@@ -4306,9 +4306,26 @@ function addTooltips() {
  
         // FIX: hashed class `scenario___msSka` → attribute substring match.
         const scenarioName = section.querySelector('[class*="scenario___"]')?.textContent?.trim();
-        if (!scenarioName || !scenarios[scenarioName]) return;
- 
-        const variants = scenarios[scenarioName];
+        // wb15: case-insensitive lookup. Server-overlaid recipes that
+        // don't have an upstream BFB match get stored under their raw
+        // (often lowercase) key, but Torn displays scenario names in
+        // Title Case — a case-sensitive lookup miss left those crimes
+        // gray with no tooltip.
+        if (!scenarioName) return;
+        let lookupKey = scenarios[scenarioName] ? scenarioName : null;
+        if (!lookupKey) {
+            if (!scenarios._wbLowerIndex) {
+                scenarios._wbLowerIndex = Object.create(null);
+                for (const k of Object.keys(scenarios)) {
+                    if (k.startsWith('_wb')) continue;
+                    scenarios._wbLowerIndex[k.toLowerCase()] = k;
+                }
+            }
+            lookupKey = scenarios._wbLowerIndex[scenarioName.toLowerCase()];
+        }
+        if (!lookupKey || !scenarios[lookupKey]) return;
+
+        const variants = scenarios[lookupKey];
         const selectedVariant = Array.isArray(variants[0])
             ? variants.find(v => shouldShowScenario(v, hasFlamethrower))
             : (shouldShowScenario(variants, hasFlamethrower) ? variants : null);
