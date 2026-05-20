@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.046-wb13
+// @version      1.00.047-wb13
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -13,24 +13,6 @@
 // @downloadURL  https://tornwar.com/scripts/arson-bang-for-buck.user.js
 // @updateURL    https://tornwar.com/scripts/arson-bang-for-buck.meta.js
 // ==/UserScript==
-//
-// =============================================================================
-// CHANGELOG (tornwar fork)
-// =============================================================================
-// 1.00.040-fix3-wb1 — Replaced wb2 (based on 1.00.037) with neth392's
-//   community 1.00.040-fix3 from
-//   https://gist.github.com/neth392/756b3de97e27cdae6aecc43895834158
-//   Key fix3 improvements over the wb2 fork:
-//     - hoverTarget now requires THREE substrings on the same element
-//       (crimeOptionSection___ + flexGrow___ + titleSection___) so
-//       false matches don't trigger spurious tooltips
-//     - Mobile tap attaches to the whole section, not a single hashed
-//       child; ignores button/a/input/select/textarea clicks so action
-//       buttons still work. Fixes PDA tooltip behavior cleanly.
-//     - dataset.tooltipAdded dedup guard so MutationObserver doesn't
-//       re-attach handlers on every render
-//     - Outside-click auto-closes the tooltip
-// =============================================================================
 (function() {
     'use strict';
  
