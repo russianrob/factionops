@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.049-wb13
+// @version      1.00.050-wb14
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -254,9 +254,27 @@ async function getPricesFromAPI() {
             // for them (BFB line 4253). Multi-variant shape preserves
             // both paths.
             if (Array.isArray(existing) && existing.length > 0 && Array.isArray(existing[0])) {
+                // Multi-variant — replace the matching-flame slot.
                 const variantIdx = existing.findIndex(v => wbVariantIsFlamethrower(v) === serverIsFlame);
                 if (variantIdx >= 0) existing[variantIdx] = lines;
                 else existing.push(lines);
+            } else if (Array.isArray(existing) && existing.length > 0 && !Array.isArray(existing[0])) {
+                // Single-variant upstream. Promote to multi-variant
+                // if the server recipe's flamethrower status differs
+                // from upstream's. Without this, replacing a flame
+                // upstream variant with a no-flame server variant
+                // (or vice versa) leaves only ONE variant — and if
+                // shouldShowScenario filters it out for the viewer's
+                // flamethrower unlock state, the tooltip never
+                // renders, no color is applied, and the crime
+                // appears broken. wb14: keep both variants visible
+                // so every viewer sees their applicable one.
+                const existingIsFlame = wbVariantIsFlamethrower(existing);
+                if (existingIsFlame !== serverIsFlame) {
+                    scenarios[key] = [existing, lines];
+                } else {
+                    scenarios[key] = lines;
+                }
             } else {
                 scenarios[key] = lines;
             }
