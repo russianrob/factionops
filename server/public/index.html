@@ -1965,9 +1965,7 @@ img { max-width: 100%; display: block; }
             <p class="notif-msg">Enter your Torn API key to enable push notifications.</p>
             <div class="notif-auth-form">
               <input type="password" id="notif-api-key" class="notif-input" placeholder="Torn API Key" autocomplete="off" spellcheck="false">
-              <button id="notif-auth-btn" class="btn btn-primary notif-btn"
-                      style="filter:blur(2px);pointer-events:none;opacity:0.4;"
-                      title="Temporarily disabled during live test">
+              <button id="notif-auth-btn" class="btn btn-primary notif-btn">
                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
                   <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
@@ -2014,12 +2012,7 @@ img { max-width: 100%; display: block; }
             </div>
 
             <p class="notif-hint" style="margin-top:16px">🔒 Your key is encrypted on the server and used solely for Torn API polling. It cannot be viewed, exported, or used for anything else. Alerts stay active until you disable them.</p>
-            <!-- TEMP (2026-05-19): blurred + click-blocked while user
-                 is running a live test. Revert by removing the inline
-                 style attribute below. -->
-            <button id="notif-unsubscribe-btn" class="btn btn-ghost notif-btn-sm"
-                    style="filter:blur(2px);pointer-events:none;opacity:0.4;"
-                    title="Temporarily disabled during live test">
+            <button id="notif-unsubscribe-btn" class="btn btn-ghost notif-btn-sm">
               Disable Notifications
             </button>
           </div>
