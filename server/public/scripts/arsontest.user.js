@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson Recipe Sandbox (test)
 // @namespace    tornwar.com
-// @version      0.10.1
+// @version      0.10.2
 // @description  Lightweight recipe-editor UI for arson scenarios. Floating ⚙ button on the crimes page opens a panel to add / edit / delete server-hosted recipes (tornwar.com). NO DOM modification of crime options — leaves the upstream 'arson-bang-for-buck' tooltip / hover behavior completely untouched.
 // @author       RussianRob
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -1028,13 +1028,21 @@
             //   Payout, Profit/Nerve, Nerve, Flamethrower, Place, Stoke, Dampen
             const payoutK = Math.round(recipe.payout / 1000);
             tt.appendChild(buildBulletDiv('Payout: ' + payoutK + 'K'));
-            if (recipe.nerve && recipe.nerve > 0) {
-                const ppn = recipe.payout / recipe.nerve;
+            // 0.10.2: derive nerve via autoCalcArsonNerve when the recipe
+            // doesn't carry an explicit value. Pre-flatten the server
+            // stored a `nerve` field on every row; after the flatten that
+            // field is absent on most rows, leaving the fallback tooltip
+            // with no Profit/Nerve at all.
+            const nerveEffective = (recipe.nerve && recipe.nerve > 0)
+                ? recipe.nerve
+                : autoCalcArsonNerve(recipe.items, recipe.stoke, recipe.dampen, recipe.flamethrower, recipe.ignite);
+            if (nerveEffective > 0) {
+                const ppn = recipe.payout / nerveEffective;
                 const ppnStr = ppn >= 1000
                     ? (Math.round(ppn / 100) / 10) + 'K'
                     : Math.round(ppn) + '';
                 tt.appendChild(buildBulletDiv('Profit/Nerve: ' + ppnStr));
-                tt.appendChild(buildBulletDiv('Nerve: ' + recipe.nerve));
+                tt.appendChild(buildBulletDiv('Nerve: ' + nerveEffective));
             }
             if (typeof recipe.flamethrower === 'boolean') {
                 tt.appendChild(buildBulletDiv('Flamethrower: ' + (recipe.flamethrower ? 'Yes' : 'No')));
