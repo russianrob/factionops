@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson Recipe Sandbox (test)
 // @namespace    tornwar.com
-// @version      0.10.6
+// @version      0.10.7
 // @description  Lightweight recipe-editor UI for arson scenarios. Floating ⚙ button on the crimes page opens a panel to add / edit / delete server-hosted recipes (tornwar.com). NO DOM modification of crime options — leaves the upstream 'arson-bang-for-buck' tooltip / hover behavior completely untouched.
 // @author       RussianRob
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -1042,7 +1042,7 @@
                     ? (Math.round(ppn / 100) / 10) + 'K'
                     : Math.round(ppn) + '';
                 tt.appendChild(buildBulletDiv('Profit/Nerve: ' + ppnStr));
-                tt.appendChild(buildBulletDiv('Nerve: ' + nerveEffective));
+                tt.appendChild(buildBulletDiv('Total Nerve: ' + nerveEffective));
                 // 0.10.3: apply BFB's highlight class to the crime card.
                 // BFB hides its own tooltip on scenarios that require a
                 // flamethrower the viewer doesn't have, which skipped the
