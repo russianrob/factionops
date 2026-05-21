@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.051-wb19
+// @version      1.00.051-wb20
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -4276,10 +4276,17 @@ function addTooltips() {
         if (!lookupKey || !scenarios[lookupKey]) return;
 
         const variants = scenarios[lookupKey];
+        // wb19→wb20: always show a tooltip. Multi-variant scenarios
+        // pick the variant matching the viewer's flame state if one
+        // exists, else fall back to the first variant so flame-
+        // required scenarios on no-flame viewers still get useful
+        // info (and stay consistent with wb18 always coloring them).
+        // Previously these crimes showed nothing without arsontest's
+        // fallback tooltip stepping in.
         const selectedVariant = Array.isArray(variants[0])
-            ? variants.find(v => shouldShowScenario(v, hasFlamethrower))
-            : (shouldShowScenario(variants, hasFlamethrower) ? variants : null);
- 
+            ? (variants.find(v => shouldShowScenario(v, hasFlamethrower)) || variants[0])
+            : variants;
+
         if (!selectedVariant) return;
  
         const tooltip = createTooltip(selectedVariant, section, section);
