@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson Recipe Sandbox (test)
 // @namespace    tornwar.com
-// @version      0.10.4
+// @version      0.10.5
 // @description  Lightweight recipe-editor UI for arson scenarios. Floating ⚙ button on the crimes page opens a panel to add / edit / delete server-hosted recipes (tornwar.com). NO DOM modification of crime options — leaves the upstream 'arson-bang-for-buck' tooltip / hover behavior completely untouched.
 // @author       RussianRob
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -1392,6 +1392,49 @@
 
     // Re-run on DOM mutations (Torn lazy-renders cards). Debounced so we
     // don't churn during heavy renders.
+    // 0.10.5: proactively color every crime card from server recipe data,
+    // so users don't have to tap each card to see the highlight. Iterates
+    // every section, looks up the scenario in RECIPES, computes
+    // Profit/Nerve via autoCalcArsonNerve when nerve is missing, and
+    // applies BFB's highlight-{negative,low,high,jackpot} class. Skips
+    // cards BFB already highlighted (its own click/hover handler beats
+    // ours on the no-flame-restriction scenarios) by checking for an
+    // existing highlight-* class.
+    function applyHighlightsFromRecipes() {
+        if (!RECIPES || !Object.keys(RECIPES).length) return;
+        let thr = { LowProfit: 5000, HighProfit: 10000 };
+        try {
+            const saved = localStorage.getItem('highlightValues');
+            if (saved) {
+                const p = JSON.parse(saved);
+                if (p && Number.isFinite(p.LowProfit) && Number.isFinite(p.HighProfit)) thr = p;
+            }
+        } catch (_) {}
+        document.querySelectorAll('[class*="sections___"]').forEach(card => {
+            try {
+                if (card.dataset.arsontestHighlighted === '1') return;
+                const actionEl = card.querySelector('[class*="scenario___"]');
+                if (!actionEl) return;
+                const action = actionEl.textContent.trim();
+                if (!action) return;
+                const recipe = lookupRecipe(action);
+                if (!recipe || !recipe.payout) return;
+                const nerve = (recipe.nerve && recipe.nerve > 0)
+                    ? recipe.nerve
+                    : autoCalcArsonNerve(recipe.items, recipe.stoke, recipe.dampen, recipe.flamethrower, recipe.ignite);
+                if (!nerve || nerve <= 0) return;
+                const ppn = recipe.payout / nerve;
+                const cls = ppn <= 0 ? 'highlight-negative'
+                          : ppn <= thr.LowProfit ? 'highlight-low'
+                          : ppn <= thr.HighProfit ? 'highlight-high'
+                          : 'highlight-jackpot';
+                card.classList.remove('highlight-negative','highlight-low','highlight-high','highlight-jackpot');
+                card.classList.add(cls);
+                card.dataset.arsontestHighlighted = '1';
+            } catch (_) {}
+        });
+    }
+
     let _injectTimer = null;
     function scheduleInject() {
         if (_injectTimer) return;
@@ -1401,6 +1444,7 @@
             setImageTitles();         // desktop hover + cursor cue
             rewriteLocationText();    // fallback: write action into visible location div
             injectPdaActionNames();   // belt-and-braces inject
+            applyHighlightsFromRecipes(); // 0.10.5: proactive color
         }, 400);
     }
     function watchForCards() {
@@ -1418,6 +1462,6 @@
     rewriteLocationText();          // fallback
     injectPdaActionNames();         // belt-and-braces
     watchForCards();
-    fetchRecipes().then(() => autoCaptureLocations());
+    fetchRecipes().then(() => { autoCaptureLocations(); applyHighlightsFromRecipes(); });
     setTimeout(injectGearButton, 500);
 })();
