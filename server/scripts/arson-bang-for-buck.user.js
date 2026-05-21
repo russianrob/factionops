@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.051-wb17
+// @version      1.00.051-wb18
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -342,6 +342,15 @@ async function getPricesFromAPI() {
                     const recipes = body && body.recipes;
                     if (!recipes) return;
                     wbOverlayServerRecipes(recipes);
+                    // Invalidate lowercase index since overlay added
+                    // new keys, then recolor every card. Without this,
+                    // first-load cards stay gray until the next DOM
+                    // mutation tick — manifesting as "have to refresh
+                    // to see colors" for the user.
+                    if (scenarios._wbLowerIndex) scenarios._wbLowerIndex = null;
+                    if (typeof wbApplyHighlightsToAllCards === 'function') {
+                        wbApplyHighlightsToAllCards();
+                    }
                     try {
                         GM_setValue(WB_CACHE_KEY, JSON.stringify({
                             ts: Date.now(), recipes
@@ -4320,8 +4329,65 @@ function addTooltips() {
  
  
  
+// wb18: proactively color EVERY crime card from BFB's scenarios data
+// (which is upstream-hardcoded + server-overlayed). Bypasses
+// shouldShowScenario — that filter only decides whether to bind a
+// hover/click tooltip, but cards should still be colored so the
+// user sees at-a-glance profitability even on crimes they can't do
+// (e.g. flame-required scenarios for no-flame viewers). Eliminates
+// the need for arsontest's applyHighlightsFromRecipes — BFB is now
+// self-sufficient for coloring.
+function wbApplyHighlightsToAllCards() {
+    document.querySelectorAll('[class*="sections___"]').forEach(section => {
+        try {
+            const actionEl = section.querySelector('[class*="scenario___"]');
+            if (!actionEl) return;
+            const scenarioName = actionEl.textContent.trim();
+            if (!scenarioName) return;
+            // Case-insensitive lookup mirrors addTooltips at line 4250.
+            let lookupKey = scenarios[scenarioName] ? scenarioName : null;
+            if (!lookupKey) {
+                if (!scenarios._wbLowerIndex) {
+                    scenarios._wbLowerIndex = Object.create(null);
+                    for (const k of Object.keys(scenarios)) {
+                        if (k.startsWith('_wb')) continue;
+                        scenarios._wbLowerIndex[k.toLowerCase()] = k;
+                    }
+                }
+                lookupKey = scenarios._wbLowerIndex[scenarioName.toLowerCase()];
+            }
+            if (!lookupKey || !scenarios[lookupKey]) return;
+            const variants = scenarios[lookupKey];
+            // Multi-variant scenarios: prefer the variant whose
+            // Flamethrower line matches the viewer (so colors reflect
+            // the path they'd actually take). Fall back to any
+            // variant if no match (still color, just maybe slightly
+            // off PPN for the unreachable path).
+            const flame = getSkillValue() >= 80;
+            let variant;
+            if (Array.isArray(variants[0])) {
+                variant = variants.find(v => shouldShowScenario(v, flame)) || variants[0];
+            } else {
+                variant = variants;
+            }
+            const ranges = calculateProfitPerNerve(variant);
+            if (!ranges) return;
+            const baseProfitValue = ranges.profitText.replace(/<[^>]*>/g, '').split('–').pop().trim();
+            const numericValue = parseFloat(baseProfitValue.replace(/K/i, '')) * (baseProfitValue.includes('K') ? 1000 : 1);
+            if (!Number.isFinite(numericValue)) return;
+            section.classList.remove('highlight-negative','highlight-low','highlight-high','highlight-jackpot');
+            const cls = numericValue <= 0 ? 'highlight-negative'
+                      : numericValue <= highlightValues.LowProfit ? 'highlight-low'
+                      : numericValue <= highlightValues.HighProfit ? 'highlight-high'
+                      : 'highlight-jackpot';
+            section.classList.add(cls);
+        } catch (_) {}
+    });
+}
+
 const observer = new MutationObserver(() => {
     addTooltips();
+    wbApplyHighlightsToAllCards();
     createSettingsUI();
  
     // Remove Torn's highlight
