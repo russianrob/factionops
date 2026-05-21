@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.051-wb22
+// @version      1.00.051-wb23
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -4362,10 +4362,21 @@ function wbPickUsefulVariant(variants, hasFlame) {
 function wbApplyHighlightsToAllCards() {
     document.querySelectorAll('[class*="sections___"]').forEach(section => {
         try {
+            // wb23: per-card dedup. Skip cards whose scenario name +
+            // flame state haven't changed since last successful color
+            // pass. On Torn PDA the chain bar / live timers fire
+            // mutations multiple times per second, and re-running
+            // querySelectorAll + calculateProfitPerNerve per card on
+            // every tick was the leading suspect for 46% screentime
+            // CPU. Stamp `dataset.wbHighlightKey` after coloring;
+            // bail early if the stamp still matches the current key.
             const actionEl = section.querySelector('[class*="scenario___"]');
             if (!actionEl) return;
             const scenarioName = actionEl.textContent.trim();
             if (!scenarioName) return;
+            const flame = getSkillValue() >= 80;
+            const dedupKey = scenarioName + '|' + (flame ? '1' : '0');
+            if (section.dataset.wbHighlightKey === dedupKey) return;
             // Case-insensitive lookup mirrors addTooltips at line 4250.
             let lookupKey = scenarios[scenarioName] ? scenarioName : null;
             if (!lookupKey) {
@@ -4380,12 +4391,6 @@ function wbApplyHighlightsToAllCards() {
             }
             if (!lookupKey || !scenarios[lookupKey]) return;
             const variants = scenarios[lookupKey];
-            // Multi-variant scenarios: prefer the variant whose
-            // Flamethrower line matches the viewer (so colors reflect
-            // the path they'd actually take). Fall back to any
-            // variant if no match (still color, just maybe slightly
-            // off PPN for the unreachable path).
-            const flame = getSkillValue() >= 80;
             const variant = wbPickUsefulVariant(variants, flame);
             if (!variant) return;
             const ranges = calculateProfitPerNerve(variant);
@@ -4399,24 +4404,28 @@ function wbApplyHighlightsToAllCards() {
                       : numericValue <= highlightValues.HighProfit ? 'highlight-high'
                       : 'highlight-jackpot';
             section.classList.add(cls);
+            section.dataset.wbHighlightKey = dedupKey;
         } catch (_) {}
     });
 }
 
-const observer = new MutationObserver(() => {
+// wb23: also debounce the entire observer callback. Without this each
+// micro-mutation triggers addTooltips + wbApplyHighlightsToAllCards +
+// createSettingsUI + two more querySelectorAll loops. Coalescing them
+// into one 150ms tick cuts work by orders of magnitude while still
+// feeling instant. Critical for PDA battery.
+let _wbObserverTimer = null;
+function wbObserverTick() {
     addTooltips();
     wbApplyHighlightsToAllCards();
     createSettingsUI();
- 
+
     // Remove Torn's highlight
-    // FIX: hashed class `crimeOptionWrapper___IOnLO` → attribute substring match.
-    // `pending-collect` is a stable (non-hashed) class and is used as-is in classList.remove.
     document.querySelectorAll('[class*="crimeOptionWrapper___"].pending-collect').forEach(el => {
         el.classList.remove('pending-collect');
     });
- 
-    // Highlight Collect and 2 softly if both exist
-    // FIX: hashed class `childrenWrapper___h2Sw5` → attribute substring match.
+
+    // Highlight Collect-and-2 buttons softly
     document.querySelectorAll('[class*="childrenWrapper___"]').forEach(btn => {
         const text = btn.textContent.trim();
         if (text.includes('Collect') && text.includes('2')) {
@@ -4427,7 +4436,16 @@ const observer = new MutationObserver(() => {
             btn.style.fontWeight = '';
         }
     });
+}
+
+const observer = new MutationObserver(() => {
+    if (_wbObserverTimer) return;
+    _wbObserverTimer = setTimeout(() => { _wbObserverTimer = null; wbObserverTick(); }, 150);
 });
+
+// wb23: original inline observer body folded into wbObserverTick().
+// The MutationObserver above now schedules a debounced 150ms tick
+// instead of running everything synchronously on every mutation.
  
 //  Observe without delay
 observer.observe(document.body, { childList: true, subtree: true });
