@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.051-wb21
+// @version      1.00.051-wb22
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -4276,16 +4276,14 @@ function addTooltips() {
         if (!lookupKey || !scenarios[lookupKey]) return;
 
         const variants = scenarios[lookupKey];
-        // wb19→wb20: always show a tooltip. Multi-variant scenarios
-        // pick the variant matching the viewer's flame state if one
-        // exists, else fall back to the first variant so flame-
-        // required scenarios on no-flame viewers still get useful
-        // info (and stay consistent with wb18 always coloring them).
-        // Previously these crimes showed nothing without arsontest's
-        // fallback tooltip stepping in.
-        const selectedVariant = Array.isArray(variants[0])
-            ? (variants.find(v => shouldShowScenario(v, hasFlamethrower)) || variants[0])
-            : variants;
+        // wb22: pick the most useful variant. Some scenarios (Blaze
+        // of Glory, Smoldering Resentment, Body of Evidence...) have
+        // a no-flame variant that's a placeholder with no Payout —
+        // wb20 picked that for no-flame viewers, leaving the tooltip
+        // empty and the card uncolored. wbPickUsefulVariant prefers
+        // matched-flame AND has-Payout; falls back to any variant
+        // with Payout; last resort the matched one.
+        const selectedVariant = wbPickUsefulVariant(variants, hasFlamethrower);
 
         if (!selectedVariant) return;
  
@@ -4336,6 +4334,23 @@ function addTooltips() {
  
  
  
+// wb22: shared variant picker — prefer matched flame state AND a
+// usable Payout line; fall back to any variant with Payout; last
+// resort the matched one. Used by both addTooltips (so the tooltip
+// has data to show) and wbApplyHighlightsToAllCards (so the color
+// has data to compute). Returns null only when input is invalid.
+function wbPickUsefulVariant(variants, hasFlame) {
+    if (!variants) return null;
+    if (!Array.isArray(variants[0])) return variants;
+    const hasPayout = v => Array.isArray(v)
+        && v.some(line => typeof line === 'string' && /^Payout\s*:/i.test(line) && /\d/.test(line));
+    const matchedWithData = variants.find(v => shouldShowScenario(v, hasFlame) && hasPayout(v));
+    if (matchedWithData) return matchedWithData;
+    const anyWithData = variants.find(hasPayout);
+    if (anyWithData) return anyWithData;
+    return variants.find(v => shouldShowScenario(v, hasFlame)) || variants[0];
+}
+
 // wb18: proactively color EVERY crime card from BFB's scenarios data
 // (which is upstream-hardcoded + server-overlayed). Bypasses
 // shouldShowScenario — that filter only decides whether to bind a
@@ -4371,12 +4386,8 @@ function wbApplyHighlightsToAllCards() {
             // variant if no match (still color, just maybe slightly
             // off PPN for the unreachable path).
             const flame = getSkillValue() >= 80;
-            let variant;
-            if (Array.isArray(variants[0])) {
-                variant = variants.find(v => shouldShowScenario(v, flame)) || variants[0];
-            } else {
-                variant = variants;
-            }
+            const variant = wbPickUsefulVariant(variants, flame);
+            if (!variant) return;
             const ranges = calculateProfitPerNerve(variant);
             if (!ranges) return;
             const baseProfitValue = ranges.profitText.replace(/<[^>]*>/g, '').split('–').pop().trim();
