@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson Recipe Sandbox (test)
 // @namespace    tornwar.com
-// @version      0.10.7
+// @version      0.10.8
 // @description  Lightweight recipe-editor UI for arson scenarios. Floating ⚙ button on the crimes page opens a panel to add / edit / delete server-hosted recipes (tornwar.com). NO DOM modification of crime options — leaves the upstream 'arson-bang-for-buck' tooltip / hover behavior completely untouched.
 // @author       RussianRob
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -1024,31 +1024,25 @@
         // arson-bang-for-buck tooltip + piggyback header combo.
         tt.appendChild(buildScenarioHeader(location ? location + ' · ' + action : action));
         if (recipe) {
-            // Same line order as arson-bang-for-buck:
-            //   Payout, Profit/Nerve, Nerve, Flamethrower, Place, Stoke, Dampen
+            // 0.10.8: exact BFB line order so fallback tooltip renders
+            // identically to BFB's native createTooltip:
+            //   Payout → Profit/Nerve → Ignite → Flamethrower → Place
+            //   → Stoke → Dampen → Total Nerve (always last, appended
+            //   after every other line just like BFB).
             const payoutK = Math.round(recipe.payout / 1000);
             tt.appendChild(buildBulletDiv('Payout: ' + payoutK + 'K'));
-            // 0.10.2: derive nerve via autoCalcArsonNerve when the recipe
-            // doesn't carry an explicit value. Pre-flatten the server
-            // stored a `nerve` field on every row; after the flatten that
-            // field is absent on most rows, leaving the fallback tooltip
-            // with no Profit/Nerve at all.
             const nerveEffective = (recipe.nerve && recipe.nerve > 0)
                 ? recipe.nerve
                 : autoCalcArsonNerve(recipe.items, recipe.stoke, recipe.dampen, recipe.flamethrower, recipe.ignite);
+            let ppn = 0;
             if (nerveEffective > 0) {
-                const ppn = recipe.payout / nerveEffective;
+                ppn = recipe.payout / nerveEffective;
                 const ppnStr = ppn >= 1000
                     ? (Math.round(ppn / 100) / 10) + 'K'
                     : Math.round(ppn) + '';
                 tt.appendChild(buildBulletDiv('Profit/Nerve: ' + ppnStr));
-                tt.appendChild(buildBulletDiv('Total Nerve: ' + nerveEffective));
-                // 0.10.3: apply BFB's highlight class to the crime card.
-                // BFB hides its own tooltip on scenarios that require a
-                // flamethrower the viewer doesn't have, which skipped the
-                // colored highlight — leaving useful arsontest fallback
-                // data on a gray card. Read BFB's thresholds from the
-                // shared localStorage key so user-adjusted values apply.
+                // Apply BFB's highlight class. Read user-adjusted
+                // thresholds from the shared localStorage key.
                 try {
                     let thr = { LowProfit: 5000, HighProfit: 10000 };
                     const saved = localStorage.getItem('highlightValues');
@@ -1066,6 +1060,13 @@
                     }
                 } catch (_) {}
             }
+            // Ignite tool — BFB renders this above Place when set.
+            // Title-case the value to match upstream BFB capitalization
+            // (server stores lowercase: "lighter", "flamethrower").
+            if (recipe.ignite && String(recipe.ignite).trim()) {
+                const ig = String(recipe.ignite).trim().replace(/\b\w/g, c => c.toUpperCase());
+                tt.appendChild(buildBulletDiv('Ignite: ' + ig));
+            }
             if (typeof recipe.flamethrower === 'boolean') {
                 tt.appendChild(buildBulletDiv('Flamethrower: ' + (recipe.flamethrower ? 'Yes' : 'No')));
             }
@@ -1075,6 +1076,11 @@
             }
             if (recipe.dampen && Object.keys(recipe.dampen).length) {
                 tt.appendChild(buildBulletDiv('Dampen: ' + formatItemsBullet(recipe.dampen)));
+            }
+            // Total Nerve last — matches BFB's createTooltip which
+            // appends it after lines.forEach completes.
+            if (nerveEffective > 0) {
+                tt.appendChild(buildBulletDiv('Total Nerve: ' + nerveEffective));
             }
         } else {
             // No recipe in arsontest's RECIPES table. Show a clear hint
