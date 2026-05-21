@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Weav3r Bazaar Deals
 // @namespace    russianrob
-// @version      2.4.1
+// @version      2.4.2
 // @description  Find real below-market bazaar deals — solo build, fetches weav3r.dev directly, no warboard proxy
 // @author       RussianRob
 // @match        https://www.torn.com/*
@@ -1064,6 +1064,11 @@
             store.set('w3_minimized', false);
             panel.classList.remove('minimized');
             minBtn.style.display = 'none';
+            // 2.4.2: kick a fresh load when expanding so the user sees
+            // current data, since we no longer refresh in the background.
+            if (!S.deals.length || (Date.now() - (S.dealsTs || 0)) > CFG.refreshMs) {
+                loadDeals();
+            }
         });
         document.body.appendChild(minBtn);
 
@@ -1075,12 +1080,21 @@
     function init() {
         buildPanel();
         render();
-        loadDeals();
-        // 2.4.0: poll weav3r.dev directly every CFG.refreshMs. Originally
-        // an SSE stream from our server fanned out cached results, but
-        // weav3r.dev itself exposes no SSE endpoint and this script now
-        // runs solo (no server proxy), so polling is the only option.
-        setInterval(() => { if (!S.dealsLoading) loadDeals(); }, CFG.refreshMs);
+        // 2.4.2: don't load deals at all on startup when the panel is
+        // minimized. Previously the script ran loadDeals() unconditionally
+        // on every torn.com page, triggering loadRealDeals() which fires
+        // ~25 batches of weav3r marketplace lookups + ~25 panel re-renders
+        // — the leading suspect for PDA's 46% screentime spike. Now the
+        // first load + every refresh only fires when the panel is visible
+        // (i.e. the user is actually looking at deals).
+        if (!S.minimized) loadDeals();
+        // Periodic refresh — skip silently when minimized so we don't
+        // burn CPU + network on pages the user isn't viewing deals on.
+        setInterval(() => {
+            if (S.dealsLoading) return;
+            if (S.minimized) return;
+            loadDeals();
+        }, CFG.refreshMs);
         // Build full item index via Torn API if key is set, else skip
         if (S.apiKey) setTimeout(buildIndexFromTornAPI, 2000);
     }
