@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Weav3r Bazaar Deals
 // @namespace    russianrob
-// @version      2.4.0
+// @version      2.4.1
 // @description  Find real below-market bazaar deals — solo build, fetches weav3r.dev directly, no warboard proxy
 // @author       RussianRob
 // @match        https://www.torn.com/*
@@ -131,7 +131,11 @@
     GM_addStyle(`
         #w3b-panel {
             position: fixed; bottom: 70px; right: 16px; width: 370px;
-            max-height: 540px; background: #12121e;
+            /* 2.4.1: clamp to viewport so the top edge is always
+             * reachable on phones — the prior hard 540px cap pushed
+             * the API Key input above the visible area on shorter
+             * screens and left no way to scroll up to it. */
+            max-height: calc(100vh - 90px); background: #12121e;
             border: 1px solid #1e3a5f; border-radius: 10px;
             font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px;
             color: #dde; z-index: 99999; display: flex; flex-direction: column;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Weav3r Bazaar Deals
 // @namespace    russianrob
-// @version      2.4.0
+// @version      2.4.1
 // @description  Find real below-market bazaar deals — solo build, fetches weav3r.dev directly, no warboard proxy
 // @author       RussianRob
 // @match        https://www.torn.com/*
