@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.051-wb16
+// @version      1.00.051-wb17
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -4248,9 +4248,25 @@ function addTooltips() {
  
         // FIX: hashed class `scenario___msSka` → attribute substring match.
         const scenarioName = section.querySelector('[class*="scenario___"]')?.textContent?.trim();
-        if (!scenarioName || !scenarios[scenarioName]) return;
- 
-        const variants = scenarios[scenarioName];
+        if (!scenarioName) return;
+        // wb17: case-insensitive lookup. Torn renders scenario names in
+        // arbitrary casing across builds, and server-overlay writes
+        // lowercase keys. Strict-case lookup missed both — leaving
+        // crimes gray. Build a lowercase index on first use, lazy.
+        let lookupKey = scenarios[scenarioName] ? scenarioName : null;
+        if (!lookupKey) {
+            if (!scenarios._wbLowerIndex) {
+                scenarios._wbLowerIndex = Object.create(null);
+                for (const k of Object.keys(scenarios)) {
+                    if (k.startsWith('_wb')) continue;
+                    scenarios._wbLowerIndex[k.toLowerCase()] = k;
+                }
+            }
+            lookupKey = scenarios._wbLowerIndex[scenarioName.toLowerCase()];
+        }
+        if (!lookupKey || !scenarios[lookupKey]) return;
+
+        const variants = scenarios[lookupKey];
         const selectedVariant = Array.isArray(variants[0])
             ? variants.find(v => shouldShowScenario(v, hasFlamethrower))
             : (shouldShowScenario(variants, hasFlamethrower) ? variants : null);

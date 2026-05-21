@@ -1,6 +1,6 @@
 {
   "version": 5,
-  "updatedAt": 1779129188150,
+  "updatedAt": 1779324878393,
   "recipes": {
     "a hot lead": {
       "items": {
@@ -51,7 +51,8 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 1600
+      "payout": 1600,
+      "location": "Hunting Lodge"
     },
     "banking on it": {
       "items": {
@@ -291,7 +292,8 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 17000
+      "payout": 17000,
+      "location": "Library"
     },
     "fire kills 99.9% of bacteria": {
       "items": {
@@ -317,7 +319,8 @@
       "items": {
         "hydrogen tank": 1
       },
-      "payout": 69000
+      "payout": 69000,
+      "location": "Luxury Villa"
     },
     "gentrifried": {
       "items": {
@@ -428,7 +431,8 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 52000
+      "payout": 52000,
+      "location": "Subway"
     },
     "like for like": {
       "items": {
@@ -441,7 +445,8 @@
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 210000
+      "payout": 210000,
+      "location": "Warehouse"
     },
     "long pig": {
       "items": {
@@ -524,6 +529,7 @@
         "blanket": 1
       },
       "payout": 42000,
+      "location": "Mobile Home",
       "ignite": "lighter"
     },
     "pest control": {
@@ -755,6 +761,7 @@
         "gasoline": 3
       },
       "payout": 170000,
+      "location": "Music Store",
       "ignite": "lighter"
     },
     "the smoking gun": {
@@ -875,7 +882,8 @@
       "items": {
         "gasoline": 6
       },
-      "payout": 105000
+      "payout": 105000,
+      "location": "Funeral Parlor"
     },
     "boom industry": {
       "items": {
@@ -908,7 +916,8 @@
       "items": {
         "gasoline": 3
       },
-      "payout": 32000
+      "payout": 32000,
+      "location": "Bungalow"
     },
     "burning through cash": {
       "items": {
@@ -921,6 +930,7 @@
         "gasoline": 5
       },
       "payout": 115000,
+      "location": "Bordello",
       "stoke": {
         "gasoline": 1
       }
@@ -992,7 +1002,8 @@
       "items": {
         "gasoline": 5
       },
-      "payout": 120000
+      "payout": 120000,
+      "location": "Sports Arena"
     },
     "going viral": {
       "items": {
@@ -1120,483 +1131,419 @@
       },
       "payout": 100000
     },
-    "a black mark:flame": {
+    "a black mark": {
       "items": {
         "gasoline": 1
       },
-      "payout": 210000,
-      "flamethrower": true
+      "payout": 210000
     },
-    "a burnt child dreads the fire:flame": {
+    "a burnt child dreads the fire": {
       "items": {
         "hydrogen tank": 1
       },
       "payout": 235000,
       "stoke": {
         "hydrogen tank": 1
-      },
-      "flamethrower": true
+      }
     },
-    "a dirty job:flame": {
+    "a dirty job": {
       "items": {
         "gasoline": 1
       },
-      "payout": 32000,
-      "flamethrower": true
+      "payout": 32000
     },
-    "a fungus among us:flame": {
+    "a fungus among us": {
       "items": {
         "gasoline": 1
       },
-      "payout": 34000,
-      "flamethrower": true
+      "payout": 34000
     },
-    "a problem shared:flame": {
+    "a problem shared": {
       "items": {
         "gasoline": 4
       },
       "payout": 180000,
       "stoke": {
         "flamethrower": 1
-      },
-      "flamethrower": true
+      }
     },
-    "anon starter:flame": {
+    "anon starter": {
       "items": {
         "gasoline": 1
       },
-      "payout": 31000,
-      "flamethrower": true
+      "payout": 31000
     },
-    "bald faced destruction:flame": {
+    "bald faced destruction": {
       "items": {
         "gasoline": 3
       },
-      "payout": 245000,
-      "flamethrower": true
+      "payout": 245000
     },
-    "bang for your buck:flame": {
+    "bang for your buck": {
       "items": {
         "gasoline": 1
       },
-      "payout": 44000,
-      "flamethrower": true
+      "payout": 44000
     },
-    "blaze of glory:flame": {
+    "blaze of glory": {
       "items": {
         "gasoline": 2
       },
       "payout": 180000,
       "stoke": {
         "flamethrower": 1
-      },
-      "flamethrower": true
+      }
     },
-    "burn after screening:flame": {
+    "burn after screening": {
       "items": {
         "gasoline": 2
       },
-      "payout": 100000,
-      "flamethrower": true
+      "payout": 100000
     },
-    "burn the deck:flame": {
+    "burn the deck": {
       "items": {
         "gasoline": 3
       },
-      "payout": 96000,
-      "flamethrower": true
+      "payout": 96000
     },
-    "burning ambition:flame": {
+    "burning ambition": {
       "items": {
         "gasoline": 2
       },
-      "payout": 46000,
-      "flamethrower": true
+      "payout": 46000
     },
-    "burn up the dancefloor:flame": {
+    "burn up the dancefloor": {
       "items": {
         "gasoline": 2
       },
-      "payout": 175000,
-      "flamethrower": true
+      "payout": 175000
     },
-    "charcoal sketch:flame": {
+    "charcoal sketch": {
       "items": {
         "gasoline": 1
       },
-      "payout": 39000,
-      "flamethrower": true
+      "payout": 39000
     },
-    "cold feet:flame": {
+    "cold feet": {
       "items": {
         "gasoline": 5
       },
       "payout": 120000,
       "stoke": {
         "flamethrower": 1
-      },
-      "flamethrower": true
+      }
     },
-    "cooked and burned:flame": {
+    "cooked and burned": {
       "items": {
         "gasoline": 2
       },
-      "payout": 73000,
-      "flamethrower": true
+      "payout": 73000
     },
-    "cooking the books:flame": {
+    "cooking the books": {
       "items": {
         "gasoline": 1
       },
-      "payout": 25000,
-      "flamethrower": true
+      "payout": 25000
     },
-    "crisp bills:flame": {
+    "crisp bills": {
       "items": {
         "gasoline": 1
       },
-      "payout": 39000,
-      "flamethrower": true
+      "payout": 39000
     },
-    "don't hate the player:flame": {
+    "don't hate the player": {
       "items": {
         "gasoline": 2
       },
-      "payout": 32000,
-      "flamethrower": true
+      "payout": 32000
     },
-    "family feud:flame": {
+    "family feud": {
       "items": {
         "gasoline": 1
       },
-      "payout": 20000,
-      "flamethrower": true
+      "payout": 20000
     },
-    "from the ashes:flame": {
+    "from the ashes": {
       "items": {
         "gasoline": 4
       },
-      "payout": 170000,
-      "flamethrower": true
+      "payout": 170000
     },
-    "gay frogs:flame": {
+    "gay frogs": {
       "items": {
         "gasoline": 2
       },
-      "payout": 34000,
-      "flamethrower": true
+      "payout": 34000
     },
-    "get wrecked:flame": {
+    "get wrecked": {
       "items": {
         "gasoline": 2
       },
-      "payout": 84000,
-      "flamethrower": true
+      "payout": 84000
     },
-    "green with envy:flame": {
+    "green with envy": {
       "items": {
         "gasoline": 4
       },
-      "payout": 120000,
-      "flamethrower": true
+      "payout": 120000
     },
-    "gym'll fix it:flame": {
+    "gym'll fix it": {
       "items": {
         "gasoline": 2
       },
-      "payout": 52000,
-      "flamethrower": true
+      "payout": 52000
     },
-    "heat the rich:flame": {
+    "heat the rich": {
       "items": {
         "gasoline": 2
       },
-      "payout": 40000,
-      "flamethrower": true
+      "payout": 40000
     },
-    "hide and seek:flame": {
+    "hide and seek": {
       "items": {
         "gasoline": 2
       },
-      "payout": 33000,
-      "flamethrower": true
+      "payout": 33000
     },
-    "high time:flame": {
+    "high time": {
       "items": {
         "gasoline": 1
       },
-      "payout": 10000,
-      "flamethrower": true
+      "payout": 10000
     },
-    "hire and fire:flame": {
+    "hire and fire": {
       "items": {
         "gasoline": 2
       },
-      "payout": 57000,
-      "flamethrower": true
+      "payout": 57000
     },
-    "home and dry:flame": {
+    "home and dry": {
       "items": {
         "gasoline": 1
       },
-      "payout": 49000,
-      "flamethrower": true
+      "payout": 49000
     },
-    "hot dog:flame": {
+    "hot dog": {
       "items": {
         "gasoline": 1
       },
-      "payout": 30500,
-      "flamethrower": true
+      "payout": 30500
     },
-    "hot out of the gate:flame": {
+    "hot out of the gate": {
       "items": {
         "gasoline": 2
       },
-      "payout": 96000,
-      "flamethrower": true
+      "payout": 96000
     },
-    "hot pursuit:flame": {
+    "hot pursuit": {
       "items": {
         "gasoline": 2
       },
-      "payout": 50000,
-      "flamethrower": true
+      "payout": 50000
     },
-    "igniting curiosity:flame": {
+    "igniting curiosity": {
       "items": {
         "gasoline": 4
       },
-      "payout": 260000,
-      "flamethrower": true
+      "payout": 260000
     },
-    "it cuts both ways:flame": {
+    "it cuts both ways": {
       "items": {
         "gasoline": 1
       },
-      "payout": 20500,
-      "flamethrower": true
+      "payout": 20500
     },
-    "kindling spirits:flame": {
+    "kindling spirits": {
       "items": {
         "gasoline": 4
       },
-      "payout": 92500,
-      "flamethrower": true
+      "payout": 92500
     },
-    "letter of the law:flame": {
+    "letter of the law": {
       "items": {
         "hydrogen tank": 1
       },
       "payout": 360000,
       "stoke": {
         "hydrogen tank": 2
-      },
-      "flamethrower": true
+      }
     },
-    "liquor on the back row:flame": {
+    "liquor on the back row": {
       "items": {
         "gasoline": 2
       },
-      "payout": 50000,
-      "flamethrower": true
+      "payout": 50000
     },
-    "local concerns:flame": {
+    "local concerns": {
       "items": {
         "gasoline": 1
       },
-      "payout": 30000,
-      "flamethrower": true
+      "payout": 30000
     },
-    "marked for salvation:flame": {
+    "marked for salvation": {
       "items": {
         "kerosene": 1
       },
-      "payout": 80000,
-      "flamethrower": true
+      "payout": 80000
     },
-    "needles to say:flame": {
+    "needles to say": {
       "items": {
         "gasoline": 1
       },
-      "payout": 39000,
-      "flamethrower": true
+      "payout": 39000
     },
-    "not a leg to stand on:flame": {
+    "not a leg to stand on": {
       "items": {
         "gasoline": 3
       },
-      "payout": 125000,
-      "flamethrower": true
+      "payout": 125000
     },
-    "off the market:flame": {
+    "off the market": {
       "items": {
         "hydrogen tank": 1
       },
       "payout": 155000,
       "stoke": {
         "hydrogen tank": 1
-      },
-      "flamethrower": true
+      }
     },
-    "old school:flame": {
+    "old school": {
       "items": {
         "gasoline": 3
       },
-      "payout": 62500,
-      "flamethrower": true
+      "payout": 62500
     },
-    "party pooper:flame": {
+    "party pooper": {
       "items": {
         "gasoline": 2
       },
-      "payout": 62000,
-      "flamethrower": true
+      "payout": 62000
     },
-    "political firestorm:flame": {
+    "political firestorm": {
       "items": {
         "gasoline": 2
       },
-      "payout": 40000,
-      "flamethrower": true
+      "payout": 40000
     },
-    "raising hell:flame": {
+    "raising hell": {
       "items": {
         "gasoline": 3
       },
       "payout": 170000,
       "stoke": {
         "flamethrower": 1
-      },
-      "flamethrower": true
+      }
     },
-    "see no evil:flame": {
+    "see no evil": {
       "items": {
         "gasoline": 3
       },
-      "payout": 71000,
-      "flamethrower": true
+      "payout": 71000
     },
-    "smoke on the water:flame": {
+    "smoke on the water": {
       "items": {
         "gasoline": 1
       },
-      "payout": 8600,
-      "flamethrower": true
+      "payout": 8600
     },
-    "smoke out:flame": {
+    "smoke out": {
       "items": {
         "gasoline": 1
       },
-      "payout": 21000,
-      "flamethrower": true
+      "payout": 21000
     },
-    "smoldering resentment:flame": {
+    "smoldering resentment": {
       "items": {
         "gasoline": 1
       },
-      "payout": 10000,
-      "flamethrower": true
+      "payout": 10000
     },
-    "stroke of fortune:flame": {
+    "stroke of fortune": {
       "items": {
         "gasoline": 3
       },
       "payout": 120000,
       "stoke": {
         "flamethrower": 1
-      },
-      "flamethrower": true
+      }
     },
-    "that place is history:flame": {
+    "that place is history": {
       "items": {
         "gasoline": 3
       },
-      "payout": 118500,
-      "flamethrower": true
+      "payout": 118500
     },
-    "the devil's in the details:flame": {
+    "the devil's in the details": {
       "items": {
         "diesel": 1
       },
       "payout": 130000,
       "stoke": {
         "potassium nitrate": 1
-      },
-      "flamethrower": true
+      }
     },
-    "the empyre strikes back:flame": {
+    "the empyre strikes back": {
       "items": {
         "gasoline": 2
       },
-      "payout": 49000,
-      "flamethrower": true
+      "payout": 49000
     },
-    "the fire chief:flame": {
+    "the fire chief": {
       "items": {
         "gasoline": 3
       },
       "payout": 140000,
       "stoke": {
         "flamethrower": 1
-      },
-      "flamethrower": true
+      }
     },
-    "the midnight oil:flame": {
+    "the midnight oil": {
       "items": {
         "gasoline": 3
       },
-      "payout": 75000,
-      "flamethrower": true
+      "payout": 75000
     },
-    "third-degree burn:flame": {
+    "third-degree burn": {
       "items": {
         "gasoline": 1
       },
-      "payout": 29000,
-      "flamethrower": true
+      "payout": 29000
     },
-    "turn up the heat:flame": {
+    "turn up the heat": {
       "items": {
         "gasoline": 2
       },
-      "payout": 76000,
-      "flamethrower": true
+      "payout": 76000
     },
-    "twisted firestarter:flame": {
+    "twisted firestarter": {
       "items": {
         "gasoline": 1
       },
-      "payout": 23000,
-      "flamethrower": true
+      "payout": 23000
     },
-    "uber heats:flame": {
+    "uber heats": {
       "items": {
         "gasoline": 2
       },
-      "payout": 59000,
-      "flamethrower": true
+      "payout": 59000
     },
-    "visions of the savory:flame": {
+    "visions of the savory": {
       "items": {
         "gasoline": 3
       },
-      "payout": 110000,
-      "flamethrower": true
+      "payout": 110000
     },
-    "where there's a will:flame": {
+    "where there's a will": {
       "items": {
         "gasoline": 3
       },
-      "payout": 52000,
-      "flamethrower": true
+      "payout": 52000
     },
-    "womb with a view:flame": {
+    "womb with a view": {
       "items": {
         "gasoline": 2
       },
-      "payout": 78500,
-      "flamethrower": true
+      "payout": 78500
     }
   }
 }

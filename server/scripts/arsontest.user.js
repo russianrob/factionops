@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson Recipe Sandbox (test)
 // @namespace    tornwar.com
-// @version      0.10.0
+// @version      0.10.1
 // @description  Lightweight recipe-editor UI for arson scenarios. Floating ⚙ button on the crimes page opens a panel to add / edit / delete server-hosted recipes (tornwar.com). NO DOM modification of crime options — leaves the upstream 'arson-bang-for-buck' tooltip / hover behavior completely untouched.
 // @author       RussianRob
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -317,84 +317,24 @@
             .replace(/\s+/g, ' ')
             .trim();
     }
-    // v0.9.0: composite-key variants. A crime can have two saved
-    // recipes — base ("hot dog") for the no-flamethrower path and
-    // ":flame" suffix ("hot dog:flame") for the flamethrower path.
-    // Helpers below strip / re-attach the suffix as needed.
-    const VARIANT_SUFFIX = ':flame';
-    function baseName(k) {
-        const s = String(k || '');
-        return s.endsWith(VARIANT_SUFFIX) ? s.slice(0, -VARIANT_SUFFIX.length) : s;
-    }
-    function variantKey(base, isFlame) {
-        return isFlame ? (base + VARIANT_SUFFIX) : base;
-    }
-    function isFlameKey(k) {
-        return String(k || '').endsWith(VARIANT_SUFFIX);
-    }
-
     // Lookup that tries exact-then-normalized. Returns the recipe or null.
-    // Variant-aware: if both ":flame" and base exist for an action, prefers
-    // the base (no-flame) variant since tooltip viewers without flamethrower
-    // are the majority case. Callers needing the flame variant explicitly
-    // can append :flame to the action string themselves.
     function lookupRecipe(action) {
         if (!action) return null;
-        const lower = action.toLowerCase();
-        const direct = RECIPES[lower];
+        const direct = RECIPES[action.toLowerCase()];
         if (direct) return direct;
         const norm = normalizeRecipeKey(action);
         if (RECIPES[norm]) return RECIPES[norm];
+        // Try every key with normalize-both-sides
         for (const k of Object.keys(RECIPES)) {
-            if (normalizeRecipeKey(baseName(k)) === norm && !isFlameKey(k)) return RECIPES[k];
-        }
-        // Last resort: return the flame variant when no base exists.
-        for (const k of Object.keys(RECIPES)) {
-            if (normalizeRecipeKey(baseName(k)) === norm) return RECIPES[k];
+            if (normalizeRecipeKey(k) === norm) return RECIPES[k];
         }
         return null;
-    }
-
-    // Upstream BFB scenario data — fetched once per page load and used
-    // by the +variant button to pre-fill items + payout from BFB's
-    // hardcoded variant data (so e.g. creating the no-flame Hot Dog
-    // pre-fills 3 gasoline @ 38K, the flame one pre-fills 1 gasoline
-    // @ 30.5K). The server route /api/arson/upstream parses this once
-    // at boot from the BFB userscript's `scenarios` const.
-    let UPSTREAM_SCENARIOS = null;
-    async function fetchUpstreamScenarios() {
-        if (UPSTREAM_SCENARIOS) return UPSTREAM_SCENARIOS;
-        try {
-            const res = await new Promise((resolve, reject) => {
-                if (typeof GM_xmlhttpRequest === 'function') {
-                    GM_xmlhttpRequest({
-                        method: 'GET', url: SERVER + '/api/arson/upstream',
-                        timeout: 5000,
-                        onload: r => resolve(JSON.parse(r.responseText)),
-                        onerror: () => reject(new Error('net')),
-                        ontimeout: () => reject(new Error('timeout')),
-                    });
-                } else {
-                    fetch(SERVER + '/api/arson/upstream').then(r => r.json()).then(resolve).catch(reject);
-                }
-            });
-            UPSTREAM_SCENARIOS = res?.scenarios || {};
-        } catch (_) { UPSTREAM_SCENARIOS = {}; }
-        return UPSTREAM_SCENARIOS;
-    }
-    // Look up an upstream variant by crime name (case-insensitive) and
-    // target flamethrower flag. Returns null if no match.
-    function findUpstreamVariant(crimeName, wantFlame) {
-        if (!UPSTREAM_SCENARIOS) return null;
-        const variants = UPSTREAM_SCENARIOS[String(crimeName || '').toLowerCase()];
-        if (!Array.isArray(variants)) return null;
-        return variants.find(v => !!v.flamethrower === !!wantFlame) || null;
     }
 
     const RECIPE_TTL_MS = 10 * 60 * 1000;
     function loadCachedRecipes() {
         try {
-            const raw = localStorage.getItem('arsontest_recipes_cache_v2');
+            const raw = localStorage.getItem('arsontest_recipes_cache');
             if (!raw) return null;
             const obj = JSON.parse(raw);
             if (Date.now() - (obj.cachedAt || 0) < RECIPE_TTL_MS) return obj;
@@ -423,7 +363,7 @@
             });
             if (data?.recipes) {
                 RECIPES = data.recipes;
-                try { localStorage.setItem('arsontest_recipes_cache_v2', JSON.stringify({ data, cachedAt: Date.now() })); } catch (_) {}
+                try { localStorage.setItem('arsontest_recipes_cache', JSON.stringify({ data, cachedAt: Date.now() })); } catch (_) {}
                 LOG('recipes fetched from server:', Object.keys(RECIPES).length);
             }
         } catch (e) { WARN('recipe fetch failed:', e?.message || e); }
@@ -485,11 +425,9 @@
                 </div>
                 <div id="arsontest-ed-list" style="overflow-y:auto;display:flex;flex-direction:column;gap:4px;max-height:40vh;font-family:monospace;font-size:11px;"></div>
                 <div style="border-top:1px solid #333;padding-top:8px;display:flex;flex-direction:column;gap:6px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-weight:600;color:#a78bfa;">Add / update</span>
-                        <span id="arsontest-ed-variant-chip" style="font-weight:700;font-size:11px;padding:2px 7px;border-radius:4px;background:#0f1a14;border:1px solid #444;">🚫🔥 no-flame variant</span>
-                    </div>
+                    <span style="font-weight:600;color:#a78bfa;">Add / update</span>
                     <input id="arsontest-ed-key" placeholder="action name (e.g. spirit level)" style="background:#0f1a14;color:#eee;border:1px solid #444;border-radius:4px;padding:5px;font-size:11px;">
+                    <input id="arsontest-ed-loc" placeholder="location (e.g. Apartment, Lakehouse)" style="background:#0f1a14;color:#eee;border:1px solid #444;border-radius:4px;padding:5px;font-size:11px;">
                     <input id="arsontest-ed-items" placeholder="Place: gasoline:3, hydrogen tank:1 (comma between items)" style="background:#0f1a14;color:#eee;border:1px solid #444;border-radius:4px;padding:5px;font-size:11px;">
                     <input id="arsontest-ed-stoke" placeholder="Stoke (optional): gasoline:2, lighter:1" style="background:#0f1a14;color:#eee;border:1px solid #444;border-radius:4px;padding:5px;font-size:11px;">
                     <input id="arsontest-ed-dampen" placeholder="Dampen (optional): fire extinguisher:1" style="background:#0f1a14;color:#eee;border:1px solid #444;border-radius:4px;padding:5px;font-size:11px;">
@@ -523,18 +461,21 @@
         };
         const renderList = () => {
             const list = overlay.querySelector('#arsontest-ed-list');
-            // Sort by base crime name (alphabetical), then no-flame
-            // before flame so variant siblings sit adjacent.
+            // Sort by location first (entries without location sink), then action.
             const entries = Object.entries(RECIPES).sort((a, b) => {
-                const baseA = baseName(a[0]); const baseB = baseName(b[0]);
-                if (baseA !== baseB) return baseA < baseB ? -1 : 1;
-                return isFlameKey(a[0]) - isFlameKey(b[0]);
+                const la = (a[1].location || '￿~~~').toLowerCase();
+                const lb = (b[1].location || '￿~~~').toLowerCase();
+                if (la !== lb) return la < lb ? -1 : 1;
+                return a[0] < b[0] ? -1 : 1;
             });
             if (!entries.length) { list.innerHTML = '<div style="color:#6b7280;">No recipes yet.</div>'; return; }
             const listValueMap = loadItemValueMap();
             list.innerHTML = entries.map(([k, r]) => {
                 const itemsStr = Object.entries(r.items).map(([n, q]) => q + ' ' + n).join(', ');
                 const nerveStr = r.nerve ? (' · ' + r.nerve + 'N') : '';
+                const locStr = r.location
+                    ? `<span style="color:#f4a261;font-weight:700;">${r.location}</span> · `
+                    : `<span style="color:#6b7280;font-style:italic;">(no location)</span> · `;
                 // Inline net Profit/Nerve so admins can scan the list
                 // without opening each recipe. Same (payout − cost) /
                 // nerve formula the editor + BFB use; negatives
@@ -557,35 +498,18 @@
                     const color = ppn < 0 ? '#fca5a5' : '#74c69d';
                     ppnHtml = ` · <span style="color:${color};font-weight:600;" title="profit/nerve at current item prices">${sign}${body}/N</span>`;
                 }
-                // Variant chip on EVERY row so the flame/no-flame
-                // state is visible at a glance and the listing reads
-                // symmetrically across variants.
-                const flameChip = isFlameKey(k)
-                    ? '<span style="color:#fb923c;font-weight:700;" title="flamethrower variant">🔥</span> '
-                    : '<span style="color:#9ca3af;font-weight:700;" title="no-flame variant">🚫🔥</span> ';
-                const display = baseName(k);
-                // Offer a "+ variant" button when the sibling variant
-                // doesn't exist yet — one tap clones this recipe into
-                // the other slot so the user can edit/tweak from there.
-                const siblingKey = isFlameKey(k) ? display : (display + VARIANT_SUFFIX);
-                const hasSibling = RECIPES[siblingKey] != null;
-                const variantBtn = hasSibling
-                    ? ''
-                    : `<button class="arsontest-ed-dup" data-k="${k}" title="${isFlameKey(k) ? 'create no-flame variant' : 'create flame variant'}" style="background:transparent;border:1px solid #2d3a2a;color:#fb923c;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;">+${isFlameKey(k) ? '🚫🔥' : '🔥'}</button>`;
                 return `<div style="display:flex;justify-content:space-between;gap:6px;padding:3px 0;border-bottom:1px solid #2a2a2a;">
-                    <span style="color:#d1d5db;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${k}\n${itemsStr}\n$${r.payout.toLocaleString()}${nerveStr}">
-                        ${flameChip}<b>${display}</b> · <span style="color:#9ca3af;">${itemsStr}</span> · <span style="color:#74c69d;">$${(r.payout/1000).toFixed(0)}K</span>${nerveStr}${ppnHtml}
+                    <span style="color:#d1d5db;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.location ? r.location + ' / ' : ''}${k}\n${itemsStr}\n$${r.payout.toLocaleString()}${nerveStr}">
+                        ${locStr}<b>${k}</b> · <span style="color:#9ca3af;">${itemsStr}</span> · <span style="color:#74c69d;">$${(r.payout/1000).toFixed(0)}K</span>${nerveStr}${ppnHtml}
                     </span>
-                    ${variantBtn}
                     <button class="arsontest-ed-edit" data-k="${k}" style="background:transparent;border:1px solid #444;color:#a78bfa;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;">edit</button>
                     <button class="arsontest-ed-del" data-k="${k}" style="background:transparent;border:1px solid #4a1a1a;color:#ef4444;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;">del</button>
                 </div>`;
             }).join('');
             list.querySelectorAll('.arsontest-ed-edit').forEach(b => b.addEventListener('click', () => {
                 const k = b.dataset.k; const r = RECIPES[k];
-                // Show the base name in the editor — the :flame suffix
-                // is implicit from the flamethrower checkbox state.
-                overlay.querySelector('#arsontest-ed-key').value = baseName(k);
+                overlay.querySelector('#arsontest-ed-key').value = k;
+                overlay.querySelector('#arsontest-ed-loc').value = r.location || '';
                 overlay.querySelector('#arsontest-ed-items').value = Object.entries(r.items).map(([n, q]) => n + ':' + q).join(', ');
                 overlay.querySelector('#arsontest-ed-stoke').value = r.stoke
                     ? Object.entries(r.stoke).map(([n, q]) => n + ':' + q).join(', ')
@@ -603,68 +527,13 @@
                 try { recomputeProfitNerve(); } catch (_) {}
                 status('Editing ' + k);
             }));
-            list.querySelectorAll('.arsontest-ed-dup').forEach(b => b.addEventListener('click', async () => {
-                // Pre-fill the editor for the OPPOSITE variant. Priority:
-                //   1. upstream BFB scenario data (canonical items + payout
-                //      for that specific crime + flame state)
-                //   2. fall back to the existing recipe with the ignite
-                //      tool swapped (lighter ↔ flamethrower).
-                const k = b.dataset.k; const r = RECIPES[k];
-                if (!r) return;
-                const toFlame = !isFlameKey(k);
-                const crime = baseName(k);
-
-                await fetchUpstreamScenarios();
-                const upstream = findUpstreamVariant(crime, toFlame);
-
-                let itemsObj, stokeMap, payoutValue, dampenObj;
-                let igniteValue;
-                let source;
-                if (upstream && Object.keys(upstream.items || {}).length > 0) {
-                    itemsObj = upstream.items;
-                    stokeMap = Object.assign({}, upstream.stoke || {});
-                    dampenObj = upstream.dampen || {};
-                    payoutValue = upstream.payout || r.payout;
-                    igniteValue = toFlame ? 'flamethrower' : (stokeMap.lighter ? 'lighter' : '');
-                    source = 'upstream BFB';
-                } else {
-                    // Fallback: clone current items, swap ignite tool.
-                    itemsObj = r.items;
-                    stokeMap = r.stoke ? Object.assign({}, r.stoke) : {};
-                    dampenObj = r.dampen || {};
-                    payoutValue = r.payout;
-                    if (toFlame) {
-                        delete stokeMap.lighter;
-                        igniteValue = 'flamethrower';
-                    } else {
-                        if (!stokeMap.lighter) stokeMap.lighter = 1;
-                        igniteValue = 'lighter';
-                    }
-                    source = 'fallback (no upstream)';
-                }
-
-                overlay.querySelector('#arsontest-ed-key').value = crime;
-                overlay.querySelector('#arsontest-ed-items').value = Object.entries(itemsObj).map(([n, q]) => n + ':' + q).join(', ');
-                overlay.querySelector('#arsontest-ed-stoke').value = Object.keys(stokeMap).length > 0
-                    ? Object.entries(stokeMap).map(([n, q]) => n + ':' + q).join(', ')
-                    : '';
-                overlay.querySelector('#arsontest-ed-dampen').value = Object.keys(dampenObj).length > 0
-                    ? Object.entries(dampenObj).map(([n, q]) => n + ':' + q).join(', ')
-                    : '';
-                overlay.querySelector('#arsontest-ed-payout').value = payoutValue;
-                overlay.querySelector('#arsontest-ed-nerve').value = '';
-                overlay.querySelector('#arsontest-ed-flame').checked = toFlame;
-                overlay.querySelector('#arsontest-ed-ignite').value = igniteValue;
-                try { recomputeProfitNerve(); } catch (_) {}
-                status('Pre-filled ' + (toFlame ? 'flame' : 'no-flame') + ' variant of ' + crime + ' from ' + source + ' — review then Save');
-            }));
             list.querySelectorAll('.arsontest-ed-del').forEach(b => b.addEventListener('click', async () => {
                 const k = b.dataset.k;
                 if (!confirm('Delete recipe "' + k + '"?')) return;
                 try {
                     await deleteRecipe(k);
                     delete RECIPES[k];
-                    try { localStorage.removeItem('arsontest_recipes_cache_v2'); } catch (_) {}
+                    try { localStorage.removeItem('arsontest_recipes_cache'); } catch (_) {}
                     status('Deleted ' + k, '#74c69d');
                     renderList();
                 } catch (e) { status('Delete failed: ' + e.message, '#ef4444'); }
@@ -688,24 +557,7 @@
             else body = String(Math.round(abs));
             return sign + body;
         }
-        function updateVariantChip() {
-            const chip = overlay.querySelector('#arsontest-ed-variant-chip');
-            if (!chip) return;
-            const flame = overlay.querySelector('#arsontest-ed-flame').checked;
-            if (flame) {
-                chip.textContent = '🔥 flame variant';
-                chip.style.background = '#1f1410';
-                chip.style.borderColor = '#fb923c';
-                chip.style.color = '#fb923c';
-            } else {
-                chip.textContent = '🚫🔥 no-flame variant';
-                chip.style.background = '#0f1a14';
-                chip.style.borderColor = '#444';
-                chip.style.color = '#9ca3af';
-            }
-        }
         function recomputeProfitNerve() {
-            updateVariantChip();
             try {
                 const payout = Number(overlay.querySelector('#arsontest-ed-payout').value);
                 const nerveRaw = Number(overlay.querySelector('#arsontest-ed-nerve').value);
@@ -826,13 +678,14 @@
         });
         overlay.querySelector('#arsontest-ed-refresh').addEventListener('click', async () => {
             status('Fetching…');
-            try { localStorage.removeItem('arsontest_recipes_cache_v2'); } catch (_) {}
+            try { localStorage.removeItem('arsontest_recipes_cache'); } catch (_) {}
             await fetchRecipes(true);
             renderList();
             status('Refreshed (' + Object.keys(RECIPES).length + ' recipes)', '#74c69d');
         });
         overlay.querySelector('#arsontest-ed-save').addEventListener('click', async () => {
-            const rawKey = overlay.querySelector('#arsontest-ed-key').value.trim().toLowerCase();
+            const key = overlay.querySelector('#arsontest-ed-key').value.trim().toLowerCase();
+            const location = overlay.querySelector('#arsontest-ed-loc').value.trim();
             const itemsStr = overlay.querySelector('#arsontest-ed-items').value.trim();
             const stokeStr = overlay.querySelector('#arsontest-ed-stoke').value.trim();
             const dampenStr = overlay.querySelector('#arsontest-ed-dampen').value.trim();
@@ -840,15 +693,12 @@
             const nerve = Number(overlay.querySelector('#arsontest-ed-nerve').value);
             const flamethrower = overlay.querySelector('#arsontest-ed-flame').checked;
             const ignite = overlay.querySelector('#arsontest-ed-ignite').value.trim().toLowerCase();
-            // Auto-attach :flame suffix when the checkbox is ticked,
-            // strip it when it isn't. User can type either form into
-            // the key field; the checkbox is the source of truth.
-            const key = variantKey(baseName(rawKey), flamethrower);
             if (!key) { status('Need a name', '#ef4444'); return; }
             if (!Number.isFinite(payout) || payout <= 0) { status('Need a payout > 0', '#ef4444'); return; }
             const items = parseItemsString(itemsStr);
             if (Object.keys(items).length === 0) { status('Need at least 1 item (e.g. gasoline:3)', '#ef4444'); return; }
             const recipe = { items, payout };
+            if (location) recipe.location = location;
             const stoke = parseItemsString(stokeStr);
             if (Object.keys(stoke).length > 0) recipe.stoke = stoke;
             const dampen = parseItemsString(dampenStr);
@@ -868,7 +718,7 @@
             try {
                 await postRecipe(key, recipe);
                 RECIPES[key] = recipe;
-                try { localStorage.removeItem('arsontest_recipes_cache_v2'); } catch (_) {}
+                try { localStorage.removeItem('arsontest_recipes_cache'); } catch (_) {}
                 status('Saved ' + key, '#74c69d');
                 renderList();
             } catch (e) { status('Save failed: ' + e.message, '#ef4444'); }
@@ -927,7 +777,8 @@
             ? '$' + Math.round(recipe.payout / 1000) + 'K'
             : '$' + recipe.payout;
         const nerveStr = recipe.nerve ? (' · ' + recipe.nerve + 'N') : '';
-        return itemsStr + stokeStr + dampenStr + ' · ' + payoutStr + nerveStr + flameStr;
+        const locStr = recipe.location ? recipe.location + ' · ' : '';
+        return locStr + itemsStr + stokeStr + dampenStr + ' · ' + payoutStr + nerveStr + flameStr;
     }
     // ── Material costs for net-profit calc ───────────────────────────
     // Shares localStorage with arson-bang-for-buck (same origin), so
@@ -1171,7 +1022,7 @@
         // Header line — uses the SAME styling as the piggyback header
         // (v0.8.20) so this fallback tooltip looks identical to the
         // arson-bang-for-buck tooltip + piggyback header combo.
-        tt.appendChild(buildScenarioHeader(action));
+        tt.appendChild(buildScenarioHeader(location ? location + ' · ' + action : action));
         if (recipe) {
             // Same line order as arson-bang-for-buck:
             //   Payout, Profit/Nerve, Nerve, Flamethrower, Place, Stoke, Dampen
@@ -1502,7 +1353,7 @@
                 _capturedThisSession.add(key);
                 postRecipe(key, updated).then(() => {
                     RECIPES[key] = updated;
-                    try { localStorage.removeItem('arsontest_recipes_cache_v2'); } catch (_) {}
+                    try { localStorage.removeItem('arsontest_recipes_cache'); } catch (_) {}
                     LOG('auto-captured location:', action, '→', location);
                 }).catch(e => WARN('auto-capture POST failed for', action, e.message));
             } catch (e) { /* skip malformed cards */ }
