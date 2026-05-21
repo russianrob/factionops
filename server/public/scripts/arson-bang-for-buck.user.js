@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.051-wb15
-// @description  Profit-per-nerve + how-to-perform tooltips on the crimes page.
+// @version      1.00.051-wb16
+// @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=torn.com
@@ -13,6 +13,24 @@
 // @downloadURL  https://tornwar.com/scripts/arson-bang-for-buck.user.js
 // @updateURL    https://tornwar.com/scripts/arson-bang-for-buck.meta.js
 // ==/UserScript==
+//
+// =============================================================================
+// CHANGELOG (tornwar fork)
+// =============================================================================
+// 1.00.040-fix3-wb1 — Replaced wb2 (based on 1.00.037) with neth392's
+//   community 1.00.040-fix3 from
+//   https://gist.github.com/neth392/756b3de97e27cdae6aecc43895834158
+//   Key fix3 improvements over the wb2 fork:
+//     - hoverTarget now requires THREE substrings on the same element
+//       (crimeOptionSection___ + flexGrow___ + titleSection___) so
+//       false matches don't trigger spurious tooltips
+//     - Mobile tap attaches to the whole section, not a single hashed
+//       child; ignores button/a/input/select/textarea clicks so action
+//       buttons still work. Fixes PDA tooltip behavior cleanly.
+//     - dataset.tooltipAdded dedup guard so MutationObserver doesn't
+//       re-attach handlers on every render
+//     - Outside-click auto-closes the tooltip
+// =============================================================================
 (function() {
     'use strict';
  
@@ -150,43 +168,28 @@ async function getPricesFromAPI() {
     /** Map a server recipe (structured fields) into the line-array shape
      *  the BFB tooltip code expects. Order mirrors upstream's existing
      *  scenario rows so the tooltip layout stays familiar. */
-    /** Format { name: qty } / array / string as "1 lighter, 2 gasoline".
-     *  Returns empty string for null / undefined / empty. */
-    function wbFormatItemMap(v) {
-        if (!v) return '';
-        if (Array.isArray(v)) return v.join(', ');
-        if (typeof v === 'string') return v;
-        if (typeof v === 'object') {
-            return Object.entries(v).map(([n, q]) => q + ' ' + n).join(', ');
-        }
-        return String(v);
-    }
-
-    /** Compact money formatter matching upstream BFB's style:
-     *  1234 → "1.2K", 30500 → "30.5K", 210000 → "210K", 1500000 → "1.5M". */
-    function wbFormatMoney(n) {
-        const abs = Math.abs(n);
-        if (abs >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
-        if (abs >= 1e4) return Math.round(n / 1e3) + 'K';
-        if (abs >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
-        return String(Math.round(n));
-    }
-
     function wbRecipeToLines(r) {
         if (!r || typeof r !== 'object') return null;
         const lines = [];
-        // Format raw payout int as "30.5K" / "210K" / "1.5M" so the
-        // tooltip's Payout line matches upstream style AND so the
-        // chip parser's regex (/^[\d.,kKmM]+$/) accepts it.
-        const rawPayout = r.payout != null && r.payout !== '' ? Number(r.payout) : null;
-        const payout = rawPayout && Number.isFinite(rawPayout) ? wbFormatMoney(rawPayout) : '';
+        const payout = r.payout != null && r.payout !== '' ? String(r.payout) : '';
+        // Use stored nerve when present, otherwise auto-calc so the
+        // tooltip can still show Profit/Nerve for recipes whose author
+        // skipped the nerve field.
+        let nerve = r.nerve  != null && r.nerve  !== '' ? Number(r.nerve)  : null;
+        if (!(nerve && nerve > 0)) {
+            const auto = wbAutoCalcArsonNerve(r);
+            if (auto > 0) nerve = auto;
+        }
         if (payout) lines.push('Payout: ' + payout);
-        // Leave Profit/Nerve BLANK on purpose — wbDeriveProfitPerNerveAll
-        // (called from wbOverlayServerRecipes) fills it using the same
-        // compact "1.2K" / "30K" format as upstream-derived rows. Doing
-        // the calc here too with toLocaleString() (e.g. "2,033") broke
-        // the downstream chip parser, which only accepts the K/M form.
-        lines.push('Profit/Nerve: ');
+        if (nerve && nerve > 0 && /^[\d.,kKmM]+$/.test(payout)) {
+            // Best-effort profit/nerve calc only when payout parses cleanly.
+            const num = parseFloat(payout.replace(/,/g, ''));
+            const mult = /m/i.test(payout) ? 1_000_000 : /k/i.test(payout) ? 1_000 : 1;
+            const profitPerNerve = Math.round((num * mult) / nerve);
+            lines.push('Profit/Nerve: ' + profitPerNerve.toLocaleString());
+        } else {
+            lines.push('Profit/Nerve: ');
+        }
         lines.push('Flamethrower: ' + (r.flamethrower ? 'Yes' : 'No'));
         // Render the ignite tool when set. Mirrors upstream BFB's
         // "Ignite: Lighter" line so users see the missing ignite info
@@ -207,77 +210,21 @@ async function getPricesFromAPI() {
             itemsStr = r.items;
         }
         lines.push('Place: ' + itemsStr);
-        // Same { name: qty } format as items — string-concatenating
-        // raw objects produced "Stoke: [object Object]" pre-wb12.
-        lines.push('Stoke: '  + wbFormatItemMap(r.stoke));
-        lines.push('Dampen: ' + wbFormatItemMap(r.dampen));
+        lines.push('Stoke: '  + (r.stoke  || ''));
+        lines.push('Dampen: ' + (r.dampen || ''));
+        if (r.location) lines.push('Location: ' + r.location);
         return lines;
     }
 
     /** Overlay server recipes into the `scenarios` map (defined below).
-     *  Mutates in place; safe to call repeatedly.
-     *  wb10: server stores keys lowercase ("hot dog"); upstream
-     *  scenarios use Title Case ("Hot Dog"). Without case-folding,
-     *  the overlay added a NEW lowercase key while Torn's lookup
-     *  kept hitting the stale Title Case entry — so every server
-     *  recipe was silently ignored at render time. Fix: build a
-     *  case-insensitive index once, then overlay onto the canonical
-     *  upstream key when one exists. */
-    /** True if a single variant's lines flag flamethrower:yes. */
-    function wbVariantIsFlamethrower(variant) {
-        if (!Array.isArray(variant)) return false;
-        return variant.some(ln => typeof ln === 'string' && /^Flamethrower\s*:\s*yes/i.test(ln));
-    }
-
+     *  Mutates in place; safe to call repeatedly. */
     function wbOverlayServerRecipes(serverRecipes) {
         if (!serverRecipes || typeof serverRecipes !== 'object') return 0;
-        const canonical = Object.create(null);
-        for (const k of Object.keys(scenarios)) canonical[k.toLowerCase()] = k;
         let n = 0;
-        for (const [rawKey, recipe] of Object.entries(serverRecipes)) {
+        for (const [key, recipe] of Object.entries(serverRecipes)) {
             const lines = wbRecipeToLines(recipe);
             if (!lines) continue;
-            // arsontest v0.9.0 introduces composite keys ":flame" suffix
-            // for the flamethrower variant of a crime. Strip it before
-            // canonical lookup — the recipe's own `flamethrower` field
-            // still drives which variant slot we replace below.
-            const base = rawKey.endsWith(':flame') ? rawKey.slice(0, -6) : rawKey;
-            const key = canonical[base.toLowerCase()] || base;
-            const existing = scenarios[key];
-            const serverIsFlame = !!recipe.flamethrower;
-            // v1.00.043: when upstream has multi-variant data, replace
-            // only the variant whose flamethrower flag matches the
-            // server recipe. Pre-wb11 single-variant replacement was
-            // killing the no-flame fallback for users who haven't
-            // unlocked flamethrower — they'd see no tooltip at all
-            // because shouldShowScenario filters yes-flame variants
-            // for them (BFB line 4253). Multi-variant shape preserves
-            // both paths.
-            if (Array.isArray(existing) && existing.length > 0 && Array.isArray(existing[0])) {
-                // Multi-variant — replace the matching-flame slot.
-                const variantIdx = existing.findIndex(v => wbVariantIsFlamethrower(v) === serverIsFlame);
-                if (variantIdx >= 0) existing[variantIdx] = lines;
-                else existing.push(lines);
-            } else if (Array.isArray(existing) && existing.length > 0 && !Array.isArray(existing[0])) {
-                // Single-variant upstream. Promote to multi-variant
-                // if the server recipe's flamethrower status differs
-                // from upstream's. Without this, replacing a flame
-                // upstream variant with a no-flame server variant
-                // (or vice versa) leaves only ONE variant — and if
-                // shouldShowScenario filters it out for the viewer's
-                // flamethrower unlock state, the tooltip never
-                // renders, no color is applied, and the crime
-                // appears broken. wb14: keep both variants visible
-                // so every viewer sees their applicable one.
-                const existingIsFlame = wbVariantIsFlamethrower(existing);
-                if (existingIsFlame !== serverIsFlame) {
-                    scenarios[key] = [existing, lines];
-                } else {
-                    scenarios[key] = lines;
-                }
-            } else {
-                scenarios[key] = lines;
-            }
+            scenarios[key] = lines;
             n++;
         }
         // After any overlay, re-derive Profit/Nerve for every recipe
@@ -3682,23 +3629,18 @@ function calculateMaterialCost(lines) {
  
  
     function formatProfitNerve(value) {
-        // wb9: stop floor-rounding sub-100 values to "0". Previous
-        // code did `Math.floor(abs / 100) * 100` which rounded
-        // anything 0-99 down to 0 — so a recipe with payout 16000,
-        // cost 14695, nerve 15 → 87 per nerve rendered as "0"
-        // instead of "87" (user-reported on Pest Control after their
-        // Hydrogen Tank price was customised away from the 45K
-        // default). Now: show the actual rounded integer for
-        // sub-1000 values, K-suffix only kicks in at >= 1000.
-        // wb7: also format negatives with the same K-suffix that
-        // positives get, so net-loss recipes render as "-1.9K"
-        // instead of the raw "-2000" that previously appeared.
+        // wb7: format negatives with the same K-suffix that positives
+        // get. Previous code returned raw "-2000" for negative profit
+        // while positive >=1000 got "2.0K" — inconsistent and visually
+        // misleading (user reported seeing "0" for net-loss recipes
+        // when in practice the formatter was producing a long raw
+        // negative integer that the user mis-read).
         const sign = value < 0 ? '-' : '';
         const abs = Math.abs(value);
-        if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(1).replace(/\.0$/, '')}M`;
-        if (abs >= 1e4) return `${sign}${Math.round(abs / 1e3)}K`;
-        if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(1).replace(/\.0$/, '')}K`;
-        return `${sign}${Math.round(abs)}`;
+        const rounded = Math.floor(abs / 100) * 100;
+        return rounded >= 1000
+            ? `${sign}${(rounded / 1000).toFixed(1)}K`
+            : `${sign}${rounded}`;
     }
  
  
@@ -4306,26 +4248,9 @@ function addTooltips() {
  
         // FIX: hashed class `scenario___msSka` → attribute substring match.
         const scenarioName = section.querySelector('[class*="scenario___"]')?.textContent?.trim();
-        // wb15: case-insensitive lookup. Server-overlaid recipes that
-        // don't have an upstream BFB match get stored under their raw
-        // (often lowercase) key, but Torn displays scenario names in
-        // Title Case — a case-sensitive lookup miss left those crimes
-        // gray with no tooltip.
-        if (!scenarioName) return;
-        let lookupKey = scenarios[scenarioName] ? scenarioName : null;
-        if (!lookupKey) {
-            if (!scenarios._wbLowerIndex) {
-                scenarios._wbLowerIndex = Object.create(null);
-                for (const k of Object.keys(scenarios)) {
-                    if (k.startsWith('_wb')) continue;
-                    scenarios._wbLowerIndex[k.toLowerCase()] = k;
-                }
-            }
-            lookupKey = scenarios._wbLowerIndex[scenarioName.toLowerCase()];
-        }
-        if (!lookupKey || !scenarios[lookupKey]) return;
-
-        const variants = scenarios[lookupKey];
+        if (!scenarioName || !scenarios[scenarioName]) return;
+ 
+        const variants = scenarios[scenarioName];
         const selectedVariant = Array.isArray(variants[0])
             ? variants.find(v => shouldShowScenario(v, hasFlamethrower))
             : (shouldShowScenario(variants, hasFlamethrower) ? variants : null);

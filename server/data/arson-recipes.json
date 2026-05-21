@@ -1,6 +1,6 @@
 {
-  "version": 3,
-  "updatedAt": 1778897292099,
+  "version": 5,
+  "updatedAt": 1779129188150,
   "recipes": {
     "a hot lead": {
       "items": {
@@ -12,7 +12,8 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 11000
+      "payout": 11000,
+      "ignite": "lighter"
     },
     "a treat for the tricked": {
       "items": {
@@ -84,7 +85,8 @@
         "gasoline": 1,
         "blanket": 1
       },
-      "payout": 43000
+      "payout": 43000,
+      "ignite": "lighter"
     },
     "boxing clever": {
       "items": {
@@ -100,13 +102,14 @@
       },
       "payout": 210000,
       "nerve": 20,
-      "location": "Car Showroom"
+      "ignite": "lighter"
     },
     "burned by stupidity": {
       "items": {
         "kerosene": 1
       },
-      "payout": 32000
+      "payout": 32000,
+      "ignite": "lighter"
     },
     "burned cookies": {
       "items": {
@@ -119,7 +122,8 @@
       "items": {
         "hydrogen tank": 3
       },
-      "payout": 160000
+      "payout": 160000,
+      "ignite": "lighter"
     },
     "burnt ends": {
       "items": {
@@ -150,7 +154,8 @@
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 280000
+      "payout": 280000,
+      "ignite": "lighter"
     },
     "claim to flame": {
       "items": {
@@ -169,19 +174,22 @@
         "opium": 1,
         "gasoline": 1
       },
-      "payout": 165000
+      "payout": 165000,
+      "ignite": "lighter"
     },
     "cold brew reality": {
       "items": {
         "hydrogen tank": 3
       },
-      "payout": 150000
+      "payout": 150000,
+      "ignite": "lighter"
     },
     "cook it rare": {
       "items": {
         "kerosene": 3
       },
-      "payout": 330000
+      "payout": 330000,
+      "ignite": "lighter"
     },
     "cop some heat": {
       "items": {
@@ -193,26 +201,30 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 100000
+      "payout": 100000,
+      "ignite": "lighter"
     },
     "curtain call": {
       "items": {
         "gasoline": 1
       },
-      "payout": 57000
+      "payout": 57000,
+      "ignite": "lighter"
     },
     "cut corners": {
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 200000
+      "payout": 200000,
+      "ignite": "lighter"
     },
     "daddy's girl": {
       "items": {
         "kerosene": 1,
         "methane tank, 1 hydrogen tank": 1
       },
-      "payout": 330000
+      "payout": 330000,
+      "ignite": "lighter"
     },
     "damned if you don't": {
       "items": {
@@ -224,37 +236,43 @@
       "items": {
         "kerosene": 1
       },
-      "payout": 29000
+      "payout": 29000,
+      "ignite": "lighter"
     },
     "dine and dash": {
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 95000
+      "payout": 95000,
+      "ignite": "lighter"
     },
     "dirty money": {
       "items": {
         "kerosene": 3
       },
-      "payout": 360000
+      "payout": 360000,
+      "ignite": "lighter"
     },
     "disco inferno": {
       "items": {
         "hydrogen tank": 1
       },
-      "payout": 48000
+      "payout": 48000,
+      "ignite": "lighter"
     },
     "fan the flames": {
       "items": {
         "hydrogen tank": 1
       },
-      "payout": 33000
+      "payout": 33000,
+      "ignite": "lighter"
     },
     "fight fire with fire": {
       "items": {
         "gasoline": 2
       },
-      "payout": 81000
+      "payout": 81000,
+      "ignite": "lighter"
     },
     "final markdown": {
       "items": {
@@ -266,7 +284,8 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 125000
+      "payout": 125000,
+      "ignite": "lighter"
     },
     "fire in the belly": {
       "items": {
@@ -278,13 +297,15 @@
       "items": {
         "hydrogen tank": 1
       },
-      "payout": 305000
+      "payout": 305000,
+      "ignite": "lighter"
     },
     "fire sale": {
       "items": {
         "kerosene": 1
       },
-      "payout": 10000
+      "payout": 10000,
+      "ignite": "lighter"
     },
     "flame and fortune": {
       "items": {
@@ -309,13 +330,15 @@
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 93000
+      "payout": 93000,
+      "ignite": "lighter"
     },
     "hold fire": {
       "items": {
         "gasoline": 1
       },
-      "payout": 110000
+      "payout": 110000,
+      "ignite": "lighter"
     },
     "holy smokes": {
       "items": {
@@ -345,7 +368,8 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 390000
+      "payout": 390000,
+      "ignite": "lighter"
     },
     "hot profit": {
       "items": {
@@ -357,32 +381,36 @@
       "items": {
         "kerosene": 1
       },
-      "payout": 54000
+      "payout": 54000,
+      "ignite": "lighter"
     },
     "house of cards": {
       "items": {
         "hydrogen": 3
       },
-      "payout": 610000
+      "payout": 610000,
+      "ignite": "lighter"
     },
     "in your debt": {
       "items": {
         "kerosene": 1
       },
-      "payout": 33000
+      "payout": 33000,
+      "ignite": "lighter"
     },
     "insert coin to continue": {
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 120000
+      "payout": 120000,
+      "ignite": "lighter"
     },
     "it's a write off": {
       "items": {
         "gasoline": 2
       },
       "payout": 225000,
-      "location": "Lakehouse"
+      "ignite": "lighter"
     },
     "it's not all white": {
       "items": {
@@ -406,7 +434,8 @@
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 110000
+      "payout": 110000,
+      "ignite": "lighter"
     },
     "lock, stock, and barrel": {
       "items": {
@@ -418,13 +447,15 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 130000
+      "payout": 130000,
+      "ignite": "lighter"
     },
     "loud and clear": {
       "items": {
         "gasoline": 2
       },
-      "payout": 195000
+      "payout": 195000,
+      "ignite": "lighter"
     },
     "lover's quarrel": {
       "items": {
@@ -436,7 +467,8 @@
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 120000
+      "payout": 120000,
+      "ignite": "lighter"
     },
     "mallrats": {
       "items": {
@@ -449,7 +481,8 @@
       "items": {
         "diesel": 4
       },
-      "payout": 330000
+      "payout": 330000,
+      "ignite": "lighter"
     },
     "mental block": {
       "items": {
@@ -462,7 +495,8 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 155000
+      "payout": 155000,
+      "ignite": "lighter"
     },
     "muscling in": {
       "items": {
@@ -481,20 +515,23 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 64000
+      "payout": 64000,
+      "ignite": "lighter"
     },
     "out with a bang": {
       "items": {
         "gasoline": 1,
         "blanket": 1
       },
-      "payout": 42000
+      "payout": 42000,
+      "ignite": "lighter"
     },
     "pest control": {
       "items": {
         "hydrogen tank": 1
       },
-      "payout": 16000
+      "payout": 16000,
+      "ignite": "lighter"
     },
     "piggy in the middle": {
       "items": {
@@ -507,13 +544,15 @@
         "pele charm": 1,
         "gasoline": 1
       },
-      "payout": 120000
+      "payout": 120000,
+      "ignite": "lighter"
     },
     "playing with fire": {
       "items": {
         "gasoline": 2
       },
-      "payout": 210000
+      "payout": 210000,
+      "ignite": "lighter"
     },
     "point of no return": {
       "items": {
@@ -532,7 +571,8 @@
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 90000
+      "payout": 90000,
+      "ignite": "lighter"
     },
     "raze the steaks": {
       "items": {
@@ -556,7 +596,8 @@
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 160000
+      "payout": 160000,
+      "ignite": "lighter"
     },
     "risky business": {
       "items": {
@@ -568,7 +609,8 @@
       "items": {
         "diesel": 1
       },
-      "payout": 325000
+      "payout": 325000,
+      "ignite": "lighter"
     },
     "searing irony": {
       "items": {
@@ -580,13 +622,15 @@
       "items": {
         "kerosene": 1
       },
-      "payout": 37000
+      "payout": 37000,
+      "ignite": "lighter"
     },
     "set 'em straight": {
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 310000
+      "payout": 310000,
+      "ignite": "lighter"
     },
     "shaky investment": {
       "items": {
@@ -617,13 +661,15 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 200000
+      "payout": 200000,
+      "ignite": "lighter"
     },
     "sofa king cheap": {
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 120000
+      "payout": 120000,
+      "ignite": "lighter"
     },
     "specter of destruction": {
       "items": {
@@ -642,13 +688,15 @@
       "items": {
         "hydrogen tank": 3
       },
-      "payout": 160000
+      "payout": 160000,
+      "ignite": "lighter"
     },
     "stink to high heaven": {
       "items": {
         "kerosene": 1
       },
-      "payout": 41000
+      "payout": 41000,
+      "ignite": "lighter"
     },
     "strike while it's hot": {
       "items": {
@@ -658,13 +706,14 @@
       },
       "payout": 230000,
       "nerve": 20,
-      "location": "Bowling Alley"
+      "ignite": "lighter"
     },
     "swansong": {
       "items": {
         "kerosene": 1
       },
-      "payout": 27000
+      "payout": 27000,
+      "ignite": "lighter"
     },
     "taking out the trash": {
       "items": {
@@ -677,7 +726,8 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 175000
+      "payout": 175000,
+      "ignite": "lighter"
     },
     "the bad samaritan": {
       "items": {
@@ -697,26 +747,30 @@
       "items": {
         "hydrogen tank": 1
       },
-      "payout": 270000
+      "payout": 270000,
+      "ignite": "lighter"
     },
     "the savage beast": {
       "items": {
         "gasoline": 3
       },
-      "payout": 170000
+      "payout": 170000,
+      "ignite": "lighter"
     },
     "the smoking gun": {
       "items": {
         "kerosene": 4,
         "lighter": 1
       },
-      "payout": 470000
+      "payout": 470000,
+      "ignite": "lighter"
     },
     "the waiting game": {
       "items": {
         "gasoline": 1
       },
-      "payout": 120000
+      "payout": 120000,
+      "ignite": "lighter"
     },
     "to the manor scorned": {
       "items": {
@@ -730,14 +784,14 @@
         "lighter": 1,
         "methane": 2
       },
-      "payout": 400000,
-      "location": "Law Firm"
+      "payout": 400000
     },
     "unspilled beans": {
       "items": {
         "hydrogen tank": 3
       },
-      "payout": 220000
+      "payout": 220000,
+      "ignite": "lighter"
     },
     "waist not, want not": {
       "items": {
@@ -749,7 +803,8 @@
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 90000
+      "payout": 90000,
+      "ignite": "lighter"
     },
     "wired for war": {
       "items": {
@@ -770,16 +825,778 @@
         "lighter": 1
       },
       "payout": 220000,
-      "nerve": 15,
-      "location": "Apartment"
+      "nerve": 15
     },
     "make a killing": {
       "items": {
         "kerosene": 3
       },
       "payout": 360000,
-      "nerve": 25,
-      "location": "Hospital"
+      "nerve": 25
+    },
+    "a mug's game": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 55000,
+      "ignite": "1 molotov cocktail"
+    },
+    "all mouth and trousers": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 51000
+    },
+    "apart of the problem": {
+      "items": {
+        "gasoline": 6
+      },
+      "payout": 265000
+    },
+    "ashes to ancestors": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 90000,
+      "stoke": {
+        "gasoline": 1
+      }
+    },
+    "beach bum": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 20000,
+      "stoke": {
+        "gasoline": 1
+      }
+    },
+    "body of evidence": {
+      "items": {
+        "gasoline": 6
+      },
+      "payout": 105000
+    },
+    "boom industry": {
+      "items": {
+        "gasoline": 5
+      },
+      "payout": 130000
+    },
+    "burn notice": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 175000,
+      "stoke": {
+        "gasoline": 3
+      }
+    },
+    "burn rubber": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 50000
+    },
+    "burning calories": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 84000
+    },
+    "burning memory": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 32000
+    },
+    "burning through cash": {
+      "items": {
+        "oxygen tank": 1
+      },
+      "payout": 58000
+    },
+    "camera tricks": {
+      "items": {
+        "gasoline": 5
+      },
+      "payout": 115000,
+      "stoke": {
+        "gasoline": 1
+      }
+    },
+    "chance of redemption": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 90000
+    },
+    "child's play": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 23000
+    },
+    "clean sweep": {
+      "items": {
+        "gasoline": 5
+      },
+      "payout": 150000,
+      "stoke": {
+        "diesel": 1
+      }
+    },
+    "eight lives": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 4200
+    },
+    "emotional wreck": {
+      "items": {
+        "gasoline": 6
+      },
+      "payout": 140000
+    },
+    "end of the line": {
+      "items": {
+        "gasoline": 5
+      },
+      "payout": 100000
+    },
+    "faction fiction": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 64500
+    },
+    "final cut": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 150000
+    },
+    "fire burn and cauldron bubble": {
+      "items": {
+        "gasoline": 5
+      },
+      "payout": 170000
+    },
+    "for closure": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 22000
+    },
+    "foul play": {
+      "items": {
+        "gasoline": 5
+      },
+      "payout": 120000
+    },
+    "going viral": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 190000
+    },
+    "hot gossip": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 62000
+    },
+    "house edge": {
+      "items": {
+        "gasoline": 5
+      },
+      "payout": 190000
+    },
+    "light fingered": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 165000
+    },
+    "marx & sparks": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 140000
+    },
+    "naked aggression": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 31500
+    },
+    "on fire at the box office": {
+      "items": {
+        "hydrogen tank": 1
+      },
+      "payout": 10000
+    },
+    "one rotten apple": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 180000
+    },
+    "out in the wash": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 235000
+    },
+    "read the room": {
+      "items": {
+        "gasoline": 5
+      },
+      "payout": 125000
+    },
+    "shielded from the truth": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 8900
+    },
+    "supermarket sweep": {
+      "items": {
+        "gasoline": 5
+      },
+      "payout": 265000,
+      "stoke": {
+        "lighter": 1
+      }
+    },
+    "the declaration of inebrience": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 115000
+    },
+    "the grass ain't greener": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 85000,
+      "stoke": {
+        "diesel": 1
+      }
+    },
+    "the male gaze": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 130000
+    },
+    "the plane truth": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 38000
+    },
+    "totally armless": {
+      "items": {
+        "kerosene": 2
+      },
+      "payout": 44000
+    },
+    "unpopular mechanics": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 4500
+    },
+    "wedded to the lie": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 81000
+    },
+    "workplace burnout": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 100000
+    },
+    "a black mark:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 210000,
+      "flamethrower": true
+    },
+    "a burnt child dreads the fire:flame": {
+      "items": {
+        "hydrogen tank": 1
+      },
+      "payout": 235000,
+      "stoke": {
+        "hydrogen tank": 1
+      },
+      "flamethrower": true
+    },
+    "a dirty job:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 32000,
+      "flamethrower": true
+    },
+    "a fungus among us:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 34000,
+      "flamethrower": true
+    },
+    "a problem shared:flame": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 180000,
+      "stoke": {
+        "flamethrower": 1
+      },
+      "flamethrower": true
+    },
+    "anon starter:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 31000,
+      "flamethrower": true
+    },
+    "bald faced destruction:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 245000,
+      "flamethrower": true
+    },
+    "bang for your buck:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 44000,
+      "flamethrower": true
+    },
+    "blaze of glory:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 180000,
+      "stoke": {
+        "flamethrower": 1
+      },
+      "flamethrower": true
+    },
+    "burn after screening:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 100000,
+      "flamethrower": true
+    },
+    "burn the deck:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 96000,
+      "flamethrower": true
+    },
+    "burning ambition:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 46000,
+      "flamethrower": true
+    },
+    "burn up the dancefloor:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 175000,
+      "flamethrower": true
+    },
+    "charcoal sketch:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 39000,
+      "flamethrower": true
+    },
+    "cold feet:flame": {
+      "items": {
+        "gasoline": 5
+      },
+      "payout": 120000,
+      "stoke": {
+        "flamethrower": 1
+      },
+      "flamethrower": true
+    },
+    "cooked and burned:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 73000,
+      "flamethrower": true
+    },
+    "cooking the books:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 25000,
+      "flamethrower": true
+    },
+    "crisp bills:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 39000,
+      "flamethrower": true
+    },
+    "don't hate the player:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 32000,
+      "flamethrower": true
+    },
+    "family feud:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 20000,
+      "flamethrower": true
+    },
+    "from the ashes:flame": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 170000,
+      "flamethrower": true
+    },
+    "gay frogs:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 34000,
+      "flamethrower": true
+    },
+    "get wrecked:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 84000,
+      "flamethrower": true
+    },
+    "green with envy:flame": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 120000,
+      "flamethrower": true
+    },
+    "gym'll fix it:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 52000,
+      "flamethrower": true
+    },
+    "heat the rich:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 40000,
+      "flamethrower": true
+    },
+    "hide and seek:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 33000,
+      "flamethrower": true
+    },
+    "high time:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 10000,
+      "flamethrower": true
+    },
+    "hire and fire:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 57000,
+      "flamethrower": true
+    },
+    "home and dry:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 49000,
+      "flamethrower": true
+    },
+    "hot dog:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 30500,
+      "flamethrower": true
+    },
+    "hot out of the gate:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 96000,
+      "flamethrower": true
+    },
+    "hot pursuit:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 50000,
+      "flamethrower": true
+    },
+    "igniting curiosity:flame": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 260000,
+      "flamethrower": true
+    },
+    "it cuts both ways:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 20500,
+      "flamethrower": true
+    },
+    "kindling spirits:flame": {
+      "items": {
+        "gasoline": 4
+      },
+      "payout": 92500,
+      "flamethrower": true
+    },
+    "letter of the law:flame": {
+      "items": {
+        "hydrogen tank": 1
+      },
+      "payout": 360000,
+      "stoke": {
+        "hydrogen tank": 2
+      },
+      "flamethrower": true
+    },
+    "liquor on the back row:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 50000,
+      "flamethrower": true
+    },
+    "local concerns:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 30000,
+      "flamethrower": true
+    },
+    "marked for salvation:flame": {
+      "items": {
+        "kerosene": 1
+      },
+      "payout": 80000,
+      "flamethrower": true
+    },
+    "needles to say:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 39000,
+      "flamethrower": true
+    },
+    "not a leg to stand on:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 125000,
+      "flamethrower": true
+    },
+    "off the market:flame": {
+      "items": {
+        "hydrogen tank": 1
+      },
+      "payout": 155000,
+      "stoke": {
+        "hydrogen tank": 1
+      },
+      "flamethrower": true
+    },
+    "old school:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 62500,
+      "flamethrower": true
+    },
+    "party pooper:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 62000,
+      "flamethrower": true
+    },
+    "political firestorm:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 40000,
+      "flamethrower": true
+    },
+    "raising hell:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 170000,
+      "stoke": {
+        "flamethrower": 1
+      },
+      "flamethrower": true
+    },
+    "see no evil:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 71000,
+      "flamethrower": true
+    },
+    "smoke on the water:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 8600,
+      "flamethrower": true
+    },
+    "smoke out:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 21000,
+      "flamethrower": true
+    },
+    "smoldering resentment:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 10000,
+      "flamethrower": true
+    },
+    "stroke of fortune:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 120000,
+      "stoke": {
+        "flamethrower": 1
+      },
+      "flamethrower": true
+    },
+    "that place is history:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 118500,
+      "flamethrower": true
+    },
+    "the devil's in the details:flame": {
+      "items": {
+        "diesel": 1
+      },
+      "payout": 130000,
+      "stoke": {
+        "potassium nitrate": 1
+      },
+      "flamethrower": true
+    },
+    "the empyre strikes back:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 49000,
+      "flamethrower": true
+    },
+    "the fire chief:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 140000,
+      "stoke": {
+        "flamethrower": 1
+      },
+      "flamethrower": true
+    },
+    "the midnight oil:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 75000,
+      "flamethrower": true
+    },
+    "third-degree burn:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 29000,
+      "flamethrower": true
+    },
+    "turn up the heat:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 76000,
+      "flamethrower": true
+    },
+    "twisted firestarter:flame": {
+      "items": {
+        "gasoline": 1
+      },
+      "payout": 23000,
+      "flamethrower": true
+    },
+    "uber heats:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 59000,
+      "flamethrower": true
+    },
+    "visions of the savory:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 110000,
+      "flamethrower": true
+    },
+    "where there's a will:flame": {
+      "items": {
+        "gasoline": 3
+      },
+      "payout": 52000,
+      "flamethrower": true
+    },
+    "womb with a view:flame": {
+      "items": {
+        "gasoline": 2
+      },
+      "payout": 78500,
+      "flamethrower": true
     }
   }
 }
