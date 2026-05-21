@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson Recipe Sandbox (test)
 // @namespace    tornwar.com
-// @version      0.10.3
+// @version      0.10.4
 // @description  Lightweight recipe-editor UI for arson scenarios. Floating ⚙ button on the crimes page opens a panel to add / edit / delete server-hosted recipes (tornwar.com). NO DOM modification of crime options — leaves the upstream 'arson-bang-for-buck' tooltip / hover behavior completely untouched.
 // @author       RussianRob
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -1043,6 +1043,28 @@
                     : Math.round(ppn) + '';
                 tt.appendChild(buildBulletDiv('Profit/Nerve: ' + ppnStr));
                 tt.appendChild(buildBulletDiv('Nerve: ' + nerveEffective));
+                // 0.10.3: apply BFB's highlight class to the crime card.
+                // BFB hides its own tooltip on scenarios that require a
+                // flamethrower the viewer doesn't have, which skipped the
+                // colored highlight — leaving useful arsontest fallback
+                // data on a gray card. Read BFB's thresholds from the
+                // shared localStorage key so user-adjusted values apply.
+                try {
+                    let thr = { LowProfit: 5000, HighProfit: 10000 };
+                    const saved = localStorage.getItem('highlightValues');
+                    if (saved) {
+                        const p = JSON.parse(saved);
+                        if (p && Number.isFinite(p.LowProfit) && Number.isFinite(p.HighProfit)) thr = p;
+                    }
+                    if (anchor && anchor.classList) {
+                        anchor.classList.remove('highlight-negative','highlight-low','highlight-high','highlight-jackpot');
+                        const cls = ppn <= 0 ? 'highlight-negative'
+                                  : ppn <= thr.LowProfit ? 'highlight-low'
+                                  : ppn <= thr.HighProfit ? 'highlight-high'
+                                  : 'highlight-jackpot';
+                        anchor.classList.add(cls);
+                    }
+                } catch (_) {}
             }
             if (typeof recipe.flamethrower === 'boolean') {
                 tt.appendChild(buildBulletDiv('Flamethrower: ' + (recipe.flamethrower ? 'Yes' : 'No')));
