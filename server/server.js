@@ -540,7 +540,13 @@ for (const [warId, war] of store.getAllWars()) {
 
 // Schedule weekly membership verification (every Tuesday)
 startMembershipSchedule();
-  startXanaxSubscriptions();
+  // 2026-05-21: disabled — no factions use the scripts, so the 5-min
+  // poll against /user/?selections=events&comment=wb-xanax is wasted
+  // OWNER_API_KEY budget. Re-enable by uncommenting if subscription
+  // payments resume. Module remains imported so routes.js helpers
+  // (hasXanaxSubscription, grantFactionAccess, etc.) still resolve —
+  // they just read the static state file instead of live polling.
+  // startXanaxSubscriptions();
   // Resume chain-monitor polling for any war that has an iOS Live
   // Activity push token registered. The /api/poll handler also starts
   // these on demand, but if the iOS app has been backgrounded since
