@@ -425,6 +425,25 @@ function parseCookie(cookieHeader, name) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+// ── POST /api/admin/xanax/repoll/:warId ────────────────────────────────
+// Owner-only. Forces a fresh xanax-news poll for a war whose tracker
+// has already stopped — useful for back-filling late deposits the
+// scheduled tracker missed before the 24h-post-war polling fix was
+// in place. Returns the updated stats.
+router.post("/api/admin/xanax/repoll/:warId", requireAuth, async (req, res) => {
+  const { playerId } = req.user;
+  if (String(playerId) !== "137558") {
+    return res.status(403).json({ error: "Owner only" });
+  }
+  try {
+    const xt = await import("./xanax-tracker.js");
+    const stats = await xt.repollNow(req.params.warId);
+    return res.json({ ok: true, stats });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /api/auth ──────────────────────────────────────────────────────
 
 const FACTIONOPS_MIN_VERSION = '4.9.74';

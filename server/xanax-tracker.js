@@ -267,3 +267,24 @@ async function pollOnce(warId) {
 // Exported for unit-style testing of the regex from elsewhere if ever
 // useful. Not used by production code paths.
 export const _internal = { parseXanaxEntry, TOOK_XANAX_RE };
+
+// Exposed for admin one-time repoll endpoint — bypasses the
+// startXanaxTracker timer registration. Returns the post-poll stats.
+// Rotates through up to 8 pool keys so a single insufficient-access
+// key doesn't fail the whole repoll (mirrors war-payouts.js pattern).
+export async function repollNow(warId) {
+  const MAX_TRIES = 8;
+  let lastErr = null;
+  for (let i = 0; i < MAX_TRIES; i++) {
+    try {
+      await pollOnce(warId);
+      return getStats(warId);
+    } catch (e) {
+      lastErr = e;
+      // Code 16 = access level too low, code 7 = id-entity relation.
+      // Both are key-specific; retry with the next cursor.
+      if (!/code 16|code 7|access level|no pool key/i.test(e.message || '')) throw e;
+    }
+  }
+  throw lastErr || new Error("repoll exhausted pool keys");
+}
