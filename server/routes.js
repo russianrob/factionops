@@ -551,22 +551,27 @@ async function loadReport(warId){
 }
 
 function render(d){
-  const a=d.analysis||d;
-  const wo=a.warOverview||{};
-  const ee=a.energyEfficiency||{};
-  const ph=a.positiveHighlights||{};
-  const nh=a.negativeHighlights||{};
+  // Response is flat (no .analysis wrapper). Field map:
+  //   warSummary { ourName, enemyName, ourScore, enemyScore, result, totalRespect, ... }
+  //   factionPerformance { totalRoster, participationCount, participationRate, avgRespectPerHit, ... }
+  //   energyEfficiency, positiveHighlights, negativeHighlights
+  const ws=d.warSummary||{};
+  const fp=d.factionPerformance||{};
+  const ee=d.energyEfficiency||{};
+  const ph=d.positiveHighlights||{};
+  const nh=d.negativeHighlights||{};
   let h='';
   // Overview
   h+='<div class="card"><h2>War</h2>';
-  h+='<div><b>'+esc(wo.ourFactionName||'Us')+'</b> vs <b>'+esc(wo.enemyFactionName||'Them')+'</b>';
-  if(wo.warResult) h+=' <span class="pill">'+esc(wo.warResult)+'</span>';
+  h+='<div><b>'+esc(ws.ourName||'Us')+'</b> vs <b>'+esc(ws.enemyName||'Them')+'</b>';
+  if(ws.result) h+=' <span class="pill">'+esc(ws.result)+'</span>';
+  if(ws.durationFormatted) h+=' <span class="muted" style="font-size:12px">'+esc(ws.durationFormatted)+'</span>';
   h+='</div>';
   h+='<div class="grid" style="margin-top:10px">';
-  h+='<div class="stat"><div class="lbl">Our score</div><div class="val">'+fmtN(wo.ourScore)+'</div></div>';
-  h+='<div class="stat"><div class="lbl">Enemy score</div><div class="val">'+fmtN(wo.enemyScore)+'</div></div>';
-  h+='<div class="stat"><div class="lbl">Participation</div><div class="val">'+fmtN(wo.participationCount||0)+'/'+fmtN(wo.totalMembers||0)+'</div></div>';
-  h+='<div class="stat"><div class="lbl">Total respect</div><div class="val">'+fmtR(wo.ourTotalRespect)+'</div></div>';
+  h+='<div class="stat"><div class="lbl">Our score</div><div class="val">'+fmtN(ws.ourScore)+'</div></div>';
+  h+='<div class="stat"><div class="lbl">Enemy score</div><div class="val">'+fmtN(ws.enemyScore)+'</div></div>';
+  h+='<div class="stat"><div class="lbl">Participation</div><div class="val">'+fmtN(fp.participationCount||0)+'/'+fmtN(fp.totalRoster||0)+'</div></div>';
+  h+='<div class="stat"><div class="lbl">Total respect</div><div class="val">'+fmtR(ws.totalRespect)+'</div></div>';
   h+='</div></div>';
 
   // Energy efficiency
