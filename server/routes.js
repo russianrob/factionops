@@ -483,8 +483,8 @@ const PAYOUTS_HTML = `<!doctype html>
   <div class="toolbar">
     <select id="war-picker"></select>
     <select id="mode-picker">
-      <option value="dynamic">Dynamic (FF-weighted)</option>
-      <option value="static">Static (1pt per hit)</option>
+      <option value="dynamic">FF Based</option>
+      <option value="static">Termed</option>
     </select>
     <button class="secondary" id="refresh">↻</button>
     <button class="secondary" id="signout">Sign out</button>
