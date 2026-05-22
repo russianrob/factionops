@@ -618,7 +618,8 @@ function render(d){
     h+='<div class="muted">No member payouts to display.</div>';
   }else{
     for(const m of members){
-      const pct=(m.sharePct!=null)?(m.sharePct*100).toFixed(2)+'%':'';
+      // Server returns sharePct as whole percent already (0-100).
+      const pct=(m.sharePct!=null)?Number(m.sharePct).toFixed(2)+'%':'';
       h+='<div class="member"><div class="member-head"><div class="member-name">'+esc(m.name||('Player '+m.playerId))+'</div><div class="member-pay">'+fmt$(m.dollarPayout||0)+'</div></div>';
       h+='<div class="member-stats">';
       h+='<span>Share '+pct+'</span>';
