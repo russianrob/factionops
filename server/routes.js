@@ -394,6 +394,7 @@ export function gateMiddleware(req, res, next) {
     req.path === "/gate.html" ||
     req.path.startsWith("/diag/") ||
     req.path === "/war" || req.path.startsWith("/war/") ||
+    req.path === "/payouts" || req.path.startsWith("/payouts/") ||
     req.path.endsWith(".meta.js") || req.path.endsWith(".user.js") ||
     // Install assets — same public-by-design rationale as userscript
     // .user.js. Apps need to be installable without a gate cookie since
@@ -418,6 +419,211 @@ export function gateMiddleware(req, res, next) {
   }
   return res.redirect("/gate.html");
 }
+
+// ── Shared HTML for /payouts page ──────────────────────────────────────
+const PAYOUTS_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Payouts</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0d14">
+<style>
+  :root {
+    --bg:#0a0d14; --surface:#131722; --surface-2:#1c2030; --border:#232838;
+    --text:#e6e8ee; --text-dim:#9097a6; --text-mute:#5b6172;
+    --accent:#6ee7b7; --pos:#6ee7b7; --neg:#fb7185; --warn:#fbbf24; --link:#93c5fd;
+  }
+  *{box-sizing:border-box;} html,body{margin:0;padding:0;}
+  body{font:14px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif; background:var(--bg); color:var(--text); -webkit-font-smoothing:antialiased; padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0);}
+  .wrap{max-width:780px; margin:0 auto; padding:14px;}
+  h1{font-size:20px; font-weight:700; margin:4px 0 12px; letter-spacing:-0.01em;}
+  h2{font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-dim); margin:14px 0 8px;}
+  .card{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:12px;}
+  .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  button{background:var(--accent); color:#0a0d14; border:0; border-radius:8px; padding:9px 14px; font:600 13px inherit; cursor:pointer;}
+  button.secondary{background:var(--surface-2); color:var(--text);}
+  input,select{background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font:13px inherit; -webkit-appearance:none; appearance:none;}
+  input:focus,select:focus{outline:none; border-color:var(--accent);}
+  .grid{display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:14px;}
+  @media (min-width:540px){.grid{grid-template-columns:repeat(4,1fr);}}
+  .stat{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 12px;}
+  .stat .lbl{font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-mute);}
+  .stat .val{font:600 16px/1.2 "SF Mono", ui-monospace, Menlo, monospace; margin-top:3px; letter-spacing:-0.01em;}
+  .pos{color:var(--pos);} .neg{color:var(--neg);} .muted{color:var(--text-mute);}
+  a{color:var(--link); text-decoration:none;}
+  .member{border-top:1px solid var(--border); padding:10px 4px;}
+  .member:first-child{border-top:0;}
+  .member-head{display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
+  .member-name{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .member-pay{font:600 14px "SF Mono", ui-monospace, Menlo, monospace; color:var(--accent); white-space:nowrap;}
+  .member-stats{display:flex; gap:10px; font-size:11.5px; color:var(--text-mute); margin-top:4px; flex-wrap:wrap; font-family:"SF Mono", ui-monospace, Menlo, monospace;}
+  .pill{display:inline-block; padding:2px 8px; border-radius:10px; background:var(--surface-2); font-size:11px; color:var(--text-dim);}
+  #status{font-size:12px; color:var(--text-dim); margin-left:8px;}
+  #auth{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:18px; max-width:380px; margin:40px auto;}
+  #auth h2{margin-top:0;} #auth input{width:100%; margin:8px 0;}
+  .err{color:var(--neg); font-size:13px; margin-top:8px;}
+  .toolbar{display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:12px;}
+  .breakdown{font-size:11px; color:var(--text-mute); margin-top:4px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Payouts</h1>
+
+<div id="auth" style="display:none">
+  <h2>Sign in</h2>
+  <p class="muted" style="font-size:12px">Faction admin role required. Your API key is exchanged for a JWT stored locally — never shared.</p>
+  <input type="password" id="apikey" placeholder="Torn API key" autocomplete="off">
+  <button id="signin">Sign in</button>
+  <div id="auth-err" class="err"></div>
+</div>
+
+<div id="app" style="display:none">
+  <div class="toolbar">
+    <select id="war-picker"></select>
+    <select id="mode-picker">
+      <option value="dynamic">Dynamic (FF-weighted)</option>
+      <option value="static">Static (1pt per hit)</option>
+    </select>
+    <button class="secondary" id="refresh">↻</button>
+    <button class="secondary" id="signout">Sign out</button>
+    <span id="status"></span>
+  </div>
+  <div id="report"></div>
+</div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const fmt$=n=>{ if(!Number.isFinite(n)) return '$0'; const abs=Math.abs(n); if(abs>=1e9) return '$'+(n/1e9).toFixed(2)+'b'; if(abs>=1e6) return '$'+(n/1e6).toFixed(2)+'m'; if(abs>=1e3) return '$'+(n/1e3).toFixed(1)+'k'; return '$'+n.toFixed(0); };
+const fmtN=n=>Number(n||0).toLocaleString();
+const fmtR=n=>Number(n||0).toFixed(2);
+const esc=s=>String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+const TOK='wb_war_jwt'; // share token with /war page
+function getTok(){try{return localStorage.getItem(TOK)||'';}catch{return '';}}
+function setTok(v){try{v?localStorage.setItem(TOK,v):localStorage.removeItem(TOK);}catch{}}
+
+async function api(path,{method='GET',body}={}) {
+  const r=await fetch(path,{ method, headers:{'Content-Type':'application/json','Authorization':'Bearer '+getTok()}, body: body?JSON.stringify(body):undefined });
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+
+async function signIn(){
+  const key=$('#apikey').value.trim(); if(!key) return;
+  $('#auth-err').textContent='';
+  try{
+    const r=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apiKey:key,scriptName:'payouts-page'})});
+    const j=await r.json();
+    if(!j.token) throw new Error(j.error||'No token');
+    setTok(j.token); boot();
+  }catch(e){ $('#auth-err').textContent=e.message; }
+}
+function signOut(){ setTok(''); location.reload(); }
+
+async function loadWars(){ const j=await api('/api/war/admin-list'); return j.wars||[]; }
+async function loadPayouts(warId,mode){
+  $('#status').textContent='Loading…';
+  try{
+    const j=await api('/api/war/'+encodeURIComponent(warId)+'/payouts-admin?mode='+encodeURIComponent(mode));
+    $('#status').textContent='';
+    render(j);
+  }catch(e){
+    $('#status').textContent='';
+    $('#report').innerHTML='<div class="card err">'+esc(e.message)+'</div>';
+  }
+}
+
+function render(d){
+  let h='';
+  h+='<div class="card"><h2>War</h2>';
+  h+='<div><b>vs '+esc(d.enemyFactionName||'Enemy')+'</b>';
+  if(d.warResult) h+=' <span class="pill">'+esc(d.warResult)+'</span>';
+  if(d.mode) h+=' <span class="pill">'+esc(d.mode)+'</span>';
+  h+='</div>';
+  h+='<div class="grid" style="margin-top:10px">';
+  h+='<div class="stat"><div class="lbl">Loot total</div><div class="val">'+fmt$(d.lootTotal||0)+'</div></div>';
+  h+='<div class="stat"><div class="lbl">Payout pool</div><div class="val pos">'+fmt$(d.payoutPool||0)+'</div></div>';
+  h+='<div class="stat"><div class="lbl">Faction share</div><div class="val">'+fmt$(d.factionShare||0)+'</div></div>';
+  h+='<div class="stat"><div class="lbl">Total score</div><div class="val">'+fmtR(d.totalScore||0)+'</div></div>';
+  h+='</div>';
+  // Loot breakdown if available
+  if(d.lootBreakdown && (d.lootBreakdown.cash||(d.lootBreakdown.items||[]).length)){
+    h+='<details style="margin-top:8px"><summary class="muted" style="cursor:pointer;font-size:12px">Loot breakdown ('+esc(d.lootSource||'')+')</summary><div class="breakdown" style="margin-top:6px">';
+    if(d.lootBreakdown.cash>0) h+='<div>Cash: '+fmt$(d.lootBreakdown.cash)+'</div>';
+    for(const it of (d.lootBreakdown.items||[])){
+      h+='<div>'+esc(it.name)+' × '+fmtN(it.quantity)+' @ '+fmt$(it.unitPrice)+' = '+fmt$(it.lineTotal)+'</div>';
+    }
+    h+='</div></details>';
+  }
+  h+='</div>';
+
+  // Members
+  const members=Array.isArray(d.members)?d.members.slice():[];
+  members.sort((a,b)=>(b.dollarPayout||0)-(a.dollarPayout||0));
+  h+='<div class="card"><h2>Members ('+members.length+')</h2>';
+  if(!members.length){
+    h+='<div class="muted">No member payouts to display.</div>';
+  }else{
+    for(const m of members){
+      const pct=(m.sharePct!=null)?(m.sharePct*100).toFixed(2)+'%':'';
+      h+='<div class="member"><div class="member-head"><div class="member-name">'+esc(m.name||('Player '+m.playerId))+'</div><div class="member-pay">'+fmt$(m.dollarPayout||0)+'</div></div>';
+      h+='<div class="member-stats">';
+      h+='<span>Share '+pct+'</span>';
+      h+='<span>Score '+fmtR(m.score||0)+'</span>';
+      if(m.breakdown){
+        const b=m.breakdown;
+        const parts=[];
+        if(b.warHits) parts.push('war '+b.warHits);
+        if(b.assists) parts.push('asst '+b.assists);
+        if(b.chainHits) parts.push('chain '+b.chainHits);
+        if(b.retals) parts.push('retal '+b.retals);
+        if(b.overseas) parts.push('os '+b.overseas);
+        if(parts.length) h+='<span>'+parts.join(' · ')+'</span>';
+      }
+      h+='</div></div>';
+    }
+  }
+  h+='</div>';
+  $('#report').innerHTML=h;
+}
+
+async function boot(){
+  if(!getTok()){ $('#auth').style.display='block'; $('#app').style.display='none'; return; }
+  try{
+    const wars=await loadWars();
+    if(!wars.length){
+      $('#auth').style.display='none'; $('#app').style.display='block';
+      $('#report').innerHTML='<div class="card muted">No ended wars available.</div>'; return;
+    }
+    const picker=$('#war-picker');
+    picker.innerHTML=wars.map(w=>'<option value="'+esc(w.warId)+'">'+esc(w.enemyFactionName)+' — '+new Date(w.warEndedAt).toLocaleDateString()+'</option>').join('');
+    $('#auth').style.display='none'; $('#app').style.display='block';
+    const urlWarId=(location.pathname.match(/\\/payouts\\/(.+)$/)||[])[1];
+    const chosen=urlWarId && wars.find(w=>w.warId===decodeURIComponent(urlWarId)) ? decodeURIComponent(urlWarId) : wars[0].warId;
+    picker.value=chosen;
+    const modeSel=$('#mode-picker');
+    const reload=()=>loadPayouts(picker.value, modeSel.value);
+    picker.addEventListener('change',reload);
+    modeSel.addEventListener('change',reload);
+    $('#refresh').addEventListener('click',reload);
+    reload();
+  }catch(e){
+    if(/401|403/.test(e.message)){ setTok(''); boot(); return; }
+    $('#app').style.display='block';
+    $('#report').innerHTML='<div class="card err">'+esc(e.message)+'</div>';
+  }
+}
+
+$('#signin').addEventListener('click',signIn);
+$('#apikey').addEventListener('keydown',e=>{ if(e.key==='Enter') signIn(); });
+$('#signout').addEventListener('click',signOut);
+boot();
+</script>
+</body>
+</html>`;
 
 // ── Shared HTML for /war post-war report page ──────────────────────────
 const WAR_REPORT_HTML = `<!doctype html>
@@ -701,6 +907,37 @@ function parseCookie(cookieHeader, name) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+// JWT-auth sibling of /api/war/:warId/payouts — same compute, same
+// admin role gate; lets the /payouts HTML page (which has only a JWT
+// from /api/auth) request payouts without a raw API key.
+router.get("/api/war/:warId/payouts-admin", requireAuth, async (req, res) => {
+  const { factionId, factionPosition, playerId } = req.user;
+  const adminRoles = (store.getAdminRoles
+    ? store.getAdminRoles(factionId)
+    : store.getAllowedBroadcastRoles(factionId) || [])
+      .map(r => String(r).toLowerCase());
+  const isDev = String(playerId) === '137558';
+  const myPos = String(factionPosition || '').toLowerCase();
+  if (!isDev && !adminRoles.includes(myPos)) {
+    return res.status(403).json({ error: "Admin role required" });
+  }
+  const warId = String(req.params.warId);
+  const mode = req.query.mode === 'static' ? 'static' : 'dynamic';
+  const lootTotal = req.query.loot != null && req.query.loot !== ''
+    ? Number(req.query.loot)
+    : null;
+  const forceFresh = req.query.fresh === '1';
+  try {
+    const result = await warPayouts.computePayouts(warId, { mode, lootTotal, forceFresh });
+    if (String(result.factionId) !== String(factionId)) {
+      return res.status(403).json({ error: "War belongs to a different faction" });
+    }
+    return res.json(result);
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // JWT-auth sibling of /api/war/payouts/list — used by the /war HTML page
 // since that page authenticates via /api/auth (JWT) and has no raw API
 // key to pass. Same admin-role gating as the original.
@@ -732,6 +969,11 @@ router.get("/api/war/admin-list", requireAuth, (req, res) => {
 router.get(["/war", "/war/:warId"], (req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
   res.send(WAR_REPORT_HTML);
+});
+
+router.get(["/payouts", "/payouts/:warId"], (req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.send(PAYOUTS_HTML);
 });
 
 // ── POST /api/admin/xanax/repoll/:warId ────────────────────────────────
