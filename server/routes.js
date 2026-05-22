@@ -534,7 +534,7 @@ async function signIn(){
 function signOut(){ setTok(''); location.reload(); }
 
 async function loadWars(){
-  const j=await api('/api/war/payouts/list');
+  const j=await api('/api/war/admin-list');
   return j.wars||[];
 }
 
@@ -667,6 +667,27 @@ function parseCookie(cookieHeader, name) {
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : null;
 }
+
+// JWT-auth sibling of /api/war/payouts/list — used by the /war HTML page
+// since that page authenticates via /api/auth (JWT) and has no raw API
+// key to pass. Same admin-role gating as the original.
+router.get("/api/war/admin-list", requireAuth, (req, res) => {
+  const { factionId, factionPosition, playerId } = req.user;
+  const adminRoles = (store.getAdminRoles
+    ? store.getAdminRoles(factionId)
+    : store.getAllowedBroadcastRoles(factionId) || [])
+      .map(r => String(r).toLowerCase());
+  const isDev = String(playerId) === '137558';
+  const myPos = String(factionPosition || '').toLowerCase();
+  if (!isDev && !adminRoles.includes(myPos)) {
+    return res.status(403).json({ error: "Admin role required" });
+  }
+  try {
+    return res.json({ wars: warPayouts.listEligibleWars(factionId) });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
 
 // ── GET /war  /war/:warId  — admin-only HTML post-war report ───────────
 // Renders the same post-war analysis as the in-script modal as a
