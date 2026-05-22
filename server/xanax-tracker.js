@@ -92,11 +92,20 @@ export function startXanaxTracker(warId) {
   const tick = async () => {
     const war = store.getWar(warId);
     if (!war || !war.factionId || war.warEnded) {
-      // If war ended, do one final flush before stopping so the late
-      // entries (people taking xanax in the last 5 minutes) still land
-      // in the post-war report. Then unregister.
+      // 2026-05-22: keep polling for POST_WAR_LOOKAHEAD_SEC (24h)
+      // AFTER warEnded flips true. Late xanax deposits (someone gives
+      // back unused vials hours after the war ends) need to land in
+      // the report; the original "one final flush + stop" logic was
+      // dropping them even though the matching events would have
+      // counted under the 24h cap. Cadence relaxed to 5 min post-war
+      // since news rate is much lower then.
       if (war?.warEnded) {
         await pollOnce(warId).catch(() => {});
+        const cutoffMs = (Number(war.warEndedAt) || Date.now()) + POST_WAR_LOOKAHEAD_SEC * 1000;
+        if (Date.now() < cutoffMs) {
+          timers.set(warId, setTimeout(tick, 5 * 60 * 1000));
+          return;
+        }
         stopXanaxTracker(warId);
         return;
       }
