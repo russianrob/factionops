@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.23
+// @version      3.2.24
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -4618,8 +4618,13 @@
     }
 
     function renderRecommendations(recs, scopeProjection) {
-        // Show any level that has eligible members OR has OC slots — don't silently drop rows
-        const visible = recs.filter(r => r.action !== 'none' || r.freeMembers + r.soonMembers > 0 || r.totalSlots > 0);
+        // v3.2.24: show ALL levels 1–10 instead of hiding empty rows.
+        // The old filter dropped levels with no members + no OCs +
+        // no action — confusing on faction-war prep when an adjacent
+        // scope-range level (e.g. Lvl 8 alongside an active Lvl 7)
+        // silently vanished. Empty rows still render with "None
+        // needed" so the user can see the level exists and is idle.
+        const visible = recs.slice();
         if (!visible.length) return '<p class="oc-tag-none">No eligible members found for any level.</p>';
 
         const rows = visible.map(r => {
