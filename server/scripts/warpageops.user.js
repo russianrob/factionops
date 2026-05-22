@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WarPageOps (fork — solo test branch)
 // @namespace    tornwar.com/warpageops
-// @version      0.3.1
+// @version      0.3.2
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -684,15 +684,16 @@ html.wb-theme-light {
     border-color: var(--wb-call-red);
     cursor: default;
 }
-/* 0.2.0: hijacked Score column cell styles. Inline in Torn's row
- * cell so the visual fits the existing column width. */
+/* 0.2.0+: hijacked Score column cell styles. The cell is just a
+ * wrapper; the actual clickable target is the inner <button>. */
 .wpo-score-call {
     padding: 0 !important;
     text-align: center !important;
+    pointer-events: auto !important;
 }
-.wpo-score-call > span {
+.wpo-call-btn-inner {
     display: inline-block;
-    padding: 3px 10px;
+    padding: 4px 10px;
     border-radius: 12px;
     font-size: 11px;
     font-weight: 700;
@@ -702,7 +703,15 @@ html.wb-theme-light {
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: pointer;
+    border: 1px solid transparent;
+    background: transparent;
+    color: inherit;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    pointer-events: auto !important;
 }
+.wpo-call-btn-inner:active { transform: translateY(1px); }
 .wpo-call-empty {
     background: rgba(78,205,196,0.12);
     color: #4ecdc4;
@@ -8111,27 +8120,38 @@ body.wb-chain-active {
     function _wpoRenderScoreCall(cell, targetId) {
         cell.innerHTML = '';
         cell.classList.add('wpo-score-call');
+        // 0.3.2: use a real <button> instead of <span>. Cells in
+        // Torn's war table are likely <td>s with their own click
+        // handlers / pointer-events:none in some layouts; a button
+        // gives us its own focusable, clickable element that the
+        // browser handles natively. Listeners attach to the button,
+        // not the cell, so Torn can't swallow the event.
         const callData = state.calls[String(targetId)];
-        const inner = document.createElement('span');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'wpo-call-btn-inner';
         if (!callData) {
-            inner.className = 'wpo-call-empty';
-            inner.textContent = 'Call';
+            btn.classList.add('wpo-call-empty');
+            btn.textContent = 'Call';
         } else if (callData.calledBy && String(callData.calledBy.id) === String(state.myPlayerId)) {
-            inner.className = 'wpo-call-mine' + (callData.isDeal ? ' wpo-call-deal' : '');
-            inner.textContent = callData.isDeal ? '🤝 You' : 'You';
+            btn.classList.add('wpo-call-mine');
+            if (callData.isDeal) btn.classList.add('wpo-call-deal');
+            btn.textContent = callData.isDeal ? '🤝 You' : 'You';
         } else {
-            inner.className = 'wpo-call-other' + (callData.isDeal ? ' wpo-call-deal' : '');
+            btn.classList.add('wpo-call-other');
+            if (callData.isDeal) btn.classList.add('wpo-call-deal');
             const name = callData.calledBy ? callData.calledBy.name : 'Called';
-            inner.textContent = callData.isDeal ? `🤝 ${name}` : name;
+            btn.textContent = callData.isDeal ? `🤝 ${name}` : name;
         }
-        cell.appendChild(inner);
+        // Attach handlers directly to THIS button so a fresh listener
+        // pair lives with every render. Cheaper than tracking bind
+        // state and means re-renders never lose their handlers when
+        // Torn re-attaches DOM around us.
+        _wpoAttachCallHandlers(btn, targetId);
+        cell.appendChild(btn);
     }
 
-    function _wpoAttachCallHandlers(cell, targetId) {
-        if (cell.dataset.wpoCallBound) return;
-        cell.dataset.wpoCallBound = '1';
-        cell.style.cursor = 'pointer';
-        cell.style.webkitTapHighlightColor = 'transparent';
+    function _wpoAttachCallHandlers(el, targetId) {
         let pressTimer = null;
         let longFired = false;
 
@@ -8145,22 +8165,27 @@ body.wb-chain-active {
             // else: someone else's call, ignore
         }
 
-        cell.addEventListener('touchstart', () => {
+        // Pointer events (covers mouse + touch + pen on modern WebView).
+        el.addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
             longFired = false;
             pressTimer = setTimeout(() => { longFired = true; callOrUncall(true); }, 500);
-        }, { passive: true });
-        const cancelLong = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
-        cell.addEventListener('touchend',    cancelLong);
-        cell.addEventListener('touchmove',   cancelLong);
-        cell.addEventListener('touchcancel', cancelLong);
+        });
+        const cancelLong = (e) => {
+            if (e) e.stopPropagation();
+            if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+        };
+        el.addEventListener('pointerup',     cancelLong);
+        el.addEventListener('pointercancel', cancelLong);
+        el.addEventListener('pointerleave',  cancelLong);
 
-        cell.addEventListener('click', (e) => {
+        el.addEventListener('click', (e) => {
             e.stopPropagation(); e.preventDefault();
             if (longFired) { longFired = false; return; }
             callOrUncall(false);
         });
-        cell.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
+        el.addEventListener('contextmenu', (e) => {
+            e.stopPropagation(); e.preventDefault();
             callOrUncall(true);
         });
     }
@@ -8169,7 +8194,6 @@ body.wb-chain-active {
         const cell = _wpoFindScoreCell(row);
         if (!cell) return;
         _wpoScoreCells.set(String(targetId), cell);
-        _wpoAttachCallHandlers(cell, targetId);
         _wpoRenderScoreCall(cell, targetId);
     }
 
