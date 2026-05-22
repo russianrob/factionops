@@ -3441,9 +3441,13 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   // ── E. INDIVIDUAL HIGHLIGHTS: AREAS TO IMPROVE ──
   const bottomPerformers = [];
 
-  // Members with low respect/hit (participated but bad target selection)
+  // Members with low respect/hit (participated but bad target selection).
+  // 2026-05-22: hard floor at 8 RPH — even if a member is below half the
+  // faction average, 8+/hit is objectively a healthy number (faction's
+  // avg may just be very high). Don't flag them as needing improvement.
+  const RPH_GOOD_FLOOR = 8;
   const lowRphMembers = scoredMembers
-    .filter(m => m.attacks >= 3 && m.respectPerHit < factionAvgRph * 0.5)
+    .filter(m => m.attacks >= 3 && m.respectPerHit < factionAvgRph * 0.5 && m.respectPerHit < RPH_GOOD_FLOOR)
     .sort((a, b) => a.respectPerHit - b.respectPerHit)
     .slice(0, 5);
 
@@ -3460,9 +3464,11 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
     });
   }
 
-  // Members with high hits but low total respect (wasted energy)
+  // Members with high hits but low total respect (wasted energy).
+  // Same 8+/hit escape — if their RPH is already good, the low total
+  // is just a function of fewer hits, not wasted energy.
   const wastedEnergyMembers = scoredMembers
-    .filter(m => m.attacks >= 5 && m.respect < totalRespect * 0.01 && !lowRphMembers.find(l => l.id === m.id))
+    .filter(m => m.attacks >= 5 && m.respect < totalRespect * 0.01 && m.respectPerHit < RPH_GOOD_FLOOR && !lowRphMembers.find(l => l.id === m.id))
     .sort((a, b) => b.attacks - a.attacks)
     .slice(0, 3);
 
