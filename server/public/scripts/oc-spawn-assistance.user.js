@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.24
+// @version      3.2.25
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -3900,16 +3900,25 @@
     //  SLOT COUNT
     // ═══════════════════════════════════════════════════════════════════════
     function countOpenSlots(availableCrimes) {
+        // v3.2.25: count crimes at EVERY status (not just Recruiting)
+        // so a level whose OCs are all filled (Planning) still shows
+        // up in the recommendations table. Open-slot math still only
+        // applies to Recruiting status — Planning OCs have no joinable
+        // slots, but the crime itself is still active.
         const slotMap = {};
         for (const crime of normArr(availableCrimes)) {
-            if (crime.status !== 'Recruiting') continue;
             const d = crime.difficulty;
             if (!slotMap[d]) slotMap[d] = { totalSlots: 0, openSlots: 0, crimes: [] };
             let open = 0, total = 0;
-            for (const slot of (crime.slots || [])) { total++; if (!slot.user_id && !slot.user?.id) open++; }
-            const filled = total - open;
-            slotMap[d].totalSlots += total; slotMap[d].openSlots += open;
-            slotMap[d].crimes.push({ id: crime.id, name: crime.name, open, total, filled });
+            if (crime.status === 'Recruiting') {
+                for (const slot of (crime.slots || [])) { total++; if (!slot.user_id && !slot.user?.id) open++; }
+                slotMap[d].totalSlots += total;
+                slotMap[d].openSlots  += open;
+            }
+            slotMap[d].crimes.push({
+                id: crime.id, name: crime.name, status: crime.status,
+                open, total, filled: total - open,
+            });
         }
         return slotMap;
     }
