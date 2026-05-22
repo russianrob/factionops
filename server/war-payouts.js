@@ -363,10 +363,13 @@ export async function computePayouts(warId, options = {}) {
     //
     // SUCCESS_RESULTS for reference (mirror of war-status-monitor.js):
     //   Attacked, Hospitalized, Mugged, Looted, Special, Assist
-    // Everything else with respect_gain<=0 we treat as a real loss.
-    const LOSS_RESULTS = new Set([
-      'Lost', 'Stalemate', 'Escape', 'Interrupted', 'Timeout',
-    ]);
+    //
+    // 2026-05-23: narrowed to TRUE losses only — user direction.
+    // Stalemate / Escape / Interrupted / Timeout are inconvenient
+    // but not the attacker's fault in the same way as actually
+    // losing the fight. They no longer contribute to the breakdown
+    // "losses" bucket or earn failedWeight credit.
+    const LOSS_RESULTS = new Set(['Lost']);
     const respectGain = Number(atk.respect_gain) || 0;
     if (respectGain <= 0) {
       const result = String(atk.result || '');

@@ -509,7 +509,7 @@ const PAYOUTS_HTML = `<!doctype html>
       <label style="font-size:11.5px;color:var(--text-mute);">Payout % <input type="number" id="s-pct" placeholder="80" min="0" max="100" step="1"></label>
       <label style="font-size:11.5px;color:var(--text-mute);">Assist weight <input type="number" id="s-assist" placeholder="0.3" min="0" step="0.05"></label>
       <label style="font-size:11.5px;color:var(--text-mute);">Non-war weight <input type="number" id="s-nonwar" placeholder="0.3" min="0" step="0.05"></label>
-      <label style="font-size:11.5px;color:var(--text-mute);">Failed weight <input type="number" id="s-failed" placeholder="0" min="0" step="0.05"></label>
+      <label style="font-size:11.5px;color:var(--text-mute);">Loss weight <input type="number" id="s-failed" placeholder="0" min="0" step="0.05"></label>
     </div>
     <div class="row" style="margin-top:8px">
       <button id="save-settings">Save & Recompute</button>
@@ -639,7 +639,7 @@ function render(d){
       ['chain_hit',    'Chain hits'],
       ['os_chain',     'Overseas chain'],
       ['non_war',      'Non-war attacks'],
-      ['failed',       'Failed'],
+      ['failed',       'Losses'],
     ];
     for(const m of members){
       // Server returns sharePct as whole percent already (0-100).
