@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WarPageOps (fork — solo test branch)
 // @namespace    tornwar.com/warpageops
-// @version      0.3.2
+// @version      0.3.3
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -62,7 +62,11 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
         SERVER_URL: GM_getValue('warpageops_server', 'https://tornwar.com'),
         API_KEY: GM_getValue('warpageops_apikey', '') || (IS_PDA ? PDA_API_KEY : ''),
         THEME: GM_getValue('warpageops_theme', 'dark'),
-        AUTO_SORT: GM_getValue('warpageops_autosort', true),
+        // 0.3.3: default off for warpageops. Auto-sort reorders the
+        // member list, which can make the wrong rows appear first and
+        // confuse what's enhanced. Toggle back on in settings if you
+        // want call-priority sorting.
+        AUTO_SORT: GM_getValue('warpageops_autosort', false),
         CHAIN_ALERT: GM_getValue('warpageops_chain_alert', true),
         CHAIN_ALERT_THRESHOLD: GM_getValue('warpageops_chain_alert_threshold', 60),
         PDA_NOTIFICATIONS: GM_getValue('warpageops_pda_notif', IS_PDA),
