@@ -628,24 +628,46 @@ function render(d){
   if(!members.length){
     h+='<div class="muted">No member payouts to display.</div>';
   }else{
+    // Server-side breakdown keys match war-payouts.js classify():
+    //   war_hit, retal, overseas_war, chain_hit, os_chain, assist,
+    //   non_war, failed. Order by "most valuable" first.
+    const BREAKDOWN_LABELS = [
+      ['war_hit',      'War hits'],
+      ['retal',        'Retals'],
+      ['overseas_war', 'Overseas war hits'],
+      ['assist',       'Assists'],
+      ['chain_hit',    'Chain hits'],
+      ['os_chain',     'Overseas chain'],
+      ['non_war',      'Non-war attacks'],
+      ['failed',       'Failed'],
+    ];
     for(const m of members){
       // Server returns sharePct as whole percent already (0-100).
       const pct=(m.sharePct!=null)?Number(m.sharePct).toFixed(2)+'%':'';
-      h+='<div class="member"><div class="member-head"><div class="member-name">'+esc(m.name||('Player '+m.playerId))+'</div><div class="member-pay">'+fmt$(m.dollarPayout||0)+'</div></div>';
+      h+='<div class="member expandable">';
+      h+='<div class="member-head"><div class="member-name"><span class="arrow">▸</span>'+esc(m.name||('Player '+m.playerId))+(m.level?' <span class="muted" style="font-weight:400;font-size:11px">Lv'+m.level+'</span>':'')+'</div><div class="member-pay">'+fmt$(m.dollarPayout||0)+'</div></div>';
       h+='<div class="member-stats">';
       h+='<span>Share '+pct+'</span>';
       h+='<span>Score '+fmtR(m.score||0)+'</span>';
-      if(m.breakdown){
-        const b=m.breakdown;
-        const parts=[];
-        if(b.warHits) parts.push('war '+b.warHits);
-        if(b.assists) parts.push('asst '+b.assists);
-        if(b.chainHits) parts.push('chain '+b.chainHits);
-        if(b.retals) parts.push('retal '+b.retals);
-        if(b.overseas) parts.push('os '+b.overseas);
-        if(parts.length) h+='<span>'+parts.join(' · ')+'</span>';
+      if(m.attackCount!=null) h+='<span>War '+m.attackCount+(m.totalAttacks!=null && m.totalAttacks!==m.attackCount?' / '+m.totalAttacks+' total':'')+'</span>';
+      if(m.avgFf>0) h+='<span>Avg FF '+fmtR(m.avgFf)+'</span>';
+      h+='</div>';
+      // Drilldown panel
+      const b=m.breakdown||{};
+      h+='<div class="member-detail"><table class="bd-table"><tbody>';
+      let any=false;
+      for(const [k,lbl] of BREAKDOWN_LABELS){
+        const v=Number(b[k]||0);
+        if(v>0){ h+='<tr><td>'+esc(lbl)+'</td><td>'+v+'</td></tr>'; any=true; }
       }
+      if(!any) h+='<tr><td class="muted" colspan=2>No itemized attacks recorded.</td></tr>';
+      h+='</tbody></table>';
+      h+='<div class="bd-meta">';
+      if(m.tornScore!=null) h+='<span>Torn score: '+fmtR(m.tornScore)+'</span>';
+      if(m.tornAttacks!=null) h+='<span>Torn attacks: '+m.tornAttacks+'</span>';
+      h+='<span>Payout: '+fmt$(m.dollarPayout||0)+'</span>';
       h+='</div></div>';
+      h+='</div>';
     }
   }
   h+='</div>';
