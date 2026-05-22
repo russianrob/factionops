@@ -609,6 +609,35 @@ function render(d){
   }else h+='<div class="muted">No top performer data.</div>';
   h+='</div>';
 
+  // Xanax accountability
+  const xa=a.xanaxAccountability||{};
+  h+='<div class="card"><h2>Xanax accountability</h2>';
+  if(!xa.enabled){
+    h+='<div class="muted">Xanax tracking not active for this war.</div>';
+  }else{
+    h+='<div class="grid" style="margin-bottom:10px">';
+    h+='<div class="stat"><div class="lbl">Total xanax taken</div><div class="val">'+fmtN(xa.totalXanaxTaken||0)+'</div></div>';
+    h+='<div class="stat"><div class="lbl">Members who took</div><div class="val">'+fmtN(xa.membersWhoTook||0)+'</div></div>';
+    h+='<div class="stat"><div class="lbl">Flagged</div><div class="val '+((xa.membersFlagged||0)>0?'neg':'')+'">'+fmtN(xa.membersFlagged||0)+'</div></div>';
+    h+='</div>';
+    if(xa.rule) h+='<div class="muted" style="font-size:11px;margin-bottom:8px">'+esc(xa.rule)+'</div>';
+    if(xa.rows && xa.rows.length){
+      for(const r of xa.rows){
+        const isFlag=!!r.flagged;
+        h+='<div class="member"><div class="member-head"><div class="member-name">'+esc(r.name)+(isFlag?' <span class="pill" style="color:var(--neg);background:rgba(251,113,133,0.12);border:1px solid var(--neg)">flagged</span>':'')+'</div></div>';
+        h+='<div class="member-stats">';
+        h+='<span>Xanax '+r.xanaxTaken+'</span>';
+        h+='<span>Hits '+r.attacks+' / expected '+r.expectedAttacks+'</span>';
+        if(r.attackDeficit>0) h+='<span class="neg">−'+r.attackDeficit+' deficit</span>';
+        else if(r.attackDeficit<0) h+='<span class="pos">+'+Math.abs(r.attackDeficit)+' bonus</span>';
+        h+='</div></div>';
+      }
+    }else{
+      h+='<div class="muted">No xanax pulled this war.</div>';
+    }
+  }
+  h+='</div>';
+
   // Areas to improve
   h+='<div class="card"><h2>Areas to improve</h2>';
   if(nh.areasToImprove && nh.areasToImprove.length){
