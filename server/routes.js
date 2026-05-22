@@ -490,6 +490,22 @@ const PAYOUTS_HTML = `<!doctype html>
     <button class="secondary" id="signout">Sign out</button>
     <span id="status"></span>
   </div>
+  <div class="card" id="settings-card">
+    <h2>Settings (per-war)</h2>
+    <p class="muted" style="font-size:11.5px;margin:0 0 10px">Leave blank to use defaults. Changes invalidate the cache and recompute on next refresh.</p>
+    <div class="grid">
+      <label style="grid-column:1/-1;font-size:11.5px;color:var(--text-mute);">Loot override (\$) <input type="number" id="s-loot" placeholder="auto-detect" min="0" step="1000000"></label>
+      <label style="font-size:11.5px;color:var(--text-mute);">Payout % (0-1) <input type="number" id="s-pct" placeholder="0.80" min="0" max="1" step="0.01"></label>
+      <label style="font-size:11.5px;color:var(--text-mute);">Assist weight <input type="number" id="s-assist" placeholder="0.3" min="0" step="0.05"></label>
+      <label style="font-size:11.5px;color:var(--text-mute);">Non-war weight <input type="number" id="s-nonwar" placeholder="0.3" min="0" step="0.05"></label>
+      <label style="font-size:11.5px;color:var(--text-mute);">Failed weight <input type="number" id="s-failed" placeholder="0" min="0" step="0.05"></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="save-settings">Save & Recompute</button>
+      <button class="secondary" id="reset-settings">Reset to defaults</button>
+      <span id="settings-status" class="muted" style="font-size:11.5px"></span>
+    </div>
+  </div>
   <div id="report"></div>
 </div>
 </div>
@@ -524,6 +540,36 @@ async function signIn(){
 function signOut(){ setTok(''); location.reload(); }
 
 async function loadWars(){ const j=await api('/api/war/admin-list'); return j.wars||[]; }
+async function loadSettings(warId){
+  try{
+    const s=await api('/api/war/'+encodeURIComponent(warId)+'/payout-settings-admin');
+    $('#s-loot').value   = s.lootOverride!=null ? s.lootOverride : '';
+    $('#s-pct').value    = s.payoutPct!=null ? s.payoutPct : '';
+    $('#s-assist').value = s.assistWeight!=null ? s.assistWeight : '';
+    $('#s-nonwar').value = s.nonWarWeight!=null ? s.nonWarWeight : '';
+    $('#s-failed').value = s.failedWeight!=null ? s.failedWeight : '';
+  }catch(e){ /* leave blanks if 403 etc */ }
+}
+async function saveSettings(warId){
+  $('#settings-status').textContent='Saving…';
+  const payload={
+    lootOverride: $('#s-loot').value,
+    payoutPct:    $('#s-pct').value,
+    assistWeight: $('#s-assist').value,
+    nonWarWeight: $('#s-nonwar').value,
+    failedWeight: $('#s-failed').value,
+  };
+  try{
+    await api('/api/war/'+encodeURIComponent(warId)+'/payout-settings-admin',{method:'POST',body:payload});
+    $('#settings-status').textContent='Saved.';
+    setTimeout(()=>$('#settings-status').textContent='', 2000);
+    return true;
+  }catch(e){ $('#settings-status').textContent='Error: '+e.message; return false; }
+}
+async function resetSettings(warId){
+  $('#s-loot').value=''; $('#s-pct').value=''; $('#s-assist').value=''; $('#s-nonwar').value=''; $('#s-failed').value='';
+  await saveSettings(warId);
+}
 async function loadPayouts(warId,mode){
   $('#status').textContent='Loading…';
   try{
@@ -606,9 +652,13 @@ async function boot(){
     picker.value=chosen;
     const modeSel=$('#mode-picker');
     const reload=()=>loadPayouts(picker.value, modeSel.value);
-    picker.addEventListener('change',reload);
+    const reloadAll=async()=>{ await loadSettings(picker.value); reload(); };
+    picker.addEventListener('change',reloadAll);
     modeSel.addEventListener('change',reload);
-    $('#refresh').addEventListener('click',reload);
+    $('#refresh').addEventListener('click',reloadAll);
+    $('#save-settings').addEventListener('click',async()=>{ if(await saveSettings(picker.value)) reload(); });
+    $('#reset-settings').addEventListener('click',async()=>{ await resetSettings(picker.value); reload(); });
+    await loadSettings(chosen);
     reload();
   }catch(e){
     if(/401|403/.test(e.message)){ setTok(''); boot(); return; }
@@ -906,6 +956,55 @@ function parseCookie(cookieHeader, name) {
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : null;
 }
+
+// JWT-auth sibling pair for /api/war/:warId/payout-settings (GET+POST)
+// — same shape, same admin gate, used by the /payouts HTML page.
+function _payoutsAdminGate(req, res) {
+  const { factionId, factionPosition, playerId } = req.user;
+  const adminRoles = (store.getAdminRoles
+    ? store.getAdminRoles(factionId)
+    : store.getAllowedBroadcastRoles(factionId) || [])
+      .map(r => String(r).toLowerCase());
+  const isDev = String(playerId) === '137558';
+  const myPos = String(factionPosition || '').toLowerCase();
+  if (!isDev && !adminRoles.includes(myPos)) {
+    res.status(403).json({ error: "Admin role required" });
+    return false;
+  }
+  return true;
+}
+router.get("/api/war/:warId/payout-settings-admin", requireAuth, (req, res) => {
+  if (!_payoutsAdminGate(req, res)) return;
+  return res.json(store.getPayoutSettings(req.params.warId) || {});
+});
+router.post("/api/war/:warId/payout-settings-admin", requireAuth, express.json({ limit: '4kb' }), (req, res) => {
+  if (!_payoutsAdminGate(req, res)) return;
+  const body = req.body || {};
+  const settings = {};
+  if (body.lootOverride != null && body.lootOverride !== '') {
+    const n = Number(body.lootOverride);
+    if (Number.isFinite(n) && n >= 0) settings.lootOverride = n;
+  }
+  if (body.assistWeight != null && body.assistWeight !== '') {
+    const n = Number(body.assistWeight);
+    if (Number.isFinite(n) && n >= 0) settings.assistWeight = n;
+  }
+  if (body.nonWarWeight != null && body.nonWarWeight !== '') {
+    const n = Number(body.nonWarWeight);
+    if (Number.isFinite(n) && n >= 0) settings.nonWarWeight = n;
+  }
+  if (body.payoutPct != null && body.payoutPct !== '') {
+    const n = Number(body.payoutPct);
+    if (Number.isFinite(n) && n >= 0 && n <= 1) settings.payoutPct = n;
+  }
+  if (body.failedWeight != null && body.failedWeight !== '') {
+    const n = Number(body.failedWeight);
+    if (Number.isFinite(n) && n >= 0) settings.failedWeight = n;
+  }
+  store.setPayoutSettings(req.params.warId, settings);
+  warPayouts.invalidateCache(req.params.warId);
+  return res.json({ ok: true, settings });
+});
 
 // JWT-auth sibling of /api/war/:warId/payouts — same compute, same
 // admin role gate; lets the /payouts HTML page (which has only a JWT
