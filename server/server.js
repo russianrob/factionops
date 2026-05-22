@@ -219,6 +219,12 @@ app.use(/^\/api\/war\/[^/]+\/travel-info/, warRoomPerJwtLimiter);
 // ── Landing page gate ───────────────────────────────────────────────────
 app.use(gateMiddleware);
 
+// ── Battery diag ────────────────────────────────────────────────────────
+// Receives periodic samples from the wb-battery-diag userscript and
+// serves a read-only timeline at /diag/battery. Gate-exempt the POST
+// endpoint via the path prefix already covered by /api/* in gate.
+import("./battery-diag.js").then(m => m.registerRoutes(app, express));
+
 // ── Static files (landing page) ─────────────────────────────────────────
 app.use(express.static(join(__dirname, "public")));
 

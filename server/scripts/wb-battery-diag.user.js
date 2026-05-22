@@ -1,0 +1,336 @@
+// ==UserScript==
+// @name         Warboard Battery Diag
+// @namespace    tornwar.com
+// @version      0.2.0
+// @description  Live overlay of what's consuming CPU/network inside the WebView — fetch / XHR / GM_xhr counts by host + caller, mutation rate, setInterval handles, page nav rate. Diagnostic only, no side effects.
+// @author       warboard
+// @match        https://www.torn.com/*
+// @downloadURL  https://tornwar.com/scripts/wb-battery-diag.user.js
+// @updateURL    https://tornwar.com/scripts/wb-battery-diag.meta.js
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @run-at       document-start
+// @connect      tornwar.com
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  // 0.1.1 — wrap each instrumentation step in try/catch so one
+  // failure on a hardened WebView (PDA) doesn't kill the overlay.
+  // Also log a marker so the user can verify the script loaded.
+  console.log('[wb-diag] script loaded v0.1.1 — overlay will appear bottom-left when body is ready');
+  function safe(label, fn) {
+    try { fn(); } catch (e) { console.warn('[wb-diag] ' + label + ' failed:', e && e.message); }
+  }
+
+  // ── Stats state ─────────────────────────────────────────────────────
+  const stats = {
+    startTs:   Date.now(),
+    fetch:     0,
+    xhr:       0,
+    gmxhr:     0,
+    byHost:    Object.create(null),    // hostname → count
+    bySource:  Object.create(null),    // script URL → count
+    mutations: 0,
+    navs:      0,
+    qsa:       0,
+    intervals: new Map(),              // handle → { ms, fn-summary }
+    timeouts:  0,
+    setIntervalCalls: 0,
+  };
+
+  // Caller attribution — pull the first non-self frame from a stack.
+  // Tampermonkey/Stay/PDA userscripts show up in stacks with their
+  // @downloadURL or a synthetic userscript:// URL. We strip noise and
+  // bucket by that string so per-script blame is possible.
+  function attributeCaller() {
+    try {
+      const stack = new Error().stack || '';
+      const lines = stack.split('\n').slice(2);
+      for (const line of lines) {
+        const m = line.match(/(https?:\/\/[^\s):]+)|(userscript:[^\s):]+)|(file:\/\/[^\s):]+)/);
+        if (m && m[0] && !m[0].includes('wb-battery-diag')) {
+          // Strip line:col tail for grouping; keep filename.
+          return m[0].replace(/:\d+:\d+$/, '').split('/').slice(-2).join('/').slice(0, 60);
+        }
+      }
+    } catch (_) {}
+    return 'unknown';
+  }
+
+  function bump(map, key) { map[key] = (map[key] || 0) + 1; }
+
+  // ── Network instrumentation (each wrapped so one failure is isolated) ─
+  safe('fetch-wrap', () => {
+    const origFetch = window.fetch;
+    if (!origFetch) return;
+    window.fetch = function patchedFetch(input, init) {
+      stats.fetch++;
+      try {
+        const url = typeof input === 'string' ? input : input?.url || '';
+        const host = new URL(url, location.href).hostname || '(relative)';
+        bump(stats.byHost, host);
+        bump(stats.bySource, attributeCaller());
+      } catch (_) {}
+      return origFetch.call(this, input, init);
+    };
+  });
+
+  safe('xhr-wrap', () => {
+    const origXhrOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function patchedOpen(method, url, ...rest) {
+      stats.xhr++;
+      try {
+        const host = new URL(url, location.href).hostname || '(relative)';
+        bump(stats.byHost, host);
+        bump(stats.bySource, attributeCaller());
+      } catch (_) {}
+      return origXhrOpen.call(this, method, url, ...rest);
+    };
+  });
+
+  safe('gm-xhr-wrap', () => {
+    if (typeof GM_xmlhttpRequest !== 'function') return;
+    const origGm = GM_xmlhttpRequest;
+    window.GM_xmlhttpRequest = function patchedGm(opts) {
+      stats.gmxhr++;
+      try {
+        const host = new URL(opts.url || '', location.href).hostname || '(relative)';
+        bump(stats.byHost, host);
+        bump(stats.bySource, attributeCaller());
+      } catch (_) {}
+      return origGm(opts);
+    };
+  });
+
+  safe('timer-wrap', () => {
+    const origSI = window.setInterval;
+    window.setInterval = function patchedSI(fn, ms, ...args) {
+      stats.setIntervalCalls++;
+      const h = origSI.call(this, fn, ms, ...args);
+      try {
+        const summary = (typeof fn === 'function' ? fn.toString() : String(fn)).replace(/\s+/g, ' ').slice(0, 80);
+        stats.intervals.set(h, { ms: Number(ms) || 0, fn: summary, caller: attributeCaller() });
+      } catch (_) {}
+      return h;
+    };
+    const origCI = window.clearInterval;
+    window.clearInterval = function patchedCI(h) {
+      stats.intervals.delete(h);
+      return origCI.call(this, h);
+    };
+    const origST = window.setTimeout;
+    window.setTimeout = function patchedST(...args) {
+      stats.timeouts++;
+      return origST.apply(this, args);
+    };
+  });
+
+  safe('qsa-wrap', () => {
+    const origQSA = Document.prototype.querySelectorAll;
+    Document.prototype.querySelectorAll = function patchedQSA(...args) {
+      stats.qsa++;
+      return origQSA.apply(this, args);
+    };
+    const origQSAE = Element.prototype.querySelectorAll;
+    Element.prototype.querySelectorAll = function patchedQSAE(...args) {
+      stats.qsa++;
+      return origQSAE.apply(this, args);
+    };
+  });
+
+  safe('mut-observer', () => {
+    function startMutObserver() {
+      if (!document.body) return setTimeout(startMutObserver, 100);
+      const obs = new MutationObserver(muts => { stats.mutations += muts.length; });
+      obs.observe(document.body, { childList: true, subtree: true });
+    }
+    startMutObserver();
+  });
+
+  safe('nav-poll', () => {
+    let lastUrl = location.href;
+    setInterval(() => {
+      if (location.href !== lastUrl) { stats.navs++; lastUrl = location.href; }
+    }, 1000);
+  });
+
+  // ── Overlay UI ──────────────────────────────────────────────────────
+  function buildOverlay() {
+    if (!document.body) return setTimeout(buildOverlay, 200);
+    const wrap = document.createElement('div');
+    wrap.id = 'wb-diag';
+    wrap.style.cssText = `
+      position: fixed; bottom: 10px; left: 10px;
+      background: rgba(10,15,25,0.92); color: #d0e0ff;
+      font: 11px/1.35 ui-monospace, "SF Mono", Menlo, monospace;
+      padding: 8px 10px; border-radius: 6px;
+      border: 1px solid #2a3a55;
+      z-index: 2147483646;
+      max-width: 340px; max-height: 60vh; overflow: auto;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+      pointer-events: auto; user-select: text;
+    `;
+    wrap.innerHTML = '<div id="wb-diag-body">starting…</div>';
+    document.body.appendChild(wrap);
+
+    // Toggle button — smaller pill to expand/collapse.
+    const btn = document.createElement('div');
+    btn.textContent = '🔋 diag';
+    btn.style.cssText = `
+      position: fixed; bottom: 10px; left: 10px;
+      background: #e05070; color: #fff;
+      font: 600 11px ui-monospace, "SF Mono", Menlo, monospace;
+      padding: 5px 10px; border-radius: 999px;
+      z-index: 2147483647; cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      display: none;
+    `;
+    btn.addEventListener('click', () => {
+      wrap.style.display = 'block';
+      btn.style.display = 'none';
+    });
+    document.body.appendChild(btn);
+
+    // Header with collapse button
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;border-bottom:1px solid #2a3a55;padding-bottom:4px;';
+    hdr.innerHTML = `<strong style="color:#ff7e9c">WB Battery Diag</strong>`;
+    const close = document.createElement('span');
+    close.textContent = '×';
+    close.style.cssText = 'cursor:pointer;font-size:16px;line-height:1;padding:0 4px;color:#999;';
+    close.addEventListener('click', () => { wrap.style.display = 'none'; btn.style.display = 'block'; });
+    const reset = document.createElement('span');
+    reset.textContent = '↺';
+    reset.style.cssText = 'cursor:pointer;font-size:14px;line-height:1;padding:0 6px;color:#999;';
+    reset.addEventListener('click', () => {
+      stats.startTs = Date.now();
+      stats.fetch = stats.xhr = stats.gmxhr = stats.mutations = stats.navs = stats.qsa = stats.timeouts = stats.setIntervalCalls = 0;
+      for (const k of Object.keys(stats.byHost)) delete stats.byHost[k];
+      for (const k of Object.keys(stats.bySource)) delete stats.bySource[k];
+    });
+    const right = document.createElement('div');
+    right.appendChild(reset);
+    right.appendChild(close);
+    hdr.appendChild(right);
+    wrap.insertBefore(hdr, wrap.firstChild);
+
+    setInterval(refreshOverlay, 1000);
+  }
+
+  function refreshOverlay() {
+    const body = document.getElementById('wb-diag-body');
+    if (!body) return;
+    const elapsedSec = (Date.now() - stats.startTs) / 1000;
+    const perMin = n => elapsedSec > 0 ? (n / elapsedSec * 60).toFixed(1) : '0';
+    const topN = (obj, n) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n);
+    const activeIntervals = [...stats.intervals.values()];
+    // Group active intervals by caller for compact display
+    const intByCaller = {};
+    let intervalHandles = 0;
+    let intervalRatePerMin = 0;
+    for (const i of activeIntervals) {
+      intervalHandles++;
+      if (i.ms > 0) intervalRatePerMin += (60000 / i.ms);
+      const key = (i.caller || 'unknown') + ' @ ' + i.ms + 'ms';
+      intByCaller[key] = (intByCaller[key] || 0) + 1;
+    }
+    body.innerHTML = `
+      <div style="margin-bottom:6px;color:#8ba">elapsed: ${elapsedSec.toFixed(0)}s</div>
+      <div><strong>Network</strong> (/min):
+        fetch <b>${perMin(stats.fetch)}</b> ·
+        xhr <b>${perMin(stats.xhr)}</b> ·
+        gmxhr <b>${perMin(stats.gmxhr)}</b>
+      </div>
+      <div style="color:#8ba;margin-top:3px;font-size:10px">top hosts:</div>
+      ${topN(stats.byHost, 6).map(([h, n]) => `<div style="padding-left:6px">${h} <span style="color:#8ba">${n} (${perMin(n)}/m)</span></div>`).join('')}
+      <div style="color:#8ba;margin-top:3px;font-size:10px">top callers:</div>
+      ${topN(stats.bySource, 6).map(([s, n]) => `<div style="padding-left:6px">${s} <span style="color:#8ba">${n}</span></div>`).join('')}
+
+      <div style="margin-top:6px"><strong>DOM</strong>:
+        mutations <b>${perMin(stats.mutations)}</b>/m ·
+        qSA <b>${perMin(stats.qsa)}</b>/m ·
+        navs <b>${stats.navs}</b>
+      </div>
+
+      <div style="margin-top:6px"><strong>Timers</strong>:
+        active intervals <b>${intervalHandles}</b> (~${intervalRatePerMin.toFixed(0)} fires/m) ·
+        setInterval calls <b>${stats.setIntervalCalls}</b> ·
+        setTimeout <b>${perMin(stats.timeouts)}</b>/m
+      </div>
+      <div style="color:#8ba;margin-top:3px;font-size:10px">active interval owners:</div>
+      ${Object.entries(intByCaller).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, n]) => `<div style="padding-left:6px;font-size:10px">${k} <span style="color:#8ba">×${n}</span></div>`).join('')}
+
+      <div style="margin-top:8px;font-size:10px;color:#667">
+        higher mutations/min ≈ more JS / repaint work.<br>
+        higher gmxhr or fetch /min ≈ more network wake-ups.<br>
+        many active intervals ≈ constant CPU even idle.
+      </div>
+    `;
+  }
+
+  // 0.1.1 — call buildOverlay in two places: now (in case body exists),
+  // and on DOMContentLoaded as a backup. Both routes hit the same code
+  // which is idempotent (only one element with id=wb-diag is created).
+  safe('overlay-now', buildOverlay);
+  if (document.addEventListener) {
+    document.addEventListener('DOMContentLoaded', () => safe('overlay-domready', () => {
+      if (!document.getElementById('wb-diag')) buildOverlay();
+    }), { once: true });
+  }
+
+  // 0.2.0 — periodic POST of the current sample window to the server,
+  // so the user can review later at https://tornwar.com/diag/battery
+  // instead of watching the overlay live. Counters reset after each
+  // send so each sample represents a discrete window. Uses
+  // GM_xmlhttpRequest to bypass any page CSP restrictions; falls back
+  // to plain fetch if GM_xhr isn't around. Fire-and-forget — failures
+  // are silent so a server hiccup doesn't spam errors.
+  const POST_INTERVAL_MS = 60 * 1000;
+  let _windowStart = Date.now();
+  safe('post-loop', () => {
+    setInterval(() => safe('post-tick', () => {
+      const windowSec = (Date.now() - _windowStart) / 1000;
+      if (windowSec < 5) return;
+      const payload = {
+        windowSec,
+        ua: navigator.userAgent || '',
+        url: location.href || '',
+        fetch:     stats.fetch,
+        xhr:       stats.xhr,
+        gmxhr:     stats.gmxhr,
+        mutations: stats.mutations,
+        qsa:       stats.qsa,
+        navs:      stats.navs,
+        timeouts:  stats.timeouts,
+        intervalsActive: stats.intervals.size,
+        byHost:    Object.assign({}, stats.byHost),
+        bySource:  Object.assign({}, stats.bySource),
+      };
+      // Reset counters before send so next window starts clean. (Don't
+      // reset interval handles — those are live.)
+      _windowStart = Date.now();
+      stats.fetch = stats.xhr = stats.gmxhr = stats.mutations = stats.qsa = stats.navs = stats.timeouts = 0;
+      for (const k of Object.keys(stats.byHost)) delete stats.byHost[k];
+      for (const k of Object.keys(stats.bySource)) delete stats.bySource[k];
+      const body = JSON.stringify(payload);
+      if (typeof GM_xmlhttpRequest === 'function') {
+        // origGm intentionally — patched gmxhr would double-count this
+        // very call in the next sample, which is misleading.
+        GM_xmlhttpRequest({
+          method: 'POST',
+          url: 'https://tornwar.com/api/diag/battery',
+          headers: { 'Content-Type': 'application/json' },
+          data: body,
+          timeout: 8000,
+        });
+      } else if (typeof fetch === 'function') {
+        fetch('https://tornwar.com/api/diag/battery', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body
+        }).catch(() => {});
+      }
+    }), POST_INTERVAL_MS);
+  });
+})();
