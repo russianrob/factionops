@@ -245,7 +245,26 @@ export async function computePayouts(warId, options = {}) {
   const cacheKey = `${warId}:${mode}:${settingsKey}`;
   const cached = _cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() && !options.forceFresh) {
-    return { ...cached.result, cached: true };
+    // For permacached (ended-war) entries, sanity-check that the
+    // cached toTs aligns with the war's CURRENT warEndedAt. Mid-war
+    // flickers can persist a partial-window result; this guard
+    // detects the mismatch on the next read and forces recompute.
+    // (Tolerance: 60 sec to absorb Date/Math floor rounding.)
+    if (cached.expiresAt === Infinity) {
+      const war = store.getWar(warId);
+      const expectedToTs = war && war.warEndedAt
+        ? Math.floor(Number(war.warEndedAt) / 1000)
+        : null;
+      if (expectedToTs && cached.result.toTs && Math.abs(cached.result.toTs - expectedToTs) > 60) {
+        console.warn(`[war-payouts] cache stale for ${warId}: cached toTs=${cached.result.toTs}, war.warEndedAt=${expectedToTs} (diff ${expectedToTs - cached.result.toTs}s) — invalidating`);
+        _cache.delete(cacheKey);
+        persistDiskCache();
+      } else {
+        return { ...cached.result, cached: true };
+      }
+    } else {
+      return { ...cached.result, cached: true };
+    }
   }
 
   const war = store.getWar(warId);
