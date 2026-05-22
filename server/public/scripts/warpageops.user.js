@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WarPageOps (fork — solo test branch)
 // @namespace    tornwar.com/warpageops
-// @version      0.2.0
+// @version      0.3.0
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -8061,13 +8061,46 @@ body.wb-chain-active {
     // in place when the call state changes (own/other/free).
     const _wpoScoreCells = new Map();
 
+    // 0.3.0: cache the Score column position once. Scan ANY likely
+    // header row on the war page for the literal text "Score" and
+    // remember its index — then per-row, hit the same-indexed cell.
+    // Much more reliable than class matching because Torn uses
+    // hashed class names that rotate between builds.
+    let _wpoScoreColIdx = null;
+    function _wpoFindScoreColIdx() {
+        if (_wpoScoreColIdx != null) return _wpoScoreColIdx;
+        // Search any element on the page whose text is exactly "Score"
+        // and which appears to be a header cell (parent has siblings).
+        const all = document.querySelectorAll('[class*="header" i], th, [role="columnheader"]');
+        for (const h of all) {
+            const txt = (h.textContent || '').trim();
+            if (txt === 'Score' || txt.toLowerCase() === 'score') {
+                const parent = h.parentElement;
+                if (!parent) continue;
+                const idx = Array.prototype.indexOf.call(parent.children, h);
+                if (idx >= 0) { _wpoScoreColIdx = idx; return idx; }
+            }
+        }
+        return null;
+    }
     function _wpoFindScoreCell(row) {
-        // Try class-based detection first — Torn's war page columns
-        // are wrapped in elements with class names containing "score".
+        // 1) Header-index match (most reliable across Torn versions).
+        const idx = _wpoFindScoreColIdx();
+        if (idx != null && row.children[idx]) {
+            const cell = row.children[idx];
+            const t = (cell.textContent || '').trim();
+            // Sanity check: cell text should look like a score number
+            // (or already be our pill from a previous render).
+            if (/^\d{1,4}\.\d{1,2}$/.test(t) || cell.classList.contains('wpo-score-call')) {
+                return cell;
+            }
+        }
+        // 2) Class-based fallback — Torn's war columns sometimes
+        // include "score" in their hashed class names.
         const byCls = row.querySelector('[class*="score" i]');
         if (byCls) return byCls;
-        // Fallback: scan immediate children for one whose trimmed text
-        // looks like a decimal score (e.g. "0.00", "170.61").
+        // 3) Last resort: scan immediate children for a decimal
+        // number cell. Catches mobile/PDA layouts that use divs.
         for (const c of row.children) {
             const t = (c.textContent || '').trim();
             if (/^\d{1,4}\.\d{1,2}$/.test(t)) return c;
@@ -9085,6 +9118,15 @@ body.wb-chain-active {
         startCallPruner();
         startKeepAlive();
         updateChainBar();
+
+        // 0.3.0: WarPageOps strips the #fo-overlay panel entirely.
+        // Background services (chain timer, status timers, call
+        // pruner, keepalive, chain bar) still run because they feed
+        // the in-row UI mutations (Score-column call cell + wb-cell
+        // status pills). The overlay itself + the main-content hide
+        // are skipped so users see Torn's native war page UI with
+        // our cell-level enhancements layered on top.
+        if (true) return; // disable overlay creation
 
         // Hide Torn's main content but keep the container itself visible so
         // we can insert the overlay INSIDE it. Torn typically scopes its
