@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Warboard Battery Diag
 // @namespace    tornwar.com
-// @version      0.2.5
+// @version      0.2.6
 // @description  Live overlay of what's consuming CPU/network inside the WebView — fetch / XHR / GM_xhr counts by host + caller, mutation rate, setInterval handles, page nav rate. Diagnostic only, no side effects.
 // @author       warboard
 // @match        https://www.torn.com/*
@@ -278,14 +278,20 @@
     const topN = (obj, n) => Object.entries(obj || {}).sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, n);
     let activeIntervals = [];
     try { activeIntervals = [...stats.intervals.values()]; } catch (_) {}
-    const intByCaller = {};
+    // 0.2.6: group by (caller, ms, fn-shortened) so "unknown" rows
+    // get sub-grouped by the actual callback function source. That
+    // lets us see e.g. "unknown @ 1000ms ×83 — fn: function tick(){...}"
+    // instead of an unattributable bucket.
+    const intByKey = {};
     let intervalHandles = activeIntervals.length;
     let intervalRatePerMin = 0;
     for (const i of activeIntervals) {
       const ms = Number(i && i.ms) || 0;
       if (ms > 0) intervalRatePerMin += (60000 / ms);
-      const key = ((i && i.caller) || 'unknown') + ' @ ' + ms + 'ms';
-      intByCaller[key] = (intByCaller[key] || 0) + 1;
+      const caller = (i && i.caller) || 'unknown';
+      const fnShort = (i && i.fn) ? String(i.fn).slice(0, 60) : '';
+      const key = caller + ' @ ' + ms + 'ms\n  ' + fnShort;
+      intByKey[key] = (intByKey[key] || 0) + 1;
     }
     body.innerHTML = `
       <div style="margin-bottom:6px;color:#8ba">elapsed: ${elapsedSec.toFixed(0)}s</div>
@@ -310,8 +316,13 @@
         setInterval calls <b>${stats.setIntervalCalls}</b> ·
         setTimeout <b>${perMin(stats.timeouts)}</b>/m
       </div>
-      <div style="color:#8ba;margin-top:3px;font-size:10px">active interval owners:</div>
-      ${Object.entries(intByCaller).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, n]) => `<div style="padding-left:6px;font-size:10px">${k} <span style="color:#8ba">×${n}</span></div>`).join('')}
+      <div style="color:#8ba;margin-top:3px;font-size:10px">active interval owners (caller / ms / fn-source):</div>
+      ${Object.entries(intByKey).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, n]) => {
+        const [head, ...rest] = k.split('\n');
+        const fn = (rest.join(' ') || '').trim();
+        const escFn = fn.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return `<div style="padding-left:6px;font-size:10px;line-height:1.3">${head} <span style="color:#8ba">×${n}</span>${fn ? `<br><span style="padding-left:14px;color:#666;font-family:ui-monospace,Menlo,monospace;font-size:9px">${escFn}</span>` : ''}</div>`;
+      }).join('')}
 
       <div style="margin-top:8px;font-size:10px;color:#667">
         higher mutations/min ≈ more JS / repaint work.<br>
