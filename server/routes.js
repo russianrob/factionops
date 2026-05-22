@@ -495,7 +495,7 @@ const PAYOUTS_HTML = `<!doctype html>
     <p class="muted" style="font-size:11.5px;margin:0 0 10px">Leave blank to use defaults. Changes invalidate the cache and recompute on next refresh.</p>
     <div class="grid">
       <label style="grid-column:1/-1;font-size:11.5px;color:var(--text-mute);">Loot override (\$) <input type="number" id="s-loot" placeholder="auto-detect" min="0" step="1000000"></label>
-      <label style="font-size:11.5px;color:var(--text-mute);">Payout % (0-1) <input type="number" id="s-pct" placeholder="0.80" min="0" max="1" step="0.01"></label>
+      <label style="font-size:11.5px;color:var(--text-mute);">Payout % <input type="number" id="s-pct" placeholder="80" min="0" max="100" step="1"></label>
       <label style="font-size:11.5px;color:var(--text-mute);">Assist weight <input type="number" id="s-assist" placeholder="0.3" min="0" step="0.05"></label>
       <label style="font-size:11.5px;color:var(--text-mute);">Non-war weight <input type="number" id="s-nonwar" placeholder="0.3" min="0" step="0.05"></label>
       <label style="font-size:11.5px;color:var(--text-mute);">Failed weight <input type="number" id="s-failed" placeholder="0" min="0" step="0.05"></label>
@@ -544,7 +544,8 @@ async function loadSettings(warId){
   try{
     const s=await api('/api/war/'+encodeURIComponent(warId)+'/payout-settings-admin');
     $('#s-loot').value   = s.lootOverride!=null ? s.lootOverride : '';
-    $('#s-pct').value    = s.payoutPct!=null ? s.payoutPct : '';
+    // Server stores payoutPct as 0-1; UI shows whole percent 0-100.
+    $('#s-pct').value    = s.payoutPct!=null ? Math.round(s.payoutPct*100) : '';
     $('#s-assist').value = s.assistWeight!=null ? s.assistWeight : '';
     $('#s-nonwar').value = s.nonWarWeight!=null ? s.nonWarWeight : '';
     $('#s-failed').value = s.failedWeight!=null ? s.failedWeight : '';
@@ -552,9 +553,12 @@ async function loadSettings(warId){
 }
 async function saveSettings(warId){
   $('#settings-status').textContent='Saving…';
+  // payoutPct UI is 0-100 whole percent; server expects 0-1 fraction.
+  const pctRaw=$('#s-pct').value;
+  const pctOut=pctRaw==='' ? '' : (Number(pctRaw)/100);
   const payload={
     lootOverride: $('#s-loot').value,
-    payoutPct:    $('#s-pct').value,
+    payoutPct:    pctOut,
     assistWeight: $('#s-assist').value,
     nonWarWeight: $('#s-nonwar').value,
     failedWeight: $('#s-failed').value,
