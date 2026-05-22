@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Warboard Battery Diag
 // @namespace    tornwar.com
-// @version      0.2.0
+// @version      0.2.5
 // @description  Live overlay of what's consuming CPU/network inside the WebView — fetch / XHR / GM_xhr counts by host + caller, mutation rate, setInterval handles, page nav rate. Diagnostic only, no side effects.
 // @author       warboard
 // @match        https://www.torn.com/*
@@ -32,10 +32,12 @@
     xhr:       0,
     gmxhr:     0,
     byHost:    Object.create(null),    // hostname → count
-    bySource:  Object.create(null),    // script URL → count
+    bySource:  Object.create(null),    // script URL → count (network)
     mutations: 0,
     navs:      0,
     qsa:       0,
+    qsaBySource:     Object.create(null),  // 0.2.3: script URL of IMMEDIATE qSA caller
+    qsaByOriginator: Object.create(null),  // 0.2.5: script URL of OUTERMOST frame — blames the userscript that started the chain even when it triggered Torn helpers
     intervals: new Map(),              // handle → { ms, fn-summary }
     timeouts:  0,
     setIntervalCalls: 0,
@@ -58,6 +60,26 @@
       }
     } catch (_) {}
     return 'unknown';
+  }
+  // 0.2.5: collect both immediate (innermost) and originator (outermost)
+  // frames in one stack walk. Userscripts that trigger Torn helpers
+  // were getting hidden under the helper's URL with attributeCaller
+  // alone; the originator field surfaces them.
+  function attributeBoth() {
+    let immediate = null, outermost = null;
+    try {
+      const stack = new Error().stack || '';
+      const lines = stack.split('\n').slice(2);
+      for (const line of lines) {
+        const m = line.match(/(https?:\/\/[^\s):]+)|(userscript:[^\s):]+)|(file:\/\/[^\s):]+)/);
+        if (m && m[0] && !m[0].includes('wb-battery-diag')) {
+          const cleaned = m[0].replace(/:\d+:\d+$/, '').split('/').slice(-2).join('/').slice(0, 60);
+          if (!immediate) immediate = cleaned;
+          outermost = cleaned;
+        }
+      }
+    } catch (_) {}
+    return { immediate: immediate || 'unknown', outermost: outermost || 'unknown' };
   }
 
   function bump(map, key) { map[key] = (map[key] || 0) + 1; }
@@ -129,14 +151,27 @@
   });
 
   safe('qsa-wrap', () => {
+    // 0.2.5: bump BOTH immediate and originator maps per call. Single
+    // Error.stack capture extracts both, so cost is the same as 0.2.3
+    // but we gain the chain-originator view.
     const origQSA = Document.prototype.querySelectorAll;
     Document.prototype.querySelectorAll = function patchedQSA(...args) {
       stats.qsa++;
+      try {
+        const a = attributeBoth();
+        bump(stats.qsaBySource,     a.immediate);
+        bump(stats.qsaByOriginator, a.outermost);
+      } catch (_) {}
       return origQSA.apply(this, args);
     };
     const origQSAE = Element.prototype.querySelectorAll;
     Element.prototype.querySelectorAll = function patchedQSAE(...args) {
       stats.qsa++;
+      try {
+        const a = attributeBoth();
+        bump(stats.qsaBySource,     a.immediate);
+        bump(stats.qsaByOriginator, a.outermost);
+      } catch (_) {}
       return origQSAE.apply(this, args);
     };
   });
@@ -158,8 +193,20 @@
   });
 
   // ── Overlay UI ──────────────────────────────────────────────────────
+  // 0.2.4 — collapsed state persists across page nav via localStorage.
+  // Previously closing the panel only hid it for the current page;
+  // next refresh popped it back open and the user had to close again.
+  function getCollapsed() {
+    try { return localStorage.getItem('wb-diag-collapsed') === '1'; } catch (_) { return false; }
+  }
+  function setCollapsed(v) {
+    try { localStorage.setItem('wb-diag-collapsed', v ? '1' : '0'); } catch (_) {}
+  }
+
   function buildOverlay() {
     if (!document.body) return setTimeout(buildOverlay, 200);
+    if (document.getElementById('wb-diag')) return;
+    const startCollapsed = getCollapsed();
     const wrap = document.createElement('div');
     wrap.id = 'wb-diag';
     wrap.style.cssText = `
@@ -174,6 +221,7 @@
       pointer-events: auto; user-select: text;
     `;
     wrap.innerHTML = '<div id="wb-diag-body">starting…</div>';
+    if (startCollapsed) wrap.style.display = 'none';
     document.body.appendChild(wrap);
 
     // Toggle button — smaller pill to expand/collapse.
@@ -191,7 +239,9 @@
     btn.addEventListener('click', () => {
       wrap.style.display = 'block';
       btn.style.display = 'none';
+      setCollapsed(false);
     });
+    if (startCollapsed) btn.style.display = 'block';
     document.body.appendChild(btn);
 
     // Header with collapse button
@@ -201,7 +251,7 @@
     const close = document.createElement('span');
     close.textContent = '×';
     close.style.cssText = 'cursor:pointer;font-size:16px;line-height:1;padding:0 4px;color:#999;';
-    close.addEventListener('click', () => { wrap.style.display = 'none'; btn.style.display = 'block'; });
+    close.addEventListener('click', () => { wrap.style.display = 'none'; btn.style.display = 'block'; setCollapsed(true); });
     const reset = document.createElement('span');
     reset.textContent = '↺';
     reset.style.cssText = 'cursor:pointer;font-size:14px;line-height:1;padding:0 6px;color:#999;';
@@ -217,24 +267,24 @@
     hdr.appendChild(right);
     wrap.insertBefore(hdr, wrap.firstChild);
 
-    setInterval(refreshOverlay, 1000);
+    setInterval(() => safe('overlay-refresh', refreshOverlay), 1000);
   }
 
   function refreshOverlay() {
     const body = document.getElementById('wb-diag-body');
     if (!body) return;
-    const elapsedSec = (Date.now() - stats.startTs) / 1000;
-    const perMin = n => elapsedSec > 0 ? (n / elapsedSec * 60).toFixed(1) : '0';
-    const topN = (obj, n) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n);
-    const activeIntervals = [...stats.intervals.values()];
-    // Group active intervals by caller for compact display
+    const elapsedSec = Math.max(0.001, (Date.now() - stats.startTs) / 1000);
+    const perMin = n => Number.isFinite(n) ? (n / elapsedSec * 60).toFixed(1) : '0';
+    const topN = (obj, n) => Object.entries(obj || {}).sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, n);
+    let activeIntervals = [];
+    try { activeIntervals = [...stats.intervals.values()]; } catch (_) {}
     const intByCaller = {};
-    let intervalHandles = 0;
+    let intervalHandles = activeIntervals.length;
     let intervalRatePerMin = 0;
     for (const i of activeIntervals) {
-      intervalHandles++;
-      if (i.ms > 0) intervalRatePerMin += (60000 / i.ms);
-      const key = (i.caller || 'unknown') + ' @ ' + i.ms + 'ms';
+      const ms = Number(i && i.ms) || 0;
+      if (ms > 0) intervalRatePerMin += (60000 / ms);
+      const key = ((i && i.caller) || 'unknown') + ' @ ' + ms + 'ms';
       intByCaller[key] = (intByCaller[key] || 0) + 1;
     }
     body.innerHTML = `
@@ -306,8 +356,10 @@
         navs:      stats.navs,
         timeouts:  stats.timeouts,
         intervalsActive: stats.intervals.size,
-        byHost:    Object.assign({}, stats.byHost),
-        bySource:  Object.assign({}, stats.bySource),
+        byHost:          Object.assign({}, stats.byHost),
+        bySource:        Object.assign({}, stats.bySource),
+        qsaBySource:     Object.assign({}, stats.qsaBySource),     // 0.2.3: immediate
+        qsaByOriginator: Object.assign({}, stats.qsaByOriginator), // 0.2.5: outermost
       };
       // Reset counters before send so next window starts clean. (Don't
       // reset interval handles — those are live.)
@@ -315,6 +367,8 @@
       stats.fetch = stats.xhr = stats.gmxhr = stats.mutations = stats.qsa = stats.navs = stats.timeouts = 0;
       for (const k of Object.keys(stats.byHost)) delete stats.byHost[k];
       for (const k of Object.keys(stats.bySource)) delete stats.bySource[k];
+      for (const k of Object.keys(stats.qsaBySource)) delete stats.qsaBySource[k];
+      for (const k of Object.keys(stats.qsaByOriginator)) delete stats.qsaByOriginator[k];
       const body = JSON.stringify(payload);
       if (typeof GM_xmlhttpRequest === 'function') {
         // origGm intentionally — patched gmxhr would double-count this

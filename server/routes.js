@@ -440,12 +440,17 @@ function factionopsVersionTooOld(v) {
 }
 
 router.post("/api/auth", async (req, res) => {
-  const { apiKey, scriptVersion } = (req.body || {});
+  const { apiKey, scriptVersion, scriptName } = (req.body || {});
   if (!apiKey || typeof apiKey !== "string") {
     return res.status(400).json({ error: "apiKey is required" });
   }
 
-  if (factionopsVersionTooOld(scriptVersion)) {
+  // Version gate only applies to the production factionops / commandcenter
+  // scripts. Other client identities (miniops, warpageops, dev forks)
+  // skip the gate — they're allowed to pick their own versioning scheme
+  // without inheriting factionops's minimum.
+  const isVersionedClient = !scriptName || scriptName === 'factionops' || scriptName === 'commandcenter';
+  if (isVersionedClient && factionopsVersionTooOld(scriptVersion)) {
     return res.status(426).json({
       error: `FactionOps ${scriptVersion} is outdated — please update to v${FACTIONOPS_MIN_VERSION} or newer.`,
       updateUrl: 'https://tornwar.com/scripts/factionops.user.js',

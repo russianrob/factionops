@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Offline Highlighter
 // @namespace    torn.faction.offline.highlight
-// @version      1.9.3
+// @version      1.9.4
 // @description  Highlights faction members red who have been offline for over 24 hours on the faction member list. Shows OC inactivity badges in chat globally. Configurable threshold. PDA compatible.
 // @author       RussianRob
 // @match        https://www.torn.com/*
@@ -17,7 +17,8 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
-// v1.9.3  - Fix: members whose last OC was older than the most-recent ~100 crimes were getting "[OC: Never]" / "Last OC: Never" badges. Torn v2 caps /faction/crimes?cat=completed at 100 entries per response and the script was only reading page 1 — anyone (e.g. Ciel) whose last OC was further back than the freshest page got dropped from lastOCMap and treated as a never-participant. fetchCompletedCrimes now paginates backwards via the `to=<unix-ts>` keyset over a 90-day window (max 20 pages = 2000 crimes), matching the same pagination loop already in use server-side at oc-spawn.js:62.
+// v1.9.4  - Fix: chat tags now show [In OC] for members in active scenarios
+// v1.9.3  - Fix: OC badge showing twice in chat (avatar + name links)
 // v1.9.2  - Update URLs to tornwar.com hosting
 // v1.9.1  - Fix: highlighting bleeding onto armory/controls pages
 // v1.9.0  - Fix: new members (<72h) incorrectly getting [OC: Never] badges
@@ -133,48 +134,8 @@
         return apiFetch(`${API_BASE}/v2/faction/?selections=members&key=${apiKey}`);
     }
 
-    // Paginated fetch — Torn v2 caps `?cat=completed` at 100 entries per
-    // response. Without walking back via the `to=<unix-ts>` keyset we only
-    // see the most-recent ~100 crimes, which makes anyone whose last OC
-    // happened earlier than that window look like they "Never" joined an OC.
-    // Walks 90 days max; safety cap of 20 pages = 2000 crimes.
-    async function fetchCompletedCrimes(apiKey) {
-        const LOOKBACK_DAYS = 90;
-        const MAX_PAGES = 20;
-        const fromTs = Math.floor(Date.now() / 1000) - (LOOKBACK_DAYS * 86400);
-        const seen = new Set();
-        const all = [];
-        let toTs = null;
-        for (let page = 0; page < MAX_PAGES; page++) {
-            const params = new URLSearchParams({
-                cat: 'completed',
-                sort: 'DESC',
-                from: String(fromTs),
-                key: apiKey,
-            });
-            if (toTs) params.set('to', String(toTs));
-            const data = await apiFetch(`${API_BASE}/v2/faction/crimes?${params}`);
-            if (data && data.error) return data; // surface the error to caller
-            const batch = Array.isArray(data?.crimes)
-                ? data.crimes
-                : Object.values(data?.crimes || {});
-            if (batch.length === 0) break;
-            let added = 0;
-            let oldest = Infinity;
-            for (const c of batch) {
-                const id = String(c.id);
-                if (seen.has(id)) continue;
-                seen.add(id);
-                all.push(c);
-                added++;
-                const ts = Number(c.executed_at || 0);
-                if (ts > 0 && ts < oldest) oldest = ts;
-            }
-            if (added === 0) break;
-            if (!Number.isFinite(oldest) || oldest <= fromTs) break;
-            toTs = oldest - 1;
-        }
-        return { crimes: all };
+    function fetchCompletedCrimes(apiKey) {
+        return apiFetch(`${API_BASE}/v2/faction/crimes?cat=completed&sort=DESC&key=${apiKey}`);
     }
 
     function fetchAvailableCrimes(apiKey) {
@@ -197,6 +158,7 @@
     // ─── OC participation tracking ──────────────────────────
     let lastOCMap = {};  // member ID → { timestamp, crimeName }
     let notParticipatingIDs = new Set();  // IDs of members not in any active OC
+    let inActiveOCIDs = new Set();  // IDs of members currently in an active OC
     let allFactionMemberIDs = new Set();  // all faction member IDs
     let newMemberIDs = new Set();  // IDs of members who joined < 3 days ago (72h OC cooldown)
 
@@ -267,14 +229,14 @@
             }
 
             // Build set of member IDs in active OCs
-            const inActiveOC = new Set();
+            inActiveOCIDs = new Set();
             if (!crimesData.error) {
                 const crimes = crimesData.crimes || [];
                 for (const crime of crimes) {
                     if (!crime.slots) continue;
                     for (const slot of crime.slots) {
                         const uid = slot.user && (slot.user.id || slot.user.user_id);
-                        if (uid) inActiveOC.add(String(uid));
+                        if (uid) inActiveOCIDs.add(String(uid));
                     }
                 }
             }
@@ -283,12 +245,12 @@
             // Exclude new members (< 3 days) who can't join OCs yet
             notParticipatingIDs = new Set();
             for (const id of allFactionMemberIDs) {
-                if (!inActiveOC.has(id) && !newMemberIDs.has(id)) {
+                if (!inActiveOCIDs.has(id) && !newMemberIDs.has(id)) {
                     notParticipatingIDs.add(id);
                 }
             }
 
-            console.log(`[FOH] ${notParticipatingIDs.size} members not in active OCs, ${inActiveOC.size} in active OCs, ${newMemberIDs.size} new members (< 72h)`);
+            console.log(`[FOH] ${notParticipatingIDs.size} members not in active OCs, ${inActiveOCIDs.size} in active OCs, ${newMemberIDs.size} new members (< 72h)`);
         } catch (err) {
             console.error('[FOH] Failed to build not-participating list:', err);
         }
@@ -436,7 +398,7 @@
 
     // ─── Chat OC badges ──────────────────────────────────
     function annotateChatMessages() {
-        if (Object.keys(lastOCMap).length === 0 || notParticipatingIDs.size === 0) return;
+        if (Object.keys(lastOCMap).length === 0 && inActiveOCIDs.size === 0) return;
 
         // Cache the OC panel reference outside the loop (only on faction page)
         let ocPanelEl = null;
@@ -459,11 +421,18 @@
             if (!match) return;
             const id = match[1];
 
+            // Only annotate known faction members
+            if (allFactionMemberIDs.size > 0 && !allFactionMemberIDs.has(id)) return;
+
             // Skip new members who can't join OCs yet (< 72h cooldown)
             if (newMemberIDs.has(id)) return;
 
-            // Only annotate members who aren't participating in any OC
-            if (!notParticipatingIDs.has(id)) return;
+            // Skip avatar/image links — only annotate the plain text name link
+            if (link.querySelector('img')) return;
+
+            // Skip already-processed links (guard against multiple links with same XID)
+            if (link.dataset.fohChatDone) return;
+            link.dataset.fohChatDone = '1';
 
             // Make sure this isn't in the OC panel (only relevant on faction page)
             if (ocPanelEl && ocPanelEl.contains(link)) return;
@@ -479,23 +448,34 @@
             const badge = document.createElement('span');
             badge.className = 'foh-chat-oc';
 
-            const ocInfo = lastOCMap[id];
-            if (ocInfo) {
-                const hrsAgo = hoursAgo(ocInfo.timestamp);
-                const timeStr = formatDuration(hrsAgo);
-                badge.textContent = ` [OC: ${timeStr} ago]`;
-                badge.title = `${ocInfo.crimeName} - ${new Date(ocInfo.timestamp * 1000).toLocaleDateString()}`;
-                if (hrsAgo > 168) {
-                    badge.style.color = '#ff4444';
-                } else if (hrsAgo > 72) {
-                    badge.style.color = '#ffa500';
+            if (inActiveOCIDs.has(id)) {
+                // Member is currently in an active OC scenario
+                badge.textContent = ' [In OC]';
+                badge.title = 'Currently assigned to an active OC scenario';
+                badge.style.color = '#2196f3';
+            } else if (notParticipatingIDs.has(id)) {
+                // Member is NOT in any active OC — show last completion time
+                const ocInfo = lastOCMap[id];
+                if (ocInfo) {
+                    const hrsAgo = hoursAgo(ocInfo.timestamp);
+                    const timeStr = formatDuration(hrsAgo);
+                    badge.textContent = ` [OC: ${timeStr} ago]`;
+                    badge.title = `${ocInfo.crimeName} - ${new Date(ocInfo.timestamp * 1000).toLocaleDateString()}`;
+                    if (hrsAgo > 168) {
+                        badge.style.color = '#ff4444';
+                    } else if (hrsAgo > 72) {
+                        badge.style.color = '#ffa500';
+                    } else {
+                        badge.style.color = '#4caf50';
+                    }
                 } else {
-                    badge.style.color = '#4caf50';
+                    badge.textContent = ' [OC: Never]';
+                    badge.title = 'No completed OC found in recent history';
+                    badge.style.color = '#ff4444';
                 }
             } else {
-                badge.textContent = ' [OC: Never]';
-                badge.title = 'No completed OC found in recent history';
-                badge.style.color = '#ff4444';
+                // Member not in either set (data may not be loaded yet) — skip
+                return;
             }
 
             badge.style.cssText += ';font-size:9px;font-weight:700;' +

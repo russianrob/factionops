@@ -1,14 +1,14 @@
 // ==UserScript==
-// @name         WarPageOps
-// @namespace    tornwar.com/warpageops
+// @name         MiniOps
+// @namespace    tornwar.com/miniops
 // @version      1.0.0
 // @description  Call/uncall faction war targets directly from Torn's native war page. No overlay, no banners — just a tap-to-call button in place of each enemy's score cell.
 // @author       RussianRob
 // @license      MIT
 // @match        https://www.torn.com/factions.php*
 // @match        https://www.torn.com/war.php*
-// @downloadURL  https://tornwar.com/scripts/warpageops.user.js
-// @updateURL    https://tornwar.com/scripts/warpageops.meta.js
+// @downloadURL  https://tornwar.com/scripts/miniops.user.js
+// @updateURL    https://tornwar.com/scripts/miniops.meta.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -24,7 +24,7 @@
   const SERVER     = 'https://tornwar.com';
   const POLL_MS    = 5000;          // how often we fetch fresh call state
   const LONG_MS    = 500;           // long-press threshold → deal call
-  const LOG_PREFIX = '[warpageops]';
+  const LOG_PREFIX = '[miniops]';
   const log  = (...a) => console.log(LOG_PREFIX, ...a);
   const warn = (...a) => console.warn(LOG_PREFIX, ...a);
 
@@ -33,10 +33,10 @@
   const set = (k, v) => { try { GM_setValue(k, v); } catch {} };
 
   const state = {
-    apiKey:  get('warpageops_apikey', ''),
-    jwt:     get('warpageops_jwt', ''),
-    myId:    get('warpageops_my_id', ''),
-    myName:  get('warpageops_my_name', ''),
+    apiKey:  get('miniops_apikey', ''),
+    jwt:     get('miniops_jwt', ''),
+    myId:    get('miniops_my_id', ''),
+    myName:  get('miniops_my_name', ''),
     warId:   null,
     calls:   Object.create(null),   // targetId → { calledBy:{id,name}, isDeal, calledAt }
     rowCache: new Map(),            // targetId → score-cell button element
@@ -75,15 +75,15 @@
     const r = await gmRequest({
       method: 'POST',
       url: SERVER + '/api/auth',
-      body: { apiKey: state.apiKey, scriptVersion: '1.0.0', scriptName: 'warpageops' },
+      body: { apiKey: state.apiKey, scriptVersion: '1.0.0', scriptName: 'miniops' },
     });
     if (!r.token || !r.playerId) throw new Error('Auth response missing token');
     state.jwt    = r.token;
     state.myId   = String(r.playerId);
     state.myName = r.playerName || '';
-    set('warpageops_jwt',     state.jwt);
-    set('warpageops_my_id',   state.myId);
-    set('warpageops_my_name', state.myName);
+    set('miniops_jwt',     state.jwt);
+    set('miniops_my_id',   state.myId);
+    set('miniops_my_name', state.myName);
     log('Authed as', state.myName, '(' + state.myId + ')');
   }
 
@@ -287,7 +287,7 @@
     overlay.id = 'wpo-settings';
     overlay.innerHTML = `
       <div class="wpo-modal">
-        <h3>WarPageOps</h3>
+        <h3>MiniOps</h3>
         <p>Paste your Torn API key (limited access is fine — only used for auth).</p>
         <input type="text" id="wpo-key" placeholder="API key" value="${state.apiKey || ''}">
         <div class="wpo-row">
@@ -301,7 +301,7 @@
     document.getElementById('wpo-save').onclick  = async () => {
       const k = document.getElementById('wpo-key').value.trim();
       if (!k) return;
-      state.apiKey = k; set('warpageops_apikey', k);
+      state.apiKey = k; set('miniops_apikey', k);
       const s = document.getElementById('wpo-status');
       s.textContent = 'Authenticating…';
       try {
@@ -318,7 +318,7 @@
     const g = document.createElement('button');
     g.id = 'wpo-gear';
     g.textContent = '⚙';
-    g.title = 'WarPageOps settings';
+    g.title = 'MiniOps settings';
     g.onclick = showSettings;
     document.body.appendChild(g);
   }
