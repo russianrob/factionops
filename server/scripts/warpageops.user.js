@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WarPageOps (fork — solo test branch)
 // @namespace    tornwar.com/warpageops
-// @version      0.1.0
+// @version      0.2.0
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -683,6 +683,45 @@ html.wb-theme-light {
     color: var(--wb-call-red);
     border-color: var(--wb-call-red);
     cursor: default;
+}
+/* 0.2.0: hijacked Score column cell styles. Inline in Torn's row
+ * cell so the visual fits the existing column width. */
+.wpo-score-call {
+    padding: 0 !important;
+    text-align: center !important;
+}
+.wpo-score-call > span {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    user-select: none;
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.wpo-call-empty {
+    background: rgba(78,205,196,0.12);
+    color: #4ecdc4;
+    border: 1px solid #4ecdc4;
+}
+.wpo-call-mine {
+    background: rgba(78,205,196,0.28);
+    color: #4ecdc4;
+    border: 1px solid #4ecdc4;
+}
+.wpo-call-other {
+    background: rgba(225,112,85,0.15);
+    color: #e17055;
+    border: 1px solid #e17055;
+}
+.wpo-call-deal {
+    background: rgba(253,203,110,0.18);
+    color: #fdcb6e;
+    border-color: #fdcb6e;
 }
 .wb-uncall-btn {
     padding: 2px 8px;
@@ -8009,6 +8048,96 @@ body.wb-chain-active {
 
         // Apply initial row highlights
         applyRowHighlights(row, targetId);
+
+        // 0.2.0: hijack Torn's Score column cell and replace its
+        // contents with a call/uncall button. Same call state as the
+        // overlay, single tap = regular, long-press / right-click =
+        // deal call.
+        _wpoInstallScoreCallForRow(row, targetId);
+    }
+
+    // ---- 0.2.0: Score-column call hijack ----
+    // Tracks each row's score cell so updateTargetRow can re-render
+    // in place when the call state changes (own/other/free).
+    const _wpoScoreCells = new Map();
+
+    function _wpoFindScoreCell(row) {
+        // Try class-based detection first — Torn's war page columns
+        // are wrapped in elements with class names containing "score".
+        const byCls = row.querySelector('[class*="score" i]');
+        if (byCls) return byCls;
+        // Fallback: scan immediate children for one whose trimmed text
+        // looks like a decimal score (e.g. "0.00", "170.61").
+        for (const c of row.children) {
+            const t = (c.textContent || '').trim();
+            if (/^\d{1,4}\.\d{1,2}$/.test(t)) return c;
+        }
+        return null;
+    }
+
+    function _wpoRenderScoreCall(cell, targetId) {
+        cell.innerHTML = '';
+        cell.classList.add('wpo-score-call');
+        const callData = state.calls[String(targetId)];
+        const inner = document.createElement('span');
+        if (!callData) {
+            inner.className = 'wpo-call-empty';
+            inner.textContent = 'Call';
+        } else if (callData.calledBy && String(callData.calledBy.id) === String(state.myPlayerId)) {
+            inner.className = 'wpo-call-mine' + (callData.isDeal ? ' wpo-call-deal' : '');
+            inner.textContent = callData.isDeal ? '🤝 You' : 'You';
+        } else {
+            inner.className = 'wpo-call-other' + (callData.isDeal ? ' wpo-call-deal' : '');
+            const name = callData.calledBy ? callData.calledBy.name : 'Called';
+            inner.textContent = callData.isDeal ? `🤝 ${name}` : name;
+        }
+        cell.appendChild(inner);
+    }
+
+    function _wpoAttachCallHandlers(cell, targetId) {
+        if (cell.dataset.wpoCallBound) return;
+        cell.dataset.wpoCallBound = '1';
+        cell.style.cursor = 'pointer';
+        cell.style.webkitTapHighlightColor = 'transparent';
+        let pressTimer = null;
+        let longFired = false;
+
+        function callOrUncall(isDeal) {
+            const c = state.calls[String(targetId)];
+            if (!c) {
+                emitCallTarget(targetId, isDeal);
+            } else if (c.calledBy && String(c.calledBy.id) === String(state.myPlayerId)) {
+                emitUncallTarget(targetId);
+            }
+            // else: someone else's call, ignore
+        }
+
+        cell.addEventListener('touchstart', () => {
+            longFired = false;
+            pressTimer = setTimeout(() => { longFired = true; callOrUncall(true); }, 500);
+        }, { passive: true });
+        const cancelLong = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
+        cell.addEventListener('touchend',    cancelLong);
+        cell.addEventListener('touchmove',   cancelLong);
+        cell.addEventListener('touchcancel', cancelLong);
+
+        cell.addEventListener('click', (e) => {
+            e.stopPropagation(); e.preventDefault();
+            if (longFired) { longFired = false; return; }
+            callOrUncall(false);
+        });
+        cell.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            callOrUncall(true);
+        });
+    }
+
+    function _wpoInstallScoreCallForRow(row, targetId) {
+        const cell = _wpoFindScoreCell(row);
+        if (!cell) return;
+        _wpoScoreCells.set(String(targetId), cell);
+        _wpoAttachCallHandlers(cell, targetId);
+        _wpoRenderScoreCall(cell, targetId);
     }
 
     // ---- Cell renderers ----
@@ -8249,6 +8378,10 @@ body.wb-chain-active {
         // Also update old-style enhanced row cells
         const callEl = document.getElementById(`wb-call-${targetId}`);
         if (callEl) renderCallCell(callEl, targetId);
+
+        // 0.2.0: re-render the hijacked Score-column cell too
+        const scoreCell = _wpoScoreCells.get(String(targetId));
+        if (scoreCell) _wpoRenderScoreCall(scoreCell, targetId);
 
         const statusEl = document.getElementById(`wb-status-${targetId}`);
         if (statusEl) renderStatusCell(statusEl, targetId);

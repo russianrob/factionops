@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WarPageOps (fork — solo test branch)
 // @namespace    tornwar.com/warpageops
-// @version      0.1.0
+// @version      0.2.0
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
