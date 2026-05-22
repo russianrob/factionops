@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MiniOps
 // @namespace    tornwar.com/miniops
-// @version      1.0.0
+// @version      1.0.1
 // @description  Call/uncall faction war targets directly from Torn's native war page. No overlay, no banners — just a tap-to-call button in place of each enemy's score cell.
 // @author       RussianRob
 // @license      MIT
@@ -77,10 +77,12 @@
       url: SERVER + '/api/auth',
       body: { apiKey: state.apiKey, scriptVersion: '1.0.0', scriptName: 'miniops' },
     });
-    if (!r.token || !r.playerId) throw new Error('Auth response missing token');
+    // Server returns { token, player: { playerId, playerName, factionId, ... } }
+    const player = r.player || {};
+    if (!r.token || !player.playerId) throw new Error('Auth response missing token or playerId');
     state.jwt    = r.token;
-    state.myId   = String(r.playerId);
-    state.myName = r.playerName || '';
+    state.myId   = String(player.playerId);
+    state.myName = player.playerName || '';
     set('miniops_jwt',     state.jwt);
     set('miniops_my_id',   state.myId);
     set('miniops_my_name', state.myName);

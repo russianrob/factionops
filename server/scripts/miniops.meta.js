@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MiniOps
 // @namespace    tornwar.com/miniops
-// @version      1.0.0
+// @version      1.0.1
 // @description  Call/uncall faction war targets directly from Torn's native war page. No overlay, no banners — just a tap-to-call button in place of each enemy's score cell.
 // @author       RussianRob
 // @license      MIT
