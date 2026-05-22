@@ -458,6 +458,17 @@ const PAYOUTS_HTML = `<!doctype html>
   .member-name{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .member-pay{font:600 14px "SF Mono", ui-monospace, Menlo, monospace; color:var(--accent); white-space:nowrap;}
   .member-stats{display:flex; gap:10px; font-size:11.5px; color:var(--text-mute); margin-top:4px; flex-wrap:wrap; font-family:"SF Mono", ui-monospace, Menlo, monospace;}
+  .member.expandable{cursor:pointer; -webkit-tap-highlight-color:transparent;}
+  .member.expandable .arrow{display:inline-block; color:var(--text-mute); margin-right:4px; transition:transform .15s; font-size:10px;}
+  .member.expandable.open .arrow{transform:rotate(90deg);}
+  .member-detail{display:none; margin-top:8px; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:8px;}
+  .member.expandable.open .member-detail{display:block;}
+  .bd-table{width:100%; border-collapse:collapse; font-size:11.5px; font-family:"SF Mono", ui-monospace, Menlo, monospace;}
+  .bd-table td{padding:3px 6px; border-bottom:1px solid var(--border);}
+  .bd-table tr:last-child td{border-bottom:0;}
+  .bd-table td:last-child{text-align:right; color:var(--text);}
+  .bd-table td:first-child{color:var(--text-mute);}
+  .bd-meta{display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:11px; color:var(--text-mute); font-family:"SF Mono", ui-monospace, Menlo, monospace;}
   .pill{display:inline-block; padding:2px 8px; border-radius:10px; background:var(--surface-2); font-size:11px; color:var(--text-dim);}
   #status{font-size:12px; color:var(--text-dim); margin-left:8px;}
   #auth{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:18px; max-width:380px; margin:40px auto;}
@@ -639,6 +650,14 @@ function render(d){
   }
   h+='</div>';
   $('#report').innerHTML=h;
+  // Wire expand/collapse on member rows
+  document.querySelectorAll('.member.expandable').forEach(el => {
+    el.addEventListener('click', (ev) => {
+      // Don't fight any future inner-button clicks
+      if (ev.target.closest('button, a, input, select')) return;
+      el.classList.toggle('open');
+    });
+  });
 }
 
 async function boot(){
