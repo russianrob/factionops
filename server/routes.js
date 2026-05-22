@@ -393,6 +393,7 @@ export function gateMiddleware(req, res, next) {
     req.path.startsWith("/data/") ||
     req.path === "/gate.html" ||
     req.path.startsWith("/diag/") ||
+    req.path === "/war" || req.path.startsWith("/war/") ||
     req.path.endsWith(".meta.js") || req.path.endsWith(".user.js") ||
     // Install assets — same public-by-design rationale as userscript
     // .user.js. Apps need to be installable without a gate cookie since
@@ -418,12 +419,266 @@ export function gateMiddleware(req, res, next) {
   return res.redirect("/gate.html");
 }
 
+// ── Shared HTML for /war post-war report page ──────────────────────────
+const WAR_REPORT_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Post-war report</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0d14">
+<style>
+  :root {
+    --bg:#0a0d14; --surface:#131722; --surface-2:#1c2030; --border:#232838;
+    --text:#e6e8ee; --text-dim:#9097a6; --text-mute:#5b6172;
+    --accent:#6ee7b7; --pos:#6ee7b7; --neg:#fb7185; --warn:#fbbf24; --link:#93c5fd;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font:14px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif;
+    background:var(--bg); color:var(--text); -webkit-font-smoothing:antialiased;
+    padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0);
+  }
+  .wrap{max-width:720px; margin:0 auto; padding:14px;}
+  h1{font-size:20px; font-weight:700; margin:4px 0 12px; letter-spacing:-0.01em;}
+  h2{font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-dim); margin:14px 0 8px;}
+  .card{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:12px;}
+  .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  button{background:var(--accent); color:#0a0d14; border:0; border-radius:8px; padding:9px 14px; font:600 13px inherit; cursor:pointer;}
+  button.secondary{background:var(--surface-2); color:var(--text);}
+  input{background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font:13px inherit; -webkit-appearance:none; appearance:none;}
+  input:focus{outline:none; border-color:var(--accent);}
+  select{background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font:13px inherit;}
+  .stat{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 12px;}
+  .stat .lbl{font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-mute);}
+  .stat .val{font:600 16px/1.2 "SF Mono", ui-monospace, Menlo, monospace; margin-top:3px; letter-spacing:-0.01em;}
+  .grid{display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:14px;}
+  @media (min-width:540px){.grid{grid-template-columns:repeat(4,1fr);}}
+  .pos{color:var(--pos);} .neg{color:var(--neg);} .warn{color:var(--warn);} .muted{color:var(--text-mute);}
+  a{color:var(--link); text-decoration:none;}
+  .member{border-top:1px solid var(--border); padding:10px 4px;}
+  .member:first-child{border-top:0;}
+  .member-head{display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
+  .member-name{font-weight:600;}
+  .member-stats{display:flex; gap:10px; font-size:11.5px; color:var(--text-mute); margin-top:4px; flex-wrap:wrap; font-family:"SF Mono", ui-monospace, Menlo, monospace;}
+  .issue{font-size:11px; color:var(--warn); margin-top:4px;}
+  .pill{display:inline-block; padding:2px 8px; border-radius:10px; background:var(--surface-2); font-size:11px; color:var(--text-dim);}
+  #status{font-size:12px; color:var(--text-dim); margin-left:8px;}
+  #auth{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:18px; max-width:380px; margin:40px auto;}
+  #auth h2{margin-top:0;}
+  #auth input{width:100%; margin:8px 0;}
+  .bar{height:6px; background:var(--border); border-radius:3px; overflow:hidden; margin-top:6px;}
+  .bar-fill{height:100%; transition:width .3s; border-radius:3px;}
+  .bar-fill.ok{background:var(--pos);} .bar-fill.warn{background:var(--warn);} .bar-fill.bad{background:var(--neg);}
+  .err{color:var(--neg); font-size:13px; margin-top:8px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Post-war report</h1>
+
+<div id="auth" style="display:none">
+  <h2>Sign in</h2>
+  <p class="muted" style="font-size:12px">Faction admin role required (Leader / Co-Leader / configured admin role). Your API key is exchanged for a JWT stored locally — never shared.</p>
+  <input type="password" id="apikey" placeholder="Torn API key" autocomplete="off">
+  <button id="signin">Sign in</button>
+  <div id="auth-err" class="err"></div>
+</div>
+
+<div id="app" style="display:none">
+  <div class="row" style="margin-bottom:12px">
+    <select id="war-picker"></select>
+    <button class="secondary" id="refresh">↻</button>
+    <button class="secondary" id="signout">Sign out</button>
+    <span id="status"></span>
+  </div>
+  <div id="report"></div>
+</div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const fmt$=n=>(n<0?'−':'')+'$'+Math.abs(Math.round(n||0)).toLocaleString();
+const fmtN=n=>Number(n||0).toLocaleString();
+const fmtR=n=>Number(n||0).toFixed(2);
+const esc=s=>String(s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+
+const TOK='wb_war_jwt';
+function getTok(){try{return localStorage.getItem(TOK)||'';}catch{return '';}}
+function setTok(v){try{v?localStorage.setItem(TOK,v):localStorage.removeItem(TOK);}catch{}}
+
+async function api(path,{method='GET',body}={}) {
+  const r=await fetch(path,{
+    method, headers:{'Content-Type':'application/json','Authorization':'Bearer '+getTok()},
+    body: body?JSON.stringify(body):undefined,
+  });
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+
+async function signIn(){
+  const key=$('#apikey').value.trim();
+  if(!key) return;
+  $('#auth-err').textContent='';
+  try{
+    const r=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apiKey:key,scriptName:'war-page'})});
+    const j=await r.json();
+    if(!j.token) throw new Error(j.error||'No token');
+    setTok(j.token);
+    boot();
+  }catch(e){ $('#auth-err').textContent=e.message; }
+}
+
+function signOut(){ setTok(''); location.reload(); }
+
+async function loadWars(){
+  const j=await api('/api/war/payouts/list');
+  return j.wars||[];
+}
+
+async function loadReport(warId){
+  $('#status').textContent='Loading…';
+  try{
+    const j=await api('/api/war/'+encodeURIComponent(warId)+'/post-war-report',{method:'POST',body:{estimates:{}}});
+    $('#status').textContent='';
+    render(j);
+  }catch(e){
+    $('#status').textContent='';
+    $('#report').innerHTML='<div class="card err">'+esc(e.message)+'</div>';
+  }
+}
+
+function render(d){
+  const a=d.analysis||d;
+  const wo=a.warOverview||{};
+  const ee=a.energyEfficiency||{};
+  const ph=a.positiveHighlights||{};
+  const nh=a.negativeHighlights||{};
+  let h='';
+  // Overview
+  h+='<div class="card"><h2>War</h2>';
+  h+='<div><b>'+esc(wo.ourFactionName||'Us')+'</b> vs <b>'+esc(wo.enemyFactionName||'Them')+'</b>';
+  if(wo.warResult) h+=' <span class="pill">'+esc(wo.warResult)+'</span>';
+  h+='</div>';
+  h+='<div class="grid" style="margin-top:10px">';
+  h+='<div class="stat"><div class="lbl">Our score</div><div class="val">'+fmtN(wo.ourScore)+'</div></div>';
+  h+='<div class="stat"><div class="lbl">Enemy score</div><div class="val">'+fmtN(wo.enemyScore)+'</div></div>';
+  h+='<div class="stat"><div class="lbl">Participation</div><div class="val">'+fmtN(wo.participationCount||0)+'/'+fmtN(wo.totalMembers||0)+'</div></div>';
+  h+='<div class="stat"><div class="lbl">Total respect</div><div class="val">'+fmtR(wo.ourTotalRespect)+'</div></div>';
+  h+='</div></div>';
+
+  // Energy efficiency
+  if(ee.efficiencyPct!=null){
+    const cls = ee.efficiencyPct>=80?'ok':ee.efficiencyPct>=60?'warn':'bad';
+    h+='<div class="card"><h2>Energy efficiency</h2>';
+    h+='<div class="grid">';
+    h+='<div class="stat"><div class="lbl">Estimated energy used</div><div class="val">'+fmtN(ee.totalEstimatedEnergy)+'</div></div>';
+    h+='<div class="stat"><div class="lbl">Estimated wasted</div><div class="val neg">'+fmtN(ee.totalWastedEnergy)+'</div></div>';
+    h+='<div class="stat"><div class="lbl">Faction avg respect/hit</div><div class="val">'+fmtR(ee.factionAvgRespectPerHit)+'</div></div>';
+    h+='<div class="stat"><div class="lbl">Efficiency</div><div class="val '+(ee.efficiencyPct>=80?'pos':ee.efficiencyPct<60?'neg':'warn')+'">'+ee.efficiencyPct+'%</div></div>';
+    h+='</div>';
+    h+='<div class="bar"><div class="bar-fill '+cls+'" style="width:'+Math.min(100,ee.efficiencyPct)+'%"></div></div>';
+    h+='</div>';
+  }
+
+  // Top performers
+  h+='<div class="card"><h2>Top performers</h2>';
+  if(ph.achievements && ph.achievements.length){
+    h+='<div style="margin-bottom:10px">';
+    for(const a2 of ph.achievements){
+      h+='<span class="pill" style="margin-right:6px;color:var(--accent);background:rgba(110,231,183,0.12);border:1px solid var(--accent)">'+esc(a2.title)+': '+esc(a2.name)+' ('+esc(a2.value)+')</span>';
+    }
+    h+='</div>';
+  }
+  if(ph.topPerformers && ph.topPerformers.length){
+    for(const m of ph.topPerformers){
+      h+='<div class="member"><div class="member-head"><div class="member-name">'+esc(m.name)+' <span class="muted" style="font-weight:400;font-size:11px">Lv'+m.level+'</span></div><div class="muted" style="font-size:11px">Score '+fmtR(m.score)+'</div></div>';
+      h+='<div class="member-stats">';
+      h+='<span>Hits '+m.attacks+'</span>';
+      if(m.assists) h+='<span>Assists '+m.assists+'</span>';
+      h+='<span>Respect '+fmtR(m.respect)+'</span>';
+      h+='<span>Resp/Hit '+fmtR(m.respectPerHit)+'</span>';
+      h+='</div></div>';
+    }
+  }else h+='<div class="muted">No top performer data.</div>';
+  h+='</div>';
+
+  // Areas to improve
+  h+='<div class="card"><h2>Areas to improve</h2>';
+  if(nh.areasToImprove && nh.areasToImprove.length){
+    for(const m of nh.areasToImprove){
+      h+='<div class="member"><div class="member-head"><div class="member-name">'+esc(m.name)+' <span class="muted" style="font-weight:400;font-size:11px">Lv'+m.level+'</span></div></div>';
+      h+='<div class="member-stats">';
+      h+='<span>Hits '+m.attacks+'</span>';
+      h+='<span>Respect '+fmtR(m.respect)+'</span>';
+      if(m.attacks>0) h+='<span>Resp/Hit '+fmtR(m.respectPerHit)+'</span>';
+      h+='</div>';
+      h+='<div class="issue">'+esc(m.issue||'')+'</div>';
+      h+='</div>';
+    }
+  }else h+='<div class="muted">No notable issues — great performance across the board.</div>';
+  h+='</div>';
+
+  $('#report').innerHTML=h;
+}
+
+async function boot(){
+  if(!getTok()){
+    $('#auth').style.display='block'; $('#app').style.display='none'; return;
+  }
+  try{
+    const wars=await loadWars();
+    if(!wars.length){
+      $('#auth').style.display='none'; $('#app').style.display='block';
+      $('#report').innerHTML='<div class="card muted">No ended wars available for your faction.</div>';
+      return;
+    }
+    const picker=$('#war-picker');
+    picker.innerHTML=wars.map(w=>'<option value="'+esc(w.warId)+'">'+esc(w.enemyFactionName)+' — '+new Date(w.warEndedAt).toLocaleDateString()+'</option>').join('');
+    $('#auth').style.display='none'; $('#app').style.display='block';
+    // Allow ?warId=X to deep-link
+    const urlWarId=(location.pathname.match(/\\/war\\/(.+)$/)||[])[1];
+    const chosen=urlWarId && wars.find(w=>w.warId===decodeURIComponent(urlWarId)) ? decodeURIComponent(urlWarId) : wars[0].warId;
+    picker.value=chosen;
+    picker.addEventListener('change',()=>loadReport(picker.value));
+    $('#refresh').addEventListener('click',()=>loadReport(picker.value));
+    loadReport(chosen);
+  }catch(e){
+    // Probably bad JWT; sign out and retry
+    if(/401|403/.test(e.message)){ setTok(''); boot(); return; }
+    $('#app').style.display='block';
+    $('#report').innerHTML='<div class="card err">'+esc(e.message)+'</div>';
+  }
+}
+
+$('#signin').addEventListener('click',signIn);
+$('#apikey').addEventListener('keydown',e=>{ if(e.key==='Enter') signIn(); });
+$('#signout').addEventListener('click',signOut);
+boot();
+</script>
+</body>
+</html>`;
+
 /** Simple cookie parser — no dependency needed. */
 function parseCookie(cookieHeader, name) {
   if (!cookieHeader) return null;
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : null;
 }
+
+// ── GET /war  /war/:warId  — admin-only HTML post-war report ───────────
+// Renders the same post-war analysis as the in-script modal as a
+// shareable web page. Auth: client-side — the page prompts for a
+// Torn API key, POSTs to /api/auth, stores the JWT in localStorage,
+// then fetches the same /api/war/:warId/post-war-report endpoint
+// that already has the admin-role gate built in. Gate-exempt only
+// for the HTML shell; the data API still enforces faction admin role.
+router.get(["/war", "/war/:warId"], (req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.send(WAR_REPORT_HTML);
+});
 
 // ── POST /api/admin/xanax/repoll/:warId ────────────────────────────────
 // Owner-only. Forces a fresh xanax-news poll for a war whose tracker
