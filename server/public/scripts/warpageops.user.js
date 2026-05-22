@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WarPageOps (fork — solo test branch)
 // @namespace    tornwar.com/warpageops
-// @version      0.3.0
+// @version      0.3.1
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -9126,7 +9126,15 @@ body.wb-chain-active {
         // status pills). The overlay itself + the main-content hide
         // are skipped so users see Torn's native war page UI with
         // our cell-level enhancements layered on top.
-        if (true) return; // disable overlay creation
+        //
+        // 0.3.1: ALSO kick off the dormant in-place row enhancement
+        // system that the original factionops abandoned in favor of
+        // the overlay. setupMutationObserver finds Torn's member
+        // list container, observes it, and runs enhanceRow per row —
+        // which is what wires up our Score-column hijack and the
+        // wb-cell-container status/attack pills.
+        if (typeof setupMutationObserver === 'function') setupMutationObserver();
+        return; // skip overlay creation
 
         // Hide Torn's main content but keep the container itself visible so
         // we can insert the overlay INSIDE it. Torn typically scopes its
