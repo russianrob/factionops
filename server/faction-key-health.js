@@ -28,6 +28,30 @@ const POLL_INTERVAL_MS = Number(process.env.WB_KEY_HEALTH_POLL_MS) || 30 * 60 * 
 const RENOTIFY_INTERVAL_MS = 24 * 3600 * 1000; // 24h
 const lastNotifyAt = new Map(); // factionId → epoch ms
 
+// Torn API error codes that mean the KEY ITSELF is broken (regenerated,
+// revoked, downgraded, jailed-owner, etc) — these are the only ones
+// worth waking the admin up about. Everything else is Torn-side
+// transient noise (HTTP 5xx, rate limits, backend errors) that
+// resolves on its own. https://www.torn.com/api.html
+const PERSISTENT_BROKEN_CODES = new Set([
+   1, // Empty key
+   2, // Incorrect key
+   6, // Incorrect ID
+  10, // Key owner is in federal jail
+  13, // Key temporarily disabled due to owner inactivity
+  14, // Daily read limit reached
+  16, // Access level of this key is not high enough
+]);
+// Transient — log a warning but DON'T notify. Includes code 17
+// ("Backend error occurred") which is the one that mis-fired today.
+const TRANSIENT_CODES = new Set([
+   5, // Too many requests
+   8, // IP block
+   9, // API disabled
+  15, // Temporary error
+  17, // Backend error, please try again
+]);
+
 let _timer = null;
 let _running = false;
 
@@ -74,8 +98,20 @@ async function tick() {
     for (const fid of factionIds) {
       const result = await probeKey(fid);
       if (result.healthy === false) {
-        console.warn(`[key-health] faction ${fid} key BROKEN (${result.reason}, code ${result.code ?? "?"})`);
-        await notifyBroken(fid, `${result.reason}${result.code != null ? ` (code ${result.code})` : ""}`);
+        const code = result.code;
+        // Only notify on persistent / key-actually-broken codes.
+        // Transient Torn-side codes (17 etc.) get a log warning but
+        // don't wake the admin — they fix themselves on the next tick.
+        if (code != null && TRANSIENT_CODES.has(code)) {
+          console.warn(`[key-health] faction ${fid} transient Torn error (${result.reason}, code ${code}) — not notifying`);
+        } else if (code == null || PERSISTENT_BROKEN_CODES.has(code)) {
+          console.warn(`[key-health] faction ${fid} key BROKEN (${result.reason}, code ${code ?? "?"})`);
+          await notifyBroken(fid, `${result.reason}${code != null ? ` (code ${code})` : ""}`);
+        } else {
+          // Unknown code — treat as transient by default to avoid
+          // alert spam from new Torn API additions, but log loudly.
+          console.warn(`[key-health] faction ${fid} unclassified error (${result.reason}, code ${code}) — treating as transient`);
+        }
       } else if (result.healthy === true) {
         // Reset de-dup so a future break re-notifies.
         if (lastNotifyAt.has(String(fid))) {
