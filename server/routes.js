@@ -551,15 +551,14 @@ async function loadReport(warId){
 }
 
 function render(d){
-  // Response is flat (no .analysis wrapper). Field map:
-  //   warSummary { ourName, enemyName, ourScore, enemyScore, result, totalRespect, ... }
-  //   factionPerformance { totalRoster, participationCount, participationRate, avgRespectPerHit, ... }
-  //   energyEfficiency, positiveHighlights, negativeHighlights
-  const ws=d.warSummary||{};
-  const fp=d.factionPerformance||{};
-  const ee=d.energyEfficiency||{};
-  const ph=d.positiveHighlights||{};
-  const nh=d.negativeHighlights||{};
+  // Server wraps the analysis in d.report. Unwrap before reading
+  // warSummary / factionPerformance / energyEfficiency / etc.
+  const a=d.report||d;
+  const ws=a.warSummary||{};
+  const fp=a.factionPerformance||{};
+  const ee=a.energyEfficiency||{};
+  const ph=a.positiveHighlights||{};
+  const nh=a.negativeHighlights||{};
   let h='';
   // Overview
   h+='<div class="card"><h2>War</h2>';
