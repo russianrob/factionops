@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.25
+// @version      3.2.26
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -199,6 +199,37 @@
 (function () {
     'use strict';
 
+    // 2026-05-24 — PDA Android GM polyfill. TM's @grant occasionally fails
+    // to bind GM_xxx as local vars on Android (xentac repro). Defining on
+    // window lets the bare GM_xxx(...) call fall through to the global via
+    // scope chain. Harmless on iOS — TM's local var always shadows window.
+    // Skipped GM_xmlhttpRequest (fetch can't reliably emulate cross-origin).
+    (function polyfillGM() {
+        const w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+        if (typeof w.GM_addStyle !== 'function') {
+            w.GM_addStyle = function (css) {
+                const s = document.createElement('style');
+                s.textContent = String(css || '');
+                (document.head || document.documentElement).appendChild(s);
+                return s;
+            };
+        }
+        if (typeof w.GM_setValue !== 'function') {
+            w.GM_setValue = function (k, v) { try { localStorage.setItem('ocsp:' + k, JSON.stringify(v)); } catch (_) {} };
+        }
+        if (typeof w.GM_getValue !== 'function') {
+            w.GM_getValue = function (k, d) {
+                try { const raw = localStorage.getItem('ocsp:' + k); return raw == null ? d : JSON.parse(raw); }
+                catch (_) { return d; }
+            };
+        }
+        if (typeof w.GM_openInTab !== 'function') {
+            w.GM_openInTab = function (url, opts) {
+                try { return window.open(String(url || ''), '_blank', 'noopener,noreferrer'); } catch (_) {}
+            };
+        }
+    })();
+
     // ═══════════════════════════════════════════════════════════════════════
     //  SCOPE SYSTEM CONSTANTS
     //  Range → difficulty band, spawn cost, scope payout on success
@@ -268,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.23';
+    const SCRIPT_VERSION = '3.2.26';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead

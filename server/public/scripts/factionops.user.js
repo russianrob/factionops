@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.19
+// @version      5.1.20
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -48,6 +48,37 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
 (function () {
     'use strict';
 
+    // 2026-05-24 — PDA Android GM polyfill. TM's @grant occasionally fails
+    // to bind GM_xxx as local vars on Android (xentac repro). Defining on
+    // window lets the bare GM_xxx(...) call fall through to the global via
+    // scope chain. Harmless on iOS — TM's local var always shadows window.
+    // Skipped GM_xmlhttpRequest (fetch can't reliably emulate cross-origin).
+    (function polyfillGM() {
+        const w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+        if (typeof w.GM_addStyle !== 'function') {
+            w.GM_addStyle = function (css) {
+                const s = document.createElement('style');
+                s.textContent = String(css || '');
+                (document.head || document.documentElement).appendChild(s);
+                return s;
+            };
+        }
+        if (typeof w.GM_setValue !== 'function') {
+            w.GM_setValue = function (k, v) { try { localStorage.setItem('fo:' + k, JSON.stringify(v)); } catch (_) {} };
+        }
+        if (typeof w.GM_getValue !== 'function') {
+            w.GM_getValue = function (k, d) {
+                try { const raw = localStorage.getItem('fo:' + k); return raw == null ? d : JSON.parse(raw); }
+                catch (_) { return d; }
+            };
+        }
+        if (typeof w.GM_setClipboard !== 'function') {
+            w.GM_setClipboard = function (text) {
+                try { return navigator.clipboard && navigator.clipboard.writeText(String(text || '')); } catch (_) {}
+            };
+        }
+    })();
+
     // =========================================================================
     // SECTION 1: CONFIGURATION
     // =========================================================================
@@ -56,7 +87,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.18';
+    const SCRIPT_VERSION = '5.1.20';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),

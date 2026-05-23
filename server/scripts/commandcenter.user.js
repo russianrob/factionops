@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CommandCenter - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      4.9.27
+// @version      4.9.28
 // @description  Real-time faction war coordination tool for Torn.com (CommandCenter build).
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -232,6 +232,32 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
 
 (function () {
     'use strict';
+
+    // 2026-05-24 — PDA Android GM polyfill. TM's @grant occasionally fails
+    // to bind GM_xxx as local vars on Android (xentac repro). Defining on
+    // window lets the bare GM_xxx(...) call fall through to the global via
+    // scope chain. Harmless on iOS — TM's local var always shadows window.
+    // Skipped GM_xmlhttpRequest (fetch can't reliably emulate cross-origin).
+    (function polyfillGM() {
+        const w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+        if (typeof w.GM_addStyle !== 'function') {
+            w.GM_addStyle = function (css) {
+                const s = document.createElement('style');
+                s.textContent = String(css || '');
+                (document.head || document.documentElement).appendChild(s);
+                return s;
+            };
+        }
+        if (typeof w.GM_setValue !== 'function') {
+            w.GM_setValue = function (k, v) { try { localStorage.setItem('cc:' + k, JSON.stringify(v)); } catch (_) {} };
+        }
+        if (typeof w.GM_getValue !== 'function') {
+            w.GM_getValue = function (k, d) {
+                try { const raw = localStorage.getItem('cc:' + k); return raw == null ? d : JSON.parse(raw); }
+                catch (_) { return d; }
+            };
+        }
+    })();
 
     // =========================================================================
     // SECTION 1: CONFIGURATION
