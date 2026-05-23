@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Warboard Tab Fix (PDA Android GM redefine workaround)
 // @namespace    tornwar.com
-// @version      0.2.0
-// @description  Workaround for Torn PDA Android's "Cannot redefine property: GM" bug, which kills all userscripts in any tab opened via window.open(url,'_blank') or <a target="_blank">. Root cause is PDA double-injecting Tampermonkey's GM bridge into newly-spawned WebViews; noopener doesn't help. This script intercepts new-tab opens on Android and redirects them to same-tab navigation (location.assign) so no new WebView spawns. iOS keeps the original new-tab behavior + adds noopener as a mild defense-in-depth measure.
+// @version      0.3.0
+// @description  Suppress "Cannot redefine property: GM" errors on Torn PDA Android caused by PDA double-injecting userscript bundles into the same page. Patches Object.defineProperty at document-start so the second GM redefine silently no-ops instead of throwing — downstream scripts then continue past the failure point. Also logs run counts + suppressed redefines to console so you can see what's happening.
 // @author       warboard
 // @match        https://www.torn.com/*
 // @match        https://*.torn.com/*
