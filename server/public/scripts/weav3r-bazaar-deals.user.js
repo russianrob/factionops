@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Weav3r Bazaar Deals
 // @namespace    russianrob
-// @version      2.4.2
+// @version      2.4.3
 // @description  Find real below-market bazaar deals — solo build, fetches weav3r.dev directly, no warboard proxy
 // @author       RussianRob
 // @match        https://www.torn.com/*
@@ -721,9 +721,9 @@
                             <span>Qty: ${it.quantity}</span>
                         </div>
                         <div class="w3b-links">
-                            <a href="https://www.torn.com/bazaar.php?userId=${it.playerId}&highlightItem=${it.itemId}" target="_blank">Open Bazaar</a>
-                            <a href="https://www.torn.com/trade.php#step=start&userID=${it.playerId}" target="_blank">Trade</a>
-                            <a href="https://weav3r.dev/item/${it.itemId}" target="_blank">Weav3r</a>
+                            <a href="https://www.torn.com/bazaar.php?userId=${it.playerId}&highlightItem=${it.itemId}" target="_blank" rel="noopener noreferrer">Open Bazaar</a>
+                            <a href="https://www.torn.com/trade.php#step=start&userID=${it.playerId}" target="_blank" rel="noopener noreferrer">Trade</a>
+                            <a href="https://weav3r.dev/item/${it.itemId}" target="_blank" rel="noopener noreferrer">Weav3r</a>
                         </div>
                     </div>`;
                 }).join('');
@@ -770,7 +770,7 @@
         } else if (S.lookupError) {
             out += `<div class="w3b-error">⚠ ${esc(S.lookupError)}</div>`;
             if (S.lookupId) out += `<div class="w3b-hint" style="text-align:center;margin-top:8px;">
-                <a href="https://weav3r.dev/item/${S.lookupId}" target="_blank" style="color:#e05070;">View on weav3r.dev →</a></div>`;
+                <a href="https://weav3r.dev/item/${S.lookupId}" target="_blank" rel="noopener noreferrer" style="color:#e05070;">View on weav3r.dev →</a></div>`;
         } else if (S.lookupListings.length > 0) {
             const name = S.lookupName || `Item #${S.lookupId}`;
             if (S.lookupMismatch) {
@@ -791,12 +791,12 @@
                         <span>${l.lastChecked ? esc(l.lastChecked) : ''}</span>
                     </div>
                     ${l.playerId ? `<div class="w3b-links">
-                        <a href="https://www.torn.com/bazaar.php?userId=${l.playerId}&highlightItem=${S.lookupId}" target="_blank">Open Bazaar</a>
-                        <a href="https://www.torn.com/trade.php#step=start&userID=${l.playerId}" target="_blank">Trade</a>
+                        <a href="https://www.torn.com/bazaar.php?userId=${l.playerId}&highlightItem=${S.lookupId}" target="_blank" rel="noopener noreferrer">Open Bazaar</a>
+                        <a href="https://www.torn.com/trade.php#step=start&userID=${l.playerId}" target="_blank" rel="noopener noreferrer">Trade</a>
                     </div>` : ''}
                 </div>`).join('');
             out += `<div class="w3b-hint" style="text-align:center;margin-top:6px;">
-                <a href="https://weav3r.dev/item/${S.lookupId}" target="_blank" style="color:#e05070;">Full data on weav3r.dev →</a></div>`;
+                <a href="https://weav3r.dev/item/${S.lookupId}" target="_blank" rel="noopener noreferrer" style="color:#e05070;">Full data on weav3r.dev →</a></div>`;
         } else if (S.lookupId && !S.lookupLoading) {
             const totalMsg = S.lookupTotal === 0
                 ? 'weav3r shows 0 active bazaar listings for this item.'
@@ -804,7 +804,7 @@
                     ? `weav3r found ${S.lookupTotal} listings but none returned.`
                     : 'No bazaar listings found.';
             out += `<div class="w3b-empty">${totalMsg}<br>
-                <a href="https://weav3r.dev/item/${S.lookupId}" target="_blank" style="color:#e05070;">Verify on weav3r.dev →</a></div>`;
+                <a href="https://weav3r.dev/item/${S.lookupId}" target="_blank" rel="noopener noreferrer" style="color:#e05070;">Verify on weav3r.dev →</a></div>`;
         } else {
             out += `<div class="w3b-empty" style="color:#556">Type an item name to search.<br>
                 <span style="font-size:10px">Index covers ${Object.keys(itemIndex).length} items<br>and grows as deals load.</span></div>`;

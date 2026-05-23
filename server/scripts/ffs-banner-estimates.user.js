@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.1-wb60
+// @version      2.73.1-wb61
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -1557,7 +1557,7 @@ if (!singleton) {
 
     const btn = document.createElement("a");
     btn.href = `https://ffscouter.com/player-view?player_id=${player_id}`;
-    btn.target = "_blank";
+    btn.target = "_blank"; btn.rel = "noopener noreferrer";
     btn.rel = "noopener noreferrer";
     btn.className = "ff-scouter-history-btn";
     btn.title = "View Stats History on FFScouter";
@@ -3756,7 +3756,7 @@ if (!singleton) {
       if (tabType === "sametab") {
         window.location.href = profileLink;
       } else {
-        window.open(profileLink, "_blank");
+        window.open(profileLink, '_blank', 'noopener,noreferrer');
       }
     });
     // Add the button to the page
@@ -4138,10 +4138,10 @@ if (!singleton) {
 
     apiExplanation.innerHTML = `
       <strong>Important:</strong> You must use the SAME exact API key that you use on
-      <a href="https://ffscouter.com/" target="_blank">ffscouter.com</a>.
+      <a href="https://ffscouter.com/" target="_blank" rel="noopener noreferrer">ffscouter.com</a>.
       <br><br>
       If you're not sure which API key you used, go to
-      <a href="https://www.torn.com/preferences.php#tab=api" target="_blank">your API preferences</a>
+      <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener noreferrer">your API preferences</a>
       and look for "FFScouter3" in your API key history comments.
     `;
     content.appendChild(apiExplanation);
@@ -4933,7 +4933,7 @@ if (!singleton) {
       "Invalid API key. Please sign up at ffscouter.com to use this service"
     ) {
       msg.innerHTML =
-        'FairFight Scouter: Invalid API key. Please sign up at <a href="https://ffscouter.com" target="_blank" style="color: #fff; text-decoration: underline; font-weight: bold;">ffscouter.com</a> to use this service';
+        'FairFight Scouter: Invalid API key. Please sign up at <a href="https://ffscouter.com" target="_blank" rel="noopener noreferrer" style="color: #fff; text-decoration: underline; font-weight: bold;">ffscouter.com</a> to use this service';
     } else {
       msg.textContent = `FairFight Scouter: ${message}`;
     }

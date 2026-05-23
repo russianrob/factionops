@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Torn Ranked War Timer
-// @version      1.7.0
+// @version      1.7.1
 // @author       RussianRob
 // @description  Timer for Ranked Wars
 // @license      MIT
@@ -168,7 +168,7 @@
         display.style.fontWeight = 'bold';
         display.style.cursor = 'pointer';
         display.style.display = 'inline-block';
-        display.onclick = () => window.open(WIKI_URL, '_blank');
+        display.onclick = () => window.open(WIKI_URL, '_blank', 'noopener,noreferrer');
 
         let headerContainer =
             warBox.querySelector('[class*="header"], [class*="title"]') ||
