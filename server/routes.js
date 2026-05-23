@@ -598,6 +598,7 @@ async function loadPayouts(warId,mode){
 }
 
 function render(d){
+  const modeNow = d.mode || 'dynamic';
   let h='';
   h+='<div class="card"><h2>War</h2>';
   h+='<div><b>vs '+esc(d.enemyFactionName||'Enemy')+'</b>';
@@ -662,9 +663,17 @@ function render(d){
       }
       if(!any) h+='<tr><td class="muted" colspan=2>No itemized attacks recorded.</td></tr>';
       h+='</tbody></table>';
+      // Meta row: in FF Based mode show Avg FF + Highest FF instead
+      // of Torn score (per user direction — Torn score is less useful
+      // when fair_score is what drives payouts here).
       h+='<div class="bd-meta">';
-      if(m.tornScore!=null) h+='<span>Torn score: '+fmtR(m.tornScore)+'</span>';
-      if(m.tornAttacks!=null) h+='<span>Torn attacks: '+m.tornAttacks+'</span>';
+      if(modeNow==='dynamic'){
+        h+='<span>Avg FF: '+fmtR(m.avgFf||0)+'</span>';
+        h+='<span>Highest FF: '+fmtR(m.maxFf||0)+'</span>';
+      }else{
+        if(m.tornScore!=null) h+='<span>Torn score: '+fmtR(m.tornScore)+'</span>';
+        if(m.tornAttacks!=null) h+='<span>Torn attacks: '+m.tornAttacks+'</span>';
+      }
       h+='<span>Payout: '+fmt$(m.dollarPayout||0)+'</span>';
       h+='</div></div>';
       h+='</div>';

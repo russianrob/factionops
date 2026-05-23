@@ -344,6 +344,7 @@ export async function computePayouts(warId, options = {}) {
         fairScoreSum: 0,
         ffSum: 0,
         ffSamples: 0,
+        ffMax: 0,
         breakdown: {},
         attackCount: 0,    // successful war hits (drives the score)
         totalAttacks: 0,   // every attack attempted (war + non-war + failed)
@@ -463,6 +464,7 @@ export async function computePayouts(warId, options = {}) {
     if (ff > 0) {
       byAttacker[aid].ffSum += ff;
       byAttacker[aid].ffSamples += 1;
+      if (ff > byAttacker[aid].ffMax) byAttacker[aid].ffMax = ff;
     }
     byAttacker[aid].breakdown[cat] = (byAttacker[aid].breakdown[cat] || 0) + 1;
     byAttacker[aid].attackCount += 1;
@@ -541,6 +543,7 @@ export async function computePayouts(warId, options = {}) {
       totalAttacks: m.totalAttacks, // war + non-war (display only)
       breakdown: m.breakdown,
       avgFf: m.ffSamples > 0 ? (m.ffSum / m.ffSamples) : 0,
+      maxFf: m.ffMax || 0,
       tornScore: 0,
       tornAttacks: 0,
       level: null,
@@ -556,6 +559,7 @@ export async function computePayouts(warId, options = {}) {
           attackCount: 0,
           breakdown: {},
           avgFf: 0,
+          maxFf: 0,
           tornScore: 0,
           tornAttacks: 0,
           level: null,
@@ -599,6 +603,7 @@ export async function computePayouts(warId, options = {}) {
         // ratio in the breakdown popover.
         totalAttacks: m.totalAttacks || m.attackCount || m.tornAttacks || 0,
         avgFf: Math.round(m.avgFf * 100) / 100,
+        maxFf: Math.round((m.maxFf || 0) * 100) / 100,
         level: m.level,
         breakdown: m.breakdown,
         tornScore: Math.round(m.tornScore * 100) / 100,
