@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Warboard Battery Diag
 // @namespace    tornwar.com
-// @version      0.2.7
+// @version      0.2.8
 // @description  Live overlay of what's consuming CPU/network inside the WebView — fetch / XHR / GM_xhr counts by host + caller, mutation rate, setInterval handles, page nav rate. Diagnostic only, no side effects.
 // @author       warboard
 // @match        https://www.torn.com/*
@@ -43,6 +43,7 @@
     xhr:       0,
     gmxhr:     0,
     byHost:    Object.create(null),    // hostname → count
+    byPath:    Object.create(null),    // host+normalized-path → count (0.2.8)
     bySource:  Object.create(null),    // script URL → count (network)
     mutations: 0,
     navs:      0,
@@ -95,6 +96,27 @@
 
   function bump(map, key) { map[key] = (map[key] || 0) + 1; }
 
+  // 0.2.8: normalize URL path for byPath bucketing. Strips:
+  //   - query string + hash (huge cardinality killer)
+  //   - trailing numeric IDs (so /user/12345 collapses with /user/67890)
+  //   - long hash-like UUID-ish segments
+  // Result is host+canonical-path, e.g. "www.torn.com/sentry/api/N/envelope".
+  function normalizeUrl(rawUrl) {
+    try {
+      const u = new URL(String(rawUrl), location.href);
+      const segs = u.pathname.split('/').map(seg => {
+        if (!seg) return seg;
+        if (/^\d+$/.test(seg)) return 'N';                     // numeric ID
+        if (/^[a-f0-9]{16,}$/i.test(seg)) return 'HASH';       // hex hash
+        if (/^[0-9a-f-]{32,}$/i.test(seg)) return 'UUID';      // uuid-ish
+        return seg;
+      });
+      return u.hostname + segs.join('/');
+    } catch (_) {
+      return String(rawUrl || '').slice(0, 80);
+    }
+  }
+
   // ── Network instrumentation (each wrapped so one failure is isolated) ─
   safe('fetch-wrap', () => {
     const origFetch = window.fetch;
@@ -105,6 +127,7 @@
         const url = typeof input === 'string' ? input : input?.url || '';
         const host = new URL(url, location.href).hostname || '(relative)';
         bump(stats.byHost, host);
+        bump(stats.byPath, normalizeUrl(url));
         bump(stats.bySource, attributeCaller());
       } catch (_) {}
       return origFetch.call(this, input, init);
@@ -118,6 +141,7 @@
       try {
         const host = new URL(url, location.href).hostname || '(relative)';
         bump(stats.byHost, host);
+        bump(stats.byPath, normalizeUrl(url));
         bump(stats.bySource, attributeCaller());
       } catch (_) {}
       return origXhrOpen.call(this, method, url, ...rest);
@@ -132,6 +156,7 @@
       try {
         const host = new URL(opts.url || '', location.href).hostname || '(relative)';
         bump(stats.byHost, host);
+        bump(stats.byPath, normalizeUrl(opts.url || ''));
         bump(stats.bySource, attributeCaller());
       } catch (_) {}
       return origGm(opts);
@@ -379,6 +404,7 @@
         timeouts:  stats.timeouts,
         intervalsActive: stats.intervals.size,
         byHost:          Object.assign({}, stats.byHost),
+        byPath:          Object.assign({}, stats.byPath),
         bySource:        Object.assign({}, stats.bySource),
         qsaBySource:     Object.assign({}, stats.qsaBySource),     // 0.2.3: immediate
         qsaByOriginator: Object.assign({}, stats.qsaByOriginator), // 0.2.5: outermost

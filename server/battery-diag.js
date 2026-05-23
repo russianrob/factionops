@@ -55,8 +55,11 @@ export function registerRoutes(app, express) {
       navs:      Number(body.navs) || 0,
       timeouts:  Number(body.timeouts) || 0,
       intervalsActive: Number(body.intervalsActive) || 0,
-      byHost:    typeof body.byHost === "object" && body.byHost ? body.byHost : {},
-      bySource:  typeof body.bySource === "object" && body.bySource ? body.bySource : {},
+      byHost:          typeof body.byHost === "object" && body.byHost ? body.byHost : {},
+      byPath:          typeof body.byPath === "object" && body.byPath ? body.byPath : {},
+      bySource:        typeof body.bySource === "object" && body.bySource ? body.bySource : {},
+      qsaBySource:     typeof body.qsaBySource === "object" && body.qsaBySource ? body.qsaBySource : {},
+      qsaByOriginator: typeof body.qsaByOriginator === "object" && body.qsaByOriginator ? body.qsaByOriginator : {},
     };
     load();
     _samples.push(sample);
@@ -119,13 +122,15 @@ async function load() {
   // Aggregate last hour
   const cutoff = Date.now() - 60*60*1000;
   const recent = samples.filter(s => s.ts >= cutoff);
-  const agg = { fetch:0, xhr:0, gmxhr:0, mutations:0, qsa:0, navs:0, totalSec:0, byHost:{}, bySource:{} };
+  const agg = { fetch:0, xhr:0, gmxhr:0, mutations:0, qsa:0, navs:0, totalSec:0, byHost:{}, bySource:{}, qsaBySource:{}, qsaByOriginator:{} };
   for (const s of recent) {
     agg.fetch += s.fetch; agg.xhr += s.xhr; agg.gmxhr += s.gmxhr;
     agg.mutations += s.mutations; agg.qsa += s.qsa; agg.navs += s.navs;
     agg.totalSec += s.windowSec || 60;
     for (const [h,n] of Object.entries(s.byHost||{})) agg.byHost[h] = (agg.byHost[h]||0)+n;
     for (const [s2,n] of Object.entries(s.bySource||{})) agg.bySource[s2] = (agg.bySource[s2]||0)+n;
+    for (const [s2,n] of Object.entries(s.qsaBySource||{})) agg.qsaBySource[s2] = (agg.qsaBySource[s2]||0)+n;
+    for (const [s2,n] of Object.entries(s.qsaByOriginator||{})) agg.qsaByOriginator[s2] = (agg.qsaByOriginator[s2]||0)+n;
   }
   const m = (n)=>agg.totalSec>0 ? (n/agg.totalSec*60) : 0;
   const last = samples[samples.length-1];
@@ -146,9 +151,19 @@ async function load() {
       \${topN(agg.byHost, 10).map(([h,n])=>\`<tr><td>\${h}</td><td class="r">\${n}</td><td class="r">\${fmt(m(n))}</td></tr>\`).join('')}
     </table></div>
 
-    <h2>Top callers (last hour)</h2>
+    <h2>Top callers (last hour) — Network</h2>
     <div class="card"><table><tr><th>Source</th><th class="r">Network calls</th><th class="r">/min</th></tr>
       \${topN(agg.bySource, 12).map(([s,n])=>\`<tr><td>\${s}</td><td class="r">\${n}</td><td class="r">\${fmt(m(n))}</td></tr>\`).join('')}
+    </table></div>
+
+    <h2>Top qSA callers — IMMEDIATE (who directly calls querySelectorAll)</h2>
+    <div class="card"><table><tr><th>Source</th><th class="r">qSA calls</th><th class="r">/min</th></tr>
+      \${topN(agg.qsaBySource, 12).map(([s,n])=>\`<tr><td>\${s}</td><td class="r">\${n}</td><td class="r">\${fmt(m(n))}</td></tr>\`).join('')}
+    </table></div>
+
+    <h2>Top qSA callers — ORIGINATOR (outermost frame, blames userscripts that trigger Torn helpers)</h2>
+    <div class="card"><table><tr><th>Source</th><th class="r">qSA calls</th><th class="r">/min</th></tr>
+      \${topN(agg.qsaByOriginator, 12).map(([s,n])=>\`<tr><td>\${s}</td><td class="r">\${n}</td><td class="r">\${fmt(m(n))}</td></tr>\`).join('')}
     </table></div>
 
     <h2>Last 10 samples</h2>
