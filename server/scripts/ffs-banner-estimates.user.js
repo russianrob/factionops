@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.1-wb63
+// @version      2.73.1-wb64
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -736,7 +736,13 @@ if (!singleton) {
       // store — happens when upstream FF Scouter (or another fork)
       // created the same-named DB first with a different schema.
       // Migration 2 self-heals by creating the store if absent.
-      this.db_version = 2;
+      //
+      // wb64 (2026-05-24): bumped 2 → 10 to leapfrog conflicting forks
+      // that put the same-named DB at v3+. IndexedDB doesn't allow
+      // downgrades — opening at a lower version than the existing DB
+      // throws VersionError and fires the "Error loading database"
+      // toast. Migration 10 is the same idempotent heal step.
+      this.db_version = 10;
 
       this.store_name = "cache";
 
@@ -751,8 +757,9 @@ if (!singleton) {
         store.createIndex("expiry", ["expiry"], { unique: false });
       };
       this.migrations = {
-        1: (db, _) => { ffdebug("migration 1"); ensureStore(db); },
-        2: (db, _) => { ffdebug("migration 2 (heal)"); ensureStore(db); },
+        1:  (db, _) => { ffdebug("migration 1"); ensureStore(db); },
+        2:  (db, _) => { ffdebug("migration 2 (heal)"); ensureStore(db); },
+        10: (db, _) => { ffdebug("migration 10 (heal, leapfrog higher-version conflicts)"); ensureStore(db); },
       };
     }
 
