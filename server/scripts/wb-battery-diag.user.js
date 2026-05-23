@@ -414,6 +414,7 @@
       _windowStart = Date.now();
       stats.fetch = stats.xhr = stats.gmxhr = stats.mutations = stats.qsa = stats.navs = stats.timeouts = 0;
       for (const k of Object.keys(stats.byHost)) delete stats.byHost[k];
+      for (const k of Object.keys(stats.byPath)) delete stats.byPath[k];
       for (const k of Object.keys(stats.bySource)) delete stats.bySource[k];
       for (const k of Object.keys(stats.qsaBySource)) delete stats.qsaBySource[k];
       for (const k of Object.keys(stats.qsaByOriginator)) delete stats.qsaByOriginator[k];
