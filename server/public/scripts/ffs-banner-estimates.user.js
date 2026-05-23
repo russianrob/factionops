@@ -2,8 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.1-wb61
-// @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
+// @version      2.73.1-wb62// @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -171,6 +170,49 @@
 //              stale. Safe no-op when FFS has no cached data for the user.
 // =============================================================================
 
+
+// 2026-05-23 (wb62) — PDA Android polyfill. Tampermonkey's grant injection
+// occasionally fails to bind GM_addStyle / GM_setValue / etc as local
+// variables in the script scope, causing 'ReferenceError: GM_addStyle is
+// not defined' at script start (xentac repro on moto g stylus, Android 12).
+// When the bare GM_xxx identifier isn't found in any scope, JS falls back
+// to the global object — so defining window.GM_xxx makes the bare call
+// resolve cleanly. If TM did bind the local var, our polyfill is shadowed
+// and ignored. Skipped GM_xmlhttpRequest (needs cross-origin semantics
+// fetch can't reliably emulate inside a WebView).
+(function () {
+  const w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+  if (typeof w.GM_addStyle !== 'function') {
+    w.GM_addStyle = function (css) {
+      const s = document.createElement('style');
+      s.textContent = String(css || '');
+      (document.head || document.documentElement).appendChild(s);
+      return s;
+    };
+  }
+  if (typeof w.GM_setValue !== 'function') {
+    w.GM_setValue = function (k, v) { try { localStorage.setItem('ts:' + k, JSON.stringify(v)); } catch (_) {} };
+  }
+  if (typeof w.GM_getValue !== 'function') {
+    w.GM_getValue = function (k, d) {
+      try { const raw = localStorage.getItem('ts:' + k); return raw == null ? d : JSON.parse(raw); }
+      catch (_) { return d; }
+    };
+  }
+  if (typeof w.GM_deleteValue !== 'function') {
+    w.GM_deleteValue = function (k) { try { localStorage.removeItem('ts:' + k); } catch (_) {} };
+  }
+  if (typeof w.GM_listValues !== 'function') {
+    w.GM_listValues = function () {
+      const out = [];
+      try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('ts:')) out.push(k.slice(3)); } } catch (_) {}
+      return out;
+    };
+  }
+  if (typeof w.GM_info !== 'object' || !w.GM_info) {
+    w.GM_info = { script: { name: 'ffs-banner-estimates', version: '2.73.1-wb62' }, scriptHandler: 'polyfill' };
+  }
+})();
 
 const FF_VERSION = "2.73";
 const API_INTERVAL = 30000;
