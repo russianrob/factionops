@@ -783,6 +783,21 @@ const WAR_REPORT_HTML = `<!doctype html>
   .bar-fill{height:100%; transition:width .3s; border-radius:3px;}
   .bar-fill.ok{background:var(--pos);} .bar-fill.warn{background:var(--warn);} .bar-fill.bad{background:var(--neg);}
   .err{color:var(--neg); font-size:13px; margin-top:8px;}
+  /* Energy efficiency: help tooltip + expandable rows */
+  .help-icon{position:relative; display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; background:var(--surface-2); color:var(--text-dim); font-size:11px; font-weight:600; cursor:help; text-transform:none; letter-spacing:0;}
+  .help-icon:hover, .help-icon:focus{background:var(--accent); color:var(--bg); outline:none;}
+  .help-tip{position:absolute; top:calc(100% + 6px); left:0; min-width:260px; max-width:320px; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font:400 11.5px/1.5 -apple-system,system-ui,sans-serif; color:var(--text); text-transform:none; letter-spacing:0; box-shadow:0 8px 24px rgba(0,0,0,0.4); opacity:0; pointer-events:none; transition:opacity .15s; z-index:10; white-space:normal;}
+  .help-icon:hover .help-tip, .help-icon:focus .help-tip{opacity:1; pointer-events:auto;}
+  .help-tip b{color:var(--accent);} .help-tip i{color:var(--text-dim);}
+  .ee-details summary{cursor:pointer; font-size:12px; color:var(--text-dim); padding:6px 0; user-select:none;}
+  .ee-details[open] summary{color:var(--text); margin-bottom:4px;}
+  .ee-row{padding:8px 0; border-top:1px solid var(--border);}
+  .ee-row:first-child{border-top:0;}
+  .ee-row-head{display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
+  .ee-name{font-weight:600; font-size:13px;}
+  .ee-pct{font:600 13px "SF Mono", ui-monospace, monospace;}
+  .ee-row-stats{display:flex; gap:10px; font-size:11px; color:var(--text-mute); margin-top:3px; flex-wrap:wrap; font-family:"SF Mono", ui-monospace, monospace;}
+  .ee-reason{font-size:11px; color:var(--warn); margin-top:4px;}
 </style>
 </head>
 <body>
@@ -887,14 +902,49 @@ function render(d){
   // Energy efficiency
   if(ee.efficiencyPct!=null){
     const cls = ee.efficiencyPct>=80?'ok':ee.efficiencyPct>=60?'warn':'bad';
-    h+='<div class="card"><h2>Energy efficiency</h2>';
+    h+='<div class="card"><h2 style="display:flex;align-items:center;gap:6px">Energy efficiency';
+    h+=' <span class="help-icon" tabindex="0" title="How efficiency is calculated">?<span class="help-tip">';
+    h+='<b>Productive</b> = successful war hits × 25e<br>';
+    h+='<b>Wasted on failed attacks</b> = (Lost / Stalemate / Escape / Interrupted / Timeout) × 25e<br>';
+    h+='<b>Wasted on unused xanax</b> = (xanax × 10 expected attacks − actual attacks) × 25e<br>';
+    h+='&nbsp;&nbsp;<i>1 xanax = 250e = 10 attacks. Taking 3 xanax then making 0 hits wastes 750e.</i><br>';
+    h+='<b>Efficiency %</b> = productive ÷ (productive + all waste) × 100';
+    h+='</span></span></h2>';
     h+='<div class="grid">';
-    h+='<div class="stat"><div class="lbl">Estimated energy used</div><div class="val">'+fmtN(ee.totalEstimatedEnergy)+'</div></div>';
-    h+='<div class="stat"><div class="lbl">Estimated wasted</div><div class="val neg">'+fmtN(ee.totalWastedEnergy)+'</div></div>';
-    h+='<div class="stat"><div class="lbl">Faction avg respect/hit</div><div class="val">'+fmtR(ee.factionAvgRespectPerHit)+'</div></div>';
+    h+='<div class="stat"><div class="lbl">Energy spent</div><div class="val">'+fmtN(ee.totalEstimatedEnergy)+'</div></div>';
+    h+='<div class="stat"><div class="lbl">Wasted on fails</div><div class="val neg">'+fmtN(ee.totalWastedOnFailedAttacks||0)+'</div></div>';
+    h+='<div class="stat"><div class="lbl">Wasted on xanax</div><div class="val neg">'+fmtN(ee.totalWastedOnUnusedXanax||0)+'</div></div>';
     h+='<div class="stat"><div class="lbl">Efficiency</div><div class="val '+(ee.efficiencyPct>=80?'pos':ee.efficiencyPct<60?'neg':'warn')+'">'+ee.efficiencyPct+'%</div></div>';
     h+='</div>';
     h+='<div class="bar"><div class="bar-fill '+cls+'" style="width:'+Math.min(100,ee.efficiencyPct)+'%"></div></div>';
+
+    // Worst offenders — expandable list with per-member breakdown
+    const bad = (ee.members||[]).filter(m => m.wastedEnergy > 0 && m.efficiencyPct < 80).slice(0, 8);
+    if (bad.length) {
+      h+='<details class="ee-details" style="margin-top:10px">';
+      h+='<summary>Worst offenders ('+bad.length+') — tap to expand</summary>';
+      h+='<div style="margin-top:6px">';
+      for (const m of bad) {
+        const fails = m.failedAttacks||0;
+        const xanaxDeficit = Math.max(0, (m.xanaxTaken||0)*10 - (m.attemptedAttacks||0));
+        const reasonBits = [];
+        if (m.wastedOnFails>0) reasonBits.push(fails+' failed × 25e = '+fmtN(m.wastedOnFails)+'e');
+        if (m.wastedOnXanax>0) reasonBits.push((m.xanaxTaken||0)+' xanax taken, '+xanaxDeficit+' attacks missing = '+fmtN(m.wastedOnXanax)+'e');
+        h+='<div class="ee-row"><div class="ee-row-head">';
+        h+='<span class="ee-name">'+esc(m.name)+' <span class="muted" style="font-size:11px">Lv'+m.level+'</span></span>';
+        h+='<span class="ee-pct '+(m.efficiencyPct<50?'neg':'warn')+'">'+m.efficiencyPct+'%</span>';
+        h+='</div>';
+        h+='<div class="ee-row-stats">';
+        h+='<span>Productive '+fmtN(m.productiveEnergy)+'e</span>';
+        h+='<span class="neg">Wasted '+fmtN(m.wastedEnergy)+'e</span>';
+        h+='<span>'+m.attacks+'/'+(m.attemptedAttacks||0)+' hits</span>';
+        if((m.xanaxTaken||0)>0) h+='<span>'+(m.xanaxTaken||0)+' xanax</span>';
+        h+='</div>';
+        if (reasonBits.length) h+='<div class="ee-reason">'+reasonBits.join(' · ')+'</div>';
+        h+='</div>';
+      }
+      h+='</div></details>';
+    }
     h+='</div>';
   }
 
@@ -3928,6 +3978,11 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   // Calculate how much respect each of our members gave away by being attacked
   attackLog = attackLog || [];
   const bleedByMember = {}; // our member ID -> { timesAttacked, respectBled }
+  // 2026-05-23: also count attempted+failed attacks per attacker so the
+  // energy efficiency block can credit losses/stalemates/escapes as wasted
+  // energy (Torn's faction.members.attacks only counts successful war hits).
+  const attemptsByMember = {}; // our member ID -> { total, failed }
+  const FAILED_ATTACK_RESULTS = new Set(['Lost', 'Stalemate', 'Escape', 'Interrupted', 'Timeout']);
   const ourFactionId_str = String(ourFaction.id || "");
   for (const atk of attackLog) {
     // Enemy attacked one of our members
@@ -3936,6 +3991,17 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
       if (!bleedByMember[defId]) bleedByMember[defId] = { timesAttacked: 0, respectBled: 0 };
       bleedByMember[defId].timesAttacked++;
       bleedByMember[defId].respectBled += (atk.respect_gain || atk.respect || 0);
+    }
+    // We attacked someone — count attempts + failed for energy efficiency
+    if (String(atk.attacker_faction) === ourFactionId_str) {
+      const aid = String(atk.attacker_id || "");
+      if (aid && aid !== "0") {
+        if (!attemptsByMember[aid]) attemptsByMember[aid] = { total: 0, failed: 0 };
+        attemptsByMember[aid].total++;
+        if (FAILED_ATTACK_RESULTS.has(String(atk.result || ''))) {
+          attemptsByMember[aid].failed++;
+        }
+      }
     }
   }
   const hasBleedData = attackLog.length > 0;
@@ -3946,6 +4012,7 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   const xanaxTaken = (xanaxStats && xanaxStats.taken) || {};
   const ourMemberList = Object.entries(ourMembers).map(([id, m]) => {
     const bleed = bleedByMember[id] || { timesAttacked: 0, respectBled: 0 };
+    const attempts = attemptsByMember[id] || { total: 0, failed: 0 };
     const xanax = Number(xanaxTaken[id]) || 0;
     const attacks = m.attacks || 0;
     // 1 xanax = 250 energy = 10 war attacks at 25 e each. So if a
@@ -3964,6 +4031,9 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
       score: m.score || 0,
       timesAttacked: bleed.timesAttacked,
       respectBled: Math.round(bleed.respectBled * 100) / 100,
+      // 2026-05-23: attempted/failed from attack log (used by energy efficiency)
+      attemptedAttacks: attempts.total,
+      failedAttacks: attempts.failed,
       // xanax accountability — only meaningful for members who actually
       // took xanax during the war. xanax==0 members get null deficit so
       // the UI can skip them in the "suspicious" callout.
@@ -4051,18 +4121,36 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   };
 
   // ── C. ENERGY EFFICIENCY ANALYSIS ──
+  // 2026-05-23: rewritten. Old calc counted only war-credited successful
+  // hits and used a units-broken "below avg rph" formula. New calc covers
+  // every way energy can be burned:
+  //   - productive   = successful war hits × 25e
+  //   - wastedOnFails = (attempted - successful) × 25e  (losses, stalemates,
+  //                     escapes, interrupts, timeouts, non-war hits during war)
+  //   - wastedOnXanax = max(0, xanax×10 - attempted) × 25e  (xanax taken but
+  //                     no attacks made — 1 xanax refills 250e = 10 attacks)
+  // efficiencyPct = productive / (productive + wasted) × 100
   const energyAnalysis = [];
   const factionAvgRph = avgRespectPerHit;
+  const ENERGY_PER_ATTACK = 25;
+  const ATTACKS_PER_XANAX = 10;
 
   for (const m of ourMemberList) {
-    if (m.attacks === 0) continue;
+    // include anyone who attacked OR took xanax (xanax-and-zero-hits is
+    // exactly the case we want to surface)
+    if (m.attemptedAttacks === 0 && m.xanaxTaken === 0) continue;
+
     const rph = m.attacks > 0 ? Math.round((m.respect / m.attacks) * 100) / 100 : 0;
-    const estEnergy = m.attacks * 25;
-    const rphRatio = factionAvgRph > 0 ? rph / factionAvgRph : 1;
-    const isBelowThreshold = rphRatio < 0.5;
-    const wastedEnergy = isBelowThreshold ? Math.round((factionAvgRph - rph) * m.attacks * 25) : 0;
+    const productive = m.attacks * ENERGY_PER_ATTACK;
+    const wastedOnFails = Math.max(0, (m.attemptedAttacks - m.attacks)) * ENERGY_PER_ATTACK;
+    const xanaxAttacksExpected = m.xanaxTaken * ATTACKS_PER_XANAX;
+    const wastedOnXanax = Math.max(0, xanaxAttacksExpected - m.attemptedAttacks) * ENERGY_PER_ATTACK;
+    const totalEnergyBurned = productive + wastedOnFails + wastedOnXanax;
+    const totalWaste = wastedOnFails + wastedOnXanax;
+    const efficiencyPct = totalEnergyBurned > 0
+      ? Math.round((productive / totalEnergyBurned) * 100)
+      : 100;
     // Net Score = score earned - respect bled to enemy
-    // This is the TRUE contribution: what you earned minus what you gave away
     const netScore = Math.round((m.respect - m.respectBled) * 100) / 100;
 
     energyAnalysis.push({
@@ -4070,28 +4158,41 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
       name: m.name,
       level: m.level,
       attacks: m.attacks,
+      attemptedAttacks: m.attemptedAttacks,
+      failedAttacks: Math.max(0, m.attemptedAttacks - m.attacks),
+      xanaxTaken: m.xanaxTaken,
       respect: m.respect,
       respectPerHit: rph,
-      estimatedEnergy: estEnergy,
-      efficiencyPct: Math.round(rphRatio * 100),
-      wastedEnergy,
+      estimatedEnergy: totalEnergyBurned,
+      productiveEnergy: productive,
+      wastedOnFails,
+      wastedOnXanax,
+      wastedEnergy: totalWaste,
+      efficiencyPct,
       timesAttacked: m.timesAttacked,
       respectBled: m.respectBled,
       netScore,
-      isBelowThreshold,
+      isBelowThreshold: efficiencyPct < 50,
     });
   }
 
-  energyAnalysis.sort((a, b) => b.respectPerHit - a.respectPerHit);
+  // Surface the worst offenders first (low efficiency = most actionable)
+  energyAnalysis.sort((a, b) => a.efficiencyPct - b.efficiencyPct || b.wastedEnergy - a.wastedEnergy);
 
   const totalEstEnergy = energyAnalysis.reduce((s, m) => s + m.estimatedEnergy, 0);
   const totalWastedEnergy = energyAnalysis.reduce((s, m) => s + m.wastedEnergy, 0);
-  const energyEfficiencyPct = totalEstEnergy > 0 ? Math.round(((totalEstEnergy - totalWastedEnergy) / totalEstEnergy) * 100) : 100;
+  const totalWastedOnFails = energyAnalysis.reduce((s, m) => s + m.wastedOnFails, 0);
+  const totalWastedOnXanax = energyAnalysis.reduce((s, m) => s + m.wastedOnXanax, 0);
+  const energyEfficiencyPct = totalEstEnergy > 0
+    ? Math.max(0, Math.round(((totalEstEnergy - totalWastedEnergy) / totalEstEnergy) * 100))
+    : 100;
 
   const energyEfficiency = {
     members: energyAnalysis,
     totalEstimatedEnergy: totalEstEnergy,
     totalWastedEnergy: totalWastedEnergy,
+    totalWastedOnFailedAttacks: totalWastedOnFails,
+    totalWastedOnUnusedXanax: totalWastedOnXanax,
     efficiencyPct: energyEfficiencyPct,
     factionAvgRespectPerHit: factionAvgRph,
   };
