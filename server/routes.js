@@ -3978,12 +3978,15 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   // Calculate how much respect each of our members gave away by being attacked
   attackLog = attackLog || [];
   const bleedByMember = {}; // our member ID -> { timesAttacked, respectBled }
-  // 2026-05-23: also count attempted+failed attacks per attacker so the
+  // 2026-05-23: also count attempted+failed war attacks per attacker so the
   // energy efficiency block can credit losses/stalemates/escapes as wasted
   // energy (Torn's faction.members.attacks only counts successful war hits).
+  // Scope: only attacks against the enemy faction count toward "war attempted"
+  // so a member's stray Tornville mug doesn't inflate their war energy spend.
   const attemptsByMember = {}; // our member ID -> { total, failed }
   const FAILED_ATTACK_RESULTS = new Set(['Lost', 'Stalemate', 'Escape', 'Interrupted', 'Timeout']);
   const ourFactionId_str = String(ourFaction.id || "");
+  const enemyFactionId_str = String(enemyFaction.id || "");
   for (const atk of attackLog) {
     // Enemy attacked one of our members
     if (String(atk.defender_faction) === ourFactionId_str && String(atk.attacker_faction) !== ourFactionId_str) {
@@ -3992,8 +3995,10 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
       bleedByMember[defId].timesAttacked++;
       bleedByMember[defId].respectBled += (atk.respect_gain || atk.respect || 0);
     }
-    // We attacked someone — count attempts + failed for energy efficiency
-    if (String(atk.attacker_faction) === ourFactionId_str) {
+    // We attacked the enemy faction — count as war attempt
+    if (String(atk.attacker_faction) === ourFactionId_str
+        && enemyFactionId_str
+        && String(atk.defender_faction) === enemyFactionId_str) {
       const aid = String(atk.attacker_id || "");
       if (aid && aid !== "0") {
         if (!attemptsByMember[aid]) attemptsByMember[aid] = { total: 0, failed: 0 };
@@ -4142,7 +4147,11 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
 
     const rph = m.attacks > 0 ? Math.round((m.respect / m.attacks) * 100) / 100 : 0;
     const productive = m.attacks * ENERGY_PER_ATTACK;
-    const wastedOnFails = Math.max(0, (m.attemptedAttacks - m.attacks)) * ENERGY_PER_ATTACK;
+    // Use explicit failure count from attack log (Lost / Stalemate / Escape /
+    // Interrupted / Timeout). Don't infer from attempted-successful because
+    // assists count as successes here but earn no respect — they'd otherwise
+    // get mis-bucketed as failures.
+    const wastedOnFails = m.failedAttacks * ENERGY_PER_ATTACK;
     const xanaxAttacksExpected = m.xanaxTaken * ATTACKS_PER_XANAX;
     const wastedOnXanax = Math.max(0, xanaxAttacksExpected - m.attemptedAttacks) * ENERGY_PER_ATTACK;
     const totalEnergyBurned = productive + wastedOnFails + wastedOnXanax;
@@ -4159,7 +4168,7 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
       level: m.level,
       attacks: m.attacks,
       attemptedAttacks: m.attemptedAttacks,
-      failedAttacks: Math.max(0, m.attemptedAttacks - m.attacks),
+      failedAttacks: m.failedAttacks,
       xanaxTaken: m.xanaxTaken,
       respect: m.respect,
       respectPerHit: rph,
@@ -4695,8 +4704,12 @@ async function handlePostWarReport(req, res) {
         const startTs = warReportData.rankedwarreport?.start || warReportData.start || 0;
         const endTs = warReportData.rankedwarreport?.end || warReportData.end || 0;
         if (startTs && endTs) {
-          attackLog = await fetchFactionAttacks(war.factionId, apiKey, startTs, endTs);
-          console.log(`[post-war] Fetched ${attackLog.length} ranked war attacks for bleed analysis`);
+          // 2026-05-23: rankedWarOnly:false so losses/stalemates/escapes
+          // come through (Torn's ranked_war flag is set only on attacks
+          // that actually scored — failures get stripped under the
+          // default filter, which broke the new energy efficiency calc).
+          attackLog = await fetchFactionAttacks(war.factionId, apiKey, startTs, endTs, { rankedWarOnly: false });
+          console.log(`[post-war] Fetched ${attackLog.length} faction attacks (war + non-war) for bleed + energy analysis`);
         }
       } catch (atkErr) {
         console.warn(`[post-war] Attack log fetch failed (bleed analysis will be skipped):`, atkErr.message);
