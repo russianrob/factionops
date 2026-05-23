@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.1-wb62
+// @version      2.73.1-wb63
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -217,6 +217,24 @@
 
 const FF_VERSION = "2.73";
 const API_INTERVAL = 30000;
+// wb63 (2026-05-24): prefer Torn's server-synced clock via
+// window.getCurrentTimestamp() so travel + hospital countdowns match
+// Torn's own UI tick-for-tick — no drift from a wrong device clock.
+// Defensive: handles sec/ms shapes, falls back to Date.now()/1000 if
+// Torn's React bundle hasn't loaded yet.
+function ffs_nowSec() {
+  try {
+    const w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    if (typeof w.getCurrentTimestamp === 'function') {
+      const t = w.getCurrentTimestamp();
+      if (Number.isFinite(t)) {
+        if (t > 1e12) return Math.floor(t / 1000);
+        if (t > 1e9)  return Math.floor(t);
+      }
+    }
+  } catch (_) {}
+  return Math.floor(Date.now() / 1000);
+}
 const FF_TARGET_STALENESS = 24 * 60 * 60 * 1000; // Refresh the target list every day
 const TARGET_KEY = "ffscouterv2-targets";
 const TARGET_INDEX_KEY = "ffscouterv2-target-index";
@@ -1487,7 +1505,7 @@ if (!singleton) {
   // "Traveling to X" description block.
   // ─────────────────────────────────────────────────────────────────────
   function format_countdown(unixSec) {
-    const remaining = Math.max(0, unixSec - Date.now() / 1000);
+    const remaining = Math.max(0, unixSec - ffs_nowSec());
     const h = Math.floor(remaining / 3600);
     const m = Math.floor((remaining % 3600) / 60);
     const s = Math.floor(remaining % 60);
@@ -2935,7 +2953,7 @@ if (!singleton) {
       const until = _ffsMemberCountdowns[uid];
       if (until) {
         painted++;
-        const remaining = until * 1000 - Date.now();
+        const remaining = (until - ffs_nowSec()) * 1000;
         const countdownText = ffs_formatCountdown(remaining);
         const countryText = _ffsMemberAbbr[uid] || "";
         const isReturning = !!_ffsMemberReturning[uid];
@@ -3032,7 +3050,7 @@ if (!singleton) {
         const hospUntil = _ffsMemberHospitalUntil[uid];
         const hospState = _ffsMemberHospitalState[uid] || 'Hospital';
         if (hospUntil) {
-          const remaining = hospUntil - Math.floor(Date.now() / 1000);
+          const remaining = hospUntil - ffs_nowSec();
           if (remaining <= 0) {
             // Release moment passed — clean up and let React own the cell.
             delete _ffsMemberHospitalUntil[uid];
