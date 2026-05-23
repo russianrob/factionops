@@ -983,16 +983,18 @@ function render(d){
     h+='</div>';
     if(xa.rule) h+='<div class="muted" style="font-size:11px;margin-bottom:8px">'+esc(xa.rule)+'</div>';
     if(xa.rows && xa.rows.length){
+      // Flagged-only list — members who took xanax and met expectations
+      // aren't shown (rolled into the aggregate counts above).
       for(const r of xa.rows){
-        const isFlag=!!r.flagged;
-        h+='<div class="member"><div class="member-head"><div class="member-name">'+esc(r.name)+(isFlag?' <span class="pill" style="color:var(--neg);background:rgba(251,113,133,0.12);border:1px solid var(--neg)">flagged</span>':'')+'</div></div>';
+        h+='<div class="member"><div class="member-head"><div class="member-name">'+esc(r.name)+' <span class="pill" style="color:var(--neg);background:rgba(251,113,133,0.12);border:1px solid var(--neg)">flagged</span></div></div>';
         h+='<div class="member-stats">';
         h+='<span>Xanax '+r.xanaxTaken+'</span>';
         h+='<span>Hits '+r.attacks+' / expected '+r.expectedAttacks+'</span>';
         if(r.attackDeficit>0) h+='<span class="neg">−'+r.attackDeficit+' deficit</span>';
-        else if(r.attackDeficit<0) h+='<span class="pos">+'+Math.abs(r.attackDeficit)+' bonus</span>';
         h+='</div></div>';
       }
+    }else if((xa.membersWhoTook||0) > 0){
+      h+='<div class="muted">All '+fmtN(xa.membersWhoTook)+' members who took xanax delivered the expected attacks.</div>';
     }else{
       h+='<div class="muted">No xanax pulled this war.</div>';
     }
@@ -4429,8 +4431,12 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   // Members are flagged when their attack count is below xanax * 10.
   // The full list is sorted by deficit DESC so the worst offenders sit
   // at the top.
-  const xanaxRows = ourMemberList
-    .filter(m => (m.xanaxTaken || 0) > 0)
+  // 2026-05-23: rows are flagged-only now — members who took xanax and
+  // delivered the expected ≥N×10 attacks aren't surfaced (no signal,
+  // just noise). Aggregate totals still cover everyone who took xanax.
+  const xanaxTookList = ourMemberList.filter(m => (m.xanaxTaken || 0) > 0);
+  const xanaxRows = xanaxTookList
+    .filter(m => m.xanaxFlagged)
     .map(m => ({
       id: m.id,
       name: m.name,
@@ -4443,9 +4449,9 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
     .sort((a, b) => (b.attackDeficit || 0) - (a.attackDeficit || 0));
   const xanaxAccountability = {
     enabled: !!xanaxStats,
-    totalXanaxTaken: xanaxRows.reduce((s, r) => s + r.xanaxTaken, 0),
-    membersWhoTook:  xanaxRows.length,
-    membersFlagged:  xanaxRows.filter(r => r.flagged).length,
+    totalXanaxTaken: xanaxTookList.reduce((s, m) => s + (m.xanaxTaken || 0), 0),
+    membersWhoTook:  xanaxTookList.length,
+    membersFlagged:  xanaxRows.length, // rows is flagged-only now
     rows: xanaxRows,
     // Plainspoken accountability: 1 xanax = 250 energy = 10 attacks. If
     // a member took xanax in the 24h before war + during the war and
