@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.20
+// @version      5.1.21
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -87,7 +87,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.20';
+    const SCRIPT_VERSION = '5.1.21';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -3476,7 +3476,25 @@ body.wb-chain-active {
     // release timestamp instead of a locally-decremented duration. Prevents
     // tick-drift (dt floating-point accumulation) + server-poll rebounds that
     // required the wall of monotonic-guard patches (3.7.6, 3.8.3, 3.8.4, 3.8.5).
-    function _nowSec() { return Math.floor(Date.now() / 1000); }
+    //
+    // v5.1.21 (2026-05-24): prefer Torn's server-synced clock via
+    // window.getCurrentTimestamp() so our hospital/jail countdowns match
+    // Torn's own UI exactly — no drift from a wrong device clock. Handles
+    // both seconds and milliseconds return shapes defensively, and falls
+    // back to local time before Torn's bundle has loaded.
+    function _nowSec() {
+        try {
+            const w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+            if (typeof w.getCurrentTimestamp === 'function') {
+                const t = w.getCurrentTimestamp();
+                if (Number.isFinite(t)) {
+                    if (t > 1e12) return Math.floor(t / 1000); // returned ms
+                    if (t > 1e9)  return Math.floor(t);         // returned sec
+                }
+            }
+        } catch (_) {}
+        return Math.floor(Date.now() / 1000);
+    }
     function rebaseStatusUntil(s) {
         // Call every time `until` is written from a fresh source (merge,
         // init, DOM parse). Records the absolute release time so later
