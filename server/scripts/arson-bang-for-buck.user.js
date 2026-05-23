@@ -3970,7 +3970,7 @@ function createSettingsUI() {
                 textDecoration: 'none',
                 fontSize: '12px'
             });
-            helpLink.target = '_blank'; helpLink.rel = 'noopener noreferrer';
+            helpLink.target = '_blank';
             helpLink.rel = 'noopener noreferrer';
  
             tabContainer.appendChild(fuelTab);

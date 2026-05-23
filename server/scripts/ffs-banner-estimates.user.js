@@ -1557,7 +1557,7 @@ if (!singleton) {
 
     const btn = document.createElement("a");
     btn.href = `https://ffscouter.com/player-view?player_id=${player_id}`;
-    btn.target = "_blank"; btn.rel = "noopener noreferrer";
+    btn.target = "_blank";
     btn.rel = "noopener noreferrer";
     btn.className = "ff-scouter-history-btn";
     btn.title = "View Stats History on FFScouter";
