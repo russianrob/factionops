@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Warboard Battery Diag
 // @namespace    tornwar.com
-// @version      0.2.6
+// @version      0.2.7
 // @description  Live overlay of what's consuming CPU/network inside the WebView — fetch / XHR / GM_xhr counts by host + caller, mutation rate, setInterval handles, page nav rate. Diagnostic only, no side effects.
 // @author       warboard
 // @match        https://www.torn.com/*
@@ -16,6 +16,17 @@
 
 (function () {
   'use strict';
+
+  // 0.2.7 — bfcache / re-injection guard. PDA's WebView and Safari
+  // keep pages in back-forward cache; on return the userscript runs
+  // again but the previous script context lives on with its
+  // setIntervals still firing. Without this guard the diag's OWN
+  // nav-poll + post-loop accumulate to ×N visits, polluting the
+  // "active intervals" count it was supposed to be measuring.
+  try {
+    if (window.__wbDiagInitialized) return;
+    window.__wbDiagInitialized = true;
+  } catch (_) {}
 
   // 0.1.1 — wrap each instrumentation step in try/catch so one
   // failure on a hardened WebView (PDA) doesn't kill the overlay.
