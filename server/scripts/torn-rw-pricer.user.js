@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.36
+// @version      3.1.37
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2403,11 +2403,49 @@
                         ' | missing from badge cache: ' + (calc.missingFromCache || 0) +
                         ' | RW delta sum: $' + Math.round(calc.sum).toLocaleString());
                 } catch (_) {}
-                if (calc.count === 0) { nwlog('skip: 0 RW items added — either none in badge cache (visit /item.php to populate) or all caught by tolerance filter'); return; }
+                if (calc.count === 0) {
+                    // v3.1.37: if nothing got counted but there ARE
+                    // potentially-RW items in inventory we haven't seen
+                    // on the items page yet, render a setup hint pill
+                    // instead of silently doing nothing.
+                    if ((calc.missingFromCache || 0) > 0) {
+                        nwlog('0 counted but ' + calc.missingFromCache + ' items missing from cache — rendering setup hint');
+                        renderNwSetupHint(calc.missingFromCache);
+                    } else {
+                        nwlog('skip: 0 RW items added (all caught by tolerance filter or no RW items in inventory)');
+                    }
+                    return;
+                }
                 finishNwRender(calc);
             });
             return;
         });
+    }
+
+    // v3.1.37: hint pill shown when badge cache is empty. Tells the user
+    // they need to visit /item.php to populate prices before networth can
+    // include their RW value.
+    function renderNwSetupHint(missingCount) {
+        var row = findNwRow();
+        if (!row) return;
+        var valNode = findNwValueNode(row);
+        if (!valNode || !valNode.parentNode) return;
+        // Idempotent — don't stack hints
+        if (valNode.parentNode.querySelector('[data-rwp-hint]')) return;
+        // Don't show if a real RW pill is already there
+        if (valNode.parentNode.querySelector('[data-rwp-pill]')) return;
+        var hint = document.createElement('span');
+        hint.setAttribute('data-rwp-hint', '1');
+        hint.setAttribute('data-rwp-pill', '1');
+        hint.textContent = ' RW?';
+        hint.title = 'RW Pricer: ' + missingCount + ' items in your inventory need their price cached.\nVisit your items page (Items tab) — wait ~5 seconds for badges to render — and reload this page. The networth will then include your RW items.';
+        hint.style.cssText = 'margin-left:6px;padding:1px 5px;background:rgba(251,191,36,0.15);border:1px solid #fbbf24;border-radius:8px;color:#fbbf24;font-size:0.75em;cursor:help;';
+        hint.addEventListener('click', function (e) {
+            e.stopPropagation();
+            // Convenience: deep-link to items page if clicked
+            window.location.href = '/item.php';
+        });
+        valNode.parentNode.appendChild(hint);
     }
 
     function finishNwRender(calc) {
