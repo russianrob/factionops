@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.25
+// @version      3.1.26
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2203,18 +2203,40 @@
                     else if (aData && aData.Yellow) ourPrice = aData.Yellow[1];
                 }
             }
-            if (!ourPrice) continue; // not in our DB, skip
-            if (tornPrice > 0 && tornPrice >= ourPrice * TOLERANCE) {
-                // Torn's price is close enough — already counted in networth
-                skippedTornValued += qty;
+            if (!ourPrice) {
+                // v3.1.26: per-item diag for items skipped because not in our DB
+                window.__rwpItemDiag = window.__rwpItemDiag || [];
+                window.__rwpItemDiag.push({ name: it.name, id: it.id, uid: it.uid, rarity: rarityKey, ourPrice: 0, tornPrice: tornPrice, decision: 'not-in-db' });
                 continue;
             }
-            var delta = Math.max(0, ourPrice - tornPrice);
-            if (delta > 0) {
-                sum += delta * qty;
-                count += qty;
+            var decision, delta;
+            if (tornPrice > 0 && tornPrice >= ourPrice * TOLERANCE) {
+                skippedTornValued += qty;
+                decision = 'tolerance-skip (tornPrice ' + tornPrice + ' >= ' + Math.round(ourPrice * TOLERANCE) + ')';
+                delta = 0;
+            } else {
+                delta = Math.max(0, ourPrice - tornPrice);
+                if (delta > 0) {
+                    sum += delta * qty;
+                    count += qty;
+                    decision = 'added delta $' + delta.toLocaleString();
+                } else {
+                    decision = 'zero-delta';
+                }
             }
+            window.__rwpItemDiag = window.__rwpItemDiag || [];
+            window.__rwpItemDiag.push({ name: it.name, id: it.id, uid: it.uid, rarity: rarityKey, ourPrice: ourPrice, tornPrice: tornPrice, decision: decision });
         }
+        // Flush per-item diag once per pass
+        try {
+            if (window.__rwpItemDiag && window.__rwpItemDiag.length) {
+                console.log('[rwp-networth] per-item breakdown:');
+                window.__rwpItemDiag.forEach(function (d) {
+                    console.log('  ' + d.name + ' (id ' + d.id + ', uid ' + d.uid + ', rarity ' + d.rarity + ') ourPrice=$' + (d.ourPrice||0).toLocaleString() + ' tornPrice=$' + (d.tornPrice||0).toLocaleString() + ' → ' + d.decision);
+                });
+                window.__rwpItemDiag = [];
+            }
+        } catch (_) {}
         return { sum: sum, count: count, skippedLoaned: skippedLoaned, skippedUnequipped: skippedUnequipped, skippedTornValued: skippedTornValued };
     }
 
