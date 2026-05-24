@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auction Filter
 // @namespace    tornwar.com
-// @version      0.1.0
+// @version      0.2.0
 // @description  Filter Torn auction house by rarity (Yellow / Orange / Red) and search by weapon name. Reads rarity from rw-pricer badges already on the listings — install Torn RW Pricer first for color filters to work. Search-by-name works standalone.
 // @author       warboard
 // @match        https://www.torn.com/amarket*
@@ -23,10 +23,17 @@
   var STATE = {
     rarity: 'all',  // 'all' | 'yellow' | 'orange' | 'red' | 'unbadged'
     name: '',
+    // v0.2.0: auto-pagination state. When a color filter is active and
+    // visible count drops below threshold, auto-click Next to load more.
+    autoPaged: 0,             // pages auto-clicked since filter was last changed
+    lastAutoClickTs: 0,       // throttle timestamp
   };
+  var AUTO_PAGE_MIN_VISIBLE = 5;       // visible-on-page count triggering Next-click
+  var AUTO_PAGE_MAX = 20;              // hard cap per filter session (~400 listings)
+  var AUTO_PAGE_MIN_INTERVAL = 1200;   // ms between auto-clicks (lets next page render)
 
   function log(m) { try { console.log('[torn-auction-filter] ' + m); } catch (_) {} }
-  log('installed v0.1.0');
+  log('installed v0.2.0');
 
   // ─── Styles ────────────────────────────────────────────────────────
   function injectStyles() {
@@ -132,6 +139,56 @@
     return firstLine.slice(0, 60);
   }
 
+  // ─── v0.2.0: Auto-paginate when filtered results run low ──────────
+  // Find Torn's auction-list "Next" pagination button. It's React-rendered
+  // with hashed class names, so use structural + text-content selectors.
+  function findNextPageButton() {
+    // Pattern 1: explicit aria-label
+    var aria = document.querySelector('button[aria-label*="next" i], a[aria-label*="next" i]');
+    if (aria && !aria.disabled) return aria;
+    // Pattern 2: text content "Next" inside a button/anchor
+    var candidates = document.querySelectorAll('button, a');
+    for (var i = 0; i < candidates.length; i++) {
+      var c = candidates[i];
+      var t = (c.textContent || '').trim().toLowerCase();
+      if (t === 'next' || t === '>' || t === '›' || t === '→') {
+        if (!c.disabled && !c.classList.contains('disabled')) return c;
+      }
+    }
+    // Pattern 3: pagination container's last child (Torn often uses » or chevron icons)
+    var pagers = document.querySelectorAll('[class*="pagination"]');
+    for (var j = 0; j < pagers.length; j++) {
+      var lastBtn = pagers[j].querySelector('button:last-child, a:last-child');
+      if (lastBtn && !lastBtn.disabled && !lastBtn.classList.contains('disabled')) {
+        // Make sure it's not "Last" (could be »» on some skins) — check icon
+        if (!/last/i.test(lastBtn.getAttribute('aria-label') || '')) return lastBtn;
+      }
+    }
+    return null;
+  }
+
+  function maybeAutoPaginate() {
+    // Only auto-page when a color filter is active (not 'all')
+    if (STATE.rarity === 'all' && !STATE.name) return;
+    if (STATE.autoPaged >= AUTO_PAGE_MAX) return;
+    var now = Date.now();
+    if (now - STATE.lastAutoClickTs < AUTO_PAGE_MIN_INTERVAL) return;
+    // Count visible after filter
+    var lis = findListings();
+    var visible = 0;
+    for (var i = 0; i < lis.length; i++) if (!lis[i].classList.contains('wb-auc-hidden')) visible++;
+    if (visible >= AUTO_PAGE_MIN_VISIBLE) return; // enough on screen — don't auto-page
+    var nextBtn = findNextPageButton();
+    if (!nextBtn) {
+      log('auto-paginate: no Next button found (probably last page)');
+      return;
+    }
+    STATE.autoPaged++;
+    STATE.lastAutoClickTs = now;
+    log('auto-paginate: ' + visible + '/' + AUTO_PAGE_MIN_VISIBLE + ' visible — clicking Next (auto-page ' + STATE.autoPaged + '/' + AUTO_PAGE_MAX + ')');
+    try { nextBtn.click(); } catch (e) { log('next-click failed: ' + e.message); }
+  }
+
   // ─── Apply filter to current DOM ───────────────────────────────────
   function applyFilter() {
     var lis = findListings();
@@ -153,7 +210,13 @@
       else { li.classList.remove('wb-auc-hidden'); shown++; }
     }
     var countEl = document.getElementById('wb-auc-count');
-    if (countEl) countEl.textContent = shown + ' / ' + lis.length + ' shown';
+    if (countEl) {
+      var label = shown + ' / ' + lis.length + ' shown';
+      if (STATE.autoPaged > 0) label += ' (auto-paged ×' + STATE.autoPaged + ')';
+      countEl.textContent = label;
+    }
+    // v0.2.0: auto-paginate if filter active and visible count too low
+    maybeAutoPaginate();
   }
 
   // ─── Build the filter bar ──────────────────────────────────────────
@@ -186,6 +249,7 @@
         bar.querySelectorAll('.wb-auc-chip').forEach(function (c) { c.classList.remove('active'); });
         chip.classList.add('active');
         STATE.rarity = chip.getAttribute('data-rarity');
+        STATE.autoPaged = 0; // reset cap so user can re-auto-page from scratch
         applyFilter();
       });
     });
@@ -195,6 +259,7 @@
       clearTimeout(debounceT);
       debounceT = setTimeout(function () {
         STATE.name = search.value || '';
+        STATE.autoPaged = 0;
         applyFilter();
       }, 150);
     });
