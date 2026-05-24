@@ -38,7 +38,7 @@
   var HARVESTED = new Map(); // key → { name, price, rarity, html }
 
   function log(m) { try { console.log('[torn-auction-filter] ' + m); } catch (_) {} }
-  log('installed v0.2.0');
+  log('installed v0.3.0');
 
   // ─── Styles ────────────────────────────────────────────────────────
   function injectStyles() {
