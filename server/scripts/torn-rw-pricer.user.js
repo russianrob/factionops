@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.24
+// @version      3.1.25
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1916,11 +1916,12 @@
     var NW_UID_CACHE_KEY = 'rwp_uid_details_cache';
 
     function getNwMode() {
-        // v3.1.23: default to 'replace' (only shipping mode now). Existing
-        // 'line'/'tooltip' stored values still honored for users who set them;
-        // 'off' still disables. Mode selector dropped from settings UI.
-        var v = safeGet(NW_MODE_KEY, 'replace');
-        return NW_MODES.indexOf(v) >= 0 ? v : 'replace';
+        // v3.1.25: hardcoded to 'replace' — the only shipping mode. Users
+        // with legacy 'line' / 'tooltip' stored from the old mode selector
+        // got stuck with broken rendering on desktop (line mode wrapped
+        // weirdly in Torn's General Info layout) and had no UI to change
+        // it back since we dropped the selector in 3.1.23. Force override.
+        return 'replace';
     }
 
     function getEffectiveApiKey() {
