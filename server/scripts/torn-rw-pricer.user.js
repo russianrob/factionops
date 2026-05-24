@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.33
+// @version      3.1.34
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1982,8 +1982,11 @@
     var NW_UID_CACHE_KEY = 'rwp_uid_details_cache';
 
     function getNwMode() {
-        var v = safeGet(NW_MODE_KEY, 'line');
-        return NW_MODES.indexOf(v) >= 0 ? v : 'line';
+        // v3.1.34: always inline (replace mode). Line mode rendered as
+        // wrapped text below the Networth row on desktop — messy. Inline
+        // swaps the value in-place with a green RW pill. Works on both
+        // PDA and desktop layouts.
+        return 'replace';
     }
 
     function getEffectiveApiKey() {
