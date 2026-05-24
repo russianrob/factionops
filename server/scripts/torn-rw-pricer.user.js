@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.35
+// @version      3.1.36
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2206,37 +2206,48 @@
         for (var k = 0; k < Math.min(3, uids.length); k++) next();
     }
 
-    function computeRwInventorySum(inventoryContainer) {
-        // v3.1.33: drastically simplified. Read prices straight from the
-        // BADGE_CACHE_KEY populated by harvestInventoryBadges on the items
-        // page. No per-uid API calls, no tolerance filter, no rarity
-        // detection — the cached price IS what rw-pricer's badge already
-        // displays (factoring in rarity + bonus combos exactly as the
-        // visible UI does).
+    function computeRwInventorySum(inventoryContainer, marketPriceMap) {
+        // v3.1.33: read from BADGE_CACHE_KEY populated on items page
+        // v3.1.36: skip items where Torn's market_price is within 70% of
+        // the badge value — Torn already counts those in networth, so
+        // adding the badge value on top would double-count (the user's
+        // armour-already-has-value complaint). Items where Torn's price
+        // is far below the badge value (e.g. RW weapon with bonus where
+        // Torn only knows the base weapon price) still get full badge
+        // value added.
         var items;
         if (Array.isArray(inventoryContainer)) items = inventoryContainer;
         else if (inventoryContainer && Array.isArray(inventoryContainer.items)) items = inventoryContainer.items;
         else if (inventoryContainer && typeof inventoryContainer === 'object') items = Object.values(inventoryContainer);
-        else return { sum: 0, count: 0, skippedLoaned: 0, missingFromCache: 0 };
+        else return { sum: 0, count: 0, skippedLoaned: 0, missingFromCache: 0, skippedTornValued: 0 };
 
         var badgeCache = safeGet(BADGE_CACHE_KEY, {}) || {};
-        var sum = 0, count = 0, skippedLoaned = 0, missingFromCache = 0;
+        var TOLERANCE = 0.7;
+        var sum = 0, count = 0, skippedLoaned = 0, missingFromCache = 0, skippedTornValued = 0;
         for (var i = 0; i < items.length; i++) {
             var it = items[i];
             if (!it || !it.uid) continue;
             if (isLoanedItem(it)) { skippedLoaned += Number(it.amount != null ? it.amount : it.quantity) || 1; continue; }
             var cached = badgeCache[it.uid];
             if (!cached || !cached.price) {
-                // Only count items potentially relevant (in our DB) toward
-                // "missing" — don't flag every consumable/drug as missing.
                 if (lookupWeapon(it.name) || lookupArmour(it.name)) missingFromCache++;
                 continue;
             }
             var qty = Number(it.amount != null ? it.amount : it.quantity) || 1;
-            sum += cached.price * qty;
-            count += qty;
+            // Tolerance: if Torn already values close to the badge price,
+            // skip — already in networth.
+            var tornPrice = (marketPriceMap && it.id != null && marketPriceMap[it.id]) ? Number(marketPriceMap[it.id]) : 0;
+            if (tornPrice > 0 && tornPrice >= cached.price * TOLERANCE) {
+                skippedTornValued += qty;
+                continue;
+            }
+            var delta = Math.max(0, cached.price - tornPrice);
+            if (delta > 0) {
+                sum += delta * qty;
+                count += qty;
+            }
         }
-        return { sum: sum, count: count, skippedLoaned: skippedLoaned, missingFromCache: missingFromCache };
+        return { sum: sum, count: count, skippedLoaned: skippedLoaned, missingFromCache: missingFromCache, skippedTornValued: skippedTornValued };
     }
 
     function findNwRow() {
@@ -2378,44 +2389,55 @@
             if (onProfile) {
                 if (!userId || Number(userId) !== profileXid) { nwlog('skip: userId(' + userId + ') != profileXid(' + profileXid + ')'); return; }
             }
-            // v3.1.33: simplified — use cached badge values from items page.
-            // No per-uid API calls, no tolerance filter, no per-instance
-            // rarity fetch. Just sum what the badges showed last time the
-            // user visited /item.php (or any rw-pricer-active page).
-            var calc = computeRwInventorySum(data.inventory);
-            try {
-                console.log('[rwp-networth] counted: ' + calc.count +
-                    ' | loaned skipped: ' + (calc.skippedLoaned || 0) +
-                    ' | missing from badge cache: ' + (calc.missingFromCache || 0) +
-                    ' | RW sum: $' + Math.round(calc.sum).toLocaleString());
-            } catch (_) {}
-            if (calc.count === 0) { nwlog('skip: 0 RW items in badge cache — visit /item.php once to populate'); return; }
-            var row = findNwRow();
-            if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); return; }
-            var valNode = findNwValueNode(row);
-            if (!valNode) { nwlog('skip: $ value text node not found in networth row'); return; }
-            var match = valNode.textContent.match(/\$([\d,]+)/);
-            if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); return; }
-            var displayedNw = Number(match[1].replace(/,/g, ''));
-            if (window.__rwpOriginalNw == null) {
-                window.__rwpOriginalNw = displayedNw;
-                nwlog('cached original Torn networth: $' + displayedNw.toLocaleString());
-            }
-            var statedNw = window.__rwpOriginalNw;
-            // Clear any prior render before redrawing
-            var existingLine = document.getElementById('rwp-nw-line');
-            if (existingLine) existingLine.remove();
-            if (valNode.parentNode) {
-                valNode.parentNode.removeAttribute('data-rwp-tooltip');
-                var oldPills = valNode.parentNode.querySelectorAll('[data-rwp-pill]');
-                oldPills.forEach(function(p){ p.remove(); });
-            }
-            nwlog('rendering mode=' + mode + ' statedNw=$' + statedNw.toLocaleString() + ' adj=$' + Math.round(calc.sum).toLocaleString());
-            if (mode === 'line')    renderNwLine(row, statedNw, calc.sum, calc.count);
-            else if (mode === 'tooltip') renderNwTooltip(row, valNode, statedNw, calc.sum, calc.count);
-            else if (mode === 'replace') renderNwReplace(row, valNode, statedNw, calc.sum, calc.count);
-            nwlog('render complete');
+            // v3.1.33: read from badge cache
+            // v3.1.36: also fetch Torn market_prices and pass to compute
+            // so the tolerance filter can skip armour Torn already values.
+            fetchItemMarketPrices(key, function (mpErr, mpMap) {
+                if (mpErr) nwlog('market_price fetch err: ' + mpErr.message + ' — proceeding without tolerance filter');
+                else nwlog('market_price map loaded: ' + Object.keys(mpMap || {}).length + ' items');
+                var calc = computeRwInventorySum(data.inventory, mpMap);
+                try {
+                    console.log('[rwp-networth] counted: ' + calc.count +
+                        ' | loaned skipped: ' + (calc.skippedLoaned || 0) +
+                        ' | already-in-networth skipped: ' + (calc.skippedTornValued || 0) +
+                        ' | missing from badge cache: ' + (calc.missingFromCache || 0) +
+                        ' | RW delta sum: $' + Math.round(calc.sum).toLocaleString());
+                } catch (_) {}
+                if (calc.count === 0) { nwlog('skip: 0 RW items added — either none in badge cache (visit /item.php to populate) or all caught by tolerance filter'); return; }
+                finishNwRender(calc);
+            });
+            return;
         });
+    }
+
+    function finishNwRender(calc) {
+        var nwlog = function (m) { try { console.log('[rwp-networth] ' + m); } catch (_) {} };
+        var mode = getNwMode();
+        var row = findNwRow();
+        if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); return; }
+        var valNode = findNwValueNode(row);
+        if (!valNode) { nwlog('skip: $ value text node not found in networth row'); return; }
+        var match = valNode.textContent.match(/\$([\d,]+)/);
+        if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); return; }
+        var displayedNw = Number(match[1].replace(/,/g, ''));
+        if (window.__rwpOriginalNw == null) {
+            window.__rwpOriginalNw = displayedNw;
+            nwlog('cached original Torn networth: $' + displayedNw.toLocaleString());
+        }
+        var statedNw = window.__rwpOriginalNw;
+        // Clear any prior render before redrawing
+        var existingLine = document.getElementById('rwp-nw-line');
+        if (existingLine) existingLine.remove();
+        if (valNode.parentNode) {
+            valNode.parentNode.removeAttribute('data-rwp-tooltip');
+            var oldPills = valNode.parentNode.querySelectorAll('[data-rwp-pill]');
+            oldPills.forEach(function(p){ p.remove(); });
+        }
+        nwlog('rendering mode=' + mode + ' statedNw=$' + statedNw.toLocaleString() + ' adj=$' + Math.round(calc.sum).toLocaleString());
+        if (mode === 'line')    renderNwLine(row, statedNw, calc.sum, calc.count);
+        else if (mode === 'tooltip') renderNwTooltip(row, valNode, statedNw, calc.sum, calc.count);
+        else if (mode === 'replace') renderNwReplace(row, valNode, statedNw, calc.sum, calc.count);
+        nwlog('render complete');
     }
 
     // Settings menu — Tampermonkey-only, no-op if grant missing
