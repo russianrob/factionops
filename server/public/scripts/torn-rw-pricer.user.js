@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.8
+// @version      3.1.9
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1947,13 +1947,15 @@
         } catch (_) {}
         GM_xmlhttpRequest({
             method: 'GET',
-            // v3.1.8: v2 uses a SUB-RESOURCE endpoint for inventory, not
-            // ?selections=. Confirmed via Torn's OpenAPI spec:
-            //   GET /v2/user/inventory → { inventory: { items: [...], timestamp }, _metadata }
+            // v3.1.9: v2 uses HEADER auth, not ?key= query param. Per Torn's
+            // OpenAPI security scheme: Authorization: ApiKey <KEY>. Passing
+            // the key as ?key= made the parser treat it as a 'cat' (category)
+            // filter, returning "Incorrect category".
+            // Endpoint per spec: GET /v2/user/inventory →
+            //   { inventory: { items: [...], timestamp }, _metadata }
             // Item shape: { id, name, amount, equipped, faction_owned, uid }
-            // — note `amount` not `quantity`, and `faction_owned` is THE
-            // field for armoury-loaned items (not the older `loaned` name).
-            url: 'https://api.torn.com/v2/user/inventory?key=' + encodeURIComponent(key),
+            url: 'https://api.torn.com/v2/user/inventory',
+            headers: { 'Authorization': 'ApiKey ' + key },
             onload: function (r) {
                 try {
                     var d = JSON.parse(r.responseText);
