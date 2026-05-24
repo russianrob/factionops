@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.7
+// @version      3.1.8
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1947,12 +1947,13 @@
         } catch (_) {}
         GM_xmlhttpRequest({
             method: 'GET',
-            // v3.1.7: v1 inventory was deprecated ("The inventory selection
-            // is no longer available"). Switched to v2 with inventory ONLY
-            // (combining with basic returned "Incorrect category" in v2).
-            // v2 /user response still includes player_id at the top level so
-            // own-profile verification still works.
-            url: 'https://api.torn.com/v2/user?selections=inventory&key=' + encodeURIComponent(key),
+            // v3.1.8: v2 uses a SUB-RESOURCE endpoint for inventory, not
+            // ?selections=. Confirmed via Torn's OpenAPI spec:
+            //   GET /v2/user/inventory → { inventory: { items: [...], timestamp }, _metadata }
+            // Item shape: { id, name, amount, equipped, faction_owned, uid }
+            // — note `amount` not `quantity`, and `faction_owned` is THE
+            // field for armoury-loaned items (not the older `loaned` name).
+            url: 'https://api.torn.com/v2/user/inventory?key=' + encodeURIComponent(key),
             onload: function (r) {
                 try {
                     var d = JSON.parse(r.responseText);
@@ -1972,31 +1973,40 @@
     // depending on the source of the loan; check all the common ones.
     function isLoanedItem(it) {
         if (!it) return false;
-        // v1 sets `loaned` to the faction/user ID it's loaned from (or
-        // null when not loaned). Any truthy non-falsy value = loaned.
-        // Also handle older/alternative field shapes.
+        // v3.1.8: Torn v2 marks armoury-loaned items with faction_owned=true.
+        // That's the canonical field — `loaned*` names were for older API shapes.
+        if (it.faction_owned === true) return true;
+        // Defensive fallbacks for other API shapes / future changes
         if (it.loaned !== undefined && it.loaned !== null && it.loaned !== 0 && it.loaned !== false && it.loaned !== '') return true;
         if (it.is_loaned === true) return true;
         if (it.loaned_to && it.loaned_to !== 0 && it.loaned_to !== '0') return true;
         if (it.loaned_from && it.loaned_from !== 0 && it.loaned_from !== '0') return true;
-        if (it.loaned_until || it.loan_until) return true;
         if (it.borrowed === true) return true;
         return false;
     }
 
-    function computeRwInventorySum(inventory) {
-        // v1 returns inventory as an OBJECT keyed by item ID (not an array).
-        // v2 returns an array. Normalize to array.
+    function computeRwInventorySum(inventoryContainer) {
+        // v3.1.8: v2 returns { inventory: { items: [...], timestamp } }.
+        // We accept either the wrapped container, the .items array, or the
+        // raw array — so the function works regardless of whether the caller
+        // already drilled into .items.
         var items;
-        if (Array.isArray(inventory)) items = inventory;
-        else if (inventory && typeof inventory === 'object') items = Object.values(inventory);
-        else return { sum: 0, count: 0, skippedLoaned: 0 };
+        if (Array.isArray(inventoryContainer)) {
+            items = inventoryContainer;
+        } else if (inventoryContainer && Array.isArray(inventoryContainer.items)) {
+            items = inventoryContainer.items;
+        } else if (inventoryContainer && typeof inventoryContainer === 'object') {
+            items = Object.values(inventoryContainer);
+        } else {
+            return { sum: 0, count: 0, skippedLoaned: 0 };
+        }
         var sum = 0, count = 0, skippedLoaned = 0;
         for (var i = 0; i < items.length; i++) {
             var it = items[i];
             if (!it || !it.name) continue;
-            if (isLoanedItem(it)) { skippedLoaned += Number(it.quantity) || 1; continue; }
-            var qty = Number(it.quantity) || 1;
+            if (isLoanedItem(it)) { skippedLoaned += Number(it.amount != null ? it.amount : it.quantity) || 1; continue; }
+            // v2 uses `amount`; older shapes used `quantity` — accept either.
+            var qty = Number(it.amount != null ? it.amount : it.quantity) || 1;
             var wn = lookupWeapon(it.name);
             if (wn) {
                 var wp = getMedianPrice(wn, 'Yellow');
@@ -2107,9 +2117,13 @@
             // v1 puts player_id at top level (no .basic nesting). Also accept
             // v2-style nesting for resilience.
             var userId = data.player_id || (data.basic && data.basic.player_id) || data.id;
-            var invLen = Array.isArray(data.inventory) ? data.inventory.length
-                       : (data.inventory && typeof data.inventory === 'object') ? Object.keys(data.inventory).length
-                       : 'NONE';
+            // v3.1.8: v2 inventory at data.inventory.items (array).
+            // Length reporting handles all three response shapes.
+            var invLen;
+            if (data.inventory && Array.isArray(data.inventory.items)) invLen = data.inventory.items.length;
+            else if (Array.isArray(data.inventory)) invLen = data.inventory.length;
+            else if (data.inventory && typeof data.inventory === 'object') invLen = Object.keys(data.inventory).length;
+            else invLen = 'NONE';
             // v3.1.6: full diagnostic so we can see what the API actually returned
             var keySource = (safeGet(NW_APIKEY_KEY, '')) ? 'user-saved' : (apiKey ? 'PDA-injected' : 'none');
             nwlog('fetched: userId=' + userId + ' inventory-len=' + invLen + ' keySource=' + keySource);
