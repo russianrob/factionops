@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.1
+// @version      3.1.2
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -16,6 +16,10 @@
 // @match        https://pda.torn.com/amarket*
 // @match        https://www.torn.com/profiles.php*
 // @match        https://pda.torn.com/profiles.php*
+// @match        https://www.torn.com/index.php*
+// @match        https://pda.torn.com/index.php*
+// @match        https://www.torn.com/
+// @match        https://pda.torn.com/
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
@@ -1831,6 +1835,18 @@
         return /\/profiles\.php/i.test(window.location.pathname);
     }
 
+    function isHomePage() {
+        // Home renders the same General Information panel as a profile but
+        // always with the logged-in user's own data. Match index.php or
+        // bare root, ignoring # hash fragments.
+        var p = window.location.pathname;
+        return p === '/' || /\/index\.php\b/i.test(p);
+    }
+
+    function isOwnInfoPage() {
+        return isHomePage() || isProfilePage();
+    }
+
     function getProfileXid() {
         var m = window.location.search.match(/[?&]XID=(\d+)/i);
         return m ? Number(m[1]) : null;
@@ -1981,15 +1997,20 @@
     function applyNwInflator() {
         var mode = getNwMode();
         if (mode === 'off') return;
-        if (!isProfilePage()) return;
+        if (!isOwnInfoPage()) return;
         var key = getEffectiveApiKey();
         if (!key) return; // no key — silently skip (menu entry tells the user how to set it)
-        var profileXid = getProfileXid();
-        if (!profileXid) return;
+        var onProfile = isProfilePage();
+        var profileXid = onProfile ? getProfileXid() : null;
+        if (onProfile && !profileXid) return;
         fetchNwData(key, function (err, data) {
             if (err || !data) return;
             var userId = (data.basic && data.basic.player_id) || data.id || data.player_id;
-            if (!userId || Number(userId) !== profileXid) return; // only own profile
+            // On a profile page we must verify it's our own. On the home
+            // page the panel is always our own data — skip the XID check.
+            if (onProfile) {
+                if (!userId || Number(userId) !== profileXid) return;
+            }
             var calc = computeRwInventorySum(data.inventory);
             try {
                 console.log('[rwp-networth] RW items counted: ' + calc.count +
@@ -2034,7 +2055,7 @@
     // Trigger on profile pages — also retry via MutationObserver because
     // Torn's React app sometimes re-renders the General Info panel after
     // initial load.
-    if (isProfilePage()) {
+    if (isOwnInfoPage()) {
         setTimeout(applyNwInflator, 1500);
         var nwAttempts = 0;
         var nwObs = new MutationObserver(function () {
