@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.4
+// @version      3.1.5
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1503,6 +1503,85 @@
             '#rwp-inline-toggle.rwp-disabled {' +
             '  opacity: 0.4;' +
             '}' +
+
+            /* v3.1.5: settings cog + panel */
+            '#rwp-settings-cog {' +
+            '  position: fixed;' +
+            '  bottom: 80px;' +
+            '  right: 60px;' +    /* sits to the left of the $ toggle */
+            '  z-index: 999999;' +
+            '  width: 36px;' +
+            '  height: 36px;' +
+            '  border-radius: 50%;' +
+            '  border: 1px solid rgba(110,231,183,0.4);' +
+            '  background: rgba(11, 15, 25, 0.96);' +
+            '  color: #6ee7b7;' +
+            '  font-size: 18px;' +
+            '  cursor: pointer;' +
+            '  display: flex;' +
+            '  align-items: center;' +
+            '  justify-content: center;' +
+            '  box-shadow: 0 2px 8px rgba(0,0,0,0.4);' +
+            '  transition: opacity 0.2s, transform 0.15s;' +
+            '}' +
+            '#rwp-settings-cog:hover { opacity: 0.85; transform: rotate(30deg); }' +
+            '#rwp-settings-panel {' +
+            '  position: fixed;' +
+            '  bottom: 130px;' +
+            '  right: 16px;' +
+            '  z-index: 1000000;' +
+            '  width: 280px;' +
+            '  max-width: calc(100vw - 32px);' +
+            '  background: rgba(13, 18, 28, 0.98);' +
+            '  border: 1px solid #2a3447;' +
+            '  border-radius: 10px;' +
+            '  box-shadow: 0 8px 28px rgba(0,0,0,0.5);' +
+            '  padding: 14px;' +
+            '  color: #e6e8ee;' +
+            '  font: 13px/1.4 -apple-system, system-ui, sans-serif;' +
+            '}' +
+            '#rwp-settings-panel h3 {' +
+            '  margin: 0 0 10px; font-size: 13px; color: #6ee7b7;' +
+            '  display: flex; justify-content: space-between; align-items: center;' +
+            '}' +
+            '#rwp-settings-panel .rwp-close {' +
+            '  cursor: pointer; color: #9097a6; font-size: 18px; line-height: 1; padding: 2px 6px;' +
+            '}' +
+            '#rwp-settings-panel label {' +
+            '  display: block; margin: 10px 0 4px; font-size: 11px;' +
+            '  text-transform: uppercase; letter-spacing: 0.04em; color: #9097a6;' +
+            '}' +
+            '#rwp-settings-panel input[type=text], #rwp-settings-panel input[type=password] {' +
+            '  width: 100%; box-sizing: border-box; background: #0a0d14;' +
+            '  border: 1px solid #2a3447; color: #e6e8ee;' +
+            '  border-radius: 6px; padding: 7px 9px; font: 12px ui-monospace, monospace;' +
+            '}' +
+            '#rwp-settings-panel input:focus { outline: none; border-color: #6ee7b7; }' +
+            '#rwp-settings-panel .rwp-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }' +
+            '#rwp-settings-panel .rwp-modes label {' +
+            '  display: flex; align-items: center; gap: 6px;' +
+            '  margin: 0; padding: 6px 8px; background: #1a2030; border-radius: 6px;' +
+            '  cursor: pointer; text-transform: none; letter-spacing: 0;' +
+            '  font-size: 12px; color: #e6e8ee;' +
+            '}' +
+            '#rwp-settings-panel .rwp-modes label:hover { background: #1f2638; }' +
+            '#rwp-settings-panel .rwp-modes input[type=radio] { margin: 0; accent-color: #6ee7b7; }' +
+            '#rwp-settings-panel .rwp-hint { font-size: 10.5px; color: #6b7280; margin-top: 4px; line-height: 1.35; }' +
+            '#rwp-settings-panel .rwp-actions { display: flex; gap: 6px; margin-top: 14px; }' +
+            '#rwp-settings-panel button {' +
+            '  flex: 1; background: #6ee7b7; color: #0a0d14; border: 0;' +
+            '  border-radius: 6px; padding: 8px 10px; font: 600 12px inherit; cursor: pointer;' +
+            '}' +
+            '#rwp-settings-panel button.rwp-secondary { background: #2a3447; color: #e6e8ee; }' +
+            '#rwp-settings-panel button:active { opacity: 0.7; }' +
+            '#rwp-settings-saved {' +
+            '  position: fixed; bottom: 130px; right: 16px; z-index: 1000001;' +
+            '  background: #6ee7b7; color: #0a0d14;' +
+            '  padding: 8px 14px; border-radius: 6px; font: 600 12px -apple-system, system-ui, sans-serif;' +
+            '  box-shadow: 0 4px 12px rgba(0,0,0,0.4); pointer-events: none;' +
+            '  opacity: 0; transition: opacity 0.2s;' +
+            '}' +
+            '#rwp-settings-saved.show { opacity: 1; }' +
             '@keyframes rwp-spin {' +
             '  0% { transform: rotate(0deg); }' +
             '  100% { transform: rotate(360deg); }' +
@@ -1773,6 +1852,7 @@
     function init() {
         injectStyles();
         createToggle();
+        createSettingsCog();
 
         // Load cached prices (or keep defaults)
         var cacheTimestamp = loadCachedPrices();
@@ -1826,9 +1906,14 @@
     }
 
     function getEffectiveApiKey() {
-        // PDA bridge auto-fills `apiKey`; desktop users set one via menu
+        // v3.1.5: prefer the user-saved key over the PDA-injected one.
+        // Why: PDA's auto-key sometimes lacks Inventory permission, so the
+        // user needs to be able to override it without disabling PDA's key
+        // for everything else.
+        var saved = safeGet(NW_APIKEY_KEY, '') || '';
+        if (saved) return saved;
         if (apiKey) return apiKey;
-        return safeGet(NW_APIKEY_KEY, '') || '';
+        return '';
     }
 
     function isProfilePage() {
@@ -2070,6 +2155,105 @@
                 }
             });
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // v3.1.5: in-page ⚙ settings panel (works regardless of TM menu)
+    // Lives next to the $ toggle, always visible. Users on PDA (where
+    // GM_registerMenuCommand isn't surfaced) and on desktop both get the
+    // same UI — saves having two parallel settings paths.
+    // ─────────────────────────────────────────────────────────────────
+    function createSettingsCog() {
+        if (document.getElementById('rwp-settings-cog')) return;
+        var cog = document.createElement('div');
+        cog.id = 'rwp-settings-cog';
+        cog.title = 'RW Pricer settings';
+        cog.textContent = '⚙'; // ⚙
+        cog.addEventListener('click', toggleSettingsPanel);
+        document.body.appendChild(cog);
+    }
+
+    function toggleSettingsPanel() {
+        var existing = document.getElementById('rwp-settings-panel');
+        if (existing) { existing.remove(); return; }
+        renderSettingsPanel();
+    }
+
+    function renderSettingsPanel() {
+        var panel = document.createElement('div');
+        panel.id = 'rwp-settings-panel';
+        var currentMode = getNwMode();
+        var savedKey = safeGet(NW_APIKEY_KEY, '') || '';
+        var pdaKeyPresent = !!apiKey;
+
+        var modeHtml = '';
+        for (var i = 0; i < NW_MODES.length; i++) {
+            var m = NW_MODES[i];
+            var checked = (m === currentMode) ? ' checked' : '';
+            modeHtml += '<label><input type="radio" name="rwp-mode" value="' + m + '"' + checked + '> ' +
+                        m.charAt(0).toUpperCase() + m.slice(1) + '</label>';
+        }
+
+        var keyHint = pdaKeyPresent
+            ? 'PDA-injected key detected. Leave blank to use it, or paste a Limited key with Inventory access to override (e.g. if PDA\'s key lacks inventory).'
+            : 'Paste a Torn API key (Limited works) with Inventory access. Used only locally for inventory lookup — never sent to any third party.';
+
+        panel.innerHTML =
+            '<h3>RW Pricer settings <span class="rwp-close" id="rwp-settings-close">×</span></h3>' +
+            '<label>Networth display mode</label>' +
+            '<div class="rwp-modes">' + modeHtml + '</div>' +
+            '<label for="rwp-settings-apikey">API key (override)</label>' +
+            '<input id="rwp-settings-apikey" type="text" autocomplete="off" spellcheck="false" placeholder="' + (pdaKeyPresent ? 'using PDA key — leave blank' : 'paste Limited key with Inventory') + '" value="' + escapeHtml(savedKey) + '">' +
+            '<div class="rwp-hint">' + keyHint + '</div>' +
+            '<div class="rwp-actions">' +
+              '<button id="rwp-settings-save">Save</button>' +
+              '<button class="rwp-secondary" id="rwp-settings-clearkey">Clear key</button>' +
+            '</div>';
+
+        document.body.appendChild(panel);
+
+        document.getElementById('rwp-settings-close').addEventListener('click', function () { panel.remove(); });
+        document.getElementById('rwp-settings-clearkey').addEventListener('click', function () {
+            document.getElementById('rwp-settings-apikey').value = '';
+        });
+        document.getElementById('rwp-settings-save').addEventListener('click', function () {
+            // Save mode
+            var radios = panel.querySelectorAll('input[name="rwp-mode"]');
+            for (var i = 0; i < radios.length; i++) {
+                if (radios[i].checked) { safeSet(NW_MODE_KEY, radios[i].value); break; }
+            }
+            // Save / clear API key
+            var keyVal = String(document.getElementById('rwp-settings-apikey').value || '').trim();
+            safeSet(NW_APIKEY_KEY, keyVal);
+            // Drop cached fetched data so the next applyNwInflator re-fetches
+            // with the new key (otherwise stale 5-min cache would hide the fix)
+            safeSet(NW_DATA_CACHE_KEY, null);
+            panel.remove();
+            showSavedToast();
+            // Re-apply immediately so the user sees the result without reloading
+            setTimeout(applyNwInflator, 200);
+        });
+    }
+
+    function showSavedToast() {
+        var t = document.getElementById('rwp-settings-saved');
+        if (!t) {
+            t = document.createElement('div');
+            t.id = 'rwp-settings-saved';
+            t.textContent = 'Saved. Re-applying…';
+            document.body.appendChild(t);
+        }
+        // Force reflow then toggle class
+        // eslint-disable-next-line no-unused-expressions
+        t.offsetHeight;
+        t.classList.add('show');
+        setTimeout(function () { t.classList.remove('show'); }, 1800);
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, function (c) {
+            return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+        });
     }
 
     // Trigger on profile pages — also retry via MutationObserver because
