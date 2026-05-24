@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.11
+// @version      3.1.12
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1945,45 +1945,63 @@
                 return;
             }
         } catch (_) {}
-        // v3.1.10: use native fetch instead of GM_xmlhttpRequest. PDA's
-        // GM bridge proxies XHR calls to /api.torn.com through pdaHandler_ApiGet,
-        // which is hardcoded to v1's ?key= scheme — strips our Authorization
-        // header and adds ?key=, causing v2 to interpret the key as ?cat=KEY
-        // and return "Incorrect category". Native fetch goes directly through
-        // the WebView's network stack (api.torn.com sends CORS headers
-        // allowing www.torn.com, same as Torn's own React app uses).
-        var fetchUrl = 'https://api.torn.com/v2/user/inventory';
-        try { console.log('[rwp-networth] fetching: ' + fetchUrl + ' (header auth, native fetch — bypassing PDA bridge)'); } catch (_) {}
-        if (typeof fetch === 'function') {
-            fetch(fetchUrl, {
+        // v3.1.12: v2 /user/inventory REQUIRES a `cat` query param (server
+        // returned error code 21 "Incorrect category" when omitted, despite
+        // the OpenAPI spec marking it optional). Fetch each RW-relevant
+        // category in parallel and merge.
+        // Categories per TornInventoryItemType enum:
+        //   Primary — rifles, shotguns, SMGs, heavy (Minigun, RPG, etc)
+        //   Secondary — pistols (Beretta, Desert Eagle, etc)
+        //   Melee — Katana, Yasukuni, Kodachi, etc
+        //   Defensive — body armour, helmets, vests
+        if (typeof fetch !== 'function') {
+            cb(new Error('fetch unavailable'));
+            return;
+        }
+        var CATEGORIES = ['Primary', 'Secondary', 'Melee', 'Defensive'];
+        try { console.log('[rwp-networth] fetching ' + CATEGORIES.length + ' categories in parallel (v2 needs cat param)'); } catch (_) {}
+        var promises = CATEGORIES.map(function (cat) {
+            return fetch('https://api.torn.com/v2/user/inventory?cat=' + encodeURIComponent(cat) + '&limit=250', {
                 method: 'GET',
                 headers: { 'Authorization': 'ApiKey ' + key, 'Accept': 'application/json' },
                 credentials: 'omit',
             }).then(function (r) {
-                // v3.1.11: capture status + final URL (might differ from request URL
-                // if PDA monkey-patched fetch and rewrote it) + raw body
                 return r.text().then(function (txt) {
-                    return { status: r.status, finalUrl: r.url, text: txt };
+                    return { cat: cat, status: r.status, text: txt };
                 });
-            }).then(function (resp) {
-                try { console.log('[rwp-networth] HTTP ' + resp.status + ' from ' + resp.finalUrl + ' (' + resp.text.length + ' bytes)'); } catch (_) {}
+            });
+        });
+        Promise.all(promises).then(function (responses) {
+            var allItems = [];
+            var anyError = null;
+            for (var i = 0; i < responses.length; i++) {
+                var resp = responses[i];
                 var d;
-                try { d = JSON.parse(resp.text); } catch (e) {
-                    cb(new Error('non-JSON response: ' + resp.text.slice(0, 200)));
-                    return;
+                try { d = JSON.parse(resp.text); }
+                catch (e) {
+                    try { console.log('[rwp-networth] ' + resp.cat + ': non-JSON response'); } catch (_) {}
+                    continue;
                 }
                 if (d.error) {
-                    try { console.log('[rwp-networth] API error full: ' + JSON.stringify(d.error)); } catch (_) {}
-                    cb(new Error('code ' + (d.error.code != null ? d.error.code : '?') + ' — ' + (d.error.error || 'api error')));
-                    return;
+                    try { console.log('[rwp-networth] ' + resp.cat + ': error ' + JSON.stringify(d.error)); } catch (_) {}
+                    anyError = d.error;
+                    continue;
                 }
-                safeSet(NW_DATA_CACHE_KEY, { ts: Date.now(), data: d });
-                cb(null, d);
-            }).catch(function (e) {
-                cb(new Error('fetch failed: ' + (e && e.message ? e.message : e)));
-            });
-            return;
-        }
+                var items = (d.inventory && Array.isArray(d.inventory.items)) ? d.inventory.items : [];
+                try { console.log('[rwp-networth] ' + resp.cat + ': ' + items.length + ' items'); } catch (_) {}
+                for (var j = 0; j < items.length; j++) allItems.push(items[j]);
+            }
+            if (allItems.length === 0 && anyError) {
+                cb(new Error('all categories errored — last: code ' + anyError.code + ' ' + anyError.error));
+                return;
+            }
+            var merged = { inventory: { items: allItems, timestamp: Math.floor(Date.now() / 1000) } };
+            safeSet(NW_DATA_CACHE_KEY, { ts: Date.now(), data: merged });
+            cb(null, merged);
+        }).catch(function (e) {
+            cb(new Error('parallel fetch failed: ' + (e && e.message ? e.message : e)));
+        });
+        return;
         // Fallback: GM_xmlhttpRequest (in case fetch isn't available — unlikely on modern PDA)
         GM_xmlhttpRequest({
             method: 'GET',
