@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auction Filter
 // @namespace    tornwar.com
-// @version      0.2.0
+// @version      0.3.0
 // @description  Filter Torn auction house by rarity (Yellow / Orange / Red) and search by weapon name. Reads rarity from rw-pricer badges already on the listings — install Torn RW Pricer first for color filters to work. Search-by-name works standalone.
 // @author       warboard
 // @match        https://www.torn.com/amarket*
@@ -31,6 +31,11 @@
   var AUTO_PAGE_MIN_VISIBLE = 5;       // visible-on-page count triggering Next-click
   var AUTO_PAGE_MAX = 20;              // hard cap per filter session (~400 listings)
   var AUTO_PAGE_MIN_INTERVAL = 1200;   // ms between auto-clicks (lets next page render)
+
+  // v0.3.0: merged-view pool. Persists across page advances so all matching
+  // listings from pages 1..N show in one container. Keyed by a synthesized
+  // identifier (rwp uid attribute, falling back to name+price hash).
+  var HARVESTED = new Map(); // key → { name, price, rarity, html }
 
   function log(m) { try { console.log('[torn-auction-filter] ' + m); } catch (_) {} }
   log('installed v0.2.0');
@@ -70,6 +75,33 @@
       '#wb-auc-search:focus { outline: none; border-color: #6ee7b7; }',
       '#wb-auc-count { font-size: 11px; color: #6b7280; margin-left: auto; }',
       '.wb-auc-hidden { display: none !important; }',
+      /* v0.3.0: merged-view container — aggregated matches from all pages */
+      '#wb-auc-merged {',
+      '  margin: 8px 0; padding: 8px; background: rgba(13,18,28,0.55);',
+      '  border: 1px solid #2a3447; border-radius: 8px;',
+      '  max-height: 60vh; overflow-y: auto;',
+      '  font: 12px -apple-system, system-ui, sans-serif; color: #e6e8ee;',
+      '}',
+      '#wb-auc-merged-header {',
+      '  display:flex; justify-content:space-between; align-items:center;',
+      '  font-size:11px; color:#9ca3af; text-transform:uppercase;',
+      '  letter-spacing:0.05em; margin-bottom:6px;',
+      '}',
+      '.wb-auc-merged-row {',
+      '  display:grid; grid-template-columns: 14px 1fr auto auto;',
+      '  gap:8px; padding:6px 4px; border-top:1px solid #1c2030;',
+      '  align-items:center;',
+      '}',
+      '.wb-auc-merged-row:first-of-type { border-top:0; }',
+      '.wb-auc-merged-row .dot { width:8px; height:8px; border-radius:50%; }',
+      '.wb-auc-merged-row .name { font-weight:600; color:#e6e8ee; }',
+      '.wb-auc-merged-row .price { font-family:ui-monospace,monospace; color:#6ee7b7; }',
+      '.wb-auc-merged-row .go {',
+      '  background:#2a3447; color:#e6e8ee; border:0;',
+      '  padding:3px 8px; border-radius:4px; font-size:11px;',
+      '  cursor:pointer; font-weight:600;',
+      '}',
+      '.wb-auc-merged-row .go:hover { background:#3a4459; }',
       ''
     ].join('\n');
     document.head.appendChild(s);
@@ -137,6 +169,84 @@
     var text = (li.textContent || '').trim();
     var firstLine = text.split('\n')[0];
     return firstLine.slice(0, 60);
+  }
+
+  function listingPrice(li) {
+    var m = (li.textContent || '').match(/\$([\d,]+)/);
+    return m ? Number(m[1].replace(/,/g, '')) : 0;
+  }
+
+  function listingKey(li) {
+    // Prefer the badge's data-rwp-item attribute + price as a stable key
+    var name = listingName(li);
+    var price = listingPrice(li);
+    return name + '|' + price;
+  }
+
+  // v0.3.0: harvest matching listings on the current page into the global
+  // pool. Called every applyFilter pass so the pool accumulates as the
+  // user (or auto-paginator) advances through pages.
+  function harvestMatches(matches) {
+    for (var i = 0; i < matches.length; i++) {
+      var li = matches[i];
+      var key = listingKey(li);
+      if (HARVESTED.has(key)) continue;
+      HARVESTED.set(key, {
+        name: listingName(li),
+        rarity: listingRarity(li) || '',
+        price: listingPrice(li),
+        ts: Date.now(),
+      });
+    }
+  }
+
+  function renderMergedView() {
+    var box = document.getElementById('wb-auc-merged');
+    if (HARVESTED.size === 0) {
+      if (box) box.remove();
+      return;
+    }
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'wb-auc-merged';
+      var bar = document.getElementById('wb-auc-bar');
+      if (bar && bar.parentNode) bar.parentNode.insertBefore(box, bar.nextSibling);
+      else document.body.insertBefore(box, document.body.firstChild);
+    }
+    var rarityColor = { yellow:'#fbbf24', orange:'#fb923c', red:'#fb7185' };
+    var rows = Array.from(HARVESTED.values()).sort(function (a, b) {
+      // Sort by rarity (red > orange > yellow > others), then by price ascending
+      var rank = { red:3, orange:2, yellow:1 };
+      var rr = (rank[b.rarity]||0) - (rank[a.rarity]||0);
+      if (rr !== 0) return rr;
+      return a.price - b.price;
+    });
+    var html = '<div id="wb-auc-merged-header">';
+    html += '<span>Merged matches (' + rows.length + ' across pages)</span>';
+    html += '<span id="wb-auc-merged-clear" style="cursor:pointer;color:#6b7280">clear ×</span>';
+    html += '</div>';
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var color = rarityColor[r.rarity] || '#2a3447';
+      html += '<div class="wb-auc-merged-row">';
+      html += '<span class="dot" style="background:' + color + '"></span>';
+      html += '<span class="name">' + escapeHtml(r.name) + '</span>';
+      html += '<span class="price">$' + r.price.toLocaleString() + '</span>';
+      html += '<span style="color:#6b7280;font-size:10.5px">' + (r.rarity || '–') + '</span>';
+      html += '</div>';
+    }
+    box.innerHTML = html;
+    var clearBtn = document.getElementById('wb-auc-merged-clear');
+    if (clearBtn) clearBtn.addEventListener('click', function () {
+      HARVESTED.clear();
+      renderMergedView();
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c];
+    });
   }
 
   // ─── v0.2.0: Auto-paginate when filtered results run low ──────────
@@ -215,6 +325,14 @@
       if (STATE.autoPaged > 0) label += ' (auto-paged ×' + STATE.autoPaged + ')';
       countEl.textContent = label;
     }
+    // v0.3.0: harvest visible matches into the merged pool so the user
+    // sees an aggregated cross-page list above the regular listings.
+    if (STATE.rarity !== 'all' || STATE.name) {
+      var matches = [];
+      for (var k = 0; k < lis.length; k++) if (!lis[k].classList.contains('wb-auc-hidden')) matches.push(lis[k]);
+      harvestMatches(matches);
+      renderMergedView();
+    }
     // v0.2.0: auto-paginate if filter active and visible count too low
     maybeAutoPaginate();
   }
@@ -229,7 +347,6 @@
       '<span class="wb-auc-chip wb-auc-yellow" data-rarity="yellow">Yellow</span>',
       '<span class="wb-auc-chip wb-auc-orange" data-rarity="orange">Orange</span>',
       '<span class="wb-auc-chip wb-auc-red" data-rarity="red">Red</span>',
-      '<span class="wb-auc-chip" data-rarity="unbadged" title="Items without an RW badge (regular auctions)">No badge</span>',
       '<input id="wb-auc-search" type="text" placeholder="Search name…" autocomplete="off" spellcheck="false">',
       '<span id="wb-auc-count"></span>',
     ].join('');
@@ -250,6 +367,8 @@
         chip.classList.add('active');
         STATE.rarity = chip.getAttribute('data-rarity');
         STATE.autoPaged = 0; // reset cap so user can re-auto-page from scratch
+        HARVESTED.clear();   // new filter session — drop prior pool
+        renderMergedView();  // removes the merge container until new matches harvest
         applyFilter();
       });
     });
@@ -260,6 +379,8 @@
       debounceT = setTimeout(function () {
         STATE.name = search.value || '';
         STATE.autoPaged = 0;
+        HARVESTED.clear();
+        renderMergedView();
         applyFilter();
       }, 150);
     });

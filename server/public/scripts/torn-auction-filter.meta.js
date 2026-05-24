@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auction Filter
 // @namespace    tornwar.com
-// @version      0.2.0
+// @version      0.3.0
 // @description  Filter Torn auction house by rarity (Yellow / Orange / Red) and search by weapon name. Reads rarity from rw-pricer badges already on the listings — install Torn RW Pricer first for color filters to work. Search-by-name works standalone.
 // @author       warboard
 // @match        https://www.torn.com/amarket*
