@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.5
+// @version      3.1.6
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2108,7 +2108,17 @@
             var invLen = Array.isArray(data.inventory) ? data.inventory.length
                        : (data.inventory && typeof data.inventory === 'object') ? Object.keys(data.inventory).length
                        : 'NONE';
-            nwlog('fetched: userId=' + userId + ' inventory-len=' + invLen);
+            // v3.1.6: full diagnostic so we can see what the API actually returned
+            var keySource = (safeGet(NW_APIKEY_KEY, '')) ? 'user-saved' : (apiKey ? 'PDA-injected' : 'none');
+            nwlog('fetched: userId=' + userId + ' inventory-len=' + invLen + ' keySource=' + keySource);
+            nwlog('response top-level keys: ' + Object.keys(data || {}).join(', '));
+            if (data && data.inventory !== undefined) {
+                var invStr;
+                try { invStr = JSON.stringify(data.inventory).slice(0, 200); } catch (_) { invStr = '<unstringifiable>'; }
+                nwlog('inventory raw shape (first 200 chars): ' + invStr);
+            } else {
+                nwlog('inventory field is UNDEFINED in response — selection name wrong or key tier insufficient');
+            }
             // On a profile page we must verify it's our own. On the home
             // page the panel is always our own data — skip the XID check.
             if (onProfile) {
