@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.28
+// @version      3.1.29
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2176,12 +2176,21 @@
             // equipped. Counting both. Tolerance filter + per-uid rarity +
             // Torn market_price gate now do all the RW-vs-regular work.
             // (skippedUnequipped counter retained but stays 0)
+            //
             // v2 uses `amount`; older shapes used `quantity` — accept either.
             var qty = Number(it.amount != null ? it.amount : it.quantity) || 1;
             // v3.1.18: use per-instance rarity from /torn/{uid}/itemdetails.
             // Falls back to Yellow if details missing (graceful degradation —
             // initial render before per-uid fetches complete).
             var det = uidDetailsMap && it.uid != null ? uidDetailsMap[it.uid] : null;
+            // v3.1.29: RW items ALWAYS have bonuses. Items without bonuses
+            // are regular Torn weapons (M4A1 Colt Carbine in inventory etc.)
+            // and shouldn't be counted at RW market prices. Skip unless
+            // we have at least one bonus name from /torn/{uid}/itemdetails.
+            if (!det || !det.bonusNames || det.bonusNames.length === 0) {
+                skippedUnequipped++; // counter re-used for "non-RW (no bonus)"
+                continue;
+            }
             var rarityKey = 'Yellow';
             if (det && det.rarity) {
                 if (det.rarity === 'red')    rarityKey = 'Red';
@@ -2435,12 +2444,20 @@
             // calls complete (cached forever per uid).
             var allItems = (data.inventory && Array.isArray(data.inventory.items)) ? data.inventory.items
                          : Array.isArray(data.inventory) ? data.inventory : [];
+            // v3.1.29: gather uids for ALL non-loaned items whose names are
+            // in our weapon/armour DB. Per-uid call returns rarity + bonus
+            // names; we use bonus presence to filter RW from regular. Items
+            // not in DB (consumables, drugs, etc.) skip — no API call needed.
             var equippedUids = [];
             for (var ii = 0; ii < allItems.length; ii++) {
                 var ix = allItems[ii];
-                if (ix && ix.equipped === true && ix.uid != null && !isLoanedItem(ix)) equippedUids.push(ix.uid);
+                if (!ix || !ix.uid || isLoanedItem(ix)) continue;
+                if (!ix.name) continue;
+                if (lookupWeapon(ix.name) || lookupArmour(ix.name)) {
+                    equippedUids.push(ix.uid);
+                }
             }
-            nwlog('equipped RW candidates: ' + equippedUids.length + ' uids — fetching per-instance rarity + Torn market_prices');
+            nwlog('RW candidates (in DB, not loaned): ' + equippedUids.length + ' uids — fetching per-instance rarity + bonuses');
             // v3.1.20: load Torn's per-item-id market_price map alongside
             // the rarity fetch. Used in computeRwInventorySum to compute
             // delta = max(0, ourRwPrice - tornMarketPrice) so we don't
