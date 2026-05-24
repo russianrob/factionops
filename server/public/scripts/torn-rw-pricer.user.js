@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.19
+// @version      3.1.20
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2149,7 +2149,7 @@
         } else {
             return { sum: 0, count: 0, skippedLoaned: 0 };
         }
-        var sum = 0, count = 0, skippedLoaned = 0, skippedUnequipped = 0;
+        var sum = 0, count = 0, skippedLoaned = 0, skippedUnequipped = 0, skippedTornValued = 0;
         for (var i = 0; i < items.length; i++) {
             var it = items[i];
             if (!it || !it.name) continue;
@@ -2174,25 +2174,37 @@
                 else if (det.rarity === 'orange') rarityKey = 'Orange';
                 else if (det.rarity === 'yellow') rarityKey = 'Yellow';
             }
+            // v3.1.20: add only the DELTA between our RW market price and
+            // Torn's known market_price. Items Torn doesn't price (market_price
+            // is N/A) get the full RW value added. Items Torn already values
+            // (like regular armour with stable market activity) only get the
+            // RW premium added — no double-counting with networth.
+            var tornPrice = (marketPriceMap && it.id != null && marketPriceMap[it.id]) ? Number(marketPriceMap[it.id]) : 0;
+            var ourPrice = 0;
             var wn = lookupWeapon(it.name);
             if (wn) {
-                var wp = getMedianPrice(wn, rarityKey);
-                // Fall back to lower tiers if requested rarity isn't priced
-                if (!wp && rarityKey !== 'Yellow') wp = getMedianPrice(wn, 'Yellow');
-                if (wp) { sum += wp * qty; count += qty; continue; }
+                ourPrice = getMedianPrice(wn, rarityKey);
+                if (!ourPrice && rarityKey !== 'Yellow') ourPrice = getMedianPrice(wn, 'Yellow');
             }
-            var an = lookupArmour(it.name);
-            if (an) {
-                var ap = (function () {
+            if (!ourPrice) {
+                var an = lookupArmour(it.name);
+                if (an) {
                     var aData = armourPrices[an];
-                    if (aData && aData[rarityKey]) return aData[rarityKey][1];
-                    if (aData && aData.Yellow) return aData.Yellow[1];
-                    return null;
-                })();
-                if (ap) { sum += ap * qty; count += qty; continue; }
+                    if (aData && aData[rarityKey]) ourPrice = aData[rarityKey][1];
+                    else if (aData && aData.Yellow) ourPrice = aData.Yellow[1];
+                }
+            }
+            if (!ourPrice) continue; // not in our DB, skip
+            var delta = Math.max(0, ourPrice - tornPrice);
+            if (delta > 0) {
+                sum += delta * qty;
+                count += qty;
+            } else {
+                // Torn already values it at or above our RW estimate — nothing to add
+                skippedTornValued += qty;
             }
         }
-        return { sum: sum, count: count, skippedLoaned: skippedLoaned, skippedUnequipped: skippedUnequipped };
+        return { sum: sum, count: count, skippedLoaned: skippedLoaned, skippedUnequipped: skippedUnequipped, skippedTornValued: skippedTornValued };
     }
 
     function findNwRow() {
@@ -2333,15 +2345,25 @@
                 var ix = allItems[ii];
                 if (ix && ix.equipped === true && ix.uid != null && !isLoanedItem(ix)) equippedUids.push(ix.uid);
             }
-            nwlog('equipped RW candidates: ' + equippedUids.length + ' uids — fetching per-instance rarity');
+            nwlog('equipped RW candidates: ' + equippedUids.length + ' uids — fetching per-instance rarity + Torn market_prices');
+            // v3.1.20: load Torn's per-item-id market_price map alongside
+            // the rarity fetch. Used in computeRwInventorySum to compute
+            // delta = max(0, ourRwPrice - tornMarketPrice) so we don't
+            // double-count items Torn already values in networth.
+            var sharedMpMap = null;
+            fetchItemMarketPrices(key, function (mpErr, mpMap) {
+                if (mpErr) nwlog('market_price fetch err: ' + mpErr.message + ' — proceeding without delta adjustment');
+                else { sharedMpMap = mpMap; nwlog('market_price map loaded: ' + Object.keys(mpMap||{}).length + ' items'); }
+            });
             var doRender = function (uidMap, isFinal) {
-                var calc = computeRwInventorySum(data.inventory, null, uidMap);
+                var calc = computeRwInventorySum(data.inventory, sharedMpMap, uidMap);
                 try {
                     console.log('[rwp-networth] ' + (isFinal ? 'FINAL' : 'initial Yellow-default') +
                         ' — counted: ' + calc.count +
                         ' | loaned skipped: ' + (calc.skippedLoaned || 0) +
                         ' | unequipped skipped: ' + (calc.skippedUnequipped || 0) +
-                        ' | RW sum: $' + Math.round(calc.sum).toLocaleString());
+                        ' | Torn-already-valued skipped: ' + (calc.skippedTornValued || 0) +
+                        ' | delta sum: $' + Math.round(calc.sum).toLocaleString());
                 } catch (_) {}
                 if (calc.count === 0) { nwlog('skip: 0 equipped RW items found'); return; }
                 var row = findNwRow();
