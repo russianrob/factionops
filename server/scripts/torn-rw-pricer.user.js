@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.26
+// @version      3.1.28
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2111,7 +2111,11 @@
             var det = d.itemdetails || d;
             var rarity = (det.rarity || '').toLowerCase();
             var bonuses = Array.isArray(det.bonuses) ? det.bonuses : [];
-            var entry = { rarity: rarity, bonusCount: bonuses.length };
+            // v3.1.28: capture bonus NAMES (not just count) so we can look
+            // up combo prices like "Naval Cutlass|Quicken" which are valued
+            // much higher than the base weapon median.
+            var bonusNames = bonuses.map(function (b) { return (b && b.name) || ''; }).filter(Boolean);
+            var entry = { rarity: rarity, bonusCount: bonuses.length, bonusNames: bonusNames };
             cache[uid] = entry;
             try { safeSet(NW_UID_CACHE_KEY, cache); } catch (_) {}
             cb(null, entry);
@@ -2167,7 +2171,11 @@
             // from the base item's history, even when the bonus-attached
             // instance is unique. Equipped is the simpler, accurate proxy
             // and matches the user's stated "3 weapons + 5 armour" count.
-            if (it.equipped !== true) { skippedUnequipped++; continue; }
+            // v3.1.27: equipped/unequipped filter dropped. User clarified
+            // RW items live in inventory (unequipped, kept for war) AND
+            // equipped. Counting both. Tolerance filter + per-uid rarity +
+            // Torn market_price gate now do all the RW-vs-regular work.
+            // (skippedUnequipped counter retained but stays 0)
             // v2 uses `amount`; older shapes used `quantity` — accept either.
             var qty = Number(it.amount != null ? it.amount : it.quantity) || 1;
             // v3.1.18: use per-instance rarity from /torn/{uid}/itemdetails.
@@ -2190,17 +2198,49 @@
             var TOLERANCE = 0.7; // Torn price ≥ 70% of ours = already valued
             var tornPrice = (marketPriceMap && it.id != null && marketPriceMap[it.id]) ? Number(marketPriceMap[it.id]) : 0;
             var ourPrice = 0;
+            var priceSource = 'base';
             var wn = lookupWeapon(it.name);
             if (wn) {
-                ourPrice = getMedianPrice(wn, rarityKey);
-                if (!ourPrice && rarityKey !== 'Yellow') ourPrice = getMedianPrice(wn, 'Yellow');
+                // v3.1.28: prefer combo price (weapon|bonus) over base
+                // weapon median. The Naval Cutlass|Quicken combo at
+                // Orange is ~$888M median vs base Naval Cutlass Orange
+                // at ~$700M — bonuses dramatically inflate the price.
+                if (det && det.bonusNames && det.bonusNames.length > 0) {
+                    for (var bi = 0; bi < det.bonusNames.length; bi++) {
+                        var comboKey = wn + '|' + det.bonusNames[bi];
+                        var combo = weaponComboPrices && weaponComboPrices[comboKey];
+                        if (combo && combo[rarityKey] && combo[rarityKey][1]) {
+                            ourPrice = combo[rarityKey][1];
+                            priceSource = 'combo:' + det.bonusNames[bi];
+                            break;
+                        }
+                    }
+                }
+                if (!ourPrice) {
+                    ourPrice = getMedianPrice(wn, rarityKey);
+                    if (!ourPrice && rarityKey !== 'Yellow') ourPrice = getMedianPrice(wn, 'Yellow');
+                }
             }
             if (!ourPrice) {
                 var an = lookupArmour(it.name);
                 if (an) {
-                    var aData = armourPrices[an];
-                    if (aData && aData[rarityKey]) ourPrice = aData[rarityKey][1];
-                    else if (aData && aData.Yellow) ourPrice = aData.Yellow[1];
+                    // Try armour combo too (armourComboPrices same shape if exists)
+                    if (det && det.bonusNames && det.bonusNames.length > 0 && typeof armourComboPrices !== 'undefined' && armourComboPrices) {
+                        for (var abi = 0; abi < det.bonusNames.length; abi++) {
+                            var aComboKey = an + '|' + det.bonusNames[abi];
+                            var aCombo = armourComboPrices[aComboKey];
+                            if (aCombo && aCombo[rarityKey] && aCombo[rarityKey][1]) {
+                                ourPrice = aCombo[rarityKey][1];
+                                priceSource = 'armour-combo:' + det.bonusNames[abi];
+                                break;
+                            }
+                        }
+                    }
+                    if (!ourPrice) {
+                        var aData = armourPrices[an];
+                        if (aData && aData[rarityKey]) ourPrice = aData[rarityKey][1];
+                        else if (aData && aData.Yellow) ourPrice = aData.Yellow[1];
+                    }
                 }
             }
             if (!ourPrice) {
@@ -2225,14 +2265,14 @@
                 }
             }
             window.__rwpItemDiag = window.__rwpItemDiag || [];
-            window.__rwpItemDiag.push({ name: it.name, id: it.id, uid: it.uid, rarity: rarityKey, ourPrice: ourPrice, tornPrice: tornPrice, decision: decision });
+            window.__rwpItemDiag.push({ name: it.name, id: it.id, uid: it.uid, rarity: rarityKey, ourPrice: ourPrice, tornPrice: tornPrice, priceSource: priceSource, decision: decision });
         }
         // Flush per-item diag once per pass
         try {
             if (window.__rwpItemDiag && window.__rwpItemDiag.length) {
                 console.log('[rwp-networth] per-item breakdown:');
                 window.__rwpItemDiag.forEach(function (d) {
-                    console.log('  ' + d.name + ' (id ' + d.id + ', uid ' + d.uid + ', rarity ' + d.rarity + ') ourPrice=$' + (d.ourPrice||0).toLocaleString() + ' tornPrice=$' + (d.tornPrice||0).toLocaleString() + ' → ' + d.decision);
+                    console.log('  ' + d.name + ' (id ' + d.id + ', uid ' + d.uid + ', rarity ' + d.rarity + ', priceSrc=' + (d.priceSource || 'base') + ') ourPrice=$' + (d.ourPrice||0).toLocaleString() + ' tornPrice=$' + (d.tornPrice||0).toLocaleString() + ' → ' + d.decision);
                 });
                 window.__rwpItemDiag = [];
             }
