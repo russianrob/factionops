@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.22
+// @version      3.1.23
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1916,8 +1916,11 @@
     var NW_UID_CACHE_KEY = 'rwp_uid_details_cache';
 
     function getNwMode() {
-        var v = safeGet(NW_MODE_KEY, 'line');
-        return NW_MODES.indexOf(v) >= 0 ? v : 'line';
+        // v3.1.23: default to 'replace' (only shipping mode now). Existing
+        // 'line'/'tooltip' stored values still honored for users who set them;
+        // 'off' still disables. Mode selector dropped from settings UI.
+        var v = safeGet(NW_MODE_KEY, 'replace');
+        return NW_MODES.indexOf(v) >= 0 ? v : 'replace';
     }
 
     function getEffectiveApiKey() {
@@ -2485,26 +2488,17 @@
     function renderSettingsPanel() {
         var panel = document.createElement('div');
         panel.id = 'rwp-settings-panel';
-        var currentMode = getNwMode();
         var savedKey = safeGet(NW_APIKEY_KEY, '') || '';
         var pdaKeyPresent = !!apiKey;
 
-        var modeHtml = '';
-        for (var i = 0; i < NW_MODES.length; i++) {
-            var m = NW_MODES[i];
-            var checked = (m === currentMode) ? ' checked' : '';
-            modeHtml += '<label><input type="radio" name="rwp-mode" value="' + m + '"' + checked + '> ' +
-                        m.charAt(0).toUpperCase() + m.slice(1) + '</label>';
-        }
-
+        // v3.1.23: mode selector removed — feature ships as "replace" only.
+        // Mode key is still respected if previously set, but UI is API-key only.
         var keyHint = pdaKeyPresent
             ? 'PDA-injected key detected. Leave blank to use it, or paste a Limited key with Inventory access to override (e.g. if PDA\'s key lacks inventory).'
             : 'Paste a Torn API key (Limited works) with Inventory access. Used only locally for inventory lookup — never sent to any third party.';
 
         panel.innerHTML =
             '<h3>RW Pricer settings <span class="rwp-close" id="rwp-settings-close">×</span></h3>' +
-            '<label>Networth display mode</label>' +
-            '<div class="rwp-modes">' + modeHtml + '</div>' +
             '<label for="rwp-settings-apikey">API key (override)</label>' +
             '<input id="rwp-settings-apikey" type="text" autocomplete="off" spellcheck="false" placeholder="' + (pdaKeyPresent ? 'using PDA key — leave blank' : 'paste Limited key with Inventory') + '" value="' + escapeHtml(savedKey) + '">' +
             '<div class="rwp-hint">' + keyHint + '</div>' +
@@ -2520,11 +2514,6 @@
             document.getElementById('rwp-settings-apikey').value = '';
         });
         document.getElementById('rwp-settings-save').addEventListener('click', function () {
-            // Save mode
-            var radios = panel.querySelectorAll('input[name="rwp-mode"]');
-            for (var i = 0; i < radios.length; i++) {
-                if (radios[i].checked) { safeSet(NW_MODE_KEY, radios[i].value); break; }
-            }
             // Save / clear API key
             var keyVal = String(document.getElementById('rwp-settings-apikey').value || '').trim();
             safeSet(NW_APIKEY_KEY, keyVal);
