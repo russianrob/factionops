@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.21
+// @version      3.1.22
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1851,8 +1851,10 @@
 
     function init() {
         injectStyles();
-        createToggle();
-        createSettingsCog();
+        // v3.1.22: removed the $ refresh toggle — price cache auto-refreshes
+        // when stale (1h TTL), no need for manual button on every page.
+        // Settings cog moves inline next to the RW pill on networth pages,
+        // see renderNwReplace/Line/Tooltip. No floating button anywhere.
 
         // Load cached prices (or keep defaults)
         var cacheTimestamp = loadCachedPrices();
@@ -2255,6 +2257,25 @@
         return '$' + Math.round(n).toLocaleString();
     }
 
+    // v3.1.22: inline gear icon, dropped right next to the RW pill on
+    // the networth row. Replaces the floating cog button. Single 18px
+    // text-gear with a click handler that opens the same settings panel.
+    function makeInlineCog() {
+        var cog = document.createElement('span');
+        cog.setAttribute('data-rwp-pill', '1'); // also cleared on re-render
+        cog.setAttribute('role', 'button');
+        cog.setAttribute('aria-label', 'RW Pricer settings');
+        cog.title = 'RW Pricer settings';
+        cog.textContent = '⚙';
+        cog.style.cssText = 'margin-left:6px;padding:1px 5px;background:transparent;border:1px solid #2a3447;border-radius:8px;color:#9ca3af;font-size:0.85em;cursor:pointer;user-select:none;';
+        cog.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleSettingsPanel();
+        });
+        return cog;
+    }
+
     function renderNwLine(row, statedNw, adj, count) {
         if (document.getElementById('rwp-nw-line')) return; // idempotent
         var newRow = document.createElement(row.tagName);
@@ -2267,6 +2288,7 @@
         valCell.innerHTML = fmtBigDollar(statedNw + adj) +
             ' <span style="color:#6ee7b7;font-size:0.85em">(+' + fmtCompact(adj) + ' from ' + count + ' RW items)</span>';
         valCell.style.cssText = (row.lastElementChild && row.lastElementChild.style.cssText) || '';
+        valCell.appendChild(makeInlineCog());
         newRow.appendChild(labelCell);
         newRow.appendChild(valCell);
         row.parentNode.insertBefore(newRow, row.nextSibling);
@@ -2277,11 +2299,12 @@
         if (!parent || parent.getAttribute('data-rwp-tooltip') === '1') return;
         parent.setAttribute('data-rwp-tooltip', '1');
         parent.title = 'Torn networth: ' + fmtBigDollar(statedNw) +
-            '\nRW inventory (Yellow-tier): +' + fmtBigDollar(adj) +
+            '\nRW inventory delta: +' + fmtBigDollar(adj) +
             '\n  (' + count + ' RW weapons/armour)' +
             '\nWith RW: ' + fmtBigDollar(statedNw + adj);
         parent.style.cursor = 'help';
         parent.style.borderBottom = '1px dotted #6ee7b7';
+        parent.appendChild(makeInlineCog());
     }
 
     function renderNwReplace(row, valNode, statedNw, adj, count) {
@@ -2294,6 +2317,7 @@
             pill.title = 'Includes RW inventory: +' + fmtBigDollar(adj) + ' / ' + count + ' items';
             pill.style.cssText = 'margin-left:6px;padding:1px 5px;background:rgba(110,231,183,0.15);border:1px solid #6ee7b7;border-radius:8px;color:#6ee7b7;font-size:0.75em;cursor:help;';
             valNode.parentNode.appendChild(pill);
+            valNode.parentNode.appendChild(makeInlineCog());
         }
     }
 
