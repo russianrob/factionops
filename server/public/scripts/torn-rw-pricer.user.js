@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.17
+// @version      3.1.18
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1908,6 +1908,10 @@
     // because RW items share IDs with regular variants).
     var NW_ITEMS_CACHE_KEY = 'rwp_torn_items_marketprice';
     var NW_ITEMS_TTL = 24 * 60 * 60 * 1000; // 24h
+    // v3.1.18: per-uid rarity + bonuses cache. /torn/{uid}/itemdetails
+    // returns { rarity: "yellow"|"orange"|"red", bonuses: [...], stats }.
+    // Rarity/bonuses are fixed per instance — cache indefinitely keyed by uid.
+    var NW_UID_CACHE_KEY = 'rwp_uid_details_cache';
 
     function getNwMode() {
         var v = safeGet(NW_MODE_KEY, 'line');
@@ -2084,7 +2088,53 @@
         }).catch(function (e) { cb(new Error('items fetch failed: ' + (e && e.message ? e.message : e))); });
     }
 
-    function computeRwInventorySum(inventoryContainer, marketPriceMap) {
+    // v3.1.18: fetch per-instance details (rarity + bonuses) for one uid.
+    // Cached indefinitely keyed by uid since instance properties don't
+    // change unless the user re-rolls bonuses (rare). Uses Authorization
+    // header + native fetch like the inventory fetch.
+    function fetchUidDetails(key, uid, cb) {
+        var cache = safeGet(NW_UID_CACHE_KEY, {}) || {};
+        if (cache[uid]) { cb(null, cache[uid]); return; }
+        if (typeof fetch !== 'function') { cb(new Error('fetch unavailable')); return; }
+        fetch('https://api.torn.com/v2/torn/' + encodeURIComponent(uid) + '/itemdetails', {
+            method: 'GET',
+            headers: { 'Authorization': 'ApiKey ' + key, 'Accept': 'application/json' },
+            credentials: 'omit',
+        }).then(function (r) { return r.json(); }).then(function (d) {
+            if (d.error) { cb(new Error('uid ' + uid + ': code ' + d.error.code + ' ' + d.error.error)); return; }
+            var det = d.itemdetails || d;
+            var rarity = (det.rarity || '').toLowerCase();
+            var bonuses = Array.isArray(det.bonuses) ? det.bonuses : [];
+            var entry = { rarity: rarity, bonusCount: bonuses.length };
+            cache[uid] = entry;
+            try { safeSet(NW_UID_CACHE_KEY, cache); } catch (_) {}
+            cb(null, entry);
+        }).catch(function (e) { cb(new Error('uid ' + uid + ' fetch: ' + (e && e.message ? e.message : e))); });
+    }
+
+    // Throttled parallel fetcher for a list of uids — calls cb({ uid: entry, ... })
+    // when all complete or after timeout. Throttles to ~5/sec to be polite.
+    function fetchUidDetailsBatch(key, uids, cb) {
+        var out = {};
+        var pending = uids.length;
+        if (pending === 0) { cb(out); return; }
+        var i = 0;
+        function next() {
+            if (i >= uids.length) return;
+            var uid = uids[i++];
+            fetchUidDetails(key, uid, function (err, entry) {
+                if (!err && entry) out[uid] = entry;
+                pending--;
+                if (pending === 0) cb(out);
+            });
+            // Throttle: stagger requests ~200ms apart
+            setTimeout(next, 200);
+        }
+        // Kick off first 3 in parallel for speed, rest follow on throttle
+        for (var k = 0; k < Math.min(3, uids.length); k++) next();
+    }
+
+    function computeRwInventorySum(inventoryContainer, marketPriceMap, uidDetailsMap) {
         // v3.1.8: v2 returns { inventory: { items: [...], timestamp } }.
         // We accept either the wrapped container, the .items array, or the
         // raw array — so the function works regardless of whether the caller
@@ -2114,15 +2164,28 @@
             if (it.equipped !== true) { skippedUnequipped++; continue; }
             // v2 uses `amount`; older shapes used `quantity` — accept either.
             var qty = Number(it.amount != null ? it.amount : it.quantity) || 1;
+            // v3.1.18: use per-instance rarity from /torn/{uid}/itemdetails.
+            // Falls back to Yellow if details missing (graceful degradation —
+            // initial render before per-uid fetches complete).
+            var det = uidDetailsMap && it.uid != null ? uidDetailsMap[it.uid] : null;
+            var rarityKey = 'Yellow';
+            if (det && det.rarity) {
+                if (det.rarity === 'red')    rarityKey = 'Red';
+                else if (det.rarity === 'orange') rarityKey = 'Orange';
+                else if (det.rarity === 'yellow') rarityKey = 'Yellow';
+            }
             var wn = lookupWeapon(it.name);
             if (wn) {
-                var wp = getMedianPrice(wn, 'Yellow');
+                var wp = getMedianPrice(wn, rarityKey);
+                // Fall back to lower tiers if requested rarity isn't priced
+                if (!wp && rarityKey !== 'Yellow') wp = getMedianPrice(wn, 'Yellow');
                 if (wp) { sum += wp * qty; count += qty; continue; }
             }
             var an = lookupArmour(it.name);
             if (an) {
                 var ap = (function () {
                     var aData = armourPrices[an];
+                    if (aData && aData[rarityKey]) return aData[rarityKey][1];
                     if (aData && aData.Yellow) return aData.Yellow[1];
                     return null;
                 })();
@@ -2205,13 +2268,13 @@
     }
 
     function renderNwReplace(row, valNode, statedNw, adj, count) {
-        if (valNode.parentNode && valNode.parentNode.getAttribute('data-rwp-replaced') === '1') return;
         valNode.textContent = fmtBigDollar(statedNw + adj);
         if (valNode.parentNode) {
             valNode.parentNode.setAttribute('data-rwp-replaced', '1');
             var pill = document.createElement('span');
+            pill.setAttribute('data-rwp-pill', '1');
             pill.textContent = ' RW';
-            pill.title = 'Includes RW inventory (Yellow-tier): +' + fmtBigDollar(adj) + ' / ' + count + ' items';
+            pill.title = 'Includes RW inventory: +' + fmtBigDollar(adj) + ' / ' + count + ' items';
             pill.style.cssText = 'margin-left:6px;padding:1px 5px;background:rgba(110,231,183,0.15);border:1px solid #6ee7b7;border-radius:8px;color:#6ee7b7;font-size:0.75em;cursor:help;';
             valNode.parentNode.appendChild(pill);
         }
@@ -2258,28 +2321,58 @@
             if (onProfile) {
                 if (!userId || Number(userId) !== profileXid) { nwlog('skip: userId(' + userId + ') != profileXid(' + profileXid + ')'); return; }
             }
-            // v3.1.17: equipped-only filter. No more market_price fetch —
-            // equipped status alone matches the user's 3+5=8 RW count.
-            var calc = computeRwInventorySum(data.inventory);
-            try {
-                console.log('[rwp-networth] RW items counted: ' + calc.count +
-                    ' | loaned skipped: ' + (calc.skippedLoaned || 0) +
-                    ' | unequipped skipped: ' + (calc.skippedUnequipped || 0) +
-                    ' | RW sum: $' + Math.round(calc.sum).toLocaleString());
-            } catch (_) {}
-            if (calc.count === 0) { nwlog('skip: 0 equipped RW items found'); return; }
-            var row = findNwRow();
-            if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); return; }
-            var valNode = findNwValueNode(row);
-            if (!valNode) { nwlog('skip: $ value text node not found in networth row'); return; }
-            var match = valNode.textContent.match(/\$([\d,]+)/);
-            if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); return; }
-            var statedNw = Number(match[1].replace(/,/g, ''));
-            nwlog('rendering mode=' + mode + ' statedNw=$' + statedNw.toLocaleString() + ' adj=$' + Math.round(calc.sum).toLocaleString());
-            if (mode === 'line')    renderNwLine(row, statedNw, calc.sum, calc.count);
-            else if (mode === 'tooltip') renderNwTooltip(row, valNode, statedNw, calc.sum, calc.count);
-            else if (mode === 'replace') renderNwReplace(row, valNode, statedNw, calc.sum, calc.count);
-            nwlog('render complete');
+            // v3.1.18: collect equipped uids for per-instance rarity lookup,
+            // then compute with actual Yellow/Orange/Red tiers. First render
+            // uses Yellow defaults so the user sees something fast; second
+            // render upgrades to correct rarities once /torn/{uid}/itemdetails
+            // calls complete (cached forever per uid).
+            var allItems = (data.inventory && Array.isArray(data.inventory.items)) ? data.inventory.items
+                         : Array.isArray(data.inventory) ? data.inventory : [];
+            var equippedUids = [];
+            for (var ii = 0; ii < allItems.length; ii++) {
+                var ix = allItems[ii];
+                if (ix && ix.equipped === true && ix.uid != null && !isLoanedItem(ix)) equippedUids.push(ix.uid);
+            }
+            nwlog('equipped RW candidates: ' + equippedUids.length + ' uids — fetching per-instance rarity');
+            var doRender = function (uidMap, isFinal) {
+                var calc = computeRwInventorySum(data.inventory, null, uidMap);
+                try {
+                    console.log('[rwp-networth] ' + (isFinal ? 'FINAL' : 'initial Yellow-default') +
+                        ' — counted: ' + calc.count +
+                        ' | loaned skipped: ' + (calc.skippedLoaned || 0) +
+                        ' | unequipped skipped: ' + (calc.skippedUnequipped || 0) +
+                        ' | RW sum: $' + Math.round(calc.sum).toLocaleString());
+                } catch (_) {}
+                if (calc.count === 0) { nwlog('skip: 0 equipped RW items found'); return; }
+                var row = findNwRow();
+                if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); return; }
+                var valNode = findNwValueNode(row);
+                if (!valNode) { nwlog('skip: $ value text node not found in networth row'); return; }
+                var match = valNode.textContent.match(/\$([\d,]+)/);
+                if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); return; }
+                var statedNw = Number(match[1].replace(/,/g, ''));
+                // Clear any prior render (initial → final upgrade should replace,
+                // not stack a second row/pill/tooltip on top of the first).
+                var existingLine = document.getElementById('rwp-nw-line');
+                if (existingLine) existingLine.remove();
+                if (valNode.parentNode) {
+                    valNode.parentNode.removeAttribute('data-rwp-tooltip');
+                    var oldPills = valNode.parentNode.querySelectorAll('[data-rwp-pill]');
+                    oldPills.forEach(function(p){ p.remove(); });
+                }
+                nwlog('rendering mode=' + mode + ' statedNw=$' + statedNw.toLocaleString() + ' adj=$' + Math.round(calc.sum).toLocaleString() + (isFinal ? '' : ' (will upgrade)'));
+                if (mode === 'line')    renderNwLine(row, statedNw, calc.sum, calc.count);
+                else if (mode === 'tooltip') renderNwTooltip(row, valNode, statedNw, calc.sum, calc.count);
+                else if (mode === 'replace') renderNwReplace(row, valNode, statedNw, calc.sum, calc.count);
+                nwlog('render complete' + (isFinal ? ' (final)' : ' (initial — fetching rarities…)'));
+            };
+            // Render once immediately with Yellow defaults (fast feedback),
+            // then upgrade once /torn/{uid}/itemdetails calls complete.
+            doRender(null, false);
+            fetchUidDetailsBatch(key, equippedUids, function (uidMap) {
+                try { console.log('[rwp-networth] rarity map: ' + Object.keys(uidMap).length + '/' + equippedUids.length + ' resolved — re-rendering'); } catch (_) {}
+                doRender(uidMap, true);
+            });
         });
     }
 
