@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.18
+// @version      3.1.19
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2350,7 +2350,19 @@
                 if (!valNode) { nwlog('skip: $ value text node not found in networth row'); return; }
                 var match = valNode.textContent.match(/\$([\d,]+)/);
                 if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); return; }
-                var statedNw = Number(match[1].replace(/,/g, ''));
+                var displayedNw = Number(match[1].replace(/,/g, ''));
+                // v3.1.19: anti-compounding. Each render previously read the
+                // currently-displayed value and added adj on top. With
+                // MutationObserver retries firing, that compounded — second
+                // run saw "original + adj" as the new baseline and added
+                // adj again, cubed third run, etc. Cache the ORIGINAL
+                // Torn-supplied value on first read so subsequent renders
+                // always use it as the source of truth, no compounding.
+                if (window.__rwpOriginalNw == null) {
+                    window.__rwpOriginalNw = displayedNw;
+                    nwlog('cached original Torn networth: $' + displayedNw.toLocaleString());
+                }
+                var statedNw = window.__rwpOriginalNw;
                 // Clear any prior render (initial → final upgrade should replace,
                 // not stack a second row/pill/tooltip on top of the first).
                 var existingLine = document.getElementById('rwp-nw-line');
@@ -2501,11 +2513,19 @@
     // initial load.
     if (isOwnInfoPage()) {
         setTimeout(applyNwInflator, 1500);
+        // v3.1.19: MO retries only fire BEFORE first applied render, and
+        // self-disconnect once anything is rendered (line / pill / tooltip
+        // marker). The current-mode marker check covers all three render
+        // modes — previously we only checked rwp-nw-line which left
+        // tooltip and replace modes uncapped → MO kept firing → cumulative.
         var nwAttempts = 0;
         var nwObs = new MutationObserver(function () {
             if (nwAttempts > 5) { nwObs.disconnect(); return; }
-            if (document.getElementById('rwp-nw-line')) { nwObs.disconnect(); return; }
-            // Only retry if the Networth row exists but we haven't rendered yet
+            // Disconnect when any render mode has applied its marker.
+            var rendered = document.getElementById('rwp-nw-line')
+                || document.querySelector('[data-rwp-tooltip="1"]')
+                || document.querySelector('[data-rwp-replaced="1"]');
+            if (rendered) { nwObs.disconnect(); return; }
             if (findNwRow()) {
                 nwAttempts++;
                 applyNwInflator();
