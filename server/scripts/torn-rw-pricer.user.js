@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.23
+// @version      3.1.24
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2432,11 +2432,12 @@
                 else if (mode === 'replace') renderNwReplace(row, valNode, statedNw, calc.sum, calc.count);
                 nwlog('render complete' + (isFinal ? ' (final)' : ' (initial — fetching rarities…)'));
             };
-            // Render once immediately with Yellow defaults (fast feedback),
-            // then upgrade once /torn/{uid}/itemdetails calls complete.
-            doRender(null, false);
+            // v3.1.24: only render after per-uid rarity fetches complete.
+            // Skips the brief Yellow-default flash that confused users into
+            // thinking the script under-counted. Cost: ~1-2s of unchanged
+            // networth display before the RW pill appears.
             fetchUidDetailsBatch(key, equippedUids, function (uidMap) {
-                try { console.log('[rwp-networth] rarity map: ' + Object.keys(uidMap).length + '/' + equippedUids.length + ' resolved — re-rendering'); } catch (_) {}
+                try { console.log('[rwp-networth] rarity map: ' + Object.keys(uidMap).length + '/' + equippedUids.length + ' resolved — rendering'); } catch (_) {}
                 doRender(uidMap, true);
             });
         });
