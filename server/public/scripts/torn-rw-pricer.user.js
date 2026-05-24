@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.29
+// @version      3.1.30
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2114,7 +2114,12 @@
             // v3.1.28: capture bonus NAMES (not just count) so we can look
             // up combo prices like "Naval Cutlass|Quicken" which are valued
             // much higher than the base weapon median.
-            var bonusNames = bonuses.map(function (b) { return (b && b.name) || ''; }).filter(Boolean);
+            // v3.1.30: bonus schema is { id, title, description, value } —
+            // .title, NOT .name. Earlier parser used b.name → always
+            // undefined → bonusNames empty → every item skipped.
+            var bonusNames = bonuses.map(function (b) {
+                return (b && (b.title || b.name)) || '';
+            }).filter(Boolean);
             var entry = { rarity: rarity, bonusCount: bonuses.length, bonusNames: bonusNames };
             cache[uid] = entry;
             try { safeSet(NW_UID_CACHE_KEY, cache); } catch (_) {}
@@ -2122,8 +2127,11 @@
         }).catch(function (e) { cb(new Error('uid ' + uid + ' fetch: ' + (e && e.message ? e.message : e))); });
     }
 
-    // Throttled parallel fetcher for a list of uids — calls cb({ uid: entry, ... })
-    // when all complete or after timeout. Throttles to ~5/sec to be polite.
+    // v3.1.30: serialize requests at 700ms intervals (~1.4/sec) to stay
+    // under Torn's per-key rate limit (~100/min). Previous 200ms/3-parallel
+    // pace burned through the budget in seconds and rate-limited the
+    // remaining 90+ uids to silent failures. With 127 uids @ 700ms it's
+    // ~90s total but ALL succeed and cache forever.
     function fetchUidDetailsBatch(key, uids, cb) {
         var out = {};
         var pending = uids.length;
@@ -2134,14 +2142,14 @@
             var uid = uids[i++];
             fetchUidDetails(key, uid, function (err, entry) {
                 if (!err && entry) out[uid] = entry;
+                else if (err) { try { console.log('[rwp-networth] uid fetch err: ' + err.message); } catch (_) {} }
                 pending--;
                 if (pending === 0) cb(out);
             });
-            // Throttle: stagger requests ~200ms apart
-            setTimeout(next, 200);
+            setTimeout(next, 700);
         }
-        // Kick off first 3 in parallel for speed, rest follow on throttle
-        for (var k = 0; k < Math.min(3, uids.length); k++) next();
+        // 1 in-flight at a time — avoids blasting Torn's rate limit
+        next();
     }
 
     function computeRwInventorySum(inventoryContainer, marketPriceMap, uidDetailsMap) {
