@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.30
+// @version      3.1.31
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2100,7 +2100,11 @@
     // header + native fetch like the inventory fetch.
     function fetchUidDetails(key, uid, cb) {
         var cache = safeGet(NW_UID_CACHE_KEY, {}) || {};
-        if (cache[uid]) { cb(null, cache[uid]); return; }
+        // v3.1.31: cache entries from 3.1.29 have empty bonusNames (old
+        // b.name parser was broken). Re-fetch any entry that lacks the
+        // _v marker stamped by 3.1.30+ so the corrected b.title parser
+        // populates them properly.
+        if (cache[uid] && cache[uid]._v >= 31) { cb(null, cache[uid]); return; }
         if (typeof fetch !== 'function') { cb(new Error('fetch unavailable')); return; }
         fetch('https://api.torn.com/v2/torn/' + encodeURIComponent(uid) + '/itemdetails', {
             method: 'GET',
@@ -2111,16 +2115,10 @@
             var det = d.itemdetails || d;
             var rarity = (det.rarity || '').toLowerCase();
             var bonuses = Array.isArray(det.bonuses) ? det.bonuses : [];
-            // v3.1.28: capture bonus NAMES (not just count) so we can look
-            // up combo prices like "Naval Cutlass|Quicken" which are valued
-            // much higher than the base weapon median.
-            // v3.1.30: bonus schema is { id, title, description, value } —
-            // .title, NOT .name. Earlier parser used b.name → always
-            // undefined → bonusNames empty → every item skipped.
             var bonusNames = bonuses.map(function (b) {
                 return (b && (b.title || b.name)) || '';
             }).filter(Boolean);
-            var entry = { rarity: rarity, bonusCount: bonuses.length, bonusNames: bonusNames };
+            var entry = { rarity: rarity, bonusCount: bonuses.length, bonusNames: bonusNames, _v: 31 };
             cache[uid] = entry;
             try { safeSet(NW_UID_CACHE_KEY, cache); } catch (_) {}
             cb(null, entry);
@@ -2406,18 +2404,25 @@
 
     function applyNwInflator() {
         var nwlog = function (m) { try { console.log('[rwp-networth] ' + m); } catch (_) {} };
+        // v3.1.31: hard lock against re-entry while a fetch sequence is in
+        // flight. MutationObserver retries were re-kicking the 127-uid
+        // fetch on every tick, burning rate-limit budget and never letting
+        // the previous run finish. Lock releases once doRender callback
+        // completes (success OR failure).
+        if (window.__rwpNwFetching) { nwlog('skip: fetch already in progress'); return; }
         nwlog('applyNwInflator: tick — url=' + window.location.pathname + window.location.search.slice(0, 40));
         var mode = getNwMode();
         if (mode === 'off') { nwlog('skip: mode=off'); return; }
         if (!isOwnInfoPage()) { nwlog('skip: not own-info page (home/profile)'); return; }
         var key = getEffectiveApiKey();
         if (!key) { nwlog('skip: no API key — PDA bridge empty AND no saved key. apiKey-var=' + (apiKey ? '<set>' : '<empty>')); return; }
+        window.__rwpNwFetching = true;
         var onProfile = isProfilePage();
         var profileXid = onProfile ? getProfileXid() : null;
         if (onProfile && !profileXid) { nwlog('skip: on profile page but XID missing from URL'); return; }
         nwlog('proceeding: mode=' + mode + ' onProfile=' + onProfile + ' xid=' + profileXid + ' keyLen=' + key.length);
         fetchNwData(key, function (err, data) {
-            if (err) { nwlog('fetch err: ' + err.message); return; }
+            if (err) { nwlog('fetch err: ' + err.message); window.__rwpNwFetching = false; return; }
             if (!data) { nwlog('fetch returned no data'); return; }
             // v1 puts player_id at top level (no .basic nesting). Also accept
             // v2-style nesting for resilience.
@@ -2485,13 +2490,13 @@
                         ' | Torn-already-valued skipped: ' + (calc.skippedTornValued || 0) +
                         ' | delta sum: $' + Math.round(calc.sum).toLocaleString());
                 } catch (_) {}
-                if (calc.count === 0) { nwlog('skip: 0 equipped RW items found'); return; }
+                if (calc.count === 0) { nwlog('skip: 0 equipped RW items found'); window.__rwpNwFetching = false; return; }
                 var row = findNwRow();
-                if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); return; }
+                if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); window.__rwpNwFetching = false; return; }
                 var valNode = findNwValueNode(row);
-                if (!valNode) { nwlog('skip: $ value text node not found in networth row'); return; }
+                if (!valNode) { nwlog('skip: $ value text node not found in networth row'); window.__rwpNwFetching = false; return; }
                 var match = valNode.textContent.match(/\$([\d,]+)/);
-                if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); return; }
+                if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); window.__rwpNwFetching = false; return; }
                 var displayedNw = Number(match[1].replace(/,/g, ''));
                 // v3.1.19: anti-compounding. Each render previously read the
                 // currently-displayed value and added adj on top. With
@@ -2519,6 +2524,7 @@
                 else if (mode === 'tooltip') renderNwTooltip(row, valNode, statedNw, calc.sum, calc.count);
                 else if (mode === 'replace') renderNwReplace(row, valNode, statedNw, calc.sum, calc.count);
                 nwlog('render complete' + (isFinal ? ' (final)' : ' (initial — fetching rarities…)'));
+                if (isFinal) window.__rwpNwFetching = false;
             };
             // v3.1.24: only render after per-uid rarity fetches complete.
             // Skips the brief Yellow-default flash that confused users into
