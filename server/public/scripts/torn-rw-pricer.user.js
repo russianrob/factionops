@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.16
+// @version      3.1.17
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2099,25 +2099,19 @@
         } else {
             return { sum: 0, count: 0, skippedLoaned: 0 };
         }
-        var sum = 0, count = 0, skippedLoaned = 0, skippedTornValued = 0;
+        var sum = 0, count = 0, skippedLoaned = 0, skippedUnequipped = 0;
         for (var i = 0; i < items.length; i++) {
             var it = items[i];
             if (!it || !it.name) continue;
             if (isLoanedItem(it)) { skippedLoaned += Number(it.amount != null ? it.amount : it.quantity) || 1; continue; }
-            // v3.1.16: only count items where Torn's market_price is N/A
-            // (null or 0). If Torn has a market price, the item is already
-            // counted in your networth at that price — adding our RW
-            // estimate on top would double-count. RW items with unique
-            // bonus rolls don't have a published market price (they're
-            // distributed via the faction war shop, not the item market),
-            // so they're exactly the items we should add.
-            if (marketPriceMap && it.id != null) {
-                var tornPrice = marketPriceMap[it.id];
-                if (tornPrice && tornPrice > 0) {
-                    skippedTornValued += Number(it.amount != null ? it.amount : it.quantity) || 1;
-                    continue;
-                }
-            }
+            // v3.1.17: revert to equipped-only filter — RW items live in
+            // your 8 equipped slots (3 weapon + 5 armour). The N/A
+            // market_price filter from 3.1.16 was too aggressive (caught
+            // only 1/8) because RW item IDs DO have market_price values
+            // from the base item's history, even when the bonus-attached
+            // instance is unique. Equipped is the simpler, accurate proxy
+            // and matches the user's stated "3 weapons + 5 armour" count.
+            if (it.equipped !== true) { skippedUnequipped++; continue; }
             // v2 uses `amount`; older shapes used `quantity` — accept either.
             var qty = Number(it.amount != null ? it.amount : it.quantity) || 1;
             var wn = lookupWeapon(it.name);
@@ -2135,7 +2129,7 @@
                 if (ap) { sum += ap * qty; count += qty; continue; }
             }
         }
-        return { sum: sum, count: count, skippedLoaned: skippedLoaned, skippedTornValued: skippedTornValued };
+        return { sum: sum, count: count, skippedLoaned: skippedLoaned, skippedUnequipped: skippedUnequipped };
     }
 
     function findNwRow() {
@@ -2264,35 +2258,28 @@
             if (onProfile) {
                 if (!userId || Number(userId) !== profileXid) { nwlog('skip: userId(' + userId + ') != profileXid(' + profileXid + ')'); return; }
             }
-            // v3.1.16: fetch Torn's per-item market_price map (cached 24h).
-            // Items where Torn returns market_price>0 are already counted
-            // in your networth at that price — skip them. Items where
-            // market_price is N/A (null/0) are RW-only items not in your
-            // networth, those are the ones we should add.
-            fetchItemMarketPrices(key, function (mpErr, mpMap) {
-                if (mpErr) nwlog('market_price fetch failed (' + mpErr.message + ') — proceeding without filter');
-                else nwlog('market_price map: ' + Object.keys(mpMap || {}).length + ' items loaded');
-                var calc = computeRwInventorySum(data.inventory, mpMap);
-                try {
-                    console.log('[rwp-networth] RW items counted: ' + calc.count +
-                        ' | loaned skipped: ' + (calc.skippedLoaned || 0) +
-                        ' | already-in-networth skipped (Torn has market_price): ' + (calc.skippedTornValued || 0) +
-                        ' | RW sum: $' + Math.round(calc.sum).toLocaleString());
-                } catch (_) {}
-                if (calc.count === 0) { nwlog('skip: 0 RW items after N/A-only filter'); return; }
-                var row = findNwRow();
-                if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); return; }
-                var valNode = findNwValueNode(row);
-                if (!valNode) { nwlog('skip: $ value text node not found in networth row'); return; }
-                var match = valNode.textContent.match(/\$([\d,]+)/);
-                if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); return; }
-                var statedNw = Number(match[1].replace(/,/g, ''));
-                nwlog('rendering mode=' + mode + ' statedNw=$' + statedNw.toLocaleString() + ' adj=$' + Math.round(calc.sum).toLocaleString());
-                if (mode === 'line')    renderNwLine(row, statedNw, calc.sum, calc.count);
-                else if (mode === 'tooltip') renderNwTooltip(row, valNode, statedNw, calc.sum, calc.count);
-                else if (mode === 'replace') renderNwReplace(row, valNode, statedNw, calc.sum, calc.count);
-                nwlog('render complete');
-            });
+            // v3.1.17: equipped-only filter. No more market_price fetch —
+            // equipped status alone matches the user's 3+5=8 RW count.
+            var calc = computeRwInventorySum(data.inventory);
+            try {
+                console.log('[rwp-networth] RW items counted: ' + calc.count +
+                    ' | loaned skipped: ' + (calc.skippedLoaned || 0) +
+                    ' | unequipped skipped: ' + (calc.skippedUnequipped || 0) +
+                    ' | RW sum: $' + Math.round(calc.sum).toLocaleString());
+            } catch (_) {}
+            if (calc.count === 0) { nwlog('skip: 0 equipped RW items found'); return; }
+            var row = findNwRow();
+            if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); return; }
+            var valNode = findNwValueNode(row);
+            if (!valNode) { nwlog('skip: $ value text node not found in networth row'); return; }
+            var match = valNode.textContent.match(/\$([\d,]+)/);
+            if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); return; }
+            var statedNw = Number(match[1].replace(/,/g, ''));
+            nwlog('rendering mode=' + mode + ' statedNw=$' + statedNw.toLocaleString() + ' adj=$' + Math.round(calc.sum).toLocaleString());
+            if (mode === 'line')    renderNwLine(row, statedNw, calc.sum, calc.count);
+            else if (mode === 'tooltip') renderNwTooltip(row, valNode, statedNw, calc.sum, calc.count);
+            else if (mode === 'replace') renderNwReplace(row, valNode, statedNw, calc.sum, calc.count);
+            nwlog('render complete');
         });
     }
 
