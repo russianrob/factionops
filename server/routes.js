@@ -391,6 +391,7 @@ export function gateMiddleware(req, res, next) {
   if (
     req.path.startsWith("/api/") ||
     req.path.startsWith("/data/") ||
+    req.path === "/health" ||
     req.path === "/gate.html" ||
     req.path.startsWith("/diag/") ||
     req.path === "/war" || req.path.startsWith("/war/") ||
