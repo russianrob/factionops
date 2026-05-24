@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.0
+// @version      3.1.1
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1859,12 +1859,32 @@
         });
     }
 
+    // v3.1.1: skip loaned items (faction armoury loans, friend loans, etc).
+    // Loaned weapons aren't actually owned — you have to return them, so
+    // counting their market value toward networth would overstate wealth.
+    // The Torn /v2/user inventory item shape uses a few different fields
+    // depending on the source of the loan; check all the common ones.
+    function isLoanedItem(it) {
+        if (!it) return false;
+        if (it.loaned === true || it.loaned === 1) return true;
+        if (it.is_loaned === true) return true;
+        if (it.loaned_to && it.loaned_to !== 0 && it.loaned_to !== '0') return true;
+        if (it.loaned_from && it.loaned_from !== 0 && it.loaned_from !== '0') return true;
+        if (it.loaned_until || it.loan_until) return true;
+        if (it.borrowed === true) return true;
+        // Nested loan object: { loan: { ... } } or { loaned: { faction: true } }
+        if (it.loan && typeof it.loan === 'object') return true;
+        if (it.loaned && typeof it.loaned === 'object') return true;
+        return false;
+    }
+
     function computeRwInventorySum(inventory) {
-        if (!Array.isArray(inventory)) return { sum: 0, count: 0 };
-        var sum = 0, count = 0;
+        if (!Array.isArray(inventory)) return { sum: 0, count: 0, skippedLoaned: 0 };
+        var sum = 0, count = 0, skippedLoaned = 0;
         for (var i = 0; i < inventory.length; i++) {
             var it = inventory[i];
             if (!it || !it.name) continue;
+            if (isLoanedItem(it)) { skippedLoaned += Number(it.quantity) || 1; continue; }
             var qty = Number(it.quantity) || 1;
             var wn = lookupWeapon(it.name);
             if (wn) {
@@ -1881,7 +1901,7 @@
                 if (ap) { sum += ap * qty; count += qty; continue; }
             }
         }
-        return { sum: sum, count: count };
+        return { sum: sum, count: count, skippedLoaned: skippedLoaned };
     }
 
     function findNwRow() {
@@ -1971,6 +1991,11 @@
             var userId = (data.basic && data.basic.player_id) || data.id || data.player_id;
             if (!userId || Number(userId) !== profileXid) return; // only own profile
             var calc = computeRwInventorySum(data.inventory);
+            try {
+                console.log('[rwp-networth] RW items counted: ' + calc.count +
+                    ' | loaned items skipped: ' + (calc.skippedLoaned || 0) +
+                    ' | RW sum: $' + Math.round(calc.sum).toLocaleString());
+            } catch (_) {}
             if (calc.count === 0) return;
             var row = findNwRow();
             if (!row) return;
