@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.12
+// @version      3.1.13
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2079,14 +2079,25 @@
     }
 
     function findNwRow() {
-        // General Information panel renders each field as a row with a
-        // label cell and a value cell. Most reliable selector: any TR
-        // whose label cell text is exactly "Networth".
-        var rows = document.querySelectorAll('tr, [class*="info"] [class*="row"], [class*="general"] [class*="row"]');
-        for (var i = 0; i < rows.length; i++) {
-            var r = rows[i];
-            var label = r.firstElementChild;
-            if (label && /^\s*Networth\s*$/i.test(label.textContent || '')) return r;
+        // v3.1.13: Torn's General Info panel renders differently across
+        // contexts (TR table, div-grid, dl, React grid). Strategy:
+        // 1. Find any leaf element whose text is exactly "Networth" (label)
+        // 2. Walk up to its nearest ancestor that ALSO contains a $-amount
+        //    (i.e. the row container holding label + value).
+        var labels = document.querySelectorAll('td, th, div, span, dt, label, li, p');
+        for (var i = 0; i < labels.length; i++) {
+            var e = labels[i];
+            var txt = (e.textContent || '').trim();
+            if (txt !== 'Networth') continue;
+            var anc = e.parentElement;
+            var hops = 0;
+            while (anc && anc !== document.body && hops < 8) {
+                if (/\$[\d,]{3,}/.test(anc.textContent) && anc.children && anc.children.length >= 2) {
+                    return anc;
+                }
+                anc = anc.parentElement;
+                hops++;
+            }
         }
         return null;
     }
