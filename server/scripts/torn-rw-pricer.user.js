@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.3
+// @version      3.1.4
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1862,7 +1862,10 @@
         } catch (_) {}
         GM_xmlhttpRequest({
             method: 'GET',
-            url: 'https://api.torn.com/v2/user?selections=inventory,basic&key=' + encodeURIComponent(key),
+            // v3.1.4: switched from v2 → v1 — v2 rejected the combo with
+            // "Incorrect category". v1 accepts comma-separated selections
+            // reliably and exposes player_id at the top level.
+            url: 'https://api.torn.com/user/?selections=inventory,basic&key=' + encodeURIComponent(key),
             onload: function (r) {
                 try {
                     var d = JSON.parse(r.responseText);
@@ -1882,23 +1885,28 @@
     // depending on the source of the loan; check all the common ones.
     function isLoanedItem(it) {
         if (!it) return false;
-        if (it.loaned === true || it.loaned === 1) return true;
+        // v1 sets `loaned` to the faction/user ID it's loaned from (or
+        // null when not loaned). Any truthy non-falsy value = loaned.
+        // Also handle older/alternative field shapes.
+        if (it.loaned !== undefined && it.loaned !== null && it.loaned !== 0 && it.loaned !== false && it.loaned !== '') return true;
         if (it.is_loaned === true) return true;
         if (it.loaned_to && it.loaned_to !== 0 && it.loaned_to !== '0') return true;
         if (it.loaned_from && it.loaned_from !== 0 && it.loaned_from !== '0') return true;
         if (it.loaned_until || it.loan_until) return true;
         if (it.borrowed === true) return true;
-        // Nested loan object: { loan: { ... } } or { loaned: { faction: true } }
-        if (it.loan && typeof it.loan === 'object') return true;
-        if (it.loaned && typeof it.loaned === 'object') return true;
         return false;
     }
 
     function computeRwInventorySum(inventory) {
-        if (!Array.isArray(inventory)) return { sum: 0, count: 0, skippedLoaned: 0 };
+        // v1 returns inventory as an OBJECT keyed by item ID (not an array).
+        // v2 returns an array. Normalize to array.
+        var items;
+        if (Array.isArray(inventory)) items = inventory;
+        else if (inventory && typeof inventory === 'object') items = Object.values(inventory);
+        else return { sum: 0, count: 0, skippedLoaned: 0 };
         var sum = 0, count = 0, skippedLoaned = 0;
-        for (var i = 0; i < inventory.length; i++) {
-            var it = inventory[i];
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
             if (!it || !it.name) continue;
             if (isLoanedItem(it)) { skippedLoaned += Number(it.quantity) || 1; continue; }
             var qty = Number(it.quantity) || 1;
@@ -2009,8 +2017,13 @@
         fetchNwData(key, function (err, data) {
             if (err) { nwlog('fetch err: ' + err.message); return; }
             if (!data) { nwlog('fetch returned no data'); return; }
-            var userId = (data.basic && data.basic.player_id) || data.id || data.player_id;
-            nwlog('fetched: userId=' + userId + ' inventory-len=' + (Array.isArray(data.inventory) ? data.inventory.length : 'NOT-ARRAY'));
+            // v1 puts player_id at top level (no .basic nesting). Also accept
+            // v2-style nesting for resilience.
+            var userId = data.player_id || (data.basic && data.basic.player_id) || data.id;
+            var invLen = Array.isArray(data.inventory) ? data.inventory.length
+                       : (data.inventory && typeof data.inventory === 'object') ? Object.keys(data.inventory).length
+                       : 'NONE';
+            nwlog('fetched: userId=' + userId + ' inventory-len=' + invLen);
             // On a profile page we must verify it's our own. On the home
             // page the panel is always our own data — skip the XID check.
             if (onProfile) {
