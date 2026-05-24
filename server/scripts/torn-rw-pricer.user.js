@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.10
+// @version      3.1.11
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1960,9 +1960,23 @@
                 headers: { 'Authorization': 'ApiKey ' + key, 'Accept': 'application/json' },
                 credentials: 'omit',
             }).then(function (r) {
-                return r.json();
-            }).then(function (d) {
-                if (d.error) { cb(new Error(d.error.error || 'api error')); return; }
+                // v3.1.11: capture status + final URL (might differ from request URL
+                // if PDA monkey-patched fetch and rewrote it) + raw body
+                return r.text().then(function (txt) {
+                    return { status: r.status, finalUrl: r.url, text: txt };
+                });
+            }).then(function (resp) {
+                try { console.log('[rwp-networth] HTTP ' + resp.status + ' from ' + resp.finalUrl + ' (' + resp.text.length + ' bytes)'); } catch (_) {}
+                var d;
+                try { d = JSON.parse(resp.text); } catch (e) {
+                    cb(new Error('non-JSON response: ' + resp.text.slice(0, 200)));
+                    return;
+                }
+                if (d.error) {
+                    try { console.log('[rwp-networth] API error full: ' + JSON.stringify(d.error)); } catch (_) {}
+                    cb(new Error('code ' + (d.error.code != null ? d.error.code : '?') + ' — ' + (d.error.error || 'api error')));
+                    return;
+                }
                 safeSet(NW_DATA_CACHE_KEY, { ts: Date.now(), data: d });
                 cb(null, d);
             }).catch(function (e) {
