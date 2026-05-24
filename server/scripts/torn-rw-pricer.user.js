@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.15
+// @version      3.1.16
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1899,14 +1899,15 @@
     var NW_DATA_CACHE_KEY = 'rwp_networth_data_cache';
     var NW_DATA_TTL = 5 * 60 * 1000; // 5 min — inventory changes infrequently
     var NW_MODES = ['off', 'line', 'tooltip', 'replace'];
-    // v3.1.14: circulation-based RW filter. RW items have very low
-    // circulation (tens to hundreds) vs regular Torn weapons (50k+).
-    // Fetch /v2/torn/items once and build a Set of item IDs whose
-    // circulation is below this threshold. Excludes regular weapons
-    // that happen to share names with their RW variants in our price DB.
-    var NW_ITEMS_CACHE_KEY = 'rwp_torn_items_circulation';
+    // v3.1.16: filter by Torn's item-market-price field. Items where
+    // Torn returns a market_price > 0 are already counted in your
+    // networth (Torn values them at that price). Items where market_price
+    // is null/0 ("N/A" on the item market page) are NOT in Torn's
+    // networth — those are the ones our RW pricer should add. Repurposes
+    // the v3.1.14 /v2/torn/items fetch (circulation by itself didn't work
+    // because RW items share IDs with regular variants).
+    var NW_ITEMS_CACHE_KEY = 'rwp_torn_items_marketprice';
     var NW_ITEMS_TTL = 24 * 60 * 60 * 1000; // 24h
-    var NW_CIRC_THRESHOLD = 2000;
 
     function getNwMode() {
         var v = safeGet(NW_MODE_KEY, 'line');
@@ -2046,8 +2047,11 @@
         return false;
     }
 
-    // v3.1.14: fetch /v2/torn/items, build circulation map. Cached 24h.
-    function fetchItemCirculations(key, cb) {
+    // v3.1.16: fetch /v2/torn/items, build market_price map. Cached 24h.
+    // Returns { itemId: market_price } — items with market_price=0/null
+    // are "N/A" on the item market, meaning Torn isn't valuing them in
+    // networth, so we should add their RW market value.
+    function fetchItemMarketPrices(key, cb) {
         try {
             var cached = safeGet(NW_ITEMS_CACHE_KEY, null);
             if (cached && cached.ts && Date.now() - cached.ts < NW_ITEMS_TTL && cached.map) {
@@ -2056,33 +2060,31 @@
             }
         } catch (_) {}
         if (typeof fetch !== 'function') { cb(new Error('fetch unavailable')); return; }
-        try { console.log('[rwp-networth] fetching /v2/torn/items (one-time, cached 24h)'); } catch (_) {}
+        try { console.log('[rwp-networth] fetching /v2/torn/items for market_price map (cached 24h)'); } catch (_) {}
         fetch('https://api.torn.com/v2/torn/items', {
             method: 'GET',
             headers: { 'Authorization': 'ApiKey ' + key, 'Accept': 'application/json' },
             credentials: 'omit',
         }).then(function (r) { return r.json(); }).then(function (d) {
             if (d.error) { cb(new Error('items api: code ' + d.error.code + ' ' + d.error.error)); return; }
-            // Response shape per spec: { items: [{ id, name, circulation, ... }] }
-            // Build a lean { id: circulation } map — saves space vs full items.
             var map = {};
             var items = (d.items && Array.isArray(d.items)) ? d.items
-                      : (Array.isArray(d.itemmods) ? d.itemmods : []);
-            if (items.length === 0 && d.items && typeof d.items === 'object') {
-                // Some v2 endpoints return as object keyed by ID
-                items = Object.values(d.items);
-            }
+                      : (d.items && typeof d.items === 'object') ? Object.values(d.items)
+                      : [];
             for (var i = 0; i < items.length; i++) {
                 var it = items[i];
-                if (it && it.id != null) map[it.id] = Number(it.circulation) || 0;
+                if (it && it.id != null) {
+                    var mp = (it.value && it.value.market_price != null) ? Number(it.value.market_price) : 0;
+                    map[it.id] = mp;
+                }
             }
             safeSet(NW_ITEMS_CACHE_KEY, { ts: Date.now(), map: map });
-            try { console.log('[rwp-networth] cached circulation for ' + Object.keys(map).length + ' items'); } catch (_) {}
+            try { console.log('[rwp-networth] cached market_price for ' + Object.keys(map).length + ' items'); } catch (_) {}
             cb(null, map);
         }).catch(function (e) { cb(new Error('items fetch failed: ' + (e && e.message ? e.message : e))); });
     }
 
-    function computeRwInventorySum(inventoryContainer, lowCircSet) {
+    function computeRwInventorySum(inventoryContainer, marketPriceMap) {
         // v3.1.8: v2 returns { inventory: { items: [...], timestamp } }.
         // We accept either the wrapped container, the .items array, or the
         // raw array — so the function works regardless of whether the caller
@@ -2097,21 +2099,24 @@
         } else {
             return { sum: 0, count: 0, skippedLoaned: 0 };
         }
-        var sum = 0, count = 0, skippedLoaned = 0, skippedRegular = 0, skippedUnequipped = 0;
+        var sum = 0, count = 0, skippedLoaned = 0, skippedTornValued = 0;
         for (var i = 0; i < items.length; i++) {
             var it = items[i];
             if (!it || !it.name) continue;
             if (isLoanedItem(it)) { skippedLoaned += Number(it.amount != null ? it.amount : it.quantity) || 1; continue; }
-            // v3.1.15: equipped-only filter — RW items live in your 8
-            // equipped slots (3 weapon + 5 armour). Unequipped weapons in
-            // inventory are usually regular Torn backup/fodder. This matches
-            // your real RW count without needing per-instance bonus lookups.
-            if (it.equipped !== true) { skippedUnequipped++; continue; }
-            // v3.1.14: circulation filter retained as additional gate (rarely
-            // matters with equipped filter on top but kept as defense layer).
-            if (lowCircSet && it.id != null && !lowCircSet.has(Number(it.id))) {
-                skippedRegular += Number(it.amount != null ? it.amount : it.quantity) || 1;
-                continue;
+            // v3.1.16: only count items where Torn's market_price is N/A
+            // (null or 0). If Torn has a market price, the item is already
+            // counted in your networth at that price — adding our RW
+            // estimate on top would double-count. RW items with unique
+            // bonus rolls don't have a published market price (they're
+            // distributed via the faction war shop, not the item market),
+            // so they're exactly the items we should add.
+            if (marketPriceMap && it.id != null) {
+                var tornPrice = marketPriceMap[it.id];
+                if (tornPrice && tornPrice > 0) {
+                    skippedTornValued += Number(it.amount != null ? it.amount : it.quantity) || 1;
+                    continue;
+                }
             }
             // v2 uses `amount`; older shapes used `quantity` — accept either.
             var qty = Number(it.amount != null ? it.amount : it.quantity) || 1;
@@ -2130,7 +2135,7 @@
                 if (ap) { sum += ap * qty; count += qty; continue; }
             }
         }
-        return { sum: sum, count: count, skippedLoaned: skippedLoaned, skippedRegular: skippedRegular, skippedUnequipped: skippedUnequipped };
+        return { sum: sum, count: count, skippedLoaned: skippedLoaned, skippedTornValued: skippedTornValued };
     }
 
     function findNwRow() {
@@ -2259,34 +2264,22 @@
             if (onProfile) {
                 if (!userId || Number(userId) !== profileXid) { nwlog('skip: userId(' + userId + ') != profileXid(' + profileXid + ')'); return; }
             }
-            // v3.1.14: fetch circulation map (cached 24h), build low-circulation
-            // Set to use as the RW allowlist. If the fetch fails we proceed
-            // with null (no filter) so the feature still works in degraded
-            // mode — better to over-count than not render at all.
-            fetchItemCirculations(key, function (circErr, circMap) {
-                var lowCircSet = null;
-                if (circErr) {
-                    nwlog('circulation fetch failed (' + circErr.message + ') — proceeding without filter');
-                } else if (circMap) {
-                    lowCircSet = new Set();
-                    var lowCount = 0;
-                    for (var idStr in circMap) {
-                        if (Number(circMap[idStr]) < NW_CIRC_THRESHOLD) {
-                            lowCircSet.add(Number(idStr));
-                            lowCount++;
-                        }
-                    }
-                    nwlog('circulation: ' + Object.keys(circMap).length + ' items total, ' + lowCount + ' below threshold ' + NW_CIRC_THRESHOLD + ' (= RW-eligible)');
-                }
-                var calc = computeRwInventorySum(data.inventory, lowCircSet);
+            // v3.1.16: fetch Torn's per-item market_price map (cached 24h).
+            // Items where Torn returns market_price>0 are already counted
+            // in your networth at that price — skip them. Items where
+            // market_price is N/A (null/0) are RW-only items not in your
+            // networth, those are the ones we should add.
+            fetchItemMarketPrices(key, function (mpErr, mpMap) {
+                if (mpErr) nwlog('market_price fetch failed (' + mpErr.message + ') — proceeding without filter');
+                else nwlog('market_price map: ' + Object.keys(mpMap || {}).length + ' items loaded');
+                var calc = computeRwInventorySum(data.inventory, mpMap);
                 try {
                     console.log('[rwp-networth] RW items counted: ' + calc.count +
-                        ' | unequipped skipped: ' + (calc.skippedUnequipped || 0) +
                         ' | loaned skipped: ' + (calc.skippedLoaned || 0) +
-                        ' | high-circulation skipped: ' + (calc.skippedRegular || 0) +
+                        ' | already-in-networth skipped (Torn has market_price): ' + (calc.skippedTornValued || 0) +
                         ' | RW sum: $' + Math.round(calc.sum).toLocaleString());
                 } catch (_) {}
-                if (calc.count === 0) { nwlog('skip: 0 RW items after filter'); return; }
+                if (calc.count === 0) { nwlog('skip: 0 RW items after N/A-only filter'); return; }
                 var row = findNwRow();
                 if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); return; }
                 var valNode = findNwValueNode(row);
