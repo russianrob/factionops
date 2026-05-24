@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.37
+// @version      3.1.38
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2438,12 +2438,31 @@
         hint.setAttribute('data-rwp-hint', '1');
         hint.setAttribute('data-rwp-pill', '1');
         hint.textContent = ' RW?';
-        hint.title = 'RW Pricer: ' + missingCount + ' items in your inventory need their price cached.\nVisit your items page (Items tab) — wait ~5 seconds for badges to render — and reload this page. The networth will then include your RW items.';
-        hint.style.cssText = 'margin-left:6px;padding:1px 5px;background:rgba(251,191,36,0.15);border:1px solid #fbbf24;border-radius:8px;color:#fbbf24;font-size:0.75em;cursor:help;';
+        var hintText = 'RW Pricer: ' + missingCount + ' items in your inventory need their price cached. Visit your items page — wait ~5 seconds for badges to render — and reload this page. The networth will then include your RW items.';
+        hint.title = hintText; // desktop hover
+        hint.style.cssText = 'margin-left:6px;padding:1px 5px;background:rgba(251,191,36,0.15);border:1px solid #fbbf24;border-radius:8px;color:#fbbf24;font-size:0.75em;cursor:help;position:relative;';
+        // v3.1.38: tap toggles an inline popover (mobile-friendly — title
+        // attribute doesn't reliably show on touch). No navigation; user
+        // clicks the pill, sees the text, clicks again or outside to dismiss.
         hint.addEventListener('click', function (e) {
+            e.preventDefault();
             e.stopPropagation();
-            // Convenience: deep-link to items page if clicked
-            window.location.href = '/item.php';
+            var existing = document.getElementById('rwp-hint-popover');
+            if (existing) { existing.remove(); return; }
+            var pop = document.createElement('div');
+            pop.id = 'rwp-hint-popover';
+            pop.textContent = hintText;
+            pop.style.cssText = 'position:absolute;top:100%;right:0;margin-top:4px;width:260px;max-width:80vw;padding:8px 10px;background:#1c2030;border:1px solid #fbbf24;border-radius:6px;color:#e6e8ee;font-size:11px;font-weight:400;letter-spacing:0;text-transform:none;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.5);line-height:1.4;';
+            hint.appendChild(pop);
+            // Click outside to dismiss
+            setTimeout(function () {
+                var off = function (ev) {
+                    if (pop.contains(ev.target) || hint.contains(ev.target)) return;
+                    pop.remove();
+                    document.removeEventListener('click', off, true);
+                };
+                document.addEventListener('click', off, true);
+            }, 0);
         });
         valNode.parentNode.appendChild(hint);
     }
