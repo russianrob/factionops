@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.38
+// @version      3.1.39
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2438,7 +2438,7 @@
         hint.setAttribute('data-rwp-hint', '1');
         hint.setAttribute('data-rwp-pill', '1');
         hint.textContent = ' RW?';
-        var hintText = 'RW Pricer: ' + missingCount + ' items in your inventory need their price cached. Visit your items page — wait ~5 seconds for badges to render — and reload this page. The networth will then include your RW items.';
+        var hintText = 'Go to your items page and visit each weapon category (Primary, Secondary, Melee) and Armour so the networth can update with your RW items.';
         hint.title = hintText; // desktop hover
         hint.style.cssText = 'margin-left:6px;padding:1px 5px;background:rgba(251,191,36,0.15);border:1px solid #fbbf24;border-radius:8px;color:#fbbf24;font-size:0.75em;cursor:help;position:relative;';
         // v3.1.38: tap toggles an inline popover (mobile-friendly — title
