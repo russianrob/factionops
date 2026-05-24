@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.1-wb64
+// @version      2.73.1-wb65
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -732,17 +732,18 @@ if (!singleton) {
       this.db_name = db_name;
       this.db = null;
       // wb55: bumped 1 → 2 to force onupgradeneeded for users whose
-      // ffscouter-cache DB was already at v1 but missing the "cache"
-      // store — happens when upstream FF Scouter (or another fork)
-      // created the same-named DB first with a different schema.
-      // Migration 2 self-heals by creating the store if absent.
+      // DB was at v1 but missing the "cache" store. Migration 2
+      // self-heals by creating the store if absent.
       //
-      // wb64 (2026-05-24): bumped 2 → 10 to leapfrog conflicting forks
-      // that put the same-named DB at v3+. IndexedDB doesn't allow
-      // downgrades — opening at a lower version than the existing DB
-      // throws VersionError and fires the "Error loading database"
-      // toast. Migration 10 is the same idempotent heal step.
-      this.db_version = 10;
+      // wb65 (2026-05-24): caller now passes a fork-private db name
+      // ("ffs-banner-cache" instead of "ffscouter-cache") so we no
+      // longer share storage with xentac's upstream script — both can
+      // be installed and toggled without VersionError collisions in
+      // either direction. Reverted to db_version 2 (wb64's bump to 10
+      // was a band-aid for the shared-name case that's no longer
+      // applicable, and it broke xentac's script for users who
+      // toggled between them).
+      this.db_version = 2;
 
       this.store_name = "cache";
 
@@ -757,9 +758,8 @@ if (!singleton) {
         store.createIndex("expiry", ["expiry"], { unique: false });
       };
       this.migrations = {
-        1:  (db, _) => { ffdebug("migration 1"); ensureStore(db); },
-        2:  (db, _) => { ffdebug("migration 2 (heal)"); ensureStore(db); },
-        10: (db, _) => { ffdebug("migration 10 (heal, leapfrog higher-version conflicts)"); ensureStore(db); },
+        1: (db, _) => { ffdebug("migration 1"); ensureStore(db); },
+        2: (db, _) => { ffdebug("migration 2 (heal)"); ensureStore(db); },
       };
     }
 
@@ -945,7 +945,9 @@ if (!singleton) {
     };
   }
 
-  const ffcache = new FFScouterCache("ffscouter-cache");
+  // wb65: fork-private DB name so we don't share with xentac's upstream
+  // script. Avoids VersionError collisions when both are installed.
+  const ffcache = new FFScouterCache("ffs-banner-cache");
 
   if (!rD_getValue(CLEARED_TSC_KEY)) {
     console.log("Trying to delete any TSC keys found");
