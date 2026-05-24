@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.31
+// @version      3.1.32
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1851,10 +1851,8 @@
 
     function init() {
         injectStyles();
-        // v3.1.22: removed the $ refresh toggle — price cache auto-refreshes
-        // when stale (1h TTL), no need for manual button on every page.
-        // Settings cog moves inline next to the RW pill on networth pages,
-        // see renderNwReplace/Line/Tooltip. No floating button anywhere.
+        createToggle();
+        createSettingsCog();
 
         // Load cached prices (or keep defaults)
         var cacheTimestamp = loadCachedPrices();
@@ -1916,12 +1914,8 @@
     var NW_UID_CACHE_KEY = 'rwp_uid_details_cache';
 
     function getNwMode() {
-        // v3.1.25: hardcoded to 'replace' — the only shipping mode. Users
-        // with legacy 'line' / 'tooltip' stored from the old mode selector
-        // got stuck with broken rendering on desktop (line mode wrapped
-        // weirdly in Torn's General Info layout) and had no UI to change
-        // it back since we dropped the selector in 3.1.23. Force override.
-        return 'replace';
+        var v = safeGet(NW_MODE_KEY, 'line');
+        return NW_MODES.indexOf(v) >= 0 ? v : 'line';
     }
 
     function getEffectiveApiKey() {
@@ -2100,11 +2094,7 @@
     // header + native fetch like the inventory fetch.
     function fetchUidDetails(key, uid, cb) {
         var cache = safeGet(NW_UID_CACHE_KEY, {}) || {};
-        // v3.1.31: cache entries from 3.1.29 have empty bonusNames (old
-        // b.name parser was broken). Re-fetch any entry that lacks the
-        // _v marker stamped by 3.1.30+ so the corrected b.title parser
-        // populates them properly.
-        if (cache[uid] && cache[uid]._v >= 31) { cb(null, cache[uid]); return; }
+        if (cache[uid]) { cb(null, cache[uid]); return; }
         if (typeof fetch !== 'function') { cb(new Error('fetch unavailable')); return; }
         fetch('https://api.torn.com/v2/torn/' + encodeURIComponent(uid) + '/itemdetails', {
             method: 'GET',
@@ -2115,21 +2105,15 @@
             var det = d.itemdetails || d;
             var rarity = (det.rarity || '').toLowerCase();
             var bonuses = Array.isArray(det.bonuses) ? det.bonuses : [];
-            var bonusNames = bonuses.map(function (b) {
-                return (b && (b.title || b.name)) || '';
-            }).filter(Boolean);
-            var entry = { rarity: rarity, bonusCount: bonuses.length, bonusNames: bonusNames, _v: 31 };
+            var entry = { rarity: rarity, bonusCount: bonuses.length };
             cache[uid] = entry;
             try { safeSet(NW_UID_CACHE_KEY, cache); } catch (_) {}
             cb(null, entry);
         }).catch(function (e) { cb(new Error('uid ' + uid + ' fetch: ' + (e && e.message ? e.message : e))); });
     }
 
-    // v3.1.30: serialize requests at 700ms intervals (~1.4/sec) to stay
-    // under Torn's per-key rate limit (~100/min). Previous 200ms/3-parallel
-    // pace burned through the budget in seconds and rate-limited the
-    // remaining 90+ uids to silent failures. With 127 uids @ 700ms it's
-    // ~90s total but ALL succeed and cache forever.
+    // Throttled parallel fetcher for a list of uids — calls cb({ uid: entry, ... })
+    // when all complete or after timeout. Throttles to ~5/sec to be polite.
     function fetchUidDetailsBatch(key, uids, cb) {
         var out = {};
         var pending = uids.length;
@@ -2140,14 +2124,14 @@
             var uid = uids[i++];
             fetchUidDetails(key, uid, function (err, entry) {
                 if (!err && entry) out[uid] = entry;
-                else if (err) { try { console.log('[rwp-networth] uid fetch err: ' + err.message); } catch (_) {} }
                 pending--;
                 if (pending === 0) cb(out);
             });
-            setTimeout(next, 700);
+            // Throttle: stagger requests ~200ms apart
+            setTimeout(next, 200);
         }
-        // 1 in-flight at a time — avoids blasting Torn's rate limit
-        next();
+        // Kick off first 3 in parallel for speed, rest follow on throttle
+        for (var k = 0; k < Math.min(3, uids.length); k++) next();
     }
 
     function computeRwInventorySum(inventoryContainer, marketPriceMap, uidDetailsMap) {
@@ -2177,26 +2161,13 @@
             // from the base item's history, even when the bonus-attached
             // instance is unique. Equipped is the simpler, accurate proxy
             // and matches the user's stated "3 weapons + 5 armour" count.
-            // v3.1.27: equipped/unequipped filter dropped. User clarified
-            // RW items live in inventory (unequipped, kept for war) AND
-            // equipped. Counting both. Tolerance filter + per-uid rarity +
-            // Torn market_price gate now do all the RW-vs-regular work.
-            // (skippedUnequipped counter retained but stays 0)
-            //
+            if (it.equipped !== true) { skippedUnequipped++; continue; }
             // v2 uses `amount`; older shapes used `quantity` — accept either.
             var qty = Number(it.amount != null ? it.amount : it.quantity) || 1;
             // v3.1.18: use per-instance rarity from /torn/{uid}/itemdetails.
             // Falls back to Yellow if details missing (graceful degradation —
             // initial render before per-uid fetches complete).
             var det = uidDetailsMap && it.uid != null ? uidDetailsMap[it.uid] : null;
-            // v3.1.29: RW items ALWAYS have bonuses. Items without bonuses
-            // are regular Torn weapons (M4A1 Colt Carbine in inventory etc.)
-            // and shouldn't be counted at RW market prices. Skip unless
-            // we have at least one bonus name from /torn/{uid}/itemdetails.
-            if (!det || !det.bonusNames || det.bonusNames.length === 0) {
-                skippedUnequipped++; // counter re-used for "non-RW (no bonus)"
-                continue;
-            }
             var rarityKey = 'Yellow';
             if (det && det.rarity) {
                 if (det.rarity === 'red')    rarityKey = 'Red';
@@ -2213,85 +2184,31 @@
             var TOLERANCE = 0.7; // Torn price ≥ 70% of ours = already valued
             var tornPrice = (marketPriceMap && it.id != null && marketPriceMap[it.id]) ? Number(marketPriceMap[it.id]) : 0;
             var ourPrice = 0;
-            var priceSource = 'base';
             var wn = lookupWeapon(it.name);
             if (wn) {
-                // v3.1.28: prefer combo price (weapon|bonus) over base
-                // weapon median. The Naval Cutlass|Quicken combo at
-                // Orange is ~$888M median vs base Naval Cutlass Orange
-                // at ~$700M — bonuses dramatically inflate the price.
-                if (det && det.bonusNames && det.bonusNames.length > 0) {
-                    for (var bi = 0; bi < det.bonusNames.length; bi++) {
-                        var comboKey = wn + '|' + det.bonusNames[bi];
-                        var combo = weaponComboPrices && weaponComboPrices[comboKey];
-                        if (combo && combo[rarityKey] && combo[rarityKey][1]) {
-                            ourPrice = combo[rarityKey][1];
-                            priceSource = 'combo:' + det.bonusNames[bi];
-                            break;
-                        }
-                    }
-                }
-                if (!ourPrice) {
-                    ourPrice = getMedianPrice(wn, rarityKey);
-                    if (!ourPrice && rarityKey !== 'Yellow') ourPrice = getMedianPrice(wn, 'Yellow');
-                }
+                ourPrice = getMedianPrice(wn, rarityKey);
+                if (!ourPrice && rarityKey !== 'Yellow') ourPrice = getMedianPrice(wn, 'Yellow');
             }
             if (!ourPrice) {
                 var an = lookupArmour(it.name);
                 if (an) {
-                    // Try armour combo too (armourComboPrices same shape if exists)
-                    if (det && det.bonusNames && det.bonusNames.length > 0 && typeof armourComboPrices !== 'undefined' && armourComboPrices) {
-                        for (var abi = 0; abi < det.bonusNames.length; abi++) {
-                            var aComboKey = an + '|' + det.bonusNames[abi];
-                            var aCombo = armourComboPrices[aComboKey];
-                            if (aCombo && aCombo[rarityKey] && aCombo[rarityKey][1]) {
-                                ourPrice = aCombo[rarityKey][1];
-                                priceSource = 'armour-combo:' + det.bonusNames[abi];
-                                break;
-                            }
-                        }
-                    }
-                    if (!ourPrice) {
-                        var aData = armourPrices[an];
-                        if (aData && aData[rarityKey]) ourPrice = aData[rarityKey][1];
-                        else if (aData && aData.Yellow) ourPrice = aData.Yellow[1];
-                    }
+                    var aData = armourPrices[an];
+                    if (aData && aData[rarityKey]) ourPrice = aData[rarityKey][1];
+                    else if (aData && aData.Yellow) ourPrice = aData.Yellow[1];
                 }
             }
-            if (!ourPrice) {
-                // v3.1.26: per-item diag for items skipped because not in our DB
-                window.__rwpItemDiag = window.__rwpItemDiag || [];
-                window.__rwpItemDiag.push({ name: it.name, id: it.id, uid: it.uid, rarity: rarityKey, ourPrice: 0, tornPrice: tornPrice, decision: 'not-in-db' });
+            if (!ourPrice) continue; // not in our DB, skip
+            if (tornPrice > 0 && tornPrice >= ourPrice * TOLERANCE) {
+                // Torn's price is close enough — already counted in networth
+                skippedTornValued += qty;
                 continue;
             }
-            var decision, delta;
-            if (tornPrice > 0 && tornPrice >= ourPrice * TOLERANCE) {
-                skippedTornValued += qty;
-                decision = 'tolerance-skip (tornPrice ' + tornPrice + ' >= ' + Math.round(ourPrice * TOLERANCE) + ')';
-                delta = 0;
-            } else {
-                delta = Math.max(0, ourPrice - tornPrice);
-                if (delta > 0) {
-                    sum += delta * qty;
-                    count += qty;
-                    decision = 'added delta $' + delta.toLocaleString();
-                } else {
-                    decision = 'zero-delta';
-                }
+            var delta = Math.max(0, ourPrice - tornPrice);
+            if (delta > 0) {
+                sum += delta * qty;
+                count += qty;
             }
-            window.__rwpItemDiag = window.__rwpItemDiag || [];
-            window.__rwpItemDiag.push({ name: it.name, id: it.id, uid: it.uid, rarity: rarityKey, ourPrice: ourPrice, tornPrice: tornPrice, priceSource: priceSource, decision: decision });
         }
-        // Flush per-item diag once per pass
-        try {
-            if (window.__rwpItemDiag && window.__rwpItemDiag.length) {
-                console.log('[rwp-networth] per-item breakdown:');
-                window.__rwpItemDiag.forEach(function (d) {
-                    console.log('  ' + d.name + ' (id ' + d.id + ', uid ' + d.uid + ', rarity ' + d.rarity + ', priceSrc=' + (d.priceSource || 'base') + ') ourPrice=$' + (d.ourPrice||0).toLocaleString() + ' tornPrice=$' + (d.tornPrice||0).toLocaleString() + ' → ' + d.decision);
-                });
-                window.__rwpItemDiag = [];
-            }
-        } catch (_) {}
         return { sum: sum, count: count, skippedLoaned: skippedLoaned, skippedUnequipped: skippedUnequipped, skippedTornValued: skippedTornValued };
     }
 
@@ -2338,25 +2255,6 @@
         return '$' + Math.round(n).toLocaleString();
     }
 
-    // v3.1.22: inline gear icon, dropped right next to the RW pill on
-    // the networth row. Replaces the floating cog button. Single 18px
-    // text-gear with a click handler that opens the same settings panel.
-    function makeInlineCog() {
-        var cog = document.createElement('span');
-        cog.setAttribute('data-rwp-pill', '1'); // also cleared on re-render
-        cog.setAttribute('role', 'button');
-        cog.setAttribute('aria-label', 'RW Pricer settings');
-        cog.title = 'RW Pricer settings';
-        cog.textContent = '⚙';
-        cog.style.cssText = 'margin-left:6px;padding:1px 5px;background:transparent;border:1px solid #2a3447;border-radius:8px;color:#9ca3af;font-size:0.85em;cursor:pointer;user-select:none;';
-        cog.addEventListener('click', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            toggleSettingsPanel();
-        });
-        return cog;
-    }
-
     function renderNwLine(row, statedNw, adj, count) {
         if (document.getElementById('rwp-nw-line')) return; // idempotent
         var newRow = document.createElement(row.tagName);
@@ -2369,7 +2267,6 @@
         valCell.innerHTML = fmtBigDollar(statedNw + adj) +
             ' <span style="color:#6ee7b7;font-size:0.85em">(+' + fmtCompact(adj) + ' from ' + count + ' RW items)</span>';
         valCell.style.cssText = (row.lastElementChild && row.lastElementChild.style.cssText) || '';
-        valCell.appendChild(makeInlineCog());
         newRow.appendChild(labelCell);
         newRow.appendChild(valCell);
         row.parentNode.insertBefore(newRow, row.nextSibling);
@@ -2380,12 +2277,11 @@
         if (!parent || parent.getAttribute('data-rwp-tooltip') === '1') return;
         parent.setAttribute('data-rwp-tooltip', '1');
         parent.title = 'Torn networth: ' + fmtBigDollar(statedNw) +
-            '\nRW inventory delta: +' + fmtBigDollar(adj) +
+            '\nRW inventory (Yellow-tier): +' + fmtBigDollar(adj) +
             '\n  (' + count + ' RW weapons/armour)' +
             '\nWith RW: ' + fmtBigDollar(statedNw + adj);
         parent.style.cursor = 'help';
         parent.style.borderBottom = '1px dotted #6ee7b7';
-        parent.appendChild(makeInlineCog());
     }
 
     function renderNwReplace(row, valNode, statedNw, adj, count) {
@@ -2398,31 +2294,23 @@
             pill.title = 'Includes RW inventory: +' + fmtBigDollar(adj) + ' / ' + count + ' items';
             pill.style.cssText = 'margin-left:6px;padding:1px 5px;background:rgba(110,231,183,0.15);border:1px solid #6ee7b7;border-radius:8px;color:#6ee7b7;font-size:0.75em;cursor:help;';
             valNode.parentNode.appendChild(pill);
-            valNode.parentNode.appendChild(makeInlineCog());
         }
     }
 
     function applyNwInflator() {
         var nwlog = function (m) { try { console.log('[rwp-networth] ' + m); } catch (_) {} };
-        // v3.1.31: hard lock against re-entry while a fetch sequence is in
-        // flight. MutationObserver retries were re-kicking the 127-uid
-        // fetch on every tick, burning rate-limit budget and never letting
-        // the previous run finish. Lock releases once doRender callback
-        // completes (success OR failure).
-        if (window.__rwpNwFetching) { nwlog('skip: fetch already in progress'); return; }
         nwlog('applyNwInflator: tick — url=' + window.location.pathname + window.location.search.slice(0, 40));
         var mode = getNwMode();
         if (mode === 'off') { nwlog('skip: mode=off'); return; }
         if (!isOwnInfoPage()) { nwlog('skip: not own-info page (home/profile)'); return; }
         var key = getEffectiveApiKey();
         if (!key) { nwlog('skip: no API key — PDA bridge empty AND no saved key. apiKey-var=' + (apiKey ? '<set>' : '<empty>')); return; }
-        window.__rwpNwFetching = true;
         var onProfile = isProfilePage();
         var profileXid = onProfile ? getProfileXid() : null;
         if (onProfile && !profileXid) { nwlog('skip: on profile page but XID missing from URL'); return; }
         nwlog('proceeding: mode=' + mode + ' onProfile=' + onProfile + ' xid=' + profileXid + ' keyLen=' + key.length);
         fetchNwData(key, function (err, data) {
-            if (err) { nwlog('fetch err: ' + err.message); window.__rwpNwFetching = false; return; }
+            if (err) { nwlog('fetch err: ' + err.message); return; }
             if (!data) { nwlog('fetch returned no data'); return; }
             // v1 puts player_id at top level (no .basic nesting). Also accept
             // v2-style nesting for resilience.
@@ -2457,20 +2345,12 @@
             // calls complete (cached forever per uid).
             var allItems = (data.inventory && Array.isArray(data.inventory.items)) ? data.inventory.items
                          : Array.isArray(data.inventory) ? data.inventory : [];
-            // v3.1.29: gather uids for ALL non-loaned items whose names are
-            // in our weapon/armour DB. Per-uid call returns rarity + bonus
-            // names; we use bonus presence to filter RW from regular. Items
-            // not in DB (consumables, drugs, etc.) skip — no API call needed.
             var equippedUids = [];
             for (var ii = 0; ii < allItems.length; ii++) {
                 var ix = allItems[ii];
-                if (!ix || !ix.uid || isLoanedItem(ix)) continue;
-                if (!ix.name) continue;
-                if (lookupWeapon(ix.name) || lookupArmour(ix.name)) {
-                    equippedUids.push(ix.uid);
-                }
+                if (ix && ix.equipped === true && ix.uid != null && !isLoanedItem(ix)) equippedUids.push(ix.uid);
             }
-            nwlog('RW candidates (in DB, not loaned): ' + equippedUids.length + ' uids — fetching per-instance rarity + bonuses');
+            nwlog('equipped RW candidates: ' + equippedUids.length + ' uids — fetching per-instance rarity + Torn market_prices');
             // v3.1.20: load Torn's per-item-id market_price map alongside
             // the rarity fetch. Used in computeRwInventorySum to compute
             // delta = max(0, ourRwPrice - tornMarketPrice) so we don't
@@ -2490,13 +2370,13 @@
                         ' | Torn-already-valued skipped: ' + (calc.skippedTornValued || 0) +
                         ' | delta sum: $' + Math.round(calc.sum).toLocaleString());
                 } catch (_) {}
-                if (calc.count === 0) { nwlog('skip: 0 equipped RW items found'); window.__rwpNwFetching = false; return; }
+                if (calc.count === 0) { nwlog('skip: 0 equipped RW items found'); return; }
                 var row = findNwRow();
-                if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); window.__rwpNwFetching = false; return; }
+                if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); return; }
                 var valNode = findNwValueNode(row);
-                if (!valNode) { nwlog('skip: $ value text node not found in networth row'); window.__rwpNwFetching = false; return; }
+                if (!valNode) { nwlog('skip: $ value text node not found in networth row'); return; }
                 var match = valNode.textContent.match(/\$([\d,]+)/);
-                if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); window.__rwpNwFetching = false; return; }
+                if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); return; }
                 var displayedNw = Number(match[1].replace(/,/g, ''));
                 // v3.1.19: anti-compounding. Each render previously read the
                 // currently-displayed value and added adj on top. With
@@ -2524,14 +2404,12 @@
                 else if (mode === 'tooltip') renderNwTooltip(row, valNode, statedNw, calc.sum, calc.count);
                 else if (mode === 'replace') renderNwReplace(row, valNode, statedNw, calc.sum, calc.count);
                 nwlog('render complete' + (isFinal ? ' (final)' : ' (initial — fetching rarities…)'));
-                if (isFinal) window.__rwpNwFetching = false;
             };
-            // v3.1.24: only render after per-uid rarity fetches complete.
-            // Skips the brief Yellow-default flash that confused users into
-            // thinking the script under-counted. Cost: ~1-2s of unchanged
-            // networth display before the RW pill appears.
+            // Render once immediately with Yellow defaults (fast feedback),
+            // then upgrade once /torn/{uid}/itemdetails calls complete.
+            doRender(null, false);
             fetchUidDetailsBatch(key, equippedUids, function (uidMap) {
-                try { console.log('[rwp-networth] rarity map: ' + Object.keys(uidMap).length + '/' + equippedUids.length + ' resolved — rendering'); } catch (_) {}
+                try { console.log('[rwp-networth] rarity map: ' + Object.keys(uidMap).length + '/' + equippedUids.length + ' resolved — re-rendering'); } catch (_) {}
                 doRender(uidMap, true);
             });
         });
@@ -2583,17 +2461,26 @@
     function renderSettingsPanel() {
         var panel = document.createElement('div');
         panel.id = 'rwp-settings-panel';
+        var currentMode = getNwMode();
         var savedKey = safeGet(NW_APIKEY_KEY, '') || '';
         var pdaKeyPresent = !!apiKey;
 
-        // v3.1.23: mode selector removed — feature ships as "replace" only.
-        // Mode key is still respected if previously set, but UI is API-key only.
+        var modeHtml = '';
+        for (var i = 0; i < NW_MODES.length; i++) {
+            var m = NW_MODES[i];
+            var checked = (m === currentMode) ? ' checked' : '';
+            modeHtml += '<label><input type="radio" name="rwp-mode" value="' + m + '"' + checked + '> ' +
+                        m.charAt(0).toUpperCase() + m.slice(1) + '</label>';
+        }
+
         var keyHint = pdaKeyPresent
             ? 'PDA-injected key detected. Leave blank to use it, or paste a Limited key with Inventory access to override (e.g. if PDA\'s key lacks inventory).'
             : 'Paste a Torn API key (Limited works) with Inventory access. Used only locally for inventory lookup — never sent to any third party.';
 
         panel.innerHTML =
             '<h3>RW Pricer settings <span class="rwp-close" id="rwp-settings-close">×</span></h3>' +
+            '<label>Networth display mode</label>' +
+            '<div class="rwp-modes">' + modeHtml + '</div>' +
             '<label for="rwp-settings-apikey">API key (override)</label>' +
             '<input id="rwp-settings-apikey" type="text" autocomplete="off" spellcheck="false" placeholder="' + (pdaKeyPresent ? 'using PDA key — leave blank' : 'paste Limited key with Inventory') + '" value="' + escapeHtml(savedKey) + '">' +
             '<div class="rwp-hint">' + keyHint + '</div>' +
@@ -2609,6 +2496,11 @@
             document.getElementById('rwp-settings-apikey').value = '';
         });
         document.getElementById('rwp-settings-save').addEventListener('click', function () {
+            // Save mode
+            var radios = panel.querySelectorAll('input[name="rwp-mode"]');
+            for (var i = 0; i < radios.length; i++) {
+                if (radios[i].checked) { safeSet(NW_MODE_KEY, radios[i].value); break; }
+            }
             // Save / clear API key
             var keyVal = String(document.getElementById('rwp-settings-apikey').value || '').trim();
             safeSet(NW_APIKEY_KEY, keyVal);
