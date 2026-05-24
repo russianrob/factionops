@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.2
+// @version      3.1.3
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1995,21 +1995,26 @@
     }
 
     function applyNwInflator() {
+        var nwlog = function (m) { try { console.log('[rwp-networth] ' + m); } catch (_) {} };
+        nwlog('applyNwInflator: tick — url=' + window.location.pathname + window.location.search.slice(0, 40));
         var mode = getNwMode();
-        if (mode === 'off') return;
-        if (!isOwnInfoPage()) return;
+        if (mode === 'off') { nwlog('skip: mode=off'); return; }
+        if (!isOwnInfoPage()) { nwlog('skip: not own-info page (home/profile)'); return; }
         var key = getEffectiveApiKey();
-        if (!key) return; // no key — silently skip (menu entry tells the user how to set it)
+        if (!key) { nwlog('skip: no API key — PDA bridge empty AND no saved key. apiKey-var=' + (apiKey ? '<set>' : '<empty>')); return; }
         var onProfile = isProfilePage();
         var profileXid = onProfile ? getProfileXid() : null;
-        if (onProfile && !profileXid) return;
+        if (onProfile && !profileXid) { nwlog('skip: on profile page but XID missing from URL'); return; }
+        nwlog('proceeding: mode=' + mode + ' onProfile=' + onProfile + ' xid=' + profileXid + ' keyLen=' + key.length);
         fetchNwData(key, function (err, data) {
-            if (err || !data) return;
+            if (err) { nwlog('fetch err: ' + err.message); return; }
+            if (!data) { nwlog('fetch returned no data'); return; }
             var userId = (data.basic && data.basic.player_id) || data.id || data.player_id;
+            nwlog('fetched: userId=' + userId + ' inventory-len=' + (Array.isArray(data.inventory) ? data.inventory.length : 'NOT-ARRAY'));
             // On a profile page we must verify it's our own. On the home
             // page the panel is always our own data — skip the XID check.
             if (onProfile) {
-                if (!userId || Number(userId) !== profileXid) return;
+                if (!userId || Number(userId) !== profileXid) { nwlog('skip: userId(' + userId + ') != profileXid(' + profileXid + ')'); return; }
             }
             var calc = computeRwInventorySum(data.inventory);
             try {
@@ -2017,17 +2022,19 @@
                     ' | loaned items skipped: ' + (calc.skippedLoaned || 0) +
                     ' | RW sum: $' + Math.round(calc.sum).toLocaleString());
             } catch (_) {}
-            if (calc.count === 0) return;
+            if (calc.count === 0) { nwlog('skip: 0 RW items detected in inventory (sum=' + calc.sum + ', skippedLoaned=' + calc.skippedLoaned + ')'); return; }
             var row = findNwRow();
-            if (!row) return;
+            if (!row) { nwlog('skip: networth row not found in DOM (Torn UI changed?)'); return; }
             var valNode = findNwValueNode(row);
-            if (!valNode) return;
+            if (!valNode) { nwlog('skip: $ value text node not found in networth row'); return; }
             var match = valNode.textContent.match(/\$([\d,]+)/);
-            if (!match) return;
+            if (!match) { nwlog('skip: dollar amount regex failed on: ' + valNode.textContent.slice(0, 50)); return; }
             var statedNw = Number(match[1].replace(/,/g, ''));
+            nwlog('rendering mode=' + mode + ' statedNw=$' + statedNw.toLocaleString() + ' adj=$' + Math.round(calc.sum).toLocaleString());
             if (mode === 'line')    renderNwLine(row, statedNw, calc.sum, calc.count);
             else if (mode === 'tooltip') renderNwTooltip(row, valNode, statedNw, calc.sum, calc.count);
             else if (mode === 'replace') renderNwReplace(row, valNode, statedNw, calc.sum, calc.count);
+            nwlog('render complete');
         });
     }
 
