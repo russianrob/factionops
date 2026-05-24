@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.14
+// @version      3.1.15
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2097,14 +2097,18 @@
         } else {
             return { sum: 0, count: 0, skippedLoaned: 0 };
         }
-        var sum = 0, count = 0, skippedLoaned = 0, skippedRegular = 0;
+        var sum = 0, count = 0, skippedLoaned = 0, skippedRegular = 0, skippedUnequipped = 0;
         for (var i = 0; i < items.length; i++) {
             var it = items[i];
             if (!it || !it.name) continue;
             if (isLoanedItem(it)) { skippedLoaned += Number(it.amount != null ? it.amount : it.quantity) || 1; continue; }
-            // v3.1.14: circulation filter. If a low-circulation Set was
-            // provided, skip items NOT in it — they're regular Torn weapons
-            // that share names with RW variants in our price DB.
+            // v3.1.15: equipped-only filter — RW items live in your 8
+            // equipped slots (3 weapon + 5 armour). Unequipped weapons in
+            // inventory are usually regular Torn backup/fodder. This matches
+            // your real RW count without needing per-instance bonus lookups.
+            if (it.equipped !== true) { skippedUnequipped++; continue; }
+            // v3.1.14: circulation filter retained as additional gate (rarely
+            // matters with equipped filter on top but kept as defense layer).
             if (lowCircSet && it.id != null && !lowCircSet.has(Number(it.id))) {
                 skippedRegular += Number(it.amount != null ? it.amount : it.quantity) || 1;
                 continue;
@@ -2126,7 +2130,7 @@
                 if (ap) { sum += ap * qty; count += qty; continue; }
             }
         }
-        return { sum: sum, count: count, skippedLoaned: skippedLoaned, skippedRegular: skippedRegular };
+        return { sum: sum, count: count, skippedLoaned: skippedLoaned, skippedRegular: skippedRegular, skippedUnequipped: skippedUnequipped };
     }
 
     function findNwRow() {
@@ -2277,8 +2281,9 @@
                 var calc = computeRwInventorySum(data.inventory, lowCircSet);
                 try {
                     console.log('[rwp-networth] RW items counted: ' + calc.count +
+                        ' | unequipped skipped: ' + (calc.skippedUnequipped || 0) +
                         ' | loaned skipped: ' + (calc.skippedLoaned || 0) +
-                        ' | regular (high-circulation) skipped: ' + (calc.skippedRegular || 0) +
+                        ' | high-circulation skipped: ' + (calc.skippedRegular || 0) +
                         ' | RW sum: $' + Math.round(calc.sum).toLocaleString());
                 } catch (_) {}
                 if (calc.count === 0) { nwlog('skip: 0 RW items after filter'); return; }
