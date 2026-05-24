@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.20
+// @version      3.1.21
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -2174,11 +2174,14 @@
                 else if (det.rarity === 'orange') rarityKey = 'Orange';
                 else if (det.rarity === 'yellow') rarityKey = 'Yellow';
             }
-            // v3.1.20: add only the DELTA between our RW market price and
-            // Torn's known market_price. Items Torn doesn't price (market_price
-            // is N/A) get the full RW value added. Items Torn already values
-            // (like regular armour with stable market activity) only get the
-            // RW premium added — no double-counting with networth.
+            // v3.1.21: tolerance-based delta. Three cases per item:
+            //  1. Torn doesn't price it (market_price=N/A/0) → add full RW price
+            //  2. Torn's price is within TOLERANCE of our RW price → Torn has it
+            //     right (e.g. Vanguard armour where Torn knows the RW market
+            //     value); skip entirely to avoid any double-counting
+            //  3. Torn's price is significantly less than our RW price → Torn
+            //     doesn't know it's the RW variant; add the delta only
+            var TOLERANCE = 0.7; // Torn price ≥ 70% of ours = already valued
             var tornPrice = (marketPriceMap && it.id != null && marketPriceMap[it.id]) ? Number(marketPriceMap[it.id]) : 0;
             var ourPrice = 0;
             var wn = lookupWeapon(it.name);
@@ -2195,13 +2198,15 @@
                 }
             }
             if (!ourPrice) continue; // not in our DB, skip
+            if (tornPrice > 0 && tornPrice >= ourPrice * TOLERANCE) {
+                // Torn's price is close enough — already counted in networth
+                skippedTornValued += qty;
+                continue;
+            }
             var delta = Math.max(0, ourPrice - tornPrice);
             if (delta > 0) {
                 sum += delta * qty;
                 count += qty;
-            } else {
-                // Torn already values it at or above our RW estimate — nothing to add
-                skippedTornValued += qty;
             }
         }
         return { sum: sum, count: count, skippedLoaned: skippedLoaned, skippedUnequipped: skippedUnequipped, skippedTornValued: skippedTornValued };
