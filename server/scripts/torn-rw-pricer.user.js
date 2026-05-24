@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.6
+// @version      3.1.7
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1947,10 +1947,12 @@
         } catch (_) {}
         GM_xmlhttpRequest({
             method: 'GET',
-            // v3.1.4: switched from v2 → v1 — v2 rejected the combo with
-            // "Incorrect category". v1 accepts comma-separated selections
-            // reliably and exposes player_id at the top level.
-            url: 'https://api.torn.com/user/?selections=inventory,basic&key=' + encodeURIComponent(key),
+            // v3.1.7: v1 inventory was deprecated ("The inventory selection
+            // is no longer available"). Switched to v2 with inventory ONLY
+            // (combining with basic returned "Incorrect category" in v2).
+            // v2 /user response still includes player_id at the top level so
+            // own-profile verification still works.
+            url: 'https://api.torn.com/v2/user?selections=inventory&key=' + encodeURIComponent(key),
             onload: function (r) {
                 try {
                     var d = JSON.parse(r.responseText);
