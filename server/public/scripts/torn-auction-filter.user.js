@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auction Filter
 // @namespace    tornwar.com
-// @version      0.4.0
+// @version      0.4.1
 // @description  Filter Torn auction house by rarity (Yellow / Orange / Red) and search by weapon name. Reads rarity from rw-pricer badges already on the listings — install Torn RW Pricer first for color filters to work. Search-by-name works standalone.
 // @author       warboard
 // @match        https://www.torn.com/amarket*
@@ -186,31 +186,69 @@
   }
 
   // ─── v0.2.0: Auto-paginate when filtered results run low ──────────
-  // Find Torn's auction-list "Next" pagination button. It's React-rendered
-  // with hashed class names, so use structural + text-content selectors.
+  // v0.4.1: more patterns + diagnostic dump on miss so we can see Torn's
+  // actual pagination structure when detection fails.
   function findNextPageButton() {
-    // Pattern 1: explicit aria-label
+    // Pattern 1: explicit aria-label "next"
     var aria = document.querySelector('button[aria-label*="next" i], a[aria-label*="next" i]');
     if (aria && !aria.disabled) return aria;
-    // Pattern 2: text content "Next" inside a button/anchor
-    var candidates = document.querySelectorAll('button, a');
+
+    // Pattern 2: text content matches Next-like strings
+    var candidates = document.querySelectorAll('button, a, [role="button"]');
     for (var i = 0; i < candidates.length; i++) {
       var c = candidates[i];
       var t = (c.textContent || '').trim().toLowerCase();
-      if (t === 'next' || t === '>' || t === '›' || t === '→') {
-        if (!c.disabled && !c.classList.contains('disabled')) return c;
+      if (t === 'next' || t === '>' || t === '›' || t === '→' || t === '»') {
+        if (!c.disabled && !c.classList.contains('disabled') && c.getAttribute('aria-disabled') !== 'true') return c;
       }
     }
-    // Pattern 3: pagination container's last child (Torn often uses » or chevron icons)
-    var pagers = document.querySelectorAll('[class*="pagination"]');
+
+    // Pattern 3: numbered page links — find currently active + click next number
+    var pagers = document.querySelectorAll('[class*="pagination"], [class*="Pagination"], [class*="pager"]');
     for (var j = 0; j < pagers.length; j++) {
-      var lastBtn = pagers[j].querySelector('button:last-child, a:last-child');
+      var pager = pagers[j];
+      // Look for the active/current page indicator
+      var active = pager.querySelector('[class*="active"], [class*="Active"], [class*="current"], [aria-current], [class*="selected"]');
+      if (active) {
+        var curNum = parseInt((active.textContent || '').trim(), 10);
+        if (!isNaN(curNum)) {
+          // Find a sibling/cousin with curNum+1
+          var allLinks = pager.querySelectorAll('a, button, [role="button"], [class*="page" i]');
+          for (var k = 0; k < allLinks.length; k++) {
+            var n = parseInt((allLinks[k].textContent || '').trim(), 10);
+            if (n === curNum + 1) return allLinks[k];
+          }
+        }
+      }
+      // Fallback: last child of the pager if it's clickable and not the Last-page button
+      var lastBtn = pager.querySelector('button:last-child, a:last-child');
       if (lastBtn && !lastBtn.disabled && !lastBtn.classList.contains('disabled')) {
-        // Make sure it's not "Last" (could be »» on some skins) — check icon
         if (!/last/i.test(lastBtn.getAttribute('aria-label') || '')) return lastBtn;
       }
     }
     return null;
+  }
+
+  // v0.4.1: throttle "no Next button" log so it doesn't spam every MO pass
+  var lastNoNextLogTs = 0;
+  function logNoNextOnce(diag) {
+    var now = Date.now();
+    if (now - lastNoNextLogTs < 5000) return; // 5s rate limit
+    lastNoNextLogTs = now;
+    log('auto-paginate: no Next button found. ' + diag);
+  }
+
+  // v0.4.1: dump pagination structure on miss so we can see what Torn uses
+  function dumpPagination() {
+    var pagers = document.querySelectorAll('[class*="pagination" i], [class*="pager" i]');
+    if (pagers.length === 0) return 'no [class*=pagination] elements found in DOM';
+    var out = pagers.length + ' pager element(s):';
+    pagers.forEach(function (p, idx) {
+      if (idx > 1) return; // dump first 2 only
+      var snippet = (p.outerHTML || '').slice(0, 400).replace(/\n+/g, ' ');
+      out += '\n  [' + idx + '] ' + snippet;
+    });
+    return out;
   }
 
   function maybeAutoPaginate() {
@@ -226,7 +264,7 @@
     if (visible >= AUTO_PAGE_MIN_VISIBLE) return; // enough on screen — don't auto-page
     var nextBtn = findNextPageButton();
     if (!nextBtn) {
-      log('auto-paginate: no Next button found (probably last page)');
+      logNoNextOnce(dumpPagination());
       return;
     }
     STATE.autoPaged++;
