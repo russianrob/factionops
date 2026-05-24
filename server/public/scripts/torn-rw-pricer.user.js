@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.9
+// @version      3.1.10
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1945,15 +1945,34 @@
                 return;
             }
         } catch (_) {}
+        // v3.1.10: use native fetch instead of GM_xmlhttpRequest. PDA's
+        // GM bridge proxies XHR calls to /api.torn.com through pdaHandler_ApiGet,
+        // which is hardcoded to v1's ?key= scheme — strips our Authorization
+        // header and adds ?key=, causing v2 to interpret the key as ?cat=KEY
+        // and return "Incorrect category". Native fetch goes directly through
+        // the WebView's network stack (api.torn.com sends CORS headers
+        // allowing www.torn.com, same as Torn's own React app uses).
+        var fetchUrl = 'https://api.torn.com/v2/user/inventory';
+        try { console.log('[rwp-networth] fetching: ' + fetchUrl + ' (header auth, native fetch — bypassing PDA bridge)'); } catch (_) {}
+        if (typeof fetch === 'function') {
+            fetch(fetchUrl, {
+                method: 'GET',
+                headers: { 'Authorization': 'ApiKey ' + key, 'Accept': 'application/json' },
+                credentials: 'omit',
+            }).then(function (r) {
+                return r.json();
+            }).then(function (d) {
+                if (d.error) { cb(new Error(d.error.error || 'api error')); return; }
+                safeSet(NW_DATA_CACHE_KEY, { ts: Date.now(), data: d });
+                cb(null, d);
+            }).catch(function (e) {
+                cb(new Error('fetch failed: ' + (e && e.message ? e.message : e)));
+            });
+            return;
+        }
+        // Fallback: GM_xmlhttpRequest (in case fetch isn't available — unlikely on modern PDA)
         GM_xmlhttpRequest({
             method: 'GET',
-            // v3.1.9: v2 uses HEADER auth, not ?key= query param. Per Torn's
-            // OpenAPI security scheme: Authorization: ApiKey <KEY>. Passing
-            // the key as ?key= made the parser treat it as a 'cat' (category)
-            // filter, returning "Incorrect category".
-            // Endpoint per spec: GET /v2/user/inventory →
-            //   { inventory: { items: [...], timestamp }, _metadata }
-            // Item shape: { id, name, amount, equipped, faction_owned, uid }
             url: 'https://api.torn.com/v2/user/inventory',
             headers: { 'Authorization': 'ApiKey ' + key },
             onload: function (r) {
