@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Specialist Gyms (DEV)
 // @namespace    tornwar.com/dev
-// @version      0.2.1
-// @description  DEV FORK of Torn Specialist Gyms. Adds locked-gyms unlock-progress list + optional auto-switch to best gym before training. v0.2.1: fix auto-switch by patching fetch at document-start via unsafeWindow (Torn was capturing fetch reference before our late hook landed).
+// @version      0.2.2
+// @description  DEV FORK with loud auto-switch diagnostics — logs script load, every fetch URL it sees (capped), and every XHR URL too, so we can pin down why train requests aren't reaching the hook.
 // @author       warboard
 // @match        https://www.torn.com/gym.php*
 // @match        https://pda.torn.com/gym.php*
@@ -16,7 +16,7 @@
 (function() {
 	"use strict";
 
-	const SCRIPT_VERSION = "0.2.1";
+	const SCRIPT_VERSION = "0.2.2";
 	const NONE = "none";
 	const STORAGE_KEY_ONE = "tsg_dev_specialist_1";
 	const STORAGE_KEY_TWO = "tsg_dev_specialist_2";
@@ -426,13 +426,31 @@
 	let statObservers = [];
 	let statElementsMap = {};
 	// v0.2.1: hook the page's fetch BEFORE Torn captures its reference.
-	// Use unsafeWindow because Tampermonkey's isolated world means our
-	// `window.fetch` is not the page's fetch even with @grant none.
-	// The hook installs unconditionally at script load and only branches
-	// into the auto-swap logic when the user has the checkbox on — that
-	// way the checkbox can be toggled live without needing a reload.
+	// v0.2.2: loud diagnostics so we can see whether the hook is even
+	// reaching page-world fetch, and whether train requests come through
+	// fetch or XHR or some other channel.
 	const pageWindow = (typeof unsafeWindow !== "undefined") ? unsafeWindow : window;
 	const realFetch = pageWindow.fetch.bind(pageWindow);
+
+	const D = (...a) => { try { console.log("[tsg-dev]", ...a); } catch (_) {} };
+	D("script load v" + SCRIPT_VERSION,
+	  "pageWindow===window:", pageWindow === window,
+	  "unsafeWindow defined:", (typeof unsafeWindow !== "undefined"),
+	  "doc.readyState:", document.readyState,
+	  "url:", location.href);
+
+	// Tap XHR too so we can see if Torn migrated training to XHR.
+	try {
+		const RealXHROpen = pageWindow.XMLHttpRequest.prototype.open;
+		let xhrCount = 0;
+		pageWindow.XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+			if (xhrCount++ < 40) D("xhr", method, String(url).slice(0, 120));
+			return RealXHROpen.call(this, method, url, ...rest);
+		};
+		D("xhr hook installed");
+	} catch (e) { D("xhr hook FAILED", e && e.message); }
+
+	let fetchCount = 0;
 
 	function formatNumber(value) {
 		if (value === Infinity) {
@@ -719,23 +737,32 @@
 	// Torn has captured its own local fetch reference and a late patch
 	// would be invisible.
 	pageWindow.fetch = async function(...args) {
+		const requestPath = getRequestPath(args[0]);
+		if (fetchCount++ < 40) D("fetch", requestPath.slice(0, 120));
+		if (requestPath.startsWith("/gym.php?step=train")) {
+			D("TRAIN INTERCEPTED — autoSwitchEnabled=" + getStoredAutoSwitchEnabled(),
+			  "body=" + (typeof args[1]?.body === "string" ? args[1].body.slice(0, 120) : typeof args[1]?.body));
+		}
 		if (getStoredAutoSwitchEnabled()) {
 			try {
-				const requestPath = getRequestPath(args[0]);
 				if (requestPath.startsWith("/gym.php?step=train")) {
 					const statKey = getTrainStatKey(args);
 					const bestGym = statKey ? getBestUnlockedGym(statKey) : null;
 					const currentGymId = getCurrentGymId();
+					D("autoswap: stat=" + statKey + " bestGym=" + (bestGym && bestGym.id) + " currentGym=" + currentGymId);
 					if (bestGym && bestGym.id !== currentGymId) {
-						await realFetch("/gym.php?step=changeGym", buildChangeGymInit(args[1], bestGym.id));
+						D("posting changeGym → " + bestGym.id);
+						const r = await realFetch("/gym.php?step=changeGym", buildChangeGymInit(args[1], bestGym.id));
+						D("changeGym response status=" + r.status);
 					}
 				}
 			} catch (e) {
-				try { console.warn("[tsg-dev] auto-switch error:", e); } catch (_) {}
+				D("auto-switch error:", e && e.message);
 			}
 		}
 		return realFetch(...args);
 	};
+	D("fetch hook installed on pageWindow");
 
 	function syncAutoSwitchHook() { /* no-op; hook is permanent, toggle is read live */ }
 
