@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Specialist Gyms (DEV)
 // @namespace    tornwar.com/dev
-// @version      0.2.2
-// @description  DEV FORK with loud auto-switch diagnostics — logs script load, every fetch URL it sees (capped), and every XHR URL too, so we can pin down why train requests aren't reaching the hook.
+// @version      0.2.3
+// @description  DEV FORK. v0.2.3: remove any existing #tsg-dev-specialist-panel from prior loads before mounting a fresh one — PDA WebView accumulates them otherwise. Retains loud auto-switch diagnostics from v0.2.2.
 // @author       warboard
 // @match        https://www.torn.com/gym.php*
 // @match        https://pda.torn.com/gym.php*
@@ -16,7 +16,7 @@
 (function() {
 	"use strict";
 
-	const SCRIPT_VERSION = "0.2.2";
+	const SCRIPT_VERSION = "0.2.3";
 	const NONE = "none";
 	const STORAGE_KEY_ONE = "tsg_dev_specialist_1";
 	const STORAGE_KEY_TWO = "tsg_dev_specialist_2";
@@ -1091,6 +1091,15 @@
 		if (panelElement) {
 			return panelElement;
 		}
+
+		// v0.2.3: a prior page load (or a hot-replaced script instance)
+		// may have left its own #PANEL_ID in the DOM. PDA WebView keeps
+		// document state across some "refreshes", so without this cleanup
+		// every reload stacks another panel. Wipe every stale instance
+		// before creating ours.
+		const stale = document.querySelectorAll("#" + PANEL_ID);
+		stale.forEach((n) => n.remove());
+		if (stale.length) D("removed " + stale.length + " stale panel(s)");
 
 		panelElement = createElement("section");
 		panelElement.id = PANEL_ID;
