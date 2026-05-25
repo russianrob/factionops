@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auction Filter
 // @namespace    tornwar.com
-// @version      0.4.1
-// @description  Filter Torn auction house by rarity (Yellow / Orange / Red) and search by weapon name. Reads rarity from rw-pricer badges already on the listings — install Torn RW Pricer first for color filters to work. Search-by-name works standalone.
+// @version      0.5.0
+// @description  Filter Torn auction house by rarity (Yellow / Orange / Red), category (Primary / Secondary / Melee), and name. Reads rarity from rw-pricer badges already on the listings — install Torn RW Pricer first for color filters to work. v0.5.0: auto-pagination removed; click Next yourself.
 // @author       warboard
 // @match        https://www.torn.com/amarket*
 // @match        https://www.torn.com/page.php?sid=auctionHouse*
@@ -24,10 +24,6 @@
     rarity: 'all',  // 'all' | 'yellow' | 'orange' | 'red'
     category: 'all', // 'all' | 'primary' | 'secondary' | 'melee'
     name: '',
-    // v0.2.0: auto-pagination state. When a filter is active and visible
-    // count drops below threshold, auto-click Next to load more.
-    autoPaged: 0,             // pages auto-clicked since filter was last changed
-    lastAutoClickTs: 0,       // throttle timestamp
   };
 
   // v0.4.0: weapon name → category (RW weapons only — covers ~all RW items
@@ -68,9 +64,8 @@
     var n = String(name).trim().toLowerCase();
     return CATEGORY_MAP[n] || null;
   }
-  var AUTO_PAGE_MIN_VISIBLE = 5;       // visible-on-page count triggering Next-click
-  var AUTO_PAGE_MAX = 20;              // hard cap per filter session (~400 listings)
-  var AUTO_PAGE_MIN_INTERVAL = 1200;   // ms between auto-clicks (lets next page render)
+  // v0.5.0: auto-paginate removed per user — Torn rules forbid programmatic
+  // UI clicks (Next button). Manual paging only now.
 
   function log(m) { try { console.log('[torn-auction-filter] ' + m); } catch (_) {} }
   log('installed v0.4.0');
@@ -185,94 +180,6 @@
     });
   }
 
-  // ─── v0.2.0: Auto-paginate when filtered results run low ──────────
-  // v0.4.1: more patterns + diagnostic dump on miss so we can see Torn's
-  // actual pagination structure when detection fails.
-  function findNextPageButton() {
-    // Pattern 1: explicit aria-label "next"
-    var aria = document.querySelector('button[aria-label*="next" i], a[aria-label*="next" i]');
-    if (aria && !aria.disabled) return aria;
-
-    // Pattern 2: text content matches Next-like strings
-    var candidates = document.querySelectorAll('button, a, [role="button"]');
-    for (var i = 0; i < candidates.length; i++) {
-      var c = candidates[i];
-      var t = (c.textContent || '').trim().toLowerCase();
-      if (t === 'next' || t === '>' || t === '›' || t === '→' || t === '»') {
-        if (!c.disabled && !c.classList.contains('disabled') && c.getAttribute('aria-disabled') !== 'true') return c;
-      }
-    }
-
-    // Pattern 3: numbered page links — find currently active + click next number
-    var pagers = document.querySelectorAll('[class*="pagination"], [class*="Pagination"], [class*="pager"]');
-    for (var j = 0; j < pagers.length; j++) {
-      var pager = pagers[j];
-      // Look for the active/current page indicator
-      var active = pager.querySelector('[class*="active"], [class*="Active"], [class*="current"], [aria-current], [class*="selected"]');
-      if (active) {
-        var curNum = parseInt((active.textContent || '').trim(), 10);
-        if (!isNaN(curNum)) {
-          // Find a sibling/cousin with curNum+1
-          var allLinks = pager.querySelectorAll('a, button, [role="button"], [class*="page" i]');
-          for (var k = 0; k < allLinks.length; k++) {
-            var n = parseInt((allLinks[k].textContent || '').trim(), 10);
-            if (n === curNum + 1) return allLinks[k];
-          }
-        }
-      }
-      // Fallback: last child of the pager if it's clickable and not the Last-page button
-      var lastBtn = pager.querySelector('button:last-child, a:last-child');
-      if (lastBtn && !lastBtn.disabled && !lastBtn.classList.contains('disabled')) {
-        if (!/last/i.test(lastBtn.getAttribute('aria-label') || '')) return lastBtn;
-      }
-    }
-    return null;
-  }
-
-  // v0.4.1: throttle "no Next button" log so it doesn't spam every MO pass
-  var lastNoNextLogTs = 0;
-  function logNoNextOnce(diag) {
-    var now = Date.now();
-    if (now - lastNoNextLogTs < 5000) return; // 5s rate limit
-    lastNoNextLogTs = now;
-    log('auto-paginate: no Next button found. ' + diag);
-  }
-
-  // v0.4.1: dump pagination structure on miss so we can see what Torn uses
-  function dumpPagination() {
-    var pagers = document.querySelectorAll('[class*="pagination" i], [class*="pager" i]');
-    if (pagers.length === 0) return 'no [class*=pagination] elements found in DOM';
-    var out = pagers.length + ' pager element(s):';
-    pagers.forEach(function (p, idx) {
-      if (idx > 1) return; // dump first 2 only
-      var snippet = (p.outerHTML || '').slice(0, 400).replace(/\n+/g, ' ');
-      out += '\n  [' + idx + '] ' + snippet;
-    });
-    return out;
-  }
-
-  function maybeAutoPaginate() {
-    // Only auto-page when SOME filter is active (rarity / category / name)
-    if (STATE.rarity === 'all' && STATE.category === 'all' && !STATE.name) return;
-    if (STATE.autoPaged >= AUTO_PAGE_MAX) return;
-    var now = Date.now();
-    if (now - STATE.lastAutoClickTs < AUTO_PAGE_MIN_INTERVAL) return;
-    // Count visible after filter
-    var lis = findListings();
-    var visible = 0;
-    for (var i = 0; i < lis.length; i++) if (!lis[i].classList.contains('wb-auc-hidden')) visible++;
-    if (visible >= AUTO_PAGE_MIN_VISIBLE) return; // enough on screen — don't auto-page
-    var nextBtn = findNextPageButton();
-    if (!nextBtn) {
-      logNoNextOnce(dumpPagination());
-      return;
-    }
-    STATE.autoPaged++;
-    STATE.lastAutoClickTs = now;
-    log('auto-paginate: ' + visible + '/' + AUTO_PAGE_MIN_VISIBLE + ' visible — clicking Next (auto-page ' + STATE.autoPaged + '/' + AUTO_PAGE_MAX + ')');
-    try { nextBtn.click(); } catch (e) { log('next-click failed: ' + e.message); }
-  }
-
   // ─── Apply filter to current DOM ───────────────────────────────────
   function applyFilter() {
     var lis = findListings();
@@ -301,12 +208,8 @@
     }
     var countEl = document.getElementById('wb-auc-count');
     if (countEl) {
-      var label = shown + ' / ' + lis.length + ' shown';
-      if (STATE.autoPaged > 0) label += ' (auto-paged ×' + STATE.autoPaged + ')';
-      countEl.textContent = label;
+      countEl.textContent = shown + ' / ' + lis.length + ' shown';
     }
-    // v0.2.0: auto-paginate if filter active and visible count too low
-    maybeAutoPaginate();
   }
 
   // ─── Build the filter bar ──────────────────────────────────────────
@@ -351,7 +254,6 @@
         chip.classList.add('active');
         if (group === 'rarity') STATE.rarity = value;
         else if (group === 'category') STATE.category = value;
-        STATE.autoPaged = 0;
         applyFilter();
       });
     });
@@ -361,7 +263,6 @@
       clearTimeout(debounceT);
       debounceT = setTimeout(function () {
         STATE.name = search.value || '';
-        STATE.autoPaged = 0;
         applyFilter();
       }, 150);
     });
