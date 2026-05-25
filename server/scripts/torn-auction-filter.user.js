@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auction Filter
 // @namespace    tornwar.com
-// @version      0.6.1
-// @description  Filter Torn auction house by rarity (Yellow / Orange / Red), category (Primary / Secondary / Melee), and name. v0.6.1: diagnostic — logs raw API response and shows a rarity breakdown in the panel header so we can pin down why filters return 0. Reuses the rw-pricer API key.
+// @version      0.6.2
+// @description  Filter Torn auction house by rarity (Yellow / Orange / Red), category (Primary / Secondary / Melee), and name. v0.6.2: dump first listing as JSON in the panel itself (PDA Dev Tools can't expand objects) so we can see exactly which fields the API returns.
 // @author       warboard
 // @match        https://www.torn.com/amarket*
 // @match        https://www.torn.com/page.php?sid=auctionHouse*
@@ -135,6 +135,13 @@
       '.wb-auc-results-close { cursor: pointer; padding: 0 8px; color: #9ca3af; font-size: 18px; }',
       '.wb-auc-results-close:hover { color: #fb7185; }',
       '.wb-auc-results-empty { padding: 18px 8px; text-align: center; color: #6b7280; }',
+      '.wb-auc-sample-dump { margin: 8px 4px; }',
+      '.wb-auc-sample-dump summary { cursor: pointer; color: #9ca3af; font-size: 11px; padding: 4px 0; }',
+      '.wb-auc-sample-dump pre {',
+      '  background: #0a0d14; color: #c4b5fd; padding: 8px;',
+      '  border-radius: 6px; font: 10px/1.3 ui-monospace, monospace;',
+      '  white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto;',
+      '}',
       '.wb-auc-result-row {',
       '  display: flex; gap: 10px; padding: 6px 8px;',
       '  border-bottom: 1px solid #1a2030; align-items: center;',
@@ -299,11 +306,13 @@
             try {
               window.__wbAucLastFetch = collected;
               window.__wbAucLastRaw = data;
-              var sample = collected.slice(0, 3).map(function (r) {
-                return { id: r && r.id, item: r && r.item, price: r && r.price };
-              });
+              // PDA Dev Tools Terminal can't expand objects (shows
+              // "[object Object]") — stringify so the user can read it.
+              var sampleStr = '';
+              try { sampleStr = JSON.stringify(collected.slice(0, 2), null, 2); } catch (e) { sampleStr = '<stringify failed: ' + e.message + '>'; }
+              FETCH_STATE.lastSampleJson = sampleStr;
               console.log('[torn-auction-filter] fetched ' + collected.length + ' listings');
-              console.log('[torn-auction-filter] sample (first 3):', sample);
+              console.log('[torn-auction-filter] sample JSON (first 2):\n' + sampleStr);
               console.log('[torn-auction-filter] last page raw response keys:', data ? Object.keys(data) : []);
             } catch (_) {}
             cb && cb(null, { listings: collected, pages: pagesFetched, hasMore: !!nextLink });
@@ -404,6 +413,14 @@
     html.push('</span>');
     html.push('<span class="wb-auc-results-close" title="Close panel">×</span>');
     html.push('</div>');
+    // v0.6.2 — raw sample dump (only when we have no matches, so the
+    // diagnostic doesn't clutter normal use). Lets us see on PDA which
+    // fields the API actually returns.
+    if (filtered.length === 0 && FETCH_STATE.lastSampleJson) {
+      html.push('<details class="wb-auc-sample-dump"><summary>Show raw sample (first 2 listings)</summary>');
+      html.push('<pre>' + escapeHtml(FETCH_STATE.lastSampleJson.slice(0, 4000)) + '</pre>');
+      html.push('</details>');
+    }
     if (filtered.length === 0) {
       html.push('<div class="wb-auc-results-empty">No matches with current filters. See the rarity breakdown above — if all listings are "none", the API isn\'t tagging rarity and we need an items-lookup pass. Otherwise try a different rarity / category.</div>');
     } else {
