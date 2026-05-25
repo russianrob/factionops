@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.44
+// @version      3.1.45
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1920,19 +1920,51 @@
                     nameForLog = item.name;
                 }
                 // v3.1.43: fallback — extract item name from DOM and lookup
-                // by name in the /v2/torn/items name index. Covers items
-                // not in our inventory cache (clothing, books, materials).
+                // by name in the /v2/torn/items name index.
+                // v3.1.45: more robust name extraction — try several DOM
+                // structures, strip qty prefix in multiple forms, log
+                // misses so we can see what's failing.
                 if (!price && mpCache.byName) {
-                    var nameEl = li.querySelector('.name-wrap') || li.querySelector('[class*="name"]');
-                    if (nameEl) {
-                        // Strip any qty prefix like "x2 " and trailing badges/whitespace
-                        var rawText = (nameEl.textContent || '').trim();
-                        var nameOnly = rawText.replace(/^x\d+\s+/, '').replace(/\$[\d.,]+[KMB]?$/, '').trim().toLowerCase();
-                        // Also try extracting qty from prefix
-                        var qtyMatch = rawText.match(/^x(\d+)\s/);
-                        if (qtyMatch) qty = Number(qtyMatch[1]);
-                        price = mpCache.byName[nameOnly] || 0;
-                        if (price) nameForLog = nameOnly;
+                    // Try several candidate elements for the name
+                    var nameCandidates = [
+                        li.querySelector('.name-wrap'),
+                        li.querySelector('[class^="name___"], [class*=" name___"]'),
+                        li.querySelector('[class*="title___"]'),
+                        li.querySelector('.title'),
+                        li.querySelector('a'),
+                    ].filter(Boolean);
+
+                    var foundName = '';
+                    for (var ni = 0; ni < nameCandidates.length; ni++) {
+                        var raw = (nameCandidates[ni].textContent || '').trim();
+                        if (!raw) continue;
+                        // Strip qty prefix in various forms: "x77 ", "x77.", "77x ", "(x77) ", etc.
+                        var stripped = raw
+                            .replace(/^x\s*\d+[\s\.x]+/i, '')   // "x77 " or "x77."
+                            .replace(/^\d+\s*x\s+/i, '')         // "77x "
+                            .replace(/^\(x\d+\)\s+/i, '')        // "(x77) "
+                            .replace(/\$[\d.,]+\s*[KMB]?\s*$/i, '') // trailing price
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                        // Also pull qty from prefix
+                        var qm = raw.match(/x\s*(\d+)/i);
+                        if (qm && Number(qm[1]) > 0) qty = Number(qm[1]);
+                        var nameKey = stripped.toLowerCase();
+                        if (mpCache.byName[nameKey]) {
+                            price = mpCache.byName[nameKey];
+                            foundName = nameKey;
+                            break;
+                        }
+                        if (!foundName) foundName = nameKey; // remember for log
+                    }
+                    if (price) {
+                        nameForLog = foundName;
+                    } else if (foundName) {
+                        // Log first 5 misses per session so we can see patterns
+                        window.__rwpBpMissCount = (window.__rwpBpMissCount || 0) + 1;
+                        if (window.__rwpBpMissCount <= 5) {
+                            try { console.log('[rwp-base-price] no price for: "' + foundName + '"'); } catch (_) {}
+                        }
                     }
                 }
                 if (!price) continue;
