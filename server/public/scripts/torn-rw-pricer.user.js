@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.45
+// @version      3.1.46
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -78,6 +78,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
+    var SCRIPT_VERSION = '3.1.46';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1868,6 +1869,8 @@
 
         try { console.log('[rwp-base-price] init — DOM-polling mode (PDA-compatible)'); } catch (_) {}
 
+        var bpPriceFetchInFlight = false;
+
         // v3.1.42: DOM-polling instead of XHR/fetch hooks. PDA's
         // pdaHandler_httpPost intercepts inventory requests before our
         // hooks see them, so we'd never get the response data. Instead,
@@ -1879,16 +1882,37 @@
             if (isTornToolsActive()) return;
             var invCache = safeGet(NW_DATA_CACHE_KEY, null);
             var mpCache = safeGet(NW_ITEMS_CACHE_KEY, null);
-            if (!invCache || !invCache.data || !mpCache || !mpCache.map) return;
-            var inv = invCache.data;
-            var items = (inv.inventory && Array.isArray(inv.inventory.items)) ? inv.inventory.items
-                      : Array.isArray(inv.inventory) ? inv.inventory : [];
-            if (items.length === 0) return;
+            if (!mpCache || !mpCache.map || !mpCache.byName || !mpCache.byId) {
+                var key = getEffectiveApiKey();
+                if (key && !bpPriceFetchInFlight) {
+                    bpPriceFetchInFlight = true;
+                    fetchItemMarketPrices(key, function () {
+                        bpPriceFetchInFlight = false;
+                        pollAndLabel();
+                    });
+                }
+                return;
+            }
+            var inv = invCache && invCache.data ? invCache.data : null;
+            var items = inv ? ((inv.inventory && Array.isArray(inv.inventory.items)) ? inv.inventory.items
+                      : Array.isArray(inv.inventory) ? inv.inventory : []) : [];
             var uidMap = {};
             for (var i = 0; i < items.length; i++) {
                 if (items[i] && items[i].uid != null) uidMap[items[i].uid] = items[i];
             }
-            var lis = document.querySelectorAll('li');
+            // v3.1.46: scope to inventory <li>s only — exclude sidebar/nav
+            // li's that triggered misses like "logout", "settings", etc.
+            var lis = document.querySelectorAll(
+                'ul[class*="items-cont"] li, ' +
+                'ul[class*="items-list"] li, ' +
+                'ul.items-cont li, ' +
+                '[class*="itemRow"] li, ' +
+                'li[data-armory-id], li[data-uid], li[id*="$"]'
+            );
+            if (lis.length === 0) {
+                // Fallback: any <li> within elements with item-y classes
+                lis = document.querySelectorAll('[class*="item"] li[class*="item"], [class*="Item"] li');
+            }
             var labeled = 0;
             for (var j = 0; j < lis.length; j++) {
                 var li = lis[j];
@@ -1938,16 +1962,15 @@
                     for (var ni = 0; ni < nameCandidates.length; ni++) {
                         var raw = (nameCandidates[ni].textContent || '').trim();
                         if (!raw) continue;
-                        // Strip qty prefix in various forms: "x77 ", "x77.", "77x ", "(x77) ", etc.
+                        // Strip qty prefix in various forms: "x77 ", "x77Brick", "77x ", "(x77)", etc.
                         var stripped = raw
-                            .replace(/^x\s*\d+[\s\.x]+/i, '')   // "x77 " or "x77."
-                            .replace(/^\d+\s*x\s+/i, '')         // "77x "
-                            .replace(/^\(x\d+\)\s+/i, '')        // "(x77) "
+                            .replace(/^\(?x\s*\d+\)?[\s\.]*/i, '') // "x77 ", "x77.", "(x77)"
+                            .replace(/^\d+\s*x[\s\.]*/i, '')        // "77x "
                             .replace(/\$[\d.,]+\s*[KMB]?\s*$/i, '') // trailing price
                             .replace(/\s+/g, ' ')
                             .trim();
                         // Also pull qty from prefix
-                        var qm = raw.match(/x\s*(\d+)/i);
+                        var qm = raw.match(/^\(?x\s*(\d+)\)?/i) || raw.match(/^(\d+)\s*x/i);
                         if (qm && Number(qm[1]) > 0) qty = Number(qm[1]);
                         var nameKey = stripped.toLowerCase();
                         if (mpCache.byName[nameKey]) {
@@ -2277,7 +2300,7 @@
     function fetchItemMarketPrices(key, cb) {
         try {
             var cached = safeGet(NW_ITEMS_CACHE_KEY, null);
-            if (cached && cached.ts && Date.now() - cached.ts < NW_ITEMS_TTL && cached.map) {
+            if (cached && cached.ts && Date.now() - cached.ts < NW_ITEMS_TTL && cached.map && cached.byName && cached.byId) {
                 cb(null, cached.map);
                 return;
             }
@@ -2293,23 +2316,35 @@
             var map = {};         // id → STRICT market_price (for networth tolerance filter)
             var byName = {};      // name (lower) → bestPrice (for label display)
             var byId = {};        // id → bestPrice (for label display)
+            function priceNum(v) {
+                var n = Number(v);
+                return n > 0 ? n : 0;
+            }
             var items = (d.items && Array.isArray(d.items)) ? d.items
-                      : (d.items && typeof d.items === 'object') ? Object.values(d.items)
+                      : (d.items && typeof d.items === 'object') ? Object.keys(d.items).map(function (id) {
+                            var item = d.items[id];
+                            if (item && item.id == null && /^\d+$/.test(id)) item.id = Number(id);
+                            return item;
+                        })
                       : [];
             for (var i = 0; i < items.length; i++) {
                 var it = items[i];
                 if (!it || it.id == null) continue;
                 var v = it.value || {};
-                var mp = (v.market_price != null) ? Number(v.market_price) : 0;
+                var mp = priceNum(v.market_price != null ? v.market_price : it.market_price);
                 map[it.id] = mp; // strict — networth tolerance must compare against actual market
                 // v3.1.44: bestPrice for label display falls back through
                 // market → vendor sell → vendor buy. Vendor prices cover
                 // items not actively traded (clothing, books, materials,
                 // plushies) so labels work for far more inventory — same
                 // breadth TornTools achieves via item.averageprice.
-                var sp = (v.sell_price != null) ? Number(v.sell_price) : 0;
-                var bp = (v.buy_price != null) ? Number(v.buy_price) : 0;
-                var best = mp > 0 ? mp : (sp > 0 ? sp : (bp > 0 ? bp : 0));
+                var avg = priceNum(it.averageprice != null ? it.averageprice
+                              : it.average_price != null ? it.average_price
+                              : v.averageprice != null ? v.averageprice
+                              : v.average_price);
+                var sp = priceNum(v.sell_price != null ? v.sell_price : it.sell_price);
+                var bp = priceNum(v.buy_price != null ? v.buy_price : it.buy_price);
+                var best = avg > 0 ? avg : (mp > 0 ? mp : (sp > 0 ? sp : (bp > 0 ? bp : 0)));
                 byId[it.id] = best;
                 if (it.name && best > 0) byName[String(it.name).toLowerCase().trim()] = best;
             }
