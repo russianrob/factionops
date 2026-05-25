@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.41
+// @version      3.1.42
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1866,104 +1866,71 @@
             return false;
         }
 
-        try { console.log('[rwp-base-price] init — hooking XHR + fetch for /item.php'); } catch (_) {}
+        try { console.log('[rwp-base-price] init — DOM-polling mode (PDA-compatible)'); } catch (_) {}
 
-        function renderPriceForItem(armoryID, price, qty) {
+        // v3.1.42: DOM-polling instead of XHR/fetch hooks. PDA's
+        // pdaHandler_httpPost intercepts inventory requests before our
+        // hooks see them, so we'd never get the response data. Instead,
+        // walk the DOM after Torn renders each item, extract its uid,
+        // and look up the price using inventory cache (uid→id) +
+        // market_price cache (id→price). Both already populated by
+        // the networth inflator's normal data flow — no new API calls.
+        function pollAndLabel() {
             if (isTornToolsActive()) return;
-            if (!price || price <= 0) return;
-            // v3.1.41: try multiple selectors — Torn's DOM has shifted across
-            // builds (data-reactid is legacy React, modern uses other attrs).
-            var li = document.querySelector('li[data-reactid*="$' + armoryID + '"]')
-                  || document.querySelector('li[id*="' + armoryID + '"]')
-                  || document.querySelector('li[data-id="' + armoryID + '"]')
-                  || document.querySelector('[data-armory-id="' + armoryID + '"]')
-                  || document.querySelector('[data-uid="' + armoryID + '"]');
-            if (!li) {
-                try { console.log('[rwp-base-price] no DOM element found for armoryID=' + armoryID); } catch (_) {}
-                return;
+            var invCache = safeGet(NW_DATA_CACHE_KEY, null);
+            var mpCache = safeGet(NW_ITEMS_CACHE_KEY, null);
+            if (!invCache || !invCache.data || !mpCache || !mpCache.map) return;
+            var inv = invCache.data;
+            var items = (inv.inventory && Array.isArray(inv.inventory.items)) ? inv.inventory.items
+                      : Array.isArray(inv.inventory) ? inv.inventory : [];
+            if (items.length === 0) return;
+            var uidMap = {};
+            for (var i = 0; i < items.length; i++) {
+                if (items[i] && items[i].uid != null) uidMap[items[i].uid] = items[i];
             }
-            if (li.querySelector('.rwp-base-price-tag')) return;
-            var nameWrap = li.querySelector('.name-wrap') || li.querySelector('[class*="name"]') || li;
-            var span = document.createElement('span');
-            span.className = 'rwp-base-price-tag';
-            span.setAttribute('data-rwp-base-price', '1');
-            var total = qty > 1 ? price * qty : price;
-            span.textContent = '$' + (total >= 1e9 ? (total / 1e9).toFixed(2) + 'B'
-                                   : total >= 1e6 ? (total / 1e6).toFixed(1) + 'M'
-                                   : total.toLocaleString());
-            span.title = qty > 1 ? qty + ' × $' + price.toLocaleString() + ' = $' + total.toLocaleString() : 'Avg market price';
-            span.style.cssText = 'margin-left:6px;padding:0 4px;background:rgba(156,163,175,0.1);border:1px solid #2a3447;border-radius:4px;color:#9ca3af;font-size:10px;font-family:ui-monospace,monospace;';
-            nameWrap.appendChild(span);
-        }
-
-        function processInventoryResponse(json, source) {
-            if (!json || !Array.isArray(json.list)) {
-                try { console.log('[rwp-base-price] ' + source + ' response has no .list array (keys: ' + Object.keys(json||{}).join(',') + ')'); } catch (_) {}
-                return;
+            var lis = document.querySelectorAll('li');
+            var labeled = 0;
+            for (var j = 0; j < lis.length; j++) {
+                var li = lis[j];
+                if (li.querySelector('.rwp-base-price-tag')) continue;
+                var uid = null;
+                var attrs = li.attributes;
+                for (var ai = 0; ai < attrs.length; ai++) {
+                    var v = attrs[ai].value;
+                    if (/^\d{8,}$/.test(v)) { uid = Number(v); break; }
+                }
+                if (!uid) {
+                    var inner = li.querySelector('[data-reactid*="$"], [id*="$"]');
+                    if (inner) {
+                        var match = (inner.getAttribute('data-reactid') || inner.id || '').match(/\$(\d{8,})/);
+                        if (match) uid = Number(match[1]);
+                    }
+                }
+                if (!uid || !uidMap[uid]) continue;
+                var item = uidMap[uid];
+                var price = (mpCache.map[item.id]) ? Number(mpCache.map[item.id]) : 0;
+                if (!price) continue;
+                var qty = Number(item.amount) || 1;
+                var nameWrap = li.querySelector('.name-wrap') || li.querySelector('[class*="name"]') || li;
+                var span = document.createElement('span');
+                span.className = 'rwp-base-price-tag';
+                span.setAttribute('data-rwp-base-price', '1');
+                var total = qty > 1 ? price * qty : price;
+                span.textContent = '$' + (total >= 1e9 ? (total / 1e9).toFixed(2) + 'B'
+                                       : total >= 1e6 ? (total / 1e6).toFixed(1) + 'M'
+                                       : total.toLocaleString());
+                span.title = qty > 1 ? qty + ' × $' + price.toLocaleString() + ' = $' + total.toLocaleString() : 'Avg market price';
+                span.style.cssText = 'margin-left:6px;padding:0 4px;background:rgba(156,163,175,0.1);border:1px solid #2a3447;border-radius:4px;color:#9ca3af;font-size:10px;font-family:ui-monospace,monospace;';
+                nameWrap.appendChild(span);
+                labeled++;
             }
-            try { console.log('[rwp-base-price] ' + source + ' got ' + json.list.length + ' items — rendering prices'); } catch (_) {}
-            setTimeout(function () {
-                var rendered = 0;
-                json.list.forEach(function (item) {
-                    if (parseInt(item.untradable)) return;
-                    var price = parseInt(item.averageprice) || 0;
-                    var qty = parseInt(item.Qty) || 1;
-                    var before = document.querySelectorAll('.rwp-base-price-tag').length;
-                    renderPriceForItem(item.armoryID, price, qty);
-                    if (document.querySelectorAll('.rwp-base-price-tag').length > before) rendered++;
-                });
-                try { console.log('[rwp-base-price] rendered ' + rendered + '/' + json.list.length + ' labels'); } catch (_) {}
-            }, 100);
+            if (labeled > 0) {
+                try { console.log('[rwp-base-price] labeled ' + labeled + ' items (DOM poll)'); } catch (_) {}
+            }
         }
 
-        // Hook XMLHttpRequest
-        try {
-            var origOpen = XMLHttpRequest.prototype.open;
-            var origSend = XMLHttpRequest.prototype.send;
-            XMLHttpRequest.prototype.open = function (method, url) {
-                this._rwpUrl = url || '';
-                return origOpen.apply(this, arguments);
-            };
-            XMLHttpRequest.prototype.send = function (body) {
-                var xhr = this;
-                if (/\/item\.php/i.test(xhr._rwpUrl || '')) {
-                    try { console.log('[rwp-base-price] XHR matched: ' + xhr._rwpUrl); } catch (_) {}
-                    xhr.addEventListener('load', function () {
-                        if (isTornToolsActive()) return;
-                        try {
-                            var json = JSON.parse(xhr.responseText);
-                            processInventoryResponse(json, 'XHR');
-                        } catch (e) {
-                            try { console.log('[rwp-base-price] XHR JSON parse fail: ' + e.message); } catch (_) {}
-                        }
-                    });
-                }
-                return origSend.apply(this, arguments);
-            };
-        } catch (e) {
-            try { console.log('[rwp-base-price] XHR hook failed: ' + e.message); } catch (_) {}
-        }
-
-        // Hook fetch() too — PDA / modern Torn may route inventory through fetch
-        try {
-            var origFetch = window.fetch;
-            window.fetch = function (input, init) {
-                var url = typeof input === 'string' ? input : (input && input.url) || '';
-                var promise = origFetch.apply(this, arguments);
-                if (/\/item\.php/i.test(url)) {
-                    try { console.log('[rwp-base-price] fetch matched: ' + url); } catch (_) {}
-                    promise.then(function (resp) {
-                        if (isTornToolsActive()) return;
-                        return resp.clone().json().then(function (json) {
-                            processInventoryResponse(json, 'fetch');
-                        }).catch(function () {});
-                    }).catch(function () {});
-                }
-                return promise;
-            };
-        } catch (e) {
-            try { console.log('[rwp-base-price] fetch hook failed: ' + e.message); } catch (_) {}
-        }
+        setTimeout(pollAndLabel, 2000);
+        setInterval(pollAndLabel, 2500);
     }
 
     // v3.1.33: harvest rendered badge prices from items inventory page,
