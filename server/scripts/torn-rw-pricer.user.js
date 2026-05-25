@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.39
+// @version      3.1.40
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1849,6 +1849,79 @@
         }, 200);
     }
 
+    // v3.1.40: show Torn's base averageprice next to every inventory item
+    // on /item.php. Complements the RW badges (which only cover RW
+    // weapons/armour). Hooks Torn's own inventory XHR so we use the
+    // averageprice field they already fetched — zero new API calls.
+    // Defers to TornTools when present (avoids visual duplication).
+    function setupBasePriceLabels() {
+        var TT_DETECTED = false;
+        function isTornToolsActive() {
+            if (TT_DETECTED) return true;
+            if (document.querySelector('.tt-item-price, [class^="tt-"], #tt-controls')) {
+                TT_DETECTED = true;
+                try { console.log('[rwp-base-price] TornTools detected — deferring base-price labels'); } catch (_) {}
+                return true;
+            }
+            return false;
+        }
+
+        function renderPriceForItem(armoryID, price, qty) {
+            if (isTornToolsActive()) return;
+            if (!price || price <= 0) return;
+            var li = document.querySelector('li[data-reactid*="$' + armoryID + '"], li[id*="' + armoryID + '"]');
+            if (!li) return;
+            // Idempotent: skip if already rendered
+            if (li.querySelector('.rwp-base-price-tag')) return;
+            var nameWrap = li.querySelector('.name-wrap');
+            if (!nameWrap) return;
+            var span = document.createElement('span');
+            span.className = 'rwp-base-price-tag';
+            span.setAttribute('data-rwp-base-price', '1');
+            var total = qty > 1 ? price * qty : price;
+            span.textContent = '$' + (total >= 1e9 ? (total / 1e9).toFixed(2) + 'B'
+                                   : total >= 1e6 ? (total / 1e6).toFixed(1) + 'M'
+                                   : total.toLocaleString());
+            span.title = qty > 1 ? qty + ' × $' + price.toLocaleString() + ' = $' + total.toLocaleString() : 'Avg market price';
+            span.style.cssText = 'margin-left:6px;padding:0 4px;background:rgba(156,163,175,0.1);border:1px solid #2a3447;border-radius:4px;color:#9ca3af;font-size:10px;font-family:ui-monospace,monospace;';
+            nameWrap.appendChild(span);
+        }
+
+        // Hook XMLHttpRequest to catch /item.php inventory responses
+        try {
+            var origOpen = XMLHttpRequest.prototype.open;
+            var origSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function (method, url) {
+                this._rwpUrl = url || '';
+                return origOpen.apply(this, arguments);
+            };
+            XMLHttpRequest.prototype.send = function (body) {
+                var xhr = this;
+                if (/\/item\.php/i.test(xhr._rwpUrl || '')) {
+                    xhr.addEventListener('load', function () {
+                        if (isTornToolsActive()) return;
+                        try {
+                            var json = JSON.parse(xhr.responseText);
+                            if (!json || !Array.isArray(json.list)) return;
+                            // Defer to next tick so Torn finishes rendering
+                            setTimeout(function () {
+                                json.list.forEach(function (item) {
+                                    if (parseInt(item.untradable)) return;
+                                    var price = parseInt(item.averageprice) || 0;
+                                    var qty = parseInt(item.Qty) || 1;
+                                    renderPriceForItem(item.armoryID, price, qty);
+                                });
+                            }, 100);
+                        } catch (_) {}
+                    });
+                }
+                return origSend.apply(this, arguments);
+            };
+        } catch (e) {
+            try { console.log('[rwp-base-price] XHR hook failed: ' + e.message); } catch (_) {}
+        }
+    }
+
     // v3.1.33: harvest rendered badge prices from items inventory page,
     // cache by uid so the networth inflator can read them without API calls.
     function harvestInventoryBadges() {
@@ -1915,6 +1988,12 @@
         if (/\/item\.php/i.test(window.location.pathname) || /\/item(\?|$)/i.test(window.location.pathname)) {
             setTimeout(harvestInventoryBadges, 2500);
             setInterval(harvestInventoryBadges, 5000);
+            // v3.1.40: also show Torn's base market_price next to every
+            // item in the inventory (not just RW). Defers to TornTools if
+            // present (detected via .tt-item-price element). Uses a
+            // distinct class (rwp-base-price) so the networth harvester
+            // ignores it. Hooks Torn's inventory XHR for prices.
+            setupBasePriceLabels();
         }
 
         // Load cached prices (or keep defaults)
