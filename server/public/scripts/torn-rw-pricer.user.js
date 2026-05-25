@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.42
+// @version      3.1.43
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1906,11 +1906,30 @@
                         if (match) uid = Number(match[1]);
                     }
                 }
-                if (!uid || !uidMap[uid]) continue;
-                var item = uidMap[uid];
-                var price = (mpCache.map[item.id]) ? Number(mpCache.map[item.id]) : 0;
+                var item = uid ? uidMap[uid] : null;
+                var price = 0, qty = 1, nameForLog = '';
+                if (item) {
+                    price = (mpCache.map[item.id]) ? Number(mpCache.map[item.id]) : 0;
+                    qty = Number(item.amount) || 1;
+                    nameForLog = item.name;
+                }
+                // v3.1.43: fallback — extract item name from DOM and lookup
+                // by name in the /v2/torn/items name index. Covers items
+                // not in our inventory cache (clothing, books, materials).
+                if (!price && mpCache.byName) {
+                    var nameEl = li.querySelector('.name-wrap') || li.querySelector('[class*="name"]');
+                    if (nameEl) {
+                        // Strip any qty prefix like "x2 " and trailing badges/whitespace
+                        var rawText = (nameEl.textContent || '').trim();
+                        var nameOnly = rawText.replace(/^x\d+\s+/, '').replace(/\$[\d.,]+[KMB]?$/, '').trim().toLowerCase();
+                        // Also try extracting qty from prefix
+                        var qtyMatch = rawText.match(/^x(\d+)\s/);
+                        if (qtyMatch) qty = Number(qtyMatch[1]);
+                        price = mpCache.byName[nameOnly] || 0;
+                        if (price) nameForLog = nameOnly;
+                    }
+                }
                 if (!price) continue;
-                var qty = Number(item.amount) || 1;
                 var nameWrap = li.querySelector('.name-wrap') || li.querySelector('[class*="name"]') || li;
                 var span = document.createElement('span');
                 span.className = 'rwp-base-price-tag';
@@ -2233,7 +2252,8 @@
             credentials: 'omit',
         }).then(function (r) { return r.json(); }).then(function (d) {
             if (d.error) { cb(new Error('items api: code ' + d.error.code + ' ' + d.error.error)); return; }
-            var map = {};
+            var map = {};      // id → market_price
+            var byName = {};   // name (lowercased) → market_price (v3.1.43, for base-price labels)
             var items = (d.items && Array.isArray(d.items)) ? d.items
                       : (d.items && typeof d.items === 'object') ? Object.values(d.items)
                       : [];
@@ -2242,10 +2262,11 @@
                 if (it && it.id != null) {
                     var mp = (it.value && it.value.market_price != null) ? Number(it.value.market_price) : 0;
                     map[it.id] = mp;
+                    if (it.name && mp > 0) byName[String(it.name).toLowerCase().trim()] = mp;
                 }
             }
-            safeSet(NW_ITEMS_CACHE_KEY, { ts: Date.now(), map: map });
-            try { console.log('[rwp-networth] cached market_price for ' + Object.keys(map).length + ' items'); } catch (_) {}
+            safeSet(NW_ITEMS_CACHE_KEY, { ts: Date.now(), map: map, byName: byName });
+            try { console.log('[rwp-networth] cached market_price for ' + Object.keys(map).length + ' items (' + Object.keys(byName).length + ' name-indexed)'); } catch (_) {}
             cb(null, map);
         }).catch(function (e) { cb(new Error('items fetch failed: ' + (e && e.message ? e.message : e))); });
     }
