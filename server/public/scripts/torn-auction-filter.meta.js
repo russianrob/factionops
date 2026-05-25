@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auction Filter
 // @namespace    tornwar.com
-// @version      0.6.0
-// @description  Filter Torn auction house by rarity (Yellow / Orange / Red), category (Primary / Secondary / Melee), and name. v0.6.0: "Show all" button fetches every auction via Torn API v2 and renders a compact panel — every row is a matching item, no half-empty pages. Reuses the rw-pricer API key if one is saved; otherwise click ⚙ to set one.
+// @version      0.6.1
+// @description  Filter Torn auction house by rarity (Yellow / Orange / Red), category (Primary / Secondary / Melee), and name. v0.6.1: diagnostic — logs raw API response and shows a rarity breakdown in the panel header so we can pin down why filters return 0. Reuses the rw-pricer API key.
 // @author       warboard
 // @match        https://www.torn.com/amarket*
 // @match        https://www.torn.com/page.php?sid=auctionHouse*

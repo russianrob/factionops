@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auction Filter
 // @namespace    tornwar.com
-// @version      0.6.0
-// @description  Filter Torn auction house by rarity (Yellow / Orange / Red), category (Primary / Secondary / Melee), and name. v0.6.0: "Show all" button fetches every auction via Torn API v2 and renders a compact panel — every row is a matching item, no half-empty pages. Reuses the rw-pricer API key if one is saved; otherwise click ⚙ to set one.
+// @version      0.6.1
+// @description  Filter Torn auction house by rarity (Yellow / Orange / Red), category (Primary / Secondary / Melee), and name. v0.6.1: diagnostic — logs raw API response and shows a rarity breakdown in the panel header so we can pin down why filters return 0. Reuses the rw-pricer API key.
 // @author       warboard
 // @match        https://www.torn.com/amarket*
 // @match        https://www.torn.com/page.php?sid=auctionHouse*
@@ -128,9 +128,10 @@
       '}',
       '.wb-auc-results-head {',
       '  display: flex; justify-content: space-between; align-items: center;',
-      '  padding: 4px 4px 8px; border-bottom: 1px solid #1a2030; margin-bottom: 4px;',
-      '  color: #9ca3af; font-size: 11px;',
+      '  gap: 12px; padding: 4px 4px 8px; border-bottom: 1px solid #1a2030;',
+      '  margin-bottom: 4px; color: #9ca3af; font-size: 11px;',
       '}',
+      '.wb-auc-results-head > span:first-child { flex: 1; }',
       '.wb-auc-results-close { cursor: pointer; padding: 0 8px; color: #9ca3af; font-size: 18px; }',
       '.wb-auc-results-close:hover { color: #fb7185; }',
       '.wb-auc-results-empty { padding: 18px 8px; text-align: center; color: #6b7280; }',
@@ -292,6 +293,19 @@
             FETCH_STATE.running = false;
             FETCH_STATE.lastListings = collected;
             FETCH_STATE.lastFetchedAt = Date.now();
+            // v0.6.1 diagnostics — surface raw response shape so we can
+            // tell whether `item.rarity` actually exists and matches
+            // 'yellow'/'orange'/'red' literally.
+            try {
+              window.__wbAucLastFetch = collected;
+              window.__wbAucLastRaw = data;
+              var sample = collected.slice(0, 3).map(function (r) {
+                return { id: r && r.id, item: r && r.item, price: r && r.price };
+              });
+              console.log('[torn-auction-filter] fetched ' + collected.length + ' listings');
+              console.log('[torn-auction-filter] sample (first 3):', sample);
+              console.log('[torn-auction-filter] last page raw response keys:', data ? Object.keys(data) : []);
+            } catch (_) {}
             cb && cb(null, { listings: collected, pages: pagesFetched, hasMore: !!nextLink });
           }
         })
@@ -353,19 +367,45 @@
     return panel;
   }
 
+  // v0.6.1 — rarity breakdown of fetched listings. Helps diagnose "No
+  // matches": if the breakdown shows 0 orange but plenty of unknown,
+  // the API isn't returning item.rarity (so we'd need to enrich via a
+  // separate items lookup, the way rw-pricer does).
+  function summarizeRarities(listings) {
+    var counts = { yellow: 0, orange: 0, red: 0, none: 0, other: 0 };
+    for (var i = 0; i < listings.length; i++) {
+      var it = listings[i] && listings[i].item;
+      if (!it) { counts.none++; continue; }
+      var r = (it.rarity == null ? '' : String(it.rarity)).toLowerCase();
+      if (r === 'yellow' || r === 'orange' || r === 'red') counts[r]++;
+      else if (!r) counts.none++;
+      else counts.other++;
+    }
+    return counts;
+  }
+
   function renderResults(listings, meta) {
     var panel = ensureResultsPanel();
     var filtered = applyFiltersToFetched(listings);
     var now = Math.floor(Date.now() / 1000);
+    var br = summarizeRarities(listings);
     var html = [];
     html.push('<div class="wb-auc-results-head">');
     html.push('<span>Showing ' + filtered.length + ' of ' + listings.length + ' auctions');
     if (meta && meta.hasMore) html.push(' <span style="color:#fbbf24">(capped at ' + meta.pages + ' pages)</span>');
     html.push('</span>');
+    html.push('<span class="wb-auc-results-breakdown" style="font-size:11px;color:#9ca3af">');
+    html.push('rarity: ');
+    html.push('<span style="color:#fbbf24">' + br.yellow + ' Y</span> / ');
+    html.push('<span style="color:#fb923c">' + br.orange + ' O</span> / ');
+    html.push('<span style="color:#fb7185">' + br.red + ' R</span> / ');
+    html.push('<span style="color:#6b7280">' + br.none + ' none</span>');
+    if (br.other) html.push(' / <span style="color:#c4b5fd">' + br.other + ' other</span>');
+    html.push('</span>');
     html.push('<span class="wb-auc-results-close" title="Close panel">×</span>');
     html.push('</div>');
     if (filtered.length === 0) {
-      html.push('<div class="wb-auc-results-empty">No matches. Try a different filter, or hit ↻ to refresh.</div>');
+      html.push('<div class="wb-auc-results-empty">No matches with current filters. See the rarity breakdown above — if all listings are "none", the API isn\'t tagging rarity and we need an items-lookup pass. Otherwise try a different rarity / category.</div>');
     } else {
       for (var i = 0; i < filtered.length; i++) {
         var row = filtered[i];
