@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auction Filter
 // @namespace    tornwar.com
-// @version      0.5.0
-// @description  Filter Torn auction house by rarity (Yellow / Orange / Red), category (Primary / Secondary / Melee), and name. Reads rarity from rw-pricer badges already on the listings — install Torn RW Pricer first for color filters to work. v0.5.0: auto-pagination removed; click Next yourself.
+// @version      0.6.0
+// @description  Filter Torn auction house by rarity (Yellow / Orange / Red), category (Primary / Secondary / Melee), and name. v0.6.0: "Show all" button fetches every auction via Torn API v2 and renders a compact panel — every row is a matching item, no half-empty pages. Reuses the rw-pricer API key if one is saved; otherwise click ⚙ to set one.
 // @author       warboard
 // @match        https://www.torn.com/amarket*
 // @match        https://www.torn.com/page.php?sid=auctionHouse*
@@ -105,6 +105,54 @@
       '#wb-auc-search:focus { outline: none; border-color: #6ee7b7; }',
       '#wb-auc-count { font-size: 11px; color: #6b7280; margin-left: auto; }',
       '.wb-auc-hidden { display: none !important; }',
+      // v0.6.0 — Show-all button, key cog, status, results panel
+      '.wb-auc-btn {',
+      '  cursor: pointer; padding: 5px 10px; border-radius: 12px;',
+      '  border: 1px solid #6ee7b7; background: #0a1f17; color: #6ee7b7;',
+      '  font-weight: 600; user-select: none; transition: all .15s;',
+      '}',
+      '.wb-auc-btn:hover { background: #6ee7b7; color: #0a0d14; }',
+      '.wb-auc-cog {',
+      '  cursor: pointer; padding: 5px 8px; border-radius: 12px;',
+      '  border: 1px solid #2a3447; background: #131722; color: #9ca3af;',
+      '  user-select: none;',
+      '}',
+      '.wb-auc-cog:hover { color: #e6e8ee; border-color: #6ee7b7; }',
+      '#wb-auc-status { font-size: 11px; color: #9ca3af; min-width: 80px; }',
+      '#wb-auc-results {',
+      '  background: rgba(13,18,28,0.96); border: 1px solid #2a3447;',
+      '  border-radius: 8px; padding: 8px 10px; margin: 6px 0 12px;',
+      '  max-height: 70vh; overflow: auto; color: #e6e8ee;',
+      '  font: 12px/1.3 -apple-system, system-ui, sans-serif;',
+      '  box-shadow: 0 4px 12px rgba(0,0,0,0.4);',
+      '}',
+      '.wb-auc-results-head {',
+      '  display: flex; justify-content: space-between; align-items: center;',
+      '  padding: 4px 4px 8px; border-bottom: 1px solid #1a2030; margin-bottom: 4px;',
+      '  color: #9ca3af; font-size: 11px;',
+      '}',
+      '.wb-auc-results-close { cursor: pointer; padding: 0 8px; color: #9ca3af; font-size: 18px; }',
+      '.wb-auc-results-close:hover { color: #fb7185; }',
+      '.wb-auc-results-empty { padding: 18px 8px; text-align: center; color: #6b7280; }',
+      '.wb-auc-result-row {',
+      '  display: flex; gap: 10px; padding: 6px 8px;',
+      '  border-bottom: 1px solid #1a2030; align-items: center;',
+      '  color: #e6e8ee; text-decoration: none;',
+      '}',
+      '.wb-auc-result-row:hover { background: #1a2030; }',
+      '.wb-auc-result-rarity {',
+      '  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px;',
+      '  background: #2a3447;',
+      '}',
+      '.wb-auc-result-rarity.yellow { background: #fbbf24; }',
+      '.wb-auc-result-rarity.orange { background: #fb923c; }',
+      '.wb-auc-result-rarity.red    { background: #fb7185; }',
+      '.wb-auc-result-name { flex: 1; font-weight: 600; color: #e6e8ee; }',
+      '.wb-auc-result-bonus { font-weight: 400; color: #c4b5fd; font-size: 11px; margin-left: 4px; }',
+      '.wb-auc-result-bids { color: #9ca3af; font-size: 11px; min-width: 50px; text-align: right; }',
+      '.wb-auc-result-price { color: #6ee7b7; font-family: ui-monospace, monospace; min-width: 90px; text-align: right; }',
+      '.wb-auc-result-time { color: #fbbf24; font-size: 11px; min-width: 56px; text-align: right; }',
+      '.wb-auc-result-seller { color: #9ca3af; font-size: 11px; min-width: 100px; text-align: right; }',
       ''
     ].join('\n');
     document.head.appendChild(s);
@@ -180,6 +228,198 @@
     });
   }
 
+  // ─── API key (shared with torn-rw-pricer) ──────────────────────────
+  // PDA injects the key by replacing the literal token at install time;
+  // on desktop we fall back to the rwp_user_apikey localStorage entry that
+  // rw-pricer already owns, so most users won't have to enter a key twice.
+  var PDAKey = '###PDA-APIKEY###';
+  var pdaApiKey = (PDAKey.charAt(0) !== '#') ? PDAKey : '';
+  var APIKEY_LS_KEY = 'rwp_user_apikey';
+
+  function getApiKey() {
+    try {
+      var saved = localStorage.getItem(APIKEY_LS_KEY) || '';
+      if (saved) return saved;
+    } catch (_) {}
+    return pdaApiKey;
+  }
+  function setApiKey(k) {
+    try { localStorage.setItem(APIKEY_LS_KEY, k || ''); } catch (_) {}
+  }
+
+  // ─── Fetch the whole auction house via /v2/market/auctionhouse ─────
+  // Walks the cursor at _metadata.links.next until exhausted (or hits the
+  // page cap). Returns the flat array; rarity / category / name filtering
+  // is then applied client-side.
+  var FETCH_PAGE_SIZE = 100;
+  var FETCH_MAX_PAGES = 5;        // hard cap (~500 listings) so a stuck loop can't burn API quota
+  var FETCH_BASE = 'https://api.torn.com/v2/market/auctionhouse';
+  var FETCH_STATE = { running: false, lastError: '', lastListings: null, lastFetchedAt: 0 };
+
+  function fetchAllAuctions(opts, cb) {
+    if (FETCH_STATE.running) { cb && cb(new Error('Already fetching — wait for it to finish.'), null); return; }
+    var key = getApiKey();
+    if (!key) { cb && cb(new Error('No API key. Click ⚙ in the bar to set one.'), null); return; }
+    FETCH_STATE.running = true;
+    FETCH_STATE.lastError = '';
+    var collected = [];
+    var pagesFetched = 0;
+    var maxPages = (opts && opts.maxPages) || FETCH_MAX_PAGES;
+
+    function step(url) {
+      fetch(url, { headers: { 'Authorization': 'ApiKey ' + key, 'Accept': 'application/json' } })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data && data.error) {
+            FETCH_STATE.running = false;
+            FETCH_STATE.lastError = data.error.error || ('API code ' + data.error.code);
+            cb && cb(new Error(FETCH_STATE.lastError), null);
+            return;
+          }
+          var batch = (data && data.auctionhouse) || [];
+          collected = collected.concat(batch);
+          pagesFetched++;
+          if (opts && opts.onProgress) opts.onProgress(collected.length, pagesFetched);
+          var nextLink = data && data._metadata && data._metadata.links && data._metadata.links.next;
+          if (nextLink && pagesFetched < maxPages && batch.length > 0) {
+            var u = String(nextLink);
+            // Torn's _metadata.links.next is sometimes a full URL, sometimes a
+            // bare query string. Normalise both.
+            if (u.charAt(0) === '?') u = FETCH_BASE + u;
+            else if (!/^https?:/i.test(u)) u = FETCH_BASE + '?' + u.replace(/^\?/, '');
+            step(u);
+          } else {
+            FETCH_STATE.running = false;
+            FETCH_STATE.lastListings = collected;
+            FETCH_STATE.lastFetchedAt = Date.now();
+            cb && cb(null, { listings: collected, pages: pagesFetched, hasMore: !!nextLink });
+          }
+        })
+        .catch(function (e) {
+          FETCH_STATE.running = false;
+          FETCH_STATE.lastError = e.message || String(e);
+          cb && cb(e, null);
+        });
+    }
+    step(FETCH_BASE + '?limit=' + FETCH_PAGE_SIZE + '&sort=ASC');
+  }
+
+  function fmtMoney(n) {
+    n = Math.round(Number(n) || 0);
+    return '$' + n.toLocaleString('en-US');
+  }
+  function fmtCountdown(secs) {
+    secs = Math.max(0, Math.floor(secs));
+    var h = Math.floor(secs / 3600);
+    var m = Math.floor((secs % 3600) / 60);
+    if (h >= 24) return Math.floor(h / 24) + 'd ' + (h % 24) + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm';
+  }
+
+  // Apply current STATE filters to the fetched listing array. Returns
+  // the subset that matches; ordering preserved from API response (already
+  // ASC by time-remaining).
+  function applyFiltersToFetched(listings) {
+    var nameLower = STATE.name.trim().toLowerCase();
+    return listings.filter(function (row) {
+      var it = row && row.item;
+      if (!it) return false;
+      if (STATE.rarity === 'yellow' || STATE.rarity === 'orange' || STATE.rarity === 'red') {
+        if ((it.rarity || '').toLowerCase() !== STATE.rarity) return false;
+      }
+      if (STATE.category && STATE.category !== 'all') {
+        var cat = lookupCategory(it.name);
+        if (cat !== STATE.category) return false;
+      }
+      if (nameLower && (it.name || '').toLowerCase().indexOf(nameLower) === -1) return false;
+      return true;
+    });
+  }
+
+  // ─── Compact results panel ────────────────────────────────────────
+  function ensureResultsPanel() {
+    var panel = document.getElementById('wb-auc-results');
+    if (panel) return panel;
+    panel = document.createElement('div');
+    panel.id = 'wb-auc-results';
+    panel.style.display = 'none';
+    var bar = document.getElementById('wb-auc-bar');
+    if (bar && bar.parentElement) {
+      bar.parentElement.insertBefore(panel, bar.nextSibling);
+    } else {
+      document.body.insertBefore(panel, document.body.firstChild);
+    }
+    return panel;
+  }
+
+  function renderResults(listings, meta) {
+    var panel = ensureResultsPanel();
+    var filtered = applyFiltersToFetched(listings);
+    var now = Math.floor(Date.now() / 1000);
+    var html = [];
+    html.push('<div class="wb-auc-results-head">');
+    html.push('<span>Showing ' + filtered.length + ' of ' + listings.length + ' auctions');
+    if (meta && meta.hasMore) html.push(' <span style="color:#fbbf24">(capped at ' + meta.pages + ' pages)</span>');
+    html.push('</span>');
+    html.push('<span class="wb-auc-results-close" title="Close panel">×</span>');
+    html.push('</div>');
+    if (filtered.length === 0) {
+      html.push('<div class="wb-auc-results-empty">No matches. Try a different filter, or hit ↻ to refresh.</div>');
+    } else {
+      for (var i = 0; i < filtered.length; i++) {
+        var row = filtered[i];
+        var it = row.item || {};
+        var rar = (it.rarity || '').toLowerCase();
+        var bonuses = (it.bonuses || []).map(function (b) { return b.title; }).filter(Boolean).join(', ');
+        var endsIn = (row.timestamp ? row.timestamp - now : 0);
+        var sellerName = row.seller && row.seller.name ? row.seller.name : '';
+        var bidUrl = 'https://www.torn.com/amarket.php#/p=item&itemID=' + (it.id || '');
+        html.push('<a class="wb-auc-result-row" href="' + bidUrl + '" target="_blank" rel="noopener">');
+        html.push('<span class="wb-auc-result-rarity ' + (rar || 'none') + '"></span>');
+        html.push('<span class="wb-auc-result-name">' + escapeHtml(it.name || '?'));
+        if (bonuses) html.push(' <span class="wb-auc-result-bonus">' + escapeHtml(bonuses) + '</span>');
+        html.push('</span>');
+        html.push('<span class="wb-auc-result-bids">' + (row.bids || 0) + ' bid' + ((row.bids === 1) ? '' : 's') + '</span>');
+        html.push('<span class="wb-auc-result-price">' + fmtMoney(row.price) + '</span>');
+        html.push('<span class="wb-auc-result-time">' + fmtCountdown(endsIn) + '</span>');
+        if (sellerName) html.push('<span class="wb-auc-result-seller">' + escapeHtml(sellerName) + '</span>');
+        html.push('</a>');
+      }
+    }
+    panel.innerHTML = html.join('');
+    panel.style.display = 'block';
+    var closeBtn = panel.querySelector('.wb-auc-results-close');
+    if (closeBtn) closeBtn.addEventListener('click', function () { panel.style.display = 'none'; });
+  }
+
+  function setFetchStatus(text, kind) {
+    var el = document.getElementById('wb-auc-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.color = (kind === 'err') ? '#fb7185' : (kind === 'ok' ? '#6ee7b7' : '#9ca3af');
+  }
+
+  function doFetchAndRender() {
+    setFetchStatus('Fetching…', '');
+    fetchAllAuctions({
+      onProgress: function (n, p) { setFetchStatus('Fetched ' + n + ' (' + p + ' page' + (p === 1 ? '' : 's') + ')…', ''); },
+    }, function (err, res) {
+      if (err) { setFetchStatus('Error: ' + err.message, 'err'); return; }
+      var filtered = applyFiltersToFetched(res.listings);
+      setFetchStatus(filtered.length + ' / ' + res.listings.length + ' match', 'ok');
+      renderResults(res.listings, res);
+    });
+  }
+
+  function promptForApiKey() {
+    var cur = getApiKey();
+    var v = window.prompt('Torn API key (Limited access is enough — needs market: auctionhouse):', cur || '');
+    if (v === null) return;
+    setApiKey(v.trim());
+    setFetchStatus(v.trim() ? 'Key saved.' : 'Key cleared.', 'ok');
+  }
+
   // ─── Apply filter to current DOM ───────────────────────────────────
   function applyFilter() {
     var lis = findListings();
@@ -231,6 +471,10 @@
       '<span class="wb-auc-chip" data-group="category" data-value="secondary">Secondary</span>',
       '<span class="wb-auc-chip" data-group="category" data-value="melee">Melee</span>',
       '<input id="wb-auc-search" type="text" placeholder="Search name…" autocomplete="off" spellcheck="false">',
+      // v0.6.0 — fetch-all action
+      '<span class="wb-auc-btn" id="wb-auc-fetch" title="Fetch every auction via API and show compact matches">Show all</span>',
+      '<span class="wb-auc-cog" id="wb-auc-key" title="Set or update Torn API key">⚙</span>',
+      '<span id="wb-auc-status"></span>',
       '<span id="wb-auc-count"></span>',
     ].join('');
 
@@ -255,6 +499,7 @@
         if (group === 'rarity') STATE.rarity = value;
         else if (group === 'category') STATE.category = value;
         applyFilter();
+        rerenderPanelIfOpen();
       });
     });
     var search = document.getElementById('wb-auc-search');
@@ -264,8 +509,25 @@
       debounceT = setTimeout(function () {
         STATE.name = search.value || '';
         applyFilter();
+        rerenderPanelIfOpen();
       }, 150);
     });
+    var fetchBtn = document.getElementById('wb-auc-fetch');
+    if (fetchBtn) fetchBtn.addEventListener('click', doFetchAndRender);
+    var keyBtn = document.getElementById('wb-auc-key');
+    if (keyBtn) keyBtn.addEventListener('click', promptForApiKey);
+  }
+
+  // If the results panel is already showing the most recent fetch, re-apply
+  // the active filters to that cached list so chip clicks update both the
+  // in-page DOM and our overlay in one step.
+  function rerenderPanelIfOpen() {
+    var panel = document.getElementById('wb-auc-results');
+    if (!panel || panel.style.display === 'none') return;
+    if (!FETCH_STATE.lastListings) return;
+    renderResults(FETCH_STATE.lastListings, { hasMore: false, pages: 0 });
+    var filtered = applyFiltersToFetched(FETCH_STATE.lastListings);
+    setFetchStatus(filtered.length + ' / ' + FETCH_STATE.lastListings.length + ' match', 'ok');
   }
 
   // ─── Init + MutationObserver for re-renders ────────────────────────
