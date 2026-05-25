@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.43
+// @version      3.1.44
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1909,7 +1909,13 @@
                 var item = uid ? uidMap[uid] : null;
                 var price = 0, qty = 1, nameForLog = '';
                 if (item) {
-                    price = (mpCache.map[item.id]) ? Number(mpCache.map[item.id]) : 0;
+                    // v3.1.44: use bestPrice map (byId) for label display —
+                    // covers items with no market_price by falling back to
+                    // vendor prices. Strict map[] is reserved for the
+                    // networth tolerance filter where we want only true
+                    // market prices.
+                    price = (mpCache.byId && mpCache.byId[item.id]) ? Number(mpCache.byId[item.id])
+                          : (mpCache.map[item.id] ? Number(mpCache.map[item.id]) : 0);
                     qty = Number(item.amount) || 1;
                     nameForLog = item.name;
                 }
@@ -2252,21 +2258,31 @@
             credentials: 'omit',
         }).then(function (r) { return r.json(); }).then(function (d) {
             if (d.error) { cb(new Error('items api: code ' + d.error.code + ' ' + d.error.error)); return; }
-            var map = {};      // id → market_price
-            var byName = {};   // name (lowercased) → market_price (v3.1.43, for base-price labels)
+            var map = {};         // id → STRICT market_price (for networth tolerance filter)
+            var byName = {};      // name (lower) → bestPrice (for label display)
+            var byId = {};        // id → bestPrice (for label display)
             var items = (d.items && Array.isArray(d.items)) ? d.items
                       : (d.items && typeof d.items === 'object') ? Object.values(d.items)
                       : [];
             for (var i = 0; i < items.length; i++) {
                 var it = items[i];
-                if (it && it.id != null) {
-                    var mp = (it.value && it.value.market_price != null) ? Number(it.value.market_price) : 0;
-                    map[it.id] = mp;
-                    if (it.name && mp > 0) byName[String(it.name).toLowerCase().trim()] = mp;
-                }
+                if (!it || it.id == null) continue;
+                var v = it.value || {};
+                var mp = (v.market_price != null) ? Number(v.market_price) : 0;
+                map[it.id] = mp; // strict — networth tolerance must compare against actual market
+                // v3.1.44: bestPrice for label display falls back through
+                // market → vendor sell → vendor buy. Vendor prices cover
+                // items not actively traded (clothing, books, materials,
+                // plushies) so labels work for far more inventory — same
+                // breadth TornTools achieves via item.averageprice.
+                var sp = (v.sell_price != null) ? Number(v.sell_price) : 0;
+                var bp = (v.buy_price != null) ? Number(v.buy_price) : 0;
+                var best = mp > 0 ? mp : (sp > 0 ? sp : (bp > 0 ? bp : 0));
+                byId[it.id] = best;
+                if (it.name && best > 0) byName[String(it.name).toLowerCase().trim()] = best;
             }
-            safeSet(NW_ITEMS_CACHE_KEY, { ts: Date.now(), map: map, byName: byName });
-            try { console.log('[rwp-networth] cached market_price for ' + Object.keys(map).length + ' items (' + Object.keys(byName).length + ' name-indexed)'); } catch (_) {}
+            safeSet(NW_ITEMS_CACHE_KEY, { ts: Date.now(), map: map, byName: byName, byId: byId });
+            try { console.log('[rwp-networth] cached prices for ' + Object.keys(map).length + ' items (' + Object.keys(byName).length + ' with a usable price via market or vendor)'); } catch (_) {}
             cb(null, map);
         }).catch(function (e) { cb(new Error('items fetch failed: ' + (e && e.message ? e.message : e))); });
     }
