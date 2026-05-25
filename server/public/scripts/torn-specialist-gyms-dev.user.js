@@ -1,22 +1,22 @@
 // ==UserScript==
 // @name         Torn Specialist Gyms (DEV)
 // @namespace    tornwar.com/dev
-// @version      0.2.0
-// @description  DEV FORK of Torn Specialist Gyms. Adds locked-gyms unlock-progress list + optional auto-switch to best gym before training. Install alongside prod; both panels will render so it's clear which is which.
+// @version      0.2.1
+// @description  DEV FORK of Torn Specialist Gyms. Adds locked-gyms unlock-progress list + optional auto-switch to best gym before training. v0.2.1: fix auto-switch by patching fetch at document-start via unsafeWindow (Torn was capturing fetch reference before our late hook landed).
 // @author       warboard
 // @match        https://www.torn.com/gym.php*
 // @match        https://pda.torn.com/gym.php*
 // @downloadURL  https://tornwar.com/scripts/torn-specialist-gyms-dev.user.js
 // @updateURL    https://tornwar.com/scripts/torn-specialist-gyms-dev.meta.js
-// @grant        none
-// @run-at       document-idle
+// @grant        unsafeWindow
+// @run-at       document-start
 // @noframes
 // ==/UserScript==
 
 (function() {
 	"use strict";
 
-	const SCRIPT_VERSION = "0.2.0";
+	const SCRIPT_VERSION = "0.2.1";
 	const NONE = "none";
 	const STORAGE_KEY_ONE = "tsg_dev_specialist_1";
 	const STORAGE_KEY_TWO = "tsg_dev_specialist_2";
@@ -425,9 +425,14 @@
 	let pageObserver;
 	let statObservers = [];
 	let statElementsMap = {};
-	let originalFetch = null;
-	let autoSwitchFetch = null;
-	let autoSwitchFetchInstalled = false;
+	// v0.2.1: hook the page's fetch BEFORE Torn captures its reference.
+	// Use unsafeWindow because Tampermonkey's isolated world means our
+	// `window.fetch` is not the page's fetch even with @grant none.
+	// The hook installs unconditionally at script load and only branches
+	// into the auto-swap logic when the user has the checkbox on — that
+	// way the checkbox can be toggled live without needing a reload.
+	const pageWindow = (typeof unsafeWindow !== "undefined") ? unsafeWindow : window;
+	const realFetch = pageWindow.fetch.bind(pageWindow);
 
 	function formatNumber(value) {
 		if (value === Infinity) {
@@ -709,52 +714,30 @@
 		};
 	}
 
-	function installAutoSwitchHook() {
-		if (autoSwitchFetchInstalled) {
-			return;
-		}
-
-		originalFetch = window.fetch;
-		autoSwitchFetch = async function(...args) {
-			const requestPath = getRequestPath(args[0]);
-
-			if (requestPath.startsWith("/gym.php?step=train")) {
-				const statKey = getTrainStatKey(args);
-				const bestGym = statKey ? getBestUnlockedGym(statKey) : null;
-				const currentGymId = getCurrentGymId();
-
-				if (bestGym && bestGym.id !== currentGymId) {
-					await originalFetch.call(this, "/gym.php?step=changeGym", buildChangeGymInit(args[1], bestGym.id));
-				}
-			}
-
-			return originalFetch.apply(this, args);
-		};
-		window.fetch = autoSwitchFetch;
-		autoSwitchFetchInstalled = true;
-	}
-
-	function uninstallAutoSwitchHook() {
-		if (!autoSwitchFetchInstalled) {
-			return;
-		}
-
-		if (window.fetch === autoSwitchFetch) {
-			window.fetch = originalFetch;
-		}
-
-		originalFetch = null;
-		autoSwitchFetch = null;
-		autoSwitchFetchInstalled = false;
-	}
-
-	function syncAutoSwitchHook() {
+	// v0.2.1: install ONCE at script load (document-start). The toggle
+	// only flips a flag; we don't re-patch on toggle because by then
+	// Torn has captured its own local fetch reference and a late patch
+	// would be invisible.
+	pageWindow.fetch = async function(...args) {
 		if (getStoredAutoSwitchEnabled()) {
-			installAutoSwitchHook();
-		} else {
-			uninstallAutoSwitchHook();
+			try {
+				const requestPath = getRequestPath(args[0]);
+				if (requestPath.startsWith("/gym.php?step=train")) {
+					const statKey = getTrainStatKey(args);
+					const bestGym = statKey ? getBestUnlockedGym(statKey) : null;
+					const currentGymId = getCurrentGymId();
+					if (bestGym && bestGym.id !== currentGymId) {
+						await realFetch("/gym.php?step=changeGym", buildChangeGymInit(args[1], bestGym.id));
+					}
+				}
+			} catch (e) {
+				try { console.warn("[tsg-dev] auto-switch error:", e); } catch (_) {}
+			}
 		}
-	}
+		return realFetch(...args);
+	};
+
+	function syncAutoSwitchHook() { /* no-op; hook is permanent, toggle is read live */ }
 
 	function injectStyles() {
 		if (document.getElementById(STYLE_ID)) {
