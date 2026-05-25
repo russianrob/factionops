@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Specialist Gyms
 // @namespace    tornwar.com
-// @version      0.1.0
-// @description  Shows Required / Allowed stat thresholds for Torn specialist gyms (Balboas, Frontline, Gym 3000, Isoyamas, Rebound, Elites). Math ported verbatim from TornTools.
+// @version      0.1.1
+// @description  Shows Required / Allowed stat thresholds for Torn specialist gyms (Balboas, Frontline, Gym 3000, Isoyamas, Rebound, Elites). Math ported verbatim from TornTools. v0.1.1: fix infinite-render loop that froze the PDA gym page.
 // @author       warboard
 // @match        https://www.torn.com/gym.php*
 // @match        https://pda.torn.com/gym.php*
@@ -16,7 +16,7 @@
 (function() {
 	"use strict";
 
-	const SCRIPT_VERSION = "0.1.0";
+	const SCRIPT_VERSION = "0.1.1";
 	const NONE = "none";
 	const STORAGE_KEY_ONE = "tsg_specialist_1";
 	const STORAGE_KEY_TWO = "tsg_specialist_2";
@@ -768,30 +768,45 @@
 		});
 	}
 
-	function tryMount() {
-		const gymContent = document.querySelector(GYM_CONTENT_SELECTOR);
+	// v0.1.1: once the panel is mounted and stat-element MutationObservers
+	// are attached, those observers handle all subsequent updates. The
+	// page-wide observer is only needed to detect the initial gym render
+	// (Torn lazy-renders /gym.php). Re-running tryMount on every body
+	// mutation caused an infinite update→re-render→observe loop that
+	// froze the page on PDA WebView.
+	let mounted = false;
 
-		if (!gymContent) {
-			return;
-		}
+	function tryMount() {
+		if (mounted) return;
+		const gymContent = document.querySelector(GYM_CONTENT_SELECTOR);
+		if (!gymContent) return;
 
 		const nextStatElementsMap = getStatElements();
 		const hasAllStats = Object.values(BATTLE_STAT).every((statName) => nextStatElementsMap[statName]);
-
-		if (!hasAllStats) {
-			return;
-		}
+		if (!hasAllStats) return;
 
 		insertPanel(gymContent);
 		watchStatElements(nextStatElementsMap);
 		updatePanel();
+		mounted = true;
+		if (pageObserver) {
+			pageObserver.disconnect();
+			pageObserver = null;
+		}
 	}
 
 	function start() {
 		injectStyles();
 		tryMount();
+		if (mounted) return;
 
-		pageObserver = new MutationObserver(tryMount);
+		// Debounce: PDA fires hundreds of mutations during gym tab render;
+		// without throttling we'd hammer tryMount and re-trigger ourselves.
+		let debounceT = null;
+		pageObserver = new MutationObserver(() => {
+			if (debounceT) return;
+			debounceT = setTimeout(() => { debounceT = null; tryMount(); }, 250);
+		});
 		pageObserver.observe(document.body, { childList: true, subtree: true });
 	}
 

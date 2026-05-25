@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Specialist Gyms
 // @namespace    tornwar.com
-// @version      0.1.0
-// @description  Shows Required / Allowed stat thresholds for Torn specialist gyms (Balboas, Frontline, Gym 3000, Isoyamas, Rebound, Elites). Math ported verbatim from TornTools.
+// @version      0.1.1
+// @description  Shows Required / Allowed stat thresholds for Torn specialist gyms (Balboas, Frontline, Gym 3000, Isoyamas, Rebound, Elites). Math ported verbatim from TornTools. v0.1.1: fix infinite-render loop that froze the PDA gym page.
 // @author       warboard
 // @match        https://www.torn.com/gym.php*
 // @match        https://pda.torn.com/gym.php*
@@ -12,3 +12,4 @@
 // @run-at       document-idle
 // @noframes
 // ==/UserScript==
+
