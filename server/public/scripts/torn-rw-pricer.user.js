@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.46
+// @version      3.1.47
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1962,15 +1962,22 @@
                     for (var ni = 0; ni < nameCandidates.length; ni++) {
                         var raw = (nameCandidates[ni].textContent || '').trim();
                         if (!raw) continue;
-                        // Strip qty prefix in various forms: "x77 ", "x77Brick", "77x ", "(x77)", etc.
+                        // v3.1.47: qty can be prefix ("x77 Brick") OR suffix
+                        // ("Brick x77") depending on Torn's DOM layout per
+                        // category/device. Strip both forms.
                         var stripped = raw
-                            .replace(/^\(?x\s*\d+\)?[\s\.]*/i, '') // "x77 ", "x77.", "(x77)"
-                            .replace(/^\d+\s*x[\s\.]*/i, '')        // "77x "
-                            .replace(/\$[\d.,]+\s*[KMB]?\s*$/i, '') // trailing price
+                            .replace(/^\(?x\s*\d+\)?[\s\.]*/i, '')       // prefix: "x77 ", "(x77)"
+                            .replace(/^\d+\s*x[\s\.]*/i, '')              // prefix: "77x "
+                            .replace(/[\s.]+\(?x\s*\d+\)?\s*$/i, '')      // suffix: " x77", " (x77)"
+                            .replace(/[\s.]+\d+\s*x\s*$/i, '')            // suffix: " 77x"
+                            .replace(/\$[\d.,]+\s*[KMB]?\s*$/i, '')       // trailing price
                             .replace(/\s+/g, ' ')
                             .trim();
-                        // Also pull qty from prefix
-                        var qm = raw.match(/^\(?x\s*(\d+)\)?/i) || raw.match(/^(\d+)\s*x/i);
+                        // Pull qty from either position
+                        var qm = raw.match(/^\(?x\s*(\d+)\)?/i)
+                              || raw.match(/^(\d+)\s*x/i)
+                              || raw.match(/\(?x\s*(\d+)\)?\s*$/i)
+                              || raw.match(/(\d+)\s*x\s*$/i);
                         if (qm && Number(qm[1]) > 0) qty = Number(qm[1]);
                         var nameKey = stripped.toLowerCase();
                         if (mpCache.byName[nameKey]) {
