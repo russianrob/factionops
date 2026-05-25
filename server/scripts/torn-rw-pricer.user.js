@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.40
+// @version      3.1.41
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -1866,15 +1866,24 @@
             return false;
         }
 
+        try { console.log('[rwp-base-price] init — hooking XHR + fetch for /item.php'); } catch (_) {}
+
         function renderPriceForItem(armoryID, price, qty) {
             if (isTornToolsActive()) return;
             if (!price || price <= 0) return;
-            var li = document.querySelector('li[data-reactid*="$' + armoryID + '"], li[id*="' + armoryID + '"]');
-            if (!li) return;
-            // Idempotent: skip if already rendered
+            // v3.1.41: try multiple selectors — Torn's DOM has shifted across
+            // builds (data-reactid is legacy React, modern uses other attrs).
+            var li = document.querySelector('li[data-reactid*="$' + armoryID + '"]')
+                  || document.querySelector('li[id*="' + armoryID + '"]')
+                  || document.querySelector('li[data-id="' + armoryID + '"]')
+                  || document.querySelector('[data-armory-id="' + armoryID + '"]')
+                  || document.querySelector('[data-uid="' + armoryID + '"]');
+            if (!li) {
+                try { console.log('[rwp-base-price] no DOM element found for armoryID=' + armoryID); } catch (_) {}
+                return;
+            }
             if (li.querySelector('.rwp-base-price-tag')) return;
-            var nameWrap = li.querySelector('.name-wrap');
-            if (!nameWrap) return;
+            var nameWrap = li.querySelector('.name-wrap') || li.querySelector('[class*="name"]') || li;
             var span = document.createElement('span');
             span.className = 'rwp-base-price-tag';
             span.setAttribute('data-rwp-base-price', '1');
@@ -1887,7 +1896,27 @@
             nameWrap.appendChild(span);
         }
 
-        // Hook XMLHttpRequest to catch /item.php inventory responses
+        function processInventoryResponse(json, source) {
+            if (!json || !Array.isArray(json.list)) {
+                try { console.log('[rwp-base-price] ' + source + ' response has no .list array (keys: ' + Object.keys(json||{}).join(',') + ')'); } catch (_) {}
+                return;
+            }
+            try { console.log('[rwp-base-price] ' + source + ' got ' + json.list.length + ' items — rendering prices'); } catch (_) {}
+            setTimeout(function () {
+                var rendered = 0;
+                json.list.forEach(function (item) {
+                    if (parseInt(item.untradable)) return;
+                    var price = parseInt(item.averageprice) || 0;
+                    var qty = parseInt(item.Qty) || 1;
+                    var before = document.querySelectorAll('.rwp-base-price-tag').length;
+                    renderPriceForItem(item.armoryID, price, qty);
+                    if (document.querySelectorAll('.rwp-base-price-tag').length > before) rendered++;
+                });
+                try { console.log('[rwp-base-price] rendered ' + rendered + '/' + json.list.length + ' labels'); } catch (_) {}
+            }, 100);
+        }
+
+        // Hook XMLHttpRequest
         try {
             var origOpen = XMLHttpRequest.prototype.open;
             var origSend = XMLHttpRequest.prototype.send;
@@ -1898,27 +1927,42 @@
             XMLHttpRequest.prototype.send = function (body) {
                 var xhr = this;
                 if (/\/item\.php/i.test(xhr._rwpUrl || '')) {
+                    try { console.log('[rwp-base-price] XHR matched: ' + xhr._rwpUrl); } catch (_) {}
                     xhr.addEventListener('load', function () {
                         if (isTornToolsActive()) return;
                         try {
                             var json = JSON.parse(xhr.responseText);
-                            if (!json || !Array.isArray(json.list)) return;
-                            // Defer to next tick so Torn finishes rendering
-                            setTimeout(function () {
-                                json.list.forEach(function (item) {
-                                    if (parseInt(item.untradable)) return;
-                                    var price = parseInt(item.averageprice) || 0;
-                                    var qty = parseInt(item.Qty) || 1;
-                                    renderPriceForItem(item.armoryID, price, qty);
-                                });
-                            }, 100);
-                        } catch (_) {}
+                            processInventoryResponse(json, 'XHR');
+                        } catch (e) {
+                            try { console.log('[rwp-base-price] XHR JSON parse fail: ' + e.message); } catch (_) {}
+                        }
                     });
                 }
                 return origSend.apply(this, arguments);
             };
         } catch (e) {
             try { console.log('[rwp-base-price] XHR hook failed: ' + e.message); } catch (_) {}
+        }
+
+        // Hook fetch() too — PDA / modern Torn may route inventory through fetch
+        try {
+            var origFetch = window.fetch;
+            window.fetch = function (input, init) {
+                var url = typeof input === 'string' ? input : (input && input.url) || '';
+                var promise = origFetch.apply(this, arguments);
+                if (/\/item\.php/i.test(url)) {
+                    try { console.log('[rwp-base-price] fetch matched: ' + url); } catch (_) {}
+                    promise.then(function (resp) {
+                        if (isTornToolsActive()) return;
+                        return resp.clone().json().then(function (json) {
+                            processInventoryResponse(json, 'fetch');
+                        }).catch(function () {});
+                    }).catch(function () {});
+                }
+                return promise;
+            };
+        } catch (e) {
+            try { console.log('[rwp-base-price] fetch hook failed: ' + e.message); } catch (_) {}
         }
     }
 
