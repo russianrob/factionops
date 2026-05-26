@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb7
-// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb7: tapping a blurred stat tile swaps to the best unlocked gym for that stat and shows a visible toast ("Switched to George's for STR — tap Train"). Drops the auto-re-click attempt (Torn's React train button stays disabled until full re-render). Two-tap workflow but reliable.
+// @version      1.2.4-wb8
+// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb8: deeper tile-unlock — also strip disabled attrs and disabled___ classes from descendants of the swapped tile (the train button has its own disabled state separate from the <li>'s locked___). Log tile HTML before/after so we can see what worked.
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
@@ -26,18 +26,27 @@ try { console.log('[wb-auto-gym] script load v1.2.4-wb5 url=' + location.href); 
     if (document.getElementById('wb-auto-gym-style')) return;
     var s = document.createElement('style');
     s.id = 'wb-auto-gym-style';
-    // wb5: actual Torn class is locked___, not disabled. Match <li> with
-    // a stat class AND a locked class — those are the disabled stat tiles
-    // on specialist gyms.
+    // wb5: tiles themselves
+    // wb8: also force-enable disabled buttons + inner disabled markers,
+    // because Torn renders the train button with its own disabled state
+    // separate from the <li>'s locked class.
+    var statTileSel = ['strength', 'defense', 'speed', 'dexterity']
+      .map(function(s) { return 'li[class*="' + s + '___"]'; })
+      .join(',');
     s.textContent = ''
-      + 'li[class*="strength___"][class*="locked___"],'
-      + 'li[class*="defense___"][class*="locked___"],'
-      + 'li[class*="speed___"][class*="locked___"],'
-      + 'li[class*="dexterity___"][class*="locked___"] {'
+      + statTileSel.split(',').map(function(t){return t + '[class*="locked___"]';}).join(',') + ' {'
       + '  pointer-events: auto !important;'
       + '  cursor: pointer !important;'
       + '  opacity: 0.65 !important;'
       + '  filter: none !important;'
+      + '}'
+      + statTileSel.split(',').map(function(t){return t + ' button[disabled]';}).join(',') + ','
+      + statTileSel.split(',').map(function(t){return t + ' [class*="disabled___"]';}).join(',') + ','
+      + statTileSel.split(',').map(function(t){return t + ' [aria-disabled="true"]';}).join(',') + ' {'
+      + '  opacity: 1 !important;'
+      + '  pointer-events: auto !important;'
+      + '  filter: none !important;'
+      + '  cursor: pointer !important;'
       + '}';
     (document.head || document.documentElement).appendChild(s);
   }
@@ -665,10 +674,38 @@ lynx.unlockTilesForGym = function(gymId) {
     var tile = document.querySelector('li[class*="' + statApiName + '___"]');
     if (!tile) return;
     if (info[key] > 0) {
-      var classes = Array.prototype.slice.call(tile.classList);
-      classes.forEach(function(c) {
+      // Diagnostic: full tile HTML before our cleanup so we can see what
+      // structure the train button uses.
+      try { console.log('[wb-auto-gym] tile BEFORE unlock (' + statApiName + '):\n' + tile.outerHTML.slice(0, 1500)); } catch (_) {}
+
+      // Strip locked___* from the <li> itself
+      Array.prototype.slice.call(tile.classList).forEach(function(c) {
         if (c.indexOf('locked___') === 0) tile.classList.remove(c);
       });
+      // Strip locked___ / disabled___ classes AND disabled attrs from every
+      // descendant — the train button can be deeper down.
+      var strippedClassCount = 0;
+      var strippedAttrCount = 0;
+      tile.querySelectorAll('*').forEach(function(el) {
+        Array.prototype.slice.call(el.classList).forEach(function(c) {
+          if (c.indexOf('locked___') === 0 || c.indexOf('disabled___') === 0) {
+            el.classList.remove(c);
+            strippedClassCount++;
+          }
+        });
+        if (el.hasAttribute('disabled')) {
+          el.removeAttribute('disabled');
+          strippedAttrCount++;
+        }
+        if (el.getAttribute('aria-disabled') === 'true') {
+          el.setAttribute('aria-disabled', 'false');
+          strippedAttrCount++;
+        }
+      });
+      try {
+        console.log('[wb-auto-gym] stripped ' + strippedClassCount + ' classes, ' + strippedAttrCount + ' attrs');
+        console.log('[wb-auto-gym] tile AFTER unlock (' + statApiName + '):\n' + tile.outerHTML.slice(0, 1500));
+      } catch (_) {}
     }
   });
 };

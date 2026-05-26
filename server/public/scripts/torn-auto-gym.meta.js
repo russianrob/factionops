@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb7
-// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb7: tapping a blurred stat tile swaps to the best unlocked gym for that stat and shows a visible toast ("Switched to George's for STR — tap Train"). Drops the auto-re-click attempt (Torn's React train button stays disabled until full re-render). Two-tap workflow but reliable.
+// @version      1.2.4-wb8
+// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb8: deeper tile-unlock — also strip disabled attrs and disabled___ classes from descendants of the swapped tile (the train button has its own disabled state separate from the <li>'s locked___). Log tile HTML before/after so we can see what worked.
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
