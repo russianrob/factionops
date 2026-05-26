@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auto Gym
 // @namespace    RussianRob
-// @version      1.2.14
+// @version      1.2.15
 // @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
@@ -650,6 +650,32 @@ lynx.tileIsDisabled = function(tile) {
   }
   return false;
 };
+// Mirror a train response into Torn's native gain-message container so the
+// bypass path looks identical to a React-handled train. Structure observed:
+//   <div class="message___X">
+//     <div class="messageWrapper___Y">
+//       <div>
+//         <p>{message}</p>
+//         <p role="alert" class="gained___Z">{gainMessage}</p>
+//       </div>
+//     </div>
+//   </div>
+// Approach: find the existing container and overwrite its two <p> tags'
+// textContent — re-using whatever hashed classes Torn already set so the
+// success styling carries through. If the container or paragraphs aren't
+// there yet, return false and let the caller fall back to a toast.
+lynx.renderTrainResultNatively = function(d) {
+  var container = document.querySelector('[class*="gymContent___"] [class*="message___"]')
+    || document.querySelector('[class*="message___"]');
+  if (!container) return false;
+  var msgP = container.querySelector('p:not([role="alert"])');
+  var gainP = container.querySelector('p[role="alert"], [class*="gained___"]');
+  if (!msgP && !gainP) return false;
+  if (msgP) msgP.textContent = d.message || '';
+  if (gainP) gainP.textContent = d.gainMessage || '';
+  return true;
+};
+
 // Visible toast so user knows a swap happened. Floating overlay,
 // auto-hides after a few seconds. Tapping it also dismisses.
 lynx.showSwapToast = function(message) {
@@ -814,15 +840,25 @@ function _wbTrainBypassHandler(ev) {
 
   trainFn().then(function(d){
     if (d && d.success) {
-      lynx.showSwapToast(
-        (d.gainMessage ? d.gainMessage : ('Trained ' + statKey.toUpperCase())) +
-        (repeats > 1 ? ' (x' + repeats + ')' : '')
-      );
+      // Update the stat tile's value (Torn's React would normally do this
+      // — we have to since we bypassed it).
       if (d.stat && d.stat.newValue) {
         var valEl = tile.querySelector('[class*="propertyValue___"]');
         if (valEl) valEl.textContent = d.stat.newValue;
       }
+      // Write the gain message into Torn's native message container so it
+      // renders where Torn normally puts it, not in a toast. Container
+      // sits at [class*="message___"] inside [class*="gymContent___"]
+      // with two <p> children: descriptive message + "You gained X stat".
+      var rendered = lynx.renderTrainResultNatively(d);
+      if (!rendered) {
+        // Container not present yet (very first train of a session before
+        // Torn has populated it). Fall back to toast just this once.
+        lynx.showSwapToast(d.gainMessage || ('Trained ' + statKey.toUpperCase()));
+      }
     } else {
+      // Failures stay in the toast — Torn's native container is for
+      // success messages, and surfacing an error there would look wrong.
       lynx.showSwapToast('Train failed: ' + (d && d.message ? d.message : 'unknown'));
     }
   }).catch(function(e){
@@ -1066,33 +1102,6 @@ lynx.setDisable = function() {
         lynx.currentStats[jsonData.stat.name.substring(0, 3)] = +jsonData.stat.newValue.replace(/,/g, '');
         lynx.calculateRatios();
 
-        // DIAG: after a native train, dump the tile DOM (split into 1.5k
-        // chunks because PDA terminal truncates long messages). Looking for
-        // the gain-message element Torn renders post-train so the bypass
-        // path can mirror it instead of falling back to a toast.
-        try {
-          var _statName = jsonData.stat && jsonData.stat.name;
-          if (_statName) {
-            setTimeout(function() {
-              var _tile = document.querySelector('li[class*="' + _statName.toLowerCase() + '___"]');
-              if (!_tile) { console.log('[wb-auto-gym DIAG] tile not found for ' + _statName); return; }
-              var _html = _tile.outerHTML;
-              console.log('[wb-auto-gym DIAG] tile len=' + _html.length + ' for ' + _statName);
-              for (var _i = 0; _i < _html.length; _i += 1400) {
-                console.log('[wb-auto-gym DIAG p' + Math.floor(_i / 1400) + ']: ' + _html.slice(_i, _i + 1400));
-              }
-              // Also try to find any element NEAR the tile that holds the
-              // gain message — could live as a sibling or in a separate
-              // "result" container rather than inside the tile.
-              var _gym = _tile.closest('[class*="gymContent___"]') || document;
-              var _candidates = _gym.querySelectorAll('[class*="gain"], [class*="result"], [class*="success"], [class*="notification"]');
-              console.log('[wb-auto-gym DIAG] result-y elements in gymContent: ' + _candidates.length);
-              for (var _j = 0; _j < Math.min(_candidates.length, 6); _j++) {
-                console.log('[wb-auto-gym DIAG result ' + _j + ']: ' + _candidates[_j].outerHTML.slice(0, 400));
-              }
-            }, 700);
-          }
-        } catch (_e) {}
       }
     }
 
