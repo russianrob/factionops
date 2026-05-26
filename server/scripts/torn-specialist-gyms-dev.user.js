@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Specialist Gyms (DEV)
 // @namespace    tornwar.com/dev
-// @version      0.2.5
-// @description  DEV FORK. v0.2.5: surface Torn's "You need to validate Captcha" rejection on changeGym. Show a warning banner in the panel, auto-disable autoswitch to stop hammering, point the user at the captcha. Don't silently waste training energy at the old gym.
+// @version      0.2.6
+// @description  DEV FORK. v0.2.6: ROOT CAUSE of captcha — our changeGym URL was missing the rfcv (request verification) token Torn requires. Extract rfcv from the live train URL and reuse it on changeGym; fall back to Torn's getAction helper if available. Should fix autoswitch end-to-end.
 // @author       warboard
 // @match        https://www.torn.com/gym.php*
 // @match        https://pda.torn.com/gym.php*
@@ -16,7 +16,7 @@
 (function() {
 	"use strict";
 
-	const SCRIPT_VERSION = "0.2.5";
+	const SCRIPT_VERSION = "0.2.6";
 	const NONE = "none";
 	const STORAGE_KEY_ONE = "tsg_dev_specialist_1";
 	const STORAGE_KEY_TWO = "tsg_dev_specialist_2";
@@ -759,6 +759,24 @@
 		};
 	}
 
+	// v0.2.6: Torn's anti-bot defense rejects POSTs that don't carry the
+	// rfcv (request-verification) token it embedded in the original page
+	// URL. The train request URL has it (e.g. /gym.php?step=train&rfcv=ABC);
+	// reuse it on changeGym so the swap looks like a legitimate same-session
+	// action and Torn doesn't demand captcha.
+	function extractRfcv(requestInput) {
+		try {
+			const raw = typeof requestInput === "string" ? requestInput : requestInput?.url;
+			if (!raw) return null;
+			const url = new URL(raw, location.origin);
+			return url.searchParams.get("rfcv");
+		} catch { return null; }
+	}
+	function buildChangeGymUrl(trainUrlArg) {
+		const rfcv = extractRfcv(trainUrlArg);
+		return rfcv ? `/gym.php?step=changeGym&rfcv=${encodeURIComponent(rfcv)}` : "/gym.php?step=changeGym";
+	}
+
 	// v0.2.1: install ONCE at script load (document-start). The toggle
 	// only flips a flag; we don't re-patch on toggle because by then
 	// Torn has captured its own local fetch reference and a late patch
@@ -778,8 +796,9 @@
 					const currentGymId = getCurrentGymId();
 					D("autoswap: stat=" + statKey + " bestGym=" + (bestGym && bestGym.id) + " currentGym=" + currentGymId);
 					if (bestGym && bestGym.id !== currentGymId) {
-						D("posting changeGym → " + bestGym.id);
-						const r = await realFetch("/gym.php?step=changeGym", buildChangeGymInit(args[1], bestGym.id));
+						const changeGymUrl = buildChangeGymUrl(args[0]);
+						D("posting changeGym → " + bestGym.id + " url=" + changeGymUrl);
+						const r = await realFetch(changeGymUrl, buildChangeGymInit(args[1], bestGym.id));
 						let bodyText = "";
 						try { bodyText = await r.clone().text(); } catch (_) {}
 						D("changeGym response status=" + r.status + " body=" + bodyText.slice(0, 300));

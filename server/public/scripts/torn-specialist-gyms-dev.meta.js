@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Specialist Gyms (DEV)
 // @namespace    tornwar.com/dev
-// @version      0.2.5
-// @description  DEV FORK. v0.2.5: surface Torn's "You need to validate Captcha" rejection on changeGym. Show a warning banner in the panel, auto-disable autoswitch to stop hammering, point the user at the captcha. Don't silently waste training energy at the old gym.
+// @version      0.2.6
+// @description  DEV FORK. v0.2.6: ROOT CAUSE of captcha — our changeGym URL was missing the rfcv (request verification) token Torn requires. Extract rfcv from the live train URL and reuse it on changeGym; fall back to Torn's getAction helper if available. Should fix autoswitch end-to-end.
 // @author       warboard
 // @match        https://www.torn.com/gym.php*
 // @match        https://pda.torn.com/gym.php*
