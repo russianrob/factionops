@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb1
-// @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Only changes from upstream: UI elements dedup themselves on each runRatioCheck so PDA's repeated script loads don't stack 2-3 copies of the dropdowns and disable checkbox. Math, fetch hook, gym table, and all other behavior preserved.
+// @version      1.2.4-wb2
+// @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). v1.2.4-wb2: also un-disable Torn's blurred stat tiles on specialist gyms so clicking them triggers auto-switch instead of being blocked. v1.2.4-wb1: UI dedup so PDA's repeated script loads don't stack copies.
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
@@ -13,6 +13,33 @@
 // @grant        none
 // ==/UserScript==
 var lynx = {};
+
+// wb2: Torn's gym page disables (blurs + pointer-events:none) stat tiles
+// for stats the current specialist gym can't train (e.g. Mr. Isoyamas
+// greys out STR/SPD/DEX). With auto-switch installed the user wants to
+// click those tiles anyway — the swap fires, the gym changes, the train
+// goes through. Inject a stylesheet that restores pointer-events but
+// keeps a faded look so it's still clear which stats need a swap.
+(function injectWbStyles() {
+  function inject() {
+    if (document.getElementById('wb-auto-gym-style')) return;
+    var s = document.createElement('style');
+    s.id = 'wb-auto-gym-style';
+    s.textContent = ''
+      + '[class*="gymContent___"] [class*="propertyContent___"] [class*="disabled"],'
+      + '[class*="gymContent___"] [class*="propertyContent___"][class*="disabled"],'
+      + '[class*="gymContent___"] [class*="propertyContent___"] [class*="inactive"],'
+      + '[class*="gymContent___"] [class*="trainContent___"] [class*="disabled"] {'
+      + '  pointer-events: auto !important;'
+      + '  cursor: pointer !important;'
+      + '  opacity: 0.7 !important;'
+      + '  filter: none !important;'
+      + '}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  if (document.head) inject();
+  else document.addEventListener('DOMContentLoaded', inject, { once: true });
+})();
 
 lynx.mainRatioOptions = ['No main gym', 'Str', 'Def', 'Spe', 'Dex'];
 lynx.secondaryRatioOptions = ['No secondary gym', 'Def/Dex', 'Str/Spe'];
