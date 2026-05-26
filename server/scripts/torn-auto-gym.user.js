@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auto Gym
 // @namespace    RussianRob
-// @version      1.2.15
+// @version      1.2.16
 // @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
@@ -840,25 +840,24 @@ function _wbTrainBypassHandler(ev) {
 
   trainFn().then(function(d){
     if (d && d.success) {
-      // Update the stat tile's value (Torn's React would normally do this
-      // — we have to since we bypassed it).
+      // Update the stat tile's value (Torn's React would normally do this).
       if (d.stat && d.stat.newValue) {
         var valEl = tile.querySelector('[class*="propertyValue___"]');
         if (valEl) valEl.textContent = d.stat.newValue;
       }
-      // Write the gain message into Torn's native message container so it
-      // renders where Torn normally puts it, not in a toast. Container
-      // sits at [class*="message___"] inside [class*="gymContent___"]
-      // with two <p> children: descriptive message + "You gained X stat".
-      var rendered = lynx.renderTrainResultNatively(d);
-      if (!rendered) {
-        // Container not present yet (very first train of a session before
-        // Torn has populated it). Fall back to toast just this once.
-        lynx.showSwapToast(d.gainMessage || ('Trained ' + statKey.toUpperCase()));
+      // Mirror the descriptive message ("You successfully completed N
+      // circuits in an X session") into Torn's native container so the
+      // page reads naturally.
+      lynx.renderTrainResultNatively(d);
+      // Also toast the gain amount unconditionally — Torn's native
+      // gained-paragraph render isn't reliably visible (placement varies,
+      // gets cut off on smaller screens, may animate out) and the user
+      // specifically wants to see how much was gained.
+      if (d.gainMessage) {
+        lynx.showSwapToast(d.gainMessage);
       }
     } else {
-      // Failures stay in the toast — Torn's native container is for
-      // success messages, and surfacing an error there would look wrong.
+      // Failures go to toast — native container is for success messages.
       lynx.showSwapToast('Train failed: ' + (d && d.message ? d.message : 'unknown'));
     }
   }).catch(function(e){
