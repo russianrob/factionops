@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auto Gym
 // @namespace    RussianRob
-// @version      1.2.18
+// @version      1.2.19
 // @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
@@ -650,70 +650,6 @@ lynx.tileIsDisabled = function(tile) {
   }
   return false;
 };
-// Mirror a train response into Torn's native gain-message container so the
-// bypass path looks identical to a React-handled train. Structure observed:
-//   <div class="message___X">
-//     <div class="messageWrapper___Y">
-//       <div>
-//         <p>{message}</p>
-//         <p role="alert" class="gained___Z">{gainMessage}</p>
-//       </div>
-//     </div>
-//   </div>
-// Approach: find the existing container and overwrite its two <p> tags'
-// textContent — re-using whatever hashed classes Torn already set so the
-// success styling carries through. If the container or paragraphs aren't
-// there yet, return false and let the caller fall back to a toast.
-// Cache the gained___ class hash the first time we observe one — Torn's
-// React generates it once per build, same value reused everywhere, so a
-// snapshot from any earlier native train is fine to reuse.
-lynx.cachedGainedClass = null;
-lynx.captureGainedClassHash = function() {
-  if (lynx.cachedGainedClass) return lynx.cachedGainedClass;
-  var el = document.querySelector('[class*="gained___"]');
-  if (!el) return null;
-  for (var i = 0; i < el.classList.length; i++) {
-    if (el.classList[i].indexOf('gained___') === 0) {
-      lynx.cachedGainedClass = el.classList[i];
-      return lynx.cachedGainedClass;
-    }
-  }
-  return null;
-};
-
-lynx.renderTrainResultNatively = function(d) {
-  var container = document.querySelector('[class*="gymContent___"] [class*="message___"]')
-    || document.querySelector('[class*="message___"]');
-  if (!container) return false;
-
-  var msgP = container.querySelector('p:not([role="alert"])');
-  if (!msgP) return false;
-  if (d.message) msgP.textContent = d.message;
-
-  if (d.gainMessage) {
-    var gainP = container.querySelector('p[role="alert"]');
-    if (!gainP) {
-      // Paragraph doesn't exist yet — create it. Try to reuse Torn's
-      // gained___ class hash for matching color/layout. If we don't have
-      // one cached, fall back to inline styles that approximate the native
-      // gained look (forces own row + Torn yellow-green text).
-      gainP = document.createElement('p');
-      gainP.setAttribute('role', 'alert');
-      var gainedClass = lynx.captureGainedClassHash();
-      if (gainedClass) {
-        gainP.className = gainedClass;
-      } else {
-        gainP.style.cssText = 'display:block;width:100%;text-align:center;color:#c4e600;font-weight:600;margin-top:4px;';
-      }
-      msgP.parentNode.insertBefore(gainP, msgP.nextSibling);
-    } else {
-      lynx.captureGainedClassHash();
-    }
-    gainP.textContent = d.gainMessage;
-  }
-  return true;
-};
-
 // Visible toast so user knows a swap happened. Floating overlay,
 // auto-hides after a few seconds. Tapping it also dismisses.
 lynx.showSwapToast = function(message) {
@@ -764,8 +700,6 @@ lynx.unlockTilesForGym = function(gymId) {
         if (el.hasAttribute('disabled')) el.removeAttribute('disabled');
         if (el.getAttribute('aria-disabled') === 'true') el.setAttribute('aria-disabled', 'false');
       });
-      // Mark so the Train-button bypass below knows to intercept clicks here.
-      tile.setAttribute('data-wb-unlocked', key);
     }
   });
 };
@@ -785,11 +719,17 @@ lynx.bestUnlockedGymForStat = function(statKey) {
   }
   return null;
 };
+// Blurred-tile click handler. Mirrors AGS's normal auto-swap redirect:
+// intercept the click, swap to the best unlocked gym for that stat, and
+// stop. swapGyms already fires the unified "Switched to X" toast and
+// patches Torn's native gym UI; the user then taps Train themselves and
+// Torn's React fires the train fetch natively (the train button is no
+// longer disabled because the current gym now trains this stat).
 function _wbClickHandler(ev) {
   if (lynx.disableCheckbox && lynx.disableCheckbox.checked) return;
   var hit = lynx.findClickedStatTile(ev.target);
   if (!hit) return;
-  if (!lynx.tileIsDisabled(hit.tile)) return; // tile is already enabled — let React handle
+  if (!lynx.tileIsDisabled(hit.tile)) return; // already enabled — let React handle
   var bestGym = lynx.bestUnlockedGymForStat(hit.statKey);
   if (!bestGym) return;
   ev.preventDefault();
@@ -797,14 +737,11 @@ function _wbClickHandler(ev) {
   (async function() {
     try {
       await lynx.swapGyms(bestGym.id);
+      // Unlock the tile + its inner button so the user CAN tap Train next
+      // — React's render still has them disabled because the swap came
+      // from outside its state model.
       if (lynx.currentGym === bestGym.id) {
-        // swapGyms already fired the "Switched to <gym>" toast. Append a
-        // hint specific to this path (the user tapped a blurred tile and
-        // now needs to tap the now-enabled Train button).
         lynx.unlockTilesForGym(bestGym.id);
-        var statLabel = { str: 'STR', def: 'DEF', spe: 'SPD', dex: 'DEX' }[hit.statKey] || hit.statKey;
-        var gymName = (lynx.gymInfo[bestGym.id] && lynx.gymInfo[bestGym.id].name) || ('gym ' + bestGym.id);
-        lynx.showSwapToast('Switched to ' + gymName + ' for ' + statLabel);
       } else {
         lynx.showSwapToast('Gym swap rejected by Torn (captcha?). Switch manually.');
       }
@@ -814,94 +751,6 @@ function _wbClickHandler(ev) {
   })();
 }
 document.addEventListener('click', _wbClickHandler, true);
-
-// After a cross-gym swap we strip locked / disabled markers from the target
-// stat tile, but Torn's React onClick handler still has stale state and
-// refuses to fire the train POST. Capture clicks on the Train button inside
-// any tile we marked data-wb-unlocked, synthesize the train fetch ourselves,
-// and prevent React's no-op handler from running.
-function _wbTrainBypassHandler(ev) {
-  if (lynx.disableCheckbox && lynx.disableCheckbox.checked) return;
-  var btn = ev.target.closest('button');
-  if (!btn) return;
-  var tile = btn.closest('li[data-wb-unlocked]');
-  if (!tile) return;
-  if ((btn.textContent || '').trim().toUpperCase() !== 'TRAIN') return;
-  var statKey = tile.getAttribute('data-wb-unlocked');
-  var statApi = ({ str: 'strength', def: 'defense', spe: 'speed', dex: 'dexterity' })[statKey];
-  if (!statApi) return;
-  if (!lynx.lastRfcv) {
-    lynx.showSwapToast('No rfcv yet — reload the gym page once');
-    return;
-  }
-  // Read repeats from the per-tile <input> (the [-] N [+] counter next to
-  // Train). Was reading propertyValue___ before which holds the stat value,
-  // not the repeat count — so every bypass-train fired as repeats=1.
-  // Live DOM: <input class="input___SMlGv" aria-label="Enter the number of speed training" value="3">
-  var repeats = 1;
-  var repeatEl = tile.querySelector('input[aria-label*="number of"], input[class*="input___"]');
-  if (repeatEl) {
-    var n = parseInt(repeatEl.value || repeatEl.textContent || '1', 10);
-    if (n > 0 && n <= 100) repeats = n;
-  }
-  ev.preventDefault();
-  ev.stopImmediatePropagation();
-
-  // Use Torn's own getAction() global — same helper AGS uses for swapGyms.
-  // It handles the rfcv / CSRF / headers / body format Torn's API expects.
-  // Hand-rolling fetch hit "didn't match specific pattern" regex rejections,
-  // likely because cached rfcv tokens are action-tied and rotate.
-  var trainFn;
-  if (typeof window.getAction === 'function') {
-    trainFn = function() {
-      return new Promise(function(resolve, reject) {
-        try {
-          var res = window.getAction({
-            type: 'post',
-            action: 'gym.php',
-            data: { step: 'train', stat: statApi, repeats: repeats },
-          });
-          // getAction usually returns a Promise; if not, wrap.
-          Promise.resolve(res).then(resolve, reject);
-        } catch (e) { reject(e); }
-      });
-    };
-  } else {
-    // Fallback if Torn's helper isn't exposed for some reason.
-    var url = '/gym.php?step=train&rfcv=' + encodeURIComponent(lynx.lastRfcv);
-    trainFn = function() {
-      return window.fetch(url, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json', 'x-requested-with': 'XMLHttpRequest' },
-        body: JSON.stringify({ step: 'train', stat: statApi, repeats: repeats }),
-      }).then(function(r){ return r.json(); });
-    };
-  }
-
-  trainFn().then(function(d){
-    if (d && d.success) {
-      // Update the stat tile's value (Torn's React would normally do this).
-      if (d.stat && d.stat.newValue) {
-        var valEl = tile.querySelector('[class*="propertyValue___"]');
-        if (valEl) valEl.textContent = d.stat.newValue;
-      }
-      // Mirror BOTH the descriptive message AND the gained paragraph into
-      // Torn's native container — renderTrainResultNatively now creates the
-      // gained <p> if it doesn't exist yet (first train of the session).
-      // If the container itself isn't there, fall back to a toast.
-      if (!lynx.renderTrainResultNatively(d)) {
-        var fallback = d.gainMessage || ('Trained ' + statKey.toUpperCase());
-        lynx.showSwapToast(fallback);
-      }
-    } else {
-      lynx.showSwapToast('Train failed: ' + (d && d.message ? d.message : 'unknown'));
-    }
-  }).catch(function(e){
-    lynx.showSwapToast('Train failed: ' + (e && e.message));
-  });
-}
-document.addEventListener('click', _wbTrainBypassHandler, true);
 
 lynx.runRatioCheck = function() {
 
@@ -1137,10 +986,6 @@ lynx.setDisable = function() {
         // Is this better than checking the button each time?
         lynx.currentStats[jsonData.stat.name.substring(0, 3)] = +jsonData.stat.newValue.replace(/,/g, '');
         lynx.calculateRatios();
-        // After Torn re-renders the message wrapper, capture the gained___
-        // class hash so future bypass-path renders can re-use it and match
-        // native styling instead of falling back to inline styles.
-        setTimeout(function() { if (lynx.captureGainedClassHash) lynx.captureGainedClassHash(); }, 700);
       }
     }
 
