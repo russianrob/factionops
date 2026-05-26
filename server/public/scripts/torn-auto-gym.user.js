@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb6
-// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb6: after swap, manually strip locked___ classes from the stat tiles the new gym trains (Torn's React doesn't re-render the tile lock state on a fetch-driven gym change).
+// @version      1.2.4-wb7
+// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb7: tapping a blurred stat tile swaps to the best unlocked gym for that stat and shows a visible toast ("Switched to George's for STR — tap Train"). Drops the auto-re-click attempt (Torn's React train button stays disabled until full re-render). Two-tap workflow but reliable.
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
@@ -630,6 +630,28 @@ lynx.tileIsDisabled = function(tile) {
   }
   return false;
 };
+// wb7: visible toast so user knows a swap happened. Floating overlay,
+// auto-hides after a few seconds. Tapping it also dismisses.
+lynx.showSwapToast = function(message) {
+  var existing = document.getElementById('wb-auto-gym-toast');
+  if (existing) existing.remove();
+  var t = document.createElement('div');
+  t.id = 'wb-auto-gym-toast';
+  t.textContent = message;
+  t.style.cssText = [
+    'position:fixed', 'left:50%', 'bottom:80px', 'transform:translateX(-50%)',
+    'background:#0a0d14', 'color:#6ee7b7',
+    'border:1px solid #6ee7b7', 'border-radius:8px',
+    'padding:10px 16px', 'font:600 13px/1.3 -apple-system,system-ui,sans-serif',
+    'box-shadow:0 4px 16px rgba(0,0,0,0.5)', 'z-index:99999',
+    'max-width:90vw', 'text-align:center', 'cursor:pointer',
+    'pointer-events:auto',
+  ].join(';');
+  t.addEventListener('click', function(){ t.remove(); });
+  document.body.appendChild(t);
+  setTimeout(function() { if (t.parentNode) t.remove(); }, 4500);
+};
+
 // wb6: post-swap visual sync. lynx.gymInfo[id] has per-stat dot values
 // (0 = gym can't train that stat). For each tile, ensure locked___ class
 // presence matches the new gym's capability. Removes only the previously-
@@ -694,27 +716,23 @@ function _wbClickHandler(ev) {
   (async function() {
     try {
       await lynx.swapGyms(bestGym.id);
-      // wb6: Torn's React doesn't re-render the stat tile locked states
-      // on a fetch-driven changeGym. We strip the locked___* classes
-      // ourselves for stats the new gym actually trains, then re-click.
-      // Skip the strip if AGS reports the swap didn't take (lynx.currentGym
-      // is set to bestGym.id only on changeResult.success).
+      // wb7: don't try to auto-train. Torn's train button stays disabled
+      // until React fully re-renders, and we can't force that from outside.
+      // Strip locked___ on the relevant tiles so they're tappable, show a
+      // toast so the user knows the swap happened, let them tap Train.
       if (lynx.currentGym === bestGym.id) {
         lynx.unlockTilesForGym(bestGym.id);
-        // Brief wait so any in-flight React render finishes before we click.
-        await new Promise(function(r){ setTimeout(r, 80); });
-        if (!lynx.tileIsDisabled(hit.tile)) {
-          var trainBtn = hit.tile.querySelector('button:not([disabled])') || hit.tile;
-          console.log('[wb-auto-gym] re-clicking tile after unlock');
-          trainBtn.click();
-          return;
-        }
-        console.warn('[wb-auto-gym] tile still tests as disabled after unlock — tap train manually');
+        var gymName = (lynx.gymInfo[bestGym.id] && lynx.gymInfo[bestGym.id].name) || ('gym ' + bestGym.id);
+        var statLabel = { str: 'STR', def: 'DEF', spe: 'SPD', dex: 'DEX' }[hit.statKey] || hit.statKey;
+        lynx.showSwapToast('Switched to ' + gymName + ' for ' + statLabel + ' — tap Train');
+        console.log('[wb-auto-gym] swap done; user should tap Train now');
       } else {
+        lynx.showSwapToast('Gym swap rejected by Torn (captcha?). Switch manually.');
         console.warn('[wb-auto-gym] swap did not take (currentGym=' + lynx.currentGym + ', wanted=' + bestGym.id + ')');
       }
     } catch (e) {
       console.warn('[wb-auto-gym] cross-gym swap failed:', e && e.message);
+      lynx.showSwapToast('Gym swap failed: ' + (e && e.message));
     }
   })();
 }
