@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auto Gym
 // @namespace    RussianRob
-// @version      1.2.16
+// @version      1.2.17
 // @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
@@ -664,15 +664,51 @@ lynx.tileIsDisabled = function(tile) {
 // textContent — re-using whatever hashed classes Torn already set so the
 // success styling carries through. If the container or paragraphs aren't
 // there yet, return false and let the caller fall back to a toast.
+// Cache the gained___ class hash the first time we observe one — Torn's
+// React generates it once per build, same value reused everywhere, so a
+// snapshot from any earlier native train is fine to reuse.
+lynx.cachedGainedClass = null;
+lynx.captureGainedClassHash = function() {
+  if (lynx.cachedGainedClass) return lynx.cachedGainedClass;
+  var el = document.querySelector('[class*="gained___"]');
+  if (!el) return null;
+  for (var i = 0; i < el.classList.length; i++) {
+    if (el.classList[i].indexOf('gained___') === 0) {
+      lynx.cachedGainedClass = el.classList[i];
+      return lynx.cachedGainedClass;
+    }
+  }
+  return null;
+};
+
 lynx.renderTrainResultNatively = function(d) {
   var container = document.querySelector('[class*="gymContent___"] [class*="message___"]')
     || document.querySelector('[class*="message___"]');
   if (!container) return false;
+
   var msgP = container.querySelector('p:not([role="alert"])');
-  var gainP = container.querySelector('p[role="alert"], [class*="gained___"]');
-  if (!msgP && !gainP) return false;
-  if (msgP) msgP.textContent = d.message || '';
-  if (gainP) gainP.textContent = d.gainMessage || '';
+  if (!msgP) return false;
+  if (d.message) msgP.textContent = d.message;
+
+  if (d.gainMessage) {
+    var gainP = container.querySelector('p[role="alert"]');
+    if (!gainP) {
+      // Paragraph doesn't exist yet (first train of the session via our
+      // bypass). Create one in the same parent right after the message <p>
+      // so Torn's CSS layout applies. If we've seen a gained___ class hash
+      // before, reuse it so the existing color/font styling carries.
+      gainP = document.createElement('p');
+      gainP.setAttribute('role', 'alert');
+      var gainedClass = lynx.captureGainedClassHash();
+      if (gainedClass) gainP.className = gainedClass;
+      msgP.parentNode.insertBefore(gainP, msgP.nextSibling);
+    } else {
+      // Make sure existing paragraph has the gained___ class (might have
+      // been stripped by a prior render). Cache the hash while we have it.
+      lynx.captureGainedClassHash();
+    }
+    gainP.textContent = d.gainMessage;
+  }
   return true;
 };
 
@@ -796,11 +832,14 @@ function _wbTrainBypassHandler(ev) {
     lynx.showSwapToast('No rfcv yet — reload the gym page once');
     return;
   }
-  // Read repeats from Torn's per-tile counter if we can find it; default to 1.
+  // Read repeats from the per-tile <input> (the [-] N [+] counter next to
+  // Train). Was reading propertyValue___ before which holds the stat value,
+  // not the repeat count — so every bypass-train fired as repeats=1.
+  // Live DOM: <input class="input___SMlGv" aria-label="Enter the number of speed training" value="3">
   var repeats = 1;
-  var repeatEl = tile.querySelector('[class*="propertyValue___"], [class*="amount___"], [class*="counter___"]');
+  var repeatEl = tile.querySelector('input[aria-label*="number of"], input[class*="input___"]');
   if (repeatEl) {
-    var n = parseInt((repeatEl.textContent || '').replace(/[^\d]/g, ''), 10);
+    var n = parseInt(repeatEl.value || repeatEl.textContent || '1', 10);
     if (n > 0 && n <= 100) repeats = n;
   }
   ev.preventDefault();
@@ -845,19 +884,15 @@ function _wbTrainBypassHandler(ev) {
         var valEl = tile.querySelector('[class*="propertyValue___"]');
         if (valEl) valEl.textContent = d.stat.newValue;
       }
-      // Mirror the descriptive message ("You successfully completed N
-      // circuits in an X session") into Torn's native container so the
-      // page reads naturally.
-      lynx.renderTrainResultNatively(d);
-      // Also toast the gain amount unconditionally — Torn's native
-      // gained-paragraph render isn't reliably visible (placement varies,
-      // gets cut off on smaller screens, may animate out) and the user
-      // specifically wants to see how much was gained.
-      if (d.gainMessage) {
-        lynx.showSwapToast(d.gainMessage);
+      // Mirror BOTH the descriptive message AND the gained paragraph into
+      // Torn's native container — renderTrainResultNatively now creates the
+      // gained <p> if it doesn't exist yet (first train of the session).
+      // If the container itself isn't there, fall back to a toast.
+      if (!lynx.renderTrainResultNatively(d)) {
+        var fallback = d.gainMessage || ('Trained ' + statKey.toUpperCase());
+        lynx.showSwapToast(fallback);
       }
     } else {
-      // Failures go to toast — native container is for success messages.
       lynx.showSwapToast('Train failed: ' + (d && d.message ? d.message : 'unknown'));
     }
   }).catch(function(e){
