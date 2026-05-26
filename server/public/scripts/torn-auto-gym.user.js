@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auto Gym
 // @namespace    RussianRob
-// @version      1.2.17
+// @version      1.2.18
 // @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
@@ -693,18 +693,20 @@ lynx.renderTrainResultNatively = function(d) {
   if (d.gainMessage) {
     var gainP = container.querySelector('p[role="alert"]');
     if (!gainP) {
-      // Paragraph doesn't exist yet (first train of the session via our
-      // bypass). Create one in the same parent right after the message <p>
-      // so Torn's CSS layout applies. If we've seen a gained___ class hash
-      // before, reuse it so the existing color/font styling carries.
+      // Paragraph doesn't exist yet — create it. Try to reuse Torn's
+      // gained___ class hash for matching color/layout. If we don't have
+      // one cached, fall back to inline styles that approximate the native
+      // gained look (forces own row + Torn yellow-green text).
       gainP = document.createElement('p');
       gainP.setAttribute('role', 'alert');
       var gainedClass = lynx.captureGainedClassHash();
-      if (gainedClass) gainP.className = gainedClass;
+      if (gainedClass) {
+        gainP.className = gainedClass;
+      } else {
+        gainP.style.cssText = 'display:block;width:100%;text-align:center;color:#c4e600;font-weight:600;margin-top:4px;';
+      }
       msgP.parentNode.insertBefore(gainP, msgP.nextSibling);
     } else {
-      // Make sure existing paragraph has the gained___ class (might have
-      // been stripped by a prior render). Cache the hash while we have it.
       lynx.captureGainedClassHash();
     }
     gainP.textContent = d.gainMessage;
@@ -1135,7 +1137,10 @@ lynx.setDisable = function() {
         // Is this better than checking the button each time?
         lynx.currentStats[jsonData.stat.name.substring(0, 3)] = +jsonData.stat.newValue.replace(/,/g, '');
         lynx.calculateRatios();
-
+        // After Torn re-renders the message wrapper, capture the gained___
+        // class hash so future bypass-path renders can re-use it and match
+        // native styling instead of falling back to inline styles.
+        setTimeout(function() { if (lynx.captureGainedClassHash) lynx.captureGainedClassHash(); }, 700);
       }
     }
 
