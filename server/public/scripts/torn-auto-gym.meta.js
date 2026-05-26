@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb9
-// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb9: cross-gym training works — tap a blurred stat tile, script swaps + strips locked/disabled markers + shows a unified toast. Also fires the same toast on AGS's normal auto-swap (was using Torn's native notification before) so all swaps confirm the same way.
+// @version      1.2.4-wb10
+// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb10: fix "args[0].indexOf is not a function" crash when navigating to non-gym pages (PDA keeps the fetch hook live across SPA navigation, and other pages pass Request objects to fetch instead of string URLs).
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*

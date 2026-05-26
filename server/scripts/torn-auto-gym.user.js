@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb9
-// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb9: cross-gym training works — tap a blurred stat tile, script swaps + strips locked/disabled markers + shows a unified toast. Also fires the same toast on AGS's normal auto-swap (was using Torn's native notification before) so all swaps confirm the same way.
+// @version      1.2.4-wb10
+// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb10: fix "args[0].indexOf is not a function" crash when navigating to non-gym pages (PDA keeps the fetch hook live across SPA navigation, and other pages pass Request objects to fetch instead of string URLs).
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
@@ -821,7 +821,21 @@ lynx.setDisable = function() {
 
   window.fetch = async function(...args) {
 
-    if (!args[0].indexOf('/gym.php?step=train') && !lynx.disableCheckbox.checked) {
+    // wb10: args[0] is a string when the page calls fetch with a URL, but
+    // can be a Request object (or anything else) on other Torn pages. PDA
+    // keeps this hook live across SPA navigation away from /gym.php, so we
+    // see fetches with non-string args[0] and the old args[0].indexOf(...)
+    // calls below crash. Normalise to a URL string once at the top and let
+    // every prefix check operate on that. If we can't get a URL, treat the
+    // request as "not interesting" and just pass it through.
+    var _url0 = typeof args[0] === 'string'
+      ? args[0]
+      : (args[0] && typeof args[0].url === 'string' ? args[0].url : '');
+    if (typeof _url0 !== 'string' || !_url0) {
+      return await originalFetch(...args);
+    }
+
+    if (!_url0.indexOf('/gym.php?step=train') && !lynx.disableCheckbox.checked) {
 
       var stat = JSON.parse(args[1].body).stat.substring(0, 3);
 
@@ -861,7 +875,7 @@ lynx.setDisable = function() {
 
     var jsonData;
 
-    if (!lynx.booted && !args[0].indexOf('/gym.php?step=getInitialGymInfo')) {
+    if (!lynx.booted && !_url0.indexOf('/gym.php?step=getInitialGymInfo')) {
 
       lynx.booted = true;
       jsonData = await result.clone().json();
@@ -907,7 +921,7 @@ lynx.setDisable = function() {
 
       lynx.pickGyms(jsonData.gyms);
 
-    } else if (!args[0].indexOf('/gym.php?step=changeGym') || !args[0].indexOf('/gym.php?step=purchaseMembership')) {
+    } else if (!_url0.indexOf('/gym.php?step=changeGym') || !_url0.indexOf('/gym.php?step=purchaseMembership')) {
 
       jsonData = await result.clone().json();
 
@@ -923,7 +937,7 @@ lynx.setDisable = function() {
           }
         }
       }
-    } else if (lynx.ratioSetup && !args[0].indexOf('/gym.php?step=train')) {
+    } else if (lynx.ratioSetup && !_url0.indexOf('/gym.php?step=train')) {
 
       jsonData = await result.clone().json();
 
