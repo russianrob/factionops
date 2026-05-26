@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auto Gym (RussianRob fork)
 // @namespace    RussianRob
-// @version      1.2.10
+// @version      1.2.11
 // @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
@@ -779,22 +779,45 @@ function _wbTrainBypassHandler(ev) {
   }
   ev.preventDefault();
   ev.stopImmediatePropagation();
-  var url = '/gym.php?step=train&rfcv=' + encodeURIComponent(lynx.lastRfcv);
-  // Use window.fetch (our own AGS-derived hook): it'll see the train POST,
-  // check best vs current (same after swap), no re-swap, just forward to the
-  // real fetch. Saves us from scope-grabbing originalFetch out of the IIFE.
-  window.fetch(url, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ step: 'train', stat: statApi, repeats: repeats }),
-  }).then(function(r){ return r.json(); }).then(function(d){
+
+  // Use Torn's own getAction() global — same helper AGS uses for swapGyms.
+  // It handles the rfcv / CSRF / headers / body format Torn's API expects.
+  // Hand-rolling fetch hit "didn't match specific pattern" regex rejections,
+  // likely because cached rfcv tokens are action-tied and rotate.
+  var trainFn;
+  if (typeof window.getAction === 'function') {
+    trainFn = function() {
+      return new Promise(function(resolve, reject) {
+        try {
+          var res = window.getAction({
+            type: 'post',
+            action: 'gym.php',
+            data: { step: 'train', stat: statApi, repeats: repeats },
+          });
+          // getAction usually returns a Promise; if not, wrap.
+          Promise.resolve(res).then(resolve, reject);
+        } catch (e) { reject(e); }
+      });
+    };
+  } else {
+    // Fallback if Torn's helper isn't exposed for some reason.
+    var url = '/gym.php?step=train&rfcv=' + encodeURIComponent(lynx.lastRfcv);
+    trainFn = function() {
+      return window.fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json', 'x-requested-with': 'XMLHttpRequest' },
+        body: JSON.stringify({ step: 'train', stat: statApi, repeats: repeats }),
+      }).then(function(r){ return r.json(); });
+    };
+  }
+
+  trainFn().then(function(d){
     if (d && d.success) {
       lynx.showSwapToast(
         (d.gainMessage ? d.gainMessage : ('Trained ' + statKey.toUpperCase())) +
         (repeats > 1 ? ' (x' + repeats + ')' : '')
       );
-      // Update the stat value in DOM if the response gives us one
       if (d.stat && d.stat.newValue) {
         var valEl = tile.querySelector('[class*="propertyValue___"]');
         if (valEl) valEl.textContent = d.stat.newValue;
