@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.34
+// @version      3.6.35
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -625,33 +625,36 @@
     // --- FF Scouter (V2) fallback via IndexedDB ---
 
     function getFfScouterEstimate(userId) {
+        // Try our ffs-banner-estimates cache first ("ffs-banner-cache" since
+        // v2.73.1-wb65 — renamed to coexist with upstream xentac), fall back
+        // to the legacy "ffscouter-cache" name if upstream is still active.
+        return readFfsCache("ffs-banner-cache", userId).then(function (hit) {
+            if (hit) return hit;
+            return readFfsCache("ffscouter-cache", userId);
+        });
+    }
+
+    function readFfsCache(dbName, userId) {
         return new Promise((resolve) => {
             try {
-                // Omit the version arg — ffs-banner-estimates bumped
-                // ffscouter-cache to v2 (self-healing migration for
-                // upstream forks that created the DB without our store).
-                // Passing `open(name, 1)` against a v2 database throws
-                // VersionError and the connection silently fails — that's
-                // what was making this function always return null and
-                // the copied output read "FFS: N/A".
-                const request = window.indexedDB.open("ffscouter-cache");
+                // Omit the version arg — connecting without one matches any
+                // existing DB version. Passing a specific version (e.g. 1)
+                // against a higher-versioned DB throws VersionError and
+                // silently disconnects.
+                const request = window.indexedDB.open(dbName);
 
                 request.onerror = () => {
-                    if (debug) console.error("FF Scouter: failed to open IndexedDB");
+                    if (debug) console.error("FF Scouter: failed to open " + dbName);
                     resolve(null);
                 };
                 request.onblocked = () => {
-                    if (debug) console.warn("FF Scouter: IndexedDB open blocked");
+                    if (debug) console.warn("FF Scouter: " + dbName + " open blocked");
                     resolve(null);
                 };
 
                 request.onsuccess = () => {
                     const db = request.result;
                     if (!db.objectStoreNames.contains("cache")) {
-                        // ffs-banner-estimates hasn't created the store
-                        // yet (user hasn't loaded a page with the FFS
-                        // script active in this session). No cached data
-                        // to read; downstream renders "N/A".
                         resolve(null);
                         return;
                     }
@@ -659,7 +662,7 @@
                     try {
                         tx = db.transaction("cache", "readonly");
                     } catch (e) {
-                        if (debug) console.error("FF Scouter: tx open failed", e);
+                        if (debug) console.error("FF Scouter: tx open failed on " + dbName, e);
                         resolve(null);
                         return;
                     }
@@ -667,7 +670,7 @@
                     const getReq = store.get(parseInt(userId, 10));
 
                     getReq.onerror = () => {
-                        if (debug) console.error("FF Scouter: error reading cache for", userId);
+                        if (debug) console.error("FF Scouter: error reading " + dbName + " for", userId);
                         resolve(null);
                     };
 
@@ -685,7 +688,7 @@
                     };
                 };
             } catch (e) {
-                if (debug) console.error("FF Scouter: exception accessing cache", e);
+                if (debug) console.error("FF Scouter: exception accessing " + dbName, e);
                 resolve(null);
             }
         });
