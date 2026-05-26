@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb5
-// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb5: fix the tile / disabled selectors — Torn uses <li class="speed___X locked___Y"> not propertyContent___/disabled___ like wb3-wb4 guessed.
+// @version      1.2.4-wb6
+// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb6: after swap, manually strip locked___ classes from the stat tiles the new gym trains (Torn's React doesn't re-render the tile lock state on a fetch-driven gym change).
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
@@ -630,6 +630,27 @@ lynx.tileIsDisabled = function(tile) {
   }
   return false;
 };
+// wb6: post-swap visual sync. lynx.gymInfo[id] has per-stat dot values
+// (0 = gym can't train that stat). For each tile, ensure locked___ class
+// presence matches the new gym's capability. Removes only the previously-
+// applied class names — we don't add a fresh locked class because React
+// would just regenerate its own on next render anyway.
+lynx.unlockTilesForGym = function(gymId) {
+  var info = lynx.gymInfo[gymId];
+  if (!info) return;
+  Object.keys(lynx.statClassToKey).forEach(function(statApiName) {
+    var key = lynx.statClassToKey[statApiName];
+    var tile = document.querySelector('li[class*="' + statApiName + '___"]');
+    if (!tile) return;
+    if (info[key] > 0) {
+      var classes = Array.prototype.slice.call(tile.classList);
+      classes.forEach(function(c) {
+        if (c.indexOf('locked___') === 0) tile.classList.remove(c);
+      });
+    }
+  });
+};
+
 lynx.bestUnlockedGymForStat = function(statKey) {
   var gymList = lynx.picks[statKey] || [];
   for (var i = 0; i < gymList.length; i++) {
@@ -673,17 +694,25 @@ function _wbClickHandler(ev) {
   (async function() {
     try {
       await lynx.swapGyms(bestGym.id);
-      // Wait briefly for Torn's React to re-render the tile as enabled,
-      // then re-click. Two short retries in case the first is too early.
-      for (var attempt = 0; attempt < 4; attempt++) {
-        await new Promise(function(r){ setTimeout(r, 200); });
+      // wb6: Torn's React doesn't re-render the stat tile locked states
+      // on a fetch-driven changeGym. We strip the locked___* classes
+      // ourselves for stats the new gym actually trains, then re-click.
+      // Skip the strip if AGS reports the swap didn't take (lynx.currentGym
+      // is set to bestGym.id only on changeResult.success).
+      if (lynx.currentGym === bestGym.id) {
+        lynx.unlockTilesForGym(bestGym.id);
+        // Brief wait so any in-flight React render finishes before we click.
+        await new Promise(function(r){ setTimeout(r, 80); });
         if (!lynx.tileIsDisabled(hit.tile)) {
           var trainBtn = hit.tile.querySelector('button:not([disabled])') || hit.tile;
+          console.log('[wb-auto-gym] re-clicking tile after unlock');
           trainBtn.click();
           return;
         }
+        console.warn('[wb-auto-gym] tile still tests as disabled after unlock — tap train manually');
+      } else {
+        console.warn('[wb-auto-gym] swap did not take (currentGym=' + lynx.currentGym + ', wanted=' + bestGym.id + ')');
       }
-      console.warn('[wb-auto-gym] tile stayed disabled after swap; tap train again');
     } catch (e) {
       console.warn('[wb-auto-gym] cross-gym swap failed:', e && e.message);
     }
