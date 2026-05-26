@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Specialist Gyms (DEV)
 // @namespace    tornwar.com/dev
-// @version      0.2.3
-// @description  DEV FORK. v0.2.3: remove any existing #tsg-dev-specialist-panel from prior loads before mounting a fresh one — PDA WebView accumulates them otherwise. Retains loud auto-switch diagnostics from v0.2.2.
+// @version      0.2.4
+// @description  DEV FORK. v0.2.4: log changeGym + train response bodies (not just status) so we can see what Torn actually returns. Try more permissive selectors for the active gym button.
 // @author       warboard
 // @match        https://www.torn.com/gym.php*
 // @match        https://pda.torn.com/gym.php*
@@ -16,7 +16,7 @@
 (function() {
 	"use strict";
 
-	const SCRIPT_VERSION = "0.2.3";
+	const SCRIPT_VERSION = "0.2.4";
 	const NONE = "none";
 	const STORAGE_KEY_ONE = "tsg_dev_specialist_1";
 	const STORAGE_KEY_TWO = "tsg_dev_specialist_2";
@@ -24,7 +24,11 @@
 	const PANEL_ID = "tsg-dev-specialist-panel";
 	const STYLE_ID = "tsg-dev-specialist-style";
 	const GYM_CONTENT_SELECTOR = '[class*="gymContent___"]';
-	const ACTIVE_GYM_SELECTOR = "[class*='active'][class^='gymButton']";
+	// v0.2.4: was "[class*='active'][class^='gymButton']" — too strict;
+	// class^= requires gymButton to be the FIRST class, which it usually
+	// isn't in React-mangled output ("foo___ active___xY7zQ gymButton___ab").
+	// Switch both halves to *= (contains) and add a fallback chain.
+	const ACTIVE_GYM_SELECTOR = "[class*='gymButton'][class*='active'], [class*='active'][class*='gymButton'], [class*='gymButton_active'], [class*='active_gymButton']";
 	const GYM_ID_SELECTOR_PREFIX = "[class*='gym-";
 
 	const GYM_CATALOG = [
@@ -753,8 +757,18 @@
 					if (bestGym && bestGym.id !== currentGymId) {
 						D("posting changeGym → " + bestGym.id);
 						const r = await realFetch("/gym.php?step=changeGym", buildChangeGymInit(args[1], bestGym.id));
-						D("changeGym response status=" + r.status);
+						// v0.2.4: also read body so we can see what Torn actually said.
+						let bodyText = "";
+						try { bodyText = await r.clone().text(); } catch (_) {}
+						D("changeGym response status=" + r.status + " body=" + bodyText.slice(0, 300));
 					}
+					// v0.2.4: also clone the train response so we can see whether
+					// Torn trained at the new gym or rejected.
+					const trainResp = await realFetch(...args);
+					let trainBody = "";
+					try { trainBody = await trainResp.clone().text(); } catch (_) {}
+					D("train response status=" + trainResp.status + " body=" + trainBody.slice(0, 300));
+					return trainResp;
 				}
 			} catch (e) {
 				D("auto-switch error:", e && e.message);
