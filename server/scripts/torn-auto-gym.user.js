@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb2
-// @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). v1.2.4-wb2: also un-disable Torn's blurred stat tiles on specialist gyms so clicking them triggers auto-switch instead of being blocked. v1.2.4-wb1: UI dedup so PDA's repeated script loads don't stack copies.
+// @version      1.2.4-wb3
+// @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). v1.2.4-wb3: click-capture on disabled stat tiles — when on a specialist gym, tap any stat to swap to the best unlocked gym for that stat first, then auto-train. v1.2.4-wb2: CSS un-disable. v1.2.4-wb1: UI dedup.
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
@@ -566,6 +566,107 @@ lynx.swapGyms = async function(gymToUse) {
     message: changeResult.message
   }));
 };
+
+// wb3: capture clicks on disabled stat tiles. When the user is on a
+// specialist gym, Torn's React handler refuses to fire the train fetch
+// for stats that gym can't train (Mr. Isoyamas blocks STR/SPD/DEX).
+// Without this handler, auto-switch never gets a train fetch to
+// intercept for those stats — the workflow dead-ends at the click.
+//
+// Flow when user taps a blocked stat tile:
+//   1. Detect: click is inside a [class*="propertyContent___"] that
+//      Torn marks disabled (greyed/locked/inactive).
+//   2. Identify the stat from the tile's stat-class (strength___ etc.).
+//   3. Pick the best UNLOCKED gym that trains that stat from
+//      lynx.picks[stat] — the same list AGS uses for autoswitch.
+//   4. preventDefault + stopImmediatePropagation so Torn's no-op
+//      handler doesn't run.
+//   5. Call lynx.swapGyms(bestId) — AGS's own swap helper, handles
+//      rfcv + DOM resync.
+//   6. After a short delay (so Torn re-renders the now-enabled tile),
+//      programmatically click the same tile so Torn's React fires
+//      the train fetch normally — our fetch hook + AGS swap path
+//      takes care of the rest.
+lynx.statClassToKey = {
+  'strength': 'str',
+  'defense':  'def',
+  'speed':    'spe',
+  'dexterity':'dex',
+};
+lynx.findClickedStatTile = function(el) {
+  var tile = el && el.closest ? el.closest('[class*="propertyContent___"]') : null;
+  if (!tile) return null;
+  // Find stat name by scanning for a stat-class in the tile or its ancestors
+  var statKey = null;
+  var keys = Object.keys(lynx.statClassToKey);
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    if (tile.querySelector('[class*="' + k + '___"]') || (tile.className || '').indexOf(k + '___') >= 0) {
+      // also check tile's own ancestor for the stat container
+      statKey = lynx.statClassToKey[k];
+      break;
+    }
+    var ancestor = tile.closest('[class*="' + k + '___"]');
+    if (ancestor) { statKey = lynx.statClassToKey[k]; break; }
+  }
+  return statKey ? { tile: tile, statKey: statKey } : null;
+};
+lynx.tileIsDisabled = function(tile) {
+  // Multiple ways Torn signals "this stat tile is not trainable here"
+  if (!tile) return false;
+  if (tile.matches('[class*="disabled"]')) return true;
+  if (tile.querySelector('button[disabled], [aria-disabled="true"]')) return true;
+  // Look for inner trainContent-ish element with a disabled class
+  if (tile.querySelector('[class*="disabled"]')) return true;
+  return false;
+};
+lynx.bestUnlockedGymForStat = function(statKey) {
+  var gymList = lynx.picks[statKey] || [];
+  for (var i = 0; i < gymList.length; i++) {
+    var g = gymList[i];
+    var marker = document.querySelector('[class*="gym-' + g.id + '"]');
+    var parent = marker && marker.parentElement;
+    if (!parent) continue;
+    var locked = false;
+    for (var c = 0; c < parent.classList.length; c++) {
+      if (parent.classList[c].indexOf('locked') === 0) { locked = true; break; }
+    }
+    if (!locked) return g;
+  }
+  return null;
+};
+document.addEventListener('click', function(ev) {
+  if (lynx.disableCheckbox && lynx.disableCheckbox.checked) return;
+  var hit = lynx.findClickedStatTile(ev.target);
+  if (!hit) return;
+  if (!lynx.tileIsDisabled(hit.tile)) return; // tile is enabled, let React handle normally
+  var bestGym = lynx.bestUnlockedGymForStat(hit.statKey);
+  if (!bestGym) {
+    console.warn('[wb-auto-gym] no unlocked gym trains ' + hit.statKey + ' — letting click through');
+    return;
+  }
+  ev.preventDefault();
+  ev.stopImmediatePropagation();
+  console.log('[wb-auto-gym] cross-gym train: swap to ' + bestGym.id + ' for ' + hit.statKey);
+  (async function() {
+    try {
+      await lynx.swapGyms(bestGym.id);
+      // Wait briefly for Torn's React to re-render the tile as enabled,
+      // then re-click. Two short retries in case the first is too early.
+      for (var attempt = 0; attempt < 4; attempt++) {
+        await new Promise(function(r){ setTimeout(r, 200); });
+        if (!lynx.tileIsDisabled(hit.tile)) {
+          var trainBtn = hit.tile.querySelector('button:not([disabled])') || hit.tile;
+          trainBtn.click();
+          return;
+        }
+      }
+      console.warn('[wb-auto-gym] tile stayed disabled after swap; tap train again');
+    } catch (e) {
+      console.warn('[wb-auto-gym] cross-gym swap failed:', e && e.message);
+    }
+  })();
+}, true);
 
 lynx.runRatioCheck = function() {
 
