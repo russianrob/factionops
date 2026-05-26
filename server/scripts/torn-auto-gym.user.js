@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb4
-// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb4: noisy diagnostics for cross-gym click capture — logs on script load and on every click so we can see whether the handler is firing at all.
+// @version      1.2.4-wb5
+// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb5: fix the tile / disabled selectors — Torn uses <li class="speed___X locked___Y"> not propertyContent___/disabled___ like wb3-wb4 guessed.
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
@@ -13,7 +13,7 @@
 // @grant        none
 // ==/UserScript==
 var lynx = {};
-try { console.log('[wb-auto-gym] script load v1.2.4-wb4 url=' + location.href + ' doc.readyState=' + document.readyState); } catch (_) {}
+try { console.log('[wb-auto-gym] script load v1.2.4-wb5 url=' + location.href); } catch (_) {}
 
 // wb2: Torn's gym page disables (blurs + pointer-events:none) stat tiles
 // for stats the current specialist gym can't train (e.g. Mr. Isoyamas
@@ -26,14 +26,17 @@ try { console.log('[wb-auto-gym] script load v1.2.4-wb4 url=' + location.href + 
     if (document.getElementById('wb-auto-gym-style')) return;
     var s = document.createElement('style');
     s.id = 'wb-auto-gym-style';
+    // wb5: actual Torn class is locked___, not disabled. Match <li> with
+    // a stat class AND a locked class — those are the disabled stat tiles
+    // on specialist gyms.
     s.textContent = ''
-      + '[class*="gymContent___"] [class*="propertyContent___"] [class*="disabled"],'
-      + '[class*="gymContent___"] [class*="propertyContent___"][class*="disabled"],'
-      + '[class*="gymContent___"] [class*="propertyContent___"] [class*="inactive"],'
-      + '[class*="gymContent___"] [class*="trainContent___"] [class*="disabled"] {'
+      + 'li[class*="strength___"][class*="locked___"],'
+      + 'li[class*="defense___"][class*="locked___"],'
+      + 'li[class*="speed___"][class*="locked___"],'
+      + 'li[class*="dexterity___"][class*="locked___"] {'
       + '  pointer-events: auto !important;'
       + '  cursor: pointer !important;'
-      + '  opacity: 0.7 !important;'
+      + '  opacity: 0.65 !important;'
       + '  filter: none !important;'
       + '}';
     (document.head || document.documentElement).appendChild(s);
@@ -594,31 +597,37 @@ lynx.statClassToKey = {
   'speed':    'spe',
   'dexterity':'dex',
 };
+// wb5: actual DOM observed in PDA console log —
+//   <li class="speed___d3OO8 locked___zpLSk">
+//     <div class="propertyTitle___dZL4b">…</div>
+//   </li>
+// Tile = the <li>. Stat = first part of its first className. Locked
+// state = presence of any class starting with "locked___".
 lynx.findClickedStatTile = function(el) {
-  var tile = el && el.closest ? el.closest('[class*="propertyContent___"]') : null;
+  if (!el || !el.closest) return null;
+  var statSelectors = Object.keys(lynx.statClassToKey)
+    .map(function(s) { return 'li[class*="' + s + '___"]'; })
+    .join(', ');
+  var tile = el.closest(statSelectors);
   if (!tile) return null;
-  // Find stat name by scanning for a stat-class in the tile or its ancestors
   var statKey = null;
-  var keys = Object.keys(lynx.statClassToKey);
-  for (var i = 0; i < keys.length; i++) {
-    var k = keys[i];
-    if (tile.querySelector('[class*="' + k + '___"]') || (tile.className || '').indexOf(k + '___') >= 0) {
-      // also check tile's own ancestor for the stat container
-      statKey = lynx.statClassToKey[k];
-      break;
-    }
-    var ancestor = tile.closest('[class*="' + k + '___"]');
-    if (ancestor) { statKey = lynx.statClassToKey[k]; break; }
+  var classes = (tile.className || '').split(/\s+/);
+  for (var i = 0; i < classes.length; i++) {
+    var m = classes[i].match(/^(strength|defense|speed|dexterity)___/);
+    if (m) { statKey = lynx.statClassToKey[m[1]]; break; }
   }
   return statKey ? { tile: tile, statKey: statKey } : null;
 };
 lynx.tileIsDisabled = function(tile) {
-  // Multiple ways Torn signals "this stat tile is not trainable here"
   if (!tile) return false;
-  if (tile.matches('[class*="disabled"]')) return true;
-  if (tile.querySelector('button[disabled], [aria-disabled="true"]')) return true;
-  // Look for inner trainContent-ish element with a disabled class
-  if (tile.querySelector('[class*="disabled"]')) return true;
+  var classes = (tile.className || '').split(/\s+/);
+  for (var i = 0; i < classes.length; i++) {
+    if (classes[i].indexOf('locked___') === 0) return true;
+  }
+  // Also catch any inner element marked locked / disabled, as a fallback
+  if (tile.querySelector('[class*="locked___"], [class*="disabled___"], [aria-disabled="true"], button[disabled]')) {
+    return true;
+  }
   return false;
 };
 lynx.bestUnlockedGymForStat = function(statKey) {
@@ -637,7 +646,7 @@ lynx.bestUnlockedGymForStat = function(statKey) {
   return null;
 };
 lynx.wbClickCount = 0;
-document.addEventListener('click', function(ev) {
+function _wbClickHandler(ev) {
   if (lynx.wbClickCount++ < 30) {
     var tgt = ev.target;
     var snippet = '';
@@ -679,7 +688,8 @@ document.addEventListener('click', function(ev) {
       console.warn('[wb-auto-gym] cross-gym swap failed:', e && e.message);
     }
   })();
-}, true);
+}
+document.addEventListener('click', _wbClickHandler, true);
 
 lynx.runRatioCheck = function() {
 
