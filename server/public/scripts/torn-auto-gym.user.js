@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auto Gym
 // @namespace    RussianRob
-// @version      1.2.13
+// @version      1.2.14
 // @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
@@ -1066,19 +1066,29 @@ lynx.setDisable = function() {
         lynx.currentStats[jsonData.stat.name.substring(0, 3)] = +jsonData.stat.newValue.replace(/,/g, '');
         lynx.calculateRatios();
 
-        // DIAG (v1.2.13): after a native train, dump the tile DOM so we can
-        // see which element Torn renders the gain message into. 700ms lets
-        // React's response handler finish painting before we snapshot.
+        // DIAG: after a native train, dump the tile DOM (split into 1.5k
+        // chunks because PDA terminal truncates long messages). Looking for
+        // the gain-message element Torn renders post-train so the bypass
+        // path can mirror it instead of falling back to a toast.
         try {
           var _statName = jsonData.stat && jsonData.stat.name;
           if (_statName) {
             setTimeout(function() {
               var _tile = document.querySelector('li[class*="' + _statName.toLowerCase() + '___"]');
-              if (_tile) {
-                console.log('[wb-auto-gym DIAG] tile after native train (' + _statName + '):\n' + _tile.outerHTML.slice(0, 3000));
-                console.log('[wb-auto-gym DIAG] train response:', JSON.stringify(jsonData).slice(0, 500));
-              } else {
-                console.log('[wb-auto-gym DIAG] could not find tile for ' + _statName);
+              if (!_tile) { console.log('[wb-auto-gym DIAG] tile not found for ' + _statName); return; }
+              var _html = _tile.outerHTML;
+              console.log('[wb-auto-gym DIAG] tile len=' + _html.length + ' for ' + _statName);
+              for (var _i = 0; _i < _html.length; _i += 1400) {
+                console.log('[wb-auto-gym DIAG p' + Math.floor(_i / 1400) + ']: ' + _html.slice(_i, _i + 1400));
+              }
+              // Also try to find any element NEAR the tile that holds the
+              // gain message — could live as a sibling or in a separate
+              // "result" container rather than inside the tile.
+              var _gym = _tile.closest('[class*="gymContent___"]') || document;
+              var _candidates = _gym.querySelectorAll('[class*="gain"], [class*="result"], [class*="success"], [class*="notification"]');
+              console.log('[wb-auto-gym DIAG] result-y elements in gymContent: ' + _candidates.length);
+              for (var _j = 0; _j < Math.min(_candidates.length, 6); _j++) {
+                console.log('[wb-auto-gym DIAG result ' + _j + ']: ' + _candidates[_j].outerHTML.slice(0, 400));
               }
             }, 700);
           }
