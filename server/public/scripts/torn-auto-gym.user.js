@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auto Gym (RussianRob fork)
 // @namespace    RussianRob
-// @version      1.2.9
+// @version      1.2.10
 // @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
@@ -700,6 +700,8 @@ lynx.unlockTilesForGym = function(gymId) {
         if (el.hasAttribute('disabled')) el.removeAttribute('disabled');
         if (el.getAttribute('aria-disabled') === 'true') el.setAttribute('aria-disabled', 'false');
       });
+      // Mark so the Train-button bypass below knows to intercept clicks here.
+      tile.setAttribute('data-wb-unlocked', key);
     }
   });
 };
@@ -748,6 +750,63 @@ function _wbClickHandler(ev) {
   })();
 }
 document.addEventListener('click', _wbClickHandler, true);
+
+// After a cross-gym swap we strip locked / disabled markers from the target
+// stat tile, but Torn's React onClick handler still has stale state and
+// refuses to fire the train POST. Capture clicks on the Train button inside
+// any tile we marked data-wb-unlocked, synthesize the train fetch ourselves,
+// and prevent React's no-op handler from running.
+function _wbTrainBypassHandler(ev) {
+  if (lynx.disableCheckbox && lynx.disableCheckbox.checked) return;
+  var btn = ev.target.closest('button');
+  if (!btn) return;
+  var tile = btn.closest('li[data-wb-unlocked]');
+  if (!tile) return;
+  if ((btn.textContent || '').trim().toUpperCase() !== 'TRAIN') return;
+  var statKey = tile.getAttribute('data-wb-unlocked');
+  var statApi = ({ str: 'strength', def: 'defense', spe: 'speed', dex: 'dexterity' })[statKey];
+  if (!statApi) return;
+  if (!lynx.lastRfcv) {
+    lynx.showSwapToast('No rfcv yet — reload the gym page once');
+    return;
+  }
+  // Read repeats from Torn's per-tile counter if we can find it; default to 1.
+  var repeats = 1;
+  var repeatEl = tile.querySelector('[class*="propertyValue___"], [class*="amount___"], [class*="counter___"]');
+  if (repeatEl) {
+    var n = parseInt((repeatEl.textContent || '').replace(/[^\d]/g, ''), 10);
+    if (n > 0 && n <= 100) repeats = n;
+  }
+  ev.preventDefault();
+  ev.stopImmediatePropagation();
+  var url = '/gym.php?step=train&rfcv=' + encodeURIComponent(lynx.lastRfcv);
+  // Use window.fetch (our own AGS-derived hook): it'll see the train POST,
+  // check best vs current (same after swap), no re-swap, just forward to the
+  // real fetch. Saves us from scope-grabbing originalFetch out of the IIFE.
+  window.fetch(url, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ step: 'train', stat: statApi, repeats: repeats }),
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d && d.success) {
+      lynx.showSwapToast(
+        (d.gainMessage ? d.gainMessage : ('Trained ' + statKey.toUpperCase())) +
+        (repeats > 1 ? ' (x' + repeats + ')' : '')
+      );
+      // Update the stat value in DOM if the response gives us one
+      if (d.stat && d.stat.newValue) {
+        var valEl = tile.querySelector('[class*="propertyValue___"]');
+        if (valEl) valEl.textContent = d.stat.newValue;
+      }
+    } else {
+      lynx.showSwapToast('Train failed: ' + (d && d.message ? d.message : 'unknown'));
+    }
+  }).catch(function(e){
+    lynx.showSwapToast('Train failed: ' + (e && e.message));
+  });
+}
+document.addEventListener('click', _wbTrainBypassHandler, true);
 
 lynx.runRatioCheck = function() {
 
@@ -832,6 +891,12 @@ lynx.setDisable = function() {
     if (typeof _url0 !== 'string' || !_url0) {
       return await originalFetch(...args);
     }
+    // Cache rfcv from any gym URL we see so we can synthesize gym POSTs
+    // ourselves (used by the post-swap Train-button bypass below).
+    try {
+      var _m = _url0.match(/[?&]rfcv=([^&]+)/);
+      if (_m) lynx.lastRfcv = _m[1];
+    } catch (_) {}
 
     if (!_url0.indexOf('/gym.php?step=train') && !lynx.disableCheckbox.checked) {
 
