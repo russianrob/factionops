@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb3
-// @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). v1.2.4-wb3: click-capture on disabled stat tiles — when on a specialist gym, tap any stat to swap to the best unlocked gym for that stat first, then auto-train. v1.2.4-wb2: CSS un-disable. v1.2.4-wb1: UI dedup.
+// @version      1.2.4-wb4
+// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb4: noisy diagnostics for cross-gym click capture — logs on script load and on every click so we can see whether the handler is firing at all.
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
@@ -13,6 +13,7 @@
 // @grant        none
 // ==/UserScript==
 var lynx = {};
+try { console.log('[wb-auto-gym] script load v1.2.4-wb4 url=' + location.href + ' doc.readyState=' + document.readyState); } catch (_) {}
 
 // wb2: Torn's gym page disables (blurs + pointer-events:none) stat tiles
 // for stats the current specialist gym can't train (e.g. Mr. Isoyamas
@@ -635,11 +636,23 @@ lynx.bestUnlockedGymForStat = function(statKey) {
   }
   return null;
 };
+lynx.wbClickCount = 0;
 document.addEventListener('click', function(ev) {
-  if (lynx.disableCheckbox && lynx.disableCheckbox.checked) return;
+  if (lynx.wbClickCount++ < 30) {
+    var tgt = ev.target;
+    var snippet = '';
+    try { snippet = (tgt.outerHTML || tgt.tagName || '?').slice(0, 200); } catch (_) {}
+    console.log('[wb-auto-gym] click captured target=', snippet);
+  }
+  if (lynx.disableCheckbox && lynx.disableCheckbox.checked) {
+    console.log('[wb-auto-gym] autoswitch disabled — passing click through');
+    return;
+  }
   var hit = lynx.findClickedStatTile(ev.target);
-  if (!hit) return;
-  if (!lynx.tileIsDisabled(hit.tile)) return; // tile is enabled, let React handle normally
+  if (!hit) { console.log('[wb-auto-gym] click is NOT on a stat tile (no propertyContent___ ancestor)'); return; }
+  console.log('[wb-auto-gym] tile detected statKey=' + hit.statKey + ' tile.className=' + hit.tile.className);
+  if (!lynx.tileIsDisabled(hit.tile)) { console.log('[wb-auto-gym] tile is enabled — letting React handle'); return; }
+  console.log('[wb-auto-gym] tile is DISABLED — looking for best gym for ' + hit.statKey);
   var bestGym = lynx.bestUnlockedGymForStat(hit.statKey);
   if (!bestGym) {
     console.warn('[wb-auto-gym] no unlocked gym trains ' + hit.statKey + ' — letting click through');
