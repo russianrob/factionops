@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auto Gym (RussianRob fork)
 // @namespace    RussianRob
-// @version      1.2.8
+// @version      1.2.9
 // @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
@@ -31,19 +31,19 @@ var lynx = {};
     var statTileSel = ['strength', 'defense', 'speed', 'dexterity']
       .map(function(s) { return 'li[class*="' + s + '___"]'; })
       .join(',');
+    // Keep Torn's native blur on locked tiles so the visual signal stays —
+    // only force pointer-events through so our click-capture handler can
+    // fire. Same for the inner disabled button: clickable but still looks
+    // disabled.
     s.textContent = ''
       + statTileSel.split(',').map(function(t){return t + '[class*="locked___"]';}).join(',') + ' {'
       + '  pointer-events: auto !important;'
       + '  cursor: pointer !important;'
-      + '  opacity: 0.65 !important;'
-      + '  filter: none !important;'
       + '}'
       + statTileSel.split(',').map(function(t){return t + ' button[disabled]';}).join(',') + ','
       + statTileSel.split(',').map(function(t){return t + ' [class*="disabled___"]';}).join(',') + ','
       + statTileSel.split(',').map(function(t){return t + ' [aria-disabled="true"]';}).join(',') + ' {'
-      + '  opacity: 1 !important;'
       + '  pointer-events: auto !important;'
-      + '  filter: none !important;'
       + '  cursor: pointer !important;'
       + '}';
     (document.head || document.documentElement).appendChild(s);
@@ -921,17 +921,48 @@ lynx.setDisable = function() {
 
     } else if (!_url0.indexOf('/gym.php?step=changeGym') || !_url0.indexOf('/gym.php?step=purchaseMembership')) {
 
-      jsonData = await result.clone().json();
+      try { jsonData = await result.clone().json(); } catch (_) { jsonData = null; }
 
-      if (jsonData.success) {
+      if (jsonData && jsonData.success) {
 
-        lynx.currentGym = JSON.parse(args[1].body).gymID;
+        // Torn's UI-initiated changeGym can send body as JSON string,
+        // FormData, URLSearchParams, ReadableStream, etc. AGS assumed
+        // JSON string and crashed otherwise — leaving lynx.currentGym
+        // stuck on the old gym, which then made AGS try redundant
+        // swaps and Torn replied "you're already in this gym".
+        var newGymId = null;
+        try {
+          var b = args[1] && args[1].body;
+          if (typeof b === 'string') {
+            try { newGymId = JSON.parse(b).gymID; } catch (_) {}
+            if (newGymId == null) {
+              var p = new URLSearchParams(b);
+              var v = p.get('gymID');
+              if (v != null) newGymId = Number(v);
+            }
+          } else if (b && typeof b.get === 'function') {
+            // FormData / URLSearchParams
+            var v2 = b.get('gymID');
+            if (v2 != null) newGymId = Number(v2);
+          }
+          // Last-resort: response itself sometimes includes the gym id.
+          if (newGymId == null) {
+            if (jsonData.gymID != null) newGymId = Number(jsonData.gymID);
+            else if (jsonData.gym && jsonData.gym.id != null) newGymId = Number(jsonData.gym.id);
+          }
+        } catch (e) {
+          try { console.warn('[wb-auto-gym] changeGym body parse failed:', e && e.message); } catch (_) {}
+        }
 
-        if (!lynx.gymInfo[lynx.currentGym].checked) {
-          lynx.checkGym(lynx.currentGym);
+        if (newGymId != null && !isNaN(newGymId)) {
+          lynx.currentGym = newGymId;
 
-          for (var sortStat in lynx.picks) {
-            lynx.picks[sortStat].sort(lynx.sortGyms);
+          if (lynx.gymInfo[lynx.currentGym] && !lynx.gymInfo[lynx.currentGym].checked) {
+            lynx.checkGym(lynx.currentGym);
+
+            for (var sortStat in lynx.picks) {
+              lynx.picks[sortStat].sort(lynx.sortGyms);
+            }
           }
         }
       }
