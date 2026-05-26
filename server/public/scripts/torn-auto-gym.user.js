@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auto Gym
 // @namespace    RussianRob
-// @version      1.2.12
+// @version      1.2.13
 // @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
@@ -1065,6 +1065,24 @@ lynx.setDisable = function() {
         // Is this better than checking the button each time?
         lynx.currentStats[jsonData.stat.name.substring(0, 3)] = +jsonData.stat.newValue.replace(/,/g, '');
         lynx.calculateRatios();
+
+        // DIAG (v1.2.13): after a native train, dump the tile DOM so we can
+        // see which element Torn renders the gain message into. 700ms lets
+        // React's response handler finish painting before we snapshot.
+        try {
+          var _statName = jsonData.stat && jsonData.stat.name;
+          if (_statName) {
+            setTimeout(function() {
+              var _tile = document.querySelector('li[class*="' + _statName.toLowerCase() + '___"]');
+              if (_tile) {
+                console.log('[wb-auto-gym DIAG] tile after native train (' + _statName + '):\n' + _tile.outerHTML.slice(0, 3000));
+                console.log('[wb-auto-gym DIAG] train response:', JSON.stringify(jsonData).slice(0, 500));
+              } else {
+                console.log('[wb-auto-gym DIAG] could not find tile for ' + _statName);
+              }
+            }, 700);
+          }
+        } catch (_e) {}
       }
     }
 
