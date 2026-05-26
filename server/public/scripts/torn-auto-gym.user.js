@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.5
-// @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, locked-tile click capture, unified swap toasts, dedup on PDA, fetch-arg type safety for non-gym pages.
+// @version      1.2.6
+// @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). v1.2.6: drop the "— tap Train" suffix from blurred-tile swap toast — confirmation alone is enough.
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
@@ -740,7 +740,7 @@ function _wbClickHandler(ev) {
         lynx.unlockTilesForGym(bestGym.id);
         var statLabel = { str: 'STR', def: 'DEF', spe: 'SPD', dex: 'DEX' }[hit.statKey] || hit.statKey;
         var gymName = (lynx.gymInfo[bestGym.id] && lynx.gymInfo[bestGym.id].name) || ('gym ' + bestGym.id);
-        lynx.showSwapToast('Switched to ' + gymName + ' for ' + statLabel + ' — tap Train');
+        lynx.showSwapToast('Switched to ' + gymName + ' for ' + statLabel);
       } else {
         lynx.showSwapToast('Gym swap rejected by Torn (captcha?). Switch manually.');
       }
