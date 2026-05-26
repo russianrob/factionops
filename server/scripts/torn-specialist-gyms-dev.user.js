@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Specialist Gyms (DEV)
 // @namespace    tornwar.com/dev
-// @version      0.2.4
-// @description  DEV FORK. v0.2.4: log changeGym + train response bodies (not just status) so we can see what Torn actually returns. Try more permissive selectors for the active gym button.
+// @version      0.2.5
+// @description  DEV FORK. v0.2.5: surface Torn's "You need to validate Captcha" rejection on changeGym. Show a warning banner in the panel, auto-disable autoswitch to stop hammering, point the user at the captcha. Don't silently waste training energy at the old gym.
 // @author       warboard
 // @match        https://www.torn.com/gym.php*
 // @match        https://pda.torn.com/gym.php*
@@ -16,7 +16,7 @@
 (function() {
 	"use strict";
 
-	const SCRIPT_VERSION = "0.2.4";
+	const SCRIPT_VERSION = "0.2.5";
 	const NONE = "none";
 	const STORAGE_KEY_ONE = "tsg_dev_specialist_1";
 	const STORAGE_KEY_TWO = "tsg_dev_specialist_2";
@@ -480,6 +480,29 @@
 		return localStorage.getItem(AUTO_SWITCH_STORAGE_KEY) === "1";
 	}
 
+	// v0.2.5: surface changeGym failures (most commonly Torn's
+	// "You need to validate Captcha" anti-automation block) and
+	// auto-disable to stop hammering rejected swaps.
+	let lastSwapWarning = "";
+	function setSwapWarning(msg) {
+		lastSwapWarning = msg || "";
+		const banner = document.getElementById("tsg-dev-swap-warning");
+		if (!banner) return;
+		if (msg) {
+			banner.textContent = msg;
+			banner.style.display = "block";
+		} else {
+			banner.style.display = "none";
+		}
+	}
+	function disableAutoSwitchDueToFailure(reason) {
+		localStorage.setItem(AUTO_SWITCH_STORAGE_KEY, "0");
+		const cb = document.getElementById("tsg-dev-autoswitch-checkbox");
+		if (cb) cb.checked = false;
+		setSwapWarning("Auto-switch disabled: " + reason);
+		D("auto-switch DISABLED:", reason);
+	}
+
 	function createElement(type, className, text) {
 		const element = document.createElement(type);
 
@@ -757,17 +780,38 @@
 					if (bestGym && bestGym.id !== currentGymId) {
 						D("posting changeGym → " + bestGym.id);
 						const r = await realFetch("/gym.php?step=changeGym", buildChangeGymInit(args[1], bestGym.id));
-						// v0.2.4: also read body so we can see what Torn actually said.
 						let bodyText = "";
 						try { bodyText = await r.clone().text(); } catch (_) {}
 						D("changeGym response status=" + r.status + " body=" + bodyText.slice(0, 300));
+						// v0.2.5: parse and act on the response. Torn returns 200
+						// with {success:false, message:"You need to validate Captcha"}
+						// when it wants the user to prove they're not a bot.
+						try {
+							const parsed = JSON.parse(bodyText);
+							if (parsed && parsed.success === false) {
+								const msg = String(parsed.message || "Torn rejected the gym change");
+								if (/captcha/i.test(msg)) {
+									disableAutoSwitchDueToFailure(
+										"Torn requires a captcha. Open /gym.php, switch a gym manually once to clear the captcha, then re-enable auto-switch."
+									);
+								} else {
+									disableAutoSwitchDueToFailure(msg);
+								}
+							} else if (parsed && parsed.success === true) {
+								// Clear any stale warning from a previous failure.
+								setSwapWarning("");
+							}
+						} catch (e) {
+							D("changeGym body not JSON:", e && e.message);
+						}
 					}
-					// v0.2.4: also clone the train response so we can see whether
-					// Torn trained at the new gym or rejected.
+					// Forward the train regardless — don't lose the user's click.
+					// If the swap was rejected, this trains at the current (lesser)
+					// gym; the banner already told the user why.
 					const trainResp = await realFetch(...args);
 					let trainBody = "";
 					try { trainBody = await trainResp.clone().text(); } catch (_) {}
-					D("train response status=" + trainResp.status + " body=" + trainBody.slice(0, 300));
+					D("train response status=" + trainResp.status + " body=" + trainBody.slice(0, 200));
 					return trainResp;
 				}
 			} catch (e) {
@@ -922,6 +966,18 @@
 			#${PANEL_ID} .tsg-dev-message.tsg-dev-impossible {
 				border-color: rgba(251, 113, 133, 0.52);
 				color: #fb7185;
+			}
+
+			#${PANEL_ID} .tsg-dev-swap-warning {
+				display: none;
+				margin: 8px 0 4px;
+				padding: 8px 10px;
+				border-radius: 6px;
+				background: rgba(251, 191, 36, 0.12);
+				border: 1px solid rgba(251, 191, 36, 0.55);
+				color: #fbbf24;
+				font-size: 12px;
+				line-height: 1.4;
 			}
 
 			#${PANEL_ID} .tsg-dev-grid {
@@ -1090,9 +1146,11 @@
 		const label = createElement("label", "tsg-dev-autoswitch");
 		autoSwitchCheckboxElement = document.createElement("input");
 		autoSwitchCheckboxElement.type = "checkbox";
+		autoSwitchCheckboxElement.id = "tsg-dev-autoswitch-checkbox";
 		autoSwitchCheckboxElement.checked = getStoredAutoSwitchEnabled();
 		autoSwitchCheckboxElement.addEventListener("change", () => {
 			localStorage.setItem(AUTO_SWITCH_STORAGE_KEY, autoSwitchCheckboxElement.checked ? "1" : "0");
+			if (autoSwitchCheckboxElement.checked) setSwapWarning(""); // user re-enabling = dismiss old warning
 			syncAutoSwitchHook();
 			updatePanel();
 		});
@@ -1138,9 +1196,14 @@
 
 		controls.append(fieldOne, fieldTwo);
 		const autoSwitchControl = createAutoSwitchControl();
+		// v0.2.5: persistent warning slot for changeGym rejection / captcha.
+		const swapWarning = createElement("div", "tsg-dev-swap-warning");
+		swapWarning.id = "tsg-dev-swap-warning";
+		swapWarning.style.display = lastSwapWarning ? "block" : "none";
+		swapWarning.textContent = lastSwapWarning;
 		resultsElement = createElement("div", "tsg-dev-results");
 
-		panelElement.append(top, controls, autoSwitchControl, resultsElement);
+		panelElement.append(top, controls, autoSwitchControl, swapWarning, resultsElement);
 		syncAutoSwitchHook();
 		return panelElement;
 	}
