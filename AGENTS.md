@@ -65,6 +65,7 @@ These have caused incidents in the past. Read every one before touching any Torn
 
 - **No `wb-` prefix on new scripts.** Use topical prefix: `torn-`, `oc-`, `arson-`, `ffs-`, `factionops-`. Existing `wb-*` scripts keep their names because users already have them installed.
 - **Attribution: `@namespace RussianRob` + `@author RussianRob`.** Don't use `tornwar.com` / `warboard` in those fields. For forks of upstream scripts, credit the upstream author and append `(RussianRob maintains fork)`. Console log prefixes and panel CSS classes can keep their existing names — only the `@namespace` / `@author` header fields are affected.
+- **`@name` stays clean.** Just the feature name (`Torn Auto Gym`, not `Torn Auto Gym (RussianRob fork)`). Fork lineage goes in `@author` or the description's "Fork of X" sentence, never in the user-visible `@name`.
 - **Versioning: plain semver only.** `X.Y.Z` — no `-wbN`, `-dev`, or `-rc` suffixes. Pre-release suffixes break Tampermonkey updates once the suffix number hits double digits (`-wb10` sorts below `-wb9` lexically). Bump patch for fixes, minor for features, major for breaking changes.
 - Userscripts live as `<prefix>-<feature>.user.js` (e.g., `torn-rw-pricer.user.js`, `oc-spawn-assistance.user.js`).
 
