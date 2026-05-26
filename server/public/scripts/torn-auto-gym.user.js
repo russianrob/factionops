@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Auto Gym
 // @namespace    RussianRob
-// @version      1.2.19
+// @version      1.2.20
 // @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
@@ -672,38 +672,6 @@ lynx.showSwapToast = function(message) {
   setTimeout(function() { if (t.parentNode) t.remove(); }, 4500);
 };
 
-// Post-swap visual sync. lynx.gymInfo[id] has per-stat dot values
-// (0 = gym can't train that stat). For each tile, ensure locked___ class
-// presence matches the new gym's capability. Removes only the previously-
-// applied class names — we don't add a fresh locked class because React
-// would just regenerate its own on next render anyway.
-lynx.unlockTilesForGym = function(gymId) {
-  var info = lynx.gymInfo[gymId];
-  if (!info) return;
-  Object.keys(lynx.statClassToKey).forEach(function(statApiName) {
-    var key = lynx.statClassToKey[statApiName];
-    var tile = document.querySelector('li[class*="' + statApiName + '___"]');
-    if (!tile) return;
-    if (info[key] > 0) {
-      // Strip locked___* from the <li>
-      Array.prototype.slice.call(tile.classList).forEach(function(c) {
-        if (c.indexOf('locked___') === 0) tile.classList.remove(c);
-      });
-      // Strip locked___ / disabled___ classes AND disabled attrs from every
-      // descendant — the train button has its own disabled state deeper in.
-      tile.querySelectorAll('*').forEach(function(el) {
-        Array.prototype.slice.call(el.classList).forEach(function(c) {
-          if (c.indexOf('locked___') === 0 || c.indexOf('disabled___') === 0) {
-            el.classList.remove(c);
-          }
-        });
-        if (el.hasAttribute('disabled')) el.removeAttribute('disabled');
-        if (el.getAttribute('aria-disabled') === 'true') el.setAttribute('aria-disabled', 'false');
-      });
-    }
-  });
-};
-
 lynx.bestUnlockedGymForStat = function(statKey) {
   var gymList = lynx.picks[statKey] || [];
   for (var i = 0; i < gymList.length; i++) {
@@ -719,12 +687,18 @@ lynx.bestUnlockedGymForStat = function(statKey) {
   }
   return null;
 };
-// Blurred-tile click handler. Mirrors AGS's normal auto-swap redirect:
-// intercept the click, swap to the best unlocked gym for that stat, and
-// stop. swapGyms already fires the unified "Switched to X" toast and
-// patches Torn's native gym UI; the user then taps Train themselves and
-// Torn's React fires the train fetch natively (the train button is no
-// longer disabled because the current gym now trains this stat).
+// Blurred-tile click handler. On a specialist gym (where the current
+// gym doesn't train the tapped stat), Torn renders the train button as
+// disabled WITHOUT attaching an onClick handler — so even if we strip
+// the disabled attribute, taps reach a dead element. Only way to get
+// React to render the button as enabled (with handler attached) is to
+// re-initialize React with the new gym as its starting state, which
+// means a full page reload.
+//
+// Flow: tap blurred tile → swap server-side → brief 400ms pause so the
+// "Switched to X" toast registers visually → location.reload(). Page
+// comes back with the new gym selected, all stat tiles render fresh,
+// the previously-blurred stat is now normally trainable.
 function _wbClickHandler(ev) {
   if (lynx.disableCheckbox && lynx.disableCheckbox.checked) return;
   var hit = lynx.findClickedStatTile(ev.target);
@@ -737,11 +711,10 @@ function _wbClickHandler(ev) {
   (async function() {
     try {
       await lynx.swapGyms(bestGym.id);
-      // Unlock the tile + its inner button so the user CAN tap Train next
-      // — React's render still has them disabled because the swap came
-      // from outside its state model.
       if (lynx.currentGym === bestGym.id) {
-        lynx.unlockTilesForGym(bestGym.id);
+        // Tiny pause so the swap toast is briefly visible before the
+        // reload wipes it.
+        setTimeout(function() { window.location.reload(); }, 400);
       } else {
         lynx.showSwapToast('Gym swap rejected by Torn (captcha?). Switch manually.');
       }
