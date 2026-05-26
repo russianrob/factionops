@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb8
-// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb8: deeper tile-unlock — also strip disabled attrs and disabled___ classes from descendants of the swapped tile (the train button has its own disabled state separate from the <li>'s locked___). Log tile HTML before/after so we can see what worked.
+// @version      1.2.4-wb9
+// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb9: cross-gym training works — tap a blurred stat tile, script swaps + strips locked/disabled markers + shows a unified toast. Also fires the same toast on AGS's normal auto-swap (was using Torn's native notification before) so all swaps confirm the same way.
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*

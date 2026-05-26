@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (warboard fork)
 // @namespace    tornwar.com
-// @version      1.2.4-wb8
-// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb8: deeper tile-unlock — also strip disabled attrs and disabled___ classes from descendants of the swapped tile (the train button has its own disabled state separate from the <li>'s locked___). Log tile HTML before/after so we can see what worked.
+// @version      1.2.4-wb9
+// @description  Fork of Stephen Lynx's Auto Gym Switch. v1.2.4-wb9: cross-gym training works — tap a blurred stat tile, script swaps + strips locked/disabled markers + shows a unified toast. Also fires the same toast on AGS's normal auto-swap (was using Torn's native notification before) so all swaps confirm the same way.
 // @author       Stephen Lynx (warboard maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
@@ -13,7 +13,6 @@
 // @grant        none
 // ==/UserScript==
 var lynx = {};
-try { console.log('[wb-auto-gym] script load v1.2.4-wb5 url=' + location.href); } catch (_) {}
 
 // wb2: Torn's gym page disables (blurs + pointer-events:none) stat tiles
 // for stats the current specialist gym can't train (e.g. Mr. Isoyamas
@@ -565,12 +564,26 @@ lynx.swapGyms = async function(gymToUse) {
       var newSrc = logo.src.split('/');
       newSrc[newSrc.length - 1] = gymToUse + '.png';
       logo.src = newSrc.join('/');
-      
+
     } catch(error) {
       console.log(error);
+      // wb9: still toast even if the visual sync threw — the server-side
+      // swap already happened and the user needs to know.
+      if (lynx.showSwapToast) {
+        lynx.showSwapToast('Switched to ' + (lynx.gymInfo[gymToUse] && lynx.gymInfo[gymToUse].name || ('gym ' + gymToUse)));
+      }
       return new Response(JSON.stringify({
         message: 'Gym changed but failed to update visual elements. Wait for patch.'
       }));
+    }
+
+    // wb9: unified swap toast — fires for EVERY successful swap (both AGS's
+    // own auto-swap during the train fetch hook AND the blurred-tile click
+    // path in _wbClickHandler) so the user gets one consistent confirmation
+    // format across the script.
+    if (lynx.showSwapToast) {
+      var name = (lynx.gymInfo[gymToUse] && lynx.gymInfo[gymToUse].name) || ('gym ' + gymToUse);
+      lynx.showSwapToast('Switched to ' + name);
     }
 
   }
@@ -674,38 +687,21 @@ lynx.unlockTilesForGym = function(gymId) {
     var tile = document.querySelector('li[class*="' + statApiName + '___"]');
     if (!tile) return;
     if (info[key] > 0) {
-      // Diagnostic: full tile HTML before our cleanup so we can see what
-      // structure the train button uses.
-      try { console.log('[wb-auto-gym] tile BEFORE unlock (' + statApiName + '):\n' + tile.outerHTML.slice(0, 1500)); } catch (_) {}
-
-      // Strip locked___* from the <li> itself
+      // Strip locked___* from the <li>
       Array.prototype.slice.call(tile.classList).forEach(function(c) {
         if (c.indexOf('locked___') === 0) tile.classList.remove(c);
       });
       // Strip locked___ / disabled___ classes AND disabled attrs from every
-      // descendant — the train button can be deeper down.
-      var strippedClassCount = 0;
-      var strippedAttrCount = 0;
+      // descendant — the train button has its own disabled state deeper in.
       tile.querySelectorAll('*').forEach(function(el) {
         Array.prototype.slice.call(el.classList).forEach(function(c) {
           if (c.indexOf('locked___') === 0 || c.indexOf('disabled___') === 0) {
             el.classList.remove(c);
-            strippedClassCount++;
           }
         });
-        if (el.hasAttribute('disabled')) {
-          el.removeAttribute('disabled');
-          strippedAttrCount++;
-        }
-        if (el.getAttribute('aria-disabled') === 'true') {
-          el.setAttribute('aria-disabled', 'false');
-          strippedAttrCount++;
-        }
+        if (el.hasAttribute('disabled')) el.removeAttribute('disabled');
+        if (el.getAttribute('aria-disabled') === 'true') el.setAttribute('aria-disabled', 'false');
       });
-      try {
-        console.log('[wb-auto-gym] stripped ' + strippedClassCount + ' classes, ' + strippedAttrCount + ' attrs');
-        console.log('[wb-auto-gym] tile AFTER unlock (' + statApiName + '):\n' + tile.outerHTML.slice(0, 1500));
-      } catch (_) {}
     }
   });
 };
@@ -725,50 +721,30 @@ lynx.bestUnlockedGymForStat = function(statKey) {
   }
   return null;
 };
-lynx.wbClickCount = 0;
 function _wbClickHandler(ev) {
-  if (lynx.wbClickCount++ < 30) {
-    var tgt = ev.target;
-    var snippet = '';
-    try { snippet = (tgt.outerHTML || tgt.tagName || '?').slice(0, 200); } catch (_) {}
-    console.log('[wb-auto-gym] click captured target=', snippet);
-  }
-  if (lynx.disableCheckbox && lynx.disableCheckbox.checked) {
-    console.log('[wb-auto-gym] autoswitch disabled — passing click through');
-    return;
-  }
+  if (lynx.disableCheckbox && lynx.disableCheckbox.checked) return;
   var hit = lynx.findClickedStatTile(ev.target);
-  if (!hit) { console.log('[wb-auto-gym] click is NOT on a stat tile (no propertyContent___ ancestor)'); return; }
-  console.log('[wb-auto-gym] tile detected statKey=' + hit.statKey + ' tile.className=' + hit.tile.className);
-  if (!lynx.tileIsDisabled(hit.tile)) { console.log('[wb-auto-gym] tile is enabled — letting React handle'); return; }
-  console.log('[wb-auto-gym] tile is DISABLED — looking for best gym for ' + hit.statKey);
+  if (!hit) return;
+  if (!lynx.tileIsDisabled(hit.tile)) return; // tile is already enabled — let React handle
   var bestGym = lynx.bestUnlockedGymForStat(hit.statKey);
-  if (!bestGym) {
-    console.warn('[wb-auto-gym] no unlocked gym trains ' + hit.statKey + ' — letting click through');
-    return;
-  }
+  if (!bestGym) return;
   ev.preventDefault();
   ev.stopImmediatePropagation();
-  console.log('[wb-auto-gym] cross-gym train: swap to ' + bestGym.id + ' for ' + hit.statKey);
   (async function() {
     try {
       await lynx.swapGyms(bestGym.id);
-      // wb7: don't try to auto-train. Torn's train button stays disabled
-      // until React fully re-renders, and we can't force that from outside.
-      // Strip locked___ on the relevant tiles so they're tappable, show a
-      // toast so the user knows the swap happened, let them tap Train.
       if (lynx.currentGym === bestGym.id) {
+        // swapGyms already fired the "Switched to <gym>" toast. Append a
+        // hint specific to this path (the user tapped a blurred tile and
+        // now needs to tap the now-enabled Train button).
         lynx.unlockTilesForGym(bestGym.id);
-        var gymName = (lynx.gymInfo[bestGym.id] && lynx.gymInfo[bestGym.id].name) || ('gym ' + bestGym.id);
         var statLabel = { str: 'STR', def: 'DEF', spe: 'SPD', dex: 'DEX' }[hit.statKey] || hit.statKey;
+        var gymName = (lynx.gymInfo[bestGym.id] && lynx.gymInfo[bestGym.id].name) || ('gym ' + bestGym.id);
         lynx.showSwapToast('Switched to ' + gymName + ' for ' + statLabel + ' — tap Train');
-        console.log('[wb-auto-gym] swap done; user should tap Train now');
       } else {
         lynx.showSwapToast('Gym swap rejected by Torn (captcha?). Switch manually.');
-        console.warn('[wb-auto-gym] swap did not take (currentGym=' + lynx.currentGym + ', wanted=' + bestGym.id + ')');
       }
     } catch (e) {
-      console.warn('[wb-auto-gym] cross-gym swap failed:', e && e.message);
       lynx.showSwapToast('Gym swap failed: ' + (e && e.message));
     }
   })();
