@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Auto Gym (RussianRob fork)
 // @namespace    RussianRob
-// @version      1.2.7
-// @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). v1.2.7: switch @namespace + @author to RussianRob (the service name). v1.2.6: drop "— tap Train" toast suffix.
+// @version      1.2.8
+// @description  Fork of Stephen Lynx's Auto Gym Switch (Greasy Fork 480060). Cross-gym training, PDA support, unified swap toasts, tile/button unlock after gym switch, fetch-arg type safety for non-gym pages.
 // @author       Stephen Lynx (RussianRob maintains fork)
 // @license      MIT
 // @match        https://www.torn.com/gym.php*
@@ -14,7 +14,7 @@
 // ==/UserScript==
 var lynx = {};
 
-// wb2: Torn's gym page disables (blurs + pointer-events:none) stat tiles
+// Torn's gym page disables (blurs + pointer-events:none) stat tiles
 // for stats the current specialist gym can't train (e.g. Mr. Isoyamas
 // greys out STR/SPD/DEX). With auto-switch installed the user wants to
 // click those tiles anyway — the swap fires, the gym changes, the train
@@ -25,10 +25,9 @@ var lynx = {};
     if (document.getElementById('wb-auto-gym-style')) return;
     var s = document.createElement('style');
     s.id = 'wb-auto-gym-style';
-    // wb5: tiles themselves
-    // wb8: also force-enable disabled buttons + inner disabled markers,
-    // because Torn renders the train button with its own disabled state
-    // separate from the <li>'s locked class.
+    // Force-enable the locked stat tiles plus their inner disabled
+    // buttons / markers — Torn renders the train button with its own
+    // disabled state separate from the <li>'s locked class.
     var statTileSel = ['strength', 'defense', 'speed', 'dexterity']
       .map(function(s) { return 'li[class*="' + s + '___"]'; })
       .join(',');
@@ -567,7 +566,7 @@ lynx.swapGyms = async function(gymToUse) {
 
     } catch(error) {
       console.log(error);
-      // wb9: still toast even if the visual sync threw — the server-side
+      // Still toast even if the visual sync threw — the server-side
       // swap already happened and the user needs to know.
       if (lynx.showSwapToast) {
         lynx.showSwapToast('Switched to ' + (lynx.gymInfo[gymToUse] && lynx.gymInfo[gymToUse].name || ('gym ' + gymToUse)));
@@ -577,10 +576,9 @@ lynx.swapGyms = async function(gymToUse) {
       }));
     }
 
-    // wb9: unified swap toast — fires for EVERY successful swap (both AGS's
-    // own auto-swap during the train fetch hook AND the blurred-tile click
-    // path in _wbClickHandler) so the user gets one consistent confirmation
-    // format across the script.
+    // Unified swap toast — fires for every successful swap (both AGS's
+    // own auto-swap during the train fetch hook AND the blurred-tile
+    // click path) so the user gets one consistent confirmation format.
     if (lynx.showSwapToast) {
       var name = (lynx.gymInfo[gymToUse] && lynx.gymInfo[gymToUse].name) || ('gym ' + gymToUse);
       lynx.showSwapToast('Switched to ' + name);
@@ -593,7 +591,7 @@ lynx.swapGyms = async function(gymToUse) {
   }));
 };
 
-// wb3: capture clicks on disabled stat tiles. When the user is on a
+// Capture clicks on disabled stat tiles. When the user is on a
 // specialist gym, Torn's React handler refuses to fire the train fetch
 // for stats that gym can't train (Mr. Isoyamas blocks STR/SPD/DEX).
 // Without this handler, auto-switch never gets a train fetch to
@@ -619,7 +617,7 @@ lynx.statClassToKey = {
   'speed':    'spe',
   'dexterity':'dex',
 };
-// wb5: actual DOM observed in PDA console log —
+// Actual Torn DOM (verified):
 //   <li class="speed___d3OO8 locked___zpLSk">
 //     <div class="propertyTitle___dZL4b">…</div>
 //   </li>
@@ -652,7 +650,7 @@ lynx.tileIsDisabled = function(tile) {
   }
   return false;
 };
-// wb7: visible toast so user knows a swap happened. Floating overlay,
+// Visible toast so user knows a swap happened. Floating overlay,
 // auto-hides after a few seconds. Tapping it also dismisses.
 lynx.showSwapToast = function(message) {
   var existing = document.getElementById('wb-auto-gym-toast');
@@ -674,7 +672,7 @@ lynx.showSwapToast = function(message) {
   setTimeout(function() { if (t.parentNode) t.remove(); }, 4500);
 };
 
-// wb6: post-swap visual sync. lynx.gymInfo[id] has per-stat dot values
+// Post-swap visual sync. lynx.gymInfo[id] has per-stat dot values
 // (0 = gym can't train that stat). For each tile, ensure locked___ class
 // presence matches the new gym's capability. Removes only the previously-
 // applied class names — we don't add a fresh locked class because React
@@ -821,7 +819,7 @@ lynx.setDisable = function() {
 
   window.fetch = async function(...args) {
 
-    // wb10: args[0] is a string when the page calls fetch with a URL, but
+    // args[0] is a string when the page calls fetch with a URL, but
     // can be a Request object (or anything else) on other Torn pages. PDA
     // keeps this hook live across SPA navigation away from /gym.php, so we
     // see fetches with non-string args[0] and the old args[0].indexOf(...)
