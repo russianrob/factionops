@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.21
+// @version      5.1.22
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -4217,13 +4217,35 @@ body.wb-chain-active {
     let ffFetchInFlight = false;
 
     /**
-     * Batch-fetch FF values from ffscouter.com for all current enemy targets.
-     * Caches results in memory for 1 hour. Skips targets already cached.
+     * Try the warboard server's cached enemy-stats endpoint first.
+     * Server uses the faction's saved FFS key (or the requester's API key as
+     * a fallback), caches estimates for 30 minutes per war, and serves the
+     * same data to every faction member — so we hit ffscouter.com once per
+     * war per 30 min instead of once per browser tab.
+     * Resolves to { playerId: bs_estimate } map, or null if unavailable.
      */
-    function fetchFairFightBatch() {
+    async function fetchEnemyStatsFromServer() {
+        const warId = deriveWarId();
+        if (!warId || !state.jwtToken) return null;
+        try {
+            const data = await getAction(`/api/war/${encodeURIComponent(warId)}/enemy-stats`);
+            if (!data || !data.estimates) return null;
+            return data.estimates;
+        } catch (e) {
+            // 503 (no FFS key on server) or any other error → caller falls back
+            return null;
+        }
+    }
+
+    /**
+     * Batch-fetch enemy stat estimates. Server-cached path first
+     * (shared across faction, 30-min TTL); direct ffscouter.com call as
+     * fallback for when the server has no FFS key or returns an error.
+     * Stores values in ffCache as { stats, bsHuman, fetchedAt } — no FF
+     * score; we only show stat estimates in the overlay.
+     */
+    async function fetchFairFightBatch() {
         if (ffFetchInFlight) return;
-        const apiKey = CONFIG.API_KEY;
-        if (!apiKey) return;
 
         const allIds = Object.keys(state.statuses);
         const now = Date.now();
@@ -4233,13 +4255,41 @@ body.wb-chain-active {
         });
         if (needed.length === 0) return;
 
-        // ffscouter API accepts comma-separated target IDs
+        ffFetchInFlight = true;
+        try {
+            // Try the server's cached endpoint first.
+            const serverEstimates = await fetchEnemyStatsFromServer();
+            if (serverEstimates && Object.keys(serverEstimates).length > 0) {
+                const ts = Date.now();
+                for (const [pid, total] of Object.entries(serverEstimates)) {
+                    const n = Number(total);
+                    if (!Number.isFinite(n) || n <= 0) continue;
+                    ffCache[pid] = {
+                        value: null,            // server endpoint doesn't return FF score
+                        stats: n,
+                        bsHuman: formatBspNumber(n),
+                        lastUpdated: 0,
+                        fetchedAt: ts,
+                    };
+                }
+                log('FF: server returned', Object.keys(serverEstimates).length, 'estimates');
+                ffFetchInFlight = false;
+                updateAllFfBadges();
+                return;
+            }
+        } catch (e) {
+            log('FF: server enemy-stats threw:', e && e.message);
+        }
+        // Fallback: direct ffscouter.com call with user's own API key.
+        // The GM_xmlhttpRequest callbacks below reset ffFetchInFlight.
+        const apiKey = CONFIG.API_KEY;
+        if (!apiKey) { ffFetchInFlight = false; return; }
+
         const batchSize = 50;
         const batch = needed.slice(0, batchSize);
         const url = `https://ffscouter.com/api/v1/get-stats?key=${encodeURIComponent(apiKey)}&targets=${batch.join(',')}`;
 
-        ffFetchInFlight = true;
-        log('FF: fetching', batch.length, 'targets from ffscouter.com');
+        log('FF: server miss, falling back to ffscouter.com for', batch.length, 'targets');
 
         GM_xmlhttpRequest({
             method: 'GET',
@@ -4262,13 +4312,23 @@ body.wb-chain-active {
                     for (const entry of data) {
                         if (!entry || !entry.player_id) continue;
                         const id = String(entry.player_id);
-                        if (entry.fair_fight == null) {
-                            ffCache[id] = { value: null, lastUpdated: 0, bsHuman: null, fetchedAt: ts };
+                        // Normalised cache shape: { value (FF score), stats
+                        // (raw bs_estimate), bsHuman (formatted), lastUpdated,
+                        // fetchedAt }. value+lastUpdated retained for any
+                        // legacy code path; overlay rendering only uses stats/
+                        // bsHuman.
+                        const rawStats = Number(entry.bs_estimate);
+                        const stats = Number.isFinite(rawStats) && rawStats > 0 ? rawStats : null;
+                        const bsHuman = entry.bs_estimate_human
+                            || (stats != null ? formatBspNumber(stats) : null);
+                        if (entry.fair_fight == null && stats == null) {
+                            ffCache[id] = { value: null, stats: null, lastUpdated: 0, bsHuman: null, fetchedAt: ts };
                         } else {
                             ffCache[id] = {
-                                value: entry.fair_fight,
+                                value: entry.fair_fight != null ? entry.fair_fight : null,
+                                stats,
                                 lastUpdated: entry.last_updated || 0,
-                                bsHuman: entry.bs_estimate_human || null,
+                                bsHuman,
                                 fetchedAt: ts,
                             };
                         }
@@ -4308,8 +4368,13 @@ body.wb-chain-active {
     /** Render an inline FF badge element. */
     function renderInlineFf(el, targetId) {
         const cached = ffCache[targetId];
-        if (!cached || cached.value == null) {
-            if (el.dataset.foCache === 'empty') return; // already empty
+        // Stats-only display. No FF score in the overlay (user preference).
+        // Show the human-formatted stat estimate; if we don't have one,
+        // render empty.
+        const stats = cached && cached.bsHuman ? cached.bsHuman
+            : (cached && cached.stats ? formatBspNumber(cached.stats) : null);
+        if (!stats) {
+            if (el.dataset.foCache === 'empty') return;
             el.dataset.foCache = 'empty';
             el.textContent = '';
             el.className = 'fo-ff-inline';
@@ -4317,28 +4382,18 @@ body.wb-chain-active {
             el.style.background = '';
             return;
         }
-        const ff = cached.value;
-        const now = Date.now() / 1000;
-        const age = now - cached.lastUpdated;
-        const stale = age > 14 * 24 * 60 * 60; // >14 days
-        // v5.0.20: include the FFS stat estimate inline next to the FF
-        // score when available. bsHuman is the formatted string like
-        // "5.08b" (premium-tier FFS feature). Free-tier users won't have
-        // it — those badges stay FF-only as before.
-        const stats = cached.bsHuman || null;
-        const key = `ff_${ff.toFixed(2)}_${stale}_${stats || ''}`;
-        if (el.dataset.foCache === key) return; // no change
+        const tier = cached && cached.stats != null ? bspTier(cached.stats) : 'unknown';
+        const key = `stats_${stats}_${tier}`;
+        if (el.dataset.foCache === key) return;
         el.dataset.foCache = key;
-        const label = stats
-            ? `FF:${ff.toFixed(2)}${stale ? '?' : ''} · ${stats}`
-            : `FF:${ff.toFixed(2)}${stale ? '?' : ''}`;
-        el.className = 'fo-ff-inline';
-        el.textContent = label;
-        el.style.color = ffColor(ff);
+        el.className = 'fo-ff-inline fo-ff-stats-' + tier;
+        el.textContent = stats;
+        // Tier-based subtle color so the user gets a quick visual read.
+        // s=red (3B+), a=yellow (1-3B), b=green (500M-1B), c=gray (<500M).
+        const tierColor = ({ s: '#ff4f57', a: '#f5a623', b: '#7ed957', c: '#9aa3b2', unknown: '' })[tier];
+        el.style.color = tierColor || '';
         el.style.background = 'rgba(255,255,255,0.06)';
-        el.title = stale
-            ? `Fair Fight ${ff.toFixed(2)}${stats ? ' • Est. stats: ' + stats : ''} (stale data)`
-            : `Fair Fight ${ff.toFixed(2)}${stats ? ' • Est. stats: ' + stats : ''}`;
+        el.title = `Est. stats: ${stats}`;
     }
 
     /** Update all rendered FF badges from cache. */
