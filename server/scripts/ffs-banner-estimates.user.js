@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.1-wb65
+// @version      2.73.2
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3623,10 +3623,33 @@ if (!singleton) {
       return null;
     }
 
+    // Classify each row's availability so online players bubble above
+    // hospital / jail / traveling. Within each group the FFS score still
+    // decides ordering, so a strong online target outranks weaker online
+    // ones; the whole hospital group sits beneath the whole online group.
+    //   0 = online (attackable now)
+    //   1 = idle / okay / unknown (not in hospital but not green-online)
+    //   2 = hospital / jail / traveling / offline (not attackable now)
+    function rowGroup(meta) {
+      if (meta.pid && _ffsMemberHospitalUntil[meta.pid]) return 2; // we have hospital countdown data
+      if (meta.pid && _ffsMemberCountdowns[meta.pid]) return 2;    // travel landing data
+      const row = meta.row;
+      // Hospital / jail / traveling text in any cell
+      const txt = (row.textContent || '').toLowerCase();
+      if (/\b(hospital|jail|traveling|travelling)\b/.test(txt)) return 2;
+      // Explicit online indicator
+      if (row.querySelector('[aria-label*="online" i], [title*="online" i], [class*="online"]')) return 0;
+      if (/\bonline\b/.test(txt)) return 0;
+      return 1;
+    }
+
     rowMeta.sort((a, b) => {
+      const ga = rowGroup(a);
+      const gb = rowGroup(b);
+      if (ga !== gb) return ga - gb; // online (0) → other (1) → hospital (2)
       const sa = rowScore(a);
       const sb = rowScore(b);
-      // Rows missing scores sink to the bottom regardless of direction.
+      // Rows missing scores sink within their own group.
       if (sa == null && sb == null) return 0;
       if (sa == null) return 1;
       if (sb == null) return -1;
