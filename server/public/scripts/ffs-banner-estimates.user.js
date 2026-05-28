@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.3
+// @version      2.73.4
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3121,21 +3121,115 @@ if (!singleton) {
       painted, skippedNoAnchor, skippedNoStatus, notTraveling,
       travellingKnown: Object.keys(_ffsMemberCountdowns).length,
     });
-    // wb48: after the paint pass, reorder each member-list so hospital/
-    // jail members with the soonest release float to the top. Ported
-    // from Torn War Stuff Enhanced — enables revive-hunting by visual
-    // scan instead of manual timer math.
-    ffs_sortRowsByHospitalRelease(rows);
+    // wb48/wb61: after the paint pass, re-apply ordering. ffs_applyWarSort is
+    // the single ordering authority: in war mode (after the user clicks FFS)
+    // it keeps attackable→hospital→jail/travel and re-applies it every tick so
+    // it survives React re-renders; otherwise it reproduces the original
+    // hospital-release revive-hunt sort. Signature-guarded, so a stable list
+    // is a no-op.
+    ffs_applyWarSort(rows);
   }
 
-  // wb48: keep track of last-sorted signature per container so we skip
-  // DOM writes when nothing's changed (avoids visual thrash on every 1s
-  // paint tick).
+  // wb48/wb61: last-sorted signature per container so we skip DOM writes when
+  // nothing changed (avoids visual thrash on every 1s paint tick). The
+  // signature is mode + direction + resulting pid order, so a direction toggle
+  // or a member moving between groups flips it and triggers exactly one
+  // corrective re-sort.
   const _ffsSortSignatures = new WeakMap();
-  function ffs_sortRowsByHospitalRelease(rowList) {
+
+  // wb61: war-mode FFS sort state lives in module scope, NOT on the button —
+  // the sort button is re-injected every 500ms (ffs_inject_sort_buttons) and
+  // would otherwise reset direction to default. _ffsWarSortActive flips true
+  // the first time the user clicks the FFS button in a war context; from then
+  // on the 1s paint tick re-applies the war ordering so it survives Torn's
+  // React re-renders. _ffsScoreCache holds FFS scores by pid so the tick never
+  // has to await the async ffcache.get.
+  let _ffsWarSortActive = false;
+  let _ffsAppliedDesc = null;   // null = unclicked; true = strongest-first; false = weakest-first
+  const _ffsScoreCache = {};    // pid (string) -> FFS score
+
+  // wb61: are we on a ranked-war VIEW (not just the own-faction roster, which
+  // also lives at step=your)? Require an actual enemy/war signal so the
+  // persistent attackable-top ordering only kicks in during a war — plain
+  // roster pages keep the click-only hospital-release default. The React
+  // selector is a build-independent partial match (the hashed class
+  // .opponentFactionName___xxxx changes between Torn builds).
+  function ffs_isWarContext() {
+    return !!(document.querySelector('.enemy-faction .members-list')
+           || document.querySelector('[class*="opponentFactionName" i]')
+           || /\/war\//.test(location.hash)
+           || location.search.includes('type=1'));
+  }
+
+  // wb61: keep the sort button's arrow/label in sync with module state. Label
+  // shows the NEXT click's direction (↓ = sort strongest-first/descending).
+  function _ffsApplySortBtnVisual(btn) {
+    const nextDesc = (_ffsAppliedDesc !== true); // next click descends unless we just did
+    btn.dataset.sortDesc = nextDesc ? "1" : "0";
+    btn.textContent = nextDesc ? "↓ FFS" : "↑ FFS";
+  }
+
+  // wb61: parse the visible text out of a saved status-cell HTML snapshot
+  // (data-ffsTravelOriginal / data-ffsHospOriginal) so group detection can
+  // recover the native status word after our chip overwrote the cell.
+  function _ffsTextFromHtml(html) {
+    const t = document.createElement('div');
+    t.innerHTML = html;
+    return t.textContent || '';
+  }
+
+  // wb61: classify a member row into a sort group:
+  //   0 = attackable (okay/online/idle), 1 = hospital, 2 = jail / travel / abroad
+  // Priority ladder (first match wins), built to survive the chip painter
+  // overwriting the native status text — after a chip is injected the cell text
+  // is a bare timer ("00:12:34"), never the word "Hospital":
+  //   (a) authoritative in-memory maps (independent of DOM),
+  //   (b) our injected chips (.jail checked BEFORE plain hospital),
+  //   (c) Torn-native status cell: aria-label + saved-original snapshot, read
+  //       BEFORE live textContent,
+  //   (d) raw textContent regex as a last resort.
+  function ffs_rowGroup(row, pid) {
+    if (pid && _ffsMemberCountdowns[pid]) return 2;            // traveling (map)
+    if (pid && _ffsMemberHospitalUntil[pid]) {                // hospital/jail (map)
+      return _ffsMemberHospitalState[pid] === 'Jail' ? 2 : 1;
+    }
+    if (row.querySelector('a.ffs-hosp-status.jail')) return 2; // jail BEFORE hospital
+    if (row.querySelector('a.ffs-hosp-status'))      return 1; // hospital
+    if (row.querySelector('span.ffs-travel-status')) return 2; // traveling
+    const statusEl = row.querySelector('.status')
+                  || row.querySelector('[class*="status" i]');
+    let txt = '';
+    if (statusEl) {
+      if (statusEl.dataset.ffsHospOriginal)        txt = _ffsTextFromHtml(statusEl.dataset.ffsHospOriginal);
+      else if (statusEl.dataset.ffsTravelOriginal) txt = _ffsTextFromHtml(statusEl.dataset.ffsTravelOriginal);
+      else                                         txt = statusEl.textContent || '';
+      const aria = statusEl.getAttribute('aria-label') || '';
+      if (aria) txt = aria + ' ' + txt;
+    }
+    txt = txt.toLowerCase();
+    if (/\b(traveling|travelling|jail|abroad)\b/.test(txt)) return 2;
+    if (/\bhospital\b/.test(txt)) return 1;
+    return 0;                                                  // attackable
+  }
+  function ffs_hospKey(pid)    { return _ffsMemberHospitalUntil[pid] || Infinity; }
+  function ffs_unreachKey(pid) { return _ffsMemberHospitalUntil[pid] || _ffsMemberCountdowns[pid] || Infinity; }
+
+  // wb61: the SINGLE reorderer for member lists — replaces the old
+  // ffs_sortRowsByHospitalRelease so exactly one function owns ordering. (The
+  // previous setup ran this hospital-release sort every 1s, fighting the
+  // click-driven FFS sort — that conflict is why war-mode "groups mixed" and
+  // wouldn't stay sorted.) Two modes:
+  //   • war mode (user clicked FFS in a war context): attackable first by FFS
+  //     score, then hospital by soonest release, then jail/travel last;
+  //   • legacy (default / non-war / pre-click): hospital, jail & travel float
+  //     to the top by release time (revive-hunting), attackable sinks — the
+  //     original wb48 behaviour, preserved for plain faction roster pages.
+  // Signature-guarded + change-checked: an unchanged list is a no-op, so the
+  // appendChild can never trigger a re-sort loop.
+  function ffs_applyWarSort(rowList) {
     if (!rowList || rowList.length === 0) return;
-    // Group rows by their parent container so we only reorder within
-    // each list (enemy-faction vs your-faction etc.).
+    const warMode = _ffsWarSortActive && ffs_isWarContext();
+    const desc = (_ffsAppliedDesc == null) ? true : _ffsAppliedDesc;
     const groups = new Map();
     rowList.forEach((row) => {
       const parent = row.parentElement;
@@ -3145,41 +3239,51 @@ if (!singleton) {
     });
 
     for (const [parent, rows] of groups) {
-      // Compute a sort key per row. Lower = higher in the list.
-      //   Hospital: release-unix (earliest release first)
-      //   Jail:     release-unix + 1e10 (after all hospital)
-      //   Traveling (with known landing): landing-unix + 2e10
-      //   Other:    Infinity
-      const keyed = rows.map((row, idx) => {
+      const metas = rows.map((row, idx) => {
         const a = row.querySelector('a[href*="XID="]');
         const m = a?.href?.match(/XID=(\d+)/);
-        const uid = m?.[1];
-        let key = Infinity;
-        if (uid) {
-          if (_ffsMemberHospitalUntil[uid]) {
-            const base = _ffsMemberHospitalUntil[uid];
-            key = _ffsMemberHospitalState[uid] === 'Jail' ? base + 1e10 : base;
-          } else if (_ffsMemberCountdowns[uid]) {
-            key = _ffsMemberCountdowns[uid] + 2e10;
-          }
-        }
-        return { row, key, idx };
+        return { row, pid: m ? m[1] : null, idx };
       });
-      // Stable sort — use index tie-breaker so equal-key rows keep order.
-      keyed.sort((a, b) => (a.key - b.key) || (a.idx - b.idx));
-      // Signature = concatenation of keys in sorted order. If unchanged
-      // since last pass, skip the DOM reorder.
-      const sig = keyed.map(k => k.key).join('|');
+
+      metas.sort((A, B) => {
+        if (warMode) {
+          const ga = ffs_rowGroup(A.row, A.pid);
+          const gb = ffs_rowGroup(B.row, B.pid);
+          if (ga !== gb) return ga - gb;                       // 0 atk < 1 hosp < 2 jail/travel
+          if (ga === 1) return ffs_hospKey(A.pid) - ffs_hospKey(B.pid);     // soonest release first
+          if (ga === 2) return ffs_unreachKey(A.pid) - ffs_unreachKey(B.pid);
+          const sa = _ffsScoreCache[A.pid];                    // attackable: by FFS score
+          const sb = _ffsScoreCache[B.pid];
+          if (sa == null && sb == null) return A.idx - B.idx;
+          if (sa == null) return 1;
+          if (sb == null) return -1;
+          return desc ? sb - sa : sa - sb;
+        }
+        // legacy: hospital(until) < jail(+1e10) < travel(+2e10) < attackable(Infinity)
+        let ka = Infinity, kb = Infinity;
+        if (A.pid) {
+          if (_ffsMemberHospitalUntil[A.pid]) { const b = _ffsMemberHospitalUntil[A.pid]; ka = _ffsMemberHospitalState[A.pid] === 'Jail' ? b + 1e10 : b; }
+          else if (_ffsMemberCountdowns[A.pid]) { ka = _ffsMemberCountdowns[A.pid] + 2e10; }
+        }
+        if (B.pid) {
+          if (_ffsMemberHospitalUntil[B.pid]) { const b = _ffsMemberHospitalUntil[B.pid]; kb = _ffsMemberHospitalState[B.pid] === 'Jail' ? b + 1e10 : b; }
+          else if (_ffsMemberCountdowns[B.pid]) { kb = _ffsMemberCountdowns[B.pid] + 2e10; }
+        }
+        return (ka - kb) || (A.idx - B.idx);
+      });
+
+      // Signature = mode + direction + resulting pid order. Unchanged → skip.
+      const sig = (warMode ? 'w' : 'l') + (desc ? 'd' : 'a') + '|' + metas.map(k => k.pid || '?').join(',');
       if (_ffsSortSignatures.get(parent) === sig) continue;
       _ffsSortSignatures.set(parent, sig);
-      // Skip DOM writes if already in desired order.
+      // Skip the DOM write if the rows are already in the desired order.
       let changed = false;
-      for (let i = 0; i < keyed.length; i++) {
-        if (parent.children[i] !== keyed[i].row) { changed = true; break; }
+      for (let i = 0; i < metas.length; i++) {
+        if (parent.children[i] !== metas[i].row) { changed = true; break; }
       }
       if (!changed) continue;
       const frag = document.createDocumentFragment();
-      for (const k of keyed) frag.appendChild(k.row);
+      for (const k of metas) frag.appendChild(k.row);
       parent.appendChild(frag);
     }
   }
@@ -3542,8 +3646,7 @@ if (!singleton) {
 
       const btn = document.createElement("button");
       btn.className = "ff-scouter-sort-btn";
-      btn.dataset.sortDesc = "1"; // first click: strongest → weakest
-      btn.textContent = "↓ FFS";
+      _ffsApplySortBtnVisual(btn); // wb61: reflect persisted direction (survives 500ms re-inject)
       btn.style.cssText =
         "margin-left:6px;padding:1px 6px;border-radius:3px;"
         + "font-size:11px;font-weight:700;background:#2a3fff;color:#fff;"
@@ -3570,10 +3673,12 @@ if (!singleton) {
   }
 
   async function ffs_sort_list(container, btn) {
-    const descNow = btn.dataset.sortDesc === "1";
-    // Flip for next click.
-    btn.dataset.sortDesc = descNow ? "0" : "1";
-    btn.textContent = descNow ? "↑ FFS" : "↓ FFS";
+    // wb61: direction + active state live in module scope (see _ffsAppliedDesc /
+    // _ffsWarSortActive), NOT on the button — the button is re-injected every
+    // 500ms and would otherwise reset. Toggle on each click; null → desc first.
+    _ffsAppliedDesc = (_ffsAppliedDesc == null) ? true : !_ffsAppliedDesc;
+    const descNow = _ffsAppliedDesc; // true = strongest-first
+    _ffsApplySortBtnVisual(btn);
 
     // War pages (legacy): rows live under .members-list.
     // Faction pages: rows live under .table-body.
@@ -3609,9 +3714,9 @@ if (!singleton) {
       return { row, pid };
     });
 
-    // Pull FFS cache for all rows in one shot.
+    // Pull FFS cache for all rows in one shot, then stash scores by pid so the
+    // 1s paint-tick re-sort (ffs_applyWarSort) reads them synchronously.
     const cache = await ffcache.get(playerIds);
-
     function rowScore(meta) {
       if (!meta.pid) return null;
       const c = cache[meta.pid];
@@ -3622,40 +3727,31 @@ if (!singleton) {
       if (typeof c.value === "number" && isFinite(c.value)) return c.value;
       return null;
     }
-
-    // Three-tier grouping:
-    //   0 = not in hospital (attackable now — online / idle / okay)
-    //   1 = hospital (sorted internally by release time ascending so the
-    //       ones about to wake up are right after the attackable group)
-    //   2 = traveling / jail (genuinely unreachable, bottom of the list)
-    // FFS score decides the order WITHIN groups 0 and 2; group 1 is
-    // ordered by hospital release time, not score.
-    function rowGroup(meta) {
-      if (meta.pid && _ffsMemberCountdowns[meta.pid]) return 2; // traveling
-      if (meta.pid && _ffsMemberHospitalUntil[meta.pid]) {
-        return _ffsMemberHospitalState[meta.pid] === 'Jail' ? 2 : 1;
-      }
-      // Text-based fallback for rows we haven't observed travel/hospital
-      // data for yet.
-      const txt = (meta.row.textContent || '').toLowerCase();
-      if (/\b(traveling|travelling|jail)\b/.test(txt)) return 2;
-      if (/\bhospital\b/.test(txt)) return 1;
-      return 0;
-    }
-    function hospitalUntil(meta) {
-      if (meta.pid && _ffsMemberHospitalUntil[meta.pid]) {
-        return _ffsMemberHospitalUntil[meta.pid];
-      }
-      return Infinity;
+    for (const meta of rowMeta) {
+      if (!meta.pid) continue;
+      const sc = rowScore(meta);
+      if (sc != null) _ffsScoreCache[String(meta.pid)] = sc; // never downgrade a known score
     }
 
+    // wb61: in a war context hand ordering to the single persistent sorter so
+    // the result survives Torn's React re-renders (it re-applies under a
+    // signature guard on every 1s paint tick). Instant feedback + persistence.
+    if (ffs_isWarContext()) {
+      _ffsWarSortActive = true;
+      ffs_applyWarSort(rows);
+      return;
+    }
+
+    // Non-war faction roster page: one-shot group+score sort (click-only, as
+    // before) using the shared robust group detector.
+    //   0 = attackable (online/idle/okay) — FFS score within group
+    //   1 = hospital — soonest release first
+    //   2 = traveling / jail — bottom
     rowMeta.sort((a, b) => {
-      const ga = rowGroup(a);
-      const gb = rowGroup(b);
+      const ga = ffs_rowGroup(a.row, a.pid);
+      const gb = ffs_rowGroup(b.row, b.pid);
       if (ga !== gb) return ga - gb;
-      // Hospital group: least time-to-release first, regardless of score.
-      if (ga === 1) return hospitalUntil(a) - hospitalUntil(b);
-      // Other groups: FFS score, direction per current toggle.
+      if (ga === 1) return ffs_hospKey(a.pid) - ffs_hospKey(b.pid);
       const sa = rowScore(a);
       const sb = rowScore(b);
       if (sa == null && sb == null) return 0;
@@ -3663,7 +3759,6 @@ if (!singleton) {
       if (sb == null) return -1;
       return descNow ? sb - sa : sa - sb;
     });
-
     // Reattach in new order.
     for (const m of rowMeta) rowContainer.appendChild(m.row);
   }
@@ -4013,6 +4108,9 @@ if (!singleton) {
       let userID = match[1];
       let statusEl = li.querySelector(".status");
       if (!statusEl) return;
+      // wb61: don't overwrite a cell our travel/hospital chip owns — textContent
+      // would wipe the chip and break chip-based group detection.
+      if (statusEl.dataset.ffsTravelInjected || statusEl.dataset.ffsHospInjected) return;
       if (memberCountdowns[userID]) {
         let remaining = memberCountdowns[userID] * 1000 - Date.now();
         if (remaining < 0) remaining = 0;
