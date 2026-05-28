@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.23
+// @version      5.1.24
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -87,7 +87,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.21';
+    const SCRIPT_VERSION = '5.1.24';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -3741,6 +3741,15 @@ body.wb-chain-active {
                                 for (const m of members) {
                                     const uid = String(m.userID || m.userid || '');
                                     if (!uid) continue;
+                                    // getwarusers returns BOTH factions' members in one flat
+                                    // array. Filter to the enemy only — without this our own
+                                    // faction members leak straight into state.statuses and
+                                    // render as targets. Each member carries factionID.
+                                    const fid = String(m.factionID || m.faction_id || m.factionId || '');
+                                    if (fid) {
+                                        if (state.myFactionId && fid === String(state.myFactionId)) continue;
+                                        if (state.enemyFactionId && fid !== String(state.enemyFactionId)) continue;
+                                    }
                                     const st = m.status || {};
                                     const text = String(st.text || st.status || '');
                                     if (!text) continue;
