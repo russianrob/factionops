@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.4
+// @version      2.73.5
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3219,16 +3219,21 @@ if (!singleton) {
   // previous setup ran this hospital-release sort every 1s, fighting the
   // click-driven FFS sort — that conflict is why war-mode "groups mixed" and
   // wouldn't stay sorted.) Two modes:
-  //   • war mode (user clicked FFS in a war context): attackable first by FFS
-  //     score, then hospital by soonest release, then jail/travel last;
-  //   • legacy (default / non-war / pre-click): hospital, jail & travel float
-  //     to the top by release time (revive-hunting), attackable sinks — the
-  //     original wb48 behaviour, preserved for plain faction roster pages.
+  //   • war context (ANY ranked-war view — DEFAULT, no click needed):
+  //     attackable first (by FFS score once cached), then hospital by soonest
+  //     release, then jail/travel last;
+  //   • legacy (non-war roster pages): hospital, jail & travel float to the
+  //     top by release time (revive-hunting), attackable sinks — the original
+  //     wb48 / "War Stuff Enhanced" behaviour, kept for the faction roster.
   // Signature-guarded + change-checked: an unchanged list is a no-op, so the
   // appendChild can never trigger a re-sort loop.
   function ffs_applyWarSort(rowList) {
     if (!rowList || rowList.length === 0) return;
-    const warMode = _ffsWarSortActive && ffs_isWarContext();
+    // wb62: war ordering is the DEFAULT on any war view — no click required.
+    // (Pre-wb62 it engaged only after clicking ↓FFS via _ffsWarSortActive, so
+    // the war page first loaded showing the legacy hospital-on-top revive-hunt
+    // order — the reported bug.) The ↓FFS button now just toggles direction.
+    const warMode = ffs_isWarContext();
     const desc = (_ffsAppliedDesc == null) ? true : _ffsAppliedDesc;
     const groups = new Map();
     rowList.forEach((row) => {
