@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.22
+// @version      2.73.23
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2925,7 +2925,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.22';
+  const SCRIPT_VERSION = '2.73.23';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3614,19 +3614,16 @@ if (!singleton) {
     // Ticker: repaint every 1s so countdowns stay live.
     setInterval(ffs_paintTravelCountdowns, 1000);
 
-    // wb73: drive the lightweight countdown ticker with a self-correcting
-    // setTimeout aligned to each real second boundary, so the HH:MM:SS flips
-    // EXACTLY on the second (within a few ms) instead of up to a poll-interval
-    // late — and only once per second (vs polling 4×/sec). Re-aligns each tick
-    // from Date.now() so it never drifts.
+    // wb78: the old boundary-aligned setTimeout (wb73) flipped on the DEVICE
+    // second, but the value comes from ffs_nowSec (Torn's server clock), which is
+    // phased off the device clock — so the flip lagged up to ~1s. Don't predict
+    // the boundary; watch the value. Poll every 100ms and let ffs_tickCountdowns
+    // repaint ONLY when the displayed second actually changes (its text-diff
+    // guard), so the flip lands within ~100ms of the true tick regardless of any
+    // clock offset. (A plain setInterval of this ticker is proven safe — ran fine
+    // in 2.73.16/17 — unlike the phase probe that broke the stats.)
     ffs_tickCountdowns(); // initial paint
-    (function ffs_scheduleCountdownTick() {
-      const msToNext = 1000 - (Date.now() % 1000);
-      setTimeout(function () {
-        ffs_tickCountdowns();
-        ffs_scheduleCountdownTick();
-      }, msToNext + 15);
-    })();
+    setInterval(ffs_tickCountdowns, 100);
 
     // Data fetch loop: poll Torn API every 30s, extract all faction IDs
     // currently visible on the page.
