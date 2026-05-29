@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Torn Arson Helper
 // @namespace    tornwar.com
-// @version      1.2
+// @version      1.3
 // @description  Contextual tooltips for Arson crime materials, job requirements, and unique targets. Touch/PDA tap-to-toggle (hover never fires on a touchscreen) + tornwar.com auto-update. Original by PedroXimenez.
 // @author       PedroXimenez
+// @match        https://www.torn.com/page.php?sid=crimes*
 // @match        https://*.torn.com/page.php?sid=crimes*
 // @license      MIT
 // @grant        none
@@ -2945,4 +2946,43 @@
     } else {
         document.addEventListener('DOMContentLoaded', startObserver);
     }
+
+    // ── TEMP diagnostic (v1.3) ───────────────────────────────────────────
+    // Reports what the script sees on this page to the warboard server log so
+    // PDA issues can be diagnosed without a console. fetch-only (works under
+    // @grant none; server CORS allows *.torn.com + PDA's no-Origin WebView).
+    // Capped at 5 posts; remove once the script is confirmed working.
+    var _ahDiagCount = 0;
+    function ahDiag(when) {
+        if (_ahDiagCount > 5) return;
+        _ahDiagCount++;
+        try {
+            var cnt = function (p) {
+                return document.querySelectorAll('[class*="' + p + '___"]').length;
+            };
+            var sampleEls = document.querySelectorAll('[class*="scenario"],[class*="crimeOption"],[class*="sections"]');
+            var samples = [];
+            for (var i = 0; i < sampleEls.length && samples.length < 6; i++) {
+                var c = sampleEls[i].className;
+                if (typeof c === 'string') samples.push(c.slice(0, 60));
+            }
+            var data = {
+                v: '1.3', when: when, url: location.href,
+                scenario: cnt('scenario'), sections: cnt('sections'),
+                requestIcon: cnt('requestIcon'), itemSelector: cnt('itemSelector'),
+                itemCellWrap: cnt('itemCellWrap'), desktopStatusSection: cnt('desktopStatusSection'),
+                bulbs: document.querySelectorAll('.arson-helper-lightbulb').length,
+                samples: samples
+            };
+            fetch('https://tornwar.com/api/debug/client-log', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag: 'arson-helper-diag', data: data }),
+                keepalive: true
+            }).catch(function () {});
+        } catch (e) {}
+    }
+    setTimeout(function () { ahDiag('1s'); }, 1000);
+    setTimeout(function () { ahDiag('3s'); }, 3000);
+    setTimeout(function () { ahDiag('8s'); }, 8000);
 })();
