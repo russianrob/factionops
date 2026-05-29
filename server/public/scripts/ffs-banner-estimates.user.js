@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.24
+// @version      2.73.25
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2597,6 +2597,23 @@ if (!singleton) {
   const _ffsMemberHospitalUntil = {};  // userID → unix release time
   const _ffsMemberHospitalState = {};  // userID → 'Hospital' | 'Jail'
 
+  // wb79: catch defensive hospital extensions. Torn hospital timers don't
+  // stack (longest wins) — ipecac syrup / a wrong blood bag SET the timer to
+  // ~60-90 min, so a target about to be released can jump back to a long
+  // timer. The 30s poll + Torn's ~30s API service cache mean a real extension
+  // can lag ~60s; long enough for the OLD short timer to hit 0 and (pre-wb79)
+  // falsely mark the target released/attackable. Fix: when a chip is near or
+  // past release, force a CACHE-BUSTED re-fetch of the tracked factions so the
+  // new status.until lands in ~seconds, and NEVER release on the local
+  // countdown alone — only the authoritative poll decides release.
+  const FFS_IMMINENT_THRESHOLD_SEC = 120;  // fast-refresh once a hosp/jail chip is within 120s of release
+  const FFS_IMMINENT_REFRESH_MS = 10_000;  // min gap between forced re-fetches (rate-limit guard)
+  const FFS_LIVE_WINS_MS = 30_000;         // after a cache-busted (live) refresh, ignore the slower cached
+                                           // 30s poll for this long so it can't clobber the fresh until
+  const _ffsTrackedFactionIds = new Set(); // factions pollAll is currently watching
+  const _ffsFactionLiveAt = {};            // factionId → ts of last applied cache-busted (live) response
+  let _ffsLastImminentRefresh = 0;
+
   // wb44: localStorage cache so countdowns appear instantly on reload
   // without waiting for the 30s poll. Keyed per-faction so scouting
   // multiple factions doesn't cross-pollute. TTL 5min — older data is
@@ -2665,12 +2682,33 @@ if (!singleton) {
 
   const FFS_PLANE_SVG = '<svg class="ffs-plane" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><path d="M482.3 192c34.2 0 93.7 29 93.7 64c0 36-59.5 64-93.7 64l-116.6 0L265.2 495.9c-5.7 10-16.3 16.1-27.8 16.1l-56.2 0c-10.6 0-18.3-10.2-15.4-20.4l49-171.6L112 320 68.8 377.6c-3 4-7.8 6.4-12.8 6.4l-42 0c-7.8 0-14-6.3-14-14c0-1.3 .2-2.6 .5-3.9L32 256 .5 145.9c-.4-1.3-.5-2.6-.5-3.9c0-7.8 6.3-14 14-14l42 0c5 0 9.8 2.4 12.8 6.4L112 192l102.9 0-49-171.6C162.9 10.2 170.6 0 181.2 0l56.2 0c11.5 0 22.1 6.2 27.8 16.1L365.7 192l116.6 0z"/></svg>';
 
-  function ffs_fetchFactionMembers(factionId) {
+  function ffs_fetchFactionMembers(factionId, bust) {
     // key is the FFS-registered Torn API key — same one used elsewhere
     // in this script. Works with Limited/Full Access.
     if (!key) return Promise.reject(new Error("no key"));
-    const url = `https://api.torn.com/v2/faction/${factionId}/members?striptags=true&key=${encodeURIComponent(key)}`;
+    let url = `https://api.torn.com/v2/faction/${factionId}/members?striptags=true&key=${encodeURIComponent(key)}`;
+    // wb79: bust Torn's ~30s service cache with a unique timestamp so an
+    // imminent re-fetch sees the LIVE status.until (catches a last-second
+    // hospital extension). Sanctioned cache-buster; a cache MISS costs one
+    // call, kept in check by the FFS_IMMINENT_REFRESH_MS debounce.
+    if (bust) url += `&timestamp=${Date.now()}`;
     return fetch(url).then(r => r.json());
+  }
+
+  // wb79: debounced, cache-busted re-fetch of the factions pollAll is watching.
+  // Fired by the paint loop when a hospital/jail chip is near or past release
+  // so a defensive extension (ipecac / wrong blood bag) is reflected within
+  // seconds instead of up to ~60s. The debounce caps the extra API load (≈ one
+  // refresh cycle per 10s, hitting the 1-2 tracked factions). ffs_updateFaction-
+  // TravelData is a hoisted declaration below, so it's callable here at runtime.
+  function ffs_imminentHospRefresh() {
+    const now = Date.now();
+    if (now - _ffsLastImminentRefresh < FFS_IMMINENT_REFRESH_MS) return;
+    if (_ffsTrackedFactionIds.size === 0) return;
+    _ffsLastImminentRefresh = now;
+    for (const fid of _ffsTrackedFactionIds) {
+      try { ffs_updateFactionTravelData(fid, true); } catch (_) {}
+    }
   }
 
   function ffs_recordMemberTravel(member) {
@@ -2879,9 +2917,9 @@ if (!singleton) {
     });
   }
 
-  async function ffs_updateFactionTravelData(factionId) {
+  async function ffs_updateFactionTravelData(factionId, bust) {
     try {
-      const data = await ffs_fetchFactionMembers(factionId);
+      const data = await ffs_fetchFactionMembers(factionId, bust);
       if (!data || data.error) {
         ffs_travelDiag({
           source: "fetch-error",
@@ -2890,6 +2928,18 @@ if (!singleton) {
         });
         return;
       }
+      // wb79: live-wins guard. The 30s poll is NOT cache-busted, so Torn can
+      // serve it a snapshot up to ~30s stale. If a cache-busted (live) refresh
+      // for this faction landed within the last FFS_LIVE_WINS_MS, drop this
+      // cached response — otherwise a late-arriving stale poll could overwrite
+      // a freshly-extended status.until (or delete a still-hospitalised member),
+      // transiently re-introducing the false-release this fix removes. The
+      // busted refresh re-fetches the whole faction anyway, so nothing is lost.
+      const now = Date.now();
+      if (!bust && (now - (_ffsFactionLiveAt[factionId] || 0) < FFS_LIVE_WINS_MS)) {
+        return;
+      }
+      if (bust) _ffsFactionLiveAt[factionId] = now;
       const list = Array.isArray(data.members) ? data.members : [];
       let travelingCount = 0;
       let recorded = 0;
@@ -2943,7 +2993,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.24';
+  const SCRIPT_VERSION = '2.73.25';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3152,18 +3202,22 @@ if (!singleton) {
         const hospUntil = _ffsMemberHospitalUntil[uid];
         const hospState = _ffsMemberHospitalState[uid] || 'Hospital';
         if (hospUntil) {
-          const remaining = Math.round(hospUntil - ffs_nowSecFloat()); // wb78: round, not floor (no ~0.5s bias)
+          let remaining = Math.round(hospUntil - ffs_nowSecFloat()); // wb78: round, not floor (no ~0.5s bias)
           if (remaining <= 0) {
-            // Release moment passed — clean up and let React own the cell.
-            delete _ffsMemberHospitalUntil[uid];
-            delete _ffsMemberHospitalState[uid];
-            if (statusEl.dataset.ffsHospInjected) {
-              const orig = statusEl.dataset.ffsHospOriginal;
-              if (orig && orig.trim()) statusEl.innerHTML = orig;
-              delete statusEl.dataset.ffsHospOriginal;
-              delete statusEl.dataset.ffsHospInjected;
-            }
-            return;
+            // wb79: DON'T release on the local countdown alone. A target can
+            // defensively extend hospital (ipecac / wrong blood bag) right
+            // before release; status.until jumps, but our cached value is the
+            // OLD short time until the next poll lands. Clamp at 0, KEEP the
+            // chip showing 00:00:00, and force a cache-busted re-fetch. Release
+            // is decided ONLY by the authoritative poll: ffs_recordMemberTravel
+            // deletes the entry once state != Hospital, after which the
+            // `else if (ffsHospInjected)` branch below restores React's cell.
+            remaining = 0;
+            ffs_imminentHospRefresh();
+          } else if (remaining <= FFS_IMMINENT_THRESHOLD_SEC) {
+            // wb79: near release — start fast-refreshing so a last-second
+            // extension is caught before the old timer would expire.
+            ffs_imminentHospRefresh();
           }
           const h = Math.floor(remaining / 3600);
           const m = Math.floor((remaining % 3600) / 60);
@@ -3799,6 +3853,10 @@ if (!singleton) {
         ownFactionResolved: _ffsOwnFactionId,
         listSamples,
       });
+      // wb79: remember which factions we're watching so the imminent
+      // hospital re-fetch (paint loop) can target the same set.
+      _ffsTrackedFactionIds.clear();
+      factionIds.forEach(id => _ffsTrackedFactionIds.add(id));
       for (const fid of factionIds) {
         // wb44: prepopulate from last session's cache before the fetch
         // so chips appear within 1s of page load even on scouted
