@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.13
+// @version      2.73.14
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2929,7 +2929,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.13';
+  const SCRIPT_VERSION = '2.73.14';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3208,15 +3208,15 @@ if (!singleton) {
     return location.search.includes('type=1') || /\/war\//.test(location.hash);
   }
 
-  // wb68: where the hide online/offline toggles apply — the ranked-war board
-  // AND the faction profile / own-faction members roster (per user). Broader
-  // than ffs_isWarContext (which gates only the war SORT). Scoped to
-  // factions.php member-listing views, never arbitrary pages.
+  // wb69: REVERTED to war-board only. Extending the hide machinery to the
+  // faction profile/members roster (wb68) ran ffs_injectHideControls +
+  // ffs_applyActivityFilter on that page every tick and knocked out the
+  // FFScouter stat gauges there — even with both toggles off. The members
+  // roster is where stats are read, so the hide feature stays on the war board
+  // only; the roster falls through to ffs_clearActivityFilter (no bar, no
+  // filter), exactly as before wb68.
   function ffs_isHideContext() {
-    if (!/factions\.php/.test(location.pathname)) return false;
-    return ffs_isWarContext()
-        || location.search.includes('step=profile')
-        || location.search.includes('step=your');
+    return ffs_isWarContext();
   }
 
   // wb61: keep the sort button's arrow/label in sync with module state. Label
