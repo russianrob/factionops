@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.41
+// @version      3.6.42
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -71,7 +71,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.41';
+    const TPLF_VERSION = '3.6.42';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -85,6 +85,57 @@
                 onload: function () {}, onerror: function () {},
             });
         } catch (_) {}
+    }
+
+    // v3.6.42: online/idle/offline detector. The old code keyed off the LEGACY
+    // profile icon (li[id^="icon1-profile-"] + "-Online"/"-Away" class) and the
+    // legacy member "userStatusWrap svg", both of which Torn's React rebuild
+    // dropped — so it always fell through to the default Offline (black dot).
+    // Modern Torn renders the dot as [class*="userOnlineStatusIcon___"] with a
+    // LOWERCASE alt/title (online/idle/offline) — the same element TornTools and
+    // the FFS banner (ffs_activityOf) read. Read alt/title/aria-label, NEVER the
+    // className (the wrapper class literally contains "Online" → false positive).
+    // scope = document for the profile page, or a member row for lists.
+    function tplf_activityStatus(scope) {
+        const root = scope || document;
+        const read = (el) => {
+            if (!el || !el.getAttribute) return '';
+            return ((el.getAttribute('alt') || el.getAttribute('title') ||
+                     el.getAttribute('aria-label') || '') + '').trim().toLowerCase();
+        };
+        const classify = (s) => {
+            if (!s) return null;
+            if (s.includes('online'))  return 'Online';
+            if (s.includes('idle') || s.includes('away')) return 'Idle';
+            if (s.includes('offline')) return 'Offline';
+            return null;
+        };
+        // 1) Modern dot — prefer the element's alt, then an inner img/labelled node.
+        const modern = root.querySelector("[class*='userOnlineStatusIcon' i], [class*='onlineStatus' i]");
+        if (modern) {
+            let c = classify(read(modern));
+            if (!c) c = classify(read(modern.querySelector('img[alt], [aria-label], [title]')));
+            if (c) return c;
+        }
+        // 2) Legacy profile-header icon — status lives in the class suffix.
+        const legacy = root.querySelector("li[id^='icon1-profile-'], li[id^='icon2-profile-'], li[id^='icon62-profile-'], li[class*='user-status-']");
+        if (legacy) {
+            const cls = legacy.className.toString();
+            if (/-Online\b/i.test(cls)) return 'Online';
+            if (/-Away\b|-Idle\b/i.test(cls)) return 'Idle';
+            const c = classify(read(legacy));
+            if (c) return c;
+        }
+        // 3) Broad fallback — any node whose alt/title/aria-label is EXACTLY the
+        //    status word (exact match avoids matching unrelated tooltips).
+        const labelled = root.querySelectorAll('[alt],[title],[aria-label]');
+        for (const el of labelled) {
+            const v = read(el);
+            if (v === 'online')  return 'Online';
+            if (v === 'idle')    return 'Idle';
+            if (v === 'offline') return 'Offline';
+        }
+        return 'Offline';
     }
 
     // v3.6.39: Torn PDA's webview reports clipboard-write success but the text
@@ -301,11 +352,15 @@
             if (title === 'Job') companyLinkEl = item.querySelector('.user-info-value a, a');
         });
 
-        const statusIconEl = document.querySelector('li[id^="icon1-profile-"], li[id^="icon2-profile-"], li[id^="icon62-profile-"]');
-        if (statusIconEl) {
-            if (statusIconEl.className.includes('-Online')) activityStatus = 'Online';
-            else if (statusIconEl.className.includes('-Away')) activityStatus = 'Idle';
-        }
+        activityStatus = tplf_activityStatus(document);
+        try {
+            const _p = document.querySelector("[class*='userOnlineStatusIcon' i], [class*='onlineStatus' i]");
+            const _l = document.querySelector("li[id^='icon1-profile-'], li[id^='icon2-profile-'], li[id^='icon62-profile-']");
+            tplf_diag({ tag: 'activity', ctx: 'profile', status: activityStatus,
+                modAlt: _p ? (_p.getAttribute('alt') || _p.getAttribute('title') || _p.getAttribute('aria-label')) : null,
+                modCls: _p ? String(_p.className).slice(0, 50) : null,
+                legacyCls: _l ? String(_l.className).slice(0, 50) : null });
+        } catch (_) {}
 
         const statusDescEl = document.querySelector('.profile-status.hospital .main-desc');
         const isInHospital = !!statusDescEl;
@@ -878,14 +933,8 @@
         let statsStr = null;
 
         if (settings.activity) {
-            const statusEl = memberElement.querySelector('[class*="userStatusWrap"] svg, li[class*="user-status-16-"]');
-            statusEmoji = '⚫ ';
-            if (statusEl) {
-                const cls = statusEl.className.toString();
-                const fill = statusEl.getAttribute && statusEl.getAttribute('fill') || '';
-                if (cls.includes('-Online') || fill.includes('online')) statusEmoji = '🟢 ';
-                else if (cls.includes('-Away') || cls.includes('-Idle') || fill.includes('idle')) statusEmoji = '🟡 ';
-            }
+            const act = tplf_activityStatus(memberElement);
+            statusEmoji = act === 'Online' ? '🟢 ' : (act === 'Idle' ? '🟡 ' : '⚫ ');
         }
 
         const releaseTimestamp = hospTime[id] || null;
