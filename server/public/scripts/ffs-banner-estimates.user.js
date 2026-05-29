@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.21
+// @version      2.73.22
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2097,8 +2097,12 @@ if (!singleton) {
             + "padding:1px 6px;border-radius:3px;"
             + "font-size:10px;font-weight:700;"
             + "background:rgba(0,0,0,0.78);color:#fff;"
-            + "white-space:nowrap;line-height:12px;pointer-events:none;"
+            + "white-space:nowrap;line-height:12px;"
+            // wb77: the stat pill is now a click-to-attack target (was pointer-events:none)
+            + "pointer-events:auto;cursor:pointer;"
             + "z-index:5;text-shadow:0 1px 1px rgba(0,0,0,0.8);";
+          overlay.dataset.ffsUid = String(player_id);
+          overlay.title = (chipInfo.source ? chipInfo.source + " · " : "") + "Click to attack";
           element.appendChild(overlay);
         }
       }
@@ -2921,7 +2925,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.21';
+  const SCRIPT_VERSION = '2.73.22';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3832,6 +3836,24 @@ if (!singleton) {
     }, true);
   }
   ffs_initTravelCountdowns();
+
+  // wb77: make the FFS stat pill on the honor bar a click-to-attack shortcut.
+  // Bound at top level so it works on profiles AND war/member pages. The pill
+  // carries data-ffs-uid (stamped when painted); clicking it opens that player's
+  // attack page. Capture phase + preventDefault so it overrides the honor bar's
+  // underlying profile link. (Own-faction members aren't attackable — Torn will
+  // just say so — but the pill is mostly used on scouted enemies.)
+  document.addEventListener("click", function (ev) {
+    const pill = ev.target && ev.target.closest && ev.target.closest(".ff-scouter-est-overlay[data-ffs-uid]");
+    if (!pill) return;
+    const uid = pill.dataset.ffsUid;
+    if (!uid) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const url = "https://www.torn.com/page.php?sid=attack&user2ID=" + uid;
+    const w = window.open(url, "_blank", "noopener");
+    if (!w) location.href = url;
+  }, true);
 
   // wb36: mini-profile countdown ticker — runs on every Torn page,
   // since mini-profiles can appear anywhere (chat, messages, forums,
