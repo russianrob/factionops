@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.6
+// @version      2.73.7
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3168,6 +3168,7 @@ if (!singleton) {
   // wb63: hide online/offline activity filter (war page). Persisted across loads.
   let _ffsHideOnline  = !!rD_getValue('ffs_hide_online', false);
   let _ffsHideOffline = !!rD_getValue('ffs_hide_offline', false);
+  let _ffsActivityDiagOnce = false; // wb64: one-shot detection diag per page load
 
   // wb61: are we on a ranked-war VIEW (not just the own-faction roster, which
   // also lives at step=your)? Require an actual enemy/war signal so the
@@ -3329,8 +3330,26 @@ if (!singleton) {
     return false;
   }
   function ffs_activityOf(row) {
-    const icon = row.querySelector("[class*='userOnlineStatusIcon___']");
-    return icon ? (icon.getAttribute('alt') || '') : '';
+    // Find the online indicator. Primary = TornTools' ranked-war icon; plus
+    // a couple of other Torn online-dot patterns as fallback.
+    const icon = row.querySelector(
+      "[class*='userOnlineStatusIcon' i], [class*='onlineStatus' i], "
+      + ".user-green-status, .user-yellow-status, .user-red-status"
+    );
+    if (!icon) return '';
+    // Classic Torn status classes (unambiguous).
+    const cl = icon.getAttribute('class') || '';
+    if (/user-green-status/.test(cl))  return 'Online';
+    if (/user-yellow-status/.test(cl)) return 'Idle';
+    if (/user-red-status/.test(cl))    return 'Offline';
+    // React war icon: the status word lives in alt / title / aria-label.
+    // Normalise (lowercase + substring) so casing or extra text can't break it.
+    const raw = (icon.getAttribute('alt') || icon.getAttribute('title')
+              || icon.getAttribute('aria-label') || '').toLowerCase();
+    if (raw.includes('online'))  return 'Online';
+    if (raw.includes('idle'))    return 'Idle';
+    if (raw.includes('offline')) return 'Offline';
+    return '';
   }
   function ffs_warRows() {
     const out = [];
@@ -3341,6 +3360,29 @@ if (!singleton) {
   }
   function ffs_applyActivityFilter(rows) {
     rows = rows || ffs_warRows();
+    // wb64: one-shot diag — log what the online indicator actually looks like
+    // on this user's war page so detection can be confirmed from server logs.
+    if (!_ffsActivityDiagOnce && rows.length) {
+      _ffsActivityDiagOnce = true;
+      try {
+        const samples = rows.slice(0, 6).map((row) => {
+          const icon = row.querySelector(
+            "[class*='userOnlineStatusIcon' i], [class*='onlineStatus' i], "
+            + ".user-green-status, .user-yellow-status, .user-red-status"
+          );
+          return {
+            icon: !!icon,
+            tag: icon ? icon.tagName : null,
+            cls: icon ? String(icon.getAttribute('class') || '').slice(0, 50) : null,
+            alt: icon ? icon.getAttribute('alt') : null,
+            title: icon ? icon.getAttribute('title') : null,
+            aria: icon ? icon.getAttribute('aria-label') : null,
+            canon: ffs_activityOf(row),
+          };
+        });
+        ffs_travelDiag({ source: 'activity-detect', rowCount: rows.length, samples });
+      } catch (_) {}
+    }
     let hidden = 0;
     for (const row of rows) {
       const hide = ffs_shouldHide(ffs_activityOf(row), _ffsHideOnline, _ffsHideOffline);
