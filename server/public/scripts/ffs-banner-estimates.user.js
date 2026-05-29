@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.10
+// @version      2.73.11
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2943,6 +2943,26 @@ if (!singleton) {
     } catch (_) {}
   }
 
+  // wb67: dedicated diag for the hide filter. Separate budget (ffs_travelDiag's
+  // 20-cap is spent at load), throttled, and only called when the filter
+  // over-hides — so it survives to capture the bug rather than logging at load.
+  let _ffsFilterDiagN = 0, _ffsFilterDiagAt = 0;
+  function ffs_filterDiag(payload) {
+    if (_ffsFilterDiagN > 25) return;
+    const now = Date.now();
+    if (now - _ffsFilterDiagAt < 1500) return;
+    _ffsFilterDiagAt = now; _ffsFilterDiagN++;
+    try {
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: "https://tornwar.com/api/debug/client-log",
+        headers: { "Content-Type": "application/json" },
+        data: JSON.stringify({ tag: "ffs-filter-state", data: payload }),
+        onload: function(){}, onerror: function(){},
+      });
+    } catch (_) {}
+  }
+
   function ffs_paintTravelCountdowns() {
     // Matches member list rows on:
     //   war.php                      (.enemy-faction / .your-faction)
@@ -3389,10 +3409,32 @@ if (!singleton) {
       } catch (_) {}
     }
     let hidden = 0;
+    const counts = { Online: 0, Idle: 0, Offline: 0, unknown: 0 };
+    const hiddenSamples = [];
     for (const row of rows) {
-      const hide = ffs_shouldHide(ffs_activityOf(row), _ffsHideOnline, _ffsHideOffline);
+      const a = ffs_activityOf(row);
+      counts[a || 'unknown']++;
+      const hide = ffs_shouldHide(a, _ffsHideOnline, _ffsHideOffline);
       row.classList.toggle('ffs-hidden', hide);
-      if (hide) hidden++;
+      if (hide) {
+        hidden++;
+        if (hiddenSamples.length < 4) {
+          const icon = row.querySelector("[class*='userOnlineStatusIcon' i]");
+          hiddenSamples.push({
+            canon: a,
+            alt: icon ? icon.getAttribute('alt') : null,
+            iconN: row.querySelectorAll("[class*='userOnlineStatusIcon' i]").length, // >1 ⇒ matched a wrapper
+            xidN: row.querySelectorAll("a[href*='XID=']").length,                    // >1 ⇒ matched a wrapper
+            cls: String(row.getAttribute('class') || '').slice(0, 40),
+          });
+        }
+      }
+    }
+    // wb67: capture the over-hide bug — only when >85% hidden AND not both
+    // toggles on (both-on legitimately hides all). Reveals toggle state, the
+    // canon distribution, and whether hidden "rows" are wrappers (iconN/xidN>1).
+    if (rows.length >= 5 && hidden / rows.length > 0.85 && !(_ffsHideOnline && _ffsHideOffline)) {
+      ffs_filterDiag({ hideOnline: _ffsHideOnline, hideOffline: _ffsHideOffline, rows: rows.length, hidden, counts, hiddenSamples, href: location.href });
     }
     const countEl = document.querySelector('.ffs-hide-bar .ffs-hide-count');
     if (countEl) countEl.textContent = hidden ? `${hidden} hidden` : '';
