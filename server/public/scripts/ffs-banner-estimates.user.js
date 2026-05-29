@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.16
+// @version      2.73.17
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2929,7 +2929,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.16';
+  const SCRIPT_VERSION = '2.73.17';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -2990,6 +2990,22 @@ if (!singleton) {
       if (val.textContent !== timeStr) val.textContent = timeStr;
       const imminent = remaining < 300;
       if (chip.classList.contains('imminent') !== imminent) chip.classList.toggle('imminent', imminent);
+    }
+    // wb72: travel / landing countdowns — only while the chip shows the time
+    // (skip when toggled to the country label). Keep data-ffs-time fresh so the
+    // click-to-toggle still shows the right value.
+    const travel = document.querySelectorAll('.ffs-travel-status[data-ffs-land]');
+    for (const chip of travel) {
+      if (chip.dataset.ffsShowCountry === '1') continue;
+      const land = parseInt(chip.dataset.ffsLand, 10);
+      if (!Number.isFinite(land)) continue;
+      const remMs = (land - now) * 1000;
+      if (remMs <= 0) continue;
+      const val = chip.querySelector('.ffs-mq-value');
+      if (!val) continue;
+      const txt = ffs_formatCountdown(remMs);
+      if (val.textContent !== txt) val.textContent = txt;
+      chip.dataset.ffsTime = txt;
     }
   }
 
@@ -3070,6 +3086,7 @@ if (!singleton) {
         if (statusSpan && valueSpan) {
           statusSpan.dataset.ffsCountry = countryLabel;
           statusSpan.dataset.ffsTime = countdownText;
+          statusSpan.dataset.ffsLand = String(until); // wb72: for the 250ms ticker
           const showCountry = statusSpan.dataset.ffsShowCountry === "1";
           const desired = showCountry ? countryLabel : countdownText;
           if (valueSpan.textContent !== desired) {
@@ -3096,6 +3113,7 @@ if (!singleton) {
           statusEl.innerHTML =
             `<span class="ffs-travel-status${retCls}" `
             + `data-ffs-time="${countdownText}" `
+            + `data-ffs-land="${until}" `
             + `data-ffs-country="${escLabel}" `
             + `data-ffs-show-country="0" `
             + `title="Click to toggle country / time">`
