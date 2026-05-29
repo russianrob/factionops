@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.15
+// @version      2.73.16
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2929,7 +2929,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.15';
+  const SCRIPT_VERSION = '2.73.16';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -2966,6 +2966,31 @@ if (!singleton) {
         onload: function(){}, onerror: function(){},
       });
     } catch (_) {}
+  }
+
+  // wb71: lightweight, high-frequency countdown refresh. Updates ONLY the
+  // visible hospital/jail timer text from the release timestamp stamped on each
+  // chip (data-ffs-until) — independent of the heavy 1s paint/sort/hide loop, so
+  // the HH:MM:SS flips within ~250ms of real time instead of lagging up to 1s.
+  function ffs_tickCountdowns() {
+    let now;
+    try { now = ffs_nowSec(); } catch (_) { return; }
+    const chips = document.querySelectorAll('a.ffs-hosp-status[data-ffs-until]');
+    for (const chip of chips) {
+      const until = parseInt(chip.dataset.ffsUntil, 10);
+      if (!Number.isFinite(until)) continue;
+      const remaining = until - now;
+      if (remaining <= 0) continue; // let the heavy paint loop restore the cell
+      const val = chip.querySelector('.ffs-hosp-val');
+      if (!val) continue;
+      const h = Math.floor(remaining / 3600);
+      const m = Math.floor((remaining % 3600) / 60);
+      const s = remaining % 60;
+      const timeStr = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+      if (val.textContent !== timeStr) val.textContent = timeStr;
+      const imminent = remaining < 300;
+      if (chip.classList.contains('imminent') !== imminent) chip.classList.toggle('imminent', imminent);
+    }
   }
 
   function ffs_paintTravelCountdowns() {
@@ -3116,6 +3141,7 @@ if (!singleton) {
           const jail = hospState === 'Jail';
           let hospSpan = statusEl.querySelector('.ffs-hosp-status');
           if (hospSpan) {
+            hospSpan.dataset.ffsUntil = String(hospUntil); // wb71: for the 250ms lightweight ticker
             const valueSpan = hospSpan.querySelector('.ffs-hosp-val');
             if (valueSpan && valueSpan.textContent !== timeStr) valueSpan.textContent = timeStr;
             hospSpan.classList.toggle('imminent', imminent);
@@ -3134,6 +3160,7 @@ if (!singleton) {
             const attackHref = `https://www.torn.com/page.php?sid=attack&user2ID=${uid}`;
             statusEl.innerHTML =
               `<a class="${cls}" href="${attackHref}" target="_blank" rel="noopener"`
+              + ` data-ffs-until="${hospUntil}"`
               + ` title="${hospState} release \u2014 click to attack">`
               + `<span class="ffs-hosp-val">${timeStr}</span>`
               + `</a>`;
@@ -3572,6 +3599,11 @@ if (!singleton) {
 
     // Ticker: repaint every 1s so countdowns stay live.
     setInterval(ffs_paintTravelCountdowns, 1000);
+
+    // wb71: lightweight text-only ticker so hospital/jail countdowns flip within
+    // ~250ms of real time instead of waiting on the heavy 1s paint loop above.
+    setInterval(ffs_tickCountdowns, 250);
+    ffs_tickCountdowns();
 
     // Data fetch loop: poll Torn API every 30s, extract all faction IDs
     // currently visible on the page.
