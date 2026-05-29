@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.14
+// @version      2.73.15
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2929,7 +2929,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.14';
+  const SCRIPT_VERSION = '2.73.15';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3424,33 +3424,43 @@ if (!singleton) {
         ffs_travelDiag({ source: 'activity-detect', rowCount: rows.length, samples });
       } catch (_) {}
     }
-    let hidden = 0;
+    let hidden = 0, protectedOnline = 0;
     const counts = { Online: 0, Idle: 0, Offline: 0, unknown: 0 };
     const hiddenSamples = [];
     for (const row of rows) {
       const a = ffs_activityOf(row);
       counts[a || 'unknown']++;
-      const hide = ffs_shouldHide(a, _ffsHideOnline, _ffsHideOffline);
+      const onlineN = Array.from(row.querySelectorAll("[class*='userOnlineStatusIcon' i]"))
+        .filter(ic => (ic.getAttribute('alt') || '').trim().toLowerCase() === 'online').length;
+      let hide = ffs_shouldHide(a, _ffsHideOnline, _ffsHideOffline);
+      // wb70 SAFETY: never hide a row that still shows an online member, even if
+      // ffs_activityOf misread it (the War-Stuff hospital chip can clobber the
+      // status cell). Only applies when we're not explicitly hiding online.
+      if (hide && !_ffsHideOnline && onlineN > 0) { hide = false; protectedOnline++; }
       row.classList.toggle('ffs-hidden', hide);
       if (hide) {
         hidden++;
         if (hiddenSamples.length < 4) {
           const icon = row.querySelector("[class*='userOnlineStatusIcon' i]");
+          const statusEl = row.querySelector(".status") || row.querySelector('[class*="status" i]');
           hiddenSamples.push({
             canon: a,
             alt: icon ? icon.getAttribute('alt') : null,
             iconN: row.querySelectorAll("[class*='userOnlineStatusIcon' i]").length, // >1 ⇒ matched a wrapper
+            onlineN,                                                                 // online icons inside this hidden row
             xidN: row.querySelectorAll("a[href*='XID=']").length,                    // >1 ⇒ matched a wrapper
+            hosp: !!row.querySelector('.ffs-hosp-status'),                           // our hospital chip present?
+            statusHTML: statusEl ? String(statusEl.outerHTML || '').slice(0, 90) : null,
             cls: String(row.getAttribute('class') || '').slice(0, 40),
           });
         }
       }
     }
-    // wb67: capture the over-hide bug — only when >85% hidden AND not both
-    // toggles on (both-on legitimately hides all). Reveals toggle state, the
-    // canon distribution, and whether hidden "rows" are wrappers (iconN/xidN>1).
-    if (rows.length >= 5 && hidden / rows.length > 0.85 && !(_ffsHideOnline && _ffsHideOffline)) {
-      ffs_filterDiag({ hideOnline: _ffsHideOnline, hideOffline: _ffsHideOffline, rows: rows.length, hidden, counts, hiddenSamples, href: location.href });
+    // wb67/wb70: capture the bad state — fires when the online-safety guard had
+    // to protect a row (the actual bug) OR >85% hidden. Shows wrapper signals
+    // (iconN/xidN>1), whether hidden rows carry the hosp chip, and status HTML.
+    if (rows.length >= 5 && (protectedOnline > 0 || hidden / rows.length > 0.85) && !(_ffsHideOnline && _ffsHideOffline)) {
+      ffs_filterDiag({ hideOnline: _ffsHideOnline, hideOffline: _ffsHideOffline, rows: rows.length, hidden, protectedOnline, counts, hiddenSamples, href: location.href });
     }
     const countEl = document.querySelector('.ffs-hide-bar .ffs-hide-count');
     if (countEl) countEl.textContent = hidden ? `${hidden} hidden` : '';
