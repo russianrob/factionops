@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.17
+// @version      2.73.18
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2929,7 +2929,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.17';
+  const SCRIPT_VERSION = '2.73.18';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3618,10 +3618,19 @@ if (!singleton) {
     // Ticker: repaint every 1s so countdowns stay live.
     setInterval(ffs_paintTravelCountdowns, 1000);
 
-    // wb71: lightweight text-only ticker so hospital/jail countdowns flip within
-    // ~250ms of real time instead of waiting on the heavy 1s paint loop above.
-    setInterval(ffs_tickCountdowns, 250);
-    ffs_tickCountdowns();
+    // wb73: drive the lightweight countdown ticker with a self-correcting
+    // setTimeout aligned to each real second boundary, so the HH:MM:SS flips
+    // EXACTLY on the second (within a few ms) instead of up to a poll-interval
+    // late — and only once per second (vs polling 4×/sec). Re-aligns each tick
+    // from Date.now() so it never drifts.
+    ffs_tickCountdowns(); // initial paint
+    (function ffs_scheduleCountdownTick() {
+      const msToNext = 1000 - (Date.now() % 1000);
+      setTimeout(function () {
+        ffs_tickCountdowns();
+        ffs_scheduleCountdownTick();
+      }, msToNext + 15);
+    })();
 
     // Data fetch loop: poll Torn API every 30s, extract all faction IDs
     // currently visible on the page.
