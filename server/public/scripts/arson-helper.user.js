@@ -2596,8 +2596,11 @@
         // Touch/PDA: hover never fires, so TAP toggles the tooltip. (The original
         // click handler only ever HID it, so a tap could never reveal anything on
         // a touchscreen — this was why no tooltip showed on PDA.)
-        el.addEventListener('click', (e) => {
-            e.stopPropagation(); // don't let the outside-tap handler immediately re-close it
+        // NOTE: no stopPropagation/preventDefault here — the material buttons are
+        // real Torn (React) buttons using document-level event delegation, so the
+        // tap must keep bubbling for material selection to still work. The
+        // outside-tap-close handler already ignores taps on the current owner.
+        el.addEventListener('click', () => {
             const showingThis = tooltip.classList.contains('visible') && tooltipOwner === el;
             hideTooltip();
             if (!showingThis) showTooltip(el, html);
