@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.37
+// @version      3.6.38
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -71,7 +71,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.37';
+    const TPLF_VERSION = '3.6.38';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -1310,35 +1310,38 @@
     }
 
     function copyToClipboard(text) {
-        let method = 'none', ok = false;
+        // v3.6.38: GM_setClipboard reported ok=true on Torn PDA but the text
+        // never actually reached the system clipboard (paste was empty) — most
+        // likely the {type,mimetype} OBJECT form. So: (a) use the PLAIN form
+        // GM_setClipboard(text), and (b) do NOT stop at its (possibly fake)
+        // success — also fire navigator.clipboard.writeText, so whichever path
+        // genuinely writes wins. execCommand only if neither modern API exists
+        // (it pops the keyboard on mobile and is a no-op on PDA anyway).
+        const r = { gm: false, nav: false, exec: undefined };
         const hasGMset = typeof GM_setClipboard === 'function';
         const hasNavClip = !!(navigator.clipboard && navigator.clipboard.writeText);
-        // 1) GM_setClipboard — works in Tampermonkey + Torn PDA, immune to
-        //    focus / secure-context restrictions.
         if (hasGMset) {
-            try { GM_setClipboard(text, { type: 'text', mimetype: 'text/plain' }); method = 'GM_setClipboard'; ok = true; }
+            try { GM_setClipboard(text); r.gm = true; }
             catch (err) { if (debug) console.error('TPLF: GM_setClipboard failed.', err); }
         }
-        // 2) Async Clipboard API (secure contexts / desktop).
-        if (!ok && hasNavClip) {
-            try { navigator.clipboard.writeText(text).catch(() => {}); method = 'navigator.clipboard'; ok = true; }
+        if (hasNavClip) {
+            try { navigator.clipboard.writeText(text).then(() => {}, () => {}); r.nav = true; }
             catch (err) { if (debug) console.error('TPLF: navigator.clipboard failed.', err); }
         }
-        // 3) Legacy execCommand fallback (unreliable on PDA/mobile).
-        if (!ok) {
-            const tempTextarea = document.createElement('textarea');
-            tempTextarea.style.position = 'fixed';
-            tempTextarea.style.left = '-9999px';
-            tempTextarea.value = text;
-            document.body.appendChild(tempTextarea);
-            tempTextarea.select();
-            try { ok = document.execCommand('copy'); method = 'execCommand'; }
+        if (!hasGMset && !hasNavClip) {
+            const ta = document.createElement('textarea');
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            try { r.exec = document.execCommand('copy'); }
             catch (err) { if (debug) console.error('TPLF: execCommand failed.', err); }
-            document.body.removeChild(tempTextarea);
+            document.body.removeChild(ta);
         }
-        // v3.6.37: diag — version + which path ran + success + API availability.
-        tplf_diag({ tag: 'copy', ver: TPLF_VERSION, method, ok, len: (text || '').length, hasGMset, hasNavClip });
-        return ok;
+        // diag — version + which paths were attempted + API availability.
+        tplf_diag({ tag: 'copy', ver: TPLF_VERSION, r, len: (text || '').length, hasGMset, hasNavClip });
+        return true;
     }
 
     // --- Live Data Interception (war JSON -> hospTime + warMemberFaction) ---
