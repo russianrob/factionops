@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.9
+// @version      2.73.10
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3168,8 +3168,8 @@ if (!singleton) {
   const _ffsScoreCache = {};    // pid (string) -> FFS score
 
   // wb63: hide online/offline activity filter (war page). Persisted across loads.
-  let _ffsHideOnline  = !!rD_getValue('ffs_hide_online', false);
-  let _ffsHideOffline = !!rD_getValue('ffs_hide_offline', false);
+  let _ffsHideOnline  = ffs_parseBool(rD_getValue('ffs_hide_online', false));
+  let _ffsHideOffline = ffs_parseBool(rD_getValue('ffs_hide_offline', false));
   let _ffsActivityDiagOnce = false; // wb64: one-shot detection diag per page load
 
   // wb61/wb64: are we on the ranked-war VIEW? Detect by URL ONLY. We used to
@@ -3318,16 +3318,21 @@ if (!singleton) {
   // ── wb63: hide online / offline members on the war page ─────────────────
   // Detection mirrors TornTools' ranked-war-filter: each war row carries a
   // [class*="userOnlineStatusIcon___"] whose alt is "Online"/"Idle"/"Offline".
-  // PRECISE 3-state semantics (wb65): hide-online hides Online; hide-offline
-  // hides ONLY truly Offline. Idle (recently-active) is always visible — in a
-  // war most members are idle/offline, so the old two-bucket "hide offline"
-  // (idle+offline) wiped almost the whole list. Unknown status is never hidden.
-  // Hidden rows just get display:none, so this composes with the sort.
+  // TWO-BUCKET semantics (wb66, per user): hide-online hides Online;
+  // hide-offline hides everything NOT online (Idle + Offline) — idle counts as
+  // offline. Unknown status is never hidden. Hidden rows just get display:none,
+  // so this composes with the sort.
   function ffs_shouldHide(alt, hideOnline, hideOffline) {
     if (!alt) return false;
     if (hideOnline && alt === 'Online') return true;
-    if (hideOffline && alt === 'Offline') return true; // only Offline; Idle stays visible
+    if (hideOffline && alt !== 'Online') return true; // idle + offline
     return false;
+  }
+  // wb66: robust boolean read for persisted toggles. On PDA, rD_getValue
+  // returns the RAW localStorage string, so !!"false" / !!"0" were truthy —
+  // that's why both boxes came back checked after a refresh. Parse explicitly.
+  function ffs_parseBool(v) {
+    return v === true || v === 1 || v === '1' || v === 'true';
   }
   function ffs_activityOf(row) {
     // Find the online indicator. Primary = TornTools' ranked-war icon; plus
@@ -3424,12 +3429,12 @@ if (!singleton) {
     count.className = 'ffs-hide-count';
     on.cb.addEventListener('change', () => {
       _ffsHideOnline = on.cb.checked;
-      rD_setValue('ffs_hide_online', _ffsHideOnline);
+      rD_setValue('ffs_hide_online', _ffsHideOnline ? '1' : '0'); // string round-trips on PDA
       ffs_applyActivityFilter();
     });
     off.cb.addEventListener('change', () => {
       _ffsHideOffline = off.cb.checked;
-      rD_setValue('ffs_hide_offline', _ffsHideOffline);
+      rD_setValue('ffs_hide_offline', _ffsHideOffline ? '1' : '0');
       ffs_applyActivityFilter();
     });
     bar.appendChild(on.label);
