@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.38
+// @version      3.6.39
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -71,7 +71,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.38';
+    const TPLF_VERSION = '3.6.39';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -85,6 +85,44 @@
                 onload: function () {}, onerror: function () {},
             });
         } catch (_) {}
+    }
+
+    // v3.6.39: Torn PDA's webview reports clipboard-write success but the text
+    // never reaches the system clipboard. Detect PDA so we can fall back to a
+    // manual long-press copy (the only thing that reliably works there).
+    const IS_PDA = (function () {
+        try {
+            const w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+            if ((w && w.flutter_inappwebview) || window.flutter_inappwebview) return true;
+            return /TornPDA|tornpda|DalvikTornPDA|com\.manuito/i.test(navigator.userAgent || '');
+        } catch (_) { return false; }
+    })();
+
+    // Manual-copy fallback overlay: a pre-selected textarea the user can
+    // long-press → Copy. Works on any mobile/webview regardless of clipboard API.
+    function showCopyFallback(text) {
+        const old = document.getElementById('gnsc-copy-fallback');
+        if (old) old.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'gnsc-copy-fallback';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:16px;';
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#1a1a1a;border:1px solid rgba(255,255,255,.15);border-radius:12px;padding:14px;max-width:560px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.6);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+        const hint = document.createElement('div');
+        hint.textContent = 'Long-press the text → Select all → Copy:';
+        hint.style.cssText = 'color:#ddd;font-size:13px;margin-bottom:8px;';
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'width:100%;height:120px;background:#0e0e0e;color:#eee;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:8px;font-size:13px;box-sizing:border-box;';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = 'Close';
+        closeBtn.style.cssText = 'margin-top:10px;padding:6px 14px;border:0;border-radius:8px;background:#2a3cff;color:#fff;font-weight:600;cursor:pointer;';
+        closeBtn.addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+        box.appendChild(hint); box.appendChild(ta); box.appendChild(closeBtn);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        try { ta.focus(); ta.select(); ta.setSelectionRange(0, (text || '').length); } catch (_) {}
     }
 
     const GNSC_setValue = typeof GM_setValue !== 'undefined'
@@ -1317,7 +1355,7 @@
         // success — also fire navigator.clipboard.writeText, so whichever path
         // genuinely writes wins. execCommand only if neither modern API exists
         // (it pops the keyboard on mobile and is a no-op on PDA anyway).
-        const r = { gm: false, nav: false, exec: undefined };
+        const r = { gm: false, nav: false };
         const hasGMset = typeof GM_setClipboard === 'function';
         const hasNavClip = !!(navigator.clipboard && navigator.clipboard.writeText);
         if (hasGMset) {
@@ -1325,22 +1363,21 @@
             catch (err) { if (debug) console.error('TPLF: GM_setClipboard failed.', err); }
         }
         if (hasNavClip) {
-            try { navigator.clipboard.writeText(text).then(() => {}, () => {}); r.nav = true; }
-            catch (err) { if (debug) console.error('TPLF: navigator.clipboard failed.', err); }
+            try {
+                navigator.clipboard.writeText(text).then(
+                    () => tplf_diag({ tag: 'copy-nav', ver: TPLF_VERSION, result: 'resolved' }),
+                    (e) => { tplf_diag({ tag: 'copy-nav', ver: TPLF_VERSION, result: 'rejected', err: String(e && e.name) }); if (!IS_PDA) showCopyFallback(text); }
+                );
+                r.nav = true;
+            } catch (err) { if (debug) console.error('TPLF: navigator.clipboard failed.', err); }
         }
-        if (!hasGMset && !hasNavClip) {
-            const ta = document.createElement('textarea');
-            ta.style.position = 'fixed';
-            ta.style.left = '-9999px';
-            ta.value = text;
-            document.body.appendChild(ta);
-            ta.select();
-            try { r.exec = document.execCommand('copy'); }
-            catch (err) { if (debug) console.error('TPLF: execCommand failed.', err); }
-            document.body.removeChild(ta);
+        // v3.6.39: on Torn PDA the clipboard APIs report success but don't reach
+        // the system clipboard, so always offer the manual long-press copy. Also
+        // used when no clipboard API exists at all.
+        if (IS_PDA || (!hasGMset && !hasNavClip)) {
+            showCopyFallback(text);
         }
-        // diag — version + which paths were attempted + API availability.
-        tplf_diag({ tag: 'copy', ver: TPLF_VERSION, r, len: (text || '').length, hasGMset, hasNavClip });
+        tplf_diag({ tag: 'copy', ver: TPLF_VERSION, r, isPDA: IS_PDA, len: (text || '').length, hasGMset, hasNavClip });
         return true;
     }
 
