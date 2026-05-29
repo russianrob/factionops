@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.23
+// @version      2.73.24
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -234,6 +234,24 @@ function ffs_nowSec() {
     }
   } catch (_) {}
   return Math.floor(Date.now() / 1000);
+}
+
+// wb78: server time in FLOAT seconds (sub-second precision when Torn's
+// getCurrentTimestamp returns ms). Pair with Math.round so the countdown
+// matches Torn / War-Stuff-Enhanced timing instead of reading ~0.5s high from
+// flooring (until - floor(now) shows the ceiling).
+function ffs_nowSecFloat() {
+  try {
+    const w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    if (typeof w.getCurrentTimestamp === 'function') {
+      const t = w.getCurrentTimestamp();
+      if (Number.isFinite(t)) {
+        if (t > 1e12) return t / 1000;   // ms → float seconds
+        if (t > 1e9)  return t;          // already seconds
+      }
+    }
+  } catch (_) {}
+  return Date.now() / 1000;
 }
 const FF_TARGET_STALENESS = 24 * 60 * 60 * 1000; // Refresh the target list every day
 const TARGET_KEY = "ffscouterv2-targets";
@@ -2925,7 +2943,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.23';
+  const SCRIPT_VERSION = '2.73.24';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -2970,12 +2988,12 @@ if (!singleton) {
   // the HH:MM:SS flips within ~250ms of real time instead of lagging up to 1s.
   function ffs_tickCountdowns() {
     let now;
-    try { now = ffs_nowSec(); } catch (_) { return; }
+    try { now = ffs_nowSecFloat(); } catch (_) { return; } // wb78: float secs + round → no ~0.5s flooring bias
     const chips = document.querySelectorAll('a.ffs-hosp-status[data-ffs-until]');
     for (const chip of chips) {
       const until = parseInt(chip.dataset.ffsUntil, 10);
       if (!Number.isFinite(until)) continue;
-      const remaining = until - now;
+      const remaining = Math.round(until - now);
       if (remaining <= 0) continue; // let the heavy paint loop restore the cell
       const val = chip.querySelector('.ffs-hosp-val');
       if (!val) continue;
@@ -3134,7 +3152,7 @@ if (!singleton) {
         const hospUntil = _ffsMemberHospitalUntil[uid];
         const hospState = _ffsMemberHospitalState[uid] || 'Hospital';
         if (hospUntil) {
-          const remaining = hospUntil - ffs_nowSec();
+          const remaining = Math.round(hospUntil - ffs_nowSecFloat()); // wb78: round, not floor (no ~0.5s bias)
           if (remaining <= 0) {
             // Release moment passed — clean up and let React own the cell.
             delete _ffsMemberHospitalUntil[uid];
