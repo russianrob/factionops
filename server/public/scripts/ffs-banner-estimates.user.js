@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.8
+// @version      2.73.9
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3318,15 +3318,15 @@ if (!singleton) {
   // ── wb63: hide online / offline members on the war page ─────────────────
   // Detection mirrors TornTools' ranked-war-filter: each war row carries a
   // [class*="userOnlineStatusIcon___"] whose alt is "Online"/"Idle"/"Offline".
-  // Two-bucket semantics (matches factionops): hide-online hides Online;
-  // hide-offline hides everything NOT online (Idle + Offline). Unknown status
-  // is never hidden. Hidden rows just get display:none, so this composes with
-  // the sort (which keeps ordering them harmlessly).
+  // PRECISE 3-state semantics (wb65): hide-online hides Online; hide-offline
+  // hides ONLY truly Offline. Idle (recently-active) is always visible — in a
+  // war most members are idle/offline, so the old two-bucket "hide offline"
+  // (idle+offline) wiped almost the whole list. Unknown status is never hidden.
+  // Hidden rows just get display:none, so this composes with the sort.
   function ffs_shouldHide(alt, hideOnline, hideOffline) {
     if (!alt) return false;
-    const isOnline = alt === 'Online';
-    if (hideOnline && isOnline) return true;
-    if (hideOffline && !isOnline) return true;
+    if (hideOnline && alt === 'Online') return true;
+    if (hideOffline && alt === 'Offline') return true; // only Offline; Idle stays visible
     return false;
   }
   function ffs_activityOf(row) {
