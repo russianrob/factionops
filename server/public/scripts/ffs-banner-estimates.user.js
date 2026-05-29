@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.18
+// @version      2.73.19
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2929,7 +2929,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.18';
+  const SCRIPT_VERSION = '2.73.19';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3007,6 +3007,30 @@ if (!singleton) {
       if (val.textContent !== txt) val.textContent = txt;
       chip.dataset.ffsTime = txt;
     }
+  }
+
+  // wb74: Torn's getCurrentTimestamp() (used by ffs_nowSec) can be phased off
+  // the device clock, so a Date.now()-aligned tick would flip slightly early or
+  // late. Measure once at startup the device-millisecond at which ffs_nowSec()
+  // actually rolls over, and align the ticker to THAT boundary so the flip is
+  // exact. Default 0 = device-aligned until measured / if measurement gives up.
+  let _ffsSecPhaseMs = 0;
+  function ffs_measureSecPhase() {
+    let s0;
+    try { s0 = ffs_nowSec(); } catch (_) { return; }
+    const start = Date.now();
+    const probe = setInterval(function () {
+      const now = Date.now();
+      let s;
+      try { s = ffs_nowSec(); } catch (_) { clearInterval(probe); return; }
+      if (s !== s0) {
+        _ffsSecPhaseMs = now % 1000;
+        clearInterval(probe);
+        ffs_travelDiag({ source: 'clock-phase', phaseMs: _ffsSecPhaseMs });
+      } else if (now - start > 1200) {
+        clearInterval(probe); // gave up — keep device-aligned (phase 0)
+      }
+    }, 20);
   }
 
   function ffs_paintTravelCountdowns() {
@@ -3618,18 +3642,20 @@ if (!singleton) {
     // Ticker: repaint every 1s so countdowns stay live.
     setInterval(ffs_paintTravelCountdowns, 1000);
 
-    // wb73: drive the lightweight countdown ticker with a self-correcting
-    // setTimeout aligned to each real second boundary, so the HH:MM:SS flips
-    // EXACTLY on the second (within a few ms) instead of up to a poll-interval
-    // late — and only once per second (vs polling 4×/sec). Re-aligns each tick
-    // from Date.now() so it never drifts.
-    ffs_tickCountdowns(); // initial paint
+    // wb73/wb74: drive the lightweight countdown ticker with a self-correcting
+    // setTimeout aligned to the measured real-second boundary (see
+    // _ffsSecPhaseMs), so the HH:MM:SS flips EXACTLY when the displayed second
+    // rolls over — accounting for any phase offset between Torn's server time
+    // (getCurrentTimestamp) and the device clock. One update/sec, no drift.
+    ffs_tickCountdowns();  // initial paint
+    ffs_measureSecPhase(); // learn the true flip phase (logs source:clock-phase)
     (function ffs_scheduleCountdownTick() {
-      const msToNext = 1000 - (Date.now() % 1000);
+      let msToNext = (_ffsSecPhaseMs - (Date.now() % 1000) + 1000) % 1000;
+      if (msToNext < 8) msToNext += 1000; // never fire twice within one second
       setTimeout(function () {
         ffs_tickCountdowns();
         ffs_scheduleCountdownTick();
-      }, msToNext + 15);
+      }, msToNext + 8);
     })();
 
     // Data fetch loop: poll Torn API every 30s, extract all faction IDs
