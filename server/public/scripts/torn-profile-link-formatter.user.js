@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.40
+// @version      3.6.41
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -71,7 +71,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.40';
+    const TPLF_VERSION = '3.6.41';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -315,7 +315,7 @@
             id: userId,
             name: cleanedName,
             profileUrl: `https://www.torn.com/profiles.php?XID=${userId}`,
-            attackUrl: `https://www.torn.com/loader2.php?sid=getInAttack&user2ID=${userId}`,
+            attackUrl: `https://www.torn.com/page.php?sid=attack&user2ID=${userId}`,
             factionUrl: factionLinkEl ? factionLinkEl.href : null,
             companyUrl: companyLinkEl ? companyLinkEl.href : null,
             activityStatus: activityStatus,
@@ -927,7 +927,7 @@
         }
 
         const linkedName = `<a href="https://www.torn.com/profiles.php?XID=${id}">${name} [${id}]</a>`;
-        const attackLink = `<a href="https://www.torn.com/loader2.php?sid=getInAttack&user2ID=${id}">Attack</a>`;
+        const attackLink = `<a href="https://www.torn.com/page.php?sid=attack&user2ID=${id}">Attack</a>`;
         const details = [attackLink];
         if (healthStr) details.push(healthStr);
         if (statsStr) details.push(statsStr);
