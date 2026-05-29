@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.35
+// @version      3.6.36
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -10,6 +10,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_xmlhttpRequest
+// @grant        GM_setClipboard
 // @grant        unsafeWindow
 // @connect      api.torn.com
 // @downloadURL  https://tornwar.com/scripts/torn-profile-link-formatter.user.js
@@ -1291,18 +1292,42 @@
     }
 
     function copyToClipboard(text) {
+        // v3.6.36: execCommand('copy') is unreliable / a no-op on Torn PDA and
+        // mobile (the reported "copy does nothing"). Try the robust paths first.
+        // 1) GM_setClipboard — works in Tampermonkey + Torn PDA, immune to
+        //    focus / secure-context restrictions.
+        try {
+            if (typeof GM_setClipboard === 'function') {
+                GM_setClipboard(text, { type: 'text', mimetype: 'text/plain' });
+                return true;
+            }
+        } catch (err) {
+            if (debug) console.error('TPLF: GM_setClipboard failed.', err);
+        }
+        // 2) Async Clipboard API (secure contexts / desktop).
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).catch(() => {});
+                return true;
+            }
+        } catch (err) {
+            if (debug) console.error('TPLF: navigator.clipboard failed.', err);
+        }
+        // 3) Legacy execCommand fallback.
         const tempTextarea = document.createElement('textarea');
         tempTextarea.style.position = 'fixed';
         tempTextarea.style.left = '-9999px';
         tempTextarea.value = text;
         document.body.appendChild(tempTextarea);
         tempTextarea.select();
+        let ok = false;
         try {
-            document.execCommand('copy');
+            ok = document.execCommand('copy');
         } catch (err) {
             if (debug) console.error('Torn Profile Link Formatter: Clipboard copy failed.', err);
         }
         document.body.removeChild(tempTextarea);
+        return ok;
     }
 
     // --- Live Data Interception (war JSON -> hospTime + warMemberFaction) ---
