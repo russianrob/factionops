@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.12
+// @version      2.73.13
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2929,7 +2929,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.12';
+  const SCRIPT_VERSION = '2.73.13';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3166,11 +3166,11 @@ if (!singleton) {
     ffs_applyWarSort(rows);
     // wb63: keep the hide-online/offline bar present and re-apply the filter
     // every tick so both survive Torn's React re-renders.
-    if (ffs_isWarContext()) {
+    if (ffs_isHideContext()) {
       ffs_injectHideControls();
       ffs_applyActivityFilter(rows);
     } else {
-      ffs_clearActivityFilter(); // wb64: off the war view — no bar, no hidden rows
+      ffs_clearActivityFilter(); // wb64: off member-list pages — no bar, no hidden rows
     }
   }
 
@@ -3206,6 +3206,17 @@ if (!singleton) {
   // pages have neither.
   function ffs_isWarContext() {
     return location.search.includes('type=1') || /\/war\//.test(location.hash);
+  }
+
+  // wb68: where the hide online/offline toggles apply — the ranked-war board
+  // AND the faction profile / own-faction members roster (per user). Broader
+  // than ffs_isWarContext (which gates only the war SORT). Scoped to
+  // factions.php member-listing views, never arbitrary pages.
+  function ffs_isHideContext() {
+    if (!/factions\.php/.test(location.pathname)) return false;
+    return ffs_isWarContext()
+        || location.search.includes('step=profile')
+        || location.search.includes('step=your');
   }
 
   // wb61: keep the sort button's arrow/label in sync with module state. Label
@@ -3453,7 +3464,7 @@ if (!singleton) {
     if (bar) bar.remove();
   }
   function ffs_injectHideControls() {
-    if (!ffs_isWarContext()) return;
+    if (!ffs_isHideContext()) return;
     if (document.querySelector('.ffs-hide-bar')) return; // already present
     const list = document.querySelector('ul.f-war-list')
               || document.querySelector(".faction-war [class*='members-list' i]")
