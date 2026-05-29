@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.7
+// @version      2.73.8
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3144,6 +3144,8 @@ if (!singleton) {
     if (ffs_isWarContext()) {
       ffs_injectHideControls();
       ffs_applyActivityFilter(rows);
+    } else {
+      ffs_clearActivityFilter(); // wb64: off the war view — no bar, no hidden rows
     }
   }
 
@@ -3170,17 +3172,15 @@ if (!singleton) {
   let _ffsHideOffline = !!rD_getValue('ffs_hide_offline', false);
   let _ffsActivityDiagOnce = false; // wb64: one-shot detection diag per page load
 
-  // wb61: are we on a ranked-war VIEW (not just the own-faction roster, which
-  // also lives at step=your)? Require an actual enemy/war signal so the
-  // persistent attackable-top ordering only kicks in during a war — plain
-  // roster pages keep the click-only hospital-release default. The React
-  // selector is a build-independent partial match (the hashed class
-  // .opponentFactionName___xxxx changes between Torn builds).
+  // wb61/wb64: are we on the ranked-war VIEW? Detect by URL ONLY. We used to
+  // also check for the opponent-faction war banner, but that element is present
+  // on EVERY faction page during a war (profile, members roster, etc.), which
+  // leaked the war sort + the hide filter onto those pages (e.g. hiding 200+
+  // roster members). The war view is factions.php?step=your&type=1#/war/rank —
+  // uniquely identified by the type=1 query or the #/war/ hash. Roster/profile
+  // pages have neither.
   function ffs_isWarContext() {
-    return !!(document.querySelector('.enemy-faction .members-list')
-           || document.querySelector('[class*="opponentFactionName" i]')
-           || /\/war\//.test(location.hash)
-           || location.search.includes('type=1'));
+    return location.search.includes('type=1') || /\/war\//.test(location.hash);
   }
 
   // wb61: keep the sort button's arrow/label in sync with module state. Label
@@ -3391,6 +3391,14 @@ if (!singleton) {
     }
     const countEl = document.querySelector('.ffs-hide-bar .ffs-hide-count');
     if (countEl) countEl.textContent = hidden ? `${hidden} hidden` : '';
+  }
+  // wb64: undo all hide-filter side effects (used when we're NOT on the war
+  // view) so the filter can never leak onto the roster/profile pages, even via
+  // stale classes left on DOM nodes reused across an SPA navigation.
+  function ffs_clearActivityFilter() {
+    document.querySelectorAll('.ffs-hidden').forEach((el) => el.classList.remove('ffs-hidden'));
+    const bar = document.querySelector('.ffs-hide-bar');
+    if (bar) bar.remove();
   }
   function ffs_injectHideControls() {
     if (!ffs_isWarContext()) return;
