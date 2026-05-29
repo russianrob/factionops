@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.42
+// @version      3.6.43
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -71,7 +71,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.42';
+    const TPLF_VERSION = '3.6.43';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -352,15 +352,9 @@
             if (title === 'Job') companyLinkEl = item.querySelector('.user-info-value a, a');
         });
 
+        // Captured for reference only; the copy reads activity LIVE at click time
+        // (see handleCopyClick) because Torn renders the dot after injection.
         activityStatus = tplf_activityStatus(document);
-        try {
-            const _p = document.querySelector("[class*='userOnlineStatusIcon' i], [class*='onlineStatus' i]");
-            const _l = document.querySelector("li[id^='icon1-profile-'], li[id^='icon2-profile-'], li[id^='icon62-profile-']");
-            tplf_diag({ tag: 'activity', ctx: 'profile', status: activityStatus,
-                modAlt: _p ? (_p.getAttribute('alt') || _p.getAttribute('title') || _p.getAttribute('aria-label')) : null,
-                modCls: _p ? String(_p.className).slice(0, 50) : null,
-                legacyCls: _l ? String(_l.className).slice(0, 50) : null });
-        } catch (_) {}
 
         const statusDescEl = document.querySelector('.profile-status.hospital .main-desc');
         const isInHospital = !!statusDescEl;
@@ -845,9 +839,29 @@
         let statusEmoji = '';
 
         if (settings.activity) {
-            statusEmoji = userInfo.activityStatus === 'Online'
-                ? '🟢 '
-                : (userInfo.activityStatus === 'Idle' ? '🟡 ' : '⚫ ');
+            // v3.6.43: read activity LIVE at click time, not the value captured at
+            // injection. Torn renders the profile status dot in stages AFTER the
+            // script first runs, so the captured value was usually the stale
+            // default 'Offline' (black) — the real remaining cause of the bug.
+            const act = tplf_activityStatus(document);
+            statusEmoji = act === 'Online' ? '🟢 ' : (act === 'Idle' ? '🟡 ' : '⚫ ');
+            try {
+                const _p = document.querySelector("[class*='userOnlineStatusIcon' i], [class*='onlineStatus' i]");
+                // If the modern dot isn't found, sample status-ish elements so the
+                // server log reveals what Torn's profile page actually renders.
+                const _samp = [];
+                if (!_p) {
+                    const _c = document.querySelectorAll("[class*='online' i],[class*='idle' i],[class*='status' i],[alt],[title],[aria-label]");
+                    for (let _i = 0; _i < _c.length && _samp.length < 6; _i++) {
+                        const _cn = (_c[_i].className && _c[_i].className.toString()) || '';
+                        const _al = (_c[_i].getAttribute('alt') || _c[_i].getAttribute('title') || _c[_i].getAttribute('aria-label') || '');
+                        if (/online|idle|offline|status/i.test(_cn + ' ' + _al)) _samp.push(_c[_i].tagName + '|' + _cn.slice(0, 26) + '|' + _al.slice(0, 16));
+                    }
+                }
+                tplf_diag({ tag: 'activity', ctx: 'profile-click', status: act,
+                    modAlt: _p ? (_p.getAttribute('alt') || _p.getAttribute('title') || _p.getAttribute('aria-label')) : null,
+                    modCls: _p ? String(_p.className).slice(0, 40) : null, samp: _samp });
+            } catch (_) {}
         }
 
         const releaseTimestamp = hospTime[userInfo.id] || null;
