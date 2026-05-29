@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.36
+// @version      3.6.37
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -68,6 +68,24 @@
     let warMemberFaction = {}; // userID -> factionID from war JSON
     let warMemberLevel = {};  // userID -> level from war JSON
     const debug = true;
+
+    // v3.6.37: stamp version + post a copy diagnostic so the server log shows
+    // exactly which build is installed and which clipboard path ran on a click.
+    const TPLF_VERSION = '3.6.37';
+    let _tplfDiagN = 0;
+    function tplf_diag(data) {
+        if (_tplfDiagN > 15) return;
+        _tplfDiagN++;
+        try {
+            GM_xmlhttpRequest({
+                method: 'POST',
+                url: 'https://tornwar.com/api/debug/client-log',
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ tag: 'tplf-' + (data.tag || 'diag'), data }),
+                onload: function () {}, onerror: function () {},
+            });
+        } catch (_) {}
+    }
 
     const GNSC_setValue = typeof GM_setValue !== 'undefined'
         ? GM_setValue
@@ -1292,41 +1310,34 @@
     }
 
     function copyToClipboard(text) {
-        // v3.6.36: execCommand('copy') is unreliable / a no-op on Torn PDA and
-        // mobile (the reported "copy does nothing"). Try the robust paths first.
+        let method = 'none', ok = false;
+        const hasGMset = typeof GM_setClipboard === 'function';
+        const hasNavClip = !!(navigator.clipboard && navigator.clipboard.writeText);
         // 1) GM_setClipboard — works in Tampermonkey + Torn PDA, immune to
         //    focus / secure-context restrictions.
-        try {
-            if (typeof GM_setClipboard === 'function') {
-                GM_setClipboard(text, { type: 'text', mimetype: 'text/plain' });
-                return true;
-            }
-        } catch (err) {
-            if (debug) console.error('TPLF: GM_setClipboard failed.', err);
+        if (hasGMset) {
+            try { GM_setClipboard(text, { type: 'text', mimetype: 'text/plain' }); method = 'GM_setClipboard'; ok = true; }
+            catch (err) { if (debug) console.error('TPLF: GM_setClipboard failed.', err); }
         }
         // 2) Async Clipboard API (secure contexts / desktop).
-        try {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).catch(() => {});
-                return true;
-            }
-        } catch (err) {
-            if (debug) console.error('TPLF: navigator.clipboard failed.', err);
+        if (!ok && hasNavClip) {
+            try { navigator.clipboard.writeText(text).catch(() => {}); method = 'navigator.clipboard'; ok = true; }
+            catch (err) { if (debug) console.error('TPLF: navigator.clipboard failed.', err); }
         }
-        // 3) Legacy execCommand fallback.
-        const tempTextarea = document.createElement('textarea');
-        tempTextarea.style.position = 'fixed';
-        tempTextarea.style.left = '-9999px';
-        tempTextarea.value = text;
-        document.body.appendChild(tempTextarea);
-        tempTextarea.select();
-        let ok = false;
-        try {
-            ok = document.execCommand('copy');
-        } catch (err) {
-            if (debug) console.error('Torn Profile Link Formatter: Clipboard copy failed.', err);
+        // 3) Legacy execCommand fallback (unreliable on PDA/mobile).
+        if (!ok) {
+            const tempTextarea = document.createElement('textarea');
+            tempTextarea.style.position = 'fixed';
+            tempTextarea.style.left = '-9999px';
+            tempTextarea.value = text;
+            document.body.appendChild(tempTextarea);
+            tempTextarea.select();
+            try { ok = document.execCommand('copy'); method = 'execCommand'; }
+            catch (err) { if (debug) console.error('TPLF: execCommand failed.', err); }
+            document.body.removeChild(tempTextarea);
         }
-        document.body.removeChild(tempTextarea);
+        // v3.6.37: diag — version + which path ran + success + API availability.
+        tplf_diag({ tag: 'copy', ver: TPLF_VERSION, method, ok, len: (text || '').length, hasGMset, hasNavClip });
         return ok;
     }
 
