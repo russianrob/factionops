@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.39
+// @version      3.6.40
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -71,7 +71,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.39';
+    const TPLF_VERSION = '3.6.40';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -123,6 +123,20 @@
         overlay.appendChild(box);
         document.body.appendChild(overlay);
         try { ta.focus(); ta.select(); ta.setSelectionRange(0, (text || '').length); } catch (_) {}
+    }
+
+    // v3.6.40: the FF estimate is async (IndexedDB). Pre-warm it into a sync
+    // cache at button-creation time so a copy click can build the full text
+    // WITHOUT an await — keeping the tap's user-activation alive so
+    // navigator.clipboard.writeText isn't denied (the NotAllowedError on PDA).
+    const _ffsSyncCache = {};
+    function prewarmFfs(userId) {
+        if (!userId || _ffsSyncCache[userId]) return;
+        try {
+            getFfScouterEstimate(userId).then(function (ff) {
+                if (ff && ff.total != null) _ffsSyncCache[userId] = ff;
+            }).catch(function () {});
+        } catch (_) {}
     }
 
     const GNSC_setValue = typeof GM_setValue !== 'undefined'
@@ -251,6 +265,8 @@
                 button.textContent = '📄';
                 button.addEventListener('click', (e) => handleListCopyClick(e, button, member));
                 nameLink.insertAdjacentElement('afterend', button);
+                const _idm = (nameLink.href || '').match(/XID=(\d+)/); // v3.6.40: pre-warm FF for in-gesture copy
+                if (_idm) prewarmFfs(_idm[1]);
             }
         });
     }
@@ -259,6 +275,7 @@
         const urlParams = new URLSearchParams(window.location.search);
         const userId = urlParams.get('XID');
         if (!userId) return;
+        prewarmFfs(userId); // v3.6.40: warm FF cache so copy can run in-gesture
 
         let cleanedName = getCleanLinkText(nameElement).replace("'s Profile", "").split(' [')[0].trim();
         
@@ -765,7 +782,7 @@
 
     // --- Handlers ---
 
-    async function handleCopyClick(e, button, userInfo) {
+    function handleCopyClick(e, button, userInfo) {
         e.preventDefault();
         const settings = loadSettings();
         let statsStr = null;
@@ -806,17 +823,16 @@
                 const predOnly = getBspPredictionOrFf(userInfo.id);
                 if (predOnly?.type === 'prediction' && predOnly.prediction) {
                     statsStr = formatPredictionString(predOnly.prediction);
+                } else if (_ffsSyncCache[userInfo.id] && _ffsSyncCache[userInfo.id].total != null) {
+                    statsStr = formatFfScouterString(_ffsSyncCache[userInfo.id], settings.battleStatsFormat);
                 } else {
-                    const ff = await getFfScouterEstimate(userInfo.id);
-                    if (ff && ff.total != null) {
-                        statsStr = formatFfScouterString(ff, settings.battleStatsFormat);
-                    } else {
-                        statsStr = "(Stats: N/A)";
-                    }
+                    // v3.6.40: FF not cached yet — fetch for next time and copy
+                    // now WITHOUT awaiting, so the tap gesture survives for the
+                    // clipboard write. (Stat line is added on the next copy.)
+                    prewarmFfs(userInfo.id);
                 }
             } catch (err) {
                 if (debug) console.error('Torn Profile Link Formatter: BSP/FF format error (profile)', userInfo.id, err);
-                statsStr = "(Stats: Error)";
             }
         }
 
@@ -842,7 +858,7 @@
         }, 2000);
     }
 
-    async function handleListCopyClick(e, button, memberElement) {
+    function handleListCopyClick(e, button, memberElement) {
         e.preventDefault();
         e.stopPropagation();
 
@@ -899,17 +915,14 @@
                 const predOnly = getBspPredictionOrFf(id);
                 if (predOnly?.type === 'prediction' && predOnly.prediction) {
                     statsStr = formatPredictionString(predOnly.prediction);
+                } else if (_ffsSyncCache[id] && _ffsSyncCache[id].total != null) {
+                    statsStr = formatFfScouterString(_ffsSyncCache[id], settings.battleStatsFormat);
                 } else {
-                    const ff = await getFfScouterEstimate(id);
-                    if (ff && ff.total != null) {
-                        statsStr = formatFfScouterString(ff, settings.battleStatsFormat);
-                    } else {
-                        statsStr = "(Stats: N/A)";
-                    }
+                    // v3.6.40: FF not cached — fetch for next time, copy now without await.
+                    prewarmFfs(id);
                 }
             } catch (error) {
                 if (debug) console.error("Torn Profile Link Formatter: BSP/FF format error (list)", id, error);
-                statsStr = "(Stats: Error)";
             }
         }
 
@@ -1366,15 +1379,16 @@
             try {
                 navigator.clipboard.writeText(text).then(
                     () => tplf_diag({ tag: 'copy-nav', ver: TPLF_VERSION, result: 'resolved' }),
-                    (e) => { tplf_diag({ tag: 'copy-nav', ver: TPLF_VERSION, result: 'rejected', err: String(e && e.name) }); if (!IS_PDA) showCopyFallback(text); }
+                    (e) => { tplf_diag({ tag: 'copy-nav', ver: TPLF_VERSION, result: 'rejected', err: String(e && e.name) }); showCopyFallback(text); }
                 );
                 r.nav = true;
             } catch (err) { if (debug) console.error('TPLF: navigator.clipboard failed.', err); }
         }
-        // v3.6.39: on Torn PDA the clipboard APIs report success but don't reach
-        // the system clipboard, so always offer the manual long-press copy. Also
-        // used when no clipboard API exists at all.
-        if (IS_PDA || (!hasGMset && !hasNavClip)) {
+        // v3.6.40: writeText now fires inside the tap gesture, so on PDA it may
+        // actually resolve (true auto-copy). Only force the manual popup when
+        // there's no clipboard API at all — the reject handler above pops it if
+        // the async write is denied.
+        if (!hasGMset && !hasNavClip) {
             showCopyFallback(text);
         }
         tplf_diag({ tag: 'copy', ver: TPLF_VERSION, r, isPDA: IS_PDA, len: (text || '').length, hasGMset, hasNavClip });
