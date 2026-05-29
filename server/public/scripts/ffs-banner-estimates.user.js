@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.20
+// @version      2.73.21
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -277,28 +277,20 @@ if (!singleton) {
     /* wb29: default shows countdown; click toggles to country name. */
     .ffs-travel-status .ffs-mq-value { white-space: nowrap; }
     .status:has(.ffs-travel-status) { overflow: hidden; white-space: nowrap; }
-    /* wb44: hospital / jail release-timer chip. Similar shape to the
-       travel chip but red-tinted. Flash animation when <5 min remain
-       so revive callers spot imminent releases at a glance. */
+    /* wb76: hospital / jail release timer renders INLINE in place of the native
+       status text (like Torn War Stuff Enhanced) — no badge/pill — while staying
+       a clickable link to the attack page. Inherits the status cell's colour so
+       it matches Torn's native styling (red for hospital, etc.). */
     .ffs-hosp-status {
-      display: inline-flex; align-items: center; gap: 4px;
-      padding: 1px 4px 1px 3px; border-radius: 3px;
-      background: rgba(220, 38, 38, .22); color: #fca5a5;
-      font-weight: 600; font-size: 11px;
-      max-width: 100%;
-      cursor: pointer; text-decoration: none;
+      color: inherit;
+      font: inherit;
+      text-decoration: none;
+      cursor: pointer;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
     }
-    .ffs-hosp-status:hover { filter: brightness(1.2); }
-    .ffs-hosp-status.jail { background: rgba(100, 116, 139, .25); color: #cbd5e1; }
-    .ffs-hosp-status.imminent {
-      animation: ffs-hosp-pulse 1s ease-in-out infinite;
-      background: rgba(220, 38, 38, .45);
-      color: #fff;
-    }
-    @keyframes ffs-hosp-pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, .6); }
-      50%      { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0); }
-    }
+    .ffs-hosp-status:hover { text-decoration: underline; }
+    .ffs-hosp-status.imminent { color: #ff5252; font-weight: 700; }
     .status:has(.ffs-hosp-status) { overflow: hidden; white-space: nowrap; }
     /* wb63: hide online/offline activity filter (war page) */
     .ffs-hidden { display: none !important; }
@@ -2929,7 +2921,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.20';
+  const SCRIPT_VERSION = '2.73.21';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
