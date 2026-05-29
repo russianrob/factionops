@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.5
+// @version      2.73.6
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -300,6 +300,17 @@ if (!singleton) {
       50%      { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0); }
     }
     .status:has(.ffs-hosp-status) { overflow: hidden; white-space: nowrap; }
+    /* wb63: hide online/offline activity filter (war page) */
+    .ffs-hidden { display: none !important; }
+    .ffs-hide-bar {
+      display: flex; align-items: center; gap: 14px;
+      padding: 5px 10px; margin: 4px 0; border-radius: 4px;
+      background: rgba(20, 22, 28, .55); color: #cbd5e1;
+      font-size: 12px; user-select: none;
+    }
+    .ffs-hide-bar label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+    .ffs-hide-bar input { margin: 0; cursor: pointer; }
+    .ffs-hide-bar .ffs-hide-count { margin-left: auto; opacity: .7; font-size: 11px; }
   `);
   GM_addStyle(`
             .ff-scouter-indicator {
@@ -3128,6 +3139,12 @@ if (!singleton) {
     // hospital-release revive-hunt sort. Signature-guarded, so a stable list
     // is a no-op.
     ffs_applyWarSort(rows);
+    // wb63: keep the hide-online/offline bar present and re-apply the filter
+    // every tick so both survive Torn's React re-renders.
+    if (ffs_isWarContext()) {
+      ffs_injectHideControls();
+      ffs_applyActivityFilter(rows);
+    }
   }
 
   // wb48/wb61: last-sorted signature per container so we skip DOM writes when
@@ -3147,6 +3164,10 @@ if (!singleton) {
   let _ffsWarSortActive = false;
   let _ffsAppliedDesc = null;   // null = unclicked; true = strongest-first; false = weakest-first
   const _ffsScoreCache = {};    // pid (string) -> FFS score
+
+  // wb63: hide online/offline activity filter (war page). Persisted across loads.
+  let _ffsHideOnline  = !!rD_getValue('ffs_hide_online', false);
+  let _ffsHideOffline = !!rD_getValue('ffs_hide_offline', false);
 
   // wb61: are we on a ranked-war VIEW (not just the own-faction roster, which
   // also lives at step=your)? Require an actual enemy/war signal so the
@@ -3291,6 +3312,81 @@ if (!singleton) {
       for (const k of metas) frag.appendChild(k.row);
       parent.appendChild(frag);
     }
+  }
+
+  // ── wb63: hide online / offline members on the war page ─────────────────
+  // Detection mirrors TornTools' ranked-war-filter: each war row carries a
+  // [class*="userOnlineStatusIcon___"] whose alt is "Online"/"Idle"/"Offline".
+  // Two-bucket semantics (matches factionops): hide-online hides Online;
+  // hide-offline hides everything NOT online (Idle + Offline). Unknown status
+  // is never hidden. Hidden rows just get display:none, so this composes with
+  // the sort (which keeps ordering them harmlessly).
+  function ffs_shouldHide(alt, hideOnline, hideOffline) {
+    if (!alt) return false;
+    const isOnline = alt === 'Online';
+    if (hideOnline && isOnline) return true;
+    if (hideOffline && !isOnline) return true;
+    return false;
+  }
+  function ffs_activityOf(row) {
+    const icon = row.querySelector("[class*='userOnlineStatusIcon___']");
+    return icon ? (icon.getAttribute('alt') || '') : '';
+  }
+  function ffs_warRows() {
+    const out = [];
+    document.querySelectorAll("ul.f-war-list li, [class*='members-list' i] li").forEach((li) => {
+      if (li.querySelector("a[href*='XID=']")) out.push(li);
+    });
+    return out;
+  }
+  function ffs_applyActivityFilter(rows) {
+    rows = rows || ffs_warRows();
+    let hidden = 0;
+    for (const row of rows) {
+      const hide = ffs_shouldHide(ffs_activityOf(row), _ffsHideOnline, _ffsHideOffline);
+      row.classList.toggle('ffs-hidden', hide);
+      if (hide) hidden++;
+    }
+    const countEl = document.querySelector('.ffs-hide-bar .ffs-hide-count');
+    if (countEl) countEl.textContent = hidden ? `${hidden} hidden` : '';
+  }
+  function ffs_injectHideControls() {
+    if (!ffs_isWarContext()) return;
+    if (document.querySelector('.ffs-hide-bar')) return; // already present
+    const list = document.querySelector('ul.f-war-list')
+              || document.querySelector(".faction-war [class*='members-list' i]")
+              || document.querySelector("[class*='members-list' i]");
+    if (!list || !list.parentNode) return;
+    const bar = document.createElement('div');
+    bar.className = 'ffs-hide-bar';
+    const mk = (text, checked) => {
+      const label = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = checked;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(text));
+      return { label, cb };
+    };
+    const on = mk('Hide online', _ffsHideOnline);
+    const off = mk('Hide offline', _ffsHideOffline);
+    const count = document.createElement('span');
+    count.className = 'ffs-hide-count';
+    on.cb.addEventListener('change', () => {
+      _ffsHideOnline = on.cb.checked;
+      rD_setValue('ffs_hide_online', _ffsHideOnline);
+      ffs_applyActivityFilter();
+    });
+    off.cb.addEventListener('change', () => {
+      _ffsHideOffline = off.cb.checked;
+      rD_setValue('ffs_hide_offline', _ffsHideOffline);
+      ffs_applyActivityFilter();
+    });
+    bar.appendChild(on.label);
+    bar.appendChild(off.label);
+    bar.appendChild(count);
+    list.parentNode.insertBefore(bar, list);
+    ffs_applyActivityFilter();
   }
 
   // wb36: paint live landing-time countdowns inside mini-profile cards.
