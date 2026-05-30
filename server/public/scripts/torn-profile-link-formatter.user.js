@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.44
+// @version      3.6.45
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -71,7 +71,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.44';
+    const TPLF_VERSION = '3.6.45';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -282,53 +282,6 @@
         });
     }
 
-    // v3.6.44: keep Torn's mini-profile reachable on DESKTOP. Torn renders the
-    // card as a React node in #profile-mini-root and UNMOUNTS .mini-profile-wrapper
-    // ~1s after the pointer leaves the name — so the card vanishes before you can
-    // move onto it to click the injected 📄. We pin a static CLONE of the built
-    // card (over the original) that stays until the next click. Cloning (vs. moving
-    // Torn's node) cannot trigger a React unmount error; links still work and the
-    // 📄 is re-wired. PDA already persists the card via tap, so this is desktop-only.
-    let _tplfPinWired = false;
-    function tplf_pinMiniProfile(wrapper) {
-        if (IS_PDA) return;
-        try {
-            const old = document.getElementById('gnsc-mini-pinned');
-            if (old) old.remove();
-            const r = wrapper.getBoundingClientRect();
-            if (!r.width || !r.height) return;
-            const clone = wrapper.cloneNode(true);
-            clone.id = 'gnsc-mini-pinned';
-            clone.classList.add('gnsc-injected');
-            clone.style.position = 'fixed';
-            clone.style.top = r.top + 'px';
-            clone.style.left = r.left + 'px';
-            clone.style.margin = '0';
-            clone.style.zIndex = '2147483646';
-            document.body.appendChild(clone);
-            // Re-wire the injected copy button (cloning drops its listener); copy
-            // then close shortly after so the "Copied!" feedback is visible.
-            const btn = clone.querySelector('.gnsc-list-btn');
-            if (btn) {
-                const fresh = btn.cloneNode(true);
-                btn.replaceWith(fresh);
-                fresh.addEventListener('click', (e) => {
-                    handleListCopyClick(e, fresh, clone);
-                    setTimeout(() => { const p = document.getElementById('gnsc-mini-pinned'); if (p) p.remove(); }, 700);
-                });
-            }
-            // Any click OUTSIDE the pinned card closes it (clicks inside on links
-            // still navigate; the 📄 handles its own close above).
-            if (!_tplfPinWired) {
-                _tplfPinWired = true;
-                document.addEventListener('click', (e) => {
-                    const p = document.getElementById('gnsc-mini-pinned');
-                    if (p && !p.contains(e.target)) p.remove();
-                });
-            }
-        } catch (_) {}
-    }
-
     function initMiniProfile() {
         const miniProfile = document.querySelector('[class*="profile-mini-_wrapper"]:not(.gnsc-injected), .mini-profile-wrapper:not(.gnsc-injected)');
         if (miniProfile) {
@@ -345,7 +298,6 @@
                     button.textContent = '📄';
                     button.addEventListener('click', (e) => handleListCopyClick(e, button, miniProfile));
                     buttonContainer.insertAdjacentElement('beforeend', button);
-                    tplf_pinMiniProfile(miniProfile); // v3.6.44: hold it open on desktop until a click
                 } else if (attempts >= maxAttempts) {
                     clearInterval(interval);
                 }
