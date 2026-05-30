@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         War Stat Report
 // @namespace    tornwar.com
-// @version      0.1.1
+// @version      0.1.2
 // @description  Adds an "Enemy Stat Report" button on the faction page: scans the last 24h of your faction's attack log, keeps attacks by the war-opponent faction, and reports how many were made by enemies with FFScouter-estimated stats of 3B or more. By RussianRob.
 // @author       RussianRob
 // @match        https://www.torn.com/factions.php*
@@ -19,11 +19,11 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '0.1.1';
+  const SCRIPT_VERSION = '0.1.2';
   const THRESHOLD = 3_000_000_000;  // 3B estimated total stats
   const WINDOW_SEC = 24 * 60 * 60;  // last 24 hours
   const PAGE_LIMIT = 100;           // attacks per page
-  const MAX_PAGES = 30;             // cap (≈3000 attacks) to bound API calls / time
+  const MAX_PAGES = 50;             // cap (≈5000 attacks) to bound API calls / time
   const REQ_GAP_MS = 150;           // polite gap between API calls
 
   // ── API key (FFScouter-registered Torn key; used for the attack log + stats) ──
@@ -93,35 +93,43 @@
   async function fetchEnemyAttacks(key, enemyId) {
     const now = Math.floor(Date.now() / 1000);
     const from = now - WINDOW_SEC;
-    let url = `https://api.torn.com/v2/faction/attacks?key=${encodeURIComponent(key)}&limit=${PAGE_LIMIT}&sort=DESC&from=${from}&to=${now}`;
     const out = [];
-    let pages = 0, truncated = false, scanned = 0, withAttacker = 0;
     const facCounts = {};
-    while (url && pages < MAX_PAGES) {
+    const seen = new Set();
+    let pages = 0, scanned = 0, withAttacker = 0, truncated = false, oldestReached = now, to = now;
+    // Cursor pagination: walk backward through time (to = oldest seen each page)
+    // rather than trusting _metadata.links.next, which stopped after one page.
+    while (pages < MAX_PAGES) {
+      const url = `https://api.torn.com/v2/faction/attacks?key=${encodeURIComponent(key)}&limit=${PAGE_LIMIT}&sort=DESC&from=${from}&to=${to}`;
       const data = await httpJSON(url);
       if (data && data.error) throw new Error('Torn API: ' + (data.error.error || 'attacks'));
       const atks = Array.isArray(data?.attacks) ? data.attacks : (data?.attacks ? Object.values(data.attacks) : []);
+      if (!atks.length) break;
+      let pageOldest = to, newOnPage = 0;
       for (const a of atks) {
-        scanned++;
+        const aid = a?.id ?? a?.code;
+        if (aid != null) { if (seen.has(aid)) continue; seen.add(aid); }
+        newOnPage++; scanned++;
+        const started = a?.started ?? 0;
+        if (started) pageOldest = Math.min(pageOldest, started);
         const attacker = a?.attacker;
         if (!attacker || attacker.id == null) continue; // stealthed / unknown attacker
         withAttacker++;
-        const afid = attacker?.faction?.id ?? a?.attacker_faction;
-        const fkey = String(afid);
+        const fkey = String(attacker?.faction?.id ?? a?.attacker_faction);
         facCounts[fkey] = (facCounts[fkey] || 0) + 1;
         if (fkey !== String(enemyId)) continue;
         out.push({ id: String(attacker.id), name: attacker.name || ('ID ' + attacker.id), result: a?.result || '' });
       }
       pages++;
-      const next = data?._metadata?.links?.next;
-      const oldest = atks.length ? (atks[atks.length - 1]?.started ?? 0) : 0;
-      if (!next || (atks.length && oldest && oldest < from)) { url = null; }
-      else { url = next.includes('key=') ? next : next + (next.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(key); }
+      oldestReached = Math.min(oldestReached, pageOldest);
+      if (pageOldest <= from || atks.length < PAGE_LIMIT || newOnPage === 0) break;
+      to = pageOldest; // next page = older attacks (inclusive; dedup handles overlap)
       await sleep(REQ_GAP_MS);
     }
-    if (pages >= MAX_PAGES && url) truncated = true;
+    if (pages >= MAX_PAGES && oldestReached > from) truncated = true;
     const topFacs = Object.entries(facCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
-    return { attacks: out, truncated, meta: { scanned, withAttacker, pages, topFacs } };
+    const hoursCovered = Math.round((now - oldestReached) / 360) / 10;
+    return { attacks: out, truncated, meta: { scanned, withAttacker, pages, topFacs, hoursCovered } };
   }
 
   // ── FFScouter batch lookup → { id: bs_estimate|null } ──
@@ -230,8 +238,8 @@
       const { attacks, truncated, meta } = await fetchEnemyAttacks(key, enemyId);
       const stats = attacks.length ? await ffscouterStats(key, attacks.map((a) => a.id)) : {};
       const agg = aggregate(attacks, stats);
-      const dbg = `own ${ownId} · enemy ${enemyId} · scanned ${meta.scanned} (${meta.withAttacker} w/atk, ${meta.pages}p) · matched ${attacks.length} · attacker-factions: ${meta.topFacs.map(([f, c]) => f + '×' + c).join(', ') || 'none'}`;
-      wsrDiag({ ownId, enemyId, enemyName, scanned: meta.scanned, withAttacker: meta.withAttacker, matched: attacks.length, pages: meta.pages, topFacs: meta.topFacs, truncated });
+      const dbg = `own ${ownId} · enemy ${enemyId} · scanned ${meta.scanned} (~${meta.hoursCovered}h, ${meta.pages}p) · matched ${attacks.length} · attacker-factions: ${meta.topFacs.map(([f, c]) => f + '×' + c).join(', ') || 'none'}`;
+      wsrDiag({ ownId, enemyId, enemyName, scanned: meta.scanned, withAttacker: meta.withAttacker, matched: attacks.length, pages: meta.pages, hours: meta.hoursCovered, topFacs: meta.topFacs, truncated });
       renderReport(agg, enemyName, truncated, reportText(agg, enemyName, truncated), dbg);
     } catch (e) {
       showModal(`<h2>Enemy Stat Report</h2><div style="color:#ff8">Error: ${escapeHtml(String(e && e.message || e))}</div><div class="wsr-foot">If this is an access error, the key may need faction-attacks permission. Clear it and re-enter with <code>localStorage</code>? Use a full/faction key.</div><div class="wsr-row"><button class="wsr-act" id="wsr-close">Close</button></div>`);
