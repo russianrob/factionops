@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.48
+// @version      3.6.49
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -72,7 +72,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.48';
+    const TPLF_VERSION = '3.6.49';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -229,6 +229,21 @@
             #gnsc-input-apikey { background-color: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #ddd; border-radius: 6px; padding: 8px 10px; width: 100%; font-size: 13px; box-sizing: border-box; outline: none; font-family: monospace; transition: border-color 0.2s; }
             #gnsc-input-apikey:focus { border-color: #2a3cff; }
         `);
+    }
+
+    // v3.6.49: read the visible "In hospital for X" text from a scope (document
+    // for a profile page, or a mini-profile/row element). Pure text match, so it
+    // survives Torn's class churn. Read at COPY time: the captured value was empty
+    // on desktop (status renders after init), and the API hosp map isn't populated
+    // for arbitrary chat users in the mini-profile.
+    function tplf_hospStr(scope) {
+        const root = scope || document;
+        const pick = (el) => {
+            const t = ((el && el.textContent) || '').replace(/\s+/g, ' ');
+            const m = t.match(/In hospital for [^.\n|]+/i);
+            return m ? m[0].trim() : null;
+        };
+        return pick(root.querySelector('[class*="profile-status"][class*="hospital" i], .profile-status.hospital')) || pick(root);
     }
 
     function initProfilePage() {
@@ -880,8 +895,11 @@
                 timeParts.push(`Out at ${tctTimeString} TCT`);
             }
             if (timeParts.length > 0) hospitalStr = `(${timeParts.join(' | ')})`;
-        } else if (userInfo.hospitalTimeStr && settings.timeRemaining) {
-            hospitalStr = `(${userInfo.hospitalTimeStr})`;
+        } else if (settings.timeRemaining) {
+            // v3.6.49: scrape the hospital text LIVE — the captured value was empty
+            // on desktop (the profile status renders after the script's first pass).
+            const liveHosp = tplf_hospStr(document);
+            if (liveHosp) hospitalStr = `(${liveHosp})`;
         }
 
         if (settings.battlestats) {
@@ -967,6 +985,12 @@
                 timeParts.push(`Out at ${tctTimeString} TCT`);
             }
             if (timeParts.length > 0) healthStr = `(${timeParts.join(' | ')})`;
+        }
+        if (!healthStr && settings.timeRemaining) {
+            // v3.6.49: no API hospital time (e.g. an arbitrary chat user) — scrape
+            // the visible "In hospital for X" from the mini-profile/row itself.
+            const liveHosp = tplf_hospStr(memberElement);
+            if (liveHosp) healthStr = `(${liveHosp})`;
         }
 
         if (settings.battlestats) {
