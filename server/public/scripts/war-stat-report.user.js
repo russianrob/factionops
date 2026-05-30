@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         War Stat Report
 // @namespace    tornwar.com
-// @version      0.1.3
+// @version      0.1.4
 // @description  Adds an "Enemy Stat Report" button on the faction page: scans the last 24h of your faction's attack log, keeps attacks by the war-opponent faction, and reports how many were made by enemies with FFScouter-estimated stats of 3B or more. By RussianRob.
 // @author       RussianRob
 // @match        https://www.torn.com/factions.php*
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '0.1.3';
+  const SCRIPT_VERSION = '0.1.4';
   const THRESHOLD = 3_000_000_000;  // 3B estimated total stats
   const WINDOW_SEC = 24 * 60 * 60;  // last 24 hours
   const PAGE_LIMIT = 100;           // attacks per page
@@ -175,7 +175,7 @@
 
   // ── UI ──
   GM_addStyle(`
-    #wsr-btn { position: fixed; bottom: 16px; right: 16px; z-index: 2147483600; background:#7a1f1f; color:#fff; border:1px solid #b34a4a; border-radius:8px; padding:8px 12px; font:600 13px Arial,sans-serif; cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,.5); }
+    #wsr-btn { position: fixed; bottom: 16px; right: 16px; z-index: 2147483600; background:#7a1f1f; color:#fff; border:none; border-radius:6px; padding:7px 13px; font:bold 12px Arial,sans-serif; cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,.5); }
     #wsr-btn:hover { background:#992525; }
     #wsr-overlay { position: fixed; inset:0; z-index:2147483601; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:16px; }
     #wsr-modal { background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:10px; max-width:560px; width:100%; max-height:80vh; overflow:auto; padding:16px; font:13px Arial,sans-serif; box-shadow:0 12px 40px rgba(0,0,0,.6); }
@@ -250,7 +250,7 @@
     if (document.getElementById('wsr-btn')) return;
     const b = document.createElement('button');
     b.id = 'wsr-btn';
-    b.textContent = '📊 Enemy Stat Report';
+    b.textContent = '📊 Stat Report';
     b.addEventListener('click', runReport);
     document.body.appendChild(b);
   }
