@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         War Stat Report
 // @namespace    tornwar.com
-// @version      0.1.5
+// @version      0.1.6
 // @description  Adds an "Enemy Stat Report" button on the faction page: scans the last 24h of your faction's attack log, keeps attacks by the war-opponent faction, and reports how many were made by enemies with FFScouter-estimated stats of 3B or more. By RussianRob.
 // @author       RussianRob
 // @match        https://www.torn.com/factions.php*
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '0.1.5';
+  const SCRIPT_VERSION = '0.1.6';
   const THRESHOLD = 3_000_000_000;  // 3B estimated total stats
   const WINDOW_SEC = 24 * 60 * 60;  // last 24 hours
   const PAGE_LIMIT = 100;           // attacks per page
@@ -162,10 +162,17 @@
     const heavy = all.filter((p) => p.est != null && p.est >= THRESHOLD).sort((x, y) => y.count - x.count);
     const unknown = all.filter((p) => p.est == null).length;
     const heavyAttacks = heavy.reduce((s, p) => s + p.count, 0);
-    return { total: attacks.length, attackers: all.length, heavy, heavyAttacks, unknown };
+    const top = all.slice().sort((x, y) => y.count - x.count).slice(0, 10);
+    return { total: attacks.length, attackers: all.length, heavy, heavyAttacks, unknown, top };
   }
 
-  function reportText(agg, enemyName, truncated) {
+  function reportText(agg, enemyName, truncated, view) {
+    if (view === 'top') {
+      const lines = [`Enemy ${enemyName} — last 24h, top ${agg.top.length} attackers:`];
+      agg.top.forEach((p, i) => lines.push(`${i + 1}. ${p.name} [${p.id}]: ${p.count} atk${p.est != null ? ' (' + human(p.est) + ')' : ''}`));
+      lines.push(`Total: ${agg.total} enemy attacks.${truncated ? ' [truncated]' : ''}`);
+      return lines.join('\n');
+    }
     const lines = [`Enemy ${enemyName} — last 24h, 3B+ hitters:`];
     if (agg.heavy.length) for (const p of agg.heavy) lines.push(`- ${p.name} [${p.id}]: ${human(p.est)} — ${p.count} atk`);
     else lines.push('- none');
@@ -189,6 +196,9 @@
     .wsr-act { background:#2a2a44; color:#fff; border:1px solid #555; border-radius:6px; padding:6px 12px; cursor:pointer; font:600 13px Arial,sans-serif; }
     .wsr-act:hover { background:#3a3a5a; }
     .wsr-foot { color:#888; font-size:11px; margin-top:10px; }
+    .wsr-tabs { display:flex; gap:6px; margin:4px 0 8px; }
+    .wsr-tab { background:#23233a; color:#bbb; border:1px solid #444; border-radius:6px; padding:5px 10px; cursor:pointer; font:600 12px Arial,sans-serif; }
+    .wsr-tab.on { background:#7a1f1f; color:#fff; border-color:#b34a4a; }
   `);
 
   function closeModal() { const o = document.getElementById('wsr-overlay'); if (o) o.remove(); }
@@ -202,18 +212,33 @@
     return ov;
   }
 
-  function renderReport(agg, enemyName, truncated, text, dbg) {
-    let rows = agg.heavy.map((p) =>
-      `<tr><td><a href="https://www.torn.com/profiles.php?XID=${p.id}" target="_blank" style="color:#9cf;text-decoration:none">${escapeHtml(p.name)}</a> [${p.id}]</td><td style="color:#fff;font-weight:600">${human(p.est)}</td><td style="text-align:right;color:#fff;font-weight:600">${p.count}</td></tr>`
+  function renderReport(agg, enemyName, truncated, dbg) {
+    drawReport(agg, enemyName, truncated, dbg, GM_getValue('wsr_view', 'heavy'));
+  }
+  function drawReport(agg, enemyName, truncated, dbg, view) {
+    const isTop = view === 'top';
+    const list = isTop ? agg.top : agg.heavy;
+    let rows = list.map((p, i) =>
+      `<tr><td>${isTop ? `<span style="color:#888">${i + 1}.</span> ` : ''}<a href="https://www.torn.com/profiles.php?XID=${p.id}" target="_blank" style="color:#9cf;text-decoration:none">${escapeHtml(p.name)}</a> [${p.id}]</td><td style="color:#fff;font-weight:600">${human(p.est)}</td><td style="text-align:right;color:#fff;font-weight:600">${p.count}</td></tr>`
     ).join('');
-    if (!agg.heavy.length) rows = '<tr><td colspan="3" style="color:#888">No 3B+ enemies in the last 24h.</td></tr>';
+    if (!list.length) rows = `<tr><td colspan="3" style="color:#888">${isTop ? 'No enemy attacks in the last 24h.' : 'No 3B+ enemies in the last 24h.'}</td></tr>`;
+    const summary = isTop
+      ? `Top <b>${list.length}</b> attackers by hits — of <b>${agg.total}</b> enemy attacks (last 24h)${truncated ? ' <span style="color:#fa6">[truncated]</span>' : ''}.`
+      : `<b>${agg.heavyAttacks}</b> attacks by <b>${agg.heavy.length}</b> enemies &ge;3B — of <b>${agg.total}</b> enemy attacks (last 24h)${agg.unknown ? `, <span style="color:#caa">${agg.unknown} unknown est</span>` : ''}.${truncated ? ' <span style="color:#fa6">[truncated]</span>' : ''}`;
+    const text = reportText(agg, enemyName, truncated, view);
     showModal(`
       <h2>Enemy Stat Report — ${escapeHtml(enemyName)}</h2>
-      <div class="wsr-sum"><b>${agg.heavyAttacks}</b> attacks by <b>${agg.heavy.length}</b> enemies &ge;3B — of <b>${agg.total}</b> enemy attacks (last 24h)${agg.unknown ? `, <span style="color:#caa">${agg.unknown} unknown est</span>` : ''}.${truncated ? ' <span style="color:#fa6">[truncated]</span>' : ''}</div>
-      <table><thead><tr><th>3B+ attacker</th><th>est stats</th><th style="text-align:right">attacks</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="wsr-tabs"><button class="wsr-tab${!isTop ? ' on' : ''}" data-v="heavy">&ge;3B hitters</button><button class="wsr-tab${isTop ? ' on' : ''}" data-v="top">Top 10 attackers</button></div>
+      <div class="wsr-sum">${summary}</div>
+      <table><thead><tr><th>${isTop ? 'attacker' : '3B+ attacker'}</th><th>est stats</th><th style="text-align:right">attacks</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="wsr-row"><button class="wsr-act" id="wsr-copy">📋 Copy for chat</button><button class="wsr-act" id="wsr-close">Close</button></div>
       <div class="wsr-foot">War Stat Report v${SCRIPT_VERSION} · 3B threshold · FFScouter estimates</div>
       <div class="wsr-foot" style="opacity:.7;word-break:break-word">${escapeHtml(dbg || '')}</div>`);
+    document.querySelectorAll('.wsr-tab').forEach((t) => t.addEventListener('click', () => {
+      const v = t.getAttribute('data-v');
+      GM_setValue('wsr_view', v);
+      drawReport(agg, enemyName, truncated, dbg, v);
+    }));
     const copyBtn = document.getElementById('wsr-copy');
     copyBtn.addEventListener('click', () => {
       try {
@@ -241,7 +266,7 @@
       const agg = aggregate(attacks, stats);
       const dbg = `own ${ownId} · enemy ${enemyId} · scanned ${meta.scanned} (~${meta.hoursCovered}h, ${meta.pages}p) · matched ${attacks.length} · attacker-factions: ${meta.topFacs.map(([f, c]) => f + '×' + c).join(', ') || 'none'}`;
       wsrDiag({ ownId, enemyId, enemyName, scanned: meta.scanned, withAttacker: meta.withAttacker, matched: attacks.length, pages: meta.pages, hours: meta.hoursCovered, topFacs: meta.topFacs, truncated });
-      renderReport(agg, enemyName, truncated, reportText(agg, enemyName, truncated), dbg);
+      renderReport(agg, enemyName, truncated, dbg);
     } catch (e) {
       showModal(`<h2>Enemy Stat Report</h2><div style="color:#ff8">Error: ${escapeHtml(String(e && e.message || e))}</div><div class="wsr-foot">If this is an access error, the key may need faction-attacks permission. Clear it and re-enter with <code>localStorage</code>? Use a full/faction key.</div><div class="wsr-row"><button class="wsr-act" id="wsr-close">Close</button></div>`);
     }
