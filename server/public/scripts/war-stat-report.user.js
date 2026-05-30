@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         War Stat Report
 // @namespace    tornwar.com
-// @version      0.1.7
+// @version      0.1.8
 // @description  Adds an "Enemy Stat Report" button on the faction page: scans the last 24h of your faction's attack log, keeps attacks by the war-opponent faction, and reports how many were made by enemies with FFScouter-estimated stats of 3B or more. By RussianRob.
 // @author       RussianRob
 // @match        https://www.torn.com/factions.php*
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '0.1.7';
+  const SCRIPT_VERSION = '0.1.8';
   const THRESHOLD = 3_000_000_000;  // 3B estimated total stats
   const WINDOW_SEC = 24 * 60 * 60;  // last 24 hours
   const PAGE_LIMIT = 100;           // attacks per page
@@ -70,11 +70,11 @@
   // ── resolve own faction + current ranked-war opponent ──
   async function resolveFactions(key) {
     const basic = await httpJSON(`https://api.torn.com/v2/faction?selections=basic&key=${encodeURIComponent(key)}`);
-    if (basic && basic.error) throw new Error('Torn API: ' + (basic.error.error || 'basic'));
+    if (basic && basic.error) throw new Error('Torn faction/basic: ' + (basic.error.error || 'rejected'));
     const ownId = String(basic?.basic?.id ?? basic?.id ?? '');
 
     const wars = await httpJSON(`https://api.torn.com/v2/faction?selections=wars&key=${encodeURIComponent(key)}`);
-    if (wars && wars.error) throw new Error('Torn API: ' + (wars.error.error || 'wars'));
+    if (wars && wars.error) throw new Error('Torn faction/wars: ' + (wars.error.error || 'rejected'));
     const w = wars?.wars || wars;
     const ranked = w?.ranked;
     const entries = Array.isArray(ranked) ? ranked : (ranked ? [ranked] : []);
@@ -102,7 +102,7 @@
     while (pages < MAX_PAGES) {
       const url = `https://api.torn.com/v2/faction/attacks?key=${encodeURIComponent(key)}&limit=${PAGE_LIMIT}&sort=DESC&from=${from}&to=${to}`;
       const data = await httpJSON(url);
-      if (data && data.error) throw new Error('Torn API: ' + (data.error.error || 'attacks'));
+      if (data && data.error) throw new Error('Torn faction/attacks: ' + (data.error.error || 'rejected'));
       const atks = Array.isArray(data?.attacks) ? data.attacks : (data?.attacks ? Object.values(data.attacks) : []);
       if (!atks.length) break;
       let pageOldest = to, newOnPage = 0;
@@ -297,7 +297,14 @@
       wsrDiag({ ownId, enemyId, enemyName, scanned: meta.scanned, withAttacker: meta.withAttacker, matched: attacks.length, pages: meta.pages, hours: meta.hoursCovered, topFacs: meta.topFacs, truncated });
       renderReport(agg, enemyName, truncated, dbg);
     } catch (e) {
-      showModal(`<h2>Enemy Stat Report</h2><div style="color:#ff8">Error: ${escapeHtml(String(e && e.message || e))}</div><div class="wsr-foot">If this is an access error, the key may need faction-attacks permission. Clear it and re-enter with <code>localStorage</code>? Use a full/faction key.</div><div class="wsr-row"><button class="wsr-act" id="wsr-close">Close</button></div>`);
+      const msg = String((e && e.message) || e);
+      wsrDiag({ error: msg });
+      showModal(`<h2>Enemy Stat Report</h2>
+        <div style="color:#ff8;margin:6px 0">Error: ${escapeHtml(msg)}</div>
+        <div class="wsr-foot" style="color:#aaa;font-size:12px;line-height:1.5">The key must be a Torn key <b>registered with FFScouter</b>, with at least <b>Limited</b> access, and your faction position must grant the <b>&ldquo;attacks&rdquo;</b> API permission. Tap <b>Re-enter key</b> to switch to a different one.</div>
+        <div class="wsr-row"><button class="wsr-act" id="wsr-rekey">🔑 Re-enter key</button><button class="wsr-act" id="wsr-close">Close</button></div>`);
+      const rk = document.getElementById('wsr-rekey');
+      if (rk) rk.addEventListener('click', () => { GM_setValue('wsr_key', ''); runReport(); });
     }
   }
 
