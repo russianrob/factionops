@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         War Stat Report
 // @namespace    tornwar.com
-// @version      0.1.0
+// @version      0.1.1
 // @description  Adds an "Enemy Stat Report" button on the faction page: scans the last 24h of your faction's attack log, keeps attacks by the war-opponent faction, and reports how many were made by enemies with FFScouter-estimated stats of 3B or more. By RussianRob.
 // @author       RussianRob
 // @match        https://www.torn.com/factions.php*
@@ -11,6 +11,7 @@
 // @grant        GM_addStyle
 // @connect      api.torn.com
 // @connect      ffscouter.com
+// @connect      tornwar.com
 // @downloadURL  https://tornwar.com/scripts/war-stat-report.user.js
 // @updateURL    https://tornwar.com/scripts/war-stat-report.meta.js
 // ==/UserScript==
@@ -18,7 +19,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '0.1.0';
+  const SCRIPT_VERSION = '0.1.1';
   const THRESHOLD = 3_000_000_000;  // 3B estimated total stats
   const WINDOW_SEC = 24 * 60 * 60;  // last 24 hours
   const PAGE_LIMIT = 100;           // attacks per page
@@ -47,6 +48,16 @@
     });
   }
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function wsrDiag(data) {
+    try {
+      GM_xmlhttpRequest({
+        method: 'POST', url: 'https://tornwar.com/api/debug/client-log',
+        headers: { 'Content-Type': 'application/json' },
+        data: JSON.stringify({ tag: 'wsr', data: Object.assign({ v: SCRIPT_VERSION }, data) }),
+        onload: function () {}, onerror: function () {},
+      });
+    } catch (e) {}
+  }
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   function human(n) {
     if (n == null) return '?';
@@ -84,27 +95,33 @@
     const from = now - WINDOW_SEC;
     let url = `https://api.torn.com/v2/faction/attacks?key=${encodeURIComponent(key)}&limit=${PAGE_LIMIT}&sort=DESC&from=${from}&to=${now}`;
     const out = [];
-    let pages = 0, truncated = false;
+    let pages = 0, truncated = false, scanned = 0, withAttacker = 0;
+    const facCounts = {};
     while (url && pages < MAX_PAGES) {
       const data = await httpJSON(url);
       if (data && data.error) throw new Error('Torn API: ' + (data.error.error || 'attacks'));
       const atks = Array.isArray(data?.attacks) ? data.attacks : (data?.attacks ? Object.values(data.attacks) : []);
       for (const a of atks) {
+        scanned++;
         const attacker = a?.attacker;
         if (!attacker || attacker.id == null) continue; // stealthed / unknown attacker
+        withAttacker++;
         const afid = attacker?.faction?.id ?? a?.attacker_faction;
-        if (String(afid) !== String(enemyId)) continue;
+        const fkey = String(afid);
+        facCounts[fkey] = (facCounts[fkey] || 0) + 1;
+        if (fkey !== String(enemyId)) continue;
         out.push({ id: String(attacker.id), name: attacker.name || ('ID ' + attacker.id), result: a?.result || '' });
       }
       pages++;
       const next = data?._metadata?.links?.next;
-      const oldest = atks.length ? (atks[atks.length - 1]?.started ?? atks[atks.length - 1]?.timestamp_started ?? 0) : 0;
+      const oldest = atks.length ? (atks[atks.length - 1]?.started ?? 0) : 0;
       if (!next || (atks.length && oldest && oldest < from)) { url = null; }
       else { url = next.includes('key=') ? next : next + (next.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(key); }
       await sleep(REQ_GAP_MS);
     }
     if (pages >= MAX_PAGES && url) truncated = true;
-    return { attacks: out, truncated };
+    const topFacs = Object.entries(facCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    return { attacks: out, truncated, meta: { scanned, withAttacker, pages, topFacs } };
   }
 
   // ── FFScouter batch lookup → { id: bs_estimate|null } ──
@@ -176,7 +193,7 @@
     return ov;
   }
 
-  function renderReport(agg, enemyName, truncated, text) {
+  function renderReport(agg, enemyName, truncated, text, dbg) {
     let rows = agg.heavy.map((p) =>
       `<tr><td><a href="https://www.torn.com/profiles.php?XID=${p.id}" target="_blank" style="color:#9cf;text-decoration:none">${escapeHtml(p.name)}</a> [${p.id}]</td><td>${human(p.est)}</td><td style="text-align:right">${p.count}</td></tr>`
     ).join('');
@@ -186,7 +203,8 @@
       <div class="wsr-sum"><b>${agg.heavyAttacks}</b> attacks by <b>${agg.heavy.length}</b> enemies &ge;3B — of <b>${agg.total}</b> enemy attacks (last 24h)${agg.unknown ? `, <span style="color:#caa">${agg.unknown} unknown est</span>` : ''}.${truncated ? ' <span style="color:#fa6">[truncated]</span>' : ''}</div>
       <table><thead><tr><th>3B+ attacker</th><th>est stats</th><th style="text-align:right">attacks</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="wsr-row"><button class="wsr-act" id="wsr-copy">📋 Copy for chat</button><button class="wsr-act" id="wsr-close">Close</button></div>
-      <div class="wsr-foot">War Stat Report v${SCRIPT_VERSION} · 3B threshold · FFScouter estimates</div>`);
+      <div class="wsr-foot">War Stat Report v${SCRIPT_VERSION} · 3B threshold · FFScouter estimates</div>
+      <div class="wsr-foot" style="opacity:.7;word-break:break-word">${escapeHtml(dbg || '')}</div>`);
     const copyBtn = document.getElementById('wsr-copy');
     copyBtn.addEventListener('click', () => {
       try {
@@ -203,16 +221,18 @@
     if (!key) return;
     showModal('<h2>Enemy Stat Report</h2><div>Resolving war &amp; scanning the attack log…</div>');
     try {
-      const { enemyId, enemyName } = await resolveFactions(key);
+      const { ownId, enemyId, enemyName } = await resolveFactions(key);
       if (!enemyId) {
         showModal('<h2>Enemy Stat Report</h2><div>No active ranked war found for your faction.</div><div class="wsr-row"><button class="wsr-act" id="wsr-close">Close</button></div>');
         return;
       }
       showModal(`<h2>Enemy Stat Report</h2><div>Scanning last 24h of attacks from <b>${escapeHtml(enemyName)}</b>…</div>`);
-      const { attacks, truncated } = await fetchEnemyAttacks(key, enemyId);
+      const { attacks, truncated, meta } = await fetchEnemyAttacks(key, enemyId);
       const stats = attacks.length ? await ffscouterStats(key, attacks.map((a) => a.id)) : {};
       const agg = aggregate(attacks, stats);
-      renderReport(agg, enemyName, truncated, reportText(agg, enemyName, truncated));
+      const dbg = `own ${ownId} · enemy ${enemyId} · scanned ${meta.scanned} (${meta.withAttacker} w/atk, ${meta.pages}p) · matched ${attacks.length} · attacker-factions: ${meta.topFacs.map(([f, c]) => f + '×' + c).join(', ') || 'none'}`;
+      wsrDiag({ ownId, enemyId, enemyName, scanned: meta.scanned, withAttacker: meta.withAttacker, matched: attacks.length, pages: meta.pages, topFacs: meta.topFacs, truncated });
+      renderReport(agg, enemyName, truncated, reportText(agg, enemyName, truncated), dbg);
     } catch (e) {
       showModal(`<h2>Enemy Stat Report</h2><div style="color:#ff8">Error: ${escapeHtml(String(e && e.message || e))}</div><div class="wsr-foot">If this is an access error, the key may need faction-attacks permission. Clear it and re-enter with <code>localStorage</code>? Use a full/faction key.</div><div class="wsr-row"><button class="wsr-act" id="wsr-close">Close</button></div>`);
     }
