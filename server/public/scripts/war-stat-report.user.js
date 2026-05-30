@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         War Stat Report
 // @namespace    tornwar.com
-// @version      0.1.2
+// @version      0.1.3
 // @description  Adds an "Enemy Stat Report" button on the faction page: scans the last 24h of your faction's attack log, keeps attacks by the war-opponent faction, and reports how many were made by enemies with FFScouter-estimated stats of 3B or more. By RussianRob.
 // @author       RussianRob
 // @match        https://www.torn.com/factions.php*
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '0.1.2';
+  const SCRIPT_VERSION = '0.1.3';
   const THRESHOLD = 3_000_000_000;  // 3B estimated total stats
   const WINDOW_SEC = 24 * 60 * 60;  // last 24 hours
   const PAGE_LIMIT = 100;           // attacks per page
@@ -203,7 +203,7 @@
 
   function renderReport(agg, enemyName, truncated, text, dbg) {
     let rows = agg.heavy.map((p) =>
-      `<tr><td><a href="https://www.torn.com/profiles.php?XID=${p.id}" target="_blank" style="color:#9cf;text-decoration:none">${escapeHtml(p.name)}</a> [${p.id}]</td><td>${human(p.est)}</td><td style="text-align:right">${p.count}</td></tr>`
+      `<tr><td><a href="https://www.torn.com/profiles.php?XID=${p.id}" target="_blank" style="color:#9cf;text-decoration:none">${escapeHtml(p.name)}</a> [${p.id}]</td><td style="color:#fff;font-weight:600">${human(p.est)}</td><td style="text-align:right;color:#fff;font-weight:600">${p.count}</td></tr>`
     ).join('');
     if (!agg.heavy.length) rows = '<tr><td colspan="3" style="color:#888">No 3B+ enemies in the last 24h.</td></tr>';
     showModal(`
