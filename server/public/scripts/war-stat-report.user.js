@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         War Stat Report
 // @namespace    tornwar.com
-// @version      0.1.4
+// @version      0.1.5
 // @description  Adds an "Enemy Stat Report" button on the faction page: scans the last 24h of your faction's attack log, keeps attacks by the war-opponent faction, and reports how many were made by enemies with FFScouter-estimated stats of 3B or more. By RussianRob.
 // @author       RussianRob
 // @match        https://www.torn.com/factions.php*
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '0.1.4';
+  const SCRIPT_VERSION = '0.1.5';
   const THRESHOLD = 3_000_000_000;  // 3B estimated total stats
   const WINDOW_SEC = 24 * 60 * 60;  // last 24 hours
   const PAGE_LIMIT = 100;           // attacks per page
@@ -175,7 +175,8 @@
 
   // ── UI ──
   GM_addStyle(`
-    #wsr-btn { position: fixed; bottom: 16px; right: 16px; z-index: 2147483600; background:#7a1f1f; color:#fff; border:none; border-radius:6px; padding:7px 13px; font:bold 12px Arial,sans-serif; cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,.5); }
+    #wsr-btn { position: fixed; bottom: 16px; right: 16px; z-index: 2147483600; background:#7a1f1f; color:#fff; border:none; border-radius:6px; padding:7px 13px; font:bold 12px Arial,sans-serif; cursor:grab; box-shadow:0 4px 12px rgba(0,0,0,.5); touch-action:none; user-select:none; }
+    #wsr-btn:active { cursor:grabbing; }
     #wsr-btn:hover { background:#992525; }
     #wsr-overlay { position: fixed; inset:0; z-index:2147483601; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:16px; }
     #wsr-modal { background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:10px; max-width:560px; width:100%; max-height:80vh; overflow:auto; padding:16px; font:13px Arial,sans-serif; box-shadow:0 12px 40px rgba(0,0,0,.6); }
@@ -246,13 +247,53 @@
     }
   }
 
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
   function addButton() {
     if (document.getElementById('wsr-btn')) return;
     const b = document.createElement('button');
     b.id = 'wsr-btn';
     b.textContent = '📊 Stat Report';
-    b.addEventListener('click', runReport);
     document.body.appendChild(b);
+
+    // restore saved drag position
+    const saved = GM_getValue('wsr_btn_pos', null);
+    if (saved && typeof saved.top === 'number' && typeof saved.left === 'number') {
+      b.style.right = 'auto'; b.style.bottom = 'auto';
+      b.style.left = clamp(saved.left, 0, window.innerWidth - b.offsetWidth) + 'px';
+      b.style.top = clamp(saved.top, 0, window.innerHeight - b.offsetHeight) + 'px';
+    }
+
+    // Drag via pointer events (mouse + touch). A tap (no real move) runs the
+    // report; a drag (>8px) repositions and persists the spot across reloads.
+    let dragging = false, moved = false, sx = 0, sy = 0, ox = 0, oy = 0;
+    b.addEventListener('pointerdown', (e) => {
+      dragging = true; moved = false;
+      sx = e.clientX; sy = e.clientY;
+      const r = b.getBoundingClientRect(); ox = r.left; oy = r.top;
+      b.style.right = 'auto'; b.style.bottom = 'auto';
+      b.style.left = r.left + 'px'; b.style.top = r.top + 'px';
+      try { b.setPointerCapture(e.pointerId); } catch (_) {}
+      e.preventDefault();
+    });
+    b.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) moved = true;
+      b.style.left = clamp(ox + dx, 0, window.innerWidth - b.offsetWidth) + 'px';
+      b.style.top = clamp(oy + dy, 0, window.innerHeight - b.offsetHeight) + 'px';
+    });
+    b.addEventListener('pointerup', (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { b.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (moved) {
+        const r = b.getBoundingClientRect();
+        GM_setValue('wsr_btn_pos', { top: r.top, left: r.left });
+      } else {
+        runReport();
+      }
+    });
+    b.addEventListener('pointercancel', () => { dragging = false; });
   }
   if (document.body) addButton();
   else document.addEventListener('DOMContentLoaded', addButton);
