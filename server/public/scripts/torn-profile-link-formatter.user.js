@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.45
+// @version      3.6.46
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -71,7 +71,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.45';
+    const TPLF_VERSION = '3.6.46';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -283,27 +283,24 @@
     }
 
     function initMiniProfile() {
-        const miniProfile = document.querySelector('[class*="profile-mini-_wrapper"]:not(.gnsc-injected), .mini-profile-wrapper:not(.gnsc-injected)');
-        if (miniProfile) {
-            miniProfile.classList.add('gnsc-injected');
-            let attempts = 0;
-            const maxAttempts = 25;
-            const interval = setInterval(() => {
-                const buttonContainer = miniProfile.querySelector('.buttons-list');
-                const nameLink = miniProfile.querySelector('a[href*="profiles.php?XID="]');
-                if (buttonContainer && nameLink && !buttonContainer.querySelector('.gnsc-list-btn')) {
-                    clearInterval(interval);
-                    const button = document.createElement('span');
-                    button.className = 'gnsc-list-btn';
-                    button.textContent = '📄';
-                    button.addEventListener('click', (e) => handleListCopyClick(e, button, miniProfile));
-                    buttonContainer.insertAdjacentElement('beforeend', button);
-                } else if (attempts >= maxAttempts) {
-                    clearInterval(interval);
-                }
-                attempts++;
-            }, 200);
-        }
+        // v3.6.46: re-inject whenever the 📄 is MISSING instead of once-per-wrapper.
+        // Torn loads the mini-profile via a UserMiniProfile fetch and re-renders it;
+        // each React re-render wipes the injected node. The old one-time
+        // `.gnsc-injected` guard then refused to re-add it, so the 📄 flickered out
+        // and stayed gone. This runs on every observer cycle and is idempotent
+        // (only adds when absent), so the wipe's own mutation triggers a re-add.
+        const wrappers = document.querySelectorAll('[class*="profile-mini-_wrapper"], .mini-profile-wrapper');
+        wrappers.forEach((miniProfile) => {
+            const buttonContainer = miniProfile.querySelector('.buttons-list');
+            const nameLink = miniProfile.querySelector('a[href*="profiles.php?XID="]');
+            if (buttonContainer && nameLink && !buttonContainer.querySelector('.gnsc-list-btn')) {
+                const button = document.createElement('span');
+                button.className = 'gnsc-list-btn';
+                button.textContent = '📄';
+                button.addEventListener('click', (e) => handleListCopyClick(e, button, miniProfile));
+                buttonContainer.insertAdjacentElement('beforeend', button);
+            }
+        });
     }
 
     function injectButtonsIntoList(listElement) {
