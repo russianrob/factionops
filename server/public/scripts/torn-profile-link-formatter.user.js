@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.49
+// @version      3.6.50
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -72,7 +72,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.49';
+    const TPLF_VERSION = '3.6.50';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -298,25 +298,41 @@
         });
     }
 
+    let _tplfMiniBtn = null;
+    function tplf_miniCard() {
+        const card = document.querySelector('#profile-mini-root .mini-profile-wrapper, .mini-profile-wrapper, [class*="profile-mini-_wrapper"]');
+        if (!card) return null;
+        const nameLink = card.querySelector('a[href*="profiles.php?XID="]');
+        return (nameLink && /XID=\d+/.test(nameLink.href)) ? card : null;
+    }
     function initMiniProfile() {
-        // v3.6.46: re-inject whenever the 📄 is MISSING instead of once-per-wrapper.
-        // Torn loads the mini-profile via a UserMiniProfile fetch and re-renders it;
-        // each React re-render wipes the injected node. The old one-time
-        // `.gnsc-injected` guard then refused to re-add it, so the 📄 flickered out
-        // and stayed gone. This runs on every observer cycle and is idempotent
-        // (only adds when absent), so the wipe's own mutation triggers a re-add.
-        const wrappers = document.querySelectorAll('[class*="profile-mini-_wrapper"], .mini-profile-wrapper');
-        wrappers.forEach((miniProfile) => {
-            const buttonContainer = miniProfile.querySelector('.buttons-list');
-            const nameLink = miniProfile.querySelector('a[href*="profiles.php?XID="]');
-            if (buttonContainer && nameLink && !buttonContainer.querySelector('.gnsc-list-btn')) {
-                const button = document.createElement('span');
-                button.className = 'gnsc-list-btn';
-                button.textContent = '📄';
-                button.addEventListener('click', (e) => handleListCopyClick(e, button, miniProfile));
-                buttonContainer.insertAdjacentElement('beforeend', button);
-            }
-        });
+        // v3.6.50: render the copy button as a TPLF-owned OVERLAY anchored to the
+        // card, instead of injecting into Torn's React-controlled `.buttons-list`.
+        // Injecting into the card fought React's post-fetch re-render: it wiped the
+        // button (flicker), and re-injecting aggressively could tear the card down
+        // so it auto-closed after ~2s. The overlay lives in <body>, so React never
+        // touches it — no flicker, no auto-close.
+        const card = tplf_miniCard();
+        if (!card) { if (_tplfMiniBtn) _tplfMiniBtn.style.display = 'none'; return; }
+        if (!_tplfMiniBtn) {
+            _tplfMiniBtn = document.createElement('div');
+            _tplfMiniBtn.id = 'gnsc-mini-overlay';
+            _tplfMiniBtn.textContent = '📄';
+            _tplfMiniBtn.title = 'Copy formatted link';
+            _tplfMiniBtn.style.cssText = 'position:fixed;z-index:2147483646;cursor:pointer;font-size:15px;background:rgba(20,20,20,.9);border:1px solid rgba(255,255,255,.18);border-radius:6px;padding:1px 5px;line-height:1.4;user-select:none;';
+            _tplfMiniBtn.addEventListener('click', (e) => {
+                const c = tplf_miniCard();
+                if (c) handleListCopyClick(e, _tplfMiniBtn, c);
+            });
+            document.body.appendChild(_tplfMiniBtn);
+        }
+        const r = card.getBoundingClientRect();
+        if (!r.width || !r.height) { _tplfMiniBtn.style.display = 'none'; return; }
+        let left = r.right + 4;
+        if (left + 28 > window.innerWidth) left = r.right - 30; // flip inside if off-screen
+        _tplfMiniBtn.style.display = 'block';
+        _tplfMiniBtn.style.top = (r.top + 4) + 'px';
+        _tplfMiniBtn.style.left = left + 'px';
     }
 
     function injectButtonsIntoList(listElement) {
