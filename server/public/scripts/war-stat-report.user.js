@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         War Stat Report
 // @namespace    tornwar.com
-// @version      0.1.6
+// @version      0.1.7
 // @description  Adds an "Enemy Stat Report" button on the faction page: scans the last 24h of your faction's attack log, keeps attacks by the war-opponent faction, and reports how many were made by enemies with FFScouter-estimated stats of 3B or more. By RussianRob.
 // @author       RussianRob
 // @match        https://www.torn.com/factions.php*
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '0.1.6';
+  const SCRIPT_VERSION = '0.1.7';
   const THRESHOLD = 3_000_000_000;  // 3B estimated total stats
   const WINDOW_SEC = 24 * 60 * 60;  // last 24 hours
   const PAGE_LIMIT = 100;           // attacks per page
@@ -118,7 +118,7 @@
         const fkey = String(attacker?.faction?.id ?? a?.attacker_faction);
         facCounts[fkey] = (facCounts[fkey] || 0) + 1;
         if (fkey !== String(enemyId)) continue;
-        out.push({ id: String(attacker.id), name: attacker.name || ('ID ' + attacker.id), result: a?.result || '' });
+        out.push({ id: String(attacker.id), name: attacker.name || ('ID ' + attacker.id), result: a?.result || '', started });
       }
       pages++;
       oldestReached = Math.min(oldestReached, pageOldest);
@@ -163,10 +163,18 @@
     const unknown = all.filter((p) => p.est == null).length;
     const heavyAttacks = heavy.reduce((s, p) => s + p.count, 0);
     const top = all.slice().sort((x, y) => y.count - x.count).slice(0, 10);
-    return { total: attacks.length, attackers: all.length, heavy, heavyAttacks, unknown, top };
+    const hours = new Array(24).fill(0); // attacks per hour-of-day (TCT = UTC)
+    for (const a of attacks) { if (a.started) hours[new Date(a.started * 1000).getUTCHours()]++; }
+    return { total: attacks.length, attackers: all.length, heavy, heavyAttacks, unknown, top, hours };
   }
 
   function reportText(agg, enemyName, truncated, view) {
+    if (view === 'heat') {
+      const mx = Math.max(...agg.hours);
+      const peak = mx > 0 ? agg.hours.indexOf(mx) : 0;
+      const line = agg.hours.map((c, h) => `${String(h).padStart(2, '0')}:${c}`).join(' ');
+      return `Enemy ${enemyName} — attacks by hour (TCT), 24h. Peak ${String(peak).padStart(2, '0')}:00 (${mx}).\n${line}\nTotal: ${agg.total}.${truncated ? ' [truncated]' : ''}`;
+    }
     if (view === 'top') {
       const lines = [`Enemy ${enemyName} — last 24h, top ${agg.top.length} attackers:`];
       agg.top.forEach((p, i) => lines.push(`${i + 1}. ${p.name} [${p.id}]: ${p.count} atk${p.est != null ? ' (' + human(p.est) + ')' : ''}`));
@@ -199,6 +207,10 @@
     .wsr-tabs { display:flex; gap:6px; margin:4px 0 8px; }
     .wsr-tab { background:#23233a; color:#bbb; border:1px solid #444; border-radius:6px; padding:5px 10px; cursor:pointer; font:600 12px Arial,sans-serif; }
     .wsr-tab.on { background:#7a1f1f; color:#fff; border-color:#b34a4a; }
+    .wsr-heat { display:grid; grid-template-columns:repeat(6,1fr); gap:4px; margin:10px 0; }
+    .wsr-cell { border-radius:5px; padding:5px 2px; text-align:center; line-height:1.2; }
+    .wsr-cell-h { font-size:10px; color:#ccd; }
+    .wsr-cell-c { font-size:13px; font-weight:700; color:#fff; }
   `);
 
   function closeModal() { const o = document.getElementById('wsr-overlay'); if (o) o.remove(); }
@@ -216,21 +228,38 @@
     drawReport(agg, enemyName, truncated, dbg, GM_getValue('wsr_view', 'heavy'));
   }
   function drawReport(agg, enemyName, truncated, dbg, view) {
-    const isTop = view === 'top';
-    const list = isTop ? agg.top : agg.heavy;
-    let rows = list.map((p, i) =>
-      `<tr><td>${isTop ? `<span style="color:#888">${i + 1}.</span> ` : ''}<a href="https://www.torn.com/profiles.php?XID=${p.id}" target="_blank" style="color:#9cf;text-decoration:none">${escapeHtml(p.name)}</a> [${p.id}]</td><td style="color:#fff;font-weight:600">${human(p.est)}</td><td style="text-align:right;color:#fff;font-weight:600">${p.count}</td></tr>`
-    ).join('');
-    if (!list.length) rows = `<tr><td colspan="3" style="color:#888">${isTop ? 'No enemy attacks in the last 24h.' : 'No 3B+ enemies in the last 24h.'}</td></tr>`;
-    const summary = isTop
-      ? `Top <b>${list.length}</b> attackers by hits — of <b>${agg.total}</b> enemy attacks (last 24h)${truncated ? ' <span style="color:#fa6">[truncated]</span>' : ''}.`
-      : `<b>${agg.heavyAttacks}</b> attacks by <b>${agg.heavy.length}</b> enemies &ge;3B — of <b>${agg.total}</b> enemy attacks (last 24h)${agg.unknown ? `, <span style="color:#caa">${agg.unknown} unknown est</span>` : ''}.${truncated ? ' <span style="color:#fa6">[truncated]</span>' : ''}`;
+    const trunc = truncated ? ' <span style="color:#fa6">[truncated]</span>' : '';
+    let body, summary;
+    if (view === 'heat') {
+      const mx = Math.max(...agg.hours);
+      const peak = mx > 0 ? agg.hours.indexOf(mx) : 0;
+      summary = `Enemy attacks by hour of day (TCT) — <b>${agg.total}</b> attacks (24h). Peak <b>${String(peak).padStart(2, '0')}:00</b> (${mx})${trunc}.`;
+      let cells = '';
+      for (let h = 0; h < 24; h++) {
+        const c = agg.hours[h];
+        const bg = c ? `rgba(229,57,53,${(0.15 + 0.85 * (c / mx)).toFixed(3)})` : 'rgba(255,255,255,.04)';
+        cells += `<div class="wsr-cell" style="background:${bg}"><div class="wsr-cell-h">${String(h).padStart(2, '0')}h</div><div class="wsr-cell-c">${c}</div></div>`;
+      }
+      body = `<div class="wsr-heat">${cells}</div>`;
+    } else {
+      const isTop = view === 'top';
+      const list = isTop ? agg.top : agg.heavy;
+      let rows = list.map((p, i) =>
+        `<tr><td>${isTop ? `<span style="color:#888">${i + 1}.</span> ` : ''}<a href="https://www.torn.com/profiles.php?XID=${p.id}" target="_blank" style="color:#9cf;text-decoration:none">${escapeHtml(p.name)}</a> [${p.id}]</td><td style="color:#fff;font-weight:600">${human(p.est)}</td><td style="text-align:right;color:#fff;font-weight:600">${p.count}</td></tr>`
+      ).join('');
+      if (!list.length) rows = `<tr><td colspan="3" style="color:#888">${isTop ? 'No enemy attacks in the last 24h.' : 'No 3B+ enemies in the last 24h.'}</td></tr>`;
+      summary = isTop
+        ? `Top <b>${list.length}</b> attackers by hits — of <b>${agg.total}</b> enemy attacks (last 24h)${trunc}.`
+        : `<b>${agg.heavyAttacks}</b> attacks by <b>${agg.heavy.length}</b> enemies &ge;3B — of <b>${agg.total}</b> enemy attacks (last 24h)${agg.unknown ? `, <span style="color:#caa">${agg.unknown} unknown est</span>` : ''}${trunc}.`;
+      body = `<table><thead><tr><th>${isTop ? 'attacker' : '3B+ attacker'}</th><th>est stats</th><th style="text-align:right">attacks</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    const tab = (v, label) => `<button class="wsr-tab${view === v ? ' on' : ''}" data-v="${v}">${label}</button>`;
     const text = reportText(agg, enemyName, truncated, view);
     showModal(`
       <h2>Enemy Stat Report — ${escapeHtml(enemyName)}</h2>
-      <div class="wsr-tabs"><button class="wsr-tab${!isTop ? ' on' : ''}" data-v="heavy">&ge;3B hitters</button><button class="wsr-tab${isTop ? ' on' : ''}" data-v="top">Top 10 attackers</button></div>
+      <div class="wsr-tabs">${tab('heavy', '&ge;3B hitters')}${tab('top', 'Top 10')}${tab('heat', '🕒 Timing')}</div>
       <div class="wsr-sum">${summary}</div>
-      <table><thead><tr><th>${isTop ? 'attacker' : '3B+ attacker'}</th><th>est stats</th><th style="text-align:right">attacks</th></tr></thead><tbody>${rows}</tbody></table>
+      ${body}
       <div class="wsr-row"><button class="wsr-act" id="wsr-copy">📋 Copy for chat</button><button class="wsr-act" id="wsr-close">Close</button></div>
       <div class="wsr-foot">War Stat Report v${SCRIPT_VERSION} · 3B threshold · FFScouter estimates</div>
       <div class="wsr-foot" style="opacity:.7;word-break:break-word">${escapeHtml(dbg || '')}</div>`);
