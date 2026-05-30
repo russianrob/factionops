@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.50
+// @version      3.6.51
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -72,7 +72,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.50';
+    const TPLF_VERSION = '3.6.51';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -311,7 +311,23 @@
         // Injecting into the card fought React's post-fetch re-render: it wiped the
         // button (flicker), and re-injecting aggressively could tear the card down
         // so it auto-closed after ~2s. The overlay lives in <body>, so React never
-        // touches it — no flicker, no auto-close.
+        // touches it — no flicker, no auto-close. PDA worked fine with the in-card
+        // button (touch has no auto-close), and the overlay floated off the card
+        // there — so PDA keeps the in-card inject; only desktop uses the overlay.
+        if (IS_PDA) {
+            document.querySelectorAll('[class*="profile-mini-_wrapper"], .mini-profile-wrapper').forEach((miniProfile) => {
+                const bl = miniProfile.querySelector('.buttons-list');
+                const nl = miniProfile.querySelector('a[href*="profiles.php?XID="]');
+                if (bl && nl && !bl.querySelector('.gnsc-list-btn')) {
+                    const b = document.createElement('span');
+                    b.className = 'gnsc-list-btn';
+                    b.textContent = '📄';
+                    b.addEventListener('click', (e) => handleListCopyClick(e, b, miniProfile));
+                    bl.insertAdjacentElement('beforeend', b);
+                }
+            });
+            return;
+        }
         const card = tplf_miniCard();
         if (!card) { if (_tplfMiniBtn) _tplfMiniBtn.style.display = 'none'; return; }
         if (!_tplfMiniBtn) {
