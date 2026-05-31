@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.26
+// @version      3.2.27
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.26';
+    const SCRIPT_VERSION = '3.2.27';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -2776,6 +2776,12 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             box-shadow: 0 4px 24px rgba(0,0,0,.7); padding: 14px 16px;
         }
+        #oc-spawn-panel.oc-spawn-docked {
+            position: static !important; top: auto; left: auto; right: auto; bottom: auto;
+            width: 100%; max-width: 100%; max-height: none; overflow: visible;
+            margin: 10px 0; box-shadow: none;
+        }
+        #oc-spawn-panel.oc-spawn-docked h2 { cursor: default; }
         #oc-spawn-panel h2 {
             margin: 0 0 10px; font-size: 15px; font-weight: 700; color: #74c69d;
             display: flex; justify-content: space-between; align-items: center;
@@ -3249,6 +3255,46 @@
         <div id="oc-tab-engines" style="display:none;"></div>
     `;
     document.body.appendChild(panel);
+
+    // ── v3.2.27: dock the panel INLINE under the OC status tabs (Recruiting /
+    //    Planning / Completed) instead of floating. The strip is found by its text
+    //    labels (class-churn proof). Fully graceful: if the strip isn't found or
+    //    anything throws, the panel keeps its default floating CSS. A light interval
+    //    re-docks after Torn's React re-renders wipe the inserted node.
+    function _ocCommonAncestor(nodes) {
+        let a = nodes[0];
+        while (a && a.parentElement && !nodes.every((n) => a.contains(n))) a = a.parentElement;
+        return (a && nodes.every((n) => a.contains(n))) ? a : null;
+    }
+    function _ocTabStrip() {
+        const want = { Recruiting: null, Planning: null, Completed: null };
+        const els = document.querySelectorAll('button, a, [role="tab"], li, span, p, div');
+        for (const el of els) {
+            if (el.closest('#oc-spawn-panel')) continue;
+            const t = (el.textContent || '').trim();
+            const base = t.replace(/[\s\d().,]+$/, '').trim(); // tolerate a trailing count e.g. "Recruiting 3"
+            if ((base in want) && t.length <= base.length + 6 && el.offsetParent !== null) {
+                if (!want[base] || t.length < (want[base].textContent || '').trim().length) want[base] = el;
+            }
+        }
+        if (!want.Recruiting || !want.Planning || !want.Completed) return null;
+        return _ocCommonAncestor([want.Recruiting, want.Planning, want.Completed]);
+    }
+    function dockPanel() {
+        try {
+            if (panel.classList.contains('oc-spawn-docked') && panel.isConnected) {
+                const prev = panel.previousElementSibling, pt = prev ? (prev.textContent || '') : '';
+                if (/Recruiting/.test(pt) && /Planning/.test(pt) && /Completed/.test(pt)) return; // still docked correctly
+            }
+            const strip = _ocTabStrip();
+            if (!strip || !strip.parentNode) { panel.classList.remove('oc-spawn-docked'); return; }
+            panel.style.left = panel.style.top = panel.style.right = panel.style.bottom = panel.style.position = '';
+            panel.classList.add('oc-spawn-docked');
+            if (strip.nextElementSibling !== panel) strip.parentNode.insertBefore(panel, strip.nextElementSibling);
+        } catch (_) {}
+    }
+    setInterval(dockPanel, 1200);
+    dockPanel();
 
     const cprTooltipEl = document.createElement('div');
     cprTooltipEl.id = 'oc-cpr-tooltip';
