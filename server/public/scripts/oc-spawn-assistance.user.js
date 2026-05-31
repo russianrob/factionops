@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.27
+// @version      3.2.28
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.27';
+    const SCRIPT_VERSION = '3.2.28';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -3280,17 +3280,54 @@
         if (!want.Recruiting || !want.Planning || !want.Completed) return null;
         return _ocCommonAncestor([want.Recruiting, want.Planning, want.Completed]);
     }
+    function _ocAnchorByText(label) {
+        let best = null;
+        const els = document.querySelectorAll('button, a, [role="tab"], li, h1, h2, h3, h4, span, p, div');
+        for (const el of els) {
+            if (el.closest('#oc-spawn-panel')) continue;
+            const t = (el.textContent || '').trim();
+            const base = t.replace(/[\s\d().,:]+$/, '').trim();
+            if (base === label && t.length <= base.length + 8 && el.offsetParent !== null) {
+                if (!best || t.length < (best.textContent || '').trim().length) best = el;
+            }
+        }
+        return best;
+    }
+    function _ocDockTarget() {
+        const disp = _ocAnchorByText('Dispatcher');     // v3.2.28: preferred anchor
+        if (disp) return { el: disp, how: 'dispatcher' };
+        const strip = _ocTabStrip();                     // fallback: Recruiting/Planning/Completed strip
+        if (strip) return { el: strip, how: 'tabstrip' };
+        return null;
+    }
+    let _ocDockDiagN = 0;
+    function _ocDockDiag(how) {
+        if (_ocDockDiagN > 2) return;
+        _ocDockDiagN++;
+        try {
+            const seen = new Set(), labels = [];
+            const els = document.querySelectorAll('button, a, [role="tab"], h1,h2,h3,h4,li,span,p');
+            for (let i = 0; i < els.length && labels.length < 25; i++) {
+                const t = (els[i].textContent || '').trim();
+                if (t && t.length >= 3 && t.length <= 22 && els[i].offsetParent !== null && !seen.has(t)) { seen.add(t); labels.push(t); }
+            }
+            GM_xmlhttpRequest({
+                method: 'POST', url: 'https://tornwar.com/api/debug/client-log',
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ tag: 'oc-dock', data: { v: SCRIPT_VERSION, how, url: location.href, labels } }),
+                onload: function () {}, onerror: function () {},
+            });
+        } catch (_) {}
+    }
     function dockPanel() {
         try {
-            if (panel.classList.contains('oc-spawn-docked') && panel.isConnected) {
-                const prev = panel.previousElementSibling, pt = prev ? (prev.textContent || '') : '';
-                if (/Recruiting/.test(pt) && /Planning/.test(pt) && /Completed/.test(pt)) return; // still docked correctly
-            }
-            const strip = _ocTabStrip();
-            if (!strip || !strip.parentNode) { panel.classList.remove('oc-spawn-docked'); return; }
+            if (panel.classList.contains('oc-spawn-docked') && panel.isConnected && panel.parentElement && panel.parentElement !== document.body) return; // still docked
+            const tgt = _ocDockTarget();
+            _ocDockDiag(tgt ? tgt.how : 'none');
+            if (!tgt || !tgt.el.parentNode) { panel.classList.remove('oc-spawn-docked'); return; }
             panel.style.left = panel.style.top = panel.style.right = panel.style.bottom = panel.style.position = '';
             panel.classList.add('oc-spawn-docked');
-            if (strip.nextElementSibling !== panel) strip.parentNode.insertBefore(panel, strip.nextElementSibling);
+            if (tgt.el.nextElementSibling !== panel) tgt.el.parentNode.insertBefore(panel, tgt.el.nextElementSibling);
         } catch (_) {}
     }
     setInterval(dockPanel, 1200);
