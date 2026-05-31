@@ -31,6 +31,8 @@ import { startXanaxSubscriptions, stopXanaxSubscriptions, getActiveSubscribedFac
 import * as vaultRequests from "./vault-requests.js";
 import { startSubscriptionManager, stopSubscriptionManager } from "./subscription-manager.js";
 import * as store from "./store.js";
+import * as warHistory from "./war-history.js";
+import { computePayouts, backfillWarScores } from "./war-payouts.js";
 import { loadSubscriptions } from "./push-notifications.js";
 import { fetchRankedWar } from "./torn-api.js";
 import { isFactionAllowed } from "./subscription-manager.js";
@@ -534,6 +536,29 @@ store.loadKeyPoolingOpt();
 store.loadPlayerFactions();
 store.loadMemberBars();
 store.loadPayoutSettings();
+// War history: seed from the persisted payout cache (one-time catch-up for
+// wars that ended before this store existed), then keep it current via the
+// computePayouts ingest hook + the periodic sweep below.
+try {
+  const seeded = warHistory.backfill(store.getWar);
+  if (seeded) console.log(`[war-history] backfilled ${seeded} war(s) from payout cache`);
+} catch (e) { console.warn(`[war-history] backfill failed: ${e.message}`); }
+// Capture any ended war not yet snapshotted (e.g. nobody opened its payouts).
+// computePayouts ingests via its hook; this just skips wars already in history.
+async function _sweepWarHistory() {
+  for (const [warId, war] of Array.from(store.getAllWars())) {
+    if (!war || !war.warEnded) continue;
+    if (warHistory.hasWar(war.factionId, war)) continue;
+    try { await computePayouts(warId); }
+    catch (e) { console.warn(`[war-history] sweep compute failed for ${warId}: ${e.message}`); }
+  }
+}
+setTimeout(() => { _sweepWarHistory().catch(() => {}); }, 60_000);
+setInterval(() => { _sweepWarHistory().catch(() => {}); }, 3_600_000);
+// Fill ranked-war scores for stored wars that ended before this feature
+// existed (their record is gone but Torn still serves the report by ID).
+setTimeout(() => { backfillWarScores().then(n => { if (n) console.log(`[war-history] filled ${n} missing war score(s)`); }).catch(() => {}); }, 10_000);
+setInterval(() => { backfillWarScores().catch(() => {}); }, 86_400_000);
 loadHeatmaps();
 loadSubscriptions();
 
@@ -775,6 +800,7 @@ function shutdown(signal) {
 
   store.saveState();
   store.saveMemberBars();
+  try { warHistory.flushAll(); } catch (_) {}
   httpServer.close(() => {
     console.log("[server] Server closed");
     process.exit(0);

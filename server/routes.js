@@ -82,6 +82,7 @@ import * as pendingBroadcasts from "./pending-broadcasts.js";
 import * as missingOverrides from "./missing-overrides.js";
 import * as ocCheckpointHistory from "./oc-checkpoint-history.js";
 import * as warPayouts from "./war-payouts.js";
+import * as warHistory from "./war-history.js";
 import * as attackLedger from "./attack-ledger.js";
 import * as webauthn from "./webauthn.js";
 import busboy from "busboy";
@@ -1173,6 +1174,24 @@ router.get("/api/war/admin-list", requireAuth, (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
+});
+
+// ── War History — durable per-faction history of every ended war ──────────
+// JWT-auth, faction-scoped, same admin gate as payouts. Register the specific
+// /members route BEFORE the /:warId param route so it isn't shadowed by it.
+router.get("/api/war-history", requireAuth, (req, res) => {
+  if (!_payoutsAdminGate(req, res)) return;
+  return res.json({ wars: warHistory.listWars(req.user.factionId) });
+});
+router.get("/api/war-history/members", requireAuth, (req, res) => {
+  if (!_payoutsAdminGate(req, res)) return;
+  return res.json({ members: warHistory.aggregateByMember(req.user.factionId) });
+});
+router.get("/api/war-history/:warId", requireAuth, (req, res) => {
+  if (!_payoutsAdminGate(req, res)) return;
+  const w = warHistory.getWar(req.user.factionId, req.params.warId);
+  if (!w) return res.status(404).json({ error: "War not found in history" });
+  return res.json(w);
 });
 
 // ── GET /war  /war/:warId  — admin-only HTML post-war report ───────────

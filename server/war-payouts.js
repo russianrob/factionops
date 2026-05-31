@@ -16,6 +16,7 @@
 
 import * as store from "./store.js";
 import { fetchFactionAttacks, fetchRankedWarReport } from "./torn-api.js";
+import * as warHistory from "./war-history.js";
 import fs from "fs";
 import path from "path";
 
@@ -478,12 +479,17 @@ export async function computePayouts(warId, options = {}) {
   let reportMembersById = null;
   let reportTotalScore = 0;
   let reportTotalAttacks = 0;
+  let reportWarScores = null; // {myScore, enemyScore} from the ranked-war report
   try {
     const report = await fetchRankedWarReport(war.factionId, apiKey, warId);
     const factionsList = Array.isArray(report.factions)
       ? report.factions
       : Object.values(report.factions || {});
     const myFaction = factionsList.find(f => String(f.id) === ourFid);
+    const enemyFaction = factionsList.find(f => String(f.id) !== ourFid);
+    if (myFaction && enemyFaction && (myFaction.score != null || enemyFaction.score != null)) {
+      reportWarScores = { myScore: Number(myFaction.score) || 0, enemyScore: Number(enemyFaction.score) || 0 };
+    }
     if (myFaction && Array.isArray(myFaction.members) && myFaction.members.length > 0) {
       reportMembersById = {};
       for (const m of myFaction.members) {
@@ -619,6 +625,7 @@ export async function computePayouts(warId, options = {}) {
     enemyFactionId: war.enemyFactionId,
     enemyFactionName: war.enemyFactionName || null,
     warResult: war.warResult || null,
+    warScores: war.warScores || reportWarScores || null,
     mode,
     scoreSource, // "fair" (excludes chain/war/warlord), "report" (fallback), "computed" (legacy)
     reportTotalScore: Math.round(reportTotalScore * 10) / 10, // for UI comparison
@@ -647,10 +654,45 @@ export async function computePayouts(warId, options = {}) {
   if (war.warEnded) {
     _cache.set(cacheKey, { result, expiresAt: Infinity });
     persistDiskCache();
+    // Snapshot this ended war's per-member activity into durable war history
+    // (idempotent upsert; best-effort — never let it break payout compute).
+    try { warHistory.ingestWar(war.factionId, war, result); }
+    catch (e) { console.warn(`[war-history] ingest failed for ${warId}: ${e.message}`); }
   } else {
     _cache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
   }
   return { ...result, cached: false };
+}
+
+/**
+ * Score-backfill: for every stored war with no ranked-war score yet, fetch the
+ * ranked-war report straight from Torn (reusing the legit pool-key path) and
+ * fill in myScore/enemyScore. For wars that ended before the history store
+ * existed, the live record is gone so they can't be recomputed — but Torn
+ * still serves the report by war ID. Best-effort; returns wars filled.
+ */
+export async function backfillWarScores() {
+  let filled = 0;
+  for (const factionId of warHistory.factionIds()) {
+    const missing = warHistory.warsMissingScores(factionId);
+    if (!missing.length) continue;
+    const ourFid = String(factionId);
+    for (const { warKey, reportId } of missing) {
+      const key = store.getPollingKey(factionId, "war-history", 0);
+      if (!key) break; // no key for this faction — skip the rest
+      try {
+        const report = await fetchRankedWarReport(factionId, key, reportId);
+        const facs = Array.isArray(report.factions) ? report.factions : Object.values(report.factions || {});
+        const mine = facs.find(f => String(f.id) === ourFid);
+        const enemy = facs.find(f => String(f.id) !== ourFid);
+        if (mine && enemy && (mine.score != null || enemy.score != null)) {
+          warHistory.setScores(factionId, warKey, { myScore: Number(mine.score) || 0, enemyScore: Number(enemy.score) || 0 });
+          filled++;
+        }
+      } catch (_) { /* report gone / key issue — leave unscored */ }
+    }
+  }
+  return filled;
 }
 
 /**
