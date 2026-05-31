@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.32
+// @version      3.2.33
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.32';
+    const SCRIPT_VERSION = '3.2.33';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -3354,24 +3354,30 @@
     window.addEventListener('hashchange', () => { _ocDiagScheduled = false; });
     function dockPanel() {
         try {
-            if (panel.classList.contains('oc-spawn-docked') && panel.isConnected && panel.parentElement !== document.body
-                && toggleBtn.isConnected && toggleBtn.parentElement === panel.parentElement) return; // both still docked together
-            _ocMaybeScheduleDiag();
             const tgt = _ocDockTarget();
             if (!tgt || !tgt.el.parentNode) {
-                // off the OC tab → hide entirely (no floating button/panel)
-                panel.classList.remove('oc-spawn-docked'); toggleBtn.classList.remove('oc-spawn-docked');
+                // off the OC tab → hide the button (panel hidden too)
+                toggleBtn.classList.remove('oc-spawn-docked');
                 toggleBtn.style.display = 'none'; panel.style.display = 'none';
                 return;
             }
-            // dock the toggle + panel inline under the strip: [strip] → [⚔ button] → [panel]
-            for (const el of [toggleBtn, panel]) { el.style.left = el.style.top = el.style.right = el.style.bottom = el.style.position = ''; el.classList.add('oc-spawn-docked'); }
-            toggleBtn.style.display = ''; // show the docked button (CSS → inline-block)
+            // Dock ONLY the toggle button inline under the tabs. The panel stays
+            // a FLOATING overlay (base CSS position:fixed, bottom-right) so it
+            // never pushes/covers the OC page — the inline panel was blocking
+            // loans. Clicking the button toggles the floating panel.
+            if (panel.parentElement !== document.body) document.body.appendChild(panel);
+            panel.classList.remove('oc-spawn-docked'); // ensure it is NOT inline
             let _pv = false; try { _pv = !!panelVisible; } catch (_) {}
-            panel.style.display = _pv ? 'block' : 'none'; // restore the panel's open/closed state
+            panel.style.display = _pv ? 'block' : 'none'; // keep open/closed state
+            // already placed? nothing more to do this tick.
+            if (toggleBtn.classList.contains('oc-spawn-docked') && toggleBtn.isConnected
+                && tgt.el.nextElementSibling === toggleBtn) return;
+            _ocMaybeScheduleDiag();
+            toggleBtn.style.left = toggleBtn.style.top = toggleBtn.style.right = toggleBtn.style.bottom = toggleBtn.style.position = '';
+            toggleBtn.classList.add('oc-spawn-docked');
+            toggleBtn.style.display = ''; // show the docked button (CSS → inline-block)
             const parent = tgt.el.parentNode;
             if (tgt.el.nextElementSibling !== toggleBtn) parent.insertBefore(toggleBtn, tgt.el.nextElementSibling);
-            if (toggleBtn.nextElementSibling !== panel) parent.insertBefore(panel, toggleBtn.nextElementSibling);
         } catch (_) {}
     }
     setInterval(dockPanel, 1200);
