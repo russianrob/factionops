@@ -1069,10 +1069,13 @@ function parseCookie(cookieHeader, name) {
 // — same shape, same admin gate, used by the /payouts HTML page.
 function _payoutsAdminGate(req, res) {
   const { factionId, factionPosition, playerId } = req.user;
-  const adminRoles = (store.getAdminRoles
-    ? store.getAdminRoles(factionId)
-    : store.getAllowedBroadcastRoles(factionId) || [])
-      .map(r => String(r).toLowerCase());
+  // Payout access = the union of the partner-configured adminRoles AND the
+  // faction's in-script "Custom Admin Roles" (broadcastRoles), so a position
+  // the leader adds in the FactionOps settings field grants payout access too.
+  const adminRoles = [
+    ...(store.getAdminRoles ? (store.getAdminRoles(factionId) || []) : []),
+    ...(store.getAllowedBroadcastRoles ? (store.getAllowedBroadcastRoles(factionId) || []) : []),
+  ].map(r => String(r).toLowerCase());
   const isDev = String(playerId) === '137558';
   const myPos = String(factionPosition || '').toLowerCase();
   if (!isDev && !adminRoles.includes(myPos)) {
@@ -1119,10 +1122,13 @@ router.post("/api/war/:warId/payout-settings-admin", requireAuth, express.json({
 // from /api/auth) request payouts without a raw API key.
 router.get("/api/war/:warId/payouts-admin", requireAuth, async (req, res) => {
   const { factionId, factionPosition, playerId } = req.user;
-  const adminRoles = (store.getAdminRoles
-    ? store.getAdminRoles(factionId)
-    : store.getAllowedBroadcastRoles(factionId) || [])
-      .map(r => String(r).toLowerCase());
+  // Payout access = the union of the partner-configured adminRoles AND the
+  // faction's in-script "Custom Admin Roles" (broadcastRoles), so a position
+  // the leader adds in the FactionOps settings field grants payout access too.
+  const adminRoles = [
+    ...(store.getAdminRoles ? (store.getAdminRoles(factionId) || []) : []),
+    ...(store.getAllowedBroadcastRoles ? (store.getAllowedBroadcastRoles(factionId) || []) : []),
+  ].map(r => String(r).toLowerCase());
   const isDev = String(playerId) === '137558';
   const myPos = String(factionPosition || '').toLowerCase();
   if (!isDev && !adminRoles.includes(myPos)) {
@@ -1150,10 +1156,13 @@ router.get("/api/war/:warId/payouts-admin", requireAuth, async (req, res) => {
 // key to pass. Same admin-role gating as the original.
 router.get("/api/war/admin-list", requireAuth, (req, res) => {
   const { factionId, factionPosition, playerId } = req.user;
-  const adminRoles = (store.getAdminRoles
-    ? store.getAdminRoles(factionId)
-    : store.getAllowedBroadcastRoles(factionId) || [])
-      .map(r => String(r).toLowerCase());
+  // Payout access = the union of the partner-configured adminRoles AND the
+  // faction's in-script "Custom Admin Roles" (broadcastRoles), so a position
+  // the leader adds in the FactionOps settings field grants payout access too.
+  const adminRoles = [
+    ...(store.getAdminRoles ? (store.getAdminRoles(factionId) || []) : []),
+    ...(store.getAllowedBroadcastRoles ? (store.getAllowedBroadcastRoles(factionId) || []) : []),
+  ].map(r => String(r).toLowerCase());
   const isDev = String(playerId) === '137558';
   const myPos = String(factionPosition || '').toLowerCase();
   if (!isDev && !adminRoles.includes(myPos)) {
