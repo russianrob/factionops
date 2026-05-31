@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.29
+// @version      3.2.30
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.29';
+    const SCRIPT_VERSION = '3.2.30';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -3310,30 +3310,30 @@
         for (let i = 0; i < n && cur; i++) { chain.push(_ocDescribe(cur)); cur = cur.parentElement; }
         return chain;
     }
-    let _ocDockDiagN = 0;
-    function _ocDockDiag(how, tgtEl) {
-        if (_ocDockDiagN > 3) return;
-        _ocDockDiagN++;
+    let _ocDiagLogged = 0, _ocDiagScheduled = false;
+    function _ocDockDiag() {
+        if (_ocDiagLogged > 4) return;
         try {
             const all = document.querySelectorAll('button,a,span,div,h1,h2,h3,h4,p,li,th,td');
-            // where is "Dispatcher"?
             let disp = null, dispChain = null;
             for (const el of all) {
                 const t = (el.textContent || '').trim();
-                if (/^Dispatcher\b/i.test(t) && t.length <= 16 && el.offsetParent !== null) { disp = _ocDescribe(el); dispChain = _ocAncestry(el, 5); break; }
+                if (/^Dispatcher\b/i.test(t) && t.length <= 16 && el.offsetParent !== null) { disp = _ocDescribe(el); dispChain = _ocAncestry(el, 6); break; }
             }
-            // OC-relevant visible labels (skip the global nav)
             const seen = new Set(), ocLabels = [];
             for (const el of all) {
                 const t = (el.textContent || '').trim();
                 if (t && t.length <= 18 && el.offsetParent !== null && /recruit|planning|complete|dispatch|available|spawn|slot|joinable/i.test(t) && !seen.has(t)) { seen.add(t); ocLabels.push(t); if (ocLabels.length >= 15) break; }
             }
+            const tgt = _ocDockTarget();
+            if (!tgt && !disp && ocLabels.length === 0) return; // OC content not rendered yet — wait for a later tick
+            _ocDiagLogged++;
             GM_xmlhttpRequest({
                 method: 'POST', url: 'https://tornwar.com/api/debug/client-log',
                 headers: { 'Content-Type': 'application/json' },
                 data: JSON.stringify({ tag: 'oc-dock', data: {
-                    v: SCRIPT_VERSION, how, url: location.href,
-                    tgt: _ocDescribe(tgtEl), tgtChain: _ocAncestry(tgtEl, 4),
+                    v: SCRIPT_VERSION, how: tgt ? tgt.how : 'none', url: location.href,
+                    tgt: tgt ? _ocDescribe(tgt.el) : null, tgtChain: tgt ? _ocAncestry(tgt.el, 5) : [],
                     disp, dispChain, ocLabels,
                     pDocked: panel.classList.contains('oc-spawn-docked'), pDisp: panel.style.display || '', pParent: _ocDescribe(panel.parentElement),
                 } }),
@@ -3341,11 +3341,18 @@
             });
         } catch (_) {}
     }
+    function _ocMaybeScheduleDiag() {
+        if (_ocDiagScheduled || _ocDiagLogged > 4) return;
+        if (!/tab=crimes/.test(location.hash)) return; // only schedule on the OC crimes tab
+        _ocDiagScheduled = true;
+        [2500, 6000, 11000].forEach((ms) => setTimeout(_ocDockDiag, ms));
+    }
+    window.addEventListener('hashchange', () => { _ocDiagScheduled = false; });
     function dockPanel() {
         try {
             if (panel.classList.contains('oc-spawn-docked') && panel.isConnected && panel.parentElement && panel.parentElement !== document.body) return; // still docked
+            _ocMaybeScheduleDiag();
             const tgt = _ocDockTarget();
-            _ocDockDiag(tgt ? tgt.how : 'none', tgt ? tgt.el : null);
             if (!tgt || !tgt.el.parentNode) { panel.classList.remove('oc-spawn-docked'); return; }
             panel.style.left = panel.style.top = panel.style.right = panel.style.bottom = panel.style.position = '';
             panel.classList.add('oc-spawn-docked');
