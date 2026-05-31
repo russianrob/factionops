@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         War Stat Report
 // @namespace    tornwar.com
-// @version      0.1.8
+// @version      0.1.9
 // @description  Adds an "Enemy Stat Report" button on the faction page: scans the last 24h of your faction's attack log, keeps attacks by the war-opponent faction, and reports how many were made by enemies with FFScouter-estimated stats of 3B or more. By RussianRob.
 // @author       RussianRob
 // @match        https://www.torn.com/factions.php*
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '0.1.8';
+  const SCRIPT_VERSION = '0.1.9';
   const THRESHOLD = 3_000_000_000;  // 3B estimated total stats
   const WINDOW_SEC = 24 * 60 * 60;  // last 24 hours
   const PAGE_LIMIT = 100;           // attacks per page
@@ -48,6 +48,18 @@
     });
   }
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Retry transient Torn errors (5=too many requests, 8=IP, 9=backend error) and
+  // network blips a few times before giving up — the report makes many calls.
+  async function tornGet(url, tries = 4) {
+    for (let i = 0; i < tries; i++) {
+      let data = null;
+      try { data = await httpJSON(url); }
+      catch (e) { if (i < tries - 1) { await sleep(600 * (i + 1)); continue; } throw e; }
+      const code = data && data.error && data.error.code;
+      if ((code === 5 || code === 8 || code === 9) && i < tries - 1) { await sleep(600 * (i + 1)); continue; }
+      return data;
+    }
+  }
   function wsrDiag(data) {
     try {
       GM_xmlhttpRequest({
@@ -69,11 +81,11 @@
 
   // ── resolve own faction + current ranked-war opponent ──
   async function resolveFactions(key) {
-    const basic = await httpJSON(`https://api.torn.com/v2/faction?selections=basic&key=${encodeURIComponent(key)}`);
+    const basic = await tornGet(`https://api.torn.com/v2/faction?selections=basic&key=${encodeURIComponent(key)}`);
     if (basic && basic.error) throw new Error('Torn faction/basic: ' + (basic.error.error || 'rejected'));
     const ownId = String(basic?.basic?.id ?? basic?.id ?? '');
 
-    const wars = await httpJSON(`https://api.torn.com/v2/faction?selections=wars&key=${encodeURIComponent(key)}`);
+    const wars = await tornGet(`https://api.torn.com/v2/faction?selections=wars&key=${encodeURIComponent(key)}`);
     if (wars && wars.error) throw new Error('Torn faction/wars: ' + (wars.error.error || 'rejected'));
     const w = wars?.wars || wars;
     const ranked = w?.ranked;
@@ -101,7 +113,7 @@
     // rather than trusting _metadata.links.next, which stopped after one page.
     while (pages < MAX_PAGES) {
       const url = `https://api.torn.com/v2/faction/attacks?key=${encodeURIComponent(key)}&limit=${PAGE_LIMIT}&sort=DESC&from=${from}&to=${to}`;
-      const data = await httpJSON(url);
+      const data = await tornGet(url);
       if (data && data.error) throw new Error('Torn faction/attacks: ' + (data.error.error || 'rejected'));
       const atks = Array.isArray(data?.attacks) ? data.attacks : (data?.attacks ? Object.values(data.attacks) : []);
       if (!atks.length) break;
