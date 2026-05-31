@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.25
+// @version      2.73.26
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2993,7 +2993,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.25';
+  const SCRIPT_VERSION = '2.73.26';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3073,7 +3073,34 @@ if (!singleton) {
     }
   }
 
+  // wb80: kill the ✈ flight-time flicker on faction/war pages. The chips live in
+  // React-owned status cells, so a re-render wipes them and the 1s repaint left
+  // them gone for up to ~1s. A scoped observer on the member-list container
+  // re-paints within a frame, so a wiped chip is restored almost instantly. The
+  // sort it triggers is signature-guarded (no-op when stable), so no extra churn.
+  let _ffsTravelObs = null, _ffsTravelObsTarget = null, _ffsRepaintRaf = false;
+  function _ffsScheduleRepaint() {
+    if (_ffsRepaintRaf) return;
+    _ffsRepaintRaf = true;
+    requestAnimationFrame(() => { _ffsRepaintRaf = false; try { ffs_paintTravelCountdowns(); } catch (_) {} });
+  }
+  function _ffsAttachTravelObserver() {
+    try {
+      const cont = document.querySelector(
+        "ul.f-war-list, .enemy-faction [class*='members-list' i], .your-faction [class*='members-list' i], "
+        + "[class*='members-list' i], [class*='members-cont' i]"
+      );
+      if (!cont) return;
+      if (_ffsTravelObsTarget === cont && _ffsTravelObs) return; // already watching this container
+      if (_ffsTravelObs) _ffsTravelObs.disconnect();
+      _ffsTravelObs = new MutationObserver(_ffsScheduleRepaint);
+      _ffsTravelObs.observe(cont, { childList: true, subtree: true });
+      _ffsTravelObsTarget = cont;
+    } catch (_) {}
+  }
+
   function ffs_paintTravelCountdowns() {
+    _ffsAttachTravelObserver(); // wb80: keep the re-render observer attached to the live list
     // Matches member list rows on:
     //   war.php                      (.enemy-faction / .your-faction)
     //   factions.php?ID=XX           (.members-list > .table-body > .table-row)
