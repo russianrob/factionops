@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         War Stat Report
 // @namespace    tornwar.com
-// @version      0.1.9
+// @version      0.2.0
 // @description  Adds an "Enemy Stat Report" button on the faction page: scans the last 24h of your faction's attack log, keeps attacks by the war-opponent faction, and reports how many were made by enemies with FFScouter-estimated stats of 3B or more. By RussianRob.
 // @author       RussianRob
 // @match        https://www.torn.com/factions.php*
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '0.1.9';
+  const SCRIPT_VERSION = '0.2.0';
   const THRESHOLD = 3_000_000_000;  // 3B estimated total stats
   const WINDOW_SEC = 24 * 60 * 60;  // last 24 hours
   const PAGE_LIMIT = 100;           // attacks per page
@@ -223,6 +223,14 @@
     .wsr-cell { border-radius:5px; padding:5px 2px; text-align:center; line-height:1.2; }
     .wsr-cell-h { font-size:10px; color:#ccd; }
     .wsr-cell-c { font-size:13px; font-weight:700; color:#fff; }
+    .wsr-inline { background:#15151f; border:1px solid #4a2030; border-radius:8px; margin:8px 0; font:13px Arial,sans-serif; color:#e0e0e0; }
+    .wsr-inline-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 10px; background:#26121a; border-radius:8px 8px 0 0; }
+    .wsr-inline-title { font-weight:700; color:#ffb3b3; }
+    .wsr-inline-toggle { background:transparent; color:#ccc; border:none; cursor:pointer; font-size:13px; padding:2px 6px; }
+    .wsr-inline-body { padding:10px; }
+    .wsr-inline-body table { width:100%; border-collapse:collapse; margin:8px 0; }
+    .wsr-inline-body th, .wsr-inline-body td { text-align:left; padding:3px 6px; border-bottom:1px solid #2a2a3a; }
+    .wsr-inline-body th { color:#aaa; font-weight:600; }
   `);
 
   function closeModal() { const o = document.getElementById('wsr-overlay'); if (o) o.remove(); }
@@ -236,10 +244,8 @@
     return ov;
   }
 
-  function renderReport(agg, enemyName, truncated, dbg) {
-    drawReport(agg, enemyName, truncated, dbg, GM_getValue('wsr_view', 'heavy'));
-  }
-  function drawReport(agg, enemyName, truncated, dbg, view) {
+  // Build the inner report HTML (no outer wrapper); shared by the modal + inline panel.
+  function buildReportInner(agg, enemyName, truncated, dbg, view, dismissLabel) {
     const trunc = truncated ? ' <span style="color:#fa6">[truncated]</span>' : '';
     let body, summary;
     if (view === 'heat') {
@@ -266,58 +272,131 @@
       body = `<table><thead><tr><th>${isTop ? 'attacker' : '3B+ attacker'}</th><th>est stats</th><th style="text-align:right">attacks</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
     const tab = (v, label) => `<button class="wsr-tab${view === v ? ' on' : ''}" data-v="${v}">${label}</button>`;
-    const text = reportText(agg, enemyName, truncated, view);
-    showModal(`
-      <h2>Enemy Stat Report — ${escapeHtml(enemyName)}</h2>
-      <div class="wsr-tabs">${tab('heavy', '&ge;3B hitters')}${tab('top', 'Top 10')}${tab('heat', '🕒 Timing')}</div>
+    return `<div class="wsr-tabs">${tab('heavy', '&ge;3B hitters')}${tab('top', 'Top 10')}${tab('heat', '🕒 Timing')}</div>
       <div class="wsr-sum">${summary}</div>
       ${body}
-      <div class="wsr-row"><button class="wsr-act" id="wsr-copy">📋 Copy for chat</button><button class="wsr-act" id="wsr-close">Close</button></div>
+      <div class="wsr-row"><button class="wsr-act wsr-copy">📋 Copy for chat</button>${dismissLabel ? `<button class="wsr-act wsr-dismiss">${dismissLabel}</button>` : ''}</div>
       <div class="wsr-foot">War Stat Report v${SCRIPT_VERSION} · 3B threshold · FFScouter estimates</div>
-      <div class="wsr-foot" style="opacity:.7;word-break:break-word">${escapeHtml(dbg || '')}</div>`);
-    document.querySelectorAll('.wsr-tab').forEach((t) => t.addEventListener('click', () => {
-      const v = t.getAttribute('data-v');
-      GM_setValue('wsr_view', v);
-      drawReport(agg, enemyName, truncated, dbg, v);
-    }));
-    const copyBtn = document.getElementById('wsr-copy');
-    copyBtn.addEventListener('click', () => {
-      try {
-        navigator.clipboard.writeText(text).then(
-          () => { copyBtn.textContent = '✅ Copied'; },
-          () => { window.prompt('Copy this:', text); }
-        );
-      } catch (e) { window.prompt('Copy this:', text); }
-    });
+      <div class="wsr-foot" style="opacity:.7;word-break:break-word">${escapeHtml(dbg || '')}</div>`;
   }
 
-  async function runReport() {
+  // Render the report into a root element (modal body or inline body) and wire it.
+  function paintReport(root, data, view, onDismiss, dismissLabel) {
+    const { agg, enemyName, truncated, dbg } = data;
+    root.innerHTML = buildReportInner(agg, enemyName, truncated, dbg, view, dismissLabel);
+    root.querySelectorAll('.wsr-tab').forEach((t) => t.addEventListener('click', () => {
+      const v = t.getAttribute('data-v');
+      GM_setValue('wsr_view', v);
+      paintReport(root, data, v, onDismiss, dismissLabel);
+    }));
+    const text = reportText(agg, enemyName, truncated, view);
+    const copyBtn = root.querySelector('.wsr-copy');
+    if (copyBtn) copyBtn.addEventListener('click', () => {
+      try { navigator.clipboard.writeText(text).then(() => { copyBtn.textContent = '✅ Copied'; }, () => window.prompt('Copy this:', text)); }
+      catch (e) { window.prompt('Copy this:', text); }
+    });
+    const d = root.querySelector('.wsr-dismiss');
+    if (d && onDismiss) d.addEventListener('click', onDismiss);
+  }
+
+  // ── data pipeline (shared) ──
+  let _wsrCache = null;
+  async function fetchReport() {
     const key = getKey();
-    if (!key) return;
-    showModal('<h2>Enemy Stat Report</h2><div>Resolving war &amp; scanning the attack log…</div>');
+    if (!key) return null;
+    const { ownId, enemyId, enemyName } = await resolveFactions(key);
+    if (!enemyId) { const e = new Error('No active ranked war found for your faction.'); e.noWar = true; throw e; }
+    const { attacks, truncated, meta } = await fetchEnemyAttacks(key, enemyId);
+    const stats = attacks.length ? await ffscouterStats(key, attacks.map((a) => a.id)) : {};
+    const agg = aggregate(attacks, stats);
+    const dbg = `own ${ownId} · enemy ${enemyId} · scanned ${meta.scanned} (~${meta.hoursCovered}h, ${meta.pages}p) · matched ${attacks.length} · attacker-factions: ${meta.topFacs.map(([f, c]) => f + '×' + c).join(', ') || 'none'}`;
+    wsrDiag({ ownId, enemyId, enemyName, scanned: meta.scanned, withAttacker: meta.withAttacker, matched: attacks.length, pages: meta.pages, hours: meta.hoursCovered, topFacs: meta.topFacs, truncated });
+    _wsrCache = { agg, enemyName, truncated, dbg };
+    return _wsrCache;
+  }
+  function errorHTML(e) {
+    const msg = String((e && e.message) || e);
+    wsrDiag({ error: msg });
+    if (e && e.noWar) return `<div style="padding:6px 0;color:#ccc">No active ranked war found for your faction.</div>`;
+    return `<div style="color:#ff8;margin:6px 0">Error: ${escapeHtml(msg)}</div>
+      <div class="wsr-foot" style="color:#aaa;font-size:12px;line-height:1.5">The key must be a Torn key <b>registered with FFScouter</b>, at least <b>Limited</b> access, and your faction position must grant the <b>&ldquo;attacks&rdquo;</b> API permission.</div>
+      <div class="wsr-row"><button class="wsr-act wsr-rekey">🔑 Re-enter key</button></div>`;
+  }
+
+  // ── modal driver (floating button) ──
+  async function runReport() {
+    if (!getKey()) return;
+    showModal(`<h2 id="wsr-mtitle">Enemy Stat Report</h2><div id="wsr-mbody" style="color:#bbb">Resolving war &amp; scanning the attack log…</div>`);
     try {
-      const { ownId, enemyId, enemyName } = await resolveFactions(key);
-      if (!enemyId) {
-        showModal('<h2>Enemy Stat Report</h2><div>No active ranked war found for your faction.</div><div class="wsr-row"><button class="wsr-act" id="wsr-close">Close</button></div>');
-        return;
-      }
-      showModal(`<h2>Enemy Stat Report</h2><div>Scanning last 24h of attacks from <b>${escapeHtml(enemyName)}</b>…</div>`);
-      const { attacks, truncated, meta } = await fetchEnemyAttacks(key, enemyId);
-      const stats = attacks.length ? await ffscouterStats(key, attacks.map((a) => a.id)) : {};
-      const agg = aggregate(attacks, stats);
-      const dbg = `own ${ownId} · enemy ${enemyId} · scanned ${meta.scanned} (~${meta.hoursCovered}h, ${meta.pages}p) · matched ${attacks.length} · attacker-factions: ${meta.topFacs.map(([f, c]) => f + '×' + c).join(', ') || 'none'}`;
-      wsrDiag({ ownId, enemyId, enemyName, scanned: meta.scanned, withAttacker: meta.withAttacker, matched: attacks.length, pages: meta.pages, hours: meta.hoursCovered, topFacs: meta.topFacs, truncated });
-      renderReport(agg, enemyName, truncated, dbg);
+      const data = await fetchReport();
+      if (!data) { closeModal(); return; }
+      const title = document.getElementById('wsr-mtitle'); if (title) title.innerHTML = `Enemy Stat Report — ${escapeHtml(data.enemyName)}`;
+      const mbody = document.getElementById('wsr-mbody');
+      if (mbody) paintReport(mbody, data, GM_getValue('wsr_view', 'heavy'), closeModal, 'Close');
+      refreshInline();
     } catch (e) {
-      const msg = String((e && e.message) || e);
-      wsrDiag({ error: msg });
-      showModal(`<h2>Enemy Stat Report</h2>
-        <div style="color:#ff8;margin:6px 0">Error: ${escapeHtml(msg)}</div>
-        <div class="wsr-foot" style="color:#aaa;font-size:12px;line-height:1.5">The key must be a Torn key <b>registered with FFScouter</b>, with at least <b>Limited</b> access, and your faction position must grant the <b>&ldquo;attacks&rdquo;</b> API permission. Tap <b>Re-enter key</b> to switch to a different one.</div>
-        <div class="wsr-row"><button class="wsr-act" id="wsr-rekey">🔑 Re-enter key</button><button class="wsr-act" id="wsr-close">Close</button></div>`);
-      const rk = document.getElementById('wsr-rekey');
-      if (rk) rk.addEventListener('click', () => { GM_setValue('wsr_key', ''); runReport(); });
+      const mbody = document.getElementById('wsr-mbody');
+      if (mbody) {
+        mbody.innerHTML = errorHTML(e);
+        const rk = mbody.querySelector('.wsr-rekey'); if (rk) rk.addEventListener('click', () => { GM_setValue('wsr_key', ''); runReport(); });
+      }
     }
+  }
+
+  // ── inline panel under the war banner ──
+  let _wsrInlineOpen = false;
+  function isWarPage() { return location.search.includes('type=1') || /\/war\//.test(location.hash); }
+  function paintInline(body) {
+    const toggle = body.parentNode && body.parentNode.querySelector('.wsr-inline-toggle');
+    paintReport(body, _wsrCache, GM_getValue('wsr_view', 'heavy'), () => {
+      _wsrInlineOpen = false; body.style.display = 'none'; if (toggle) toggle.textContent = '▼';
+    }, 'Hide');
+  }
+  function refreshInline() {
+    const body = document.querySelector('#wsr-inline .wsr-inline-body');
+    const gen = document.querySelector('#wsr-inline .wsr-inline-gen');
+    if (body && _wsrCache && _wsrInlineOpen) { paintInline(body); if (gen) gen.textContent = 'Refresh'; }
+  }
+  async function runInline(body, gen) {
+    if (!getKey()) return;
+    const toggle = body.parentNode && body.parentNode.querySelector('.wsr-inline-toggle');
+    _wsrInlineOpen = true; body.style.display = 'block'; if (toggle) toggle.textContent = '▲';
+    body.innerHTML = '<div style="padding:10px;color:#bbb">Scanning last 24h of attacks…</div>';
+    gen.textContent = '…';
+    try {
+      const data = await fetchReport();
+      if (!data) { gen.textContent = 'Generate'; return; }
+      gen.textContent = 'Refresh';
+      paintInline(body);
+    } catch (e) {
+      gen.textContent = _wsrCache ? 'Refresh' : 'Generate';
+      body.innerHTML = errorHTML(e);
+      const rk = body.querySelector('.wsr-rekey'); if (rk) rk.addEventListener('click', () => { GM_setValue('wsr_key', ''); runInline(body, gen); });
+    }
+  }
+  function injectInlinePanel() {
+    if (!isWarPage()) { const p = document.getElementById('wsr-inline'); if (p) p.remove(); return; }
+    if (document.getElementById('wsr-inline')) return;
+    const list = document.querySelector('ul.f-war-list')
+      || document.querySelector(".faction-war [class*='members-list' i]")
+      || document.querySelector("[class*='members-list' i]");
+    if (!list || !list.parentNode) return;
+    const panel = document.createElement('div');
+    panel.id = 'wsr-inline';
+    panel.className = 'wsr-inline';
+    panel.innerHTML = `<div class="wsr-inline-head"><span class="wsr-inline-title">📊 Enemy Stat Report</span><span><button class="wsr-act wsr-inline-gen">${_wsrCache ? 'Refresh' : 'Generate'}</button> <button class="wsr-inline-toggle">${_wsrInlineOpen ? '▲' : '▼'}</button></span></div><div class="wsr-inline-body" style="display:${_wsrInlineOpen ? 'block' : 'none'}"></div>`;
+    list.parentNode.insertBefore(panel, list);
+    const body = panel.querySelector('.wsr-inline-body');
+    const gen = panel.querySelector('.wsr-inline-gen');
+    const toggle = panel.querySelector('.wsr-inline-toggle');
+    gen.addEventListener('click', () => runInline(body, gen));
+    toggle.addEventListener('click', () => {
+      _wsrInlineOpen = body.style.display === 'none';
+      body.style.display = _wsrInlineOpen ? 'block' : 'none';
+      toggle.textContent = _wsrInlineOpen ? '▲' : '▼';
+      if (_wsrInlineOpen && _wsrCache && !body.firstChild) paintInline(body);
+    });
+    if (_wsrInlineOpen && _wsrCache) paintInline(body); // restore after a re-render wipe
   }
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -368,6 +447,17 @@
     });
     b.addEventListener('pointercancel', () => { dragging = false; });
   }
-  if (document.body) addButton();
-  else document.addEventListener('DOMContentLoaded', addButton);
+  function wsrInit() {
+    addButton();
+    injectInlinePanel();
+    // The war page is a React SPA — re-inject the inline panel whenever a render
+    // wipes it, and on hash/route changes. Guarded by getElementById so it's a
+    // no-op when already present.
+    try {
+      const obs = new MutationObserver(() => { try { injectInlinePanel(); } catch (_) {} });
+      obs.observe(document.body, { childList: true, subtree: true });
+    } catch (_) {}
+  }
+  if (document.body) wsrInit();
+  else document.addEventListener('DOMContentLoaded', wsrInit);
 })();
