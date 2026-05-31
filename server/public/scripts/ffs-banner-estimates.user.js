@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.27
+// @version      2.73.28
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2827,6 +2827,22 @@ if (!singleton) {
               }
               if (landingTs) {
                 _ffsMemberCountdowns[uid] = landingTs;
+                // wb81: the fetch response carries the destination in
+                // status_description ("Traveling from Torn to Mexico" /
+                // "...from UAE to Torn"). Extract country + direction so the
+                // click-to-show-country toggle works on the war/ranked page,
+                // where the native status is just a flag (no parseable
+                // "Traveling to X" text for the DOM fallback to read).
+                const _sd = String(f.status_description || "");
+                const _mm = _sd.match(/from\s+(.+?)\s+to\s+(.+?)\s*$/i);
+                if (_mm) {
+                  const _from = _mm[1].trim(), _to = _mm[2].trim();
+                  if (/^torn$/i.test(_to)) {
+                    _ffsMemberAbbr[uid] = _from; _ffsMemberReturning[uid] = true;
+                  } else {
+                    _ffsMemberAbbr[uid] = _to; _ffsMemberReturning[uid] = false;
+                  }
+                }
               } else {
                 throw new Error("current present but no arrival timestamps");
               }
@@ -2993,7 +3009,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.27';
+  const SCRIPT_VERSION = '2.73.28';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3182,7 +3198,9 @@ if (!singleton) {
           statusSpan.dataset.ffsTime = countdownText;
           statusSpan.dataset.ffsLand = String(until); // wb72: for the 250ms ticker
           const showCountry = statusSpan.dataset.ffsShowCountry === "1";
-          const desired = showCountry ? countryLabel : countdownText;
+          // wb81: never blank the chip — if the country is somehow unknown,
+          // keep showing the time so the plane doesn't shift to a lone icon.
+          const desired = showCountry ? (countryLabel || countdownText) : countdownText;
           if (valueSpan.textContent !== desired) {
             valueSpan.textContent = desired;
           }
@@ -3922,7 +3940,7 @@ if (!singleton) {
       const was = span.dataset.ffsShowCountry === "1";
       span.dataset.ffsShowCountry = was ? "0" : "1";
       const v = span.querySelector(".ffs-mq-value");
-      const target = was ? span.dataset.ffsTime : span.dataset.ffsCountry;
+      const target = was ? span.dataset.ffsTime : (span.dataset.ffsCountry || span.dataset.ffsTime);
       // Diag: capture the click state before mutation so we can see
       // what the user actually toggled to.
       ffs_travelDiag({
@@ -3935,7 +3953,7 @@ if (!singleton) {
         memberAbbrSize: Object.keys(_ffsMemberAbbr).length,
       });
       if (!v) return;
-      v.textContent = target || (was ? "" : "…");
+      v.textContent = target || span.dataset.ffsTime || "";
     }, true);
   }
   ffs_initTravelCountdowns();
