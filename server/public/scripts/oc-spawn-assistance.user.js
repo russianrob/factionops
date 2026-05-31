@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.33
+// @version      3.2.34
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.33';
+    const SCRIPT_VERSION = '3.2.34';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -3354,30 +3354,41 @@
     window.addEventListener('hashchange', () => { _ocDiagScheduled = false; });
     function dockPanel() {
         try {
-            const tgt = _ocDockTarget();
-            if (!tgt || !tgt.el.parentNode) {
-                // off the OC tab → hide the button (panel hidden too)
+            const hash = location.hash || '';
+            // Loaning items happens on the ARMOURY tab (the panel's Loan Item
+            // button), so the box must stay visible there too — not only on the
+            // crimes tab. Hide only when off both.
+            const onArmoury = /tab=armou?ry/i.test(hash);
+            const onCrimes = !onArmoury && (/tab=crimes/.test(hash) || !!document.getElementById('faction-crimes-root'));
+            if (!onCrimes && !onArmoury) {
                 toggleBtn.classList.remove('oc-spawn-docked');
                 toggleBtn.style.display = 'none'; panel.style.display = 'none';
                 return;
             }
-            // Dock ONLY the toggle button inline under the tabs. The panel stays
-            // a FLOATING overlay (base CSS position:fixed, bottom-right) so it
-            // never pushes/covers the OC page — the inline panel was blocking
-            // loans. Clicking the button toggles the floating panel.
+            // Panel is always a floating overlay; keep its open/closed state so
+            // it survives the crimes → armoury jump (Loan Item stays reachable)
+            // and never pushes/covers the page (the inline panel blocked loans).
             if (panel.parentElement !== document.body) document.body.appendChild(panel);
-            panel.classList.remove('oc-spawn-docked'); // ensure it is NOT inline
+            panel.classList.remove('oc-spawn-docked');
             let _pv = false; try { _pv = !!panelVisible; } catch (_) {}
-            panel.style.display = _pv ? 'block' : 'none'; // keep open/closed state
-            // already placed? nothing more to do this tick.
-            if (toggleBtn.classList.contains('oc-spawn-docked') && toggleBtn.isConnected
-                && tgt.el.nextElementSibling === toggleBtn) return;
-            _ocMaybeScheduleDiag();
-            toggleBtn.style.left = toggleBtn.style.top = toggleBtn.style.right = toggleBtn.style.bottom = toggleBtn.style.position = '';
-            toggleBtn.classList.add('oc-spawn-docked');
-            toggleBtn.style.display = ''; // show the docked button (CSS → inline-block)
-            const parent = tgt.el.parentNode;
-            if (tgt.el.nextElementSibling !== toggleBtn) parent.insertBefore(toggleBtn, tgt.el.nextElementSibling);
+            panel.style.display = _pv ? 'block' : 'none';
+            toggleBtn.style.display = '';
+            const tgt = onCrimes ? _ocDockTarget() : null;
+            if (tgt && tgt.el.parentNode) {
+                // Crimes tab: dock the toggle button inline under the tabs.
+                if (!toggleBtn.classList.contains('oc-spawn-docked') || tgt.el.nextElementSibling !== toggleBtn) {
+                    _ocMaybeScheduleDiag();
+                    toggleBtn.style.left = toggleBtn.style.top = toggleBtn.style.right = toggleBtn.style.bottom = toggleBtn.style.position = '';
+                    toggleBtn.classList.add('oc-spawn-docked');
+                    const parent = tgt.el.parentNode;
+                    if (tgt.el.nextElementSibling !== toggleBtn) parent.insertBefore(toggleBtn, tgt.el.nextElementSibling);
+                }
+            } else {
+                // Armoury tab (or strip not yet rendered): float the button
+                // bottom-right so the panel + Loan Item stay reachable.
+                if (toggleBtn.classList.contains('oc-spawn-docked')) toggleBtn.classList.remove('oc-spawn-docked');
+                if (toggleBtn.parentElement !== document.body) document.body.appendChild(toggleBtn);
+            }
         } catch (_) {}
     }
     setInterval(dockPanel, 1200);
