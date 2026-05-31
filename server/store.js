@@ -47,6 +47,19 @@ export function setPayoutSettings(warId, settings) {
   payoutSettings.set(String(warId), { ...settings, updatedAt: Date.now() });
   savePayoutSettings();
 }
+// lootOverride is specific to ONE war's looted total. The live war is keyed by
+// the stable war_<factionId> key (reused every war), so without this the prior
+// war's custom amount goes stale on the next war. Clears only the override —
+// the faction's weight / payout-% config (policy) is intentionally preserved.
+export function clearPayoutLootOverride(warId) {
+  const s = payoutSettings.get(String(warId));
+  if (!s || s.lootOverride == null) return false;
+  const next = { ...s, updatedAt: Date.now() };
+  delete next.lootOverride;
+  payoutSettings.set(String(warId), next);
+  savePayoutSettings();
+  return true;
+}
 
 const factionSettings = new Map();
 
@@ -216,6 +229,9 @@ export function getOrCreateWar(warId, factionId, enemyFactionId = null) {
       delete war.warStart;        // belongs to the previous opponent
       delete war.warScores;       // ditto
       delete war.enemyFactionName; // caller will overwrite with new name
+      // New opponent = new war → reset the custom loot amount to auto so the
+      // prior war's override doesn't linger on the reused war_<factionId> key.
+      clearPayoutLootOverride(warId);
       saveState();
     }
     return war;
@@ -271,6 +287,9 @@ export function recordRealWarId(warId, realWarId) {
   if (!war || !realWarId) return false;
   if (String(war.realWarId) === String(realWarId)) return false;
   war.realWarId = String(realWarId);
+  // A new ranked-war ID = a new war (covers same-opponent rematches that the
+  // enemy-change reset misses) → reset the custom loot amount to auto.
+  clearPayoutLootOverride(warId);
   saveState();
   return true;
 }
