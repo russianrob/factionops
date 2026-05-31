@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.51
+// @version      3.6.52
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -72,7 +72,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.51';
+    const TPLF_VERSION = '3.6.52';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -244,6 +244,34 @@
             return m ? m[0].trim() : null;
         };
         return pick(root.querySelector('[class*="profile-status"][class*="hospital" i], .profile-status.hospital')) || pick(root);
+    }
+
+    // v3.6.52: resolve the hospital RELEASE timestamp — from the API map if we have
+    // it, else by parsing the visible "In hospital for X" text into now+duration.
+    function tplf_parseDuration(s) {
+        s = String(s).toLowerCase();
+        let total = 0, found = false, m;
+        if ((m = s.match(/(\d+)\s*hour/))) { total += parseInt(m[1], 10) * 3600; found = true; }
+        if ((m = s.match(/(\d+)\s*min/)))  { total += parseInt(m[1], 10) * 60;   found = true; }
+        if ((m = s.match(/(\d+)\s*sec/)))  { total += parseInt(m[1], 10);        found = true; }
+        return found ? total : null;
+    }
+    function tplf_hospTimestamp(scope, id) {
+        const api = (id != null && hospTime[id]) ? hospTime[id] : null;
+        if (api) return api;
+        const secs = tplf_parseDuration(tplf_hospStr(scope) || '');
+        return secs == null ? null : Math.floor(Date.now() / 1000) + secs;
+    }
+    // Combined "(In hospital for 1h 8m · out 14:32 TCT)" — the duration reads
+    // naturally, the absolute TCT out-time never goes stale once pasted in chat.
+    function tplf_hospFormat(releaseTs, settings) {
+        const rem = releaseTs - Math.floor(Date.now() / 1000);
+        if (rem <= 0) return null;
+        const d = new Date(releaseTs * 1000);
+        const tct = String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0') + ' TCT';
+        if (settings.timeRemaining) return `(In hospital for ${formatRemainingTime(rem)} · out ${tct})`;
+        if (settings.releaseTime)   return `(out ${tct})`;
+        return null;
     }
 
     function initProfilePage() {
@@ -909,29 +937,11 @@
             } catch (_) {}
         }
 
-        const releaseTimestamp = hospTime[userInfo.id] || null;
-        if (releaseTimestamp) {
-            const timeParts = [];
-            if (settings.timeRemaining) {
-                const remainingSeconds = releaseTimestamp - (Date.now() / 1000);
-                if (remainingSeconds > 0) {
-                    timeParts.push(`In hospital for ${formatRemainingTime(remainingSeconds)}`);
-                }
-            }
-            if (settings.releaseTime) {
-                const releaseDate = new Date(releaseTimestamp * 1000);
-                const tctTimeString = releaseDate.toLocaleTimeString([], {
-                    hour: '2-digit', minute: '2-digit', second: '2-digit',
-                    hour12: false, timeZone: 'UTC'
-                });
-                timeParts.push(`Out at ${tctTimeString} TCT`);
-            }
-            if (timeParts.length > 0) hospitalStr = `(${timeParts.join(' | ')})`;
-        } else if (settings.timeRemaining) {
-            // v3.6.49: scrape the hospital text LIVE — the captured value was empty
-            // on desktop (the profile status renders after the script's first pass).
-            const liveHosp = tplf_hospStr(document);
-            if (liveHosp) hospitalStr = `(${liveHosp})`;
+        // v3.6.52: combined hospital line (duration + absolute TCT out-time), from
+        // the API map or by parsing the visible "In hospital for X" text.
+        if (settings.timeRemaining || settings.releaseTime) {
+            const _ts = tplf_hospTimestamp(document, userInfo.id);
+            if (_ts) hospitalStr = tplf_hospFormat(_ts, settings);
         }
 
         if (settings.battlestats) {
@@ -999,30 +1009,10 @@
             statusEmoji = act === 'Online' ? '🟢 ' : (act === 'Idle' ? '🟡 ' : '⚫ ');
         }
 
-        const releaseTimestamp = hospTime[id] || null;
-        if (releaseTimestamp && (settings.timeRemaining || settings.releaseTime)) {
-            const timeParts = [];
-            if (settings.timeRemaining) {
-                const remainingSeconds = releaseTimestamp - (Date.now() / 1000);
-                if (remainingSeconds > 0) {
-                    timeParts.push(`In hospital for ${formatRemainingTime(remainingSeconds)}`);
-                }
-            }
-            if (settings.releaseTime) {
-                const releaseDate = new Date(releaseTimestamp * 1000);
-                const tctTimeString = releaseDate.toLocaleTimeString([], {
-                    hour: '2-digit', minute: '2-digit', second: '2-digit',
-                    hour12: false, timeZone: 'UTC'
-                });
-                timeParts.push(`Out at ${tctTimeString} TCT`);
-            }
-            if (timeParts.length > 0) healthStr = `(${timeParts.join(' | ')})`;
-        }
-        if (!healthStr && settings.timeRemaining) {
-            // v3.6.49: no API hospital time (e.g. an arbitrary chat user) — scrape
-            // the visible "In hospital for X" from the mini-profile/row itself.
-            const liveHosp = tplf_hospStr(memberElement);
-            if (liveHosp) healthStr = `(${liveHosp})`;
+        // v3.6.52: combined hospital line (duration + TCT out-time), API or DOM.
+        if (settings.timeRemaining || settings.releaseTime) {
+            const _ts = tplf_hospTimestamp(memberElement, id);
+            if (_ts) healthStr = tplf_hospFormat(_ts, settings);
         }
 
         if (settings.battlestats) {
