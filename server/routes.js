@@ -4176,8 +4176,9 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   //   - productive   = successful war hits × 25e
   //   - wastedOnFails = (attempted - successful) × 25e  (losses, stalemates,
   //                     escapes, interrupts, timeouts, non-war hits during war)
-  //   - wastedOnXanax = max(0, xanax×10 - attempted) × 25e  (xanax taken but
-  //                     no attacks made — 1 xanax refills 250e = 10 attacks)
+  //   - wastedOnXanax = max(0, xanax×10 - allAttempts) × 25e  (xanax taken but
+  //                     no attacks made; allAttempts = war + non-war hits, so
+  //                     non-war hits count as energy spent. 1 xanax = 250e = 10 atk)
   // efficiencyPct = productive / (productive + wasted) × 100
   const energyAnalysis = [];
   const factionAvgRph = avgRespectPerHit;

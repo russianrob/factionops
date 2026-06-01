@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.29
+// @version      5.1.30
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -87,7 +87,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.29';
+    const SCRIPT_VERSION = '5.1.30';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -12688,13 +12688,13 @@ body.wb-chain-active {
                     <span class="wb-postwar-achievement">${xa.membersWhoTook} members</span>
                     <span class="wb-postwar-achievement" style="${xa.membersFlagged > 0 ? 'background:rgba(255,118,117,.18);color:#ff7675;' : 'background:rgba(0,184,148,.18);color:#00b894;'}">${xa.membersFlagged} flagged</span>
                 </div>
-                <div style="font-size:10px;color:var(--wb-text-muted);margin-bottom:6px;">${escapeHtml(xa.rule || '1 xanax = 10 expected war attacks')}</div>
+                <div style="font-size:10px;color:var(--wb-text-muted);margin-bottom:6px;">${escapeHtml(xa.rule || '1 xanax = 10 expected attacks (war + non-war)')}</div>
                 <table class="wb-postwar-xanax-table">
                 <thead><tr>
                     <th class="col-mark"></th>
                     <th class="col-name">Member</th>
                     <th class="col-num">X</th>
-                    <th class="col-num">Atk</th>
+                    <th class="col-num">Hits</th>
                     <th class="col-num">Need</th>
                     <th class="col-delta">Δ</th>
                 </tr></thead><tbody>`;
@@ -12708,7 +12708,7 @@ body.wb-chain-active {
                     <td class="col-mark">${flagMark}</td>
                     <td class="col-name">${escapeHtml(r.name || '?')}</td>
                     <td class="col-num">${r.xanaxTaken}</td>
-                    <td class="col-num">${r.attacks}</td>
+                    <td class="col-num" title="${r.attacks} war">${r.allAttempts != null ? r.allAttempts : r.attacks}</td>
                     <td class="col-num" style="color:var(--wb-text-muted)">${r.expectedAttacks}</td>
                     <td class="col-delta" style="font-weight:${r.flagged?'600':'400'};color:${deficitColor}">${r.attackDeficit > 0 ? '-' + r.attackDeficit : '—'}</td>
                 </tr>`;
