@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.25
+// @version      5.1.26
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -87,7 +87,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.25';
+    const SCRIPT_VERSION = '5.1.26';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -13647,7 +13647,7 @@ body.wb-chain-active {
             // with this member + their payout (you still hit Give). No autosend.
             const _payAmt = Math.round(Number(r.payout) || 0);
             const _payLink = (_payAmt > 0 && r.playerId != null)
-                ? ` <a class="wb-pay-btn" href="https://www.torn.com/factions.php?step=your#/tab=controls&giveMoneyTo=${encodeURIComponent(r.playerId)}&money=${_payAmt}" target="_blank" rel="noopener" title="Give ${fmt$(_payAmt)} from the faction bank — prefilled, you confirm" style="margin-left:6px;text-decoration:none;font-size:13px;">💵</a>`
+                ? ` <a class="wb-pay-btn" href="https://www.torn.com/factions.php?step=your#/tab=controls&option=pay-day&select=${encodeURIComponent(r.playerId)}&pay=${_payAmt}" target="_blank" rel="noopener" title="Payday ${fmt$(_payAmt)} to this member — prefilled, you confirm" style="margin-left:6px;text-decoration:none;font-size:13px;">💵</a>`
                 : '';
             html += `<td><a href="/profiles.php?XID=${escapeHtml(r.playerId)}" target="_blank" rel="noopener" style="color:#d1d5db;text-decoration:none;">${escapeHtml(r.name)}</a>${_payLink}</td>`;
             html += `<td class="right" style="color:#74c69d;font-weight:600;">${lpad(f.payout, padTo.payout)}</td>`;
