@@ -932,7 +932,7 @@ function render(d){
       h+='<div style="margin-top:6px">';
       for (const m of bad) {
         const fails = m.failedAttacks||0;
-        const xanaxDeficit = Math.max(0, (m.xanaxTaken||0)*10 - (m.attemptedAttacks||0));
+        const xanaxDeficit = Math.max(0, (m.xanaxTaken||0)*10 - (m.allAttempts||0));
         const reasonBits = [];
         if (m.wastedOnFails>0) reasonBits.push(fails+' failed × 25e = '+fmtN(m.wastedOnFails)+'e');
         if (m.wastedOnXanax>0) reasonBits.push((m.xanaxTaken||0)+' xanax taken, '+xanaxDeficit+' attacks missing = '+fmtN(m.wastedOnXanax)+'e');
@@ -943,7 +943,7 @@ function render(d){
         h+='<div class="ee-row-stats">';
         h+='<span>Productive '+fmtN(m.productiveEnergy)+'e</span>';
         h+='<span class="neg">Wasted '+fmtN(m.wastedEnergy)+'e</span>';
-        h+='<span>'+m.attacks+'/'+(m.attemptedAttacks||0)+' hits</span>';
+        h+='<span>'+(m.allAttempts||0)+' hits ('+m.attacks+' war)</span>';
         if((m.xanaxTaken||0)>0) h+='<span>'+(m.xanaxTaken||0)+' xanax</span>';
         h+='</div>';
         if (reasonBits.length) h+='<div class="ee-reason">'+reasonBits.join(' · ')+'</div>';
@@ -995,7 +995,7 @@ function render(d){
         h+='<div class="member"><div class="member-head"><div class="member-name">'+esc(r.name)+' <span class="pill" style="color:var(--neg);background:rgba(251,113,133,0.12);border:1px solid var(--neg)">flagged</span></div></div>';
         h+='<div class="member-stats">';
         h+='<span>Xanax '+r.xanaxTaken+'</span>';
-        h+='<span>Hits '+r.attacks+' / expected '+r.expectedAttacks+'</span>';
+        h+='<span>Hits '+(r.allAttempts!=null?r.allAttempts:r.attacks)+' ('+r.attacks+' war) / expected '+r.expectedAttacks+'</span>';
         if(r.attackDeficit>0) h+='<span class="neg">−'+r.attackDeficit+' deficit</span>';
         h+='</div></div>';
       }
@@ -4018,7 +4018,8 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   // energy (Torn's faction.members.attacks only counts successful war hits).
   // Scope: only attacks against the enemy faction count toward "war attempted"
   // so a member's stray Tornville mug doesn't inflate their war energy spend.
-  const attemptsByMember = {}; // our member ID -> { total, failed }
+  const attemptsByMember = {}; // our member ID -> { total, failed } (war only)
+  const allAttemptsByMember = {}; // our member ID -> ALL attacks (war + non-war) = energy spent
   const FAILED_ATTACK_RESULTS = new Set(['Lost', 'Stalemate', 'Escape', 'Interrupted', 'Timeout']);
   const ourFactionId_str = String(ourFaction.id || "");
   const enemyFactionId_str = String(enemyFaction.id || "");
@@ -4043,6 +4044,12 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
         }
       }
     }
+    // EVERY attack our member made (war OR non-war) — total energy actually
+    // spent. Xanax accountability uses this so non-war hits aren't penalised.
+    if (String(atk.attacker_faction) === ourFactionId_str) {
+      const aidAll = String(atk.attacker_id || "");
+      if (aidAll && aidAll !== "0") allAttemptsByMember[aidAll] = (allAttemptsByMember[aidAll] || 0) + 1;
+    }
   }
   const hasBleedData = attackLog.length > 0;
 
@@ -4053,13 +4060,14 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   const ourMemberList = Object.entries(ourMembers).map(([id, m]) => {
     const bleed = bleedByMember[id] || { timesAttacked: 0, respectBled: 0 };
     const attempts = attemptsByMember[id] || { total: 0, failed: 0 };
+    const allAttempts = allAttemptsByMember[id] || 0;
     const xanax = Number(xanaxTaken[id]) || 0;
     const attacks = m.attacks || 0;
-    // 1 xanax = 250 energy = 10 war attacks at 25 e each. So if a
-    // member took N xanax during the war, they should have made at
-    // least N*10 war attacks. Anything less = unaccounted-for energy.
+    // 1 xanax = 250 energy = 10 attacks at 25 e each. Credit EVERY attack the
+    // member made (war + non-war) — energy is energy, so non-war hits still
+    // count toward the xanax they pulled. Anything short = unaccounted energy.
     const expectedAttacks = xanax * 10;
-    const attackDeficit = Math.max(0, expectedAttacks - attacks);
+    const attackDeficit = Math.max(0, expectedAttacks - allAttempts);
     return {
       id,
       name: m.name || "Unknown",
@@ -4073,6 +4081,7 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
       respectBled: Math.round(bleed.respectBled * 100) / 100,
       // 2026-05-23: attempted/failed from attack log (used by energy efficiency)
       attemptedAttacks: attempts.total,
+      allAttempts,
       failedAttacks: attempts.failed,
       // xanax accountability — only meaningful for members who actually
       // took xanax during the war. xanax==0 members get null deficit so
@@ -4188,7 +4197,7 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
     // get mis-bucketed as failures.
     const wastedOnFails = m.failedAttacks * ENERGY_PER_ATTACK;
     const xanaxAttacksExpected = m.xanaxTaken * ATTACKS_PER_XANAX;
-    const wastedOnXanax = Math.max(0, xanaxAttacksExpected - m.attemptedAttacks) * ENERGY_PER_ATTACK;
+    const wastedOnXanax = Math.max(0, xanaxAttacksExpected - (m.allAttempts || 0)) * ENERGY_PER_ATTACK;
     const totalEnergyBurned = productive + wastedOnFails + wastedOnXanax;
     const totalWaste = wastedOnFails + wastedOnXanax;
     const efficiencyPct = totalEnergyBurned > 0
@@ -4203,6 +4212,7 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
       level: m.level,
       attacks: m.attacks,
       attemptedAttacks: m.attemptedAttacks,
+      allAttempts: m.allAttempts || 0,
       failedAttacks: m.failedAttacks,
       xanaxTaken: m.xanaxTaken,
       respect: m.respect,
@@ -4475,6 +4485,7 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
       name: m.name,
       xanaxTaken: m.xanaxTaken,
       attacks: m.attacks,
+      allAttempts: m.allAttempts || 0,
       expectedAttacks: m.expectedAttacks,
       attackDeficit: m.attackDeficit,
       flagged: m.xanaxFlagged,
@@ -4491,7 +4502,7 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
     // didn't translate it to ≥ N×10 attacks, they're flagged. No
     // exceptions — the leader can interpret context if needed; the
     // report just surfaces the math.
-    rule: "1 xanax = 10 expected war attacks (250 energy ÷ 25 e per atk). Window = 24h pre-war + war + 24h post-war chain finish.",
+    rule: "1 xanax = 10 expected attacks (250 energy ÷ 25 e per atk); war AND non-war hits both count as energy spent. Window = 24h pre-war + war + 24h post-war chain finish.",
   };
 
   // ── ATTACK TELEMETRY ──
