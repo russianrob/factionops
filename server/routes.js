@@ -457,8 +457,10 @@ const PAYOUTS_HTML = `<!doctype html>
   .member{border-top:1px solid var(--border); padding:10px 4px;}
   .member:first-child{border-top:0;}
   .member-head{display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
-  .member-name{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .member-name{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0;}
   .member-pay{font:600 14px "SF Mono", ui-monospace, Menlo, monospace; color:var(--accent); white-space:nowrap;}
+  .pay-btn{flex:none; padding:3px 10px; background:#2d6a4f; color:#fff; border-radius:6px; font:600 11px inherit; text-decoration:none; white-space:nowrap;}
+  .pay-btn:hover{background:#3d8a6f;}
   .member-stats{display:flex; gap:10px; font-size:11.5px; color:var(--text-mute); margin-top:4px; flex-wrap:wrap; font-family:"SF Mono", ui-monospace, Menlo, monospace;}
   .member.expandable{cursor:pointer; -webkit-tap-highlight-color:transparent;}
   .member.expandable .arrow{display:inline-block; color:var(--text-mute); margin-right:4px; transition:transform .15s; font-size:10px;}
@@ -648,7 +650,9 @@ function render(d){
       // Server returns sharePct as whole percent already (0-100).
       const pct=(m.sharePct!=null)?Number(m.sharePct).toFixed(2)+'%':'';
       h+='<div class="member expandable">';
-      h+='<div class="member-head"><div class="member-name"><span class="arrow">▸</span>'+esc(m.name||('Player '+m.playerId))+(m.level?' <span class="muted" style="font-weight:400;font-size:11px">Lv'+m.level+'</span>':'')+'</div><div class="member-pay">'+fmt$(m.dollarPayout||0)+'</div></div>';
+      const _payAmt=Math.round(Number(m.dollarPayout||0));
+      const _payBtn=(_payAmt>0 && m.playerId!=null)?'<a class="pay-btn" href="https://www.torn.com/factions.php?step=your#/tab=controls&giveMoneyTo='+encodeURIComponent(m.playerId)+'&money='+_payAmt+'" target="_blank" rel="noopener" title="Give '+fmt$(_payAmt)+' from the faction bank — prefilled, you confirm">💵 Pay</a>':'';
+      h+='<div class="member-head"><div class="member-name"><span class="arrow">▸</span>'+esc(m.name||('Player '+m.playerId))+(m.level?' <span class="muted" style="font-weight:400;font-size:11px">Lv'+m.level+'</span>':'')+'</div><div class="member-pay">'+fmt$(m.dollarPayout||0)+'</div>'+_payBtn+'</div>';
       h+='<div class="member-stats">';
       h+='<span>Share '+pct+'</span>';
       h+='<span>Score '+fmtR(m.score||0)+'</span>';
