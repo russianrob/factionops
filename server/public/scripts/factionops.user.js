@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.27
+// @version      5.1.28
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -87,7 +87,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.27';
+    const SCRIPT_VERSION = '5.1.28';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -13098,39 +13098,6 @@ body.wb-chain-active {
         loadHtmPayouts();
     }
 
-    // ── TEMP payday diag (wb): on the Payday tab, capture whether ticking a
-    // member checkbox changes the URL (→ a pure-URL pre-select would be
-    // possible) and the checkbox's member-ID mapping. POSTs to client-log.
-    (function _wbPaydayDiag() {
-        if (typeof GM_xmlhttpRequest !== 'function') return;
-        let _sent = 0;
-        const send = (tag, data) => {
-            if (_sent > 25) return; _sent++;
-            try { GM_xmlhttpRequest({ method: 'POST', url: 'https://tornwar.com/api/debug/client-log', headers: { 'Content-Type': 'application/json' }, data: JSON.stringify({ tag, data }), onload() {}, onerror() {} }); } catch (_) {}
-        };
-        const onPayday = () => /option=pay-day/.test(location.hash || '');
-        const attrs = (el) => { const o = {}; if (el && el.attributes) for (const a of el.attributes) o[a.name] = String(a.value).slice(0, 80); return o; };
-        const rowOf = (cb) => cb.closest('li, tr, div[class*="member" i], div[class*="user" i]') || cb.parentElement;
-        let lastHash = location.hash, loggedStructure = false;
-        function logStructure() {
-            if (loggedStructure || !onPayday()) return;
-            const boxes = document.querySelectorAll('input[type="checkbox"]');
-            if (!boxes.length) return;
-            loggedStructure = true;
-            const b = boxes[0], row = rowOf(b), xid = row && row.querySelector('a[href*="XID="]');
-            send('payday-diag', { phase: 'structure', hash: location.hash, checkboxCount: boxes.length, sampleBox: { id: b.id || '', name: b.name || '', value: b.value || '', cls: b.className || '' }, rowAttrs: row ? attrs(row) : null, rowHtml: row ? row.outerHTML.slice(0, 400) : '', xidInRow: xid ? xid.getAttribute('href') : null });
-        }
-        document.addEventListener('change', (ev) => {
-            const cb = ev.target;
-            if (!cb || cb.type !== 'checkbox' || !onPayday()) return;
-            const before = lastHash, row = rowOf(cb), xid = row && row.querySelector('a[href*="XID="]');
-            const snap = (when) => send('payday-diag', { phase: 'tick-' + when, checked: cb.checked, hashBefore: before, hashNow: location.hash, hashChanged: location.hash !== before, href: location.href.slice(0, 300), box: { id: cb.id || '', name: cb.name || '', value: cb.value || '', cls: cb.className || '' }, rowAttrs: row ? attrs(row) : null, xidInRow: xid ? xid.getAttribute('href') : null });
-            snap('now'); setTimeout(() => snap('after300'), 300);
-        }, true);
-        window.addEventListener('hashchange', () => { lastHash = location.hash; });
-        setInterval(logStructure, 800);
-    })();
-
     async function loadHtmActivity() {
         const pane = document.getElementById('wb-htm-pane-activity');
         const meta = document.getElementById('wb-htm-meta');
@@ -13680,7 +13647,7 @@ body.wb-chain-active {
             // with this member + their payout (you still hit Give). No autosend.
             const _payAmt = Math.round(Number(r.payout) || 0);
             const _payLink = (_payAmt > 0 && r.playerId != null)
-                ? ` <a class="wb-pay-btn" href="https://www.torn.com/factions.php?step=your#/tab=controls&option=pay-day&select=${encodeURIComponent(r.playerId)}&pay=${_payAmt}" target="_blank" rel="noopener" title="Payday ${fmt$(_payAmt)} to this member — prefilled, you confirm" style="margin-left:6px;text-decoration:none;font-size:13px;">💵</a>`
+                ? ` <a class="wb-pay-btn" href="https://www.torn.com/factions.php?step=your#/tab=controls&giveMoneyTo=${encodeURIComponent(r.playerId)}&money=${_payAmt}" target="_blank" rel="noopener" title="Give ${fmt$(_payAmt)} to this member — prefilled, you confirm" style="margin-left:6px;text-decoration:none;font-size:13px;">💵</a>`
                 : '';
             html += `<td><a href="/profiles.php?XID=${escapeHtml(r.playerId)}" target="_blank" rel="noopener" style="color:#d1d5db;text-decoration:none;">${escapeHtml(r.name)}</a>${_payLink}</td>`;
             html += `<td class="right" style="color:#74c69d;font-weight:600;">${lpad(f.payout, padTo.payout)}</td>`;

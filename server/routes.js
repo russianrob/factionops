@@ -651,7 +651,7 @@ function render(d){
       const pct=(m.sharePct!=null)?Number(m.sharePct).toFixed(2)+'%':'';
       h+='<div class="member expandable">';
       const _payAmt=Math.round(Number(m.dollarPayout||0));
-      const _payBtn=(_payAmt>0 && m.playerId!=null)?'<a class="pay-btn" href="https://www.torn.com/factions.php?step=your#/tab=controls&option=pay-day&select='+encodeURIComponent(m.playerId)+'&pay='+_payAmt+'" target="_blank" rel="noopener" title="Payday '+fmt$(_payAmt)+' to this member — prefilled, you confirm">💵 Pay</a>':'';
+      const _payBtn=(_payAmt>0 && m.playerId!=null)?'<a class="pay-btn" href="https://www.torn.com/factions.php?step=your#/tab=controls&giveMoneyTo='+encodeURIComponent(m.playerId)+'&money='+_payAmt+'" target="_blank" rel="noopener" title="Give '+fmt$(_payAmt)+' to this member — prefilled, you confirm">💵 Pay</a>':'';
       h+='<div class="member-head"><div class="member-name"><span class="arrow">▸</span>'+esc(m.name||('Player '+m.playerId))+(m.level?' <span class="muted" style="font-weight:400;font-size:11px">Lv'+m.level+'</span>':'')+'</div><div class="member-pay">'+fmt$(m.dollarPayout||0)+'</div>'+_payBtn+'</div>';
       h+='<div class="member-stats">';
       h+='<span>Share '+pct+'</span>';
