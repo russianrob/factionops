@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.34
+// @version      3.2.35
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.34';
+    const SCRIPT_VERSION = '3.2.35';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -2578,7 +2578,7 @@
                     }
                 } catch (_) {}
                 const msg = document.getElementById('oc-vault-msg');
-                if (msg) msg.textContent = `Amount copied. Paste into the Give form for ${recipient} [${xid}] — $${Number(amt).toLocaleString('en-US')}`;
+                if (msg) msg.textContent = `Opening Give for ${recipient} [${xid}] — $${Number(amt).toLocaleString('en-US')} prefilled, just confirm.`;
                 // Optimistic faction-wide hide: server marks the request as
                 // banker-claimed so every other admin's next list fetch
                 // drops it too. If the matching fundsnews event doesn't
@@ -5113,19 +5113,19 @@
             const prefLabel = r.target === 'online'
                 ? '<span style="color:#9ca3af;" title="Only send while requester is online">⏱ online only</span>'
                 : '<span style="color:#4ade80;" title="OK to send even while requester is offline">✓ anytime</span>';
-            // Payout link: opens Torn's faction Controls tab (where "give to
-            // user" lives). Torn's form doesn't pre-fill via URL params, so
-            // the tooltip shows the recipient + amount the admin needs to
-            // enter. Our fundsnews poll auto-removes this request once the
-            // money lands.
-            const payUrl = 'https://www.torn.com/factions.php?step=your&type=1#/tab=controls';
+            // Send link: opens Torn's faction Controls "Give to user" tab
+            // PREFILLED with the requester + amount via the giveMoneyTo/money
+            // URL params, so the admin just confirms. Our fundsnews poll
+            // auto-removes this request once the money lands.
+            const _amtNum = Math.round(Number(r.amount) || 0);
+            const payUrl = `https://www.torn.com/factions.php?step=your#/tab=controls&giveMoneyTo=${encodeURIComponent(r.requesterId)}&money=${_amtNum}`;
             const sendBtn = `<a href="${payUrl}" target="_blank" rel="noopener"
                 class="oc-vault-send"
                 data-req-id="${met_escapeHtml(r.id)}"
                 data-amount="${met_escapeHtml(r.amount)}"
                 data-recipient="${met_escapeHtml(r.requesterName)}"
                 data-recipient-id="${met_escapeHtml(r.requesterId)}"
-                title="Opens Controls tab · Amount $${amt} copied to clipboard · Give to ${met_escapeHtml(r.requesterName)} [${met_escapeHtml(r.requesterId)}]"
+                title="Opens Give-to-user prefilled — give $${amt} to ${met_escapeHtml(r.requesterName)} [${met_escapeHtml(r.requesterId)}], you confirm"
                 style="display:inline-block;background:#166534;color:#f3f4f6;text-decoration:none;font-weight:600;font-size:10px;padding:2px 8px;border-radius:3px;margin-left:auto;">Send</a>`;
             return `<div style="display:flex;align-items:center;gap:6px;padding:3px 6px;font-size:11px;background:#111b14;border-radius:3px;margin-bottom:3px;">
                 <span style="color:#f3f4f6;font-weight:600;">${met_escapeHtml(r.requesterName)}</span>
