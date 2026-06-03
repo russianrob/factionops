@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.055
+// @version      1.00.056
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -182,44 +182,37 @@ async function getPricesFromAPI() {
         }
         if (payout) lines.push('Payout: ' + payout);
         if (nerve && nerve > 0 && /^[\d.,kKmM]+$/.test(payout)) {
-            // NET profit/nerve = (payout - material cost) / nerve, so it reflects
-            // actual bang-for-buck rather than gross revenue/nerve.
+            // Best-effort profit/nerve calc only when payout parses cleanly.
             const num = parseFloat(payout.replace(/,/g, ''));
             const mult = /m/i.test(payout) ? 1_000_000 : /k/i.test(payout) ? 1_000 : 1;
-            const revenue = num * mult;
-            let matCost = 0;
-            const priceOf = (name) => {
-                const kk = Object.keys(itemValues).find(x => x.toLowerCase() === String(name).toLowerCase());
-                return kk ? parseValue(itemValues[kk]) : 0;
-            };
-            for (const map of [r.items, r.stoke, r.dampen]) {
-                if (map && typeof map === 'object' && !Array.isArray(map)) {
-                    for (const [name, qty] of Object.entries(map)) matCost += (Number(qty) || 0) * priceOf(name);
-                }
-            }
-            const profitPerNerve = Math.round((revenue - matCost) / nerve);
+            const profitPerNerve = Math.round((num * mult) / nerve);
             lines.push('Profit/Nerve: ' + profitPerNerve.toLocaleString());
         } else {
             lines.push('Profit/Nerve: ');
         }
         lines.push('Flamethrower: ' + (r.flamethrower ? 'Yes' : 'No'));
-        // NOTE: Ignite + Location lines intentionally NOT emitted — they aren't
-        // in the built-in line set, and emitting them changed how the tooltip
-        // looked once server recipes started applying. (Lighters etc. show in
-        // the Place line when stored in items.)
-        // items / stoke / dampen are all stored as { name: qty } maps (e.g.
-        // {"gasoline": 2}). Format as "2 gasoline" — matching upstream BFB's
-        // "Place:" line layout. Accept arrays/strings too. Doing all three via
-        // one formatter so an object never renders as "[object Object]" (the
-        // Stoke line was concatenating the raw object).
-        const fmtMat = (v) => {
-            if (Array.isArray(v)) return v.join(', ');
-            if (v && typeof v === 'object') return Object.entries(v).map(([name, qty]) => `${qty} ${name}`).join(', ');
-            return v != null ? String(v) : '';
-        };
-        lines.push('Place: '  + fmtMat(r.items));
-        lines.push('Stoke: '  + fmtMat(r.stoke));
-        lines.push('Dampen: ' + fmtMat(r.dampen));
+        // Render the ignite tool when set. Mirrors upstream BFB's
+        // "Ignite: Lighter" line so users see the missing ignite info
+        // that the 2026-05-16 migration silently dropped.
+        if (r.ignite) lines.push('Ignite: ' + r.ignite);
+        // Server stores items as { name: qty } (e.g. {"gasoline": 2,
+        // "kerosene": 1}). Format as "2 gasoline, 1 kerosene" — matches
+        // the way upstream BFB writes its "Place:" lines so the layout
+        // stays consistent. Also accept arrays/strings for forward-compat.
+        let itemsStr = '';
+        if (Array.isArray(r.items)) {
+            itemsStr = r.items.join(', ');
+        } else if (r.items && typeof r.items === 'object') {
+            itemsStr = Object.entries(r.items)
+                .map(([name, qty]) => `${qty} ${name}`)
+                .join(', ');
+        } else if (typeof r.items === 'string') {
+            itemsStr = r.items;
+        }
+        lines.push('Place: ' + itemsStr);
+        lines.push('Stoke: '  + (r.stoke  || ''));
+        lines.push('Dampen: ' + (r.dampen || ''));
+        if (r.location) lines.push('Location: ' + r.location);
         return lines;
     }
 
@@ -227,24 +220,13 @@ async function getPricesFromAPI() {
      *  Mutates in place; safe to call repeatedly. */
     function wbOverlayServerRecipes(serverRecipes) {
         if (!serverRecipes || typeof serverRecipes !== 'object') return 0;
-        // Map lowercased existing key -> actual key so a server recipe keyed
-        // e.g. "wet behind the ears" OVERWRITES the built-in "Wet Behind the
-        // Ears" (the lookup prefers the exact-cased name) instead of adding a
-        // parallel lowercase entry the lookup never reaches.
-        const lowerToActual = Object.create(null);
-        for (const k of Object.keys(scenarios)) {
-            if (k === '_wbLowerIndex') continue;
-            lowerToActual[k.toLowerCase()] = k;
-        }
         let n = 0;
         for (const [key, recipe] of Object.entries(serverRecipes)) {
             const lines = wbRecipeToLines(recipe);
             if (!lines) continue;
-            const targetKey = scenarios[key] ? key : (lowerToActual[key.toLowerCase()] || key);
-            scenarios[targetKey] = lines;
+            scenarios[key] = lines;
             n++;
         }
-        scenarios._wbLowerIndex = null; // keys may have changed; rebuild lazily
         // After any overlay, re-derive Profit/Nerve for every recipe
         // (including upstream-hardcoded ones whose authors left the
         // field blank). Idempotent — skips lines that already carry a
@@ -316,9 +298,7 @@ async function getPricesFromAPI() {
         const totalQty = itemsQty + (flamethrowerYes ? 1 : 0);
         if (totalQty <= 0) return;
         const nerve = totalQty * 5 + 5;
-        // NET: subtract material cost (matches wbRecipeToLines / true bang-for-buck).
-        const matCost = (calculateMaterialCost(lines) || {}).baseCost || 0;
-        const ppn = Math.round((payout - matCost) / nerve);
+        const ppn = Math.round(payout / nerve);
         // Format compactly so the tooltip stays narrow: 1234 → "1.2K",
         // 12340 → "12K", 1234567 → "1.2M".
         let formatted;
