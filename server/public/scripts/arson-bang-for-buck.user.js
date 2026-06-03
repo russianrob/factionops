@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.052
+// @version      1.00.053
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -195,23 +195,19 @@ async function getPricesFromAPI() {
         // "Ignite: Lighter" line so users see the missing ignite info
         // that the 2026-05-16 migration silently dropped.
         if (r.ignite) lines.push('Ignite: ' + r.ignite);
-        // Server stores items as { name: qty } (e.g. {"gasoline": 2,
-        // "kerosene": 1}). Format as "2 gasoline, 1 kerosene" — matches
-        // the way upstream BFB writes its "Place:" lines so the layout
-        // stays consistent. Also accept arrays/strings for forward-compat.
-        let itemsStr = '';
-        if (Array.isArray(r.items)) {
-            itemsStr = r.items.join(', ');
-        } else if (r.items && typeof r.items === 'object') {
-            itemsStr = Object.entries(r.items)
-                .map(([name, qty]) => `${qty} ${name}`)
-                .join(', ');
-        } else if (typeof r.items === 'string') {
-            itemsStr = r.items;
-        }
-        lines.push('Place: ' + itemsStr);
-        lines.push('Stoke: '  + (r.stoke  || ''));
-        lines.push('Dampen: ' + (r.dampen || ''));
+        // items / stoke / dampen are all stored as { name: qty } maps (e.g.
+        // {"gasoline": 2}). Format as "2 gasoline" — matching upstream BFB's
+        // "Place:" line layout. Accept arrays/strings too. Doing all three via
+        // one formatter so an object never renders as "[object Object]" (the
+        // Stoke line was concatenating the raw object).
+        const fmtMat = (v) => {
+            if (Array.isArray(v)) return v.join(', ');
+            if (v && typeof v === 'object') return Object.entries(v).map(([name, qty]) => `${qty} ${name}`).join(', ');
+            return v != null ? String(v) : '';
+        };
+        lines.push('Place: '  + fmtMat(r.items));
+        lines.push('Stoke: '  + fmtMat(r.stoke));
+        lines.push('Dampen: ' + fmtMat(r.dampen));
         if (r.location) lines.push('Location: ' + r.location);
         return lines;
     }
