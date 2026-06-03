@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.054
+// @version      1.00.055
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -203,10 +203,10 @@ async function getPricesFromAPI() {
             lines.push('Profit/Nerve: ');
         }
         lines.push('Flamethrower: ' + (r.flamethrower ? 'Yes' : 'No'));
-        // Render the ignite tool when set. Mirrors upstream BFB's
-        // "Ignite: Lighter" line so users see the missing ignite info
-        // that the 2026-05-16 migration silently dropped.
-        if (r.ignite) lines.push('Ignite: ' + r.ignite);
+        // NOTE: Ignite + Location lines intentionally NOT emitted — they aren't
+        // in the built-in line set, and emitting them changed how the tooltip
+        // looked once server recipes started applying. (Lighters etc. show in
+        // the Place line when stored in items.)
         // items / stoke / dampen are all stored as { name: qty } maps (e.g.
         // {"gasoline": 2}). Format as "2 gasoline" — matching upstream BFB's
         // "Place:" line layout. Accept arrays/strings too. Doing all three via
@@ -220,7 +220,6 @@ async function getPricesFromAPI() {
         lines.push('Place: '  + fmtMat(r.items));
         lines.push('Stoke: '  + fmtMat(r.stoke));
         lines.push('Dampen: ' + fmtMat(r.dampen));
-        if (r.location) lines.push('Location: ' + r.location);
         return lines;
     }
 
