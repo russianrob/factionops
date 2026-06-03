@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.051-wb24
+// @version      1.00.052
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -220,13 +220,24 @@ async function getPricesFromAPI() {
      *  Mutates in place; safe to call repeatedly. */
     function wbOverlayServerRecipes(serverRecipes) {
         if (!serverRecipes || typeof serverRecipes !== 'object') return 0;
+        // Map lowercased existing key -> actual key so a server recipe keyed
+        // e.g. "wet behind the ears" OVERWRITES the built-in "Wet Behind the
+        // Ears" (the lookup prefers the exact-cased name) instead of adding a
+        // parallel lowercase entry the lookup never reaches.
+        const lowerToActual = Object.create(null);
+        for (const k of Object.keys(scenarios)) {
+            if (k === '_wbLowerIndex') continue;
+            lowerToActual[k.toLowerCase()] = k;
+        }
         let n = 0;
         for (const [key, recipe] of Object.entries(serverRecipes)) {
             const lines = wbRecipeToLines(recipe);
             if (!lines) continue;
-            scenarios[key] = lines;
+            const targetKey = scenarios[key] ? key : (lowerToActual[key.toLowerCase()] || key);
+            scenarios[targetKey] = lines;
             n++;
         }
+        scenarios._wbLowerIndex = null; // keys may have changed; rebuild lazily
         // After any overlay, re-derive Profit/Nerve for every recipe
         // (including upstream-hardcoded ones whose authors left the
         // field blank). Idempotent — skips lines that already carry a
