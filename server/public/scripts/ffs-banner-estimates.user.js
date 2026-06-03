@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.28
+// @version      2.73.29
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2826,7 +2826,15 @@ if (!singleton) {
                 landingTs = latest || earliest;
               }
               if (landingTs) {
-                _ffsMemberCountdowns[uid] = landingTs;
+                // wb82: FREEZE the landing time per flight. A flight's arrival
+                // is fixed, but FFScouter's book_likely_being_used flag (and its
+                // earliest/latest bounds) can change between our 30s re-fetches,
+                // flipping the chosen endpoint (earliest/midpoint/latest) and
+                // making the members-list countdown JUMP/RESET by up to the
+                // ~10-min earliest↔latest gap. Keep the first value for this
+                // flight; the members-endpoint clears _ffsMemberCountdowns when
+                // the member stops travelling, so a NEW flight re-derives fresh.
+                if (_ffsMemberCountdowns[uid] == null) _ffsMemberCountdowns[uid] = landingTs;
                 // wb81: the fetch response carries the destination in
                 // status_description ("Traveling from Torn to Mexico" /
                 // "...from UAE to Torn"). Extract country + direction so the
@@ -3009,7 +3017,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.28';
+  const SCRIPT_VERSION = '2.73.29';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
