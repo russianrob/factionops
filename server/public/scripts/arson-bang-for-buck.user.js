@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.056
+// @version      1.00.057
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -170,49 +170,44 @@ async function getPricesFromAPI() {
      *  scenario rows so the tooltip layout stays familiar. */
     function wbRecipeToLines(r) {
         if (!r || typeof r !== 'object') return null;
+        // Emit EXACTLY the built-in 6-line shape so an overlaid server recipe
+        // renders identically to the hardcoded scenarios:
+        //   Payout / Profit/Nerve (blank) / Flamethrower / Place / Stoke / Dampen
+        // Do NOT add Ignite or Location lines — they aren't in the built-in
+        // shape, and emitting them made the overlaid tooltip wrap/jumble vs the
+        // hardcoded ones (the bug that prompted the revert). Lighters etc. still
+        // show in Place when the server stores them in `items`.
+        const cap = (s) => String(s).replace(/\b[a-z]/g, c => c.toUpperCase());
+        // items / stoke are stored as { name: qty } maps (e.g. {"gasoline": 1}).
+        // Render "1 Gasoline" — capitalized, comma-joined — matching how the
+        // built-ins write their Place/Stoke lines. One formatter for all so an
+        // object never renders as "[object Object]". Accept arrays/strings too.
+        const fmt = (v) => {
+            if (Array.isArray(v)) return v.map(cap).join(', ');
+            if (v && typeof v === 'object') return Object.entries(v).map(([name, qty]) => `${qty} ${cap(name)}`).join(', ');
+            if (typeof v === 'string') return cap(v);
+            return '';
+        };
+        // Abbreviate payout to the built-in "220k" style. All arson payouts are
+        // sub-million (max 680k), so K-only is safe — calculateProfitPerNerve
+        // understands a K suffix but NOT M, so never emit "m".
+        const fmtPay = (n) => {
+            const val = Number(n);
+            if (!Number.isFinite(val) || val <= 0) return n != null ? String(n) : '';
+            if (val >= 1000) { const k = val / 1000; return (Number.isInteger(k) ? k : +k.toFixed(1)) + 'k'; }
+            return String(val);
+        };
         const lines = [];
-        const payout = r.payout != null && r.payout !== '' ? String(r.payout) : '';
-        // Use stored nerve when present, otherwise auto-calc so the
-        // tooltip can still show Profit/Nerve for recipes whose author
-        // skipped the nerve field.
-        let nerve = r.nerve  != null && r.nerve  !== '' ? Number(r.nerve)  : null;
-        if (!(nerve && nerve > 0)) {
-            const auto = wbAutoCalcArsonNerve(r);
-            if (auto > 0) nerve = auto;
-        }
-        if (payout) lines.push('Payout: ' + payout);
-        if (nerve && nerve > 0 && /^[\d.,kKmM]+$/.test(payout)) {
-            // Best-effort profit/nerve calc only when payout parses cleanly.
-            const num = parseFloat(payout.replace(/,/g, ''));
-            const mult = /m/i.test(payout) ? 1_000_000 : /k/i.test(payout) ? 1_000 : 1;
-            const profitPerNerve = Math.round((num * mult) / nerve);
-            lines.push('Profit/Nerve: ' + profitPerNerve.toLocaleString());
-        } else {
-            lines.push('Profit/Nerve: ');
-        }
+        lines.push('Payout: ' + fmtPay(r.payout));
+        // Leave Profit/Nerve blank — wbDeriveProfitPerNerveAll() (run right
+        // after the overlay) fills it for every recipe, built-in and server
+        // alike, so overridden recipes show the same computed value the
+        // hardcoded ones do.
+        lines.push('Profit/Nerve: ');
         lines.push('Flamethrower: ' + (r.flamethrower ? 'Yes' : 'No'));
-        // Render the ignite tool when set. Mirrors upstream BFB's
-        // "Ignite: Lighter" line so users see the missing ignite info
-        // that the 2026-05-16 migration silently dropped.
-        if (r.ignite) lines.push('Ignite: ' + r.ignite);
-        // Server stores items as { name: qty } (e.g. {"gasoline": 2,
-        // "kerosene": 1}). Format as "2 gasoline, 1 kerosene" — matches
-        // the way upstream BFB writes its "Place:" lines so the layout
-        // stays consistent. Also accept arrays/strings for forward-compat.
-        let itemsStr = '';
-        if (Array.isArray(r.items)) {
-            itemsStr = r.items.join(', ');
-        } else if (r.items && typeof r.items === 'object') {
-            itemsStr = Object.entries(r.items)
-                .map(([name, qty]) => `${qty} ${name}`)
-                .join(', ');
-        } else if (typeof r.items === 'string') {
-            itemsStr = r.items;
-        }
-        lines.push('Place: ' + itemsStr);
-        lines.push('Stoke: '  + (r.stoke  || ''));
-        lines.push('Dampen: ' + (r.dampen || ''));
-        if (r.location) lines.push('Location: ' + r.location);
+        lines.push('Place: '  + fmt(r.items));
+        lines.push('Stoke: '  + fmt(r.stoke));
+        lines.push('Dampen: ' + fmt(r.dampen));
         return lines;
     }
 
@@ -220,13 +215,28 @@ async function getPricesFromAPI() {
      *  Mutates in place; safe to call repeatedly. */
     function wbOverlayServerRecipes(serverRecipes) {
         if (!serverRecipes || typeof serverRecipes !== 'object') return 0;
+        // Built-in scenario keys are Title Case ("Wet Behind the Ears"); server
+        // recipe keys are lowercase ("wet behind the ears"). Map each server key
+        // onto the existing built-in key so we OVERRIDE the hardcoded recipe
+        // instead of creating an unreachable lowercase duplicate that the
+        // tooltip lookup (keyed by the exact DOM scenario name) never finds —
+        // that duplicate-key bug is why wet behind kept showing the stale
+        // hardcoded "2 Gasoline" instead of the server's kerosene+lighter.
+        const lowerToActual = Object.create(null);
+        for (const k of Object.keys(scenarios)) {
+            if (k && k[0] !== '_') lowerToActual[k.toLowerCase()] = k;
+        }
         let n = 0;
         for (const [key, recipe] of Object.entries(serverRecipes)) {
             const lines = wbRecipeToLines(recipe);
             if (!lines) continue;
-            scenarios[key] = lines;
+            const targetKey = scenarios[key] ? key : (lowerToActual[key.toLowerCase()] || key);
+            scenarios[targetKey] = lines;
             n++;
         }
+        // The case-insensitive lookup cache may now be stale (new keys added);
+        // drop it so it rebuilds against the overridden scenario map.
+        if (scenarios._wbLowerIndex) scenarios._wbLowerIndex = null;
         // After any overlay, re-derive Profit/Nerve for every recipe
         // (including upstream-hardcoded ones whose authors left the
         // field blank). Idempotent — skips lines that already carry a
