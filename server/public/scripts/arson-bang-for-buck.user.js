@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.053
+// @version      1.00.054
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -182,10 +182,22 @@ async function getPricesFromAPI() {
         }
         if (payout) lines.push('Payout: ' + payout);
         if (nerve && nerve > 0 && /^[\d.,kKmM]+$/.test(payout)) {
-            // Best-effort profit/nerve calc only when payout parses cleanly.
+            // NET profit/nerve = (payout - material cost) / nerve, so it reflects
+            // actual bang-for-buck rather than gross revenue/nerve.
             const num = parseFloat(payout.replace(/,/g, ''));
             const mult = /m/i.test(payout) ? 1_000_000 : /k/i.test(payout) ? 1_000 : 1;
-            const profitPerNerve = Math.round((num * mult) / nerve);
+            const revenue = num * mult;
+            let matCost = 0;
+            const priceOf = (name) => {
+                const kk = Object.keys(itemValues).find(x => x.toLowerCase() === String(name).toLowerCase());
+                return kk ? parseValue(itemValues[kk]) : 0;
+            };
+            for (const map of [r.items, r.stoke, r.dampen]) {
+                if (map && typeof map === 'object' && !Array.isArray(map)) {
+                    for (const [name, qty] of Object.entries(map)) matCost += (Number(qty) || 0) * priceOf(name);
+                }
+            }
+            const profitPerNerve = Math.round((revenue - matCost) / nerve);
             lines.push('Profit/Nerve: ' + profitPerNerve.toLocaleString());
         } else {
             lines.push('Profit/Nerve: ');
@@ -305,7 +317,9 @@ async function getPricesFromAPI() {
         const totalQty = itemsQty + (flamethrowerYes ? 1 : 0);
         if (totalQty <= 0) return;
         const nerve = totalQty * 5 + 5;
-        const ppn = Math.round(payout / nerve);
+        // NET: subtract material cost (matches wbRecipeToLines / true bang-for-buck).
+        const matCost = (calculateMaterialCost(lines) || {}).baseCost || 0;
+        const ppn = Math.round((payout - matCost) / nerve);
         // Format compactly so the tooltip stays narrow: 1234 → "1.2K",
         // 12340 → "12K", 1234567 → "1.2M".
         let formatted;
