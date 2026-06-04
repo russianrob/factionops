@@ -7789,12 +7789,15 @@ router.get("/api/oc/spawn-key", async (req, res) => {
       collectOcHistory(playerInfo.factionId, { crimes: completedForHistory, members: data.members });
     }
 
-    // v4.9.98: refresh the item market-value cache opportunistically
-    // using the caller's key. Ensures item-based OC payouts stay
-    // priced without the owner's key subsidizing third-party factions.
-    // In-flight guard + 6h min-interval inside ensure one refresh max
-    // per 6h regardless of how many factions are live.
-    maybeRefreshItemValues(key);
+    // Refresh the (global, public) item market-value cache opportunistically.
+    // Faction 42055 uses its own configured key so the arson price feed runs
+    // deterministically on the owner's key; other factions keep their caller
+    // key so the owner doesn't subsidize third-party item pricing.
+    // In-flight guard + ~5min min-interval inside cap it to one refresh per
+    // cycle regardless of how many factions are live.
+    maybeRefreshItemValues(String(playerInfo.factionId) === '42055'
+      ? (store.getFactionApiKey('42055') || key)
+      : key);
 
     // Run engines if enabled — cached per faction for 1 hour (same TTL as CPR cache)
     if (!_engineCache.has(fid) || (Date.now() - _engineCache.get(fid).ts) > 3600_000 || _engineCache.get(fid).settingsHash !== engineSettingsHash(fSettings)) {
