@@ -112,6 +112,9 @@ export function getItemPriceByName(name) {
   return Number(_byName[String(name).toLowerCase()]) || 0;
 }
 
+/** Full Torn item id → market value map (live cache). */
+export function getAllItemPricesById() { return _values; }
+
 /**
  * Opportunistic refresh. If the cache is older than 6h, triggers a
  * background refresh using the caller's Torn API key. Safe to call on

@@ -97,7 +97,7 @@ const maskKey = (key) => key ? `****${String(key).slice(-4)}` : '****';
 import { getHeatmap, resetHeatmap } from "./activity-heatmap.js";
 import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName } from "./oc-spawn.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
-import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt } from "./item-values.js";
+import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById } from "./item-values.js";
 import * as vaultRequests from "./vault-requests.js";
 import * as keyUsage from "./key-usage-log.js";
 import { hasXanaxSubscription, grantFactionAccess, getXanaxSubscription } from "./xanax-subscriptions.js";
@@ -9388,6 +9388,17 @@ router.get("/api/arson/prices", async (req, res) => {
     const p = getItemPriceByName(nm);
     if (p > 0) prices[nm] = p;
   }
+  res.set('Cache-Control', 'public, max-age=600');
+  return res.json({ prices, fetchedAt: getItemValueFetchedAt(), count: Object.keys(prices).length });
+});
+
+// Raw Torn item id → live market_price (public cache). Lets a price-consuming
+// userscript map via its own item-id table (e.g. the Arsonist's Ledger fork's
+// tornIdToResource) instead of fragile name matching. Keyless, ≤6h fresh.
+// GET /api/items/prices → { prices: { "206": 529, ... }, fetchedAt }
+router.get("/api/items/prices", async (req, res) => {
+  try { maybeRefreshItemValues(store.getPollingKey('42055', 'oc')); } catch (_) {}
+  const prices = getAllItemPricesById() || {};
   res.set('Cache-Control', 'public, max-age=600');
   return res.json({ prices, fetchedAt: getItemValueFetchedAt(), count: Object.keys(prices).length });
 });
