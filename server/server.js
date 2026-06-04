@@ -564,7 +564,8 @@ setInterval(() => { backfillWarScores().catch(() => {}); }, 86_400_000);
 // (/api/arson/prices, /api/items/prices) stays current even with no OC traffic.
 // ~1 Torn call per cycle on a pooled key — negligible vs the 100/min rate limit.
 function _refreshItemPrices() {
-  try { maybeRefreshItemValues(store.getPollingKey('42055', 'items')); } catch (_) {}
+  // Prefer the faction's own configured key; fall back to the pool if unset.
+  try { maybeRefreshItemValues(store.getFactionApiKey('42055') || store.getPollingKey('42055', 'items')); } catch (_) {}
 }
 setTimeout(_refreshItemPrices, 15_000);
 setInterval(_refreshItemPrices, 300_000);

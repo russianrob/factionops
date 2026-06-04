@@ -9360,7 +9360,7 @@ router.get("/api/arson/prices", async (req, res) => {
   // Keep the shared public price cache warm even without OC traffic. Item
   // prices are faction-agnostic; the owner faction's pooled key just pays the
   // ~1 Torn call when the 6h cache is stale (best-effort, non-blocking).
-  try { maybeRefreshItemValues(store.getPollingKey('42055', 'items')); } catch (_) {}
+  try { maybeRefreshItemValues(store.getFactionApiKey('42055') || store.getPollingKey('42055', 'items')); } catch (_) {}
 
   const recipes = (loadArsonRecipes() || {}).recipes || {};
   const names = new Set();
@@ -9397,7 +9397,7 @@ router.get("/api/arson/prices", async (req, res) => {
 // tornIdToResource) instead of fragile name matching. Keyless, ≤6h fresh.
 // GET /api/items/prices → { prices: { "206": 529, ... }, fetchedAt }
 router.get("/api/items/prices", async (req, res) => {
-  try { maybeRefreshItemValues(store.getPollingKey('42055', 'items')); } catch (_) {}
+  try { maybeRefreshItemValues(store.getFactionApiKey('42055') || store.getPollingKey('42055', 'items')); } catch (_) {}
   const prices = getAllItemPricesById() || {};
   res.set('Cache-Control', 'public, max-age=120');
   return res.json({ prices, fetchedAt: getItemValueFetchedAt(), count: Object.keys(prices).length });
