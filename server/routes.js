@@ -9388,7 +9388,7 @@ router.get("/api/arson/prices", async (req, res) => {
     const p = getItemPriceByName(nm);
     if (p > 0) prices[nm] = p;
   }
-  res.set('Cache-Control', 'public, max-age=600');
+  res.set('Cache-Control', 'public, max-age=120');
   return res.json({ prices, fetchedAt: getItemValueFetchedAt(), count: Object.keys(prices).length });
 });
 
@@ -9399,7 +9399,7 @@ router.get("/api/arson/prices", async (req, res) => {
 router.get("/api/items/prices", async (req, res) => {
   try { maybeRefreshItemValues(store.getPollingKey('42055', 'oc')); } catch (_) {}
   const prices = getAllItemPricesById() || {};
-  res.set('Cache-Control', 'public, max-age=600');
+  res.set('Cache-Control', 'public, max-age=120');
   return res.json({ prices, fetchedAt: getItemValueFetchedAt(), count: Object.keys(prices).length });
 });
 

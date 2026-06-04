@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson Bang for Buck — Live Prices
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page, with material costs auto-updated daily from live Torn market prices (via tornwar.com — no API key, works in Torn PDA).
 // @author       RussianRob (fork of Para_Thenics/auboli77/neth392's Arson bang for buck)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -154,7 +154,7 @@ async function getPricesFromAPI() {
     // with a 24h cache can.
     const WB_PRICES_URL       = 'https://tornwar.com/api/arson/prices';
     const WB_PRICES_CACHE_KEY = 'bfb_server_prices_v1';
-    const WB_PRICES_TTL_MS    = 24 * 60 * 60 * 1000;
+    const WB_PRICES_TTL_MS    = 5 * 60 * 1000; // re-pull live prices every 5 min
 
     /** Merge server prices into itemValues, overwriting the matching key
      *  case-insensitively so we update the hardcoded default in place (no

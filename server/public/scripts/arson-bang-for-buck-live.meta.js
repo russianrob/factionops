@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson Bang for Buck — Live Prices
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page, with material costs auto-updated daily from live Torn market prices (via tornwar.com — no API key, works in Torn PDA).
 // @author       RussianRob (fork of Para_Thenics/auboli77/neth392's Arson bang for buck)
 // @match        https://www.torn.com/page.php?sid=crimes*
