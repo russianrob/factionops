@@ -97,7 +97,7 @@ const maskKey = (key) => key ? `****${String(key).slice(-4)}` : '****';
 import { getHeatmap, resetHeatmap } from "./activity-heatmap.js";
 import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName } from "./oc-spawn.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
-import { getItemMarketValue, maybeRefreshItemValues } from "./item-values.js";
+import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt } from "./item-values.js";
 import * as vaultRequests from "./vault-requests.js";
 import * as keyUsage from "./key-usage-log.js";
 import { hasXanaxSubscription, grantFactionAccess, getXanaxSubscription } from "./xanax-subscriptions.js";
@@ -9349,6 +9349,47 @@ function scheduleArsonSave() {
 
 router.get("/api/arson/recipes", async (req, res) => {
   return res.json(loadArsonRecipes());
+});
+
+// Daily-fresh material prices for the arson cost calc, sourced from the shared
+// public item-market-value cache (Torn /torn?selections=items) and keyed by the
+// material NAMES the recipes use. No user API key needed — the bfb userscript
+// fetches this once/day (PDA-safe, no @require).
+// GET /api/arson/prices → { prices: { "gasoline": 500, ... }, fetchedAt, count }
+router.get("/api/arson/prices", async (req, res) => {
+  // Keep the shared public price cache warm even without OC traffic. Item
+  // prices are faction-agnostic; the owner faction's pooled key just pays the
+  // ~1 Torn call when the 6h cache is stale (best-effort, non-blocking).
+  try { maybeRefreshItemValues(store.getPollingKey('42055', 'oc')); } catch (_) {}
+
+  const recipes = (loadArsonRecipes() || {}).recipes || {};
+  const names = new Set();
+  const addNames = (v) => {
+    if (!v) return;
+    if (typeof v === 'object' && !Array.isArray(v)) {
+      for (const k of Object.keys(v)) names.add(String(k).toLowerCase().trim());
+      return;
+    }
+    const arr = Array.isArray(v) ? v : [v];
+    for (const s of arr) {
+      for (const part of String(s).split(',')) {
+        const nm = part.replace(/^\s*\d+\s*/, '').trim().toLowerCase(); // strip leading "2 "
+        if (nm) names.add(nm);
+      }
+    }
+  };
+  for (const r of Object.values(recipes)) {
+    addNames(r.items); addNames(r.stoke); addNames(r.dampen);
+    if (r.ignite) names.add(String(r.ignite).toLowerCase().trim());
+  }
+
+  const prices = {};
+  for (const nm of names) {
+    const p = getItemPriceByName(nm);
+    if (p > 0) prices[nm] = p;
+  }
+  res.set('Cache-Control', 'public, max-age=600');
+  return res.json({ prices, fetchedAt: getItemValueFetchedAt(), count: Object.keys(prices).length });
 });
 
 // Upstream BFB scenario table — parsed once at extract time from the
