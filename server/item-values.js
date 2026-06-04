@@ -26,6 +26,7 @@ let _byName = {};          // { [name.toLowerCase()]: marketValue }
 let _fetchedAt = 0;
 let _refreshInFlight = null;
 let _lastNameBackfill = 0;
+let _onRefreshed = null;
 
 function _load() {
   try {
@@ -89,6 +90,7 @@ async function _refreshWithKey(key) {
         _fetchedAt = Date.now();
         _save();
         console.log(`[item-values] refreshed ${Object.keys(_values).length} item prices (${Object.keys(_byName).length} by name) via key ****${String(key).slice(-4)}`);
+        if (_onRefreshed) { try { _onRefreshed(); } catch (e) { console.warn('[item-values] onRefreshed hook failed:', e.message); } }
       }
     } catch (e) {
       console.warn('[item-values] refresh failed:', e.message);
@@ -118,6 +120,12 @@ export function getItemPriceByName(name) {
 
 /** Full Torn item id → market value map (live cache). */
 export function getAllItemPricesById() { return _values; }
+
+/** Register a callback to run after each successful price refresh (e.g. the
+ *  price-spike watcher). One callback; last registration wins. */
+export function onItemValuesRefreshed(fn) {
+  _onRefreshed = (typeof fn === "function") ? fn : null;
+}
 
 /**
  * Opportunistic refresh. If the cache is older than 6h, triggers a

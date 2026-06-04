@@ -33,7 +33,8 @@ import { startSubscriptionManager, stopSubscriptionManager } from "./subscriptio
 import * as store from "./store.js";
 import * as warHistory from "./war-history.js";
 import { computePayouts, backfillWarScores } from "./war-payouts.js";
-import { maybeRefreshItemValues } from "./item-values.js";
+import { maybeRefreshItemValues, onItemValuesRefreshed } from "./item-values.js";
+import * as priceWatcher from "./price-watcher.js";
 import { loadSubscriptions } from "./push-notifications.js";
 import { fetchRankedWar } from "./torn-api.js";
 import { isFactionAllowed } from "./subscription-manager.js";
@@ -569,6 +570,10 @@ function _refreshItemPrices() {
 }
 setTimeout(_refreshItemPrices, 15_000);
 setInterval(_refreshItemPrices, 300_000);
+// Price-spike watcher: evaluate tracked items (e.g. Passport > $900k) after
+// every price refresh, push-alerting the configured player on cross-up.
+priceWatcher.load();
+onItemValuesRefreshed(() => priceWatcher.checkWatchers());
 loadHeatmaps();
 loadSubscriptions();
 
