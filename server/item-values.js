@@ -8,14 +8,18 @@
 // OWNER_API_KEY. Item prices are faction-agnostic (public market) so
 // one shared cache across all factions is fine — whichever faction
 // calls first while the cache is stale pays the ~1 Torn API call.
-// Refresh cadence: no more than once per 6h regardless of how many
-// callers request it.
+// Refresh cadence: no more than once per ~5 min regardless of how many
+// callers request it. server.js also runs a scheduled refresh on this cadence
+// so prices stay fresh even with no OC traffic (feeds the arson price endpoints).
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname as pathDirname, join as pathJoin } from "node:path";
 
 const CACHE_FILE = pathJoin(process.env.DATA_DIR || './data', 'item-market-values.json');
-const REFRESH_MS = 6 * 60 * 60 * 1000;
+const REFRESH_MS = 4 * 60 * 1000; // 4 min — just under server.js's 5-min scheduled
+                                  // tick so the cache (~5 min old by then) always
+                                  // re-fetches; without the margin, jitter makes
+                                  // every other tick skip (effective 10 min).
 
 let _values = {};          // { [itemId]: marketValue }
 let _byName = {};          // { [name.toLowerCase()]: marketValue }

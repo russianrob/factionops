@@ -33,6 +33,7 @@ import { startSubscriptionManager, stopSubscriptionManager } from "./subscriptio
 import * as store from "./store.js";
 import * as warHistory from "./war-history.js";
 import { computePayouts, backfillWarScores } from "./war-payouts.js";
+import { maybeRefreshItemValues } from "./item-values.js";
 import { loadSubscriptions } from "./push-notifications.js";
 import { fetchRankedWar } from "./torn-api.js";
 import { isFactionAllowed } from "./subscription-manager.js";
@@ -559,6 +560,14 @@ setInterval(() => { _sweepWarHistory().catch(() => {}); }, 3_600_000);
 // existed (their record is gone but Torn still serves the report by ID).
 setTimeout(() => { backfillWarScores().then(n => { if (n) console.log(`[war-history] filled ${n} missing war score(s)`); }).catch(() => {}); }, 10_000);
 setInterval(() => { backfillWarScores().catch(() => {}); }, 86_400_000);
+// Keep the public item market-price cache fresh (~5 min) so the arson price feed
+// (/api/arson/prices, /api/items/prices) stays current even with no OC traffic.
+// ~1 Torn call per cycle on a pooled key — negligible vs the 100/min rate limit.
+function _refreshItemPrices() {
+  try { maybeRefreshItemValues(store.getPollingKey('42055', 'oc')); } catch (_) {}
+}
+setTimeout(_refreshItemPrices, 15_000);
+setInterval(_refreshItemPrices, 300_000);
 loadHeatmaps();
 loadSubscriptions();
 
