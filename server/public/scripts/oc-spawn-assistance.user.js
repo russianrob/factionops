@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.39
+// @version      3.2.40
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.39';
+    const SCRIPT_VERSION = '3.2.40';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7125,30 +7125,22 @@
       if (!(unit > 0)) { diag({ name, novalue: true }); continue; }
       tn.nodeValue = txt.replace(/worth\s*\$\s*0\b/i, "worth " + fmt(unit * qty));
     }
-    // pass 2 — sum every VISIBLE "Nx <item> worth $X" reward line (the OC card on
-    // screen) into ONE Total, injected right after the last reward line.
-    const w2 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    const lines = [];
-    while ((n = w2.nextNode())) {
-      const mm = (n.nodeValue || "").match(/\d+\s*x?\s+.+?\s+worth\s*\$\s*([\d,]+)\b/i);
-      if (!mm) continue;
-      const val = Number(mm[1].replace(/,/g, "")) || 0;
-      if (!(val > 0) || !isVisible(n.parentElement)) continue;
-      lines.push({ el: n.parentElement, value: val });
+    // pass 2 (recon) — the per-item "worth" lives only in hover tooltips, so a
+    // persistent per-OC Total must be read from the reward ICONS. Capture their
+    // DOM once (item-image src format + container) so the total is built right.
+    if (!window.__ocwIcon) {
+      const imgs = Array.from(document.querySelectorAll("img")).filter(isVisible);
+      const items = imgs.filter((im) => /\/items?\//i.test(im.src || ""));
+      if (items.length) {
+        window.__ocwIcon = true;
+        const im = items[0];
+        const gp = im.parentElement && im.parentElement.parentElement;
+        diag({ icon_probe: true, count: items.length, srcs: items.slice(0, 4).map((i) => (i.src || "").slice(0, 90)), parentHTML: (im.parentElement && im.parentElement.outerHTML || "").slice(0, 200), gpHTML: (gp && gp.outerHTML || "").slice(0, 480) });
+      } else if (imgs.length) {
+        window.__ocwIcon = true;
+        diag({ icon_probe: true, no_item_match: true, allSrcs: imgs.slice(0, 8).map((i) => (i.src || "").slice(0, 70)) });
+      }
     }
-    const existing = document.getElementById("ocw-total");
-    if (!lines.length) { if (existing) existing.remove(); return; }
-    const sum = lines.reduce((s, l) => s + l.value, 0);
-    const lastEl = lines[lines.length - 1].el;
-    let totalEl = existing;
-    if (!totalEl) {
-      totalEl = document.createElement("div");
-      totalEl.id = "ocw-total";
-      totalEl.style.cssText = "font-weight:700;color:#7CFC00;margin:4px 0;padding:1px 0;font-size:13px;";
-      diag({ total_injected: true, sum, items: lines.length, lastTag: lastEl.tagName, lastCls: String(lastEl.className || "").slice(0, 50), parentTag: lastEl.parentElement && lastEl.parentElement.tagName, parentHTML: (lastEl.parentElement && lastEl.parentElement.outerHTML || "").slice(0, 350) });
-    }
-    totalEl.textContent = "Total: " + fmt(sum);
-    try { lastEl.insertAdjacentElement("afterend", totalEl); } catch (_) { try { lastEl.parentElement && lastEl.parentElement.appendChild(totalEl); } catch (__) {} }
   }
   function loadValues(cb) {
     try { const raw = GM_getValue(CACHE_KEY, ""); if (raw) { const o = JSON.parse(raw); if (o && o.byName) { _byName = o.byName; if (o.ts && Date.now() - o.ts < TTL_MS) { cb(); return; } } } } catch (_) {}
