@@ -104,6 +104,23 @@ async function _fetchOne(id, apiKey) {
   if (lowest > 0) _listings[String(id)] = { name, price: lowest, at: Date.now() };
 }
 
+/** Fetch lowest listings for a specific set of ids right now (on demand),
+ *  skipping ones already fresh. Used to value brand-new OC reward items the
+ *  moment they're requested. */
+export async function fetchNow(ids, apiKey) {
+  if (!apiKey || !Array.isArray(ids) || !ids.length) return;
+  const now = Date.now();
+  let n = 0;
+  for (const id of ids.slice(0, 20)) {
+    trackItem(id);
+    const e = _listings[String(id)];
+    if (e && now - (e.at || 0) < PER_ITEM_TTL) continue;
+    try { await _fetchOne(id, apiKey); n++; } catch (_) {}
+    await new Promise((r) => setTimeout(r, INTER_FETCH_MS));
+  }
+  if (n > 0) _save();
+}
+
 /** Refresh lowest listings for tracked items whose cache is stale. One in-flight
  *  pass at a time; per-item TTL throttle; polite inter-fetch delay. */
 export async function refreshTracked(apiKey) {

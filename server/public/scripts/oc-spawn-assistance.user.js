@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.40
+// @version      3.2.41
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.40';
+    const SCRIPT_VERSION = '3.2.41';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7089,12 +7089,15 @@
 //    @match / @grant / @connect. Built-in diag (tag oc-item-worth) to verify.
 (function () {
   "use strict";
-  const VALUES_URL = "https://tornwar.com/api/oc/item-values";
+  const NAMES_URL  = "https://tornwar.com/api/oc/item-values"; // {byName} — for tooltip $0 rewrite
+  const VALUE_URL  = "https://tornwar.com/api/oc/value";        // ?ids= → {values:{id:price}} — for per-OC total
   const CACHE_KEY  = "ocw_item_values_v1";
   const TTL_MS     = 10 * 60 * 1000;
   const DIAG_URL   = "https://tornwar.com/api/debug/client-log";
-  let _byName = {};
-  let _diagCount = 0;
+  let _byName = {};      // item name(lower) -> value  (the $0-catalog items)
+  let _byId   = {};      // item id(str)     -> value  (catalog || item-market; filled on demand)
+  let _fetching = false;
+  let _diagCount = 0, _diagDone = false;
   const VER = (typeof GM_info !== "undefined" && GM_info && GM_info.script && GM_info.script.version) || "?";
   function diag(payload) {
     if (_diagCount >= 6) return; _diagCount++;
@@ -7104,10 +7107,10 @@
   function isVisible(el) {
     return !!(el && el.getClientRects && el.getClientRects().length > 0);
   }
-  function applyOverrides() {
+
+  // ── pass 1: rewrite the hover tooltip's "worth $0" with the live value ──────
+  function rewriteZeros() {
     if (!_byName || !Object.keys(_byName).length) return;
-    // pass 1 — rewrite VISIBLE "worth $0" with the live item value (skip hidden
-    // copies/templates so we fix the card the user actually sees)
     const w1 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const zeros = []; let n;
     while ((n = w1.nextNode())) { if (/worth\s*\$\s*0\b/i.test(n.nodeValue || "") && isVisible(n.parentElement)) zeros.push(n); }
@@ -7120,32 +7123,95 @@
         const ancText = (tn.parentElement && tn.parentElement.textContent || "").toLowerCase();
         for (const k of Object.keys(_byName)) { if (ancText.includes(k)) { name = k; const qm = ancText.match(/(\d+)\s*x/); if (qm) qty = parseInt(qm[1], 10) || 1; break; } }
       }
-      if (!name) { diag({ unresolved: true, text: txt.slice(0, 80) }); continue; }
+      if (!name) continue;
       const unit = _byName[name.toLowerCase()];
-      if (!(unit > 0)) { diag({ name, novalue: true }); continue; }
+      if (!(unit > 0)) continue;
       tn.nodeValue = txt.replace(/worth\s*\$\s*0\b/i, "worth " + fmt(unit * qty));
     }
-    // pass 2 (recon) — the per-item "worth" lives only in hover tooltips, so a
-    // persistent per-OC Total must be read from the reward ICONS. Capture their
-    // DOM once (item-image src format + container) so the total is built right.
-    if (!window.__ocwIcon) {
-      const imgs = Array.from(document.querySelectorAll("img")).filter(isVisible);
-      const items = imgs.filter((im) => /\/items?\//i.test(im.src || ""));
-      if (items.length) {
-        window.__ocwIcon = true;
-        const im = items[0];
-        const gp = im.parentElement && im.parentElement.parentElement;
-        diag({ icon_probe: true, count: items.length, srcs: items.slice(0, 4).map((i) => (i.src || "").slice(0, 90)), parentHTML: (im.parentElement && im.parentElement.outerHTML || "").slice(0, 200), gpHTML: (gp && gp.outerHTML || "").slice(0, 480) });
-      } else if (imgs.length) {
-        window.__ocwIcon = true;
-        diag({ icon_probe: true, no_item_match: true, allSrcs: imgs.slice(0, 8).map((i) => (i.src || "").slice(0, 70)) });
-      }
-    }
   }
-  function loadValues(cb) {
+
+  // ── pass 2: persistent per-OC Total, summed from the reward ICONS ───────────
+  //   Each reward item is  <div class="container___" aria-label="<Name>">
+  //     <span><img class="torn-item" src="/images/items/<id>/medium.png"></span>
+  //     <div class="quantityContainer___">N</div></div>
+  //   The "$ worth" only exists in transient hover tooltips, so we read id+qty
+  //   off the icons and value them ourselves (/api/oc/value, catalog ⊎ market).
+  function scanRewardRows() {
+    const rows = new Map(); // rewardRowEl -> [{ id, qty }]
+    const imgs = document.querySelectorAll('img.torn-item, img[src*="/images/items/"]');
+    for (const img of imgs) {
+      if (!isVisible(img)) continue;
+      const src = img.getAttribute("src") || img.src || "";
+      const m = src.match(/\/items\/(\d+)\b/);
+      if (!m) continue;
+      const id = m[1];
+      const container = img.closest('[class*="container___"]') || (img.parentElement && img.parentElement.parentElement);
+      if (!container) continue;
+      const qEl = container.querySelector('[class*="quantityContainer"]');
+      let qty = 1;
+      if (qEl) { const q = parseInt((qEl.textContent || "").replace(/[^\d]/g, ""), 10); if (q > 0) qty = q; }
+      const row = container.parentElement;
+      if (!row) continue;
+      let g = rows.get(row); if (!g) { g = []; rows.set(row, g); }
+      g.push({ id, qty });
+    }
+    return rows;
+  }
+  function ensureValues(ids, done) {
+    const missing = ids.filter((id) => !(id in _byId));
+    if (!missing.length || _fetching) { done(); return; }
+    _fetching = true;
+    try {
+      GM_xmlhttpRequest({ method: "GET", url: VALUE_URL + "?ids=" + missing.slice(0, 30).join(","), timeout: 12000,
+        onload: (resp) => {
+          _fetching = false;
+          try { const b = JSON.parse(resp.responseText); if (b && b.values) for (const [k, v] of Object.entries(b.values)) _byId[k] = Number(v) || 0; } catch (_) {}
+          done();
+        },
+        onerror: () => { _fetching = false; done(); },
+      });
+    } catch (_) { _fetching = false; done(); }
+  }
+  function injectTotals() {
+    // drop any total whose reward row was re-rendered away (avoids dupes/orphans)
+    document.querySelectorAll(".ocw-oc-total").forEach((el) => {
+      const prev = el.previousElementSibling;
+      if (!(prev && prev.querySelector && prev.querySelector('img.torn-item, img[src*="/images/items/"]'))) el.remove();
+    });
+    const rows = scanRewardRows();
+    let injected = 0, firstSum = 0;
+    for (const [row, items] of rows) {
+      let sum = 0;
+      for (const it of items) { const v = _byId[it.id]; if (v > 0) sum += v * it.qty; }
+      if (!(sum > 0)) continue;
+      let el = row.nextElementSibling;
+      if (!(el && el.classList && el.classList.contains("ocw-oc-total"))) {
+        el = document.createElement("div");
+        el.className = "ocw-oc-total";
+        el.style.cssText = "margin:5px 2px 3px;font-size:12px;font-weight:700;color:#46d369;letter-spacing:.2px;font-family:inherit;";
+        row.insertAdjacentElement("afterend", el);
+      }
+      const label = "💰 Items total: " + fmt(sum);
+      if (el.textContent !== label) el.textContent = label;
+      injected++; if (!firstSum) firstSum = sum;
+    }
+    if (injected && !_diagDone) { _diagDone = true; diag({ total_injected: true, rows: injected, firstSum }); }
+  }
+  function pass2() {
+    const rows = scanRewardRows();
+    const ids = new Set();
+    for (const items of rows.values()) for (const it of items) ids.add(it.id);
+    if (!ids.size) { injectTotals(); return; } // still run to clean orphans
+    ensureValues(Array.from(ids), injectTotals);
+    injectTotals(); // paint immediately with whatever's already cached
+  }
+
+  function applyOverrides() { rewriteZeros(); pass2(); }
+
+  function loadNames(cb) {
     try { const raw = GM_getValue(CACHE_KEY, ""); if (raw) { const o = JSON.parse(raw); if (o && o.byName) { _byName = o.byName; if (o.ts && Date.now() - o.ts < TTL_MS) { cb(); return; } } } } catch (_) {}
     try {
-      GM_xmlhttpRequest({ method: "GET", url: VALUES_URL, timeout: 10000,
+      GM_xmlhttpRequest({ method: "GET", url: NAMES_URL, timeout: 10000,
         onload: (resp) => {
           if (resp.status >= 200 && resp.status < 300) { try { const body = JSON.parse(resp.responseText); if (body && body.byName) { _byName = body.byName; try { GM_setValue(CACHE_KEY, JSON.stringify({ ts: Date.now(), byName: _byName })); } catch (_) {} } } catch (_) {} }
           cb();
@@ -7156,6 +7222,6 @@
   }
   let _pending = null;
   function schedule() { if (_pending) return; _pending = setTimeout(() => { _pending = null; try { applyOverrides(); } catch (_) {} }, 300); }
-  loadValues(() => { applyOverrides(); try { new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true }); } catch (_) {} });
+  loadNames(() => { applyOverrides(); try { new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true }); } catch (_) {} });
 })();
 

@@ -98,7 +98,7 @@ import { getHeatmap, resetHeatmap } from "./activity-heatmap.js";
 import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName } from "./oc-spawn.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
 import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById } from "./item-values.js";
-import { getLowestListing, trackItem, getListingsById, getListingsByName } from "./item-market.js";
+import { getLowestListing, trackItem, getListingsById, getListingsByName, fetchNow as itemMarketFetchNow } from "./item-market.js";
 import * as vaultRequests from "./vault-requests.js";
 import * as keyUsage from "./key-usage-log.js";
 import { hasXanaxSubscription, grantFactionAccess, getXanaxSubscription } from "./xanax-subscriptions.js";
@@ -9424,6 +9424,34 @@ router.get("/api/items/prices", async (req, res) => {
 router.get("/api/oc/item-values", async (req, res) => {
   res.set('Cache-Control', 'public, max-age=120');
   return res.json({ byName: getListingsByName(), byId: getListingsById() });
+});
+
+// Realizable value for an arbitrary set of OC reward item ids, so the OC-page
+// userscript can sum a per-OC total straight from the reward icons. For each id
+// we return catalog market_price if it has one, else the live item-market lowest
+// listing. Unknown $0-catalog ids get tracked and fetched on demand so the very
+// first total isn't blank. GET /api/oc/value?ids=453,1508,1121 → { values: {id: price} }
+router.get("/api/oc/value", async (req, res) => {
+  const ids = String(req.query.ids || "")
+    .split(",").map((s) => s.trim()).filter((s) => /^\d+$/.test(s)).slice(0, 30);
+  const values = {};
+  const unknown = [];
+  for (const id of ids) {
+    const v = getItemMarketValue(id) || getLowestListing(id);
+    if (v > 0) { values[id] = v; }
+    else { unknown.push(id); trackItem(id); values[id] = 0; }
+  }
+  if (unknown.length) {
+    try {
+      const key = store.getFactionApiKey('42055') || store.getPollingKey('42055', 'items');
+      if (key) {
+        await itemMarketFetchNow(unknown, key);
+        for (const id of unknown) values[id] = getItemMarketValue(id) || getLowestListing(id) || 0;
+      }
+    } catch (_) { /* best effort — leave unknowns at 0 */ }
+  }
+  res.set('Cache-Control', 'public, max-age=120');
+  return res.json({ values });
 });
 
 // Upstream BFB scenario table — parsed once at extract time from the
