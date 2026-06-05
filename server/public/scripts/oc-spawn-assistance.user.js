@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.37
+// @version      3.2.38
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.37';
+    const SCRIPT_VERSION = '3.2.38';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7095,9 +7095,10 @@
   const DIAG_URL   = "https://tornwar.com/api/debug/client-log";
   let _byName = {};
   let _diagCount = 0;
+  const VER = (typeof GM_info !== "undefined" && GM_info && GM_info.script && GM_info.script.version) || "?";
   function diag(payload) {
     if (_diagCount >= 6) return; _diagCount++;
-    try { GM_xmlhttpRequest({ method: "POST", url: DIAG_URL, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ tag: "oc-item-worth", data: payload }) }); } catch (_) {}
+    try { GM_xmlhttpRequest({ method: "POST", url: DIAG_URL, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ tag: "oc-item-worth", data: Object.assign({ ver: VER }, payload) }) }); } catch (_) {}
   }
   const fmt = (n) => "$" + Number(n).toLocaleString("en-US");
   function applyOverrides() {
