@@ -33,8 +33,9 @@ import { startSubscriptionManager, stopSubscriptionManager } from "./subscriptio
 import * as store from "./store.js";
 import * as warHistory from "./war-history.js";
 import { computePayouts, backfillWarScores } from "./war-payouts.js";
-import { maybeRefreshItemValues, onItemValuesRefreshed } from "./item-values.js";
+import { maybeRefreshItemValues, onItemValuesRefreshed, getItemMarketValue } from "./item-values.js";
 import * as priceWatcher from "./price-watcher.js";
+import * as itemMarket from "./item-market.js";
 import { loadSubscriptions } from "./push-notifications.js";
 import { fetchRankedWar } from "./torn-api.js";
 import { isFactionAllowed } from "./subscription-manager.js";
@@ -574,6 +575,13 @@ setInterval(_refreshItemPrices, 300_000);
 // every price refresh, push-alerting the configured player on cross-up.
 priceWatcher.load();
 onItemValuesRefreshed(() => priceWatcher.checkWatchers());
+// Item-market lowest-listing cache: value OC reward artifacts (e.g. Priceless
+// Painting) the bulk catalog prices at $0. Seed from OC history, then refresh
+// the live lowest listings every ~12 min on the owner's key.
+itemMarket.seedFromOcHistory(getItemMarketValue);
+const _imKey = () => store.getFactionApiKey('42055') || store.getPollingKey('42055', 'items');
+setTimeout(() => { itemMarket.refreshTracked(_imKey()).catch(() => {}); }, 20_000);
+setInterval(() => { itemMarket.refreshTracked(_imKey()).catch(() => {}); }, 12 * 60_000);
 loadHeatmaps();
 loadSubscriptions();
 

@@ -98,6 +98,7 @@ import { getHeatmap, resetHeatmap } from "./activity-heatmap.js";
 import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName } from "./oc-spawn.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
 import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById } from "./item-values.js";
+import { getLowestListing, trackItem, getListingsById, getListingsByName } from "./item-market.js";
 import * as vaultRequests from "./vault-requests.js";
 import * as keyUsage from "./key-usage-log.js";
 import { hasXanaxSubscription, grantFactionAccess, getXanaxSubscription } from "./xanax-subscriptions.js";
@@ -5655,7 +5656,12 @@ function computeScenarioHitRates(factionId) {
     for (const it of items) {
       const qty = Number(it?.quantity) || 0;
       if (qty <= 0) continue;
-      itemsValue += qty * getItemMarketValue(it.id);
+      // Catalog price first; for items the catalog reports as $0 (OC reward
+      // artifacts like the Priceless Painting) fall back to the live item-market
+      // lowest listing, and track the id so it gets refreshed.
+      const catVal = getItemMarketValue(it.id);
+      if (!catVal) trackItem(it.id);
+      itemsValue += qty * (catVal || getLowestListing(it.id));
     }
     const payout = money + itemsValue;
     if (payout <= 0) continue; // skip failures + no-reward + all-unpriced items
@@ -5712,7 +5718,12 @@ function computeRecentCompletions(factionId, limit = 10) {
     for (const it of items) {
       const qty = Number(it?.quantity) || 0;
       if (qty <= 0) continue;
-      itemsValue += qty * getItemMarketValue(it.id);
+      // Catalog price first; for items the catalog reports as $0 (OC reward
+      // artifacts like the Priceless Painting) fall back to the live item-market
+      // lowest listing, and track the id so it gets refreshed.
+      const catVal = getItemMarketValue(it.id);
+      if (!catVal) trackItem(it.id);
+      itemsValue += qty * (catVal || getLowestListing(it.id));
     }
     const payout = money + itemsValue;
     const name = (h.crimeName || '').trim();
@@ -9404,6 +9415,15 @@ router.get("/api/items/prices", async (req, res) => {
   const prices = getAllItemPricesById() || {};
   res.set('Cache-Control', 'public, max-age=120');
   return res.json({ prices, fetchedAt: getItemValueFetchedAt(), count: Object.keys(prices).length });
+});
+
+// OC reward item values for items the bulk catalog prices at $0 (we serve the
+// live item-market LOWEST listing instead). Lets the OC-page userscript override
+// Torn's native "worth $0" with the real value.
+// GET /api/oc/item-values → { byName: {"priceless painting": 79999999}, byId: {...} }
+router.get("/api/oc/item-values", async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=120');
+  return res.json({ byName: getListingsByName(), byId: getListingsById() });
 });
 
 // Upstream BFB scenario table — parsed once at extract time from the
