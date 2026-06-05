@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.36
+// @version      3.2.37
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.36';
+    const SCRIPT_VERSION = '3.2.37';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7102,10 +7102,11 @@
   const fmt = (n) => "$" + Number(n).toLocaleString("en-US");
   function applyOverrides() {
     if (!_byName || !Object.keys(_byName).length) return;
+    // pass 1 — rewrite Torn's native "worth $0" with the live item value
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    const nodes = []; let n;
-    while ((n = walker.nextNode())) { if (/worth\s*\$\s*0\b/i.test(n.nodeValue || "")) nodes.push(n); }
-    for (const tn of nodes) {
+    const zeros = []; let n;
+    while ((n = walker.nextNode())) { if (/worth\s*\$\s*0\b/i.test(n.nodeValue || "")) zeros.push(n); }
+    for (const tn of zeros) {
       const txt = tn.nodeValue;
       let name = null, qty = 1;
       const m = txt.match(/(\d+)\s*x?\s+(.+?)\s+worth\s*\$\s*0\b/i);
@@ -7117,9 +7118,35 @@
       if (!name) { diag({ unresolved: true, text: txt.slice(0, 80), anc: (tn.parentElement && tn.parentElement.textContent || "").slice(0, 120) }); continue; }
       const unit = _byName[name.toLowerCase()];
       if (!(unit > 0)) { diag({ name, novalue: true }); continue; }
-      const total = unit * qty;
-      tn.nodeValue = txt.replace(/worth\s*\$\s*0\b/i, "worth " + fmt(total));
-      diag({ name, qty, unit, total, replaced: true });
+      tn.nodeValue = txt.replace(/worth\s*\$\s*0\b/i, "worth " + fmt(unit * qty));
+    }
+    // pass 2 — sum every "Nx <item> worth $X" reward line per container and
+    // inject/update a Total line right after the items.
+    const w2 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const groups = new Map();
+    while ((n = w2.nextNode())) {
+      const mm = (n.nodeValue || "").match(/\d+\s*x?\s+.+?\s+worth\s*\$\s*([\d,]+)\b/i);
+      if (!mm) continue;
+      const val = Number(mm[1].replace(/,/g, "")) || 0;
+      if (!(val > 0)) continue;
+      const lineEl = n.parentElement;
+      const container = lineEl && lineEl.parentElement;
+      if (!container) continue;
+      let g = groups.get(container);
+      if (!g) { g = { sum: 0, count: 0, lastEl: lineEl }; groups.set(container, g); }
+      g.sum += val; g.count++; g.lastEl = lineEl;
+    }
+    for (const [container, g] of groups) {
+      if (g.count < 1) continue;
+      let totalEl = container.querySelector(":scope > .ocw-total");
+      if (!totalEl) {
+        totalEl = document.createElement("div");
+        totalEl.className = "ocw-total";
+        totalEl.style.cssText = "font-weight:600;opacity:0.95;margin-top:3px;";
+        try { g.lastEl.insertAdjacentElement("afterend", totalEl); } catch (_) { container.appendChild(totalEl); }
+        diag({ total_injected: true, sum: g.sum, items: g.count, container: (container.tagName || "") + "." + String(container.className || "").slice(0, 40) });
+      }
+      totalEl.textContent = "Total: " + fmt(g.sum);
     }
   }
   function loadValues(cb) {
