@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.38
+// @version      3.2.39
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.38';
+    const SCRIPT_VERSION = '3.2.39';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7101,12 +7101,16 @@
     try { GM_xmlhttpRequest({ method: "POST", url: DIAG_URL, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ tag: "oc-item-worth", data: Object.assign({ ver: VER }, payload) }) }); } catch (_) {}
   }
   const fmt = (n) => "$" + Number(n).toLocaleString("en-US");
+  function isVisible(el) {
+    return !!(el && el.getClientRects && el.getClientRects().length > 0);
+  }
   function applyOverrides() {
     if (!_byName || !Object.keys(_byName).length) return;
-    // pass 1 — rewrite Torn's native "worth $0" with the live item value
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    // pass 1 — rewrite VISIBLE "worth $0" with the live item value (skip hidden
+    // copies/templates so we fix the card the user actually sees)
+    const w1 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const zeros = []; let n;
-    while ((n = walker.nextNode())) { if (/worth\s*\$\s*0\b/i.test(n.nodeValue || "")) zeros.push(n); }
+    while ((n = w1.nextNode())) { if (/worth\s*\$\s*0\b/i.test(n.nodeValue || "") && isVisible(n.parentElement)) zeros.push(n); }
     for (const tn of zeros) {
       const txt = tn.nodeValue;
       let name = null, qty = 1;
@@ -7116,39 +7120,35 @@
         const ancText = (tn.parentElement && tn.parentElement.textContent || "").toLowerCase();
         for (const k of Object.keys(_byName)) { if (ancText.includes(k)) { name = k; const qm = ancText.match(/(\d+)\s*x/); if (qm) qty = parseInt(qm[1], 10) || 1; break; } }
       }
-      if (!name) { diag({ unresolved: true, text: txt.slice(0, 80), anc: (tn.parentElement && tn.parentElement.textContent || "").slice(0, 120) }); continue; }
+      if (!name) { diag({ unresolved: true, text: txt.slice(0, 80) }); continue; }
       const unit = _byName[name.toLowerCase()];
       if (!(unit > 0)) { diag({ name, novalue: true }); continue; }
       tn.nodeValue = txt.replace(/worth\s*\$\s*0\b/i, "worth " + fmt(unit * qty));
     }
-    // pass 2 — sum every "Nx <item> worth $X" reward line per container and
-    // inject/update a Total line right after the items.
+    // pass 2 — sum every VISIBLE "Nx <item> worth $X" reward line (the OC card on
+    // screen) into ONE Total, injected right after the last reward line.
     const w2 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    const groups = new Map();
+    const lines = [];
     while ((n = w2.nextNode())) {
       const mm = (n.nodeValue || "").match(/\d+\s*x?\s+.+?\s+worth\s*\$\s*([\d,]+)\b/i);
       if (!mm) continue;
       const val = Number(mm[1].replace(/,/g, "")) || 0;
-      if (!(val > 0)) continue;
-      const lineEl = n.parentElement;
-      const container = lineEl && lineEl.parentElement;
-      if (!container) continue;
-      let g = groups.get(container);
-      if (!g) { g = { sum: 0, count: 0, lastEl: lineEl }; groups.set(container, g); }
-      g.sum += val; g.count++; g.lastEl = lineEl;
+      if (!(val > 0) || !isVisible(n.parentElement)) continue;
+      lines.push({ el: n.parentElement, value: val });
     }
-    for (const [container, g] of groups) {
-      if (g.count < 1) continue;
-      let totalEl = container.querySelector(":scope > .ocw-total");
-      if (!totalEl) {
-        totalEl = document.createElement("div");
-        totalEl.className = "ocw-total";
-        totalEl.style.cssText = "font-weight:600;opacity:0.95;margin-top:3px;";
-        try { g.lastEl.insertAdjacentElement("afterend", totalEl); } catch (_) { container.appendChild(totalEl); }
-        diag({ total_injected: true, sum: g.sum, items: g.count, container: (container.tagName || "") + "." + String(container.className || "").slice(0, 40) });
-      }
-      totalEl.textContent = "Total: " + fmt(g.sum);
+    const existing = document.getElementById("ocw-total");
+    if (!lines.length) { if (existing) existing.remove(); return; }
+    const sum = lines.reduce((s, l) => s + l.value, 0);
+    const lastEl = lines[lines.length - 1].el;
+    let totalEl = existing;
+    if (!totalEl) {
+      totalEl = document.createElement("div");
+      totalEl.id = "ocw-total";
+      totalEl.style.cssText = "font-weight:700;color:#7CFC00;margin:4px 0;padding:1px 0;font-size:13px;";
+      diag({ total_injected: true, sum, items: lines.length, lastTag: lastEl.tagName, lastCls: String(lastEl.className || "").slice(0, 50), parentTag: lastEl.parentElement && lastEl.parentElement.tagName, parentHTML: (lastEl.parentElement && lastEl.parentElement.outerHTML || "").slice(0, 350) });
     }
+    totalEl.textContent = "Total: " + fmt(sum);
+    try { lastEl.insertAdjacentElement("afterend", totalEl); } catch (_) { try { lastEl.parentElement && lastEl.parentElement.appendChild(totalEl); } catch (__) {} }
   }
   function loadValues(cb) {
     try { const raw = GM_getValue(CACHE_KEY, ""); if (raw) { const o = JSON.parse(raw); if (o && o.byName) { _byName = o.byName; if (o.ts && Date.now() - o.ts < TTL_MS) { cb(); return; } } } } catch (_) {}
