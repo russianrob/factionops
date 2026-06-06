@@ -16,34 +16,27 @@
 // @updateURL    https://tornwar.com/scripts/oc-item-worth.meta.js
 // ==/UserScript==
 
-// Corrects Torn's native "worth $N" on completed-OC reward items with the real
-// item-market value, and adds one "Items total" per OC reward list. Prices come
-// from the user's own Torn API key, read straight from the item market
-// (/v2/market/{id}/itemmarket). The key lives only in this script's GM storage
-// and is sent only to api.torn.com. Same reward-icon scan + per-OC total as the
-// copy embedded in OC Spawn Assistance (which is the no-key option).
 (function () {
   "use strict";
   const SCRIPT_VERSION = "1.1.0";
-  const KEY_STORE  = "ocwk_torn_api_key";  // the user's Torn API key (local only)
-  const CACHE_KEY  = "ocwk_listings_v1";    // { id: {name, price, at} }
-  const TTL_MS     = 10 * 60 * 1000;        // re-fetch a given item at most every 10 min
-  const FETCH_GAP  = 350;                    // polite gap between per-item Torn calls
+  const KEY_STORE  = "ocwk_torn_api_key";
+  const CACHE_KEY  = "ocwk_listings_v1";
+  const TTL_MS     = 10 * 60 * 1000;
+  const FETCH_GAP  = 350;
   const API_BASE   = "https://api.torn.com/v2/market/";
 
   let _apiKey = "";
-  let _byId = {};        // id(str)   -> price
-  let _byName = {};      // name(low) -> price  (for tooltip rewrite)
-  let _cache = {};       // id(str)   -> {name, price, at}  (persisted)
+  let _byId = {};
+  let _byName = {};
+  let _cache = {};
   let _fetching = false;
-  let _state = "none";   // none | checking | ok | invalid | lowaccess | paused | ratelimited | error
+  let _state = "none";
   let _expanded = false;
   let _chipSig = null;
 
   const fmt = (n) => "$" + Number(n).toLocaleString("en-US");
   function isVisible(el) { return !!(el && el.getClientRects && el.getClientRects().length > 0); }
 
-  // ── local storage ──────────────────────────────────────────────────────────
   function loadKey()  { try { _apiKey = (GM_getValue(KEY_STORE, "") || "").trim(); } catch (_) { _apiKey = ""; } }
   function saveKey(k) { _apiKey = String(k || "").trim(); try { GM_setValue(KEY_STORE, _apiKey); } catch (_) {} }
   function clearKey() { _apiKey = ""; try { GM_setValue(KEY_STORE, ""); } catch (_) {} }
@@ -56,8 +49,6 @@
   }
   function saveCache() { try { GM_setValue(CACHE_KEY, JSON.stringify(_cache)); } catch (_) {} }
 
-  // ── Torn item-market fetch ──────────────────────────────────────────────────
-  // cb(errCode|null) — errCode is the Torn error code (number) or a string tag.
   function fetchItem(id, cb) {
     const url = API_BASE + id + "/itemmarket?key=" + encodeURIComponent(_apiKey) + "&comment=oc-item-worth";
     try {
@@ -82,7 +73,6 @@
       });
     } catch (_) { cb("net"); }
   }
-  // Fetch any ids we don't have yet, one at a time with a polite gap.
   function fetchMissing(ids, done) {
     if (_fetching) { done(); return; }
     const need = ids.filter((id) => !(id in _byId));
@@ -94,10 +84,10 @@
       if (i >= need.length) { _fetching = false; saveCache(); if (_state === "checking") { _state = "ok"; renderChip(); } done(); schedule(); return; }
       const id = need[i++];
       fetchItem(id, (err) => {
-        if (err === 2 || err === 1) { _state = "invalid"; _fetching = false; renderChip(); return; }     // incorrect/empty key — stop
-        if (err === 16) { _state = "lowaccess"; _fetching = false; renderChip(); return; }                // access level too low
-        if (err === 18) { _state = "paused"; _fetching = false; renderChip(); return; }                   // key paused
-        if (err === 5) { _state = "ratelimited"; saveCache(); renderChip(); setTimeout(() => { _fetching = false; schedule(); }, 5000); return; } // hold _fetching through the backoff
+        if (err === 2 || err === 1) { _state = "invalid"; _fetching = false; renderChip(); return; }
+        if (err === 16) { _state = "lowaccess"; _fetching = false; renderChip(); return; }
+        if (err === 18) { _state = "paused"; _fetching = false; renderChip(); return; }
+        if (err === 5) { _state = "ratelimited"; saveCache(); renderChip(); setTimeout(() => { _fetching = false; schedule(); }, 5000); return; }
         if (err == null && _state !== "ok") { _state = "ok"; renderChip(); }
         setTimeout(step, FETCH_GAP);
       });
@@ -105,7 +95,6 @@
     step();
   }
 
-  // ── pass 1: correct the hover tooltip's "worth $N" to the live market value ──
   const WORTH_RE = /worth\s*\$\s*([\d,]+)/i;
   function rewriteWorth() {
     if (!_byName || !Object.keys(_byName).length) return;
@@ -131,10 +120,8 @@
     }
   }
 
-  // ── pass 2: one "Items total" per OC reward list (<ul class="reward___…">) ───
-  //   img.torn-item ▸ span.item-plate ▸ div.container___[aria-label] ▸ li ▸ ul.reward___
   function scanRewardLists() {
-    const lists = new Map(); // reward <ul> -> Map(id -> qty)
+    const lists = new Map();
     const imgs = document.querySelectorAll('img.torn-item, img[src*="/images/items/"]');
     for (const img of imgs) {
       if (!isVisible(img)) continue;
@@ -162,7 +149,7 @@
       if (!document.contains(ul)) continue;
       let sum = 0;
       for (const [id, qty] of byId) { const v = _byId[id]; if (v > 0) sum += v * qty; }
-      if (!(sum > 0)) continue; // wait until we have values — no "$0" flash
+      if (!(sum > 0)) continue;
       let el = ul.nextElementSibling;
       if (!(el && el.classList && el.classList.contains("ocw-oc-total"))) {
         el = document.createElement("div");
@@ -175,7 +162,6 @@
     }
   }
 
-  // ── key-entry chip (PDA-friendly inline UI, lives on document.body) ──────────
   function statusText() {
     switch (_state) {
       case "ok":          return "✓ OC prices: Torn";
@@ -239,7 +225,6 @@
       return;
     }
     if (act === "close") { _expanded = false; _chipSig = null; renderChip(); return; }
-    // tapping the status toggles the editor
     _expanded = !_expanded; _chipSig = null; renderChip();
   }
   function renderChip() {
@@ -247,8 +232,7 @@
     if (!chip) return;
     if (_expanded) {
       const sig = "exp:" + _state;
-      if (_chipSig === sig) return; // unchanged — leave the panel (and the input) alone
-      // a background fetch may have changed _state mid-edit; preserve what the user typed
+      if (_chipSig === sig) return;
       const prev = document.getElementById("ocwk-input");
       const pv = prev ? prev.value : null, ps = prev ? prev.selectionStart : null, pe = prev ? prev.selectionEnd : null;
       _chipSig = sig; chip.innerHTML = panelHTML();
@@ -263,13 +247,10 @@
     chip.innerHTML = '<span data-action="toggle" style="cursor:pointer;white-space:nowrap">' + status + '</span>';
   }
 
-  // ── main loop ───────────────────────────────────────────────────────────────
-  // states where we must NOT keep auto-retrying the key on every DOM mutation —
-  // the user has to fix/re-save the key first (which resets _state to "checking")
   const TERMINAL_ERR = { invalid: 1, lowaccess: 1, paused: 1 };
   function tick() {
     const lists = scanRewardLists();
-    if (!lists.size) { removeChip(); return; } // not on an OC-rewards view
+    if (!lists.size) { removeChip(); return; }
     ensureChip();
     if (!_apiKey) { if (_state !== "none") { _state = "none"; renderChip(); } injectTotals(); return; }
     if (!TERMINAL_ERR[_state]) {
@@ -277,12 +258,11 @@
       for (const byId of lists.values()) for (const id of byId.keys()) ids.add(id);
       fetchMissing(Array.from(ids), () => { rewriteWorth(); injectTotals(); });
     }
-    rewriteWorth(); injectTotals(); // paint cached immediately
+    rewriteWorth(); injectTotals();
   }
   let _pending = null;
   function schedule() { if (_pending) return; _pending = setTimeout(() => { _pending = null; try { tick(); } catch (_) {} }, 300); }
 
-  // desktop convenience (ignored on PDA)
   try {
     if (typeof GM_registerMenuCommand === "function") {
       GM_registerMenuCommand("Set OC API key (Torn)", () => {
