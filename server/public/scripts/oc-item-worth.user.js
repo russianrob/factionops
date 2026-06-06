@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Item Worth & Totals
 // @namespace    RussianRob
-// @version      1.2.3
+// @version      1.2.4
 // @description  Shows the real market value of completed-OC reward items (the paintings/weapons Torn prices at $0 or a stale catalog price) and a per-OC "Items total", reading live item-market prices straight from Torn with YOUR own API key. Talks only to api.torn.com. Works in Torn PDA.
 // @author       RussianRob
 // @license      MIT
@@ -17,7 +17,7 @@
 
 (function () {
   "use strict";
-  const SCRIPT_VERSION = "1.2.3";
+  const SCRIPT_VERSION = "1.2.4";
   const KEY_STORE  = "ocwk_torn_api_key";
   const CACHE_KEY  = "ocwk_listings_v3";
   const TTL_MS     = 10 * 60 * 1000;
@@ -33,6 +33,7 @@
   let _state = "none";
   let _expanded = false;
   let _barSig = null;
+  let _idName = {};
 
   const fmt = (n) => "$" + Number(n).toLocaleString("en-US");
   function isVisible(el) { return !!(el && el.getClientRects && el.getClientRects().length > 0); }
@@ -99,8 +100,9 @@
     step();
   }
 
-  const WORTH_RE = /worth\s*\$\s*([\d,]+)/i;
+  const WORTH_RE = /worth\s*\$?\s*([\d,]+)/i;
   function rewriteWorth() {
+    for (const [id, nm] of Object.entries(_idName)) { const v = _byId[id]; if (nm && v > 0) _byName[nm.toLowerCase()] = v; }
     if (!_byName || !Object.keys(_byName).length) return;
     const w1 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const hits = []; let n;
@@ -108,7 +110,7 @@
     for (const tn of hits) {
       const txt = tn.nodeValue;
       let name = null, qty = 1;
-      const m = txt.match(/(\d+)\s*x?\s+(.+?)\s+worth\s*\$\s*[\d,]+/i);
+      const m = txt.match(/(\d+)\s*x?\s+(.+?)\s+worth\s*\$?\s*[\d,]+/i);
       if (m) { qty = parseInt(m[1], 10) || 1; name = m[2].trim(); }
       else {
         const ancText = (tn.parentElement && tn.parentElement.textContent || "").toLowerCase();
@@ -135,6 +137,8 @@
       if (!ul) continue;
       const id = m[1];
       const container = img.closest('[class*="container___"]') || img.parentElement;
+      const nm = (container && container.getAttribute && container.getAttribute("aria-label")) || img.getAttribute("alt") || "";
+      if (nm) _idName[id] = nm;
       const qEl = container && container.querySelector('[class*="quantityContainer"]');
       let qty = 1;
       if (qEl) { const q = parseInt((qEl.textContent || "").replace(/[^\d]/g, ""), 10); if (q > 0) qty = q; }
