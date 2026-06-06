@@ -4,7 +4,6 @@
 // @version      4.9.28
 // @description  Real-time faction war coordination tool for Torn.com (CommandCenter build).
 // @author       RussianRob
-// @copyright    2024-2026, RussianRob (https://tornwar.com)
 // @license      MIT (code) — FactionOps™ / CommandCenter™ names are unregistered trademarks of RussianRob; brand use requires permission
 // @downloadURL  https://tornwar.com/scripts/commandcenter.user.js
 // @updateURL    https://tornwar.com/scripts/commandcenter.meta.js
