@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Item Worth & Totals
 // @namespace    RussianRob
-// @version      1.2.1
+// @version      1.2.2
 // @description  Shows the real market value of completed-OC reward items (the paintings/weapons Torn prices at $0 or a stale catalog price) and a per-OC "Items total", reading live item-market prices straight from Torn with YOUR own API key. Talks only to api.torn.com. Works in Torn PDA.
 // @author       RussianRob
 // @license      MIT
@@ -17,9 +17,9 @@
 
 (function () {
   "use strict";
-  const SCRIPT_VERSION = "1.2.1";
+  const SCRIPT_VERSION = "1.2.2";
   const KEY_STORE  = "ocwk_torn_api_key";
-  const CACHE_KEY  = "ocwk_listings_v2";
+  const CACHE_KEY  = "ocwk_listings_v3";
   const TTL_MS     = 10 * 60 * 1000;
   const FETCH_GAP  = 350;
   const API_BASE   = "https://api.torn.com/v2/market/";
@@ -61,7 +61,8 @@
           const im = d.itemmarket || {};
           const name = (im.item && im.item.name) || (_cache[id] && _cache[id].name) || null;
           const avg = Number(im.item && im.item.average_price) || 0;
-          const cap = avg > 0 ? avg * 5 : Infinity;
+          const HARD_CAP = 100000000000;
+          const cap = avg > 0 ? Math.min(avg * 5, HARD_CAP) : HARD_CAP;
           const listings = Array.isArray(im.listings) ? im.listings : [];
           let lowest = 0;
           for (const l of listings) { const p = Number(l && l.price) || 0; if (p > 0 && p <= cap && (lowest === 0 || p < lowest)) lowest = p; }
@@ -180,7 +181,8 @@
     const hint = _apiKey ? "change" : "tap to set";
     return '<span data-action="toggle" style="cursor:pointer;display:inline-flex;align-items:center;gap:8px">' +
       '<span>' + statusText() + '</span>' +
-      '<span style="opacity:.55;font-size:11px">' + hint + '</span></span>';
+      '<span style="opacity:.55;font-size:11px">' + hint + '</span>' +
+      '<span style="opacity:.4;font-size:10px">v' + SCRIPT_VERSION + '</span></span>';
   }
   function panelHTML() {
     const cur = (_apiKey || "").replace(/[^A-Za-z0-9]/g, "");

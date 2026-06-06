@@ -99,7 +99,8 @@ async function _fetchOne(id, apiKey) {
   // market average (cheap items like Can of Crocozade sometimes have only
   // troll-priced listings — e.g. $1T — which would otherwise become "lowest").
   const avg = Number(im.item?.average_price) || 0;
-  const cap = avg > 0 ? avg * 5 : Infinity;
+  const HARD_CAP = 100000000000; // absolute troll ceiling — no item is worth $100B
+  const cap = avg > 0 ? Math.min(avg * 5, HARD_CAP) : HARD_CAP;
   const listings = Array.isArray(im.listings) ? im.listings : [];
   let lowest = 0;
   for (const l of listings) {
