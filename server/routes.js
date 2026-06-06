@@ -9434,21 +9434,22 @@ router.get("/api/oc/item-values", async (req, res) => {
 router.get("/api/oc/value", async (req, res) => {
   const ids = String(req.query.ids || "")
     .split(",").map((s) => s.trim()).filter((s) => /^\d+$/.test(s)).slice(0, 30);
-  const values = {};
-  const unknown = [];
-  for (const id of ids) {
-    const v = getItemMarketValue(id) || getLowestListing(id);
-    if (v > 0) { values[id] = v; }
-    else { unknown.push(id); trackItem(id); values[id] = 0; }
-  }
-  if (unknown.length) {
+  // The realizable "worth" of an OC reward is the LIVE item-market lowest ask,
+  // not the bulk catalog market_price — catalog lags badly for thin collectibles
+  // (e.g. a Painting catalog reports $65M while it's actually listed at $85M).
+  // So refresh the live listing for every requested id (fetchNow skips ones still
+  // fresh), prefer that listing, and fall back to catalog only when nothing's listed.
+  if (ids.length) {
     try {
       const key = store.getFactionApiKey('42055') || store.getPollingKey('42055', 'items');
-      if (key) {
-        await itemMarketFetchNow(unknown, key);
-        for (const id of unknown) values[id] = getItemMarketValue(id) || getLowestListing(id) || 0;
-      }
-    } catch (_) { /* best effort — leave unknowns at 0 */ }
+      if (key) await itemMarketFetchNow(ids, key);
+    } catch (_) { /* best effort — fall back to whatever's cached */ }
+  }
+  const values = {};
+  for (const id of ids) {
+    trackItem(id);
+    const live = getLowestListing(id);
+    values[id] = live > 0 ? live : (getItemMarketValue(id) || 0);
   }
   res.set('Cache-Control', 'public, max-age=120');
   return res.json({ values });

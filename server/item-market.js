@@ -111,7 +111,7 @@ export async function fetchNow(ids, apiKey) {
   if (!apiKey || !Array.isArray(ids) || !ids.length) return;
   const now = Date.now();
   let n = 0;
-  for (const id of ids.slice(0, 20)) {
+  for (const id of ids.slice(0, 30)) {
     trackItem(id);
     const e = _listings[String(id)];
     if (e && now - (e.at || 0) < PER_ITEM_TTL) continue;

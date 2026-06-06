@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.41
+// @version      3.2.43
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.41';
+    const SCRIPT_VERSION = '3.2.43';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7136,72 +7136,79 @@
   //     <div class="quantityContainer___">N</div></div>
   //   The "$ worth" only exists in transient hover tooltips, so we read id+qty
   //   off the icons and value them ourselves (/api/oc/value, catalog ⊎ market).
-  function scanRewardRows() {
-    const rows = new Map(); // rewardRowEl -> [{ id, qty }]
+  // Group reward icons by their OC reward list (<ul class="reward___…">). Each OC
+  // card has exactly one, so this gives ONE total per OC — not one per item (the
+  // per-<li> bug) and not one giant sum across every OC on the page (the global
+  // over-count). Icons outside any reward ul (member weapons, avatars, other UI)
+  // are ignored. DOM (confirmed via diag):
+  //   img.torn-item ▸ span.item-plate ▸ div.container___[aria-label] ▸ li ▸ ul.reward___
+  function scanRewardLists() {
+    const lists = new Map(); // reward <ul> -> Map(id -> qty)
     const imgs = document.querySelectorAll('img.torn-item, img[src*="/images/items/"]');
     for (const img of imgs) {
       if (!isVisible(img)) continue;
-      const src = img.getAttribute("src") || img.src || "";
-      const m = src.match(/\/items\/(\d+)\b/);
+      const m = (img.getAttribute("src") || img.src || "").match(/\/items\/(\d+)\b/);
       if (!m) continue;
+      const ul = img.closest('[class*="reward___"]');
+      if (!ul) continue; // not an OC reward icon
       const id = m[1];
-      const container = img.closest('[class*="container___"]') || (img.parentElement && img.parentElement.parentElement);
-      if (!container) continue;
-      const qEl = container.querySelector('[class*="quantityContainer"]');
+      const container = img.closest('[class*="container___"]') || img.parentElement;
+      const qEl = container && container.querySelector('[class*="quantityContainer"]');
       let qty = 1;
       if (qEl) { const q = parseInt((qEl.textContent || "").replace(/[^\d]/g, ""), 10); if (q > 0) qty = q; }
-      const row = container.parentElement;
-      if (!row) continue;
-      let g = rows.get(row); if (!g) { g = []; rows.set(row, g); }
-      g.push({ id, qty });
+      let g = lists.get(ul); if (!g) { g = new Map(); lists.set(ul, g); }
+      if (!g.has(id) || qty > g.get(id)) g.set(id, qty); // dedupe within an OC by id
     }
-    return rows;
+    return lists;
   }
   function ensureValues(ids, done) {
     const missing = ids.filter((id) => !(id in _byId));
     if (!missing.length || _fetching) { done(); return; }
     _fetching = true;
+    // re-run after the fetch so any ids that changed while it was in flight get picked up
+    const finish = () => { _fetching = false; done(); schedule(); };
     try {
-      GM_xmlhttpRequest({ method: "GET", url: VALUE_URL + "?ids=" + missing.slice(0, 30).join(","), timeout: 12000,
+      GM_xmlhttpRequest({ method: "GET", url: VALUE_URL + "?ids=" + missing.slice(0, 30).join(","), timeout: 20000,
         onload: (resp) => {
-          _fetching = false;
           try { const b = JSON.parse(resp.responseText); if (b && b.values) for (const [k, v] of Object.entries(b.values)) _byId[k] = Number(v) || 0; } catch (_) {}
-          done();
+          finish();
         },
-        onerror: () => { _fetching = false; done(); },
+        onerror: finish,
+        ontimeout: finish,
       });
-    } catch (_) { _fetching = false; done(); }
+    } catch (_) { finish(); }
   }
   function injectTotals() {
-    // drop any total whose reward row was re-rendered away (avoids dupes/orphans)
+    // drop totals whose reward ul was re-rendered away (avoids dupes/orphans)
     document.querySelectorAll(".ocw-oc-total").forEach((el) => {
       const prev = el.previousElementSibling;
-      if (!(prev && prev.querySelector && prev.querySelector('img.torn-item, img[src*="/images/items/"]'))) el.remove();
+      if (!(prev && prev.matches && prev.matches('[class*="reward___"]'))) el.remove();
     });
-    const rows = scanRewardRows();
-    let injected = 0, firstSum = 0;
-    for (const [row, items] of rows) {
-      let sum = 0;
-      for (const it of items) { const v = _byId[it.id]; if (v > 0) sum += v * it.qty; }
-      if (!(sum > 0)) continue;
-      let el = row.nextElementSibling;
+    const lists = scanRewardLists();
+    let ocs = 0, firstSum = 0;
+    for (const [ul, byId] of lists) {
+      if (!document.contains(ul)) continue;
+      let sum = 0, missing = 0;
+      for (const [id, qty] of byId) { const v = _byId[id]; if (v > 0) sum += v * qty; else if (!(id in _byId)) missing++; }
+      if (!(sum > 0)) continue; // wait until values are in — no "$0 …" flash
+      let el = ul.nextElementSibling;
       if (!(el && el.classList && el.classList.contains("ocw-oc-total"))) {
         el = document.createElement("div");
         el.className = "ocw-oc-total";
         el.style.cssText = "margin:5px 2px 3px;font-size:12px;font-weight:700;color:#46d369;letter-spacing:.2px;font-family:inherit;";
-        row.insertAdjacentElement("afterend", el);
+        ul.insertAdjacentElement("afterend", el);
       }
-      const label = "💰 Items total: " + fmt(sum);
+      const label = "💰 Items total: " + fmt(sum) + (missing ? " …" : "");
       if (el.textContent !== label) el.textContent = label;
-      injected++; if (!firstSum) firstSum = sum;
+      ocs++; if (!firstSum) firstSum = sum;
     }
-    if (injected && !_diagDone) { _diagDone = true; diag({ total_injected: true, rows: injected, firstSum }); }
+    if (ocs && !_diagDone) { _diagDone = true; diag({ total_v3: true, ocs, firstSum }); }
   }
   function pass2() {
-    const rows = scanRewardRows();
+    const lists = scanRewardLists();
     const ids = new Set();
-    for (const items of rows.values()) for (const it of items) ids.add(it.id);
-    if (!ids.size) { injectTotals(); return; } // still run to clean orphans
+    for (const byId of lists.values()) for (const id of byId.keys()) ids.add(id);
+    if (!ids.size) { injectTotals(); return; } // still run to clean stale totals
     ensureValues(Array.from(ids), injectTotals);
     injectTotals(); // paint immediately with whatever's already cached
   }
