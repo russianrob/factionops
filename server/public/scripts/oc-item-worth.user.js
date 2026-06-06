@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Item Worth & Totals
 // @namespace    RussianRob
-// @version      1.1.1
+// @version      1.2.0
 // @description  Shows the real market value of completed-OC reward items (the paintings/weapons Torn prices at $0 or a stale catalog price) and a per-OC "Items total", reading live item-market prices straight from Torn with YOUR own API key. Talks only to api.torn.com. Works in Torn PDA.
 // @author       RussianRob
 // @copyright    2026, RussianRob (https://tornwar.com)
@@ -18,12 +18,13 @@
 
 (function () {
   "use strict";
-  const SCRIPT_VERSION = "1.1.1";
+  const SCRIPT_VERSION = "1.2.0";
   const KEY_STORE  = "ocwk_torn_api_key";
   const CACHE_KEY  = "ocwk_listings_v1";
   const TTL_MS     = 10 * 60 * 1000;
   const FETCH_GAP  = 350;
   const API_BASE   = "https://api.torn.com/v2/market/";
+  const BAR_ID     = "ocw-keybar";
 
   let _apiKey = "";
   let _byId = {};
@@ -32,7 +33,7 @@
   let _fetching = false;
   let _state = "none";
   let _expanded = false;
-  let _chipSig = null;
+  let _barSig = null;
 
   const fmt = (n) => "$" + Number(n).toLocaleString("en-US");
   function isVisible(el) { return !!(el && el.getClientRects && el.getClientRects().length > 0); }
@@ -78,17 +79,17 @@
     const need = ids.filter((id) => !(id in _byId));
     if (!need.length) { done(); return; }
     _fetching = true;
-    if (_state !== "ok") { _state = "checking"; renderChip(); }
+    if (_state !== "ok") { _state = "checking"; renderBar(); }
     let i = 0;
     const step = () => {
-      if (i >= need.length) { _fetching = false; saveCache(); if (_state === "checking") { _state = "ok"; renderChip(); } done(); schedule(); return; }
+      if (i >= need.length) { _fetching = false; saveCache(); if (_state === "checking") { _state = "ok"; renderBar(); } done(); schedule(); return; }
       const id = need[i++];
       fetchItem(id, (err) => {
-        if (err === 2 || err === 1) { _state = "invalid"; _fetching = false; renderChip(); return; }
-        if (err === 16) { _state = "lowaccess"; _fetching = false; renderChip(); return; }
-        if (err === 18) { _state = "paused"; _fetching = false; renderChip(); return; }
-        if (err === 5) { _state = "ratelimited"; saveCache(); renderChip(); setTimeout(() => { _fetching = false; schedule(); }, 5000); return; }
-        if (err == null && _state !== "ok") { _state = "ok"; renderChip(); }
+        if (err === 2 || err === 1) { _state = "invalid"; _fetching = false; renderBar(); return; }
+        if (err === 16) { _state = "lowaccess"; _fetching = false; renderBar(); return; }
+        if (err === 18) { _state = "paused"; _fetching = false; renderBar(); return; }
+        if (err === 5) { _state = "ratelimited"; saveCache(); renderBar(); setTimeout(() => { _fetching = false; schedule(); }, 5000); return; }
+        if (err == null && _state !== "ok") { _state = "ok"; renderBar(); }
         setTimeout(step, FETCH_GAP);
       });
     };
@@ -164,15 +165,20 @@
 
   function statusText() {
     switch (_state) {
-      case "ok":          return "✓ OC prices: Torn";
+      case "ok":          return "✓ OC prices: your Torn key";
       case "checking":    return "⏳ Checking key…";
       case "invalid":     return "⚠ Invalid API key — tap to fix";
       case "lowaccess":   return "⚠ Key access too low — tap to fix";
       case "paused":      return "⚠ API key paused — tap to fix";
       case "ratelimited": return "⏳ Rate-limited — retrying…";
-      case "error":       return "⚠ Torn API error — tap to retry";
-      default:            return "🔑 Set API key for OC prices";
+      default:            return "🔑 Set a Torn API key to value OC rewards";
     }
+  }
+  function collapsedHTML() {
+    const hint = _apiKey ? "change" : "tap to set";
+    return '<span data-action="toggle" style="cursor:pointer;display:inline-flex;align-items:center;gap:8px">' +
+      '<span>' + statusText() + '</span>' +
+      '<span style="opacity:.55;font-size:11px">' + hint + '</span></span>';
   }
   function panelHTML() {
     const cur = (_apiKey || "").replace(/[^A-Za-z0-9]/g, "");
@@ -182,77 +188,94 @@
     if (_state === "paused")    note = '<div style="margin-top:4px;color:#ff6b6b">This key is paused in your Torn API settings.</div>';
     return '' +
       '<div style="font-weight:700;margin-bottom:5px">OC item prices — Torn API key</div>' +
-      '<input id="ocwk-input" type="text" autocomplete="off" spellcheck="false" placeholder="Paste Torn API key" value="' + cur + '" ' +
-        'style="width:200px;max-width:60vw;padding:4px 6px;border-radius:4px;border:1px solid #555;background:#1a1a1a;color:#eee;font-size:12px">' +
+      '<input id="ocw-keyinput" type="text" autocomplete="off" spellcheck="false" placeholder="Paste Torn API key" value="' + cur + '" ' +
+        'style="width:240px;max-width:70%;padding:4px 6px;border-radius:4px;border:1px solid #555;background:#1a1a1a;color:#eee;font-size:12px">' +
       '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">' +
-        '<button data-action="save"  style="padding:3px 10px;border-radius:4px;border:0;background:#2e7d32;color:#fff;font-weight:700;cursor:pointer">Save</button>' +
-        '<button data-action="clear" style="padding:3px 10px;border-radius:4px;border:0;background:#555;color:#fff;cursor:pointer">Clear</button>' +
-        '<button data-action="close" style="padding:3px 10px;border-radius:4px;border:0;background:#333;color:#bbb;cursor:pointer">Close</button>' +
+        '<button data-action="save"  style="padding:3px 12px;border-radius:4px;border:0;background:#2e7d32;color:#fff;font-weight:700;cursor:pointer">Save</button>' +
+        '<button data-action="clear" style="padding:3px 12px;border-radius:4px;border:0;background:#555;color:#fff;cursor:pointer">Clear</button>' +
+        '<button data-action="close" style="padding:3px 12px;border-radius:4px;border:0;background:#333;color:#bbb;cursor:pointer">Close</button>' +
       '</div>' +
       note +
-      '<div style="margin-top:6px;opacity:.65;font-size:10px;line-height:1.35;max-width:230px">A <b>Limited Access</b> key is enough. Stored only in this browser; sent only to api.torn.com. Create one in Torn → Settings → API Keys.</div>';
+      '<div style="margin-top:6px;opacity:.65;font-size:10px;line-height:1.35">A <b>Limited Access</b> key is enough. Stored only in this browser; sent only to api.torn.com. Create one in Torn → Settings → API Keys.</div>';
   }
-  function ensureChip() {
-    let chip = document.getElementById("ocwk-chip");
-    if (chip) return chip;
-    chip = document.createElement("div");
-    chip.id = "ocwk-chip";
-    chip.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:2147483600;max-width:80vw;" +
-      "background:rgba(20,20,20,.92);color:#ddd;border:1px solid #3a3a3a;border-radius:8px;" +
-      "padding:6px 9px;font-family:inherit;font-size:12px;box-shadow:0 2px 10px rgba(0,0,0,.4)";
-    chip.addEventListener("click", onChipClick);
-    document.body.appendChild(chip);
-    _chipSig = null;
-    renderChip();
-    return chip;
+
+  function findTabStrip() {
+    const root = document.getElementById("faction-crimes-root");
+    if (!root) return null;
+    const cands = root.querySelectorAll('[class*="buttonsContainer"], [class*="tabs"], ul, nav');
+    for (const c of cands) {
+      const t = c.textContent || "";
+      if (/\bCompleted\b/.test(t) && (/\bRecruiting\b/.test(t) || /\bPlanning\b/.test(t))) return c;
+    }
+    return root.querySelector('[class*="buttonsContainer"]');
   }
-  function removeChip() { const c = document.getElementById("ocwk-chip"); if (c) c.remove(); _chipSig = null; _expanded = false; }
-  function onChipClick(e) {
+  function dockBar() {
+    let bar = document.getElementById(BAR_ID);
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = BAR_ID;
+      bar.style.cssText = "margin:7px 0;padding:7px 11px;border-radius:8px;background:rgba(28,28,28,.55);border:1px solid #383838;color:#ddd;font-family:inherit;font-size:12px";
+      bar.addEventListener("click", onBarClick);
+      _barSig = null;
+    }
+    const strip = findTabStrip();
+    if (strip && strip.parentElement) {
+      if (!bar.isConnected || bar.parentElement !== strip.parentElement) strip.parentElement.insertBefore(bar, strip.nextElementSibling);
+    } else {
+      const ul = document.querySelector('[class*="reward___"]');
+      const top = ul ? (ul.closest('[class*="wrapper___"]') || ul) : null;
+      if (top && top.parentElement) { if (!bar.isConnected || bar.parentElement !== top.parentElement) top.parentElement.insertBefore(bar, top); }
+      else if (bar.parentElement !== document.body) { document.body.appendChild(bar); bar.style.position = "fixed"; bar.style.left = "8px"; bar.style.bottom = "8px"; bar.style.zIndex = "2147483600"; }
+    }
+    renderBar();
+    return bar;
+  }
+  function removeBar() { const b = document.getElementById(BAR_ID); if (b) b.remove(); _barSig = null; _expanded = false; }
+  function onBarClick(e) {
     const t = e.target;
     const act = t && t.getAttribute && t.getAttribute("data-action");
     if (act === "save") {
-      const inp = document.getElementById("ocwk-input");
+      const inp = document.getElementById("ocw-keyinput");
       saveKey(inp ? inp.value : "");
-      _expanded = false; _chipSig = null;
-      if (_apiKey) { _byId = {}; _byName = {}; _state = "checking"; renderChip(); schedule(); }
-      else { _state = "none"; renderChip(); }
+      _expanded = false; _barSig = null;
+      if (_apiKey) { _byId = {}; _byName = {}; _state = "checking"; renderBar(); schedule(); }
+      else { _state = "none"; renderBar(); }
       return;
     }
     if (act === "clear") {
-      clearKey(); _byId = {}; _byName = {}; _expanded = false; _state = "none"; _chipSig = null;
+      clearKey(); _byId = {}; _byName = {}; _expanded = false; _state = "none"; _barSig = null;
       document.querySelectorAll(".ocw-oc-total").forEach((el) => el.remove());
-      renderChip();
+      renderBar();
       return;
     }
-    if (act === "close") { _expanded = false; _chipSig = null; renderChip(); return; }
-    _expanded = !_expanded; _chipSig = null; renderChip();
+    if (act === "close") { _expanded = false; _barSig = null; renderBar(); return; }
+    _expanded = !_expanded; _barSig = null; renderBar();
   }
-  function renderChip() {
-    const chip = document.getElementById("ocwk-chip");
-    if (!chip) return;
+  function renderBar() {
+    const bar = document.getElementById(BAR_ID);
+    if (!bar) return;
     if (_expanded) {
       const sig = "exp:" + _state;
-      if (_chipSig === sig) return;
-      const prev = document.getElementById("ocwk-input");
+      if (_barSig === sig) return;
+      const prev = document.getElementById("ocw-keyinput");
       const pv = prev ? prev.value : null, ps = prev ? prev.selectionStart : null, pe = prev ? prev.selectionEnd : null;
-      _chipSig = sig; chip.innerHTML = panelHTML();
-      const inp = document.getElementById("ocwk-input");
+      _barSig = sig; bar.innerHTML = panelHTML();
+      const inp = document.getElementById("ocw-keyinput");
       if (inp) { if (pv != null) inp.value = pv; try { inp.focus(); if (ps != null) inp.setSelectionRange(ps, pe); } catch (_) {} }
       return;
     }
-    const status = statusText();
-    const sig = "col:" + status;
-    if (_chipSig === sig) return;
-    _chipSig = sig;
-    chip.innerHTML = '<span data-action="toggle" style="cursor:pointer;white-space:nowrap">' + status + '</span>';
+    const sig = "col:" + statusText() + (_apiKey ? ":k" : "");
+    if (_barSig === sig) return;
+    _barSig = sig;
+    bar.innerHTML = collapsedHTML();
   }
 
   const TERMINAL_ERR = { invalid: 1, lowaccess: 1, paused: 1 };
   function tick() {
     const lists = scanRewardLists();
-    if (!lists.size) { removeChip(); return; }
-    ensureChip();
-    if (!_apiKey) { if (_state !== "none") { _state = "none"; renderChip(); } injectTotals(); return; }
+    if (!lists.size) { removeBar(); return; }
+    dockBar();
+    if (!_apiKey) { injectTotals(); return; }
     if (!TERMINAL_ERR[_state]) {
       const ids = new Set();
       for (const byId of lists.values()) for (const id of byId.keys()) ids.add(id);
@@ -267,9 +290,9 @@
     if (typeof GM_registerMenuCommand === "function") {
       GM_registerMenuCommand("Set OC API key (Torn)", () => {
         const k = prompt("Paste your Torn API key (Limited Access is enough):", _apiKey || "");
-        if (k != null) { saveKey(k); _byId = {}; _byName = {}; _state = _apiKey ? "checking" : "none"; _chipSig = null; schedule(); }
+        if (k != null) { saveKey(k); _byId = {}; _byName = {}; _state = _apiKey ? "checking" : "none"; _barSig = null; schedule(); }
       });
-      GM_registerMenuCommand("Clear OC API key", () => { clearKey(); _byId = {}; _byName = {}; _state = "none"; _chipSig = null; schedule(); });
+      GM_registerMenuCommand("Clear OC API key", () => { clearKey(); _byId = {}; _byName = {}; _state = "none"; _barSig = null; schedule(); });
     }
   } catch (_) {}
 
@@ -277,4 +300,5 @@
   loadCache();
   tick();
   try { new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true }); } catch (_) {}
+  setInterval(() => { if (!document.getElementById(BAR_ID) && document.querySelector('[class*="reward___"]')) schedule(); }, 2000);
 })();
