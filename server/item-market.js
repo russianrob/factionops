@@ -95,12 +95,18 @@ async function _fetchOne(id, apiKey) {
   if (data.error) return;
   const im = data.itemmarket || {};
   const name = im.item?.name || _listings[String(id)]?.name || null;
+  // Reject troll listings: ignore any listing priced absurdly above the item's
+  // market average (cheap items like Can of Crocozade sometimes have only
+  // troll-priced listings — e.g. $1T — which would otherwise become "lowest").
+  const avg = Number(im.item?.average_price) || 0;
+  const cap = avg > 0 ? avg * 5 : Infinity;
   const listings = Array.isArray(im.listings) ? im.listings : [];
   let lowest = 0;
   for (const l of listings) {
     const p = Number(l?.price) || 0;
-    if (p > 0 && (lowest === 0 || p < lowest)) lowest = p;
+    if (p > 0 && p <= cap && (lowest === 0 || p < lowest)) lowest = p;
   }
+  if (lowest === 0 && avg > 0) lowest = avg;
   if (lowest > 0) _listings[String(id)] = { name, price: lowest, at: Date.now() };
 }
 
