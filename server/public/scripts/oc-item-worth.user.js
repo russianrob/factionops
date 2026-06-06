@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         OC Item Worth & Totals
 // @namespace    RussianRob
-// @version      1.0.0
-// @description  Shows the real market value of completed-OC reward items (the paintings/weapons Torn prices at $0 or a stale catalog price) and adds a per-OC "Items total", using live Torn item-market prices via tornwar.com — no API key, works in Torn PDA.
+// @version      1.1.0
+// @description  Shows the real market value of completed-OC reward items (the paintings/weapons Torn prices at $0 or a stale catalog price) and a per-OC "Items total", reading live item-market prices straight from Torn with YOUR own API key. Talks only to api.torn.com. Works in Torn PDA.
 // @author       RussianRob
 // @copyright    2026, RussianRob (https://tornwar.com)
 // @license      MIT
@@ -10,43 +10,102 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
-// @connect      tornwar.com
+// @grant        GM_registerMenuCommand
+// @connect      api.torn.com
 // @downloadURL  https://tornwar.com/scripts/oc-item-worth.user.js
 // @updateURL    https://tornwar.com/scripts/oc-item-worth.meta.js
 // ==/UserScript==
 
-// Standalone version of the OC reward-value override that ships inside OC Spawn
-// Assistance — for people who don't run that script and just want correct reward
-// worths + a per-OC total. Corrects Torn's native "worth $N" on OC reward items
-// (the catalog underprices/zeroes collectibles like the Priceless Painting) with
-// the live item-market lowest listing from tornwar.com, and sums each OC's reward
-// items into one "Items total" line. Built-in diag (tag oc-item-worth) to verify.
+// Corrects Torn's native "worth $N" on completed-OC reward items with the real
+// item-market value, and adds one "Items total" per OC reward list. Prices come
+// from the user's own Torn API key, read straight from the item market
+// (/v2/market/{id}/itemmarket). The key lives only in this script's GM storage
+// and is sent only to api.torn.com. Same reward-icon scan + per-OC total as the
+// copy embedded in OC Spawn Assistance (which is the no-key option).
 (function () {
   "use strict";
-  const SCRIPT_VERSION = "1.0.0";
-  const NAMES_URL  = "https://tornwar.com/api/oc/item-values"; // {byName} — for tooltip worth rewrite
-  const VALUE_URL  = "https://tornwar.com/api/oc/value";        // ?ids= → {values:{id:price}} — for per-OC total
-  const CACHE_KEY  = "ocw_item_values_v1";
-  const TTL_MS     = 10 * 60 * 1000;
-  const DIAG_URL   = "https://tornwar.com/api/debug/client-log";
-  let _byName = {};      // item name(lower) -> value  (the $0/stale-catalog items)
-  let _byId   = {};      // item id(str)     -> value  (catalog || item-market; filled on demand)
+  const SCRIPT_VERSION = "1.1.0";
+  const KEY_STORE  = "ocwk_torn_api_key";  // the user's Torn API key (local only)
+  const CACHE_KEY  = "ocwk_listings_v1";    // { id: {name, price, at} }
+  const TTL_MS     = 10 * 60 * 1000;        // re-fetch a given item at most every 10 min
+  const FETCH_GAP  = 350;                    // polite gap between per-item Torn calls
+  const API_BASE   = "https://api.torn.com/v2/market/";
+
+  let _apiKey = "";
+  let _byId = {};        // id(str)   -> price
+  let _byName = {};      // name(low) -> price  (for tooltip rewrite)
+  let _cache = {};       // id(str)   -> {name, price, at}  (persisted)
   let _fetching = false;
-  let _diagCount = 0, _diagDone = false;
-  const VER = (typeof GM_info !== "undefined" && GM_info && GM_info.script && GM_info.script.version) || SCRIPT_VERSION;
-  function diag(payload) {
-    if (_diagCount >= 6) return; _diagCount++;
-    try { GM_xmlhttpRequest({ method: "POST", url: DIAG_URL, headers: { "Content-Type": "application/json" }, data: JSON.stringify({ tag: "oc-item-worth", data: Object.assign({ ver: VER, src: "standalone" }, payload) }) }); } catch (_) {}
-  }
+  let _state = "none";   // none | checking | ok | invalid | lowaccess | paused | ratelimited | error
+  let _expanded = false;
+  let _chipSig = null;
+
   const fmt = (n) => "$" + Number(n).toLocaleString("en-US");
-  function isVisible(el) {
-    return !!(el && el.getClientRects && el.getClientRects().length > 0);
+  function isVisible(el) { return !!(el && el.getClientRects && el.getClientRects().length > 0); }
+
+  // ── local storage ──────────────────────────────────────────────────────────
+  function loadKey()  { try { _apiKey = (GM_getValue(KEY_STORE, "") || "").trim(); } catch (_) { _apiKey = ""; } }
+  function saveKey(k) { _apiKey = String(k || "").trim(); try { GM_setValue(KEY_STORE, _apiKey); } catch (_) {} }
+  function clearKey() { _apiKey = ""; try { GM_setValue(KEY_STORE, ""); } catch (_) {} }
+  function loadCache() {
+    try { const raw = GM_getValue(CACHE_KEY, ""); if (raw) { const o = JSON.parse(raw); if (o && typeof o === "object") _cache = o; } } catch (_) { _cache = {}; }
+    const now = Date.now();
+    for (const [id, e] of Object.entries(_cache)) {
+      if (e && now - (e.at || 0) < TTL_MS) { _byId[id] = Number(e.price) || 0; if (e.name && e.price > 0) _byName[String(e.name).toLowerCase()] = e.price; }
+    }
+  }
+  function saveCache() { try { GM_setValue(CACHE_KEY, JSON.stringify(_cache)); } catch (_) {} }
+
+  // ── Torn item-market fetch ──────────────────────────────────────────────────
+  // cb(errCode|null) — errCode is the Torn error code (number) or a string tag.
+  function fetchItem(id, cb) {
+    const url = API_BASE + id + "/itemmarket?key=" + encodeURIComponent(_apiKey) + "&comment=oc-item-worth";
+    try {
+      GM_xmlhttpRequest({
+        method: "GET", url, timeout: 15000,
+        onload: (resp) => {
+          let d = null; try { d = JSON.parse(resp.responseText); } catch (_) {}
+          if (!d) { cb("parse"); return; }
+          if (d.error) { cb(d.error.code); return; }
+          const im = d.itemmarket || {};
+          const name = (im.item && im.item.name) || (_cache[id] && _cache[id].name) || null;
+          const listings = Array.isArray(im.listings) ? im.listings : [];
+          let lowest = 0;
+          for (const l of listings) { const p = Number(l && l.price) || 0; if (p > 0 && (lowest === 0 || p < lowest)) lowest = p; }
+          _cache[id] = { name, price: lowest, at: Date.now() };
+          _byId[id] = lowest;
+          if (name && lowest > 0) _byName[name.toLowerCase()] = lowest;
+          cb(null);
+        },
+        onerror: () => cb("net"),
+        ontimeout: () => cb("timeout"),
+      });
+    } catch (_) { cb("net"); }
+  }
+  // Fetch any ids we don't have yet, one at a time with a polite gap.
+  function fetchMissing(ids, done) {
+    if (_fetching) { done(); return; }
+    const need = ids.filter((id) => !(id in _byId));
+    if (!need.length) { done(); return; }
+    _fetching = true;
+    if (_state !== "ok") { _state = "checking"; renderChip(); }
+    let i = 0;
+    const step = () => {
+      if (i >= need.length) { _fetching = false; saveCache(); if (_state === "checking") { _state = "ok"; renderChip(); } done(); schedule(); return; }
+      const id = need[i++];
+      fetchItem(id, (err) => {
+        if (err === 2 || err === 1) { _state = "invalid"; _fetching = false; renderChip(); return; }     // incorrect/empty key — stop
+        if (err === 16) { _state = "lowaccess"; _fetching = false; renderChip(); return; }                // access level too low
+        if (err === 18) { _state = "paused"; _fetching = false; renderChip(); return; }                   // key paused
+        if (err === 5) { _state = "ratelimited"; saveCache(); renderChip(); setTimeout(() => { _fetching = false; schedule(); }, 5000); return; } // hold _fetching through the backoff
+        if (err == null && _state !== "ok") { _state = "ok"; renderChip(); }
+        setTimeout(step, FETCH_GAP);
+      });
+    };
+    step();
   }
 
   // ── pass 1: correct the hover tooltip's "worth $N" to the live market value ──
-  //   Torn shows the bulk catalog market_price, which is $0 for some collectibles
-  //   and stale for others (e.g. Priceless Painting catalog $65M, listed at $85M).
-  //   For any tracked item we have a live value for, rewrite the shown amount.
   const WORTH_RE = /worth\s*\$\s*([\d,]+)/i;
   function rewriteWorth() {
     if (!_byName || !Object.keys(_byName).length) return;
@@ -67,17 +126,12 @@
       if (!(unit > 0)) continue;
       const want = unit * qty;
       const shown = parseInt((txt.match(WORTH_RE)[1] || "0").replace(/,/g, ""), 10);
-      if (shown === want) continue; // already correct — don't churn
+      if (shown === want) continue;
       tn.nodeValue = txt.replace(WORTH_RE, "worth " + fmt(want));
     }
   }
 
-  // ── pass 2: persistent per-OC Total, summed from the reward ICONS ───────────
-  //   The "$ worth" only exists in transient hover tooltips, so we read id+qty
-  //   off the reward icons and value them ourselves (/api/oc/value).
-  // Group reward icons by their OC reward list (<ul class="reward___…">). Each OC
-  // card has exactly one, so this gives ONE total per OC. Icons outside any reward
-  // ul (member weapons, avatars, other UI) are ignored. DOM (confirmed via diag):
+  // ── pass 2: one "Items total" per OC reward list (<ul class="reward___…">) ───
   //   img.torn-item ▸ span.item-plate ▸ div.container___[aria-label] ▸ li ▸ ul.reward___
   function scanRewardLists() {
     const lists = new Map(); // reward <ul> -> Map(id -> qty)
@@ -87,47 +141,28 @@
       const m = (img.getAttribute("src") || img.src || "").match(/\/items\/(\d+)\b/);
       if (!m) continue;
       const ul = img.closest('[class*="reward___"]');
-      if (!ul) continue; // not an OC reward icon
+      if (!ul) continue;
       const id = m[1];
       const container = img.closest('[class*="container___"]') || img.parentElement;
       const qEl = container && container.querySelector('[class*="quantityContainer"]');
       let qty = 1;
       if (qEl) { const q = parseInt((qEl.textContent || "").replace(/[^\d]/g, ""), 10); if (q > 0) qty = q; }
       let g = lists.get(ul); if (!g) { g = new Map(); lists.set(ul, g); }
-      if (!g.has(id) || qty > g.get(id)) g.set(id, qty); // dedupe within an OC by id
+      if (!g.has(id) || qty > g.get(id)) g.set(id, qty);
     }
     return lists;
   }
-  function ensureValues(ids, done) {
-    const missing = ids.filter((id) => !(id in _byId));
-    if (!missing.length || _fetching) { done(); return; }
-    _fetching = true;
-    // re-run after the fetch so any ids that changed while it was in flight get picked up
-    const finish = () => { _fetching = false; done(); schedule(); };
-    try {
-      GM_xmlhttpRequest({ method: "GET", url: VALUE_URL + "?ids=" + missing.slice(0, 30).join(","), timeout: 20000,
-        onload: (resp) => {
-          try { const b = JSON.parse(resp.responseText); if (b && b.values) for (const [k, v] of Object.entries(b.values)) _byId[k] = Number(v) || 0; } catch (_) {}
-          finish();
-        },
-        onerror: finish,
-        ontimeout: finish,
-      });
-    } catch (_) { finish(); }
-  }
   function injectTotals() {
-    // drop totals whose reward ul was re-rendered away (avoids dupes/orphans)
     document.querySelectorAll(".ocw-oc-total").forEach((el) => {
       const prev = el.previousElementSibling;
       if (!(prev && prev.matches && prev.matches('[class*="reward___"]'))) el.remove();
     });
     const lists = scanRewardLists();
-    let ocs = 0, firstSum = 0;
     for (const [ul, byId] of lists) {
       if (!document.contains(ul)) continue;
-      let sum = 0, missing = 0;
-      for (const [id, qty] of byId) { const v = _byId[id]; if (v > 0) sum += v * qty; else if (!(id in _byId)) missing++; }
-      if (!(sum > 0)) continue; // wait until values are in — no "$0 …" flash
+      let sum = 0;
+      for (const [id, qty] of byId) { const v = _byId[id]; if (v > 0) sum += v * qty; }
+      if (!(sum > 0)) continue; // wait until we have values — no "$0" flash
       let el = ul.nextElementSibling;
       if (!(el && el.classList && el.classList.contains("ocw-oc-total"))) {
         el = document.createElement("div");
@@ -135,36 +170,131 @@
         el.style.cssText = "margin:5px 2px 3px;font-size:12px;font-weight:700;color:#46d369;letter-spacing:.2px;font-family:inherit;";
         ul.insertAdjacentElement("afterend", el);
       }
-      const label = "💰 Items total: " + fmt(sum) + (missing ? " …" : "");
+      const label = "💰 Items total: " + fmt(sum);
       if (el.textContent !== label) el.textContent = label;
-      ocs++; if (!firstSum) firstSum = sum;
     }
-    if (ocs && !_diagDone) { _diagDone = true; diag({ total_v3: true, ocs, firstSum }); }
   }
-  function pass2() {
+
+  // ── key-entry chip (PDA-friendly inline UI, lives on document.body) ──────────
+  function statusText() {
+    switch (_state) {
+      case "ok":          return "✓ OC prices: Torn";
+      case "checking":    return "⏳ Checking key…";
+      case "invalid":     return "⚠ Invalid API key — tap to fix";
+      case "lowaccess":   return "⚠ Key access too low — tap to fix";
+      case "paused":      return "⚠ API key paused — tap to fix";
+      case "ratelimited": return "⏳ Rate-limited — retrying…";
+      case "error":       return "⚠ Torn API error — tap to retry";
+      default:            return "🔑 Set API key for OC prices";
+    }
+  }
+  function panelHTML() {
+    const cur = (_apiKey || "").replace(/[^A-Za-z0-9]/g, "");
+    let note = "";
+    if (_state === "invalid")   note = '<div style="margin-top:4px;color:#ff6b6b">Key was rejected — paste a valid one.</div>';
+    if (_state === "lowaccess") note = '<div style="margin-top:4px;color:#ff6b6b">This key\'s access level is too low. A Limited Access key works.</div>';
+    if (_state === "paused")    note = '<div style="margin-top:4px;color:#ff6b6b">This key is paused in your Torn API settings.</div>';
+    return '' +
+      '<div style="font-weight:700;margin-bottom:5px">OC item prices — Torn API key</div>' +
+      '<input id="ocwk-input" type="text" autocomplete="off" spellcheck="false" placeholder="Paste Torn API key" value="' + cur + '" ' +
+        'style="width:200px;max-width:60vw;padding:4px 6px;border-radius:4px;border:1px solid #555;background:#1a1a1a;color:#eee;font-size:12px">' +
+      '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">' +
+        '<button data-action="save"  style="padding:3px 10px;border-radius:4px;border:0;background:#2e7d32;color:#fff;font-weight:700;cursor:pointer">Save</button>' +
+        '<button data-action="clear" style="padding:3px 10px;border-radius:4px;border:0;background:#555;color:#fff;cursor:pointer">Clear</button>' +
+        '<button data-action="close" style="padding:3px 10px;border-radius:4px;border:0;background:#333;color:#bbb;cursor:pointer">Close</button>' +
+      '</div>' +
+      note +
+      '<div style="margin-top:6px;opacity:.65;font-size:10px;line-height:1.35;max-width:230px">A <b>Limited Access</b> key is enough. Stored only in this browser; sent only to api.torn.com. Create one in Torn → Settings → API Keys.</div>';
+  }
+  function ensureChip() {
+    let chip = document.getElementById("ocwk-chip");
+    if (chip) return chip;
+    chip = document.createElement("div");
+    chip.id = "ocwk-chip";
+    chip.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:2147483600;max-width:80vw;" +
+      "background:rgba(20,20,20,.92);color:#ddd;border:1px solid #3a3a3a;border-radius:8px;" +
+      "padding:6px 9px;font-family:inherit;font-size:12px;box-shadow:0 2px 10px rgba(0,0,0,.4)";
+    chip.addEventListener("click", onChipClick);
+    document.body.appendChild(chip);
+    _chipSig = null;
+    renderChip();
+    return chip;
+  }
+  function removeChip() { const c = document.getElementById("ocwk-chip"); if (c) c.remove(); _chipSig = null; _expanded = false; }
+  function onChipClick(e) {
+    const t = e.target;
+    const act = t && t.getAttribute && t.getAttribute("data-action");
+    if (act === "save") {
+      const inp = document.getElementById("ocwk-input");
+      saveKey(inp ? inp.value : "");
+      _expanded = false; _chipSig = null;
+      if (_apiKey) { _byId = {}; _byName = {}; _state = "checking"; renderChip(); schedule(); }
+      else { _state = "none"; renderChip(); }
+      return;
+    }
+    if (act === "clear") {
+      clearKey(); _byId = {}; _byName = {}; _expanded = false; _state = "none"; _chipSig = null;
+      document.querySelectorAll(".ocw-oc-total").forEach((el) => el.remove());
+      renderChip();
+      return;
+    }
+    if (act === "close") { _expanded = false; _chipSig = null; renderChip(); return; }
+    // tapping the status toggles the editor
+    _expanded = !_expanded; _chipSig = null; renderChip();
+  }
+  function renderChip() {
+    const chip = document.getElementById("ocwk-chip");
+    if (!chip) return;
+    if (_expanded) {
+      const sig = "exp:" + _state;
+      if (_chipSig === sig) return; // unchanged — leave the panel (and the input) alone
+      // a background fetch may have changed _state mid-edit; preserve what the user typed
+      const prev = document.getElementById("ocwk-input");
+      const pv = prev ? prev.value : null, ps = prev ? prev.selectionStart : null, pe = prev ? prev.selectionEnd : null;
+      _chipSig = sig; chip.innerHTML = panelHTML();
+      const inp = document.getElementById("ocwk-input");
+      if (inp) { if (pv != null) inp.value = pv; try { inp.focus(); if (ps != null) inp.setSelectionRange(ps, pe); } catch (_) {} }
+      return;
+    }
+    const status = statusText();
+    const sig = "col:" + status;
+    if (_chipSig === sig) return;
+    _chipSig = sig;
+    chip.innerHTML = '<span data-action="toggle" style="cursor:pointer;white-space:nowrap">' + status + '</span>';
+  }
+
+  // ── main loop ───────────────────────────────────────────────────────────────
+  // states where we must NOT keep auto-retrying the key on every DOM mutation —
+  // the user has to fix/re-save the key first (which resets _state to "checking")
+  const TERMINAL_ERR = { invalid: 1, lowaccess: 1, paused: 1 };
+  function tick() {
     const lists = scanRewardLists();
-    const ids = new Set();
-    for (const byId of lists.values()) for (const id of byId.keys()) ids.add(id);
-    if (!ids.size) { injectTotals(); return; } // still run to clean stale totals
-    ensureValues(Array.from(ids), injectTotals);
-    injectTotals(); // paint immediately with whatever's already cached
-  }
-
-  function applyOverrides() { rewriteWorth(); pass2(); }
-
-  function loadNames(cb) {
-    try { const raw = GM_getValue(CACHE_KEY, ""); if (raw) { const o = JSON.parse(raw); if (o && o.byName) { _byName = o.byName; if (o.ts && Date.now() - o.ts < TTL_MS) { cb(); return; } } } } catch (_) {}
-    try {
-      GM_xmlhttpRequest({ method: "GET", url: NAMES_URL, timeout: 10000,
-        onload: (resp) => {
-          if (resp.status >= 200 && resp.status < 300) { try { const body = JSON.parse(resp.responseText); if (body && body.byName) { _byName = body.byName; try { GM_setValue(CACHE_KEY, JSON.stringify({ ts: Date.now(), byName: _byName })); } catch (_) {} } } catch (_) {} }
-          cb();
-        },
-        onerror: () => cb(),
-      });
-    } catch (_) { cb(); }
+    if (!lists.size) { removeChip(); return; } // not on an OC-rewards view
+    ensureChip();
+    if (!_apiKey) { if (_state !== "none") { _state = "none"; renderChip(); } injectTotals(); return; }
+    if (!TERMINAL_ERR[_state]) {
+      const ids = new Set();
+      for (const byId of lists.values()) for (const id of byId.keys()) ids.add(id);
+      fetchMissing(Array.from(ids), () => { rewriteWorth(); injectTotals(); });
+    }
+    rewriteWorth(); injectTotals(); // paint cached immediately
   }
   let _pending = null;
-  function schedule() { if (_pending) return; _pending = setTimeout(() => { _pending = null; try { applyOverrides(); } catch (_) {} }, 300); }
-  loadNames(() => { applyOverrides(); try { new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true }); } catch (_) {} });
+  function schedule() { if (_pending) return; _pending = setTimeout(() => { _pending = null; try { tick(); } catch (_) {} }, 300); }
+
+  // desktop convenience (ignored on PDA)
+  try {
+    if (typeof GM_registerMenuCommand === "function") {
+      GM_registerMenuCommand("Set OC API key (Torn)", () => {
+        const k = prompt("Paste your Torn API key (Limited Access is enough):", _apiKey || "");
+        if (k != null) { saveKey(k); _byId = {}; _byName = {}; _state = _apiKey ? "checking" : "none"; _chipSig = null; schedule(); }
+      });
+      GM_registerMenuCommand("Clear OC API key", () => { clearKey(); _byId = {}; _byName = {}; _state = "none"; _chipSig = null; schedule(); });
+    }
+  } catch (_) {}
+
+  loadKey();
+  loadCache();
+  tick();
+  try { new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true }); } catch (_) {}
 })();
