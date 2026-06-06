@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Item Worth & Totals
 // @namespace    RussianRob
-// @version      1.1.0
+// @version      1.1.1
 // @description  Shows the real market value of completed-OC reward items (the paintings/weapons Torn prices at $0 or a stale catalog price) and a per-OC "Items total", reading live item-market prices straight from Torn with YOUR own API key. Talks only to api.torn.com. Works in Torn PDA.
 // @author       RussianRob
 // @copyright    2026, RussianRob (https://tornwar.com)
@@ -18,7 +18,7 @@
 
 (function () {
   "use strict";
-  const SCRIPT_VERSION = "1.1.0";
+  const SCRIPT_VERSION = "1.1.1";
   const KEY_STORE  = "ocwk_torn_api_key";
   const CACHE_KEY  = "ocwk_listings_v1";
   const TTL_MS     = 10 * 60 * 1000;
