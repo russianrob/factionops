@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Item Worth & Totals
 // @namespace    RussianRob
-// @version      1.2.2
+// @version      1.2.3
 // @description  Shows the real market value of completed-OC reward items (the paintings/weapons Torn prices at $0 or a stale catalog price) and a per-OC "Items total", reading live item-market prices straight from Torn with YOUR own API key. Talks only to api.torn.com. Works in Torn PDA.
 // @author       RussianRob
 // @license      MIT
@@ -17,7 +17,7 @@
 
 (function () {
   "use strict";
-  const SCRIPT_VERSION = "1.2.2";
+  const SCRIPT_VERSION = "1.2.3";
   const KEY_STORE  = "ocwk_torn_api_key";
   const CACHE_KEY  = "ocwk_listings_v3";
   const TTL_MS     = 10 * 60 * 1000;
@@ -80,7 +80,7 @@
   function fetchMissing(ids, done) {
     if (_fetching) { done(); return; }
     const need = ids.filter((id) => !(id in _byId));
-    if (!need.length) { done(); return; }
+    if (!need.length) { if (_apiKey && _state !== "ok" && !TERMINAL_ERR[_state]) { _state = "ok"; renderBar(); } done(); return; }
     _fetching = true;
     if (_state !== "ok") { _state = "checking"; renderBar(); }
     let i = 0;
@@ -302,6 +302,7 @@
 
   loadKey();
   loadCache();
+  if (_apiKey) _state = "ok";
   tick();
   try { new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true }); } catch (_) {}
   setInterval(() => { if (!document.getElementById(BAR_ID) && document.querySelector('[class*="reward___"]')) schedule(); }, 2000);
