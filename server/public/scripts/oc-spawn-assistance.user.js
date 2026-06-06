@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.43
+// @version      3.2.44
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @copyright    2024-2026, RussianRob (https://tornwar.com)
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.43';
+    const SCRIPT_VERSION = '3.2.44';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7108,16 +7108,20 @@
     return !!(el && el.getClientRects && el.getClientRects().length > 0);
   }
 
-  // ── pass 1: rewrite the hover tooltip's "worth $0" with the live value ──────
-  function rewriteZeros() {
+  // ── pass 1: correct the hover tooltip's "worth $N" to the live market value ──
+  //   Torn shows the bulk catalog market_price, which is $0 for some collectibles
+  //   and stale for others (e.g. Priceless Painting catalog $65M, listed at $85M).
+  //   For any tracked item we have a live value for, rewrite the shown amount.
+  const WORTH_RE = /worth\s*\$\s*([\d,]+)/i;
+  function rewriteWorth() {
     if (!_byName || !Object.keys(_byName).length) return;
     const w1 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    const zeros = []; let n;
-    while ((n = w1.nextNode())) { if (/worth\s*\$\s*0\b/i.test(n.nodeValue || "") && isVisible(n.parentElement)) zeros.push(n); }
-    for (const tn of zeros) {
+    const hits = []; let n;
+    while ((n = w1.nextNode())) { if (WORTH_RE.test(n.nodeValue || "") && isVisible(n.parentElement)) hits.push(n); }
+    for (const tn of hits) {
       const txt = tn.nodeValue;
       let name = null, qty = 1;
-      const m = txt.match(/(\d+)\s*x?\s+(.+?)\s+worth\s*\$\s*0\b/i);
+      const m = txt.match(/(\d+)\s*x?\s+(.+?)\s+worth\s*\$\s*[\d,]+/i);
       if (m) { qty = parseInt(m[1], 10) || 1; name = m[2].trim(); }
       else {
         const ancText = (tn.parentElement && tn.parentElement.textContent || "").toLowerCase();
@@ -7126,7 +7130,10 @@
       if (!name) continue;
       const unit = _byName[name.toLowerCase()];
       if (!(unit > 0)) continue;
-      tn.nodeValue = txt.replace(/worth\s*\$\s*0\b/i, "worth " + fmt(unit * qty));
+      const want = unit * qty;
+      const shown = parseInt((txt.match(WORTH_RE)[1] || "0").replace(/,/g, ""), 10);
+      if (shown === want) continue; // already correct — don't churn
+      tn.nodeValue = txt.replace(WORTH_RE, "worth " + fmt(want));
     }
   }
 
@@ -7213,7 +7220,7 @@
     injectTotals(); // paint immediately with whatever's already cached
   }
 
-  function applyOverrides() { rewriteZeros(); pass2(); }
+  function applyOverrides() { rewriteWorth(); pass2(); }
 
   function loadNames(cb) {
     try { const raw = GM_getValue(CACHE_KEY, ""); if (raw) { const o = JSON.parse(raw); if (o && o.byName) { _byName = o.byName; if (o.ts && Date.now() - o.ts < TTL_MS) { cb(); return; } } } } catch (_) {}
