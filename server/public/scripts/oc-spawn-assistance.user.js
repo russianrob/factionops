@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.44
+// @version      3.2.45
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.44';
+    const SCRIPT_VERSION = '3.2.45';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7095,6 +7095,7 @@
   const DIAG_URL   = "https://tornwar.com/api/debug/client-log";
   let _byName = {};      // item name(lower) -> value  (the $0-catalog items)
   let _byId   = {};      // item id(str)     -> value  (catalog || item-market; filled on demand)
+  let _idName = {};
   let _fetching = false;
   let _diagCount = 0, _diagDone = false;
   const VER = (typeof GM_info !== "undefined" && GM_info && GM_info.script && GM_info.script.version) || "?";
@@ -7111,8 +7112,9 @@
   //   Torn shows the bulk catalog market_price, which is $0 for some collectibles
   //   and stale for others (e.g. Priceless Painting catalog $65M, listed at $85M).
   //   For any tracked item we have a live value for, rewrite the shown amount.
-  const WORTH_RE = /worth\s*\$\s*([\d,]+)/i;
+  const WORTH_RE = /worth\s*\$?\s*([\d,]+)/i;
   function rewriteWorth() {
+    for (const [id, nm] of Object.entries(_idName)) { const v = _byId[id]; if (nm && v > 0) _byName[nm.toLowerCase()] = v; }
     if (!_byName || !Object.keys(_byName).length) return;
     const w1 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const hits = []; let n;
@@ -7120,7 +7122,7 @@
     for (const tn of hits) {
       const txt = tn.nodeValue;
       let name = null, qty = 1;
-      const m = txt.match(/(\d+)\s*x?\s+(.+?)\s+worth\s*\$\s*[\d,]+/i);
+      const m = txt.match(/(\d+)\s*x?\s+(.+?)\s+worth\s*\$?\s*[\d,]+/i);
       if (m) { qty = parseInt(m[1], 10) || 1; name = m[2].trim(); }
       else {
         const ancText = (tn.parentElement && tn.parentElement.textContent || "").toLowerCase();
@@ -7131,8 +7133,8 @@
       if (!(unit > 0)) continue;
       const want = unit * qty;
       const shown = parseInt((txt.match(WORTH_RE)[1] || "0").replace(/,/g, ""), 10);
-      if (shown === want) continue; // already correct — don't churn
-      tn.nodeValue = txt.replace(WORTH_RE, "worth " + fmt(want));
+      if (shown === want) continue;
+      tn.nodeValue = txt.replace(WORTH_RE, () => "worth " + fmt(want));
     }
   }
 
@@ -7159,11 +7161,13 @@
       if (!ul) continue; // not an OC reward icon
       const id = m[1];
       const container = img.closest('[class*="container___"]') || img.parentElement;
+      const nm = (container && container.getAttribute && container.getAttribute("aria-label")) || img.getAttribute("alt") || "";
+      if (nm) _idName[id] = nm;
       const qEl = container && container.querySelector('[class*="quantityContainer"]');
       let qty = 1;
       if (qEl) { const q = parseInt((qEl.textContent || "").replace(/[^\d]/g, ""), 10); if (q > 0) qty = q; }
       let g = lists.get(ul); if (!g) { g = new Map(); lists.set(ul, g); }
-      if (!g.has(id) || qty > g.get(id)) g.set(id, qty); // dedupe within an OC by id
+      if (!g.has(id) || qty > g.get(id)) g.set(id, qty);
     }
     return lists;
   }
