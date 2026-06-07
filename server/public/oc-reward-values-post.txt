@@ -1,0 +1,33 @@
+[center]
+[size=6][b]OC Reward Values[/b][/size]
+[size=3][color=#9aa0a5]See what your completed OC rewards are actually worth[/color][/size]
+
+[img]https://tornwar.com/ocworth-screenshot.png[/img]
+[/center]
+
+
+If you run OCs you've probably seen Torn list a bunch of the reward items as "worth $0" or some stale price that's nowhere near what they actually sell for. Paintings, weapons, the odd collectible. Makes it a pain to tell what a crime really paid out.
+
+I made a small userscript for it. On the completed OC tab it does two things:
+
+[list]
+[*]Fixes the "worth $X" on each reward item to the real item-market price
+[*]Adds an "Items total" line under each OC so you can see the whole payout at a glance
+[/list]
+
+Prices come straight from Torn's own item market using your own API key (a Limited key is plenty). The key is stored in your browser and only ever hits api.torn.com. It doesn't go to me or any other server, and the script doesn't click or automate anything, so it stays on the right side of the rules.
+
+Runs on desktop with Tampermonkey and in Torn PDA.
+
+
+[size=5][b]Screenshots[/b][/size]
+
+[i]Completed OC with the corrected painting value and the items total:[/i]
+[img]https://tornwar.com/ocworth-screenshot.png[/img]
+
+
+[size=5][b]Install[/b][/size]
+
+[url=https://greasyfork.org/en/scripts/581408-oc-reward-values]Install OC Reward Values on Greasy Fork[/url]
+
+First time you open the OC tab there's a small bar to paste your key, then it just runs in the background. If you find an item it prices wrong, post it here and I'll take a look.
