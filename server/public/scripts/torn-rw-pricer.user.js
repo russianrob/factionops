@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.55
+// @version      3.1.56
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -29,7 +29,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.1.55';
+    var SCRIPT_VERSION = '3.1.56';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1773,8 +1773,10 @@
             var tileTitle = el.querySelector('[class*="title___"]');
             var tilePriceEl = el.querySelector('[class*="priceAndTotal___"]');
 
-            if (armNameEl && armNameEl.parentNode) {
-                armNameEl.parentNode.insertBefore(badge, armNameEl.nextSibling);
+            if (armNameEl) {
+                // Append inside the name element so the badge sits inline to the
+                // right of the weapon name (a sibling drops below the block div).
+                armNameEl.appendChild(badge);
             } else if (armWrapEl && armWrapEl.parentNode) {
                 armWrapEl.parentNode.insertBefore(badge, armWrapEl.nextSibling);
             } else if (tileTitle && tilePriceEl) {
