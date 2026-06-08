@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.54
+// @version      3.1.55
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -29,7 +29,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.1.54';
+    var SCRIPT_VERSION = '3.1.55';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -996,6 +996,23 @@
             return m ? parseInt(m[1], 10) : null;
         }
 
+        // Faction armoury collapsed row: the weapon bonus is an icon whose
+        // title holds "<b>Name</b><br/>NN% ...". On narrow (PDA) layouts the
+        // stats column is CSS-hidden, so read the title directly without the
+        // isVisible gate. The damage/accuracy stat icons carry no title.
+        if (el.querySelector && el.querySelector('div.img-wrap[data-armoryid]')) {
+            var armIcons = el.querySelectorAll('ul.bonuses i[title]');
+            for (var ari = 0; ari < armIcons.length; ari++) {
+                var ariCls = armIcons[ari].className || '';
+                if (/bonus-attachment-item-/i.test(ariCls)) continue;
+                var ariTitle = armIcons[ari].getAttribute('title') || '';
+                var ariM = ariTitle.match(/<b>([\w\s-]+)<\/b>/i);
+                var ariName = resolveBonusName(ariM ? ariM[1] : ariTitle.replace(/<[^>]+>/g, ' ').trim());
+                var ariLvlText = ariTitle.indexOf('</b>') !== -1 ? ariTitle.split('</b>')[1] : ariTitle;
+                if (ariName) addBonus(ariName, parseLevelFromText(ariLvlText));
+            }
+        }
+
         // React: aria-label containing "Bonus"
         var ariaEls = el.querySelectorAll('[aria-label*="Bonus"]');
         for (var i = 0; i < ariaEls.length; i++) {
@@ -1749,13 +1766,16 @@
             badge = createBadge(weaponKey || armourKey, rarity, median, bonusNames, bonusFn, estimatedPrice, itemPriceArray, Object.keys(bonusPriceArrays).length > 0 ? bonusPriceArrays : null, bonusColors, Object.keys(comboPriceArrays).length > 0 ? comboPriceArrays : null, maxBonusNames);
 
             // Find insertion point — after name element
-            // Faction armoury collapsed row: insert right after the item icon
+            // Faction armoury collapsed row: insert right after the weapon name
             var armWrapEl = el.querySelector('div.img-wrap[data-armoryid]');
+            var armNameEl = armWrapEl ? (el.querySelector('div.name.bold') || el.querySelector('div.name')) : null;
             // Item Market tile: insert inside the title container, after price
             var tileTitle = el.querySelector('[class*="title___"]');
             var tilePriceEl = el.querySelector('[class*="priceAndTotal___"]');
 
-            if (armWrapEl && armWrapEl.parentNode) {
+            if (armNameEl && armNameEl.parentNode) {
+                armNameEl.parentNode.insertBefore(badge, armNameEl.nextSibling);
+            } else if (armWrapEl && armWrapEl.parentNode) {
                 armWrapEl.parentNode.insertBefore(badge, armWrapEl.nextSibling);
             } else if (tileTitle && tilePriceEl) {
                 // Tile view: insert badge after the price element
