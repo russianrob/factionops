@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.50
+// @version      3.1.51
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -23,54 +23,12 @@
 // @updateURL https://update.greasyfork.org/scripts/569836/Torn%20RW%20Pricer.meta.js
 // ==/UserScript==
 
-// =============================================================================
-// CHANGELOG
-// v3.0.14 - Prevent nested container duplicate price tags.
-// v3.0.13 - Add weapon class check to prevent melee-only bonuses (like Fury) appearing on firearms.
-// =============================================================================
-// v3.0.12 - Add isConnected and bounding-rect dimension checks to isVisible (extra defensive layering against ghost bonuses)
-// v3.0.11 - Fix missing isVisible check in final fallback bonus text extraction loop (Auction House bug)
-// v3.0.10 - Traverse DOM tree in isVisible check to catch parent elements using opacity: 0 (fixes Fiveseven Fury issue)
-// v3.0.9  - Update isVisible helper to check computed CSS styles (display, visibility, opacity) to robustly prevent phantom bonuses
-// v3.0.8  - Re-enable isVisible checks on React markets to prevent reading recycled DOM nodes (fixes phantom bonuses)
-// v3.0.7  - Server-side update to fallback JSON + force client cache flush for Bushmaster stats
-// v3.0.6  - Map historical ID 241 directly to Bushmaster Carbon 15 and remove outdated Bushmaster alias
-// v3.0.5  - Add missing Bushmaster Carbon 15 to item ID map
-// v3.0.4  - Allow reading hidden bonus data in PDA inventory (remove overly aggressive isVisible checks)
-// v3.0.3  - Add Bushmaster to item class map
-// v3.0.2  - Ignore hidden UI elements when extracting bonuses
-// v3.0.1  - Fix duplicate badges on item market tiles (remove parent li selector)
-// v3.0.0  - Add Item Market tile/card view support (PDA & desktop)
-//           New selectors: itemTile, itemList, title/name elements
-//           Detect rarity via glow-*-border on imageWrapper
-//           Badge positioned inside tile title area
-//           Add PDA domain match patterns
-// v2.9.9  - Update URLs to tornwar.com hosting, serve prices from VPS
-// v2.9.8  - Full BONUS_COLOR_RANGES cross-check and correction using
-//           forum reference data
-// v2.9.7  - Correct bonus color ranges: Focus red [26,32],
-//           Double-Edged Y[10,14] O[16,22] R[23,32]
-// v2.9.6  - Fix: bonus color ranges — Focus and Double-Edged red tier
-//           now [25,32] instead of [32,32]
-// v2.9.5  - Fix: combo rarity uses weapon rarity instead of bonus color
-//           tier for combo lookups and tooltip labels
-// v2.9.4  - Extract bonus from item detail page (inventory) for combo pricing
-// v2.9.3  - Fix: combo array length check (>=4 not ===4)
-// v2.9.2  - Show bonus quality % on combo Max rows
-// v2.9.1  - Add bonus quality % to max sale display
-// v2.9.0  - Show bonus name(s) on max-priced weapon sale
-// v2.8.0  - Tooltip flips above badge when near bottom of screen
-// v2.7.0  - Sync and hosting improvements
-// v2.6.1  - Initial public release: inline price badges for RW weapons
-//           and armour using daily-refreshed auction data
-// =============================================================================
-
 (function() {
     'use strict';
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.1.50';
+    var SCRIPT_VERSION = '3.1.51';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
