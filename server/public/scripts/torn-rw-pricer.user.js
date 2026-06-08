@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.1.53
+// @version      3.1.54
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @match        https://www.torn.com/item*
@@ -29,7 +29,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.1.53';
+    var SCRIPT_VERSION = '3.1.54';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1132,6 +1132,15 @@
     // ─── Weapon name extraction ──────────────────────────────
 
     function extractWeaponName(el) {
+        // Faction armoury collapsed row: the icon has no alt, but its wrapper
+        // carries data-itemid — resolve the name from the id maps directly.
+        var armWrap = el.querySelector('div.img-wrap[data-itemid]');
+        if (armWrap) {
+            var armId = armWrap.getAttribute('data-itemid');
+            var armName = ITEM_ID_MAP[armId] || ARMOUR_ID_MAP[armId];
+            if (armName) return armName;
+        }
+
         // Item Market tile: [class*="name___"] inside [class*="title___"]
         var tileName = el.querySelector('[class*="title___"] [class*="name___"]');
         if (tileName) return normalizeWeaponName(tileName.textContent);
@@ -1584,6 +1593,17 @@
             if (containers.indexOf(invConts[m]) === -1) containers.push(invConts[m]);
         }
 
+        // Faction armoury: collapsed rows. The wrapper carries data-itemid +
+        // data-armoryid; bonuses are lazy-loaded (data-loaded=0) so collapsed
+        // rows only resolve item + rarity → base median.
+        var armWraps = document.querySelectorAll('div.img-wrap[data-armoryid]');
+        for (var aw = 0; aw < armWraps.length; aw++) {
+            var armRow = armWraps[aw];
+            for (var up = 0; up < 4 && armRow && armRow.tagName !== 'LI'; up++) armRow = armRow.parentElement;
+            if (!armRow || armRow.tagName !== 'LI') armRow = armWraps[aw].parentElement;
+            if (armRow && containers.indexOf(armRow) === -1) containers.push(armRow);
+        }
+
         return containers;
     }
 
@@ -1729,11 +1749,15 @@
             badge = createBadge(weaponKey || armourKey, rarity, median, bonusNames, bonusFn, estimatedPrice, itemPriceArray, Object.keys(bonusPriceArrays).length > 0 ? bonusPriceArrays : null, bonusColors, Object.keys(comboPriceArrays).length > 0 ? comboPriceArrays : null, maxBonusNames);
 
             // Find insertion point — after name element
+            // Faction armoury collapsed row: insert right after the item icon
+            var armWrapEl = el.querySelector('div.img-wrap[data-armoryid]');
             // Item Market tile: insert inside the title container, after price
             var tileTitle = el.querySelector('[class*="title___"]');
             var tilePriceEl = el.querySelector('[class*="priceAndTotal___"]');
 
-            if (tileTitle && tilePriceEl) {
+            if (armWrapEl && armWrapEl.parentNode) {
+                armWrapEl.parentNode.insertBefore(badge, armWrapEl.nextSibling);
+            } else if (tileTitle && tilePriceEl) {
                 // Tile view: insert badge after the price element
                 tilePriceEl.parentNode.insertBefore(badge, tilePriceEl.nextSibling);
             } else if (tileTitle) {
