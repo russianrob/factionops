@@ -1,0 +1,4 @@
+# Torn RW Pricer — Changelog
+
+## 3.2.0
+- **Faction armoury support.** RWP EST price estimates now show directly on weapons and armour in the faction armoury list. They're bonus-aware (the bonus is read straight from the row), so you see each item's real value at a glance — no need to expand anything. The badge sits to the right of the weapon name.
