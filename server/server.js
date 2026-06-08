@@ -35,6 +35,7 @@ import * as warHistory from "./war-history.js";
 import { computePayouts, backfillWarScores } from "./war-payouts.js";
 import { maybeRefreshItemValues, onItemValuesRefreshed, getItemMarketValue } from "./item-values.js";
 import * as priceWatcher from "./price-watcher.js";
+import { startRwpRefresh } from "./rwp-refresh.js";
 import * as itemMarket from "./item-market.js";
 import { loadSubscriptions } from "./push-notifications.js";
 import { fetchRankedWar } from "./torn-api.js";
@@ -575,6 +576,9 @@ setInterval(_refreshItemPrices, 300_000);
 // every price refresh, push-alerting the configured player on cross-up.
 priceWatcher.load();
 onItemValuesRefreshed(() => priceWatcher.checkWatchers());
+// Torn RW Pricer: regenerate data/rwp-prices.json daily from the marches.cafe
+// auction CSVs so the PDA path (which can't gunzip the CDN) gets fresh prices.
+startRwpRefresh();
 // Item-market lowest-listing cache: value OC reward artifacts (e.g. Priceless
 // Painting) the bulk catalog prices at $0. Seed from OC history, then refresh
 // the live lowest listings every ~12 min on the owner's key.
