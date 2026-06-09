@@ -47,13 +47,16 @@
     }
     return out;
   }
+  function groupThousands(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
   function fmtMoney(n) {
-    if (n == null || isNaN(n)) return "—";
-    return "$" + Math.round(n).toLocaleString("en-US");
+    if (typeof n !== "number" || !isFinite(n)) return "—";
+    return "$" + groupThousands(Math.round(n));
   }
   function fmtProfit(n) {
-    if (n == null || isNaN(n)) return "—";
-    return (n < 0 ? "-$" : "+$") + Math.round(Math.abs(n)).toLocaleString("en-US");
+    if (typeof n !== "number" || !isFinite(n)) return "—";
+    return (n < 0 ? "-$" : "+$") + groupThousands(Math.round(Math.abs(n)));
   }
   function formatAge(updateSec, nowSecVal) {
     var diff = Math.max(0, Math.floor(nowSecVal - updateSec));
@@ -69,7 +72,7 @@
     var getValue = opts.getValue || function () { return undefined; };
     return items.map(function (it) {
       var value = (mode === "profit") ? getValue(it.id) : undefined;
-      value = (value == null || isNaN(value)) ? null : value;
+      value = (typeof value === "number" && isFinite(value)) ? value : null;
       var profit = (value == null) ? null : (value - it.cost);
       return { id: it.id, name: it.name, qty: it.qty, cost: it.cost, value: value, profit: profit };
     });
