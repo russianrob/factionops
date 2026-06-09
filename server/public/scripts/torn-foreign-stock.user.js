@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.3.0
+// @version      0.4.0
 // @description  Shows abroad item stock (and optional profit) inline on the Torn travel page
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.3.0";
+  var SCRIPT_VERSION = "0.4.0";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -240,8 +240,70 @@
       ".tfs-qty{color:#888;}.tfs-cost{color:#bbb;min-width:60px;text-align:right;}" +
       ".tfs-row.out{opacity:.6;}" +
       ".tfs-oos{color:#d6a86a;font-style:italic;margin-left:auto;text-align:right;white-space:nowrap;}" +
-      ".tfs-profit{min-width:80px;text-align:right;}.tfs-profit.pos{color:#5ad15a;}.tfs-profit.neg{color:#777;}";
+      ".tfs-profit{min-width:80px;text-align:right;}.tfs-profit.pos{color:#5ad15a;}.tfs-profit.neg{color:#777;}" +
+      ".tfs-filterbtn{background:#2a2a2a;color:#bbb;border:1px solid #444;border-radius:3px;padding:2px 8px;cursor:pointer;}" +
+      ".tfs-filters{display:none;flex-basis:100%;margin-top:6px;padding-top:6px;border-top:1px solid #333;}" +
+      ".tfs-filters.open{display:block;}" +
+      ".tfs-frow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:3px 0;}" +
+      ".tfs-frow .lbl{color:#888;margin-right:2px;min-width:62px;}" +
+      ".tfs-chip{background:#2a3fff;color:#fff;border:1px solid #2a3fff;border-radius:10px;padding:1px 8px;cursor:pointer;font-size:11px;}" +
+      ".tfs-chip.off{background:#222;color:#777;border-color:#444;}" +
+      ".tfs-ftog{background:#2a2a2a;color:#bbb;border:1px solid #444;border-radius:3px;padding:2px 8px;cursor:pointer;}" +
+      ".tfs-ftog.on{background:#2a3fff;color:#fff;border-color:#2a3fff;}";
     document.head.appendChild(s);
+  }
+
+  var TFS_CATS = ["Plushie", "Flower", "Drug", "Temporary", "Weapon", "Armor", "Other"];
+  var TFS_COUNTRIES = [["mex", "Mexico"], ["cay", "Cayman"], ["can", "Canada"], ["haw", "Hawaii"], ["uni", "UK"], ["arg", "Argentina"], ["swi", "Switz"], ["jap", "Japan"], ["chi", "China"], ["uae", "UAE"], ["sou", "S.Africa"]];
+
+  function buildFilterPanel(onChange) {
+    var f = getFilters();
+    var panel = document.createElement("div");
+    panel.className = "tfs-filters";
+    panel.id = "tfs-filters";
+    var html = '<div class="tfs-frow">' +
+      '<button class="tfs-ftog' + (f.hideOos ? " on" : "") + '" data-t="oos">Hide out-of-stock</button>' +
+      '<button class="tfs-ftog' + (f.hideNeg ? " on" : "") + '" data-t="neg">Hide -profit</button>' +
+      '</div><div class="tfs-frow"><span class="lbl">Items</span>';
+    for (var i = 0; i < TFS_CATS.length; i++) html += '<span class="tfs-chip cat' + (f.excludedCats.indexOf(TFS_CATS[i]) !== -1 ? " off" : "") + '" data-cat="' + TFS_CATS[i] + '">' + TFS_CATS[i] + '</span>';
+    html += '</div><div class="tfs-frow"><span class="lbl">Countries</span>';
+    for (var k = 0; k < TFS_COUNTRIES.length; k++) html += '<span class="tfs-chip ctry' + (f.hiddenCountries.indexOf(TFS_COUNTRIES[k][0]) !== -1 ? " off" : "") + '" data-code="' + TFS_COUNTRIES[k][0] + '">' + TFS_COUNTRIES[k][1] + '</span>';
+    html += '</div>';
+    panel.innerHTML = html;
+    var togs = panel.querySelectorAll(".tfs-ftog");
+    for (var t = 0; t < togs.length; t++) {
+      (function (b) {
+        b.addEventListener("click", function () {
+          var which = b.getAttribute("data-t");
+          if (which === "oos") gmSet("tfs_hide_oos", !gmGet("tfs_hide_oos", false));
+          else gmSet("tfs_hide_negprofit", !gmGet("tfs_hide_negprofit", false));
+          b.classList.toggle("on"); onChange(false);
+        });
+      })(togs[t]);
+    }
+    var catChips = panel.querySelectorAll(".tfs-chip.cat");
+    for (var ci = 0; ci < catChips.length; ci++) {
+      (function (c) {
+        c.addEventListener("click", function () {
+          var cat = c.getAttribute("data-cat");
+          var ex = gmGet("tfs_cats", []); var idx = ex.indexOf(cat);
+          if (idx === -1) { ex.push(cat); c.classList.add("off"); } else { ex.splice(idx, 1); c.classList.remove("off"); }
+          gmSet("tfs_cats", ex); onChange(false);
+        });
+      })(catChips[ci]);
+    }
+    var ctryChips = panel.querySelectorAll(".tfs-chip.ctry");
+    for (var di = 0; di < ctryChips.length; di++) {
+      (function (c) {
+        c.addEventListener("click", function () {
+          var code = c.getAttribute("data-code");
+          var hc = gmGet("tfs_hidden_countries", []); var idx = hc.indexOf(code);
+          if (idx === -1) { hc.push(code); c.classList.add("off"); } else { hc.splice(idx, 1); c.classList.remove("off"); }
+          gmSet("tfs_hidden_countries", hc); onChange(false);
+        });
+      })(ctryChips[di]);
+    }
+    return panel;
   }
 
   function injectSettingsBar(onChange) {
@@ -254,6 +316,7 @@
       '<button class="tfs-toggle" data-mode="stock">Stock</button>' +
       '<button class="tfs-toggle" data-mode="profit">Profit</button>' +
       '<button class="tfs-refresh" title="Refresh stock">↻</button>' +
+      '<button class="tfs-filterbtn">Filters ▾</button>' +
       '<span class="tfs-keywrap" style="display:' + (mode === "profit" ? "inline-flex" : "none") + '">' +
       '<input class="tfs-key" type="password" placeholder="Torn API key for profit" value="' + getKey().replace(/"/g, "") + '">' +
       '<button class="tfs-save">Save</button></span>' +
@@ -275,6 +338,9 @@
       setKey(v); tfsMsg("saved"); onChange(true);
     });
     paint();
+    var fpanel = buildFilterPanel(onChange);
+    bar.appendChild(fpanel);
+    bar.querySelector(".tfs-filterbtn").addEventListener("click", function () { fpanel.classList.toggle("open"); });
     var anchor = document.querySelector('[class*="destinationList___"]');
     if (anchor && anchor.parentNode) { anchor.parentNode.insertBefore(bar, anchor); }
     else { var c = document.querySelector(".content") || document.body; c.insertBefore(bar, c.firstChild); }
@@ -299,10 +365,13 @@
     return out;
   }
 
-  function renderPanel(destEl, code, stock, mode, prices, model) {
+  function renderPanel(destEl, code, stock, mode, prices, model, filters) {
+    if (!filters) filters = {};
     var country = stock[code];
     if (!country) return;
     var rows = sortRows(buildRows(country.items, { mode: mode, getValue: function (id) { return prices[id]; } }), mode);
+    rows = rows.filter(function (r) { return rowVisible(r, mode, filters); });
+    if (!rows.length) { var gone = destEl.querySelector(".tfs-panel"); if (gone) gone.parentNode.removeChild(gone); return; }
     var age = formatAge(country.update, Math.floor(Date.now() / 1000));
     var html = '<div class="tfs-head"><span class="tfs-age' + (age.stale ? " stale" : "") + '">updated ' + age.text + '</span></div><div class="tfs-rows">';
     var nowMs = Date.now();
@@ -325,8 +394,16 @@
 
   var _applyTimer = null;
   function paintPanels(stock, mode, prices, model) {
+    var filters = getFilters();
     var dests = findDestinations();
-    for (var i = 0; i < dests.length; i++) renderPanel(dests[i].el, dests[i].code, stock, mode, prices, model || {});
+    for (var i = 0; i < dests.length; i++) {
+      if (!countryVisible(dests[i].code, filters)) {
+        var hidden = dests[i].el.querySelector(".tfs-panel");
+        if (hidden) hidden.parentNode.removeChild(hidden);
+        continue;
+      }
+      renderPanel(dests[i].el, dests[i].code, stock, mode, prices, model || {}, filters);
+    }
   }
   function applyAll(force) {
     var mode = getMode(), key = getKey();
