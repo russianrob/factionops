@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Foreign Stock
 // @namespace    RussianRob
-// @version      0.1.0
+// @version      0.2.0
 // @description  Shows abroad item stock (and optional profit) inline on the Torn travel page
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -19,7 +19,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.1.0";
+  var SCRIPT_VERSION = "0.2.0";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -186,6 +186,8 @@
       ".tfs-row{display:flex;gap:8px;padding:1px 0;align-items:baseline;}" +
       ".tfs-name{flex:1;min-width:0;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" +
       ".tfs-qty{color:#888;}.tfs-cost{color:#bbb;min-width:60px;text-align:right;}" +
+      ".tfs-row.out{opacity:.6;}" +
+      ".tfs-oos{color:#d6a86a;font-style:italic;margin-left:auto;text-align:right;white-space:nowrap;}" +
       ".tfs-profit{min-width:80px;text-align:right;}.tfs-profit.pos{color:#5ad15a;}.tfs-profit.neg{color:#777;}";
     document.head.appendChild(s);
   }
@@ -251,10 +253,17 @@
     var rows = sortRows(buildRows(country.items, { mode: mode, getValue: function (id) { return prices[id]; } }), mode);
     var age = formatAge(country.update, Math.floor(Date.now() / 1000));
     var html = '<div class="tfs-head"><span class="tfs-age' + (age.stale ? " stale" : "") + '">updated ' + age.text + '</span></div><div class="tfs-rows">';
+    var nowMs = Date.now();
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
-      html += '<div class="tfs-row"><span class="tfs-name">' + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
-        (mode === "profit" ? '<span class="tfs-profit ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
+      if (r.qty === 0) {
+        var eta = restockEta(r.nextRestock, nowMs);
+        html += '<div class="tfs-row out"><span class="tfs-name">' + escapeHtml(r.name) + '</span>' +
+          '<span class="tfs-oos">' + (eta ? "restocks in " + eta.text : "out of stock") + '</span></div>';
+      } else {
+        html += '<div class="tfs-row"><span class="tfs-name">' + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
+          (mode === "profit" ? '<span class="tfs-profit ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
+      }
     }
     html += '</div>';
     var existing = destEl.querySelector(".tfs-panel");
@@ -294,6 +303,7 @@
     injectSettingsBar(function (force) { applyAll(!!force); });
     applyAll(false);
     startObserver();
+    setInterval(function () { applyAll(false); }, 30000);
     try { if (typeof GM_registerMenuCommand === "function") GM_registerMenuCommand("Foreign Stock: refresh", function () { applyAll(true); }); } catch (e) {}
   }
 

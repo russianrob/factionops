@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Foreign Stock
 // @namespace    RussianRob
-// @version      0.1.0
+// @version      0.2.0
 // @description  Shows abroad item stock (and optional profit) inline on the Torn travel page
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -12,6 +12,7 @@
 // @grant        GM_registerMenuCommand
 // @connect      yata.yt
 // @connect      api.torn.com
+// @connect      api.prombot.co.uk
 // @run-at       document-idle
 // @downloadURL  https://tornwar.com/scripts/torn-foreign-stock.user.js
 // @updateURL    https://tornwar.com/scripts/torn-foreign-stock.user.js
