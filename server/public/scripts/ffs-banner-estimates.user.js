@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.29
+// @version      2.73.30
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3017,7 +3017,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.29';
+  const SCRIPT_VERSION = '2.73.30';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3359,6 +3359,7 @@ if (!singleton) {
   // has to await the async ffcache.get.
   let _ffsWarSortActive = false;
   let _ffsAppliedDesc = null;   // null = unclicked; true = strongest-first; false = weakest-first
+  let _ffsPureStatSort = false; // set once the user clicks the FFS button: order by stats only, ignoring hospital/jail/travel status groups
   const _ffsScoreCache = {};    // pid (string) -> FFS score
 
   // wb63: hide online/offline activity filter (war page). Persisted across loads.
@@ -3478,6 +3479,14 @@ if (!singleton) {
       });
 
       metas.sort((A, B) => {
+        if (_ffsPureStatSort) {                                // user clicked: stats only, status ignored
+          const pa = _ffsScoreCache[A.pid];
+          const pb = _ffsScoreCache[B.pid];
+          if (pa == null && pb == null) return A.idx - B.idx;
+          if (pa == null) return 1;                            // unknown score sinks
+          if (pb == null) return -1;
+          return desc ? pb - pa : pa - pb;
+        }
         if (warMode) {
           const ga = ffs_rowGroup(A.row, A.pid);
           const gb = ffs_rowGroup(B.row, B.pid);
@@ -3505,7 +3514,7 @@ if (!singleton) {
       });
 
       // Signature = mode + direction + resulting pid order. Unchanged → skip.
-      const sig = (warMode ? 'w' : 'l') + (desc ? 'd' : 'a') + '|' + metas.map(k => k.pid || '?').join(',');
+      const sig = (warMode ? 'w' : 'l') + (_ffsPureStatSort ? 'p' : 'g') + (desc ? 'd' : 'a') + '|' + metas.map(k => k.pid || '?').join(',');
       if (_ffsSortSignatures.get(parent) === sig) continue;
       _ffsSortSignatures.set(parent, sig);
       // Skip the DOM write if the rows are already in the desired order.
@@ -4104,6 +4113,7 @@ if (!singleton) {
     // 500ms and would otherwise reset. Toggle on each click; null → desc first.
     _ffsAppliedDesc = (_ffsAppliedDesc == null) ? true : !_ffsAppliedDesc;
     const descNow = _ffsAppliedDesc; // true = strongest-first
+    _ffsPureStatSort = true;         // clicking sorts by stats only, regardless of hospital/jail/travel status
     _ffsApplySortBtnVisual(btn);
 
     // War pages (legacy): rows live under .members-list.
@@ -4174,10 +4184,6 @@ if (!singleton) {
     //   1 = hospital — soonest release first
     //   2 = traveling / jail — bottom
     rowMeta.sort((a, b) => {
-      const ga = ffs_rowGroup(a.row, a.pid);
-      const gb = ffs_rowGroup(b.row, b.pid);
-      if (ga !== gb) return ga - gb;
-      if (ga === 1) return ffs_hospKey(a.pid) - ffs_hospKey(b.pid);
       const sa = rowScore(a);
       const sb = rowScore(b);
       if (sa == null && sb == null) return 0;
