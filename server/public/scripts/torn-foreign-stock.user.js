@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.7.0
+// @version      0.7.1
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.7.0";
+  var SCRIPT_VERSION = "0.7.1";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -240,13 +240,15 @@
       ".tfs-filters{display:none;flex-basis:100%;margin-top:7px;padding-top:8px;border-top:1px solid #262a33;}" +
       ".tfs-filters.open{display:block;}" +
       ".tfs-frow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:5px 0;}" +
-      ".tfs-frow .lbl{color:#7a818c;margin-right:2px;min-width:60px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;}" +
+      ".tfs-frow.flags{flex-wrap:nowrap;gap:3px;}" +
+      ".tfs-frow .lbl{color:#7a818c;margin-right:2px;min-width:54px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;}" +
+      ".tfs-ricon{margin-right:5px;font-size:11px;opacity:.95;}" +
       ".tfs-chip{cursor:pointer;font-size:11px;transition:all .12s;}" +
       ".tfs-chip.cat{display:inline-flex;align-items:center;gap:3px;background:#202a40;color:#aec4ff;border:1px solid #2c3650;border-radius:11px;padding:2px 10px;}" +
       ".tfs-chip.cat:hover{border-color:#3b6dff;}" +
       ".tfs-chip.cat.off{background:transparent;color:#5b626d;border-color:#2a2e38;}" +
       ".tfs-chip.cat.off .tfs-cicon{filter:grayscale(1);opacity:.55;}" +
-      ".tfs-chip.flag{background:transparent;border:0;border-radius:5px;font-size:17px;line-height:1;padding:2px 3px;}" +
+      ".tfs-chip.flag{background:transparent;border:0;border-radius:5px;font-size:15px;line-height:1;padding:1px 2px;flex:0 0 auto;}" +
       ".tfs-chip.flag:hover{background:#20242c;}" +
       ".tfs-chip.flag.off{filter:grayscale(1);opacity:.3;}" +
       ".tfs-ftog{background:#1a1e26;color:#8a909a;border:1px solid #2e333d;border-radius:7px;padding:3px 11px;cursor:pointer;transition:all .12s;}" +
@@ -284,9 +286,10 @@
 
   var TFS_CATS = ["Plushie", "Flower", "Drug", "Temporary", "Weapon", "Armor", "Other"];
   var TFS_COUNTRIES = [["mex", "Mexico"], ["cay", "Cayman"], ["can", "Canada"], ["haw", "Hawaii"], ["uni", "UK"], ["arg", "Argentina"], ["swi", "Switz"], ["jap", "Japan"], ["chi", "China"], ["uae", "UAE"], ["sou", "S.Africa"]];
-  var TFS_FLAGS = { mex: "🇲🇽", cay: "🇰🇾", can: "🇨🇦", haw: "🌺", uni: "🇬🇧", arg: "🇦🇷", swi: "🇨🇭", jap: "🇯🇵", chi: "🇨🇳", uae: "🇦🇪", sou: "🇿🇦" };
+  var TFS_FLAGS = { mex: "🇲🇽", cay: "🇰🇾", can: "🇨🇦", haw: "🏝", uni: "🇬🇧", arg: "🇦🇷", swi: "🇨🇭", jap: "🇯🇵", chi: "🇨🇳", uae: "🇦🇪", sou: "🇿🇦" };
   function tfsFlag(code) { return TFS_FLAGS[code] || "🏳"; }
-  var TFS_CATICON = { Plushie: "🧸", Flower: "🌸", Drug: "💊", Temporary: "⏳", Weapon: "🔫", Armor: "🛡️", Other: "📦" };
+  var TFS_CATICON = { Plushie: "🧸", Flower: "🌸", Drug: "💊", Temporary: "⏳", Weapon: "⚔️", Armor: "🛡️", Other: "📦" };
+  function tfsRowIcon(id) { var ic = TFS_CATICON[itemCategory(id)]; return ic ? ('<span class="tfs-ricon">' + ic + '</span>') : ''; }
 
   function buildFilterPanel(onChange) {
     var f = getFilters();
@@ -298,7 +301,7 @@
       '<button class="tfs-ftog' + (f.hideNeg ? " on" : "") + '" data-t="neg">Hide -profit</button>' +
       '</div><div class="tfs-frow"><span class="lbl">Items</span>';
     for (var i = 0; i < TFS_CATS.length; i++) html += '<span class="tfs-chip cat' + (f.excludedCats.indexOf(TFS_CATS[i]) !== -1 ? " off" : "") + '" data-cat="' + TFS_CATS[i] + '" title="' + TFS_CATS[i] + '"><span class="tfs-cicon">' + (TFS_CATICON[TFS_CATS[i]] || "") + '</span>' + TFS_CATS[i] + '</span>';
-    html += '</div><div class="tfs-frow"><span class="lbl">Countries</span>';
+    html += '</div><div class="tfs-frow flags"><span class="lbl">Countries</span>';
     for (var k = 0; k < TFS_COUNTRIES.length; k++) html += '<span class="tfs-chip ctry flag' + (f.hiddenCountries.indexOf(TFS_COUNTRIES[k][0]) !== -1 ? " off" : "") + '" data-code="' + TFS_COUNTRIES[k][0] + '" title="' + TFS_COUNTRIES[k][1] + '">' + tfsFlag(TFS_COUNTRIES[k][0]) + '</span>';
     html += '</div>';
     panel.innerHTML = html;
@@ -387,9 +390,9 @@
         var r = rows[i];
         if (r.qty === 0) {
           var entry = (model && model[code]) ? model[code][String(r.id)] : null;
-          html += '<div class="tfs-tr out"><span class="tfs-tn">' + escapeHtml(r.name) + '</span><span class="tfs-toos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
+          html += '<div class="tfs-tr out"><span class="tfs-tn">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span><span class="tfs-toos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
         } else {
-          html += '<div class="tfs-tr' + (mode === "profit" ? " mp" : "") + '"><span class="tfs-tn">' + escapeHtml(r.name) + '</span><span class="tfs-tq">×' + r.qty + '</span><span class="tfs-tcost">' + fmtMoney(r.cost) + '</span>' +
+          html += '<div class="tfs-tr' + (mode === "profit" ? " mp" : "") + '"><span class="tfs-tn">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span><span class="tfs-tq">×' + r.qty + '</span><span class="tfs-tcost">' + fmtMoney(r.cost) + '</span>' +
             (mode === "profit" ? '<span class="tfs-tp ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
         }
       }
@@ -471,10 +474,10 @@
       var r = rows[i];
       if (r.qty === 0) {
         var entry = (model && model[code]) ? model[code][String(r.id)] : null;
-        html += '<div class="tfs-row out"><span class="tfs-name">' + escapeHtml(r.name) + '</span>' +
+        html += '<div class="tfs-row out"><span class="tfs-name">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span>' +
           '<span class="tfs-oos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
       } else {
-        html += '<div class="tfs-row' + (mode === "profit" ? " mp" : "") + '"><span class="tfs-name">' + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
+        html += '<div class="tfs-row' + (mode === "profit" ? " mp" : "") + '"><span class="tfs-name">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
           (mode === "profit" ? '<span class="tfs-profit ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
       }
     }
