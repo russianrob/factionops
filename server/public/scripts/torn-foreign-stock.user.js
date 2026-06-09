@@ -11,6 +11,7 @@
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @connect      api.prombot.co.uk
+// @connect      raw.githubusercontent.com
 // @connect      yata.yt
 // @connect      api.torn.com
 // @run-at       document-idle
@@ -23,6 +24,8 @@
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
+  var MODEL_URL = "https://raw.githubusercontent.com/russianrob/torn-foreign-restock/main/restock-model.json";
+  var MODEL_TTL = 600;
   var STOCK_TTL = 60, PRICE_TTL = 21600, STALE_MIN = 30;
 
   // ─── pure helpers (unit-tested) ──────────────────────────
@@ -161,6 +164,15 @@
       gmSet("tfs_prices", { t: _nowSec(), key: key, map: map });
       return map;
     });
+  }
+  function getModel() {
+    var cached = gmGet("tfs_model", null);
+    if (cached && (_nowSec() - cached.t) < MODEL_TTL) return Promise.resolve(cached.data);
+    return _fetchJson(MODEL_URL).then(function (json) {
+      var data = (json && json.items) ? json.items : {};
+      gmSet("tfs_model", { t: _nowSec(), data: data });
+      return data;
+    }).catch(function () { return cached ? cached.data : {}; });
   }
 
   // ─── DOM: settings, injector, observer ───────────────────
@@ -321,6 +333,7 @@
     };
     module.exports.getStock = getStock;
     module.exports.getPrices = getPrices;
+    module.exports.getModel = getModel;
     module.exports.__setFetch = function (fn) { _fetchJson = fn; };
     module.exports.__setClock = function (fn) { _nowSec = fn; };
   }

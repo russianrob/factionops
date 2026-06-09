@@ -192,3 +192,20 @@ test("sortRows: in-stock before out-of-stock; out-of-stock by soonest restock", 
   const ids = mod.sortRows(rows, "stock", now).map(function (r) { return r.id; });
   assert.deepStrictEqual(ids, [3, 1, 4, 2, 5]); // in-stock by cost desc (200,100), then out-of-stock: soon, late, none
 });
+
+test("getModel fetches + caches the GitHub model items map", async () => {
+  const store = {};
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  let clock = 5000, calls = 0;
+  mod.__setClock(() => clock);
+  mod.__setFetch(async () => { calls++; return { updated: 1, items: { uae: { "384": { interval: 1500, last: 1, n: 5, rel: "med" } } } }; });
+  const a = await mod.getModel();
+  assert.strictEqual(a.uae["384"].interval, 1500);
+  assert.strictEqual(calls, 1);
+  await mod.getModel();
+  assert.strictEqual(calls, 1);
+  clock += 601;
+  await mod.getModel();
+  assert.strictEqual(calls, 2);
+});

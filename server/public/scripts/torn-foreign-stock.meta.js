@@ -13,6 +13,7 @@
 // @connect      yata.yt
 // @connect      api.torn.com
 // @connect      api.prombot.co.uk
+// @connect      raw.githubusercontent.com
 // @run-at       document-idle
 // @downloadURL  https://update.greasyfork.org/scripts/581933/Torn%20Foreign%20Stocks.user.js
 // @updateURL    https://update.greasyfork.org/scripts/581933/Torn%20Foreign%20Stocks.meta.js
