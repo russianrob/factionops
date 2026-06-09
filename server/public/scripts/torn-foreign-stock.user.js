@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.5.2
+// @version      0.6.0
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.5.2";
+  var SCRIPT_VERSION = "0.6.0";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -225,51 +225,55 @@
     var s = document.createElement("style");
     s.id = "tfs-css";
     s.textContent =
-      ".tfs-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;margin:6px 0;background:#1a1a1a;border:1px solid #333;border-radius:4px;font-size:12px;color:#ccc;}" +
-      ".tfs-bar .tfs-title{font-weight:700;color:#e8c44a;margin-right:4px;}" +
-      ".tfs-toggle{background:#2a2a2a;color:#bbb;border:1px solid #444;border-radius:3px;padding:2px 8px;cursor:pointer;}" +
-      ".tfs-toggle.on{background:#2a3fff;color:#fff;border-color:#2a3fff;}" +
-      ".tfs-refresh{background:#2a2a2a;color:#bbb;border:1px solid #444;border-radius:3px;padding:2px 7px;cursor:pointer;}" +
-      ".tfs-key{background:#111;border:1px solid #444;color:#ddd;border-radius:3px;padding:2px 6px;width:150px;}" +
-      ".tfs-save{background:#2a2a2a;color:#bbb;border:1px solid #444;border-radius:3px;padding:2px 8px;cursor:pointer;}" +
-      ".tfs-msg{color:#e88;}" +
-      ".tfs-panel{margin:4px 0 8px;font-size:12px;}" +
-      ".tfs-head .tfs-age{color:#888;}.tfs-head .tfs-age.stale{opacity:.5;}" +
-      ".tfs-row{display:flex;gap:8px;padding:1px 0;align-items:baseline;}" +
-      ".tfs-name{flex:1;min-width:0;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" +
-      ".tfs-qty{color:#888;}.tfs-cost{color:#bbb;min-width:60px;text-align:right;}" +
-      ".tfs-row.out{opacity:.6;}" +
-      ".tfs-oos{color:#d6a86a;font-style:italic;margin-left:auto;text-align:right;white-space:nowrap;}" +
-      ".tfs-profit{min-width:80px;text-align:right;}.tfs-profit.pos{color:#5ad15a;}.tfs-profit.neg{color:#777;}" +
-      ".tfs-filterbtn{background:#2a2a2a;color:#bbb;border:1px solid #444;border-radius:3px;padding:2px 8px;cursor:pointer;}" +
-      ".tfs-filters{display:none;flex-basis:100%;margin-top:6px;padding-top:6px;border-top:1px solid #333;}" +
+      ".tfs-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;margin:8px 0;background:#16181d;border:1px solid #262a33;border-radius:7px;box-shadow:0 1px 3px rgba(0,0,0,.35);font-size:12px;color:#cfd4dc;}" +
+      ".tfs-bar .tfs-title{font-weight:700;color:#e8c44a;letter-spacing:.3px;margin-right:4px;}" +
+      ".tfs-toggle{background:#20242c;color:#aeb4bd;border:1px solid #2e333d;border-radius:6px;padding:3px 13px;cursor:pointer;transition:background .12s;}" +
+      ".tfs-toggle:hover{background:#262b34;}" +
+      ".tfs-toggle.on{background:#3b6dff;color:#fff;border-color:#3b6dff;box-shadow:0 1px 4px rgba(59,109,255,.4);}" +
+      ".tfs-refresh,.tfs-save,.tfs-filterbtn{background:#20242c;color:#aeb4bd;border:1px solid #2e333d;border-radius:6px;padding:3px 9px;cursor:pointer;}" +
+      ".tfs-refresh:hover,.tfs-save:hover,.tfs-filterbtn:hover{background:#262b34;color:#e6e9ee;}" +
+      ".tfs-key{background:#0e0f12;border:1px solid #2e333d;color:#dde2e8;border-radius:6px;padding:3px 8px;width:150px;}" +
+      ".tfs-msg{color:#e08a7a;}" +
+      ".tfs-filters{display:none;flex-basis:100%;margin-top:7px;padding-top:8px;border-top:1px solid #262a33;}" +
       ".tfs-filters.open{display:block;}" +
-      ".tfs-frow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:3px 0;}" +
-      ".tfs-frow .lbl{color:#888;margin-right:2px;min-width:62px;}" +
-      ".tfs-chip{background:#2a3fff;color:#fff;border:1px solid #2a3fff;border-radius:10px;padding:1px 8px;cursor:pointer;font-size:11px;}" +
-      ".tfs-chip.off{background:#222;color:#777;border-color:#444;}" +
-      ".tfs-ftog{background:#2a2a2a;color:#bbb;border:1px solid #444;border-radius:3px;padding:2px 8px;cursor:pointer;}" +
-      ".tfs-ftog.on{background:#2a3fff;color:#fff;border-color:#2a3fff;}" +
+      ".tfs-frow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:5px 0;}" +
+      ".tfs-frow .lbl{color:#7a818c;margin-right:2px;min-width:60px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;}" +
+      ".tfs-chip{background:#3b6dff;color:#fff;border:0;border-radius:11px;padding:2px 11px;cursor:pointer;font-size:11px;}" +
+      ".tfs-chip.off{background:#20242c;color:#6f7681;}" +
+      ".tfs-ftog{background:#20242c;color:#aeb4bd;border:1px solid #2e333d;border-radius:6px;padding:3px 10px;cursor:pointer;}" +
+      ".tfs-ftog.on{background:#3b6dff;color:#fff;border-color:#3b6dff;}" +
+      ".tfs-panel{margin:5px 0 10px;font-size:12px;max-width:540px;}" +
+      ".tfs-head{display:flex;align-items:center;padding:2px 6px 3px;}" +
+      ".tfs-age{margin-left:auto;font-size:10px;color:#6f7681;background:#20242c;padding:1px 7px;border-radius:8px;white-space:nowrap;}" +
+      ".tfs-age.stale{opacity:.5;}" +
+      ".tfs-row,.tfs-tr{display:grid;grid-template-columns:minmax(0,1fr) 50px 96px;gap:8px;align-items:baseline;padding:2px 6px;border-radius:4px;}" +
+      ".tfs-row.mp,.tfs-tr.mp{grid-template-columns:minmax(0,1fr) 46px 92px 112px;}" +
+      ".tfs-row.out,.tfs-tr.out{grid-template-columns:minmax(0,1fr) auto;opacity:.72;}" +
+      ".tfs-row:hover,.tfs-tr:hover{background:#20242c;}" +
+      ".tfs-name,.tfs-tn{min-width:0;color:#cfd4dc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" +
+      ".tfs-qty,.tfs-tq{color:#7a818c;text-align:right;font-variant-numeric:tabular-nums;}" +
+      ".tfs-cost,.tfs-tcost{color:#aeb4bd;text-align:right;font-variant-numeric:tabular-nums;}" +
+      ".tfs-profit,.tfs-tp{text-align:right;font-variant-numeric:tabular-nums;}" +
+      ".tfs-profit.pos,.tfs-tp.pos{color:#51c97a;}.tfs-profit.neg,.tfs-tp.neg{color:#b06a5a;}" +
+      ".tfs-oos,.tfs-toos{text-align:right;color:#d8a463;font-style:italic;white-space:nowrap;}" +
       "#tfs-desktop{margin:8px 0;}" +
-      ".tfs-thost{background:#1a1a1a;border:1px solid #333;border-radius:4px;margin-top:6px;font-size:12px;color:#ccc;}" +
-      ".tfs-thead{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:#222;border-bottom:1px solid #333;}" +
-      ".tfs-ttitle{font-weight:700;color:#e8c44a;}" +
-      ".tfs-tcollapse{background:none;border:0;color:#bbb;cursor:pointer;font-size:14px;}" +
-      ".tfs-tbody{padding:6px 10px;max-height:62vh;overflow-y:auto;}" +
-      ".tfs-tc{break-inside:avoid;margin-bottom:8px;}" +
-      ".tfs-tch{font-weight:700;color:#ddd;border-bottom:1px solid #333;padding-bottom:2px;margin-bottom:2px;}" +
-      ".tfs-tr{display:flex;gap:8px;padding:1px 0;align-items:baseline;}" +
-      ".tfs-tr.out{opacity:.6;}" +
-      ".tfs-tn{flex:1;min-width:0;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" +
-      ".tfs-tq{color:#888;}.tfs-tcost{color:#bbb;min-width:56px;text-align:right;}" +
-      ".tfs-tp{min-width:74px;text-align:right;}.tfs-tp.pos{color:#5ad15a;}.tfs-tp.neg{color:#777;}" +
-      ".tfs-toos{color:#d6a86a;font-style:italic;margin-left:auto;}" +
-      ".tfs-tempty{color:#888;}";
+      ".tfs-thost{background:#16181d;border:1px solid #262a33;border-radius:7px;box-shadow:0 1px 4px rgba(0,0,0,.4);overflow:hidden;font-size:12px;color:#cfd4dc;}" +
+      ".tfs-thead{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#1c1f26;border-bottom:1px solid #262a33;}" +
+      ".tfs-ttitle{font-weight:700;color:#e8c44a;letter-spacing:.3px;}" +
+      ".tfs-tcollapse{background:none;border:0;color:#8a909a;cursor:pointer;font-size:13px;line-height:1;}" +
+      ".tfs-tbody{padding:6px 12px 10px;max-height:64vh;overflow-y:auto;}" +
+      ".tfs-tbody::-webkit-scrollbar{width:9px;}.tfs-tbody::-webkit-scrollbar-thumb{background:#2e333d;border-radius:5px;}" +
+      ".tfs-tc{margin:0 0 12px;max-width:540px;}" +
+      ".tfs-tch{display:flex;align-items:center;gap:7px;font-weight:600;color:#e6e9ee;padding:5px 6px 4px;border-bottom:1px solid #262a33;margin-bottom:3px;position:sticky;top:-1px;background:#16181d;}" +
+      ".tfs-flag{font-size:14px;}" +
+      ".tfs-tempty{color:#7a818c;padding:6px 6px;}";
     document.head.appendChild(s);
   }
 
   var TFS_CATS = ["Plushie", "Flower", "Drug", "Temporary", "Weapon", "Armor", "Other"];
   var TFS_COUNTRIES = [["mex", "Mexico"], ["cay", "Cayman"], ["can", "Canada"], ["haw", "Hawaii"], ["uni", "UK"], ["arg", "Argentina"], ["swi", "Switz"], ["jap", "Japan"], ["chi", "China"], ["uae", "UAE"], ["sou", "S.Africa"]];
+  var TFS_FLAGS = { mex: "🇲🇽", cay: "🇰🇾", can: "🇨🇦", haw: "🌺", uni: "🇬🇧", arg: "🇦🇷", swi: "🇨🇭", jap: "🇯🇵", chi: "🇨🇳", uae: "🇦🇪", sou: "🇿🇦" };
+  function tfsFlag(code) { return TFS_FLAGS[code] || "🏳"; }
 
   function buildFilterPanel(onChange) {
     var f = getFilters();
@@ -365,14 +369,14 @@
       rows = rows.filter(function (r) { return rowVisible(r, mode, filters); });
       if (!rows.length) continue;
       var age = formatAge(country.update, Math.floor(nowMs / 1000));
-      html += '<div class="tfs-tc"><div class="tfs-tch">' + cname + ' <span class="tfs-age' + (age.stale ? " stale" : "") + '">updated ' + age.text + '</span></div>';
+      html += '<div class="tfs-tc"><div class="tfs-tch"><span class="tfs-flag">' + tfsFlag(code) + '</span><span class="tfs-cn">' + cname + '</span><span class="tfs-age' + (age.stale ? " stale" : "") + '">updated ' + age.text + '</span></div>';
       for (var i = 0; i < rows.length; i++) {
         var r = rows[i];
         if (r.qty === 0) {
           var entry = (model && model[code]) ? model[code][String(r.id)] : null;
           html += '<div class="tfs-tr out"><span class="tfs-tn">' + escapeHtml(r.name) + '</span><span class="tfs-toos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
         } else {
-          html += '<div class="tfs-tr"><span class="tfs-tn">' + escapeHtml(r.name) + '</span><span class="tfs-tq">×' + r.qty + '</span><span class="tfs-tcost">' + fmtMoney(r.cost) + '</span>' +
+          html += '<div class="tfs-tr' + (mode === "profit" ? " mp" : "") + '"><span class="tfs-tn">' + escapeHtml(r.name) + '</span><span class="tfs-tq">×' + r.qty + '</span><span class="tfs-tcost">' + fmtMoney(r.cost) + '</span>' +
             (mode === "profit" ? '<span class="tfs-tp ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
         }
       }
@@ -458,7 +462,7 @@
         html += '<div class="tfs-row out"><span class="tfs-name">' + escapeHtml(r.name) + '</span>' +
           '<span class="tfs-oos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
       } else {
-        html += '<div class="tfs-row"><span class="tfs-name">' + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
+        html += '<div class="tfs-row' + (mode === "profit" ? " mp" : "") + '"><span class="tfs-name">' + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
           (mode === "profit" ? '<span class="tfs-profit ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
       }
     }
