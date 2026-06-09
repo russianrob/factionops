@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.6.0
+// @version      0.6.1
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.6.0";
+  var SCRIPT_VERSION = "0.6.1";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -227,11 +227,14 @@
     s.textContent =
       ".tfs-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;margin:8px 0;background:#16181d;border:1px solid #262a33;border-radius:7px;box-shadow:0 1px 3px rgba(0,0,0,.35);font-size:12px;color:#cfd4dc;}" +
       ".tfs-bar .tfs-title{font-weight:700;color:#e8c44a;letter-spacing:.3px;margin-right:4px;}" +
-      ".tfs-toggle{background:#20242c;color:#aeb4bd;border:1px solid #2e333d;border-radius:6px;padding:3px 13px;cursor:pointer;transition:background .12s;}" +
-      ".tfs-toggle:hover{background:#262b34;}" +
-      ".tfs-toggle.on{background:#3b6dff;color:#fff;border-color:#3b6dff;box-shadow:0 1px 4px rgba(59,109,255,.4);}" +
-      ".tfs-refresh,.tfs-save,.tfs-filterbtn{background:#20242c;color:#aeb4bd;border:1px solid #2e333d;border-radius:6px;padding:3px 9px;cursor:pointer;}" +
-      ".tfs-refresh:hover,.tfs-save:hover,.tfs-filterbtn:hover{background:#262b34;color:#e6e9ee;}" +
+      ".tfs-seg{display:inline-flex;border:1px solid #2e333d;border-radius:7px;overflow:hidden;background:#14161b;}" +
+      ".tfs-toggle{background:transparent;color:#8a909a;border:0;border-radius:0;padding:4px 16px;cursor:pointer;font-weight:600;transition:background .12s,color .12s;}" +
+      ".tfs-toggle:hover{background:#20242c;color:#cfd4dc;}" +
+      ".tfs-toggle.on{background:#3b6dff;color:#fff;}" +
+      ".tfs-toggle+.tfs-toggle{border-left:1px solid #2e333d;}" +
+      ".tfs-refresh,.tfs-save,.tfs-filterbtn{background:#20242c;color:#aeb4bd;border:1px solid #2e333d;border-radius:7px;padding:4px 10px;cursor:pointer;transition:background .12s,color .12s;}" +
+      ".tfs-refresh{padding:4px 9px;font-size:13px;}" +
+      ".tfs-refresh:hover,.tfs-save:hover,.tfs-filterbtn:hover{background:#262b34;color:#e6e9ee;border-color:#3a4150;}" +
       ".tfs-key{background:#0e0f12;border:1px solid #2e333d;color:#dde2e8;border-radius:6px;padding:3px 8px;width:150px;}" +
       ".tfs-msg{color:#e08a7a;}" +
       ".tfs-filters{display:none;flex-basis:100%;margin-top:7px;padding-top:8px;border-top:1px solid #262a33;}" +
@@ -259,7 +262,8 @@
       "#tfs-desktop{margin:8px 0;}" +
       ".tfs-thost{background:#16181d;border:1px solid #262a33;border-radius:7px;box-shadow:0 1px 4px rgba(0,0,0,.4);overflow:hidden;font-size:12px;color:#cfd4dc;}" +
       ".tfs-thead{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#1c1f26;border-bottom:1px solid #262a33;}" +
-      ".tfs-ttitle{font-weight:700;color:#e8c44a;letter-spacing:.3px;}" +
+      ".tfs-ttitle{font-weight:600;color:#8a909a;font-size:11px;text-transform:uppercase;letter-spacing:.6px;}" +
+      ".tfs-bar .tfs-ico{font-size:13px;}" +
       ".tfs-tcollapse{background:none;border:0;color:#8a909a;cursor:pointer;font-size:13px;line-height:1;}" +
       ".tfs-tbody{padding:6px 12px 10px;max-height:64vh;overflow-y:auto;}" +
       ".tfs-tbody::-webkit-scrollbar{width:9px;}.tfs-tbody::-webkit-scrollbar-thumb{background:#2e333d;border-radius:5px;}" +
@@ -345,7 +349,7 @@
     panel = document.createElement("div");
     panel.id = "tfs-table-host";
     panel.className = "tfs-thost";
-    panel.innerHTML = '<div class="tfs-thead"><span class="tfs-ttitle">Foreign Stocks</span><button class="tfs-tcollapse">▾</button></div><div class="tfs-tbody"></div>';
+    panel.innerHTML = '<div class="tfs-thead"><span class="tfs-ttitle">Stock by country</span><button class="tfs-tcollapse" title="Collapse">▾</button></div><div class="tfs-tbody"></div>';
     panel.querySelector(".tfs-tcollapse").addEventListener("click", function () {
       var b = panel.querySelector(".tfs-tbody"), btn = panel.querySelector(".tfs-tcollapse");
       var show = (b.style.display === "none");
@@ -391,9 +395,8 @@
     bar.id = "tfs-bar"; bar.className = "tfs-bar";
     var mode = getMode();
     bar.innerHTML =
-      '<span class="tfs-title">Foreign Stock</span>' +
-      '<button class="tfs-toggle" data-mode="stock">Stock</button>' +
-      '<button class="tfs-toggle" data-mode="profit">Profit</button>' +
+      '<span class="tfs-title"><span class="tfs-ico">✈</span> Foreign Stocks</span>' +
+      '<span class="tfs-seg"><button class="tfs-toggle" data-mode="stock">Stock</button><button class="tfs-toggle" data-mode="profit">Profit</button></span>' +
       '<button class="tfs-refresh" title="Refresh stock">↻</button>' +
       '<button class="tfs-filterbtn">Filters ▾</button>' +
       '<span class="tfs-keywrap" style="display:' + (mode === "profit" ? "inline-flex" : "none") + '">' +
