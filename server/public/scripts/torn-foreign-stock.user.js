@@ -88,6 +88,56 @@
   }
 
   // ─── GM / data layer ─────────────────────────────────────
+  var _fetchJson = function (url) {
+    return new Promise(function (resolve, reject) {
+      GM_xmlhttpRequest({
+        method: "GET", url: url, timeout: 15000,
+        onload: function (r) { try { resolve(JSON.parse(r.responseText)); } catch (e) { reject(e); } },
+        onerror: function () { reject(new Error("network")); },
+        ontimeout: function () { reject(new Error("timeout")); }
+      });
+    });
+  };
+  var _nowSec = function () { return Math.floor(Date.now() / 1000); };
+  function gmGet(key, def) {
+    try {
+      var g = (typeof GM_getValue === "function") ? GM_getValue : (typeof globalThis !== "undefined" ? globalThis.GM_getValue : null);
+      var v = g ? g(key, null) : null;
+      return v == null ? def : JSON.parse(v);
+    } catch (e) { return def; }
+  }
+  function gmSet(key, val) {
+    try {
+      var s = (typeof GM_setValue === "function") ? GM_setValue : (typeof globalThis !== "undefined" ? globalThis.GM_setValue : null);
+      if (s) s(key, JSON.stringify(val));
+    } catch (e) {}
+  }
+  function getStock(force) {
+    var cached = gmGet("tfs_stock", null);
+    if (!force && cached && (_nowSec() - cached.t) < STOCK_TTL) return Promise.resolve(cached.data);
+    return _fetchJson(YATA_URL).then(function (json) {
+      var data = parseYataExport(json);
+      gmSet("tfs_stock", { t: _nowSec(), data: data });
+      return data;
+    }).catch(function () { return cached ? cached.data : null; });
+  }
+  function getPrices(key) {
+    if (!key) return Promise.resolve({});
+    var cached = gmGet("tfs_prices", null);
+    if (cached && cached.key === key && (_nowSec() - cached.t) < PRICE_TTL) return Promise.resolve(cached.map);
+    return _fetchJson(TORN_ITEMS_URL + encodeURIComponent(key)).then(function (json) {
+      if (json && json.error) throw new Error((json.error && json.error.error) || "API error");
+      var items = (json && json.items) || {};
+      var list = Array.isArray(items) ? items : Object.keys(items).map(function (k) { var o = items[k] || {}; if (o.id == null) o.id = Number(k); return o; });
+      var map = {};
+      list.forEach(function (it) {
+        var v = (it.value && it.value.market_price != null) ? it.value.market_price : (it.market_value != null ? it.market_value : it.marketValue);
+        if (v != null) map[it.id] = v;
+      });
+      gmSet("tfs_prices", { t: _nowSec(), key: key, map: map });
+      return map;
+    });
+  }
 
   // ─── DOM: settings, injector, observer ───────────────────
 
@@ -102,5 +152,9 @@
       parseYataExport: parseYataExport, fmtMoney: fmtMoney, fmtProfit: fmtProfit, formatAge: formatAge,
       buildRows: buildRows, sortRows: sortRows
     };
+    module.exports.getStock = getStock;
+    module.exports.getPrices = getPrices;
+    module.exports.__setFetch = function (fn) { _fetchJson = fn; };
+    module.exports.__setClock = function (fn) { _nowSec = fn; };
   }
 })();

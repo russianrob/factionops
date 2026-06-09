@@ -88,3 +88,47 @@ test("sortRows profit: profit desc, nulls last", () => {
   const rows = mod.sortRows(mod.buildRows(ITEMS, { mode: "profit", getValue: function (id) { return prices[id]; } }), "profit");
   assert.deepStrictEqual(rows.map(function (r) { return r.id; }), [1, 2, 3]);
 });
+
+test("getStock caches within TTL and refreshes after", async () => {
+  const store = {};
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  let clock = 1000, calls = 0;
+  mod.__setClock(() => clock);
+  mod.__setFetch(async () => { calls++; return { stocks: { mex: { update: 1, stocks: [{ id: 1, name: "X", quantity: 2, cost: 3 }] } } }; });
+
+  const a = await mod.getStock();
+  assert.strictEqual(a.mex.items[0].id, 1);
+  assert.strictEqual(calls, 1);
+  await mod.getStock();
+  assert.strictEqual(calls, 1);
+  clock += 301;
+  await mod.getStock();
+  assert.strictEqual(calls, 2);
+});
+
+test("getStock serves stale cache on fetch failure", async () => {
+  const store = {};
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  let clock = 1000;
+  mod.__setClock(() => clock);
+  mod.__setFetch(async () => ({ stocks: { mex: { update: 1, stocks: [] } } }));
+  await mod.getStock();
+  clock += 999999;
+  mod.__setFetch(async () => { throw new Error("down"); });
+  const out = await mod.getStock();
+  assert.ok(out.mex);
+});
+
+test("getPrices maps v2 value.market_price and throws on api error", async () => {
+  const store = {};
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  mod.__setClock(() => 1000);
+  mod.__setFetch(async () => ({ items: { "1": { id: 1, value: { market_price: 9200 } }, "2": { id: 2, value: { market_price: 850 } } } }));
+  const map = await mod.getPrices("KEY");
+  assert.strictEqual(map[1], 9200);
+  mod.__setFetch(async () => ({ error: { error: "Incorrect key" } }));
+  await assert.rejects(() => mod.getPrices("BADKEY"));
+});
