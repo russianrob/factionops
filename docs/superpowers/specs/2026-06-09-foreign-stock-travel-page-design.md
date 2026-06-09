@@ -195,3 +195,19 @@ touches tornwar.** The injector is then built against the real DOM.
 - Torn `value.market_price` is a catalogue figure, not live item-market lowest;
   acceptable for a profit *estimate* (matches how Torn shows item value). The v2
   field name is confirmed during implementation with the fallback chain as a guard.
+
+---
+
+## Addendum (2026-06-09): Restock ETA via Prombot
+
+**Approved increment.** Show a restock countdown for out-of-stock (qty 0) items.
+
+**Data source.** YATA has no restock data (confirmed: only id/name/quantity/cost). **Prombot** `https://api.prombot.co.uk/api/travel` returns the *same JSON shape as YATA plus a `nextRestock` field per item** (ISO timestamp; `null` when in stock), full 11-country coverage, live (0–2 min). It's the source TornPDA's stock timers use. → **Switch the data source to Prombot, with YATA as an automatic fallback** (if Prombot is unreachable, stock still shows, ETAs absent). Add `@connect api.prombot.co.uk`. The existing parser handles both (YATA items get `nextRestock: null`).
+
+**Gotcha — lapsed predictions.** Many `nextRestock` values are already in the past (~42 of 69 out-of-stock items in one sample). Only render a countdown when `nextRestock` is in the **future**; past/null → just "out of stock".
+
+**Display.** Out-of-stock rows render dimmed: "*Item* — out of stock" + (future only) "restocks in 9m" / "1h 24m". In-stock rows unchanged. **Ordering:** in-stock first (price/profit desc as before); out-of-stock grouped below, sorted by soonest future restock (no/past-ETA items last). A 30 s re-render ticks the countdown down.
+
+**New pure logic (unit-tested):** `restockEta(nextRestock, nowMs)` → `{mins, text}` | `null` (null for missing/past); `buildRows` passes `nextRestock` through; `sortRows(rows, mode, nowMs)` groups in-stock first then out-of-stock by `restockEta` ascending.
+
+**Version:** bump 0.1.0 → 0.2.0 on completion.
