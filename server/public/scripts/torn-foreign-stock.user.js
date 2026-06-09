@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.2.1
+// @version      0.2.2
 // @description  Shows abroad item stock (and optional profit) inline on the Torn travel page
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -19,11 +19,11 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.2.1";
+  var SCRIPT_VERSION = "0.2.2";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
-  var STOCK_TTL = 300, PRICE_TTL = 21600, STALE_MIN = 30;
+  var STOCK_TTL = 60, PRICE_TTL = 21600, STALE_MIN = 30;
 
   // ─── pure helpers (unit-tested) ──────────────────────────
   var COUNTRY_MAP = {
@@ -82,10 +82,13 @@
   function restockEta(nextRestock, nowMs) {
     if (!nextRestock) return null;
     var t = Date.parse(nextRestock);
-    if (isNaN(t) || t <= nowMs) return null;
-    var mins = Math.ceil((t - nowMs) / 60000);
-    var text = (mins < 60) ? (mins + "m") : (Math.floor(mins / 60) + "h " + (mins % 60) + "m");
-    return { mins: mins, text: text };
+    if (isNaN(t)) return null;
+    if (t > nowMs) {
+      var mins = Math.ceil((t - nowMs) / 60000);
+      return { mins: mins, text: (mins < 60) ? (mins + "m") : (Math.floor(mins / 60) + "h " + (mins % 60) + "m"), due: false };
+    }
+    if ((nowMs - t) <= 3600000) return { mins: 0, text: "due", due: true };
+    return null;
   }
   function sortRows(rows, mode, nowMs) {
     if (nowMs == null) nowMs = Date.now();
@@ -102,7 +105,7 @@
         return String(a.name).localeCompare(String(b.name));
       }
       var ea = restockEta(a.nextRestock, nowMs), eb = restockEta(b.nextRestock, nowMs);
-      var ma = ea ? ea.mins : Infinity, mb = eb ? eb.mins : Infinity;
+      var ma = ea ? (ea.due ? 1e9 : ea.mins) : Infinity, mb = eb ? (eb.due ? 1e9 : eb.mins) : Infinity;
       if (ma !== mb) return ma - mb;
       return String(a.name).localeCompare(String(b.name));
     });
@@ -259,7 +262,7 @@
       if (r.qty === 0) {
         var eta = restockEta(r.nextRestock, nowMs);
         html += '<div class="tfs-row out"><span class="tfs-name">' + escapeHtml(r.name) + '</span>' +
-          '<span class="tfs-oos">' + (eta ? "restocks in " + eta.text : "out of stock") + '</span></div>';
+          '<span class="tfs-oos">' + (eta ? (eta.due ? "restock due" : ("restocks in " + eta.text)) : "out of stock") + '</span></div>';
       } else {
         html += '<div class="tfs-row"><span class="tfs-name">' + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
           (mode === "profit" ? '<span class="tfs-profit ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';

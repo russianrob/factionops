@@ -142,13 +142,29 @@ test("parseYataExport keeps nextRestock (prombot) and defaults null (yata)", () 
   assert.strictEqual(mod.parseYataExport(yata).mex.items[0].nextRestock, null);
 });
 
-test("restockEta: null for missing/past/invalid, text for future", () => {
+test("restockEta: null for missing/invalid/long-past, due for recent past, text for future", () => {
   const now = Date.parse("2026-06-09T16:00:00.000Z");
   assert.strictEqual(mod.restockEta(null, now), null);
-  assert.strictEqual(mod.restockEta("2026-06-09T15:00:00.000Z", now), null); // past
   assert.strictEqual(mod.restockEta("not-a-date", now), null);
-  assert.strictEqual(mod.restockEta("2026-06-09T16:09:00.000Z", now).text, "9m");
+  assert.strictEqual(mod.restockEta("2026-06-09T14:00:00.000Z", now), null); // 2h past -> null
+  const due = mod.restockEta("2026-06-09T15:30:00.000Z", now); // 30m past -> due
+  assert.strictEqual(due.due, true);
+  assert.strictEqual(due.text, "due");
+  const f = mod.restockEta("2026-06-09T16:09:00.000Z", now);
+  assert.strictEqual(f.text, "9m");
+  assert.strictEqual(f.due, false);
   assert.strictEqual(mod.restockEta("2026-06-09T17:24:00.000Z", now).text, "1h 24m");
+});
+
+test("sortRows out-of-stock: future soonest, then due, then none", () => {
+  const now = Date.parse("2026-06-09T16:00:00.000Z");
+  const rows = [
+    { id: 4, name: "Soon", qty: 0, cost: 1, profit: null, nextRestock: "2026-06-09T16:10:00.000Z" },
+    { id: 5, name: "None", qty: 0, cost: 1, profit: null, nextRestock: null },
+    { id: 6, name: "Due", qty: 0, cost: 1, profit: null, nextRestock: "2026-06-09T15:40:00.000Z" }
+  ];
+  const ids = mod.sortRows(rows, "stock", now).map(function (r) { return r.id; });
+  assert.deepStrictEqual(ids, [4, 6, 5]); // future, due, none
 });
 
 test("getStock uses Prombot, falls back to YATA on Prombot failure", async () => {
