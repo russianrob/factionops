@@ -29,3 +29,31 @@ test("normalizeCountryName returns null for unknown", () => {
   assert.strictEqual(mod.normalizeCountryName(""), null);
   assert.strictEqual(mod.normalizeCountryName(null), null);
 });
+
+test("parseYataExport normalizes countries + items", () => {
+  const json = { stocks: { mex: { update: 1000, stocks: [ { id: 99, name: "Springfield 1911", quantity: 49, cost: 430 } ] } } };
+  const out = mod.parseYataExport(json);
+  assert.deepStrictEqual(out.mex.items[0], { id: 99, name: "Springfield 1911", qty: 49, cost: 430 });
+  assert.strictEqual(out.mex.update, 1000);
+});
+
+test("parseYataExport tolerates missing fields", () => {
+  assert.deepStrictEqual(mod.parseYataExport({}), {});
+  assert.deepStrictEqual(mod.parseYataExport(null), {});
+});
+
+test("fmtMoney and fmtProfit", () => {
+  assert.strictEqual(mod.fmtMoney(1071816), "$1,071,816");
+  assert.strictEqual(mod.fmtMoney(null), "—");
+  assert.strictEqual(mod.fmtProfit(8370), "+$8,370");
+  assert.strictEqual(mod.fmtProfit(-500), "-$500");
+  assert.strictEqual(mod.fmtProfit(null), "—");
+});
+
+test("formatAge text + staleness", () => {
+  assert.strictEqual(mod.formatAge(1000, 1030).text, "just now");
+  assert.strictEqual(mod.formatAge(1000, 1000 + 120).text, "2m ago");
+  assert.strictEqual(mod.formatAge(1000, 1000 + 120).stale, false);
+  assert.strictEqual(mod.formatAge(1000, 1000 + 31 * 60).stale, true);
+  assert.strictEqual(mod.formatAge(1000, 1000 + 90 * 60).text, "1h 30m ago");
+});

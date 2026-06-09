@@ -35,6 +35,34 @@
     var k = String(name).trim().toLowerCase().replace(/\s+/g, " ");
     return COUNTRY_MAP[k] || null;
   }
+  function parseYataExport(json) {
+    var out = {}, stocks = (json && json.stocks) || {};
+    for (var code in stocks) {
+      if (!Object.prototype.hasOwnProperty.call(stocks, code)) continue;
+      var c = stocks[code] || {};
+      var items = (c.stocks || []).map(function (it) {
+        return { id: it.id, name: it.name, qty: it.quantity, cost: it.cost };
+      });
+      out[code] = { update: c.update || 0, items: items };
+    }
+    return out;
+  }
+  function fmtMoney(n) {
+    if (n == null || isNaN(n)) return "—";
+    return "$" + Math.round(n).toLocaleString("en-US");
+  }
+  function fmtProfit(n) {
+    if (n == null || isNaN(n)) return "—";
+    return (n < 0 ? "-$" : "+$") + Math.round(Math.abs(n)).toLocaleString("en-US");
+  }
+  function formatAge(updateSec, nowSecVal) {
+    var diff = Math.max(0, Math.floor(nowSecVal - updateSec));
+    var mins = Math.floor(diff / 60), text;
+    if (diff < 60) text = "just now";
+    else if (mins < 60) text = mins + "m ago";
+    else text = Math.floor(mins / 60) + "h " + (mins % 60) + "m ago";
+    return { text: text, stale: mins >= STALE_MIN };
+  }
 
   // ─── GM / data layer ─────────────────────────────────────
 
@@ -46,6 +74,9 @@
     main();
   }
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { normalizeCountryName: normalizeCountryName, COUNTRY_MAP: COUNTRY_MAP };
+    module.exports = {
+      normalizeCountryName: normalizeCountryName, COUNTRY_MAP: COUNTRY_MAP,
+      parseYataExport: parseYataExport, fmtMoney: fmtMoney, fmtProfit: fmtProfit, formatAge: formatAge
+    };
   }
 })();
