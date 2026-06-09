@@ -7,7 +7,7 @@
 ## Summary
 
 A new standalone Torn userscript that displays current foreign (abroad) item
-stock on the Torn travel agency page (`travelagency.php`), inline under each
+stock on the Torn travel agency page (`page.php?sid=travel`), inline under each
 destination — like TornTools' foreign-stock feature — so the user doesn't have
 to leave Torn for TornPDA's separate stock tab.
 
@@ -161,7 +161,7 @@ travel page load
 
 ## DOM Discovery (dev-only first step, NOT part of the shipped script)
 
-The `travelagency.php` DOM as rendered inside the **TornPDA WebView** is not yet
+The `page.php?sid=travel` DOM as rendered inside the **TornPDA WebView** is not yet
 captured. Implementation step 1 is a **throwaway diagnostic userscript** (same
 approach as the armoury diag) that captures each destination row's structure (the
 anchor element, how the destination name is exposed) on the user's device. The
@@ -176,7 +176,7 @@ touches tornwar.** The injector is then built against the real DOM.
 - Plain semver; `@version` kept in sync with an in-file `SCRIPT_VERSION`.
 - No descriptive code comments, no changelog block, no `@copyright` in source.
 - Distributed via Greasy Fork; `@downloadURL`/`@updateURL` point there.
-- `@match https://www.torn.com/travelagency.php*`; `@connect yata.yt`,
+- `@match https://www.torn.com/page.php?sid=travel*`; `@connect yata.yt`,
   `api.torn.com`; `@grant GM_xmlhttpRequest`, `GM_getValue`, `GM_setValue`,
   `GM_registerMenuCommand`.
 
@@ -190,7 +190,7 @@ touches tornwar.** The injector is then built against the real DOM.
 
 ## Open Risks
 
-- TornPDA WebView `travelagency.php` DOM is unverified → mitigated by the diag step.
+- TornPDA WebView `page.php?sid=travel` DOM is unverified → mitigated by the diag step.
 - YATA freshness varies by country (crowd-sourced) → surfaced via the age stamp.
 - Torn `value.market_price` is a catalogue figure, not live item-market lowest;
   acceptable for a profit *estimate* (matches how Torn shows item value). The v2

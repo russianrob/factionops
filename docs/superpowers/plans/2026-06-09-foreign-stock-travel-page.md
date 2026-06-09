@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship `torn-foreign-stock.user.js` — a standalone userscript that shows YATA foreign stock inline on Torn's `travelagency.php`, with a keyless stock view and an optional-API-key profit view.
+**Goal:** Ship `torn-foreign-stock.user.js` — a standalone userscript that shows YATA foreign stock inline on Torn's `page.php?sid=travel`, with a keyless stock view and an optional-API-key profit view.
 
-**Architecture:** One IIFE userscript. Pure logic (country mapping, YATA parsing, money/age formatting, row building, sorting) is defined as plain functions and exposed via a guarded `module.exports` so it can be unit-tested under `node --test` without a browser. Browser-only concerns (GM storage, `GM_xmlhttpRequest` fetches, DOM injection, MutationObserver) run only when a `window`/`travelagency.php` context is present. A throwaway diagnostic script captures the real `travelagency.php` DOM (unverified in the TornPDA WebView) before the injector is built.
+**Architecture:** One IIFE userscript. Pure logic (country mapping, YATA parsing, money/age formatting, row building, sorting) is defined as plain functions and exposed via a guarded `module.exports` so it can be unit-tested under `node --test` without a browser. Browser-only concerns (GM storage, `GM_xmlhttpRequest` fetches, DOM injection, MutationObserver) run only when a `window`/`page.php?sid=travel` context is present. A throwaway diagnostic script captures the real `page.php?sid=travel` DOM (unverified in the TornPDA WebView) before the injector is built.
 
 **Tech Stack:** Vanilla ES5-compatible JS (Tampermonkey + TornPDA WebView), `GM_xmlhttpRequest`/`GM_getValue`/`GM_setValue`, YATA travel export API, Torn API v2 `torn?selections=items`. Tests: node's built-in `node:test` + `node:assert`.
 
@@ -27,7 +27,7 @@ The shipped script is a single file by necessity (userscripts ship as one file).
 
 ## Task 1: DOM-discovery diagnostic
 
-Captures the `travelagency.php` destination-row DOM on the user's device (TornPDA + desktop) so the injector (Task 8) anchors to real elements. Cannot be unit-tested — it is a capture step whose output is read from the server log.
+Captures the `page.php?sid=travel` destination-row DOM on the user's device (TornPDA + desktop) so the injector (Task 8) anchors to real elements. Cannot be unit-tested — it is a capture step whose output is read from the server log.
 
 **Files:**
 - Create: `server/public/scripts/foreign-stock-diag.user.js`
@@ -39,9 +39,9 @@ Captures the `travelagency.php` destination-row DOM on the user's device (TornPD
 // @name         Foreign Stock Diag
 // @namespace    RussianRob
 // @version      1.0.0
-// @description  Temporary diagnostic — reports the travelagency.php destination DOM so Foreign Stock can anchor its panels. Safe to remove after.
+// @description  Temporary diagnostic — reports the page.php?sid=travel destination DOM so Foreign Stock can anchor its panels. Safe to remove after.
 // @author       RussianRob
-// @match        https://www.torn.com/travelagency.php*
+// @match        https://www.torn.com/page.php?sid=travel*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
 // @connect      tornwar.com
@@ -109,7 +109,7 @@ Expected: `200`
 
 - [ ] **Step 4: User installs + loads the travel page**
 
-Ask the user to install `https://tornwar.com/scripts/foreign-stock-diag.user.js`, open `travelagency.php` on their device, and let it sit a few seconds. Then read the capture:
+Ask the user to install `https://tornwar.com/scripts/foreign-stock-diag.user.js`, open `page.php?sid=travel` on their device, and let it sit a few seconds. Then read the capture:
 
 Run: `grep "foreign-stock-diag" /var/log/warboard/warboard-out.log | tail -14`
 Expected: JSON rows showing each destination element's tag/class/chain/outerHTML.
@@ -122,7 +122,7 @@ Append a short note to the spec's "DOM Discovery" section (or a comment in this 
 
 ```bash
 cd /opt/warboard && git add server/public/scripts/foreign-stock-diag.user.js
-git commit -m "foreign-stock-diag 1.0.0: capture travelagency.php destination DOM
+git commit -m "foreign-stock-diag 1.0.0: capture page.php?sid=travel destination DOM
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -148,7 +148,7 @@ Creates the shipped file with its metadata block, the init guard, and the test-e
 // @description  Shows abroad item stock (and optional profit) inline on the Torn travel agency page
 // @author       RussianRob
 // @license      GPL-3.0-or-later
-// @match        https://www.torn.com/travelagency.php*
+// @match        https://www.torn.com/page.php?sid=travel*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -193,7 +193,7 @@ Creates the shipped file with its metadata block, the init guard, and the test-e
 // @description  Shows abroad item stock (and optional profit) inline on the Torn travel agency page
 // @author       RussianRob
 // @license      GPL-3.0-or-later
-// @match        https://www.torn.com/travelagency.php*
+// @match        https://www.torn.com/page.php?sid=travel*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -903,7 +903,7 @@ Expected: `// @version      0.1.0`
 
 - [ ] **Step 4: User installs + verifies on the live travel page**
 
-Ask the user to install `https://tornwar.com/scripts/torn-foreign-stock.user.js`, open `travelagency.php`, and confirm:
+Ask the user to install `https://tornwar.com/scripts/torn-foreign-stock.user.js`, open `page.php?sid=travel`, and confirm:
 - A "Foreign Stock" bar appears at the top with Stock/Profit toggles + Refresh.
 - Each destination shows a stock panel (`item ×qty $price`) with an "updated Xm ago" header.
 - Switching to Profit with a valid key adds `→ +$X ea` and re-sorts by profit; with no key it shows the "add a key" hint and stays on stock rows; with a bad key it shows "key error" and falls back.
