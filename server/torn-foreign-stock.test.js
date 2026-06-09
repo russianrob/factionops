@@ -232,3 +232,31 @@ test("restockDisplay merge priority", () => {
   assert.strictEqual(mod.restockDisplay("2026-06-09T15:40:00.000Z", null, now), "restock due");
   assert.strictEqual(mod.restockDisplay(null, null, now), "out of stock");
 });
+
+test("itemCategory maps known ids and defaults Other", () => {
+  assert.strictEqual(mod.itemCategory(26), "Weapon");
+  assert.strictEqual(mod.itemCategory(196), "Drug");
+  assert.strictEqual(mod.itemCategory(258), "Plushie");
+  assert.strictEqual(mod.itemCategory(260), "Flower");
+  assert.strictEqual(mod.itemCategory(50), "Armor");
+  assert.strictEqual(mod.itemCategory(99999), "Other");
+});
+
+test("rowVisible: out-of-stock, negative-profit, category filters", () => {
+  const base = { id: 26, qty: 5, profit: 100 };   // Weapon, in stock, +profit
+  assert.strictEqual(mod.rowVisible(base, "stock", { hideOos: false, hideNeg: false, excludedCats: [], hiddenCountries: [] }), true);
+  assert.strictEqual(mod.rowVisible({ id: 26, qty: 0, profit: null }, "stock", { hideOos: true, excludedCats: [] }), false);
+  assert.strictEqual(mod.rowVisible({ id: 26, qty: 0, profit: null }, "stock", { hideOos: false, excludedCats: [] }), true);
+  // hideNeg only applies in profit mode
+  assert.strictEqual(mod.rowVisible({ id: 26, qty: 5, profit: -50 }, "profit", { hideNeg: true, excludedCats: [] }), false);
+  assert.strictEqual(mod.rowVisible({ id: 26, qty: 5, profit: -50 }, "stock", { hideNeg: true, excludedCats: [] }), true);
+  // excluded category hides the row
+  assert.strictEqual(mod.rowVisible({ id: 26, qty: 5, profit: 1 }, "stock", { excludedCats: ["Weapon"] }), false);
+  assert.strictEqual(mod.rowVisible({ id: 196, qty: 5, profit: 1 }, "stock", { excludedCats: ["Weapon"] }), true);
+});
+
+test("countryVisible: hidden set", () => {
+  assert.strictEqual(mod.countryVisible("mex", { hiddenCountries: [] }), true);
+  assert.strictEqual(mod.countryVisible("mex", { hiddenCountries: ["mex"] }), false);
+  assert.strictEqual(mod.countryVisible("uae", { hiddenCountries: ["mex"] }), true);
+});

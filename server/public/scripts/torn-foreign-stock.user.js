@@ -132,6 +132,17 @@
     });
     return arr;
   }
+  var ITEM_CATEGORY = {4:"Weapon",8:"Weapon",11:"Weapon",20:"Weapon",21:"Weapon",26:"Weapon",31:"Weapon",50:"Armor",63:"Weapon",99:"Weapon",108:"Weapon",110:"Weapon",111:"Weapon",175:"Weapon",177:"Weapon",178:"Armor",196:"Drug",197:"Drug",198:"Drug",199:"Drug",200:"Drug",201:"Drug",203:"Drug",204:"Drug",205:"Drug",206:"Drug",217:"Weapon",218:"Weapon",219:"Weapon",220:"Weapon",221:"Weapon",222:"Weapon",223:"Weapon",224:"Weapon",225:"Weapon",226:"Weapon",227:"Weapon",228:"Weapon",229:"Weapon",230:"Weapon",231:"Weapon",232:"Weapon",233:"Weapon",234:"Weapon",235:"Weapon",236:"Weapon",237:"Weapon",238:"Weapon",239:"Weapon",240:"Weapon",241:"Weapon",242:"Weapon",243:"Weapon",244:"Weapon",245:"Weapon",246:"Weapon",247:"Weapon",248:"Weapon",249:"Weapon",250:"Weapon",251:"Weapon",252:"Weapon",253:"Weapon",255:"Weapon",256:"Weapon",257:"Weapon",258:"Plushie",260:"Flower",261:"Plushie",263:"Flower",264:"Flower",266:"Plushie",267:"Flower",268:"Plushie",269:"Plushie",271:"Flower",272:"Flower",273:"Plushie",274:"Plushie",276:"Flower",277:"Flower",281:"Plushie",282:"Flower",332:"Armor",333:"Armor",334:"Armor",382:"Weapon",384:"Plushie",385:"Flower",387:"Weapon",388:"Weapon",391:"Weapon",395:"Weapon",397:"Weapon",398:"Weapon",399:"Weapon",400:"Weapon",402:"Weapon",435:"Flower",438:"Weapon",439:"Weapon",440:"Weapon",612:"Weapon",613:"Weapon",614:"Weapon",615:"Weapon",616:"Weapon",617:"Flower",618:"Plushie",640:"Armor",641:"Armor",645:"Armor",651:"Armor",652:"Armor",653:"Armor",654:"Armor"};
+  function itemCategory(id) { return ITEM_CATEGORY[id] || "Other"; }
+  function rowVisible(row, mode, filters) {
+    if (filters.hideOos && row.qty === 0) return false;
+    if (mode === "profit" && filters.hideNeg && row.profit != null && row.profit < 0) return false;
+    if (filters.excludedCats && filters.excludedCats.indexOf(itemCategory(row.id)) !== -1) return false;
+    return true;
+  }
+  function countryVisible(code, filters) {
+    return !(filters.hiddenCountries && filters.hiddenCountries.indexOf(code) !== -1);
+  }
 
   // ─── GM / data layer ─────────────────────────────────────
   var _fetchJson = function (url) {
@@ -157,6 +168,14 @@
       var s = (typeof GM_setValue === "function") ? GM_setValue : (typeof globalThis !== "undefined" ? globalThis.GM_setValue : null);
       if (s) s(key, JSON.stringify(val));
     } catch (e) {}
+  }
+  function getFilters() {
+    return {
+      hideOos: gmGet("tfs_hide_oos", false),
+      hideNeg: gmGet("tfs_hide_negprofit", false),
+      excludedCats: gmGet("tfs_cats", []),
+      hiddenCountries: gmGet("tfs_hidden_countries", [])
+    };
   }
   function getStock(force) {
     var cached = gmGet("tfs_stock", null);
@@ -349,7 +368,8 @@
       normalizeCountryName: normalizeCountryName, COUNTRY_MAP: COUNTRY_MAP,
       parseYataExport: parseYataExport, fmtMoney: fmtMoney, fmtProfit: fmtProfit, formatAge: formatAge,
       buildRows: buildRows, sortRows: sortRows, restockEta: restockEta,
-      fmtDuration: fmtDuration, modelEstimate: modelEstimate, restockDisplay: restockDisplay
+      fmtDuration: fmtDuration, modelEstimate: modelEstimate, restockDisplay: restockDisplay,
+      itemCategory: itemCategory, rowVisible: rowVisible, countryVisible: countryVisible
     };
     module.exports.getStock = getStock;
     module.exports.getPrices = getPrices;
