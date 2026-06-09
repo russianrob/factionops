@@ -55,3 +55,69 @@ export function buildModel(state, nowSec) {
   }
   return { updated: nowSec, items: items };
 }
+
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const STATE_FILE = join(__dirname, "data", "restock-state.json");
+const PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
+const REPO = "russianrob/torn-foreign-restock";
+const MODEL_PATH = "restock-model.json";
+
+let _state = {};
+
+function loadState() {
+  try { if (existsSync(STATE_FILE)) _state = JSON.parse(readFileSync(STATE_FILE, "utf-8")) || {}; }
+  catch (e) { _state = {}; }
+}
+function saveState() {
+  try { mkdirSync(dirname(STATE_FILE), { recursive: true }); writeFileSync(STATE_FILE, JSON.stringify(_state)); }
+  catch (e) { console.error("[restock] saveState failed:", e.message); }
+}
+
+async function pollOnce() {
+  let json;
+  try { const r = await fetch(PROMBOT_URL); json = await r.json(); }
+  catch (e) { console.error("[restock] poll failed:", e.message); return; }
+  const stocks = (json && json.stocks) || {};
+  const now = Math.floor(Date.now() / 1000);
+  for (const c in stocks) {
+    if (!_state[c]) _state[c] = {};
+    for (const it of (stocks[c].stocks || [])) {
+      const id = String(it.id);
+      _state[c][id] = recordSample(_state[c][id], it.quantity, now);
+    }
+  }
+  saveState();
+}
+
+function ghCurrentSha() {
+  return new Promise((resolve) => {
+    execFile("gh", ["api", `/repos/${REPO}/contents/${MODEL_PATH}`, "--jq", ".sha"],
+      (e, out) => resolve(e ? "" : String(out).trim()));
+  });
+}
+async function publishModel() {
+  const now = Math.floor(Date.now() / 1000);
+  const model = buildModel(_state, now);
+  const content = Buffer.from(JSON.stringify(model)).toString("base64");
+  const sha = await ghCurrentSha();
+  const args = ["api", "--method", "PUT", `/repos/${REPO}/contents/${MODEL_PATH}`,
+    "-f", `message=update restock model (${new Date(now * 1000).toISOString().slice(0, 16)}Z)`,
+    "-f", `content=${content}`];
+  if (sha) args.push("-f", `sha=${sha}`);
+  await new Promise((resolve) => {
+    execFile("gh", args, (e) => { if (e) console.error("[restock] publish failed:", e.message); resolve(); });
+  });
+}
+
+export function startRestockTracker() {
+  loadState();
+  pollOnce().catch(() => {});
+  setInterval(() => { pollOnce().catch(() => {}); }, 60_000);
+  setInterval(() => { publishModel().catch(() => {}); }, 600_000);
+  console.log("[restock] tracker started (poll 60s, publish 10m)");
+}
