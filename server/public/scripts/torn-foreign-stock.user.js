@@ -143,8 +143,141 @@
   }
 
   // ─── DOM: settings, injector, observer ───────────────────
+  function getMode() { var m = gmGet("tfs_mode", "stock"); return (m === "profit") ? "profit" : "stock"; }
+  function setMode(m) { gmSet("tfs_mode", m); }
+  function getKey() { return gmGet("tfs_key", "") || ""; }
+  function setKey(k) { gmSet("tfs_key", String(k || "").trim()); }
+  function tfsMsg(s) { var m = document.querySelector("#tfs-bar .tfs-msg"); if (m) m.textContent = s ? (" " + s) : ""; }
+  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]; }); }
 
-  function main() {}
+  function injectCss() {
+    if (document.getElementById("tfs-css")) return;
+    var s = document.createElement("style");
+    s.id = "tfs-css";
+    s.textContent =
+      ".tfs-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;margin:6px 0;background:#1a1a1a;border:1px solid #333;border-radius:4px;font-size:12px;color:#ccc;}" +
+      ".tfs-bar .tfs-title{font-weight:700;color:#e8c44a;margin-right:4px;}" +
+      ".tfs-toggle{background:#2a2a2a;color:#bbb;border:1px solid #444;border-radius:3px;padding:2px 8px;cursor:pointer;}" +
+      ".tfs-toggle.on{background:#2a3fff;color:#fff;border-color:#2a3fff;}" +
+      ".tfs-refresh{background:#2a2a2a;color:#bbb;border:1px solid #444;border-radius:3px;padding:2px 7px;cursor:pointer;}" +
+      ".tfs-key{background:#111;border:1px solid #444;color:#ddd;border-radius:3px;padding:2px 6px;width:150px;}" +
+      ".tfs-save{background:#2a2a2a;color:#bbb;border:1px solid #444;border-radius:3px;padding:2px 8px;cursor:pointer;}" +
+      ".tfs-msg{color:#e88;}" +
+      ".tfs-panel{margin:4px 0 8px;font-size:12px;}" +
+      ".tfs-head .tfs-age{color:#888;}.tfs-head .tfs-age.stale{opacity:.5;}" +
+      ".tfs-row{display:flex;gap:8px;padding:1px 0;align-items:baseline;}" +
+      ".tfs-name{flex:1;min-width:0;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" +
+      ".tfs-qty{color:#888;}.tfs-cost{color:#bbb;min-width:60px;text-align:right;}" +
+      ".tfs-profit{min-width:80px;text-align:right;}.tfs-profit.pos{color:#5ad15a;}.tfs-profit.neg{color:#777;}";
+    document.head.appendChild(s);
+  }
+
+  function injectSettingsBar(onChange) {
+    if (document.getElementById("tfs-bar")) return;
+    var bar = document.createElement("div");
+    bar.id = "tfs-bar"; bar.className = "tfs-bar";
+    var mode = getMode();
+    bar.innerHTML =
+      '<span class="tfs-title">Foreign Stock</span>' +
+      '<button class="tfs-toggle" data-mode="stock">Stock</button>' +
+      '<button class="tfs-toggle" data-mode="profit">Profit</button>' +
+      '<button class="tfs-refresh" title="Refresh stock">↻</button>' +
+      '<span class="tfs-keywrap" style="display:' + (mode === "profit" ? "inline-flex" : "none") + '">' +
+      '<input class="tfs-key" type="password" placeholder="Torn API key for profit" value="' + getKey().replace(/"/g, "") + '">' +
+      '<button class="tfs-save">Save</button></span>' +
+      '<span class="tfs-msg"></span>';
+    function paint() {
+      var m = getMode();
+      var tg = bar.querySelectorAll(".tfs-toggle");
+      for (var i = 0; i < tg.length; i++) { tg[i].classList.toggle("on", tg[i].getAttribute("data-mode") === m); }
+      bar.querySelector(".tfs-keywrap").style.display = (m === "profit") ? "inline-flex" : "none";
+    }
+    var toggles = bar.querySelectorAll(".tfs-toggle");
+    for (var t = 0; t < toggles.length; t++) {
+      (function (btn) { btn.addEventListener("click", function () { setMode(btn.getAttribute("data-mode")); paint(); onChange(false); }); })(toggles[t]);
+    }
+    bar.querySelector(".tfs-refresh").addEventListener("click", function () { onChange(true); });
+    bar.querySelector(".tfs-save").addEventListener("click", function () {
+      var v = bar.querySelector(".tfs-key").value.trim();
+      if (!v) { tfsMsg("enter a key"); return; }
+      setKey(v); tfsMsg("saved"); onChange(true);
+    });
+    paint();
+    var anchor = document.querySelector('[class*="destinationList___"]');
+    if (anchor && anchor.parentNode) { anchor.parentNode.insertBefore(bar, anchor); }
+    else { var c = document.querySelector(".content") || document.body; c.insertBefore(bar, c.firstChild); }
+  }
+
+  function findDestinations() {
+    var out = [], seen = [];
+    var spans = document.querySelectorAll('span[class*="country___"]');
+    for (var i = 0; i < spans.length; i++) {
+      var code = normalizeCountryName((spans[i].textContent || "").trim());
+      if (!code) continue;
+      var row = spans[i];
+      for (var up = 0; up < 6 && row; up++) {
+        var cn = (row.getAttribute && row.getAttribute("class")) || "";
+        if (/destination___/.test(cn) && !/destinationList___|destinationDetails___/.test(cn)) break;
+        row = row.parentElement;
+      }
+      if (!row || !/destination___/.test((row.getAttribute && row.getAttribute("class")) || "")) continue;
+      if (seen.indexOf(row) !== -1) continue;
+      seen.push(row); out.push({ el: row, code: code });
+    }
+    return out;
+  }
+
+  function renderPanel(destEl, code, stock, mode, prices) {
+    var country = stock[code];
+    if (!country) return;
+    var rows = sortRows(buildRows(country.items, { mode: mode, getValue: function (id) { return prices[id]; } }), mode);
+    var age = formatAge(country.update, Math.floor(Date.now() / 1000));
+    var html = '<div class="tfs-head"><span class="tfs-age' + (age.stale ? " stale" : "") + '">updated ' + age.text + '</span></div><div class="tfs-rows">';
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      html += '<div class="tfs-row"><span class="tfs-name">' + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
+        (mode === "profit" ? '<span class="tfs-profit ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
+    }
+    html += '</div>';
+    var existing = destEl.querySelector(".tfs-panel");
+    if (existing) { existing.innerHTML = html; }
+    else { var p = document.createElement("div"); p.className = "tfs-panel"; p.innerHTML = html; destEl.appendChild(p); }
+  }
+
+  var _applyTimer = null;
+  function paintPanels(stock, mode, prices) {
+    var dests = findDestinations();
+    for (var i = 0; i < dests.length; i++) renderPanel(dests[i].el, dests[i].code, stock, mode, prices);
+  }
+  function applyAll(force) {
+    var mode = getMode(), key = getKey();
+    getStock(force).then(function (stock) {
+      if (!stock) { tfsMsg("stock unavailable"); return; }
+      if (mode === "profit" && key) {
+        return getPrices(key).then(function (m) { tfsMsg(""); paintPanels(stock, "profit", m); })
+          .catch(function () { tfsMsg("key error"); paintPanels(stock, "stock", {}); });
+      }
+      if (mode === "profit" && !key) tfsMsg("add a key for profit");
+      paintPanels(stock, "stock", {});
+    });
+  }
+  function scheduleApply() {
+    if (_applyTimer) clearTimeout(_applyTimer);
+    _applyTimer = setTimeout(function () { applyAll(false); }, 200);
+  }
+  function startObserver() {
+    var root = document.querySelector('[class*="destinationList___"]') || document.querySelector(".content") || document.body;
+    var obs = new MutationObserver(scheduleApply);
+    obs.observe(root, { childList: true, subtree: true });
+  }
+
+  function main() {
+    injectCss();
+    injectSettingsBar(function (force) { applyAll(!!force); });
+    applyAll(false);
+    startObserver();
+    try { if (typeof GM_registerMenuCommand === "function") GM_registerMenuCommand("Foreign Stock: refresh", function () { applyAll(true); }); } catch (e) {}
+  }
 
   if (typeof window !== "undefined" && typeof location !== "undefined" && /\/page\.php/.test(location.pathname) && /sid=travel/.test(location.search + location.hash)) {
     main();
