@@ -69,13 +69,14 @@ export function buildModel(state, nowSec) {
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFile } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = join(__dirname, "data", "restock-state.json");
+const TOKEN_FILE = join(__dirname, "data", ".ghtoken");
 const PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
 const REPO = "russianrob/torn-foreign-restock";
 const MODEL_PATH = "restock-model.json";
+const GH_API = `https://api.github.com/repos/${REPO}/contents/${MODEL_PATH}`;
 
 let _state = {};
 
@@ -115,34 +116,61 @@ async function pollOnce() {
   finally { _polling = false; }
 }
 
-function ghCurrentSha() {
-  return new Promise((resolve) => {
-    execFile("gh", ["api", `/repos/${REPO}/contents/${MODEL_PATH}`, "--jq", ".sha"],
-      (e, out) => resolve(e ? "" : String(out).trim()));
-  });
+function ghToken() {
+  try { return readFileSync(TOKEN_FILE, "utf-8").trim(); }
+  catch (e) { return ""; }
+}
+function ghHeaders(token) {
+  return {
+    "Authorization": "Bearer " + token,
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "warboard-restock-tracker"
+  };
+}
+async function ghCurrentSha(token) {
+  try {
+    const r = await fetch(GH_API, { headers: ghHeaders(token) });
+    if (!r.ok) return "";
+    const j = await r.json();
+    return (j && j.sha) || "";
+  } catch (e) { return ""; }
+}
+function modelItemCount(model) {
+  let n = 0;
+  for (const c in (model.items || {})) n += Object.keys(model.items[c]).length;
+  return n;
 }
 async function publishModel() {
   if (_publishing) return;
   _publishing = true;
   try {
+    const token = ghToken();
+    if (!token) { console.error("[restock] publish skipped: no token file"); return; }
     const now = Math.floor(Date.now() / 1000);
     const model = buildModel(_state, now);
-    const content = Buffer.from(JSON.stringify(model)).toString("base64");
-    const sha = await ghCurrentSha();
-    const args = ["api", "--method", "PUT", `/repos/${REPO}/contents/${MODEL_PATH}`,
-      "-f", `message=update restock model (${new Date(now * 1000).toISOString().slice(0, 16)}Z)`,
-      "-f", `content=${content}`];
-    if (sha) args.push("-f", `sha=${sha}`);
-    await new Promise((resolve) => {
-      execFile("gh", args, (e) => { if (e) console.error("[restock] publish failed:", e.message); resolve(); });
-    });
-  } finally { _publishing = false; }
+    const body = {
+      message: `update restock model (${new Date(now * 1000).toISOString().slice(0, 16)}Z)`,
+      content: Buffer.from(JSON.stringify(model)).toString("base64")
+    };
+    const sha = await ghCurrentSha(token);
+    if (sha) body.sha = sha;
+    const r = await fetch(GH_API, { method: "PUT", headers: ghHeaders(token), body: JSON.stringify(body) });
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      console.error("[restock] publish failed:", r.status, t.slice(0, 200));
+    } else {
+      console.log("[restock] published model:", modelItemCount(model), "items");
+    }
+  } catch (e) { console.error("[restock] publish error:", e.message); }
+  finally { _publishing = false; }
 }
 
 export function startRestockTracker() {
   loadState();
   pollOnce().catch(() => {});
   setInterval(() => { pollOnce().catch(() => {}); }, 60_000);
+  setTimeout(() => { publishModel().catch(() => {}); }, 10_000);
   setInterval(() => { publishModel().catch(() => {}); }, 600_000);
   console.log("[restock] tracker started (poll 60s, publish 10m)");
 }
