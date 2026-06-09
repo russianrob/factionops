@@ -93,6 +93,19 @@ Tiers (tunable constants): `high` if `n ≥ 8` and `CV < 0.3`; `med` if `n ≥ 4
 ```
 `interval` & `last` in unix seconds. Keyed by YATA/Prombot country code then item id.
 
+### 4. Monitoring / server status link (for the user)
+
+So the user can watch the tracker learn:
+- **`GET https://tornwar.com/restock-model.json`** — the current model JSON, served from
+  the server's local copy (identical to what's published to GitHub).
+- **`GET https://tornwar.com/restock`** — a lightweight HTML status page rendering the
+  model: per country, each tracked item with name, `~interval` (formatted), `last`
+  restock (… ago), `n` samples, and `rel` tier, sorted by reliability/recency. Lets the
+  user eyeball coverage and whether it's working at a glance.
+
+This link is a server-only convenience for the user; the **shipped userscript still reads
+the model from GitHub raw**, so the script stays tornwar-free.
+
 ## Data Flow
 
 ```
