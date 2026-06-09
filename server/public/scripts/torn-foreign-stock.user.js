@@ -2,10 +2,10 @@
 // @name         Foreign Stock
 // @namespace    RussianRob
 // @version      0.1.0
-// @description  Shows abroad item stock (and optional profit) inline on the Torn travel agency page
+// @description  Shows abroad item stock (and optional profit) inline on the Torn travel page
 // @author       RussianRob
 // @license      GPL-3.0-or-later
-// @match        https://www.torn.com/travelagency.php*
+// @match        https://www.torn.com/page.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -42,7 +42,7 @@
 
   function main() {}
 
-  if (typeof window !== "undefined" && typeof location !== "undefined" && /\/travelagency\.php/.test(location.pathname)) {
+  if (typeof window !== "undefined" && typeof location !== "undefined" && /\/page\.php/.test(location.pathname) && /sid=travel/.test(location.search + location.hash)) {
     main();
   }
   if (typeof module !== "undefined" && module.exports) {
