@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.4.0
+// @version      0.5.0
 // @description  Shows abroad item stock (and optional profit) inline on the Torn travel page
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.4.0";
+  var SCRIPT_VERSION = "0.5.0";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -249,7 +249,22 @@
       ".tfs-chip{background:#2a3fff;color:#fff;border:1px solid #2a3fff;border-radius:10px;padding:1px 8px;cursor:pointer;font-size:11px;}" +
       ".tfs-chip.off{background:#222;color:#777;border-color:#444;}" +
       ".tfs-ftog{background:#2a2a2a;color:#bbb;border:1px solid #444;border-radius:3px;padding:2px 8px;cursor:pointer;}" +
-      ".tfs-ftog.on{background:#2a3fff;color:#fff;border-color:#2a3fff;}";
+      ".tfs-ftog.on{background:#2a3fff;color:#fff;border-color:#2a3fff;}" +
+      "#tfs-desktop{margin:8px 0;}" +
+      ".tfs-thost{background:#1a1a1a;border:1px solid #333;border-radius:4px;margin-top:6px;font-size:12px;color:#ccc;}" +
+      ".tfs-thead{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:#222;border-bottom:1px solid #333;}" +
+      ".tfs-ttitle{font-weight:700;color:#e8c44a;}" +
+      ".tfs-tcollapse{background:none;border:0;color:#bbb;cursor:pointer;font-size:14px;}" +
+      ".tfs-tbody{padding:6px 10px;max-height:62vh;overflow:auto;column-count:2;column-gap:18px;}" +
+      ".tfs-tc{break-inside:avoid;margin-bottom:8px;}" +
+      ".tfs-tch{font-weight:700;color:#ddd;border-bottom:1px solid #333;padding-bottom:2px;margin-bottom:2px;}" +
+      ".tfs-tr{display:flex;gap:8px;padding:1px 0;align-items:baseline;}" +
+      ".tfs-tr.out{opacity:.6;}" +
+      ".tfs-tn{flex:1;min-width:0;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" +
+      ".tfs-tq{color:#888;}.tfs-tcost{color:#bbb;min-width:56px;text-align:right;}" +
+      ".tfs-tp{min-width:74px;text-align:right;}.tfs-tp.pos{color:#5ad15a;}.tfs-tp.neg{color:#777;}" +
+      ".tfs-toos{color:#d6a86a;font-style:italic;margin-left:auto;}" +
+      ".tfs-tempty{color:#888;}";
     document.head.appendChild(s);
   }
 
@@ -306,6 +321,66 @@
     return panel;
   }
 
+  function isMapLayout() {
+    return !!document.querySelector('[class*="worldMap___"]') && !document.querySelector('span[class*="country___"]');
+  }
+  function desktopHost() {
+    var h = document.getElementById("tfs-desktop");
+    if (h) return h;
+    h = document.createElement("div");
+    h.id = "tfs-desktop";
+    var map = document.querySelector('[class*="worldMap___"]');
+    var cont = (map && (map.closest('[class*="content-wrapper"]') || map.parentElement)) ||
+      document.querySelector('[class*="content-wrapper"]') || document.querySelector(".content") || document.body;
+    cont.appendChild(h);
+    return h;
+  }
+  function ensureTablePanel() {
+    var panel = document.getElementById("tfs-table-host");
+    if (panel) return panel;
+    panel = document.createElement("div");
+    panel.id = "tfs-table-host";
+    panel.className = "tfs-thost";
+    panel.innerHTML = '<div class="tfs-thead"><span class="tfs-ttitle">Foreign Stocks</span><button class="tfs-tcollapse">▾</button></div><div class="tfs-tbody"></div>';
+    panel.querySelector(".tfs-tcollapse").addEventListener("click", function () {
+      var b = panel.querySelector(".tfs-tbody"), btn = panel.querySelector(".tfs-tcollapse");
+      var show = (b.style.display === "none");
+      b.style.display = show ? "" : "none"; btn.textContent = show ? "▾" : "▸";
+    });
+    desktopHost().appendChild(panel);
+    return panel;
+  }
+  function paintTable(stock, mode, prices, model) {
+    var filters = getFilters();
+    var panel = ensureTablePanel();
+    var body = panel.querySelector(".tfs-tbody");
+    var nowMs = Date.now();
+    var html = "";
+    for (var ci = 0; ci < TFS_COUNTRIES.length; ci++) {
+      var code = TFS_COUNTRIES[ci][0], cname = TFS_COUNTRIES[ci][1];
+      if (!countryVisible(code, filters)) continue;
+      var country = stock[code];
+      if (!country) continue;
+      var rows = sortRows(buildRows(country.items, { mode: mode, getValue: function (id) { return prices[id]; } }), mode, nowMs);
+      rows = rows.filter(function (r) { return rowVisible(r, mode, filters); });
+      if (!rows.length) continue;
+      var age = formatAge(country.update, Math.floor(nowMs / 1000));
+      html += '<div class="tfs-tc"><div class="tfs-tch">' + cname + ' <span class="tfs-age' + (age.stale ? " stale" : "") + '">updated ' + age.text + '</span></div>';
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        if (r.qty === 0) {
+          var entry = (model && model[code]) ? model[code][String(r.id)] : null;
+          html += '<div class="tfs-tr out"><span class="tfs-tn">' + escapeHtml(r.name) + '</span><span class="tfs-toos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
+        } else {
+          html += '<div class="tfs-tr"><span class="tfs-tn">' + escapeHtml(r.name) + '</span><span class="tfs-tq">×' + r.qty + '</span><span class="tfs-tcost">' + fmtMoney(r.cost) + '</span>' +
+            (mode === "profit" ? '<span class="tfs-tp ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
+        }
+      }
+      html += '</div>';
+    }
+    body.innerHTML = html || '<div class="tfs-tempty">No items match your filters.</div>';
+  }
+
   function injectSettingsBar(onChange) {
     if (document.getElementById("tfs-bar")) return;
     var bar = document.createElement("div");
@@ -343,6 +418,7 @@
     bar.querySelector(".tfs-filterbtn").addEventListener("click", function () { fpanel.classList.toggle("open"); });
     var anchor = document.querySelector('[class*="destinationList___"]');
     if (anchor && anchor.parentNode) { anchor.parentNode.insertBefore(bar, anchor); }
+    else if (isMapLayout()) { var dh = desktopHost(); dh.insertBefore(bar, dh.firstChild); }
     else { var c = document.querySelector(".content") || document.body; c.insertBefore(bar, c.firstChild); }
   }
 
@@ -410,12 +486,16 @@
     Promise.all([getStock(force), getModel()]).then(function (res) {
       var stock = res[0], model = res[1] || {};
       if (!stock) { tfsMsg("stock unavailable"); return; }
+      function render(prices, m) {
+        if (isMapLayout()) paintTable(stock, m, prices, model);
+        else paintPanels(stock, m, prices, model);
+      }
       if (mode === "profit" && key) {
-        return getPrices(key).then(function (m) { tfsMsg(""); paintPanels(stock, "profit", m, model); })
-          .catch(function () { tfsMsg("key error"); paintPanels(stock, "stock", {}, model); });
+        return getPrices(key).then(function (mp) { tfsMsg(""); render(mp, "profit"); })
+          .catch(function () { tfsMsg("key error"); render({}, "stock"); });
       }
       if (mode === "profit" && !key) tfsMsg("add a key for profit");
-      paintPanels(stock, "stock", {}, model);
+      render({}, "stock");
     });
   }
   function scheduleApply() {
