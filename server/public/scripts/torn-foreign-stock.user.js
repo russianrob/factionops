@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.6.1
+// @version      0.7.0
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.6.1";
+  var SCRIPT_VERSION = "0.7.0";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -233,7 +233,7 @@
       ".tfs-toggle.on{background:#3b6dff;color:#fff;}" +
       ".tfs-toggle+.tfs-toggle{border-left:1px solid #2e333d;}" +
       ".tfs-refresh,.tfs-save,.tfs-filterbtn{background:#20242c;color:#aeb4bd;border:1px solid #2e333d;border-radius:7px;padding:4px 10px;cursor:pointer;transition:background .12s,color .12s;}" +
-      ".tfs-refresh{padding:4px 9px;font-size:13px;}" +
+      ".tfs-refresh{width:27px;height:26px;padding:0;border-radius:50%;font-size:13px;display:inline-flex;align-items:center;justify-content:center;}" +
       ".tfs-refresh:hover,.tfs-save:hover,.tfs-filterbtn:hover{background:#262b34;color:#e6e9ee;border-color:#3a4150;}" +
       ".tfs-key{background:#0e0f12;border:1px solid #2e333d;color:#dde2e8;border-radius:6px;padding:3px 8px;width:150px;}" +
       ".tfs-msg{color:#e08a7a;}" +
@@ -241,10 +241,18 @@
       ".tfs-filters.open{display:block;}" +
       ".tfs-frow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:5px 0;}" +
       ".tfs-frow .lbl{color:#7a818c;margin-right:2px;min-width:60px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;}" +
-      ".tfs-chip{background:#3b6dff;color:#fff;border:0;border-radius:11px;padding:2px 11px;cursor:pointer;font-size:11px;}" +
-      ".tfs-chip.off{background:#20242c;color:#6f7681;}" +
-      ".tfs-ftog{background:#20242c;color:#aeb4bd;border:1px solid #2e333d;border-radius:6px;padding:3px 10px;cursor:pointer;}" +
+      ".tfs-chip{cursor:pointer;font-size:11px;transition:all .12s;}" +
+      ".tfs-chip.cat{display:inline-flex;align-items:center;gap:3px;background:#202a40;color:#aec4ff;border:1px solid #2c3650;border-radius:11px;padding:2px 10px;}" +
+      ".tfs-chip.cat:hover{border-color:#3b6dff;}" +
+      ".tfs-chip.cat.off{background:transparent;color:#5b626d;border-color:#2a2e38;}" +
+      ".tfs-chip.cat.off .tfs-cicon{filter:grayscale(1);opacity:.55;}" +
+      ".tfs-chip.flag{background:transparent;border:0;border-radius:5px;font-size:17px;line-height:1;padding:2px 3px;}" +
+      ".tfs-chip.flag:hover{background:#20242c;}" +
+      ".tfs-chip.flag.off{filter:grayscale(1);opacity:.3;}" +
+      ".tfs-ftog{background:#1a1e26;color:#8a909a;border:1px solid #2e333d;border-radius:7px;padding:3px 11px;cursor:pointer;transition:all .12s;}" +
+      ".tfs-ftog:hover{border-color:#3a4150;color:#cfd4dc;}" +
       ".tfs-ftog.on{background:#3b6dff;color:#fff;border-color:#3b6dff;}" +
+      ".tfs-ftog.on::before{content:'✓ ';}" +
       ".tfs-panel{margin:5px 0 10px;font-size:12px;max-width:540px;}" +
       ".tfs-head{display:flex;align-items:center;padding:2px 6px 3px;}" +
       ".tfs-age{margin-left:auto;font-size:10px;color:#6f7681;background:#20242c;padding:1px 7px;border-radius:8px;white-space:nowrap;}" +
@@ -278,6 +286,7 @@
   var TFS_COUNTRIES = [["mex", "Mexico"], ["cay", "Cayman"], ["can", "Canada"], ["haw", "Hawaii"], ["uni", "UK"], ["arg", "Argentina"], ["swi", "Switz"], ["jap", "Japan"], ["chi", "China"], ["uae", "UAE"], ["sou", "S.Africa"]];
   var TFS_FLAGS = { mex: "🇲🇽", cay: "🇰🇾", can: "🇨🇦", haw: "🌺", uni: "🇬🇧", arg: "🇦🇷", swi: "🇨🇭", jap: "🇯🇵", chi: "🇨🇳", uae: "🇦🇪", sou: "🇿🇦" };
   function tfsFlag(code) { return TFS_FLAGS[code] || "🏳"; }
+  var TFS_CATICON = { Plushie: "🧸", Flower: "🌸", Drug: "💊", Temporary: "⏳", Weapon: "🔫", Armor: "🛡️", Other: "📦" };
 
   function buildFilterPanel(onChange) {
     var f = getFilters();
@@ -288,9 +297,9 @@
       '<button class="tfs-ftog' + (f.hideOos ? " on" : "") + '" data-t="oos">Hide out-of-stock</button>' +
       '<button class="tfs-ftog' + (f.hideNeg ? " on" : "") + '" data-t="neg">Hide -profit</button>' +
       '</div><div class="tfs-frow"><span class="lbl">Items</span>';
-    for (var i = 0; i < TFS_CATS.length; i++) html += '<span class="tfs-chip cat' + (f.excludedCats.indexOf(TFS_CATS[i]) !== -1 ? " off" : "") + '" data-cat="' + TFS_CATS[i] + '">' + TFS_CATS[i] + '</span>';
+    for (var i = 0; i < TFS_CATS.length; i++) html += '<span class="tfs-chip cat' + (f.excludedCats.indexOf(TFS_CATS[i]) !== -1 ? " off" : "") + '" data-cat="' + TFS_CATS[i] + '" title="' + TFS_CATS[i] + '"><span class="tfs-cicon">' + (TFS_CATICON[TFS_CATS[i]] || "") + '</span>' + TFS_CATS[i] + '</span>';
     html += '</div><div class="tfs-frow"><span class="lbl">Countries</span>';
-    for (var k = 0; k < TFS_COUNTRIES.length; k++) html += '<span class="tfs-chip ctry' + (f.hiddenCountries.indexOf(TFS_COUNTRIES[k][0]) !== -1 ? " off" : "") + '" data-code="' + TFS_COUNTRIES[k][0] + '">' + TFS_COUNTRIES[k][1] + '</span>';
+    for (var k = 0; k < TFS_COUNTRIES.length; k++) html += '<span class="tfs-chip ctry flag' + (f.hiddenCountries.indexOf(TFS_COUNTRIES[k][0]) !== -1 ? " off" : "") + '" data-code="' + TFS_COUNTRIES[k][0] + '" title="' + TFS_COUNTRIES[k][1] + '">' + tfsFlag(TFS_COUNTRIES[k][0]) + '</span>';
     html += '</div>';
     panel.innerHTML = html;
     var togs = panel.querySelectorAll(".tfs-ftog");
