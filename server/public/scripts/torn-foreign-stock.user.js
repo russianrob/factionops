@@ -63,6 +63,29 @@
     else text = Math.floor(mins / 60) + "h " + (mins % 60) + "m ago";
     return { text: text, stale: mins >= STALE_MIN };
   }
+  function buildRows(items, opts) {
+    opts = opts || {};
+    var mode = opts.mode || "stock";
+    var getValue = opts.getValue || function () { return undefined; };
+    return items.map(function (it) {
+      var value = (mode === "profit") ? getValue(it.id) : undefined;
+      value = (value == null || isNaN(value)) ? null : value;
+      var profit = (value == null) ? null : (value - it.cost);
+      return { id: it.id, name: it.name, qty: it.qty, cost: it.cost, value: value, profit: profit };
+    });
+  }
+  function sortRows(rows, mode) {
+    var arr = rows.slice();
+    arr.sort(function (a, b) {
+      var pa, pb;
+      if (mode === "profit") { pa = (a.profit == null ? -Infinity : a.profit); pb = (b.profit == null ? -Infinity : b.profit); }
+      else { pa = a.cost; pb = b.cost; }
+      if (pb !== pa) return pb - pa;
+      if (b.qty !== a.qty) return b.qty - a.qty;
+      return String(a.name).localeCompare(String(b.name));
+    });
+    return arr;
+  }
 
   // ─── GM / data layer ─────────────────────────────────────
 
@@ -76,7 +99,8 @@
   if (typeof module !== "undefined" && module.exports) {
     module.exports = {
       normalizeCountryName: normalizeCountryName, COUNTRY_MAP: COUNTRY_MAP,
-      parseYataExport: parseYataExport, fmtMoney: fmtMoney, fmtProfit: fmtProfit, formatAge: formatAge
+      parseYataExport: parseYataExport, fmtMoney: fmtMoney, fmtProfit: fmtProfit, formatAge: formatAge,
+      buildRows: buildRows, sortRows: sortRows
     };
   }
 })();

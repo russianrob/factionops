@@ -57,3 +57,34 @@ test("formatAge text + staleness", () => {
   assert.strictEqual(mod.formatAge(1000, 1000 + 31 * 60).stale, true);
   assert.strictEqual(mod.formatAge(1000, 1000 + 90 * 60).text, "1h 30m ago");
 });
+
+const ITEMS = [
+  { id: 1, name: "Xanax", qty: 88, cost: 830 },
+  { id: 2, name: "Plushie", qty: 142, cost: 452 },
+  { id: 3, name: "Aaa", qty: 142, cost: 452 }
+];
+
+test("buildRows stock mode leaves profit null", () => {
+  const rows = mod.buildRows(ITEMS, { mode: "stock" });
+  assert.strictEqual(rows[0].profit, null);
+  assert.strictEqual(rows[0].value, null);
+});
+
+test("buildRows profit mode computes value-cost by id; miss => null", () => {
+  const prices = { 1: 9200, 2: 850 };
+  const rows = mod.buildRows(ITEMS, { mode: "profit", getValue: function (id) { return prices[id]; } });
+  assert.strictEqual(rows[0].profit, 9200 - 830);
+  assert.strictEqual(rows[1].profit, 850 - 452);
+  assert.strictEqual(rows[2].profit, null);
+});
+
+test("sortRows stock: price desc, then qty desc, then name", () => {
+  const rows = mod.sortRows(mod.buildRows(ITEMS, { mode: "stock" }), "stock");
+  assert.deepStrictEqual(rows.map(function (r) { return r.id; }), [1, 3, 2]);
+});
+
+test("sortRows profit: profit desc, nulls last", () => {
+  const prices = { 1: 9200, 2: 850 };
+  const rows = mod.sortRows(mod.buildRows(ITEMS, { mode: "profit", getValue: function (id) { return prices[id]; } }), "profit");
+  assert.deepStrictEqual(rows.map(function (r) { return r.id; }), [1, 2, 3]);
+});
