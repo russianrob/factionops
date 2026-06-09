@@ -93,6 +93,24 @@
     if ((nowMs - t) <= 3600000) return { mins: 0, text: "due", due: true };
     return null;
   }
+  function fmtDuration(sec) {
+    var m = Math.round(sec / 60);
+    return (m < 60) ? (m + "m") : (Math.floor(m / 60) + "h " + (m % 60) + "m");
+  }
+  function modelEstimate(entry, nowMs) {
+    if (!entry || !entry.interval) return null;
+    var leftSec = (entry.last + entry.interval) - Math.floor(nowMs / 1000);
+    var left = (leftSec > 0) ? ("~" + fmtDuration(leftSec)) : "due";
+    return "~every " + fmtDuration(entry.interval) + " · " + left + " (" + (entry.rel || "low") + ")";
+  }
+  function restockDisplay(nextRestock, entry, nowMs) {
+    var live = restockEta(nextRestock, nowMs);
+    if (live && !live.due) return "restocks in " + live.text;
+    var est = modelEstimate(entry, nowMs);
+    if (est) return est;
+    if (live && live.due) return "restock due";
+    return "out of stock";
+  }
   function sortRows(rows, mode, nowMs) {
     if (nowMs == null) nowMs = Date.now();
     var arr = rows.slice();
@@ -329,7 +347,8 @@
     module.exports = {
       normalizeCountryName: normalizeCountryName, COUNTRY_MAP: COUNTRY_MAP,
       parseYataExport: parseYataExport, fmtMoney: fmtMoney, fmtProfit: fmtProfit, formatAge: formatAge,
-      buildRows: buildRows, sortRows: sortRows, restockEta: restockEta
+      buildRows: buildRows, sortRows: sortRows, restockEta: restockEta,
+      fmtDuration: fmtDuration, modelEstimate: modelEstimate, restockDisplay: restockDisplay
     };
     module.exports.getStock = getStock;
     module.exports.getPrices = getPrices;

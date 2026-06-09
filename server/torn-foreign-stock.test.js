@@ -209,3 +209,26 @@ test("getModel fetches + caches the GitHub model items map", async () => {
   await mod.getModel();
   assert.strictEqual(calls, 2);
 });
+
+test("fmtDuration", () => {
+  assert.strictEqual(mod.fmtDuration(1500), "25m");
+  assert.strictEqual(mod.fmtDuration(3900), "1h 5m");
+});
+
+test("modelEstimate builds '~every X · ~Y (rel)' and 'due' when past", () => {
+  const now = Date.parse("2026-06-09T16:00:00.000Z");
+  const lastSec = Math.floor(now / 1000) - 600;
+  const e = mod.modelEstimate({ interval: 1500, last: lastSec, n: 5, rel: "med" }, now);
+  assert.strictEqual(e, "~every 25m · ~15m (med)");
+  const past = mod.modelEstimate({ interval: 300, last: Math.floor(now / 1000) - 600, n: 5, rel: "low" }, now);
+  assert.strictEqual(past, "~every 5m · due (low)");
+});
+
+test("restockDisplay merge priority", () => {
+  const now = Date.parse("2026-06-09T16:00:00.000Z");
+  const entry = { interval: 1500, last: Math.floor(now / 1000) - 600, n: 5, rel: "med" };
+  assert.strictEqual(mod.restockDisplay("2026-06-09T16:09:00.000Z", entry, now), "restocks in 9m");
+  assert.strictEqual(mod.restockDisplay(null, entry, now), "~every 25m · ~15m (med)");
+  assert.strictEqual(mod.restockDisplay("2026-06-09T15:40:00.000Z", null, now), "restock due");
+  assert.strictEqual(mod.restockDisplay(null, null, now), "out of stock");
+});
