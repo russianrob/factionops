@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.2.2
+// @version      0.3.0
 // @description  Shows abroad item stock (and optional profit) inline on the Torn travel page
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.2.2";
+  var SCRIPT_VERSION = "0.3.0";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -280,7 +280,7 @@
     return out;
   }
 
-  function renderPanel(destEl, code, stock, mode, prices) {
+  function renderPanel(destEl, code, stock, mode, prices, model) {
     var country = stock[code];
     if (!country) return;
     var rows = sortRows(buildRows(country.items, { mode: mode, getValue: function (id) { return prices[id]; } }), mode);
@@ -290,9 +290,9 @@
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
       if (r.qty === 0) {
-        var eta = restockEta(r.nextRestock, nowMs);
+        var entry = (model && model[code]) ? model[code][String(r.id)] : null;
         html += '<div class="tfs-row out"><span class="tfs-name">' + escapeHtml(r.name) + '</span>' +
-          '<span class="tfs-oos">' + (eta ? (eta.due ? "restock due" : ("restocks in " + eta.text)) : "out of stock") + '</span></div>';
+          '<span class="tfs-oos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
       } else {
         html += '<div class="tfs-row"><span class="tfs-name">' + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
           (mode === "profit" ? '<span class="tfs-profit ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
@@ -305,20 +305,21 @@
   }
 
   var _applyTimer = null;
-  function paintPanels(stock, mode, prices) {
+  function paintPanels(stock, mode, prices, model) {
     var dests = findDestinations();
-    for (var i = 0; i < dests.length; i++) renderPanel(dests[i].el, dests[i].code, stock, mode, prices);
+    for (var i = 0; i < dests.length; i++) renderPanel(dests[i].el, dests[i].code, stock, mode, prices, model || {});
   }
   function applyAll(force) {
     var mode = getMode(), key = getKey();
-    getStock(force).then(function (stock) {
+    Promise.all([getStock(force), getModel()]).then(function (res) {
+      var stock = res[0], model = res[1] || {};
       if (!stock) { tfsMsg("stock unavailable"); return; }
       if (mode === "profit" && key) {
-        return getPrices(key).then(function (m) { tfsMsg(""); paintPanels(stock, "profit", m); })
-          .catch(function () { tfsMsg("key error"); paintPanels(stock, "stock", {}); });
+        return getPrices(key).then(function (m) { tfsMsg(""); paintPanels(stock, "profit", m, model); })
+          .catch(function () { tfsMsg("key error"); paintPanels(stock, "stock", {}, model); });
       }
       if (mode === "profit" && !key) tfsMsg("add a key for profit");
-      paintPanels(stock, "stock", {});
+      paintPanels(stock, "stock", {}, model);
     });
   }
   function scheduleApply() {
