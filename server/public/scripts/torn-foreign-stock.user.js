@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
+// @connect      api.prombot.co.uk
 // @connect      yata.yt
 // @connect      api.torn.com
 // @run-at       document-idle
@@ -20,6 +21,7 @@
   "use strict";
   var SCRIPT_VERSION = "0.1.0";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
+  var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
   var STOCK_TTL = 300, PRICE_TTL = 21600, STALE_MIN = 30;
 
@@ -41,7 +43,7 @@
       if (!Object.prototype.hasOwnProperty.call(stocks, code)) continue;
       var c = stocks[code] || {};
       var items = (c.stocks || []).map(function (it) {
-        return { id: it.id, name: it.name, qty: it.quantity, cost: it.cost };
+        return { id: it.id, name: it.name, qty: it.quantity, cost: it.cost, nextRestock: (it.nextRestock != null ? it.nextRestock : null) };
       });
       out[code] = { update: c.update || 0, items: items };
     }
@@ -74,17 +76,34 @@
       var value = (mode === "profit") ? getValue(it.id) : undefined;
       value = (typeof value === "number" && isFinite(value)) ? value : null;
       var profit = (value == null) ? null : (value - it.cost);
-      return { id: it.id, name: it.name, qty: it.qty, cost: it.cost, value: value, profit: profit };
+      return { id: it.id, name: it.name, qty: it.qty, cost: it.cost, value: value, profit: profit, nextRestock: it.nextRestock || null };
     });
   }
-  function sortRows(rows, mode) {
+  function restockEta(nextRestock, nowMs) {
+    if (!nextRestock) return null;
+    var t = Date.parse(nextRestock);
+    if (isNaN(t) || t <= nowMs) return null;
+    var mins = Math.ceil((t - nowMs) / 60000);
+    var text = (mins < 60) ? (mins + "m") : (Math.floor(mins / 60) + "h " + (mins % 60) + "m");
+    return { mins: mins, text: text };
+  }
+  function sortRows(rows, mode, nowMs) {
+    if (nowMs == null) nowMs = Date.now();
     var arr = rows.slice();
     arr.sort(function (a, b) {
-      var pa, pb;
-      if (mode === "profit") { pa = (a.profit == null ? -Infinity : a.profit); pb = (b.profit == null ? -Infinity : b.profit); }
-      else { pa = a.cost; pb = b.cost; }
-      if (pb !== pa) return pb - pa;
-      if (b.qty !== a.qty) return b.qty - a.qty;
+      var ai = a.qty > 0, bi = b.qty > 0;
+      if (ai !== bi) return ai ? -1 : 1;
+      if (ai) {
+        var pa, pb;
+        if (mode === "profit") { pa = (a.profit == null ? -Infinity : a.profit); pb = (b.profit == null ? -Infinity : b.profit); }
+        else { pa = a.cost; pb = b.cost; }
+        if (pb !== pa) return pb - pa;
+        if (b.qty !== a.qty) return b.qty - a.qty;
+        return String(a.name).localeCompare(String(b.name));
+      }
+      var ea = restockEta(a.nextRestock, nowMs), eb = restockEta(b.nextRestock, nowMs);
+      var ma = ea ? ea.mins : Infinity, mb = eb ? eb.mins : Infinity;
+      if (ma !== mb) return ma - mb;
       return String(a.name).localeCompare(String(b.name));
     });
     return arr;
@@ -118,11 +137,10 @@
   function getStock(force) {
     var cached = gmGet("tfs_stock", null);
     if (!force && cached && (_nowSec() - cached.t) < STOCK_TTL) return Promise.resolve(cached.data);
-    return _fetchJson(YATA_URL).then(function (json) {
-      var data = parseYataExport(json);
-      gmSet("tfs_stock", { t: _nowSec(), data: data });
-      return data;
-    }).catch(function () { return cached ? cached.data : null; });
+    function store(json) { var data = parseYataExport(json); gmSet("tfs_stock", { t: _nowSec(), data: data }); return data; }
+    return _fetchJson(PROMBOT_URL).then(store).catch(function () {
+      return _fetchJson(YATA_URL).then(store).catch(function () { return cached ? cached.data : null; });
+    });
   }
   function getPrices(key) {
     if (!key) return Promise.resolve({});
@@ -286,7 +304,7 @@
     module.exports = {
       normalizeCountryName: normalizeCountryName, COUNTRY_MAP: COUNTRY_MAP,
       parseYataExport: parseYataExport, fmtMoney: fmtMoney, fmtProfit: fmtProfit, formatAge: formatAge,
-      buildRows: buildRows, sortRows: sortRows
+      buildRows: buildRows, sortRows: sortRows, restockEta: restockEta
     };
     module.exports.getStock = getStock;
     module.exports.getPrices = getPrices;

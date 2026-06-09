@@ -35,7 +35,7 @@ test("normalizeCountryName returns null for unknown", () => {
 test("parseYataExport normalizes countries + items", () => {
   const json = { stocks: { mex: { update: 1000, stocks: [ { id: 99, name: "Springfield 1911", quantity: 49, cost: 430 } ] } } };
   const out = mod.parseYataExport(json);
-  assert.deepStrictEqual(out.mex.items[0], { id: 99, name: "Springfield 1911", qty: 49, cost: 430 });
+  assert.deepStrictEqual(out.mex.items[0], { id: 99, name: "Springfield 1911", qty: 49, cost: 430, nextRestock: null });
   assert.strictEqual(out.mex.update, 1000);
 });
 
@@ -133,4 +133,46 @@ test("getPrices maps v2 value.market_price and throws on api error", async () =>
   assert.strictEqual(map[1], 9200);
   mod.__setFetch(async () => ({ error: { error: "Incorrect key" } }));
   await assert.rejects(() => mod.getPrices("BADKEY"));
+});
+
+test("parseYataExport keeps nextRestock (prombot) and defaults null (yata)", () => {
+  const prom = { stocks: { mex: { update: 1, stocks: [{ id: 5, name: "A", quantity: 0, cost: 9, nextRestock: "2026-06-09T16:45:00.000Z" }] } } };
+  assert.strictEqual(mod.parseYataExport(prom).mex.items[0].nextRestock, "2026-06-09T16:45:00.000Z");
+  const yata = { stocks: { mex: { update: 1, stocks: [{ id: 5, name: "A", quantity: 3, cost: 9 }] } } };
+  assert.strictEqual(mod.parseYataExport(yata).mex.items[0].nextRestock, null);
+});
+
+test("restockEta: null for missing/past/invalid, text for future", () => {
+  const now = Date.parse("2026-06-09T16:00:00.000Z");
+  assert.strictEqual(mod.restockEta(null, now), null);
+  assert.strictEqual(mod.restockEta("2026-06-09T15:00:00.000Z", now), null); // past
+  assert.strictEqual(mod.restockEta("not-a-date", now), null);
+  assert.strictEqual(mod.restockEta("2026-06-09T16:09:00.000Z", now).text, "9m");
+  assert.strictEqual(mod.restockEta("2026-06-09T17:24:00.000Z", now).text, "1h 24m");
+});
+
+test("getStock uses Prombot, falls back to YATA on Prombot failure", async () => {
+  const store = {};
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  mod.__setClock(() => 2000);
+  mod.__setFetch(async (url) => {
+    if (url.indexOf("prombot") !== -1) throw new Error("prombot down");
+    return { stocks: { mex: { update: 1, stocks: [{ id: 7, name: "Y", quantity: 1, cost: 2 }] } } };
+  });
+  const out = await mod.getStock(true);
+  assert.strictEqual(out.mex.items[0].id, 7);
+});
+
+test("sortRows: in-stock before out-of-stock; out-of-stock by soonest restock", () => {
+  const now = Date.parse("2026-06-09T16:00:00.000Z");
+  const rows = [
+    { id: 1, name: "InB", qty: 5, cost: 100, profit: null, nextRestock: null },
+    { id: 2, name: "OutLate", qty: 0, cost: 50, profit: null, nextRestock: "2026-06-09T18:00:00.000Z" },
+    { id: 3, name: "InA", qty: 9, cost: 200, profit: null, nextRestock: null },
+    { id: 4, name: "OutSoon", qty: 0, cost: 50, profit: null, nextRestock: "2026-06-09T16:10:00.000Z" },
+    { id: 5, name: "OutNone", qty: 0, cost: 50, profit: null, nextRestock: null }
+  ];
+  const ids = mod.sortRows(rows, "stock", now).map(function (r) { return r.id; });
+  assert.deepStrictEqual(ids, [3, 1, 4, 2, 5]); // in-stock by cost desc (200,100), then out-of-stock: soon, late, none
 });
