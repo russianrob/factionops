@@ -24,6 +24,17 @@
   var STOCK_TTL = 300, PRICE_TTL = 21600, STALE_MIN = 30;
 
   // ─── pure helpers (unit-tested) ──────────────────────────
+  var COUNTRY_MAP = {
+    "mexico": "mex", "cayman islands": "cay", "canada": "can", "hawaii": "haw",
+    "united kingdom": "uni", "uk": "uni", "argentina": "arg", "switzerland": "swi",
+    "japan": "jap", "china": "chi", "uae": "uae", "united arab emirates": "uae",
+    "south africa": "sou"
+  };
+  function normalizeCountryName(name) {
+    if (!name) return null;
+    var k = String(name).trim().toLowerCase().replace(/\s+/g, " ");
+    return COUNTRY_MAP[k] || null;
+  }
 
   // ─── GM / data layer ─────────────────────────────────────
 
@@ -35,6 +46,6 @@
     main();
   }
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = {};
+    module.exports = { normalizeCountryName: normalizeCountryName, COUNTRY_MAP: COUNTRY_MAP };
   }
 })();
