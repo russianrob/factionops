@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.5.0
+// @version      0.5.1
 // @description  Shows abroad item stock (and optional profit) inline on the Torn travel page
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.5.0";
+  var SCRIPT_VERSION = "0.5.1";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -255,7 +255,7 @@
       ".tfs-thead{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:#222;border-bottom:1px solid #333;}" +
       ".tfs-ttitle{font-weight:700;color:#e8c44a;}" +
       ".tfs-tcollapse{background:none;border:0;color:#bbb;cursor:pointer;font-size:14px;}" +
-      ".tfs-tbody{padding:6px 10px;max-height:62vh;overflow:auto;column-count:2;column-gap:18px;}" +
+      ".tfs-tbody{padding:6px 10px;max-height:62vh;overflow-y:auto;}" +
       ".tfs-tc{break-inside:avoid;margin-bottom:8px;}" +
       ".tfs-tch{font-weight:700;color:#ddd;border-bottom:1px solid #333;padding-bottom:2px;margin-bottom:2px;}" +
       ".tfs-tr{display:flex;gap:8px;padding:1px 0;align-items:baseline;}" +
