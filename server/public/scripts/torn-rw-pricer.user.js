@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.2.5
+// @version      3.2.6
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -21,8 +21,8 @@
 // @connect      cdn.marches.cafe
 // @connect      raw.githubusercontent.com
 // @connect      api.torn.com
-// @downloadURL https://update.greasyfork.org/scripts/569836/Torn%20RW%20Pricer.user.js
-// @updateURL https://update.greasyfork.org/scripts/569836/Torn%20RW%20Pricer.meta.js
+// @downloadURL https://tornwar.com/scripts/torn-rw-pricer.user.js
+// @updateURL https://tornwar.com/scripts/torn-rw-pricer.meta.js
 // ==/UserScript==
 
 (function() {
@@ -30,7 +30,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.2.5';
+    var SCRIPT_VERSION = '3.2.6';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -460,11 +460,12 @@
     // ─── PDA: fetch pre-built JSON prices (no decompression needed) ──
 
     function fetchPricesJSON() {
+        var url = PRICES_JSON_URL + '?t=' + Math.floor(Date.now() / 3600000);
         return new Promise(function(resolve, reject) {
             if (typeof GM_xmlhttpRequest === 'function') {
                 GM_xmlhttpRequest({
                     method: 'GET',
-                    url: PRICES_JSON_URL,
+                    url: url,
                     onload: function(resp) {
                         var text = resp.responseText || resp;
                         try {
@@ -477,7 +478,7 @@
                 });
             } else {
                 // Last resort: try native fetch for JSON
-                fetch(PRICES_JSON_URL).then(function(resp) {
+                fetch(url).then(function(resp) {
                     if (!resp.ok) throw new Error('HTTP ' + resp.status);
                     return resp.json();
                 }).then(resolve).catch(reject);
@@ -1732,6 +1733,7 @@
     function injectPriceTags() {
 
         var containers = findItemContainers();
+        ensureRefreshButton(containers);
 
         for (var i = 0; i < containers.length; i++) {
             var el = containers[i];
@@ -1778,7 +1780,10 @@
                 var combo = comboFn(itemKey, b.name, rarity);
                 if (combo) return combo;
                 var bMed = bonusFn(b.name, bonusColors[b.name]);
-                return bMed ? Math.max(median, bMed) : median;
+                if (!bMed) return median;
+                var bvPa = weaponKey ? getPriceArray(itemKey, rarity) : getArmourPriceArray(itemKey, rarity);
+                var bvFloor = (bvPa && bvPa[0]) ? Math.max(bvPa[0], Math.round(median * 0.03)) : Math.round(median * 0.1);
+                return Math.max(bvFloor, bMed);
             };
             if (bonuses.length === 1) {
                 estimatedPrice = bonusValue(bonuses[0]);
@@ -1882,6 +1887,30 @@
     }
 
     // ─── Toggle button ───────────────────────────────────────
+
+    function ensureRefreshButton(containers) {
+        try {
+            if (document.getElementById('rwp-refresh-btn')) return;
+            var loc = window.location.href;
+            if (loc.indexOf('auctionHouse') === -1 && loc.indexOf('amarket') === -1 && loc.indexOf('ItemMarket') === -1) return;
+            if (!containers || !containers.length) return;
+            var anchor = containers[0];
+            var list = anchor.parentElement;
+            if (!list || !list.parentElement) return;
+            var btn = document.createElement('div');
+            btn.id = 'rwp-refresh-btn';
+            btn.textContent = '↻ Refresh RWP prices';
+            btn.title = 'Re-fetch the latest RW price data';
+            btn.style.cssText = 'display:block;margin:8px auto;padding:8px 14px;max-width:260px;text-align:center;background:#2c2c2c;color:#7ec8ff;border:1px solid #555;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;user-select:none;';
+            btn.addEventListener('click', function () {
+                btn.textContent = '↻ Refreshing…';
+                Promise.resolve(fetchAndUpdatePrices()).then(function () {
+                    btn.textContent = '↻ Refresh RWP prices';
+                });
+            });
+            list.parentElement.insertBefore(btn, list);
+        } catch (e) {}
+    }
 
     function createToggle() {
         if (document.getElementById('rwp-inline-toggle')) return;
@@ -2160,8 +2189,10 @@
         // Inject immediately with whatever data we have
         injectPriceTags();
 
-        // Fetch fresh data in background if cache is stale
-        if (isCacheStale(cacheTimestamp)) {
+        // Fetch fresh data in background if cache is stale, OR if the cached
+        // file predates per-level data (old schema) — auto-heals after a script
+        // update without needing a manual refresh button.
+        if (isCacheStale(cacheTimestamp) || Object.keys(weaponLevelPrices).length === 0) {
             fetchAndUpdatePrices();
         }
 
