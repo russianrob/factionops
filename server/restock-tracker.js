@@ -29,10 +29,24 @@ const MIN_GAP = 180;          // ignore gaps < 3 min (glitch dips / same-second)
 const ABSENT_MAX = 180;       // if an item went unseen > 3 min (3+ missed polls), the next increase is unreliable
 const STALE_DROP = 6 * 3600;  // drop model entries whose last restock is > 6h old
 
+const WINDOW_SEC = 1800;
+const SAMPLE_CAP = 40;
+const MIN_SAMPLES_IN_WINDOW = 6;
+const MIN_OBSERVED_SEC = 600;
+const MIN_UNITS_OBSERVED = 3;
+const SAFETY = 1.15;
+
+export function percentile(nums, p) {
+  if (!nums || !nums.length) return 0;
+  const a = nums.slice().sort((x, y) => x - y);
+  const idx = Math.round(p * (a.length - 1));
+  return a[Math.max(0, Math.min(a.length - 1, idx))];
+}
+
 export function recordSample(item, curQty, nowSec) {
-  const prev = item || { qty: null, restocks: [], lastSeen: null };
+  const prev = item || { qty: null, restocks: [], lastSeen: null, samples: [] };
   if (typeof curQty !== "number" || !isFinite(curQty)) {
-    return { qty: prev.qty, restocks: (prev.restocks || []).slice(), lastSeen: prev.lastSeen };
+    return { qty: prev.qty, restocks: (prev.restocks || []).slice(), lastSeen: prev.lastSeen, samples: (prev.samples || []).slice() };
   }
   let restocks = (prev.restocks || []).slice();
   const fresh = (prev.lastSeen == null) || (nowSec - prev.lastSeen) <= ABSENT_MAX;
@@ -40,27 +54,103 @@ export function recordSample(item, curQty, nowSec) {
     restocks.push(nowSec);
     if (restocks.length > 24) restocks = restocks.slice(restocks.length - 24);
   }
-  return { qty: curQty, restocks: restocks, lastSeen: nowSec };
+  let samples = (prev.samples || []).slice();
+  samples.push([nowSec, curQty]);
+  const minAge = nowSec - WINDOW_SEC - 120;
+  samples = samples.filter((s) => s[0] >= minAge);
+  if (samples.length > SAMPLE_CAP) samples = samples.slice(samples.length - SAMPLE_CAP);
+  return { qty: curQty, restocks: restocks, lastSeen: nowSec, samples: samples };
 }
 
-export function computeEntry(restocks) {
-  if (!restocks || restocks.length < 2) return null;
-  const g = gaps(restocks).filter((x) => x >= MIN_GAP);
-  if (g.length < 1) return null;
-  return {
-    interval: Math.round(median(g)),
-    last: restocks[restocks.length - 1],
-    n: g.length,
-    rel: reliabilityTier(g.length, coeffVar(g))
-  };
+export function computeSellRate(samples, nowSec) {
+  if (!samples || samples.length < 2) return null;
+  const lo = nowSec - WINDOW_SEC;
+  const drops = [];
+  const secs = [];
+  let sumDropsRaw = 0;
+  let largestRawDrop = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const prev = samples[i - 1];
+    const cur = samples[i];
+    if (prev[0] < lo || cur[0] < lo || cur[0] > nowSec) continue;
+    const dt = cur[0] - prev[0];
+    if (dt > ABSENT_MAX) continue;
+    if (cur[1] > prev[1]) continue;
+    const drop = prev[1] - cur[1];
+    drops.push(drop);
+    secs.push(dt);
+    sumDropsRaw += drop;
+    if (drop > largestRawDrop) largestRawDrop = drop;
+  }
+  const usableIntervals = drops.length;
+  if (usableIntervals < 1) return null;
+  const observedSec = secs.reduce((s, x) => s + x, 0);
+  if (observedSec <= 0) return null;
+  const cap = Math.max(percentile(drops, 0.9), 5);
+  let sumDrops = 0;
+  for (const d of drops) sumDrops += Math.min(d, cap);
+  let sellRate = sumDrops / (observedSec / 60);
+  if (!isFinite(sellRate) || sellRate < 0) sellRate = 0;
+  const maxDropShare = sumDropsRaw > 0 ? largestRawDrop / sumDropsRaw : 0;
+  return { sellRate, sumDrops, sumDropsRaw, usableIntervals, observedSec, maxDropShare };
+}
+
+export function depletionReliability(usableIntervals, maxDropShare, coverage) {
+  if (usableIntervals >= 12 && maxDropShare < 0.4 && coverage > 0.7) return "high";
+  if (usableIntervals >= 6 && maxDropShare < 0.6) return "med";
+  return "low";
+}
+
+export function computeEntry(restocks, samples, nowSec) {
+  let entry = null;
+  if (restocks && restocks.length >= 2) {
+    const g = gaps(restocks).filter((x) => x >= MIN_GAP);
+    if (g.length >= 1) {
+      entry = {
+        interval: Math.round(median(g)),
+        last: restocks[restocks.length - 1],
+        n: g.length,
+        rel: reliabilityTier(g.length, coeffVar(g))
+      };
+    }
+  }
+
+  const sr = computeSellRate(samples, nowSec);
+  const sellReady = !!(sr && sr.usableIntervals >= MIN_SAMPLES_IN_WINDOW &&
+    sr.observedSec >= MIN_OBSERVED_SEC && sr.sumDrops >= MIN_UNITS_OBSERVED);
+
+  if (!entry && !sellReady) return null;
+  if (!entry) entry = {};
+  entry.sellReady = sellReady;
+  if (sellReady) {
+    const modelQty = samples[samples.length - 1][1];
+    entry.sellRate = sr.sellRate;
+    entry.srel = depletionReliability(sr.usableIntervals, sr.maxDropShare, sr.observedSec / WINDOW_SEC);
+    entry.secToSellout = Math.round(modelQty / (sr.sellRate * SAFETY));
+    entry.modelQty = modelQty;
+    entry.n2 = sr.usableIntervals;
+    entry.obsSec = sr.observedSec;
+    entry.maxDropShare = sr.maxDropShare;
+    entry.sumDrops = sr.sumDrops;
+  }
+  return entry;
 }
 
 export function buildModel(state, nowSec) {
   const items = {};
   for (const c in state) {
     for (const id in state[c]) {
-      const e = computeEntry(state[c][id].restocks || []);
-      if (e && (nowSec - e.last) <= STALE_DROP) { if (!items[c]) items[c] = {}; items[c][id] = e; }
+      const rec = state[c][id];
+      const e = computeEntry(rec.restocks || [], rec.samples || [], nowSec);
+      if (!e) continue;
+      const restockFresh = e.last != null && (nowSec - e.last) <= STALE_DROP;
+      if (!restockFresh && e.last != null) {
+        delete e.interval; delete e.last; delete e.n; delete e.rel;
+      }
+      if (restockFresh || e.sellReady) {
+        if (!items[c]) items[c] = {};
+        items[c][id] = e;
+      }
     }
   }
   return { updated: nowSec, items: items };

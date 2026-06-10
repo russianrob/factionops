@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.7.2
+// @version      0.8.0
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,13 +20,14 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.7.2";
+  var SCRIPT_VERSION = "0.8.0";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
   var MODEL_URL = "https://raw.githubusercontent.com/russianrob/torn-foreign-restock/main/restock-model.json";
   var MODEL_TTL = 600;
   var STOCK_TTL = 60, PRICE_TTL = 21600, STALE_MIN = 30;
+  var SAFETY = 1.15, MARGIN_SAFE_MIN = 8;
 
   // ─── pure helpers (unit-tested) ──────────────────────────
   var COUNTRY_MAP = {
@@ -113,6 +114,69 @@
     if (est) return est;
     if (live && live.due) return "restock due";
     return "out of stock";
+  }
+  var BASE_MIN = { mex: 26, cay: 35, can: 41, haw: 134, uni: 159, arg: 167, swi: 175, jap: 225, chi: 242, uae: 271, sou: 297 };
+  var METHOD_MULT = { standard: 1, airstrip: 0.7, private: 0.5, business: 0.3 };
+  function parseFlightMinutes(text) {
+    if (text == null) return null;
+    var s = String(text).trim();
+    if (!s) return null;
+    var hm = s.match(/(\d+)\s*h\s*(\d+)\s*m/i);
+    if (hm) return Number(hm[1]) * 60 + Number(hm[2]);
+    var clock = s.match(/^(\d{1,3}):(\d{1,2})(?::(\d{2}))?$/);
+    if (clock) {
+      if (clock[3] != null) return Math.round(Number(clock[1]) * 60 + Number(clock[2]) + Number(clock[3]) / 60);
+      return Number(clock[1]) * 60 + Number(clock[2]);
+    }
+    return null;
+  }
+  function nextRestockSec(nextRestock, entry, nowSec) {
+    var best = null;
+    if (nextRestock) {
+      var t = Date.parse(nextRestock);
+      if (!isNaN(t)) { var s = Math.floor(t / 1000); if (s > nowSec) best = s; }
+    }
+    if (entry && entry.interval && entry.last != null && (entry.rel || "low") !== "low") {
+      var interval = entry.interval, since = nowSec - entry.last, leftSec;
+      if (since < 0) leftSec = -since; else leftSec = interval - (since % interval);
+      if (leftSec <= 0) leftSec = interval;
+      var slot = nowSec + leftSec;
+      if (best == null || slot < best) best = slot;
+    }
+    return best;
+  }
+  function landVerdict(ctx) {
+    ctx = ctx || {};
+    if (!ctx.sellReady || ctx.flightMinutes == null) return null;
+    var qty = ctx.qty, F = ctx.flightMinutes;
+    var lowConf = (ctx.srel === "low");
+    var nowSec = Math.floor((ctx.nowMs != null ? ctx.nowMs : Date.now()) / 1000);
+    var rSec = nextRestockSec(ctx.nextRestock, ctx.restockEntry, nowSec);
+    var R = (rSec == null) ? null : (rSec - nowSec) / 60;
+    if (qty <= 0) {
+      if (R != null && R <= F) {
+        return { state: "GONE_THEN_RESTOCKED", text: "🔄 Restocks ~" + Math.max(1, Math.round(R)) + "m before you land", lowConf: lowConf };
+      }
+      return { state: "GONE", text: "❌ Out of stock", lowConf: lowConf };
+    }
+    if (ctx.sellRate < 0 || !isFinite(ctx.sellRate)) return null;
+    var bufferedRate = ctx.sellRate * SAFETY;
+    var M = (bufferedRate > 0 && isFinite(bufferedRate)) ? (qty / bufferedRate) : Infinity;
+    var margin = M - F;
+    if (margin >= MARGIN_SAFE_MIN || M >= 1.5 * F) {
+      var safeText = "✅ In stock when you land";
+      if (!lowConf) safeText += " (~" + Math.max(1, Math.round(margin)) + "m buffer)";
+      return { state: "SAFE", text: safeText, lowConf: lowConf };
+    }
+    if (margin >= 0) {
+      var riskyText = "⚠️ Cutting it close — selling fast";
+      if (!lowConf) riskyText += " (~" + Math.max(1, Math.round(margin)) + "m to spare)";
+      return { state: "RISKY", text: riskyText, lowConf: lowConf };
+    }
+    if (R != null && R <= F && R > M) {
+      return { state: "GONE_THEN_RESTOCKED", text: "🔄 Sells out, but restocks ~" + Math.max(1, Math.round(R)) + "m before you land", lowConf: lowConf };
+    }
+    return { state: "GONE", text: "❌ Will sell out before you land", lowConf: lowConf };
   }
   function sortRows(rows, mode, nowMs) {
     if (nowMs == null) nowMs = Date.now();
@@ -283,7 +347,14 @@
       ".tfs-tc{margin:0 0 12px;max-width:540px;}" +
       ".tfs-tch{display:flex;align-items:center;gap:7px;font-weight:600;color:#e6e9ee;padding:5px 6px 4px;border-bottom:1px solid #262a33;margin-bottom:3px;position:sticky;top:-1px;background:#16181d;}" +
       ".tfs-flag{font-size:14px;}" +
-      ".tfs-tempty{color:#7a818c;padding:6px 6px;}";
+      ".tfs-tempty{color:#7a818c;padding:6px 6px;}" +
+      ".tfs-verdict{font-size:11px;line-height:1.3;margin:0 0 4px;padding:2px 6px 4px;color:#aeb4bd;border-left:2px solid #2e333d;}" +
+      ".tfs-verdict.safe{color:#51c97a;border-left-color:#2f6b45;}" +
+      ".tfs-verdict.risky{color:#e0b35a;border-left-color:#7a5e22;}" +
+      ".tfs-verdict.gone{color:#d8736a;border-left-color:#6b322c;}" +
+      ".tfs-verdict.restock{color:#6aa6e0;border-left-color:#2c4d6b;}" +
+      ".tfs-verdict.lowconf{opacity:.6;}" +
+      ".tfs-verdict .tfs-lc{color:#7a818c;font-style:italic;}";
     document.head.appendChild(s);
   }
 
@@ -463,6 +534,26 @@
     return out;
   }
 
+  function getTravelMethod() {
+    var el = document.querySelector('input[name="travelType"][aria-checked="true"]');
+    var v = el && el.value;
+    return (v && METHOD_MULT[v] != null) ? v : "standard";
+  }
+  function readFlightMinutes(destEl, code) {
+    if (destEl) {
+      var t = destEl.querySelector('[class*="duration___"] time[datetime]') || destEl.querySelector('time[datetime]');
+      if (t) {
+        var fromAttr = parseFlightMinutes(t.getAttribute("datetime"));
+        if (fromAttr != null) return fromAttr;
+        var vis = t.querySelector('span[aria-hidden="true"]');
+        var fromText = parseFlightMinutes(vis ? vis.textContent : t.textContent);
+        if (fromText != null) return fromText;
+      }
+    }
+    if (BASE_MIN[code] != null) return Math.round(BASE_MIN[code] * METHOD_MULT[getTravelMethod()]);
+    return null;
+  }
+
   function renderPanel(destEl, code, stock, mode, prices, model, filters) {
     if (!filters) filters = {};
     var country = stock[code];
@@ -473,15 +564,21 @@
     var age = formatAge(country.update, Math.floor(Date.now() / 1000));
     var html = '<div class="tfs-head"><span class="tfs-age' + (age.stale ? " stale" : "") + '">updated ' + age.text + '</span></div><div class="tfs-rows">';
     var nowMs = Date.now();
+    var flightMinutes = readFlightMinutes(destEl, code);
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
+      var entry = (model && model[code]) ? model[code][String(r.id)] : null;
       if (r.qty === 0) {
-        var entry = (model && model[code]) ? model[code][String(r.id)] : null;
         html += '<div class="tfs-row out"><span class="tfs-name">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span>' +
           '<span class="tfs-oos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
       } else {
         html += '<div class="tfs-row' + (mode === "profit" ? " mp" : "") + '"><span class="tfs-name">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
           (mode === "profit" ? '<span class="tfs-profit ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
+        var verdict = entry ? landVerdict({ qty: r.qty, sellRate: entry.sellRate, srel: entry.srel, sellReady: !!entry.sellReady, flightMinutes: flightMinutes, nextRestock: r.nextRestock, restockEntry: entry, nowMs: nowMs }) : null;
+        if (verdict) {
+          var cls = { SAFE: "safe", RISKY: "risky", GONE: "gone", GONE_THEN_RESTOCKED: "restock" }[verdict.state] || "";
+          html += '<div class="tfs-verdict ' + cls + (verdict.lowConf ? " lowconf" : "") + '">' + escapeHtml(verdict.text) + (verdict.lowConf ? ' <span class="tfs-lc">(low confidence)</span>' : '') + '</div>';
+        }
       }
     }
     html += '</div>';
@@ -548,7 +645,9 @@
       parseYataExport: parseYataExport, fmtMoney: fmtMoney, fmtProfit: fmtProfit, formatAge: formatAge,
       buildRows: buildRows, sortRows: sortRows, restockEta: restockEta,
       fmtDuration: fmtDuration, modelEstimate: modelEstimate, restockDisplay: restockDisplay,
-      itemCategory: itemCategory, rowVisible: rowVisible, countryVisible: countryVisible
+      itemCategory: itemCategory, rowVisible: rowVisible, countryVisible: countryVisible,
+      parseFlightMinutes: parseFlightMinutes, landVerdict: landVerdict,
+      getTravelMethod: getTravelMethod, readFlightMinutes: readFlightMinutes
     };
     module.exports.getStock = getStock;
     module.exports.getPrices = getPrices;

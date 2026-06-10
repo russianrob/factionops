@@ -49,8 +49,11 @@ returns as `el`) natively contains the flight time. Verified from live
 **Read order** (per destination row `el`):
 1. `el.querySelector('[class*="duration___"] time[datetime]')` → parse `datetime`
    attr with `/(\d+)\s*h\s*(\d+)\s*m/` → `hours*60 + mins` = `flightMinutes`.
-2. Fallback: the visible `time > span[aria-hidden="true"]` text (`"00:18"` /
-   `"1:23:45"`) parsed with `/^(?:(\d+):)?(\d{1,2}):(\d{2})$/` (h:m:s or m:s).
+2. Fallback: the visible `time > span[aria-hidden="true"]` text disambiguated by
+   colon-part count — **two parts = `h:m`** (the live DOM pairs `datetime="0h 18m"`
+   with visible `"00:18"`, i.e. 18 **minutes**, not 18 seconds), **three parts =
+   `h:m:s`** (`"1:23:45"` → 84 min). Parsed with
+   `/^(\d{1,3}):(\d{1,2})(?::(\d{2}))?$/`.
 3. If neither parses → **no flight time** → render stock/restock info but **no
    land-time verdict** for that row.
 
@@ -101,7 +104,10 @@ maximum-likelihood mean depletion rate and is naturally chunking-robust.
   units to avoid over-clipping low-volume items) before summing — one whale-buy can't
   dominate.
 - Publish `maxDropShare = largestIntervalDropRaw / sumDropsRaw`. `> 0.6` ⇒
-  spiky/volatile; the script softens such verdicts.
+  spiky/volatile; this lowers the depletion-reliability tier `srel` (see below),
+  which de-emphasizes the verdict and omits the numeric margin. (The script does not
+  consume `maxDropShare` directly — the agreed `landVerdict` signature takes `srel`, so
+  volatility softening flows through `srel`, not a separate RISKY trigger.)
 
 ### Windowing, state, gating
 
@@ -167,7 +173,7 @@ when `rel != "low"`**.
 | State | Condition | Badge (with margin shown) |
 |---|---|---|
 | **SAFE** | `qty>0` && (`margin >= 8` OR `M >= 1.5*F`) | `✅ In stock when you land (~12m buffer)` |
-| **RISKY** | `qty>0` && `0 <= margin < 8`, OR `maxDropShare>0.6` | `⚠️ Cutting it close — selling fast (~2m to spare)` |
+| **RISKY** | `qty>0` && `0 <= margin < 8` | `⚠️ Cutting it close — selling fast (~2m to spare)` |
 | **GONE** | `M < F` && (`R` null OR `R > F`) | `❌ Will sell out before you land` |
 | **GONE_THEN_RESTOCKED** | `M < F` && `R <= F` && `R > M` | `🔄 Sells out, but restocks ~3m before you land` |
 

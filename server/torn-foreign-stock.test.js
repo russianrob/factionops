@@ -261,3 +261,165 @@ test("countryVisible: hidden set", () => {
   assert.strictEqual(mod.countryVisible("mex", { hiddenCountries: ["mex"] }), false);
   assert.strictEqual(mod.countryVisible("uae", { hiddenCountries: ["mex"] }), true);
 });
+
+test("parseFlightMinutes: h/m datetime format", () => {
+  assert.strictEqual(mod.parseFlightMinutes("0h 18m"), 18);
+  assert.strictEqual(mod.parseFlightMinutes("2h 39m"), 159);
+  assert.strictEqual(mod.parseFlightMinutes("4h 31m"), 271);
+});
+
+test("parseFlightMinutes: colon clock format", () => {
+  assert.strictEqual(mod.parseFlightMinutes("00:18"), 18);
+  assert.strictEqual(mod.parseFlightMinutes("2:39"), 159);
+  assert.strictEqual(mod.parseFlightMinutes("1:23:45"), 84);
+});
+
+test("parseFlightMinutes: junk -> null", () => {
+  assert.strictEqual(mod.parseFlightMinutes(""), null);
+  assert.strictEqual(mod.parseFlightMinutes(null), null);
+  assert.strictEqual(mod.parseFlightMinutes("flight time"), null);
+  assert.strictEqual(mod.parseFlightMinutes("abc"), null);
+});
+
+function withDocument(checkedMethod, fn) {
+  const prev = globalThis.document;
+  globalThis.document = {
+    querySelector: function (sel) {
+      if (sel.indexOf("travelType") !== -1) {
+        return checkedMethod == null ? null : { value: checkedMethod };
+      }
+      return null;
+    }
+  };
+  try { return fn(); } finally {
+    if (prev === undefined) delete globalThis.document; else globalThis.document = prev;
+  }
+}
+
+test("getTravelMethod: reads checked radio value, defaults standard", () => {
+  withDocument("airstrip", () => assert.strictEqual(mod.getTravelMethod(), "airstrip"));
+  withDocument("business", () => assert.strictEqual(mod.getTravelMethod(), "business"));
+  withDocument(null, () => assert.strictEqual(mod.getTravelMethod(), "standard"));
+  withDocument("bogus", () => assert.strictEqual(mod.getTravelMethod(), "standard"));
+});
+
+test("readFlightMinutes: DOM time[datetime] primary", () => {
+  const destEl = {
+    querySelector: function (sel) {
+      if (sel.indexOf("time") !== -1) {
+        return { getAttribute: function () { return "0h 18m"; }, querySelector: function () { return null; }, textContent: "00:18" };
+      }
+      return null;
+    }
+  };
+  withDocument("standard", () => assert.strictEqual(mod.readFlightMinutes(destEl, "mex"), 18));
+});
+
+test("readFlightMinutes: missing time node -> base-table x method fallback", () => {
+  const noTime = { querySelector: function () { return null; } };
+  // standard: mex 26 * 1 = 26; uae 271 * 1 = 271
+  withDocument("standard", () => {
+    assert.strictEqual(mod.readFlightMinutes(noTime, "mex"), 26);
+    assert.strictEqual(mod.readFlightMinutes(noTime, "uae"), 271);
+  });
+  // airstrip: mex round(26 * 0.7) = 18; private: uae round(271 * 0.5) = 136
+  withDocument("airstrip", () => assert.strictEqual(mod.readFlightMinutes(noTime, "mex"), 18));
+  withDocument("private", () => assert.strictEqual(mod.readFlightMinutes(noTime, "uae"), 136));
+  // null destEl also falls back via table
+  withDocument("standard", () => assert.strictEqual(mod.readFlightMinutes(null, "swi"), 175));
+});
+
+test("readFlightMinutes: unknown code with no DOM -> null", () => {
+  withDocument("standard", () => assert.strictEqual(mod.readFlightMinutes(null, "zzz"), null));
+});
+
+const NOW = Date.parse("2026-06-09T16:00:00.000Z");
+function nowSecOf(ms) { return Math.floor(ms / 1000); }
+
+test("landVerdict: null when not ready or no flight time", () => {
+  assert.strictEqual(mod.landVerdict({ qty: 50, sellRate: 1, srel: "high", sellReady: false, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW }), null);
+  assert.strictEqual(mod.landVerdict({ qty: 50, sellRate: 1, srel: "high", sellReady: true, flightMinutes: null, nextRestock: null, restockEntry: null, nowMs: NOW }), null);
+});
+
+test("landVerdict: SAFE shows margin (big buffer)", () => {
+  // qty 50, rate 1/min -> bufferedRate 1.15 -> M=43.5min, F=18 -> margin ~25.5
+  const v = mod.landVerdict({ qty: 50, sellRate: 1, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW });
+  assert.strictEqual(v.state, "SAFE");
+  assert.strictEqual(v.lowConf, false);
+  assert.match(v.text, /In stock when you land/);
+  assert.match(v.text, /buffer/);
+});
+
+test("landVerdict: SAFE via M >= 1.5F even when margin < 8", () => {
+  // F=10, qty=20, rate=1 -> M=17.4, margin=7.4 (<8) but M>=1.5F(15) -> SAFE
+  const v = mod.landVerdict({ qty: 20, sellRate: 1, srel: "high", sellReady: true, flightMinutes: 10, nextRestock: null, restockEntry: null, nowMs: NOW });
+  assert.strictEqual(v.state, "SAFE");
+});
+
+test("landVerdict: RISKY shows margin (cutting it close)", () => {
+  // F=18, qty=23, rate=1 -> M=20, margin=2 (0<=margin<8) -> RISKY
+  const v = mod.landVerdict({ qty: 23, sellRate: 1, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW });
+  assert.strictEqual(v.state, "RISKY");
+  assert.match(v.text, /Cutting it close/);
+  assert.match(v.text, /to spare/);
+});
+
+test("landVerdict: GONE when sells out and no restock", () => {
+  // F=18, qty=5, rate=1 -> M=4.3 < F, no restock -> GONE
+  const v = mod.landVerdict({ qty: 5, sellRate: 1, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW });
+  assert.strictEqual(v.state, "GONE");
+  assert.match(v.text, /sell out before you land/);
+});
+
+test("landVerdict: GONE_THEN_RESTOCKED when restock lands during flight after sellout", () => {
+  // F=18, qty=5, rate=1 -> M=4.3; restock in 10m -> R=10, M(4.3)<R(10)<=F(18) -> GONE_THEN_RESTOCKED
+  const nextRestock = new Date(NOW + 10 * 60000).toISOString();
+  const v = mod.landVerdict({ qty: 5, sellRate: 1, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: nextRestock, restockEntry: null, nowMs: NOW });
+  assert.strictEqual(v.state, "GONE_THEN_RESTOCKED");
+  assert.match(v.text, /restocks ~\d+m before you land/i);
+});
+
+test("landVerdict: GONE_THEN_RESTOCKED uses model roll-forward when rel != low", () => {
+  // F=18, qty=5, rate=1 -> M=4.3; model interval 600s, last 7m ago -> next restock 3m out -> R=3 but R<M? M=4.3>R=3 -> not GTR -> GONE
+  // make interval such that R between M and F: last 4m ago, interval 600 -> next in 6m, R=6 in (M,F] -> GTR
+  const entry = { interval: 600, last: nowSecOf(NOW) - 240, n: 5, rel: "med" };
+  const v = mod.landVerdict({ qty: 5, sellRate: 1, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: entry, nowMs: NOW });
+  assert.strictEqual(v.state, "GONE_THEN_RESTOCKED");
+});
+
+test("landVerdict: rel=low suppresses model restock promise -> GONE", () => {
+  const entry = { interval: 600, last: nowSecOf(NOW) - 240, n: 5, rel: "low" };
+  const v = mod.landVerdict({ qty: 5, sellRate: 1, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: entry, nowMs: NOW });
+  assert.strictEqual(v.state, "GONE");
+});
+
+test("landVerdict: qty<=0 restock-driven (restocks before land)", () => {
+  const nextRestock = new Date(NOW + 12 * 60000).toISOString();
+  const v = mod.landVerdict({ qty: 0, sellRate: 1, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: nextRestock, restockEntry: null, nowMs: NOW });
+  assert.strictEqual(v.state, "GONE_THEN_RESTOCKED");
+  assert.match(v.text, /Restocks ~\d+m before you land/i);
+});
+
+test("landVerdict: qty<=0 no restock -> GONE out of stock", () => {
+  const v = mod.landVerdict({ qty: 0, sellRate: 1, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW });
+  assert.strictEqual(v.state, "GONE");
+  assert.match(v.text, /Out of stock/i);
+});
+
+test("landVerdict: srel=low sets lowConf and omits numeric margin", () => {
+  const v = mod.landVerdict({ qty: 50, sellRate: 1, srel: "low", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW });
+  assert.strictEqual(v.state, "SAFE");
+  assert.strictEqual(v.lowConf, true);
+  assert.doesNotMatch(v.text, /buffer|to spare|~\d+m/);
+});
+
+test("landVerdict: zero rate (no observed depletion) -> SAFE", () => {
+  const v = mod.landVerdict({ qty: 50, sellRate: 0, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW });
+  assert.strictEqual(v.state, "SAFE");
+});
+
+test("landVerdict: negative or non-finite rate is not a confident verdict -> null", () => {
+  assert.strictEqual(mod.landVerdict({ qty: 50, sellRate: -1, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW }), null);
+  assert.strictEqual(mod.landVerdict({ qty: 50, sellRate: NaN, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW }), null);
+  assert.strictEqual(mod.landVerdict({ qty: 50, sellRate: Infinity, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW }), null);
+});
