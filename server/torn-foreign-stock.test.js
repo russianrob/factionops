@@ -671,3 +671,67 @@ test("travelRowsHtml applies filters (hide-out-of-stock) like the destination-li
   assert.ok(html.includes("InStockItem"));
   assert.ok(!html.includes("OosItem"));
 });
+
+// ── Live-stock parser (Torn foreign-store React grid) ──────────────
+function tfsMakeCell(label, value) {
+  const sr = label == null ? null : { textContent: label };
+  return {
+    textContent: (label == null ? "" : label) + (value == null ? "" : value),
+    querySelector: (sel) => (sel.indexOf("srOnly") !== -1 ? sr : null)
+  };
+}
+function tfsMakeRow(cells) {
+  const cellObjs = cells.map((c) => tfsMakeCell(c.label, c.value));
+  return { querySelectorAll: (sel) => (sel.indexOf("cell___") !== -1 ? cellObjs : []) };
+}
+
+test("tfsStockFromRow reads the stock-labeled cell's number (bare text node)", () => {
+  const row = tfsMakeRow([
+    { label: null, value: "" },                // image cell
+    { label: null, value: "Claymore Mine" },   // name (button)
+    { label: "type ", value: "Temporary" },
+    { label: "stock ", value: "982" },
+    { label: null, value: "$70,000" }
+  ]);
+  assert.strictEqual(mod.tfsStockFromRow(row), 982);
+});
+
+test("tfsStockFromRow strips commas in the stock count", () => {
+  assert.strictEqual(mod.tfsStockFromRow(tfsMakeRow([{ label: "stock ", value: "1,021" }])), 1021);
+});
+
+test("tfsStockFromRow returns 0 for an Out-of-stock cell", () => {
+  assert.strictEqual(mod.tfsStockFromRow(tfsMakeRow([{ label: "stock ", value: "Out of stock" }])), 0);
+});
+
+test("tfsStockFromRow prefers a stock cell over an available cell", () => {
+  const row = tfsMakeRow([
+    { label: "available ", value: "5" },
+    { label: "stock ", value: "982" }
+  ]);
+  assert.strictEqual(mod.tfsStockFromRow(row), 982);
+});
+
+test("tfsStockFromRow falls back to available when there is no stock cell", () => {
+  assert.strictEqual(mod.tfsStockFromRow(tfsMakeRow([{ label: "available ", value: "37" }])), 37);
+});
+
+test("tfsStockFromRow returns null when no stock/available column exists", () => {
+  const row = tfsMakeRow([
+    { label: "type ", value: "Temporary" },
+    { label: null, value: "$70,000" }
+  ]);
+  assert.strictEqual(mod.tfsStockFromRow(row), null);
+});
+
+test("tfsCellLabel lowercases the srOnly label", () => {
+  assert.strictEqual(mod.tfsCellLabel(tfsMakeCell("Stock ", "982")).trim(), "stock");
+});
+
+test("tfsStoreRowImgId extracts the item id from the store image", () => {
+  const row = {
+    querySelector: (sel) => (sel.indexOf("images/items") !== -1
+      ? { getAttribute: () => "/images/items/229/medium.png" } : null)
+  };
+  assert.strictEqual(mod.tfsStoreRowImgId(row), "229");
+});

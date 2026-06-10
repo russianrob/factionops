@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.9.7
+// @version      0.9.8
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.7";
+  var SCRIPT_VERSION = "0.9.8";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -538,62 +538,67 @@
   function travelHost() {
     return document.querySelector('[class*="content-wrapper"]') || document.getElementById("mainContainer") || document.body;
   }
-  // ── Live stock from Torn's own store table (overrides the lagging API) ──
-  function tfsFindStoreRow(img, cost) {
-    var costStr = "$" + groupThousands(cost), el = img;
-    for (var u = 0; u < 7 && el; u++) {
-      if ((el.textContent || "").indexOf(costStr) !== -1) return el;
-      el = el.parentElement;
-    }
-    return null;
+  // ── Live stock from Torn's own store grid (overrides the lagging API) ──
+  // Torn's foreign-store row = div[class*="row___"]; each column is a
+  // div[class*="cell___"] whose screen-reader span (class*="srOnly") names it
+  // ("type", "stock", …). The stock count is a bare text node after that span,
+  // so we read the whole cell's digits. Keyed on the label, not the hashed class.
+  function tfsCellLabel(cell) {
+    var sr = cell.querySelector('[class*="srOnly"]');
+    return sr ? String(sr.textContent || "").toLowerCase() : "";
   }
-  function tfsExtractStock(rowEl, cost) {
-    var els = rowEl.querySelectorAll("*"), nums = [];
-    for (var i = 0; i < els.length; i++) {
-      if (els[i].children.length) continue;
-      var t = (els[i].textContent || "").trim();
-      if (/^[\d,]+$/.test(t)) {
-        var n = parseInt(t.replace(/,/g, ""), 10);
-        if (!isNaN(n) && n >= 0 && n <= 9999999 && n !== cost) nums.push(n);
-      }
+  function tfsStockFromRow(rowEl) {
+    var cells = rowEl.querySelectorAll('[class*="cell___"]');
+    var stockN = null, availN = null;
+    for (var c = 0; c < cells.length; c++) {
+      var label = tfsCellLabel(cells[c]);
+      var isStock = label.indexOf("stock") !== -1;
+      var isAvail = label.indexOf("available") !== -1;
+      if (!isStock && !isAvail) continue;
+      var digits = String(cells[c].textContent || "").replace(/[^\d]/g, "");
+      if (isStock) stockN = digits ? parseInt(digits, 10) : 0; // no digits = "Out of stock"
+      else if (digits) availN = parseInt(digits, 10);
     }
-    var uniq = nums.filter(function (v, k) { return nums.indexOf(v) === k; });
-    return (uniq.length === 1) ? uniq[0] : null;
+    return (stockN != null) ? stockN : availN;
+  }
+  function tfsStoreRowImgId(rowEl) {
+    var img = rowEl.querySelector('img[src*="/images/items/"]');
+    if (!img) return null;
+    var m = String(img.getAttribute("src") || "").match(/\/images\/items\/(\d+)/);
+    return m ? m[1] : null;
   }
   function tfsLiveStock(rows) {
     var live = {}, byId = {};
     try {
       for (var i = 0; i < rows.length; i++) byId[String(rows[i].id)] = rows[i];
-      var imgs = document.querySelectorAll('img[src*="/images/items/"]');
-      for (var j = 0; j < imgs.length; j++) {
-        var m = (imgs[j].getAttribute("src") || "").match(/\/images\/items\/(\d+)[\/_]/);
-        if (!m || !byId[m[1]]) continue;
-        var rowEl = tfsFindStoreRow(imgs[j], byId[m[1]].cost);
-        if (!rowEl) continue;
-        var q = tfsExtractStock(rowEl, byId[m[1]].cost);
-        if (q != null) live[m[1]] = q;
+      var storeRows = document.querySelectorAll('div[class*="row___"]');
+      for (var j = 0; j < storeRows.length; j++) {
+        var id = tfsStoreRowImgId(storeRows[j]);
+        if (!id || !byId[id]) continue;
+        var q = tfsStockFromRow(storeRows[j]);
+        if (q != null) live[id] = q;
       }
     } catch (e) {}
     return live;
   }
   function tfsStockDebug(rows) {
     try {
-      var all = document.querySelectorAll("*");
-      for (var r = 0; r < rows.length; r++) {
-        var name = rows[r].name, leaf = null;
-        for (var k = 0; k < all.length; k++) {
-          if (all[k].children.length) continue;
-          if ((all[k].textContent || "").trim() !== name) continue;
-          if (all[k].closest('[id^="tfs"]')) continue;
-          leaf = all[k]; break;
+      var byId = {}; for (var i = 0; i < rows.length; i++) byId[String(rows[i].id)] = rows[i];
+      var storeRows = document.querySelectorAll('div[class*="row___"]');
+      for (var j = 0; j < storeRows.length; j++) {
+        var id = tfsStoreRowImgId(storeRows[j]);
+        if (!id || !byId[id]) continue;
+        var cells = storeRows[j].querySelectorAll('[class*="cell___"]'), map = "";
+        for (var c = 0; c < cells.length; c++) {
+          var sr = cells[c].querySelector('[class*="srOnly"]');
+          var label = sr ? String(sr.textContent || "").replace(/\s+/g, " ").trim() : "-";
+          var full = String(cells[c].textContent || "").replace(/\s+/g, " ").trim();
+          var val = sr ? full.replace(String(sr.textContent || "").replace(/\s+/g, " ").trim(), "").trim() : full;
+          map += "[" + label + "=" + val.slice(0, 12) + "]";
         }
-        if (!leaf) continue;
-        var costStr = "$" + groupThousands(rows[r].cost), row = leaf, hit = false;
-        for (var u = 0; u < 6 && row.parentElement; u++) { row = row.parentElement; if ((row.textContent || "").indexOf(costStr) !== -1) { hit = true; break; } }
-        var html = (row.outerHTML || "").replace(/<svg[\s\S]*?<\/svg>/gi, "[svg]").replace(/ style="[^"]*"/gi, "").replace(/\s+/g, " ");
-        return escapeHtml(name + " :: " + html.slice(0, 820));
+        return escapeHtml("id=" + id + " api=" + (byId[id] ? byId[id].qty : "?") + " LIVE=" + tfsStockFromRow(storeRows[j]) + " :: " + map).slice(0, 850);
       }
-      return "NO-TORN-STORE-ON-PAGE (only my panel has names)";
+      return "NO-row___-STORE (none of my items found in Torn's grid)";
     } catch (e) { return "dbgErr:" + e.message; }
   }
   function travelRowsHtml(state, stock, model, prices, mode, nowMs) {
@@ -887,7 +892,8 @@
       parseFlightMinutes: parseFlightMinutes, landVerdict: landVerdict,
       parseTravelState: parseTravelState,
       getTravelMethod: getTravelMethod, readFlightMinutes: readFlightMinutes,
-      travelRowsHtml: travelRowsHtml, getFilters: getFilters
+      travelRowsHtml: travelRowsHtml, getFilters: getFilters,
+      tfsStockFromRow: tfsStockFromRow, tfsCellLabel: tfsCellLabel, tfsStoreRowImgId: tfsStoreRowImgId
     };
     module.exports.getStock = getStock;
     module.exports.getPrices = getPrices;
