@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.9.6
+// @version      0.9.7
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.6";
+  var SCRIPT_VERSION = "0.9.7";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -590,14 +590,8 @@
         if (!leaf) continue;
         var costStr = "$" + groupThousands(rows[r].cost), row = leaf, hit = false;
         for (var u = 0; u < 6 && row.parentElement; u++) { row = row.parentElement; if ((row.textContent || "").indexOf(costStr) !== -1) { hit = true; break; } }
-        var struct = "", ee = row.querySelectorAll("*");
-        for (var x = 0; x < ee.length && struct.length < 230; x++) {
-          if (ee[x].children.length) continue;
-          var t = (ee[x].textContent || "").replace(/\s+/g, " ").trim();
-          if (!t) continue;
-          struct += "<" + ee[x].tagName.toLowerCase() + "." + String(ee[x].className || "").split(" ")[0].slice(0, 14) + ">" + t.slice(0, 16) + " ";
-        }
-        return name + " row=<" + row.tagName.toLowerCase() + "." + String(row.className || "").split(" ")[0].slice(0, 16) + "> costHit=" + hit + " :: " + struct;
+        var html = (row.outerHTML || "").replace(/<svg[\s\S]*?<\/svg>/gi, "[svg]").replace(/ style="[^"]*"/gi, "").replace(/\s+/g, " ");
+        return escapeHtml(name + " :: " + html.slice(0, 820));
       }
       return "NO-TORN-STORE-ON-PAGE (only my panel has names)";
     } catch (e) { return "dbgErr:" + e.message; }
