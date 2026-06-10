@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.9.4
+// @version      0.9.5
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
