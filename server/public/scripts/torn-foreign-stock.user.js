@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.9.1
+// @version      0.9.2
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.1";
+  var SCRIPT_VERSION = "0.9.2";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -114,13 +114,13 @@
     if (leftSec <= 0) leftSec = interval;
     return "~every " + fmtDuration(interval) + " · ~" + fmtDuration(leftSec) + " (" + (entry.rel || "low") + ")";
   }
-  function restockDisplay(nextRestock, entry, nowMs) {
+  function restockDisplay(nextRestock, entry, nowMs, qty) {
     var live = restockEta(nextRestock, nowMs);
     if (live && !live.due) return "restocks in " + live.text;
     var est = modelEstimate(entry, nowMs);
     if (est) return est;
     if (live && live.due) return "restock due";
-    return "out of stock";
+    return (qty > 0) ? "in stock" : "out of stock";
   }
   var BASE_MIN = { mex: 26, cay: 35, can: 41, haw: 134, uni: 159, arg: 167, swi: 175, jap: 225, chi: 242, uae: 271, sou: 297 };
   var METHOD_MULT = { standard: 1, airstrip: 0.7, private: 0.5, business: 0.3 };
@@ -518,7 +518,7 @@
         var r = rows[i];
         if (r.qty === 0) {
           var entry = (model && model[code]) ? model[code][String(r.id)] : null;
-          html += '<div class="tfs-tr out"><span class="tfs-tn">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span><span class="tfs-toos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
+          html += '<div class="tfs-tr out"><span class="tfs-tn">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span><span class="tfs-toos">' + restockDisplay(r.nextRestock, entry, nowMs, r.qty) + '</span></div>';
         } else {
           html += '<div class="tfs-tr' + (mode === "profit" ? " mp" : "") + '"><span class="tfs-tn">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span><span class="tfs-tq">×' + r.qty + '</span><span class="tfs-tcost">' + fmtMoney(r.cost) + '</span>' +
             (mode === "profit" ? '<span class="tfs-tp ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
@@ -551,7 +551,7 @@
       var entry = (model && model[state.code]) ? model[state.code][String(r.id)] : null;
       if (r.qty === 0) {
         html += '<div class="tfs-row out"><span class="tfs-name">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span>' +
-          '<span class="tfs-oos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
+          '<span class="tfs-oos">' + restockDisplay(r.nextRestock, entry, nowMs, r.qty) + '</span></div>';
       } else {
         html += '<div class="tfs-row' + (mode === "profit" ? " mp" : "") + '"><span class="tfs-name">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
           (mode === "profit" ? '<span class="tfs-profit ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
@@ -562,7 +562,7 @@
             html += '<div class="tfs-verdict ' + cls + (verdict.lowConf ? " lowconf" : "") + '">' + escapeHtml(verdict.text) + (verdict.lowConf ? ' <span class="tfs-lc">(low confidence)</span>' : '') + '</div>';
           }
         } else {
-          html += '<div class="tfs-verdict">' + restockDisplay(r.nextRestock, entry, nowMs) + '</div>';
+          html += '<div class="tfs-verdict">' + restockDisplay(r.nextRestock, entry, nowMs, r.qty) + '</div>';
         }
       }
     }
@@ -729,7 +729,7 @@
       var entry = (model && model[code]) ? model[code][String(r.id)] : null;
       if (r.qty === 0) {
         html += '<div class="tfs-row out"><span class="tfs-name">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span>' +
-          '<span class="tfs-oos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
+          '<span class="tfs-oos">' + restockDisplay(r.nextRestock, entry, nowMs, r.qty) + '</span></div>';
       } else {
         html += '<div class="tfs-row' + (mode === "profit" ? " mp" : "") + '"><span class="tfs-name">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
           (mode === "profit" ? '<span class="tfs-profit ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
