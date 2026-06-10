@@ -79,6 +79,7 @@ export async function refreshRwpPrices(reason) {
       armourSetPrices:   aData.armourSetPrices,
       weaponComboPrices: wData.comboPrices,
       weaponPairComboPrices: wData.pairComboPrices,
+      weaponLevelPrices: wData.levelPrices,
       armourComboPrices: aData.comboPrices,
       weaponMaxBonus:    wData.weaponMaxBonus,
       timestamp: Date.now(),

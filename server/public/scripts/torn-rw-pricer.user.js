@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.2.3
+// @version      3.2.4
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -30,7 +30,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.2.3';
+    var SCRIPT_VERSION = '3.2.4';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -77,8 +77,10 @@
     var weaponComboPrices = DEFAULT_WEAPON_COMBO_PRICES;  // weapon+bonus combo medians
     var armourComboPrices = DEFAULT_ARMOUR_COMBO_PRICES;  // armour+bonus combo medians
     var weaponPairComboPrices = {};   // weapon|bonusA+bonusB exact double-bonus medians
+    var weaponLevelPrices = {};   // weapon|bonus -> rarity -> exact-% -> median (per bonus level)
     var weaponMaxBonus = DEFAULT_WEAPON_MAX_BONUS || {};   // bonus on highest sale per weapon+rarity
     var COMBO_MIN_SAMPLES = 3;   // min auctions needed to use combo median
+    var LEVEL_MIN_SAMPLES = 5;   // min auctions needed to use a per-level median
 
     // ─── Static structural mappings (never change) ───────────
 
@@ -354,6 +356,24 @@
         return null;
     }
 
+    function getWeaponLevelMedian(weaponName, bonusName, rarity, level) {
+        if (!level) return null;
+        var lv = weaponLevelPrices[weaponName + '|' + bonusName];
+        if (!lv || !lv[rarity]) return null;
+        lv = lv[rarity];
+        if (lv[level] != null) return lv[level];
+        var lvls = Object.keys(lv).map(Number).sort(function(a, b) { return a - b; });
+        var lo = null, hi = null;
+        for (var i = 0; i < lvls.length; i++) {
+            if (lvls[i] < level) lo = lvls[i];
+            if (lvls[i] > level && hi === null) hi = lvls[i];
+        }
+        if (lo !== null && hi !== null) {
+            return Math.round(lv[lo] + (lv[hi] - lv[lo]) * (level - lo) / (hi - lo));
+        }
+        return null;
+    }
+
     // ─── Percentile computation ──────────────────────────────
 
     function percentile(sortedArr, p) {
@@ -474,6 +494,7 @@
         var classGroups = {};   // class+rarity -> [prices]
         var comboGroups = {};   // weapon|bonus|rarity -> [prices]
         var pairGroups = {};    // weapon|bonusA+bonusB|rarity -> [prices] (double-bonus)
+        var levelGroups = {};   // weapon|bonus|rarity|level -> [prices] (single-bonus only)
         var comboMaxTracker = {};  // combo key -> {price, qual}
         var maxBonusTracker = {}; // weapon+rarity -> {price, bonuses}
 
@@ -544,6 +565,13 @@
                 var pgKey = weaponName + '|' + (bn1 < bn2 ? bn1 + '+' + bn2 : bn2 + '+' + bn1) + '|' + rarityName;
                 if (!pairGroups[pgKey]) pairGroups[pgKey] = [];
                 pairGroups[pgKey].push(price);
+            }
+
+            // Per-level: single-bonus sales only, keyed by exact bonus %
+            if (bn1 && !bn2 && qual1 > 0) {
+                var lgKey = weaponName + '|' + bn1 + '|' + rarityName + '|' + qual1;
+                if (!levelGroups[lgKey]) levelGroups[lgKey] = [];
+                levelGroups[lgKey].push(price);
             }
 
             // Class group
@@ -644,6 +672,22 @@
             ];
         });
 
+        // Compute per-level medians (weapon|bonus -> rarity -> level), median-only
+        var newLevelPrices = {};
+        Object.keys(levelGroups).forEach(function(key) {
+            var parts = key.split('|');
+            var weapon = parts[0];
+            var bonus = parts[1];
+            var rar = parts[2];
+            var lvl = parts[3];
+            var arr = levelGroups[key].sort(function(a, b) { return a - b; });
+            if (arr.length < LEVEL_MIN_SAMPLES) return;
+            var wbKey = weapon + '|' + bonus;
+            if (!newLevelPrices[wbKey]) newLevelPrices[wbKey] = {};
+            if (!newLevelPrices[wbKey][rar]) newLevelPrices[wbKey][rar] = {};
+            newLevelPrices[wbKey][rar][lvl] = Math.round(percentile(arr, 50));
+        });
+
         // Build max bonus map
         var newMaxBonus = {};
         Object.keys(maxBonusTracker).forEach(function(key) {
@@ -662,6 +706,7 @@
             classPrices: newClassPrices,
             comboPrices: newComboPrices,
             pairComboPrices: newPairComboPrices,
+            levelPrices: newLevelPrices,
             weaponMaxBonus: newMaxBonus
         };
     }
@@ -819,6 +864,7 @@
             if (cached.armourSetPrices) armourSetPrices = cached.armourSetPrices;
             if (cached.weaponComboPrices) weaponComboPrices = cached.weaponComboPrices;
             if (cached.weaponPairComboPrices) weaponPairComboPrices = cached.weaponPairComboPrices;
+            if (cached.weaponLevelPrices) weaponLevelPrices = cached.weaponLevelPrices;
             if (cached.armourComboPrices) armourComboPrices = cached.armourComboPrices;
             if (cached.weaponMaxBonus) weaponMaxBonus = cached.weaponMaxBonus;
             return cached.timestamp;
@@ -851,6 +897,7 @@
                 if (jsonData.armourSetPrices) armourSetPrices = jsonData.armourSetPrices;
                 if (jsonData.weaponComboPrices) weaponComboPrices = jsonData.weaponComboPrices;
                 if (jsonData.weaponPairComboPrices) weaponPairComboPrices = jsonData.weaponPairComboPrices;
+                if (jsonData.weaponLevelPrices) weaponLevelPrices = jsonData.weaponLevelPrices;
                 if (jsonData.armourComboPrices) armourComboPrices = jsonData.armourComboPrices;
                 if (jsonData.weaponMaxBonus) weaponMaxBonus = jsonData.weaponMaxBonus;
 
@@ -870,6 +917,7 @@
                 classPrices = weaponData.classPrices;
                 weaponComboPrices = weaponData.comboPrices;
                 weaponPairComboPrices = weaponData.pairComboPrices || {};
+                weaponLevelPrices = weaponData.levelPrices || {};
                 if (weaponData.weaponMaxBonus) weaponMaxBonus = weaponData.weaponMaxBonus;
 
                 var armourData = parseArmourCSVAndComputePrices(results[1]);
@@ -892,6 +940,7 @@
                 armourSetPrices: armourSetPrices,
                 weaponComboPrices: weaponComboPrices,
                 weaponPairComboPrices: weaponPairComboPrices,
+                weaponLevelPrices: weaponLevelPrices,
                 armourComboPrices: armourComboPrices,
                 weaponMaxBonus: weaponMaxBonus,
                 timestamp: Date.now()
@@ -1722,6 +1771,10 @@
 
             var estimatedPrice = median;
             var bonusValue = function(b) {
+                if (weaponKey) {
+                    var lvlMed = getWeaponLevelMedian(itemKey, b.name, rarity, b.level);
+                    if (lvlMed) return lvlMed;
+                }
                 var combo = comboFn(itemKey, b.name, rarity);
                 if (combo) return combo;
                 var bMed = bonusFn(b.name, bonusColors[b.name]);
