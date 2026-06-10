@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.9.2
+// @version      0.9.3
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.2";
+  var SCRIPT_VERSION = "0.9.3";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -538,10 +538,53 @@
   function travelHost() {
     return document.querySelector('[class*="content-wrapper"]') || document.getElementById("mainContainer") || document.body;
   }
+  // ── Live stock from Torn's own store table (overrides the lagging API) ──
+  function tfsFindStoreRow(img, cost) {
+    var costStr = "$" + groupThousands(cost), el = img;
+    for (var u = 0; u < 7 && el; u++) {
+      if ((el.textContent || "").indexOf(costStr) !== -1) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+  function tfsExtractStock(rowEl, cost) {
+    var els = rowEl.querySelectorAll("*"), nums = [];
+    for (var i = 0; i < els.length; i++) {
+      if (els[i].children.length) continue;
+      var t = (els[i].textContent || "").trim();
+      if (/^[\d,]+$/.test(t)) {
+        var n = parseInt(t.replace(/,/g, ""), 10);
+        if (!isNaN(n) && n >= 0 && n <= 9999999 && n !== cost) nums.push(n);
+      }
+    }
+    var uniq = nums.filter(function (v, k) { return nums.indexOf(v) === k; });
+    return (uniq.length === 1) ? uniq[0] : null;
+  }
+  function tfsLiveStock(rows) {
+    var live = {}, byId = {};
+    try {
+      for (var i = 0; i < rows.length; i++) byId[String(rows[i].id)] = rows[i];
+      var imgs = document.querySelectorAll('img[src*="/images/items/"]');
+      for (var j = 0; j < imgs.length; j++) {
+        var m = (imgs[j].getAttribute("src") || "").match(/\/images\/items\/(\d+)[\/_]/);
+        if (!m || !byId[m[1]]) continue;
+        var rowEl = tfsFindStoreRow(imgs[j], byId[m[1]].cost);
+        if (!rowEl) continue;
+        var q = tfsExtractStock(rowEl, byId[m[1]].cost);
+        if (q != null) live[m[1]] = q;
+      }
+    } catch (e) {}
+    return live;
+  }
   function travelRowsHtml(state, stock, model, prices, mode, nowMs) {
     var country = stock && stock[state.code];
     if (!country || !country.items || !country.items.length) return '<div class="tfs-tempty">no stock data</div>';
-    var rows = sortRows(buildRows(country.items, { mode: mode, getValue: function (id) { return prices[id]; } }), mode, nowMs);
+    var built = buildRows(country.items, { mode: mode, getValue: function (id) { return prices[id]; } });
+    if (state.mode === "abroad") {
+      var live = tfsLiveStock(built);
+      for (var liv = 0; liv < built.length; liv++) { var lv = live[String(built[liv].id)]; if (lv != null) built[liv].qty = lv; }
+    }
+    var rows = sortRows(built, mode, nowMs);
     rows = rows.filter(function (r) { return rowVisible(r, mode, getFilters()); });
     if (!rows.length) return '<div class="tfs-tempty">no stock data</div>';
     var flightMinutes = (state.mode === "flight" && state.timeLeftSec != null) ? (state.timeLeftSec / 60) : null;
