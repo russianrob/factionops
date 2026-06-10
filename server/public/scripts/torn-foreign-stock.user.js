@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.9.0
+// @version      0.9.1
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.0";
+  var SCRIPT_VERSION = "0.9.1";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -542,6 +542,7 @@
     var country = stock && stock[state.code];
     if (!country || !country.items || !country.items.length) return '<div class="tfs-tempty">no stock data</div>';
     var rows = sortRows(buildRows(country.items, { mode: mode, getValue: function (id) { return prices[id]; } }), mode, nowMs);
+    rows = rows.filter(function (r) { return rowVisible(r, mode, getFilters()); });
     if (!rows.length) return '<div class="tfs-tempty">no stock data</div>';
     var flightMinutes = (state.mode === "flight" && state.timeLeftSec != null) ? (state.timeLeftSec / 60) : null;
     var html = "";
@@ -822,7 +823,8 @@
       itemCategory: itemCategory, rowVisible: rowVisible, countryVisible: countryVisible,
       parseFlightMinutes: parseFlightMinutes, landVerdict: landVerdict,
       parseTravelState: parseTravelState,
-      getTravelMethod: getTravelMethod, readFlightMinutes: readFlightMinutes
+      getTravelMethod: getTravelMethod, readFlightMinutes: readFlightMinutes,
+      travelRowsHtml: travelRowsHtml, getFilters: getFilters
     };
     module.exports.getStock = getStock;
     module.exports.getPrices = getPrices;

@@ -648,3 +648,26 @@ test("getTravelState: destinationList present -> skip fetch, null", async () => 
     if (prev === undefined) delete globalThis.document; else globalThis.document = prev;
   }
 });
+
+test("travelRowsHtml applies filters (hide-out-of-stock) like the destination-list panels", () => {
+  const store = {};
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  const state = { mode: "abroad", code: "mex", countryName: "Mexico" };
+  const stock = { mex: { items: [
+    { id: 1, name: "InStockItem", qty: 5, cost: 100 },
+    { id: 2, name: "OosItem", qty: 0, cost: 100 }
+  ] } };
+  const now = Date.parse("2026-06-09T16:00:00.000Z");
+
+  // filters off (empty store) -> both rows present
+  let html = mod.travelRowsHtml(state, stock, {}, {}, "stock", now);
+  assert.ok(html.includes("InStockItem"));
+  assert.ok(html.includes("OosItem"));
+
+  // hide-out-of-stock on -> the qty-0 row is filtered out of the travel panel too
+  store["tfs_hide_oos"] = JSON.stringify(true);
+  html = mod.travelRowsHtml(state, stock, {}, {}, "stock", now);
+  assert.ok(html.includes("InStockItem"));
+  assert.ok(!html.includes("OosItem"));
+});
