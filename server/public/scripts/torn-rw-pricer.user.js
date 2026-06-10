@@ -21,8 +21,8 @@
 // @connect      cdn.marches.cafe
 // @connect      raw.githubusercontent.com
 // @connect      api.torn.com
-// @downloadURL https://tornwar.com/scripts/torn-rw-pricer.user.js
-// @updateURL https://tornwar.com/scripts/torn-rw-pricer.meta.js
+// @downloadURL https://update.greasyfork.org/scripts/569836/Torn%20RW%20Pricer.user.js
+// @updateURL https://update.greasyfork.org/scripts/569836/Torn%20RW%20Pricer.meta.js
 // ==/UserScript==
 
 (function() {
