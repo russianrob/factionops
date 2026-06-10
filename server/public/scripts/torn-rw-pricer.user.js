@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.2.8
+// @version      3.2.9
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -30,7 +30,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.2.8';
+    var SCRIPT_VERSION = '3.2.9';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -952,9 +952,11 @@
             removeAllBadges();
             injectPriceTags();
             flashButton('#22c55e'); // green = live data success
+            return true;
         } catch (e) {
             console.error('[RWP] Fetch failed, using fallback data:', e);
             flashButton('#ef4444'); // red = fetch failed, using defaults/cache
+            return false;
         } finally {
             isFetching = false;
             setToggleLoading(false);
@@ -1903,9 +1905,20 @@
             btn.title = 'Re-fetch the latest RW price data';
             btn.style.cssText = 'display:block;margin:8px auto;padding:8px 14px;max-width:260px;text-align:center;background:#2c2c2c;color:#7ec8ff;border:1px solid #555;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;user-select:none;';
             btn.addEventListener('click', function () {
+                if (btn.getAttribute('data-busy') === '1') return;
+                btn.setAttribute('data-busy', '1');
+                btn.style.opacity = '0.6';
                 btn.textContent = '↻ Refreshing…';
-                Promise.resolve(fetchAndUpdatePrices()).then(function () {
-                    btn.textContent = '↻ Refresh RWP prices';
+                var t0 = Date.now();
+                Promise.resolve(fetchAndUpdatePrices()).then(function (ok) {
+                    setTimeout(function () {
+                        btn.style.opacity = '1';
+                        btn.textContent = (ok === false) ? '✗ Update failed — tap to retry' : '✓ Prices updated';
+                        setTimeout(function () {
+                            btn.textContent = '↻ Refresh RWP prices';
+                            btn.removeAttribute('data-busy');
+                        }, 1800);
+                    }, Math.max(0, 700 - (Date.now() - t0)));
                 });
             });
             list.parentElement.insertBefore(btn, list);
@@ -2189,10 +2202,10 @@
         // Inject immediately with whatever data we have
         injectPriceTags();
 
-        // Fetch fresh data in background if cache is stale, OR if the cached
-        // file predates per-level data (old schema) — auto-heals after a script
-        // update without needing a manual refresh button.
-        if (isCacheStale(cacheTimestamp) || Object.keys(weaponLevelPrices).length === 0) {
+        // Refresh is manual via the inline "Refresh RWP prices" button — no
+        // background auto-update. Fetch automatically only on a brand-new
+        // install (no cache yet) so there is data to show before the first tap.
+        if (cacheTimestamp === 0) {
             fetchAndUpdatePrices();
         }
 
