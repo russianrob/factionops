@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.2.2
+// @version      3.2.3
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -30,7 +30,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.2.2';
+    var SCRIPT_VERSION = '3.2.3';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -76,6 +76,7 @@
     var armourSetPrices = DEFAULT_ARMOUR_SET_PRICES;
     var weaponComboPrices = DEFAULT_WEAPON_COMBO_PRICES;  // weapon+bonus combo medians
     var armourComboPrices = DEFAULT_ARMOUR_COMBO_PRICES;  // armour+bonus combo medians
+    var weaponPairComboPrices = {};   // weapon|bonusA+bonusB exact double-bonus medians
     var weaponMaxBonus = DEFAULT_WEAPON_MAX_BONUS || {};   // bonus on highest sale per weapon+rarity
     var COMBO_MIN_SAMPLES = 3;   // min auctions needed to use combo median
 
@@ -337,6 +338,22 @@
         return null;
     }
 
+    function pairKeyFor(bonusA, bonusB) {
+        return (bonusA < bonusB) ? (bonusA + '+' + bonusB) : (bonusB + '+' + bonusA);
+    }
+
+    function getWeaponPairComboMedian(weaponName, bonusA, bonusB, rarity) {
+        var key = weaponName + '|' + pairKeyFor(bonusA, bonusB);
+        if (weaponPairComboPrices[key] && weaponPairComboPrices[key][rarity]) return weaponPairComboPrices[key][rarity][1];
+        return null;
+    }
+
+    function getWeaponPairComboArray(weaponName, bonusA, bonusB, rarity) {
+        var key = weaponName + '|' + pairKeyFor(bonusA, bonusB);
+        if (weaponPairComboPrices[key] && weaponPairComboPrices[key][rarity]) return weaponPairComboPrices[key][rarity];
+        return null;
+    }
+
     // ─── Percentile computation ──────────────────────────────
 
     function percentile(sortedArr, p) {
@@ -456,6 +473,7 @@
         var bonusGroups = {};   // bonus+rarity -> [prices]
         var classGroups = {};   // class+rarity -> [prices]
         var comboGroups = {};   // weapon|bonus|rarity -> [prices]
+        var pairGroups = {};    // weapon|bonusA+bonusB|rarity -> [prices] (double-bonus)
         var comboMaxTracker = {};  // combo key -> {price, qual}
         var maxBonusTracker = {}; // weapon+rarity -> {price, bonuses}
 
@@ -519,6 +537,13 @@
                 if (!comboMaxTracker[cbKey2] || price > comboMaxTracker[cbKey2].price) {
                     comboMaxTracker[cbKey2] = { price: price, qual: qual2 };
                 }
+            }
+
+            // Double-bonus exact combo (both bonuses present on the same sale)
+            if (bn1 && bn2 && bn1 !== bn2) {
+                var pgKey = weaponName + '|' + (bn1 < bn2 ? bn1 + '+' + bn2 : bn2 + '+' + bn1) + '|' + rarityName;
+                if (!pairGroups[pgKey]) pairGroups[pgKey] = [];
+                pairGroups[pgKey].push(price);
             }
 
             // Class group
@@ -600,6 +625,25 @@
             newComboPrices[comboKey][rar] = entry;
         });
 
+        // Compute double-bonus combo percentiles (weapon|bonusA+bonusB)
+        var newPairComboPrices = {};
+        Object.keys(pairGroups).forEach(function(key) {
+            var parts = key.split('|');
+            var weapon = parts[0];
+            var pair = parts[1];
+            var rar = parts[2];
+            var arr = pairGroups[key].sort(function(a, b) { return a - b; });
+            if (arr.length < COMBO_MIN_SAMPLES) return;
+            var pairKey = weapon + '|' + pair;
+            if (!newPairComboPrices[pairKey]) newPairComboPrices[pairKey] = {};
+            newPairComboPrices[pairKey][rar] = [
+                arr[0],
+                Math.round(percentile(arr, 50)),
+                arr[arr.length - 1],
+                arr.length
+            ];
+        });
+
         // Build max bonus map
         var newMaxBonus = {};
         Object.keys(maxBonusTracker).forEach(function(key) {
@@ -617,6 +661,7 @@
             bonusPrices: newBonusPrices,
             classPrices: newClassPrices,
             comboPrices: newComboPrices,
+            pairComboPrices: newPairComboPrices,
             weaponMaxBonus: newMaxBonus
         };
     }
@@ -773,6 +818,7 @@
             if (cached.armourBonusPrices) armourBonusPrices = cached.armourBonusPrices;
             if (cached.armourSetPrices) armourSetPrices = cached.armourSetPrices;
             if (cached.weaponComboPrices) weaponComboPrices = cached.weaponComboPrices;
+            if (cached.weaponPairComboPrices) weaponPairComboPrices = cached.weaponPairComboPrices;
             if (cached.armourComboPrices) armourComboPrices = cached.armourComboPrices;
             if (cached.weaponMaxBonus) weaponMaxBonus = cached.weaponMaxBonus;
             return cached.timestamp;
@@ -804,6 +850,7 @@
                 if (jsonData.armourBonusPrices) armourBonusPrices = jsonData.armourBonusPrices;
                 if (jsonData.armourSetPrices) armourSetPrices = jsonData.armourSetPrices;
                 if (jsonData.weaponComboPrices) weaponComboPrices = jsonData.weaponComboPrices;
+                if (jsonData.weaponPairComboPrices) weaponPairComboPrices = jsonData.weaponPairComboPrices;
                 if (jsonData.armourComboPrices) armourComboPrices = jsonData.armourComboPrices;
                 if (jsonData.weaponMaxBonus) weaponMaxBonus = jsonData.weaponMaxBonus;
 
@@ -822,6 +869,7 @@
                 bonusPrices = weaponData.bonusPrices;
                 classPrices = weaponData.classPrices;
                 weaponComboPrices = weaponData.comboPrices;
+                weaponPairComboPrices = weaponData.pairComboPrices || {};
                 if (weaponData.weaponMaxBonus) weaponMaxBonus = weaponData.weaponMaxBonus;
 
                 var armourData = parseArmourCSVAndComputePrices(results[1]);
@@ -843,6 +891,7 @@
                 armourBonusPrices: armourBonusPrices,
                 armourSetPrices: armourSetPrices,
                 weaponComboPrices: weaponComboPrices,
+                weaponPairComboPrices: weaponPairComboPrices,
                 armourComboPrices: armourComboPrices,
                 weaponMaxBonus: weaponMaxBonus,
                 timestamp: Date.now()
@@ -1678,14 +1727,26 @@
                 var bMed = bonusFn(b.name, bonusColors[b.name]);
                 return bMed ? Math.max(median, bMed) : median;
             };
-            if (bonuses.length > 0) {
-                var vals = [];
-                for (var bv = 0; bv < bonuses.length; bv++) vals.push(bonusValue(bonuses[bv]));
-                var maxIdx = 0;
-                for (var mi = 1; mi < vals.length; mi++) { if (vals[mi] > vals[maxIdx]) maxIdx = mi; }
-                estimatedPrice = vals[maxIdx];
-                for (var pv = 0; pv < vals.length; pv++) {
-                    if (pv !== maxIdx) estimatedPrice += Math.max(0, vals[pv] - median);
+            if (bonuses.length === 1) {
+                estimatedPrice = bonusValue(bonuses[0]);
+            } else if (bonuses.length >= 2) {
+                var pairMed = (weaponKey && bonuses.length === 2)
+                    ? getWeaponPairComboMedian(itemKey, bonuses[0].name, bonuses[1].name, rarity) : null;
+                if (pairMed) {
+                    estimatedPrice = pairMed;
+                } else {
+                    var priceArr = weaponKey ? getPriceArray(itemKey, rarity) : getArmourPriceArray(itemKey, rarity);
+                    var plain = (priceArr && priceArr[0]) ? priceArr[0] : Math.round(median * 0.1);
+                    plain = Math.max(plain, Math.round(median * 0.03));
+                    if (plain > median) plain = median;
+                    var vals = [];
+                    for (var bv = 0; bv < bonuses.length; bv++) vals.push(bonusValue(bonuses[bv]));
+                    var maxIdx = 0;
+                    for (var mi = 1; mi < vals.length; mi++) { if (vals[mi] > vals[maxIdx]) maxIdx = mi; }
+                    estimatedPrice = vals[maxIdx];
+                    for (var pv = 0; pv < vals.length; pv++) {
+                        if (pv !== maxIdx) estimatedPrice += Math.max(0, vals[pv] - plain);
+                    }
                 }
             }
 
