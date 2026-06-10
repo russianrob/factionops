@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.7.1
+// @version      0.7.2
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.7.1";
+  var SCRIPT_VERSION = "0.7.2";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -99,9 +99,12 @@
   }
   function modelEstimate(entry, nowMs) {
     if (!entry || !entry.interval) return null;
-    var leftSec = (entry.last + entry.interval) - Math.floor(nowMs / 1000);
-    var left = (leftSec > 0) ? ("~" + fmtDuration(leftSec)) : "due";
-    return "~every " + fmtDuration(entry.interval) + " · " + left + " (" + (entry.rel || "low") + ")";
+    var nowSec = Math.floor(nowMs / 1000);
+    var interval = entry.interval;
+    var since = nowSec - entry.last;
+    var leftSec = (since < 0) ? -since : (interval - (since % interval));
+    if (leftSec <= 0) leftSec = interval;
+    return "~every " + fmtDuration(interval) + " · ~" + fmtDuration(leftSec) + " (" + (entry.rel || "low") + ")";
   }
   function restockDisplay(nextRestock, entry, nowMs) {
     var live = restockEta(nextRestock, nowMs);

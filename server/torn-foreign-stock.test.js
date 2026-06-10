@@ -215,13 +215,14 @@ test("fmtDuration", () => {
   assert.strictEqual(mod.fmtDuration(3900), "1h 5m");
 });
 
-test("modelEstimate builds '~every X · ~Y (rel)' and 'due' when past", () => {
+test("modelEstimate builds '~every X · ~Y (rel)' and rolls forward when past", () => {
   const now = Date.parse("2026-06-09T16:00:00.000Z");
   const lastSec = Math.floor(now / 1000) - 600;
   const e = mod.modelEstimate({ interval: 1500, last: lastSec, n: 5, rel: "med" }, now);
   assert.strictEqual(e, "~every 25m · ~15m (med)");
-  const past = mod.modelEstimate({ interval: 300, last: Math.floor(now / 1000) - 600, n: 5, rel: "low" }, now);
-  assert.strictEqual(past, "~every 5m · due (low)");
+  // last+interval already passed: roll forward to the next future cycle, never "due"
+  const past = mod.modelEstimate({ interval: 300, last: Math.floor(now / 1000) - 700, n: 5, rel: "low" }, now);
+  assert.strictEqual(past, "~every 5m · ~3m (low)");
 });
 
 test("restockDisplay merge priority", () => {
