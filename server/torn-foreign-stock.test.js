@@ -423,3 +423,228 @@ test("landVerdict: negative or non-finite rate is not a confident verdict -> nul
   assert.strictEqual(mod.landVerdict({ qty: 50, sellRate: NaN, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW }), null);
   assert.strictEqual(mod.landVerdict({ qty: 50, sellRate: Infinity, srel: "high", sellReady: true, flightMinutes: 18, nextRestock: null, restockEntry: null, nowMs: NOW }), null);
 });
+
+test("parseTravelState: traveling to a foreign country -> flight + fields", () => {
+  const api = {
+    status: { state: "Traveling", description: "Traveling from Switzerland to Mexico" },
+    travel: { destination: "Mexico", method: "Airstrip", timestamp: 1700001234, departed: 1700000000, time_left: 1080 }
+  };
+  const s = mod.parseTravelState(api);
+  assert.deepStrictEqual(s, { mode: "flight", code: "mex", countryName: "Mexico", arrivalSec: 1700001234, timeLeftSec: 1080 });
+});
+
+test("parseTravelState: traveling home to Torn -> null", () => {
+  const api = {
+    status: { state: "Traveling", description: "Traveling from Mexico to Torn" },
+    travel: { destination: "Torn", method: "Airstrip", timestamp: 1700001234, time_left: 600 }
+  };
+  assert.strictEqual(mod.parseTravelState(api), null);
+});
+
+test("parseTravelState: abroad 'In Mexico' from status.description -> abroad/mex", () => {
+  const api = {
+    status: { state: "Abroad", description: "In Mexico" },
+    travel: { destination: "Mexico", method: "Airstrip", timestamp: 0, time_left: 0 }
+  };
+  const s = mod.parseTravelState(api);
+  assert.deepStrictEqual(s, { mode: "abroad", code: "mex", countryName: "Mexico", arrivalSec: null, timeLeftSec: null });
+});
+
+test("parseTravelState: abroad falls back to travel.destination when no 'In X' match", () => {
+  const api = {
+    status: { state: "Abroad", description: "Doing something in a foreign land" },
+    travel: { destination: "Japan", method: "Airstrip", timestamp: 0, time_left: 0 }
+  };
+  const s = mod.parseTravelState(api);
+  assert.deepStrictEqual(s, { mode: "abroad", code: "jap", countryName: "Japan", arrivalSec: null, timeLeftSec: null });
+});
+
+test("parseTravelState: state Okay (at home) -> null", () => {
+  assert.strictEqual(mod.parseTravelState({ status: { state: "Okay", description: "Okay" }, travel: {} }), null);
+});
+
+test("parseTravelState: missing status -> null", () => {
+  assert.strictEqual(mod.parseTravelState({ travel: { destination: "Mexico" } }), null);
+  assert.strictEqual(mod.parseTravelState({}), null);
+  assert.strictEqual(mod.parseTravelState(null), null);
+});
+
+test("parseTravelState: unknown country -> null", () => {
+  const flight = {
+    status: { state: "Traveling", description: "Traveling from Torn to Narnia" },
+    travel: { destination: "Narnia", method: "Airstrip", timestamp: 1, time_left: 1 }
+  };
+  assert.strictEqual(mod.parseTravelState(flight), null);
+  const abroad = {
+    status: { state: "Abroad", description: "In Narnia" },
+    travel: { destination: "Narnia" }
+  };
+  assert.strictEqual(mod.parseTravelState(abroad), null);
+});
+
+function withTravelDoc(listPresent, fn) {
+  const prev = globalThis.document;
+  globalThis.document = {
+    querySelector: function (sel) {
+      if (sel.indexOf("country___") !== -1) return listPresent ? {} : null;
+      return null;
+    }
+  };
+  try { return fn(); } finally {
+    if (prev === undefined) delete globalThis.document; else globalThis.document = prev;
+  }
+}
+
+const FLIGHT_API = {
+  status: { state: "Traveling", description: "Traveling from Torn to Mexico" },
+  travel: { destination: "Mexico", method: "Airstrip", timestamp: 1700001234, time_left: 1080 }
+};
+
+test("getTravelState: no key set -> null, no fetch", async () => {
+  const store = {};
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  mod.__setClock(() => 1000);
+  let calls = 0;
+  mod.__setFetch(async () => { calls++; return FLIGHT_API; });
+  const out = await withTravelDoc(false, () => mod.getTravelState());
+  assert.strictEqual(out, null);
+  assert.strictEqual(calls, 0);
+});
+
+test("getTravelState: destination list present -> skip fetch, null", async () => {
+  const store = { tfs_key: JSON.stringify("KEY") };
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  mod.__setClock(() => 1000);
+  let calls = 0;
+  mod.__setFetch(async () => { calls++; return FLIGHT_API; });
+  const out = await withTravelDoc(true, () => mod.getTravelState());
+  assert.strictEqual(out, null);
+  assert.strictEqual(calls, 0);
+});
+
+test("getTravelState: with key + list absent -> fetches v1 travel,basic and parses flight", async () => {
+  const store = { tfs_key: JSON.stringify("KEY") };
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  mod.__setClock(() => 1000);
+  let url = null, calls = 0;
+  mod.__setFetch(async (u) => { calls++; url = u; return FLIGHT_API; });
+  const out = await withTravelDoc(false, () => mod.getTravelState());
+  assert.deepStrictEqual(out, { mode: "flight", code: "mex", countryName: "Mexico", arrivalSec: 1700001234, timeLeftSec: 1080 });
+  assert.strictEqual(calls, 1);
+  assert.match(url, /api\.torn\.com\/user\/?\?/);
+  assert.match(url, /selections=travel,basic/);
+  assert.match(url, /key=KEY/);
+});
+
+test("getTravelState: caches within TRAVEL_TTL, refetches after", async () => {
+  const store = { tfs_key: JSON.stringify("KEY") };
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  let clock = 1000, calls = 0;
+  mod.__setClock(() => clock);
+  mod.__setFetch(async () => { calls++; return FLIGHT_API; });
+  await withTravelDoc(false, () => mod.getTravelState());
+  assert.strictEqual(calls, 1);
+  await withTravelDoc(false, () => mod.getTravelState());
+  assert.strictEqual(calls, 1);
+  clock += 31;
+  await withTravelDoc(false, () => mod.getTravelState());
+  assert.strictEqual(calls, 2);
+});
+
+test("getTravelState: API error -> null quietly (no throw)", async () => {
+  const store = { tfs_key: JSON.stringify("KEY") };
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  mod.__setClock(() => 1000);
+  mod.__setFetch(async () => ({ error: { error: "Incorrect key" } }));
+  const out = await withTravelDoc(false, () => mod.getTravelState());
+  assert.strictEqual(out, null);
+});
+
+test("getTravelState: network failure -> null quietly", async () => {
+  const store = { tfs_key: JSON.stringify("KEY") };
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  mod.__setClock(() => 1000);
+  mod.__setFetch(async () => { throw new Error("down"); });
+  const out = await withTravelDoc(false, () => mod.getTravelState());
+  assert.strictEqual(out, null);
+});
+
+test("getTravelState: API error -> preserves last cached-good state and refreshes its TTL", async () => {
+  const store = { tfs_key: JSON.stringify("KEY") };
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  let clock = 1000, calls = 0;
+  mod.__setClock(() => clock);
+  mod.__setFetch(async () => { calls++; return FLIGHT_API; });
+  const first = await withTravelDoc(false, () => mod.getTravelState());
+  assert.deepStrictEqual(first, { mode: "flight", code: "mex", countryName: "Mexico", arrivalSec: 1700001234, timeLeftSec: 1080 });
+  assert.strictEqual(calls, 1);
+  // TTL elapses, next poll errors -> keep last good, don't return null
+  clock += 31;
+  mod.__setFetch(async () => { calls++; return { error: { error: "Incorrect key" } }; });
+  const out = await withTravelDoc(false, () => mod.getTravelState());
+  assert.deepStrictEqual(out, first);
+  assert.strictEqual(calls, 2);
+  // TTL was refreshed on the error path -> next poll serves cache, does NOT spam
+  const cached = await withTravelDoc(false, () => mod.getTravelState());
+  assert.deepStrictEqual(cached, first);
+  assert.strictEqual(calls, 2);
+});
+
+test("getTravelState: network failure -> preserves last cached-good state and refreshes its TTL", async () => {
+  const store = { tfs_key: JSON.stringify("KEY") };
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  let clock = 1000, calls = 0;
+  mod.__setClock(() => clock);
+  mod.__setFetch(async () => { calls++; return FLIGHT_API; });
+  const first = await withTravelDoc(false, () => mod.getTravelState());
+  assert.strictEqual(calls, 1);
+  clock += 31;
+  mod.__setFetch(async () => { calls++; throw new Error("down"); });
+  const out = await withTravelDoc(false, () => mod.getTravelState());
+  assert.deepStrictEqual(out, first);
+  assert.strictEqual(calls, 2);
+  const cached = await withTravelDoc(false, () => mod.getTravelState());
+  assert.deepStrictEqual(cached, first);
+  assert.strictEqual(calls, 2);
+});
+
+test("getTravelState: error with no prior cache still returns null quietly", async () => {
+  const store = { tfs_key: JSON.stringify("KEY") };
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  mod.__setClock(() => 1000);
+  mod.__setFetch(async () => ({ error: { error: "Incorrect key" } }));
+  const out = await withTravelDoc(false, () => mod.getTravelState());
+  assert.strictEqual(out, null);
+});
+
+test("getTravelState: destinationList present -> skip fetch, null", async () => {
+  const store = { tfs_key: JSON.stringify("KEY") };
+  globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  globalThis.GM_setValue = (k, v) => { store[k] = v; };
+  mod.__setClock(() => 1000);
+  let calls = 0;
+  mod.__setFetch(async () => { calls++; return FLIGHT_API; });
+  const prev = globalThis.document;
+  globalThis.document = {
+    querySelector: function (sel) {
+      if (sel.indexOf("destinationList___") !== -1) return {};
+      return null;
+    }
+  };
+  try {
+    const out = await mod.getTravelState();
+    assert.strictEqual(out, null);
+    assert.strictEqual(calls, 0);
+  } finally {
+    if (prev === undefined) delete globalThis.document; else globalThis.document = prev;
+  }
+});

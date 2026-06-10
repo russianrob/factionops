@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.8.0
+// @version      0.9.0
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,14 +20,21 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.8.0";
+  var SCRIPT_VERSION = "0.9.0";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
   var MODEL_URL = "https://raw.githubusercontent.com/russianrob/torn-foreign-restock/main/restock-model.json";
   var MODEL_TTL = 600;
-  var STOCK_TTL = 60, PRICE_TTL = 21600, STALE_MIN = 30;
+  var STOCK_TTL = 60, PRICE_TTL = 21600, STALE_MIN = 30, TRAVEL_TTL = 30;
+  var TORN_TRAVEL_URL = "https://api.torn.com/user/?selections=travel,basic&key=";
   var SAFETY = 1.15, MARGIN_SAFE_MIN = 8;
+  var IS_PDA = (function () {
+    try {
+      if (typeof window !== "undefined" && window.flutter_inappwebview) return true;
+      return typeof navigator !== "undefined" && /TornPDA|tornpda|DalvikTornPDA|com\.manuito/i.test(navigator.userAgent || "");
+    } catch (e) { return false; }
+  })();
 
   // ─── pure helpers (unit-tested) ──────────────────────────
   var COUNTRY_MAP = {
@@ -178,6 +185,28 @@
     }
     return { state: "GONE", text: "❌ Will sell out before you land", lowConf: lowConf };
   }
+  function parseTravelState(api) {
+    if (!api || !api.status || !api.status.state) return null;
+    var state = api.status.state;
+    var travel = api.travel || {};
+    if (state === "Traveling") {
+      var dest = travel.destination;
+      if (dest === "Torn") return null;
+      var code = normalizeCountryName(dest);
+      if (!code) return null;
+      return { mode: "flight", code: code, countryName: dest, arrivalSec: travel.timestamp, timeLeftSec: travel.time_left };
+    }
+    if (state === "Abroad") {
+      var name = null;
+      var m = String(api.status.description || "").match(/^In (.+)$/);
+      if (m) name = m[1].trim();
+      var ccode = normalizeCountryName(name);
+      if (!ccode) { name = travel.destination; ccode = normalizeCountryName(name); }
+      if (!ccode) return null;
+      return { mode: "abroad", code: ccode, countryName: name, arrivalSec: null, timeLeftSec: null };
+    }
+    return null;
+  }
   function sortRows(rows, mode, nowMs) {
     if (nowMs == null) nowMs = Date.now();
     var arr = rows.slice();
@@ -278,6 +307,24 @@
       return data;
     }).catch(function () { return cached ? cached.data : {}; });
   }
+  function getTravelState() {
+    if (typeof document !== "undefined" && (document.querySelector('span[class*="country___"]') || document.querySelector('[class*="destinationList___"]'))) return Promise.resolve(null);
+    var key = getKey();
+    if (!key) return Promise.resolve(null);
+    var cached = gmGet("tfs_travel", null);
+    if (cached && (_nowSec() - cached.t) < TRAVEL_TTL) return Promise.resolve(cached.state);
+    function keepLast() {
+      var last = cached ? cached.state : null;
+      gmSet("tfs_travel", { t: _nowSec(), state: last });
+      return last;
+    }
+    return _fetchJson(TORN_TRAVEL_URL + encodeURIComponent(key)).then(function (json) {
+      if (json && json.error) return keepLast();
+      var state = parseTravelState(json);
+      gmSet("tfs_travel", { t: _nowSec(), state: state });
+      return state;
+    }).catch(keepLast);
+  }
 
   // ─── DOM: settings, injector, observer ───────────────────
   function getMode() { var m = gmGet("tfs_mode", "stock"); return (m === "profit") ? "profit" : "stock"; }
@@ -354,7 +401,14 @@
       ".tfs-verdict.gone{color:#d8736a;border-left-color:#6b322c;}" +
       ".tfs-verdict.restock{color:#6aa6e0;border-left-color:#2c4d6b;}" +
       ".tfs-verdict.lowconf{opacity:.6;}" +
-      ".tfs-verdict .tfs-lc{color:#7a818c;font-style:italic;}";
+      ".tfs-verdict .tfs-lc{color:#7a818c;font-style:italic;}" +
+      "#tfs-travel{margin:8px 0 10px;font-size:12px;max-width:540px;background:#16181d;border:1px solid #262a33;border-radius:7px;box-shadow:0 1px 4px rgba(0,0,0,.4);overflow:hidden;color:#cfd4dc;}" +
+      ".tfs-travel-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:8px 12px;background:#1c1f26;border-bottom:1px solid #262a33;font-weight:600;color:#e6e9ee;}" +
+      ".tfs-travel-head .tfs-flag{font-size:16px;}" +
+      ".tfs-travel-head .tfs-cn{color:#e6e9ee;}" +
+      ".tfs-countdown{margin-left:auto;font-size:11px;color:#e8c44a;background:#20242c;padding:2px 9px;border-radius:9px;white-space:nowrap;font-variant-numeric:tabular-nums;}" +
+      "#tfs-travel .tfs-rows{padding:6px 12px 10px;}" +
+      "#tfs-travel .tfs-tempty{color:#7a818c;padding:6px 0;}";
     document.head.appendChild(s);
   }
 
@@ -473,6 +527,110 @@
       html += '</div>';
     }
     body.innerHTML = html || '<div class="tfs-tempty">No items match your filters.</div>';
+  }
+
+  function fmtClock(sec) {
+    var s = Math.max(0, Math.floor(sec));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return h > 0 ? (h + ":" + p(m) + ":" + p(ss)) : (p(m) + ":" + p(ss));
+  }
+  function travelHost() {
+    return document.querySelector('[class*="content-wrapper"]') || document.getElementById("mainContainer") || document.body;
+  }
+  function travelRowsHtml(state, stock, model, prices, mode, nowMs) {
+    var country = stock && stock[state.code];
+    if (!country || !country.items || !country.items.length) return '<div class="tfs-tempty">no stock data</div>';
+    var rows = sortRows(buildRows(country.items, { mode: mode, getValue: function (id) { return prices[id]; } }), mode, nowMs);
+    if (!rows.length) return '<div class="tfs-tempty">no stock data</div>';
+    var flightMinutes = (state.mode === "flight" && state.timeLeftSec != null) ? (state.timeLeftSec / 60) : null;
+    var html = "";
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var entry = (model && model[state.code]) ? model[state.code][String(r.id)] : null;
+      if (r.qty === 0) {
+        html += '<div class="tfs-row out"><span class="tfs-name">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span>' +
+          '<span class="tfs-oos">' + restockDisplay(r.nextRestock, entry, nowMs) + '</span></div>';
+      } else {
+        html += '<div class="tfs-row' + (mode === "profit" ? " mp" : "") + '"><span class="tfs-name">' + tfsRowIcon(r.id) + escapeHtml(r.name) + '</span><span class="tfs-qty">×' + r.qty + '</span><span class="tfs-cost">' + fmtMoney(r.cost) + '</span>' +
+          (mode === "profit" ? '<span class="tfs-profit ' + (r.profit != null && r.profit > 0 ? "pos" : "neg") + '">' + fmtProfit(r.profit) + ' ea</span>' : '') + '</div>';
+        if (state.mode === "flight") {
+          var verdict = entry ? landVerdict({ qty: r.qty, sellRate: entry.sellRate, srel: entry.srel, sellReady: !!entry.sellReady, flightMinutes: flightMinutes, nextRestock: r.nextRestock, restockEntry: entry, nowMs: nowMs }) : null;
+          if (verdict) {
+            var cls = { SAFE: "safe", RISKY: "risky", GONE: "gone", GONE_THEN_RESTOCKED: "restock" }[verdict.state] || "";
+            html += '<div class="tfs-verdict ' + cls + (verdict.lowConf ? " lowconf" : "") + '">' + escapeHtml(verdict.text) + (verdict.lowConf ? ' <span class="tfs-lc">(low confidence)</span>' : '') + '</div>';
+          }
+        } else {
+          html += '<div class="tfs-verdict">' + restockDisplay(r.nextRestock, entry, nowMs) + '</div>';
+        }
+      }
+    }
+    return html;
+  }
+  function renderTravelPanel(state, stock, model, prices, nowMs) {
+    if (!state) return;
+    prices = prices || {};
+    model = model || {};
+    var mode = (getMode() === "profit" && Object.keys(prices).length) ? "profit" : "stock";
+    var panel = document.getElementById("tfs-travel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "tfs-travel";
+      var host = travelHost();
+      host.insertBefore(panel, host.firstChild);
+    }
+    var head;
+    if (state.mode === "flight") {
+      var left = (state.timeLeftSec != null) ? state.timeLeftSec : ((state.arrivalSec || 0) - Math.floor(nowMs / 1000));
+      head = '<span class="tfs-flag">' + tfsFlag(state.code) + '</span><span class="tfs-cn">' + escapeHtml(state.countryName || "") + '</span>' +
+        '<span class="tfs-countdown">Landing in ' + fmtClock(left) + '</span>';
+    } else {
+      head = '<span class="tfs-flag">' + tfsFlag(state.code) + '</span><span class="tfs-cn">You\'re in ' + escapeHtml(state.countryName || "") + '</span>';
+    }
+    panel.innerHTML = '<div class="tfs-travel-head">' + head + '</div><div class="tfs-rows">' + travelRowsHtml(state, stock, model, prices, mode, nowMs) + '</div>';
+  }
+  var _travelTimer = null, _travelState = null, _travelLastMin = null, _travelCtx = null;
+  function updateCountdown() {
+    var panel = document.getElementById("tfs-travel");
+    if (!panel || !_travelState || _travelState.mode !== "flight") { clearTravelTicker(); return; }
+    if (!IS_PDA && typeof document !== "undefined" && document.hidden) return;
+    var left = (_travelState.arrivalSec || 0) - _nowSec();
+    if (left < 0) left = 0;
+    var cd = panel.querySelector(".tfs-countdown");
+    if (cd) cd.textContent = "Landing in " + fmtClock(left);
+    var min = Math.floor(left / 60);
+    if (min !== _travelLastMin) {
+      _travelLastMin = min;
+      if (_travelCtx) {
+        var rows = panel.querySelector(".tfs-rows");
+        if (rows) {
+          var st = { mode: "flight", code: _travelState.code, countryName: _travelState.countryName, arrivalSec: _travelState.arrivalSec, timeLeftSec: left };
+          var mode = (getMode() === "profit" && Object.keys(_travelCtx.prices).length) ? "profit" : "stock";
+          rows.innerHTML = travelRowsHtml(st, _travelCtx.stock, _travelCtx.model, _travelCtx.prices, mode, Date.now());
+        }
+      }
+    }
+  }
+  function startTravelTicker(state, ctx) {
+    _travelState = state;
+    if (state && state.mode === "flight") {
+      _travelCtx = ctx || null;
+      _travelLastMin = null;
+      if (!_travelTimer) _travelTimer = setInterval(updateCountdown, 1000);
+    } else {
+      clearTravelTicker();
+    }
+  }
+  function clearTravelTicker() {
+    if (_travelTimer) { clearInterval(_travelTimer); _travelTimer = null; }
+    _travelLastMin = null;
+    _travelCtx = null;
+  }
+  function removeTravelPanel() {
+    clearTravelTicker();
+    _travelState = null;
+    var panel = document.getElementById("tfs-travel");
+    if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
   }
 
   function injectSettingsBar(onChange) {
@@ -600,6 +758,13 @@
       renderPanel(dests[i].el, dests[i].code, stock, mode, prices, model || {}, filters);
     }
   }
+  function applyTravel(stock, model, prices) {
+    getTravelState().then(function (state) {
+      if (!state) { removeTravelPanel(); return; }
+      startTravelTicker(state, { stock: stock, model: model || {}, prices: prices || {} });
+      renderTravelPanel(state, stock, model, prices, Date.now());
+    }).catch(function () { removeTravelPanel(); });
+  }
   function applyAll(force) {
     var mode = getMode(), key = getKey();
     Promise.all([getStock(force), getModel()]).then(function (res) {
@@ -608,6 +773,7 @@
       function render(prices, m) {
         if (isMapLayout()) paintTable(stock, m, prices, model);
         else paintPanels(stock, m, prices, model);
+        applyTravel(stock, model, prices);
       }
       if (mode === "profit" && key) {
         return getPrices(key).then(function (mp) { tfsMsg(""); render(mp, "profit"); })
@@ -621,9 +787,17 @@
     if (_applyTimer) clearTimeout(_applyTimer);
     _applyTimer = setTimeout(function () { applyAll(false); }, 200);
   }
+  function isOurNode(node) {
+    var el = node && node.nodeType === 1 ? node : (node && node.parentElement);
+    return !!(el && el.closest && el.closest('[id^="tfs"], [class*="tfs-"]'));
+  }
   function startObserver() {
     var root = document.querySelector('[class*="destinationList___"]') || document.querySelector(".content") || document.body;
-    var obs = new MutationObserver(scheduleApply);
+    var obs = new MutationObserver(function (muts) {
+      for (var i = 0; i < muts.length; i++) {
+        if (!isOurNode(muts[i].target)) { scheduleApply(); return; }
+      }
+    });
     obs.observe(root, { childList: true, subtree: true });
   }
 
@@ -647,11 +821,13 @@
       fmtDuration: fmtDuration, modelEstimate: modelEstimate, restockDisplay: restockDisplay,
       itemCategory: itemCategory, rowVisible: rowVisible, countryVisible: countryVisible,
       parseFlightMinutes: parseFlightMinutes, landVerdict: landVerdict,
+      parseTravelState: parseTravelState,
       getTravelMethod: getTravelMethod, readFlightMinutes: readFlightMinutes
     };
     module.exports.getStock = getStock;
     module.exports.getPrices = getPrices;
     module.exports.getModel = getModel;
+    module.exports.getTravelState = getTravelState;
     module.exports.__setFetch = function (fn) { _fetchJson = fn; };
     module.exports.__setClock = function (fn) { _nowSec = fn; };
   }
