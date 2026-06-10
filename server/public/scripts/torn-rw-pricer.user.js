@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.2.1
+// @version      3.2.2
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -30,7 +30,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.2.1';
+    var SCRIPT_VERSION = '3.2.2';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1671,84 +1671,22 @@
                 bonusColors[bonuses[bc].name] = bColor || rarity;
             }
 
-            // Compute estimated price accounting for bonuses
-            // Priority: 1) exact weapon+bonus combo median  2) additive estimate  3) base median
             var estimatedPrice = median;
-
-            if (bonuses.length === 1) {
-                var bonusRarity0 = bonusColors[bonuses[0].name];
-                // Try exact combo lookup first (combo data is keyed by weapon rarity)
-                var comboMedian1 = comboFn(itemKey, bonuses[0].name, rarity);
-                if (comboMedian1) {
-                    estimatedPrice = comboMedian1;
-                } else {
-                    // Fallback: additive model
-                    var classMedian = 0;
-                    if (weaponKey) {
-                        var cls = WEAPON_CLASS[weaponKey];
-                        if (cls && classPrices[cls] && classPrices[cls][rarity]) classMedian = classPrices[cls][rarity][1];
-                    } else if (armourKey) {
-                        var aSet = ARMOUR_SET[armourKey];
-                        if (aSet && armourSetPrices[aSet] && armourSetPrices[aSet][rarity]) classMedian = armourSetPrices[aSet][rarity][1];
-                    }
-                    var b1Median = bonusFn(bonuses[0].name, bonusRarity0);
-                    if (b1Median) {
-                        var premium1 = Math.max(0, b1Median - classMedian);
-                        estimatedPrice = median + premium1;
-                    }
+            var bonusValue = function(b) {
+                var combo = comboFn(itemKey, b.name, rarity);
+                if (combo) return combo;
+                var bMed = bonusFn(b.name, bonusColors[b.name]);
+                return bMed ? Math.max(median, bMed) : median;
+            };
+            if (bonuses.length > 0) {
+                var vals = [];
+                for (var bv = 0; bv < bonuses.length; bv++) vals.push(bonusValue(bonuses[bv]));
+                var maxIdx = 0;
+                for (var mi = 1; mi < vals.length; mi++) { if (vals[mi] > vals[maxIdx]) maxIdx = mi; }
+                estimatedPrice = vals[maxIdx];
+                for (var pv = 0; pv < vals.length; pv++) {
+                    if (pv !== maxIdx) estimatedPrice += Math.max(0, vals[pv] - median);
                 }
-            } else if (bonuses.length === 2) {
-                var bonusRarity2a = bonusColors[bonuses[0].name];
-                var bonusRarity2b = bonusColors[bonuses[1].name];
-                // Try combo lookups for each bonus (combo data keyed by weapon rarity)
-                var combo2a = comboFn(itemKey, bonuses[0].name, rarity);
-                var combo2b = comboFn(itemKey, bonuses[1].name, rarity);
-                if (combo2a && combo2b) {
-                    // Both combos known: use the higher combo median + premium from the other
-                    var higher = Math.max(combo2a, combo2b);
-                    var lower = Math.min(combo2a, combo2b);
-                    // The premium of the second bonus over the base weapon median
-                    var secondPremium = Math.max(0, lower - median);
-                    estimatedPrice = higher + secondPremium;
-                } else if (combo2a || combo2b) {
-                    // One combo known: use it + additive for the other
-                    var knownCombo = combo2a || combo2b;
-                    var unknownBonusObj = combo2a ? bonuses[1] : bonuses[0];
-                    var unknownBonusRarity = bonusColors[unknownBonusObj.name];
-                    var classMedian2 = 0;
-                    if (weaponKey) {
-                        var cls2 = WEAPON_CLASS[weaponKey];
-                        if (cls2 && classPrices[cls2] && classPrices[cls2][rarity]) classMedian2 = classPrices[cls2][rarity][1];
-                    } else if (armourKey) {
-                        var aSet2 = ARMOUR_SET[armourKey];
-                        if (aSet2 && armourSetPrices[aSet2] && armourSetPrices[aSet2][rarity]) classMedian2 = armourSetPrices[aSet2][rarity][1];
-                    }
-                    var ubMedian = bonusFn(unknownBonusObj.name, unknownBonusRarity);
-                    var ubPremium = ubMedian ? Math.max(0, ubMedian - classMedian2) : 0;
-                    estimatedPrice = knownCombo + ubPremium;
-                } else {
-                    // No combo data: pure additive
-                    var classMedian3 = 0;
-                    if (weaponKey) {
-                        var cls3 = WEAPON_CLASS[weaponKey];
-                        if (cls3 && classPrices[cls3] && classPrices[cls3][rarity]) classMedian3 = classPrices[cls3][rarity][1];
-                    } else if (armourKey) {
-                        var aSet3 = ARMOUR_SET[armourKey];
-                        if (aSet3 && armourSetPrices[aSet3] && armourSetPrices[aSet3][rarity]) classMedian3 = armourSetPrices[aSet3][rarity][1];
-                    }
-                    var db1Median = bonusFn(bonuses[0].name, bonusColors[bonuses[0].name]);
-                    var db2Median = bonusFn(bonuses[1].name, bonusColors[bonuses[1].name]);
-                    var totalPremium = 0;
-                    if (db1Median) totalPremium += Math.max(0, db1Median - classMedian3);
-                    if (db2Median) totalPremium += Math.max(0, db2Median - classMedian3);
-                    estimatedPrice = median + totalPremium;
-                }
-            }
-
-            if (bonuses.length >= 2) estimatedPrice = Math.max(estimatedPrice, median);
-            for (var fb = 0; fb < bonuses.length; fb++) {
-                var fCombo = comboFn(itemKey, bonuses[fb].name, rarity);
-                if (fCombo) estimatedPrice = Math.max(estimatedPrice, fCombo);
             }
 
             // Gather full price arrays for tooltip
