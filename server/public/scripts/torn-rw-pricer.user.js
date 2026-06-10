@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.3.1
+// @version      3.3.2
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -30,7 +30,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.3.1';
+    var SCRIPT_VERSION = '3.3.2';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1407,7 +1407,7 @@
                 html += '<div class="rwp-tooltip-row"><span class="rwp-tooltip-label">' + d.label + '</span><span class="rwp-tooltip-value">' + amt + ' <span style="opacity:0.5;font-size:11px;">' + (d.src || '') + salesMeta(d.n) + '</span></span></div>';
             }
             if (prices && prices.length === 4) {
-                html += '<div class="rwp-tooltip-row" style="opacity:0.65;"><span class="rwp-tooltip-label">base ' + itemName + '</span><span class="rwp-tooltip-value">' + fmtMoney(prices[1]) + ' <span style="opacity:0.6;font-size:11px;">' + salesMeta(prices[3]) + '</span></span></div>';
+                html += '<div class="rwp-tooltip-row" style="opacity:0.65;"><span class="rwp-tooltip-label">' + rarity + ' ' + itemName + '</span><span class="rwp-tooltip-value">' + fmtMoney(prices[1]) + ' <span style="opacity:0.6;font-size:11px;">' + salesMeta(prices[3]) + '</span></span></div>';
                 var topMeta = (maxBonusData && maxBonusData.length) ? ' · ' + maxBonusData.join(', ') : '';
                 html += '<div class="rwp-tooltip-row" style="opacity:0.55;"><span class="rwp-tooltip-label">top sale</span><span class="rwp-tooltip-value">' + fmtMoney(prices[2]) + ' <span style="opacity:0.6;font-size:11px;">' + topMeta + '</span></span></div>';
             }
