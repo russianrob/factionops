@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stocks
 // @namespace    RussianRob
-// @version      0.9.3
+// @version      0.9.4
 // @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.3";
+  var SCRIPT_VERSION = "0.9.4";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -576,6 +576,32 @@
     } catch (e) {}
     return live;
   }
+  function tfsStockDebug(rows) {
+    try {
+      var imgsAll = document.querySelectorAll("img").length;
+      var itemImgs = document.querySelectorAll('img[src*="/images/items/"]');
+      var live = tfsLiveStock(rows);
+      var bodyText = document.body.innerText || document.body.textContent || "";
+      var nameHits = 0, sample = "";
+      for (var i = 0; i < rows.length; i++) {
+        if (bodyText.indexOf(rows[i].name) === -1) continue;
+        nameHits++;
+        if (!sample) {
+          var all = document.querySelectorAll("*"), found = null;
+          for (var k = 0; k < all.length; k++) {
+            if (!all[k].children.length && (all[k].textContent || "").indexOf(rows[i].name) !== -1) { found = all[k]; break; }
+          }
+          if (found) {
+            var anc = found;
+            for (var u = 0; u < 3 && anc.parentElement; u++) anc = anc.parentElement;
+            sample = rows[i].name + " => <" + anc.tagName.toLowerCase() + " class='" + String(anc.className || "").slice(0, 45) + "'> " + (anc.textContent || "").replace(/\s+/g, " ").trim().slice(0, 70);
+          }
+        }
+      }
+      var src0 = itemImgs[0] ? String(itemImgs[0].getAttribute("src")).slice(0, 55) : "none";
+      return "imgsAll=" + imgsAll + " itemImgs=" + itemImgs.length + " matched=" + Object.keys(live).length + " names=" + nameHits + "/" + rows.length + " img=" + src0 + " | " + sample;
+    } catch (e) { return "dbgErr:" + e.message; }
+  }
   function travelRowsHtml(state, stock, model, prices, mode, nowMs) {
     var country = stock && stock[state.code];
     if (!country || !country.items || !country.items.length) return '<div class="tfs-tempty">no stock data</div>';
@@ -588,7 +614,7 @@
     rows = rows.filter(function (r) { return rowVisible(r, mode, getFilters()); });
     if (!rows.length) return '<div class="tfs-tempty">no stock data</div>';
     var flightMinutes = (state.mode === "flight" && state.timeLeftSec != null) ? (state.timeLeftSec / 60) : null;
-    var html = "";
+    var html = (state.mode === "abroad") ? ('<div style="font-size:10px;color:#f90;padding:4px 8px;word-break:break-all;line-height:1.3;">DBG ' + tfsStockDebug(built) + '</div>') : "";
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
       var entry = (model && model[state.code]) ? model[state.code][String(r.id)] : null;
