@@ -1,22 +1,20 @@
 // ==UserScript==
 // @name         Vault Share
 // @namespace    RussianRob
-// @version      0.1.1
+// @version      0.1.2
 // @description  Shows your share vs your spouse's share of the shared property vault, tracking each person's deposits/withdrawals. Set your share once; it auto-tracks from there.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/properties.php*
-// @connect      tornwar.com
 // @grant        GM_setValue
 // @grant        GM_getValue
-// @grant        GM_xmlhttpRequest
 // @run-at       document-idle
 // ==/UserScript==
 
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "0.1.1";
+  const SCRIPT_VERSION = "0.1.2";
   const K_SHARE = "vs_myShare";
   const K_LASTTX = "vs_lastTxKey";
   const K_TOTAL = "vs_lastTotal";
@@ -31,17 +29,6 @@
   const STATE_VER = "0.1.1";
   if (gv("vs_stateVer", "") !== STATE_VER) {
     sv(K_CFG, false); sv(K_SHARE, 0); sv(K_LASTTX, ""); sv(K_TOTAL, 0); sv("vs_stateVer", STATE_VER);
-  }
-
-  function report(data) {
-    try {
-      GM_xmlhttpRequest({
-        method: "POST",
-        url: "https://tornwar.com/api/debug/client-log",
-        headers: { "Content-Type": "application/json" },
-        data: JSON.stringify({ tag: "vault-share-diag", data: Object.assign({ v: SCRIPT_VERSION }, data) }),
-      });
-    } catch (e) {}
   }
 
   // Own player id from the sidebar profile link (settings menu) or any self XID link.
@@ -186,24 +173,9 @@
 
   function isValid(r) { return !isNaN(r.balance) || !isNaN(r.amount); }
 
-  let tries = 0, _reported = false;
+  let tries = 0;
   function tick() {
-    const raw = findRows();
-    const rows = raw.map(parseRow).filter(isValid);
-    if (!_reported) {
-      _reported = true;
-      const vaultEl = document.querySelector("[class*='vault'], [id*='vault']");
-      report({
-        url: location.href,
-        rawFound: raw.length,
-        validRows: rows.length,
-        sampleRow: raw[0] ? raw[0].outerHTML.slice(0, 1400) : null,
-        parsedFirst: rows[0] || (raw[0] ? parseRow(raw[0]) : null),
-        amountEls: document.querySelectorAll("li.amount, .amount").length,
-        balanceEls: document.querySelectorAll("li.balance, .balance").length,
-        vaultElHTML: vaultEl ? vaultEl.outerHTML.slice(0, 1400) : null,
-      });
-    }
+    const rows = findRows().map(parseRow).filter(isValid);
     if (rows.length) { render(rows, ownId()); return; }
     if (++tries > 20) { showHint(); return; }
     setTimeout(tick, 500);
