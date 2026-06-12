@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.30
+// @version      2.73.31
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3017,7 +3017,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.30';
+  const SCRIPT_VERSION = '2.73.31';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -4779,6 +4779,73 @@ if (!singleton) {
 
     // API Key Input
 
+    // wb: the verify call, shared by the Verify button AND the key field's
+    // change event. On warboard-iOS (WKWebView) the FIRST tap on Verify while the
+    // keyboard is up only dismisses the keyboard — the button's click never fires
+    // ("just blurs the key"). Running verify from the field's change (which DOES
+    // fire on that blur) makes it work there too. Guarded against double-fire,
+    // and shows immediate feedback so a failed request is visible, not silent.
+    let _ffsVerifyInflight = false;
+    function runVerifyKey() {
+      if (_ffsVerifyInflight) return;
+      if (!key) {
+        showToast("Enter your FF Scouter API key first.", TOAST_ERROR);
+        return;
+      }
+      _ffsVerifyInflight = true;
+      showToast("Verifying API key…");
+      rD_xmlhttpRequest({
+        method: "GET",
+        url: `${BASE_URL}/api/v1/check-key?key=${key}`,
+        onload: (response) => {
+          _ffsVerifyInflight = false;
+          if (!response) {
+            showToast("Verify failed: no response from FF Scouter.", TOAST_ERROR);
+            return;
+          }
+          if (response.status == 200) {
+            var ff_response = JSON.parse(response.responseText);
+            if (ff_response && ff_response.error) {
+              showToast(ff_response.error);
+              return;
+            }
+            let message = `FF Scouter not configured. API key (${ff_response.key}) not registered.`;
+            let level = TOAST_ERROR;
+            if (ff_response.is_registered) {
+              message = `FF Scouter successfully configured. API key (${ff_response.key}) was registered on ${format_timestamp(ff_response.registered_at)} and last used ${format_timestamp(ff_response.last_used)}.`;
+              level = TOAST_LOG;
+            }
+            showToast(message, level);
+          } else {
+            try {
+              var err = JSON.parse(response.responseText);
+              if (err && err.error) {
+                showToast("API request failed. Error: " + err.error + "; Code: " + err.code);
+              } else {
+                showToast("API request failed. HTTP status code: " + response.status);
+              }
+            } catch {
+              showToast("API request failed. HTTP status code: " + response.status);
+            }
+          }
+        },
+        onerror: function (e) {
+          _ffsVerifyInflight = false;
+          console.error("[FF Scouter V2] **** error ", e, "; Stack:", e && e.stack);
+          showToast("Verify failed: network/connect error.", TOAST_ERROR);
+        },
+        onabort: function (e) {
+          _ffsVerifyInflight = false;
+          console.error("[FF Scouter V2] **** abort ", e);
+        },
+        ontimeout: function (e) {
+          _ffsVerifyInflight = false;
+          console.error("[FF Scouter V2] **** timeout ", e);
+          showToast("Verify failed: request timed out.", TOAST_ERROR);
+        },
+      });
+    }
+
     const apiKeyDiv = document.createElement("div");
     apiKeyDiv.className = "ff-settings-entry ff-settings-entry-large";
 
@@ -4833,6 +4900,9 @@ if (!singleton) {
         if (newKey) {
           this.classList.add("ff-blur");
           settingsPanel.classList.remove("ff-settings-glow");
+          // wb: auto-verify on key entry so the warboard-iOS keyboard-tap issue
+          // (Verify's first tap only blurs the field) doesn't strand the user.
+          runVerifyKey();
         } else {
           settingsPanel.classList.add("ff-settings-glow");
         }
@@ -4867,67 +4937,7 @@ if (!singleton) {
     checkKeyButton.className =
       "ff-settings-button ff-settings-button-large torn-btn btn-big";
 
-    checkKeyButton.addEventListener("click", () => {
-      rD_xmlhttpRequest({
-        method: "GET",
-        url: `${BASE_URL}/api/v1/check-key?key=${key}`,
-        onload: (response) => {
-          if (!response) {
-            return;
-          }
-
-          if (response.status == 200) {
-            var ff_response = JSON.parse(response.responseText);
-            if (ff_response && ff_response.error) {
-              showToast(ff_response.error);
-              return;
-            }
-
-            let message = `FF Scouter not configured. API key (${ff_response.key}) not registered.`;
-            let level = TOAST_ERROR;
-            if (ff_response.is_registered) {
-              message = `FF Scouter successfully configured. API key (${ff_response.key}) was registered on ${format_timestamp(ff_response.registered_at)} and last used ${format_timestamp(ff_response.last_used)}.`;
-              level = TOAST_LOG;
-            }
-            showToast(message, level);
-          } else {
-            try {
-              var err = JSON.parse(response.responseText);
-              if (err && err.error) {
-                showToast(
-                  "API request failed. Error: " +
-                    err.error +
-                    "; Code: " +
-                    err.code,
-                );
-              } else {
-                showToast(
-                  "API request failed. HTTP status code: " + response.status,
-                );
-              }
-            } catch {
-              showToast(
-                "API request failed. HTTP status code: " + response.status,
-              );
-            }
-          }
-        },
-        onerror: function (e) {
-          console.error("[FF Scouter V2] **** error ", e, "; Stack:", e.stack);
-        },
-        onabort: function (e) {
-          console.error("[FF Scouter V2] **** abort ", e, "; Stack:", e.stack);
-        },
-        ontimeout: function (e) {
-          console.error(
-            "[FF Scouter V2] **** timeout ",
-            e,
-            "; Stack:",
-            e.stack,
-          );
-        },
-      });
-    });
+    checkKeyButton.addEventListener("click", () => runVerifyKey());
 
     verifyDiv.appendChild(checkKeyButton);
 
