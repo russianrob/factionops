@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.31
+// @version      2.73.32
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3017,7 +3017,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.31';
+  const SCRIPT_VERSION = '2.73.32';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -4794,9 +4794,12 @@ if (!singleton) {
       }
       _ffsVerifyInflight = true;
       showToast("Verifying API key…");
+      // wb: trim + encode the key — a pasted key with a trailing space/newline
+      // makes the raw URL invalid, which the native GM bridge reports as a
+      // transport ("network") error rather than reaching ffscouter at all.
       rD_xmlhttpRequest({
         method: "GET",
-        url: `${BASE_URL}/api/v1/check-key?key=${key}`,
+        url: `${BASE_URL}/api/v1/check-key?key=${encodeURIComponent((key || "").trim())}`,
         onload: (response) => {
           _ffsVerifyInflight = false;
           if (!response) {
@@ -4832,7 +4835,12 @@ if (!singleton) {
         onerror: function (e) {
           _ffsVerifyInflight = false;
           console.error("[FF Scouter V2] **** error ", e, "; Stack:", e && e.stack);
-          showToast("Verify failed: network/connect error.", TOAST_ERROR);
+          // Surface the actual bridge error so we can tell a bad-URL from a real
+          // network/ATS failure on the next retest.
+          var detail =
+            (e && (e.error || e.message || e.statusText)) ||
+            (typeof e === "string" ? e : "network/connect error");
+          showToast("Verify failed: " + detail, TOAST_ERROR);
         },
         onabort: function (e) {
           _ffsVerifyInflight = false;
