@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vault Share
 // @namespace    RussianRob
-// @version      0.1.0
+// @version      0.1.1
 // @description  Shows your share vs your spouse's share of the shared property vault, tracking each person's deposits/withdrawals. Set your share once; it auto-tracks from there.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -16,7 +16,7 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "0.1.0";
+  const SCRIPT_VERSION = "0.1.1";
   const K_SHARE = "vs_myShare";
   const K_LASTTX = "vs_lastTxKey";
   const K_TOTAL = "vs_lastTotal";
@@ -27,15 +27,19 @@
   function money(n) { return "$" + Math.round(Number(n) || 0).toLocaleString("en-US"); }
   function digits(s) { const m = String(s || "").replace(/[^0-9]/g, ""); return m ? parseInt(m, 10) : NaN; }
 
-  let _diagSent = false;
-  function diag(tag, data) {
-    if (_diagSent) return; _diagSent = true;
+  // One-time reset of any garbage state from the first (mis-parsing) version.
+  const STATE_VER = "0.1.1";
+  if (gv("vs_stateVer", "") !== STATE_VER) {
+    sv(K_CFG, false); sv(K_SHARE, 0); sv(K_LASTTX, ""); sv(K_TOTAL, 0); sv("vs_stateVer", STATE_VER);
+  }
+
+  function report(data) {
     try {
       GM_xmlhttpRequest({
         method: "POST",
         url: "https://tornwar.com/api/debug/client-log",
         headers: { "Content-Type": "application/json" },
-        data: JSON.stringify({ tag: "vault-share-diag", data: Object.assign({ event: tag, v: SCRIPT_VERSION }, data) }),
+        data: JSON.stringify({ tag: "vault-share-diag", data: Object.assign({ v: SCRIPT_VERSION }, data) }),
       });
     } catch (e) {}
   }
@@ -166,26 +170,47 @@
     #vs-panel a{color:#e0ce00}`;
   const style = document.createElement("style"); style.textContent = CSS; document.head.appendChild(style);
 
-  let tries = 0;
+  function panelEl() {
+    let panel = document.getElementById("vs-panel");
+    if (!panel) {
+      panel = document.createElement("div"); panel.id = "vs-panel";
+      const anchor = document.querySelector(".vault-cont, .content-wrapper, #properties, .properties-cont") || document.body;
+      anchor.insertBefore(panel, anchor.firstChild);
+    }
+    return panel;
+  }
+  function showHint() {
+    panelEl().innerHTML = `<div class="vs-title">🔐 Vault Share</div>
+      <div class="vs-row">Open your shared vault's <b>transaction log</b> for the split to show.</div>`;
+  }
+
+  function isValid(r) { return !isNaN(r.balance) || !isNaN(r.amount); }
+
+  let tries = 0, _reported = false;
   function tick() {
-    const rows = findRows();
-    if (rows.length) {
-      render(rows.map(parseRow), ownId());
-      return;
-    }
-    if (++tries > 40) { // ~20s of polling, then give up + report what's on the page
-      const cont = document.querySelector(".vault-cont, [class*='vault']");
-      diag("rows-not-found", {
-        hasVaultCont: !!cont,
+    const raw = findRows();
+    const rows = raw.map(parseRow).filter(isValid);
+    if (!_reported) {
+      _reported = true;
+      const vaultEl = document.querySelector("[class*='vault'], [id*='vault']");
+      report({
         url: location.href,
-        sample: (cont ? cont.outerHTML : document.body.innerHTML).slice(0, 1800),
+        rawFound: raw.length,
+        validRows: rows.length,
+        sampleRow: raw[0] ? raw[0].outerHTML.slice(0, 1400) : null,
+        parsedFirst: rows[0] || (raw[0] ? parseRow(raw[0]) : null),
+        amountEls: document.querySelectorAll("li.amount, .amount").length,
+        balanceEls: document.querySelectorAll("li.balance, .balance").length,
+        vaultElHTML: vaultEl ? vaultEl.outerHTML.slice(0, 1400) : null,
       });
-      return;
     }
+    if (rows.length) { render(rows, ownId()); return; }
+    if (++tries > 20) { showHint(); return; }
     setTimeout(tick, 500);
   }
   tick();
-  // Torn is an SPA — re-run when the property view changes.
-  new MutationObserver(() => { if (!document.getElementById("vs-panel") && findRows().length) { tries = 0; tick(); } })
-    .observe(document.body, { childList: true, subtree: true });
+  // Torn is an SPA — re-run when the property/vault view changes.
+  new MutationObserver(() => {
+    if (!document.getElementById("vs-panel") && findRows().map(parseRow).some(isValid)) { tries = 0; tick(); }
+  }).observe(document.body, { childList: true, subtree: true });
 })();
