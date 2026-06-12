@@ -1,0 +1,38 @@
+<div style="text-align:center">
+<h2>Torn Foreign Stock</h2>
+<p><em>Live abroad item stock, restock timers and travel profit, right on your travel page</em></p>
+</div>
+
+<p>Flying somewhere only to land and find the item you went for is sold out is the worst. The foreign shops restock on their own timers, and Torn gives you no way to see what's actually in stock until you're already there. This script fixes that.</p>
+
+<p>It drops live foreign-stock data straight onto Torn's travel screen, so you can see what's available <strong>before you fly</strong>, watch it <strong>restock while you're in the air</strong>, and know exactly what's worth grabbing the moment you land.</p>
+
+<ul>
+<li>Live stock counts for every travel destination, so you know what's actually there right now</li>
+<li>Restock countdown timers, so you can see when a sold-out item is coming back and time your flight around it</li>
+<li>A Stock view and a Profit view you can flip between</li>
+<li>Sort and filter by stock, profit, country or item, and hide anything that loses money</li>
+<li>Works on the travel page, while you're travelling, and once you're abroad</li>
+<li>Mobile and desktop: compact panels on mobile, a full table on desktop</li>
+</ul>
+
+<p>Stock counts and restock timers work straight away, with nothing to set up and no API key. They're crowdsourced through YATA and Prombot, the same public sources other travel tools use, so the more people travel the better the data gets.</p>
+
+<p>Optional: switch to Profit view and add your own Torn API key, and it shows each item's current market value next to its buy price, works out the profit per unit, and sorts the best earners to the top. The key stays in your browser and is only used to read item prices from Torn's market.</p>
+
+<p>Credit where it's due: this was inspired by the travel table in TornTools.</p>
+
+<p>Works on desktop with Tampermonkey, in Torn PDA, and in the Warboard iOS app.</p>
+
+<h3>Screenshots</h3>
+<p><em>The travel page, before you fly:</em></p>
+<img src="https://tornwar.com/foreign-stock-travel.jpg" alt="Torn Foreign Stock on the travel page">
+<p><em>While you're travelling, with restock timers counting down:</em></p>
+<img src="https://tornwar.com/foreign-stock-traveling.jpg" alt="Torn Foreign Stock while travelling">
+<p><em>Once you're abroad:</em></p>
+<img src="https://tornwar.com/foreign-stock-abroad.jpg" alt="Torn Foreign Stock abroad at the destination">
+
+<h3>Install</h3>
+<p><a href="https://greasyfork.org/scripts/581933">Install Torn Foreign Stock on Greasy Fork</a></p>
+
+<p>If a number looks off or stock seems wrong, post it here and I'll take a look.</p>
