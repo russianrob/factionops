@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Vault Share
+// @name         Torn Vault Share
 // @namespace    RussianRob
-// @version      0.1.3
+// @version      0.1.4
 // @description  Shows your share vs your spouse's share of the shared property vault, tracking each person's deposits/withdrawals. Set your share once; it auto-tracks from there.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -14,7 +14,7 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "0.1.3";
+  const SCRIPT_VERSION = "0.1.4";
   const K_SHARE = "vs_myShare";
   const K_LASTTX = "vs_lastTxKey";
   const K_TOTAL = "vs_lastTotal";
