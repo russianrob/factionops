@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vault Share
 // @namespace    RussianRob
-// @version      0.1.2
+// @version      0.1.3
 // @description  Shows your share vs your spouse's share of the shared property vault, tracking each person's deposits/withdrawals. Set your share once; it auto-tracks from there.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -14,7 +14,7 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "0.1.2";
+  const SCRIPT_VERSION = "0.1.3";
   const K_SHARE = "vs_myShare";
   const K_LASTTX = "vs_lastTxKey";
   const K_TOTAL = "vs_lastTotal";
@@ -173,16 +173,26 @@
 
   function isValid(r) { return !isNaN(r.balance) || !isNaN(r.amount); }
 
-  let tries = 0;
-  function tick() {
+  let tries = 0, lastKey = null, debounce = null;
+  function refresh() {
     const rows = findRows().map(parseRow).filter(isValid);
-    if (rows.length) { render(rows, ownId()); return; }
+    if (!rows.length) return;
+    // Re-render only when the vault log actually changed (new deposit/withdrawal
+    // or balance) — and never while you're mid-typing your share (would wipe it).
+    if (rows[0].key === lastKey && document.getElementById("vs-panel")) return;
+    const input = document.getElementById("vs-input");
+    if (input && document.activeElement === input) return;
+    lastKey = rows[0].key;
+    render(rows, ownId());
+  }
+  function tick() {
+    if (findRows().map(parseRow).some(isValid)) { refresh(); return; }
     if (++tries > 20) { showHint(); return; }
     setTimeout(tick, 500);
   }
   tick();
-  // Torn is an SPA — re-run when the property/vault view changes.
-  new MutationObserver(() => {
-    if (!document.getElementById("vs-panel") && findRows().map(parseRow).some(isValid)) { tries = 0; tick(); }
-  }).observe(document.body, { childList: true, subtree: true });
+  // Live update: re-render whenever the vault transaction log changes, so the
+  // split updates the moment you (or your spouse) deposit/withdraw — no refresh.
+  new MutationObserver(() => { clearTimeout(debounce); debounce = setTimeout(refresh, 250); })
+    .observe(document.body, { childList: true, subtree: true });
 })();
