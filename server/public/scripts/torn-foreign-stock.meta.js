@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Torn Foreign Stocks
+// @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.9
-// @description  Abroad item stock, profit & restock estimates on the Torn travel page (mobile panels + desktop table). Inspired by TornTools.
+// @version      0.9.10
+// @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/page.php*
@@ -15,6 +15,6 @@
 // @connect      api.prombot.co.uk
 // @connect      raw.githubusercontent.com
 // @run-at       document-idle
-// @downloadURL  https://update.greasyfork.org/scripts/581933/Torn%20Foreign%20Stocks.user.js
-// @updateURL    https://update.greasyfork.org/scripts/581933/Torn%20Foreign%20Stocks.meta.js
+// @downloadURL  https://update.greasyfork.org/scripts/581933/Torn%20Foreign%20Stock.user.js
+// @updateURL    https://update.greasyfork.org/scripts/581933/Torn%20Foreign%20Stock.meta.js
 // ==/UserScript==
