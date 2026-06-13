@@ -456,7 +456,9 @@ if (localCell) {
 
 ---
 
-# PART C — Community % (via the flowchart, reusing Part B)
+# PART C — Community % — ❌ DROPPED (infeasible, 2026-06-13)
+
+> **DROPPED.** A spike found Crimehub's Firestore `outcomes`/`aggregations` are for Torn's **CLASSIC single-player crimes** (typeids 1–13 = Search for Cash … Arson, per the bundle's own `CrimeType` map), **not the OC2 team crimes**. OC2 crimes have **no community observed-odds anywhere** — Crimehub models them purely from user sliders (default 50), reading zero Firestore in the flowchart path. The only community-derived OC2 number is tornprobability's `CalculateSuccess`, which is warboard's existing **Pass %**. So there is nothing distinct to display. The tasks below were **NOT built**; kept for the record only.
 
 ### Task C1: `crimehub-odds.js` — Firestore aggregations fetch + cache
 

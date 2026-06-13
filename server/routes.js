@@ -8746,9 +8746,9 @@ router.get("/api/oc/outcome", async (req, res) => {
 });
 
 // -- GET /api/oc/observed-odds (PRIVATE admin) ------------------------------
-// Per-crime observed whole-crime success, keyed by crime NAME. faction =
-// this faction's own history (aggregateByCrime: a crime succeeds only if
-// every checkpoint passed). community is filled in by Part C (Crimehub).
+// Per-crime observed whole-crime success, keyed by crime NAME: this
+// faction's own history (aggregateByCrime: a crime succeeds only if every
+// checkpoint passed).
 router.get("/api/oc/observed-odds", async (req, res) => {
   const key = req.query.key;
   if (!key || key.length < 10) return res.status(400).json({ error: "Invalid key" });
@@ -8770,7 +8770,7 @@ router.get("/api/oc/observed-odds", async (req, res) => {
 
   const faction = ocCheckpointHistory.aggregateByCrime(info.factionId);
   const byName = {};
-  for (const name in faction) byName[name] = { faction: faction[name], community: null };
+  for (const name in faction) byName[name] = { faction: faction[name] };
   res.set("Cache-Control", "private, max-age=60");
   return res.json({ byName });
 });

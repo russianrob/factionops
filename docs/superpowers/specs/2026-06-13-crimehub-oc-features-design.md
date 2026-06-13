@@ -1,8 +1,10 @@
 # Crimehub-backed OC features (warboard) — Design
 
 **Date:** 2026-06-13
-**Status:** Approved (design)
+**Status:** Implemented (Yours % + Local %); **Community % DROPPED as infeasible** — see note below.
 **Repo:** `/opt/warboard` (factionops) — server (`server/`) + userscript (`server/public/scripts/oc-spawn-assistance.user.js`)
+
+> **⚠️ Outcome (2026-06-13).** Shipped **Yours %** (faction history) + **Local %** (ported flowchart engine) in oc-spawn-assistance 3.2.47. **Community % was dropped**: a spike found Crimehub's Firestore data is for Torn CLASSIC single-player crimes, **not OC2** — there is no OC2 community observed-odds to display. Details in `docs/superpowers/plans/2026-06-13-crimehub-oc-features.md` Part C.
 
 ## Goal
 
