@@ -1,9 +1,9 @@
 {
   "id": "torntools",
-  "version": "9.0.6",
+  "version": "9.0.6.1",
   "upstream": "9.0.6",
-  "minSeedVersion": "9.0.6",
-  "base": "/ext/torntools/9.0.6/",
+  "minSeedVersion": "9.0.6.1",
+  "base": "/ext/torntools/9.0.6.1/",
   "files": [
     {
       "path": "_background.js",
@@ -277,8 +277,8 @@
     },
     {
       "path": "content-scripts/extension.js",
-      "sha256": "336cbe38cee4de8cd2b63c1832d3bb6093e36a8d2f4314ef033de16f3775967e",
-      "bytes": 2832662
+      "sha256": "ce9aecefbb559c2eb27530d28b631f0757aed9e97cb0dd283a29828b71698cb2",
+      "bytes": 2834218
     },
     {
       "path": "content-scripts/extension.js.map",
@@ -392,8 +392,8 @@
     },
     {
       "path": "manifest.json",
-      "sha256": "e593242ddd56975f7559e7c835c24ada2e3e1e40836a417a1603157141c8289b",
-      "bytes": 1794
+      "sha256": "a5e6eb4db642a8d0e5879755397a9bd33a855197c26c26c06490bc1ecb195dae",
+      "bytes": 1796
     },
     {
       "path": "no-outside-link-alert--inject.js",

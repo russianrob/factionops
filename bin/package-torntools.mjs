@@ -15,6 +15,7 @@ const PRELUDE = readFileSync(join(__dirname, "torntools-prelude.js"), "utf8");
 // The warboard bg-host loads `_bg.html` (not the manifest's service_worker).
 // Stock TornTools ships no such file, so the packager always writes it.
 const BG_HTML = '<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>';
+const HIDECHAT_FIX = readFileSync(join(__dirname, "torntools-hidechat-fix.js"), "utf8");
 
 function walk(dir, base = dir) {
   const out = [];
@@ -43,6 +44,9 @@ export function packageTornTools({ stockDir, outDir, version, baseUrlPath = "/ex
   writeFileSync(join(verDir, "manifest.json"), JSON.stringify(mani));
   // patch #3: always provide the bg-host convention page.
   writeFileSync(join(verDir, "_bg.html"), BG_HTML);
+  // patch #4: append the warboard Hide-Chat re-tick fix to the content script.
+  const csPath = join(verDir, "content-scripts", "extension.js");
+  if (existsSync(csPath)) writeFileSync(csPath, readFileSync(csPath, "utf8") + "\n;" + HIDECHAT_FIX);
 
   // version.json over the FINAL tree (includes the patched _background.js + _bg.html)
   const files = walk(verDir).map((path) => {
