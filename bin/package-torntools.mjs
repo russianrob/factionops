@@ -33,7 +33,11 @@ export function packageTornTools({ stockDir, outDir, version, baseUrlPath = "/ex
   if (existsSync(verDir)) rmSync(verDir, { recursive: true, force: true });
   mkdirSync(verDir, { recursive: true });
 
-  for (const rel of walk(stockDir)) copy(join(stockDir, rel), join(verDir, rel));
+  // Sourcemaps are devtools-only; skip them to ~halve the on-device download.
+  for (const rel of walk(stockDir)) {
+    if (rel.endsWith(".map")) continue;
+    copy(join(stockDir, rel), join(verDir, rel));
+  }
 
   // patch #1: _background.js = prelude + stock background.js
   writeFileSync(join(verDir, "_background.js"), PRELUDE + "\n" + readFileSync(join(stockDir, "background.js"), "utf8"));
