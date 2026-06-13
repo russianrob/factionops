@@ -29,7 +29,7 @@ Discovery findings (probed live, read-only):
     money: { min: 3, avg: 73.6489, max: 600 },
     crits: { injury:{min,max}, jail:{min,max}, hospital:{min,max} } }   // severity seconds
   ```
-  Observed odds = `outcomes.success / samples` (and `failure/samples`, `critical/samples`).
+  **Correction (post-planning discovery): each `aggregations` doc is ONE checkpoint, not a whole crime** (a crime ≈ 6 crimeids, e.g. typeid 1 = `_id` 1–6, with `samples` decreasing down the chain — these are *conditional* per-checkpoint pass counts). So a whole-crime community success % is **derived**, not read: run the per-checkpoint community rates through the flowchart model ([b]) — see the plan's Task C2 (node↔crimeid join) + C3. This **couples Community % to [b]**, so it ships after it.
 - **`outcomes` collection** (13,999 docs) = per-variant story/reward detail. **Out of scope for v1** (drill-down only).
 - **Keying / mapping:** no `name→typeid` table is shipped anywhere. Join via **Torn `crimeid`** (`== aggregations._id`), which warboard already sees in OC data. A scenario (`typeid`) can span multiple `crimeid`s (e.g. typeid 3 → crimeids 12 & 18). Crosswalk seed (typeid→first crimeid): `{1:4, 2:8, 3:[12,18], 4:19, 5:27, 6:49, 7:112, 8:140, 9:157, 10:205, 11:208, 12:290, ...}` — build & cache the full `crimeid↔typeid` crosswalk once by scanning the `outcomes`/`aggregations` collections (select `crimeid`,`typeid`, dedup).
 - **Flowchart model reverse-engineered & validated.** Graph data = static JSON on the Crimehub host: `assets/json/<slug>_paths.json` (edges) + `assets/json/<slug>_checks.json` (nodes), `slug = name.replace(/\s/g,'').toLowerCase()` + optional `v1`/`v2`. ~956 KB raw across 21 crime-variants (650 nodes / 804 edges); trims to ~150–250 KB by dropping story text + coords. Role-order tables live in the bundle (`setRoles()` calls). 3 routed crimes (`cranereaction`, `gonefission`, `manifestcruelty`) currently 404 (unpublished). Guardian Angels slug needs accent: `guardian%C3%A1ngels`.
@@ -55,21 +55,21 @@ Rationale for server-centric: matches the existing `/api/oc/*` pattern, caches o
 
 ## Feature [a] — Observed-odds columns
 
-**Endpoint:** `GET /api/oc/observed-odds` (JWT/key as siblings). Returns, per crime/scenario:
+**Endpoint:** `GET /api/oc/observed-odds` (admin-gated, key as siblings). Keyed by crime **name** (the join key across faction store + the table rows). Returns, per crime:
 ```jsonc
 {
-  "<crimeid>": {
-    "scenario": "Honey Trap",
-    "community": { "success": 12972, "failure": 1595, "critical": 58, "samples": 14625 },
-    "faction":   { "success": 41,    "failure": 7,    "critical": 1,  "samples": 49 }
+  "byName": {
+    "Honey Trap": {
+      "faction":   { "success": 41, "fail": 7, "total": 49, "rate": 0.837 },  // exact whole-crime success
+      "community": { "rate": 0.41, "samples": 14625 }                          // flowchart-derived; null until [b]
+    }
   }
 }
 ```
-- `community` ← cached Crimehub `aggregations`, joined by `crimeid`.
-- `faction` ← aggregated from warboard's checkpoint-history store.
-- Either side may be `null` (no data) → renders "—".
+- `faction` ← `aggregateByCrime` over checkpoint-history; whole-crime success = every checkpoint passed (no crit — store is P/F only). Ships first, no external dependency.
+- `community` ← `calculateCommunityOutcome`: Crimehub `aggregations` per-checkpoint rates run through the flowchart ([b]). `null` until [b] lands and the node↔crimeid join (plan Task C2) is resolved.
 
-**UI (`oc-spawn-assistance`):** add two columns to the Outcome-EV / Hit% table — **"Community %"** and **"Yours %"** — each showing success-rate (with fail/crit on hover/tooltip + sample size). **Distinct** from the existing payout-based **Hit%** column (that's top-quartile payout; this is success rate). Missing data → "—", never breaks the table.
+**UI (`oc-spawn-assistance`):** add **"Yours %"** (ships first) and **"Community %"** (after [b]) columns to the Outcome-EV / Hit% table — both whole-crime success-rate. **Distinct** from the existing payout-based **Hit%** column (that's top-quartile payout). Missing data → "—", never breaks the table.
 
 ## Feature [b] — Local flowchart model
 
