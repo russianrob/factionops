@@ -5,7 +5,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const OUT = join(__dirname, "..", "server", "data");
+const OUT = join(__dirname, "..", "server");
 const BASE = "https://crimeshub-2b4b0.web.app/assets/json";
 const UA = { headers: { "User-Agent": "warboard-oc/1.0 (+https://tornwar.com; interop with crimeshub-2b4b0.web.app)" } };
 
@@ -84,5 +84,4 @@ for (const c of CRIMES) {
 }
 mkdirSync(OUT, { recursive: true });
 writeFileSync(join(OUT, "crimehub-graphs.json"), JSON.stringify(graphs));
-writeFileSync(join(OUT, "crimehub-crosswalk.json"), JSON.stringify(crosswalk, null, 2));
 console.log(`vendored ${Object.keys(graphs).length} crimes`);

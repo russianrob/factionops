@@ -1,5 +1,5 @@
 // Ported Crimehub OC flowchart success engine. Pure propagation over the
-// vendored per-crime graphs (server/data/crimehub-graphs.json). Reproduces
+// vendored per-crime graphs (server/crimehub-graphs.json). Reproduces
 // Crimehub's client-side simulator: seed each check node's pass rate, walk
 // the graph propagating occurrence along P/F edges, sum the "Good" endings.
 // Attribution: model + graph data derived from crimeshub-2b4b0.web.app.
@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 let _graphs = null;
 function graphs() {
-  return _graphs ||= JSON.parse(readFileSync(join(__dirname, "data", "crimehub-graphs.json"), "utf8"));
+  return _graphs ||= JSON.parse(readFileSync(join(__dirname, "crimehub-graphs.json"), "utf8"));
 }
 const _norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s*\(v\d+\)\s*$/, "").trim();
 export function graphForScenario(name) {
