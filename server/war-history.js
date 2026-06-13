@@ -120,6 +120,16 @@ export function ingestWar(factionId, war, result) {
     warEndedAt: endedMs,
     warResult: result.warResult || (war && war.warResult) || null,
     warScores: (war && war.warScores) || result.warScores || null,
+    lootTotal: (result.lootTotal != null ? Number(result.lootTotal) : null),
+    lootBreakdown: result.lootBreakdown || null,
+    lootSource: result.lootSource || null,
+    payoutPct: (Number.isFinite(result.payoutPct) ? Number(result.payoutPct) : null),
+    payoutPool: (result.payoutPool != null ? Number(result.payoutPool) : null),
+    factionShare: (result.factionShare != null ? Number(result.factionShare) : null),
+    totalScore: (result.totalScore != null ? Number(result.totalScore) : null),
+    settings: result.settings || null,
+    payoutMode: result.mode || null,
+    payoutComputedAt: Number(result.generatedAt) || Date.now(),
     capturedAt: Date.now(),
     members: result.members.map(m => ({
       playerId: String(m.playerId),
@@ -127,6 +137,13 @@ export function ingestWar(factionId, war, result) {
       level: Number(m.level) || null,
       warHits: Number(m.attackCount) || 0,
       totalAttacks: Number(m.totalAttacks) || 0,
+      score: (m.score != null ? Number(m.score) : null),
+      sharePct: (m.sharePct != null ? Number(m.sharePct) : null),
+      dollarPayout: (m.dollarPayout != null ? Number(m.dollarPayout) : null),
+      avgFf: (m.avgFf != null ? Number(m.avgFf) : null),
+      maxFf: (m.maxFf != null ? Number(m.maxFf) : null),
+      tornScore: (m.tornScore != null ? Number(m.tornScore) : null),
+      tornAttacks: (m.tornAttacks != null ? Number(m.tornAttacks) : null),
       breakdown: (m.breakdown && typeof m.breakdown === "object") ? m.breakdown : {},
     })),
   };
@@ -156,6 +173,8 @@ export function listWars(factionId) {
       warResult: w.warResult,
       warScores: w.warScores,
       memberCount: Array.isArray(w.members) ? w.members.length : 0,
+      lootTotal: (w.lootTotal ?? null), payoutPool: (w.payoutPool ?? null),
+      payoutPct: (w.payoutPct ?? null), factionShare: (w.factionShare ?? null),
     }))
     .sort((a, b) => (b.warEndedAt || 0) - (a.warEndedAt || 0));
 }
@@ -163,6 +182,40 @@ export function listWars(factionId) {
 /** Full record (incl. per-member activity) for one war. */
 export function getWar(factionId, warKey) {
   return _load(factionId).wars[String(warKey)] || null;
+}
+
+/** True if this war's archive record carries computed payout fields. */
+export function hasPayout(factionId, warKey) {
+  const w = _load(factionId).wars[String(warKey)];
+  return !!(w && w.payoutPool != null && Array.isArray(w.members));
+}
+
+/** Reconstruct a computePayouts-shaped result from the archive record. */
+export function getPayout(factionId, warKey) {
+  const w = _load(factionId).wars[String(warKey)];
+  if (!w || w.payoutPool == null) return null;
+  return {
+    warId: String(warKey), factionId: String(factionId),
+    enemyFactionId: w.enemyFactionId, enemyFactionName: w.enemyFactionName || null,
+    warResult: w.warResult || null, warScores: w.warScores || null,
+    mode: w.payoutMode || 'dynamic', scoreSource: 'archive',
+    fromTs: (w.warStart ? Math.floor(w.warStart / 1000) : 0),
+    toTs: (w.warEndedAt ? Math.floor(w.warEndedAt / 1000) : 0),
+    lootTotal: Number(w.lootTotal) || 0, lootBreakdown: w.lootBreakdown || null,
+    lootSource: w.lootSource || 'archive', lootAutoDetected: false,
+    payoutPct: (w.payoutPct != null ? Number(w.payoutPct) : 0.8),
+    payoutPool: Number(w.payoutPool) || 0, factionShare: Number(w.factionShare) || 0,
+    settings: w.settings || {}, totalScore: Number(w.totalScore) || 0,
+    members: (w.members || []).map(m => ({
+      playerId: String(m.playerId), name: m.name, level: m.level ?? null,
+      score: Number(m.score) || 0, sharePct: Number(m.sharePct) || 0,
+      dollarPayout: Number(m.dollarPayout) || 0, attackCount: Number(m.warHits) || 0,
+      totalAttacks: Number(m.totalAttacks) || 0, avgFf: Number(m.avgFf) || 0,
+      maxFf: Number(m.maxFf) || 0, tornScore: Number(m.tornScore) || 0,
+      tornAttacks: Number(m.tornAttacks) || 0, breakdown: m.breakdown || {},
+    })),
+    generatedAt: w.payoutComputedAt || w.capturedAt || Date.now(), fromArchive: true,
+  };
 }
 
 /**
@@ -274,6 +327,71 @@ export function backfill(getWarFn) {
     // would otherwise graft the wrong scores/start onto this snapshot.
     if (war && String(war.enemyFactionId) !== String(result.enemyFactionId)) war = null;
     if (ingestWar(result.factionId, war, result)) n++;
+  }
+  return n;
+}
+
+/**
+ * One-time idempotent enrich: graft full payout fields (loot/pool/per-member
+ * shares) onto already-ingested archive records that lack them, sourcing from
+ * the persisted payout cache MATCHED BY ENEMY IDENTITY (faction+enemy), never
+ * by cache key. Skips records that already carry a payoutPool. Returns the
+ * count of war records enriched.
+ */
+export function backfillPayouts() {
+  let cacheObj;
+  try {
+    cacheObj = JSON.parse(readFileSync(PAYOUT_CACHE_FILE, "utf8"));
+  } catch { return 0; }
+  if (!cacheObj || typeof cacheObj !== "object") return 0;
+  // Build a best-per-(faction:enemy) index over cache results that actually
+  // carry payout members. Prefer dynamic mode, then the freshest generatedAt.
+  const best = new Map();
+  for (const key in cacheObj) {
+    const entry = cacheObj[key];
+    const r = (entry && (entry.result || entry)) || null;
+    if (!r || !r.factionId || r.enemyFactionId == null || !Array.isArray(r.members)) continue;
+    const idKey = `${r.factionId}:${r.enemyFactionId}`;
+    const cur = best.get(idKey);
+    if (!cur) { best.set(idKey, r); continue; }
+    const better = (r.mode === 'dynamic' && cur.mode !== 'dynamic')
+      || (((r.mode === 'dynamic') === (cur.mode === 'dynamic'))
+          && (Number(r.generatedAt) || 0) > (Number(cur.generatedAt) || 0));
+    if (better) best.set(idKey, r);
+  }
+  let n = 0;
+  for (const fid of factionIds()) {
+    const entry = _load(fid);
+    let touched = false;
+    for (const wk in entry.wars) {
+      const w = entry.wars[wk];
+      if (!w || w.enemyFactionId == null || w.payoutPool != null) continue; // idempotent
+      const r = best.get(`${fid}:${w.enemyFactionId}`);
+      if (!r) continue;
+      const payoutById = new Map();
+      for (const m of r.members) {
+        payoutById.set(String(m.playerId), {
+          score: m.score, sharePct: m.sharePct, dollarPayout: m.dollarPayout,
+        });
+      }
+      w.members = (w.members || []).map(m => {
+        const p = payoutById.get(String(m.playerId));
+        return p ? { ...m, score: p.score, sharePct: p.sharePct, dollarPayout: p.dollarPayout } : m;
+      });
+      w.lootTotal = (r.lootTotal != null ? Number(r.lootTotal) : null);
+      w.payoutPool = (r.payoutPool != null ? Number(r.payoutPool) : null);
+      w.payoutPct = (r.payoutPct != null ? Number(r.payoutPct) : null);
+      w.factionShare = (r.factionShare != null ? Number(r.factionShare) : null);
+      w.totalScore = (r.totalScore != null ? Number(r.totalScore) : null);
+      w.settings = r.settings || null;
+      w.payoutMode = r.mode || null;
+      if (!w.warResult && r.warResult) w.warResult = r.warResult;
+      w.payoutComputedAt = Number(r.generatedAt) || null;
+      w.payoutBackfilledAt = Date.now();
+      n++;
+      touched = true;
+    }
+    if (touched) { entry.dirty = true; _scheduleSave(entry, fid); }
   }
   return n;
 }

@@ -269,7 +269,11 @@ export async function computePayouts(warId, options = {}) {
   }
 
   const war = store.getWar(warId);
-  if (!war) throw new Error(`War ${warId} not found`);
+  if (!war) {
+    const served = serveArchivedPayout(warId, mode);
+    if (served) return { ...served, cached: true };
+    throw new Error(`War ${warId} not found`);
+  }
   if (!war.factionId || !war.enemyFactionId) {
     throw new Error(`War ${warId} missing factionId/enemyFactionId`);
   }
@@ -841,10 +845,89 @@ export async function computePayoutsHeatmap(factionId, options = {}) {
   };
 }
 
+/**
+ * Serve a payout result for a war that's no longer in the live store, from the
+ * durable archive. Resolves the faction + archive record by warKey, then tries
+ * (in order): the in-memory payout cache matched BY IDENTITY (faction + enemy +
+ * end-second, never by cache key), the archive record's own stored payout
+ * fields, and finally a fields-only reconstruction. Returns null if the war
+ * isn't in any faction's archive.
+ */
+function serveArchivedPayout(warKey, mode) {
+  let fid = null, hw = null;
+  for (const f of warHistory.factionIds()) {
+    const rec = warHistory.getWar(f, warKey);
+    if (rec) { fid = String(f); hw = rec; break; }
+  }
+  if (!hw) return null;
+  const endedSec = hw.warEndedAt ? Math.floor(Number(hw.warEndedAt) / 1000) : 0;
+  // 1) Cache-by-identity: a cached compute for this same physical war may still
+  // live in memory under a now-orphaned key. Match on faction+enemy+end-second.
+  let best = null;
+  for (const entry of _cache.values()) {
+    const r = entry && entry.result;
+    if (!r) continue;
+    if (String(r.factionId) !== fid || String(r.enemyFactionId) !== String(hw.enemyFactionId)) continue;
+    if (endedSec && r.toTs && Math.abs(Math.floor(Number(r.toTs)) - endedSec) > 60) continue;
+    if (!best || (r.mode === mode && best.mode !== mode)) best = r;
+  }
+  if (best) return { ...best, warId: String(warKey), factionId: fid };
+  // 2) Archive record's own backfilled payout fields.
+  if (warHistory.hasPayout(fid, warKey)) return warHistory.getPayout(fid, warKey);
+  // 3) Fields-only reconstruction from the raw archive record.
+  return archiveRecordToResult(hw, mode, fid);
+}
+
+/** Map a durable archive record into a computePayouts-shaped result literal. */
+function archiveRecordToResult(hw, mode, fid) {
+  const members = (hw.members || []).map(m => ({
+    playerId: String(m.playerId),
+    name: m.name,
+    score: Number(m.score) || 0,
+    sharePct: Number(m.sharePct) || 0,
+    dollarPayout: Number(m.dollarPayout) || 0,
+    attackCount: Number(m.warHits) || 0,
+    totalAttacks: Number(m.totalAttacks) || 0,
+    avgFf: Number(m.avgFf) || 0,
+    maxFf: Number(m.maxFf) || 0,
+    level: Number(m.level) || 0,
+    breakdown: m.breakdown || {},
+    tornScore: Number(m.tornScore) || 0,
+    tornAttacks: Number(m.tornAttacks) || 0,
+  }));
+  return {
+    warId: String(hw.warKey),
+    factionId: String(fid),
+    enemyFactionId: hw.enemyFactionId,
+    enemyFactionName: hw.enemyFactionName || null,
+    warResult: hw.warResult || null,
+    warScores: hw.warScores || null,
+    mode,
+    scoreSource: 'archive',
+    reportTotalScore: 0,
+    fromTs: (hw.warStart ? Math.floor(Number(hw.warStart) / 1000) : 0),
+    toTs: (hw.warEndedAt ? Math.floor(Number(hw.warEndedAt) / 1000) : 0),
+    lootTotal: Number(hw.lootTotal) || 0,
+    lootBreakdown: hw.lootBreakdown || null,
+    lootSource: hw.lootSource || 'archive',
+    lootAutoDetected: false,
+    payoutPct: (hw.payoutPct != null ? Number(hw.payoutPct) : 0.8),
+    payoutPool: Number(hw.payoutPool) || 0,
+    factionShare: Number(hw.factionShare) || 0,
+    settings: hw.settings || {},
+    totalScore: members.reduce((s, m) => s + (m.score || 0), 0),
+    members,
+    attackCount: members.reduce((s, m) => s + (m.attackCount || 0), 0),
+    generatedAt: Date.now(),
+  };
+}
+
 /** List wars eligible for payouts (ended, has data) for a faction. */
 export function listEligibleWars(factionId) {
   const fid = String(factionId);
   const out = [];
+  const seen = new Set();
+  const idKey = (eid, endedMs) => `${eid == null ? '' : eid}:${endedMs ? Math.floor(Number(endedMs) / 1000) : 0}`;
   // getAllWars() returns a Map — iterate via .entries() not for...in
   // (the latter only works for plain objects).
   const all = store.getAllWars();
@@ -860,7 +943,24 @@ export function listEligibleWars(factionId) {
       warResult: w.warResult || "unknown",
       warEndedAt: w.warEndedAt || 0,
     });
+    seen.add(idKey(w.enemyFactionId, w.warEndedAt));
   }
+  // Merge ended wars the live store has dropped, sourced from the durable
+  // archive. Deduped against the live list by enemy + end-second so the same
+  // physical war isn't listed twice.
+  try {
+    for (const hw of warHistory.listWars(fid)) {
+      const k = idKey(hw.enemyFactionId, hw.warEndedAt);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({
+        warId: String(hw.warKey),
+        enemyFactionName: hw.enemyFactionName || `Faction ${hw.enemyFactionId}`,
+        warResult: hw.warResult || "unknown",
+        warEndedAt: hw.warEndedAt || 0,
+      });
+    }
+  } catch (e) { console.warn(`[war-payouts] archive merge failed for ${fid}: ${e.message}`); }
   // Most-recent first
   out.sort((a, b) => (b.warEndedAt || 0) - (a.warEndedAt || 0));
   return out;

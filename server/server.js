@@ -548,6 +548,10 @@ try {
   const seeded = warHistory.backfill(store.getWar);
   if (seeded) console.log(`[war-history] backfilled ${seeded} war(s) from payout cache`);
 } catch (e) { console.warn(`[war-history] backfill failed: ${e.message}`); }
+try {
+  const enriched = warHistory.backfillPayouts();
+  if (enriched) console.log(`[war-history] backfilled full payout fields for ${enriched} war(s) from payout cache`);
+} catch (e) { console.warn(`[war-history] payout backfill failed: ${e.message}`); }
 // Capture any ended war not yet snapshotted (e.g. nobody opened its payouts).
 // computePayouts ingests via its hook; this just skips wars already in history.
 async function _sweepWarHistory() {
