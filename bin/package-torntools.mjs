@@ -12,6 +12,9 @@ import { createHash } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PRELUDE = readFileSync(join(__dirname, "torntools-prelude.js"), "utf8");
+// The warboard bg-host loads `_bg.html` (not the manifest's service_worker).
+// Stock TornTools ships no such file, so the packager always writes it.
+const BG_HTML = '<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>';
 
 function walk(dir, base = dir) {
   const out = [];
@@ -38,8 +41,10 @@ export function packageTornTools({ stockDir, outDir, version, baseUrlPath = "/ex
   const upstream = mani.version;
   mani.version = version;
   writeFileSync(join(verDir, "manifest.json"), JSON.stringify(mani));
+  // patch #3: always provide the bg-host convention page.
+  writeFileSync(join(verDir, "_bg.html"), BG_HTML);
 
-  // version.json over the FINAL tree (includes the patched _background.js)
+  // version.json over the FINAL tree (includes the patched _background.js + _bg.html)
   const files = walk(verDir).map((path) => {
     const data = readFileSync(join(verDir, path));
     return { path, sha256: createHash("sha256").update(data).digest("hex"), bytes: data.length };

@@ -11,6 +11,11 @@
       "bytes": 1424819
     },
     {
+      "path": "_bg.html",
+      "sha256": "4156dd8844430fb21f40b92cf67d70c1b539f29bc6e5306aec17be95903752fe",
+      "bytes": 76
+    },
+    {
       "path": "add-debug-info--inject.js",
       "sha256": "5920425f21be60df00673727d0af6ff4471dbe16f2d34bd52d012e83dc138a73",
       "bytes": 1447
