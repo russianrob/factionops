@@ -128,6 +128,37 @@ export function aggregateByMember(factionId) {
   return out;
 }
 
+/**
+ * Per-crime-NAME observed whole-crime success for a faction. A Torn OC
+ * succeeds only when EVERY checkpoint passed (the store holds P/F only —
+ * no crit). Empty-checkpoint scenarios are excluded as partial captures.
+ * Shape: { [crimeName]: { success, fail, total, rate(0..1) } }.
+ */
+export function _aggregateScenariosByCrime(scenarios) {
+  const byName = {};
+  for (const sid in scenarios) {
+    const s = scenarios[sid];
+    const cps = Array.isArray(s?.checkpoints) ? s.checkpoints : [];
+    if (cps.length === 0) continue;
+    const name = String(s.name || "").trim();
+    if (!name) continue;
+    const b = (byName[name] ||= { success: 0, fail: 0, total: 0, rate: 0 });
+    b.total++;
+    if (cps.every((c) => c.outcome === "P")) b.success++;
+    else b.fail++;
+  }
+  for (const name in byName) {
+    const b = byName[name];
+    b.rate = b.total ? b.success / b.total : 0;
+  }
+  return byName;
+}
+
+export function aggregateByCrime(factionId) {
+  const entry = _load(factionId);
+  return _aggregateScenariosByCrime(entry.scenarios || {});
+}
+
 /** Total scenarios stored for a faction — for diag/stats endpoints. */
 export function scenarioCount(factionId) {
   const entry = _load(factionId);

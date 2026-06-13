@@ -8745,6 +8745,36 @@ router.get("/api/oc/outcome", async (req, res) => {
   return res.json(out);
 });
 
+// -- GET /api/oc/observed-odds (PRIVATE admin) ------------------------------
+// Per-crime observed whole-crime success, keyed by crime NAME. faction =
+// this faction's own history (aggregateByCrime: a crime succeeds only if
+// every checkpoint passed). community is filled in by Part C (Crimehub).
+router.get("/api/oc/observed-odds", async (req, res) => {
+  const key = req.query.key;
+  if (!key || key.length < 10) return res.status(400).json({ error: "Invalid key" });
+  const suffix = key.slice(-8);
+  let info = _spawnKeyCache.get(suffix);
+  if (!info || (Date.now() - info.ts) > 5 * 60_000) {
+    try {
+      const tornInfo = await verifyTornApiKey(key);
+      info = { ts: Date.now(), factionId: tornInfo.factionId, playerName: tornInfo.playerName,
+               playerId: tornInfo.playerId, factionPosition: tornInfo.factionPosition,
+               hasFactionAccess: tornInfo.hasFactionAccess };
+      _spawnKeyCache.set(suffix, info);
+    } catch (err) { return res.status(401).json({ error: err.message }); }
+  }
+  const isDev = String(info.playerId) === "137558";
+  const adminRoles = store.getAdminRoles(info.factionId).map((r) => String(r).toLowerCase());
+  const pos = String(info.factionPosition || "").toLowerCase();
+  if (!isDev && !adminRoles.includes(pos)) return res.status(403).json({ error: "Admin role required" });
+
+  const faction = ocCheckpointHistory.aggregateByCrime(info.factionId);
+  const byName = {};
+  for (const name in faction) byName[name] = { faction: faction[name], community: null };
+  res.set("Cache-Control", "private, max-age=60");
+  return res.json({ byName });
+});
+
 // -- GET /api/oc/settings/update --------------------------------------------
 router.get("/api/oc/settings/update", async (req, res) => {
   const key = req.query.key;

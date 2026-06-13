@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.45
+// @version      3.2.46
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.45';
+    const SCRIPT_VERSION = '3.2.46';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -5478,6 +5478,7 @@
         const ttTop  = 'Probability of hitting the top-tier payout — the highest-reward outcome. A successful OC still forks into multiple reward tiers; this is the chance of landing on the best one. The $ value (when shown) is your faction\'s average top-tier payout for this scenario, computed from the top quartile of historical completions.';
         const ttQ    = 'Weighted quality score (roughly 0–1). Top-tier payout counts 1.0, 2nd-tier 0.7, 3rd-tier 0.4, every other successful tier 0.2. Single number for comparing expected reward across OCs.';
         const ttHit  = 'Historical top-tier hit rate for this scenario: % of the faction\'s successful completions whose money payout landed in the top quartile for this OC type. Used as a proxy for top-tier hits since Torn doesn\'t label outcome tiers directly. Needs at least 4 successful completions of this scenario to show; otherwise displays as —.';
+        const ttYours = 'Your faction\'s observed whole-crime success rate for this OC (a crime succeeds only if every checkpoint passes). From your own checkpoint history; needs at least 4 completions, else shows —.';
         // v3.1.40: wrap the table in overflow-x:auto so a wide OC name
         // or the six-column layout can't push past the container border
         // on narrower panels (mobile, side-docked tabs). Scrolls
@@ -5489,6 +5490,7 @@
         html += `<table class="oc-table oc-ev-table" data-sort-col="top" data-sort-dir="desc" style="width:100%;"><thead><tr>`;
         html += `<th>OC</th><th>Lvl</th>`;
         html += `<th class="oc-ev-sort" data-col="pass" style="cursor:pointer;">Pass % <span class="oc-ev-sort-ind"></span> <span class="oc-ev-info" data-tt-title="Pass %" data-tt="${ttPass}">?</span></th>`;
+        html += `<th class="oc-ev-sort" data-col="yours" style="cursor:pointer;">Yours % <span class="oc-ev-sort-ind"></span> <span class="oc-ev-info" data-tt-title="Yours %" data-tt="${ttYours}">?</span></th>`;
         html += `<th class="oc-ev-sort" data-col="top"  style="cursor:pointer;">Top end % <span class="oc-ev-sort-ind">▼</span> <span class="oc-ev-info" data-tt-title="Top end %" data-tt="${ttTop}">?</span></th>`;
         html += `<th class="oc-ev-sort" data-col="hit"  style="cursor:pointer;">Hit % <span class="oc-ev-sort-ind"></span> <span class="oc-ev-info" data-tt-title="Hit %" data-tt="${ttHit}">?</span></th>`;
         html += `<th class="oc-ev-sort" data-col="q"    style="cursor:pointer;">Q score <span class="oc-ev-sort-ind"></span> <span class="oc-ev-info" data-tt-title="Q score" data-tt="${ttQ}">?</span></th>`;
@@ -5525,6 +5527,7 @@
             html += `<td><a href="${href}" target="_blank" style="color:#74c69d;font-weight:700;text-decoration:none;" title="Open OC ${c.id} on the Torn crimes page">${c.name}${fillChip}</a></td>`;
             html += `<td>${c.difficulty}</td>`;
             html += `<td class="oc-outcome-pass" style="color:#6b7280">…</td>`;
+            html += `<td class="oc-outcome-yours" style="color:#6b7280">…</td>`;
             html += `<td class="oc-outcome-top"  style="color:#6b7280">…</td>`;
             html += hitCell;
             html += `<td class="oc-outcome-q"    style="color:#6b7280">…</td>`;
@@ -5571,6 +5574,12 @@
 
         const benchmarks = computeLevelBenchmarks(cprCache);
 
+        let _observed = {};
+        try {
+            const ro = await gmRequest(`${SERVER}/api/oc/observed-odds?key=${encodeURIComponent(apiKey)}`);
+            if (ro.ok && ro.data && ro.data.byName) _observed = ro.data.byName;
+        } catch (_) {}
+
         for (const c of matching) {
             // Empty-slot placeholder: faction's avg CPR at this OC's level.
             // Realistic "what-if-an-average-member-filled-it" estimate.
@@ -5612,6 +5621,17 @@
                 const top  = row.querySelector('.oc-outcome-top');
                 const q    = row.querySelector('.oc-outcome-q');
                 if (pass) { pass.style.color = colour(passPct); pass.textContent = passPct.toFixed(1) + '%'; pass.dataset.val = passPct; }
+                const yoursCell = row.querySelector('.oc-outcome-yours');
+                if (yoursCell) {
+                    const f = _observed[c.name]?.faction;
+                    if (f && f.total >= 4) {
+                        const yp = f.rate * 100;
+                        yoursCell.style.color = colour(yp); yoursCell.textContent = yp.toFixed(1) + '%'; yoursCell.dataset.val = yp;
+                        yoursCell.title = `${f.success}/${f.total} completions succeeded`;
+                    } else {
+                        yoursCell.textContent = f && f.total > 0 ? `— (${f.total})` : '—';
+                    }
+                }
                 if (top) {
                     top.style.color  = colour(topPct * 2);
                     top.dataset.val = topPct;
@@ -5653,10 +5673,11 @@
         const dir = table.dataset.sortDir === 'asc' ? 'asc' : 'desc';
         const tbody = table.querySelector('tbody');
         if (!tbody) return;
-        const cls = col === 'pass' ? '.oc-outcome-pass'
-                  : col === 'q'    ? '.oc-outcome-q'
-                  : col === 'hit'  ? '.oc-outcome-hit'
-                  :                  '.oc-outcome-top';
+        const cls = col === 'pass'  ? '.oc-outcome-pass'
+                  : col === 'yours' ? '.oc-outcome-yours'
+                  : col === 'q'     ? '.oc-outcome-q'
+                  : col === 'hit'   ? '.oc-outcome-hit'
+                  :                   '.oc-outcome-top';
         const rows = Array.from(tbody.querySelectorAll('tr'));
         rows.sort((a, b) => {
             const ta = a.querySelector(cls);
