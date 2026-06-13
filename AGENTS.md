@@ -1,11 +1,11 @@
-# AGENTS.md — Briefing for Codex / coding agents
+# AGENTS.md — warboard project briefing for coding agents
 
 This repo is **warboard**, the server + userscript suite behind tornwar.com. It's a mix of:
 - A Node.js / Express server (`server/`) that hosts the warboard web app, faction war overlays, and a JSON pricing endpoint (`/data/rwp-prices.json`).
 - A collection of Tampermonkey userscripts (`server/scripts/`) that ride on top of torn.com and pda.torn.com. Built copies are served from `server/public/scripts/`.
 - Apple / Android native shells in sibling repos (warboard-ios, warboard-native).
 
-Codex is invoked by the project owner (a Claude Code session) to write specific tasks. Claude plans, you implement, Claude verifies the diff. The standing brief below applies to every task unless the per-task prompt overrides it.
+This is the standing project brief for any coding agent working in this repo. Claude Code plans and implements changes directly. The brief below applies to every task unless a per-task prompt overrides it.
 
 ---
 
@@ -43,7 +43,7 @@ For any change to a script that **has a `server/scripts/<name>.user.js` source c
 6. **Verify served**: `curl -s http://127.0.0.1:3000/scripts/<name>.meta.js | grep @version` — should show the new version.
 7. **Commit and push to `origin/main`**. Standing authorization: commit + push without re-asking on any userscript change. Commit message format is plain prose (no Conventional Commits prefix); end with the Claude co-author trailer used in recent commits.
 
-If you edit anything under `server/` that isn't a userscript (the Node app itself), the host will need `pm2 reload warboard` after — but Codex isn't authorized to bounce pm2; report what you changed and leave it for the orchestrator.
+If you edit anything under `server/` that isn't a userscript (the Node app itself), `pm2 reload warboard` is required after — reload it and health-check `http://127.0.0.1:3000` (standing authorization, no need to re-ask).
 
 ---
 
@@ -88,7 +88,7 @@ These have caused incidents in the past. Read every one before touching any Torn
 - Don't introduce backwards-compat shims, feature flags, or "in case" abstractions. This codebase changes things in place.
 - Don't expand error handling beyond system boundaries. Trust internal callers.
 - Don't programmatically click any Torn UI control. (Repeated because it's the most common rule someone tries to break.)
-- Don't restore unrelated "missing" files Codex/AI tools surface as `git status` curiosities — several of those are gitignored on purpose. Ask before adding anything that wasn't in the explicit task scope.
+- Don't restore unrelated "missing" files that surface as `git status` curiosities — several of those are gitignored on purpose. Ask before adding anything that wasn't in the explicit task scope.
 
 ---
 
@@ -101,12 +101,12 @@ These have caused incidents in the past. Read every one before touching any Torn
 
 ---
 
-## Output the orchestrator expects from you
+## When you finish a task
 
-When you finish a task:
+Report concisely:
 1. State which files you changed and why, one line each.
 2. Show the version number(s) you bumped (for userscript tasks).
 3. List anything you intentionally did NOT do that the brief might have implied. Especially flag if you stopped short of deploying / committing.
 4. If anything in the brief was ambiguous, state the assumption you made.
 
-Be terse. The orchestrator will read the git diff to verify the actual change — your summary is a pointer, not a substitute.
+Be terse — the git diff is the source of truth; the summary is a pointer, not a substitute.
