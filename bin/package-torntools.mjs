@@ -28,6 +28,25 @@ function walk(dir, base = dir) {
 }
 const copy = (src, dst) => { mkdirSync(dirname(dst), { recursive: true }); writeFileSync(dst, readFileSync(src)); };
 
+// Assert every warboard patch is present in the packaged tree, comparing against
+// the exact source constants (DRY). Throws naming the patch if one is missing, so
+// a future TornTools layout change aborts the build instead of silently dropping
+// a fix. Markers come straight from the same content the patches write.
+export function verifyPatches(verDir, version) {
+  const fail = (n, why) => {
+    throw new Error(`package-torntools: patch ${n} did not land (${why}). TornTools' layout likely changed — update the patch in package-torntools.mjs. Aborting so a fix can't be silently shipped missing.`);
+  };
+  if (!readFileSync(join(verDir, "_background.js"), "utf8").startsWith(PRELUDE))
+    fail("#1 (service-worker prelude)", "_background.js does not begin with the prelude");
+  const v = JSON.parse(readFileSync(join(verDir, "manifest.json"), "utf8")).version;
+  if (v !== version) fail("#2 (manifest version)", `manifest.json says "${v}", expected "${version}"`);
+  if (!existsSync(join(verDir, "_bg.html")) || readFileSync(join(verDir, "_bg.html"), "utf8") !== BG_HTML)
+    fail("#3 (_bg.html)", "_bg.html missing or altered");
+  const csPath = join(verDir, "content-scripts", "extension.js");
+  if (!existsSync(csPath) || !readFileSync(csPath, "utf8").includes(HIDECHAT_FIX))
+    fail("#4 (Hide Chat fix)", "extension.js missing the appended fix");
+}
+
 export function packageTornTools({ stockDir, outDir, version, baseUrlPath = "/ext/torntools/" }) {
   const verDir = join(outDir, version);
   if (existsSync(verDir)) rmSync(verDir, { recursive: true, force: true });
@@ -50,7 +69,14 @@ export function packageTornTools({ stockDir, outDir, version, baseUrlPath = "/ex
   writeFileSync(join(verDir, "_bg.html"), BG_HTML);
   // patch #4: append the warboard Hide-Chat re-tick fix to the content script.
   const csPath = join(verDir, "content-scripts", "extension.js");
-  if (existsSync(csPath)) writeFileSync(csPath, readFileSync(csPath, "utf8") + "\n;" + HIDECHAT_FIX);
+  if (!existsSync(csPath)) {
+    throw new Error("package-torntools: patch #4 (Hide Chat fix) target missing — content-scripts/extension.js not found in the stock build. TornTools layout changed; update package-torntools.mjs before shipping.");
+  }
+  writeFileSync(csPath, readFileSync(csPath, "utf8") + "\n;" + HIDECHAT_FIX);
+
+  // Fail loudly if any warboard patch didn't land — a future TornTools layout
+  // change must NEVER silently ship without our fixes.
+  verifyPatches(verDir, version);
 
   // version.json over the FINAL tree (includes the patched _background.js + _bg.html)
   const files = walk(verDir).map((path) => {
