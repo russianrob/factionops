@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.3.2
+// @version      3.3.3
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -30,7 +30,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.3.2';
+    var SCRIPT_VERSION = '3.3.3';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -2644,6 +2644,8 @@
     function renderNwReplace(row, valNode, statedNw, adj, count) {
         valNode.textContent = fmtBigDollar(statedNw + adj);
         if (valNode.parentNode) {
+            var staleKeyCog = valNode.parentNode.querySelector('[data-rwp-keycog]');
+            if (staleKeyCog) staleKeyCog.remove();
             valNode.parentNode.setAttribute('data-rwp-replaced', '1');
             var pill = document.createElement('span');
             pill.setAttribute('data-rwp-pill', '1');
@@ -2674,7 +2676,7 @@
         if (mode === 'off') { nwlog('skip: mode=off'); return; }
         if (!isOwnInfoPage()) { nwlog('skip: not own-info page (home/profile)'); return; }
         var key = getEffectiveApiKey();
-        if (!key) { nwlog('skip: no API key — PDA bridge empty AND no saved key. apiKey-var=' + (apiKey ? '<set>' : '<empty>')); return; }
+        if (!key) { nwlog('skip fetch: no API key — showing settings cog so user can set one. apiKey-var=' + (apiKey ? '<set>' : '<empty>')); renderNwKeyCog(); return; }
         var onProfile = isProfilePage();
         var profileXid = onProfile ? getProfileXid() : null;
         if (onProfile && !profileXid) { nwlog('skip: on profile page but XID missing from URL'); return; }
@@ -2739,6 +2741,27 @@
             });
             return;
         });
+    }
+
+    function renderNwKeyCog() {
+        var row = findNwRow();
+        if (!row) return;
+        var valNode = findNwValueNode(row);
+        if (!valNode || !valNode.parentNode) return;
+        if (valNode.parentNode.querySelector('[data-rwp-keycog]')) return;
+        if (valNode.parentNode.querySelector('[data-rwp-replaced="1"]')) return;
+        var cog = document.createElement('span');
+        cog.setAttribute('data-rwp-keycog', '1');
+        cog.setAttribute('role', 'button');
+        cog.title = 'RW Pricer — tap to set your Torn API key (includes RW inventory in networth)';
+        cog.textContent = '⚙';
+        cog.style.cssText = 'margin-left:6px;padding:1px 5px;background:transparent;border:1px solid #2a3447;border-radius:8px;color:#9ca3af;font-size:0.85em;cursor:pointer;user-select:none;';
+        cog.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleSettingsPanel();
+        });
+        valNode.parentNode.appendChild(cog);
     }
 
     // v3.1.37: hint pill shown when badge cache is empty. Tells the user
