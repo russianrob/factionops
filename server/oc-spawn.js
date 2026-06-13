@@ -1,6 +1,7 @@
 import { fetchFactionBasic } from "./torn-api.js";
 import * as store from "./store.js";
 import * as checkpointHistory from "./oc-checkpoint-history.js";
+import { calculateLocalOutcome, slotsToRoles } from "./crimehub-model.js";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join as pathJoin } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -256,6 +257,22 @@ function buildCprCache(completedCrimes, currentPlacements = {}) {
 // so near-identical slates share a cache entry.
 const _outcomeCache = new Map();
 const OUTCOME_TTL_MS = 15 * 60 * 1000;
+
+// Merge the local Crimehub flowchart prediction into the tornprobability
+// result so the userscript shows both side by side. `data` is the raw
+// upstream object; the local value is recomputed per call (cheap, pure).
+export function _withLocalOutcome(data, scenario, rounded) {
+  const local = calculateLocalOutcome(scenario, slotsToRoles(scenario, rounded));
+  const lsc = local && !local.missing ? local.successChance : null;
+  const base = data && typeof data.successChance === "number" ? data.successChance : null;
+  return {
+    ...data,
+    localSuccessChance: lsc,
+    localAvgReward: local && !local.missing ? local.avgReward : null,
+    delta: lsc != null && base != null ? lsc - base : null,
+  };
+}
+
 export async function calculateOutcome(scenario, cprs) {
   if (!scenario || !Array.isArray(cprs) || cprs.length === 0) {
     return { error: "missing scenario or cprs" };
@@ -267,7 +284,7 @@ export async function calculateOutcome(scenario, cprs) {
   });
   const key = scenario + "|" + rounded.join(",");
   const cached = _outcomeCache.get(key);
-  if (cached && (Date.now() - cached.ts) < OUTCOME_TTL_MS) return cached.data;
+  if (cached && (Date.now() - cached.ts) < OUTCOME_TTL_MS) return _withLocalOutcome(cached.data, scenario, rounded);
   try {
     const res = await fetch("https://tornprobability.com:3000/api/CalculateSuccess", {
       method: "POST",
@@ -277,7 +294,7 @@ export async function calculateOutcome(scenario, cprs) {
     if (!res.ok) return { error: "upstream " + res.status };
     const data = await res.json();
     _outcomeCache.set(key, { data, ts: Date.now() });
-    return data;
+    return _withLocalOutcome(data, scenario, rounded);
   } catch (e) {
     return { error: String(e?.message || e) };
   }
