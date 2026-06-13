@@ -14,16 +14,18 @@ Codex is invoked by the project owner (a Claude Code session) to write specific 
 | Path | Purpose |
 |---|---|
 | `server/` | Express app, route handlers, helpers. Entry point is `server/index.js`. |
-| `server/scripts/*.user.js` | **Source of truth** for every userscript. Edit here. |
+| `server/scripts/*.user.js` | **Source of truth** for userscripts that still have a copy here — edit here, then deploy to `public/`. **Not every script has a source copy** (see note below). |
 | `server/scripts/*.meta.js` | Tampermonkey update-check stubs (auto-generated from the .user.js header). |
-| `server/public/scripts/` | **Deployed copies**. Served at `https://tornwar.com/scripts/*`. Must be kept in sync with `server/scripts/`. |
+| `server/public/scripts/` | **What is actually served** at `https://tornwar.com/scripts/*`. `express.static(public)` is mounted BEFORE the `/scripts/:filename` fallback that reads `server/scripts/`, so the public copy always wins. For the high-churn scripts in the note below, this is the ONLY copy and is canonical. |
 | `server/public/data/rwp-prices.json` | Live pricing data consumed by `torn-rw-pricer.user.js`. |
+
+> **⚠️ Public-canonical scripts (no source copy).** As of 2026-06-13 these 7 high-churn scripts are edited **directly in `server/public/scripts/`** — their `server/scripts/` source copies were deleted after drifting behind the served versions (a stale source copy silently regresses users on the next `cp`-deploy): `torn-rw-pricer`, `factionops`, `ffs-banner-estimates`, `oc-spawn-assistance`, `torn-profile-link-formatter`, `arson-bang-for-buck`, `torn-faction-offline-highlight`. **Before editing ANY script, check whether `server/scripts/<name>.user.js` exists** — if it does NOT, the script is public-canonical: edit + bump the `public/scripts/` copy in place (and regenerate its `.meta.js` per step 5) and skip the source-edit / `cp` steps.
 
 ---
 
 ## Userscript workflow (rigid — do not skip steps)
 
-For any change to a script under `server/scripts/`:
+For any change to a script that **has a `server/scripts/<name>.user.js` source copy** (if it doesn't, see the public-canonical note above and edit `server/public/scripts/<name>.user.js` directly instead):
 
 1. **Edit `server/scripts/<name>.user.js`** (the source).
 2. **Bump the version in two places**:
