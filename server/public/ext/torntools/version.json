@@ -1,9 +1,9 @@
 {
   "id": "torntools",
-  "version": "9.0.6.2",
+  "version": "9.0.6.3",
   "upstream": "9.0.6",
-  "minSeedVersion": "9.0.6.2",
-  "base": "/ext/torntools/9.0.6.2/",
+  "minSeedVersion": "9.0.6.3",
+  "base": "/ext/torntools/9.0.6.3/",
   "files": [
     {
       "path": "_background.js",
@@ -202,8 +202,8 @@
     },
     {
       "path": "fetch--inject.js",
-      "sha256": "1a52fb0feea8387bb85a6a91a916bd4a8bd0a4921c83e63291e71c4cc950f5c8",
-      "bytes": 74744
+      "sha256": "27e3967f6227483381746309fca4827ef1b54a084a7ed83c30695a8bbfdf2a55",
+      "bytes": 75082
     },
     {
       "path": "icons/128.png",
@@ -287,7 +287,7 @@
     },
     {
       "path": "manifest.json",
-      "sha256": "dcdea43ce5179ba2f55cb795e84dd7454f3b84aa8d5ddee9018bf4f306e3189a",
+      "sha256": "5f542e39255c22af84a96409370d2ee3913a1cce74838859ade523b62bdd05f7",
       "bytes": 1796
     },
     {

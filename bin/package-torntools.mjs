@@ -1,10 +1,10 @@
-// Package a stock TornTools build into warboard's server-hosted form:
-// apply the 2 warboard patches (the 14-line _background.js prelude + the
-// manifest re-seed version), lay it under public/ext/torntools/<version>/,
-// and emit version.json (per-file sha256). Run:
-//   node bin/package-torntools.mjs <stockDir> <version>
-// Attribution: TornTools by Mephiles (crimeshub unrelated). The prelude is
-// source-controlled at bin/torntools-prelude.js.
+// Package a stock TornTools build into warboard's server-hosted form: apply the
+// warboard patches — #1 _background.js prelude, #2 manifest re-seed version,
+// #3 _bg.html, #4 Hide-Chat re-tick fix, #5 Cloudflare fetch passthrough — drop
+// *.map, lay it under public/ext/torntools/<version>/, and emit version.json
+// (per-file sha256). verifyPatches() then fails the build if any patch didn't
+// land. Run:  node bin/package-torntools.mjs <stockDir> <version>
+// Attribution: TornTools by Mephiles. Patch sources are in bin/torntools-*.js.
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, rmSync, existsSync } from "node:fs";
 import { join, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,18 @@ const PRELUDE = readFileSync(join(__dirname, "torntools-prelude.js"), "utf8");
 // Stock TornTools ships no such file, so the packager always writes it.
 const BG_HTML = '<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>';
 const HIDECHAT_FIX = readFileSync(join(__dirname, "torntools-hidechat-fix.js"), "utf8");
+// patch #5: TornTools' fetch--inject.js wraps window.fetch and awaits
+// response.clone().json()+.text() for EVERY request before resolving the caller.
+// On the Cloudflare "Just a moment" page (served on www.torn.com) that stalls CF's
+// own challenge fetches in WKWebView → endless spinner while TornTools is enabled.
+// Insert a guard right after the wrapper opens that passes Cloudflare/non-Torn
+// requests straight through (Torn-API interception is unchanged).
+const FETCH_ANCHOR = "oldFetch(input, init).then(async (response) => {";
+const FETCH_PASSTHROUGH =
+  '/* warboard: pass Cloudflare/non-Torn responses straight through — clone()+read stalls the CF challenge in WKWebView. */ ' +
+  'const __wbu=(response&&response.url)||(typeof input==="string"?input:(input&&input.url))||""; ' +
+  'if(typeof __wbu!=="string"||__wbu.indexOf("torn.com/")===-1||__wbu.indexOf("/cdn-cgi/")!==-1){resolve(response);return;}';
+const FETCH_PASSTHROUGH_MARKER = "warboard: pass Cloudflare/non-Torn";
 
 function walk(dir, base = dir) {
   const out = [];
@@ -45,6 +57,9 @@ export function verifyPatches(verDir, version) {
   const csPath = join(verDir, "content-scripts", "extension.js");
   if (!existsSync(csPath) || !readFileSync(csPath, "utf8").includes(HIDECHAT_FIX))
     fail("#4 (Hide Chat fix)", "extension.js missing the appended fix");
+  const fetchInj = join(verDir, "fetch--inject.js");
+  if (!existsSync(fetchInj) || !readFileSync(fetchInj, "utf8").includes(FETCH_PASSTHROUGH_MARKER))
+    fail("#5 (Cloudflare fetch passthrough)", "fetch--inject.js missing the Cloudflare passthrough guard");
 }
 
 export function packageTornTools({ stockDir, outDir, version, baseUrlPath = "/ext/torntools/" }) {
@@ -73,6 +88,18 @@ export function packageTornTools({ stockDir, outDir, version, baseUrlPath = "/ex
     throw new Error("package-torntools: patch #4 (Hide Chat fix) target missing — content-scripts/extension.js not found in the stock build. TornTools layout changed; update package-torntools.mjs before shipping.");
   }
   writeFileSync(csPath, readFileSync(csPath, "utf8") + "\n;" + HIDECHAT_FIX);
+  // patch #5: pass Cloudflare/non-Torn requests through TornTools' fetch wrapper
+  // untouched (its clone()+read stalls CF's challenge in WKWebView → "Just a
+  // moment" hangs forever while TornTools is enabled).
+  const fetchInjPath = join(verDir, "fetch--inject.js");
+  if (!existsSync(fetchInjPath)) {
+    throw new Error("package-torntools: patch #5 (CF fetch passthrough) target missing — fetch--inject.js not found in the stock build. TornTools layout changed; update package-torntools.mjs.");
+  }
+  const fetchInj = readFileSync(fetchInjPath, "utf8");
+  if (!fetchInj.includes(FETCH_ANCHOR)) {
+    throw new Error("package-torntools: patch #5 anchor not found in fetch--inject.js — TornTools' fetch wrapper changed; update the patch.");
+  }
+  writeFileSync(fetchInjPath, fetchInj.replace(FETCH_ANCHOR, FETCH_ANCHOR + "\n" + FETCH_PASSTHROUGH));
 
   // Fail loudly if any warboard patch didn't land — a future TornTools layout
   // change must NEVER silently ship without our fixes.
