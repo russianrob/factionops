@@ -22,7 +22,7 @@ const HIDECHAT_FIX = readFileSync(join(__dirname, "torntools-hidechat-fix.js"), 
 // own challenge fetches in WKWebView → endless spinner while TornTools is enabled.
 // Insert a guard right after the wrapper opens that passes Cloudflare/non-Torn
 // requests straight through (Torn-API interception is unchanged).
-const FETCH_ANCHOR = "oldFetch(input, init).then(async (response) => {";
+export const FETCH_ANCHOR = "oldFetch(input, init).then(async (response) => {";
 const FETCH_PASSTHROUGH =
   '/* warboard: pass Cloudflare/non-Torn responses straight through — clone()+read stalls the CF challenge in WKWebView. */ ' +
   'const __wbu=(response&&response.url)||(typeof input==="string"?input:(input&&input.url))||""; ' +

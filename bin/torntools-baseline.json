@@ -1,0 +1,83 @@
+{
+  "version": "9.0.6",
+  "files": {
+    "fetch--inject.js": "1a52fb0feea8387bb85a6a91a916bd4a8bd0a4921c83e63291e71c4cc950f5c8",
+    "xhr--inject.js": "8c9e68e4eeb4f23924930d1cac1ea9cdf980d38ace0fecb996bbaba688019489",
+    "content-scripts/extension.js": "336cbe38cee4de8cd2b63c1832d3bb6093e36a8d2f4314ef033de16f3775967e",
+    "background.js": "c4d4d54a6afc7383a2c21375c42aca493f2244da01ef821f3cce098dcbb80371",
+    "manifest.json": "e593242ddd56975f7559e7c835c24ada2e3e1e40836a417a1603157141c8289b"
+  },
+  "manifest": {
+    "version": "9.0.6",
+    "permissions": [
+      "alarms",
+      "background",
+      "notifications",
+      "offscreen",
+      "storage"
+    ],
+    "host_permissions": [
+      "https://torn.com/"
+    ],
+    "content_scripts": [
+      {
+        "matches": [
+          "https://*.torn.com/api.html*"
+        ],
+        "js": 1,
+        "run_at": "document_end"
+      },
+      {
+        "matches": [
+          "https://*.torn.com/crimes.php*",
+          "https://*.torn.com/item.php*"
+        ],
+        "js": 1,
+        "run_at": "document_start"
+      },
+      {
+        "matches": [
+          "https://*.torn.com/*"
+        ],
+        "js": 1,
+        "run_at": "document_start"
+      }
+    ],
+    "background": {
+      "service_worker": "background.js"
+    },
+    "web_accessible_resources": [
+      {
+        "resources": [
+          "images/*",
+          "*--inject.js",
+          "*/*.js.map",
+          "options.html"
+        ],
+        "matches": [
+          "https://*.torn.com/*"
+        ]
+      }
+    ],
+    "optional_permissions": []
+  },
+  "risk": {
+    "fetch--inject.js": {
+      "\\.clone\\(\\)": 2,
+      "window\\.fetch\\s*=": 0
+    },
+    "xhr--inject.js": {
+      "XMLHttpRequest\\.prototype\\.(open|send)\\s*=": 2
+    },
+    "background.js": {
+      "chrome\\.offscreen|createDocument": 1,
+      "importScripts|self\\.skipWaiting|self\\.clients|registration\\.": 1,
+      "chrome\\.alarms|browser\\.alarms": 7
+    },
+    "content-scripts/extension.js": {
+      "storage\\.onChanged": 1,
+      "chrome\\.scripting|\\.executeScript|declarativeNetRequest": 0,
+      "navigator\\.serviceWorker|new SharedWorker|new Worker\\(": 0
+    }
+  }
+}
