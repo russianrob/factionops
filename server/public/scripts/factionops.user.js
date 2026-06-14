@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.30
+// @version      5.1.31
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.30';
+    const SCRIPT_VERSION = '5.1.31';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -10900,7 +10900,7 @@ body.wb-chain-active {
             const response = await originalFetch.apply(this, args);
             try {
                 const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url);
-                if (typeof url === 'string' && (url.includes('api.torn.com') || url.includes('torn.com'))) {
+                if (typeof url === 'string' && (url.includes('api.torn.com') || url.includes('torn.com')) && !url.includes('/cdn-cgi/')) {
                     const clone = response.clone();
                     clone.json().then((data) => {
                         handleInterceptedData(url, data);

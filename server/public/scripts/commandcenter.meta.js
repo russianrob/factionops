@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CommandCenter - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      4.9.28
+// @version      4.9.29
 // @description  Real-time faction war coordination tool for Torn.com (CommandCenter build).
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ / CommandCenter™ names are unregistered trademarks of RussianRob; brand use requires permission

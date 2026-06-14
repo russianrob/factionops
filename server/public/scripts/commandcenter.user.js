@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CommandCenter - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      4.9.28
+// @version      4.9.29
 // @description  Real-time faction war coordination tool for Torn.com (CommandCenter build).
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ / CommandCenter™ names are unregistered trademarks of RussianRob; brand use requires permission
@@ -7763,7 +7763,7 @@ body.wb-chain-active {
             const response = await originalFetch.apply(this, args);
             try {
                 const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url);
-                if (typeof url === 'string' && (url.includes('api.torn.com') || url.includes('torn.com'))) {
+                if (typeof url === 'string' && (url.includes('api.torn.com') || url.includes('torn.com')) && !url.includes('/cdn-cgi/')) {
                     const clone = response.clone();
                     clone.json().then((data) => {
                         handleInterceptedData(url, data);
