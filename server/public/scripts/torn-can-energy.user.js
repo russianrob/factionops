@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Drink Stats
+// @name         Drink Gains
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      1.2.0
+// @version      1.2.1
 // @description  Shows energy per can and nerve per alcohol inline on the items page (perk-adjusted; forked from TornTools)
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
@@ -16,7 +16,7 @@
 (function () {
     "use strict";
 
-    const SCRIPT_VERSION = "1.2.0";
+    const SCRIPT_VERSION = "1.2.1";
     const KEY_STORE = "ce_apikey";
     const MULT_STORE = "ce_mult";
     const MULT_TTL = 24 * 60 * 60 * 1000;
@@ -289,7 +289,7 @@
         const cog = document.createElement("span");
         cog.className = "ce-cog";
         cog.textContent = "⚙";
-        cog.title = "Drink Stats — set your Torn API key for perk-adjusted energy & nerve";
+        cog.title = "Drink Gains — set your Torn API key for perk-adjusted energy & nerve";
         cog.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); toggleKeyPanel(cog); });
         h.appendChild(cog);
     }
@@ -332,7 +332,7 @@
 
     if (typeof document !== "undefined") {
         try { GM_addStyle(".ce-badge{font-weight:600;} .ce-energy{color:#19b34a;} .ce-nerve{color:#e0556b;} .ce-cog{cursor:pointer;margin-left:6px;opacity:.7;} .ce-cog:hover{opacity:1;} #ce-keypanel{margin-left:6px;display:inline-flex;gap:4px;align-items:center;} #ce-keypanel input{width:150px;padding:2px 6px;font-size:.85em;border:1px solid #2a3447;border-radius:6px;background:#1c2030;color:#e6e8ee;} #ce-keypanel button{padding:2px 8px;font-size:.85em;border:1px solid #19b34a;border-radius:6px;background:#19b34a;color:#fff;cursor:pointer;}"); } catch (e) {}
-        try { GM_registerMenuCommand("Drink Stats: refresh", function () { fetchPerks(); fetchCalendar(); }); } catch (e) {}
+        try { GM_registerMenuCommand("Drink Gains: refresh", function () { fetchPerks(); fetchCalendar(); }); } catch (e) {}
         try { new MutationObserver(scheduleRender).observe(document.body, { childList: true, subtree: true }); } catch (e) {}
         boot();
     }

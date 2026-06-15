@@ -1,5 +1,5 @@
 <div style="text-align:center">
-<h2>Drink Stats</h2>
+<h2>Drink Gains</h2>
 <p><em>How much energy a can gives you, and how much nerve a bottle gives you — shown inline on the items page</em></p>
 </div>
 
@@ -24,9 +24,9 @@
 
 <h3>Screenshot</h3>
 <p><em>Effective energy inline, alongside RW Pricer's prices:</em></p>
-<img src="https://tornwar.com/drink-stats-screenshot.png" alt="Drink Stats effective energy values on the Torn items page">
+<img src="https://tornwar.com/drink-stats-screenshot.png" alt="Drink Gains effective energy values on the Torn items page">
 
 <h3>Install</h3>
-<p><a href="https://greasyfork.org/en/scripts/582836-drink-stats">Install Drink Stats on Greasy Fork</a></p>
+<p><a href="https://greasyfork.org/en/scripts/582836-drink-gains">Install Drink Gains on Greasy Fork</a></p>
 
 <p>If a number looks off, post it here and I'll take a look.</p>
