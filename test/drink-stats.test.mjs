@@ -84,6 +84,11 @@ check("events: none active in June", () => { const e = ds.computeEvents(CAL, 178
 check("eventActive: +-1 day padding (12h before start)", () => assert.equal(ds.eventActive(CAL, (e) => /st\.?\s*patrick/i.test(e.title), 1773705600 * 1000 - 12 * 3600 * 1000), true));
 check("eventActive: outside padding (2d before)", () => assert.equal(ds.eventActive(CAL, (e) => /st\.?\s*patrick/i.test(e.title), 1773705600 * 1000 - 2 * DAY), false));
 check("events: loose apostrophe match", () => assert.equal(ds.computeEvents([{ title: "St. Patrick’s Day", start: 1773705600, end: 1773791999 }], 1773705600 * 1000 + 1000).stPatricks, true));
+check("events: CaffeineCon no FP (Decaffeinecon)", () => assert.equal(ds.computeEvents([{ title: "Decaffeinecon Expo", start: 1792022400, end: 1792108799 }], 1792022400 * 1000 + 1000).caffeineCon, false));
+check("events: CaffeineCon no FP (Pre-CaffeineCon)", () => assert.equal(ds.computeEvents([{ title: "Pre-CaffeineCon Party", start: 1792022400, end: 1792108799 }], 1792022400 * 1000 + 1000).caffeineCon, false));
+check("events: Beer Day no FP (Pre-...Sale)", () => assert.equal(ds.computeEvents([{ title: "Pre-International Beer Day Sale", start: 1786060800, end: 1786147199 }], 1786060800 * 1000 + 1000).beerDay, false));
+check("events: Beer Day year suffix still matches", () => assert.equal(ds.computeEvents([{ title: "International Beer Day 2026", start: 1786060800, end: 1786147199 }], 1786060800 * 1000 + 1000).beerDay, true));
+check("events: St Patrick no FP (Fest Patrick)", () => assert.equal(ds.computeEvents([{ title: "Fest Patrick", start: 1773705600, end: 1773791999 }], 1773705600 * 1000 + 1000).stPatricks, false));
 
 const EP = (k) => ds.PROVIDERS.find((p) => p.key === k);
 check("energy caffeineCon doubles", () => assert.equal(EP("energy").value(15, { energyMult: 1.65 }, { id: 987, events: { caffeineCon: true } }), "50E"));

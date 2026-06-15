@@ -93,9 +93,9 @@
 
     function computeEvents(events, now) {
         return {
-            caffeineCon: eventActive(events, (e) => /caffeinecon/i.test(e.title || ""), now),
-            stPatricks: eventActive(events, (e) => /st\.?\s*patrick/i.test(e.title || ""), now),
-            beerDay: eventActive(events, (e) => /international beer day/i.test(e.title || ""), now),
+            caffeineCon: eventActive(events, (e) => /^caffeinecon/i.test((e.title || "").trim()), now),
+            stPatricks: eventActive(events, (e) => /\bst\.?\s*patrick/i.test(e.title || ""), now),
+            beerDay: eventActive(events, (e) => /^international beer day(\s+\d{4})?$/i.test((e.title || "").trim()), now),
         };
     }
 
