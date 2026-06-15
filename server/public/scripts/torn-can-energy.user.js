@@ -20,6 +20,7 @@
     const KEY_STORE = "ce_apikey";
     const MULT_STORE = "ce_mult";
     const MULT_TTL = 24 * 60 * 60 * 1000;
+    const CAL_STORE = "ce_cal";
 
     const CANS = [
         ["goose juice", 5], ["damp valley", 10], ["crocozade", 15], ["munster", 20],
@@ -194,8 +195,44 @@
         });
     }
 
+    function cachedCalendar() {
+        try {
+            const c = JSON.parse(GM_getValue(CAL_STORE, ""));
+            if (c && Array.isArray(c.events)) return c;
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function activeEvents() {
+        const c = cachedCalendar();
+        return computeEvents(c ? c.events : [], Date.now());
+    }
+
+    function fetchCalendar() {
+        const key = getKey();
+        if (!key) return;
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: "https://api.torn.com/v2/torn?selections=calendar&key=" + encodeURIComponent(key),
+            onload: (r) => {
+                try {
+                    const d = JSON.parse(r.responseText);
+                    if (d && d.error) return;
+                    const cal = d && d.calendar ? d.calendar : null;
+                    const events = cal && Array.isArray(cal.events) ? cal.events : [];
+                    GM_setValue(CAL_STORE, JSON.stringify({ events: events, fetchedAt: Date.now() }));
+                    render();
+                } catch (e) {}
+            },
+            onerror: () => {},
+        });
+    }
+
     function render() {
         const perks = cachedPerks();
+        const events = activeEvents();
         const hasKey = !!getKey();
         const rows = findRows();
         rows.forEach((entry) => {
@@ -220,7 +257,7 @@
             } else if (span.previousElementSibling !== ref) {
                 ref.insertAdjacentElement("afterend", span);
             }
-            const txt = " " + entry.provider.value(entry.base, perks) + (hasKey ? "" : "*");
+            const txt = " " + entry.provider.value(entry.base, perks, { id: entry.id, events: events }) + (hasKey ? "" : "*");
             if (span.textContent !== txt) span.textContent = txt;
             const tip = hasKey ? entry.provider.tip
                 : (lastError ? "API error: " + lastError : "Base value — tap the cog to add your API key for perk-adjusted values");
@@ -277,7 +314,7 @@
             const k = input.value.trim();
             GM_setValue(KEY_STORE, k);
             panel.remove();
-            if (k) fetchPerks(); else render();
+            if (k) { fetchPerks(); fetchCalendar(); } else render();
         });
         panel.appendChild(input);
         panel.appendChild(save);
@@ -288,12 +325,14 @@
     function boot() {
         const c = cachedPerks();
         if (getKey() && (!c || Date.now() - c.fetchedAt > MULT_TTL)) fetchPerks();
+        const cal = cachedCalendar();
+        if (getKey() && (!cal || Date.now() - cal.fetchedAt > MULT_TTL)) fetchCalendar();
         render();
     }
 
     if (typeof document !== "undefined") {
         try { GM_addStyle(".ce-badge{font-weight:600;} .ce-energy{color:#19b34a;} .ce-nerve{color:#e0556b;} .ce-cog{cursor:pointer;margin-left:6px;opacity:.7;} .ce-cog:hover{opacity:1;} #ce-keypanel{margin-left:6px;display:inline-flex;gap:4px;align-items:center;} #ce-keypanel input{width:150px;padding:2px 6px;font-size:.85em;border:1px solid #2a3447;border-radius:6px;background:#1c2030;color:#e6e8ee;} #ce-keypanel button{padding:2px 8px;font-size:.85em;border:1px solid #19b34a;border-radius:6px;background:#19b34a;color:#fff;cursor:pointer;}"); } catch (e) {}
-        try { GM_registerMenuCommand("Drink Stats: refresh perks", fetchPerks); } catch (e) {}
+        try { GM_registerMenuCommand("Drink Stats: refresh", function () { fetchPerks(); fetchCalendar(); }); } catch (e) {}
         try { new MutationObserver(scheduleRender).observe(document.body, { childList: true, subtree: true }); } catch (e) {}
         boot();
     }
