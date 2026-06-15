@@ -1,0 +1,26 @@
+
+	/* Hide scrollbars cross browser and enable momentum scroll for touch devices */
+	[data-select-viewport] {
+		scrollbar-width: none !important;
+		-ms-overflow-style: none !important;
+		-webkit-overflow-scrolling: touch !important;
+	}
+
+	[data-combobox-viewport] {
+		scrollbar-width: none !important;
+		-ms-overflow-style: none !important;
+		-webkit-overflow-scrolling: touch !important;
+	}
+
+	[data-combobox-viewport]::-webkit-scrollbar {
+		display: none !important;
+	}
+	[data-select-viewport]::-webkit-scrollbar {
+		display: none !important;
+	}
+
+	.icon.svelte-zigx8g {
+		background: url(https://torn.com/images/v2/svg_icons/sprites/user_status_icons_sprite.svg);
+		width: 16px;
+		height: 16px;
+	}
