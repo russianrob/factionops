@@ -2,7 +2,7 @@
 // @name         Can Energy
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      0.1.7
+// @version      0.1.8
 // @description  Shows each energy can's effective energy inline on the items page (perk-adjusted, matches TornTools)
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
@@ -19,7 +19,7 @@
 (function () {
     "use strict";
 
-    const SCRIPT_VERSION = "0.1.7";
+    const SCRIPT_VERSION = "0.1.8";
     const KEY_STORE = "ce_apikey";
     const MULT_STORE = "ce_mult";
     const MULT_TTL = 24 * 60 * 60 * 1000;
@@ -102,8 +102,9 @@
             let base = CAN_BASE[id];
             if (base == null) base = canBase((nameElForRow(row) || row).textContent);
             if (base == null) return;
-            const nameEl = findNameTextEl(row, rowFullName(row)) || nameElForRow(row) || row;
-            out.push({ row: row, nameEl: nameEl, base: base });
+            const nameLeaf = findNameTextEl(row, rowFullName(row)) || nameElForRow(row) || row;
+            const nameWrap = row.querySelector(".name-wrap");
+            out.push({ row: row, nameLeaf: nameLeaf, nameWrap: nameWrap, base: base });
         });
         return out;
     }
@@ -147,15 +148,26 @@
         const hasKey = !!getKey();
         const rows = findCanRows();
         rows.forEach((entry) => {
-            let span = entry.row.querySelector(".ce-energy");
+            const row = entry.row;
+            let span = row.querySelector(".ce-energy");
             if (!span) {
                 span = document.createElement("span");
                 span.className = "ce-energy";
-                if (entry.nameEl !== entry.row && entry.nameEl.insertAdjacentElement) {
-                    entry.nameEl.insertAdjacentElement("afterend", span);
-                } else {
-                    entry.nameEl.appendChild(span);
-                }
+            }
+            const priced = !!row.querySelector(".rwp-base-price-tag");
+            let ref;
+            if (priced && entry.nameLeaf && entry.nameWrap &&
+                entry.nameLeaf !== entry.nameWrap && entry.nameWrap.contains(entry.nameLeaf)) {
+                ref = entry.nameLeaf;
+            } else if (entry.nameWrap) {
+                ref = entry.nameWrap;
+            } else {
+                ref = entry.nameLeaf || row;
+            }
+            if (ref === row) {
+                if (span.parentElement !== ref) ref.appendChild(span);
+            } else if (span.previousElementSibling !== ref) {
+                ref.insertAdjacentElement("afterend", span);
             }
             const e = effectiveEnergy(entry.base, mult, false);
             span.textContent = " " + e + "E" + (hasKey ? "" : "*");
@@ -231,10 +243,16 @@
         let nameElInfo = "";
         if (rows.length) {
             const r0 = rows[0].row;
+            const nw = rows[0].nameWrap;
+            const ce = r0.querySelector(".ce-energy");
+            nameElInfo = JSON.stringify({
+                priced: !!r0.querySelector(".rwp-base-price-tag"),
+                inWrap: ce ? ce.closest(".name-wrap") != null : null,
+                wrapText: nw ? (nw.textContent || "").replace(/\s+/g, " ").trim().slice(0, 36) : null,
+                prevSib: ce && ce.previousElementSibling ? (ce.previousElementSibling.className || ce.previousElementSibling.tagName) : null,
+            });
             const tw = r0.querySelector(".title-wrap") || r0;
-            sample = (tw.innerHTML || "").replace(/\s+/g, " ").slice(0, 1100);
-            const ne = rows[0].nameEl;
-            nameElInfo = ne === r0 ? "FALLBACK-to-row" : (ne.tagName + "." + (ne.className || "")).slice(0, 80);
+            sample = (tw.innerHTML || "").replace(/<img[^>]*>/g, "").replace(/\s+/g, " ").slice(0, 700);
         } else {
             const all = document.querySelectorAll("li, div, p, span");
             for (let i = 0; i < all.length; i++) {
