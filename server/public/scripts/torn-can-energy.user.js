@@ -27,6 +27,7 @@
         ["taurine elite", 30], ["x-mass", 30],
     ];
     const CAN_BASE = { 985: 5, 986: 10, 987: 15, 530: 20, 553: 20, 532: 25, 554: 25, 533: 30, 555: 30 };
+    const NERVE_BASE = { 180: 1, 181: 1, 294: 1, 426: 1, 531: 2, 541: 4, 542: 3, 550: 2, 551: 3, 552: 4, 638: 3, 816: 2, 873: 5, 924: 5, 984: 5 };
 
     let lastError = null;
     let renderTimer = null;
@@ -245,6 +246,6 @@
         boot();
     }
     if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
-        module.exports = { perkMultiplier, effectiveEnergy, CAN_BASE };
+        module.exports = { perkMultiplier, effectiveEnergy, CAN_BASE, NERVE_BASE };
     }
 })();
