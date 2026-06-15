@@ -2,7 +2,7 @@
 // @name         Drink Gains
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      1.2.1
+// @version      1.2.2
 // @description  Shows energy per can and nerve per alcohol inline on the items page (perk-adjusted; forked from TornTools)
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
@@ -16,11 +16,13 @@
 (function () {
     "use strict";
 
-    const SCRIPT_VERSION = "1.2.1";
+    const SCRIPT_VERSION = "1.2.2";
     const KEY_STORE = "ce_apikey";
     const MULT_STORE = "ce_mult";
     const MULT_TTL = 24 * 60 * 60 * 1000;
     const CAL_STORE = "ce_cal";
+    const IS_PDA = typeof window !== "undefined" && typeof window.flutter_inappwebview !== "undefined";
+    const PDA_API_KEY = "###PDA-APIKEY###";
 
     const CANS = [
         ["goose juice", 5], ["damp valley", 10], ["crocozade", 15], ["munster", 20],
@@ -162,7 +164,12 @@
         return out;
     }
 
-    const getKey = () => (GM_getValue(KEY_STORE, "") || "").trim();
+    const getKey = () => {
+        const k = (GM_getValue(KEY_STORE, "") || "").trim();
+        if (k) return k;
+        if (IS_PDA && PDA_API_KEY.indexOf("#") === -1) return PDA_API_KEY;
+        return "";
+    };
 
     function cachedPerks() {
         try {
@@ -263,7 +270,7 @@
                 : (lastError ? "API error: " + lastError : "Base value — tap the cog to add your API key for perk-adjusted values");
             if (span.title !== tip) span.title = tip;
         });
-        injectHeaderCog();
+        injectCog();
     }
 
     function scheduleRender() {
@@ -271,27 +278,23 @@
         renderTimer = setTimeout(() => { renderTimer = null; render(); }, 200);
     }
 
-    function findHeader() {
-        let best = null;
-        document.querySelectorAll("h1,h2,h3,h4,h5,div,span,p,a").forEach((el) => {
-            const txt = el.textContent || "";
-            if (!/your items/i.test(txt)) return;
-            if (txt.length > 60) return;
-            if (!best || txt.length < (best.textContent || "").length) best = el;
-        });
-        return best;
-    }
-
-    function injectHeaderCog() {
-        if (document.querySelector(".ce-cog")) return;
-        const h = findHeader();
-        if (!h) return;
-        const cog = document.createElement("span");
-        cog.className = "ce-cog";
-        cog.textContent = "⚙";
-        cog.title = "Drink Gains — set your Torn API key for perk-adjusted energy & nerve";
-        cog.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); toggleKeyPanel(cog); });
-        h.appendChild(cog);
+    function injectCog() {
+        let cog = document.getElementById("ce-cog");
+        if (!cog) {
+            const firstBadge = document.querySelector(".ce-badge");
+            const list = document.querySelector("ul.items-cont, ul.items-list") || (firstBadge && firstBadge.closest("ul"));
+            if (!list || !list.parentElement) return;
+            const wrap = document.createElement("div");
+            wrap.id = "ce-cog-wrap";
+            cog = document.createElement("span");
+            cog.id = "ce-cog";
+            cog.title = "Drink Gains — set your Torn API key for perk-adjusted energy & nerve";
+            cog.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); toggleKeyPanel(cog); });
+            wrap.appendChild(cog);
+            list.parentElement.insertBefore(wrap, list);
+        }
+        const label = getKey() ? "⚙ Drink Gains" : "⚙ Drink Gains — tap to add API key";
+        if (cog.textContent !== label) cog.textContent = label;
     }
 
     function toggleKeyPanel(cog) {
@@ -331,7 +334,7 @@
     }
 
     if (typeof document !== "undefined") {
-        try { GM_addStyle(".ce-badge{font-weight:600;} .ce-energy{color:#19b34a;} .ce-nerve{color:#e0556b;} .ce-cog{cursor:pointer;margin-left:6px;opacity:.7;} .ce-cog:hover{opacity:1;} #ce-keypanel{margin-left:6px;display:inline-flex;gap:4px;align-items:center;} #ce-keypanel input{width:150px;padding:2px 6px;font-size:.85em;border:1px solid #2a3447;border-radius:6px;background:#1c2030;color:#e6e8ee;} #ce-keypanel button{padding:2px 8px;font-size:.85em;border:1px solid #19b34a;border-radius:6px;background:#19b34a;color:#fff;cursor:pointer;}"); } catch (e) {}
+        try { GM_addStyle(".ce-badge{font-weight:600;} .ce-energy{color:#19b34a;} .ce-nerve{color:#e0556b;} #ce-cog-wrap{padding:6px 10px;} #ce-cog{cursor:pointer;display:inline-block;padding:3px 12px;border:1px solid #19b34a;border-radius:14px;background:#1c2030;color:#19b34a;font-size:.85em;font-weight:600;opacity:.9;} #ce-cog:hover{opacity:1;} #ce-keypanel{margin-top:6px;display:flex;gap:4px;align-items:center;flex-wrap:wrap;} #ce-keypanel input{width:170px;padding:3px 6px;font-size:.85em;border:1px solid #2a3447;border-radius:6px;background:#1c2030;color:#e6e8ee;} #ce-keypanel button{padding:3px 10px;font-size:.85em;border:1px solid #19b34a;border-radius:6px;background:#19b34a;color:#fff;cursor:pointer;}"); } catch (e) {}
         try { GM_registerMenuCommand("Drink Gains: refresh", function () { fetchPerks(); fetchCalendar(); }); } catch (e) {}
         try { new MutationObserver(scheduleRender).observe(document.body, { childList: true, subtree: true }); } catch (e) {}
         boot();
