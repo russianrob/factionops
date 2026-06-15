@@ -3,7 +3,7 @@
 // @namespace    RussianRob
 // @author       RussianRob
 // @version      1.0.0
-// @description  Shows each energy can's effective energy inline on the items page (perk-adjusted, matches TornTools)
+// @description  Shows each energy can's effective energy inline on the items page (perk-adjusted; energy logic forked from TornTools)
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
 // @grant        GM_xmlhttpRequest
