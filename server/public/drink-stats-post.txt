@@ -1,0 +1,32 @@
+<div style="text-align:center">
+<h2>Drink Stats</h2>
+<p><em>How much energy a can gives you, and how much nerve a bottle gives you — shown inline on the items page</em></p>
+</div>
+
+<p>Energy drinks and alcohol never tell you what they're actually worth to <strong>you</strong>. A Can of Crocozade reads as "15 energy", but with your energy-drink perks it might really be 25. Alcohol is the same story for nerve. So you end up doing the math in your head, or just guessing which can to crack.</p>
+
+<p>This script puts the real number right next to each drink on your items page, so you can see it at a glance without leaving the page.</p>
+
+<ul>
+<li><strong>Energy per can</strong> — a green <code>25E</code> next to each energy drink, adjusted for your perks (matches the value TornTools shows)</li>
+<li><strong>Nerve per alcohol</strong> — a <code>6 - 7 N</code> next to each bottle, shown as the min–max range the game actually rolls</li>
+<li><strong>Event-aware</strong> — automatically doubles energy during CaffeineCon and nerve during St Patrick's Day, and gives Beer ×5 on International Beer Day</li>
+<li>Reads cleanly next to item prices, so one glance tells you the value <em>and</em> the cost</li>
+</ul>
+
+<p>It's the energy/nerve display from <strong>TornTools</strong>, forked out into a standalone script so you can run it on its own.</p>
+
+<p><strong>About the prices in the screenshot:</strong> the dollar value next to each can isn't from this script — that's <a href="https://greasyfork.org/en/scripts/569836-torn-rw-pricer">Torn RW Pricer</a>, a separate script. Install that one too if you want prices next to your items; the two sit side by side.</p>
+
+<p>With no setup it shows the base values. Add your own Torn API key — tap the ⚙ next to the "Your items" header — and it switches to your perk-adjusted effective numbers. The key stays in your browser and is only used to read your perks from Torn's API.</p>
+
+<p>Works on desktop with Tampermonkey and in Torn PDA.</p>
+
+<h3>Screenshot</h3>
+<p><em>Effective energy inline, alongside RW Pricer's prices:</em></p>
+<img src="https://tornwar.com/drink-stats-screenshot.png" alt="Drink Stats effective energy values on the Torn items page">
+
+<h3>Install</h3>
+<p><a href="https://tornwar.com/scripts/torn-can-energy.user.js">Install Drink Stats</a></p>
+
+<p>If a number looks off, post it here and I'll take a look.</p>
