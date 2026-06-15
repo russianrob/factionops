@@ -43,6 +43,11 @@
         return { faction: faction ? digitsPct(faction) : 0, company: company ? digitsPct(company) : 0 };
     }
 
+    function computePerks(payload) {
+        const alc = alcoholPerks(payload);
+        return { energyMult: perkMultiplier(payload), alcFaction: alc.faction, alcCompany: alc.company };
+    }
+
     function perkMultiplier(perks) {
         const arrs = [perks.faction_perks, perks.job_perks, perks.book_perks];
         let mult = 1;
@@ -125,16 +130,17 @@
 
     const getKey = () => (GM_getValue(KEY_STORE, "") || "").trim();
 
-    function cachedMult() {
+    function cachedPerks() {
         try {
             const m = JSON.parse(GM_getValue(MULT_STORE, ""));
-            return m && typeof m.multiplier === "number" ? m : null;
+            if (m && typeof m.energyMult === "number" && typeof m.alcFaction === "number" && typeof m.alcCompany === "number") return m;
+            return null;
         } catch (e) {
             return null;
         }
     }
 
-    function fetchMult() {
+    function fetchPerks() {
         const key = getKey();
         if (!key) return;
         GM_xmlhttpRequest({
@@ -144,8 +150,7 @@
                 try {
                     const d = JSON.parse(r.responseText);
                     if (d.error) { lastError = d.error.error; return; }
-                    const mult = perkMultiplier(d);
-                    GM_setValue(MULT_STORE, JSON.stringify({ multiplier: mult, fetchedAt: Date.now() }));
+                    GM_setValue(MULT_STORE, JSON.stringify(Object.assign(computePerks(d), { fetchedAt: Date.now() })));
                     lastError = null;
                     render();
                 } catch (e) {
@@ -157,8 +162,8 @@
     }
 
     function render() {
-        const cached = cachedMult();
-        const mult = cached ? cached.multiplier : 1;
+        const perks = cachedPerks();
+        const mult = perks ? perks.energyMult : 1;
         const hasKey = !!getKey();
         const rows = findCanRows();
         rows.forEach((entry) => {
@@ -242,7 +247,7 @@
             const k = input.value.trim();
             GM_setValue(KEY_STORE, k);
             panel.remove();
-            if (k) fetchMult(); else render();
+            if (k) fetchPerks(); else render();
         });
         panel.appendChild(input);
         panel.appendChild(save);
@@ -251,18 +256,18 @@
     }
 
     function boot() {
-        const c = cachedMult();
-        if (getKey() && (!c || Date.now() - c.fetchedAt > MULT_TTL)) fetchMult();
+        const c = cachedPerks();
+        if (getKey() && (!c || Date.now() - c.fetchedAt > MULT_TTL)) fetchPerks();
         render();
     }
 
     if (typeof document !== "undefined") {
         try { GM_addStyle(".ce-energy{color:#19b34a;font-weight:600;} .ce-cog{cursor:pointer;margin-left:6px;opacity:.7;} .ce-cog:hover{opacity:1;} #ce-keypanel{margin-left:6px;display:inline-flex;gap:4px;align-items:center;} #ce-keypanel input{width:150px;padding:2px 6px;font-size:.85em;border:1px solid #2a3447;border-radius:6px;background:#1c2030;color:#e6e8ee;} #ce-keypanel button{padding:2px 8px;font-size:.85em;border:1px solid #19b34a;border-radius:6px;background:#19b34a;color:#fff;cursor:pointer;}"); } catch (e) {}
-        try { GM_registerMenuCommand("Can Energy: refresh perks", fetchMult); } catch (e) {}
+        try { GM_registerMenuCommand("Can Energy: refresh perks", fetchPerks); } catch (e) {}
         try { new MutationObserver(scheduleRender).observe(document.body, { childList: true, subtree: true }); } catch (e) {}
         boot();
     }
     if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
-        module.exports = { perkMultiplier, effectiveEnergy, alcoholPerks, nerveRange, CAN_BASE, NERVE_BASE };
+        module.exports = { perkMultiplier, effectiveEnergy, alcoholPerks, nerveRange, computePerks, CAN_BASE, NERVE_BASE };
     }
 })();

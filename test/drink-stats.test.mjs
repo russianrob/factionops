@@ -57,5 +57,12 @@ check("nerve 1,25,0 -> 1 - 2 N", () => assert.equal(ds.nerveRange(1, 25, 0, 1), 
 check("nerve 4,0,50 -> 6 N", () => assert.equal(ds.nerveRange(4, 0, 50, 1), "6 N"));
 check("nerve default eventMult", () => assert.equal(ds.nerveRange(5, 0, 0), "5 N"));
 
+check("computePerks energy+alc", () => {
+  const c = ds.computePerks({ faction_perks: ["+ 50% energy from energy drinks", "+ 10% nerve from alcohol"], job_perks: ["+ 10% consumable gain", "+ 5% alcohol boost"], book_perks: [] });
+  assert.ok(Math.abs(c.energyMult - 1.65) < 1e-9);
+  assert.equal(c.alcFaction, 10);
+  assert.equal(c.alcCompany, 5);
+});
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
