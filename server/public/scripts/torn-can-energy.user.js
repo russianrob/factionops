@@ -2,7 +2,7 @@
 // @name         Can Energy
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      0.1.5
+// @version      0.1.6
 // @description  Shows each energy can's effective energy inline on the items page (perk-adjusted, matches TornTools)
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
@@ -19,7 +19,7 @@
 (function () {
     "use strict";
 
-    const SCRIPT_VERSION = "0.1.5";
+    const SCRIPT_VERSION = "0.1.6";
     const KEY_STORE = "ce_apikey";
     const MULT_STORE = "ce_mult";
     const MULT_TTL = 24 * 60 * 60 * 1000;
@@ -151,7 +151,11 @@
             if (!span) {
                 span = document.createElement("span");
                 span.className = "ce-energy";
-                entry.nameEl.appendChild(span);
+                if (entry.nameEl !== entry.row && entry.nameEl.insertAdjacentElement) {
+                    entry.nameEl.insertAdjacentElement("afterend", span);
+                } else {
+                    entry.nameEl.appendChild(span);
+                }
             }
             const e = effectiveEnergy(entry.base, mult, false);
             span.textContent = " " + e + "E" + (hasKey ? "" : "*");
