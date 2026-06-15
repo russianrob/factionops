@@ -85,5 +85,15 @@ check("eventActive: +-1 day padding (12h before start)", () => assert.equal(ds.e
 check("eventActive: outside padding (2d before)", () => assert.equal(ds.eventActive(CAL, (e) => /st\.?\s*patrick/i.test(e.title), 1773705600 * 1000 - 2 * DAY), false));
 check("events: loose apostrophe match", () => assert.equal(ds.computeEvents([{ title: "St. Patrick’s Day", start: 1773705600, end: 1773791999 }], 1773705600 * 1000 + 1000).stPatricks, true));
 
+const EP = (k) => ds.PROVIDERS.find((p) => p.key === k);
+check("energy caffeineCon doubles", () => assert.equal(EP("energy").value(15, { energyMult: 1.65 }, { id: 987, events: { caffeineCon: true } }), "50E"));
+check("energy no event unchanged", () => assert.equal(EP("energy").value(15, { energyMult: 1.65 }, { id: 987, events: {} }), "25E"));
+check("energy value no ctx (back-compat)", () => assert.equal(EP("energy").value(15, { energyMult: 1.65 }), "25E"));
+check("nerve stPatricks doubles", () => assert.equal(EP("nerve").value(5, { alcFaction: 0, alcCompany: 0 }, { id: 984, events: { stPatricks: true } }), "10 N"));
+check("nerve beerDay x5 beer only (180)", () => assert.equal(EP("nerve").value(1, { alcFaction: 0, alcCompany: 0 }, { id: 180, events: { beerDay: true } }), "5 N"));
+check("nerve beerDay no-op on non-beer (531)", () => assert.equal(EP("nerve").value(2, { alcFaction: 0, alcCompany: 0 }, { id: 531, events: { beerDay: true } }), "2 N"));
+check("nerve stPatricks+beerDay stack on beer", () => assert.equal(EP("nerve").value(1, { alcFaction: 0, alcCompany: 0 }, { id: 180, events: { stPatricks: true, beerDay: true } }), "10 N"));
+check("nerve value no ctx (back-compat)", () => assert.equal(EP("nerve").value(5, { alcFaction: 0, alcCompany: 0 }), "5 N"));
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

@@ -30,9 +30,14 @@
     const NERVE_BASE = { 180: 1, 181: 1, 294: 1, 426: 1, 531: 2, 541: 4, 542: 3, 550: 2, 551: 3, 552: 4, 638: 3, 816: 2, 873: 5, 924: 5, 984: 5 };
     const PROVIDERS = [
         { key: "energy", cls: "ce-energy", base: CAN_BASE, tip: "Effective energy (your perks)",
-          value: (base, p) => effectiveEnergy(base, p ? p.energyMult : 1, false) + "E" },
+          value: (base, p, ctx) => effectiveEnergy(base, p ? p.energyMult : 1, !!(ctx && ctx.events && ctx.events.caffeineCon)) + "E" },
         { key: "nerve", cls: "ce-nerve", base: NERVE_BASE, tip: "Effective nerve (your perks)",
-          value: (base, p) => nerveRange(base, p ? p.alcFaction : 0, p ? p.alcCompany : 0, 1) },
+          value: (base, p, ctx) => {
+              const ev = (ctx && ctx.events) || {};
+              const id = ctx ? ctx.id : 0;
+              const mult = (ev.stPatricks ? 2 : 1) * (ev.beerDay && (id === 180 || id === 816) ? 5 : 1);
+              return nerveRange(base, p ? p.alcFaction : 0, p ? p.alcCompany : 0, mult);
+          } },
     ];
 
     let lastError = null;
@@ -151,7 +156,7 @@
             if (provider == null) return;
             const nameLeaf = findNameTextEl(row, rowFullName(row)) || nameElForRow(row) || row;
             const nameWrap = row.querySelector(".name-wrap");
-            out.push({ row: row, nameLeaf: nameLeaf, nameWrap: nameWrap, provider: provider, base: base });
+            out.push({ row: row, id: id, nameLeaf: nameLeaf, nameWrap: nameWrap, provider: provider, base: base });
         });
         return out;
     }
