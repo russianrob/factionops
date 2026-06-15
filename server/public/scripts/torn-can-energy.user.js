@@ -2,7 +2,7 @@
 // @name         Can Energy
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      0.1.0
+// @version      0.1.1
 // @description  Shows each energy can's effective energy inline on the items page (perk-adjusted, matches TornTools)
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
@@ -18,7 +18,7 @@
 (function () {
     "use strict";
 
-    const SCRIPT_VERSION = "0.1.0";
+    const SCRIPT_VERSION = "0.1.1";
     const KEY_STORE = "ce_apikey";
     const MULT_STORE = "ce_mult";
     const MULT_TTL = 24 * 60 * 60 * 1000;
@@ -111,18 +111,43 @@
     }
 
     function injectCog() {
-        if (getKey() || document.querySelector(".ce-cog")) return;
+        if (document.querySelector(".ce-cog")) return;
         const anchor = document.querySelector("div.img-wrap[data-itemid]");
         if (!anchor) return;
         const cog = document.createElement("span");
         cog.className = "ce-cog";
         cog.textContent = "⚙";
-        cog.title = "Set Torn API key for perk-adjusted energy";
-        cog.addEventListener("click", () => {
-            const k = prompt("Torn API key (for your energy-drink perks):", "");
-            if (k && k.trim()) { GM_setValue(KEY_STORE, k.trim()); fetchMult(); }
-        });
+        cog.title = "Can Energy — set your Torn API key for perk-adjusted energy";
+        cog.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); toggleKeyPanel(cog); });
         (anchor.closest("li") || anchor.parentElement).appendChild(cog);
+    }
+
+    function toggleKeyPanel(cog) {
+        let panel = document.getElementById("ce-keypanel");
+        if (panel) { panel.remove(); return; }
+        panel = document.createElement("span");
+        panel.id = "ce-keypanel";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = "Torn API key";
+        input.value = getKey();
+        input.autocomplete = "off";
+        input.autocapitalize = "off";
+        input.spellcheck = false;
+        const save = document.createElement("button");
+        save.textContent = "Save";
+        save.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const k = input.value.trim();
+            GM_setValue(KEY_STORE, k);
+            panel.remove();
+            if (k) fetchMult(); else render();
+        });
+        panel.appendChild(input);
+        panel.appendChild(save);
+        cog.parentElement.appendChild(panel);
+        try { input.focus(); } catch (e) {}
     }
 
     function boot() {
@@ -131,7 +156,7 @@
         render();
     }
 
-    GM_addStyle(".ce-energy{color:#19b34a;font-weight:600;} .ce-cog{cursor:pointer;margin-left:6px;opacity:.6;} .ce-cog:hover{opacity:1;}");
+    GM_addStyle(".ce-energy{color:#19b34a;font-weight:600;} .ce-cog{cursor:pointer;margin-left:6px;opacity:.7;} .ce-cog:hover{opacity:1;} #ce-keypanel{margin-left:6px;display:inline-flex;gap:4px;align-items:center;} #ce-keypanel input{width:150px;padding:2px 6px;font-size:.85em;border:1px solid #2a3447;border-radius:6px;background:#1c2030;color:#e6e8ee;} #ce-keypanel button{padding:2px 8px;font-size:.85em;border:1px solid #19b34a;border-radius:6px;background:#19b34a;color:#fff;cursor:pointer;}");
     GM_registerMenuCommand("Can Energy: refresh perks", fetchMult);
     GM_registerMenuCommand("Can Energy: set API key", () => {
         const k = prompt("Torn API key:", getKey());
