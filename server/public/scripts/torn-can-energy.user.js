@@ -12,7 +12,6 @@
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
 // @connect      api.torn.com
-// @downloadURL  https://tornwar.com/scripts/torn-can-energy.user.js
 // ==/UserScript==
 (function () {
     "use strict";
