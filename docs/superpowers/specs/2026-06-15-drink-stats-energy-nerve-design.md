@@ -181,11 +181,19 @@ as Can Energy).
   inline, both coexisting with RW Pricer prices (price still appears), both matching
   TornTools; survive sort/tab re-renders; cog sets the key; no steady-state CPU loop.
 
-## Out of scope (v1, YAGNI)
+## Added in 1.2.0 — event multipliers
 
-- **Event multipliers** — CaffeineCon ×2 (energy), St Patrick's Day ×2 (all alcohol),
-  International Beer Day ×5 (items 180 + 816 only). The formulas keep an `eventMult`
-  seam (hard-1 in v1); add a `?selections=calendar` check before the next event.
+- **CaffeineCon** ×2 (energy, after rounding), **St Patrick's Day** ×2 (all alcohol),
+  **International Beer Day** ×5 (only Bottle of Beer 180 + Glass of Beer 816). Detection
+  replicates TornTools: fetch `torn?selections=calendar` (v2) with the same cog API key
+  (`ce_cal` cache, 24h TTL), match events by title (CaffeineCon `startsWith`; St
+  Patrick's/Beer Day via loose regex to survive apostrophe variants), and treat an event
+  active when `now` is inside its `[start−1day, end+1day]` window. No key → no calendar →
+  events off (eventMult 1). `computeEvents(events, now)` → `{caffeineCon, stPatricks,
+  beerDay}` is passed to each provider's `value(base, perks, {id, events})`.
+
+## Out of scope (YAGNI)
+
 - **Happy / other consumables** — the provider-list architecture leaves room; not built.
 - **The "doubles alcohol effects" book buff** (item 781) — a consumed item, not a
   perk; not auto-detectable. TornTools doesn't auto-apply it either. Excluded.

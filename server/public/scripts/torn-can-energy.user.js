@@ -2,7 +2,7 @@
 // @name         Drink Stats
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      1.1.0
+// @version      1.2.0
 // @description  Shows energy per can and nerve per alcohol inline on the items page (perk-adjusted; forked from TornTools)
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
@@ -16,7 +16,7 @@
 (function () {
     "use strict";
 
-    const SCRIPT_VERSION = "1.1.0";
+    const SCRIPT_VERSION = "1.2.0";
     const KEY_STORE = "ce_apikey";
     const MULT_STORE = "ce_mult";
     const MULT_TTL = 24 * 60 * 60 * 1000;
