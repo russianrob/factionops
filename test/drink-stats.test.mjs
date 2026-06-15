@@ -51,5 +51,11 @@ check("alcoholPerks company consumable boost", () => assert.deepEqual(plain(ds.a
 check("alcoholPerks both, ignore book+unrelated", () => assert.deepEqual(plain(ds.alcoholPerks({ faction_perks: ["+ 15% nerve from alcohol", "+ 50% energy from energy drinks"], job_perks: ["+ 10% alcohol boost"], book_perks: ["+ 100% alcohol effects"] })), { faction: 15, company: 10 }));
 check("alcoholPerks none", () => assert.deepEqual(plain(ds.alcoholPerks({ faction_perks: [], job_perks: [], book_perks: [] })), { faction: 0, company: 0 }));
 
+check("nerve 5,0,0 -> 5 N", () => assert.equal(ds.nerveRange(5, 0, 0, 1), "5 N"));
+check("nerve 5,10,10 -> 6 - 7 N", () => assert.equal(ds.nerveRange(5, 10, 10, 1), "6 - 7 N"));
+check("nerve 1,25,0 -> 1 - 2 N", () => assert.equal(ds.nerveRange(1, 25, 0, 1), "1 - 2 N"));
+check("nerve 4,0,50 -> 6 N", () => assert.equal(ds.nerveRange(4, 0, 50, 1), "6 N"));
+check("nerve default eventMult", () => assert.equal(ds.nerveRange(5, 0, 0), "5 N"));
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

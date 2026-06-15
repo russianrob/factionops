@@ -60,6 +60,12 @@
         return Math.round(base * mult) * (eventActive ? 2 : 1);
     }
 
+    function nerveRange(base, faction, company, eventMult) {
+        const total = base * (1 + faction / 100) * (1 + company / 100) * (eventMult || 1);
+        const min = Math.floor(total), max = Math.ceil(total);
+        return min === max ? min + " N" : min + " - " + max + " N";
+    }
+
     function canBase(text) {
         const t = (text || "").toLowerCase();
         for (const [n, b] of CANS) if (t.indexOf(n) !== -1) return b;
@@ -257,6 +263,6 @@
         boot();
     }
     if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
-        module.exports = { perkMultiplier, effectiveEnergy, alcoholPerks, CAN_BASE, NERVE_BASE };
+        module.exports = { perkMultiplier, effectiveEnergy, alcoholPerks, nerveRange, CAN_BASE, NERVE_BASE };
     }
 })();
