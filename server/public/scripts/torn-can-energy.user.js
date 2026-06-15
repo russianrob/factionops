@@ -77,6 +77,22 @@
         return min === max ? min + " N" : min + " - " + max + " N";
     }
 
+    function eventActive(events, matcher, now) {
+        const ev = (events || []).find(matcher);
+        if (!ev) return false;
+        const start = ev.start * 1000 - 86400000;
+        const end = ev.end * 1000 + 86400000;
+        return now > start && now < end;
+    }
+
+    function computeEvents(events, now) {
+        return {
+            caffeineCon: eventActive(events, (e) => /caffeinecon/i.test(e.title || ""), now),
+            stPatricks: eventActive(events, (e) => /st\.?\s*patrick/i.test(e.title || ""), now),
+            beerDay: eventActive(events, (e) => /international beer day/i.test(e.title || ""), now),
+        };
+    }
+
     function canBase(text) {
         const t = (text || "").toLowerCase();
         for (const [n, b] of CANS) if (t.indexOf(n) !== -1) return b;
@@ -277,6 +293,6 @@
         boot();
     }
     if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
-        module.exports = { perkMultiplier, effectiveEnergy, alcoholPerks, nerveRange, computePerks, PROVIDERS, CAN_BASE, NERVE_BASE };
+        module.exports = { perkMultiplier, effectiveEnergy, alcoholPerks, nerveRange, eventActive, computeEvents, computePerks, PROVIDERS, CAN_BASE, NERVE_BASE };
     }
 })();

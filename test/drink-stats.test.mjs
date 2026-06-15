@@ -70,5 +70,20 @@ check("nerve provider value (perks)", () => assert.equal(ds.PROVIDERS.find(p => 
 check("nerve provider value (base only)", () => assert.equal(ds.PROVIDERS.find(p => p.key === "nerve").value(5, null), "5 N"));
 check("providers cover both maps", () => { assert.equal(ds.PROVIDERS.length, 2); assert.equal(ds.PROVIDERS[0].base[987], 15); assert.equal(ds.PROVIDERS[1].base[180], 1); });
 
+const DAY = 86400000;
+const CAL = [
+  { title: "St Patrick's Day", start: 1773705600, end: 1773791999 },
+  { title: "International Beer Day", start: 1786060800, end: 1786147199 },
+  { title: "CaffeineCon 2026", start: 1792022400, end: 1792108799 },
+];
+check("events: St Patrick's active mid-window", () => assert.equal(ds.computeEvents(CAL, 1773705600 * 1000 + 1000).stPatricks, true));
+check("events: St Patrick's inactive 3d before", () => assert.equal(ds.computeEvents(CAL, 1773705600 * 1000 - 3 * DAY).stPatricks, false));
+check("events: CaffeineCon startsWith match", () => assert.equal(ds.computeEvents(CAL, 1792022400 * 1000 + 1000).caffeineCon, true));
+check("events: International Beer Day active", () => assert.equal(ds.computeEvents(CAL, 1786060800 * 1000 + 1000).beerDay, true));
+check("events: none active in June", () => { const e = ds.computeEvents(CAL, 1781000000000); assert.equal(e.caffeineCon || e.stPatricks || e.beerDay, false); });
+check("eventActive: +-1 day padding (12h before start)", () => assert.equal(ds.eventActive(CAL, (e) => /st\.?\s*patrick/i.test(e.title), 1773705600 * 1000 - 12 * 3600 * 1000), true));
+check("eventActive: outside padding (2d before)", () => assert.equal(ds.eventActive(CAL, (e) => /st\.?\s*patrick/i.test(e.title), 1773705600 * 1000 - 2 * DAY), false));
+check("events: loose apostrophe match", () => assert.equal(ds.computeEvents([{ title: "St. Patrick’s Day", start: 1773705600, end: 1773791999 }], 1773705600 * 1000 + 1000).stPatricks, true));
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
