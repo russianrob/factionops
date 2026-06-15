@@ -14,7 +14,7 @@
 <li>Reads cleanly next to item prices, so one glance tells you the value <em>and</em> the cost</li>
 </ul>
 
-<p>It's the energy/nerve display from <strong>TornTools</strong>, forked out into a standalone script so you can run it on its own.</p>
+<p>Credit where it's due: the energy and nerve numbers are the display from <strong>TornTools</strong>, by <a href="https://www.torn.com/profiles.php?XID=2087524">Mephiles</a> — this just forks that one feature out into a standalone script so you can run it without the full extension.</p>
 
 <p><strong>About the prices in the screenshot:</strong> the dollar value next to each can isn't from this script — that's <a href="https://greasyfork.org/en/scripts/569836-torn-rw-pricer">Torn RW Pricer</a>, a separate script. Install that one too if you want prices next to your items; the two sit side by side.</p>
 
