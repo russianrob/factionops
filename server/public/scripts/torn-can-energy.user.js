@@ -2,7 +2,7 @@
 // @name         Can Energy
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      0.1.4
+// @version      0.1.5
 // @description  Shows each energy can's effective energy inline on the items page (perk-adjusted, matches TornTools)
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
@@ -19,7 +19,7 @@
 (function () {
     "use strict";
 
-    const SCRIPT_VERSION = "0.1.4";
+    const SCRIPT_VERSION = "0.1.5";
     const KEY_STORE = "ce_apikey";
     const MULT_STORE = "ce_mult";
     const MULT_TTL = 24 * 60 * 60 * 1000;
@@ -60,8 +60,33 @@
 
     function nameElForRow(row) {
         return row.querySelector(
-            ".name-wrap .name, .item-name, .name-wrap, .title-wrap .name, .title-wrap, [class*='name___'], [class*='itemName']"
+            ".name-wrap .name, .item-name, .name-wrap, .title-wrap .name, [class*='name___'], [class*='itemName']"
         );
+    }
+
+    function rowFullName(row) {
+        const al = row.querySelector("[aria-label]");
+        if (al) {
+            const v = al.getAttribute("aria-label") || "";
+            if (/^can of /i.test(v)) return v;
+        }
+        const ds = row.getAttribute("data-sort") || "";
+        const m = ds.match(/can of .+$/i);
+        return m ? m[0] : "";
+    }
+
+    function findNameTextEl(row, fullName) {
+        if (!fullName) return null;
+        const cand = row.querySelectorAll("a, span, b, p, div");
+        let contains = null;
+        for (let i = 0; i < cand.length; i++) {
+            const el = cand[i];
+            if (el.children.length !== 0) continue;
+            const t = (el.textContent || "").trim();
+            if (t === fullName) return el;
+            if (!contains && t.indexOf(fullName) !== -1 && t.length < fullName.length + 14) contains = el;
+        }
+        return contains;
     }
 
     function findCanRows() {
@@ -77,7 +102,8 @@
             let base = CAN_BASE[id];
             if (base == null) base = canBase((nameElForRow(row) || row).textContent);
             if (base == null) return;
-            out.push({ row: row, nameEl: nameElForRow(row) || row, base: base });
+            const nameEl = findNameTextEl(row, rowFullName(row)) || nameElForRow(row) || row;
+            out.push({ row: row, nameEl: nameEl, base: base });
         });
         return out;
     }
