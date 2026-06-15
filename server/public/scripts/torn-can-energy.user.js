@@ -2,7 +2,7 @@
 // @name         Can Energy
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      0.1.3
+// @version      0.1.4
 // @description  Shows each energy can's effective energy inline on the items page (perk-adjusted, matches TornTools)
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
@@ -19,7 +19,7 @@
 (function () {
     "use strict";
 
-    const SCRIPT_VERSION = "0.1.3";
+    const SCRIPT_VERSION = "0.1.4";
     const KEY_STORE = "ce_apikey";
     const MULT_STORE = "ce_mult";
     const MULT_TTL = 24 * 60 * 60 * 1000;
@@ -29,6 +29,7 @@
         ["santa shooters", 20], ["red cow", 25], ["rockstar rudolph", 25],
         ["taurine elite", 30], ["x-mass", 30],
     ];
+    const CAN_BASE = { 985: 5, 986: 10, 987: 15, 530: 20, 553: 20, 532: 25, 554: 25, 533: 30, 555: 30 };
 
     let lastError = null;
     let renderTimer = null;
@@ -57,17 +58,26 @@
         return null;
     }
 
+    function nameElForRow(row) {
+        return row.querySelector(
+            ".name-wrap .name, .item-name, .name-wrap, .title-wrap .name, .title-wrap, [class*='name___'], [class*='itemName']"
+        );
+    }
+
     function findCanRows() {
         const rows = document.querySelectorAll(
-            "ul.items-cont > li, ul.items-list > li, li.show-item-info, [class*='info___'].show-item-info, div[class*='itemTile'], [class*='itemInfoWrapper'], [class*='itemInfo___']"
+            "ul.items-cont > li, ul.items-list > li, li.show-item-info, [data-category='Energy Drink']"
         );
         const out = [];
+        const seen = new Set();
         rows.forEach((row) => {
-            const nameEl = row.querySelector(
-                "[class*='name___'], [class*='itemName'], [class*='title___'] [class*='name'], .item-name, .title"
-            ) || row;
-            const base = canBase(nameEl.textContent);
-            if (base != null) out.push({ row: row, nameEl: nameEl, base: base });
+            if (seen.has(row)) return;
+            seen.add(row);
+            const id = parseInt(row.getAttribute("data-item"), 10);
+            let base = CAN_BASE[id];
+            if (base == null) base = canBase((nameElForRow(row) || row).textContent);
+            if (base == null) return;
+            out.push({ row: row, nameEl: nameElForRow(row) || row, base: base });
         });
         return out;
     }
@@ -188,8 +198,11 @@
         const count = (s) => { try { return document.querySelectorAll(s).length; } catch (e) { return -1; } };
         const rows = findCanRows();
         let sample = "";
+        let nameElInfo = "";
         if (rows.length) {
-            sample = (rows[0].row.outerHTML || "").slice(0, 700);
+            sample = (rows[0].row.outerHTML || "").slice(0, 1200);
+            const ne = rows[0].nameEl;
+            nameElInfo = ne === rows[0].row ? "FALLBACK-to-row" : (ne.tagName + "." + (ne.className || "")).slice(0, 80);
         } else {
             const all = document.querySelectorAll("li, div, p, span");
             for (let i = 0; i < all.length; i++) {
@@ -203,6 +216,7 @@
             v: SCRIPT_VERSION,
             url: location.href,
             canRows: rows.length,
+            nameEl: nameElInfo,
             counts: {
                 itemsCont: count("ul.items-cont > li"),
                 itemsList: count("ul.items-list > li"),
