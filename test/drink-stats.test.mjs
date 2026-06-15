@@ -64,5 +64,11 @@ check("computePerks energy+alc", () => {
   assert.equal(c.alcCompany, 5);
 });
 
+check("energy provider value (perks)", () => assert.equal(ds.PROVIDERS.find(p => p.key === "energy").value(15, { energyMult: 1.65 }), "25E"));
+check("energy provider value (base only)", () => assert.equal(ds.PROVIDERS.find(p => p.key === "energy").value(15, null), "15E"));
+check("nerve provider value (perks)", () => assert.equal(ds.PROVIDERS.find(p => p.key === "nerve").value(5, { alcFaction: 10, alcCompany: 10 }), "6 - 7 N"));
+check("nerve provider value (base only)", () => assert.equal(ds.PROVIDERS.find(p => p.key === "nerve").value(5, null), "5 N"));
+check("providers cover both maps", () => { assert.equal(ds.PROVIDERS.length, 2); assert.equal(ds.PROVIDERS[0].base[987], 15); assert.equal(ds.PROVIDERS[1].base[180], 1); });
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

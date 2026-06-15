@@ -28,6 +28,12 @@
     ];
     const CAN_BASE = { 985: 5, 986: 10, 987: 15, 530: 20, 553: 20, 532: 25, 554: 25, 533: 30, 555: 30 };
     const NERVE_BASE = { 180: 1, 181: 1, 294: 1, 426: 1, 531: 2, 541: 4, 542: 3, 550: 2, 551: 3, 552: 4, 638: 3, 816: 2, 873: 5, 924: 5, 984: 5 };
+    const PROVIDERS = [
+        { key: "energy", cls: "ce-energy", base: CAN_BASE, tip: "Effective energy (your perks)",
+          value: (base, p) => effectiveEnergy(base, p ? p.energyMult : 1, false) + "E" },
+        { key: "nerve", cls: "ce-nerve", base: NERVE_BASE, tip: "Effective nerve (your perks)",
+          value: (base, p) => nerveRange(base, p ? p.alcFaction : 0, p ? p.alcCompany : 0, 1) },
+    ];
 
     let lastError = null;
     let renderTimer = null;
@@ -87,10 +93,10 @@
         const al = row.querySelector("[aria-label]");
         if (al) {
             const v = al.getAttribute("aria-label") || "";
-            if (/^can of /i.test(v)) return v;
+            if (/(can|bottle|glass) of /i.test(v)) return v;
         }
         const ds = row.getAttribute("data-sort") || "";
-        const m = ds.match(/can of .+$/i);
+        const m = ds.match(/(can|bottle|glass) of .+$/i);
         return m ? m[0] : "";
     }
 
@@ -108,9 +114,9 @@
         return contains;
     }
 
-    function findCanRows() {
+    function findRows() {
         const rows = document.querySelectorAll(
-            "ul.items-cont > li, ul.items-list > li, li.show-item-info, [data-category='Energy Drink']"
+            "ul.items-cont > li, ul.items-list > li, li.show-item-info, [data-category='Energy Drink'], [data-category='Alcohol']"
         );
         const out = [];
         const seen = new Set();
@@ -118,12 +124,18 @@
             if (seen.has(row)) return;
             seen.add(row);
             const id = parseInt(row.getAttribute("data-item"), 10);
-            let base = CAN_BASE[id];
-            if (base == null) base = canBase((nameElForRow(row) || row).textContent);
-            if (base == null) return;
+            let provider = null, base = null;
+            for (const p of PROVIDERS) {
+                if (p.base[id] != null) { provider = p; base = p.base[id]; break; }
+            }
+            if (provider == null) {
+                const b = canBase((nameElForRow(row) || row).textContent);
+                if (b != null) { provider = PROVIDERS[0]; base = b; }
+            }
+            if (provider == null) return;
             const nameLeaf = findNameTextEl(row, rowFullName(row)) || nameElForRow(row) || row;
             const nameWrap = row.querySelector(".name-wrap");
-            out.push({ row: row, nameLeaf: nameLeaf, nameWrap: nameWrap, base: base });
+            out.push({ row: row, nameLeaf: nameLeaf, nameWrap: nameWrap, provider: provider, base: base });
         });
         return out;
     }
@@ -163,15 +175,14 @@
 
     function render() {
         const perks = cachedPerks();
-        const mult = perks ? perks.energyMult : 1;
         const hasKey = !!getKey();
-        const rows = findCanRows();
+        const rows = findRows();
         rows.forEach((entry) => {
             const row = entry.row;
-            let span = row.querySelector(".ce-energy");
+            let span = row.querySelector(".ce-badge");
             if (!span) {
                 span = document.createElement("span");
-                span.className = "ce-energy";
+                span.className = "ce-badge " + entry.provider.cls;
             }
             const priced = !!row.querySelector(".rwp-base-price-tag");
             let ref;
@@ -188,12 +199,10 @@
             } else if (span.previousElementSibling !== ref) {
                 ref.insertAdjacentElement("afterend", span);
             }
-            const e = effectiveEnergy(entry.base, mult, false);
-            const txt = " " + e + "E" + (hasKey ? "" : "*");
+            const txt = " " + entry.provider.value(entry.base, perks) + (hasKey ? "" : "*");
             if (span.textContent !== txt) span.textContent = txt;
-            const tip = hasKey
-                ? "Effective energy (your perks)"
-                : (lastError ? "API error: " + lastError : "Base energy — tap the cog to add your API key for perk-adjusted values");
+            const tip = hasKey ? entry.provider.tip
+                : (lastError ? "API error: " + lastError : "Base value — tap the cog to add your API key for perk-adjusted values");
             if (span.title !== tip) span.title = tip;
         });
         injectHeaderCog();
@@ -262,12 +271,12 @@
     }
 
     if (typeof document !== "undefined") {
-        try { GM_addStyle(".ce-energy{color:#19b34a;font-weight:600;} .ce-cog{cursor:pointer;margin-left:6px;opacity:.7;} .ce-cog:hover{opacity:1;} #ce-keypanel{margin-left:6px;display:inline-flex;gap:4px;align-items:center;} #ce-keypanel input{width:150px;padding:2px 6px;font-size:.85em;border:1px solid #2a3447;border-radius:6px;background:#1c2030;color:#e6e8ee;} #ce-keypanel button{padding:2px 8px;font-size:.85em;border:1px solid #19b34a;border-radius:6px;background:#19b34a;color:#fff;cursor:pointer;}"); } catch (e) {}
+        try { GM_addStyle(".ce-badge{font-weight:600;} .ce-energy{color:#19b34a;} .ce-nerve{color:#e0556b;} .ce-cog{cursor:pointer;margin-left:6px;opacity:.7;} .ce-cog:hover{opacity:1;} #ce-keypanel{margin-left:6px;display:inline-flex;gap:4px;align-items:center;} #ce-keypanel input{width:150px;padding:2px 6px;font-size:.85em;border:1px solid #2a3447;border-radius:6px;background:#1c2030;color:#e6e8ee;} #ce-keypanel button{padding:2px 8px;font-size:.85em;border:1px solid #19b34a;border-radius:6px;background:#19b34a;color:#fff;cursor:pointer;}"); } catch (e) {}
         try { GM_registerMenuCommand("Can Energy: refresh perks", fetchPerks); } catch (e) {}
         try { new MutationObserver(scheduleRender).observe(document.body, { childList: true, subtree: true }); } catch (e) {}
         boot();
     }
     if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
-        module.exports = { perkMultiplier, effectiveEnergy, alcoholPerks, nerveRange, computePerks, CAN_BASE, NERVE_BASE };
+        module.exports = { perkMultiplier, effectiveEnergy, alcoholPerks, nerveRange, computePerks, PROVIDERS, CAN_BASE, NERVE_BASE };
     }
 })();
