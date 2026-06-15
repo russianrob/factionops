@@ -27,6 +27,6 @@
 <img src="https://tornwar.com/drink-stats-screenshot.png" alt="Drink Stats effective energy values on the Torn items page">
 
 <h3>Install</h3>
-<p><a href="https://tornwar.com/scripts/torn-can-energy.user.js">Install Drink Stats</a></p>
+<p><a href="https://greasyfork.org/en/scripts/582836-drink-stats">Install Drink Stats on Greasy Fork</a></p>
 
 <p>If a number looks off, post it here and I'll take a look.</p>
