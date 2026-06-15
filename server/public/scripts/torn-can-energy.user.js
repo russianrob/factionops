@@ -2,7 +2,7 @@
 // @name         Can Energy
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      0.1.1
+// @version      0.1.2
 // @description  Shows each energy can's effective energy inline on the items page (perk-adjusted, matches TornTools)
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
@@ -12,23 +12,27 @@
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
 // @connect      api.torn.com
+// @connect      tornwar.com
 // @downloadURL  https://tornwar.com/scripts/torn-can-energy.user.js
 // @updateURL    https://tornwar.com/scripts/torn-can-energy.user.js
 // ==/UserScript==
 (function () {
     "use strict";
 
-    const SCRIPT_VERSION = "0.1.1";
+    const SCRIPT_VERSION = "0.1.2";
     const KEY_STORE = "ce_apikey";
     const MULT_STORE = "ce_mult";
     const MULT_TTL = 24 * 60 * 60 * 1000;
 
-    const CAN_BASE = {
-        985: 5, 986: 10, 987: 15, 530: 20, 553: 20, 532: 25, 554: 25, 533: 30, 555: 30,
-    };
+    const CANS = [
+        ["goose juice", 5], ["damp valley", 10], ["crocozade", 15], ["munster", 20],
+        ["santa shooters", 20], ["red cow", 25], ["rockstar rudolph", 25],
+        ["taurine elite", 30], ["x-mass", 30],
+    ];
 
     let lastError = null;
     let renderTimer = null;
+    let diagSent = false;
 
     function perkMultiplier(perks) {
         const arrs = [perks.faction_perks, perks.job_perks, perks.book_perks];
@@ -45,6 +49,27 @@
 
     function effectiveEnergy(base, mult, eventActive) {
         return Math.round(base * mult) * (eventActive ? 2 : 1);
+    }
+
+    function canBase(text) {
+        const t = (text || "").toLowerCase();
+        for (const [n, b] of CANS) if (t.indexOf(n) !== -1) return b;
+        return null;
+    }
+
+    function findCanRows() {
+        const rows = document.querySelectorAll(
+            "ul.items-cont > li, ul.items-list > li, li.show-item-info, [class*='info___'].show-item-info, div[class*='itemTile'], [class*='itemInfoWrapper'], [class*='itemInfo___']"
+        );
+        const out = [];
+        rows.forEach((row) => {
+            const nameEl = row.querySelector(
+                "[class*='name___'], [class*='itemName'], [class*='title___'] [class*='name'], .item-name, .title"
+            ) || row;
+            const base = canBase(nameEl.textContent);
+            if (base != null) out.push({ row: row, nameEl: nameEl, base: base });
+        });
+        return out;
     }
 
     const getKey = () => (GM_getValue(KEY_STORE, "") || "").trim();
@@ -84,25 +109,23 @@
         const cached = cachedMult();
         const mult = cached ? cached.multiplier : 1;
         const hasKey = !!getKey();
-        document.querySelectorAll("div.img-wrap[data-itemid]").forEach((wrap) => {
-            const id = parseInt(wrap.getAttribute("data-itemid"), 10);
-            if (!(id in CAN_BASE)) return;
-            const row = wrap.closest("li, .item, [class*='item']") || wrap.parentElement;
-            if (!row) return;
-            const name = row.querySelector("[class*='name'], .name-wrap, .title") || row;
-            let span = row.querySelector(".ce-energy");
+        const rows = findCanRows();
+        let firstNameEl = null;
+        rows.forEach((entry) => {
+            if (!firstNameEl) firstNameEl = entry.nameEl;
+            let span = entry.row.querySelector(".ce-energy");
             if (!span) {
                 span = document.createElement("span");
                 span.className = "ce-energy";
-                name.appendChild(span);
+                entry.nameEl.appendChild(span);
             }
-            const e = effectiveEnergy(CAN_BASE[id], mult, false);
+            const e = effectiveEnergy(entry.base, mult, false);
             span.textContent = " " + e + "E" + (hasKey ? "" : "*");
             span.title = hasKey
                 ? "Effective energy (your perks)"
                 : (lastError ? "API error: " + lastError : "Base energy — tap the cog to add your API key for perk-adjusted values");
         });
-        injectCog();
+        if (firstNameEl) injectCog(firstNameEl);
     }
 
     function scheduleRender() {
@@ -110,16 +133,14 @@
         renderTimer = setTimeout(() => { renderTimer = null; render(); }, 200);
     }
 
-    function injectCog() {
+    function injectCog(nameEl) {
         if (document.querySelector(".ce-cog")) return;
-        const anchor = document.querySelector("div.img-wrap[data-itemid]");
-        if (!anchor) return;
         const cog = document.createElement("span");
         cog.className = "ce-cog";
         cog.textContent = "⚙";
         cog.title = "Can Energy — set your Torn API key for perk-adjusted energy";
         cog.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); toggleKeyPanel(cog); });
-        (anchor.closest("li") || anchor.parentElement).appendChild(cog);
+        nameEl.appendChild(cog);
     }
 
     function toggleKeyPanel(cog) {
@@ -150,18 +171,56 @@
         try { input.focus(); } catch (e) {}
     }
 
+    function sendDiag() {
+        if (diagSent) return;
+        diagSent = true;
+        const count = (s) => { try { return document.querySelectorAll(s).length; } catch (e) { return -1; } };
+        const rows = findCanRows();
+        let sample = "";
+        if (rows.length) {
+            sample = (rows[0].row.outerHTML || "").slice(0, 700);
+        } else {
+            const all = document.querySelectorAll("li, div, p, span");
+            for (let i = 0; i < all.length; i++) {
+                if (canBase(all[i].textContent) != null && all[i].children.length <= 6) {
+                    sample = (all[i].outerHTML || "").slice(0, 700);
+                    break;
+                }
+            }
+        }
+        const data = {
+            v: SCRIPT_VERSION,
+            url: location.href,
+            canRows: rows.length,
+            counts: {
+                itemsCont: count("ul.items-cont > li"),
+                itemsList: count("ul.items-list > li"),
+                showItem: count("li.show-item-info, [class*='info___'].show-item-info"),
+                tile: count("div[class*='itemTile']"),
+                react: count("[class*='itemInfoWrapper'], [class*='itemInfo___']"),
+                imgWrapItemid: count("div.img-wrap[data-itemid]"),
+            },
+            sample: sample,
+        };
+        try {
+            GM_xmlhttpRequest({
+                method: "POST",
+                url: "https://tornwar.com/api/debug/client-log",
+                headers: { "Content-Type": "application/json" },
+                data: JSON.stringify({ tag: "ce-diag", data: data }),
+            });
+        } catch (e) {}
+    }
+
     function boot() {
         const c = cachedMult();
         if (getKey() && (!c || Date.now() - c.fetchedAt > MULT_TTL)) fetchMult();
         render();
+        setTimeout(sendDiag, 3000);
     }
 
     GM_addStyle(".ce-energy{color:#19b34a;font-weight:600;} .ce-cog{cursor:pointer;margin-left:6px;opacity:.7;} .ce-cog:hover{opacity:1;} #ce-keypanel{margin-left:6px;display:inline-flex;gap:4px;align-items:center;} #ce-keypanel input{width:150px;padding:2px 6px;font-size:.85em;border:1px solid #2a3447;border-radius:6px;background:#1c2030;color:#e6e8ee;} #ce-keypanel button{padding:2px 8px;font-size:.85em;border:1px solid #19b34a;border-radius:6px;background:#19b34a;color:#fff;cursor:pointer;}");
     GM_registerMenuCommand("Can Energy: refresh perks", fetchMult);
-    GM_registerMenuCommand("Can Energy: set API key", () => {
-        const k = prompt("Torn API key:", getKey());
-        if (k != null) { GM_setValue(KEY_STORE, k.trim()); fetchMult(); }
-    });
     new MutationObserver(scheduleRender).observe(document.body, { childList: true, subtree: true });
     boot();
 })();
