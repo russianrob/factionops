@@ -2,7 +2,7 @@
 // @name         Can Energy
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      0.1.8
+// @version      1.0.0
 // @description  Shows each energy can's effective energy inline on the items page (perk-adjusted, matches TornTools)
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
@@ -12,14 +12,12 @@
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
 // @connect      api.torn.com
-// @connect      tornwar.com
 // @downloadURL  https://tornwar.com/scripts/torn-can-energy.user.js
-// @updateURL    https://tornwar.com/scripts/torn-can-energy.user.js
 // ==/UserScript==
 (function () {
     "use strict";
 
-    const SCRIPT_VERSION = "0.1.8";
+    const SCRIPT_VERSION = "1.0.0";
     const KEY_STORE = "ce_apikey";
     const MULT_STORE = "ce_mult";
     const MULT_TTL = 24 * 60 * 60 * 1000;
@@ -33,7 +31,6 @@
 
     let lastError = null;
     let renderTimer = null;
-    let diagSent = false;
 
     function perkMultiplier(perks) {
         const arrs = [perks.faction_perks, perks.job_perks, perks.book_perks];
@@ -170,10 +167,12 @@
                 ref.insertAdjacentElement("afterend", span);
             }
             const e = effectiveEnergy(entry.base, mult, false);
-            span.textContent = " " + e + "E" + (hasKey ? "" : "*");
-            span.title = hasKey
+            const txt = " " + e + "E" + (hasKey ? "" : "*");
+            if (span.textContent !== txt) span.textContent = txt;
+            const tip = hasKey
                 ? "Effective energy (your perks)"
                 : (lastError ? "API error: " + lastError : "Base energy — tap the cog to add your API key for perk-adjusted values");
+            if (span.title !== tip) span.title = tip;
         });
         injectHeaderCog();
     }
@@ -234,64 +233,10 @@
         try { input.focus(); } catch (e) {}
     }
 
-    function sendDiag() {
-        if (diagSent) return;
-        diagSent = true;
-        const count = (s) => { try { return document.querySelectorAll(s).length; } catch (e) { return -1; } };
-        const rows = findCanRows();
-        let sample = "";
-        let nameElInfo = "";
-        if (rows.length) {
-            const r0 = rows[0].row;
-            const nw = rows[0].nameWrap;
-            const ce = r0.querySelector(".ce-energy");
-            nameElInfo = JSON.stringify({
-                priced: !!r0.querySelector(".rwp-base-price-tag"),
-                inWrap: ce ? ce.closest(".name-wrap") != null : null,
-                wrapText: nw ? (nw.textContent || "").replace(/\s+/g, " ").trim().slice(0, 36) : null,
-                prevSib: ce && ce.previousElementSibling ? (ce.previousElementSibling.className || ce.previousElementSibling.tagName) : null,
-            });
-            const tw = r0.querySelector(".title-wrap") || r0;
-            sample = (tw.innerHTML || "").replace(/<img[^>]*>/g, "").replace(/\s+/g, " ").slice(0, 700);
-        } else {
-            const all = document.querySelectorAll("li, div, p, span");
-            for (let i = 0; i < all.length; i++) {
-                if (canBase(all[i].textContent) != null && all[i].children.length <= 6) {
-                    sample = (all[i].outerHTML || "").slice(0, 700);
-                    break;
-                }
-            }
-        }
-        const data = {
-            v: SCRIPT_VERSION,
-            url: location.href,
-            canRows: rows.length,
-            nameEl: nameElInfo,
-            counts: {
-                itemsCont: count("ul.items-cont > li"),
-                itemsList: count("ul.items-list > li"),
-                showItem: count("li.show-item-info, [class*='info___'].show-item-info"),
-                tile: count("div[class*='itemTile']"),
-                react: count("[class*='itemInfoWrapper'], [class*='itemInfo___']"),
-                imgWrapItemid: count("div.img-wrap[data-itemid]"),
-            },
-            sample: sample,
-        };
-        try {
-            GM_xmlhttpRequest({
-                method: "POST",
-                url: "https://tornwar.com/api/debug/client-log",
-                headers: { "Content-Type": "application/json" },
-                data: JSON.stringify({ tag: "ce-diag", data: data }),
-            });
-        } catch (e) {}
-    }
-
     function boot() {
         const c = cachedMult();
         if (getKey() && (!c || Date.now() - c.fetchedAt > MULT_TTL)) fetchMult();
         render();
-        setTimeout(sendDiag, 3000);
     }
 
     try { GM_addStyle(".ce-energy{color:#19b34a;font-weight:600;} .ce-cog{cursor:pointer;margin-left:6px;opacity:.7;} .ce-cog:hover{opacity:1;} #ce-keypanel{margin-left:6px;display:inline-flex;gap:4px;align-items:center;} #ce-keypanel input{width:150px;padding:2px 6px;font-size:.85em;border:1px solid #2a3447;border-radius:6px;background:#1c2030;color:#e6e8ee;} #ce-keypanel button{padding:2px 8px;font-size:.85em;border:1px solid #19b34a;border-radius:6px;background:#19b34a;color:#fff;cursor:pointer;}"); } catch (e) {}
