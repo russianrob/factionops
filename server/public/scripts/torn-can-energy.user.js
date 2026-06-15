@@ -32,6 +32,17 @@
     let lastError = null;
     let renderTimer = null;
 
+    function digitsPct(s) {
+        const n = parseInt(String(s).replace(/\D+/g, ""), 10);
+        return Number.isNaN(n) ? 0 : n;
+    }
+
+    function alcoholPerks(perks) {
+        const faction = (perks.faction_perks || []).find((s) => /alcohol/i.test(s));
+        const company = (perks.job_perks || []).find((s) => /alcohol boost|consumable boost/i.test(s));
+        return { faction: faction ? digitsPct(faction) : 0, company: company ? digitsPct(company) : 0 };
+    }
+
     function perkMultiplier(perks) {
         const arrs = [perks.faction_perks, perks.job_perks, perks.book_perks];
         let mult = 1;
@@ -246,6 +257,6 @@
         boot();
     }
     if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
-        module.exports = { perkMultiplier, effectiveEnergy, CAN_BASE, NERVE_BASE };
+        module.exports = { perkMultiplier, effectiveEnergy, alcoholPerks, CAN_BASE, NERVE_BASE };
     }
 })();

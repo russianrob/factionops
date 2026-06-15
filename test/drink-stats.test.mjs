@@ -45,5 +45,11 @@ check("NERVE_BASE matches items.json", () => {
   assert.deepEqual(normalized, derived);
 });
 
+check("alcoholPerks faction only", () => assert.deepEqual(plain(ds.alcoholPerks({ faction_perks: ["+ 10% nerve from alcohol"], job_perks: [], book_perks: [] })), { faction: 10, company: 0 }));
+check("alcoholPerks company alcohol boost", () => assert.deepEqual(plain(ds.alcoholPerks({ faction_perks: [], job_perks: ["+ 10% alcohol boost"], book_perks: [] })), { faction: 0, company: 10 }));
+check("alcoholPerks company consumable boost", () => assert.deepEqual(plain(ds.alcoholPerks({ faction_perks: [], job_perks: ["+ 5% consumable boost"], book_perks: [] })), { faction: 0, company: 5 }));
+check("alcoholPerks both, ignore book+unrelated", () => assert.deepEqual(plain(ds.alcoholPerks({ faction_perks: ["+ 15% nerve from alcohol", "+ 50% energy from energy drinks"], job_perks: ["+ 10% alcohol boost"], book_perks: ["+ 100% alcohol effects"] })), { faction: 15, company: 10 }));
+check("alcoholPerks none", () => assert.deepEqual(plain(ds.alcoholPerks({ faction_perks: [], job_perks: [], book_perks: [] })), { faction: 0, company: 0 }));
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
