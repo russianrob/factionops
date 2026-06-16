@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.48
+// @version      3.2.49
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.48';
+    const SCRIPT_VERSION = '3.2.49';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -2833,6 +2833,7 @@
 .oc-table-tight { margin-bottom: 6px; }
 .oc-table-tight th { padding: 3px 8px; }
 .oc-table-tight td { padding: 2px 8px; vertical-align: top; line-height: 1.25; }
+.oc-recent-clip { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: #9ca3af; }
         .oc-row-spawn         > td:first-child { border-left: 2px solid #f4a261; padding-left: 6px; }
         .oc-row-spawn-partial > td:first-child { border-left: 2px solid #d97706; padding-left: 6px; }
         .oc-row-ok            > td:first-child { border-left: 2px solid #74c69d; padding-left: 6px; }
@@ -6302,21 +6303,22 @@
             <th>Member</th><th style="text-align:right;">Incidents</th><th style="text-align:right;">Total</th><th style="text-align:right;">Longest</th><th>Recent crimes</th>
         </tr></thead><tbody>`;
         for (const m of members) {
-            const top = (m.crimes || [])
+            const recent = (m.crimes || [])
                 .slice()
                 .sort((a, b) => (b.completedAt || Date.now()) - (a.completedAt || Date.now()))
-                .slice(0, 3)
-                .map(c => {
-                    const tag = c.pending ? ' <span style="color:#fbbf24;">(in-flight)</span>' : '';
-                    return `${escHtml(c.crimeName || 'Crime')}${tag} — <b>${fmtDur(c.delayedSec)}</b>`;
-                })
-                .join('<br>');
+                .slice(0, 3);
+            const recentInline = recent
+                .map(c => `${escHtml(c.crimeName || 'Crime')}${c.pending ? '*' : ''}`)
+                .join(', ');
+            const recentTitle = recent
+                .map(c => `${(c.crimeName || 'Crime')}${c.pending ? ' (in-flight)' : ''} — ${fmtDur(c.delayedSec)}`)
+                .join('\n');
             html += `<tr>
                 <td><a href="/profiles.php?XID=${escHtml(m.memberId)}" class="mgr-player-link">${escHtml(m.name)}</a> <span class="oc-member-id">[${escHtml(m.memberId)}]</span></td>
                 <td style="text-align:right;"><b>${m.count}</b></td>
                 <td style="text-align:right;font-weight:600;color:#f59e0b;">${fmtDur(m.totalSec)}</td>
                 <td style="text-align:right;color:#9ca3af;">${fmtDur(m.longestSec)}</td>
-                <td style="font-size:10px;color:#9ca3af;">${top}</td>
+                <td><div class="oc-recent-clip" title="${escHtml(recentTitle)}">${recentInline}</div></td>
             </tr>`;
         }
         html += `</tbody></table>`;
