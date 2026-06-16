@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.0';
+  var SCRIPT_VERSION = '1.0.1';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -61,15 +61,16 @@
   }
 
   function mapPlayerResponse(j) {
+    var p = (j && j.profile) ? j.profile : (j || {});
     return {
-      name: j.name,
-      state: j.status ? j.status.state : '',
-      description: j.status ? (j.status.description || '') : '',
-      lastAction: j.last_action ? j.last_action.status : '',
-      lastActionTs: j.last_action ? j.last_action.timestamp : 0,
-      lifeCur: j.life ? j.life.current : 0,
-      lifeMax: j.life ? j.life.maximum : 0,
-      revivable: !!j.revivable
+      name: p.name,
+      state: p.status ? p.status.state : '',
+      description: p.status ? (p.status.description || '') : '',
+      lastAction: p.last_action ? p.last_action.status : '',
+      lastActionTs: p.last_action ? p.last_action.timestamp : 0,
+      lifeCur: p.life ? p.life.current : 0,
+      lifeMax: p.life ? p.life.maximum : 0,
+      revivable: !!p.revivable
     };
   }
 

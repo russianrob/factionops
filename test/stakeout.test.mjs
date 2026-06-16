@@ -86,9 +86,13 @@ test("evaluateFaction: war/raid/territory transitions", () => {
 });
 
 // ---- response mappers ----
-test("mapPlayerResponse: v2 user/profile -> snapshot", () => {
-  const j = { name: "Bob", life: { current: 80, maximum: 100 }, status: { state: "Hospital", description: "In hospital for 10 mins" }, last_action: { status: "Online", timestamp: 1699999000 }, revivable: 1 };
+test("mapPlayerResponse: v2 user/profile (nested under profile) -> snapshot", () => {
+  const j = { profile: { name: "Bob", life: { current: 80, maximum: 100 }, status: { state: "Hospital", description: "In hospital for 10 mins" }, last_action: { status: "Online", timestamp: 1699999000 }, revivable: 1 } };
   eq(S.mapPlayerResponse(j), { name: "Bob", state: "Hospital", description: "In hospital for 10 mins", lastAction: "Online", lastActionTs: 1699999000, lifeCur: 80, lifeMax: 100, revivable: true });
+});
+test("mapPlayerResponse: flat shape still maps (defensive fallback)", () => {
+  const j = { name: "Bob", life: { current: 80, maximum: 100 }, status: { state: "Okay", description: "" }, last_action: { status: "Online", timestamp: 1699999000 }, revivable: 0 };
+  eq(S.mapPlayerResponse(j), { name: "Bob", state: "Okay", description: "", lastAction: "Online", lastActionTs: 1699999000, lifeCur: 80, lifeMax: 100, revivable: false });
 });
 test("mapFactionResponse: v2 basic+chain+wars -> snapshot", () => {
   const j = { basic: { name: "Enemy", respect: 5000, members: 81, capacity: 100 }, chain: { current: 47 }, wars: { ranked: { war_id: 1 }, raids: [], territory: [{ id: 1 }] } };
