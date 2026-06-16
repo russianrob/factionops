@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.3.3
+// @version      3.4.0
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item*
 // @match        https://www.torn.com/bazaar*
 // @match        https://www.torn.com/amarket*
+// @match        https://www.torn.com/trade.php*
 // @match        https://www.torn.com/page.php?sid=ItemMarket*
 // @match        https://www.torn.com/page.php?sid=auctionHouse*
 // @match        https://www.torn.com/profiles.php*
@@ -30,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.3.3';
+    var SCRIPT_VERSION = '3.4.0';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1674,7 +1675,22 @@
             '  border-top-color: #e8c44a;' +
             '  border-radius: 50%;' +
             '  animation: rwp-spin 0.8s linear infinite;' +
-            '}';
+            '}' +
+            '.rwp-trade-val {' +
+            '  float: right; margin: 0 8px 0 6px; padding: 0 5px;' +
+            '  border-radius: 4px; font: 600 11px/18px ui-monospace, monospace;' +
+            '  background: rgba(0,0,0,0.25); color: #cdd3e0;' +
+            '}' +
+            '.rwp-tier-green { color: #85b200 !important; }' +
+            '.rwp-tier-amber { color: #ffbf00 !important; }' +
+            '.rwp-tier-red { color: #e64d1a !important; }' +
+            '.rwp-trade-total {' +
+            '  clear: both; margin: 8px 6px 0; padding: 6px 10px;' +
+            '  border-radius: 6px; background: rgba(0,0,0,0.25);' +
+            '  font: 700 12px -apple-system, system-ui, sans-serif;' +
+            '  color: #cdd3e0; text-align: right;' +
+            '}' +
+            '.rwp-trade-total .rwp-tt-amt { color: #6ee7b7; margin-left: 6px; }';
         document.head.appendChild(style);
     }
 
@@ -2968,6 +2984,151 @@
             }
         });
         nwObs.observe(document.body, { childList: true, subtree: true });
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // v3.4.0 — Trade pricing (trade.php)
+    // Badges each item/money line with its market value, colors the name
+    // by value size (green = biggest → red = smallest on that side), and
+    // adds a "Total value" footer per side. Reuses the networth price map
+    // (fetchItemMarketPrices → byId / byName). Item id comes from the
+    // remove link (your side); the other party's items resolve by name.
+    // ═════════════════════════════════════════════════════════════════
+    function isTradePage() {
+        return /\/trade\.php/i.test(window.location.pathname);
+    }
+    function parseTradeLine(text) {
+        var t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+        if (!t) return { kind: 'empty' };
+        if (/^No .* in trade$/i.test(t)) return { kind: 'empty' };
+        var m = t.match(/^\$([\d,]+)\s+in trade$/i);
+        if (m) return { kind: 'money', amount: Number(m[1].replace(/,/g, '')) };
+        var im = t.match(/^(.*?)\s+x([\d,]+)$/);
+        if (im) return { kind: 'item', name: im[1].trim(), qty: Number(im[2].replace(/,/g, '')) };
+        return { kind: 'item', name: t, qty: 1 };
+    }
+    function extractTradeItemId(href) {
+        if (!href) return null;
+        var m = String(href).match(/itemID=(\d+)/i);
+        return m ? Number(m[1]) : null;
+    }
+    function tradeLineValue(line, maps) {
+        if (!line) return 0;
+        if (line.kind === 'money') return line.amount > 0 ? line.amount : 0;
+        if (line.kind !== 'item') return 0;
+        var unit = 0;
+        if (line.itemId != null && maps && maps.byId && maps.byId[line.itemId] > 0) unit = maps.byId[line.itemId];
+        else if (line.name && maps && maps.byName) {
+            var k = String(line.name).toLowerCase().trim();
+            if (maps.byName[k] > 0) unit = maps.byName[k];
+        }
+        if (!(unit > 0)) return 0;
+        return unit * (line.qty > 0 ? line.qty : 1);
+    }
+    function tradeValueTier(value, maxValue) {
+        if (!(value > 0) || !(maxValue > 0)) return 'none';
+        var r = value / maxValue;
+        if (r >= 0.6) return 'green';
+        if (r >= 0.2) return 'amber';
+        return 'red';
+    }
+    function setTradeTier(el, tier) {
+        var classes = ['rwp-tier-green', 'rwp-tier-amber', 'rwp-tier-red'];
+        for (var i = 0; i < classes.length; i++) {
+            var want = (classes[i] === 'rwp-tier-' + tier);
+            if (want && !el.classList.contains(classes[i])) el.classList.add(classes[i]);
+            else if (!want && el.classList.contains(classes[i])) el.classList.remove(classes[i]);
+        }
+    }
+    function injectTradePrices(maps) {
+        var trade = document.querySelector('#trade-container .trade-cont');
+        if (!trade) return;
+        var sides = ['left', 'right'];
+        for (var s = 0; s < sides.length; s++) {
+            var userEl = trade.querySelector('.user.' + sides[s]);
+            if (!userEl) continue;
+            var contUl = userEl.querySelector('ul.cont');
+            if (!contUl) continue;
+            var nameEls = contUl.querySelectorAll('ul.desc > li > div.name.left');
+            var entries = [];
+            for (var i = 0; i < nameEls.length; i++) {
+                var nameEl = nameEls[i];
+                if (nameEl.classList.contains('inactive')) continue;
+                var info = parseTradeLine(nameEl.textContent);
+                if (info.kind === 'empty') continue;
+                if (info.kind === 'item') {
+                    var rowLi = nameEl.parentElement;
+                    var rm = rowLi ? rowLi.querySelector('a[href*="itemID="]') : null;
+                    info.itemId = rm ? extractTradeItemId(rm.getAttribute('href')) : null;
+                }
+                entries.push({ nameEl: nameEl, info: info, val: tradeLineValue(info, maps) });
+            }
+            if (!entries.length) continue;
+            var maxVal = 0, total = 0;
+            for (var j = 0; j < entries.length; j++) {
+                if (entries[j].val > maxVal) maxVal = entries[j].val;
+                total += entries[j].val > 0 ? entries[j].val : 0;
+            }
+            for (var k = 0; k < entries.length; k++) {
+                var e = entries[k];
+                setTradeTier(e.nameEl, tradeValueTier(e.val, maxVal));
+                if (e.info.kind !== 'item') continue;
+                var row = e.nameEl.parentElement;
+                var badge = row.querySelector('.rwp-trade-val');
+                if (e.val > 0) {
+                    var txt = fmtBigDollar(e.val);
+                    if (!badge) {
+                        badge = document.createElement('div');
+                        badge.className = 'rwp-trade-val';
+                        var del = row.querySelector('.del.right');
+                        if (del && del.nextSibling) row.insertBefore(badge, del.nextSibling);
+                        else row.appendChild(badge);
+                    }
+                    if (badge.textContent !== txt) badge.textContent = txt;
+                    var ttl = (e.info.qty > 1 ? e.info.qty + ' × ' : '') + 'market value';
+                    if (badge.title !== ttl) badge.title = ttl;
+                } else if (badge && badge.parentNode) {
+                    badge.parentNode.removeChild(badge);
+                }
+            }
+            var totalEl = userEl.querySelector('.rwp-trade-total');
+            var totalTxt = fmtBigDollar(total);
+            if (!totalEl) {
+                totalEl = document.createElement('div');
+                totalEl.className = 'rwp-trade-total';
+                totalEl.appendChild(document.createTextNode('Total value:'));
+                var amt = document.createElement('span');
+                amt.className = 'rwp-tt-amt';
+                totalEl.appendChild(amt);
+                if (contUl.nextSibling) userEl.insertBefore(totalEl, contUl.nextSibling);
+                else userEl.appendChild(totalEl);
+            }
+            var amtEl = totalEl.querySelector('.rwp-tt-amt');
+            if (amtEl && amtEl.textContent !== totalTxt) amtEl.textContent = totalTxt;
+        }
+    }
+    var tradeInited = false;
+    function ensureTradePrices() {
+        if (tradeInited) return;
+        tradeInited = true;
+        var warnedNoMap = false;
+        function go() {
+            var maps = safeGet(NW_ITEMS_CACHE_KEY, null);
+            if (maps && maps.byId && maps.byName) { injectTradePrices(maps); return; }
+            if (!warnedNoMap) {
+                warnedNoMap = true;
+                try { console.log('[rwp-trade] no price map cached yet (api key ' + (getEffectiveApiKey() ? 'set' : 'MISSING — set one in RW Pricer settings to price trades') + ')'); } catch (_) {}
+            }
+        }
+        var key = getEffectiveApiKey();
+        if (key) { try { fetchItemMarketPrices(key, function () { go(); }); } catch (_) {} }
+        go();
+        setInterval(go, 3000);
+        window.addEventListener('hashchange', function () { setTimeout(go, 300); });
+    }
+    if (isTradePage()) {
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ensureTradePrices);
+        else ensureTradePrices();
     }
 
 })();
