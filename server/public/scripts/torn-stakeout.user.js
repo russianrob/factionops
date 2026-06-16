@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.1
+// @version      1.0.2
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.1';
+  var SCRIPT_VERSION = '1.0.2';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -219,24 +219,47 @@
     } catch (_) {}
   }
 
+  function toastContainer() {
+    var c = document.getElementById('stk-toasts');
+    if (!c) { c = document.createElement('div'); c.id = 'stk-toasts'; document.body.appendChild(c); }
+    return c;
+  }
   function showToast(text, href) {
+    var c = toastContainer();
     var t = document.createElement('div');
     t.className = 'stk-toast';
-    t.textContent = '📍 ' + text;
-    t.onclick = function () { if (href) window.open(href, '_blank'); t.remove(); };
-    document.body.appendChild(t);
+    var msg = document.createElement('span');
+    msg.className = 'stk-toast-msg';
+    msg.textContent = '📍 ' + text;
+    msg.onclick = function () { if (href) window.open(href, '_blank'); t.remove(); };
+    var x = document.createElement('span');
+    x.className = 'stk-toast-x';
+    x.textContent = '✕';
+    x.onclick = function (e) { e.stopPropagation(); t.remove(); };
+    t.appendChild(msg);
+    t.appendChild(x);
+    c.appendChild(t);
+    while (c.children.length > 5) c.removeChild(c.firstChild);
     setTimeout(function () { t.classList.add('stk-toast-in'); }, 20);
-    setTimeout(function () { t.classList.remove('stk-toast-in'); setTimeout(function () { t.remove(); }, 400); }, 8000);
   }
 
   function notify(text, href) {
     showToast(text, href);
     playPing();
+    var sent = false;
     try {
       if (typeof GM_notification === 'function') {
         GM_notification({ title: 'Stakeout', text: text, onclick: function () { if (href) window.open(href, '_blank'); } });
+        sent = true;
       }
     } catch (_) {}
+    if (!sent) {
+      try {
+        if (typeof browser !== 'undefined' && browser.notifications && browser.notifications.create) {
+          browser.notifications.create('stk-' + Date.now(), { type: 'basic', iconUrl: 'https://www.torn.com/favicon.ico', title: 'Stakeout', message: text });
+        }
+      } catch (_) {}
+    }
   }
 
   function notifyPlayer(rec, snap, alert) {
@@ -254,8 +277,12 @@
     var s = document.createElement('style');
     s.id = 'stk-styles';
     s.textContent = [
-      '.stk-toast{position:fixed;right:16px;bottom:80px;z-index:2147483647;max-width:300px;background:#1b1f2a;color:#e6e8ee;border:1px solid #2a3447;border-left:3px solid #6ee7b7;border-radius:8px;padding:10px 12px;font:600 13px system-ui,sans-serif;box-shadow:0 6px 18px rgba(0,0,0,.5);opacity:0;transform:translateY(8px);transition:opacity .35s,transform .35s;cursor:pointer;}',
+      '#stk-toasts{position:fixed;right:16px;bottom:80px;z-index:2147483647;display:flex;flex-direction:column;gap:8px;max-width:320px;align-items:flex-end;}',
+      '.stk-toast{display:flex;align-items:center;gap:8px;max-width:320px;background:#1b1f2a;color:#e6e8ee;border:1px solid #2a3447;border-left:3px solid #6ee7b7;border-radius:8px;padding:10px 12px;font:600 13px system-ui,sans-serif;box-shadow:0 6px 18px rgba(0,0,0,.5);opacity:0;transform:translateY(8px);transition:opacity .35s,transform .35s;}',
       '.stk-toast-in{opacity:1;transform:translateY(0);}',
+      '.stk-toast-msg{cursor:pointer;flex:1;}',
+      '.stk-toast-x{cursor:pointer;opacity:.55;padding:0 2px;font-size:12px;}',
+      '.stk-toast-x:hover{opacity:1;}',
       '#stk-fab{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:44px;height:44px;border-radius:50%;background:#1b1f2a;border:1px solid #2a3447;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.5);}',
       '#stk-panel{position:fixed;right:16px;bottom:70px;z-index:2147483646;width:320px;max-height:70vh;overflow:auto;background:#10141c;border:1px solid #2a3447;border-radius:10px;color:#e6e8ee;font:13px system-ui,sans-serif;padding:10px;box-shadow:0 8px 24px rgba(0,0,0,.6);display:none;}',
       '#stk-panel.stk-open{display:block;}',
