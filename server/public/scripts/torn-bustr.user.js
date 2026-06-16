@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BUSTR: Busting Reminder + PDA
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.13
+// @version      1.0.14
 // @description  Guess how many busts you can do without getting jailed. Fork: bust-penalty decay corrected to Nosy's multiplicative-inverse formula (was exponential, which undervalued older busts).
 // @author       Adobi & Ironhydedragon (decay-formula fix per Nosy [890872]'s guide)
 // @match        https://www.torn.com/*
@@ -487,9 +487,12 @@ const bustrStylesheetHTML = `<style>
     white-space: nowrap;
     box-shadow: 0 2px 8px rgba(0,0,0,.5);
   }
-  #nav-jail:hover + #bustr-context.bustr-context-menu,
+  #bustr-context.bustr-context-menu.bustr-show,
   [class*="contextMenuActive___"] #bustr-context.bustr-context-menu {
     display: flex;
+  }
+  @media (hover: hover) {
+    #nav-jail:hover + #bustr-context.bustr-context-menu { display: flex; }
   }
   #bustr-context .bustr-arrow {
     position: absolute;
@@ -769,6 +772,25 @@ async function renderBustrMobileView() {
       </div>`;
 
     jailLinkEl.insertAdjacentHTML('afterend', bustrContextMenuHTML);
+
+    const jailAnchor = jailLinkEl.querySelector('a');
+    const popupEl = document.querySelector('#bustr-context');
+    if (jailAnchor && popupEl) {
+      let lpTimer = null;
+      let lpFired = false;
+      jailAnchor.addEventListener('touchstart', () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => { lpFired = true; popupEl.classList.add('bustr-show'); }, 350);
+      }, { passive: true });
+      jailAnchor.addEventListener('touchmove', () => clearTimeout(lpTimer), { passive: true });
+      jailAnchor.addEventListener('touchend', (e) => { clearTimeout(lpTimer); if (lpFired) e.preventDefault(); });
+      jailAnchor.addEventListener('click', (e) => { if (lpFired) { e.preventDefault(); e.stopPropagation(); lpFired = false; } });
+      document.addEventListener('touchstart', (e) => {
+        if (popupEl.classList.contains('bustr-show') && !jailAnchor.contains(e.target) && !popupEl.contains(e.target)) {
+          popupEl.classList.remove('bustr-show');
+        }
+      }, { passive: true });
+    }
   } catch (err) {
     console.error(err);
   }
