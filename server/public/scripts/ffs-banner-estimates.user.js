@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.32
+// @version      2.73.33
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3017,7 +3017,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.32';
+  const SCRIPT_VERSION = '2.73.33';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3524,7 +3524,16 @@ if (!singleton) {
       }
       if (!changed) continue;
       const frag = document.createDocumentFragment();
-      for (const k of metas) frag.appendChild(k.row);
+      for (const k of metas) {
+        const extras = [];
+        let sib = k.row.nextElementSibling;
+        while (sib && sib.classList && (sib.classList.contains('tt-last-action') || sib.classList.contains('tt-stats-estimate') || sib.classList.contains('tt-member-info'))) {
+          extras.push(sib);
+          sib = sib.nextElementSibling;
+        }
+        frag.appendChild(k.row);
+        for (const ex of extras) frag.appendChild(ex);
+      }
       parent.appendChild(frag);
     }
   }
