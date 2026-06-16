@@ -248,4 +248,176 @@
     notify(who + ' ' + (FACTION_MSG[alert] || alert) + extra, 'https://www.torn.com/factions.php?step=profile&ID=' + rec.id);
   }
 
+  function injectStyles() {
+    if (document.getElementById('stk-styles')) return;
+    var s = document.createElement('style');
+    s.id = 'stk-styles';
+    s.textContent = [
+      '.stk-toast{position:fixed;right:16px;bottom:80px;z-index:2147483647;max-width:300px;background:#1b1f2a;color:#e6e8ee;border:1px solid #2a3447;border-left:3px solid #6ee7b7;border-radius:8px;padding:10px 12px;font:600 13px system-ui,sans-serif;box-shadow:0 6px 18px rgba(0,0,0,.5);opacity:0;transform:translateY(8px);transition:opacity .35s,transform .35s;cursor:pointer;}',
+      '.stk-toast-in{opacity:1;transform:translateY(0);}',
+      '#stk-fab{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:44px;height:44px;border-radius:50%;background:#1b1f2a;border:1px solid #2a3447;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.5);}',
+      '#stk-panel{position:fixed;right:16px;bottom:70px;z-index:2147483646;width:320px;max-height:70vh;overflow:auto;background:#10141c;border:1px solid #2a3447;border-radius:10px;color:#e6e8ee;font:13px system-ui,sans-serif;padding:10px;box-shadow:0 8px 24px rgba(0,0,0,.6);display:none;}',
+      '#stk-panel.stk-open{display:block;}',
+      '.stk-row{border-bottom:1px solid #1c2330;padding:6px 2px;}',
+      '.stk-row .stk-name{font-weight:600;}',
+      '.stk-status{font-size:11px;color:#9aa3b2;}',
+      '.stk-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle;}',
+      '.stk-on{background:#6ee7b7;} .stk-off{background:#6b7280;} .stk-hosp{background:#e64d1a;}',
+      '.stk-btn{background:#2a3447;color:#e6e8ee;border:0;border-radius:5px;padding:4px 8px;cursor:pointer;font-size:12px;}',
+      '.stk-input{background:#0a0d14;border:1px solid #2a3447;color:#e6e8ee;border-radius:5px;padding:4px 6px;width:100%;box-sizing:border-box;}',
+      '.stk-alerts label{display:inline-block;margin:2px 6px 2px 0;font-size:11px;color:#cdd3e0;}',
+      '.stk-sec{margin:8px 0 4px;font-weight:700;color:#9aa3b2;font-size:11px;text-transform:uppercase;}'
+    ].join('');
+    document.head.appendChild(s);
+  }
+
+  function ensurePanel() {
+    injectStyles();
+    if (!document.getElementById('stk-fab')) {
+      var fab = document.createElement('div');
+      fab.id = 'stk-fab'; fab.textContent = '📍';
+      fab.onclick = function () {
+        var p = document.getElementById('stk-panel');
+        p.classList.toggle('stk-open');
+        var st = getSettings(); st.panelOpen = p.classList.contains('stk-open'); setSettings(st);
+        if (st.panelOpen) renderPanel();
+      };
+      document.body.appendChild(fab);
+    }
+    if (!document.getElementById('stk-panel')) {
+      var panel = document.createElement('div');
+      panel.id = 'stk-panel';
+      document.body.appendChild(panel);
+      if (getSettings().panelOpen) panel.classList.add('stk-open');
+    }
+  }
+
+  function defaultPlayerAlerts() { return { okay: false, hospital: true, landing: true, online: true, life: false, offline: false, revivable: false }; }
+  function defaultFactionAlerts() { return { chainReaches: false, memberCountDrops: false, rankedWarStarts: true, inRaid: false, inTerritoryWar: false }; }
+
+  function addTarget(rawId, kind) {
+    var id = parseInt(String(rawId).replace(/[^0-9]/g, ''), 10);
+    if (!id) return;
+    if (kind === 'player') {
+      var ps = getPlayers();
+      if (ps.some(function (p) { return p.id === id; })) return;
+      ps.push({ id: id, order: Date.now(), label: '', info: null, alerts: defaultPlayerAlerts() });
+      setPlayers(ps);
+    } else {
+      var fs = getFactions();
+      if (fs.some(function (f) { return f.id === id; })) return;
+      fs.push({ id: id, order: Date.now(), info: null, alerts: defaultFactionAlerts() });
+      setFactions(fs);
+    }
+    renderPanel();
+    pollOnce();
+  }
+
+  function removePlayer(id) { setPlayers(getPlayers().filter(function (p) { return p.id !== id; })); renderPanel(); }
+  function removeFaction(id) { setFactions(getFactions().filter(function (f) { return f.id !== id; })); renderPanel(); }
+
+  function dot(snap) {
+    if (!snap) return '<span class="stk-dot stk-off"></span>';
+    if (snap.state === 'Hospital') return '<span class="stk-dot stk-hosp"></span>';
+    if (snap.lastAction === 'Online') return '<span class="stk-dot stk-on"></span>';
+    return '<span class="stk-dot stk-off"></span>';
+  }
+
+  function cbx(id, key, checked, label) {
+    return '<label><input type="checkbox" data-akey="' + key + '" data-id="' + id + '"' + (checked ? ' checked' : '') + '> ' + label + '</label>';
+  }
+  function numx(id, key, val, label, ph) {
+    return '<label>' + label + ' <input class="stk-input" data-anum="' + key + '" data-id="' + id + '" value="' + (val === false ? '' : val) + '" placeholder="' + ph + '" style="width:48px;display:inline;"></label>';
+  }
+  function playerAlertCheckboxes(p) {
+    var a = p.alerts;
+    return cbx(p.id, 'okay', a.okay, 'okay') + cbx(p.id, 'hospital', a.hospital, 'hosp') +
+      cbx(p.id, 'landing', a.landing, 'land') + cbx(p.id, 'online', a.online, 'online') +
+      cbx(p.id, 'revivable', a.revivable, 'reviv') +
+      numx(p.id, 'life', a.life, 'life<', '%') + numx(p.id, 'offline', a.offline, 'off≥', 'h');
+  }
+  function factionAlertCheckboxes(f) {
+    var a = f.alerts;
+    return cbx(f.id, 'rankedWarStarts', a.rankedWarStarts, 'war') + cbx(f.id, 'inRaid', a.inRaid, 'raid') +
+      cbx(f.id, 'inTerritoryWar', a.inTerritoryWar, 'terr') +
+      numx(f.id, 'chainReaches', a.chainReaches, 'chain≥', 'N/0') + numx(f.id, 'memberCountDrops', a.memberCountDrops, 'mem<', 'N');
+  }
+
+  function updateAlert(kind, id, key, value) {
+    if (kind === 'player') {
+      var ps = getPlayers(); ps.forEach(function (p) { if (p.id === id) p.alerts[key] = value; }); setPlayers(ps);
+    } else {
+      var fs = getFactions(); fs.forEach(function (f) { if (f.id === id) f.alerts[key] = value; }); setFactions(fs);
+    }
+  }
+
+  function renderPanel() {
+    var panel = document.getElementById('stk-panel');
+    if (!panel || !panel.classList.contains('stk-open')) return;
+    var s = getSettings();
+    var players = getPlayers(), factions = getFactions();
+    var calls = players.length + factions.length;
+    var rate = s.pollSeconds ? Math.round(calls / s.pollSeconds * 60) : 0;
+    var html = '';
+    html += '<div class="stk-sec">Players</div>';
+    players.forEach(function (p) {
+      var info = p.info;
+      html += '<div class="stk-row" data-pid="' + p.id + '">' +
+        dot(info) + '<span class="stk-name">' + (p.label || (info && info.name) || p.id) + ' [' + p.id + ']</span> ' +
+        '<button class="stk-btn stk-del-p" data-id="' + p.id + '">✕</button>' +
+        '<div class="stk-status">' + (info ? (info.state + (info.lifeMax ? ' · life ' + Math.round(info.lifeCur / info.lifeMax * 100) + '%' : '')) : 'pending…') + '</div>' +
+        '<div class="stk-alerts" data-pid="' + p.id + '">' + playerAlertCheckboxes(p) + '</div>' +
+        '</div>';
+    });
+    html += '<div style="margin:6px 0;"><input class="stk-input" id="stk-add-p" placeholder="Add player ID"></div>';
+    html += '<div class="stk-sec">Factions</div>';
+    factions.forEach(function (f) {
+      var info = f.info;
+      html += '<div class="stk-row" data-fid="' + f.id + '">' +
+        '<span class="stk-name">' + ((info && info.name) || f.id) + ' [' + f.id + ']</span> ' +
+        '<button class="stk-btn stk-del-f" data-id="' + f.id + '">✕</button>' +
+        '<div class="stk-status">' + (info ? ('chain ' + info.chain + ' · members ' + info.membersCur + '/' + info.membersMax) : 'pending…') + '</div>' +
+        '<div class="stk-alerts" data-fid="' + f.id + '">' + factionAlertCheckboxes(f) + '</div>' +
+        '</div>';
+    });
+    html += '<div style="margin:6px 0;"><input class="stk-input" id="stk-add-f" placeholder="Add faction ID"></div>';
+    html += '<div class="stk-sec">Settings</div>';
+    html += '<div>API key <input class="stk-input" id="stk-key" value="' + (s.apiKey ? '••••••••' : '') + '" placeholder="Torn API key"></div>';
+    html += '<div style="margin-top:4px;">Poll secs <input class="stk-input" id="stk-poll" value="' + s.pollSeconds + '" style="width:70px;display:inline;"> ' +
+      '<label><input type="checkbox" id="stk-sound"' + (s.sound ? ' checked' : '') + '> sound</label></div>';
+    html += '<div class="stk-status" style="margin-top:4px;">~' + rate + ' API calls/min</div>';
+    panel.innerHTML = html;
+    wirePanel(panel);
+  }
+
+  function wirePanel(panel) {
+    panel.querySelectorAll('.stk-del-p').forEach(function (b) { b.onclick = function () { removePlayer(parseInt(b.getAttribute('data-id'), 10)); }; });
+    panel.querySelectorAll('.stk-del-f').forEach(function (b) { b.onclick = function () { removeFaction(parseInt(b.getAttribute('data-id'), 10)); }; });
+    panel.querySelectorAll('input[data-akey]').forEach(function (el) {
+      el.onchange = function () {
+        var kind = el.closest('[data-pid]') ? 'player' : 'faction';
+        updateAlert(kind, parseInt(el.getAttribute('data-id'), 10), el.getAttribute('data-akey'), el.checked);
+      };
+    });
+    panel.querySelectorAll('input[data-anum]').forEach(function (el) {
+      el.onchange = function () {
+        var kind = el.closest('[data-pid]') ? 'player' : 'faction';
+        var v = el.value.trim();
+        var parsed = v === '' ? false : parseInt(v.replace(/[^0-9]/g, ''), 10);
+        if (parsed !== false && isNaN(parsed)) parsed = false;
+        updateAlert(kind, parseInt(el.getAttribute('data-id'), 10), el.getAttribute('data-anum'), parsed);
+      };
+    });
+    var addP = panel.querySelector('#stk-add-p');
+    if (addP) addP.onkeydown = function (e) { if (e.key === 'Enter') addTarget(addP.value, 'player'); };
+    var addF = panel.querySelector('#stk-add-f');
+    if (addF) addF.onkeydown = function (e) { if (e.key === 'Enter') addTarget(addF.value, 'faction'); };
+    var keyEl = panel.querySelector('#stk-key');
+    if (keyEl) keyEl.onchange = function () { if (keyEl.value && keyEl.value.indexOf('•') === -1) { var s = getSettings(); s.apiKey = keyEl.value.trim(); setSettings(s); pollOnce(); } };
+    var pollEl = panel.querySelector('#stk-poll');
+    if (pollEl) pollEl.onchange = function () { var s = getSettings(); s.pollSeconds = Math.max(10, parseInt(pollEl.value, 10) || 30); setSettings(s); restartPolling(); };
+    var soundEl = panel.querySelector('#stk-sound');
+    if (soundEl) soundEl.onchange = function () { var s = getSettings(); s.sound = soundEl.checked; setSettings(s); };
+  }
+
 })();
