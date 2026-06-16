@@ -198,4 +198,54 @@
     pollTimer = setInterval(pollOnce, Math.max(10, secs) * 1000);
   }
 
+  var PLAYER_MSG = {
+    okay: 'is now OKAY', hospital: 'is in hospital', landing: 'has landed', online: 'is now online',
+    life: 'life dropped below threshold', offline: 'has been offline a while', revivable: 'is now revivable'
+  };
+  var FACTION_MSG = {
+    chainReaches: 'chain alert', memberCountDrops: 'member count dropped',
+    rankedWarStarts: 'ranked war started', inRaid: 'is in a raid', inTerritoryWar: 'is in a territory war'
+  };
+
+  function playPing() {
+    if (!getSettings().sound) return;
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = 880; g.gain.value = 0.07;
+      o.start(); o.stop(ctx.currentTime + 0.18);
+    } catch (_) {}
+  }
+
+  function showToast(text, href) {
+    var t = document.createElement('div');
+    t.className = 'stk-toast';
+    t.textContent = '📍 ' + text;
+    t.onclick = function () { if (href) window.open(href, '_blank'); t.remove(); };
+    document.body.appendChild(t);
+    setTimeout(function () { t.classList.add('stk-toast-in'); }, 20);
+    setTimeout(function () { t.classList.remove('stk-toast-in'); setTimeout(function () { t.remove(); }, 400); }, 8000);
+  }
+
+  function notify(text, href) {
+    showToast(text, href);
+    playPing();
+    try {
+      if (typeof GM_notification === 'function') {
+        GM_notification({ title: 'Stakeout', text: text, onclick: function () { if (href) window.open(href, '_blank'); } });
+      }
+    } catch (_) {}
+  }
+
+  function notifyPlayer(rec, snap, alert) {
+    var who = (rec.label || snap.name || ('Player ' + rec.id)) + ' [' + rec.id + ']';
+    notify(who + ' ' + (PLAYER_MSG[alert] || alert), 'https://www.torn.com/profiles.php?XID=' + rec.id);
+  }
+  function notifyFaction(rec, snap, alert) {
+    var who = (snap.name || ('Faction ' + rec.id)) + ' [' + rec.id + ']';
+    var extra = alert === 'chainReaches' ? (' (chain ' + snap.chain + ')') : '';
+    notify(who + ' ' + (FACTION_MSG[alert] || alert) + extra, 'https://www.torn.com/factions.php?step=profile&ID=' + rec.id);
+  }
+
 })();
