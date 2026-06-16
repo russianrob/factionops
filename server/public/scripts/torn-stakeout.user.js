@@ -316,6 +316,10 @@
   function removePlayer(id) { setPlayers(getPlayers().filter(function (p) { return p.id !== id; })); renderPanel(); }
   function removeFaction(id) { setFactions(getFactions().filter(function (f) { return f.id !== id; })); renderPanel(); }
 
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+  }
+
   function dot(snap) {
     if (!snap) return '<span class="stk-dot stk-off"></span>';
     if (snap.state === 'Hospital') return '<span class="stk-dot stk-hosp"></span>';
@@ -354,6 +358,7 @@
   function renderPanel() {
     var panel = document.getElementById('stk-panel');
     if (!panel || !panel.classList.contains('stk-open')) return;
+    if (panel.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
     var s = getSettings();
     var players = getPlayers(), factions = getFactions();
     var calls = players.length + factions.length;
@@ -363,7 +368,7 @@
     players.forEach(function (p) {
       var info = p.info;
       html += '<div class="stk-row" data-pid="' + p.id + '">' +
-        dot(info) + '<span class="stk-name">' + (p.label || (info && info.name) || p.id) + ' [' + p.id + ']</span> ' +
+        dot(info) + '<span class="stk-name">' + esc(p.label || (info && info.name) || p.id) + ' [' + p.id + ']</span> ' +
         '<button class="stk-btn stk-del-p" data-id="' + p.id + '">✕</button>' +
         '<div class="stk-status">' + (info ? (info.state + (info.lifeMax ? ' · life ' + Math.round(info.lifeCur / info.lifeMax * 100) + '%' : '')) : 'pending…') + '</div>' +
         '<div class="stk-alerts" data-pid="' + p.id + '">' + playerAlertCheckboxes(p) + '</div>' +
@@ -374,7 +379,7 @@
     factions.forEach(function (f) {
       var info = f.info;
       html += '<div class="stk-row" data-fid="' + f.id + '">' +
-        '<span class="stk-name">' + ((info && info.name) || f.id) + ' [' + f.id + ']</span> ' +
+        '<span class="stk-name">' + esc((info && info.name) || f.id) + ' [' + f.id + ']</span> ' +
         '<button class="stk-btn stk-del-f" data-id="' + f.id + '">✕</button>' +
         '<div class="stk-status">' + (info ? ('chain ' + info.chain + ' · members ' + info.membersCur + '/' + info.membersMax) : 'pending…') + '</div>' +
         '<div class="stk-alerts" data-fid="' + f.id + '">' + factionAlertCheckboxes(f) + '</div>' +
