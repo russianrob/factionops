@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.51
+// @version      3.2.52
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.51';
+    const SCRIPT_VERSION = '3.2.52';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -2836,6 +2836,8 @@
 .oc-recent-1 { font-size: 10px; color: #9ca3af; }
 .oc-recent-more { font-size: 10px; color: #34d399; cursor: pointer; margin-left: 5px; font-weight: 700; }
 .oc-recent-pop { position: fixed; z-index: 2147483647; background: #0f1a14; border: 1px solid #1f6f4a; border-radius: 6px; padding: 6px 10px; font-size: 11px; color: #e5e7eb; white-space: pre-line; box-shadow: 0 4px 14px rgba(0,0,0,.55); max-width: 80vw; }
+.oc-total-click { color: #f59e0b; font-weight: 600; cursor: pointer; text-decoration: underline dotted; }
+.oc-recent-when { font-size: 9px; color: #6b7280; }
         .oc-row-spawn         > td:first-child { border-left: 2px solid #f4a261; padding-left: 6px; }
         .oc-row-spawn-partial > td:first-child { border-left: 2px solid #d97706; padding-left: 6px; }
         .oc-row-ok            > td:first-child { border-left: 2px solid #74c69d; padding-left: 6px; }
@@ -6299,10 +6301,15 @@
             if (h > 0) return `${h}h${(m % 60).toString().padStart(2,'0')}m`;
             return `${m}m`;
         };
+        const fmtWhen = (ms) => {
+            if (!ms) return '';
+            try { return new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+            catch (_) { return ''; }
+        };
         const escHtml = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
         let html = `<div style="color:#9ca3af;font-size:10px;margin-bottom:6px;">Last ${days} days · ${members.length} member${members.length === 1 ? '' : 's'} flagged · ordered by total time held</div>`;
         html += `<table class="oc-table oc-table-tight"><thead><tr>
-            <th>Member</th><th style="text-align:right;">Inc</th><th style="text-align:right;">Total</th><th style="text-align:right;">Max</th><th>Recent</th>
+            <th>Member</th><th style="text-align:right;">Inc</th><th style="text-align:right;">Total</th><th>Recent</th>
         </tr></thead><tbody>`;
         for (const m of members) {
             const sorted = (m.crimes || [])
@@ -6310,24 +6317,20 @@
                 .sort((a, b) => (b.completedAt || Date.now()) - (a.completedAt || Date.now()));
             const mr = sorted[0];
             const mrName = mr ? `${escHtml(mr.crimeName || 'Crime')}${mr.pending ? '*' : ''}` : '—';
-            let recentCell = `<span class="oc-recent-1">${mrName}</span>`;
-            if (sorted.length > 1) {
-                const listText = sorted
-                    .map(c => `${c.crimeName || 'Crime'}${c.pending ? ' (in-flight)' : ''} — ${fmtDur(c.delayedSec)}`)
-                    .join('\n');
-                recentCell += `<span class="oc-recent-more" data-list="${escHtml(listText)}" title="Show all delayed crimes">+${sorted.length - 1}</span>`;
-            }
+            const mrWhen = mr ? (mr.pending ? 'in-flight' : escHtml(fmtWhen(mr.completedAt))) : '';
+            const listText = sorted
+                .map(c => `${c.crimeName || 'Crime'} · ${c.pending ? 'in-flight' : fmtWhen(c.completedAt)} · ${fmtDur(c.delayedSec)}`)
+                .join('\n');
             html += `<tr>
                 <td><a href="/profiles.php?XID=${escHtml(m.memberId)}" class="mgr-player-link">${escHtml(m.name)}</a> <span class="oc-member-id">[${escHtml(m.memberId)}]</span></td>
                 <td style="text-align:right;"><b>${m.count}</b></td>
-                <td style="text-align:right;font-weight:600;color:#f59e0b;">${fmtDur(m.totalSec)}</td>
-                <td style="text-align:right;color:#9ca3af;">${fmtDur(m.longestSec)}</td>
-                <td>${recentCell}</td>
+                <td style="text-align:right;"><span class="oc-total-click" data-list="${escHtml(listText)}" title="Show delayed OCs">${fmtDur(m.totalSec)}</span></td>
+                <td><div class="oc-recent-1">${mrName}</div><div class="oc-recent-when">${mrWhen}</div></td>
             </tr>`;
         }
         html += `</tbody></table>`;
         content.innerHTML = html;
-        content.querySelectorAll('.oc-recent-more').forEach((el) => {
+        content.querySelectorAll('.oc-total-click').forEach((el) => {
             el.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); mgr_showDelayCrimes(el); });
         });
     }
