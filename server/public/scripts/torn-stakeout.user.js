@@ -462,4 +462,17 @@
     anchor.appendChild(btn);
   }
 
+  function boot() {
+    ensurePanel();
+    injectQuickAdd();
+    if (getSettings().panelOpen) renderPanel();
+    restartPolling();
+    pollOnce();
+    var mo = new MutationObserver(function () { injectQuickAdd(); });
+    mo.observe(document.body, { childList: true, subtree: true });
+    try { if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Stakeout: open panel', function () { var p = document.getElementById('stk-panel'); if (p) { p.classList.add('stk-open'); renderPanel(); } }); } catch (_) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+
 })();
