@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.3
+// @version      1.0.4
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.3';
+  var SCRIPT_VERSION = '1.0.4';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -266,6 +266,21 @@
     try {
       if (typeof browser !== 'undefined' && browser.notifications && browser.notifications.create) {
         browser.notifications.create('stk-' + Date.now(), { type: 'basic', iconUrl: 'https://www.torn.com/favicon.ico', title: 'Stakeout', message: text });
+        return;
+      }
+    } catch (_) {}
+    try {
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        var n = new Notification('Stakeout', { body: text, icon: 'https://www.torn.com/favicon.ico' });
+        if (href) n.onclick = function () { window.open(href, '_blank'); n.close(); };
+      }
+    } catch (_) {}
+  }
+
+  function requestWebNotifPermission() {
+    try {
+      if (typeof Notification !== 'undefined' && Notification.permission === 'default' && typeof Notification.requestPermission === 'function') {
+        Notification.requestPermission();
       }
     } catch (_) {}
   }
@@ -316,7 +331,7 @@
         var p = document.getElementById('stk-panel');
         p.classList.toggle('stk-open');
         var st = getSettings(); st.panelOpen = p.classList.contains('stk-open'); setSettings(st);
-        if (st.panelOpen) renderPanel();
+        if (st.panelOpen) { renderPanel(); requestWebNotifPermission(); }
       };
       document.body.appendChild(fab);
     }
