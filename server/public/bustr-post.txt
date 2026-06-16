@@ -1,0 +1,9 @@
+<p>Thanks for the writeup — you nailed it. I've pushed an updated version with the bust-penalty decay corrected:</p>
+
+<p><a href="https://greasyfork.org/en/scripts/582927-bustr-busting-reminder-pda">BUSTR: Busting Reminder + PDA (updated)</a></p>
+
+<p>It's the change straight from the diff: removed <code>calcTenHours</code> and swapped the decay from the exponential <code>128 / 2^(hours/7.2)</code> to Nosy's multiplicative inverse <code>128 / (1 + hours/10)</code>, in both the penalty score and the threshold. I replayed my own bust log through the old and new versions to double-check it lands on Nosy's numbers — for me it moved an available-busts count from 10 (old) to 16 (corrected), entirely from the threshold, which is exactly the schedule-shift case you described.</p>
+
+<p>Heads up for anyone updating: your figures will jump. Older busts now keep counting much longer, so both your current penalty and your threshold rise. If you'd set a custom penalty threshold, clear it — it was calibrated to the old (wrong) curve; the automatic one recalculates itself. And ease into the higher available-busts number rather than maxing it straight away until you've sanity-checked it.</p>
+
+<p>On the PDA side — I'm hoping this build is fine there too, but I'll be honest, I couldn't reproduce the CSS breakage on my own PDA: every element BUSTR injects into still resolves, and the hardness scores and bust count render correctly for me. If it's still broken for you, tell me exactly what's missing or misplaced (and ideally what the busting-page DOM looks like now) and I'll get it sorted.</p>
