@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BUSTR: Busting Reminder + PDA
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.12
+// @version      1.0.13
 // @description  Guess how many busts you can do without getting jailed. Fork: bust-penalty decay corrected to Nosy's multiplicative-inverse formula (was exponential, which undervalued older busts).
 // @author       Adobi & Ironhydedragon (decay-formula fix per Nosy [890872]'s guide)
 // @match        https://www.torn.com/*
@@ -474,29 +474,33 @@ const bustrStylesheetHTML = `<style>
     margin-left: unset;
   }
 
-  #bustr-context.contextMenu___bjhoL {
+  #bustr-context.bustr-context-menu {
     display: none;
-    left: unset;
+    position: absolute;
     right: -92px;
-    padding: 0 8px;
+    padding: 2px 10px;
     z-index: 9999;
+    align-items: center;
+    background: #373636;
+    color: #fff;
+    border-radius: 6px;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,.5);
   }
-  .contextMenuActive___e6i_B #bustr-context.contextMenu___bjhoL {
+  #nav-jail:hover + #bustr-context.bustr-context-menu,
+  [class*="contextMenuActive___"] #bustr-context.bustr-context-menu {
     display: flex;
   }
-  #bustr-context.contextMenu___bjhoL .arrow___tKP13 {
-    right: unset;
+  #bustr-context .bustr-arrow {
+    position: absolute;
     left: -6px;
+    top: 50%;
+    margin-top: -8px;
+    width: 0;
+    height: 0;
+    border-style: solid;
     border-width: 8px 6px 8px 0;
-    border-color: transparent #444 transparent transparent;
-  }
-  #bustr-context.contextMenu___bjhoL .arrow___tKP13:before {
     border-color: transparent #373636 transparent transparent;
-    border-width: 6px 5px 6px 0;
-    content: "";
-    left: unset;
-    right: -6px;
-    top: -6px;
   }
 
   #prefs-tab-menu #bustr-settings {
@@ -757,11 +761,11 @@ async function renderBustrMobileView() {
     renderMobileBustrNotification();
 
     const bustrContextMenuHTML = `
-      <div id="bustr-context" class='contextMenu___bjhoL bustr-context-menu'>
-        <span class='linkName___FoKha bustr-stats'>
+      <div id="bustr-context" class='bustr-context-menu'>
+        <span class='bustr-stats'>
         <span class="bustr-stats__penaltyScore">#</span> / <span class="bustr-stats__penaltyThreshold">#</span> : <span class="bustr-stats__availableBusts">#</span>
         </span>
-        <span class='arrow___tKP13 bustr-arrow'></span>
+        <span class='bustr-arrow'></span>
       </div>`;
 
     jailLinkEl.insertAdjacentHTML('afterend', bustrContextMenuHTML);
