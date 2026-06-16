@@ -128,4 +128,74 @@
   }
   function setSettings(s) { gmSet(SETTINGS_KEY, s); }
 
+  function apiFetch(section, id, selections, cb) {
+    var settings = getSettings();
+    if (!settings.apiKey) { cb(new Error('no api key')); return; }
+    var url = 'https://api.torn.com/v2/' + section + '/' + id + '?selections=' + selections.join(',');
+    if (typeof GM_xmlhttpRequest === 'function') {
+      GM_xmlhttpRequest({
+        method: 'GET', url: url,
+        headers: { 'Authorization': 'ApiKey ' + settings.apiKey, 'Accept': 'application/json' },
+        onload: function (r) {
+          try {
+            var d = JSON.parse(r.responseText);
+            if (d.error) { cb(new Error('api ' + d.error.code + ': ' + d.error.error)); return; }
+            cb(null, d);
+          } catch (e) { cb(e); }
+        },
+        onerror: function () { cb(new Error('network error')); }
+      });
+    } else { cb(new Error('GM_xmlhttpRequest unavailable')); }
+  }
+
+  var polling = false;
+  function pollOnce() {
+    if (polling) return;
+    polling = true;
+    var nowMs = Date.now();
+    var players = getPlayers();
+    var factions = getFactions();
+    var queue = [];
+    players.forEach(function (p, i) { queue.push({ kind: 'player', rec: p, idx: i }); });
+    factions.forEach(function (f, i) { queue.push({ kind: 'faction', rec: f, idx: i }); });
+    var qi = 0;
+    function next() {
+      if (qi >= queue.length) { polling = false; return; }
+      var job = queue[qi++];
+      if (job.kind === 'player') {
+        apiFetch('user', job.rec.id, ['profile'], function (err, d) {
+          if (!err && d) {
+            var snap = mapPlayerResponse(d);
+            var fired = evaluatePlayer(job.rec.info, snap, job.rec.alerts, nowMs);
+            job.rec.info = snap;
+            var arr = getPlayers(); if (arr[job.idx] && arr[job.idx].id === job.rec.id) { arr[job.idx].info = snap; setPlayers(arr); }
+            fired.forEach(function (a) { notifyPlayer(job.rec, snap, a); });
+            renderPanel();
+          }
+          next();
+        });
+      } else {
+        apiFetch('faction', job.rec.id, ['basic', 'chain', 'wars'], function (err, d) {
+          if (!err && d) {
+            var snap = mapFactionResponse(d);
+            var fired = evaluateFaction(job.rec.info, snap, job.rec.alerts);
+            job.rec.info = snap;
+            var arr = getFactions(); if (arr[job.idx] && arr[job.idx].id === job.rec.id) { arr[job.idx].info = snap; setFactions(arr); }
+            fired.forEach(function (a) { notifyFaction(job.rec, snap, a); });
+            renderPanel();
+          }
+          next();
+        });
+      }
+    }
+    next();
+  }
+
+  var pollTimer = null;
+  function restartPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    var secs = getSettings().pollSeconds || 30;
+    pollTimer = setInterval(pollOnce, Math.max(10, secs) * 1000);
+  }
+
 })();
