@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.2
+// @version      1.0.3
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.2';
+  var SCRIPT_VERSION = '1.0.3';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -246,20 +246,28 @@
   function notify(text, href) {
     showToast(text, href);
     playPing();
-    var sent = false;
+    try {
+      if (typeof window !== 'undefined' && window.flutter_inappwebview && typeof window.flutter_inappwebview.callHandler === 'function') {
+        window.flutter_inappwebview.callHandler('scheduleNotification', {
+          title: 'Stakeout', subtitle: text,
+          id: Math.floor(Math.random() * 9000) + 1000,
+          timestamp: Date.now() + 1500,
+          urlCallback: href || '', launchNativeToast: false
+        });
+        return;
+      }
+    } catch (_) {}
     try {
       if (typeof GM_notification === 'function') {
         GM_notification({ title: 'Stakeout', text: text, onclick: function () { if (href) window.open(href, '_blank'); } });
-        sent = true;
+        return;
       }
     } catch (_) {}
-    if (!sent) {
-      try {
-        if (typeof browser !== 'undefined' && browser.notifications && browser.notifications.create) {
-          browser.notifications.create('stk-' + Date.now(), { type: 'basic', iconUrl: 'https://www.torn.com/favicon.ico', title: 'Stakeout', message: text });
-        }
-      } catch (_) {}
-    }
+    try {
+      if (typeof browser !== 'undefined' && browser.notifications && browser.notifications.create) {
+        browser.notifications.create('stk-' + Date.now(), { type: 'basic', iconUrl: 'https://www.torn.com/favicon.ico', title: 'Stakeout', message: text });
+      }
+    } catch (_) {}
   }
 
   function notifyPlayer(rec, snap, alert) {
