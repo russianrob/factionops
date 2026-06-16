@@ -8325,13 +8325,27 @@ router.get("/api/oc/delays", async (req, res) => {
     console.error('[oc/delays] history read failed:', e.message);
   }
 
-  // Layer in-memory pending delays on top (for in-flight crimes).
+  // Layer in-memory pending delays on top (for in-flight crimes), but only
+  // ones observed recently. A pending observation that hasn't refreshed in a
+  // few hours means the OC was cancelled/abandoned without ever completing —
+  // so it never got baked + removed (that only happens on completion) and is
+  // no longer actually in-flight. Without this guard such an orphan shows as a
+  // perpetual "in-flight" delay until the 48h on-load sweep + a server restart.
+  // A genuine current delay re-observes every <=60s while a client is on the
+  // crimes page, so it stays well inside this window.
+  const FLYER_DELAY_LIVE_MS = 6 * 60 * 60 * 1000;       // surface as in-flight only if observed within 6h
+  const FLYER_DELAY_TTL_MS  = 48 * 60 * 60 * 1000;      // orphan (crime never completed) — prune at runtime, not just on load
+  const nowMs = Date.now();
   const pend = _flyerDelays.get(fid);
   if (pend) {
     for (const [k, v] of pend) {
+      const age = (v && v.observedAt) ? (nowMs - v.observedAt) : Infinity;
+      if (age > FLYER_DELAY_TTL_MS) { pend.delete(k); continue; }   // never going to bake — drop it now
+      if (age > FLYER_DELAY_LIVE_MS) continue;                      // stale — OC resolved/cancelled, not in-flight
       const [crimeId, memberId] = k.split('::');
       add(memberId, v.memberName, v.crimeName, crimeId, null, Number(v.delayedSec || 0));
     }
+    if (pend.size === 0) _flyerDelays.delete(fid);
   }
 
   const out = Array.from(stats.values()).sort((a, b) => b.totalSec - a.totalSec);
