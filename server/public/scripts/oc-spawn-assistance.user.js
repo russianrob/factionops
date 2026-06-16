@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.47
+// @version      3.2.48
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.47';
+    const SCRIPT_VERSION = '3.2.48';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -2830,6 +2830,9 @@
         .oc-table th { background: #0f1a14; color: #6b7280; padding: 5px 8px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #1a2e20; }
         .oc-table td { padding: 4px 8px; border-bottom: 1px solid #131f18; vertical-align: middle; white-space: nowrap; color: #f3f4f6; }
         .oc-table tr:hover td { background: #131f18; }
+.oc-table-tight { margin-bottom: 6px; }
+.oc-table-tight th { padding: 3px 8px; }
+.oc-table-tight td { padding: 2px 8px; vertical-align: top; line-height: 1.25; }
         .oc-row-spawn         > td:first-child { border-left: 2px solid #f4a261; padding-left: 6px; }
         .oc-row-spawn-partial > td:first-child { border-left: 2px solid #d97706; padding-left: 6px; }
         .oc-row-ok            > td:first-child { border-left: 2px solid #74c69d; padding-left: 6px; }
@@ -6295,7 +6298,7 @@
         };
         const escHtml = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
         let html = `<div style="color:#9ca3af;font-size:10px;margin-bottom:6px;">Last ${days} days · ${members.length} member${members.length === 1 ? '' : 's'} flagged · ordered by total time held</div>`;
-        html += `<table class="oc-table" style="width:100%;"><thead><tr>
+        html += `<table class="oc-table oc-table-tight" style="width:100%;"><thead><tr>
             <th>Member</th><th style="text-align:right;">Incidents</th><th style="text-align:right;">Total</th><th style="text-align:right;">Longest</th><th>Recent crimes</th>
         </tr></thead><tbody>`;
         for (const m of members) {
