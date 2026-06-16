@@ -94,4 +94,38 @@
     return;
   }
 
+  var PLAYERS_KEY = 'stakeout_players';
+  var FACTIONS_KEY = 'stakeout_factions';
+  var SETTINGS_KEY = 'stakeout_settings';
+  var DEFAULT_SETTINGS = { apiKey: '', pollSeconds: 30, sound: true, panelOpen: false, panelPos: null };
+
+  function gmGet(key, fallback) {
+    try {
+      if (typeof GM_getValue === 'function') {
+        var v = GM_getValue(key, null);
+        if (v == null) return fallback;
+        return typeof v === 'string' ? JSON.parse(v) : v;
+      }
+      var ls = localStorage.getItem(key);
+      return ls == null ? fallback : JSON.parse(ls);
+    } catch (_) { return fallback; }
+  }
+  function gmSet(key, val) {
+    try {
+      var s = JSON.stringify(val);
+      if (typeof GM_setValue === 'function') GM_setValue(key, s);
+      else localStorage.setItem(key, s);
+    } catch (_) {}
+  }
+  function getPlayers() { var a = gmGet(PLAYERS_KEY, []); return Array.isArray(a) ? a : []; }
+  function setPlayers(a) { gmSet(PLAYERS_KEY, a); }
+  function getFactions() { var a = gmGet(FACTIONS_KEY, []); return Array.isArray(a) ? a : []; }
+  function setFactions(a) { gmSet(FACTIONS_KEY, a); }
+  function getSettings() {
+    var s = gmGet(SETTINGS_KEY, null);
+    if (!s || typeof s !== 'object') return Object.assign({}, DEFAULT_SETTINGS);
+    return Object.assign({}, DEFAULT_SETTINGS, s);
+  }
+  function setSettings(s) { gmSet(SETTINGS_KEY, s); }
+
 })();
