@@ -420,4 +420,46 @@
     if (soundEl) soundEl.onchange = function () { var s = getSettings(); s.sound = soundEl.checked; setSettings(s); };
   }
 
+  function currentProfileXid() {
+    var m = location.search.match(/[?&]XID=(\d+)/i);
+    return m ? parseInt(m[1], 10) : null;
+  }
+  function currentFactionId() {
+    var m = location.search.match(/[?&]ID=(\d+)/i);
+    return (/factions\.php/i.test(location.pathname) && /step=profile/i.test(location.href) && m) ? parseInt(m[1], 10) : null;
+  }
+  function injectQuickAdd() {
+    var xid = currentProfileXid();
+    var fid = currentFactionId();
+    if (!xid && !fid) return;
+    if (document.getElementById('stk-quick')) return;
+    var anchor = document.querySelector('.content-title, [class*="titleContainer"], h4');
+    if (!anchor) return;
+    var btn = document.createElement('button');
+    btn.id = 'stk-quick';
+    btn.className = 'stk-btn';
+    btn.style.cssText = 'margin-left:8px;';
+    function refresh() {
+      if (xid) {
+        var on = getPlayers().some(function (p) { return p.id === xid; });
+        btn.textContent = on ? '📍 Staking out' : '📍 Stakeout';
+      } else {
+        var onf = getFactions().some(function (f) { return f.id === fid; });
+        btn.textContent = onf ? '📍 Staking out' : '📍 Stakeout faction';
+      }
+    }
+    btn.onclick = function () {
+      if (xid) {
+        if (getPlayers().some(function (p) { return p.id === xid; })) removePlayer(xid);
+        else addTarget(xid, 'player');
+      } else {
+        if (getFactions().some(function (f) { return f.id === fid; })) removeFaction(fid);
+        else addTarget(fid, 'faction');
+      }
+      refresh();
+    };
+    refresh();
+    anchor.appendChild(btn);
+  }
+
 })();
