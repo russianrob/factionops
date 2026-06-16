@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.0
+// @version      3.4.1
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.0';
+    var SCRIPT_VERSION = '3.4.1';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1789,8 +1789,11 @@
             var deriv = [];   // tooltip derivation lines: {label, amt, src, n, prem}
             var bonusValueInfo = function(b) {
                 if (weaponKey && b.level) {
-                    var lvlMed = getWeaponLevelMedian(itemKey, b.name, rarity, b.level);
-                    if (lvlMed) return { value: lvlMed, source: 'exact %', count: getWeaponLevelCount(itemKey, b.name, rarity, b.level) };
+                    var lvlCount = getWeaponLevelCount(itemKey, b.name, rarity, b.level);
+                    if (lvlCount) {
+                        var lvlMed = getWeaponLevelMedian(itemKey, b.name, rarity, b.level);
+                        if (lvlMed) return { value: lvlMed, source: 'exact %', count: lvlCount };
+                    }
                 }
                 var combo = comboFn(itemKey, b.name, rarity);
                 if (combo) {
