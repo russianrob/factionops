@@ -1,0 +1,31 @@
+<div style="text-align:center">
+<h2>Torn RW Pricer</h2>
+<p><em>Inline price estimates on RW weapons and armour, from daily auction data</em></p>
+</div>
+
+<p>RW weapons and armour are a pain to price. The item market shows you one listing, the auction house shows another, and unless you've been watching auctions for weeks you've got no real idea what a Yellow vs a Red one with the right bonus actually goes for.</p>
+
+<p>This script drops an <strong>RWP EST</strong> price estimate right next to RW gear wherever it shows up, so you can see what it's worth without leaving the page.</p>
+
+<ul><li>An "RWP EST" badge on RW weapons and armour across the item market, auction house, bazaars, your own items, and profiles</li><li>The estimate is built from recent auction sales and is rarity- and bonus-aware, so a Yellow Quicken and a Red Quicken don't show the same number</li><li>Combo pricing: what a specific weapon-plus-bonus actually sells for, not just the bonus on its own</li></ul>
+
+<p>The data refreshes daily, so it's not a stale one-time snapshot. Nothing to set up for the badges and no API key needed.</p>
+
+<p>Credit where it's due: this came after seeing the great <a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16530575&b=0&a=0">Full Auction Sale History</a> by Marches, and the auction sale data behind these estimates comes from there.</p>
+
+<p>Optional: add your own Torn API key and it does a few more things:</p>
+
+<ul><li><strong>Inventory prices</strong> — a market price next to every item in your inventory, not just RW gear</li><li><strong>Trade prices</strong> — a value on each item in a trade, item names shaded by how much they're worth, and a running "Total value" for each side, so you can see at a glance what's actually on the table</li><li><strong>Networth</strong> — updates your networth to include the real auction value of your RW weapons and armour, which Torn's own networth tends to undervalue</li></ul>
+
+<p>The key stays in your browser and is only used to read prices and your inventory from Torn's API.</p>
+
+<p>Works on desktop with Tampermonkey and in Torn PDA.</p>
+
+<h3>Screenshot</h3>
+<p><em>RWP EST badges on auction listings:</em></p>
+<img src="https://tornwar.com/rw-pricer-shot.png" alt="Torn RW Pricer badges on the auction house">
+
+<h3>Install</h3>
+<p><a href="https://greasyfork.org/en/scripts/569836-torn-rw-pricer">Install Torn RW Pricer on Greasy Fork</a></p>
+
+<p>If a price looks off or an item's missing, post it here and I'll take a look.</p>
