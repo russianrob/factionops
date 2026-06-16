@@ -24,6 +24,8 @@
 <h3>Screenshots</h3>
 <p><em>RWP EST badges on auction listings:</em></p>
 <img src="https://tornwar.com/rw-pricer-shot.png" alt="Torn RW Pricer badges on the auction house">
+<p><em>Inventory prices — a market price next to every item, not just RW gear:</em></p>
+<img src="https://tornwar.com/rw-pricer-inventory-shot.png" alt="Torn RW Pricer prices next to inventory items">
 <p><em>Trade pricing — a value on each item, names shaded by how much they're worth, and a total for each side:</em></p>
 <img src="https://tornwar.com/rw-pricer-trade-shot.png" alt="Torn RW Pricer item values and totals in a trade">
 
