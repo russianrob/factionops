@@ -5,6 +5,8 @@ import {
   computePollWindow,
   PRE_WAR_LOOKBACK_SEC,
   POST_WAR_LOOKAHEAD_SEC,
+  POLL_INTERVAL_MS,
+  MAX_BACKOFF_MS,
 } from "./xanax-tracker.js";
 
 const DAY = 24 * 60 * 60;
@@ -117,4 +119,12 @@ test("active/upcoming war has no post-war cap", () => {
   const war = { factionId: 42055, warStart: now - DAY };
   const w = computePollWindow(war, now);
   assert.equal(w.warEndCapSec, null);
+});
+
+test("polls every 1 hour — API-frugal cadence (xanax events are sparse)", () => {
+  assert.equal(POLL_INTERVAL_MS, 60 * 60 * 1000);
+});
+
+test("retry backoff caps at 2 hours", () => {
+  assert.equal(MAX_BACKOFF_MS, 2 * 60 * 60 * 1000);
 });

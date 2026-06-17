@@ -26,8 +26,14 @@
 import * as store from "./store.js";
 import { fetchFactionArmouryNews, fetchFactionArmouryNewsRange } from "./torn-api.js";
 
-const POLL_INTERVAL_MS = 5 * 60 * 1000;     // 5 min
-const MAX_BACKOFF_MS   = 30 * 60 * 1000;    // 30 min cap on retry backoff
+// Xanax is taken a handful of times a day, not continuously, and this is a
+// post-war accountability number read after the fact — so a slow cadence is
+// fine and keeps API-call volume low. The tracker always fetches from
+// lastPolledAt forward, so nothing is missed between polls as long as a
+// single poll's slice stays under Torn's 100-entry-per-page / 30-page cap;
+// 1h of a faction's armoury news is comfortably within that.
+export const POLL_INTERVAL_MS = 60 * 60 * 1000;    // 1 hour
+export const MAX_BACKOFF_MS   = 2 * 60 * 60 * 1000; // 2 h cap on retry backoff
 // Many factions stack xanax in the 24h before a ranked war starts
 // (legitimate energy prep — you take xanax now so the energy is
 // available when the war kicks off). Counting only xanax taken AFTER
@@ -128,13 +134,13 @@ export function startXanaxTracker(warId) {
       // back unused vials hours after the war ends) need to land in
       // the report; the original "one final flush + stop" logic was
       // dropping them even though the matching events would have
-      // counted under the 24h cap. Cadence relaxed to 5 min post-war
-      // since news rate is much lower then.
+      // counted under the 24h cap. Same POLL_INTERVAL_MS cadence post-war
+      // (news rate is even lower then).
       if (war?.warEnded) {
         await pollOnce(warId).catch(() => {});
         const cutoffMs = (Number(war.warEndedAt) || Date.now()) + POST_WAR_LOOKAHEAD_SEC * 1000;
         if (Date.now() < cutoffMs) {
-          timers.set(warId, setTimeout(tick, 5 * 60 * 1000));
+          timers.set(warId, setTimeout(tick, POLL_INTERVAL_MS));
           return;
         }
         stopXanaxTracker(warId);
@@ -160,8 +166,8 @@ export function startXanaxTracker(warId) {
   };
 
   // Kick off immediately so the first window of news is captured
-  // without waiting 5 min — useful when a war is detected mid-flight
-  // (start-of-tracker = several minutes after war start).
+  // without waiting a full interval — useful when a war is detected
+  // mid-flight (start-of-tracker = several minutes after war start).
   timers.set(warId, setTimeout(tick, 1_000));
   console.log(`[xanax-tracker] Started for war ${warId} (poll every ${POLL_INTERVAL_MS/1000}s)`);
 }
