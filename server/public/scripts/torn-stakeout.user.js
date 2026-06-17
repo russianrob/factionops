@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.5
+// @version      1.0.6
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.5';
+  var SCRIPT_VERSION = '1.0.6';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -230,7 +230,7 @@
     t.className = 'stk-toast';
     var msg = document.createElement('span');
     msg.className = 'stk-toast-msg';
-    msg.textContent = '📍 ' + text;
+    msg.textContent = text;
     msg.onclick = function () { if (href) window.open(href, '_blank'); t.remove(); };
     var x = document.createElement('span');
     x.className = 'stk-toast-x';
