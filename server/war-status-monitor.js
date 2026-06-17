@@ -706,7 +706,11 @@ function startEnemyProfileMonitor(io, warId) {
       broadcastSSE(warId, { enemyStatuses: { [targetId]: updated } });
     } catch (err) {
       const msg = err.message || "";
-      if (!/Too many requests/i.test(msg)) {
+      // 5xx are transient Torn-side gateway outages, not per-enemy actionable —
+      // suppress the per-member spam (during a Torn 504 wave this poller logged
+      // ~one line per enemy per 30s = thousands). The war-level chain/war-status
+      // pollers still log 504s once per war, so outages stay visible.
+      if (!/Too many requests|HTTP 5\d\d/i.test(msg)) {
         console.warn(`[enemy-profile] ${targetId}: ${msg}`);
       }
       // v5.0.3: per-enemy poller cycles through MANY pool keys per second,
