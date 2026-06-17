@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.30
+// @version      5.1.31
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.30';
+    const SCRIPT_VERSION = '5.1.31';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -3152,6 +3152,8 @@ body.wb-chain-active {
         // Map of targetId -> { level, setBy: { id, name }, timestamp }
         priorities: {},
 
+        retals: [],
+
         // Map of targetId -> { status, until, description, activity }
         statuses: {},
 
@@ -4946,6 +4948,8 @@ body.wb-chain-active {
             state.calls = data.calls;
         }
 
+        if (data.retals) { state.retals = data.retals; if (typeof renderRetalList === 'function') renderRetalList(); }
+
         // ── Chain ──
         if (data.chainData) {
             const oldCurrent = state.chain.current;
@@ -5205,6 +5209,10 @@ body.wb-chain-active {
         // Also handle the initial state sent on join
         realtimeSocket.on('war_state', (data) => {
             applyServerData(data);
+        });
+
+        realtimeSocket.on('retals', (data) => {
+            applyServerData({ retals: (data && data.retals) || [] });
         });
 
         // Faction-member bars/cooldowns self-reports (Option B dashboard).
