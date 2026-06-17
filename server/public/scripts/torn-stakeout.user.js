@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.4
+// @version      1.0.5
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.4';
+  var SCRIPT_VERSION = '1.0.5';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -306,8 +306,8 @@
       '.stk-toast-msg{cursor:pointer;flex:1;}',
       '.stk-toast-x{cursor:pointer;opacity:.55;padding:0 2px;font-size:12px;}',
       '.stk-toast-x:hover{opacity:1;}',
-      '#stk-fab{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:44px;height:44px;border-radius:50%;background:#1b1f2a;border:1px solid #2a3447;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.5);}',
-      '#stk-panel{position:fixed;right:16px;bottom:70px;z-index:2147483646;width:320px;max-height:70vh;overflow:auto;background:#10141c;border:1px solid #2a3447;border-radius:10px;color:#e6e8ee;font:13px system-ui,sans-serif;padding:10px;box-shadow:0 8px 24px rgba(0,0,0,.6);display:none;}',
+      '#stk-cog{margin-left:8px;}',
+      '#stk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:320px;max-height:70vh;overflow:auto;background:#10141c;border:1px solid #2a3447;border-radius:10px;color:#e6e8ee;font:13px system-ui,sans-serif;padding:10px;box-shadow:0 8px 24px rgba(0,0,0,.6);display:none;}',
       '#stk-panel.stk-open{display:block;}',
       '.stk-row{border-bottom:1px solid #1c2330;padding:6px 2px;}',
       '.stk-row .stk-name{font-weight:600;}',
@@ -324,23 +324,21 @@
 
   function ensurePanel() {
     injectStyles();
-    if (!document.getElementById('stk-fab')) {
-      var fab = document.createElement('div');
-      fab.id = 'stk-fab'; fab.textContent = '📍';
-      fab.onclick = function () {
-        var p = document.getElementById('stk-panel');
-        p.classList.toggle('stk-open');
-        var st = getSettings(); st.panelOpen = p.classList.contains('stk-open'); setSettings(st);
-        if (st.panelOpen) { renderPanel(); requestWebNotifPermission(); }
-      };
-      document.body.appendChild(fab);
-    }
     if (!document.getElementById('stk-panel')) {
       var panel = document.createElement('div');
       panel.id = 'stk-panel';
       document.body.appendChild(panel);
       if (getSettings().panelOpen) panel.classList.add('stk-open');
     }
+  }
+
+  function togglePanel() {
+    ensurePanel();
+    var p = document.getElementById('stk-panel');
+    if (!p) return;
+    p.classList.toggle('stk-open');
+    var st = getSettings(); st.panelOpen = p.classList.contains('stk-open'); setSettings(st);
+    if (st.panelOpen) { renderPanel(); requestWebNotifPermission(); }
   }
 
   function defaultPlayerAlerts() { return { okay: false, hospital: true, landing: true, online: true, life: false, offline: false, revivable: false }; }
@@ -488,34 +486,45 @@
     var xid = currentProfileXid();
     var fid = currentFactionId();
     if (!xid && !fid) return;
-    if (document.getElementById('stk-quick')) return;
+    if (document.getElementById('stk-cog') && document.getElementById('stk-quick')) return;
     var anchor = document.querySelector('.content-title, [class*="titleContainer"], h4');
     if (!anchor) return;
-    var btn = document.createElement('button');
-    btn.id = 'stk-quick';
-    btn.className = 'stk-btn';
-    btn.style.cssText = 'margin-left:8px;';
-    function refresh() {
-      if (xid) {
-        var on = getPlayers().some(function (p) { return p.id === xid; });
-        btn.textContent = on ? '📍 Staking out' : '📍 Stakeout';
-      } else {
-        var onf = getFactions().some(function (f) { return f.id === fid; });
-        btn.textContent = onf ? '📍 Staking out' : '📍 Stakeout faction';
-      }
+    if (!document.getElementById('stk-cog')) {
+      var cog = document.createElement('button');
+      cog.id = 'stk-cog';
+      cog.className = 'stk-btn';
+      cog.textContent = '⚙️ Stakeout';
+      cog.title = 'Open the Stakeout panel';
+      cog.onclick = function () { togglePanel(); };
+      anchor.appendChild(cog);
     }
-    btn.onclick = function () {
-      if (xid) {
-        if (getPlayers().some(function (p) { return p.id === xid; })) removePlayer(xid);
-        else addTarget(xid, 'player');
-      } else {
-        if (getFactions().some(function (f) { return f.id === fid; })) removeFaction(fid);
-        else addTarget(fid, 'faction');
-      }
+    if (!document.getElementById('stk-quick')) {
+      var btn = document.createElement('button');
+      btn.id = 'stk-quick';
+      btn.className = 'stk-btn';
+      btn.style.cssText = 'margin-left:6px;';
+      var refresh = function () {
+        if (xid) {
+          var on = getPlayers().some(function (p) { return p.id === xid; });
+          btn.textContent = on ? 'Staking out' : 'Stake out';
+        } else {
+          var onf = getFactions().some(function (f) { return f.id === fid; });
+          btn.textContent = onf ? 'Staking out' : 'Stake out faction';
+        }
+      };
+      btn.onclick = function () {
+        if (xid) {
+          if (getPlayers().some(function (p) { return p.id === xid; })) removePlayer(xid);
+          else addTarget(xid, 'player');
+        } else {
+          if (getFactions().some(function (f) { return f.id === fid; })) removeFaction(fid);
+          else addTarget(fid, 'faction');
+        }
+        refresh();
+      };
       refresh();
-    };
-    refresh();
-    anchor.appendChild(btn);
+      anchor.appendChild(btn);
+    }
   }
 
   function boot() {
