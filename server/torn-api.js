@@ -106,6 +106,35 @@ export async function fetchFactionChain(factionId, apiKey) {
 }
 
 /**
+ * Fetch a key's own access level + available faction selections.
+ * Torn v1: GET /key/?selections=info → { access_level, access_type,
+ * selections: { faction: [...], user: [...], ... } }. Used to route
+ * pooled keys away from calls they can't serve (e.g. a Custom key
+ * without `chain`). Returns { accessLevel:number, factionSelections:string[] }.
+ */
+export async function fetchKeyInfo(apiKey) {
+  const url = `https://api.torn.com/key/?selections=info&key=${encodeURIComponent(apiKey)}&comment=wb-api`;
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Torn API returned HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+
+  if (data.error) {
+    throw new Error(`Torn API error: ${data.error.error} (code ${data.error.code})`);
+  }
+
+  return {
+    accessLevel: Number(data.access_level) || 0,
+    factionSelections: Array.isArray(data.selections?.faction)
+      ? data.selections.faction.map(String)
+      : [],
+  };
+}
+
+/**
  * Fetch current ranked war data for a faction.
  * Returns { warId, enemyFactionId, enemyFactionName, myScore, enemyScore } or null if no active ranked war.
  *

@@ -804,6 +804,21 @@ export function getPooledKeysForFaction(factionId, requiredSelection = null) {
 }
 
 /**
+ * Every enabled pool opt-in with its decrypted key, across all factions —
+ * for the periodic access-level verification sweep (key-verify.js).
+ */
+export function getAllPooledKeys() {
+  const out = [];
+  for (const [playerId, opt] of keyPoolingOpt) {
+    if (!opt.enabled) continue;
+    const key = apiKeys.get(playerId);
+    if (!key) continue;
+    out.push({ playerId, factionId: opt.factionId, key });
+  }
+  return out;
+}
+
+/**
  * Auto-quarantine: when a poll using a pool key returns Torn API error
  * code 7 ("Incorrect ID-entity relation"), the key's owner is no longer
  * in the faction OR their access level dropped below what the call needs.

@@ -25,6 +25,7 @@ import { socketAuth } from "./auth.js";
 import { registerSocketHandlers } from "./socket-handlers.js";
 import { startChainMonitor, stopAll as stopAllChainMonitors } from "./chain-monitor.js";
 import { startWarStatusMonitor, stopAll as stopAllWarStatusMonitors } from "./war-status-monitor.js";
+import { verifyPoolKeyAccess } from "./key-verify.js";
 import { loadHeatmaps, stopFlush as stopHeatmapFlush } from "./activity-heatmap.js";
 import { startMembershipSchedule, stopMembershipSchedule } from "./membership-check.js";
 import { startXanaxSubscriptions, stopXanaxSubscriptions, getActiveSubscribedFactionIds } from "./xanax-subscriptions.js";
@@ -539,6 +540,13 @@ store.loadPlayerKeys();
 store.loadFactionSettings();
 store.loadKeyPoolingOpt();
 store.loadPlayerFactions();
+
+// Verify pooled keys' access levels (Torn key/info) so the per-purpose key
+// router skips keys that can't serve a call (e.g. a Custom key without `chain`)
+// instead of failing every poll. Deferred 20s so it doesn't block boot; re-runs
+// every 6h since key access levels change rarely.
+setTimeout(() => { verifyPoolKeyAccess().catch(() => {}); }, 20_000);
+setInterval(() => { verifyPoolKeyAccess().catch(() => {}); }, 6 * 60 * 60 * 1000);
 store.loadMemberBars();
 store.loadPayoutSettings();
 // War history: seed from the persisted payout cache (one-time catch-up for

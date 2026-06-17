@@ -309,13 +309,6 @@ export function startChainMonitor(io, warId) {
         // v5.0.3: code 2 = key regenerated/revoked; quarantine same as
         // code 7 so the rotation stops picking the dead key.
         store.quarantinePoolKey(apiKey, war.factionId, 'chain code 2');
-      } else if (/Access level of this key is not high enough|\(code 16\)/i.test(err.message)) {
-        // code 16 = the key's access level is too low for the chain selection
-        // (a Public/Minimal pool key) — it can NEVER read chain, so it failed
-        // every poll forever. Quarantine it (the exact access-level case
-        // quarantinePoolKey was built for); disabling it pool-wide also stops
-        // the other faction pollers picking it. Owner re-enables after upgrading.
-        store.quarantinePoolKey(apiKey, war.factionId, 'chain code 16');
       }
       // Exponential backoff on failure
       const current = backoffs.get(warId) || POLL_INTERVAL_MS;
