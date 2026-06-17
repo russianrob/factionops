@@ -224,6 +224,7 @@ function broadcastWarUpdate(warId) {
     calls: war.calls,
     priorities: war.priorities,
     enemyStatuses: war.enemyStatuses,
+    retals: war.incomingRetals || [],
     chainData: war.chainData,
     onlinePlayers: store.getOnlinePlayersForWar(warId),
     viewers: store.getViewersForWar(warId),
@@ -1467,6 +1468,7 @@ router.get("/api/faction/:factionId/war", requireAuth, (req, res) => {
         calls: war.calls,
         priorities: war.priorities,
         enemyStatuses: war.enemyStatuses,
+        retals: war.incomingRetals || [],
         chainData: war.chainData,
       });
     }
@@ -1505,6 +1507,7 @@ router.get("/api/faction/:factionId/war", requireAuth, (req, res) => {
         calls: mostRecent.calls,
         priorities: mostRecent.priorities,
         enemyStatuses: mostRecent.enemyStatuses,
+        retals: mostRecent.incomingRetals || [],
         chainData: mostRecent.chainData,
       });
     }
@@ -1562,6 +1565,8 @@ router.get("/api/stream", (req, res, next) => {
     return res.status(403).json({ error: "Not a member of this war's faction" });
   }
 
+  war.lastClientPollAt = Date.now();
+
   // Track player as online
   store.setPlayer(playerId, {
     socketId: `sse_${playerId}`,
@@ -1590,6 +1595,7 @@ router.get("/api/stream", (req, res, next) => {
     calls: war.calls,
     priorities: war.priorities,
     enemyStatuses: war.enemyStatuses,
+    retals: war.incomingRetals || [],
     chainData: war.chainData,
     onlinePlayers: store.getOnlinePlayersForWar(warId),
     viewers: store.getViewersForWar(warId),
@@ -1667,6 +1673,8 @@ router.get("/api/poll", (req, res, next) => {
   if (war.factionId !== factionId) {
     return res.status(403).json({ error: "You are not a member of this war's faction" });
   }
+
+  war.lastClientPollAt = Date.now();
 
   // WIPE STALE WAR DATA if enemy faction ID changed (bug fix)
   if (enemyFactionId && war.enemyFactionId !== enemyFactionId) {
@@ -1754,6 +1762,7 @@ router.get("/api/poll", (req, res, next) => {
     calls: war.calls,
     priorities: war.priorities,
     enemyStatuses: war.enemyStatuses,
+    retals: war.incomingRetals || [],
     chainData: war.chainData,
     onlinePlayers: store.getOnlinePlayersForWar(warId),
     viewers: store.getViewersForWar(warId),
