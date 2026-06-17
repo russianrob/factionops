@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.33
+// @version      2.73.34
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -1807,6 +1807,13 @@ if (!singleton) {
       // The .member-list doesn't have a .lvl, give up
       return;
     }
+    // Idempotent re-render: this runs more than once (cached first, then again
+    // when fresh FF data lands) and APPENDS, so without clearing the prior cells
+    // a second call stacks a DUPLICATE FF/Est column. Drop any FF/Est cells a
+    // previous call injected (header + per-row) before re-adding.
+    $(".table-header, .table-body")
+      .find(".ff-scouter-ff-visible, .ff-scouter-ff-hidden, .ff-scouter-est-visible, .ff-scouter-est-hidden")
+      .remove();
     $(".table-header > .lvl")[0].after(ff_li, est_li);
 
     const player_ids = [];
@@ -3017,7 +3024,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.33';
+  const SCRIPT_VERSION = '2.73.34';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
