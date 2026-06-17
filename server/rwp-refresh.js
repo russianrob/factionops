@@ -35,7 +35,7 @@ function extractFunction(src, name) {
 
 function extractCompute(src) {
   const parts = [];
-  for (const name of ["COMBO_MIN_SAMPLES","WEAPON_CLASS","BONUS_ID_MAP","ITEM_ID_MAP","ARMOUR_SET","ARMOUR_ID_MAP","ARMOUR_BONUS_MAP","RARITY_MAP"]) {
+  for (const name of ["COMBO_MIN_SAMPLES","LEVEL_MIN_SAMPLES","WEAPON_CLASS","BONUS_ID_MAP","ITEM_ID_MAP","ARMOUR_SET","ARMOUR_ID_MAP","ARMOUR_BONUS_MAP","RARITY_MAP"]) {
     const m = src.match(new RegExp("^[ \\t]*var[ \\t]+" + name + "[ \\t]*=.*$", "m"));
     if (!m) throw new Error("rwp: var not found: " + name);
     parts.push(m[0].trim());
