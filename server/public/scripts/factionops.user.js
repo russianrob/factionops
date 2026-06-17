@@ -9850,7 +9850,7 @@ body.wb-chain-active {
             const rem = r.endedTs + 300 - nowSec;
             const cd = Math.floor(rem / 60) + ':' + String(rem % 60).padStart(2, '0');
             const lvl = r.attackerLevel ? ' [' + r.attackerLevel + ']' : '';
-            return '<li class="fo-retal-row" data-fo-retal="' + r.attackId + '" data-ended="' + r.endedTs + '">'
+            return '<li class="fo-retal-row" data-fo-retal="' + escapeHtml(r.attackId) + '" data-ended="' + r.endedTs + '">'
                 + '<div class="fo-retal-main">'
                 + '<a class="fo-retal-name" href="/profiles.php?XID=' + r.attackerId + '" target="_blank" rel="noopener">'
                 + escapeHtml(r.attackerName) + lvl + '</a>'
