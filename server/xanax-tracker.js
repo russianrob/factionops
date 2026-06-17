@@ -33,14 +33,14 @@ const MAX_BACKOFF_MS   = 30 * 60 * 1000;    // 30 min cap on retry backoff
 // available when the war kicks off). Counting only xanax taken AFTER
 // warStart would unfairly flag everyone who pre-stacked. Backfill the
 // window so the deficit math credits pre-war energy too.
-const PRE_WAR_LOOKBACK_SEC = 24 * 60 * 60;  // 24 hours
+export const PRE_WAR_LOOKBACK_SEC = 24 * 60 * 60;  // 24 hours
 // And many factions keep chaining for hours after a war ends —
 // finishing off a respect chain that built up during the war. Xanax
 // taken in those hours is still part of the same effort. Extend the
 // post-war window so it gets counted too. Post-war attack counts get
 // added separately by the post-war report endpoint via the faction
 // attack log so the math stays fair.
-const POST_WAR_LOOKAHEAD_SEC = 24 * 60 * 60; // 24 hours
+export const POST_WAR_LOOKAHEAD_SEC = 24 * 60 * 60; // 24 hours
 
 /** Per-warId timeout handles so we can cancel cleanly. */
 const timers   = new Map();
@@ -48,6 +48,37 @@ const timers   = new Map();
 const cursors  = new Map();
 /** Per-warId backoff in ms after consecutive failures. */
 const backoffs = new Map();
+/** Per-warId latch so the "deferring until pre-war window" line logs once. */
+const deferredLogged = new Set();
+
+/**
+ * Pure decision for a poll round: what time range to fetch and whether
+ * the window is even open yet. Extracted so the upcoming-war edge cases
+ * are unit-testable without hitting the network.
+ *
+ * `fromTs` is lastPolledAt once a war has polled at least once; otherwise
+ * it walks back PRE_WAR_LOOKBACK_SEC from warStart to backfill the pre-war
+ * stacking phase. `to` is now. `open` is false when fromTs >= to — which
+ * happens for an UPCOMING war whose 24h pre-war window has not started yet
+ * (warStart - PRE_WAR_LOOKBACK_SEC is still in the future). Fetching such a
+ * range sends Torn `from > to`, which it rejects (code 4 "Wrong fields")
+ * on every key — the source of the per-cycle xanax error flood. When the
+ * window isn't open there is simply no armoury news to fetch yet, so the
+ * caller skips the round entirely.
+ */
+export function computePollWindow(war, nowSec) {
+  // lastPolledAt is always a truthy second-precision timestamp once a war
+  // has polled at least once (set at the end of pollOnce), so `|| 0` here
+  // safely means "never polled" rather than "polled at the epoch".
+  const lastPolled = (war && war.xanaxStats && war.xanaxStats.lastPolledAt) || 0;
+  const fromTs = lastPolled
+    || (((war && war.warStart) || nowSec) - PRE_WAR_LOOKBACK_SEC);
+  const to = nowSec;
+  const warEndCapSec = war && war.warEnded && war.warEndedAt
+    ? Math.floor(Number(war.warEndedAt) / 1000) + POST_WAR_LOOKAHEAD_SEC
+    : null;
+  return { fromTs, to, warEndCapSec, open: fromTs < to };
+}
 
 /**
  * Match xanax-related armoury news. Two phrasings observed in live data:
@@ -142,6 +173,7 @@ export function stopXanaxTracker(warId) {
   timers.delete(warId);
   cursors.delete(warId);
   backoffs.delete(warId);
+  deferredLogged.delete(warId);
   console.log(`[xanax-tracker] Stopped for war ${warId}`);
 }
 
@@ -154,6 +186,7 @@ export function stopAll() {
   timers.clear();
   cursors.clear();
   backoffs.clear();
+  deferredLogged.clear();
 }
 
 /**
@@ -193,23 +226,31 @@ async function pollOnce(warId) {
   // First-ever poll for this war: walk back PRE_WAR_LOOKBACK_SEC so we
   // capture the pre-war stacking phase (faction members typically take
   // 1-3 xanax in the 24h before kickoff to bank energy). Subsequent
-  // polls only fetch from lastPolledAt forward.
-  const fromTs = stats.lastPolledAt
-    || ((war.warStart || Math.floor(Date.now()/1000)) - PRE_WAR_LOOKBACK_SEC);
-  // Cap polling at warEndedAt + POST_WAR_LOOKAHEAD_SEC for ended wars.
-  // Includes the chain-finishing window where members keep xanaxing
-  // to extend the chain that built up during the war. Beyond that,
-  // xanax usage is normal-life consumption and not war-related.
-  const warEndCapSec = war.warEnded && war.warEndedAt
-    ? Math.floor(Number(war.warEndedAt) / 1000) + POST_WAR_LOOKAHEAD_SEC
-    : null;
+  // polls only fetch from lastPolledAt forward. warEndCapSec caps ended
+  // wars at warEndedAt + POST_WAR_LOOKAHEAD_SEC (the chain-finishing
+  // window); beyond that, xanax usage is normal-life and not war-related.
+  const nowSec = Math.floor(Date.now()/1000);
+  const { fromTs, to: windowTo, warEndCapSec, open } = computePollWindow(war, nowSec);
+  // Upcoming war whose 24h pre-war window has not opened yet: fromTs is
+  // still in the future, so there is nothing to fetch and a fetch would
+  // send Torn from>to (code 4 on every key). Skip quietly — the tick loop
+  // re-checks every 5 min and starts for real once the window opens.
+  if (!open) {
+    if (!deferredLogged.has(warId)) {
+      deferredLogged.add(warId);
+      const opensAt = new Date(fromTs * 1000).toISOString();
+      console.log(`[xanax-tracker] war ${warId}: armoury news window not open yet — deferring until ${opensAt}`);
+    }
+    return;
+  }
+  deferredLogged.delete(warId);
   // Torn caps results at 100 entries per call. For a busy faction this
   // can mean a single fetch only covers 1-3 hours of news, so the first
   // pull (covering 24h+ of pre-war + war-so-far) needs pagination. Walk
   // backwards in time using `to` until we either reach fromTs or get a
   // partial page (signal that we've drained the window).
   const allEntries = [];
-  let to = Math.floor(Date.now()/1000);
+  let to = windowTo;
   for (let page = 0; page < 30; page++) {
     const batch = await fetchFactionArmouryNewsRange(war.factionId, apiKey, fromTs, to);
     if (batch.length === 0) break;
