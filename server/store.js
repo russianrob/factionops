@@ -205,6 +205,7 @@ export function getOrCreateWar(warId, factionId, enemyFactionId = null) {
       war.calls = {};
       war.priorities = {};
       war.enemyStatuses = {};
+      war.incomingRetals = [];
       war.warTarget = null;
       war.enemyActivityLog = [];
       war.strategy = null;
@@ -244,6 +245,7 @@ export function getOrCreateWar(warId, factionId, enemyFactionId = null) {
     calls: {},
     priorities: {},
     enemyStatuses: {},
+    incomingRetals: [],
     chainData: { current: 0, max: 0, timeout: 0, cooldown: 0 },
     warTarget: null,
     enemyActivityLog: [],
@@ -762,6 +764,7 @@ const PURPOSE_REQUIRED_SELECTION = {
   "war-status":    "members",
   "chain":         "chain",
   "xanax-tracker": "armorynews",
+  "retals":        "attacks",
 };
 
 /** Look up the faction selection a poller's purpose requires, if any. */
