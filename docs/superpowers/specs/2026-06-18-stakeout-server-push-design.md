@@ -1,5 +1,8 @@
 # Stakeout Server-Side Push — Design
 
+> **REVISION 2026-06-18b — isolated per-owner key model (supersedes Components 1–3 below).**
+> Per RussianRob's directive, the stakeout key is a **self-contained island**: each user enters their own Torn key in the userscript, which POSTs `{apiKey, players, factions}` to an **unauthenticated** `POST /api/stakeout/sync`. The server resolves the key's owner via one Torn `/user` call, stores the key **AES-encrypted in `data/stakeout-watchers.json`** (per owner — `{ owners: { <pid>: { key, players, factions } } }`), and the watcher polls **only that owner's targets using only that owner's key**. The key is **never** put in warboard's `store`/pool, `player-keys.json`, the factionops `/api/auth` JWT, or the faction lock. Polling is **per-owner** (a target watched by two people is fetched twice, once per key); clearing a watch list **deletes the stored key**. The only warboard surface used is push **delivery** (APNs/FCM/Web Push). This replaces the original "shared subscriber row + caller's-own-key via `store.getApiKeyForPlayer` + faction-locked `/api/auth`" design in Components 1–3 and the Data-flow section. The **canonical, current build instructions live in the plan**: `docs/superpowers/plans/2026-06-18-stakeout-server-push.md` (v2). Sections below on delivery fan-out, Web Push, error handling, and testing remain accurate.
+
 ## Goal
 
 Move Stakeout trigger detection off the user's phone/browser and onto the always-on warboard VPS, so attack-window alerts (target comes online / leaves hospital / lands / becomes revivable) fire even when the app or tab is fully closed. The userscript stays the editor of the watch list; the server mirrors it, polls Torn, edge-detects, and pushes via OS/browser channels.
