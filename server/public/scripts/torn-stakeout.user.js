@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.8
+// @version      1.0.9
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.8';
+  var SCRIPT_VERSION = '1.0.9';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -321,6 +321,8 @@
       '.stk-num{width:46px;margin:0 3px;padding:1px 4px;border:1px solid rgba(128,128,128,.45);border-radius:3px;background:rgba(128,128,128,.12);color:inherit;font:inherit;}',
       '.stk-foot{margin-top:10px;padding-top:8px;border-top:1px solid rgba(128,128,128,.25);font-size:11px;opacity:.9;display:flex;flex-direction:column;gap:5px;}',
       '.stk-foot input{padding:2px 5px;border:1px solid rgba(128,128,128,.45);border-radius:3px;background:rgba(128,128,128,.12);color:inherit;font:inherit;}',
+      '.stk-test{background:linear-gradient(#8aac3d,#6f9430);color:#fff;border:0;border-radius:4px;padding:4px 10px;font:inherit;font-weight:700;cursor:pointer;}',
+      '.stk-test:hover{filter:brightness(1.08);}',
       '.stk-foot .stk-key{width:150px;} .stk-foot .stk-polln{width:54px;}',
       '.stk-status{font-size:11px;opacity:.65;margin-top:6px;}',
       '.stk-watch{margin-top:2px;}',
@@ -448,6 +450,7 @@
     html += '<div class="stk-foot">';
     html += '<div>API key <input class="stk-key" id="stk-key" value="' + (s.apiKey ? '••••••••' : '') + '" placeholder="Torn API key"></div>';
     html += '<div>Poll <input class="stk-polln" id="stk-poll" value="' + s.pollSeconds + '"> s &nbsp; <label><input type="checkbox" id="stk-sound"' + (s.sound ? ' checked' : '') + '> sound</label></div>';
+    html += '<div><button type="button" class="stk-test" id="stk-test">🔔 Test notification</button></div>';
     html += watchHtml();
     html += '</div>';
     body.innerHTML = html;
@@ -482,6 +485,14 @@
     if (pollEl) pollEl.onchange = function () { var s = getSettings(); s.pollSeconds = Math.max(10, parseInt(pollEl.value, 10) || 30); setSettings(s); restartPolling(); };
     var soundEl = body.querySelector('#stk-sound');
     if (soundEl) soundEl.onchange = function () { var s = getSettings(); s.sound = soundEl.checked; setSettings(s); };
+    var testEl = body.querySelector('#stk-test');
+    if (testEl) testEl.onclick = function () {
+      var fire = function () { notify('Stakeout test notification ✅ — if this also shows as a system notification (not just this toast), alerts will work.', 'https://www.torn.com'); };
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default' && Notification.requestPermission) { Notification.requestPermission().then(fire); return; }
+      } catch (_) {}
+      fire();
+    };
     body.querySelectorAll('.stk-watch-x').forEach(function (a) {
       a.onclick = function (e) { e.preventDefault(); e.stopPropagation(); var id = parseInt(a.getAttribute('data-id'), 10); if (a.getAttribute('data-wx') === 'p') removePlayer(id); else removeFaction(id); };
     });
