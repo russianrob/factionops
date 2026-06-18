@@ -3,6 +3,8 @@ import vm from "node:vm";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as push from "./push-notifications.js";
+import * as stakeoutStore from "./stakeout-store.js";
+import { decrypt } from "./key-encryption.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -69,4 +71,56 @@ export async function notifyStakeoutAlert(subscriberIds, targetId, snap, firedKe
   } catch (e) {
     console.warn("[stakeout-watcher] push failed:", e.message);
   }
+}
+
+async function _fetchTorn(kind, id, key) {
+  const section = kind === "faction" ? "faction" : "user";
+  const selections = kind === "faction" ? "basic,chain,wars" : "profile";
+  const url = `https://api.torn.com/v2/${section}/${id}?selections=${selections}&comment=wb-stakeout`;
+  const res = await fetch(url, { headers: { Authorization: `ApiKey ${key}`, Accept: "application/json" } });
+  const json = await res.json();
+  if (!json || json.error) return null;
+  return json;
+}
+
+export async function runPoll(opts = {}) {
+  const fetchImpl = opts.fetchImpl || _fetchTorn;
+  const sendImpl = opts.sendImpl || notifyStakeoutAlert;
+  const nowFn = opts.nowFn || Date.now;
+  const decryptKey = opts.decryptKey || decrypt;
+  const st = stakeoutStore.getState();
+  const ownerIds = Object.keys(st.owners || {});
+  let polled = 0, fired = 0;
+  if (ownerIds.length === 0) return { owners: 0, polled, fired };
+  for (const ownerId of ownerIds) {
+    const owner = st.owners[ownerId];
+    let key;
+    try { key = decryptKey(owner.key); } catch { key = null; }
+    if (!key) continue;
+    for (const [kind, map] of [["player", owner.players || {}], ["faction", owner.factions || {}]]) {
+      for (const [id, target] of Object.entries(map)) {
+        let json;
+        try { json = await fetchImpl(kind, id, key); } catch { json = null; }
+        if (!json) continue; // bad read -> do not touch info
+        const snap = kind === "faction" ? engine.mapFactionResponse(json) : engine.mapPlayerResponse(json);
+        const firedKeys = evaluateTarget(target, snap, kind, nowFn());
+        polled++;
+        if (firedKeys.length) { await sendImpl([ownerId], id, snap, firedKeys, kind); fired++; }
+      }
+    }
+  }
+  stakeoutStore.scheduleSave();
+  return { owners: ownerIds.length, polled, fired };
+}
+
+let _pollTimer = null;
+export function startWatcher() {
+  if (_pollTimer) return;
+  _pollTimer = setInterval(() => { runPoll().catch((e) => console.warn("[stakeout-watcher] poll error:", e.message)); }, POLL_INTERVAL_MS);
+  console.log(`[stakeout-watcher] started (every ${POLL_INTERVAL_MS / 1000}s)`);
+  runPoll().catch(() => {});
+}
+export function stopWatcher() {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+  stakeoutStore.flushSync();
 }
