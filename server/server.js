@@ -36,6 +36,8 @@ import * as warHistory from "./war-history.js";
 import { computePayouts, backfillWarScores } from "./war-payouts.js";
 import { maybeRefreshItemValues, onItemValuesRefreshed, getItemMarketValue } from "./item-values.js";
 import * as priceWatcher from "./price-watcher.js";
+import * as stakeoutStore from "./stakeout-store.js";
+import { startWatcher as startStakeoutWatcher, stopWatcher as stopStakeoutWatcher } from "./stakeout-watcher.js";
 import { startRwpRefresh } from "./rwp-refresh.js";
 import { startRestockTracker } from "./restock-tracker.js";
 import * as itemMarket from "./item-market.js";
@@ -592,6 +594,12 @@ setInterval(_refreshItemPrices, 300_000);
 // every price refresh, push-alerting the configured player on cross-up.
 priceWatcher.load();
 onItemValuesRefreshed(() => priceWatcher.checkWatchers());
+// Stakeout server-side push: isolated per-owner watcher. Detection is OFF
+// by default; the sync endpoint + store still accept/persist watch lists at
+// zero API cost until STAKEOUT_WATCHER=1 turns on polling.
+stakeoutStore.load();
+if (process.env.STAKEOUT_WATCHER === "1") startStakeoutWatcher();
+else console.log("[stakeout-watcher] disabled (set STAKEOUT_WATCHER=1 to enable detection)");
 // Torn RW Pricer: regenerate data/rwp-prices.json daily from the marches.cafe
 // auction CSVs so the PDA path (which can't gunzip the CDN) gets fresh prices.
 startRwpRefresh();
@@ -839,6 +847,7 @@ function shutdown(signal) {
   if (warDetectTimer) { clearInterval(warDetectTimer); warDetectTimer = null; }
   try { stopPersonalMonitor(); } catch (_) {}
   stopHeatmapFlush();
+  try { stopStakeoutWatcher(); } catch (_) {}
   stopMembershipSchedule();
   stopSubscriptionManager();
 
