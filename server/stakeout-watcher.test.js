@@ -29,3 +29,20 @@ test("evaluateTarget: cooldown blocks re-fire in window, allows after; first fir
   evaluateTarget(t, psnap({ state: "Okay" }), "player", NOW + 4000);
   assert.deepEqual(evaluateTarget(t, psnap({ state: "Hospital" }), "player", NOW + COOLDOWN_MS + 5000), ["hospital"]);
 });
+
+import { buildStakeoutPayload } from "./stakeout-watcher.js";
+
+test("buildStakeoutPayload: shape, primitive data, deep link", () => {
+  const p = buildStakeoutPayload(2194491, { name: "Bob" }, ["online"], "player");
+  assert.equal(p.title, "Stakeout");
+  assert.equal(p.body, "Bob is online");
+  assert.equal(p.tag, "stakeout-2194491");
+  assert.equal(p.threadId, "stakeout");
+  assert.deepEqual(p.data, { type: "stakeout_alert", targetId: "2194491", trigger: "online", url: "https://www.torn.com/profiles.php?XID=2194491" });
+  for (const v of Object.values(p.data)) assert.equal(typeof v, "string");
+});
+test("buildStakeoutPayload: faction deep link + fallback name", () => {
+  const p = buildStakeoutPayload(16335, {}, ["rankedWarStarts"], "faction");
+  assert.equal(p.body, "Faction 16335 started a ranked war");
+  assert.equal(p.data.url, "https://www.torn.com/factions.php?step=profile&ID=16335");
+});
