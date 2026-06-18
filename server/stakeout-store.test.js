@@ -85,3 +85,36 @@ test("syncOwner: two owners are independent (same target id, separate rows)", ()
   assert.equal(getState().owners["222"].players["5"].alerts.hospital, true);
   assert.notEqual(getState().owners["111"].key, getState().owners["222"].key);
 });
+
+import { handleStakeoutSync, resolveOwnerId } from "./stakeout-store.js";
+
+function stubRes() { return { _s: 200, _j: null, status(c){this._s=c;return this;}, json(o){this._j=o;return this;} }; }
+
+test("resolveOwnerId: parses player_id, null on error", async () => {
+  const ok = async () => ({ ok: true, json: async () => ({ player_id: 137558, name: "Rob" }) });
+  assert.equal(await resolveOwnerId("K", ok), "137558");
+  const bad = async () => ({ ok: true, json: async () => ({ error: { code: 2, error: "Incorrect key" } }) });
+  assert.equal(await resolveOwnerId("K", bad), null);
+});
+
+test("handleStakeoutSync: resolves owner from key, encrypts, stores", async () => {
+  process.env.DATA_DIR = mkdtempSync(pathJoin(tmpdir(), "stk-"));
+  load();
+  const req = { body: { apiKey: "RAWKEY", players: [{ id: 5, alerts: { online: true } }], factions: [] } };
+  const res = stubRes();
+  await handleStakeoutSync(req, res, { resolveOwnerId: async () => "137558", encrypt: (s) => "ENC(" + s + ")" });
+  assert.equal(res._s, 200);
+  assert.deepEqual(res._j, { ok: true, players: 1, factions: 0 });
+  assert.equal(getState().owners["137558"].key, "ENC(RAWKEY)");
+  assert.equal(getState().owners["137558"].players["5"].alerts.online, true);
+});
+
+test("handleStakeoutSync: 400 without apiKey, 401 on bad key", async () => {
+  load();
+  const r1 = stubRes();
+  await handleStakeoutSync({ body: { players: [] } }, r1, { resolveOwnerId: async () => "1", encrypt: (s) => s });
+  assert.equal(r1._s, 400);
+  const r2 = stubRes();
+  await handleStakeoutSync({ body: { apiKey: "x", players: [{ id: 5, alerts: {} }] } }, r2, { resolveOwnerId: async () => null, encrypt: (s) => s });
+  assert.equal(r2._s, 401);
+});

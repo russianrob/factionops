@@ -215,6 +215,9 @@ app.use('/api/heatmap',                warRoomPerJwtLimiter);
 app.use(/^\/api\/faction\/[^/]+\/war/, warRoomPerJwtLimiter);
 app.use(/^\/api\/war\/[^/]+\/travel-info/, warRoomPerJwtLimiter);
 
+const stakeoutSyncLimiter = rateLimit({ windowMs: 5 * 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
+app.use('/api/stakeout/sync', stakeoutSyncLimiter);
+
 // ── Landing page is public — gate is applied only to /scripts/*.user.js below ──
 
 // (Removed: temp [req-log] middleware that diagnosed the Android

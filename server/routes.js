@@ -8,6 +8,7 @@ import { join as pathJoin, dirname as pathDirname } from "node:path";
 import { fileURLToPath } from 'node:url';
 import axios from "axios";
 import { verifyTornApiKey, issueToken, verifyToken, requireAuth, isPoolEligible } from "./auth.js";
+import { handleStakeoutSync } from "./stakeout-store.js";
 import { TOTP as _OTPAuthTOTP, Secret as _OTPAuthSecret } from "otpauth";
 import { readFileSync as _totpReadFile } from "node:fs";
 
@@ -330,6 +331,8 @@ function scheduleCallExpiry(warId, targetId) {
 router.get("/api/health", (req, res) => {
   res.json({ status: "ok", uptime: Math.floor(process.uptime()) });
 });
+
+router.post("/api/stakeout/sync", express.json({ limit: "16kb" }), (req, res) => handleStakeoutSync(req, res));
 
 
 // ── POST /api/gate ──────────────────────────────────────────────────────

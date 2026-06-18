@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { encrypt } from "./key-encryption.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -128,4 +129,27 @@ export function validateStakeoutSync(body) {
     factions: normList(b.factions, FACTION_ALERT_KEYS, FACTION_THRESHOLD_KEYS, MAX_FACTIONS_PER_OWNER)
       .map((r) => ({ id: r.id, alerts: r.alerts })),
   };
+}
+
+export async function resolveOwnerId(apiKey, fetchImpl = fetch) {
+  const url = `https://api.torn.com/user/?selections=basic&key=${encodeURIComponent(apiKey)}&comment=wb-stakeout`;
+  const res = await fetchImpl(url);
+  if (!res || !res.ok) return null;
+  const data = await res.json();
+  if (!data || data.error || data.player_id == null) return null;
+  return String(data.player_id);
+}
+
+export async function handleStakeoutSync(req, res, deps = {}) {
+  const resolve = deps.resolveOwnerId || resolveOwnerId;
+  const enc = deps.encrypt || encrypt;
+  const body = req.body || {};
+  const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+  if (!apiKey) return res.status(400).json({ error: "apiKey is required" });
+  let ownerId = null;
+  try { ownerId = await resolve(apiKey); } catch { ownerId = null; }
+  if (!ownerId) return res.status(401).json({ error: "invalid Torn API key" });
+  const { players, factions } = validateStakeoutSync(body);
+  syncOwner(ownerId, enc(apiKey), players, factions);
+  return res.json({ ok: true, players: players.length, factions: factions.length });
 }
