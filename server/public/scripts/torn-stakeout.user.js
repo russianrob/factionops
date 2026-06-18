@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.15
+// @version      1.0.16
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
 // @connect      api.torn.com
+// @connect      tornwar.com
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_xmlhttpRequest
@@ -18,7 +19,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.15';
+  var SCRIPT_VERSION = '1.0.16';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -128,6 +129,30 @@
     return Object.assign({}, DEFAULT_SETTINGS, s);
   }
   function setSettings(s) { gmSet(SETTINGS_KEY, s); }
+
+  var SYNC_URL = 'https://tornwar.com/api/stakeout/sync';
+  function stripForSync(list, isPlayer) {
+    return list.map(function (r) {
+      var o = { id: r.id, alerts: r.alerts };
+      if (isPlayer) o.label = r.label || '';
+      return o;
+    });
+  }
+  function syncUp() {
+    var s = getSettings();
+    if (!s.apiKey || typeof GM_xmlhttpRequest !== 'function') return;
+    GM_xmlhttpRequest({
+      method: 'POST', url: SYNC_URL,
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({ apiKey: s.apiKey, players: stripForSync(getPlayers(), true), factions: stripForSync(getFactions(), false) }),
+      onload: function () {}, onerror: function () {}
+    });
+  }
+  var syncDebounce = null;
+  function scheduleSync() {
+    if (syncDebounce) clearTimeout(syncDebounce);
+    syncDebounce = setTimeout(syncUp, 2000);
+  }
 
   function apiFetch(section, id, selections, cb) {
     var settings = getSettings();
@@ -372,12 +397,13 @@
       fs.push({ id: id, order: Date.now(), info: null, alerts: defaultFactionAlerts() });
       setFactions(fs);
     }
+    scheduleSync();
     renderPanel();
     pollOnce();
   }
 
-  function removePlayer(id) { setPlayers(getPlayers().filter(function (p) { return p.id !== id; })); renderPanel(); }
-  function removeFaction(id) { setFactions(getFactions().filter(function (f) { return f.id !== id; })); renderPanel(); }
+  function removePlayer(id) { setPlayers(getPlayers().filter(function (p) { return p.id !== id; })); scheduleSync(); renderPanel(); }
+  function removeFaction(id) { setFactions(getFactions().filter(function (f) { return f.id !== id; })); scheduleSync(); renderPanel(); }
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
@@ -428,6 +454,7 @@
     } else {
       var fs = getFactions(); fs.forEach(function (f) { if (f.id === id) f.alerts[key] = value; }); setFactions(fs);
     }
+    scheduleSync();
   }
 
   function statusTextPlayer(info) {
@@ -579,6 +606,8 @@
     injectStakeoutSection();
     restartPolling();
     pollOnce();
+    syncUp();
+    setInterval(syncUp, 10 * 60 * 1000);
     var mo = new MutationObserver(function () { injectStakeoutSection(); });
     mo.observe(document.body, { childList: true, subtree: true });
   }
