@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.14
+// @version      1.0.15
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.14';
+  var SCRIPT_VERSION = '1.0.15';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -466,6 +466,9 @@
       html += '<label class="stk-enable"><input type="checkbox" id="stk-enable"' + (onf ? ' checked' : '') + '> Stakeout this faction</label>';
       html += factionCols(f || { id: fid, alerts: defaultFactionAlerts() }, onf);
       html += '<div class="stk-status">' + (onf ? esc(statusTextFaction(f.info)) : 'not staking out') + '</div>';
+    }
+    if (!s.apiKey) {
+      html += '<div class="stk-status" style="color:#e6a23c;">⚠ Enter your Torn API key below to fetch names and live status.</div>';
     }
     html += '<div class="stk-foot">';
     html += '<div>API key <input class="stk-key" id="stk-key" value="' + (s.apiKey ? '••••••••' : '') + '" placeholder="Torn API key"></div>';
