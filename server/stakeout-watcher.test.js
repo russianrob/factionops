@@ -46,3 +46,12 @@ test("buildStakeoutPayload: faction deep link + fallback name", () => {
   assert.equal(p.body, "Faction 16335 started a ranked war");
   assert.equal(p.data.url, "https://www.torn.com/factions.php?step=profile&ID=16335");
 });
+
+import { NOTIFICATION_TYPES, getPreferences } from "./push-notifications.js";
+
+test("stakeout_alert type registered, default on, in preferences", () => {
+  assert.ok(NOTIFICATION_TYPES.stakeout_alert);
+  assert.equal(NOTIFICATION_TYPES.stakeout_alert.default, true);
+  assert.equal(NOTIFICATION_TYPES.stakeout_alert.oc, undefined);
+  assert.equal(getPreferences("000")["stakeout_alert"], true);
+});
