@@ -20,3 +20,19 @@ function loadEngine() {
 }
 
 export const engine = loadEngine();
+
+export function evaluateTarget(target, snap, kind, now, cooldownMs = COOLDOWN_MS) {
+  if (!target.seeded) { target.info = snap; target.seeded = true; return []; }
+  const old = target.info;
+  const fired = kind === "faction"
+    ? engine.evaluateFaction(old, snap, target.alerts)
+    : engine.evaluatePlayer(old, snap, target.alerts, now);
+  if (!target.lastFiredAt) target.lastFiredAt = {};
+  const deliver = [];
+  for (const k of fired) {
+    const last = target.lastFiredAt[k];
+    if (last === undefined || now - last >= cooldownMs) { target.lastFiredAt[k] = now; deliver.push(k); }
+  }
+  target.info = snap; // ALWAYS re-arm
+  return deliver;
+}
