@@ -11,6 +11,7 @@ import { recordSample } from "./activity-heatmap.js";
 import { broadcastSSE } from "./routes.js";
 import * as push from "./push-notifications.js";
 import { startRetalTracker, stopRetalTracker, stopAll as stopAllRetals } from "./retal-tracker.js";
+import { enemyProfilePrewarDelay } from "./enemy-profile-gate.js";
 
 // Fallback intervals used when we can't look up the dynamic value (no
 // war loaded, store unavailable). Under normal operation both pollers
@@ -31,10 +32,12 @@ const nextEnemyAttacks = (war) =>
   war && war.factionId
     ? store.getPollInterval(war.factionId, "enemy-attacks")
     : 30_000;
-const nextEnemyProfile = (war) =>
-  war && war.factionId
+const nextEnemyProfile = (war) => {
+  const base = war && war.factionId
     ? store.getPollInterval(war.factionId, "enemy-profile")
     : 2_500;
+  return enemyProfilePrewarDelay(war && war.warStart, base, Date.now() / 1000);
+};
 
 // Attacks-feed watcher — near-real-time hospital detection.
 // Shorter Torn cache on attacks endpoint + atomic event semantics (each
