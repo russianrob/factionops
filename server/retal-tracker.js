@@ -57,6 +57,8 @@ export function startRetalTracker(io, warId) {
   async function poll() {
     const war = store.getWar(warId);
     if (!war || !war.enemyFactionId || war.warEnded) { schedule(RETAL_INTERVAL_MS); return; }
+    // Nothing can attack us before the war starts — skip until ~30 min before kickoff.
+    if (war.warStart && Date.now() / 1000 < Number(war.warStart) - 30 * 60) { schedule(RETAL_INTERVAL_MS); return; }
     if (!viewed(warId, war)) { retalBackoffs.delete(warId); schedule(RETAL_INTERVAL_MS); return; }
 
     const cursor = (retalCursors.get(warId) || 0) + 1;

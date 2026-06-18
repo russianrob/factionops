@@ -24,10 +24,14 @@ const nextWarStatus = (war) =>
   war && war.factionId
     ? store.getPollInterval(war.factionId, "war-status")
     : POLL_INTERVAL_MS;
-const nextAttacksFeed = (war) =>
-  war && war.factionId
+const nextAttacksFeed = (war) => {
+  const base = war && war.factionId
     ? store.getPollInterval(war.factionId, "attacks-feed")
     : ATTACKS_FEED_INTERVAL_MS;
+  // Same pre-war throttle as the enemy-profile sweep: before a war starts
+  // there are no war hospitalisations to detect, so don't burn the feed.
+  return enemyProfilePrewarDelay(war && war.warStart, base, Date.now() / 1000);
+};
 const nextEnemyAttacks = (war) =>
   war && war.factionId
     ? store.getPollInterval(war.factionId, "enemy-attacks")
