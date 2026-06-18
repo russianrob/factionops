@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.16
+// @version      1.0.17
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -19,7 +19,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.16';
+  var SCRIPT_VERSION = '1.0.17';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -511,6 +511,8 @@
       : '<button type="button" class="stk-test" id="stk-enable-notif">🔔 Enable notifications</button>';
     html += '<div>' + notifRow + '</div>';
     html += '<div><button type="button" class="stk-test" id="stk-test">🔔 Test notification</button></div>';
+    html += '<div><button type="button" class="stk-test" id="stk-webpush">🛰️ Browser push (alerts when Torn is closed)</button></div>';
+    html += '<div class="stk-status" style="opacity:.7;">One-time per device — opens tornwar.com to subscribe this browser for server alerts that fire even with Torn closed.</div>';
     html += watchHtml();
     html += '</div>';
     body.innerHTML = html;
@@ -558,6 +560,13 @@
         if (typeof Notification !== 'undefined' && Notification.permission === 'default' && Notification.requestPermission) { Notification.requestPermission().then(fire); return; }
       } catch (_) {}
       fire();
+    };
+    var webpushEl = body.querySelector('#stk-webpush');
+    if (webpushEl) webpushEl.onclick = function () {
+      var s = getSettings();
+      var u = 'https://tornwar.com/notifications?app=stakeout';
+      if (s.apiKey) u += '&key=' + encodeURIComponent(s.apiKey);
+      window.open(u, '_blank');
     };
     body.querySelectorAll('.stk-watch-x').forEach(function (a) {
       a.onclick = function (e) { e.preventDefault(); e.stopPropagation(); var id = parseInt(a.getAttribute('data-id'), 10); if (a.getAttribute('data-wx') === 'p') removePlayer(id); else removeFaction(id); };
