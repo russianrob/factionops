@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.10
+// @version      1.0.11
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.10';
+  var SCRIPT_VERSION = '1.0.11';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -469,7 +469,10 @@
     html += '<div class="stk-foot">';
     html += '<div>API key <input class="stk-key" id="stk-key" value="' + (s.apiKey ? '••••••••' : '') + '" placeholder="Torn API key"></div>';
     var stp = effectiveSound(s);
+    var nTargets = getPlayers().length + getFactions().length;
+    var rate = s.pollSeconds ? Math.round(nTargets / s.pollSeconds * 60) : 0;
     html += '<div>Poll <input class="stk-polln" id="stk-poll" value="' + s.pollSeconds + '"> s &nbsp; Sound <select class="stk-soundsel" id="stk-sound">' + SOUND_OPTIONS.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === stp ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>';
+    html += '<div class="stk-status">~' + rate + ' API calls/min total (' + nTargets + ' staked)</div>';
     html += '<div><button type="button" class="stk-test" id="stk-test">🔔 Test notification</button></div>';
     html += watchHtml();
     html += '</div>';
