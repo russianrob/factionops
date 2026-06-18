@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.17
+// @version      1.0.18
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -19,7 +19,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.17';
+  var SCRIPT_VERSION = '1.0.18';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -564,8 +564,8 @@
     var webpushEl = body.querySelector('#stk-webpush');
     if (webpushEl) webpushEl.onclick = function () {
       var s = getSettings();
-      var u = 'https://tornwar.com/notifications?app=stakeout';
-      if (s.apiKey) u += '&key=' + encodeURIComponent(s.apiKey);
+      var u = 'https://tornwar.com/stakeout/notifications';
+      if (s.apiKey) u += '?key=' + encodeURIComponent(s.apiKey);
       window.open(u, '_blank');
     };
     body.querySelectorAll('.stk-watch-x').forEach(function (a) {

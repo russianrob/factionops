@@ -219,6 +219,7 @@ app.use(/^\/api\/war\/[^/]+\/travel-info/, warRoomPerJwtLimiter);
 
 const stakeoutSyncLimiter = rateLimit({ windowMs: 5 * 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
 app.use('/api/stakeout/sync', stakeoutSyncLimiter);
+app.use('/api/stakeout/push', stakeoutSyncLimiter);
 
 // ── Landing page is public — gate is applied only to /scripts/*.user.js below ──
 

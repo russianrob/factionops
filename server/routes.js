@@ -8,7 +8,7 @@ import { join as pathJoin, dirname as pathDirname } from "node:path";
 import { fileURLToPath } from 'node:url';
 import axios from "axios";
 import { verifyTornApiKey, issueToken, verifyToken, requireAuth, isPoolEligible } from "./auth.js";
-import { handleStakeoutSync } from "./stakeout-store.js";
+import { handleStakeoutSync, resolveOwnerId } from "./stakeout-store.js";
 import { TOTP as _OTPAuthTOTP, Secret as _OTPAuthSecret } from "otpauth";
 import { readFileSync as _totpReadFile } from "node:fs";
 
@@ -333,6 +333,55 @@ router.get("/api/health", (req, res) => {
 });
 
 router.post("/api/stakeout/sync", express.json({ limit: "16kb" }), (req, res) => handleStakeoutSync(req, res));
+
+// Stakeout web-push: a SEPARATE opt-in from the OC /notifications page. Key-based
+// + isolated (resolveOwnerId never stores the key, no faction gate); manages only
+// the stakeout_alert type, so stakeout and OC notifications stay decoupled.
+async function _stakeoutPushOwner(req, res) {
+  const key = (req.query && req.query.key) || (req.body && req.body.key);
+  if (!key || String(key).length < 10) { res.status(400).json({ error: "key required" }); return null; }
+  let pid = null;
+  try { pid = await resolveOwnerId(String(key)); } catch { pid = null; }
+  if (!pid) { res.status(401).json({ error: "invalid Torn API key" }); return null; }
+  return pid;
+}
+
+router.post("/api/stakeout/push/subscribe", express.json({ limit: "8kb" }), async (req, res) => {
+  const pid = await _stakeoutPushOwner(req, res); if (!pid) return;
+  const sub = req.body && req.body.subscription;
+  if (!sub || !sub.endpoint) return res.status(400).json({ error: "subscription required" });
+  push.subscribe(pid, sub);
+  push.setPreferences(pid, { stakeout_alert: true });
+  console.log("[push/stakeout] " + pid + " subscribed ****" + String(sub.endpoint).slice(-12));
+  return res.json({ ok: true });
+});
+
+router.post("/api/stakeout/push/unsubscribe", express.json({ limit: "8kb" }), async (req, res) => {
+  const pid = await _stakeoutPushOwner(req, res); if (!pid) return;
+  const endpoint = req.body && req.body.endpoint;
+  if (endpoint && endpoint !== "all") push.unsubscribe(pid, endpoint); else push.unsubscribeAll(pid);
+  return res.json({ ok: true });
+});
+
+router.get("/api/stakeout/push/status", async (req, res) => {
+  const pid = await _stakeoutPushOwner(req, res); if (!pid) return;
+  return res.json({ subscribed: push.isSubscribed(pid), playerId: pid });
+});
+
+router.post("/api/stakeout/push/test", express.json({ limit: "2kb" }), async (req, res) => {
+  const pid = await _stakeoutPushOwner(req, res); if (!pid) return;
+  try {
+    await push.sendToPlayer(pid, {
+      title: "Stakeout", body: "Test ✅ — stakeout alerts will ring this device.",
+      icon: "/icon-192.png", tag: "stakeout-test", data: { type: "stakeout_alert", test: true },
+    }, "stakeout_alert");
+    return res.json({ ok: true });
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
+router.get("/stakeout/notifications", (_req, res) => {
+  res.send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stakeout Notifications</title><style>:root{color-scheme:dark}body{background:#0a0f12;color:#e5e7eb;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:20px;max-width:520px;margin-left:auto;margin-right:auto}h1{font-size:20px;font-weight:700;color:#f3f4f6;margin:0 0 2px}.sub{color:#9ca3af;font-size:13px;margin-bottom:18px;line-height:1.5}.card{background:#0f1a2e;border:1px solid #1e3a5f;border-radius:8px;padding:18px;margin-bottom:14px}label{display:block;font-size:11px;color:#9ca3af;margin-bottom:4px;text-transform:uppercase;letter-spacing:.3px}input[type=text]{width:100%;box-sizing:border-box;background:#060b12;border:1px solid #1e3a5f;color:#e5e7eb;border-radius:4px;padding:9px 10px;font-family:monospace;font-size:13px;margin-bottom:10px}input:focus{outline:none;border-color:#4ade80}button{background:#2d6a4f;color:#fff;border:0;border-radius:4px;padding:10px 16px;font-size:13px;font-weight:600;cursor:pointer;width:100%;margin-top:6px}button:hover{background:#3d8a6f}button:disabled{background:#374151;cursor:not-allowed}button.secondary{background:#1e3a5f}button.danger{background:#7f1d1d}.status{font-size:13px;padding:10px;border-radius:4px;margin-top:10px;min-height:18px;line-height:1.4}.status.ok{background:rgba(74,222,128,.12);color:#4ade80}.status.err{background:rgba(239,68,68,.12);color:#ef4444}.status.info{background:rgba(96,165,250,.12);color:#93c5fd}.muted{color:#6b7280;font-size:12px;line-height:1.5}.who{font-size:12px;color:#9ca3af;margin-bottom:6px}.who b{color:#e5e7eb}</style></head><body><h1>Stakeout Notifications</h1><div class="sub">Get a push when a watched player or faction hits a trigger — even with Torn closed. Separate from OC / faction notifications. One-time setup per browser/device.</div><div class="card"><label for="k">Torn API key</label><input id="k" type="text" placeholder="your Torn API key" autocomplete="off"><div class="who" id="who"></div><button id="enable">Enable on this device</button><button id="disable" class="danger" style="display:none">Disable on this device</button><div id="status" class="status"></div></div><div class="card" id="test-card" style="display:none"><button id="test" class="secondary">Send test notification</button><div id="test-status" class="status"></div></div><div class="muted">Your key only identifies you (one Torn lookup) and is <b>not stored</b> — only the push subscription, keyed to your player ID, is saved. This page controls stakeout alerts only.</div><script>var $=function(i){return document.getElementById(i)};var params=new URLSearchParams(location.search);var sk=localStorage.getItem('stk_key')||'';if(params.get('key'))$('k').value=params.get('key');else if(sk)$('k').value=sk;function setS(id,c,t){var e=$(id);e.className='status '+(c||'');e.textContent=t}function u8(s){var pad='='.repeat((4-s.length%4)%4);var b=(s+pad).replace(/-/g,'+').replace(/_/g,'/');var raw=atob(b);var o=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)o[i]=raw.charCodeAt(i);return o}async function refresh(){var k=$('k').value.trim();if(k.length<10){$('who').textContent='';$('disable').style.display='none';$('test-card').style.display='none';return}try{var r=await fetch('/api/stakeout/push/status?key='+encodeURIComponent(k));var d=await r.json();if(!r.ok){setS('status','err',d.error||'Status failed');return}$('who').innerHTML='Signed in as player <b>'+d.playerId+'</b>';setS('status','info',d.subscribed?'✔ Subscribed on at least one device.':'Not subscribed yet on this device.');$('disable').style.display=d.subscribed?'block':'none';$('test-card').style.display=d.subscribed?'block':'none'}catch(e){setS('status','err',e.message)}}$('k').addEventListener('blur',refresh);$('k').addEventListener('change',refresh);if($('k').value)refresh();async function enable(){var k=$('k').value.trim();if(k.length<10){setS('status','err','Enter your Torn API key first.');return}if(!('serviceWorker' in navigator)||!('PushManager' in window)){setS('status','err','This browser does not support push notifications.');return}$('enable').disabled=true;setS('status','info','Requesting permission…');try{var perm=await Notification.requestPermission();if(perm!=='granted'){setS('status','err','Permission denied — allow notifications in your browser/OS settings.');$('enable').disabled=false;return}setS('status','info','Registering…');var reg=await navigator.serviceWorker.register('/sw.js');await navigator.serviceWorker.ready;var vr=await fetch('/api/push/vapid-key');var v=await vr.json();if(!v.publicKey)throw new Error('Push not configured on server');var sub=await reg.pushManager.getSubscription();if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:u8(v.publicKey)});var sr=await fetch('/api/stakeout/push/subscribe?key='+encodeURIComponent(k),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subscription:sub.toJSON()})});var sd=await sr.json();if(!sr.ok)throw new Error(sd.error||'Server error ('+sr.status+')');localStorage.setItem('stk_key',k);setS('status','ok','✔ Enabled. Stakeout alerts will ring this device.');refresh()}catch(e){setS('status','err',e.message)}finally{$('enable').disabled=false}}async function disable(){var k=$('k').value.trim();if(k.length<10)return;$('disable').disabled=true;setS('status','info','Disabling…');try{var reg=await navigator.serviceWorker.getRegistration('/sw.js');var ep=null;if(reg){var s=await reg.pushManager.getSubscription();if(s){ep=s.endpoint;await s.unsubscribe()}}await fetch('/api/stakeout/push/unsubscribe?key='+encodeURIComponent(k),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:ep||'all'})});setS('status','ok','Disabled on this device.');refresh()}catch(e){setS('status','err',e.message)}finally{$('disable').disabled=false}}async function test(){var k=$('k').value.trim();if(k.length<10)return;$('test').disabled=true;setS('test-status','info','Sending…');try{var r=await fetch('/api/stakeout/push/test?key='+encodeURIComponent(k),{method:'POST'});var d=await r.json();if(!r.ok)throw new Error(d.error||'Error');setS('test-status','ok','✔ Sent — if nothing rang, re-enable on this device.')}catch(e){setS('test-status','err',e.message)}finally{$('test').disabled=false}}$('enable').addEventListener('click',enable);$('disable').addEventListener('click',disable);$('test').addEventListener('click',test);</script></body></html>`);
+});
 
 
 // ── POST /api/gate ──────────────────────────────────────────────────────
