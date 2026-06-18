@@ -48,6 +48,38 @@ export function flushSync() {
   _saveNow();
 }
 
+function mergeTargets(prevMap, records, isPlayer) {
+  const out = {};
+  for (const rec of records) {
+    const id = String(rec.id);
+    const prev = prevMap[id];
+    out[id] = {
+      alerts: rec.alerts,
+      info: prev ? prev.info : null,
+      seeded: prev ? prev.seeded : false,
+      lastFiredAt: prev ? prev.lastFiredAt || {} : {},
+    };
+    if (isPlayer) out[id].label = typeof rec.label === "string" ? rec.label : "";
+  }
+  return out;
+}
+
+export function syncOwner(ownerId, encryptedKey, players, factions) {
+  const oid = String(ownerId);
+  if ((players || []).length === 0 && (factions || []).length === 0) {
+    delete _state.owners[oid]; // clearing the list removes the stored key
+    scheduleSave();
+    return;
+  }
+  const prev = _state.owners[oid] || { players: {}, factions: {} };
+  _state.owners[oid] = {
+    key: encryptedKey,
+    players: mergeTargets(prev.players || {}, players || [], true),
+    factions: mergeTargets(prev.factions || {}, factions || [], false),
+  };
+  scheduleSave();
+}
+
 export const MAX_PLAYERS_PER_OWNER = 100;
 export const MAX_FACTIONS_PER_OWNER = 100;
 
