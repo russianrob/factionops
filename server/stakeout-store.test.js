@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { validateStakeoutSync } from "./stakeout-store.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as pathJoin } from "node:path";
+import { load, getState, _saveNow } from "./stakeout-store.js";
 
 test("validateStakeoutSync: strips info + apiKey, keeps id/label/alerts", () => {
   const out = validateStakeoutSync({
@@ -29,4 +33,14 @@ test("validateStakeoutSync: tri-state — false stays false, number stays, junk 
     players: [{ id: 5, alerts: { online: "yes", life: "bad", offline: 5, okay: false } }],
   });
   assert.deepEqual(out.players[0].alerts, { online: true, life: false, offline: 5, okay: false });
+});
+
+test("store: load on empty dir yields {owners:{}}; save round-trips", () => {
+  process.env.DATA_DIR = mkdtempSync(pathJoin(tmpdir(), "stk-"));
+  load();
+  assert.deepEqual(getState(), { owners: {} });
+  getState().owners["137558"] = { key: "enc", players: {}, factions: {} };
+  _saveNow();
+  load();
+  assert.deepEqual(Object.keys(getState().owners), ["137558"]);
 });

@@ -4,6 +4,50 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+function dataFile() {
+  const dir = process.env.DATA_DIR || join(__dirname, "data");
+  return { dir, file: join(dir, "stakeout-watchers.json") };
+}
+
+let _state = { owners: {} };
+let _saveTimer = null;
+
+export function getState() { return _state; }
+
+export function load() {
+  try {
+    const { file } = dataFile();
+    _state = existsSync(file)
+      ? { owners: (JSON.parse(readFileSync(file, "utf8")) || {}).owners || {} }
+      : { owners: {} };
+  } catch (e) {
+    console.warn("[stakeout-store] load failed:", e.message);
+    _state = { owners: {} };
+  }
+  console.log(`[stakeout-store] loaded ${Object.keys(_state.owners).length} owner(s)`);
+  return _state;
+}
+
+export function _saveNow() {
+  try {
+    const { dir, file } = dataFile();
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(file, JSON.stringify(_state, null, 2), "utf8");
+  } catch (e) {
+    console.warn("[stakeout-store] save failed:", e.message);
+  }
+}
+
+export function scheduleSave() {
+  if (_saveTimer) return;
+  _saveTimer = setTimeout(() => { _saveTimer = null; _saveNow(); }, 1000);
+}
+
+export function flushSync() {
+  if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+  _saveNow();
+}
+
 export const MAX_PLAYERS_PER_OWNER = 100;
 export const MAX_FACTIONS_PER_OWNER = 100;
 
