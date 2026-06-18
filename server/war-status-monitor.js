@@ -11,7 +11,7 @@ import { recordSample } from "./activity-heatmap.js";
 import { broadcastSSE } from "./routes.js";
 import * as push from "./push-notifications.js";
 import { startRetalTracker, stopRetalTracker, stopAll as stopAllRetals } from "./retal-tracker.js";
-import { enemyProfilePrewarDelay } from "./enemy-profile-gate.js";
+import { enemyProfilePrewarDelay, couldBeAttacking } from "./enemy-profile-gate.js";
 
 // Fallback intervals used when we can't look up the dynamic value (no
 // war loaded, store unavailable). Under normal operation both pollers
@@ -742,7 +742,13 @@ function startEnemyProfileMonitor(io, warId) {
       scheduleNext(nextEnemyProfile(war));
       return;
     }
-    const ids = Object.keys(war.enemyStatuses).sort();
+    // Only sweep enemies who could actually be mid-attack right now (online
+    // + free to act). Offline/idle/hospital/travelling members can't be
+    // attacking, and their roster status still refreshes via the 15s basic
+    // poll — so polling their profile is pure waste.
+    const ids = Object.keys(war.enemyStatuses)
+      .filter((id) => couldBeAttacking(war.enemyStatuses[id]))
+      .sort();
     if (ids.length === 0) {
       scheduleNext(nextEnemyProfile(war));
       return;

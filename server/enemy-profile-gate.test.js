@@ -4,6 +4,7 @@ import {
   enemyProfilePrewarDelay,
   ENEMY_PROFILE_RAMP_SEC,
   ENEMY_PROFILE_PREWAR_MS,
+  couldBeAttacking,
 } from "./enemy-profile-gate.js";
 
 const NOW = 1781800000; // unix seconds
@@ -38,4 +39,33 @@ test("missing warStart falls back to the base (active) cadence", () => {
 test("never returns shorter than the base delay", () => {
   const big = ENEMY_PROFILE_PREWAR_MS + 999;
   assert.equal(enemyProfilePrewarDelay(NOW + 10 * 24 * 3600, big, NOW), big);
+});
+
+test("couldBeAttacking: online + okay → true", () => {
+  assert.equal(couldBeAttacking({ activity: "online", status: "okay" }), true);
+});
+
+test("couldBeAttacking: online + already attacking → true (keep polling to catch the stop)", () => {
+  assert.equal(couldBeAttacking({ activity: "online", status: "attacking" }), true);
+});
+
+test("couldBeAttacking: online + abroad → true (can still attack)", () => {
+  assert.equal(couldBeAttacking({ activity: "online", status: "abroad" }), true);
+});
+
+test("couldBeAttacking: offline / idle → false (not currently active)", () => {
+  assert.equal(couldBeAttacking({ activity: "offline", status: "okay" }), false);
+  assert.equal(couldBeAttacking({ activity: "idle", status: "okay" }), false);
+});
+
+test("couldBeAttacking: online but hospital / traveling / jail / federal → false", () => {
+  assert.equal(couldBeAttacking({ activity: "online", status: "hospital" }), false);
+  assert.equal(couldBeAttacking({ activity: "online", status: "traveling" }), false);
+  assert.equal(couldBeAttacking({ activity: "online", status: "jail" }), false);
+  assert.equal(couldBeAttacking({ activity: "online", status: "federal" }), false);
+});
+
+test("couldBeAttacking: online with missing status defaults pollable; null entry → false", () => {
+  assert.equal(couldBeAttacking({ activity: "online" }), true);
+  assert.equal(couldBeAttacking(null), false);
 });
