@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.9
+// @version      1.0.10
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.9';
+  var SCRIPT_VERSION = '1.0.10';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -208,15 +208,33 @@
     rankedWarStarts: 'ranked war started', inRaid: 'is in a raid', inTerritoryWar: 'is in a territory war'
   };
 
-  function playPing() {
-    if (!getSettings().sound) return;
-    try {
-      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+  function tone(ctx, freq, type, start, dur, gain) {
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type || 'sine'; o.frequency.value = freq;
+    o.connect(g); g.connect(ctx.destination);
+    g.gain.value = gain == null ? 0.07 : gain;
+    o.start(ctx.currentTime + (start || 0));
+    o.stop(ctx.currentTime + (start || 0) + dur);
+  }
+  var SOUNDS = {
+    ping: function (ctx) { tone(ctx, 880, 'sine', 0, 0.18); },
+    chime: function (ctx) { tone(ctx, 660, 'sine', 0, 0.14); tone(ctx, 990, 'sine', 0.12, 0.2); },
+    alert: function (ctx) { tone(ctx, 1047, 'square', 0, 0.08, 0.05); tone(ctx, 1047, 'square', 0.13, 0.08, 0.05); tone(ctx, 1047, 'square', 0.26, 0.08, 0.05); },
+    buzz: function (ctx) { tone(ctx, 200, 'sawtooth', 0, 0.28, 0.05); },
+    rising: function (ctx) {
       var o = ctx.createOscillator(), g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination);
-      o.frequency.value = 880; g.gain.value = 0.07;
-      o.start(); o.stop(ctx.currentTime + 0.18);
-    } catch (_) {}
+      o.type = 'sine'; o.connect(g); g.connect(ctx.destination); g.gain.value = 0.07;
+      o.frequency.setValueAtTime(400, ctx.currentTime);
+      o.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.3);
+      o.start(); o.stop(ctx.currentTime + 0.3);
+    }
+  };
+  var SOUND_OPTIONS = [['off', 'Off'], ['ping', 'Ping'], ['chime', 'Chime'], ['alert', 'Alert'], ['buzz', 'Buzz'], ['rising', 'Rising']];
+  function effectiveSound(s) { return s.soundType || (s.sound === false ? 'off' : 'ping'); }
+  function playSound(preview) {
+    var st = preview || effectiveSound(getSettings());
+    if (st === 'off' || !SOUNDS[st]) return;
+    try { var ctx = new (window.AudioContext || window.webkitAudioContext)(); SOUNDS[st](ctx); } catch (_) {}
   }
 
   function toastContainer() {
@@ -245,7 +263,7 @@
 
   function notify(text, href) {
     showToast(text, href);
-    playPing();
+    playSound();
     try {
       if (typeof window !== 'undefined' && window.flutter_inappwebview && typeof window.flutter_inappwebview.callHandler === 'function') {
         window.flutter_inappwebview.callHandler('scheduleNotification', {
@@ -323,6 +341,7 @@
       '.stk-foot input{padding:2px 5px;border:1px solid rgba(128,128,128,.45);border-radius:3px;background:rgba(128,128,128,.12);color:inherit;font:inherit;}',
       '.stk-test{background:linear-gradient(#8aac3d,#6f9430);color:#fff;border:0;border-radius:4px;padding:4px 10px;font:inherit;font-weight:700;cursor:pointer;}',
       '.stk-test:hover{filter:brightness(1.08);}',
+      '.stk-soundsel{padding:2px 4px;border:1px solid rgba(128,128,128,.45);border-radius:3px;background:rgba(128,128,128,.12);color:inherit;font:inherit;}',
       '.stk-foot .stk-key{width:150px;} .stk-foot .stk-polln{width:54px;}',
       '.stk-status{font-size:11px;opacity:.65;margin-top:6px;}',
       '.stk-watch{margin-top:2px;}',
@@ -449,7 +468,8 @@
     }
     html += '<div class="stk-foot">';
     html += '<div>API key <input class="stk-key" id="stk-key" value="' + (s.apiKey ? '••••••••' : '') + '" placeholder="Torn API key"></div>';
-    html += '<div>Poll <input class="stk-polln" id="stk-poll" value="' + s.pollSeconds + '"> s &nbsp; <label><input type="checkbox" id="stk-sound"' + (s.sound ? ' checked' : '') + '> sound</label></div>';
+    var stp = effectiveSound(s);
+    html += '<div>Poll <input class="stk-polln" id="stk-poll" value="' + s.pollSeconds + '"> s &nbsp; Sound <select class="stk-soundsel" id="stk-sound">' + SOUND_OPTIONS.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === stp ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>';
     html += '<div><button type="button" class="stk-test" id="stk-test">🔔 Test notification</button></div>';
     html += watchHtml();
     html += '</div>';
@@ -484,7 +504,7 @@
     var pollEl = body.querySelector('#stk-poll');
     if (pollEl) pollEl.onchange = function () { var s = getSettings(); s.pollSeconds = Math.max(10, parseInt(pollEl.value, 10) || 30); setSettings(s); restartPolling(); };
     var soundEl = body.querySelector('#stk-sound');
-    if (soundEl) soundEl.onchange = function () { var s = getSettings(); s.sound = soundEl.checked; setSettings(s); };
+    if (soundEl) soundEl.onchange = function () { var s = getSettings(); s.soundType = soundEl.value; s.sound = soundEl.value !== 'off'; setSettings(s); playSound(soundEl.value); };
     var testEl = body.querySelector('#stk-test');
     if (testEl) testEl.onclick = function () {
       var fire = function () { notify('Stakeout test notification ✅ — if this also shows as a system notification (not just this toast), alerts will work.', 'https://www.torn.com'); };
