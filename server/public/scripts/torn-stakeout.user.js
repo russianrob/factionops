@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.7
+// @version      1.0.8
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.7';
+  var SCRIPT_VERSION = '1.0.8';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -98,7 +98,7 @@
   var PLAYERS_KEY = 'stakeout_players';
   var FACTIONS_KEY = 'stakeout_factions';
   var SETTINGS_KEY = 'stakeout_settings';
-  var DEFAULT_SETTINGS = { apiKey: '', pollSeconds: 30, sound: true, panelOpen: false, panelPos: null };
+  var DEFAULT_SETTINGS = { apiKey: '', pollSeconds: 30, sound: true, sectionCollapsed: false };
 
   function gmGet(key, fallback) {
     try {
@@ -371,9 +371,9 @@
   function alertOpt(id, key, checked, label, enabled) {
     return '<label class="stk-opt' + (enabled ? '' : ' stk-dis') + '"><input type="checkbox" data-akey="' + key + '" data-id="' + id + '"' + (checked ? ' checked' : '') + (enabled ? '' : ' disabled') + '> ' + label + '</label>';
   }
-  function alertNum(id, key, on, val, before, after, enabled) {
+  function alertNum(id, key, on, val, before, after, enabled, ph) {
     return '<label class="stk-opt' + (enabled ? '' : ' stk-dis') + '"><input type="checkbox" data-anumck="' + key + '" data-id="' + id + '"' + (on ? ' checked' : '') + (enabled ? '' : ' disabled') + '> ' + before +
-      ' <input class="stk-num" data-anum="' + key + '" data-id="' + id + '" value="' + (val === false || val == null ? '' : val) + '"' + (enabled ? '' : ' disabled') + '>' + (after ? ' ' + after : '') + '</label>';
+      ' <input class="stk-num" data-anum="' + key + '" data-id="' + id + '" value="' + (val === false || val == null ? '' : val) + '" placeholder="' + (ph || '') + '"' + (enabled ? '' : ' disabled') + '>' + (after ? ' ' + after : '') + '</label>';
   }
   function playerCols(p, enabled) {
     var a = p.alerts;
@@ -384,15 +384,15 @@
       alertOpt(p.id, 'okay', a.okay, 'becomes okay', enabled) +
       alertOpt(p.id, 'revivable', a.revivable, 'is revivable', enabled) +
       '</div><div class="stk-col"><div class="stk-col-title">Thresholds</div>' +
-      alertNum(p.id, 'life', a.life !== false, a.life, 'life drops below', '%', enabled) +
-      alertNum(p.id, 'offline', a.offline !== false, a.offline, 'offline at least', 'h', enabled) +
+      alertNum(p.id, 'life', a.life !== false, a.life, 'life drops below', '%', enabled, '15') +
+      alertNum(p.id, 'offline', a.offline !== false, a.offline, 'offline at least', 'h', enabled, '24') +
       '</div></div>';
   }
   function factionCols(f, enabled) {
     var a = f.alerts;
     return '<div class="stk-cols"><div class="stk-col"><div class="stk-col-title">General</div>' +
-      alertNum(f.id, 'chainReaches', a.chainReaches !== false, a.chainReaches, 'chain reaches', '', enabled) +
-      alertNum(f.id, 'memberCountDrops', a.memberCountDrops !== false, a.memberCountDrops, 'member count drops below', 'members', enabled) +
+      alertNum(f.id, 'chainReaches', a.chainReaches !== false, a.chainReaches, 'chain reaches', '', enabled, 'N') +
+      alertNum(f.id, 'memberCountDrops', a.memberCountDrops !== false, a.memberCountDrops, 'member count drops below', 'members', enabled, 'N') +
       '</div><div class="stk-col"><div class="stk-col-title">Wars</div>' +
       alertOpt(f.id, 'rankedWarStarts', a.rankedWarStarts, 'ranked war', enabled) +
       alertOpt(f.id, 'inRaid', a.inRaid, 'raid', enabled) +
@@ -461,7 +461,6 @@
     if (en) en.onchange = function () {
       if (en.checked) addTarget(tid, kind);
       else if (kind === 'player') removePlayer(tid); else removeFaction(tid);
-      renderPanel();
     };
     body.querySelectorAll('input[data-akey]').forEach(function (el) {
       el.onchange = function () { updateAlert(kind, parseInt(el.getAttribute('data-id'), 10), el.getAttribute('data-akey'), el.checked); };
@@ -473,7 +472,7 @@
         var num = row.querySelector('.stk-num');
         var key = ck.getAttribute('data-anumck');
         var nv = parseInt(String((num && num.value) || '').replace(/[^0-9]/g, ''), 10);
-        var val = ck.checked ? (isNaN(nv) ? 0 : nv) : false;
+        var val = ck.checked ? (isNaN(nv) ? (key === 'chainReaches' ? 0 : false) : nv) : false;
         updateAlert(kind, parseInt(ck.getAttribute('data-id'), 10), key, val);
       };
     });
@@ -484,7 +483,7 @@
     var soundEl = body.querySelector('#stk-sound');
     if (soundEl) soundEl.onchange = function () { var s = getSettings(); s.sound = soundEl.checked; setSettings(s); };
     body.querySelectorAll('.stk-watch-x').forEach(function (a) {
-      a.onclick = function (e) { e.preventDefault(); e.stopPropagation(); var id = parseInt(a.getAttribute('data-id'), 10); if (a.getAttribute('data-wx') === 'p') removePlayer(id); else removeFaction(id); renderPanel(); };
+      a.onclick = function (e) { e.preventDefault(); e.stopPropagation(); var id = parseInt(a.getAttribute('data-id'), 10); if (a.getAttribute('data-wx') === 'p') removePlayer(id); else removeFaction(id); };
     });
     body.querySelectorAll('.stk-watch-item > a[href]').forEach(function (a) { a.addEventListener('click', function (e) { e.stopPropagation(); }); });
   }
