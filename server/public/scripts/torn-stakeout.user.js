@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.13
+// @version      1.0.14
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.13';
+  var SCRIPT_VERSION = '1.0.14';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -276,12 +276,6 @@
       }
     } catch (_) {}
     try {
-      if (typeof GM_notification === 'function') {
-        GM_notification({ title: 'Stakeout', text: text, onclick: function () { if (href) window.open(href, '_blank'); } });
-        return;
-      }
-    } catch (_) {}
-    try {
       if (typeof browser !== 'undefined' && browser.notifications && browser.notifications.create) {
         browser.notifications.create('stk-' + Date.now(), { type: 'basic', iconUrl: 'https://www.torn.com/favicon.ico', title: 'Stakeout', message: text });
         return;
@@ -289,8 +283,15 @@
     } catch (_) {}
     try {
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        var n = new Notification('Stakeout', { body: text, icon: 'https://www.torn.com/favicon.ico' });
+        var n = new Notification('Stakeout', { body: text, icon: 'https://www.torn.com/favicon.ico', tag: 'stakeout' });
         if (href) n.onclick = function () { window.open(href, '_blank'); n.close(); };
+        return;
+      }
+    } catch (_) {}
+    try {
+      if (typeof GM_notification === 'function') {
+        GM_notification({ title: 'Stakeout', text: text, onclick: function () { if (href) window.open(href, '_blank'); } });
+        return;
       }
     } catch (_) {}
   }
@@ -473,6 +474,12 @@
     var rate = s.pollSeconds ? Math.round(nTargets / s.pollSeconds * 60) : 0;
     html += '<div>Poll <input class="stk-polln" id="stk-poll" value="' + s.pollSeconds + '"> s &nbsp; Sound <select class="stk-soundsel" id="stk-sound">' + SOUND_OPTIONS.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === stp ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>';
     html += '<div class="stk-status">~' + rate + ' API calls/min total (' + nTargets + ' staked)</div>';
+    var nperm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
+    var notifRow = nperm === 'granted' ? '<span class="stk-status">🔔 System notifications enabled</span>'
+      : nperm === 'denied' ? '<span class="stk-status">🔔 Notifications blocked — allow torn.com in your browser settings</span>'
+      : nperm === 'unsupported' ? ''
+      : '<button type="button" class="stk-test" id="stk-enable-notif">🔔 Enable notifications</button>';
+    html += '<div>' + notifRow + '</div>';
     html += '<div><button type="button" class="stk-test" id="stk-test">🔔 Test notification</button></div>';
     html += watchHtml();
     html += '</div>';
@@ -508,6 +515,12 @@
     if (pollEl) pollEl.onchange = function () { var s = getSettings(); s.pollSeconds = Math.max(10, parseInt(pollEl.value, 10) || 30); setSettings(s); restartPolling(); };
     var soundEl = body.querySelector('#stk-sound');
     if (soundEl) soundEl.onchange = function () { var s = getSettings(); s.soundType = soundEl.value; s.sound = soundEl.value !== 'off'; setSettings(s); playSound(soundEl.value); };
+    var notifEl = body.querySelector('#stk-enable-notif');
+    if (notifEl) notifEl.onclick = function () {
+      try {
+        if (typeof Notification !== 'undefined' && Notification.requestPermission) { Notification.requestPermission().then(function () { renderPanel(); }); }
+      } catch (_) {}
+    };
     var testEl = body.querySelector('#stk-test');
     if (testEl) testEl.onclick = function () {
       var fire = function () { notify('Stakeout test notification ✅ — if this also shows as a system notification (not just this toast), alerts will work.', 'https://www.torn.com'); };
