@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.12
+// @version      1.0.13
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.12';
+  var SCRIPT_VERSION = '1.0.13';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -565,11 +565,6 @@
     pollOnce();
     var mo = new MutationObserver(function () { injectStakeoutSection(); });
     mo.observe(document.body, { childList: true, subtree: true });
-    try {
-      if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Stakeout: expand panel', function () {
-        var w = document.getElementById('stk-section'); if (w) { w.classList.remove('stk-collapsed'); var st = getSettings(); st.sectionCollapsed = false; setSettings(st); }
-      });
-    } catch (_) {}
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
