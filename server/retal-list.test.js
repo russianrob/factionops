@@ -38,6 +38,18 @@ test("excludes attacks older than the 5-min window", () => {
   assert.equal(computeIncomingRetals([atk({ timestamp_ended: NOW - 301 })], ENEMY, NOW).length, 0);
 });
 
+test("excludes FAILED enemy attacks (Lost/Stalemate/Escape/Interrupted/Timeout)", () => {
+  for (const result of ["Lost", "Stalemate", "Escape", "Interrupted", "Timeout"]) {
+    assert.equal(computeIncomingRetals([atk({ result })], ENEMY, NOW).length, 0, result + " should NOT be a retal");
+  }
+});
+
+test("includes SUCCESSFUL enemy attacks (Mugged/Attacked/Arrested/Looted/Hospitalized)", () => {
+  for (const result of ["Mugged", "Attacked", "Arrested", "Looted", "Hospitalized"]) {
+    assert.equal(computeIncomingRetals([atk({ result })], ENEMY, NOW).length, 1, result + " should be a retal");
+  }
+});
+
 test("reads attacker_faction_id when attacker_faction is absent", () => {
   const a = atk(); delete a.attacker_faction; a.attacker_faction_id = ENEMY;
   assert.equal(computeIncomingRetals([a], ENEMY, NOW).length, 1);

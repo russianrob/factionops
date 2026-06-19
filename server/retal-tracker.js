@@ -7,6 +7,12 @@ const RETAL_ACTIVE_MS    = 60_000;
 const RETAL_LOOKBACK_SEC  = 420;
 const MAX_BACKOFF_MS     = 120_000;
 
+// A retal only makes sense against an enemy who actually LANDED a hit on a
+// member. Skip failed swings (mirrors routes.js FAILED_ATTACK_RESULTS): a
+// Lost/Stalemate/Escape/Interrupted/Timeout means they didn't beat us, so
+// there's nothing to retaliate.
+const FAILED_RETAL_RESULTS = new Set(["Lost", "Stalemate", "Escape", "Interrupted", "Timeout"]);
+
 /**
  * Build the incoming-retal list from OUR faction's attack log: enemy-faction
  * attacks on our members still inside the retal-bonus window. Pure + tested.
@@ -22,6 +28,7 @@ export function computeIncomingRetals(attacks, enemyFactionId, nowSec, windowSec
     if (!attackerId) continue;
     const endedTs = Number(a.timestamp_ended || a.timestamp_started || 0);
     if (!endedTs || endedTs < nowSec - windowSec) continue;
+    if (FAILED_RETAL_RESULTS.has(a.result)) continue;
     const lvl = enemyStatuses[attackerId] && enemyStatuses[attackerId].level;
     out.push({
       attackId: String(a.code || (attackerId + "-" + endedTs)),
