@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.31
+// @version      5.1.32
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.31';
+    const SCRIPT_VERSION = '5.1.32';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -5765,7 +5765,11 @@ body.wb-chain-active {
         if (window.__foRetalCardInjection) return;
         window.__foRetalCardInjection = true;
 
-        const observer = new MutationObserver(() => tryInjectRetalCard());
+        let _retalInjectTimer = null;
+        const observer = new MutationObserver(() => {
+            if (_retalInjectTimer) return; // debounce: don't re-scan on every mutation
+            _retalInjectTimer = setTimeout(() => { _retalInjectTimer = null; tryInjectRetalCard(); }, 300);
+        });
         observer.observe(document.body, { childList: true, subtree: true });
         // Also attempt once now in case the card is already on-screen.
         tryInjectRetalCard();
@@ -7550,15 +7554,21 @@ body.wb-chain-active {
                     // legacy readers that still consult s.until directly.
                     s.until = remaining;
                     anyActive = true;
-                    // Update just the timer text in the DOM for efficiency
+                    // Update just the timer text in the DOM for efficiency.
+                    // Guard with a value check: assigning textContent fires a DOM
+                    // mutation even when unchanged, and this loop runs every frame
+                    // while the seconds value only ticks 1/s — writing only on
+                    // change cuts ~98% of timer mutations. (Battery: the war page's
+                    // reactive querySelectorAll storms off our DOM mutations.)
+                    const _tt = formatTimer(remaining);
                     const timerEl = document.getElementById(`wb-timer-${targetId}`);
-                    if (timerEl) {
-                        timerEl.textContent = formatTimer(remaining);
+                    if (timerEl && timerEl.textContent !== _tt) {
+                        timerEl.textContent = _tt;
                     }
                     // Also update overlay timer element
                     const foTimerEl = document.getElementById(`fo-timer-${targetId}`);
-                    if (foTimerEl) {
-                        foTimerEl.textContent = formatTimer(remaining);
+                    if (foTimerEl && foTimerEl.textContent !== _tt) {
+                        foTimerEl.textContent = _tt;
                     }
                 }
             }
