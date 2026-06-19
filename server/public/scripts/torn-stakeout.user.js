@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.18
+// @version      1.0.19
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -19,7 +19,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.18';
+  var SCRIPT_VERSION = '1.0.19';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -512,7 +512,7 @@
     html += '<div>' + notifRow + '</div>';
     html += '<div><button type="button" class="stk-test" id="stk-test">🔔 Test notification</button></div>';
     html += '<div><button type="button" class="stk-test" id="stk-webpush">🛰️ Browser push (alerts when Torn is closed)</button></div>';
-    html += '<div class="stk-status" style="opacity:.7;">One-time per device — opens tornwar.com to subscribe this browser for server alerts that fire even with Torn closed.</div>';
+    html += '<div class="stk-status" style="opacity:.7;">One-time per device.</div>';
     html += watchHtml();
     html += '</div>';
     body.innerHTML = html;
