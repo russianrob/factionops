@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.32
+// @version      5.1.33
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.32';
+    const SCRIPT_VERSION = '5.1.33';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -7843,13 +7843,20 @@ body.wb-chain-active {
     function updateEnemyAttackingBadges() {
         const nowSec = Date.now() / 1000;
         const WINDOW = 60;
+        // One querySelectorAll for the whole overlay instead of one PER target
+        // (was N qSA/sec on a full enemy faction). Bucket the tagged rows by id,
+        // rebuilt each call so it survives overlay re-renders. Behaviour is
+        // identical — every target's rows still get the same is-attacking toggle.
+        const rowsById = {};
+        document.querySelectorAll('[data-fo-id], [data-wb-target-id]').forEach((row) => {
+            const id = row.getAttribute('data-fo-id') || row.getAttribute('data-wb-target-id');
+            if (id) (rowsById[id] || (rowsById[id] = [])).push(row);
+        });
         for (const targetId of Object.keys(state.statuses)) {
             const s = state.statuses[targetId];
             const active = !!(s.lastAttackAt && (nowSec - s.lastAttackAt) < WINDOW);
-            const rows = document.querySelectorAll(`[data-fo-id="${targetId}"], [data-wb-target-id="${targetId}"]`);
-            rows.forEach((row) => {
-                row.classList.toggle('is-attacking', active);
-            });
+            const rows = rowsById[targetId];
+            if (rows) rows.forEach((row) => row.classList.toggle('is-attacking', active));
 
             // Transition detection: was not attacking, now is. Toast
             // for ANY enemy (not just ones you called) with a per-enemy
