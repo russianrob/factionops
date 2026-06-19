@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stakeout
 // @namespace    RussianRob
-// @version      1.0.20
+// @version      1.0.21
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -19,7 +19,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  var SCRIPT_VERSION = '1.0.20';
+  var SCRIPT_VERSION = '1.0.21';
 
   function hoursSince(tsSec, nowMs) {
     return (nowMs / 1000 - tsSec) / 3600;
@@ -179,6 +179,9 @@
     if (polling) return;
     polling = true;
     var nowMs = Date.now();
+    var stkLastPoll = Number(gmGet('stakeout_last_poll', 0)) || 0;
+    var seedMode = !stkLastPoll || (nowMs - stkLastPoll) > 90000;
+    gmSet('stakeout_last_poll', nowMs);
     var players = getPlayers();
     var factions = getFactions();
     var queue = [];
@@ -192,7 +195,7 @@
         apiFetch('user', job.rec.id, ['profile'], function (err, d) {
           if (!err && d) {
             var snap = mapPlayerResponse(d);
-            var fired = evaluatePlayer(job.rec.info, snap, job.rec.alerts, nowMs);
+            var fired = seedMode ? [] : evaluatePlayer(job.rec.info, snap, job.rec.alerts, nowMs);
             job.rec.info = snap;
             var arr = getPlayers(); if (arr[job.idx] && arr[job.idx].id === job.rec.id) { arr[job.idx].info = snap; setPlayers(arr); }
             fired.forEach(function (a) { notifyPlayer(job.rec, snap, a); });
@@ -204,7 +207,7 @@
         apiFetch('faction', job.rec.id, ['basic', 'chain', 'wars'], function (err, d) {
           if (!err && d) {
             var snap = mapFactionResponse(d);
-            var fired = evaluateFaction(job.rec.info, snap, job.rec.alerts);
+            var fired = seedMode ? [] : evaluateFaction(job.rec.info, snap, job.rec.alerts);
             job.rec.info = snap;
             var arr = getFactions(); if (arr[job.idx] && arr[job.idx].id === job.rec.id) { arr[job.idx].info = snap; setFactions(arr); }
             fired.forEach(function (a) { notifyFaction(job.rec, snap, a); });
