@@ -2082,6 +2082,12 @@ router.post("/api/pool-opt", requireAuth, async (req, res) => {
     }
   }
   store.setKeyPoolingOpt(req.user.playerId, !!enabled, req.user.factionId, meta);
+  if (enabled) {
+    // A deliberate re-opt-in is the owner's "try my key again" signal — wipe
+    // any learned selection denylist (e.g. a past chain code-16 demotion) so a
+    // key they've since fixed can re-enter the routed pools.
+    store.clearPoolKeyDeniedSelections(req.user.playerId);
+  }
   console.log(
     `[pool-opt] ${req.user.playerName} (${req.user.playerId}) ${enabled ? "opted IN to" : "opted OUT of"} faction ${req.user.factionId} key pool` +
     (enabled && useful.length ? ` — useful for: ${useful.join(', ')}` : '')

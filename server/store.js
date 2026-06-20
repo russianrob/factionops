@@ -773,17 +773,32 @@ export function selectionForPurpose(purpose) {
 }
 
 /**
+ * Pure: can a key with this pool opt serve `requiredSelection`?
+ *   - null requiredSelection → yes (the unfiltered pool).
+ *   - deniedSelections is a learned denylist — a key that actually returned
+ *     Torn code 16 for the selection in practice — and OVERRIDES every allow
+ *     path below. This catches a key whose key/info advertises a selection it
+ *     can't really serve, which pure metadata routing cannot see.
+ *   - Full Access (level >= 4) serves every selection implicitly.
+ *   - Limited keys serve a selection iff their factionSelections grant it.
+ *   - Keys with no recorded access yet (pre-verify) slip through; a real
+ *     code-16 failure then demotes them via deniedSelections.
+ */
+export function poolOptServesSelection(opt, requiredSelection) {
+  if (!requiredSelection) return true;
+  if (Array.isArray(opt.deniedSelections) && opt.deniedSelections.includes(requiredSelection)) return false;
+  const hasFull = Number(opt.accessLevel) >= 4;
+  const hasSelection = Array.isArray(opt.factionSelections)
+    && opt.factionSelections.includes(requiredSelection);
+  const unknown = opt.accessLevel == null && !Array.isArray(opt.factionSelections);
+  return hasFull || hasSelection || unknown;
+}
+
+/**
  * Return all keys opted into the faction's pool, optionally filtered to
- * those that support a specific faction selection. Stable-sorted by
- * playerId so purpose-hash rotation is deterministic across restarts.
- *
- * Filter rules when requiredSelection is non-null:
- *   - Full Access (level 4) keys always pass (every selection implicit).
- *   - Limited (level 3) keys pass iff their factionSelections list
- *     contains requiredSelection.
- *   - Keys with no recorded accessLevel/selections (pre-routing entries
- *     that haven't re-authed yet) are included. The auto-quarantine
- *     handles the case where they turn out to fail in practice.
+ * those that support a specific faction selection (see poolOptServesSelection).
+ * Stable-sorted by playerId so purpose-hash rotation is deterministic across
+ * restarts.
  */
 export function getPooledKeysForFaction(factionId, requiredSelection = null) {
   const fid = String(factionId);
@@ -793,14 +808,7 @@ export function getPooledKeysForFaction(factionId, requiredSelection = null) {
     if (String(opt.factionId) !== fid) continue;
     const key = apiKeys.get(playerId);
     if (!key) continue;
-    if (requiredSelection) {
-      // Full Access always qualifies; otherwise need an explicit grant.
-      const hasFull = Number(opt.accessLevel) >= 4;
-      const hasSelection = Array.isArray(opt.factionSelections)
-        && opt.factionSelections.includes(requiredSelection);
-      const unknown = opt.accessLevel == null && !Array.isArray(opt.factionSelections);
-      if (!hasFull && !hasSelection && !unknown) continue;
-    }
+    if (!poolOptServesSelection(opt, requiredSelection)) continue;
     out.push({ playerId, key });
   }
   out.sort((a, b) => a.playerId.localeCompare(b.playerId));
@@ -843,6 +851,53 @@ export function quarantinePoolKey(apiKey, factionId, reason) {
   keyPoolingOpt.set(foundPid, { ...opt, enabled: false, quarantinedAt: Date.now(), quarantineReason: reason || 'unknown' });
   saveKeyPoolingOpt();
   console.log(`[store] Quarantined pool key for player ${foundPid} (faction ${factionId}): ${reason || 'unknown'}`);
+  return true;
+}
+
+/**
+ * Non-destructive self-heal: when a pool key returns Torn code 16 ("access
+ * level not high enough") for a routed selection, the key's key/info may still
+ * advertise that selection, so pure metadata routing keeps picking it. Record
+ * the selection on a per-key denylist so getPooledKeysForFaction skips this key
+ * for THAT selection only — it stays available for calls it can serve (e.g.
+ * enemy-profile, which needs no faction selection). Unlike quarantinePoolKey
+ * this never disables the key. The denylist survives the key-verify sweep;
+ * clearPoolKeyDeniedSelections (on a deliberate re-opt-in) gives it a fresh start.
+ */
+export function demotePoolKeySelection(apiKey, factionId, selection) {
+  if (!apiKey || !selection) return false;
+  let foundPid = null;
+  for (const [pid, k] of apiKeys) {
+    if (k === apiKey) { foundPid = pid; break; }
+  }
+  if (!foundPid) return false;
+  const opt = keyPoolingOpt.get(foundPid);
+  if (!opt || !opt.enabled) return false;
+  if (String(opt.factionId) !== String(factionId)) return false;
+  const denied = Array.isArray(opt.deniedSelections) ? opt.deniedSelections.slice() : [];
+  if (denied.includes(selection)) return false;   // already demoted — no-op
+  denied.push(selection);
+  keyPoolingOpt.set(foundPid, { ...opt, deniedSelections: denied });
+  saveKeyPoolingOpt();
+  console.log(`[store] Demoted pool key for player ${foundPid} (faction ${factionId}): can't serve '${selection}' — routed away (kept for other calls)`);
+  return true;
+}
+
+/**
+ * Clear a key's learned selection denylist. Called when the owner deliberately
+ * re-opts into the pool (a human "try my key again" signal) so a key they've
+ * since fixed can re-enter the routed pools. The 6-hourly key-verify sweep does
+ * NOT clear it — only an explicit opt-in does — so a still-broken key won't
+ * silently re-flood.
+ */
+export function clearPoolKeyDeniedSelections(playerId) {
+  const pid = String(playerId);
+  const opt = keyPoolingOpt.get(pid);
+  if (!opt || !Array.isArray(opt.deniedSelections) || opt.deniedSelections.length === 0) return false;
+  const next = { ...opt };
+  delete next.deniedSelections;
+  keyPoolingOpt.set(pid, next);
+  saveKeyPoolingOpt();
   return true;
 }
 

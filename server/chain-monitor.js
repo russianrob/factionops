@@ -309,6 +309,13 @@ export function startChainMonitor(io, warId) {
         // v5.0.3: code 2 = key regenerated/revoked; quarantine same as
         // code 7 so the rotation stops picking the dead key.
         store.quarantinePoolKey(apiKey, war.factionId, 'chain code 2');
+      } else if (/Access level of this key is not high enough|\(code 16\)/i.test(err.message)) {
+        // code 16 = this key can't serve the chain selection. Its key/info may
+        // still advertise 'chain', so pure metadata routing keeps round-robining
+        // onto it and floods this log every poll. Demote it away from 'chain'
+        // (non-destructive — it stays usable for calls it can serve); the router
+        // then skips it. Owner re-opt-in clears the demotion.
+        store.demotePoolKeySelection(apiKey, war.factionId, 'chain');
       }
       // Exponential backoff on failure
       const current = backoffs.get(warId) || POLL_INTERVAL_MS;
