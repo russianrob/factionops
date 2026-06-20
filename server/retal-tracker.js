@@ -88,6 +88,7 @@ export function startRetalTracker(io, warId) {
     } catch (err) {
       if (/Incorrect ID-entity relation/i.test(err.message)) store.quarantinePoolKey(apiKey, war.factionId, "retals code 7");
       else if (/Incorrect key|\(code 2\)/i.test(err.message)) store.quarantinePoolKey(apiKey, war.factionId, "retals code 2");
+      else if (/Access level of this key is not high enough|\(code 16\)/i.test(err.message)) store.demotePoolKeySelection(apiKey, war.factionId, "attacks");
       const cur = retalBackoffs.get(warId) || RETAL_INTERVAL_MS;
       const back = Math.min(cur * 2, MAX_BACKOFF_MS);
       retalBackoffs.set(warId, back);

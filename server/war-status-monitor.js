@@ -252,6 +252,11 @@ export function startWarStatusMonitor(io, warId) {
         // the pool keeps round-robining onto the dead key, spamming
         // the error log and wasting one poll slot per cycle.
         store.quarantinePoolKey(apiKey, war.factionId, 'war-status code 2');
+      } else if (/Access level of this key is not high enough|\(code 16\)/i.test(err.message)) {
+        // code 16 = this key can't serve the members selection even if its
+        // key/info advertises it; demote it away from 'members' so the router
+        // stops picking it (non-destructive — same lying-key self-heal as chain).
+        store.demotePoolKeySelection(apiKey, war.factionId, 'members');
       }
       // Exponential backoff on failure
       const current = backoffs.get(warId) || POLL_INTERVAL_MS;
@@ -354,6 +359,8 @@ function startEnemyAttacksMonitor(io, warId) {
         store.quarantinePoolKey(apiKey, war.factionId, 'enemy-attacks code 7');
       } else if (/Incorrect key|\(code 2\)/i.test(err.message)) {
         store.quarantinePoolKey(apiKey, war.factionId, 'enemy-attacks code 2');
+      } else if (/Access level of this key is not high enough|\(code 16\)/i.test(err.message)) {
+        store.demotePoolKeySelection(apiKey, war.factionId, 'attacks');
       }
       const current = enemyAttacksBackoffs.get(warId) || 30_000;
       const next = Math.min(current * 2, MAX_BACKOFF_MS);
@@ -530,6 +537,8 @@ function startAttacksFeedMonitor(io, warId) {
         store.quarantinePoolKey(apiKey, war.factionId, 'attacks-feed code 7');
       } else if (/Incorrect key|\(code 2\)/i.test(err.message)) {
         store.quarantinePoolKey(apiKey, war.factionId, 'attacks-feed code 2');
+      } else if (/Access level of this key is not high enough|\(code 16\)/i.test(err.message)) {
+        store.demotePoolKeySelection(apiKey, war.factionId, 'attacks');
       }
       const current = attacksFeedBackoffs.get(warId) || ATTACKS_FEED_INTERVAL_MS;
       const next = Math.min(current * 2, MAX_BACKOFF_MS);

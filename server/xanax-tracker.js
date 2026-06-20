@@ -257,15 +257,26 @@ async function pollOnce(warId) {
   // partial page (signal that we've drained the window).
   const allEntries = [];
   let to = windowTo;
-  for (let page = 0; page < 30; page++) {
-    const batch = await fetchFactionArmouryNewsRange(war.factionId, apiKey, fromTs, to);
-    if (batch.length === 0) break;
-    allEntries.push(...batch);
-    if (batch.length < 100) break;
-    // The fetcher returns sorted-ascending; use the oldest to step `to`
-    // backwards by 1s for the next page so we don't double-count.
-    to = batch[0].timestamp - 1;
-    if (to <= fromTs) break;
+  try {
+    for (let page = 0; page < 30; page++) {
+      const batch = await fetchFactionArmouryNewsRange(war.factionId, apiKey, fromTs, to);
+      if (batch.length === 0) break;
+      allEntries.push(...batch);
+      if (batch.length < 100) break;
+      // The fetcher returns sorted-ascending; use the oldest to step `to`
+      // backwards by 1s for the next page so we don't double-count.
+      to = batch[0].timestamp - 1;
+      if (to <= fromTs) break;
+    }
+  } catch (err) {
+    // code 16 = this key can't serve the armoury-news selection even though its
+    // key/info may advertise it; demote it away from 'armorynews' so the router
+    // stops picking it (same lying-key self-heal as the chain poller). Re-throw
+    // so the tick loop still backs off + logs.
+    if (/Access level of this key is not high enough|\(code 16\)/i.test(err.message)) {
+      store.demotePoolKeySelection(apiKey, war.factionId, 'armorynews');
+    }
+    throw err;
   }
   // De-dup by entry id in case pages overlap (defense-in-depth).
   const seen = new Set();
