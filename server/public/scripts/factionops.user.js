@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.33
+// @version      5.1.34
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.33';
+    const SCRIPT_VERSION = '5.1.34';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -3915,11 +3915,10 @@ body.wb-chain-active {
         // since Torn lazy-renders the news/wall after the initial DOM.
         setTimeout(scheduleHospScrape, 1500);
         setTimeout(scheduleHospScrape, 5000);
-        // Real-time watcher — fires whenever new news entries appear.
-        // 400ms debounce in scheduleHospScrape coalesces burst updates.
-        const obs = new MutationObserver(() => scheduleHospScrape());
-        obs.observe(document.body, { childList: true, subtree: true });
-        log('[hosp-news] observer installed on', isWarPage ? 'war.php' : 'factions.php');
+        if (!window.__foHospScrapeInterval) {
+            window.__foHospScrapeInterval = setInterval(scheduleHospScrape, 4000);
+        }
+        log('[hosp-news] news poller installed on', isWarPage ? 'war.php' : 'factions.php');
     }
 
     function queuePeerRelay(statusBatch) {
