@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.34
+// @version      5.1.35
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.34';
+    const SCRIPT_VERSION = '5.1.35';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -3778,6 +3778,41 @@ body.wb-chain-active {
                                 }
                             } catch (_) { /* parse error — skip */ }
                         }).catch(() => {});
+                    }
+                    if (url && /\/v2\/faction\/\d+\/members/.test(url)) {
+                        const fm = url.match(/\/v2\/faction\/(\d+)\/members/);
+                        const fid = fm ? fm[1] : '';
+                        if (fid && state.enemyFactionId && fid === String(state.enemyFactionId)) {
+                            const clone = response.clone();
+                            clone.text().then(text => {
+                                if (!text || text[0] !== '{') return;
+                                try {
+                                    const json = JSON.parse(text);
+                                    const members = Array.isArray(json.members) ? json.members : [];
+                                    if (members.length === 0) return;
+                                    const batch = {};
+                                    let count = 0;
+                                    for (const mm of members) {
+                                        const uid = String(mm.id || '');
+                                        if (!uid) continue;
+                                        const st = mm.status || {};
+                                        const stext = String(st.state || st.description || '');
+                                        if (!stext) continue;
+                                        const entry = { status: _normalizeStatusText(stext) };
+                                        if (mm.name) entry.name = String(mm.name);
+                                        if (mm.level != null) entry.level = Number(mm.level);
+                                        if (st.until) entry.until = Number(st.until);
+                                        batch[uid] = entry;
+                                        count++;
+                                    }
+                                    if (count > 0) {
+                                        log('[fetch-intercept] v2 faction/members captured', count, 'enemy member(s) with timers');
+                                        try { mergeStatusesMonotonic(batch); } catch (_) {}
+                                        try { queuePeerRelay(batch); } catch (_) {}
+                                    }
+                                } catch (_) { /* parse error — skip */ }
+                            }).catch(() => {});
+                        }
                     }
                 } catch (_) { /* don't break the page's fetch */ }
                 return response;
