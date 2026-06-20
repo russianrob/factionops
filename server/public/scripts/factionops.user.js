@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.36
+// @version      5.1.37
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.36';
+    const SCRIPT_VERSION = '5.1.37';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -3779,46 +3779,10 @@ body.wb-chain-active {
                             } catch (_) { /* parse error — skip */ }
                         }).catch(() => {});
                     }
-                    if (url && /\/v2\/faction\/\d+\/members/.test(url)) {
-                        const fm = url.match(/\/v2\/faction\/(\d+)\/members/);
-                        const fid = fm ? fm[1] : '';
-                        log('[fetch-intercept] v2 members fetch SEEN — faction ' + fid + ' (our enemy=' + (state.enemyFactionId || 'unknown') + ')');
-                        if (fid && state.enemyFactionId && fid === String(state.enemyFactionId)) {
-                            const clone = response.clone();
-                            clone.text().then(text => {
-                                if (!text || text[0] !== '{') return;
-                                try {
-                                    const json = JSON.parse(text);
-                                    const members = Array.isArray(json.members) ? json.members : [];
-                                    if (members.length === 0) return;
-                                    const batch = {};
-                                    let count = 0;
-                                    for (const mm of members) {
-                                        const uid = String(mm.id || '');
-                                        if (!uid) continue;
-                                        const st = mm.status || {};
-                                        const stext = String(st.state || st.description || '');
-                                        if (!stext) continue;
-                                        const entry = { status: _normalizeStatusText(stext) };
-                                        if (mm.name) entry.name = String(mm.name);
-                                        if (mm.level != null) entry.level = Number(mm.level);
-                                        if (st.until) entry.until = Number(st.until);
-                                        batch[uid] = entry;
-                                        count++;
-                                    }
-                                    if (count > 0) {
-                                        log('[fetch-intercept] v2 faction/members captured', count, 'enemy member(s) with timers');
-                                        try { mergeStatusesMonotonic(batch); } catch (_) {}
-                                        try { queuePeerRelay(batch); } catch (_) {}
-                                    }
-                                } catch (_) { /* parse error — skip */ }
-                            }).catch(() => {});
-                        }
-                    }
                 } catch (_) { /* don't break the page's fetch */ }
                 return response;
             };
-            log('[fetch-intercept] installed — watching getwarusers + v2 faction/members');
+            log('[fetch-intercept] installed — watching for getwarusers');
         } catch (e) {
             warn('[fetch-intercept] install failed:', e && e.message);
         }
@@ -11076,7 +11040,10 @@ body.wb-chain-active {
         // causing the overlay to briefly show our own faction members.
         if (data.members) {
             const statusBatch = {};
-            for (const [memberId, member] of Object.entries(data.members)) {
+            const memberList = Array.isArray(data.members)
+                ? data.members.map(m => [String(m.id), m])
+                : Object.entries(data.members);
+            for (const [memberId, member] of memberList) {
                 const mid = String(memberId);
                 // Skip members not already known as enemy targets
                 if (!state.statuses[mid]) continue;
@@ -11092,6 +11059,7 @@ body.wb-chain-active {
 
             // Use monotonic merge so intercepted API can't bump timers up
             if (Object.keys(statusBatch).length > 0) {
+                log('[intercept] ' + (Array.isArray(data.members) ? 'v2' : 'v1') + ' members payload → ' + Object.keys(statusBatch).length + ' enemy status update(s)');
                 mergeStatusesMonotonic(statusBatch);
 
                 // Peer relay — report changes to server for other faction members
