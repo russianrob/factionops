@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.37
+// @version      5.1.38
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.37';
+    const SCRIPT_VERSION = '5.1.38';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -3818,108 +3818,6 @@ body.wb-chain-active {
         }
     }
 
-    // v5.1.3: hospital-event scraper. Watches faction news / wall /
-    // war ticker DOM for 'X hospitalized Y' phrasings and relays the
-    // hospital status via the existing peer-relay path. Two coverage
-    // sources combined:
-    //   (1) factions.php news + wall — eventual consistency backstop
-    //       when teammates idly refresh the faction page
-    //   (2) war.php news/ticker — real-time during active chains
-    //       since most members keep the war page open
-    // Both relay through queuePeerRelay → /api/status → broadcastWarUpdate,
-    // matching the attack-result intercept path. Latency for any
-    // hospitalization seen in news ≈ 2 seconds across the faction.
-    //
-    // Pattern matches both 'hospitalized' (US) and 'hospitalised' (UK):
-    //   <a ...XID=ATTACKER>NAME</a> hospitalized <a ...XID=TARGET>NAME</a>
-    //   <a ...XID=ATTACKER>NAME</a> attacked and hospitalised
-    //                                <a ...XID=TARGET>NAME</a>
-    // We only need the TARGET's ID — that's the second XID in the
-    // 'hospitali[sz]ed' sentence. Use a non-greedy regex anchored on
-    // the verb so we don't match across unrelated entries.
-    const _hospNewsSeen = new Set();
-    const HOSP_NEWS_RE = /hospitali[sz]ed[^<]*<a[^>]*XID=(\d+)[^>]*>([^<]+)</gi;
-    function scrapeHospitalNewsFromHtml(html) {
-        const updates = {};
-        if (!html) return updates;
-        let m;
-        HOSP_NEWS_RE.lastIndex = 0;
-        while ((m = HOSP_NEWS_RE.exec(html)) !== null) {
-            const targetId = m[1];
-            const targetName = (m[2] || '').trim();
-            // Cheap dedup — key on the (id + name) tuple so the same
-            // news entry doesn't relay every MutationObserver tick.
-            const sig = targetId + '|' + targetName;
-            if (_hospNewsSeen.has(sig)) continue;
-            _hospNewsSeen.add(sig);
-            updates[targetId] = {
-                status: 'hospital',
-                until: 0, // unknown duration — basic poll refines
-                name: targetName,
-            };
-        }
-        // Cheap LRU — keep the Set bounded so it doesn't grow forever
-        if (_hospNewsSeen.size > 500) {
-            const keep = Array.from(_hospNewsSeen).slice(-300);
-            _hospNewsSeen.clear();
-            keep.forEach(s => _hospNewsSeen.add(s));
-        }
-        return updates;
-    }
-
-    let _hospScrapeTimer = null;
-    function scheduleHospScrape() {
-        if (_hospScrapeTimer) return;
-        _hospScrapeTimer = setTimeout(() => {
-            _hospScrapeTimer = null;
-            try {
-                // Hash-agnostic substrings — Torn names these
-                // newsList___xxxxx / wallList___xxxxx etc. Also fall
-                // back to scanning the whole body if no specific
-                // container matches (rare — newer page layouts).
-                const containers = document.querySelectorAll(
-                    '[class*="newsList___"], [class*="wallList___"], ' +
-                    '[class*="newsContent___"], [class*="newsContainer___"], ' +
-                    '[class*="wallContent___"], [class*="newsCard___"]'
-                );
-                let totalUpdates = {};
-                if (containers.length > 0) {
-                    for (const c of containers) {
-                        Object.assign(totalUpdates, scrapeHospitalNewsFromHtml(c.innerHTML || ''));
-                    }
-                } else {
-                    // Fallback: scan body innerHTML once. Cheaper than
-                    // querySelectorAll on every tick; only fires when
-                    // the hash-agnostic containers don't exist.
-                    Object.assign(totalUpdates, scrapeHospitalNewsFromHtml(document.body?.innerHTML || ''));
-                }
-                if (Object.keys(totalUpdates).length > 0) {
-                    log('[hosp-news] scrape relayed', Object.keys(totalUpdates).length, 'hospital event(s)');
-                    try { mergeStatusesMonotonic(totalUpdates); } catch (_) {}
-                    try { queuePeerRelay(totalUpdates); } catch (_) {}
-                }
-            } catch (e) { /* swallow — never break the page */ }
-        }, 400);
-    }
-
-    function installHospitalNewsObserver() {
-        const href = window.location.href || '';
-        // Only run where news/wall content lives — factions.php (faction
-        // news + wall), war.php (war ticker). Avoids wasted observer
-        // cycles on unrelated pages.
-        const isFactionPage = /factions?\.php/i.test(href);
-        const isWarPage     = /war\.php/i.test(href);
-        if (!isFactionPage && !isWarPage) return;
-        if (!document.body) { setTimeout(installHospitalNewsObserver, 500); return; }
-        // Initial scrape after page settles + a delayed second pass
-        // since Torn lazy-renders the news/wall after the initial DOM.
-        setTimeout(scheduleHospScrape, 1500);
-        setTimeout(scheduleHospScrape, 5000);
-        if (!window.__foHospScrapeInterval) {
-            window.__foHospScrapeInterval = setInterval(scheduleHospScrape, 4000);
-        }
-        log('[hosp-news] news poller installed on', isWarPage ? 'war.php' : 'factions.php');
-    }
 
     function queuePeerRelay(statusBatch) {
         if (!statusBatch || Object.keys(statusBatch).length === 0) return;
@@ -9379,14 +9277,6 @@ body.wb-chain-active {
         setInterval(refreshSharedBsp, 30 * 60 * 1000);
         setTimeout(uploadLocalBspToShared, 5000);
         setInterval(uploadLocalBspToShared, 6 * 60 * 60 * 1000);
-
-        // v5.1.3: hospital-event news scraper. Runs on factions.php
-        // (wall/news) and war.php (war ticker). Detects 'X hospitalized
-        // Y' entries via MutationObserver and relays through the same
-        // peer-relay path the attack-result intercept uses. Combined
-        // coverage gives ~2s faction-wide detection latency for any
-        // hospitalization visible in news.
-        try { installHospitalNewsObserver(); } catch (_) {}
 
         // v5.1.9: WebSocket intercept — primary fast path for hospital
         // detection (~100ms vs ~2s for news scrape). Falls behind news
