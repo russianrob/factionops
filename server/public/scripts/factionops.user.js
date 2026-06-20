@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.35
+// @version      5.1.36
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.35';
+    const SCRIPT_VERSION = '5.1.36';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -3782,6 +3782,7 @@ body.wb-chain-active {
                     if (url && /\/v2\/faction\/\d+\/members/.test(url)) {
                         const fm = url.match(/\/v2\/faction\/(\d+)\/members/);
                         const fid = fm ? fm[1] : '';
+                        log('[fetch-intercept] v2 members fetch SEEN — faction ' + fid + ' (our enemy=' + (state.enemyFactionId || 'unknown') + ')');
                         if (fid && state.enemyFactionId && fid === String(state.enemyFactionId)) {
                             const clone = response.clone();
                             clone.text().then(text => {
@@ -3817,7 +3818,7 @@ body.wb-chain-active {
                 } catch (_) { /* don't break the page's fetch */ }
                 return response;
             };
-            log('[fetch-intercept] installed — watching for getwarusers');
+            log('[fetch-intercept] installed — watching getwarusers + v2 faction/members');
         } catch (e) {
             warn('[fetch-intercept] install failed:', e && e.message);
         }
@@ -14295,7 +14296,7 @@ body.wb-chain-active {
     // =========================================================================
 
     async function main() {
-        log('Initialising FactionOps v2.1.0');
+        log('Initialising FactionOps v' + SCRIPT_VERSION);
         if (IS_PDA) log('Torn PDA detected — using PDA-managed API key');
 
         // 1. Inject CSS
