@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.11
+// @version      0.9.12
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.11";
+  var SCRIPT_VERSION = "0.9.12";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -820,6 +820,7 @@
   }
   function applyAll(force) {
     var mode = getMode(), key = getKey();
+    _tfsLastType = tfsSelectedType();
     Promise.all([getStock(force), getModel()]).then(function (res) {
       var stock = res[0], model = res[1] || {};
       if (!stock) { tfsMsg("stock unavailable"); return; }
@@ -840,6 +841,18 @@
     if (_applyTimer) clearTimeout(_applyTimer);
     _applyTimer = setTimeout(function () { applyAll(false); }, 200);
   }
+  var _tfsLastType = "", _tfsTypeTimer = null;
+  function tfsSelectedType() {
+    var el = document.querySelector('input[name="travelType"][aria-checked="true"]');
+    return el ? String((el.value != null ? el.value : (el.getAttribute && el.getAttribute("value"))) || "") : "";
+  }
+  function tfsOnPageInteract() {
+    if (_tfsTypeTimer) clearTimeout(_tfsTypeTimer);
+    _tfsTypeTimer = setTimeout(function () {
+      var t = tfsSelectedType();
+      if (t && t !== _tfsLastType) { _tfsLastType = t; applyAll(false); }
+    }, 250);
+  }
   function isOurNode(node) {
     var el = node && node.nodeType === 1 ? node : (node && node.parentElement);
     return !!(el && el.closest && el.closest('[id^="tfs"], [class*="tfs-"]'));
@@ -859,6 +872,8 @@
     injectSettingsBar(function (force) { applyAll(!!force); });
     applyAll(false);
     startObserver();
+    document.addEventListener("click", tfsOnPageInteract, true);
+    document.addEventListener("change", tfsOnPageInteract, true);
     setInterval(function () { applyAll(false); }, 30000);
     try { if (typeof GM_registerMenuCommand === "function") GM_registerMenuCommand("Foreign Stock: refresh", function () { applyAll(true); }); } catch (e) {}
   }
