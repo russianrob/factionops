@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.10
+// @version      0.9.11
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.10";
+  var SCRIPT_VERSION = "0.9.11";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -307,8 +307,12 @@
       return data;
     }).catch(function () { return cached ? cached.data : {}; });
   }
+  function tfsVisible(el) {
+    if (!el) return false;
+    return el.offsetWidth > 0 || el.offsetHeight > 0 || (el.getClientRects && el.getClientRects().length > 0);
+  }
   function getTravelState() {
-    if (typeof document !== "undefined" && (document.querySelector('span[class*="country___"]') || document.querySelector('[class*="destinationList___"]'))) return Promise.resolve(null);
+    if (typeof document !== "undefined" && (tfsVisible(document.querySelector('span[class*="country___"]')) || tfsVisible(document.querySelector('[class*="destinationList___"]')))) return Promise.resolve(null);
     var key = getKey();
     if (!key) return Promise.resolve(null);
     var cached = gmGet("tfs_travel", null);
