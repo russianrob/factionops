@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.52
+// @version      3.2.53
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.52';
+    const SCRIPT_VERSION = '3.2.53';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -4122,7 +4122,8 @@
             const deficit = totalNeeded - info.openSlots;
             const sr      = diffToScopeRange(lvl);
 
-            const slotsPerOc = info.crimes.length > 0 ? (info.totalSlots / info.crimes.length) : DEFAULT_SLOTS_PER_OC[sr.range];
+            const recruitingCount = info.crimes.filter(c => c.status === 'Recruiting').length;
+            const slotsPerOc = recruitingCount > 0 ? (info.totalSlots / recruitingCount) : DEFAULT_SLOTS_PER_OC[sr.range];
             // Only recommend spawning if we have enough people to FILL an OC
             const numOcsNeeded = Math.floor(deficit / slotsPerOc);
 
@@ -4821,9 +4822,9 @@
         const rows = visible.map(r => {
             let actionHtml;
             if (r.action === 'spawn') {
-                actionHtml = `<span class="oc-tag-spawn">Spawn ${r.numOcsToSpawn} OC${r.numOcsToSpawn > 1 ? 's' : ''}</span>`;
+                actionHtml = `<span class="oc-tag-spawn">Spawn ${r.numOcsToSpawn} OC${r.numOcsToSpawn > 1 ? 's' : ''} <span style="font-size:9px;opacity:.8">(${r.deficit} slot${r.deficit > 1 ? 's' : ''} needed)</span></span>`;
             } else if (r.action === 'spawn_partial') {
-                actionHtml = `<span class="oc-tag-spawn-partial">Spawn ${r.numOcsToSpawn} OC${r.numOcsToSpawn > 1 ? 's' : ''} <span style="font-size:9px;opacity:.8">(need +${r.deficit} roles)</span></span>`;
+                actionHtml = `<span class="oc-tag-spawn-partial">Spawn ${r.numOcsToSpawn} OC${r.numOcsToSpawn > 1 ? 's' : ''} <span style="font-size:9px;opacity:.8">(${r.deficit} slot${r.deficit > 1 ? 's' : ''} needed)</span></span>`;
             } else if (r.action === 'deferred') {
                 actionHtml = `<span class="oc-tag-deferred">Deferred — no scope</span>`;
             } else if (r.action === 'ok') {
