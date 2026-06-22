@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.53
+// @version      3.2.54
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.53';
+    const SCRIPT_VERSION = '3.2.54';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -6447,6 +6447,12 @@
                     .map(s => `${s.userID}:${s.position.toLowerCase()}`)
             );
             const domMissingFlagged = mgr_scrapeSlotMissingIndicators();
+            // Fail-safe: only trust the DOM "no-item icon" cross-check to
+            // override the API when the scrape actually found at least one
+            // missing indicator. If it found none (e.g. Torn changed the icon
+            // colour/markup), treating absence-of-icon as "user has it" would
+            // hide every genuinely-missing item — so fall back to API truth.
+            const domScrapeWorking = domMissingFlagged.size > 0;
 
             let domFilteredCount = 0;
             const missing = (await mgr_getMissingOCItems()).filter(m => {
@@ -6466,7 +6472,7 @@
                 // Slots not rendered (different scope) fall through to
                 // API truth since we can't verify either way.
                 const posKey = `${m.userID}:${String(m.position||'').toLowerCase()}`;
-                if (domSlots.has(posKey) && !domMissingFlagged.has(posKey)) {
+                if (domScrapeWorking && domSlots.has(posKey) && !domMissingFlagged.has(posKey)) {
                     domFilteredCount++;
                     // v3.1.89: persist this auto-detected false-positive
                     // server-side so it stays hidden after navigation
