@@ -4978,6 +4978,27 @@ function scheduleFlyerDelaysSave() {
     }
   }, 30_000);
 }
+
+// A pending flyer-delay is "in-flight" only while clients keep re-observing
+// the member as a live blocker (POSTs are throttled to ~60s while the OC page
+// is open). Once the member lands — or the crime completes — observations stop
+// and the entry freezes. Because the completion-merge runs only the first time
+// a crime is seen, an entry whose crime has since aged out of the API window
+// would otherwise show "in-flight" forever. Drop any entry not re-observed
+// within this window so the Delays tab self-heals.
+const FLYER_DELAY_STALE_MS = 10 * 60 * 1000;
+function pruneFlyerDelays(factionId) {
+  const m = _flyerDelays.get(String(factionId));
+  if (!m) return;
+  const now = Date.now();
+  let changed = false;
+  for (const [k, v] of Array.from(m.entries())) {
+    const last = Number(v && v.observedAt) || Number(v && v.firstObservedAt) || 0;
+    if (now - last > FLYER_DELAY_STALE_MS) { m.delete(k); changed = true; }
+  }
+  if (m.size === 0) _flyerDelays.delete(String(factionId));
+  if (changed) scheduleFlyerDelaysSave();
+}
 // Defer load until OC_HISTORY_DIR (declared further down) has initialised.
 setImmediate(loadFlyerDelays);
 
@@ -7910,6 +7931,7 @@ router.get("/api/oc/spawn-key", async (req, res) => {
     // tab's traveling-alert banner can show each member's OWN delay
     // duration (not the shared OC-ready-age). Shape: { [crimeId::memberId]: seconds }
     const pendingDelays = {};
+    pruneFlyerDelays(playerInfo.factionId);
     const fdMap = _flyerDelays.get(String(playerInfo.factionId));
     if (fdMap) {
       const nowMs = Date.now();
@@ -8133,6 +8155,11 @@ router.post("/api/oc/flyer-delay", async (req, res) => {
   const callerKey = req.query.key || (req.body && req.body.key);
   const { crimeId, memberId, memberName, crimeName, readyAt } = (req.body || {});
   if (!crimeId || !memberId) return res.status(400).json({ error: "crimeId and memberId are required" });
+  // Don't (re)create a pending delay for a crime already finalized this
+  // session — the completion-merge runs only on first-seen, so a late POST
+  // (a client whose OC view lagged the crime's completion) would orphan it
+  // as a permanent "in-flight" entry.
+  if (_seenCrimeIds.has(String(crimeId))) return res.json({ ok: true, skipped: "crime-completed" });
   const fid = String(info.factionId);
   if (!_flyerDelays.has(fid)) _flyerDelays.set(fid, new Map());
   const m = _flyerDelays.get(fid);
