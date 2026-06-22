@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.55
+// @version      3.2.56
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.55';
+    const SCRIPT_VERSION = '3.2.56';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -6459,31 +6459,25 @@
                 // Hide rows we just loaned (avoids re-showing during the
                 // few seconds before Torn's API reflects the loan).
                 if (mgr_recentlyLoaned.get(String(m.userID))?.has(m.itemID)) return false;
-                // Hide rows the admin marked as "✓ Has it" — manual
-                // session override for Torn API false-positives.
-                if (mgr_haveItOverride.get(String(m.userID))?.has(m.itemID)) return false;
-                // Hide rows where the page DOM/state already shows the
-                // item as bound (auto override, v3.1.80).
-                if (domBound.has(`${m.userID}:${m.itemID}`)) return false;
-                // v3.1.87: cross-check the DOM. If the slot is rendered
-                // on the page AND its icon doesn't show the orange "no
-                // item" SVG, it's a Torn API false-positive — the user
-                // does have the item; the API just hasn't caught up.
-                // Slots not rendered (different scope) fall through to
-                // API truth since we can't verify either way.
                 const posKey = `${m.userID}:${String(m.position||'').toLowerCase()}`;
-                if (domScrapeWorking && domSlots.has(posKey) && !domMissingFlagged.has(posKey)) {
+                // v3.2.56: the live orange "no-item" icon is authoritative. If
+                // Torn renders it for this slot RIGHT NOW, the member genuinely
+                // lacks the item — never hide it behind a (possibly stale) "has
+                // it" override or bound-scrape. Fixes a stuck override silently
+                // hiding a real missing item.
+                if (domMissingFlagged.has(posKey)) return true;
+                // No live missing-icon → trust the "has it" signals.
+                if (mgr_haveItOverride.get(String(m.userID))?.has(m.itemID)) return false;
+                if (domBound.has(`${m.userID}:${m.itemID}`)) return false;
+                // v3.1.87: slot rendered with no missing-icon = API false
+                // positive (user has it, API lagging). Suppress for the session
+                // only — do NOT post a sticky server override; a transient
+                // scrape miss must not persist a wrong "has it" for 3 days
+                // (that was the bug that hid a genuinely-missing item).
+                if (domScrapeWorking && domSlots.has(posKey)) {
                     domFilteredCount++;
-                    // v3.1.89: persist this auto-detected false-positive
-                    // server-side so it stays hidden after navigation
-                    // and is shared across faction admins.
-                    // v3.1.91: pass crime's expires_at so the server's
-                    // 3-day TTL is capped at the crime's execution time.
-                    if (!mgr_haveItOverride.has(String(m.userID))) {
-                        mgr_haveItOverride.set(String(m.userID), new Set());
-                    }
+                    if (!mgr_haveItOverride.has(String(m.userID))) mgr_haveItOverride.set(String(m.userID), new Set());
                     mgr_haveItOverride.get(String(m.userID)).add(m.itemID);
-                    mgr_postMissingOverride(m.userID, m.itemID, m.crimeExpiresAtMs);
                     return false;
                 }
                 return true;
