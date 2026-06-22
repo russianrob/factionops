@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.54
+// @version      3.2.55
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.54';
+    const SCRIPT_VERSION = '3.2.55';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -6491,6 +6491,25 @@
             if (domFilteredCount > 0) {
                 console.log(`[OC Mgr] DOM auto-filter: hid ${domFilteredCount} false-positive Missing entries`);
             }
+            try {
+                const _raw = await mgr_getMissingOCItems();
+                const _hv = (uid, iid) => !!(mgr_haveItOverride.get(String(uid)) && mgr_haveItOverride.get(String(uid)).has(iid));
+                const _rl = (uid, iid) => !!(mgr_recentlyLoaned.get(String(uid)) && mgr_recentlyLoaned.get(String(uid)).has(iid));
+                GM_xmlhttpRequest({
+                    method: 'POST', url: 'https://tornwar.com/api/debug/client-log',
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ tag: 'oc-missing-diag', data: {
+                        v: SCRIPT_VERSION, rawCount: _raw.length, finalCount: missing.length,
+                        domBoundSize: domBound.size, domSlotsSize: domSlots.size,
+                        domMissingFlaggedSize: domMissingFlagged.size, domScrapeWorking,
+                        raw: _raw.map(m => ({ u: m.userID, i: m.itemID, c: m.crimeName, p: m.position,
+                            bound: domBound.has(`${m.userID}:${m.itemID}`),
+                            slotRendered: domSlots.has(`${m.userID}:${String(m.position || '').toLowerCase()}`),
+                            iconFlagged: domMissingFlagged.has(`${m.userID}:${String(m.position || '').toLowerCase()}`),
+                            haveIt: _hv(m.userID, m.itemID), loaned: _rl(m.userID, m.itemID) }))
+                    } })
+                });
+            } catch (_) {}
             if (!missing.length) { content.innerHTML = '<div class="mgr-ok">✓ All OC items allocated</div>'; return; }
             await mgr_resolveItemNames(missing.map(m => m.itemID));
             let html = '';
