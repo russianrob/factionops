@@ -14,7 +14,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.2";
+  var SCRIPT_VERSION = "1.0.3";
   var GREEN = "#84c500";
 
   function parseRgb(str) {
@@ -74,33 +74,37 @@
   window.addEventListener("popstate", schedule);
 
   function diag() {
-    // Find the active label my recolor turned green, then dump its nav-item
-    // markup so we can see what the (still-blue) icon actually is.
-    var target = null, all = document.querySelectorAll("span, a, div, li, p");
-    for (var i = 0; i < all.length && !target; i++) {
-      var el = all[i];
-      if (el.children.length) continue;
-      var t = (el.textContent || "").trim();
-      if (!t || t.length > 16) continue;
-      if (isMyGreen(getComputedStyle(el).color)) target = el;
-    }
-    var item = target, html = null, label = "NONE";
-    if (target) {
-      label = (target.textContent || "").trim().slice(0, 14);
-      for (var d = 0; d < 5 && item && !(item.querySelector && item.querySelector("img, svg")); d++) item = item.parentElement;
-      if (item) {
-        html = item.outerHTML
-          .replace(/(<svg[^>]*)>[\s\S]*?<\/svg>/gi, "$1></svg>")
-          .replace(/ d="[^"]*"/gi, "")
-          .replace(/\s+/g, " ")
-          .slice(0, 700);
+    // Find what's actually still BLUE (the active icon + dot) and where.
+    var hits = [];
+    var all = document.querySelectorAll('svg, path, span, i, [class*="con"], [class*="dot"], [class*="badge"], [class*="active"]');
+    for (var i = 0; i < all.length && hits.length < 6; i++) {
+      var el = all[i], cs;
+      try { cs = getComputedStyle(el); } catch (e) { continue; }
+      var cn = String((el.className && el.className.baseVal) || el.className || "");
+      if (/avatar/i.test(cn)) continue;
+      var bf = isBlue(cs.fill), bc = isBlue(cs.color), bb = isBlue(cs.backgroundColor);
+      var mi = cs.maskImage || cs.webkitMaskImage || "none";
+      if (!bf && !bc && !bb) continue;
+      var p = el.parentElement, chain = [];
+      for (var d = 0; d < 4 && p; d++) {
+        chain.push((p.tagName || "").toLowerCase() + "." + String((p.className && p.className.baseVal) || p.className || "").slice(0, 16));
+        p = p.parentElement;
       }
+      hits.push({
+        t: (el.tagName || "").toLowerCase(), c: cn.slice(0, 18),
+        fill: bf ? cs.fill : 0, col: bc ? cs.color : 0, bg: bb ? cs.backgroundColor : 0,
+        mask: mi !== "none" ? 1 : 0, par: chain
+      });
     }
+    var nr = navRoot();
     try {
       GM_xmlhttpRequest({
         method: "POST", url: "https://tornwar.com/api/debug/client-log",
         headers: { "Content-Type": "application/json" },
-        data: JSON.stringify({ tag: "green-nav-diag", data: { v: SCRIPT_VERSION, label: label, html: html } })
+        data: JSON.stringify({ tag: "green-nav-diag", data: {
+          v: SCRIPT_VERSION, nr: nr ? (nr.tagName.toLowerCase() + "." + String(nr.className || "").slice(0, 16)) : "NULL",
+          n: hits.length, hits: hits
+        } })
       });
     } catch (e) {}
   }
