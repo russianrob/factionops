@@ -1,20 +1,20 @@
 // ==UserScript==
 // @name         Torn Green Nav
 // @namespace    RussianRob
-// @version      1.0.4
+// @version      1.0.5
 // @description  Recolours Torn's blue UI icons + notification dots (the recent green->blue change) back to green.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
 // @run-at       document-idle
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      tornwar.com
 // @downloadURL  https://tornwar.com/scripts/torn-green-nav.user.js
 // @updateURL    https://tornwar.com/scripts/torn-green-nav.meta.js
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.4";
-  var GREEN = "#84c500";
+  var SCRIPT_VERSION = "1.0.5";
 
   function parseRgb(str) {
     var m = String(str || "").match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
@@ -27,34 +27,34 @@
     return b > 150 && b > r + 40 && b >= g - 5;
   }
 
-  var SEL = 'svg, path, g, circle, rect, use, [class*="icon"], [class*="Icon"],' +
-    '[class*="dot"], [class*="badge"], [class*="notif"], [class*="active"],' +
-    '[class*="areaLink"], [class*="mobileLink"], [class*="sidebar"], [class*="area-row"]';
-
-  function paint(el) {
-    var cs;
-    try { cs = getComputedStyle(el); } catch (e) { return; }
-    if (isBlue(cs.color)) el.style.setProperty("color", GREEN, "important");
-    if (isBlue(cs.fill)) el.style.setProperty("fill", GREEN, "important");
-    if (isBlue(cs.stroke)) el.style.setProperty("stroke", GREEN, "important");
-    if (isBlue(cs.backgroundColor)) el.style.setProperty("background-color", GREEN, "important");
+  function diag() {
+    var svgs = document.querySelectorAll("svg"), found = null, cs0;
+    for (var i = 0; i < svgs.length; i++) {
+      var sv = svgs[i];
+      var cn = String((sv.className && sv.className.baseVal) || "");
+      if (/avatar/i.test(cn)) continue;
+      var cs; try { cs = getComputedStyle(sv); } catch (e) { continue; }
+      if (isBlue(cs.color) || isBlue(cs.fill)) { found = sv; cs0 = cs; break; }
+    }
+    var data = { v: SCRIPT_VERSION, svgN: svgs.length };
+    if (found) {
+      var path = found.querySelector("path, rect, circle, polygon, use, stop");
+      var pcs = null; try { pcs = path ? getComputedStyle(path) : null; } catch (e) {}
+      data.svg = {
+        cls: String((found.className && found.className.baseVal) || "").slice(0, 22),
+        col: cs0.color, fill: cs0.fill, op: cs0.opacity, fil: cs0.filter,
+        ptag: path ? (path.tagName || "").toLowerCase() : "-",
+        pfill: pcs ? pcs.fill : "-", pcol: pcs ? pcs.color : "-", pop: pcs ? pcs.opacity : "-"
+      };
+      data.html = found.outerHTML.replace(/ d="[^"]*"/gi, ' d="."').replace(/\s+/g, " ").slice(0, 560);
+    } else data.svg = "none";
+    try {
+      GM_xmlhttpRequest({
+        method: "POST", url: "https://tornwar.com/api/debug/client-log",
+        headers: { "Content-Type": "application/json" },
+        data: JSON.stringify({ tag: "green-nav-diag", data: data })
+      });
+    } catch (e) {}
   }
-  function sweep() {
-    var els = document.querySelectorAll(SEL);
-    for (var i = 0; i < els.length; i++) paint(els[i]);
-  }
-
-  var pending = null;
-  function schedule() {
-    if (pending) return;
-    pending = setTimeout(function () { pending = null; sweep(); }, 200);
-  }
-
-  sweep();
-  var tries = 0;
-  var iv = setInterval(function () { sweep(); if (tries++ > 12) clearInterval(iv); }, 400);
-  new MutationObserver(schedule).observe(document.body, {
-    childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"]
-  });
-  window.addEventListener("popstate", schedule);
+  setTimeout(diag, 2500);
 })();
