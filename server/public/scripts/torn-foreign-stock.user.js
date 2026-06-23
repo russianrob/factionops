@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.15
+// @version      0.9.16
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -14,14 +14,13 @@
 // @connect      raw.githubusercontent.com
 // @connect      yata.yt
 // @connect      api.torn.com
-// @connect      tornwar.com
 // @run-at       document-idle
 // @downloadURL  https://update.greasyfork.org/scripts/581933/Torn%20Foreign%20Stock.user.js
 // @updateURL    https://update.greasyfork.org/scripts/581933/Torn%20Foreign%20Stock.meta.js
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.15";
+  var SCRIPT_VERSION = "0.9.16";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -324,7 +323,11 @@
       return last;
     }
     return _fetchJson(TORN_TRAVEL_URL + encodeURIComponent(key)).then(function (json) {
-      if (json && json.error) return keepLast();
+      if (json && json.error) {
+        var errState = { mode: "apierror", code: json.error.code, msg: json.error.error };
+        gmSet("tfs_travel", { t: _nowSec(), state: errState });
+        return errState;
+      }
       var state = parseTravelState(json);
       gmSet("tfs_travel", { t: _nowSec(), state: state });
       return state;
@@ -812,57 +815,23 @@
       renderPanel(dests[i].el, dests[i].code, stock, mode, prices, model || {}, filters);
     }
   }
-  var _tfsDiagAt = 0;
-  function _tfsPost(data) {
-    try {
-      GM_xmlhttpRequest({
-        method: "POST", url: "https://tornwar.com/api/debug/client-log",
-        headers: { "Content-Type": "application/json" },
-        data: JSON.stringify({ tag: "fs-travel-diag", data: data })
-      });
-    } catch (e) {}
-  }
-  function tfsTravelDiag(state, stock) {
-    try {
-      var now = Date.now();
-      if (now - _tfsDiagAt < 15000) return;
-      _tfsDiagAt = now;
-      var k = getKey() || "";
-      var cache = gmGet("tfs_travel", null);
-      var base = {
-        v: SCRIPT_VERSION, pda: IS_PDA, keyLen: k.length, mode: getMode(),
-        gDestListVis: tfsVisible(document.querySelector('[class*="destinationList___"]')),
-        gCountryVis: tfsVisible(document.querySelector('span[class*="country___"]')),
-        stockN: stock ? Object.keys(stock).length : -1,
-        state: state ? (state.mode + ":" + state.code) : null,
-        cachedState: cache ? (cache.state ? (cache.state.mode + ":" + cache.state.code) : "null") : "no-cache",
-        cacheAge: cache ? (_nowSec() - cache.t) : -1
-      };
-      base.pdaGet = (typeof window.PDA_httpGet) + "/" + (typeof window.PDA_httpGet2);
-      if (!k) { _tfsPost(base); return; }
-      try {
-        GM_xmlhttpRequest({
-          method: "GET", url: TORN_TRAVEL_URL + encodeURIComponent(k), timeout: 15000,
-          onload: function (r) {
-            base.rType = typeof r;
-            base.rKeys = r ? Object.keys(r).slice(0, 12).join(",") : "r-undef";
-            base.rStatus = r ? r.status : "-";
-            base.rTextT = r ? typeof r.responseText : "-";
-            base.rRespT = r ? typeof r.response : "-";
-            var body = r ? (typeof r.responseText === "string" ? r.responseText : (typeof r.response === "string" ? r.response : "")) : "";
-            base.sample = String(body).slice(0, 48);
-            _tfsPost(base);
-          },
-          onerror: function (r) { base.onerror = 1; base.rType = typeof r; _tfsPost(base); },
-          ontimeout: function () { base.ontimeout = 1; _tfsPost(base); }
-        });
-      } catch (e) { base.threw = String((e && e.message) || e).slice(0, 50); _tfsPost(base); }
-    } catch (e) {}
+  function renderTravelError(state) {
+    var panel = document.getElementById("tfs-travel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "tfs-travel";
+      var host = travelHost();
+      host.insertBefore(panel, host.firstChild);
+    }
+    var msg = (state.code === 16)
+      ? "⚠️ Travel data needs a higher-access API key — yours is too low. Switch to Profit mode and paste a Limited or Full Torn API key in the box above."
+      : "⚠️ Travel API error: " + escapeHtml(String(state.msg || ""));
+    panel.innerHTML = '<div class="tfs-travel-head"><span class="tfs-cn">Foreign Stock — travel</span></div><div class="tfs-rows"><div class="tfs-tempty">' + msg + '</div></div>';
   }
   function applyTravel(stock, model, prices) {
     getTravelState().then(function (state) {
-      tfsTravelDiag(state, stock);
       if (!state) { removeTravelPanel(); return; }
+      if (state.mode === "apierror") { clearTravelTicker(); renderTravelError(state); return; }
       startTravelTicker(state, { stock: stock, model: model || {}, prices: prices || {} });
       renderTravelPanel(state, stock, model, prices, Date.now());
     }).catch(function () { removeTravelPanel(); });
