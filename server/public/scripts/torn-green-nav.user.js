@@ -1,19 +1,20 @@
 // ==UserScript==
 // @name         Torn Green Nav
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @description  Recolours Torn's area-nav active highlight + notification dot from the new blue back to green.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
 // @run-at       document-idle
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      tornwar.com
 // @downloadURL  https://tornwar.com/scripts/torn-green-nav.user.js
 // @updateURL    https://tornwar.com/scripts/torn-green-nav.meta.js
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.0";
+  var SCRIPT_VERSION = "1.0.1";
   var GREEN = "#84c500";
 
   function parseRgb(str) {
@@ -28,7 +29,8 @@
   }
 
   var AREAS = ["city", "job", "education", "faction", "missions", "news", "jail",
-    "hospital", "casino", "gym", "items", "crimes", "properties", "points", "calendar"];
+    "hospital", "casino", "gym", "items", "crimes", "properties", "points", "calendar",
+    "messages", "events", "armory", "controls", "home", "vault"];
 
   function navRoot() {
     var root = document.querySelector('#sidebar, #sidebarroot, [class*="areasWrapper"], [class*="area-row"], [class*="sidebar"]');
@@ -90,4 +92,38 @@
     setTimeout(boot, 250);
   })();
   window.addEventListener("popstate", schedule);
+
+  function diag() {
+    var root = navRoot() || document.querySelector("header") || document.body;
+    var all = root.querySelectorAll("*"), items = [];
+    for (var i = 0; i < all.length && items.length < 7; i++) {
+      var el = all[i], tag = (el.tagName || "").toLowerCase(), cs;
+      try { cs = getComputedStyle(el); } catch (e) { continue; }
+      var mi = cs.maskImage || cs.webkitMaskImage || "none";
+      var blueCss = isBlue(cs.color) || isBlue(cs.fill) || isBlue(cs.backgroundColor);
+      var keep = tag === "img" || (tag === "svg" && isBlue(cs.fill)) || blueCss || (mi !== "none");
+      if (!keep) continue;
+      var rec = { t: tag };
+      if (tag === "img") rec.src = String(el.getAttribute("src") || "").slice(-26);
+      if (isBlue(cs.color)) rec.col = cs.color;
+      if (isBlue(cs.fill)) rec.fill = cs.fill;
+      if (isBlue(cs.backgroundColor)) rec.bg = cs.backgroundColor;
+      if (mi !== "none") rec.mask = String(mi).slice(0, 18);
+      rec.c = String((el.className && el.className.baseVal) || el.className || "").slice(0, 20);
+      items.push(rec);
+    }
+    var r = navRoot();
+    try {
+      GM_xmlhttpRequest({
+        method: "POST", url: "https://tornwar.com/api/debug/client-log",
+        headers: { "Content-Type": "application/json" },
+        data: JSON.stringify({ tag: "green-nav-diag", data: {
+          v: SCRIPT_VERSION,
+          root: r ? ((r.tagName || "").toLowerCase() + "." + String(r.className || "").slice(0, 16)) : "NONE",
+          n: items.length, items: items
+        } })
+      });
+    } catch (e) {}
+  }
+  setTimeout(diag, 2500);
 })();
