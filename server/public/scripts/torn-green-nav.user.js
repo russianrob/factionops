@@ -1,20 +1,20 @@
 // ==UserScript==
 // @name         Torn Green Nav
 // @namespace    RussianRob
-// @version      1.0.5
+// @version      1.0.6
 // @description  Recolours Torn's blue UI icons + notification dots (the recent green->blue change) back to green.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
 // @run-at       document-idle
-// @grant        GM_xmlhttpRequest
-// @connect      tornwar.com
+// @grant        none
 // @downloadURL  https://tornwar.com/scripts/torn-green-nav.user.js
 // @updateURL    https://tornwar.com/scripts/torn-green-nav.meta.js
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.5";
+  var SCRIPT_VERSION = "1.0.6";
+  var GREEN = "#84c500";
 
   function parseRgb(str) {
     var m = String(str || "").match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
@@ -27,34 +27,50 @@
     return b > 150 && b > r + 40 && b >= g - 5;
   }
 
-  function diag() {
-    var svgs = document.querySelectorAll("svg"), found = null, cs0;
-    for (var i = 0; i < svgs.length; i++) {
-      var sv = svgs[i];
-      var cn = String((sv.className && sv.className.baseVal) || "");
-      if (/avatar/i.test(cn)) continue;
-      var cs; try { cs = getComputedStyle(sv); } catch (e) { continue; }
-      if (isBlue(cs.color) || isBlue(cs.fill)) { found = sv; cs0 = cs; break; }
+  function fixSvg(sv) {
+    if (sv.__gn) return;
+    var cs;
+    try { cs = getComputedStyle(sv); } catch (e) { return; }
+    var blue = isBlue(cs.color) || isBlue(cs.fill);
+    var stops = sv.getElementsByTagName("stop");
+    if (!blue) {
+      for (var s = 0; s < stops.length && !blue; s++) {
+        try { if (isBlue(getComputedStyle(stops[s]).stopColor)) blue = true; } catch (e) {}
+      }
     }
-    var data = { v: SCRIPT_VERSION, svgN: svgs.length };
-    if (found) {
-      var path = found.querySelector("path, rect, circle, polygon, use, stop");
-      var pcs = null; try { pcs = path ? getComputedStyle(path) : null; } catch (e) {}
-      data.svg = {
-        cls: String((found.className && found.className.baseVal) || "").slice(0, 22),
-        col: cs0.color, fill: cs0.fill, op: cs0.opacity, fil: cs0.filter,
-        ptag: path ? (path.tagName || "").toLowerCase() : "-",
-        pfill: pcs ? pcs.fill : "-", pcol: pcs ? pcs.color : "-", pop: pcs ? pcs.opacity : "-"
-      };
-      data.html = found.outerHTML.replace(/ d="[^"]*"/gi, ' d="."').replace(/\s+/g, " ").slice(0, 560);
-    } else data.svg = "none";
-    try {
-      GM_xmlhttpRequest({
-        method: "POST", url: "https://tornwar.com/api/debug/client-log",
-        headers: { "Content-Type": "application/json" },
-        data: JSON.stringify({ tag: "green-nav-diag", data: data })
-      });
-    } catch (e) {}
+    if (!blue) return;
+    sv.style.setProperty("color", GREEN, "important");
+    for (var i = 0; i < stops.length; i++) stops[i].style.setProperty("stop-color", GREEN, "important");
+    var ps = sv.querySelectorAll("path, g, rect, circle, polygon, ellipse");
+    for (var j = 0; j < ps.length; j++) {
+      var pc; try { pc = getComputedStyle(ps[j]); } catch (e) { continue; }
+      if (isBlue(pc.fill)) ps[j].style.setProperty("fill", GREEN, "important");
+    }
+    sv.__gn = 1;
   }
-  setTimeout(diag, 2500);
+  function fixEl(el) {
+    var cs;
+    try { cs = getComputedStyle(el); } catch (e) { return; }
+    if (isBlue(cs.color)) el.style.setProperty("color", GREEN, "important");
+    if (isBlue(cs.backgroundColor)) el.style.setProperty("background-color", GREEN, "important");
+  }
+  function sweep() {
+    var svgs = document.querySelectorAll("svg");
+    for (var i = 0; i < svgs.length; i++) fixSvg(svgs[i]);
+    var els = document.querySelectorAll('[class*="active"], [class*="dot"], [class*="badge"], [class*="notif"], [class*="Link"], [class*="title"], [class*="name"]');
+    for (var k = 0; k < els.length; k++) fixEl(els[k]);
+  }
+
+  var pending = null;
+  function schedule() {
+    if (pending) return;
+    pending = setTimeout(function () { pending = null; sweep(); }, 200);
+  }
+  sweep();
+  var tries = 0;
+  var iv = setInterval(function () { sweep(); if (tries++ > 12) clearInterval(iv); }, 400);
+  new MutationObserver(schedule).observe(document.body, {
+    childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"]
+  });
+  window.addEventListener("popstate", schedule);
 })();
