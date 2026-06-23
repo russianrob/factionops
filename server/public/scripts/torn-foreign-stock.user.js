@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.14
+// @version      0.9.15
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -21,7 +21,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.14";
+  var SCRIPT_VERSION = "0.9.15";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -838,15 +838,25 @@
         cachedState: cache ? (cache.state ? (cache.state.mode + ":" + cache.state.code) : "null") : "no-cache",
         cacheAge: cache ? (_nowSec() - cache.t) : -1
       };
+      base.pdaGet = (typeof window.PDA_httpGet) + "/" + (typeof window.PDA_httpGet2);
       if (!k) { _tfsPost(base); return; }
-      _fetchJson(TORN_TRAVEL_URL + encodeURIComponent(k)).then(function (json) {
-        base.apiErr = (json && json.error) ? (json.error.error + " (" + json.error.code + ")") : 0;
-        base.apiState = (json && json.status) ? json.status.state : "no-status";
-        base.apiDesc = (json && json.status) ? String(json.status.description || "").slice(0, 24) : "-";
-        base.apiDest = (json && json.travel) ? String(json.travel.destination || "") : "no-travel";
-        base.norm = normalizeCountryName(base.apiDest);
-        _tfsPost(base);
-      }).catch(function (e) { base.apiFetchErr = String((e && e.message) || e).slice(0, 30); _tfsPost(base); });
+      try {
+        GM_xmlhttpRequest({
+          method: "GET", url: TORN_TRAVEL_URL + encodeURIComponent(k), timeout: 15000,
+          onload: function (r) {
+            base.rType = typeof r;
+            base.rKeys = r ? Object.keys(r).slice(0, 12).join(",") : "r-undef";
+            base.rStatus = r ? r.status : "-";
+            base.rTextT = r ? typeof r.responseText : "-";
+            base.rRespT = r ? typeof r.response : "-";
+            var body = r ? (typeof r.responseText === "string" ? r.responseText : (typeof r.response === "string" ? r.response : "")) : "";
+            base.sample = String(body).slice(0, 48);
+            _tfsPost(base);
+          },
+          onerror: function (r) { base.onerror = 1; base.rType = typeof r; _tfsPost(base); },
+          ontimeout: function () { base.ontimeout = 1; _tfsPost(base); }
+        });
+      } catch (e) { base.threw = String((e && e.message) || e).slice(0, 50); _tfsPost(base); }
     } catch (e) {}
   }
   function applyTravel(stock, model, prices) {
