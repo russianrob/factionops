@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Green Nav
 // @namespace    RussianRob
-// @version      1.0.2
+// @version      1.0.3
 // @description  Recolours Torn's area-nav active highlight + notification dot from the new blue back to green.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
