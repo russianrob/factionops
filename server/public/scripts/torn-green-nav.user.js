@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Green Nav
 // @namespace    RussianRob
-// @version      1.0.6
-// @description  Recolours Torn's blue UI icons + notification dots (the recent green->blue change) back to green.
+// @version      1.0.7
+// @description  Recolours Torn's active area-nav highlight (icon + label + dot) from the new blue back to green. Leaves other blue UI alone.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
@@ -13,8 +13,14 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.6";
+  var SCRIPT_VERSION = "1.0.7";
   var GREEN = "#84c500";
+
+  // Only the active area-nav item should turn green. Scope strictly to nav
+  // links/rows so we never touch other intentionally-blue UI (status icons,
+  // buttons, etc.). Within these, only the active item is blue (the rest grey).
+  var NAV = '[class*="area-row"], [class*="mobileLink"], [class*="sidebarMobileLink"],' +
+    '[class*="desktopLink"], [class*="areaLink"]';
 
   function parseRgb(str) {
     var m = String(str || "").match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
@@ -28,15 +34,12 @@
   }
 
   function fixSvg(sv) {
-    if (sv.__gn) return;
     var cs;
     try { cs = getComputedStyle(sv); } catch (e) { return; }
-    var blue = isBlue(cs.color) || isBlue(cs.fill);
     var stops = sv.getElementsByTagName("stop");
-    if (!blue) {
-      for (var s = 0; s < stops.length && !blue; s++) {
-        try { if (isBlue(getComputedStyle(stops[s]).stopColor)) blue = true; } catch (e) {}
-      }
+    var blue = isBlue(cs.color) || isBlue(cs.fill);
+    for (var s = 0; s < stops.length && !blue; s++) {
+      try { if (isBlue(getComputedStyle(stops[s]).stopColor)) blue = true; } catch (e) {}
     }
     if (!blue) return;
     sv.style.setProperty("color", GREEN, "important");
@@ -46,7 +49,6 @@
       var pc; try { pc = getComputedStyle(ps[j]); } catch (e) { continue; }
       if (isBlue(pc.fill)) ps[j].style.setProperty("fill", GREEN, "important");
     }
-    sv.__gn = 1;
   }
   function fixEl(el) {
     var cs;
@@ -55,10 +57,16 @@
     if (isBlue(cs.backgroundColor)) el.style.setProperty("background-color", GREEN, "important");
   }
   function sweep() {
-    var svgs = document.querySelectorAll("svg");
-    for (var i = 0; i < svgs.length; i++) fixSvg(svgs[i]);
-    var els = document.querySelectorAll('[class*="active"], [class*="dot"], [class*="badge"], [class*="notif"], [class*="Link"], [class*="title"], [class*="name"]');
-    for (var k = 0; k < els.length; k++) fixEl(els[k]);
+    var roots = document.querySelectorAll(NAV);
+    for (var r = 0; r < roots.length; r++) {
+      var root = roots[r];
+      fixEl(root);
+      var els = root.querySelectorAll("*");
+      for (var j = 0; j < els.length; j++) {
+        if ((els[j].tagName || "").toLowerCase() === "svg") fixSvg(els[j]);
+        else fixEl(els[j]);
+      }
+    }
   }
 
   var pending = null;
