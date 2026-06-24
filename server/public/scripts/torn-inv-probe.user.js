@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Inventory Probe (temporary)
 // @namespace    RussianRob
-// @version      0.3.0
+// @version      0.3.1
 // @description  TEMPORARY diagnostic — starts at the inventory grid and deep-walks the React fiber (props + hook state) to locate the full inventory array for keyless zero-scroll. Remove after one run.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -84,32 +84,31 @@
     return "host";
   }
 
-  function findGrid() {
+  function findStart() {
     var imgs = document.querySelectorAll('img[src*="/images/items/"]');
     if (!imgs.length) return null;
     var mid = imgs[Math.floor(imgs.length / 2)];
-    var el = mid, best = mid, bestCount = 0;
-    for (var hop = 0; el && hop < 16; hop++) {
-      var c = 0; try { c = el.querySelectorAll('img[src*="/images/items/"]').length; } catch (e) {}
-      if (c >= bestCount) { bestCount = c; best = el; }
+    var el = mid;
+    for (var i = 0; el && i < 10; i++) {
+      if (fiberKey(el)) return { el: el, total: imgs.length, climbed: i };
       el = el.parentElement;
     }
-    return { el: best, imgCount: bestCount, total: imgs.length };
+    return { el: mid, total: imgs.length, climbed: -1 };
   }
 
   function run() {
-    var grid = findGrid();
-    if (!grid) { post("jfp3-grid", { note: "no item imgs" }); return; }
+    var start = findStart();
+    if (!start) { post("jfp3-grid", { note: "no item imgs" }); return; }
     var cls = "";
-    try { cls = String(grid.el.className || "").slice(0, 60); } catch (e) {}
-    var fk = fiberKey(grid.el);
-    post("jfp3-grid", { total: grid.total, imgCount: grid.imgCount, tag: (grid.el.tagName || "").toLowerCase(), cls: cls, fiber: !!fk });
-    if (!fk) { post("jfp3-best", { note: "no fiber on grid", nodeKeys: Object.keys(grid.el).slice(0, 8) }); return; }
+    try { cls = String(start.el.className || "").slice(0, 60); } catch (e) {}
+    var fk = fiberKey(start.el);
+    post("jfp3-grid", { total: start.total, climbed: start.climbed, tag: (start.el.tagName || "").toLowerCase(), cls: cls, fiber: !!fk });
+    if (!fk) { post("jfp3-best", { note: "no fiber near a middle item", nodeKeys: Object.keys(start.el).slice(0, 8) }); return; }
 
-    var fiber = grid.el[fk], hops = 0, trail = [], best = null, bestHop = -1, bestName = "";
-    while (fiber && hops < 90) {
+    var fiber = start.el[fk], hops = 0, trail = [], best = null, bestHop = -1, bestName = "";
+    while (fiber && hops < 120) {
       var nm = typeName(fiber);
-      var found = deepBiggestItemArray({ p: fiber.memoizedProps, s: fiber.memoizedState }, 8, 9000);
+      var found = deepBiggestItemArray({ p: fiber.memoizedProps, s: fiber.memoizedState }, 8, 12000);
       if (found && (!best || found.count > best.count)) { best = found; bestHop = hops; bestName = nm; }
       trail.push("h" + hops + ":" + String(nm).slice(0, 22) + (found ? "[" + found.count + "]" : ""));
       fiber = fiber.return; hops++;
