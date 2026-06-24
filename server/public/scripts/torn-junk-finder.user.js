@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Junk Finder
 // @namespace    RussianRob
-// @version      1.0.1
+// @version      1.0.2
 // @description  Flags unnecessary inventory items — low value, redundant gear you already out-class, and a curated junk list — highlights them and groups them in one panel.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -17,7 +17,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.1";
+  var SCRIPT_VERSION = "1.0.2";
   var CATALOG_URL = "https://tornwar.com/api/items/catalog";
   var CATALOG_TTL = 30 * 60 * 1000;
 
@@ -60,6 +60,7 @@
       var img = imgs[i];
       var m = String(img.getAttribute("src") || "").match(/\/images\/items\/(\d+)\b/);
       if (!m) continue;
+      if (img.closest && img.closest('[class*="equippedItems"], [class*="itemReview"], [class*="loadout" i]')) continue;
       var id = m[1];
       var li = (img.closest && (img.closest("li") || img.closest('[class*="item"]'))) || img.parentElement;
       if (!li || seen.indexOf(li) !== -1) continue;
