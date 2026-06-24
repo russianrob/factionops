@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Junk Finder
 // @namespace    RussianRob
-// @version      1.0.2
+// @version      1.0.3
 // @description  Flags unnecessary inventory items — low value, redundant gear you already out-class, and a curated junk list — highlights them and groups them in one panel.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -17,7 +17,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.2";
+  var SCRIPT_VERSION = "1.0.3";
   var CATALOG_URL = "https://tornwar.com/api/items/catalog";
   var CATALOG_TTL = 30 * 60 * 1000;
 
@@ -113,8 +113,8 @@
 
   var BADGE = { low: "💸", junk: "🗑️", redundant: "🔁" };
   var LABEL = { low: "low value", junk: "junk", redundant: "redundant — you own better" };
+  var _flagged = {};
   function paint(items) {
-    var flagged = [];
     for (var i = 0; i < items.length; i++) {
       var it = items[i], li = it.li;
       var was = li.getAttribute("data-jf");
@@ -133,14 +133,17 @@
           b.title = it.reasons.map(function (r) { return LABEL[r]; }).join(" · ");
           if (getComputedStyle(li).position === "static") li.style.position = "relative";
         }
-        flagged.push(it);
-      } else if (was) {
-        li.removeAttribute("data-jf");
-        ["outline", "outline-offset", "background"].forEach(function (p) { li.style.removeProperty(p); });
-        var ob = li.querySelector(".jf-badge"); if (ob) ob.remove();
+        _flagged[it.id] = it;
+      } else {
+        delete _flagged[it.id];
+        if (was) {
+          li.removeAttribute("data-jf");
+          ["outline", "outline-offset", "background"].forEach(function (p) { li.style.removeProperty(p); });
+          var ob = li.querySelector(".jf-badge"); if (ob) ob.remove();
+        }
       }
     }
-    renderPanel(flagged);
+    renderPanel(Object.keys(_flagged).map(function (id) { return _flagged[id]; }));
   }
 
   function panelHost() {
@@ -170,7 +173,8 @@
       '<span>🗑️ Useless Items</span><span style="background:#c0392b;color:#fff;border-radius:9px;padding:0 7px;font-size:11px;">' + flagged.length + "</span>" +
       '<span style="margin-left:auto;color:#8a909a;font-weight:400;">~' + fmtMoney(total) + ' to dump</span>' +
       '<span style="color:#8a909a;">' + (collapsed ? "▸" : "▾") + "</span></div>" +
-      '<div id="jf-body" style="display:' + (collapsed ? "none" : "block") + ';padding:4px 0 8px;">' + rows + "</div>";
+      '<div id="jf-body" style="display:' + (collapsed ? "none" : "block") + ';padding:4px 0 8px;">' + rows +
+      '<div style="padding:5px 12px 0;color:#7a818c;font-size:11px;border-top:1px solid #262a33;margin-top:4px;">↓ scroll your inventory to find the rest — items load + tally here as they appear.</div></div>";
     panel.querySelector("#jf-head").addEventListener("click", function () {
       var col = !gmGet("jf_collapsed", false); gmSet("jf_collapsed", col);
       panel.querySelector("#jf-body").style.display = col ? "none" : "block";
@@ -178,32 +182,11 @@
   }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]; }); }
 
-  var _diagSent = false;
-  function diag(items, host) {
-    if (_diagSent) return; _diagSent = true;
-    try {
-      GM_xmlhttpRequest({
-        method: "POST", url: "https://tornwar.com/api/debug/client-log",
-        headers: { "Content-Type": "application/json" },
-        data: JSON.stringify({ tag: "jf-diag", data: {
-          v: SCRIPT_VERSION, items: items.length,
-          sample: items.slice(0, 6).map(function (it) {
-            var p = it.li, chain = [];
-            for (var d = 0; d < 3 && p; d++) { chain.push((p.tagName || "").toLowerCase() + "." + String((p.className && p.className.baseVal) || p.className || "").slice(0, 14)); p = p.parentElement; }
-            return { id: it.id, n: it.name.slice(0, 12), q: it.qty, t: it.type, st: it.sub, eq: it.equipped ? 1 : 0, r: it.reasons.join(","), c: chain };
-          })
-        } })
-      });
-    } catch (e) {}
-  }
-
   var pending = null;
   function run() {
     getCatalog(function (catalog) {
       if (!catalog) return;
-      var items = classify(readInventory(), catalog, cfg());
-      paint(items);
-      diag(items, panelHost());
+      paint(classify(readInventory(), catalog, cfg()));
     });
   }
   function schedule() { if (pending) return; pending = setTimeout(function () { pending = null; run(); }, 300); }
@@ -219,12 +202,12 @@
   try {
     GM_registerMenuCommand("Junk Finder: set value threshold ($)", function () {
       var v = prompt("Flag items worth LESS than this ($):", cfg().threshold);
-      if (v != null && !isNaN(Number(v))) { gmSet("jf_threshold", Number(v)); _catalog && run(); }
+      if (v != null && !isNaN(Number(v))) { gmSet("jf_threshold", Number(v)); _flagged = {}; run(); }
     });
     GM_registerMenuCommand("Junk Finder: edit junk list (comma-separated names/types)", function () {
       var cur = (cfg().junkList || []).join(", ");
       var v = prompt("Always-useless item names or types (comma-separated):", cur);
-      if (v != null) { gmSet("jf_junklist", v.split(",").map(function (s) { return s.trim(); }).filter(Boolean)); run(); }
+      if (v != null) { gmSet("jf_junklist", v.split(",").map(function (s) { return s.trim(); }).filter(Boolean)); _flagged = {}; run(); }
     });
   } catch (e) {}
 })();

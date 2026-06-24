@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Junk Finder
 // @namespace    RussianRob
-// @version      1.0.2
+// @version      1.0.3
 // @description  Flags unnecessary inventory items — low value, redundant gear you already out-class, and a curated junk list — highlights them and groups them in one panel.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
