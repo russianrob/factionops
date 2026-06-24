@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Junk Finder
 // @namespace    RussianRob
-// @version      1.0.4
+// @version      1.0.5
 // @description  Flags unnecessary inventory items — low value, redundant gear you already out-class, and a curated junk list — highlights them and groups them in one panel.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -17,7 +17,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.4";
+  var SCRIPT_VERSION = "1.0.5";
   var CATALOG_URL = "https://tornwar.com/api/items/catalog";
   var CATALOG_TTL = 30 * 60 * 1000;
 
@@ -114,6 +114,25 @@
   var BADGE = { low: "💸", junk: "🗑️", redundant: "🔁" };
   var LABEL = { low: "low value", junk: "junk", redundant: "redundant — you own better" };
   var _flagged = {};
+  function savePersist() {
+    var arr = Object.keys(_flagged).map(function (id) {
+      var f = _flagged[id];
+      return { id: f.id, name: f.name, value: f.value, qty: f.qty, reasons: f.reasons };
+    });
+    gmSet("jf_persist", { t: Date.now(), items: arr });
+  }
+  function restorePersist() {
+    var p = gmGet("jf_persist", null);
+    if (!p || !Array.isArray(p.items)) return;
+    p.items.forEach(function (f) {
+      if (f && f.id != null && f.reasons && f.reasons.length) _flagged[String(f.id)] = f;
+    });
+  }
+  function clearPersist() {
+    _flagged = {};
+    gmSet("jf_persist", { t: Date.now(), items: [] });
+    var panel = document.getElementById("jf-panel"); if (panel) panel.remove();
+  }
   function paint(items) {
     for (var i = 0; i < items.length; i++) {
       var it = items[i], li = it.li;
@@ -144,6 +163,7 @@
       }
     }
     renderPanel(Object.keys(_flagged).map(function (id) { return _flagged[id]; }));
+    savePersist();
   }
 
   function panelHost() {
@@ -172,13 +192,16 @@
       '<div id="jf-head" style="display:flex;gap:8px;align-items:center;padding:8px 12px;background:#1c1f26;cursor:pointer;font-weight:600;">' +
       '<span>🗑️ Useless Items</span><span style="background:#c0392b;color:#fff;border-radius:9px;padding:0 7px;font-size:11px;">' + flagged.length + "</span>" +
       '<span style="margin-left:auto;color:#8a909a;font-weight:400;">~' + fmtMoney(total) + ' to dump</span>' +
+      '<span id="jf-clear" title="Clear saved list & rescan" style="cursor:pointer;color:#8a909a;padding:0 5px;">↻</span>' +
       '<span style="color:#8a909a;">' + (collapsed ? "▸" : "▾") + "</span></div>" +
       '<div id="jf-body" style="display:' + (collapsed ? "none" : "block") + ';padding:4px 0 8px;">' + rows +
-      '<div style="padding:5px 12px 0;color:#7a818c;font-size:11px;border-top:1px solid #262a33;margin-top:4px;">↓ scroll your inventory to find the rest — items load + tally here as they appear.</div></div>';
+      '<div style="padding:5px 12px 0;color:#7a818c;font-size:11px;border-top:1px solid #262a33;margin-top:4px;">↓ scroll once to catch everything — your list is saved across refreshes. Tap ↻ to rescan after you dump items.</div></div>';
     panel.querySelector("#jf-head").addEventListener("click", function () {
       var col = !gmGet("jf_collapsed", false); gmSet("jf_collapsed", col);
       panel.querySelector("#jf-body").style.display = col ? "none" : "block";
     });
+    var _cl = panel.querySelector("#jf-clear");
+    if (_cl) _cl.addEventListener("click", function (e) { e.stopPropagation(); clearPersist(); run(); });
   }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]; }); }
 
@@ -191,6 +214,8 @@
   }
   function schedule() { if (pending) return; pending = setTimeout(function () { pending = null; run(); }, 300); }
 
+  restorePersist();
+  renderPanel(Object.keys(_flagged).map(function (id) { return _flagged[id]; }));
   run();
   new MutationObserver(function (muts) {
     for (var i = 0; i < muts.length; i++) {
@@ -202,12 +227,15 @@
   try {
     GM_registerMenuCommand("Junk Finder: set value threshold ($)", function () {
       var v = prompt("Flag items worth LESS than this ($):", cfg().threshold);
-      if (v != null && !isNaN(Number(v))) { gmSet("jf_threshold", Number(v)); _flagged = {}; run(); }
+      if (v != null && !isNaN(Number(v))) { gmSet("jf_threshold", Number(v)); clearPersist(); run(); }
     });
     GM_registerMenuCommand("Junk Finder: edit junk list (comma-separated names/types)", function () {
       var cur = (cfg().junkList || []).join(", ");
       var v = prompt("Always-useless item names or types (comma-separated):", cur);
-      if (v != null) { gmSet("jf_junklist", v.split(",").map(function (s) { return s.trim(); }).filter(Boolean)); _flagged = {}; run(); }
+      if (v != null) { gmSet("jf_junklist", v.split(",").map(function (s) { return s.trim(); }).filter(Boolean)); clearPersist(); run(); }
+    });
+    GM_registerMenuCommand("Junk Finder: clear saved list (rescan)", function () {
+      clearPersist(); run();
     });
   } catch (e) {}
 })();
