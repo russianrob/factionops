@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Inventory Probe (temporary)
 // @namespace    RussianRob
-// @version      0.1.0
-// @description  TEMPORARY diagnostic — reports how item.php loads inventory (fetch/XHR, bulk vs paginated) to decide if keyless zero-scroll is possible. Remove after one run.
+// @version      0.2.0
+// @description  TEMPORARY diagnostic — hunts where item.php keeps the full inventory (React fiber / globals / inline hydration) so Junk Finder can read it keyless with zero scroll. Remove after one run.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item.php*
@@ -16,13 +16,6 @@
   var DIAG_URL = "https://tornwar.com/api/debug/client-log";
   var T0 = Date.now();
   var W = (typeof unsafeWindow !== "undefined") ? unsafeWindow : window;
-
-  var seenIds = {};
-  var invReqCount = 0;
-  var topHit = null;
-  var jsonPaths = {};
-  var scrolled = false;
-  var postedPost = false;
   var logBudget = 30;
 
   function post(tag, data) {
@@ -36,121 +29,97 @@
     } catch (e) {}
   }
 
-  var ID_KEYS = ["id", "ID", "itemID", "item_id", "itemId"];
-  var ITEM_KEYS = ["name", "quantity", "amount", "qty", "market_price", "market_value", "type", "sub_type", "equipped", "uid"];
-  function firstId(o) { for (var i = 0; i < ID_KEYS.length; i++) if (o[ID_KEYS[i]] != null) return o[ID_KEYS[i]]; return null; }
+  var ID_KEYS = ["id", "ID", "itemID", "item_id", "itemId", "armoryID"];
+  var ITEM_KEYS = ["name", "quantity", "amount", "qty", "market_price", "market_value", "type", "sub_type", "subType", "equipped", "uid"];
+  function firstId(o) { for (var i = 0; i < ID_KEYS.length; i++) if (o && o[ID_KEYS[i]] != null) return o[ID_KEYS[i]]; return null; }
   function looksLikeItem(o) {
     if (!o || typeof o !== "object") return false;
     if (firstId(o) == null) return false;
     for (var i = 0; i < ITEM_KEYS.length; i++) if (o[ITEM_KEYS[i]] != null) return true;
     return false;
   }
+  function summarize(arr) {
+    var ids = [];
+    for (var i = 0; i < arr.length && i < 6; i++) ids.push(firstId(arr[i]));
+    return { count: arr.length, keys: Object.keys(arr[0]).slice(0, 14), ids: ids, kind: "array" };
+  }
+  function summarizeMap(v, ks) {
+    var ids = [];
+    for (var i = 0; i < ks.length && i < 6; i++) ids.push(firstId(v[ks[i]]));
+    return { count: ks.length, keys: Object.keys(v[ks[0]]).slice(0, 14), ids: ids, kind: "map" };
+  }
+  function shallowItemArray(v, depth) {
+    if (!v || typeof v !== "object") return null;
+    if (Array.isArray(v)) {
+      if (v.length > 20 && looksLikeItem(v[0])) return summarize(v);
+      if (depth < 3) for (var a = 0; a < v.length && a < 30; a++) { var r0 = shallowItemArray(v[a], depth + 1); if (r0) return r0; }
+      return null;
+    }
+    var ks; try { ks = Object.keys(v); } catch (e) { return null; }
+    if (ks.length > 20) { try { if (looksLikeItem(v[ks[0]])) return summarizeMap(v, ks); } catch (e) {} }
+    if (depth < 3) for (var i = 0; i < ks.length && i < 40; i++) { try { var r = shallowItemArray(v[ks[i]], depth + 1); if (r) return r; } catch (e) {} }
+    return null;
+  }
 
-  function findItemArrays(root) {
-    var hits = [], stack = [root], visited = 0;
-    while (stack.length && visited < 4000) {
-      var node = stack.pop(); visited++;
-      if (!node || typeof node !== "object") continue;
-      if (Array.isArray(node)) {
-        if (node.length && looksLikeItem(node[0])) {
-          var keys = Object.keys(node[0]).slice(0, 12);
-          var ids = [];
-          for (var k = 0; k < node.length; k++) { var id = firstId(node[k]); if (id != null) ids.push(id); }
-          hits.push({ count: node.length, keys: keys, ids: ids });
-        } else {
-          for (var a = 0; a < node.length && a < 50; a++) stack.push(node[a]);
-        }
-      } else {
-        for (var p in node) { try { stack.push(node[p]); } catch (e) {} }
-      }
+  function scanGlobals() {
+    var hits = [], keys;
+    try { keys = Object.keys(W); } catch (e) { keys = []; }
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i], v;
+      if (/^(webkit|chrome|external|document|location|navigator|history|frames|top|parent|self|window)$/.test(k)) continue;
+      try { v = W[k]; } catch (e) { continue; }
+      if (!v || typeof v !== "object") continue;
+      var info; try { info = shallowItemArray(v, 0); } catch (e) { info = null; }
+      if (info && info.count > 50) hits.push({ key: k.slice(0, 40), count: info.count, kind: info.kind, sampleKeys: info.keys, ids: info.ids });
+      if (hits.length >= 6) break;
     }
     return hits;
   }
 
-  function analyze(src, url, method, text) {
-    if (!text || typeof text !== "string" || text.length > 3000000) return;
-    if (text.charAt(0) !== "{" && text.charAt(0) !== "[") return;
-    var u = String(url || "");
-    if (u && !/torn\.com/i.test(u) && u.charAt(0) !== "/") return;
-    var j; try { j = JSON.parse(text); } catch (e) { return; }
-    var path = (u.split("?")[0]) || "(relative)";
-    if (!jsonPaths[path]) jsonPaths[path] = { m: method, q: u.indexOf("?") >= 0 ? 1 : 0 };
-    var hits = findItemArrays(j);
-    if (!hits.length) return;
-    invReqCount++;
-    var biggest = hits[0];
-    for (var i = 1; i < hits.length; i++) if (hits[i].count > biggest.count) biggest = hits[i];
-    for (var x = 0; x < biggest.ids.length; x++) seenIds[String(biggest.ids[x])] = 1;
-    if (!topHit || biggest.count > topHit.count) {
-      topHit = { src: src, url: path.slice(0, 120), count: biggest.count, keys: biggest.keys, sampleIds: biggest.ids.slice(0, 4) };
+  function reactInventory() {
+    var img = document.querySelector('img[src*="/images/items/"]');
+    if (!img) return { note: "no item img yet" };
+    var node = (img.closest && (img.closest('li') || img.closest('[class*="item"]'))) || img.parentElement;
+    var fk = null, kk = Object.keys(node || {});
+    for (var i = 0; i < kk.length; i++) if (kk[i].indexOf("__reactFiber$") === 0 || kk[i].indexOf("__reactInternalInstance$") === 0) { fk = kk[i]; break; }
+    if (!fk) return { note: "no react fiber key on item node", nodeKeys: kk.slice(0, 6) };
+    var fiber = node[fk], hops = 0, best = null, bestHop = -1;
+    while (fiber && hops < 80) {
+      var slots = [fiber.memoizedProps, fiber.memoizedState];
+      for (var s = 0; s < slots.length; s++) {
+        var info; try { info = shallowItemArray(slots[s], 0); } catch (e) { info = null; }
+        if (info && (!best || info.count > best.count)) { best = info; bestHop = hops; }
+      }
+      fiber = fiber.return; hops++;
     }
-    post("jfp-hit", {
-      src: src, t: Date.now() - T0, scrolled: scrolled,
-      url: u.slice(0, 140), method: method,
-      thisCount: biggest.count, cumDistinct: Object.keys(seenIds).length,
-      keys: biggest.keys, sampleIds: biggest.ids.slice(0, 4)
-    });
+    if (best) return { count: best.count, kind: best.kind, sampleKeys: best.keys, ids: best.ids, hop: bestHop, hops: hops };
+    return { note: "no item array in fiber props/state", hops: hops };
   }
 
-  try {
-    var of = W.fetch;
-    if (typeof of === "function") {
-      W.fetch = function (input, init) {
-        var url = (typeof input === "string") ? input : (input && input.url) || "";
-        var method = (init && init.method) || (input && input.method) || "GET";
-        var pr = of.apply(this, arguments);
-        try {
-          pr.then(function (resp) {
-            try { resp.clone().text().then(function (t) { analyze("fetch", url, method, t); }).catch(function () {}); } catch (e) {}
-            return resp;
-          }).catch(function () {});
-        } catch (e) {}
-        return pr;
-      };
+  function scanInlineScripts() {
+    var out = [], scripts;
+    try { scripts = document.querySelectorAll("script:not([src])"); } catch (e) { return out; }
+    var markers = ["armoryID", "market_price", "\"itemID\"", "\"inventory\"", "itemMarket", "\"items\":", "__INITIAL", "preloaded", "hydrat"];
+    for (var i = 0; i < scripts.length; i++) {
+      var txt = scripts[i].textContent || "";
+      if (txt.length < 400) continue;
+      var found = [];
+      for (var m = 0; m < markers.length; m++) if (txt.indexOf(markers[m]) >= 0) found.push(markers[m]);
+      if (found.length) out.push({ len: txt.length, markers: found });
+      if (out.length >= 6) break;
     }
-  } catch (e) {}
-
-  try {
-    var OX = W.XMLHttpRequest;
-    if (OX && OX.prototype) {
-      var oOpen = OX.prototype.open, oSend = OX.prototype.send;
-      OX.prototype.open = function (m, u) { this.__jfp = { m: m, u: u }; return oOpen.apply(this, arguments); };
-      OX.prototype.send = function () {
-        var self = this;
-        try {
-          self.addEventListener("load", function () {
-            try {
-              var rt = self.responseType;
-              if (rt === "" || rt === "text") analyze("xhr", (self.__jfp && self.__jfp.u) || "", (self.__jfp && self.__jfp.m) || "GET", self.responseText);
-            } catch (e) {}
-          });
-        } catch (e) {}
-        return oSend.apply(this, arguments);
-      };
-    }
-  } catch (e) {}
-
-  ["scroll", "wheel", "touchmove"].forEach(function (ev) {
-    try { W.addEventListener(ev, function () { if (!scrolled) { scrolled = true; setTimeout(postPost, 6000); } }, { passive: true, capture: true }); } catch (e) {}
-  });
-
-  function domItemImgs() {
-    try { return document.querySelectorAll('img[src*="/images/items/"]').length; } catch (e) { return -1; }
+    return out;
   }
-  function snapshot(phase) {
-    return {
-      phase: phase, tload: Date.now() - T0, scrolled: scrolled,
-      hasUnsafe: (typeof unsafeWindow !== "undefined"),
-      domItemImgs: domItemImgs(),
-      invItemsSeen: Object.keys(seenIds).length,
-      invRequests: invReqCount,
-      topHit: topHit,
-      jsonPaths: Object.keys(jsonPaths).slice(0, 12).map(function (p) { return (jsonPaths[p].m || "?") + " " + p.slice(0, 80) + (jsonPaths[p].q ? "?…" : ""); })
-    };
-  }
-  function postPost() { if (postedPost) return; postedPost = true; post("jfp-post", snapshot("post-scroll")); }
 
-  post("jfp-start", { hasUnsafe: (typeof unsafeWindow !== "undefined"), hasFetch: typeof W.fetch, hasXHR: !!(W.XMLHttpRequest && W.XMLHttpRequest.prototype) });
-  setTimeout(function () { post("jfp-pre", snapshot("pre-scroll")); }, 5000);
-  setTimeout(postPost, 25000);
+  function domItemImgs() { try { return document.querySelectorAll('img[src*="/images/items/"]').length; } catch (e) { return -1; } }
+
+  function hunt(phase) {
+    post("jfp-react", { phase: phase, t: Date.now() - T0, domImgs: domItemImgs(), react: reactInventory() });
+    post("jfp-globals", { phase: phase, globals: scanGlobals() });
+    post("jfp-scripts", { phase: phase, scripts: scanInlineScripts() });
+  }
+
+  post("jfp2-start", { hasUnsafe: (typeof unsafeWindow !== "undefined") });
+  setTimeout(function () { hunt("t6"); }, 6000);
+  setTimeout(function () { hunt("t12"); }, 12000);
 })();
