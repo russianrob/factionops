@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Junk Finder
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @description  Flags unnecessary inventory items — low value, redundant gear you already out-class, and a curated junk list — highlights them and groups them in one panel.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -17,7 +17,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.0";
+  var SCRIPT_VERSION = "1.0.1";
   var CATALOG_URL = "https://tornwar.com/api/items/catalog";
   var CATALOG_TTL = 30 * 60 * 1000;
 
@@ -54,17 +54,20 @@
   }
 
   function readInventory() {
-    var out = [], seen = [];
+    var out = [], seen = [], byId = {};
     var imgs = document.querySelectorAll('img[src*="/images/items/"]');
     for (var i = 0; i < imgs.length; i++) {
       var img = imgs[i];
       var m = String(img.getAttribute("src") || "").match(/\/images\/items\/(\d+)\b/);
       if (!m) continue;
+      var id = m[1];
       var li = (img.closest && (img.closest("li") || img.closest('[class*="item"]'))) || img.parentElement;
       if (!li || seen.indexOf(li) !== -1) continue;
       seen.push(li);
+      if (byId[id]) continue;
+      byId[id] = 1;
       out.push({
-        id: m[1], li: li, img: img,
+        id: id, li: li, img: img,
         name: String(img.getAttribute("alt") || "").trim(),
         qty: readQty(li),
         equipped: /\bequipped\b/i.test(li.textContent || "") || !!(li.querySelector && li.querySelector('[class*="equipped" i]'))
@@ -83,9 +86,9 @@
     var bestBySub = {};
     if (c.redundant) {
       for (var i = 0; i < items.length; i++) {
-        var meta = catalog[items[i].id]; if (!meta) continue;
+        var meta = catalog[items[i].id]; if (!meta || !meta.st) continue;
         if (meta.t !== "Weapon" && meta.t !== "Armor") continue;
-        var key = meta.t + ":" + (meta.st || "?");
+        var key = meta.t + ":" + meta.st;
         if (!bestBySub[key] || meta.v > bestBySub[key]) bestBySub[key] = meta.v;
       }
     }
@@ -98,8 +101,8 @@
       var reasons = [];
       if (c.lowValue && it.value > 0 && it.value < c.threshold) reasons.push("low");
       if (c.junk && (junkSet[it.name.toLowerCase()] || junkSet[it.type.toLowerCase()] || junkSet[it.sub.toLowerCase()])) reasons.push("junk");
-      if (c.redundant && !it.equipped && (meta.t === "Weapon" || meta.t === "Armor")) {
-        var best = bestBySub[meta.t + ":" + (meta.st || "?")] || 0;
+      if (c.redundant && !it.equipped && meta.st && (meta.t === "Weapon" || meta.t === "Armor")) {
+        var best = bestBySub[meta.t + ":" + meta.st] || 0;
         if (best >= it.value * 2 && it.value > 0) reasons.push("redundant");
       }
       it.reasons = reasons;
@@ -183,8 +186,11 @@
         headers: { "Content-Type": "application/json" },
         data: JSON.stringify({ tag: "jf-diag", data: {
           v: SCRIPT_VERSION, items: items.length,
-          host: host ? ((host.tagName || "").toLowerCase() + "." + String(host.className || "").slice(0, 18)) : "body",
-          sample: items.slice(0, 5).map(function (it) { return { id: it.id, n: it.name.slice(0, 14), q: it.qty, v: it.value, t: it.type, eq: it.equipped ? 1 : 0, r: it.reasons.join(",") }; })
+          sample: items.slice(0, 6).map(function (it) {
+            var p = it.li, chain = [];
+            for (var d = 0; d < 3 && p; d++) { chain.push((p.tagName || "").toLowerCase() + "." + String((p.className && p.className.baseVal) || p.className || "").slice(0, 14)); p = p.parentElement; }
+            return { id: it.id, n: it.name.slice(0, 12), q: it.qty, t: it.type, st: it.sub, eq: it.equipped ? 1 : 0, r: it.reasons.join(","), c: chain };
+          })
         } })
       });
     } catch (e) {}
