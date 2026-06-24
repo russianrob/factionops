@@ -6093,7 +6093,12 @@ function runCprForecaster(factionId, data) {
   const members = data.members || {};
   const memberArr = Array.isArray(members) ? members : Object.values(members);
   const nameMap = {};
-  for (const m of memberArr) { nameMap[String(m.id || m.playerId || m.uid)] = m.name || m.playerName || ''; }
+  const currentMemberIds = new Set();
+  for (const m of memberArr) {
+    const mid = String(m.id || m.playerId || m.uid);
+    nameMap[mid] = m.name || m.playerName || '';
+    currentMemberIds.add(mid);
+  }
 
   const now = Date.now() / 1000;
   const DAY = 86400;
@@ -6107,7 +6112,6 @@ function runCprForecaster(factionId, data) {
 
   // Build per-member, per-level, per-role entries from merged history
   const memberData = {}; // uid -> [{ execAt, diff, role, rate }]
-  const histNameMap = {}; // uid -> name recorded at OC time; resolves ex-members no longer in the current roster
   for (const crime of allHistory) {
     const execAt = crime.executedAt || 0;
     if (!execAt || !Array.isArray(crime.slots)) continue;
@@ -6115,7 +6119,6 @@ function runCprForecaster(factionId, data) {
     for (const slot of crime.slots) {
       const uid = String(slot.userId || '');
       if (!uid) continue;
-      if (slot.userName && !histNameMap[uid]) histNameMap[uid] = slot.userName;
       const rate = slot.weight ?? null;
       if (rate === null || rate === 0) continue;
       const role = slot.position || '';
@@ -6148,6 +6151,9 @@ function runCprForecaster(factionId, data) {
 
   const results = [];
   for (const [uid, entries] of Object.entries(memberData)) {
+    // Ex-members still feed OC history / the CPR probability math, but the
+    // forecaster only lists people currently in the faction (who can be spawned).
+    if (!currentMemberIds.has(uid)) continue;
     if (entries.length < 2) continue;
 
     // Group by level, then by role within each level
@@ -6208,7 +6214,7 @@ function runCprForecaster(factionId, data) {
     const primaryLevel = levels[0];
 
     results.push({
-      uid, name: nameMap[uid] || histNameMap[uid] || uid,
+      uid, name: nameMap[uid] || uid,
       currentCpr: mainCpr, joinable,
       trend: primaryLevel.trend, changePerMonth: primaryLevel.changePerMonth,
       levels, totalEntries: entries.length,
