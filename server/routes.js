@@ -98,7 +98,7 @@ const maskKey = (key) => key ? `****${String(key).slice(-4)}` : '****';
 import { getHeatmap, resetHeatmap } from "./activity-heatmap.js";
 import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName } from "./oc-spawn.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
-import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById } from "./item-values.js";
+import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById, getItemCatalog } from "./item-values.js";
 import { getLowestListing, trackItem, getListingsById, getListingsByName, fetchNow as itemMarketFetchNow } from "./item-market.js";
 import * as vaultRequests from "./vault-requests.js";
 import * as keyUsage from "./key-usage-log.js";
@@ -9553,6 +9553,17 @@ router.get("/api/items/prices", async (req, res) => {
   const prices = getAllItemPricesById() || {};
   res.set('Cache-Control', 'public, max-age=120');
   return res.json({ prices, fetchedAt: getItemValueFetchedAt(), count: Object.keys(prices).length });
+});
+
+// Item catalog for the Junk Finder userscript: id → { t: type, v: marketValue }.
+// Keyless, public cache. Lets the script flag low-value / redundant-gear / junk
+// items in the inventory without the user supplying a Torn API key.
+// GET /api/items/catalog → { items: { "206": { t: "Drug", v: 529 }, ... }, fetchedAt }
+router.get("/api/items/catalog", async (req, res) => {
+  try { maybeRefreshItemValues(store.getFactionApiKey('42055') || store.getPollingKey('42055', 'items')); } catch (_) {}
+  const items = getItemCatalog() || {};
+  res.set('Cache-Control', 'public, max-age=300');
+  return res.json({ items, fetchedAt: getItemValueFetchedAt(), count: Object.keys(items).length });
 });
 
 // OC reward item values for items the bulk catalog prices at $0 (we serve the

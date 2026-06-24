@@ -23,6 +23,8 @@ const REFRESH_MS = 4 * 60 * 1000; // 4 min — just under server.js's 5-min sche
 
 let _values = {};          // { [itemId]: marketValue }
 let _byName = {};          // { [name.toLowerCase()]: marketValue }
+let _types = {};           // { [itemId]: typeString } — for the junk-finder catalog
+let _subtypes = {};        // { [itemId]: subTypeString } — weapon class / armor slot
 let _fetchedAt = 0;
 let _refreshInFlight = null;
 let _lastNameBackfill = 0;
@@ -36,6 +38,8 @@ function _load() {
     if (obj?.values && typeof obj.values === 'object') {
       _values = obj.values;
       _byName = (obj.byName && typeof obj.byName === 'object') ? obj.byName : {};
+      _types = (obj.types && typeof obj.types === 'object') ? obj.types : {};
+      _subtypes = (obj.subtypes && typeof obj.subtypes === 'object') ? obj.subtypes : {};
       _fetchedAt = Number(obj.fetchedAt) || 0;
       console.log(`[item-values] loaded ${Object.keys(_values).length} item prices from disk (fetchedAt ${new Date(_fetchedAt).toISOString()})`);
     }
@@ -49,7 +53,7 @@ function _save() {
   try {
     const dir = pathDirname(CACHE_FILE);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(CACHE_FILE, JSON.stringify({ values: _values, byName: _byName, fetchedAt: _fetchedAt }, null, 0), 'utf8');
+    writeFileSync(CACHE_FILE, JSON.stringify({ values: _values, byName: _byName, types: _types, subtypes: _subtypes, fetchedAt: _fetchedAt }, null, 0), 'utf8');
   } catch (e) {
     console.warn('[item-values] save failed:', e.message);
   }
@@ -74,12 +78,18 @@ async function _refreshWithKey(key) {
       const items = Array.isArray(data.items) ? data.items : Object.values(data.items || {});
       const out = {};
       const outByName = {};
+      const outTypes = {};
+      const outSubtypes = {};
       for (const it of items) {
+        const id = it?.id ?? it?.ID;
+        const ty = it?.type;
+        if (id != null && ty) outTypes[String(id)] = String(ty);
+        const st = it?.sub_type;
+        if (id != null && st) outSubtypes[String(id)] = String(st);
         const mp = Number(
           it?.value?.market_price ?? it?.market_value ?? it?.marketValue ?? 0
         );
         if (!(Number.isFinite(mp) && mp > 0)) continue;
-        const id = it?.id ?? it?.ID;
         if (id != null) out[String(id)] = mp;
         const nm = it?.name;
         if (nm) outByName[String(nm).toLowerCase()] = mp;
@@ -87,6 +97,8 @@ async function _refreshWithKey(key) {
       if (Object.keys(out).length > 0) {
         _values = out;
         _byName = outByName;
+        _types = outTypes;
+        _subtypes = outSubtypes;
         _fetchedAt = Date.now();
         _save();
         console.log(`[item-values] refreshed ${Object.keys(_values).length} item prices (${Object.keys(_byName).length} by name) via key ****${String(key).slice(-4)}`);
@@ -121,6 +133,14 @@ export function getItemPriceByName(name) {
 /** Full Torn item id → market value map (live cache). */
 export function getAllItemPricesById() { return _values; }
 
+/** Item catalog for the junk-finder: id → { t: type, st: subType, v: marketValue }. */
+export function getItemCatalog() {
+  const out = {};
+  for (const id in _types) out[id] = { t: _types[id], st: _subtypes[id] || '', v: Number(_values[id]) || 0 };
+  for (const id in _values) if (!out[id]) out[id] = { t: '', st: _subtypes[id] || '', v: Number(_values[id]) || 0 };
+  return out;
+}
+
 /** Register a callback to run after each successful price refresh (e.g. the
  *  price-spike watcher). One callback; last registration wins. */
 export function onItemValuesRefreshed(fn) {
@@ -136,12 +156,14 @@ export function onItemValuesRefreshed(fn) {
 export function maybeRefreshItemValues(apiKey) {
   const fresh = (Date.now() - _fetchedAt) < REFRESH_MS;
   const namesEmpty = Object.keys(_byName).length === 0;
-  if (fresh && !namesEmpty) return;
-  // One-time (guarded) backfill when the on-disk cache predates the name
-  // map: refresh even if the id-price cache is still fresh, but no more than
-  // once per 5 min so a key-less / erroring server can't spin on it.
-  if (namesEmpty && (Date.now() - _lastNameBackfill) < 5 * 60 * 1000) return;
-  if (namesEmpty) _lastNameBackfill = Date.now();
+  const typesEmpty = Object.keys(_types).length === 0;
+  const subtypesEmpty = Object.keys(_subtypes).length === 0;
+  if (fresh && !namesEmpty && !typesEmpty && !subtypesEmpty) return;
+  // One-time (guarded) backfill when the on-disk cache predates the name/type/
+  // subtype maps: refresh even if the id-price cache is still fresh, but no more
+  // than once per 5 min so a key-less / erroring server can't spin on it.
+  if ((namesEmpty || typesEmpty || subtypesEmpty) && (Date.now() - _lastNameBackfill) < 5 * 60 * 1000) return;
+  if (namesEmpty || typesEmpty || subtypesEmpty) _lastNameBackfill = Date.now();
   _refreshWithKey(apiKey);
 }
 
