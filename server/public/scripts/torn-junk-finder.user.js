@@ -174,7 +174,7 @@
       '<span style="margin-left:auto;color:#8a909a;font-weight:400;">~' + fmtMoney(total) + ' to dump</span>' +
       '<span style="color:#8a909a;">' + (collapsed ? "▸" : "▾") + "</span></div>" +
       '<div id="jf-body" style="display:' + (collapsed ? "none" : "block") + ';padding:4px 0 8px;">' + rows +
-      '<div style="padding:5px 12px 0;color:#7a818c;font-size:11px;border-top:1px solid #262a33;margin-top:4px;">↓ scroll your inventory to find the rest — items load + tally here as they appear.</div></div>";
+      '<div style="padding:5px 12px 0;color:#7a818c;font-size:11px;border-top:1px solid #262a33;margin-top:4px;">↓ scroll your inventory to find the rest — items load + tally here as they appear.</div></div>';
     panel.querySelector("#jf-head").addEventListener("click", function () {
       var col = !gmGet("jf_collapsed", false); gmSet("jf_collapsed", col);
       panel.querySelector("#jf-body").style.display = col ? "none" : "block";
