@@ -6107,6 +6107,7 @@ function runCprForecaster(factionId, data) {
 
   // Build per-member, per-level, per-role entries from merged history
   const memberData = {}; // uid -> [{ execAt, diff, role, rate }]
+  const histNameMap = {}; // uid -> name recorded at OC time; resolves ex-members no longer in the current roster
   for (const crime of allHistory) {
     const execAt = crime.executedAt || 0;
     if (!execAt || !Array.isArray(crime.slots)) continue;
@@ -6114,6 +6115,7 @@ function runCprForecaster(factionId, data) {
     for (const slot of crime.slots) {
       const uid = String(slot.userId || '');
       if (!uid) continue;
+      if (slot.userName && !histNameMap[uid]) histNameMap[uid] = slot.userName;
       const rate = slot.weight ?? null;
       if (rate === null || rate === 0) continue;
       const role = slot.position || '';
@@ -6206,7 +6208,7 @@ function runCprForecaster(factionId, data) {
     const primaryLevel = levels[0];
 
     results.push({
-      uid, name: nameMap[uid] || uid,
+      uid, name: nameMap[uid] || histNameMap[uid] || uid,
       currentCpr: mainCpr, joinable,
       trend: primaryLevel.trend, changePerMonth: primaryLevel.changePerMonth,
       levels, totalEntries: entries.length,
