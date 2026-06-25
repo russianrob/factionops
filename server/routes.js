@@ -8182,32 +8182,35 @@ router.post("/api/oc/flyer-delay", async (req, res) => {
   // tick once FFScouter returns real takeoff info. Caps at the current
   // value so we never *extend* a delay upward retroactively — only
   // move it earlier in time when we learn better data.
-  let firstObservedAt = Number(prev?.firstObservedAt) || now;
+  const priorFirst = Number(prev?.firstObservedAt) || 0;
+  let firstObservedAt = priorFirst || now;
   try {
     const fS = store.getFactionSettings(info.factionId);
     const factionFfsKey = fS?.oc_ffs_key || '';
     const flightInfo = await fetchFlightInfo(String(memberId), callerKey, factionFfsKey);
     const takeoffTime = flightInfo?.takeoffTime || 0;
     const readyAtMs = Number(readyAt) > 0 ? Number(readyAt) * 1000 : 0;
+    const readyReached = readyAtMs > 0 && readyAtMs <= now;
     // The member became a blocker at the LATER of (a) their takeoff and
-    // (b) the OC becoming ready — never earlier than ready, so we don't
-    // blame them for flying before the OC mattered (e.g. Caboose flew to
-    // UAE yesterday, OC spawned this morning → tally from this morning).
+    // (b) the OC becoming ready — never earlier than ready (e.g. Caboose flew
+    // to UAE yesterday, OC spawned this morning → tally from this morning).
     //
-    // v3.2.57 (client): only an OUTBOUND flight ("Traveling to X") marks when a member
-    // who was home at ready actually LEFT, so only then do we use their
-    // takeoff. An abroad member, or one on the RETURN leg ("Traveling from X
-    // to Torn"), has been away continuously — their current leg's takeoff (the
-    // flight home) is NOT when they became a blocker; using it snaps a
-    // multi-hour block back to minutes the instant their status flips abroad →
-    // traveling-home. Direction comes from `outbound` (the client's Torn
-    // status, which is reliable) — FFScouter's returning flag was not (it
-    // mislabeled the return leg, and rejects our owner key outright). Without
-    // the flag (old client) everyone anchors to ready, which is safe (no
-    // resets). Planning crimes with no ready_at keep "now" as the start.
-    if (readyAtMs > 0) {
-      const blockStart = (outbound && takeoffTime > 0) ? Math.max(takeoffTime, readyAtMs) : readyAtMs;
-      if (blockStart > 0 && blockStart <= now) firstObservedAt = blockStart;
+    // v3.2.57/59: CAPTURE-ONCE-AND-HOLD. While a member is actively flying
+    // OUTBOUND ("Traveling to X", per the client's reliable `outbound` flag)
+    // their takeoff is the authoritative departure — record max(takeoff,ready),
+    // refining even over a prior ready anchor. Once captured, the anchor is
+    // HELD: a member landing (abroad) or flying home (returning) must NOT move
+    // it, or e.g. an outbound flyer who lands gets re-anchored to OC-ready and
+    // over-counted (LouDawg's 8h). A member first seen already abroad/returning
+    // (we never caught their outbound flight) anchors to OC-ready as the best
+    // estimate. FFScouter's own returning flag is unreliable + rejects our
+    // owner key, which is why direction comes from the client. (oc_ffs_key
+    // empty → no precise outbound takeoff for already-landed members; set it
+    // for full precision.) Planning crimes with no ready_at keep "now".
+    if (outbound && takeoffTime > 0 && takeoffTime <= now && readyReached) {
+      firstObservedAt = Math.max(takeoffTime, readyAtMs);
+    } else if (priorFirst <= 0 && readyReached) {
+      firstObservedAt = readyAtMs;
     }
   } catch (_) { /* keep current firstObservedAt */ }
 
