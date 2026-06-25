@@ -8186,24 +8186,27 @@ router.post("/api/oc/flyer-delay", async (req, res) => {
   try {
     const fS = store.getFactionSettings(info.factionId);
     const factionFfsKey = fS?.oc_ffs_key || '';
-    const takeoffTime = await fetchFlyerTakeoffTime(String(memberId), callerKey, factionFfsKey);
+    const flightInfo = await fetchFlightInfo(String(memberId), callerKey, factionFfsKey);
+    const takeoffTime = flightInfo?.takeoffTime || 0;
+    const returning = !!flightInfo?.returning;
     const readyAtMs = Number(readyAt) > 0 ? Number(readyAt) * 1000 : 0;
     // The member became a blocker at the LATER of (a) their takeoff and
     // (b) the OC becoming ready — never earlier than ready, so we don't
     // blame them for flying before the OC mattered (e.g. Caboose flew to
     // UAE yesterday, OC spawned this morning → tally from this morning).
     //
-    // v3.2.57: when FFScouter has no takeoff time, anchor to OC-ready
-    // instead of first-observation. The member is a confirmed travel-
-    // blocker NOW and the OC has been unable to execute since it was
-    // ready, so a member already abroad before we first looked should
-    // tally from ready — not from whenever someone happened to open the
-    // panel (the old `firstObservedAt < readyAtMs` guard skipped the
-    // backdate entirely once first-seen landed after ready, badly
-    // under-counting long-standing flyers). Planning crimes with no
-    // ready_at keep "now" as the start.
+    // v3.2.57/58: only an OUTBOUND takeoff ("Traveling to X") marks when a
+    // member who was home at ready actually LEFT. An abroad member, or one
+    // on the RETURN leg ("Traveling from X to Torn"), has been away
+    // continuously — their current leg's takeoff (the flight home) is NOT
+    // when they became a blocker, so using max(returnTakeoff, ready) would
+    // snap a multi-hour block back to minutes the instant their status flips
+    // abroad → traveling-home. For those, anchor to OC-ready. Likewise when
+    // FFScouter has no takeoff (member already abroad before we first looked):
+    // tally from ready, not from whenever someone opened the panel. Planning
+    // crimes with no ready_at keep "now" as the start.
     if (readyAtMs > 0) {
-      const blockStart = (takeoffTime > 0) ? Math.max(takeoffTime, readyAtMs) : readyAtMs;
+      const blockStart = (takeoffTime > 0 && !returning) ? Math.max(takeoffTime, readyAtMs) : readyAtMs;
       if (blockStart > 0 && blockStart <= now) firstObservedAt = blockStart;
     }
   } catch (_) { /* keep current firstObservedAt */ }
