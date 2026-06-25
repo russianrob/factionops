@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.16
+// @version      0.9.17
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.16";
+  var SCRIPT_VERSION = "0.9.17";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -337,6 +337,8 @@
   // ─── DOM: settings, injector, observer ───────────────────
   function getMode() { var m = gmGet("tfs_mode", "stock"); return (m === "profit") ? "profit" : "stock"; }
   function setMode(m) { gmSet("tfs_mode", m); }
+  function getHidden() { return gmGet("tfs_hidden", false) === true; }
+  function setHidden(v) { gmSet("tfs_hidden", !!v); }
   function getKey() { return gmGet("tfs_key", "") || ""; }
   function setKey(k) { gmSet("tfs_key", String(k || "").trim()); }
   function tfsMsg(s) { var m = document.querySelector("#tfs-bar .tfs-msg"); if (m) m.textContent = s ? (" " + s) : ""; }
@@ -354,9 +356,10 @@
       ".tfs-toggle:hover{background:#20242c;color:#cfd4dc;}" +
       ".tfs-toggle.on{background:#3b6dff;color:#fff;}" +
       ".tfs-toggle+.tfs-toggle{border-left:1px solid #2e333d;}" +
-      ".tfs-refresh,.tfs-save,.tfs-filterbtn{background:#20242c;color:#aeb4bd;border:1px solid #2e333d;border-radius:7px;padding:4px 10px;cursor:pointer;transition:background .12s,color .12s;}" +
+      ".tfs-refresh,.tfs-save,.tfs-filterbtn,.tfs-hide{background:#20242c;color:#aeb4bd;border:1px solid #2e333d;border-radius:7px;padding:4px 10px;cursor:pointer;transition:background .12s,color .12s;}" +
       ".tfs-refresh{width:27px;height:26px;padding:0;border-radius:50%;font-size:13px;display:inline-flex;align-items:center;justify-content:center;}" +
-      ".tfs-refresh:hover,.tfs-save:hover,.tfs-filterbtn:hover{background:#262b34;color:#e6e9ee;border-color:#3a4150;}" +
+      ".tfs-refresh:hover,.tfs-save:hover,.tfs-filterbtn:hover,.tfs-hide:hover{background:#262b34;color:#e6e9ee;border-color:#3a4150;}" +
+      ".tfs-hide.on{border-color:#3b6dff;color:#cfd4dc;}" +
       ".tfs-key{background:#0e0f12;border:1px solid #2e333d;color:#dde2e8;border-radius:6px;padding:3px 8px;width:150px;}" +
       ".tfs-msg{color:#e08a7a;}" +
       ".tfs-filters{display:none;flex-basis:100%;margin-top:7px;padding-top:8px;border-top:1px solid #262a33;}" +
@@ -689,6 +692,15 @@
     var panel = document.getElementById("tfs-travel");
     if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
   }
+  // Hide button: strip every injected stock table (desktop, inline per-country,
+  // and the in-flight panel) while leaving the control bar so it can be shown again.
+  function removeAllTables() {
+    var host = document.getElementById("tfs-table-host");
+    if (host && host.parentNode) host.parentNode.removeChild(host);
+    var panels = document.querySelectorAll(".tfs-panel");
+    for (var i = 0; i < panels.length; i++) { if (panels[i].parentNode) panels[i].parentNode.removeChild(panels[i]); }
+    removeTravelPanel();
+  }
 
   function injectSettingsBar(onChange) {
     if (document.getElementById("tfs-bar")) return;
@@ -700,6 +712,7 @@
       '<span class="tfs-seg"><button class="tfs-toggle" data-mode="stock">Stock</button><button class="tfs-toggle" data-mode="profit">Profit</button></span>' +
       '<button class="tfs-refresh" title="Refresh stock">↻</button>' +
       '<button class="tfs-filterbtn">Filters ▾</button>' +
+      '<button class="tfs-hide" title="Hide or show the stock tables"></button>' +
       '<span class="tfs-keywrap" style="display:' + (mode === "profit" ? "inline-flex" : "none") + '">' +
       '<input class="tfs-key" type="password" placeholder="Torn API key for profit" value="' + getKey().replace(/"/g, "") + '">' +
       '<button class="tfs-save">Save</button></span>' +
@@ -709,12 +722,15 @@
       var tg = bar.querySelectorAll(".tfs-toggle");
       for (var i = 0; i < tg.length; i++) { tg[i].classList.toggle("on", tg[i].getAttribute("data-mode") === m); }
       bar.querySelector(".tfs-keywrap").style.display = (m === "profit") ? "inline-flex" : "none";
+      var hb = bar.querySelector(".tfs-hide");
+      if (hb) { var h = getHidden(); hb.textContent = h ? "👁 Show" : "🙈 Hide"; hb.classList.toggle("on", h); }
     }
     var toggles = bar.querySelectorAll(".tfs-toggle");
     for (var t = 0; t < toggles.length; t++) {
       (function (btn) { btn.addEventListener("click", function () { setMode(btn.getAttribute("data-mode")); paint(); onChange(false); }); })(toggles[t]);
     }
     bar.querySelector(".tfs-refresh").addEventListener("click", function () { onChange(true); });
+    bar.querySelector(".tfs-hide").addEventListener("click", function () { setHidden(!getHidden()); paint(); onChange(false); });
     bar.querySelector(".tfs-save").addEventListener("click", function () {
       var v = bar.querySelector(".tfs-key").value.trim();
       if (!v) { tfsMsg("enter a key"); return; }
@@ -843,6 +859,7 @@
       var stock = res[0], model = res[1] || {};
       if (!stock) { tfsMsg("stock unavailable"); return; }
       function render(prices, m) {
+        if (getHidden()) { removeAllTables(); return; }
         if (isMapLayout()) paintTable(stock, m, prices, model);
         else paintPanels(stock, m, prices, model);
         applyTravel(stock, model, prices);
