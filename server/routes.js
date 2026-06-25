@@ -8195,19 +8195,17 @@ router.post("/api/oc/flyer-delay", async (req, res) => {
     // (b) the OC becoming ready — never earlier than ready (e.g. Caboose flew
     // to UAE yesterday, OC spawned this morning → tally from this morning).
     //
-    // v3.2.57/59: CAPTURE-ONCE-AND-HOLD. While a member is actively flying
-    // OUTBOUND ("Traveling to X", per the client's reliable `outbound` flag)
-    // their takeoff is the authoritative departure — record max(takeoff,ready),
-    // refining even over a prior ready anchor. Once captured, the anchor is
-    // HELD: a member landing (abroad) or flying home (returning) must NOT move
-    // it, or e.g. an outbound flyer who lands gets re-anchored to OC-ready and
-    // over-counted (LouDawg's 8h). A member first seen already abroad/returning
-    // (we never caught their outbound flight) anchors to OC-ready as the best
-    // estimate. FFScouter's own returning flag is unreliable + rejects our
-    // owner key, which is why direction comes from the client. (oc_ffs_key
-    // empty → no precise outbound takeoff for already-landed members; set it
-    // for full precision.) Planning crimes with no ready_at keep "now".
-    if (outbound && takeoffTime > 0 && takeoffTime <= now && readyReached) {
+    // v3.2.60: takeoffTime is now the member's CURRENT-TRIP outbound departure
+    // from FFScouter — parsed correctly for outbound / abroad / returning (the
+    // earlier regex only matched a status string FFScouter never sends, so
+    // abroad members fell through to readyAt and over-counted, e.g. LouDawg's
+    // 8h). It is the SAME stable value across the whole trip (outbound → abroad
+    // → return leg), so it no longer resets when their status flips. Block
+    // start = max(outbound takeoff, OC-ready) — never blame them for flying
+    // before the OC mattered. Fall back to OC-ready only if FFScouter has no
+    // takeoff AND there is no prior anchor; if FFScouter is momentarily down
+    // but we already anchored, keep it. Planning crimes (no ready_at) keep "now".
+    if (takeoffTime > 0 && takeoffTime <= now && readyReached) {
       firstObservedAt = Math.max(takeoffTime, readyAtMs);
     } else if (priorFirst <= 0 && readyReached) {
       firstObservedAt = readyAtMs;
@@ -8265,16 +8263,13 @@ async function fetchFlightInfo(uid, preferredKey, factionKey) {
       const recents = Array.isArray(d?.recent_flights) ? d.recent_flights : [];
       let info = null;
       if (cur) {
-        const isReturning = /Returning/i.test(String(cur.status_description || ''));
         const desc = String(cur.status_description || '');
-        let destination = '';
-        if (isReturning) {
-          const m = desc.match(/Returning to Torn from (.+)/i);
-          destination = m ? m[1].trim() : '';
-        } else {
-          const m = desc.match(/Traveling to (.+)/i);
-          destination = m ? m[1].trim() : '';
-        }
+        // FFScouter format is "Traveling from {origin} to {destination}".
+        const route = desc.match(/from\s+(.+?)\s+to\s+(.+?)\s*$/i);
+        const origin = route ? route[1].trim() : '';
+        const dest = route ? route[2].trim() : '';
+        const isReturning = /^torn$/i.test(dest);   // heading back to Torn
+        const destination = isReturning ? origin : dest;
         // Tighten landing: earliest when book is in use, latest when
         // confirmed not, midpoint otherwise (wb49).
         const earliest = Number(cur.earliest_arrival_time) || 0;
@@ -8306,13 +8301,18 @@ async function fetchFlightInfo(uid, preferredKey, factionKey) {
         // Only emit destination+takeoff for (a). For (b) emit an empty
         // info object so /api/public/flight reports 'not flying'.
         const last = recents[0] || {};
-        const lastDesc = String(last.status_description || '');
-        const outboundMatch = lastDesc.match(/Traveling to (.+)/i);
-        if (outboundMatch) {
+        // FFScouter format "Traveling from {origin} to {destination}". Abroad =
+        // their most recent flight was OUTBOUND (from Torn to X); home = it was
+        // a return (from X to Torn).
+        const route = String(last.status_description || '').match(/from\s+(.+?)\s+to\s+(.+?)\s*$/i);
+        const lastOrigin = route ? route[1].trim() : '';
+        const lastDest = route ? route[2].trim() : '';
+        const isOutbound = route && /^torn$/i.test(lastOrigin) && !/^torn$/i.test(lastDest);
+        if (isOutbound) {
           info = {
             takeoffTime: (Number(last.takeoff_time) || 0) * 1000,
             landingAt: 0,
-            destination: outboundMatch[1].trim(),
+            destination: lastDest,
             returning: false,
             method: last.travel_method || '',
           };
