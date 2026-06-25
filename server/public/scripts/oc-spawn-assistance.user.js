@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.56
+// @version      3.2.57
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.56';
+    const SCRIPT_VERSION = '3.2.57';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -5181,7 +5181,7 @@
         for (const m of memberArr) {
             const uid = String(m.id || m.playerId || m.uid);
             const state = (m.status?.state || 'Okay').toLowerCase();
-            statusMap[uid] = { name: m.name || m.playerName || uid, state };
+            statusMap[uid] = { name: m.name || m.playerName || uid, state, desc: String(m.status?.description || '').toLowerCase() };
         }
 
         const FLYER_MESSAGE = "You're holding off on the OC initiation. You still have an outstanding fee that needs paying before we can crack on. Drop me a message as soon as it's done.";
@@ -5230,6 +5230,12 @@
                 // landed-in-a-foreign-country ("Abroad"). Both block OC
                 // initiation, so flag either.
                 if (info.state === 'traveling' || info.state === 'abroad') {
+                    // Outbound = flying AWAY from Torn ("Traveling to X"). Only
+                    // then did a home-at-ready member just leave, so the server
+                    // may use their takeoff. Abroad or return-leg ("... to
+                    // Torn") = away continuously → server anchors to OC-ready
+                    // (so the flight home doesn't reset a multi-hour block).
+                    const outbound = info.state === 'traveling' && !/\bto torn\b|returning/.test(info.desc || '');
                     // v3.1.49: prefer server-supplied per-member delay
                     // (backdated to real takeoff via FFScouter). Falls
                     // back to OC-ready-age when no server data yet.
@@ -5248,6 +5254,7 @@
                         difficulty: crime.difficulty || 0,
                         urgency: memberUrgency,
                         state: info.state,
+                        outbound: outbound,
                         readyAt: readyAt || 0,
                         delayedSec: effSec,
                     });
@@ -5280,6 +5287,7 @@
                         memberName: a.memberName, crimeName: a.crimeName,
                         delayedSec: a.delayedSec || 0,
                         readyAt: Number(a.readyAt) || 0,
+                        outbound: !!a.outbound,
                     });
                     if (typeof GM_xmlhttpRequest === 'function') {
                         GM_xmlhttpRequest({ method: 'POST', url, data: body, headers: { 'Content-Type': 'application/json' }, onerror(){}, onload(){} });

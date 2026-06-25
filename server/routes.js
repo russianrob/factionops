@@ -8161,7 +8161,7 @@ router.post("/api/oc/flyer-delay", async (req, res) => {
   const info = await resolveSpawnKeyInfo(req, res);
   if (!info) return;
   const callerKey = req.query.key || (req.body && req.body.key);
-  const { crimeId, memberId, memberName, crimeName, readyAt } = (req.body || {});
+  const { crimeId, memberId, memberName, crimeName, readyAt, outbound } = (req.body || {});
   if (!crimeId || !memberId) return res.status(400).json({ error: "crimeId and memberId are required" });
   // Don't (re)create a pending delay for a crime already finalized this
   // session — the completion-merge runs only on first-seen, so a late POST
@@ -8188,25 +8188,25 @@ router.post("/api/oc/flyer-delay", async (req, res) => {
     const factionFfsKey = fS?.oc_ffs_key || '';
     const flightInfo = await fetchFlightInfo(String(memberId), callerKey, factionFfsKey);
     const takeoffTime = flightInfo?.takeoffTime || 0;
-    const returning = !!flightInfo?.returning;
     const readyAtMs = Number(readyAt) > 0 ? Number(readyAt) * 1000 : 0;
     // The member became a blocker at the LATER of (a) their takeoff and
     // (b) the OC becoming ready — never earlier than ready, so we don't
     // blame them for flying before the OC mattered (e.g. Caboose flew to
     // UAE yesterday, OC spawned this morning → tally from this morning).
     //
-    // v3.2.57/58: only an OUTBOUND takeoff ("Traveling to X") marks when a
-    // member who was home at ready actually LEFT. An abroad member, or one
-    // on the RETURN leg ("Traveling from X to Torn"), has been away
-    // continuously — their current leg's takeoff (the flight home) is NOT
-    // when they became a blocker, so using max(returnTakeoff, ready) would
-    // snap a multi-hour block back to minutes the instant their status flips
-    // abroad → traveling-home. For those, anchor to OC-ready. Likewise when
-    // FFScouter has no takeoff (member already abroad before we first looked):
-    // tally from ready, not from whenever someone opened the panel. Planning
-    // crimes with no ready_at keep "now" as the start.
+    // v3.2.57 (client): only an OUTBOUND flight ("Traveling to X") marks when a member
+    // who was home at ready actually LEFT, so only then do we use their
+    // takeoff. An abroad member, or one on the RETURN leg ("Traveling from X
+    // to Torn"), has been away continuously — their current leg's takeoff (the
+    // flight home) is NOT when they became a blocker; using it snaps a
+    // multi-hour block back to minutes the instant their status flips abroad →
+    // traveling-home. Direction comes from `outbound` (the client's Torn
+    // status, which is reliable) — FFScouter's returning flag was not (it
+    // mislabeled the return leg, and rejects our owner key outright). Without
+    // the flag (old client) everyone anchors to ready, which is safe (no
+    // resets). Planning crimes with no ready_at keep "now" as the start.
     if (readyAtMs > 0) {
-      const blockStart = (takeoffTime > 0 && !returning) ? Math.max(takeoffTime, readyAtMs) : readyAtMs;
+      const blockStart = (outbound && takeoffTime > 0) ? Math.max(takeoffTime, readyAtMs) : readyAtMs;
       if (blockStart > 0 && blockStart <= now) firstObservedAt = blockStart;
     }
   } catch (_) { /* keep current firstObservedAt */ }
