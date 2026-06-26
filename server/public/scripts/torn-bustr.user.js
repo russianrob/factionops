@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BUSTR: Busting Reminder + PDA
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.14
+// @version      1.0.15
 // @description  Guess how many busts you can do without getting jailed. Fork: bust-penalty decay corrected to Nosy's multiplicative-inverse formula (was exponential, which undervalued older busts).
 // @author       Adobi & Ironhydedragon (decay-formula fix per Nosy [890872]'s guide)
 // @match        https://www.torn.com/*
@@ -26,6 +26,7 @@ let GLOBAL_BUSTR_STATE = {
     // quickBust: true,
     // quickBail: false,
     showHardnessScore: true, // set to 'false' to remove hardnessScore rendering and reordering
+    sortByHardness: true, // false = leave Torn's default order (descending time); toggle via the Hardness column header
   },
   penaltyScore: 0,
   penaltyThreshold: 0,
@@ -183,7 +184,47 @@ function renderHardnessScore(playerEl, hardnessScore) {
 }
 
 function sortByHardnessScore(playerEl, hardnessScore) {
-  playerEl.style.order = hardnessScore;
+  // sortByHardness off → clear the flex order so rows fall back to Torn's
+  // default DOM order (descending time remaining).
+  playerEl.style.order = (getUserSettings().sortByHardness === false) ? '' : hardnessScore;
+}
+
+function reapplyHardnessOrder() {
+  const on = getUserSettings().sortByHardness !== false;
+  for (const playerEl of document.querySelectorAll('ul.user-info-list-wrap > li')) {
+    if (playerEl.classList.contains('last')) continue;
+    if (!on) { playerEl.style.order = ''; continue; }
+    try {
+      const [level, durationInHours] = getLevelJailDurationInfo(playerEl);
+      playerEl.style.order = calcHardnessScore(level, durationInHours);
+    } catch (e) {}
+  }
+}
+
+function updateHardnessSortIndicator() {
+  const head = document.querySelector('.bustr-sort-toggle');
+  if (!head) return;
+  const on = getUserSettings().sortByHardness !== false;
+  const ind = head.querySelector('.bustr-sort-ind');
+  if (ind) { ind.textContent = on ? '▲' : '⇅'; ind.style.opacity = on ? '1' : '0.45'; }
+  head.title = on
+    ? 'Sorted by hardness (easiest at top) — click for Torn default order (descending time)'
+    : "Torn default order (descending time) — click to sort by hardness";
+}
+
+function wireHardnessSortToggle() {
+  const head = document.querySelector('.bustr-sort-toggle');
+  if (!head || head.dataset.bustrWired) { updateHardnessSortIndicator(); return; }
+  head.dataset.bustrWired = '1';
+  head.style.cursor = 'pointer';
+  head.style.userSelect = 'none';
+  head.addEventListener('click', () => {
+    const on = getUserSettings().sortByHardness !== false;
+    setUserSettings({ ...getUserSettings(), sortByHardness: !on });
+    reapplyHardnessOrder();
+    updateHardnessSortIndicator();
+  });
+  updateHardnessSortIndicator();
 }
 
 //// Callback functions
@@ -799,7 +840,7 @@ async function renderBustrMobileView() {
 function renderHardnessJailView() {
   const headingsContainerEl = document.querySelector('.users-list-title');
   const hardnessTitleHTML = `
-    <span class="hardness title-divider divider-spiky">Hardness</span>`;
+    <span class="hardness title-divider divider-spiky bustr-sort-toggle">Hardness <span class="bustr-sort-ind"></span></span>`;
   if (!headingsContainerEl.querySelector('span.hardness')) {
     headingsContainerEl.children[3].insertAdjacentHTML('afterend', hardnessTitleHTML);
   }
@@ -919,6 +960,7 @@ function hardnessScoreController() {
   createHardnessScoreObserver();
 
   renderHardnessJailView();
+  wireHardnessSortToggle();
   const playersArr = [...document.querySelectorAll('ul.user-info-list-wrap > li')];
 
   if (playersArr[0].classList.contains('last')) return;
