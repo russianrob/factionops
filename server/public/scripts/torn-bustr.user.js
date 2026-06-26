@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BUSTR: Busting Reminder + PDA
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.18
+// @version      1.0.19
 // @description  Guess how many busts you can do without getting jailed. Fork: bust-penalty decay corrected to Nosy's multiplicative-inverse formula (was exponential, which undervalued older busts).
 // @author       Adobi & Ironhydedragon (decay-formula fix per Nosy [890872]'s guide)
 // @match        https://www.torn.com/*
@@ -11,7 +11,7 @@
 // @updateURL    https://tornwar.com/scripts/torn-bustr.user.js
 // ==/UserScript==
 
-console.log('😎 BUSTR 1.0.18 ON — hardness sort toggle (click the Hardness column header)');
+console.log('😎 BUSTR 1.0.19 ON — hardness sort toggle (click the Hardness column header)');
 
 ////////  GLOBAL VARIABLES
 ////  State
@@ -197,21 +197,24 @@ function renderSortToggleBar() {
   if (!bar) {
     bar = document.createElement('div');
     bar.id = 'bustr-sort-bar';
-    bar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 12px;margin:4px 0;'
-      + 'font-size:13px;font-weight:600;cursor:pointer;border-radius:6px;border:1px solid #3b6dff;'
-      + 'background:rgba(59,109,255,0.14);color:#e2e6ee;user-select:none;';
+    bar.style.cssText = 'display:flex;align-items:center;gap:5px;margin:4px 0 7px;font-size:11px;user-select:none;';
     titleRow.insertAdjacentElement('beforebegin', bar);
-    bar.addEventListener('click', () => {
-      const cur = getUserSettings().sortByHardness !== false;
-      setUserSettings({ ...getUserSettings(), sortByHardness: !cur });
+  }
+  const pill = (active) => 'cursor:pointer;padding:2px 11px;border-radius:11px;font-weight:600;line-height:17px;'
+    + (active ? 'background:#3b6dff;color:#fff;' : 'background:#2c2c2c;color:#9a9a9a;');
+  bar.innerHTML =
+    '<span style="color:#888;margin-right:3px;">Sort:</span>'
+    + '<span class="bustr-seg" data-on="1" title="Easiest hardness at top" style="' + pill(on) + '">Hardness</span>'
+    + '<span class="bustr-seg" data-on="0" title="Torn\'s default order (time)" style="' + pill(!on) + '">Default</span>';
+  bar.querySelectorAll('.bustr-seg').forEach((el) => {
+    el.addEventListener('click', () => {
+      const wantOn = el.dataset.on === '1';
+      if ((getUserSettings().sortByHardness !== false) === wantOn) return;
+      setUserSettings({ ...getUserSettings(), sortByHardness: wantOn });
       reapplyHardnessOrder();
       renderSortToggleBar();
-      updateHardnessSortIndicator();
     });
-  }
-  bar.innerHTML = on
-    ? '🔀 Sorting by <b>Hardness</b> (easiest at top) &nbsp;·&nbsp;<span style="color:#9fb6ff;font-weight:400;">click to use Torn\'s default order (time)</span>'
-    : '🔀 <b>Torn default order</b> (descending time) &nbsp;·&nbsp;<span style="color:#9fb6ff;font-weight:400;">click to sort by hardness (easiest first)</span>';
+  });
 }
 
 function reapplyHardnessOrder() {
