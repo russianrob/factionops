@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BUSTR: Busting Reminder + PDA
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.15
+// @version      1.0.16
 // @description  Guess how many busts you can do without getting jailed. Fork: bust-penalty decay corrected to Nosy's multiplicative-inverse formula (was exponential, which undervalued older busts).
 // @author       Adobi & Ironhydedragon (decay-formula fix per Nosy [890872]'s guide)
 // @match        https://www.torn.com/*
@@ -11,7 +11,7 @@
 // @updateURL    https://tornwar.com/scripts/torn-bustr.user.js
 // ==/UserScript==
 
-console.log('😎 BUSTR-SCRIPT ON!!!!'); // TEST
+console.log('😎 BUSTR 1.0.16 ON — hardness sort toggle (click the Hardness column header)');
 
 ////////  GLOBAL VARIABLES
 ////  State
@@ -206,10 +206,15 @@ function updateHardnessSortIndicator() {
   if (!head) return;
   const on = getUserSettings().sortByHardness !== false;
   const ind = head.querySelector('.bustr-sort-ind');
-  if (ind) { ind.textContent = on ? '▲' : '⇅'; ind.style.opacity = on ? '1' : '0.45'; }
+  if (ind) {
+    ind.textContent = on ? 'sort ▲' : 'sort ✕';
+    ind.style.cssText = 'display:block;margin:2px auto 0;width:fit-content;padding:0 6px;border-radius:7px;'
+      + 'font-size:9px;line-height:14px;font-weight:700;cursor:pointer;'
+      + (on ? 'background:#3b6dff;color:#fff;' : 'background:#777;color:#fff;');
+  }
   head.title = on
-    ? 'Sorted by hardness (easiest at top) — click for Torn default order (descending time)'
-    : "Torn default order (descending time) — click to sort by hardness";
+    ? 'Sorted by hardness (easiest at top) — click to use Torn default order (descending time)'
+    : "Torn default order (descending time) — click to sort by hardness (easiest first)";
 }
 
 function wireHardnessSortToggle() {
