@@ -7,8 +7,6 @@
 // @match        https://www.torn.com/*
 // @license      MIT
 // @run-at       document-end
-// @downloadURL  https://tornwar.com/scripts/torn-bustr.user.js
-// @updateURL    https://tornwar.com/scripts/torn-bustr.user.js
 // ==/UserScript==
 
 console.log('😎 BUSTR 1.0.20 ON');
