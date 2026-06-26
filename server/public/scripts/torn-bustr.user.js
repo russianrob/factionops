@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BUSTR: Busting Reminder + PDA
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.17
+// @version      1.0.18
 // @description  Guess how many busts you can do without getting jailed. Fork: bust-penalty decay corrected to Nosy's multiplicative-inverse formula (was exponential, which undervalued older busts).
 // @author       Adobi & Ironhydedragon (decay-formula fix per Nosy [890872]'s guide)
 // @match        https://www.torn.com/*
@@ -11,7 +11,7 @@
 // @updateURL    https://tornwar.com/scripts/torn-bustr.user.js
 // ==/UserScript==
 
-console.log('😎 BUSTR 1.0.17 ON — hardness sort toggle (click the Hardness column header)');
+console.log('😎 BUSTR 1.0.18 ON — hardness sort toggle (click the Hardness column header)');
 
 ////////  GLOBAL VARIABLES
 ////  State
@@ -187,6 +187,31 @@ function sortByHardnessScore(playerEl, hardnessScore) {
   // sortByHardness off → clear the flex order so rows fall back to Torn's
   // default DOM order (descending time remaining).
   playerEl.style.order = (getUserSettings().sortByHardness === false) ? '' : hardnessScore;
+}
+
+function renderSortToggleBar() {
+  const titleRow = document.querySelector('.users-list-title');
+  if (!titleRow) return;
+  const on = getUserSettings().sortByHardness !== false;
+  let bar = document.getElementById('bustr-sort-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'bustr-sort-bar';
+    bar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 12px;margin:4px 0;'
+      + 'font-size:13px;font-weight:600;cursor:pointer;border-radius:6px;border:1px solid #3b6dff;'
+      + 'background:rgba(59,109,255,0.14);color:#e2e6ee;user-select:none;';
+    titleRow.insertAdjacentElement('beforebegin', bar);
+    bar.addEventListener('click', () => {
+      const cur = getUserSettings().sortByHardness !== false;
+      setUserSettings({ ...getUserSettings(), sortByHardness: !cur });
+      reapplyHardnessOrder();
+      renderSortToggleBar();
+      updateHardnessSortIndicator();
+    });
+  }
+  bar.innerHTML = on
+    ? '🔀 Sorting by <b>Hardness</b> (easiest at top) &nbsp;·&nbsp;<span style="color:#9fb6ff;font-weight:400;">click to use Torn\'s default order (time)</span>'
+    : '🔀 <b>Torn default order</b> (descending time) &nbsp;·&nbsp;<span style="color:#9fb6ff;font-weight:400;">click to sort by hardness (easiest first)</span>';
 }
 
 function reapplyHardnessOrder() {
@@ -968,6 +993,7 @@ function hardnessScoreController() {
 
   renderHardnessJailView();
   wireHardnessSortToggle();
+  renderSortToggleBar();
   const playersArr = [...document.querySelectorAll('ul.user-info-list-wrap > li')];
 
   if (playersArr[0].classList.contains('last')) return;
