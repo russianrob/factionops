@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BUSTR: Busting Reminder + PDA
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.19
+// @version      1.0.20
 // @description  Guess how many busts you can do without getting jailed. Fork: bust-penalty decay corrected to Nosy's multiplicative-inverse formula (was exponential, which undervalued older busts).
 // @author       Adobi & Ironhydedragon (decay-formula fix per Nosy [890872]'s guide)
 // @match        https://www.torn.com/*
@@ -11,7 +11,7 @@
 // @updateURL    https://tornwar.com/scripts/torn-bustr.user.js
 // ==/UserScript==
 
-console.log('😎 BUSTR 1.0.19 ON — hardness sort toggle (click the Hardness column header)');
+console.log('😎 BUSTR 1.0.20 ON');
 
 ////////  GLOBAL VARIABLES
 ////  State
@@ -204,8 +204,8 @@ function renderSortToggleBar() {
     + (active ? 'background:#3b6dff;color:#fff;' : 'background:#2c2c2c;color:#9a9a9a;');
   bar.innerHTML =
     '<span style="color:#888;margin-right:3px;">Sort:</span>'
-    + '<span class="bustr-seg" data-on="1" title="Easiest hardness at top" style="' + pill(on) + '">Hardness</span>'
-    + '<span class="bustr-seg" data-on="0" title="Torn\'s default order (time)" style="' + pill(!on) + '">Default</span>';
+    + '<span class="bustr-seg" data-on="1" style="' + pill(on) + '">Hardness</span>'
+    + '<span class="bustr-seg" data-on="0" style="' + pill(!on) + '">Default</span>';
   bar.querySelectorAll('.bustr-seg').forEach((el) => {
     el.addEventListener('click', () => {
       const wantOn = el.dataset.on === '1';
@@ -875,7 +875,7 @@ async function renderBustrMobileView() {
 function renderHardnessJailView() {
   const headingsContainerEl = document.querySelector('.users-list-title');
   const hardnessTitleHTML = `
-    <span class="hardness title-divider divider-spiky bustr-sort-toggle">Hardness <span class="bustr-sort-ind"></span></span>`;
+    <span class="hardness title-divider divider-spiky">Hardness</span>`;
   if (!headingsContainerEl.querySelector('span.hardness')) {
     headingsContainerEl.children[3].insertAdjacentHTML('afterend', hardnessTitleHTML);
   }
