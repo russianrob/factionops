@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.18
+// @version      0.9.19
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.18";
+  var SCRIPT_VERSION = "0.9.19";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -560,9 +560,7 @@
     return h > 0 ? (h + ":" + p(m) + ":" + p(ss)) : (p(m) + ":" + p(ss));
   }
   function travelHost() {
-    var cw = document.querySelector('[class*="content-wrapper"]');
-    if (cw && cw.parentElement) return cw.parentElement;
-    return document.getElementById("mainContainer") || document.querySelector(".content") || document.body;
+    return document.querySelector('[class*="content-wrapper"]') || document.getElementById("mainContainer") || document.body;
   }
   function tfsHash(s) { var h = 0; s = String(s); for (var i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; } return h; }
   // ── Live stock from Torn's own store grid (overrides the lagging API) ──
