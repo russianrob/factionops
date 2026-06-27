@@ -1,35 +1,58 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-// Faithful stub of the factions.php newsletter DOM, reconstructed verbatim from the
-// on-device NLG5-DIAG capture (2026-06-27): 14 input[type=checkbox] = 4 site-settings
-// boxes (class "checkbox-css dark-bg") + 10 newsletter role boxes (class
-// "checkbox checkbox-button__input"). Native .checked reflects selection (no aria-checked).
-function makeCheckbox(cls, label, checked) {
-  const parent = { textContent: label, parentElement: null };
-  const cb = {
-    type: "checkbox",
-    className: cls,
-    checked: checked,
-    textContent: "",          // an <input> has no text content
-    parentElement: parent,
-    getAttribute() { return null; },   // no aria-checked in the real DOM
-    click() { this.checked = !this.checked; }, // Torn's box toggles on a real click
-  };
-  return cb;
+// --- helpers mirrored verbatim from torn-faction-newsletter-templates.user.js ---
+const ROLE_SELECTOR = 'input[class*="checkbox-button__"]';
+function roleCheckboxes(doc) { return [].slice.call(doc.querySelectorAll(ROLE_SELECTOR)); }
+function roleLabel(cb) { let c = cb; for (let h = 0; h < 6 && c; h++) { const t = String(c.textContent || "").trim(); if (t && t.length < 50) return t; c = c.parentElement; } return ""; }
+function normRole(s) { return String(s || "").replace(/\s*\(\d+\)\s*$/, "").trim(); }
+function getCheckedRoles(doc) { return roleCheckboxes(doc).filter((cb) => cb.checked).map((cb) => normRole(roleLabel(cb))).filter(Boolean); }
+function clickOption(cb) {
+  const label = (cb.closest && cb.closest("label")) || cb.parentElement;
+  const ctrl = (label && label.querySelector && label.querySelector(".checkbox-button__control")) || label || cb;
+  try { ctrl.click(); } catch (e) {}
+}
+function rolesMenuOpen(doc) { return roleCheckboxes(doc).some((cb) => cb.offsetParent !== null); }
+function selectGroupInDropdown(doc, roles, onDone, schedule) {
+  if (!Array.isArray(roles) || !roles.length) { if (onDone) onDone(); return; }
+  schedule = schedule || ((fn) => setTimeout(fn, 320));
+  const want = {}; roles.forEach((r) => { want[normRole(r)] = 1; });
+  let attempts = 0;
+  function step() {
+    attempts++;
+    let changed = 0;
+    roleCheckboxes(doc).forEach((cb) => {
+      const desired = !!want[normRole(roleLabel(cb))];
+      if (cb.checked !== desired) { clickOption(cb); changed++; }
+    });
+    if (changed === 0 || attempts >= 6) { if (onDone) onDone(); return; }
+    schedule(step);
+  }
+  if (rolesMenuOpen(doc)) { step(); return; }
+  const tg = doc.querySelector("button.toggler.multiselect");
+  if (tg) { try { tg.click(); } catch (e) {} schedule(step); }
+  else { step(); }
 }
 
 function normName(n) { return String(n).replace(/\s*\(\d+\)\s*$/, "").trim(); }
+
+// ---------------------------------------------------------------------------
+// Static stub for selector/label/read tests: 4 site-settings boxes (checkbox-css)
+// + 10 role boxes (checkbox-button__input), reconstructed from the NLG5 capture.
+function makeStatic(cls, label, checked) {
+  const parent = { textContent: label, parentElement: null };
+  return { type: "checkbox", className: cls, checked, textContent: "", parentElement: parent, getAttribute() { return null; } };
+}
 function buildDoc(opts) {
   opts = opts || {};
   const omit = opts.omit || [];
-  const preChecked = opts.preChecked || ["Not in an Organized Crime"]; // i=6 in the capture
+  const preChecked = opts.preChecked || ["Not in an Organized Crime"];
   const extra = opts.extra || [];
   const settings = [
-    makeCheckbox("checkbox-css dark-bg", "Not", true),
-    makeCheckbox("checkbox-css dark-bg", "Dark Mode", true),
-    makeCheckbox("checkbox-css dark-bg", "Desktop View", false),
-    makeCheckbox("checkbox-css dark-bg", "News Ticker", true),
+    makeStatic("checkbox-css dark-bg", "Not", true),
+    makeStatic("checkbox-css dark-bg", "Dark Mode", true),
+    makeStatic("checkbox-css dark-bg", "Desktop View", false),
+    makeStatic("checkbox-css dark-bg", "News Ticker", true),
   ];
   const roleNames = [
     "All", "Online", "Not in an Organized Crime (4)", "Leader/Co-leader (2)",
@@ -37,14 +60,10 @@ function buildDoc(opts) {
     "War Leader (2)", "Admin Leader (3)",
   ].filter((n) => omit.indexOf(normName(n)) === -1);
   const roles = roleNames.map((n) =>
-    makeCheckbox("checkbox checkbox-button__input", n, preChecked.indexOf(normName(n)) !== -1));
-  const all = settings.concat(roles).concat(extra.map((e) => makeCheckbox(e.cls, e.label, !!e.checked)));
+    makeStatic("checkbox checkbox-button__input", n, preChecked.indexOf(normName(n)) !== -1));
+  const all = settings.concat(roles).concat(extra.map((e) => makeStatic(e.cls, e.label, !!e.checked)));
   return {
-    _all: all,
     querySelectorAll(sel) {
-      if (sel === "input.checkbox-button__in") {
-        return all.filter((c) => (" " + c.className + " ").includes(" checkbox-button__in "));
-      }
       const m = sel.match(/class\*=["']?([^"'\]]+)/);
       if (m) return all.filter((c) => c.className.includes(m[1]));
       if (sel === "input[type=checkbox]") return all.slice();
@@ -53,151 +72,138 @@ function buildDoc(opts) {
   };
 }
 
-// --- helpers mirrored verbatim from torn-faction-newsletter-templates.user.js ---
-const ROLE_SELECTOR = 'input[class*="checkbox-button__"]';   // FIX: was "input.checkbox-button__in"; requires the BEM "__" so checkbox-button-group / checkbox-buttoned do NOT match
-function roleCheckboxes(doc) { return [].slice.call(doc.querySelectorAll(ROLE_SELECTOR)); }
-function roleLabel(cb) { let c = cb; for (let h = 0; h < 6 && c; h++) { const t = String(c.textContent || "").trim(); if (t && t.length < 50) return t; c = c.parentElement; } return ""; }
-function normRole(s) { return String(s || "").replace(/\s*\(\d+\)\s*$/, "").trim(); }
-function getCheckedRoles(doc) { return roleCheckboxes(doc).filter((cb) => cb.checked).map((cb) => normRole(roleLabel(cb))).filter(Boolean); }
-function setCheckedRoles(doc, roles) {
-  if (!Array.isArray(roles) || !roles.length) return;   // empty/missing => leave selection untouched
-  const want = {}; roles.forEach((r) => { want[normRole(r)] = 1; });
-  roleCheckboxes(doc).forEach((cb) => {
-    const desired = !!want[normRole(roleLabel(cb))];
-    if (cb.checked !== desired) { try { cb.click(); } catch (e) {} }
-  });
-}
-function setRolesReliably(doc, roles, onDone, schedule) {
-  if (!Array.isArray(roles) || !roles.length) { if (onDone) onDone(); return; }
-  schedule = schedule || ((fn) => setTimeout(fn, 180));
-  let attempts = 0;
-  function target() {
-    const present = {};
-    roleCheckboxes(doc).forEach((cb) => { const k = normRole(roleLabel(cb)); if (k) present[k] = 1; });
-    return roles.map(normRole).filter((r) => present[r]).sort().join("|");
-  }
-  function satisfied() { return getCheckedRoles(doc).slice().sort().join("|") === target(); }
-  function pass() {
-    attempts++;
-    setCheckedRoles(doc, roles);
-    if (satisfied() || attempts >= 8) { if (onDone) onDone(); return; }
-    schedule(pass);
-  }
-  pass();
-}
-
-// Models the real factions.php recipient selector: a React multi-select dropdown whose
-// option checkboxes only toggle once the opened menu has RENDERED. The first click opens
-// the menu (state.opening) but does not toggle in the same synchronous tick; a later tick
-// (render()) makes the options live. Reconstructed from the NLG6 firstAncestry capture.
-function buildDropdownDoc(opts) {
+// ---------------------------------------------------------------------------
+// LIVE dropdown stub, reconstructed from the FNT-DIAG click trace:
+//  - menu is CLOSED until BUTTON.toggler.multiselect is clicked (options not laid out)
+//  - an option is selected by clicking SPAN.checkbox-button__control inside LABEL.checkbox-button
+//  - clicking a specific group auto-unchecks "All"; clicking "All" clears the specifics
+//  - the checked change is applied on the next render tick (async), like React
+function buildLiveDropdown(opts) {
   opts = opts || {};
-  const state = { opening: false, rendered: false };
-  function mk(cls, label, checked) {
-    return {
-      type: "checkbox", className: cls, checked, textContent: "",
-      parentElement: { textContent: label, parentElement: null },
-      getAttribute() { return null; },
-      click() { if (!state.rendered) { state.opening = true; return; } this.checked = !this.checked; },
-    };
-  }
-  const names = opts.names || ["All", "Online", "Reaper (56)", "Banker (3)"];
+  const state = { open: !!opts.open };
+  const names = opts.names || ["All", "Online", "Not in an Organized Crime (4)", "Reaper (56)", "Banker (3)"];
   const preChecked = opts.preChecked || ["All"];
-  const all = names.map((n) => mk("checkbox checkbox-button__input", n, preChecked.indexOf(normName(n)) !== -1));
+  const options = [];
+  function applyClick(o) {
+    if (normName(o.name) === "All") { options.forEach((x) => { x._next = (x === o); }); }
+    else { o._next = !o._checked; if (o._next) { const all = options.find((x) => normName(x.name) === "All"); if (all) all._next = false; } }
+  }
+  function mk(name, checked) {
+    const o = { name, _checked: checked, _next: checked, broken: !!opts.broken };
+    const control = { tagName: "SPAN", className: "checkbox checkbox-button__control",
+      click() { if (!state.open) { state.open = true; return; } if (o.broken) return; applyClick(o); } };
+    const li = { tagName: "LI", className: "item", parentElement: null };
+    const label = { tagName: "LABEL", className: "checkbox checkbox-button", textContent: "", parentElement: li,
+      querySelector(sel) { return /checkbox-button__control/.test(sel) ? control : null; } };
+    const input = {
+      type: "checkbox", className: "checkbox checkbox-button__input", textContent: "",
+      parentElement: label,
+      get checked() { return o._checked; },
+      get offsetParent() { return state.open ? {} : null; },
+      getAttribute() { return null; },
+      closest(sel) { return /label/i.test(sel) ? label : (/li/i.test(sel) ? li : null); },
+    };
+    // roleLabel walks input -> label("") -> li(name)
+    li.textContent = name;
+    o.input = input;
+    return o;
+  }
+  names.forEach((n) => options.push(mk(n, preChecked.indexOf(normName(n)) !== -1)));
+  const toggler = { tagName: "BUTTON", className: "toggler multiselect down", click() { state.open = true; } };
   return {
     _state: state,
-    render() { if (state.opening) state.rendered = true; },
+    _render() { options.forEach((o) => { o._checked = o._next; }); },
     querySelectorAll(sel) {
       const m = sel.match(/class\*=["']?([^"'\]]+)/);
-      if (m) return all.filter((c) => c.className.includes(m[1]));
+      if (m) return options.map((o) => o.input).filter((i) => i.className.includes(m[1]));
       return [];
     },
+    querySelector(sel) { return sel === "button.toggler.multiselect" ? toggler : null; },
   };
 }
 
-test("selects exactly the 10 role checkboxes (not the 4 site-settings ones)", () => {
-  const doc = buildDoc();
-  assert.equal(roleCheckboxes(doc).length, 10);
+// === selector / read tests (static) ===
+test("selects exactly the 10 role checkboxes, not the 4 site-settings ones", () => {
+  assert.equal(roleCheckboxes(buildDoc()).length, 10);
 });
-
-test("reads the currently-ticked group via native .checked", () => {
-  const doc = buildDoc();
-  assert.deepEqual(getCheckedRoles(doc), ["Not in an Organized Crime"]);
+test("reads the ticked group via native .checked", () => {
+  assert.deepEqual(getCheckedRoles(buildDoc()), ["Not in an Organized Crime"]);
 });
-
 test("labels strip the (N) member count", () => {
-  const doc = buildDoc();
-  const labels = roleCheckboxes(doc).map((cb) => normRole(roleLabel(cb)));
+  const labels = roleCheckboxes(buildDoc()).map((cb) => normRole(roleLabel(cb)));
   assert.deepEqual(labels, ["All", "Online", "Not in an Organized Crime", "Leader/Co-leader", "Dread Reaper", "Banker", "Reaper", "30 Day Trial", "War Leader", "Admin Leader"]);
 });
+test("hardened selector excludes lookalike inputs (checkbox-button-group / checkbox-buttoned)", () => {
+  const doc = buildDoc({ extra: [
+    { cls: "checkbox checkbox-button-group", label: "Bogus", checked: true },
+    { cls: "checkbox-buttoned", label: "Bogus2", checked: true },
+  ] });
+  assert.equal(roleCheckboxes(doc).length, 10);
+});
+test("regression: the old exact-token selector matches nothing", () => {
+  assert.equal(buildDoc().querySelectorAll("input.checkbox-button__in").length, 0);
+});
 
-test("setCheckedRoles re-ticks the saved group and clears the rest", () => {
-  const doc = buildDoc();
-  setCheckedRoles(doc, ["Reaper"]);
+// === dropdown selection tests (live stub) ===
+const sched = (doc) => (fn) => { doc._render(); fn(); };  // render the opened menu between steps
+
+test("opens the closed recipients dropdown, then selects the group via the option control", () => {
+  const doc = buildLiveDropdown();                 // closed, default "All"
+  assert.equal(rolesMenuOpen(doc), false);
+  let done = false;
+  selectGroupInDropdown(doc, ["Reaper"], () => { done = true; }, sched(doc));
+  assert.equal(done, true);
+  assert.equal(doc._state.open, true);             // menu was opened
+  assert.deepEqual(getCheckedRoles(doc), ["Reaper"]); // group selected, "All" auto-unticked
+});
+
+test("selection goes through the option CONTROL, not the bare input (1.0.6 blink fix)", () => {
+  const doc = buildLiveDropdown({ open: true });
+  // clickOption must target span.checkbox-button__control inside the label, never the input itself
+  const input = roleCheckboxes(doc).find((cb) => normRole(roleLabel(cb)) === "Reaper");
+  let clickedTag = null;
+  const label = input.closest("label");
+  const realCtrl = label.querySelector(".checkbox-button__control");
+  const origClick = realCtrl.click.bind(realCtrl);
+  realCtrl.click = function () { clickedTag = "SPAN.checkbox-button__control"; origClick(); };
+  clickOption(input);
+  doc._render();
+  assert.equal(clickedTag, "SPAN.checkbox-button__control");  // proved it clicked the control
   assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);
 });
 
-test("setCheckedRoles([]) leaves the current selection untouched (old 1.0.2 templates)", () => {
-  const doc = buildDoc();
-  const before = getCheckedRoles(doc);
-  setCheckedRoles(doc, []);
-  assert.deepEqual(getCheckedRoles(doc), before);
-});
-
-test("regression: the old exact-token selector matches nothing on today's DOM", () => {
-  const doc = buildDoc();
-  assert.equal(doc.querySelectorAll("input.checkbox-button__in").length, 0);
-});
-
-test("hardened selector excludes lookalike inputs (checkbox-button-group / checkbox-buttoned)", () => {
-  const doc = buildDoc({ extra: [
-    { cls: "checkbox checkbox-button-group", label: "Bogus Bar", checked: true },
-    { cls: "checkbox-buttoned", label: "Bogus Two", checked: true },
-  ] });
-  // still exactly the 10 real role boxes — the BEM "__" requirement rejects the lookalikes
-  assert.equal(roleCheckboxes(doc).length, 10);
-  assert.deepEqual(getCheckedRoles(doc), ["Not in an Organized Crime"]);
-});
-
-// mirrors the Apply handler's "what actually got applied" computation
-function applyRoles(doc, saved) {
-  setCheckedRoles(doc, saved);
-  const present = {};
-  roleCheckboxes(doc).forEach((cb) => { const k = normRole(roleLabel(cb)); if (k) present[k] = 1; });
-  const missing = saved.filter((r) => !present[normRole(r)]);
-  return { now: getCheckedRoles(doc), missing };
-}
-
-test("Apply reports the ACTUAL applied recipients, not the saved list, and flags missing groups", () => {
-  // a faction where "Dread Reaper" was deleted; user had "Online" manually ticked
-  const doc = buildDoc({ omit: ["Dread Reaper"], preChecked: ["Online"] });
-  const res = applyRoles(doc, ["Reaper", "Dread Reaper"]);
-  assert.deepEqual(res.now, ["Reaper"]);            // truthful: only Reaper actually applied
-  assert.deepEqual(res.missing, ["Dread Reaper"]);  // the vanished group is surfaced, not echoed as applied
-});
-
-test("react-dropdown reality: a single reconcile pass only OPENS the menu — group NOT selected (the 1.0.5 bug)", () => {
-  const doc = buildDropdownDoc();
-  setCheckedRoles(doc, ["Reaper"]);                 // one synchronous pass
-  assert.equal(doc._state.opening, true);           // the menu got opened...
-  assert.deepEqual(getCheckedRoles(doc), ["All"]);  // ...but Reaper is NOT selected yet (still default "All")
-});
-
-test("setRolesReliably converges across the dropdown render boundary (the 1.0.6 fix)", () => {
-  const doc = buildDropdownDoc();
+test("selecting an already-correct group is a no-op (no redundant clicks)", () => {
+  const doc = buildLiveDropdown({ open: true, preChecked: ["Reaper"] });
   let done = false;
-  // synchronous scheduler simulating React rendering the opened menu between passes
-  const schedule = (fn) => { doc.render(); fn(); };
-  setRolesReliably(doc, ["Reaper"], () => { done = true; }, schedule);
+  selectGroupInDropdown(doc, ["Reaper"], () => { done = true; }, sched(doc));
   assert.equal(done, true);
-  assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);  // second pass (menu rendered) lands the selection
+  assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);
 });
 
-test("setRolesReliably gives up after bounded attempts if the menu never renders (no infinite loop)", () => {
-  const doc = buildDropdownDoc();
+test("bounded: gives up after the attempt cap if the control never registers (no infinite loop)", () => {
+  const doc = buildLiveDropdown({ open: true, broken: true });
   let done = false;
-  const schedule = (fn) => { fn(); };               // never render -> options never go live
-  setRolesReliably(doc, ["Reaper"], () => { done = true; }, schedule);
-  assert.equal(done, true);                          // still terminates (attempt cap)
-  assert.deepEqual(getCheckedRoles(doc), ["All"]);   // couldn't apply, but bounded & truthful
+  selectGroupInDropdown(doc, ["Reaper"], () => { done = true; }, sched(doc));
+  assert.equal(done, true);                         // still terminates
+  assert.deepEqual(getCheckedRoles(doc), ["All"]);  // couldn't apply, but bounded
+});
+
+test("empty roles is a no-op and still calls back", () => {
+  const doc = buildLiveDropdown({ open: true });
+  let done = false;
+  selectGroupInDropdown(doc, [], () => { done = true; }, sched(doc));
+  assert.equal(done, true);
+  assert.deepEqual(getCheckedRoles(doc), ["All"]);  // untouched
+});
+
+test("applySelected-style report names the actual recipients and flags a vanished group", () => {
+  const doc = buildLiveDropdown({ open: true, names: ["All", "Online", "Reaper (56)"], preChecked: ["Online"] });
+  const saved = ["Reaper", "Dread Reaper"];          // Dread Reaper no longer exists
+  let done = false;
+  selectGroupInDropdown(doc, saved, () => { done = true; }, sched(doc));
+  const present = {}; roleCheckboxes(doc).forEach((cb) => { const k = normRole(roleLabel(cb)); if (k) present[k] = 1; });
+  const missing = saved.filter((r) => !present[normRole(r)]);
+  assert.equal(done, true);
+  assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);
+  assert.deepEqual(missing, ["Dread Reaper"]);
 });

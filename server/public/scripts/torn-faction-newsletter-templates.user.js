@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.8
+// @version      1.0.9
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.8";
+  var SCRIPT_VERSION = "1.0.9";
   var STORAGE_KEY = "fnt_templates";
 
   function getTemplates() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { return {}; } }
@@ -38,29 +38,31 @@
   function getCheckedRoles() {
     return roleCheckboxes().filter(function (cb) { return cb.checked; }).map(function (cb) { return normRole(roleLabel(cb)); }).filter(Boolean);
   }
-  function setCheckedRoles(roles) {
-    if (!Array.isArray(roles) || !roles.length) return;
-    var want = {}; roles.forEach(function (r) { want[normRole(r)] = 1; });
-    roleCheckboxes().forEach(function (cb) {
-      var desired = !!want[normRole(roleLabel(cb))];
-      if (cb.checked !== desired) { try { cb.click(); } catch (e) {} }
-    });
+  function clickOption(cb) {
+    var label = (cb.closest && cb.closest("label")) || cb.parentElement;
+    var ctrl = (label && label.querySelector && label.querySelector(".checkbox-button__control")) || label || cb;
+    try { ctrl.click(); } catch (e) {}
   }
-  function setRolesReliably(roles, onDone) {
+  function recipientToggler() { return document.querySelector("button.toggler.multiselect"); }
+  function rolesMenuOpen() { return roleCheckboxes().some(function (cb) { return cb.offsetParent !== null; }); }
+  function selectGroupInDropdown(roles, onDone) {
     if (!Array.isArray(roles) || !roles.length) { if (onDone) onDone(); return; }
+    var want = {}; roles.forEach(function (r) { want[normRole(r)] = 1; });
     var attempts = 0;
-    function target() {
-      var present = {}; roleCheckboxes().forEach(function (cb) { var k = normRole(roleLabel(cb)); if (k) present[k] = 1; });
-      return roles.map(normRole).filter(function (r) { return present[r]; }).sort().join("|");
-    }
-    function satisfied() { return getCheckedRoles().slice().sort().join("|") === target(); }
-    function pass() {
+    function step() {
       attempts++;
-      setCheckedRoles(roles);
-      if (satisfied() || attempts >= 8) { if (onDone) onDone(); return; }
-      setTimeout(pass, 180);
+      var changed = 0;
+      roleCheckboxes().forEach(function (cb) {
+        var desired = !!want[normRole(roleLabel(cb))];
+        if (cb.checked !== desired) { clickOption(cb); changed++; }
+      });
+      if (changed === 0 || attempts >= 6) { if (onDone) onDone(); return; }
+      setTimeout(step, 320);
     }
-    pass();
+    if (rolesMenuOpen()) { step(); return; }
+    var tg = recipientToggler();
+    if (tg) { try { tg.click(); } catch (e) {} setTimeout(step, 340); }
+    else { step(); }
   }
   function rolesLabel(roles) { return (Array.isArray(roles) && roles.length) ? roles.join(", ") : "(no group saved)"; }
 
@@ -150,8 +152,15 @@
       if (!n || !t[n]) { msg("no template selected"); return; }
       setBody(t[n].body || "");
       var saved = Array.isArray(t[n].roles) ? t[n].roles : [];
-      if (saved.length) msg("✓ body loaded — set the group manually for now (auto-select being fixed): " + rolesLabel(saved));
-      else msg("✓ body loaded — no saved group");
+      if (!saved.length) { msg("✓ loaded — no saved group, recipients unchanged"); return; }
+      msg("loading group…");
+      selectGroupInDropdown(saved, function () {
+        var present = {}; roleCheckboxes().forEach(function (cb) { var k = normRole(roleLabel(cb)); if (k) present[k] = 1; });
+        var missing = saved.filter(function (r) { return !present[normRole(r)]; });
+        var now = getCheckedRoles();
+        if (missing.length) msg("⚠ loaded — missing group(s): " + missing.join(", ") + "; recipients: " + (now.join(", ") || "none") + " — verify");
+        else msg("✓ loaded (recipients: " + (now.join(", ") || "none") + ") — check before sending");
+      });
     }
     var DIAG = { active: false, t0: 0, timer: 0, log: [], sig: "" };
     function ddContainer() { var b = roleCheckboxes()[0]; return b ? (b.closest(".react-dropdown-default, .small-select-menu-wrap, .select-wrap, [class*='dropdown']") || b.parentElement) : null; }
