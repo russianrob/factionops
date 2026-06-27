@@ -8,6 +8,4 @@
 // @match        https://www.torn.com/factions.php*
 // @run-at       document-idle
 // @grant        none
-// @downloadURL  https://tornwar.com/scripts/torn-faction-newsletter-templates.user.js
-// @updateURL    https://tornwar.com/scripts/torn-faction-newsletter-templates.meta.js
 // ==/UserScript==
