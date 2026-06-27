@@ -296,3 +296,42 @@ test("applySelected-style report names the actual recipients and flags a vanishe
   assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);
   assert.deepEqual(missing, ["Dread Reaper"]);
 });
+
+// === newsletter title field (input.text-input.titleField___HASH) ===
+function titleInput(doc) { return doc.querySelector('input[class*="titleField"]'); }
+function getTitle(doc) { const el = titleInput(doc); return el ? String(el.value || "") : ""; }
+function setTitle(doc, v) {
+  const el = titleInput(doc); if (!el) return false;
+  const val = v == null ? "" : String(v);
+  el.value = val;
+  el.dispatchEvent({ type: "input" }); el.dispatchEvent({ type: "change" });
+  return true;
+}
+function buildTitleDoc(initial, cls) {
+  const events = [];
+  const input = { tagName: "INPUT", className: cls || "text-input titleField___JEzzv", value: initial || "", dispatchEvent(e) { events.push(e.type); return true; } };
+  return { _events: events, querySelector(sel) { const m = sel.match(/class\*=["']?([^"'\]]+)/); return (m && input.className.includes(m[1])) ? input : null; } };
+}
+
+test("titleInput finds the React title field by the stable 'titleField' token (hash-proof)", () => {
+  assert.ok(titleInput(buildTitleDoc("", "text-input titleField___JEzzv")));
+  assert.ok(titleInput(buildTitleDoc("", "text-input titleField___aB9xQ")));   // different CSS-module hash still matches
+});
+test("getTitle reads the field value; setTitle writes it and fires input+change", () => {
+  const doc = buildTitleDoc("old");
+  assert.equal(getTitle(doc), "old");
+  assert.equal(setTitle(doc, "War Briefing"), true);
+  assert.equal(getTitle(doc), "War Briefing");
+  assert.deepEqual(doc._events, ["input", "change"]);     // React-controlled input needs these to register
+});
+test("setTitle null/empty clears the field", () => {
+  const doc = buildTitleDoc("something");
+  setTitle(doc, null);
+  assert.equal(getTitle(doc), "");
+});
+test("a template carries title alongside body+roles and Apply restores it", () => {
+  const doc = buildTitleDoc("");
+  const tpl = { body: "<p>hi</p>", roles: ["Reaper"], title: "Weekly Update" };
+  setTitle(doc, tpl.title || "");
+  assert.equal(getTitle(doc), "Weekly Update");
+});

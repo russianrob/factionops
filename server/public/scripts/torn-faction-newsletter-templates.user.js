@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.12
+// @version      1.0.13
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.12";
+  var SCRIPT_VERSION = "1.0.13";
   var STORAGE_KEY = "fnt_templates";
   var menuHideGen = 0;
 
@@ -136,6 +136,20 @@
     return !!(ed || el);
   }
 
+  function titleInput() { return document.querySelector('input[class*="titleField"]'); }
+  function getTitle() { var el = titleInput(); return el ? String(el.value || "") : ""; }
+  function setTitle(v) {
+    var el = titleInput(); if (!el) return false;
+    var val = v == null ? "" : String(v);
+    try {
+      var proto = (typeof window !== "undefined" && window.HTMLInputElement) ? window.HTMLInputElement.prototype : null;
+      var desc = proto ? Object.getOwnPropertyDescriptor(proto, "value") : null;
+      if (desc && desc.set) desc.set.call(el, val); else el.value = val;
+    } catch (e) { el.value = val; }
+    try { el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); } catch (e) {}
+    return true;
+  }
+
   function btn(id, label, bg) {
     return '<button id="' + id + '" type="button" style="background:' + bg + ';color:#e6e9ee;border:1px solid #2e333d;border-radius:6px;padding:3px 11px;cursor:pointer;font-size:12px;">' + label + "</button>";
   }
@@ -178,6 +192,7 @@
       var t = getTemplates(), n = sel.value;
       if (!n || !t[n]) { msg("no template selected"); return; }
       setBody(t[n].body || "");
+      setTitle(t[n].title || "");
       var saved = Array.isArray(t[n].roles) ? t[n].roles : [];
       if (!saved.length) { msg("✓ loaded — no saved group, recipients unchanged"); return; }
       msg("loading group…");
@@ -241,8 +256,8 @@
       var t = getTemplates();
       if (t[name] && !confirm('"' + name + '" already exists. Overwrite it?')) return;
       var roles = getCheckedRoles();
-      t[name] = { body: getBody(), roles: roles };
-      saveTemplates(t); refreshSelect(sel); sel.value = name; updateGroupInd(); msg("✓ saved (group: " + rolesLabel(roles) + ")");
+      t[name] = { body: getBody(), roles: roles, title: getTitle() };
+      saveTemplates(t); refreshSelect(sel); sel.value = name; updateGroupInd(); msg("✓ saved (title + body + group: " + rolesLabel(roles) + ")");
     });
     panel.querySelector("#fnt-del").addEventListener("click", function () {
       var t = getTemplates(), n = sel.value;
