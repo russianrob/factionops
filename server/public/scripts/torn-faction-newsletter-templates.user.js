@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.6
+// @version      1.0.7
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.6";
+  var SCRIPT_VERSION = "1.0.7";
   var STORAGE_KEY = "fnt_templates";
 
   function getTemplates() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { return {}; } }
@@ -133,6 +133,7 @@
       + btn("fnt-qsend", "⚡ Quick Send", "#2f6b45")
       + btn("fnt-save", "Save current…", "#20242c")
       + btn("fnt-del", "Delete", "#20242c")
+      + btn("fnt-diag", "🔍", "#3a2b66")
       + '<span id="fnt-msg" style="color:#7a818c;"></span>';
     editor.insertAdjacentElement("beforebegin", panel);
 
@@ -149,19 +150,36 @@
       if (!n || !t[n]) { msg("no template selected"); return; }
       setBody(t[n].body || "");
       var saved = Array.isArray(t[n].roles) ? t[n].roles : [];
-      if (!saved.length) { msg("✓ loaded — no saved group, recipients unchanged"); return; }
-      msg("loading group…");
-      setRolesReliably(saved, function () {
-        var present = {}; roleCheckboxes().forEach(function (cb) { var k = normRole(roleLabel(cb)); if (k) present[k] = 1; });
-        var missing = saved.filter(function (r) { return !present[normRole(r)]; });
-        var now = getCheckedRoles();
-        if (missing.length) msg("⚠ loaded — missing group(s): " + missing.join(", ") + "; recipients now: " + (now.join(", ") || "none") + " — verify");
-        else msg("✓ loaded (recipients: " + (now.join(", ") || "none") + ") — check before sending");
-      });
+      if (saved.length) msg("✓ body loaded — set the group manually for now (auto-select being fixed): " + rolesLabel(saved));
+      else msg("✓ body loaded — no saved group");
+    }
+    var DIAG = { active: false, t0: 0, timer: 0, log: [], sig: "" };
+    function ddContainer() { var b = roleCheckboxes()[0]; return b ? (b.closest(".react-dropdown-default, .small-select-menu-wrap, .select-wrap, [class*='dropdown']") || b.parentElement) : null; }
+    function diagAncestry() { var b = roleCheckboxes()[0], out = [], c = b; for (var h = 0; h < 9 && c; h++) { out.push(String(c.tagName || "") + "." + String(c.className || "").replace(/\s+/g, ".").slice(0, 54)); c = c.parentElement; } return out; }
+    function diagSnap() { var c = ddContainer(); return { cls: String((c && c.className) || "").slice(0, 70), checked: getCheckedRoles() }; }
+    function diagSig(s) { return s.cls + "|" + s.checked.join(","); }
+    function toggleDiag() {
+      if (!DIAG.active) {
+        DIAG.active = true; DIAG.t0 = Date.now(); DIAG.log = [];
+        var base = diagSnap(); base.t = 0; DIAG.log.push(base); DIAG.sig = diagSig(base);
+        DIAG.timer = setInterval(function () {
+          var s = diagSnap(), sig = diagSig(s);
+          if (sig !== DIAG.sig) { DIAG.sig = sig; s.t = Date.now() - DIAG.t0; DIAG.log.push(s); if (DIAG.log.length > 60) { DIAG.log.shift(); } }
+        }, 150);
+        msg("🔍 recording — now OPEN recipients & tick your group by hand, then tap 🔍 again");
+      } else {
+        DIAG.active = false; if (DIAG.timer) clearInterval(DIAG.timer);
+        var payload = { v: SCRIPT_VERSION, count: roleCheckboxes().length, ancestry: diagAncestry(), deltas: DIAG.log };
+        var str = "FNT-DIAG " + JSON.stringify(payload);
+        try { console.log(str); } catch (e) {}
+        try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(str); } catch (e) {}
+        msg("🔍 copied to clipboard (+ console) — paste it to me");
+      }
     }
     updateGroupInd();
     sel.addEventListener("change", function () { updateGroupInd(); applySelected(); });
     panel.querySelector("#fnt-apply").addEventListener("click", applySelected);
+    panel.querySelector("#fnt-diag").addEventListener("click", toggleDiag);
     panel.querySelector("#fnt-qsend").addEventListener("click", function () {
       var sb = sendButton();
       if (!sb) { msg("⚠ Send button not found"); return; }
