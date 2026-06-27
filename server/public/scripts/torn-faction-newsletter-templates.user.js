@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.0";
+  var SCRIPT_VERSION = "1.0.1";
   var STORAGE_KEY = "fnt_templates";
 
   function getTemplates() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { return {}; } }
@@ -23,6 +23,14 @@
   function onNewsletterPage() { return /factions\.php/.test(location.pathname) && /option=newsletter/.test(location.hash); }
   function editorEl() { return document.querySelector(".editorContent, .mce-content-body"); }
   function sourceEl() { return document.querySelector("textarea[class*='sourceArea']"); }
+  function sendButton() {
+    var cands = document.querySelectorAll("button, [role='button'], a[class*='torn-btn'], div[class*='btn'], input[type='button']");
+    for (var i = 0; i < cands.length; i++) {
+      var t = String(cands[i].textContent || cands[i].value || "").trim();
+      if (t === "Send") return cands[i];
+    }
+    return null;
+  }
 
   function tinyEditor() {
     try {
@@ -89,6 +97,7 @@
       '<span style="font-weight:700;color:#e8c44a;">📰 Newsletter Templates</span>'
       + '<select id="fnt-select" style="background:#0e0f12;color:#dde2e8;border:1px solid #2e333d;border-radius:6px;padding:3px 7px;max-width:220px;"></select>'
       + btn("fnt-apply", "Apply", "#3b6dff")
+      + btn("fnt-qsend", "⚡ Quick Send", "#2f6b45")
       + btn("fnt-save", "Save current…", "#20242c")
       + btn("fnt-del", "Delete", "#20242c")
       + '<span id="fnt-msg" style="color:#7a818c;"></span>';
@@ -103,6 +112,13 @@
       if (!n || !t[n]) { msg("no template selected"); return; }
       setBody(t[n].body || "");
       msg("✓ applied — check it before sending");
+    });
+    panel.querySelector("#fnt-qsend").addEventListener("click", function () {
+      var sb = sendButton();
+      if (!sb) { msg("⚠ Send button not found"); return; }
+      if (!confirm("Send this newsletter to the whole faction now?")) return;
+      sb.click();
+      msg("sent");
     });
     panel.querySelector("#fnt-save").addEventListener("click", function () {
       var name = prompt("Save the current newsletter content as a template — name:");
