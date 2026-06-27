@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.2
+// @version      1.0.4
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.2";
+  var SCRIPT_VERSION = "1.0.4";
   var STORAGE_KEY = "fnt_templates";
 
   function getTemplates() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { return {}; } }
@@ -32,14 +32,14 @@
     return null;
   }
 
-  function roleCheckboxes() { return [].slice.call(document.querySelectorAll("input.checkbox-button__in")); }
+  function roleCheckboxes() { return [].slice.call(document.querySelectorAll('input[class*="checkbox-button__"]')); }
   function roleLabel(cb) { var c = cb; for (var h = 0; h < 6 && c; h++) { var t = String(c.textContent || "").trim(); if (t && t.length < 50) return t; c = c.parentElement; } return ""; }
   function normRole(s) { return String(s || "").replace(/\s*\(\d+\)\s*$/, "").trim(); }
   function getCheckedRoles() {
     return roleCheckboxes().filter(function (cb) { return cb.checked; }).map(function (cb) { return normRole(roleLabel(cb)); }).filter(Boolean);
   }
   function setCheckedRoles(roles) {
-    if (!Array.isArray(roles)) return;
+    if (!Array.isArray(roles) || !roles.length) return;
     var want = {}; roles.forEach(function (r) { want[normRole(r)] = 1; });
     roleCheckboxes().forEach(function (cb) {
       var desired = !!want[normRole(roleLabel(cb))];
@@ -135,8 +135,14 @@
       var t = getTemplates(), n = sel.value;
       if (!n || !t[n]) { msg("no template selected"); return; }
       setBody(t[n].body || "");
-      setCheckedRoles(t[n].roles);
-      msg("✓ applied (group: " + rolesLabel(t[n].roles) + ") — check before sending");
+      var saved = Array.isArray(t[n].roles) ? t[n].roles : [];
+      setCheckedRoles(saved);
+      if (!saved.length) { msg("✓ applied — no saved group, recipients unchanged"); return; }
+      var present = {}; roleCheckboxes().forEach(function (cb) { var k = normRole(roleLabel(cb)); if (k) present[k] = 1; });
+      var missing = saved.filter(function (r) { return !present[normRole(r)]; });
+      var now = getCheckedRoles();
+      if (missing.length) msg("⚠ applied — missing group(s): " + missing.join(", ") + "; recipients now: " + (now.join(", ") || "none") + " — verify before sending");
+      else msg("✓ applied (recipients: " + (now.join(", ") || "none") + ") — check before sending");
     });
     panel.querySelector("#fnt-qsend").addEventListener("click", function () {
       var sb = sendButton();
