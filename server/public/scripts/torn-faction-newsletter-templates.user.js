@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.7
+// @version      1.0.8
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.7";
+  var SCRIPT_VERSION = "1.0.8";
   var STORAGE_KEY = "fnt_templates";
 
   function getTemplates() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { return {}; } }
@@ -161,15 +161,23 @@
     function toggleDiag() {
       if (!DIAG.active) {
         DIAG.active = true; DIAG.t0 = Date.now(); DIAG.log = [];
-        var base = diagSnap(); base.t = 0; DIAG.log.push(base); DIAG.sig = diagSig(base);
+        var base = diagSnap(); base.t = 0; base.kind = "state"; DIAG.log.push(base); DIAG.sig = diagSig(base);
+        DIAG.onClick = function (e) {
+          var el = e.target; if (!el || !el.closest) return;
+          var host = el.closest("label,li,button,[role=button]");
+          DIAG.log.push({ t: Date.now() - DIAG.t0, kind: "click", tag: el.tagName, cls: String(el.className || "").slice(0, 50), txt: String(el.textContent || "").trim().slice(0, 28), hostTag: host ? host.tagName : null, hostCls: host ? String(host.className || "").slice(0, 44) : null, hostTxt: host ? String(host.textContent || "").trim().slice(0, 28) : null });
+          if (DIAG.log.length > 80) DIAG.log.shift();
+        };
+        document.addEventListener("click", DIAG.onClick, true);
         DIAG.timer = setInterval(function () {
           var s = diagSnap(), sig = diagSig(s);
-          if (sig !== DIAG.sig) { DIAG.sig = sig; s.t = Date.now() - DIAG.t0; DIAG.log.push(s); if (DIAG.log.length > 60) { DIAG.log.shift(); } }
+          if (sig !== DIAG.sig) { DIAG.sig = sig; s.t = Date.now() - DIAG.t0; s.kind = "state"; DIAG.log.push(s); if (DIAG.log.length > 80) DIAG.log.shift(); }
         }, 150);
-        msg("🔍 recording — now OPEN recipients & tick your group by hand, then tap 🔍 again");
+        msg("🔍 recording — OPEN the recipients dropdown, click your group, then tap 🔍 again");
       } else {
         DIAG.active = false; if (DIAG.timer) clearInterval(DIAG.timer);
-        var payload = { v: SCRIPT_VERSION, count: roleCheckboxes().length, ancestry: diagAncestry(), deltas: DIAG.log };
+        if (DIAG.onClick) { try { document.removeEventListener("click", DIAG.onClick, true); } catch (e) {} }
+        var payload = { v: SCRIPT_VERSION, count: roleCheckboxes().length, ancestry: diagAncestry(), log: DIAG.log };
         var str = "FNT-DIAG " + JSON.stringify(payload);
         try { console.log(str); } catch (e) {}
         try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(str); } catch (e) {}
