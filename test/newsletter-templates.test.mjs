@@ -13,25 +13,23 @@ function clickOption(cb) {
   try { ctrl.click(); } catch (e) {}
 }
 function rolesMenuOpen(doc) { return roleCheckboxes(doc).some((cb) => cb.offsetParent !== null); }
+function closeRolesMenu(doc) { if (rolesMenuOpen(doc)) { const tg = doc.querySelector("button.toggler.multiselect"); if (tg) { try { tg.click(); } catch (e) {} } } }
 function selectGroupInDropdown(doc, roles, onDone, schedule) {
   if (!Array.isArray(roles) || !roles.length) { if (onDone) onDone(); return; }
   schedule = schedule || ((fn) => setTimeout(fn, 320));
   const want = {}; roles.forEach((r) => { want[normRole(r)] = 1; });
+  const startedClosed = !rolesMenuOpen(doc);
+  const diffBoxes = () => roleCheckboxes(doc).filter((cb) => cb.checked !== !!want[normRole(roleLabel(cb))]);
   let attempts = 0;
-  function step() {
+  function settle() {
     attempts++;
-    let changed = 0;
-    roleCheckboxes(doc).forEach((cb) => {
-      const desired = !!want[normRole(roleLabel(cb))];
-      if (cb.checked !== desired) { clickOption(cb); changed++; }
-    });
-    if (changed === 0 || attempts >= 6) { if (onDone) onDone(); return; }
-    schedule(step);
+    if (diffBoxes().length === 0 || attempts >= 6) { if (startedClosed) closeRolesMenu(doc); if (onDone) onDone(); return; }
+    if (!rolesMenuOpen(doc)) { const tg = doc.querySelector("button.toggler.multiselect"); if (tg) { try { tg.click(); } catch (e) {} } }
+    diffBoxes().forEach(clickOption);
+    schedule(settle);
   }
-  if (rolesMenuOpen(doc)) { step(); return; }
-  const tg = doc.querySelector("button.toggler.multiselect");
-  if (tg) { try { tg.click(); } catch (e) {} schedule(step); }
-  else { step(); }
+  diffBoxes().forEach(clickOption);
+  schedule(settle);
 }
 
 function normName(n) { return String(n).replace(/\s*\(\d+\)\s*$/, "").trim(); }
@@ -80,7 +78,8 @@ function buildDoc(opts) {
 //  - the checked change is applied on the next render tick (async), like React
 function buildLiveDropdown(opts) {
   opts = opts || {};
-  const state = { open: !!opts.open };
+  const state = { open: !!opts.open, everOpened: !!opts.open };
+  function openMenu() { state.open = true; state.everOpened = true; }
   const names = opts.names || ["All", "Online", "Not in an Organized Crime (4)", "Reaper (56)", "Banker (3)"];
   const preChecked = opts.preChecked || ["All"];
   const options = [];
@@ -91,7 +90,7 @@ function buildLiveDropdown(opts) {
   function mk(name, checked) {
     const o = { name, _checked: checked, _next: checked, broken: !!opts.broken };
     const control = { tagName: "SPAN", className: "checkbox checkbox-button__control",
-      click() { if (!state.open) { state.open = true; return; } if (o.broken) return; applyClick(o); } };
+      click() { if (o.broken) return; if (!state.open && !opts.silentControl) { openMenu(); return; } applyClick(o); } };
     const li = { tagName: "LI", className: "item", parentElement: null };
     const label = { tagName: "LABEL", className: "checkbox checkbox-button", textContent: "", parentElement: li,
       querySelector(sel) { return /checkbox-button__control/.test(sel) ? control : null; } };
@@ -109,7 +108,7 @@ function buildLiveDropdown(opts) {
     return o;
   }
   names.forEach((n) => options.push(mk(n, preChecked.indexOf(normName(n)) !== -1)));
-  const toggler = { tagName: "BUTTON", className: "toggler multiselect down", click() { state.open = true; } };
+  const toggler = { tagName: "BUTTON", className: "toggler multiselect down", click() { if (state.open) { state.open = false; } else { openMenu(); } } };
   return {
     _state: state,
     _render() { options.forEach((o) => { o._checked = o._next; }); },
@@ -147,32 +146,48 @@ test("regression: the old exact-token selector matches nothing", () => {
 // === dropdown selection tests (live stub) ===
 const sched = (doc) => (fn) => { doc._render(); fn(); };  // render the opened menu between steps
 
-test("opens the closed recipients dropdown, then selects the group via the option control", () => {
-  const doc = buildLiveDropdown();                 // closed, default "All"
-  assert.equal(rolesMenuOpen(doc), false);
+test("SILENT path: when the control selects without needing the menu, the menu never opens", () => {
+  const doc = buildLiveDropdown({ silentControl: true });   // closed; control works while closed
   let done = false;
   selectGroupInDropdown(doc, ["Reaper"], () => { done = true; }, sched(doc));
   assert.equal(done, true);
-  assert.equal(doc._state.open, true);             // menu was opened
-  assert.deepEqual(getCheckedRoles(doc), ["Reaper"]); // group selected, "All" auto-unticked
+  assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);
+  assert.equal(doc._state.everOpened, false);               // never opened the dropdown — invisible
+});
+
+test("FALLBACK path: if the menu must open, it selects then CLOSES it (doesn't leave it open)", () => {
+  const doc = buildLiveDropdown();                           // closed; control needs the menu open
+  let done = false;
+  selectGroupInDropdown(doc, ["Reaper"], () => { done = true; }, sched(doc));
+  assert.equal(done, true);
+  assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);        // group selected
+  assert.equal(doc._state.everOpened, true);                 // it did have to open...
+  assert.equal(doc._state.open, false);                      // ...but it's closed again at the end
+});
+
+test("if the user already had the menu open, leave it open", () => {
+  const doc = buildLiveDropdown({ open: true });
+  let done = false;
+  selectGroupInDropdown(doc, ["Reaper"], () => { done = true; }, sched(doc));
+  assert.equal(done, true);
+  assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);
+  assert.equal(doc._state.open, true);                       // respected the user's open menu
 });
 
 test("selection goes through the option CONTROL, not the bare input (1.0.6 blink fix)", () => {
   const doc = buildLiveDropdown({ open: true });
-  // clickOption must target span.checkbox-button__control inside the label, never the input itself
   const input = roleCheckboxes(doc).find((cb) => normRole(roleLabel(cb)) === "Reaper");
   let clickedTag = null;
-  const label = input.closest("label");
-  const realCtrl = label.querySelector(".checkbox-button__control");
+  const realCtrl = input.closest("label").querySelector(".checkbox-button__control");
   const origClick = realCtrl.click.bind(realCtrl);
   realCtrl.click = function () { clickedTag = "SPAN.checkbox-button__control"; origClick(); };
   clickOption(input);
   doc._render();
-  assert.equal(clickedTag, "SPAN.checkbox-button__control");  // proved it clicked the control
+  assert.equal(clickedTag, "SPAN.checkbox-button__control");
   assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);
 });
 
-test("selecting an already-correct group is a no-op (no redundant clicks)", () => {
+test("selecting an already-correct group is a no-op", () => {
   const doc = buildLiveDropdown({ open: true, preChecked: ["Reaper"] });
   let done = false;
   selectGroupInDropdown(doc, ["Reaper"], () => { done = true; }, sched(doc));
@@ -184,8 +199,8 @@ test("bounded: gives up after the attempt cap if the control never registers (no
   const doc = buildLiveDropdown({ open: true, broken: true });
   let done = false;
   selectGroupInDropdown(doc, ["Reaper"], () => { done = true; }, sched(doc));
-  assert.equal(done, true);                         // still terminates
-  assert.deepEqual(getCheckedRoles(doc), ["All"]);  // couldn't apply, but bounded
+  assert.equal(done, true);
+  assert.deepEqual(getCheckedRoles(doc), ["All"]);
 });
 
 test("empty roles is a no-op and still calls back", () => {
@@ -193,12 +208,12 @@ test("empty roles is a no-op and still calls back", () => {
   let done = false;
   selectGroupInDropdown(doc, [], () => { done = true; }, sched(doc));
   assert.equal(done, true);
-  assert.deepEqual(getCheckedRoles(doc), ["All"]);  // untouched
+  assert.deepEqual(getCheckedRoles(doc), ["All"]);
 });
 
 test("applySelected-style report names the actual recipients and flags a vanished group", () => {
   const doc = buildLiveDropdown({ open: true, names: ["All", "Online", "Reaper (56)"], preChecked: ["Online"] });
-  const saved = ["Reaper", "Dread Reaper"];          // Dread Reaper no longer exists
+  const saved = ["Reaper", "Dread Reaper"];
   let done = false;
   selectGroupInDropdown(doc, saved, () => { done = true; }, sched(doc));
   const present = {}; roleCheckboxes(doc).forEach((cb) => { const k = normRole(roleLabel(cb)); if (k) present[k] = 1; });

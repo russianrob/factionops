@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.9
+// @version      1.0.10
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.9";
+  var SCRIPT_VERSION = "1.0.10";
   var STORAGE_KEY = "fnt_templates";
 
   function getTemplates() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { return {}; } }
@@ -45,24 +45,22 @@
   }
   function recipientToggler() { return document.querySelector("button.toggler.multiselect"); }
   function rolesMenuOpen() { return roleCheckboxes().some(function (cb) { return cb.offsetParent !== null; }); }
+  function closeRolesMenu() { if (rolesMenuOpen()) { var tg = recipientToggler(); if (tg) { try { tg.click(); } catch (e) {} } } }
   function selectGroupInDropdown(roles, onDone) {
     if (!Array.isArray(roles) || !roles.length) { if (onDone) onDone(); return; }
     var want = {}; roles.forEach(function (r) { want[normRole(r)] = 1; });
+    var startedClosed = !rolesMenuOpen();
+    function diffBoxes() { return roleCheckboxes().filter(function (cb) { return cb.checked !== !!want[normRole(roleLabel(cb))]; }); }
     var attempts = 0;
-    function step() {
+    function settle() {
       attempts++;
-      var changed = 0;
-      roleCheckboxes().forEach(function (cb) {
-        var desired = !!want[normRole(roleLabel(cb))];
-        if (cb.checked !== desired) { clickOption(cb); changed++; }
-      });
-      if (changed === 0 || attempts >= 6) { if (onDone) onDone(); return; }
-      setTimeout(step, 320);
+      if (diffBoxes().length === 0 || attempts >= 6) { if (startedClosed) closeRolesMenu(); if (onDone) onDone(); return; }
+      if (!rolesMenuOpen()) { var tg = recipientToggler(); if (tg) { try { tg.click(); } catch (e) {} } }
+      diffBoxes().forEach(clickOption);
+      setTimeout(settle, 320);
     }
-    if (rolesMenuOpen()) { step(); return; }
-    var tg = recipientToggler();
-    if (tg) { try { tg.click(); } catch (e) {} setTimeout(step, 340); }
-    else { step(); }
+    diffBoxes().forEach(clickOption);
+    setTimeout(settle, 280);
   }
   function rolesLabel(roles) { return (Array.isArray(roles) && roles.length) ? roles.join(", ") : "(no group saved)"; }
 
