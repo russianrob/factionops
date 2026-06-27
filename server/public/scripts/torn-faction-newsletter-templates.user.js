@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.11
+// @version      1.0.12
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.11";
+  var SCRIPT_VERSION = "1.0.12";
   var STORAGE_KEY = "fnt_templates";
   var menuHideGen = 0;
 
@@ -198,21 +198,24 @@
       if (!DIAG.active) {
         DIAG.active = true; DIAG.t0 = Date.now(); DIAG.log = [];
         var base = diagSnap(); base.t = 0; base.kind = "state"; DIAG.log.push(base); DIAG.sig = diagSig(base);
-        DIAG.onClick = function (e) {
+        DIAG.onEvent = function (e) {
           var el = e.target; if (!el || !el.closest) return;
           var host = el.closest("label,li,button,[role=button]");
-          DIAG.log.push({ t: Date.now() - DIAG.t0, kind: "click", tag: el.tagName, cls: String(el.className || "").slice(0, 50), txt: String(el.textContent || "").trim().slice(0, 28), hostTag: host ? host.tagName : null, hostCls: host ? String(host.className || "").slice(0, 44) : null, hostTxt: host ? String(host.textContent || "").trim().slice(0, 28) : null });
+          var rec = { t: Date.now() - DIAG.t0, kind: e.type === "focusin" ? "focus" : "click", tag: el.tagName, cls: String(el.className || "").slice(0, 50), txt: String(el.textContent || "").trim().slice(0, 28), hostTag: host ? host.tagName : null, hostCls: host ? String(host.className || "").slice(0, 44) : null, hostTxt: host ? String(host.textContent || "").trim().slice(0, 28) : null };
+          if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) { rec.fieldType = el.type || ""; rec.id = el.id || ""; rec.name = el.name || ""; rec.ph = el.placeholder || ""; rec.val = String(el.value || "").slice(0, 40); }
+          DIAG.log.push(rec);
           if (DIAG.log.length > 80) DIAG.log.shift();
         };
-        document.addEventListener("click", DIAG.onClick, true);
+        document.addEventListener("click", DIAG.onEvent, true);
+        document.addEventListener("focusin", DIAG.onEvent, true);
         DIAG.timer = setInterval(function () {
           var s = diagSnap(), sig = diagSig(s);
           if (sig !== DIAG.sig) { DIAG.sig = sig; s.t = Date.now() - DIAG.t0; s.kind = "state"; DIAG.log.push(s); if (DIAG.log.length > 80) DIAG.log.shift(); }
         }, 150);
-        msg("🔍 recording — OPEN the recipients dropdown, click your group, then tap 🔍 again");
+        msg("🔍 recording — click the TITLE box (and type in it), then tap 🔍 again");
       } else {
         DIAG.active = false; if (DIAG.timer) clearInterval(DIAG.timer);
-        if (DIAG.onClick) { try { document.removeEventListener("click", DIAG.onClick, true); } catch (e) {} }
+        if (DIAG.onEvent) { try { document.removeEventListener("click", DIAG.onEvent, true); document.removeEventListener("focusin", DIAG.onEvent, true); } catch (e) {} }
         var payload = { v: SCRIPT_VERSION, count: roleCheckboxes().length, ancestry: diagAncestry(), log: DIAG.log };
         var str = "FNT-DIAG " + JSON.stringify(payload);
         try { console.log(str); } catch (e) {}
