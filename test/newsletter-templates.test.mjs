@@ -13,21 +13,41 @@ function clickOption(cb) {
   try { ctrl.click(); } catch (e) {}
 }
 function rolesMenuOpen(doc) { return roleCheckboxes(doc).some((cb) => cb.offsetParent !== null); }
+let menuHideGen = 0;
 function closeRolesMenu(doc) { if (rolesMenuOpen(doc)) { const tg = doc.querySelector("button.toggler.multiselect"); if (tg) { try { tg.click(); } catch (e) {} } } }
+function rolesRoot(doc) { const b = roleCheckboxes(doc)[0]; return (b && b.closest) ? b.closest(".small-select-menu-wrap, .react-dropdown-default, .select-wrap") : null; }
+function setMenuHidden(doc, on) {
+  if (on) { const root = rolesRoot(doc); if (root && root.setAttribute) root.setAttribute("data-fnt-hide-menu", "1"); }
+  else { const marked = doc.querySelectorAll("[data-fnt-hide-menu]"); for (let i = 0; i < marked.length; i++) { if (marked[i].removeAttribute) marked[i].removeAttribute("data-fnt-hide-menu"); } }
+}
 function selectGroupInDropdown(doc, roles, onDone, schedule) {
   if (!Array.isArray(roles) || !roles.length) { if (onDone) onDone(); return; }
   schedule = schedule || ((fn) => setTimeout(fn, 320));
   const want = {}; roles.forEach((r) => { want[normRole(r)] = 1; });
   const startedClosed = !rolesMenuOpen(doc);
+  const gen = ++menuHideGen;
+  const unhide = () => { if (gen === menuHideGen) setMenuHidden(doc, false); };
   const diffBoxes = () => roleCheckboxes(doc).filter((cb) => cb.checked !== !!want[normRole(roleLabel(cb))]);
+  function finish() {
+    if (startedClosed) {
+      closeRolesMenu(doc);
+      let tries = 0;
+      const waitClosed = () => { if (gen !== menuHideGen) return; if (!rolesMenuOpen(doc) || ++tries >= 16) { unhide(); return; } schedule(waitClosed); };
+      waitClosed();
+    }
+    try { if (onDone) onDone(); } catch (e) {}
+  }
   let attempts = 0;
   function settle() {
     attempts++;
-    if (diffBoxes().length === 0 || attempts >= 6) { if (startedClosed) closeRolesMenu(doc); if (onDone) onDone(); return; }
+    let d;
+    try { d = diffBoxes(); } catch (e) { finish(); return; }
+    if (d.length === 0 || attempts >= 6) { finish(); return; }
     if (!rolesMenuOpen(doc)) { const tg = doc.querySelector("button.toggler.multiselect"); if (tg) { try { tg.click(); } catch (e) {} } }
-    diffBoxes().forEach(clickOption);
+    d.forEach(clickOption);
     schedule(settle);
   }
+  if (startedClosed) setMenuHidden(doc, true);
   diffBoxes().forEach(clickOption);
   schedule(settle);
 }
@@ -83,6 +103,11 @@ function buildLiveDropdown(opts) {
   const names = opts.names || ["All", "Online", "Not in an Organized Crime (4)", "Reaper (56)", "Banker (3)"];
   const preChecked = opts.preChecked || ["All"];
   const options = [];
+  // the recipients dropdown's outer container (what rolesRoot() resolves + we mark to hide)
+  const root = { tagName: "DIV", className: "small-select-menu-wrap t-big-select-menu", _marked: false,
+    setAttribute(k) { if (k === "data-fnt-hide-menu") this._marked = true; },
+    removeAttribute(k) { if (k === "data-fnt-hide-menu") this._marked = false; },
+    getAttribute() { return null; } };
   function applyClick(o) {
     if (normName(o.name) === "All") { options.forEach((x) => { x._next = (x === o); }); }
     else { o._next = !o._checked; if (o._next) { const all = options.find((x) => normName(x.name) === "All"); if (all) all._next = false; } }
@@ -100,10 +125,14 @@ function buildLiveDropdown(opts) {
       get checked() { return o._checked; },
       get offsetParent() { return state.open ? {} : null; },
       getAttribute() { return null; },
-      closest(sel) { return /label/i.test(sel) ? label : (/li/i.test(sel) ? li : null); },
+      closest(sel) {
+        if (/small-select-menu-wrap|react-dropdown-default|select-wrap/.test(sel)) return root;
+        if (/label/i.test(sel)) return label;
+        if (/\bli\b/i.test(sel)) return li;
+        return null;
+      },
     };
-    // roleLabel walks input -> label("") -> li(name)
-    li.textContent = name;
+    li.textContent = name;   // roleLabel walks input -> label("") -> li(name)
     o.input = input;
     return o;
   }
@@ -112,7 +141,9 @@ function buildLiveDropdown(opts) {
   return {
     _state: state,
     _render() { options.forEach((o) => { o._checked = o._next; }); },
+    _marked() { return root._marked; },
     querySelectorAll(sel) {
+      if (sel === "[data-fnt-hide-menu]") return root._marked ? [root] : [];
       const m = sel.match(/class\*=["']?([^"'\]]+)/);
       if (m) return options.map((o) => o.input).filter((i) => i.className.includes(m[1]));
       return [];
@@ -163,6 +194,49 @@ test("FALLBACK path: if the menu must open, it selects then CLOSES it (doesn't l
   assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);        // group selected
   assert.equal(doc._state.everOpened, true);                 // it did have to open...
   assert.equal(doc._state.open, false);                      // ...but it's closed again at the end
+});
+
+test("setMenuHidden marks ONLY the recipients container, and unmarks it (scoped, not global)", () => {
+  const doc = buildLiveDropdown();
+  setMenuHidden(doc, true);
+  assert.equal(doc._marked(), true);
+  assert.equal(doc.querySelectorAll("[data-fnt-hide-menu]").length, 1);  // exactly one element marked
+  setMenuHidden(doc, false);
+  assert.equal(doc._marked(), false);
+  assert.equal(doc.querySelectorAll("[data-fnt-hide-menu]").length, 0);
+});
+
+test("FALLBACK path hides during open/close, unhides only after the menu is CLOSED, leaves nothing marked", () => {
+  const doc = buildLiveDropdown();                           // closed -> will open
+  let done = false;
+  selectGroupInDropdown(doc, ["Reaper"], () => { done = true; }, sched(doc));
+  assert.equal(done, true);
+  assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);
+  assert.equal(doc._state.open, false);                      // closed at end
+  assert.equal(doc._marked(), false);                        // hide attribute cleaned up
+});
+
+test("user-opened menu: never marks/hides (we don't touch their open menu)", () => {
+  const doc = buildLiveDropdown({ open: true });
+  selectGroupInDropdown(doc, ["Reaper"], () => {}, sched(doc));
+  assert.equal(doc._marked(), false);
+  assert.equal(doc._state.open, true);
+});
+
+test("broken control + started closed: still ends closed and unmarked (no stuck hide)", () => {
+  const doc = buildLiveDropdown({ broken: true });           // closed, control never registers
+  let done = false;
+  selectGroupInDropdown(doc, ["Reaper"], () => { done = true; }, sched(doc));
+  assert.equal(done, true);
+  assert.equal(doc._state.open, false);                      // gave up and closed
+  assert.equal(doc._marked(), false);                        // and cleaned up the hide
+});
+
+test("an onDone that throws still leaves the menu unmarked (cleanup not coupled to callback)", () => {
+  const doc = buildLiveDropdown();
+  selectGroupInDropdown(doc, ["Reaper"], () => { throw new Error("boom"); }, sched(doc));
+  assert.equal(doc._marked(), false);
+  assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);
 });
 
 test("if the user already had the menu open, leave it open", () => {

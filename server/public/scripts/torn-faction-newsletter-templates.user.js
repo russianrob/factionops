@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.10
+// @version      1.0.11
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,8 +13,9 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.10";
+  var SCRIPT_VERSION = "1.0.11";
   var STORAGE_KEY = "fnt_templates";
+  var menuHideGen = 0;
 
   function getTemplates() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { return {}; } }
   function saveTemplates(t) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(t)); } catch (e) {} }
@@ -46,19 +47,47 @@
   function recipientToggler() { return document.querySelector("button.toggler.multiselect"); }
   function rolesMenuOpen() { return roleCheckboxes().some(function (cb) { return cb.offsetParent !== null; }); }
   function closeRolesMenu() { if (rolesMenuOpen()) { var tg = recipientToggler(); if (tg) { try { tg.click(); } catch (e) {} } } }
+  function rolesRoot() { var b = roleCheckboxes()[0]; return (b && b.closest) ? b.closest(".small-select-menu-wrap, .react-dropdown-default, .select-wrap") : null; }
+  function ensureHideStyle() {
+    if (document.getElementById("fnt-hide-roles-menu")) return;
+    var s = document.createElement("style"); s.id = "fnt-hide-roles-menu";
+    s.textContent = "[data-fnt-hide-menu] .dropdownList,[data-fnt-hide-menu] ul[class*='dropdown-content'],[data-fnt-hide-menu] li.item{visibility:hidden !important;}";
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function setMenuHidden(on) {
+    if (on) { var root = rolesRoot(); if (root && root.setAttribute) { ensureHideStyle(); root.setAttribute("data-fnt-hide-menu", "1"); } }
+    else { var marked = document.querySelectorAll("[data-fnt-hide-menu]"); for (var i = 0; i < marked.length; i++) { if (marked[i].removeAttribute) marked[i].removeAttribute("data-fnt-hide-menu"); } }
+  }
   function selectGroupInDropdown(roles, onDone) {
     if (!Array.isArray(roles) || !roles.length) { if (onDone) onDone(); return; }
     var want = {}; roles.forEach(function (r) { want[normRole(r)] = 1; });
     var startedClosed = !rolesMenuOpen();
+    var gen = ++menuHideGen;
+    function unhide() { if (gen === menuHideGen) setMenuHidden(false); }
     function diffBoxes() { return roleCheckboxes().filter(function (cb) { return cb.checked !== !!want[normRole(roleLabel(cb))]; }); }
+    function finish() {
+      if (startedClosed) {
+        closeRolesMenu();
+        var tries = 0;
+        (function waitClosed() {
+          if (gen !== menuHideGen) return;
+          if (!rolesMenuOpen() || ++tries >= 16) { unhide(); return; }
+          setTimeout(waitClosed, 100);
+        })();
+      }
+      try { if (onDone) onDone(); } catch (e) {}
+    }
     var attempts = 0;
     function settle() {
       attempts++;
-      if (diffBoxes().length === 0 || attempts >= 6) { if (startedClosed) closeRolesMenu(); if (onDone) onDone(); return; }
+      var d;
+      try { d = diffBoxes(); } catch (e) { finish(); return; }
+      if (d.length === 0 || attempts >= 6) { finish(); return; }
       if (!rolesMenuOpen()) { var tg = recipientToggler(); if (tg) { try { tg.click(); } catch (e) {} } }
-      diffBoxes().forEach(clickOption);
+      d.forEach(clickOption);
       setTimeout(settle, 320);
     }
+    if (startedClosed) { setMenuHidden(true); setTimeout(unhide, 5000); }
     diffBoxes().forEach(clickOption);
     setTimeout(settle, 280);
   }
@@ -220,7 +249,7 @@
     });
   }
 
-  function removePanel() { var p = document.getElementById("fnt-panel"); if (p) p.remove(); }
+  function removePanel() { var p = document.getElementById("fnt-panel"); if (p) p.remove(); setMenuHidden(false); }
 
   var _pending = null;
   function ensure() {
