@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.1
+// @version      1.0.2
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.1";
+  var SCRIPT_VERSION = "1.0.2";
   var STORAGE_KEY = "fnt_templates";
 
   function getTemplates() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { return {}; } }
@@ -31,6 +31,22 @@
     }
     return null;
   }
+
+  function roleCheckboxes() { return [].slice.call(document.querySelectorAll("input.checkbox-button__in")); }
+  function roleLabel(cb) { var c = cb; for (var h = 0; h < 6 && c; h++) { var t = String(c.textContent || "").trim(); if (t && t.length < 50) return t; c = c.parentElement; } return ""; }
+  function normRole(s) { return String(s || "").replace(/\s*\(\d+\)\s*$/, "").trim(); }
+  function getCheckedRoles() {
+    return roleCheckboxes().filter(function (cb) { return cb.checked; }).map(function (cb) { return normRole(roleLabel(cb)); }).filter(Boolean);
+  }
+  function setCheckedRoles(roles) {
+    if (!Array.isArray(roles)) return;
+    var want = {}; roles.forEach(function (r) { want[normRole(r)] = 1; });
+    roleCheckboxes().forEach(function (cb) {
+      var desired = !!want[normRole(roleLabel(cb))];
+      if (cb.checked !== desired) { try { cb.click(); } catch (e) {} }
+    });
+  }
+  function rolesLabel(roles) { return (Array.isArray(roles) && roles.length) ? roles.join(", ") : "(no group saved)"; }
 
   function tinyEditor() {
     try {
@@ -96,6 +112,7 @@
     panel.innerHTML =
       '<span style="font-weight:700;color:#e8c44a;">📰 Newsletter Templates</span>'
       + '<select id="fnt-select" style="background:#0e0f12;color:#dde2e8;border:1px solid #2e333d;border-radius:6px;padding:3px 7px;max-width:220px;"></select>'
+      + '<span id="fnt-group" style="color:#9fb6ff;font-size:11px;white-space:nowrap;"></span>'
       + btn("fnt-apply", "Apply", "#3b6dff")
       + btn("fnt-qsend", "⚡ Quick Send", "#2f6b45")
       + btn("fnt-save", "Save current…", "#20242c")
@@ -105,13 +122,21 @@
 
     var sel = panel.querySelector("#fnt-select");
     refreshSelect(sel);
-    function msg(s) { var m = panel.querySelector("#fnt-msg"); if (m) { m.textContent = s ? " " + s : ""; if (s) setTimeout(function () { m.textContent = ""; }, 2500); } }
+    function msg(s) { var m = panel.querySelector("#fnt-msg"); if (m) { m.textContent = s ? " " + s : ""; if (s) setTimeout(function () { m.textContent = ""; }, 3000); } }
+    function updateGroupInd() {
+      var g = panel.querySelector("#fnt-group"); if (!g) return;
+      var t = getTemplates(), n = sel.value;
+      g.textContent = (n && t[n]) ? "→ " + rolesLabel(t[n].roles) : "";
+    }
+    updateGroupInd();
+    sel.addEventListener("change", updateGroupInd);
 
     panel.querySelector("#fnt-apply").addEventListener("click", function () {
       var t = getTemplates(), n = sel.value;
       if (!n || !t[n]) { msg("no template selected"); return; }
       setBody(t[n].body || "");
-      msg("✓ applied — check it before sending");
+      setCheckedRoles(t[n].roles);
+      msg("✓ applied (group: " + rolesLabel(t[n].roles) + ") — check before sending");
     });
     panel.querySelector("#fnt-qsend").addEventListener("click", function () {
       var sb = sendButton();
@@ -126,14 +151,15 @@
       name = name.trim(); if (!name) return;
       var t = getTemplates();
       if (t[name] && !confirm('"' + name + '" already exists. Overwrite it?')) return;
-      t[name] = { body: getBody() };
-      saveTemplates(t); refreshSelect(sel); sel.value = name; msg("✓ saved");
+      var roles = getCheckedRoles();
+      t[name] = { body: getBody(), roles: roles };
+      saveTemplates(t); refreshSelect(sel); sel.value = name; updateGroupInd(); msg("✓ saved (group: " + rolesLabel(roles) + ")");
     });
     panel.querySelector("#fnt-del").addEventListener("click", function () {
       var t = getTemplates(), n = sel.value;
       if (!n || !t[n]) return;
       if (!confirm('Delete template "' + n + '"?')) return;
-      delete t[n]; saveTemplates(t); refreshSelect(sel); msg("deleted");
+      delete t[n]; saveTemplates(t); refreshSelect(sel); updateGroupInd(); msg("deleted");
     });
   }
 
