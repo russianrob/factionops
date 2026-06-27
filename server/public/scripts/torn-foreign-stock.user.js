@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.17
+// @version      0.9.18
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.17";
+  var SCRIPT_VERSION = "0.9.18";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -207,6 +207,19 @@
     }
     return null;
   }
+  function parseAriaTravel(label) {
+    var m = /Traveling from .+? to (.+?)\s*$/i.exec(String(label || ""));
+    if (!m) return null;
+    var dest = m[1].trim();
+    if (/^torn$/i.test(dest)) return null;
+    var code = normalizeCountryName(dest);
+    return code ? { mode: "flight", code: code, countryName: dest, arrivalSec: null, timeLeftSec: null } : null;
+  }
+  function domTravelState() {
+    if (typeof document === "undefined") return null;
+    var a = document.querySelector('a[aria-label^="Traveling from"]');
+    return a ? parseAriaTravel(a.getAttribute("aria-label")) : null;
+  }
   function sortRows(rows, mode, nowMs) {
     if (nowMs == null) nowMs = Date.now();
     var arr = rows.slice();
@@ -312,9 +325,9 @@
     return el.offsetWidth > 0 || el.offsetHeight > 0 || (el.getClientRects && el.getClientRects().length > 0);
   }
   function getTravelState() {
-    if (typeof document !== "undefined" && (tfsVisible(document.querySelector('span[class*="country___"]')) || tfsVisible(document.querySelector('[class*="destinationList___"]')))) return Promise.resolve(null);
     var key = getKey();
-    if (!key) return Promise.resolve(null);
+    if (!key) return Promise.resolve(domTravelState());
+    if (typeof document !== "undefined" && (tfsVisible(document.querySelector('span[class*="country___"]')) || tfsVisible(document.querySelector('[class*="destinationList___"]')))) return Promise.resolve(null);
     var cached = gmGet("tfs_travel", null);
     if (cached && (_nowSec() - cached.t) < TRAVEL_TTL) return Promise.resolve(cached.state);
     function keepLast() {
@@ -328,10 +341,10 @@
         gmSet("tfs_travel", { t: _nowSec(), state: errState });
         return errState;
       }
-      var state = parseTravelState(json);
+      var state = parseTravelState(json) || domTravelState();
       gmSet("tfs_travel", { t: _nowSec(), state: state });
       return state;
-    }).catch(keepLast);
+    }).catch(function () { return domTravelState() || keepLast(); });
   }
 
   // ─── DOM: settings, injector, observer ───────────────────
@@ -547,8 +560,11 @@
     return h > 0 ? (h + ":" + p(m) + ":" + p(ss)) : (p(m) + ":" + p(ss));
   }
   function travelHost() {
-    return document.querySelector('[class*="content-wrapper"]') || document.getElementById("mainContainer") || document.body;
+    var cw = document.querySelector('[class*="content-wrapper"]');
+    if (cw && cw.parentElement) return cw.parentElement;
+    return document.getElementById("mainContainer") || document.querySelector(".content") || document.body;
   }
+  function tfsHash(s) { var h = 0; s = String(s); for (var i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; } return h; }
   // ── Live stock from Torn's own store grid (overrides the lagging API) ──
   // Torn's foreign-store row = div[class*="row___"]; each column is a
   // div[class*="cell___"] whose screen-reader span (class*="srOnly") names it
@@ -632,22 +648,33 @@
     prices = prices || {};
     model = model || {};
     var mode = (getMode() === "profit" && Object.keys(prices).length) ? "profit" : "stock";
+    var hasTime = (state.timeLeftSec != null) || (state.arrivalSec != null);
+    var rowsHtml = travelRowsHtml(state, stock, model, prices, mode, nowMs);
+    var sig = state.mode + "|" + state.code + "|" + mode + "|" + (hasTime ? "t" : "n") + "|" + tfsHash(rowsHtml);
     var panel = document.getElementById("tfs-travel");
+    var fresh = false;
     if (!panel) {
       panel = document.createElement("div");
       panel.id = "tfs-travel";
       var host = travelHost();
       host.insertBefore(panel, host.firstChild);
+      fresh = true;
     }
+    if (!fresh && panel.getAttribute("data-tfs-sig") === sig) return;
+    panel.setAttribute("data-tfs-sig", sig);
     var head;
     if (state.mode === "flight") {
-      var left = (state.timeLeftSec != null) ? state.timeLeftSec : ((state.arrivalSec || 0) - Math.floor(nowMs / 1000));
-      head = '<span class="tfs-flag">' + tfsFlag(state.code) + '</span><span class="tfs-cn">' + escapeHtml(state.countryName || "") + '</span>' +
-        '<span class="tfs-countdown">Landing in ' + fmtClock(left) + '</span>';
+      if (hasTime) {
+        var left = (state.timeLeftSec != null) ? state.timeLeftSec : ((state.arrivalSec || 0) - Math.floor(nowMs / 1000));
+        head = '<span class="tfs-flag">' + tfsFlag(state.code) + '</span><span class="tfs-cn">' + escapeHtml(state.countryName || "") + '</span>' +
+          '<span class="tfs-countdown">Landing in ' + fmtClock(left) + '</span>';
+      } else {
+        head = '<span class="tfs-flag">' + tfsFlag(state.code) + '</span><span class="tfs-cn">Flying to ' + escapeHtml(state.countryName || "") + '</span>';
+      }
     } else {
       head = '<span class="tfs-flag">' + tfsFlag(state.code) + '</span><span class="tfs-cn">You\'re in ' + escapeHtml(state.countryName || "") + '</span>';
     }
-    panel.innerHTML = '<div class="tfs-travel-head">' + head + '</div><div class="tfs-rows">' + travelRowsHtml(state, stock, model, prices, mode, nowMs) + '</div>';
+    panel.innerHTML = '<div class="tfs-travel-head">' + head + '</div><div class="tfs-rows">' + rowsHtml + '</div>';
   }
   var _travelTimer = null, _travelState = null, _travelLastMin = null, _travelCtx = null;
   function updateCountdown() {
@@ -848,7 +875,9 @@
     getTravelState().then(function (state) {
       if (!state) { removeTravelPanel(); return; }
       if (state.mode === "apierror") { clearTravelTicker(); renderTravelError(state); return; }
-      startTravelTicker(state, { stock: stock, model: model || {}, prices: prices || {} });
+      var hasTime = (state.timeLeftSec != null) || (state.arrivalSec != null);
+      if (state.mode === "flight" && hasTime) startTravelTicker(state, { stock: stock, model: model || {}, prices: prices || {} });
+      else clearTravelTicker();
       renderTravelPanel(state, stock, model, prices, Date.now());
     }).catch(function () { removeTravelPanel(); });
   }
@@ -892,11 +921,15 @@
     var el = node && node.nodeType === 1 ? node : (node && node.parentElement);
     return !!(el && el.closest && el.closest('[id^="tfs"], [class*="tfs-"]'));
   }
+  function isVolatileNode(node) {
+    var el = node && node.nodeType === 1 ? node : (node && node.parentElement);
+    return !!(el && el.closest && el.closest('[class*="flightProgressSection"], [class*="nodesAndProgress"], [class*="viewport___"], [class*="progressBar"], [class*="planeBg"]'));
+  }
   function startObserver() {
     var root = document.querySelector('[class*="destinationList___"]') || document.querySelector(".content") || document.body;
     var obs = new MutationObserver(function (muts) {
       for (var i = 0; i < muts.length; i++) {
-        if (!isOurNode(muts[i].target)) { scheduleApply(); return; }
+        if (!isOurNode(muts[i].target) && !isVolatileNode(muts[i].target)) { scheduleApply(); return; }
       }
     });
     obs.observe(root, { childList: true, subtree: true });
@@ -924,7 +957,7 @@
       fmtDuration: fmtDuration, modelEstimate: modelEstimate, restockDisplay: restockDisplay,
       itemCategory: itemCategory, rowVisible: rowVisible, countryVisible: countryVisible,
       parseFlightMinutes: parseFlightMinutes, landVerdict: landVerdict,
-      parseTravelState: parseTravelState,
+      parseTravelState: parseTravelState, parseAriaTravel: parseAriaTravel, domTravelState: domTravelState,
       getTravelMethod: getTravelMethod, readFlightMinutes: readFlightMinutes,
       travelRowsHtml: travelRowsHtml, getFilters: getFilters,
       tfsStockFromRow: tfsStockFromRow, tfsCellLabel: tfsCellLabel, tfsStoreRowImgId: tfsStoreRowImgId
