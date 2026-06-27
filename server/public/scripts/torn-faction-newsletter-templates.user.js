@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.5
+// @version      1.0.6
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.5";
+  var SCRIPT_VERSION = "1.0.6";
   var STORAGE_KEY = "fnt_templates";
 
   function getTemplates() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { return {}; } }
@@ -45,6 +45,22 @@
       var desired = !!want[normRole(roleLabel(cb))];
       if (cb.checked !== desired) { try { cb.click(); } catch (e) {} }
     });
+  }
+  function setRolesReliably(roles, onDone) {
+    if (!Array.isArray(roles) || !roles.length) { if (onDone) onDone(); return; }
+    var attempts = 0;
+    function target() {
+      var present = {}; roleCheckboxes().forEach(function (cb) { var k = normRole(roleLabel(cb)); if (k) present[k] = 1; });
+      return roles.map(normRole).filter(function (r) { return present[r]; }).sort().join("|");
+    }
+    function satisfied() { return getCheckedRoles().slice().sort().join("|") === target(); }
+    function pass() {
+      attempts++;
+      setCheckedRoles(roles);
+      if (satisfied() || attempts >= 8) { if (onDone) onDone(); return; }
+      setTimeout(pass, 180);
+    }
+    pass();
   }
   function rolesLabel(roles) { return (Array.isArray(roles) && roles.length) ? roles.join(", ") : "(no group saved)"; }
 
@@ -133,13 +149,15 @@
       if (!n || !t[n]) { msg("no template selected"); return; }
       setBody(t[n].body || "");
       var saved = Array.isArray(t[n].roles) ? t[n].roles : [];
-      setCheckedRoles(saved);
       if (!saved.length) { msg("✓ loaded — no saved group, recipients unchanged"); return; }
-      var present = {}; roleCheckboxes().forEach(function (cb) { var k = normRole(roleLabel(cb)); if (k) present[k] = 1; });
-      var missing = saved.filter(function (r) { return !present[normRole(r)]; });
-      var now = getCheckedRoles();
-      if (missing.length) msg("⚠ loaded — missing group(s): " + missing.join(", ") + "; recipients now: " + (now.join(", ") || "none") + " — verify before sending");
-      else msg("✓ loaded (recipients: " + (now.join(", ") || "none") + ") — check before sending");
+      msg("loading group…");
+      setRolesReliably(saved, function () {
+        var present = {}; roleCheckboxes().forEach(function (cb) { var k = normRole(roleLabel(cb)); if (k) present[k] = 1; });
+        var missing = saved.filter(function (r) { return !present[normRole(r)]; });
+        var now = getCheckedRoles();
+        if (missing.length) msg("⚠ loaded — missing group(s): " + missing.join(", ") + "; recipients now: " + (now.join(", ") || "none") + " — verify");
+        else msg("✓ loaded (recipients: " + (now.join(", ") || "none") + ") — check before sending");
+      });
     }
     updateGroupInd();
     sel.addEventListener("change", function () { updateGroupInd(); applySelected(); });

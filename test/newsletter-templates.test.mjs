@@ -67,6 +67,53 @@ function setCheckedRoles(doc, roles) {
     if (cb.checked !== desired) { try { cb.click(); } catch (e) {} }
   });
 }
+function setRolesReliably(doc, roles, onDone, schedule) {
+  if (!Array.isArray(roles) || !roles.length) { if (onDone) onDone(); return; }
+  schedule = schedule || ((fn) => setTimeout(fn, 180));
+  let attempts = 0;
+  function target() {
+    const present = {};
+    roleCheckboxes(doc).forEach((cb) => { const k = normRole(roleLabel(cb)); if (k) present[k] = 1; });
+    return roles.map(normRole).filter((r) => present[r]).sort().join("|");
+  }
+  function satisfied() { return getCheckedRoles(doc).slice().sort().join("|") === target(); }
+  function pass() {
+    attempts++;
+    setCheckedRoles(doc, roles);
+    if (satisfied() || attempts >= 8) { if (onDone) onDone(); return; }
+    schedule(pass);
+  }
+  pass();
+}
+
+// Models the real factions.php recipient selector: a React multi-select dropdown whose
+// option checkboxes only toggle once the opened menu has RENDERED. The first click opens
+// the menu (state.opening) but does not toggle in the same synchronous tick; a later tick
+// (render()) makes the options live. Reconstructed from the NLG6 firstAncestry capture.
+function buildDropdownDoc(opts) {
+  opts = opts || {};
+  const state = { opening: false, rendered: false };
+  function mk(cls, label, checked) {
+    return {
+      type: "checkbox", className: cls, checked, textContent: "",
+      parentElement: { textContent: label, parentElement: null },
+      getAttribute() { return null; },
+      click() { if (!state.rendered) { state.opening = true; return; } this.checked = !this.checked; },
+    };
+  }
+  const names = opts.names || ["All", "Online", "Reaper (56)", "Banker (3)"];
+  const preChecked = opts.preChecked || ["All"];
+  const all = names.map((n) => mk("checkbox checkbox-button__input", n, preChecked.indexOf(normName(n)) !== -1));
+  return {
+    _state: state,
+    render() { if (state.opening) state.rendered = true; },
+    querySelectorAll(sel) {
+      const m = sel.match(/class\*=["']?([^"'\]]+)/);
+      if (m) return all.filter((c) => c.className.includes(m[1]));
+      return [];
+    },
+  };
+}
 
 test("selects exactly the 10 role checkboxes (not the 4 site-settings ones)", () => {
   const doc = buildDoc();
@@ -127,4 +174,30 @@ test("Apply reports the ACTUAL applied recipients, not the saved list, and flags
   const res = applyRoles(doc, ["Reaper", "Dread Reaper"]);
   assert.deepEqual(res.now, ["Reaper"]);            // truthful: only Reaper actually applied
   assert.deepEqual(res.missing, ["Dread Reaper"]);  // the vanished group is surfaced, not echoed as applied
+});
+
+test("react-dropdown reality: a single reconcile pass only OPENS the menu — group NOT selected (the 1.0.5 bug)", () => {
+  const doc = buildDropdownDoc();
+  setCheckedRoles(doc, ["Reaper"]);                 // one synchronous pass
+  assert.equal(doc._state.opening, true);           // the menu got opened...
+  assert.deepEqual(getCheckedRoles(doc), ["All"]);  // ...but Reaper is NOT selected yet (still default "All")
+});
+
+test("setRolesReliably converges across the dropdown render boundary (the 1.0.6 fix)", () => {
+  const doc = buildDropdownDoc();
+  let done = false;
+  // synchronous scheduler simulating React rendering the opened menu between passes
+  const schedule = (fn) => { doc.render(); fn(); };
+  setRolesReliably(doc, ["Reaper"], () => { done = true; }, schedule);
+  assert.equal(done, true);
+  assert.deepEqual(getCheckedRoles(doc), ["Reaper"]);  // second pass (menu rendered) lands the selection
+});
+
+test("setRolesReliably gives up after bounded attempts if the menu never renders (no infinite loop)", () => {
+  const doc = buildDropdownDoc();
+  let done = false;
+  const schedule = (fn) => { fn(); };               // never render -> options never go live
+  setRolesReliably(doc, ["Reaper"], () => { done = true; }, schedule);
+  assert.equal(done, true);                          // still terminates (attempt cap)
+  assert.deepEqual(getCheckedRoles(doc), ["All"]);   // couldn't apply, but bounded & truthful
 });
