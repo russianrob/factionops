@@ -335,3 +335,16 @@ test("a template carries title alongside body+roles and Apply restores it", () =
   setTitle(doc, tpl.title || "");
   assert.equal(getTitle(doc), "Weekly Update");
 });
+
+// === Quick Send confirmation target (reflect the actual selected recipients) ===
+function sendTargetLabel(recips) {
+  const specific = (recips || []).filter((r) => normRole(r).toLowerCase() !== "all");
+  return specific.length ? specific.join(", ") : "the whole faction";
+}
+test("Quick Send target label reflects the selected group, not always 'whole faction'", () => {
+  assert.equal(sendTargetLabel(["Reaper"]), "Reaper");
+  assert.equal(sendTargetLabel(["Reaper", "Banker"]), "Reaper, Banker");
+  assert.equal(sendTargetLabel(["All"]), "the whole faction");   // "All" selected => whole faction
+  assert.equal(sendTargetLabel([]), "the whole faction");        // nothing specific => whole faction
+  assert.equal(sendTargetLabel(["All", "Reaper"]), "Reaper");    // specifics win over a stray All
+});

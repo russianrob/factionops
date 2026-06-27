@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.13
+// @version      1.0.14
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.13";
+  var SCRIPT_VERSION = "1.0.14";
   var STORAGE_KEY = "fnt_templates";
   var menuHideGen = 0;
 
@@ -92,6 +92,10 @@
     setTimeout(settle, 280);
   }
   function rolesLabel(roles) { return (Array.isArray(roles) && roles.length) ? roles.join(", ") : "(no group saved)"; }
+  function sendTargetLabel(recips) {
+    var specific = (recips || []).filter(function (r) { return normRole(r).toLowerCase() !== "all"; });
+    return specific.length ? specific.join(", ") : "the whole faction";
+  }
 
   function tinyEditor() {
     try {
@@ -245,9 +249,10 @@
     panel.querySelector("#fnt-qsend").addEventListener("click", function () {
       var sb = sendButton();
       if (!sb) { msg("⚠ Send button not found"); return; }
-      if (!confirm("Send this newsletter to the whole faction now?")) return;
+      var who = sendTargetLabel(getCheckedRoles());
+      if (!confirm("Send this newsletter to " + who + " now?")) return;
       sb.click();
-      msg("sent");
+      msg("✓ sent to " + who);
     });
     panel.querySelector("#fnt-save").addEventListener("click", function () {
       var name = prompt("Save the current newsletter content as a template — name:");
