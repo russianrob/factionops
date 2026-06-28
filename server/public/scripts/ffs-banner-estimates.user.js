@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.36
+// @version      2.73.37
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -989,6 +989,33 @@ if (!singleton) {
   // wb65: fork-private DB name so we don't share with xentac's upstream
   // script. Avoids VersionError collisions when both are installed.
   const ffcache = new FFScouterCache("ffs-banner-cache");
+
+  try {
+    const _w = (typeof unsafeWindow !== "undefined") ? unsafeWindow : window;
+    const _watch = (label, p) => {
+      let done = false;
+      Promise.resolve(p).then(
+        (v) => { done = true; console.log("[FFS repro] " + label + ": " + v); },
+        (e) => { done = true; console.log("[FFS repro] " + label + " ERROR: " + (e && (e.name || e))); }
+      );
+      setTimeout(() => { if (!done) console.log("[FFS repro] " + label + ": HUNG — no result in 3s (bug reproduced)"); }, 3000);
+      return "running " + label + " — watch the console";
+    };
+    const _readKeys = (tx) => new Promise((resolve, reject) => {
+      const r = tx.objectStore(ffcache.store_name).getAllKeys();
+      r.onsuccess = () => resolve(r.result.length + " cached players");
+      r.onerror = () => reject(r.error);
+    });
+    _w.__ffsRepro = {
+      kill: () => { try { if (ffcache.db) ffcache.db.close(); } catch (e) {} console.log("[FFS repro] cache connection .close()d (handle kept) — the exact bug state"); return "killed — now run __ffsRepro.readOld() or .readFixed()"; },
+      readOld: () => _watch("OLD read", new Promise(async (resolve, reject) => {
+        if (!ffcache.db) await ffcache.open();
+        const tx = ffcache.db.transaction(ffcache.store_name, "readonly");
+        resolve(await _readKeys(tx));
+      })),
+      readFixed: () => _watch("FIXED read", (async () => _readKeys(await ffcache._tx("readonly")))())
+    };
+  } catch (e) {}
 
   if (!rD_getValue(CLEARED_TSC_KEY)) {
     console.log("Trying to delete any TSC keys found");
@@ -3044,7 +3071,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.36';
+  const SCRIPT_VERSION = '2.73.37';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
