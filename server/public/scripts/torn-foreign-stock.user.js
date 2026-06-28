@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.23
+// @version      0.9.24
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.23";
+  var SCRIPT_VERSION = "0.9.24";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -363,8 +363,8 @@
     s.id = "tfs-css";
     s.textContent =
       ".tfs-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;margin:8px 0;background:#16181d;border:1px solid #262a33;border-radius:7px;box-shadow:0 1px 3px rgba(0,0,0,.35);font-size:12px;color:#cfd4dc;}" +
-      "body.with-sidebar .tfs-bar{width:-moz-fit-content;width:fit-content;max-width:680px;margin-left:auto;margin-right:auto;position:relative;left:40px;}" +
-      "body.with-sidebar .tfs-bar .tfs-frow.flags{flex-wrap:wrap;}" +
+      "body.tfs-desk .tfs-bar{width:-moz-fit-content;width:fit-content;max-width:680px;margin-left:auto;margin-right:auto;position:relative;left:40px;}" +
+      "body.tfs-desk .tfs-bar .tfs-frow.flags{flex-wrap:wrap;}" +
       ".tfs-bar .tfs-title{font-weight:700;color:#e8c44a;letter-spacing:.3px;margin-right:4px;}" +
       ".tfs-seg{display:inline-flex;border:1px solid #2e333d;border-radius:7px;overflow:hidden;background:#14161b;}" +
       ".tfs-toggle{background:transparent;color:#8a909a;border:0;border-radius:0;padding:4px 16px;cursor:pointer;font-weight:600;transition:background .12s,color .12s;}" +
@@ -646,7 +646,7 @@
   function autoMatchTravelWidth(panel) {
     try {
       if (typeof document === "undefined" || !document.body) return;
-      if ((" " + document.body.className + " ").indexOf(" with-sidebar ") === -1) return; // desktop only
+      if (IS_PDA || !document.body || !document.body.classList.contains("tfs-desk")) return; // desktop only, never PDA
       if (!panel || !panel.parentElement) return;
       var sels = ['[class*="flightProgressSection"]', '[class*="viewport___"]', '[class*="content-wrapper"]'];
       var ref = null;
@@ -957,6 +957,7 @@
   }
 
   function main() {
+    if (!IS_PDA && document.body) document.body.classList.add("tfs-desk");
     injectCss();
     injectSettingsBar(function (force) { applyAll(!!force); });
     applyAll(false);
