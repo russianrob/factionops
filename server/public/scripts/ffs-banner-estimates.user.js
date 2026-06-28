@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.35
+// @version      2.73.36
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -1281,7 +1281,7 @@ if (!singleton) {
             });
             ffcache.update_cache(cachedObjs).then(() => {
               callback(player_ids);
-            });
+            }).catch(() => { callback(player_ids); });
 
             update_limits(response.responseHeaders);
           } else {
@@ -1349,7 +1349,7 @@ if (!singleton) {
   }
 
   function clean_expired_data() {
-    ffcache.clean_expired();
+    ffcache.clean_expired().catch(() => {});
     let count = 0;
     for (const key of rD_listValues()) {
       // Try renaming the key to the new name format
@@ -2258,10 +2258,10 @@ if (!singleton) {
       // This is also important to ensure we only iterate the list once
       // Then update
       // Then re-display after the update
-      show_cached_values(elements);
+      show_cached_values(elements).catch(() => {});
       const player_ids = elements.map((e) => e[0]);
       await update_ff_cache(player_ids, () => {
-        show_cached_values(elements);
+        show_cached_values(elements).catch(() => {});
       });
     }
   }
@@ -3044,7 +3044,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.35';
+  const SCRIPT_VERSION = '2.73.36';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
