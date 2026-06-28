@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.25
+// @version      0.9.26
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.25";
+  var SCRIPT_VERSION = "0.9.26";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -362,8 +362,8 @@
     var s = document.createElement("style");
     s.id = "tfs-css";
     s.textContent =
-      ".tfs-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;margin:8px 0;background:#16181d;border:1px solid #262a33;border-radius:7px;box-shadow:0 1px 3px rgba(0,0,0,.35);font-size:12px;color:#cfd4dc;}" +
-      "body.tfs-desk .tfs-bar{width:-moz-fit-content;width:fit-content;max-width:680px;margin-left:auto;margin-right:auto;position:relative;left:40px;}" +
+      ".tfs-bar{display:flex;box-sizing:border-box;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;margin:8px 0;background:#16181d;border:1px solid #262a33;border-radius:7px;box-shadow:0 1px 3px rgba(0,0,0,.35);font-size:12px;color:#cfd4dc;}" +
+      "body.tfs-desk .tfs-bar{width:auto;max-width:680px;margin-left:auto;margin-right:auto;}" +
       "body.tfs-desk .tfs-bar .tfs-frow.flags{flex-wrap:wrap;}" +
       ".tfs-bar .tfs-title{font-weight:700;color:#e8c44a;letter-spacing:.3px;margin-right:4px;}" +
       ".tfs-seg{display:inline-flex;border:1px solid #2e333d;border-radius:7px;overflow:hidden;background:#14161b;}" +
@@ -681,6 +681,7 @@
       fresh = true;
     }
     autoMatchTravelWidth(panel);
+    var tfsBarEl = document.getElementById("tfs-bar"); if (tfsBarEl) autoMatchTravelWidth(tfsBarEl);
     if (!fresh && panel.getAttribute("data-tfs-sig") === sig) return;
     panel.setAttribute("data-tfs-sig", sig);
     var head;
@@ -792,6 +793,7 @@
     if (anchor && anchor.parentNode) { anchor.parentNode.insertBefore(bar, anchor); }
     else if (isMapLayout()) { var dh = desktopHost(); dh.insertBefore(bar, dh.firstChild); }
     else { var c = document.querySelector(".content") || document.body; c.insertBefore(bar, c.firstChild); }
+    autoMatchTravelWidth(bar);
   }
 
   function findDestinations() {
@@ -965,7 +967,7 @@
     document.addEventListener("click", tfsOnPageInteract, true);
     document.addEventListener("change", tfsOnPageInteract, true);
     setInterval(function () { applyAll(false); }, 30000);
-    window.addEventListener("resize", function () { var p = document.getElementById("tfs-travel"); if (p) autoMatchTravelWidth(p); });
+    window.addEventListener("resize", function () { var p = document.getElementById("tfs-travel"); if (p) autoMatchTravelWidth(p); var b = document.getElementById("tfs-bar"); if (b) autoMatchTravelWidth(b); });
     try { if (typeof GM_registerMenuCommand === "function") GM_registerMenuCommand("Foreign Stock: refresh", function () { applyAll(true); }); } catch (e) {}
   }
 
