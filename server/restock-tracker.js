@@ -241,7 +241,11 @@ async function publishModel() {
     const model = buildModel(_state, now);
     const body = {
       message: `update restock model (${new Date(now * 1000).toISOString().slice(0, 16)}Z)`,
-      content: Buffer.from(JSON.stringify(model)).toString("base64")
+      content: Buffer.from(JSON.stringify(model)).toString("base64"),
+      // Commit as a bot identity (email NOT on the russianrob account) so these
+      // automated 10-min data pushes don't count toward the human contribution graph.
+      author: { name: "warboard restock bot", email: "restock-bot@warboard.local" },
+      committer: { name: "warboard restock bot", email: "restock-bot@warboard.local" }
     };
     const sha = await ghCurrentSha(token);
     if (sha) body.sha = sha;
