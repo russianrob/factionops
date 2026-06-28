@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.34
+// @version      2.73.35
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -801,6 +801,9 @@ if (!singleton) {
             this.db = null;
             db.close();
           };
+          // PDA/WebView can silently close the connection on background/nav; drop
+          // the stale handle so the next transaction reopens instead of throwing.
+          this.db.onclose = () => { this.db = null; };
           resolve(dbopen.result);
         };
 
@@ -827,12 +830,31 @@ if (!singleton) {
       });
     };
 
+    // Open a transaction, self-healing a stale/closed connection. A WebView can
+    // close the IndexedDB connection silently (this.db stays non-null but dead),
+    // so this.db.transaction() throws InvalidStateError. Retry once via a fresh open.
+    _tx = async (mode) => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (!this.db) {
+          try { await this.open(); }
+          catch (e) { this.db = null; if (attempt) throw e; continue; }
+        }
+        try { return this.db.transaction(this.store_name, mode); }
+        catch (e) {
+          ffdebug("[FF cache] stale connection (" + (e && e.name) + "), reopening");
+          try { if (this.db) this.db.close(); } catch (_) {}
+          this.db = null;
+          if (attempt) throw e;
+        }
+      }
+      throw new Error("[FF cache] could not open a transaction");
+    };
+
     update_cache = async (values) => {
       return new Promise(async (resolve, reject) => {
-        if (!this.db) {
-          await this.open();
-        }
-        const tx = this.db.transaction(this.store_name, "readwrite");
+        let tx;
+        try { tx = await this._tx("readwrite"); }
+        catch (e) { reject(e); return; }
 
         tx.onerror = (event) => {
           showToast(`Error opening transaction for update_cache`);
@@ -865,10 +887,9 @@ if (!singleton) {
 
     get = async (player_ids) => {
       return new Promise(async (resolve, reject) => {
-        if (!this.db) {
-          await this.open();
-        }
-        const tx = this.db.transaction(this.store_name, "readonly");
+        let tx;
+        try { tx = await this._tx("readonly"); }
+        catch (e) { reject(e); return; }
 
         tx.onerror = (event) => {
           showToast(`Error opening transaction for get: ${tx.error}`);
@@ -914,10 +935,9 @@ if (!singleton) {
 
     clean_expired = () => {
       return new Promise(async (resolve, reject) => {
-        if (!this.db) {
-          await this.open();
-        }
-        const tx = this.db.transaction(this.store_name, "readwrite");
+        let tx;
+        try { tx = await this._tx("readwrite"); }
+        catch (e) { reject(e); return; }
 
         tx.onerror = (event) => {
           showToast(`Error opening transaction for clean_expired: ${tx.error}`);
@@ -3024,7 +3044,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.34';
+  const SCRIPT_VERSION = '2.73.35';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
