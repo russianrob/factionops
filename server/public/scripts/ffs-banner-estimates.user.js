@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.38
+// @version      2.73.39
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -886,6 +886,7 @@ if (!singleton) {
     };
 
     get = async (player_ids) => {
+      if (this._hang) return new Promise(function () {});
       return new Promise(async (resolve, reject) => {
         let tx;
         try { tx = await this._tx("readonly"); }
@@ -989,6 +990,34 @@ if (!singleton) {
   // wb65: fork-private DB name so we don't share with xentac's upstream
   // script. Avoids VersionError collisions when both are installed.
   const ffcache = new FFScouterCache("ffs-banner-cache");
+
+  try {
+    const _w = (typeof unsafeWindow !== "undefined") ? unsafeWindow : window;
+    const _strip = () => {
+      document.querySelectorAll(".honor-text-wrap").forEach((bar) => {
+        bar.classList.remove("ff-scouter-indicator", "indicator-lines");
+        bar.querySelectorAll('[class*="ff-scouter-"]').forEach((el) => el.remove());
+        var sib = bar.nextElementSibling;
+        if (sib && /ff-scouter/.test(String(sib.className || ""))) sib.remove();
+      });
+    };
+    const _repaint = () => {
+      try { apply_ff_gauge(Array.prototype.slice.call(document.querySelectorAll(".honor-text-wrap"))); } catch (e) {}
+    };
+    _w.__ffsRepro = {
+      break: () => {
+        ffcache._hang = true;
+        try { if (ffcache.db) ffcache.db.close(); } catch (e) {}
+        _strip(); _repaint();
+        return "BROKE — estimates should vanish (the real bug: cache read hangs, bars repaint blank). Run __ffsRepro.heal() to recover.";
+      },
+      heal: () => {
+        ffcache._hang = false; ffcache.db = null;
+        _strip(); _repaint();
+        return "HEALED — estimates should repaint (the 2.73.x self-heal reopened the cache, no reboot).";
+      }
+    };
+  } catch (e) {}
 
   if (!rD_getValue(CLEARED_TSC_KEY)) {
     console.log("Trying to delete any TSC keys found");
@@ -3044,7 +3073,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.38';
+  const SCRIPT_VERSION = '2.73.39';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
