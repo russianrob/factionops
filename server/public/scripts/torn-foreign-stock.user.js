@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.24
+// @version      0.9.25
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.24";
+  var SCRIPT_VERSION = "0.9.25";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -380,8 +380,8 @@
       ".tfs-filters{display:none;flex-basis:100%;margin-top:7px;padding-top:8px;border-top:1px solid #262a33;}" +
       ".tfs-filters.open{display:block;}" +
       ".tfs-frow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:5px 0;}" +
-      ".tfs-frow.flags{flex-wrap:nowrap;gap:3px;}" +
-      ".tfs-frow .lbl{color:#7a818c;margin-right:2px;min-width:54px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;}" +
+      ".tfs-frow.flags{flex-wrap:nowrap;gap:6px;}" +
+      ".tfs-frow .lbl{color:#7a818c;margin-right:2px;width:66px;flex:0 0 66px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;}" +
       ".tfs-ricon{margin-right:5px;font-size:11px;opacity:.95;}" +
       ".tfs-chip{cursor:pointer;font-size:11px;transition:all .12s;}" +
       ".tfs-chip.cat{display:inline-flex;align-items:center;gap:3px;background:#202a40;color:#aec4ff;border:1px solid #2c3650;border-radius:11px;padding:2px 10px;}" +
