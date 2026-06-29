@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.17
+// @version      1.0.18
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -11,7 +11,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.17";
+  var SCRIPT_VERSION = "1.0.18";
   var STORAGE_KEY = "fnt_templates";
   var menuHideGen = 0;
 
@@ -158,7 +158,7 @@
 
   function refreshSelect(sel) {
     var t = getTemplates(), names = Object.keys(t).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
-    sel.innerHTML = '<option value="__fnt_blank__">— blank —</option>'
+    sel.innerHTML = '<option value="__fnt_blank__">-</option>'
       + names.map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + "</option>"; }).join("");
     sel.value = "__fnt_blank__";
   }
@@ -174,7 +174,6 @@
       '<span style="font-weight:700;color:#e8c44a;">📰 Newsletter Templates</span>'
       + '<select id="fnt-select" style="background:#0e0f12;color:#dde2e8;border:1px solid #2e333d;border-radius:6px;padding:3px 7px;max-width:220px;"></select>'
       + '<span id="fnt-group" style="color:#9fb6ff;font-size:11px;white-space:nowrap;"></span>'
-      + btn("fnt-apply", "Apply", "#3b6dff")
       + btn("fnt-qsend", "⚡ Quick Send", "#2f6b45")
       + btn("fnt-save", "Save current…", "#20242c")
       + btn("fnt-del", "Delete", "#20242c")
@@ -208,7 +207,6 @@
     }
     updateGroupInd();
     sel.addEventListener("change", function () { updateGroupInd(); applySelected(); });
-    panel.querySelector("#fnt-apply").addEventListener("click", applySelected);
     panel.querySelector("#fnt-qsend").addEventListener("click", function () {
       var sb = sendButton();
       if (!sb) { msg("⚠ Send button not found"); return; }
