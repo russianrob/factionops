@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.27
+// @version      0.9.28
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.27";
+  var SCRIPT_VERSION = "0.9.28";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -250,7 +250,7 @@
     return true;
   }
   function countryVisible(code, filters) {
-    if (filters.focusCountry && code !== filters.focusCountry) return false;
+    if (filters.focusCountry) return code === filters.focusCountry;
     return !(filters.hiddenCountries && filters.hiddenCountries.indexOf(code) !== -1);
   }
 
