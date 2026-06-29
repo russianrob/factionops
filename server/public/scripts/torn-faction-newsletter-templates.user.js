@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.16
+// @version      1.0.17
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -11,7 +11,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.16";
+  var SCRIPT_VERSION = "1.0.17";
   var STORAGE_KEY = "fnt_templates";
   var menuHideGen = 0;
 
@@ -158,9 +158,9 @@
 
   function refreshSelect(sel) {
     var t = getTemplates(), names = Object.keys(t).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
-    sel.innerHTML = names.length
-      ? names.map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + "</option>"; }).join("")
-      : '<option value="">(no templates saved)</option>';
+    sel.innerHTML = '<option value="__fnt_blank__">— blank —</option>'
+      + names.map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + "</option>"; }).join("");
+    sel.value = "__fnt_blank__";
   }
 
   function buildPanel() {
@@ -191,6 +191,7 @@
     }
     function applySelected() {
       var t = getTemplates(), n = sel.value;
+      if (n === "__fnt_blank__") { setBody(""); setTitle(""); msg("✓ blanked (body + title cleared)"); return; }
       if (!n || !t[n]) { msg("no template selected"); return; }
       setBody(t[n].body || "");
       setTitle(t[n].title || "");
