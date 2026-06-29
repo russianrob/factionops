@@ -1,0 +1,25 @@
+<div style="text-align:center">
+<h2>Faction Newsletter Templates</h2>
+<p><em>Save a faction newsletter once — title, body, and recipients — and reload it in one click</em></p>
+</div>
+
+<p>If you send the same handful of faction newsletters over and over — a recruitment pitch, an OC nudge, the same war call to arms — you know the routine: retype the body, set the title again, and re-pick the recipient group every single time. Miss the group and the wrong people get pinged.</p>
+
+<p>This script adds a small bar to the newsletter page so you can save a newsletter once and bring it back whenever you need it.</p>
+
+<ul><li>Save the current newsletter as a named template — it stores the <strong>title, the body, and the recipient group</strong> together, not just the text</li><li>Pick a template from the dropdown and it loads all three at once — no separate "apply" step, it just fills in</li><li><strong>Quick Send</strong> fires the newsletter to the loaded recipients in one click</li><li>The editor <strong>starts blank every time</strong>, so you're never editing yesterday's leftover draft; there's a "-" entry to clear it on demand too</li><li>Delete templates you no longer use</li></ul>
+
+<p>Nothing to set up and no API key needed — it lives right on <strong>factions.php → Controls → Newsletter</strong>, and your templates are saved in your own browser.</p>
+
+<p>Credit where it's due: this was inspired by Glasnost's Torn Mail Templates, which does the same kind of thing for your mail.</p>
+
+<p>Works on desktop with Tampermonkey and in Torn PDA.</p>
+
+<h3>Screenshot</h3>
+<p><em>The template bar on the newsletter page:</em></p>
+<img src="https://tornwar.com/torn-faction-newsletter-templates-shot.png" alt="Faction Newsletter Templates panel on the Torn faction newsletter page">
+
+<h3>Install</h3>
+<p><a href="https://greasyfork.org/en/scripts/584513-faction-newsletter-templates">Install Faction Newsletter Templates on Greasy Fork</a></p>
+
+<p>If something doesn't load right or you want a feature, post it here and I'll take a look.</p>
