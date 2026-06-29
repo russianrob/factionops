@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.26
+// @version      0.9.27
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.26";
+  var SCRIPT_VERSION = "0.9.27";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -250,6 +250,7 @@
     return true;
   }
   function countryVisible(code, filters) {
+    if (filters.focusCountry && code !== filters.focusCountry) return false;
     return !(filters.hiddenCountries && filters.hiddenCountries.indexOf(code) !== -1);
   }
 
@@ -283,7 +284,8 @@
       hideOos: gmGet("tfs_hide_oos", false),
       hideNeg: gmGet("tfs_hide_negprofit", false),
       excludedCats: gmGet("tfs_cats", []),
-      hiddenCountries: gmGet("tfs_hidden_countries", [])
+      hiddenCountries: gmGet("tfs_hidden_countries", []),
+      focusCountry: gmGet("tfs_focus_country", "")
     };
   }
   function getStock(force) {
@@ -371,6 +373,8 @@
       ".tfs-toggle:hover{background:#20242c;color:#cfd4dc;}" +
       ".tfs-toggle.on{background:#3b6dff;color:#fff;}" +
       ".tfs-toggle+.tfs-toggle{border-left:1px solid #2e333d;}" +
+      ".tfs-focuswrap{display:inline-flex;align-items:center;gap:4px;color:#8a909a;}" +
+      ".tfs-focus{background:#0e0f12;color:#dde2e8;border:1px solid #2e333d;border-radius:6px;padding:3px 6px;font-size:12px;cursor:pointer;max-width:160px;}" +
       ".tfs-refresh,.tfs-save,.tfs-filterbtn,.tfs-hide{background:#20242c;color:#aeb4bd;border:1px solid #2e333d;border-radius:7px;padding:4px 10px;cursor:pointer;transition:background .12s,color .12s;}" +
       ".tfs-refresh{width:27px;height:26px;padding:0;border-radius:50%;font-size:13px;display:inline-flex;align-items:center;justify-content:center;}" +
       ".tfs-refresh:hover,.tfs-save:hover,.tfs-filterbtn:hover,.tfs-hide:hover{background:#262b34;color:#e6e9ee;border-color:#3a4150;}" +
@@ -756,9 +760,11 @@
     var bar = document.createElement("div");
     bar.id = "tfs-bar"; bar.className = "tfs-bar";
     var mode = getMode();
+    var focusOpts = '<option value="">All countries</option>' + TFS_COUNTRIES.map(function (c) { return '<option value="' + c[0] + '">' + tfsFlag(c[0]) + ' ' + c[1] + '</option>'; }).join("");
     bar.innerHTML =
       '<span class="tfs-title"><span class="tfs-ico">✈</span> Foreign Stocks</span>' +
       '<span class="tfs-seg"><button class="tfs-toggle" data-mode="stock">Stock</button><button class="tfs-toggle" data-mode="profit">Profit</button></span>' +
+      '<span class="tfs-focuswrap">Show <select class="tfs-focus" title="Show only one country">' + focusOpts + '</select></span>' +
       '<button class="tfs-refresh" title="Refresh stock">↻</button>' +
       '<button class="tfs-filterbtn">Filters ▾</button>' +
       '<button class="tfs-hide" title="Hide or show the stock tables"></button>' +
@@ -785,6 +791,11 @@
       if (!v) { tfsMsg("enter a key"); return; }
       setKey(v); tfsMsg("saved"); onChange(true);
     });
+    var focusSel = bar.querySelector(".tfs-focus");
+    if (focusSel) {
+      focusSel.value = gmGet("tfs_focus_country", "");
+      focusSel.addEventListener("change", function () { gmSet("tfs_focus_country", focusSel.value); onChange(false); });
+    }
     paint();
     var fpanel = buildFilterPanel(onChange);
     bar.appendChild(fpanel);
