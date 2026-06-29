@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.19
+// @version      1.0.20
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -11,7 +11,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.19";
+  var SCRIPT_VERSION = "1.0.20";
   var STORAGE_KEY = "fnt_templates";
   var menuHideGen = 0;
 
@@ -230,8 +230,21 @@
       if (!confirm('Delete template "' + n + '"?')) return;
       delete t[n]; saveTemplates(t); refreshSelect(sel); updateGroupInd(); msg("deleted");
     });
-    setBody("");
-    setTimeout(function () { if (sel.value === "__fnt_blank__" && getBody()) setBody(""); }, 400);
+    (function () {
+      function blankIfDefault() { if (sel.value === "__fnt_blank__" && getBody()) setBody(""); }
+      blankIfDefault();
+      var tries = 0;
+      var timer = setInterval(function () {
+        if (sel.value !== "__fnt_blank__") { clearInterval(timer); return; }
+        var be = tinyEditor();
+        if (be && !be._fntBlankHook) {
+          be._fntBlankHook = 1;
+          be.on("SetContent", function () { if (sel.value === "__fnt_blank__" && be.getContent()) setBody(""); });
+        }
+        blankIfDefault();
+        if (++tries > 60) clearInterval(timer);
+      }, 50);
+    })();
   }
 
   function removePanel() { var p = document.getElementById("fnt-panel"); if (p) p.remove(); setMenuHidden(false); }
