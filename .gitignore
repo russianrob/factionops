@@ -1,2 +1,4 @@
 .env
 scripts/data/
+server/data/.inspect-token
+server/data/inspect/
