@@ -20,7 +20,7 @@
 //
 // Spec: warboard-ios docs/.../2026-06-30-remote-inspect-bridge-design.md
 
-import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, timingSafeEqual } from "node:crypto";
@@ -89,13 +89,29 @@ export function drainCmds(ownerId) { return _drain(_cmds, ownerId); }
 export function putResult(ownerId, result) { _push(_results, ownerId, result); }
 export function drainResults(ownerId) { return _drain(_results, ownerId); }
 
+// Screenshots capture the owner's LIVE logged-in Torn session, so they are
+// sensitive: written 0600 in a 0700 dir, and anything older than the queue's
+// stale window is swept so captures don't linger after the operator reads them.
+// INSPECT_DIR (and the token file) live under data/ and must NEVER be served.
+function _sweepOldShots() {
+  try {
+    const cutoff = Date.now() - STALE_AFTER_MS;
+    for (const f of readdirSync(INSPECT_DIR)) {
+      if (!f.endsWith(".png")) continue;
+      const p = join(INSPECT_DIR, f);
+      try { if (statSync(p).mtimeMs < cutoff) unlinkSync(p); } catch {}
+    }
+  } catch {}
+}
+
 // device → operator (screenshot): decode base64 PNG to a file the operator reads.
 export function saveScreenshot(ownerId, id, base64) {
   const safe = String(id || ("shot" + Date.now())).replace(/[^a-zA-Z0-9_-]/g, "");
   try {
-    mkdirSync(INSPECT_DIR, { recursive: true });
+    mkdirSync(INSPECT_DIR, { recursive: true, mode: 0o700 });
+    _sweepOldShots();
     const file = safe + ".png";
-    writeFileSync(join(INSPECT_DIR, file), Buffer.from(base64, "base64"));
+    writeFileSync(join(INSPECT_DIR, file), Buffer.from(base64, "base64"), { mode: 0o600 });
     const out = { id: id || null, kind: "screenshot", file, path: join(INSPECT_DIR, file) };
     putResult(ownerId, out);
     return out;

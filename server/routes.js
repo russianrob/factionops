@@ -397,9 +397,8 @@ function _inspectOperator(req, res) {
 }
 function _inspectIsOwner(req) { return req.user && String(req.user.playerId) === _INSPECT_OWNER; }
 
-// operator → enqueue a command (shared-secret token)
-router.post("/api/inspect/cmd", express.json({ limit: "16kb" }), (req, res) => {
-  if (!_inspectOperator(req, res)) return;
+// operator → enqueue a command (shared-secret token, checked BEFORE the body parse)
+router.post("/api/inspect/cmd", (req, res, next) => { if (_inspectOperator(req, res)) next(); }, express.json({ limit: "16kb" }), (req, res) => {
   const b = req.body || {};
   let cmd = null;
   if (b.action === "screenshot") cmd = { action: "screenshot" };
@@ -414,9 +413,8 @@ router.get("/api/inspect/cmd", requireAuth, (req, res) => {
   res.json({ cmds: inspectRelay.drainCmds(_INSPECT_OWNER) });
 });
 
-// device → post a JS result or base64 PNG screenshot (owner JWT; larger limit for PNG)
-router.post("/api/inspect/result", express.json({ limit: "12mb" }), requireAuth, (req, res) => {
-  if (!_inspectIsOwner(req)) return res.status(403).json({ error: "forbidden" });
+// device → post a JS result or base64 PNG screenshot (owner JWT checked BEFORE the 12mb parse)
+router.post("/api/inspect/result", requireAuth, (req, res, next) => { if (_inspectIsOwner(req)) next(); else res.status(403).json({ error: "forbidden" }); }, express.json({ limit: "12mb" }), (req, res) => {
   const b = req.body || {};
   if (b.png) inspectRelay.saveScreenshot(_INSPECT_OWNER, b.id, String(b.png));
   else inspectRelay.putResult(_INSPECT_OWNER, { id: b.id || null, kind: "js", result: b.result, error: b.error });
