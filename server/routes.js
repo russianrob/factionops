@@ -467,9 +467,10 @@ router.post("/api/screenshot", requireAuth, (req, res, next) => {
 router.post("/api/agent/message", requireAuth, (req, res, next) => {
   if (_inspectIsOwner(req)) return next();
   return res.status(403).json({ error: "forbidden" });
-}, express.json({ limit: "64kb" }), async (req, res) => {
+}, express.json({ limit: "8mb" }), async (req, res) => {
   const text = (req.body && typeof req.body.text === "string") ? req.body.text : "";
   const sessionId = (req.body && typeof req.body.sessionId === "string") ? req.body.sessionId : null;
+  const installed = Array.isArray(req.body && req.body.installedScripts) ? req.body.installedScripts : null;
   if (!text.trim()) return res.status(400).json({ error: "empty message" });
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
   res.write(": preamble " + ".".repeat(1024) + "\n\n");
@@ -477,7 +478,7 @@ router.post("/api/agent/message", requireAuth, (req, res, next) => {
   const ac = new AbortController();
   req.on("close", () => ac.abort());
   try {
-    const { sessionId: sid } = await runAgentTurnResolvingSources({ text, sessionId, signal: ac.signal, onEvent: send });
+    const { sessionId: sid } = await runAgentTurnResolvingSources({ text, sessionId, signal: ac.signal, onEvent: send, installed });
     send({ t: "session", id: sid });
     send({ t: "end" });
   } catch (e) {
@@ -502,9 +503,10 @@ const _INSPECT_BLOCK_RE = /\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|Even
 router.post("/api/agent/inspect", requireAuth, (req, res, next) => {
   if (_inspectIsOwner(req)) return next();
   return res.status(403).json({ error: "forbidden" });
-}, express.json({ limit: "64kb" }), async (req, res) => {
+}, express.json({ limit: "8mb" }), async (req, res) => {
   const js = (req.body && typeof req.body.js === "string") ? req.body.js : "";
   const sessionId = (req.body && typeof req.body.sessionId === "string") ? req.body.sessionId : null;
+  const installed = Array.isArray(req.body && req.body.installedScripts) ? req.body.installedScripts : null;
   if (!js.trim()) return res.status(400).json({ error: "empty js" });
   if (!sessionId) return res.status(400).json({ error: "sessionId required" });
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
@@ -531,7 +533,7 @@ router.post("/api/agent/inspect", requireAuth, (req, res, next) => {
     const text = "=== INSPECTION RESULT ===\nThe owner approved this read-only query you requested:\n" + js +
       "\n\nResult:\n" + result +
       "\n\nNow answer the user's question using this, or request another ===INSPECT=== query if you still need more.";
-    const { sessionId: sid } = await runAgentTurnResolvingSources({ text, sessionId, signal: ac.signal, onEvent: send });
+    const { sessionId: sid } = await runAgentTurnResolvingSources({ text, sessionId, signal: ac.signal, onEvent: send, installed });
     send({ t: "session", id: sid });
     send({ t: "end" });
   } catch (e) {

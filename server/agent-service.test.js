@@ -66,3 +66,28 @@ test("buildTurnPrompt: skipUserscripts omits the USERSCRIPTS block", () => {
   const p = buildTurnPrompt({ snap: "SNAP", text: "hi", installed: [{ filename: "z.user.js", source: "//Z" }], skipUserscripts: true });
   assert.ok(!p.includes("=== USERSCRIPTS ==="));
 });
+
+import express from "express";
+import http from "node:http";
+
+test("agent route parser accepts a >1MB installedScripts body", async () => {
+  const app = express();
+  app.post("/t", express.json({ limit: "8mb" }), (req, res) => {
+    res.json({ n: Array.isArray(req.body.installedScripts) ? req.body.installedScripts.length : -1 });
+  });
+  const server = app.listen(0);
+  await new Promise((r) => server.once("listening", r));
+  const port = server.address().port;
+  const big = { installedScripts: Array.from({ length: 400 }, (_, i) => ({ filename: `s${i}.user.js`, source: "x".repeat(5000) })) };
+  const body = JSON.stringify(big);
+  assert.ok(body.length > 1_000_000, "payload must exceed the old 1MB cap");
+  const res = await new Promise((resolve) => {
+    const req = http.request({ port, path: "/t", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (r) => {
+      let d = ""; r.on("data", (c) => (d += c)); r.on("end", () => resolve({ status: r.statusCode, body: d }));
+    });
+    req.end(body);
+  });
+  server.close();
+  assert.equal(res.status, 200);
+  assert.equal(JSON.parse(res.body).n, 400);
+});

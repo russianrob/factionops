@@ -93,7 +93,8 @@ app.use(
 // req._body, making the route-level 16mb limit a dead no-op) and 413 anything
 // over 1mb before the route runs.
 const _json1mb = express.json({ limit: '1mb' });
-app.use((req, res, next) => req.path === '/api/screenshot' ? next() : _json1mb(req, res, next));
+const _jsonExempt = new Set(["/api/screenshot", "/api/agent/message", "/api/agent/inspect"]);
+app.use((req, res, next) => _jsonExempt.has(req.path) ? next() : _json1mb(req, res, next));
 
 // ── Security headers ───────────────────────────────────────────────────────
 // Helmet defaults Cross-Origin-Resource-Policy to "same-origin", which
