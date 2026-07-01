@@ -10,6 +10,7 @@
     "test": "node --test key-encryption.test.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@simplewebauthn/server": "^13.3.0",
     "axios": "^1.14.0",
     "busboy": "^1.6.0",
@@ -23,6 +24,7 @@
     "node-cron": "^4.2.1",
     "otpauth": "^9.5.0",
     "socket.io": "^4.8.1",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "zod": "^4.4.3"
   }
 }
