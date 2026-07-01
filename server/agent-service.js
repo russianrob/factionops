@@ -261,18 +261,25 @@ export function normalizeStreamLine(o) {
   return null;
 }
 
-export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUserscripts }) {
+// Assemble the per-turn prompt: standing instructions + page snapshot +
+// (optionally) the USERSCRIPTS block built from the app's installed manifest +
+// the user message. Pure/injectable so it is unit-testable without spawning.
+export function buildTurnPrompt({ snap, text, installed, skipUserscripts }) {
+  const instr = standingInstructions();
+  return (instr ? "=== STANDING INSTRUCTIONS FROM THE OWNER (persistent — always follow) ===\n" + instr + "\n\n" : "") +
+    "=== CURRENT TORN PAGE SNAPSHOT ===\n" + snap +
+    (skipUserscripts ? "" : "\n\n=== USERSCRIPTS ===\n" + userscriptContext(text, installed)) +
+    "\n\n=== USER MESSAGE ===\n" + String(text);
+}
+
+export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUserscripts, installed }) {
   let snap;
   try {
     const r = await runJsOnDevice(SNAPSHOT_JS, { timeoutMs: 8000 });
     snap = r.error ? ("(page snapshot unavailable: " + r.error + ")") : (r.value || "(empty)");
   } catch (e) { snap = "(page snapshot error: " + String(e) + ")"; }
   if (onEvent) onEvent({ t: "snapshot", ok: !/unavailable|error/.test(snap) });
-  const instr = standingInstructions();
-  const prompt = (instr ? "=== STANDING INSTRUCTIONS FROM THE OWNER (persistent — always follow) ===\n" + instr + "\n\n" : "") +
-    "=== CURRENT TORN PAGE SNAPSHOT ===\n" + snap +
-    (skipUserscripts ? "" : "\n\n=== USERSCRIPTS ===\n" + userscriptContext(text)) +
-    "\n\n=== USER MESSAGE ===\n" + String(text);
+  const prompt = buildTurnPrompt({ snap, text, installed, skipUserscripts });
   const baseArgs = ["--print", prompt,
     "--model", MODEL,
     "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -360,7 +367,7 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
 // with the source injected — no client round-trip / approval (safe read of the
 // owner's own script). Bounded so it can't run away; sourceRequest events are
 // consumed here, not streamed. The agent routes call this instead of runAgentTurn.
-export async function runAgentTurnResolvingSources({ text, sessionId, onEvent, signal }) {
+export async function runAgentTurnResolvingSources({ text, sessionId, onEvent, signal, installed }) {
   let sid = sessionId, msg = text, first = true, guard = 0, requested = null;
   const wrapped = (ev) => {
     if (ev && ev.t === "sourceRequest") { requested = ev.filename; return; }
@@ -368,11 +375,11 @@ export async function runAgentTurnResolvingSources({ text, sessionId, onEvent, s
   };
   while (true) {
     requested = null;
-    const r = await runAgentTurn({ text: msg, sessionId: sid, onEvent: wrapped, signal, skipUserscripts: !first });
+    const r = await runAgentTurn({ text: msg, sessionId: sid, onEvent: wrapped, signal, skipUserscripts: !first, installed });
     sid = r.sessionId;
     first = false;
     if (!requested || guard++ >= 6 || (signal && signal.aborted)) break;
-    const src = readScriptSource(requested);
+    const src = resolveScriptSource(requested, installed);
     onEvent({ t: "source", filename: requested, ok: src != null });
     msg = "=== SCRIPT SOURCE: " + requested + " ===\n" +
       (src != null ? src : "(not found — use the exact filename from the USERSCRIPTS list)") +

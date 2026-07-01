@@ -48,3 +48,21 @@ test("resolveScriptSource: falls back to the served dir when not in the manifest
 test("resolveScriptSource: null manifest defers entirely to the served dir", () => {
   assert.equal(resolveScriptSource("nope.user.js", null), null);
 });
+
+import { buildTurnPrompt } from "./agent-service.js";
+
+test("buildTurnPrompt: injects the manifest's USERSCRIPTS block", () => {
+  const p = buildTurnPrompt({
+    snap: "SNAP", text: "hi",
+    installed: [{ filename: "z.user.js", name: "Zed", version: "3", enabled: true, source: "//Z" }],
+    skipUserscripts: false,
+  });
+  assert.match(p, /=== USERSCRIPTS ===/);
+  assert.match(p, /z\.user\.js — Zed \(v3\)/);
+  assert.match(p, /=== USER MESSAGE ===\nhi/);
+});
+
+test("buildTurnPrompt: skipUserscripts omits the USERSCRIPTS block", () => {
+  const p = buildTurnPrompt({ snap: "SNAP", text: "hi", installed: [{ filename: "z.user.js", source: "//Z" }], skipUserscripts: true });
+  assert.ok(!p.includes("=== USERSCRIPTS ==="));
+});
