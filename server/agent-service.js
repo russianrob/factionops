@@ -1,10 +1,18 @@
 // agent-service.js
 import { spawn } from "node:child_process";
 
-const CLAUDE = process.env.CLAUDE_BIN || "/root/.local/bin/claude";
+// Runs as the non-root `warboard` server user, so no root guard / IS_SANDBOX is
+// needed. CLAUDE is the world-executable copy (warboard can't read /root). HOME
+// points at warboard's isolated agent home holding its own long-lived token.
+const CLAUDE = process.env.CLAUDE_BIN || "/usr/local/bin/claude";
 const WORKDIR = process.env.AGENT_WORKDIR || "/opt/warboard/server/data/agent-workdir";
+const AGENT_HOME = process.env.AGENT_HOME || "/opt/warboard/server/data/agent-home";
 const MCP_CONFIG = process.env.AGENT_MCP_CONFIG || "/opt/warboard/server/data/agent-mcp.json";
-const DISALLOWED = ["Bash","Edit","Write","Read","NotebookEdit","WebFetch","WebSearch","Task","Glob","Grep"];
+// SECURITY: deny EVERY built-in tool (validated live: agent then has only the 2
+// scoped MCP inspect tools). An allow-list does NOT restrict under default mode;
+// only this complete --disallowed-tools under bypassPermissions blocks. The init
+// tools[] is not exhaustive — Glob/Grep are present but unlisted, so deny them too.
+const DISALLOWED = ["Task","Bash","CronCreate","CronDelete","CronList","DesignSync","Edit","EnterWorktree","ExitWorktree","Monitor","NotebookEdit","PushNotification","Read","RemoteTrigger","ReportFindings","ScheduleWakeup","SendMessage","Skill","TaskCreate","TaskGet","TaskList","TaskOutput","TaskStop","TaskUpdate","ToolSearch","WebFetch","WebSearch","Workflow","Write","Glob","Grep"];
 const TURN_TIMEOUT_MS = Number(process.env.AGENT_TURN_TIMEOUT_MS || 180000);
 
 export function normalizeStreamLine(o) {
@@ -44,7 +52,7 @@ export function runAgentTurn({ text, sessionId, onEvent, signal }) {
       "--permission-mode", "bypassPermissions",
       "--disallowed-tools", ...DISALLOWED];
     if (sessionId) args.push("--resume", sessionId);
-    const child = spawn(CLAUDE, args, { cwd: WORKDIR, env: { ...process.env, IS_SANDBOX: process.env.IS_SANDBOX || "1" }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(CLAUDE, args, { cwd: WORKDIR, env: { ...process.env, HOME: AGENT_HOME }, stdio: ["ignore", "pipe", "pipe"] });
     let resolvedSession = sessionId || null;
     let buf = "";
     const killTimer = setTimeout(() => { onEvent({ t: "error", message: "agent turn timed out" }); child.kill("SIGKILL"); }, TURN_TIMEOUT_MS);
