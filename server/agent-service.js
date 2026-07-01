@@ -67,7 +67,7 @@ try {
 try { if (window.__wbInspect && window.__wbInspect.console && window.__wbInspect.console.length) o.console = window.__wbInspect.console.slice(-15); } catch (e) {}
 return JSON.stringify(o);
 `;
-const SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT || "You are an assistant embedded in the Warboard iOS app, helping the owner (a Torn player and userscript developer) with the Torn game and their userscripts. You have NO tools: you cannot run code, read or write files, browse the web, or take any action. Each message is prefixed with a SNAPSHOT of the user's CURRENT Torn page (URL, title, visible text, a compact DOM skeleton, and recent console errors/warnings if any), then a USERSCRIPTS section listing the owner's installed userscripts (and the full source of any the owner named). Use that context plus your knowledge of Torn and web/userscript development to answer. If you need information not in the context, say what you'd want to see rather than inventing it. Never claim to have run a tool, executed code, or taken an action.\n\nINSPECTING THE PAGE: The snapshot is limited. When you need more — an element's full HTML, a computed style, the value of a JS expression, console or network detail — you may request ONE read-only JavaScript query. Output a line that is EXACTLY `===INSPECT===` then a fenced code block whose body is a JS expression or IIFE that RETURNS a value (e.g. `document.querySelector('.rw-timer').outerHTML`, or `(function(){return getComputedStyle(document.querySelector('#x')).width})()`). The owner reviews and approves it before it runs on THEIR page; you then receive the result and continue — answer, or request another query. STRICTLY READ-ONLY: never click, submit, focus, navigate, or mutate the page, storage, or cookies. Keep results small — target a specific element, not the whole document. Put at most ONE `===INSPECT===` block per reply, as the last thing in your message, and never combine it with a `===FILE:===` proposal in the same reply.\n\nEDITING USERSCRIPTS: You may help the owner edit a userscript, but you only PROPOSE changes — the owner reviews and deploys them. When you propose a change to a script, output the COMPLETE new file (not a diff, not a snippet). Immediately precede it with a line that is EXACTLY `===FILE: <filename>===` (the bare basename, e.g. `===FILE: torn-green-nav.user.js===`), then a fenced code block containing the whole file. Keep the existing `==UserScript==` header intact and BUMP the `@version` (increment the patch number). Only include ONE such proposal per reply, as the last thing in your message.";
+const SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT || "You are an assistant embedded in the Warboard iOS app, helping the owner (a Torn player and userscript developer) with the Torn game and their userscripts. You have NO tools: you cannot run code, read or write files, browse the web, or take any action. Each message is prefixed with a SNAPSHOT of the user's CURRENT Torn page (URL, title, visible text, a compact DOM skeleton, and recent console errors/warnings if any), then a USERSCRIPTS section listing the owner's installed userscripts (and the full source of any the owner named). Use that context plus your knowledge of Torn and web/userscript development to answer. If you need information not in the context, say what you'd want to see rather than inventing it. Never claim to have run a tool, executed code, or taken an action.\n\nINSPECTING THE PAGE: The snapshot is limited. When you need more — an element's full HTML, a computed style, the value of a JS expression, console or network detail — you may request ONE read-only JavaScript query. Output a line that is EXACTLY `===INSPECT===` then a fenced code block whose body is a JS expression or IIFE that RETURNS a value (e.g. `document.querySelector('.rw-timer').outerHTML`, or `(function(){return getComputedStyle(document.querySelector('#x')).width})()`). The owner reviews and approves it before it runs on THEIR page; you then receive the result and continue — answer, or request another query. STRICTLY READ-ONLY: never click, submit, focus, navigate, or mutate the page, storage, or cookies. Keep results small — target a specific element, not the whole document. Put at most ONE `===INSPECT===` block per reply, as the last thing in your message, and never combine it with a `===FILE:===` proposal in the same reply.\n\nREADING SCRIPT SOURCE: The USERSCRIPTS section lists the installed scripts but includes full source only for ones named in the message. To read ANY installed script's current full source, output a line EXACTLY `===SOURCE: <filename>===` (the bare basename from the list, e.g. `===SOURCE: torn-dual-flyout.user.js===`). It is fetched automatically and you continue with the source — no owner approval, since it's the owner's own script. ALWAYS read a script's current source this way BEFORE proposing a `===FILE:===` edit to it, so your edit is based on the real current file.\n\nEDITING USERSCRIPTS: You may help the owner edit a userscript, but you only PROPOSE changes — the owner reviews and deploys them. When you propose a change to a script, output the COMPLETE new file (not a diff, not a snippet). Immediately precede it with a line that is EXACTLY `===FILE: <filename>===` (the bare basename, e.g. `===FILE: torn-green-nav.user.js===`), then a fenced code block containing the whole file. Keep the existing `==UserScript==` header intact and BUMP the `@version` (increment the patch number). Only include ONE such proposal per reply, as the last thing in your message.";
 // SECURITY: deny EVERY built-in tool so the agent has NO tools at all. Validated
 // live: with this list the agent's tool set is empty. An allow-list does NOT
 // restrict under default mode; only this complete --disallowed-tools under
@@ -112,7 +112,8 @@ export function userscriptContext(userText, dir = SCRIPTS_DIR) {
     try { content = readFileSync(pathJoin(dir, f), "utf8"); } catch {}
     const name = headerField(content, "name") || "(no @name)";
     const version = headerField(content, "version") || "?";
-    lines.push("- " + f + " — " + name + " (v" + version + ")");
+    const desc = headerField(content, "description");
+    lines.push("- " + f + " — " + name + " (v" + version + ")" + (desc ? " — " + desc.slice(0, 80) : ""));
     const base = f.replace(/\.user\.js$/, "");
     if (mentioned(text, f) || mentioned(text, base)) named.push({ f, content });
   }
@@ -148,6 +149,27 @@ export function parseInspect(text) {
   const js = last[1].trim();
   if (!js) return null;
   return { js };
+}
+
+// Parse an agent request to read a script's full source: `===SOURCE: <name>===`.
+// Auto-fulfilled server-side (reading the owner's own installed script is a safe
+// read-only file read — no approval, unlike a page inspect). Returns { filename }.
+export function parseSource(text) {
+  const s = String(text || "");
+  const re = /===SOURCE:[ \t]*([^\n=]+?)[ \t]*===/g;
+  let m, last = null;
+  while ((m = re.exec(s)) !== null) last = m;
+  if (!last) return null;
+  const filename = pathBasename(last[1].trim());
+  if (!filename) return null;
+  return { filename };
+}
+
+// Read an installed script's source from SCRIPTS_DIR, path-jailed via the bare-
+// basename validator (rejects separators / traversal). Returns source or null.
+export function readScriptSource(filename) {
+  if (!isValidUserscriptName(filename)) return null;
+  try { return readFileSync(pathJoin(SCRIPTS_DIR, filename), "utf8"); } catch { return null; }
 }
 
 // Deploy path-jail: a deployable userscript name is a bare basename ending in
@@ -186,7 +208,7 @@ export function normalizeStreamLine(o) {
   return null;
 }
 
-export async function runAgentTurn({ text, sessionId, onEvent, signal }) {
+export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUserscripts }) {
   let snap;
   try {
     const r = await runJsOnDevice(SNAPSHOT_JS, { timeoutMs: 8000 });
@@ -194,7 +216,7 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal }) {
   } catch (e) { snap = "(page snapshot error: " + String(e) + ")"; }
   if (onEvent) onEvent({ t: "snapshot", ok: !/unavailable|error/.test(snap) });
   const prompt = "=== CURRENT TORN PAGE SNAPSHOT ===\n" + snap +
-    "\n\n=== USERSCRIPTS ===\n" + userscriptContext(text) +
+    (skipUserscripts ? "" : "\n\n=== USERSCRIPTS ===\n" + userscriptContext(text)) +
     "\n\n=== USER MESSAGE ===\n" + String(text);
   const baseArgs = ["--print", prompt,
     "--model", MODEL,
@@ -245,6 +267,8 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal }) {
         if (ev.t === "delta") assistantText += ev.text || "";
         if (ev.t === "done") {
           const full = assistantText || ev.result || "";
+          const src = parseSource(full);
+          if (src) forward({ t: "sourceRequest", filename: src.filename });
           const insp = parseInspect(full);
           if (insp) forward({ t: "inspectRequest", js: insp.js });
           const prop = parseProposal(full);
@@ -274,4 +298,30 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal }) {
   let r = await attempt(!!sessionId);
   if (r.retry && !aborted) r = await attempt(false);
   return { sessionId: r.resolvedSession };
+}
+
+// Wraps runAgentTurn with a server-side loop that fulfills the agent's
+// `===SOURCE: <name>===` requests: read the script locally and resume (--resume)
+// with the source injected — no client round-trip / approval (safe read of the
+// owner's own script). Bounded so it can't run away; sourceRequest events are
+// consumed here, not streamed. The agent routes call this instead of runAgentTurn.
+export async function runAgentTurnResolvingSources({ text, sessionId, onEvent, signal }) {
+  let sid = sessionId, msg = text, first = true, guard = 0, requested = null;
+  const wrapped = (ev) => {
+    if (ev && ev.t === "sourceRequest") { requested = ev.filename; return; }
+    onEvent(ev);
+  };
+  while (true) {
+    requested = null;
+    const r = await runAgentTurn({ text: msg, sessionId: sid, onEvent: wrapped, signal, skipUserscripts: !first });
+    sid = r.sessionId;
+    first = false;
+    if (!requested || guard++ >= 6 || (signal && signal.aborted)) break;
+    const src = readScriptSource(requested);
+    onEvent({ t: "source", filename: requested, ok: src != null });
+    msg = "=== SCRIPT SOURCE: " + requested + " ===\n" +
+      (src != null ? src : "(not found — use the exact filename from the USERSCRIPTS list)") +
+      "\n\nUse this to continue answering the user, or request another ===SOURCE:=== if you need more.";
+  }
+  return { sessionId: sid };
 }

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import axios from "axios";
 import { verifyTornApiKey, issueToken, verifyToken, requireAuth, isPoolEligible } from "./auth.js";
 import { handleStakeoutSync, resolveOwnerId } from "./stakeout-store.js";
-import { runAgentTurn, isValidUserscriptName } from "./agent-service.js";
+import { runAgentTurn, runAgentTurnResolvingSources, isValidUserscriptName } from "./agent-service.js";
 import { runJsOnDevice } from "./agent-relay-client.js";
 import { TOTP as _OTPAuthTOTP, Secret as _OTPAuthSecret } from "otpauth";
 import { readFileSync as _totpReadFile } from "node:fs";
@@ -477,7 +477,7 @@ router.post("/api/agent/message", requireAuth, (req, res, next) => {
   const ac = new AbortController();
   req.on("close", () => ac.abort());
   try {
-    const { sessionId: sid } = await runAgentTurn({ text, sessionId, signal: ac.signal, onEvent: send });
+    const { sessionId: sid } = await runAgentTurnResolvingSources({ text, sessionId, signal: ac.signal, onEvent: send });
     send({ t: "session", id: sid });
     send({ t: "end" });
   } catch (e) {
@@ -528,7 +528,7 @@ router.post("/api/agent/inspect", requireAuth, (req, res, next) => {
     const text = "=== INSPECTION RESULT ===\nThe owner approved this read-only query you requested:\n" + js +
       "\n\nResult:\n" + result +
       "\n\nNow answer the user's question using this, or request another ===INSPECT=== query if you still need more.";
-    const { sessionId: sid } = await runAgentTurn({ text, sessionId, signal: ac.signal, onEvent: send });
+    const { sessionId: sid } = await runAgentTurnResolvingSources({ text, sessionId, signal: ac.signal, onEvent: send });
     send({ t: "session", id: sid });
     send({ t: "end" });
   } catch (e) {
