@@ -53,7 +53,7 @@ test("userscriptContext lists every *.user.js with @name + @version", () => {
   const dir = mockScriptsDir();
   try {
     const out = userscriptContext("hello", dir);
-    assert.match(out, /Installed userscripts \(2\)/);
+    assert.match(out, /userscripts on the Warboard server \(2\)/);
     assert.match(out, /torn-foo\.user\.js — Torn Foo \(v2\.3\.4\)/);
     assert.match(out, /torn-bar\.user\.js — Torn Bar \(v0\.9\.1\)/);
     assert.doesNotMatch(out, /notes\.txt/);
@@ -101,4 +101,29 @@ test("isValidUserscriptName accepts a bare *.user.js basename", () => {
   for (const ok of ["torn-dual-flyout.user.js", "oc_reward-values.user.js", "a.user.js", "torn.green.nav.user.js"]) {
     assert.equal(isValidUserscriptName(ok), true, "should accept: " + JSON.stringify(ok));
   }
+});
+
+// ── userscriptContext: installed-manifest branch ─────────────────────────
+test("userscriptContext: manifest lists the real installed set with accurate count", () => {
+  const manifest = [
+    { filename: "a.user.js", name: "Alpha", version: "1.2", enabled: true, source: "// SRC-A" },
+    { filename: "b.user.js", name: "Beta", version: "0.9", enabled: false, source: "// SRC-B" },
+  ];
+  const out = userscriptContext("hello", manifest);
+  assert.match(out, /installed userscripts \(2\)/i);
+  assert.match(out, /- a\.user\.js — Alpha \(v1\.2\)/);
+  assert.match(out, /- b\.user\.js — Beta \(v0\.9\) \[disabled\]/);
+  assert.ok(!out.includes("SRC-A"), "source not injected unless named");
+});
+
+test("userscriptContext: injects full source only for a named script", () => {
+  const manifest = [{ filename: "a.user.js", name: "Alpha", version: "1", enabled: true, source: "// SRC-A" }];
+  const out = userscriptContext("please edit a.user.js", manifest);
+  assert.match(out, /=== FULL SOURCE: a\.user\.js ===/);
+  assert.ok(out.includes("// SRC-A"));
+});
+
+test("userscriptContext: empty/absent manifest falls back to the served directory header", () => {
+  const out = userscriptContext("hi", []);          // empty array => fallback
+  assert.match(out, /on the Warboard server|no userscripts found|unavailable/i);
 });

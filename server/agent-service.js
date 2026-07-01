@@ -100,8 +100,30 @@ function mentioned(text, token) {
 // `dir` with its @name/@version; injects the FULL source ONLY for scripts the
 // owner NAMED in `userText` (by filename or basename-without-.user.js). `dir` is
 // injectable for tests.
-export function userscriptContext(userText, dir = SCRIPTS_DIR) {
+export function userscriptContext(userText, arg) {
   const text = String(userText || "");
+
+  // Preferred path: the app-provided installed manifest (the REAL installed set).
+  if (Array.isArray(arg) && arg.length) {
+    const lines = ["The owner's installed userscripts (" + arg.length + "):"];
+    const named = [];
+    for (const s of arg) {
+      const f = String((s && s.filename) || "").trim();
+      if (!f) continue;
+      const name = String((s && s.name) || "(no @name)");
+      const version = String((s && s.version) || "?");
+      const disabled = s && s.enabled === false ? " [disabled]" : "";
+      const desc = s && s.description ? " — " + String(s.description).slice(0, 80) : "";
+      lines.push("- " + f + " — " + name + " (v" + version + ")" + disabled + desc);
+      const base = f.replace(/\.user\.js$/, "");
+      if (mentioned(text, f) || mentioned(text, base)) named.push({ f, content: String((s && s.source) || "") });
+    }
+    for (const { f, content } of named) lines.push("", "=== FULL SOURCE: " + f + " ===", content);
+    return lines.join("\n");
+  }
+
+  // Fallback: no manifest (older app build) — the owner's served directory.
+  const dir = typeof arg === "string" ? arg : SCRIPTS_DIR;
   let files;
   try { files = readdirSync(dir).filter((f) => f.endsWith(".user.js")).sort(); }
   catch (e) { return "(userscript list unavailable: " + String(e && e.message || e) + ")"; }
@@ -118,9 +140,7 @@ export function userscriptContext(userText, dir = SCRIPTS_DIR) {
     const base = f.replace(/\.user\.js$/, "");
     if (mentioned(text, f) || mentioned(text, base)) named.push({ f, content });
   }
-  for (const { f, content } of named) {
-    lines.push("", "=== FULL SOURCE: " + f + " ===", content);
-  }
+  for (const { f, content } of named) lines.push("", "=== FULL SOURCE: " + f + " ===", content);
   return lines.join("\n");
 }
 
