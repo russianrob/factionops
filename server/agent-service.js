@@ -41,8 +41,33 @@ function childEnv() {
 // turn before a per-invocation stdio MCP server finishes connecting, so live MCP
 // tools don't reliably reach the turn. Instead we grab the page state via the
 // relay and prepend it to the prompt; the agent has NO tools.
-const SNAPSHOT_JS = 'var o={url:location.href,title:document.title};try{o.text=((document.body&&document.body.innerText)||"").replace(/\\s+/g," ").trim().slice(0,4000)}catch(e){o.text=""}try{var p=document.getElementById("fly-out-panel");if(p)o.flyoutOpen=/visible___/.test(p.className)}catch(e){}return JSON.stringify(o);';
-const SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT || "You are an assistant embedded in the Warboard iOS app, helping the owner (a Torn player and userscript developer) with the Torn game and their userscripts. You have NO tools: you cannot run code, read or write files, browse the web, or take any action. Each message is prefixed with a SNAPSHOT of the user's CURRENT Torn page (URL, title, visible text), then a USERSCRIPTS section listing the owner's installed userscripts (and the full source of any the owner named). Use that context plus your knowledge of Torn and web/userscript development to answer. If you need information not in the context, say what you'd want to see rather than inventing it. Never claim to have run a tool, executed code, or taken an action.\n\nEDITING USERSCRIPTS: You may help the owner edit a userscript, but you only PROPOSE changes — the owner reviews and deploys them. When you propose a change to a script, output the COMPLETE new file (not a diff, not a snippet). Immediately precede it with a line that is EXACTLY `===FILE: <filename>===` (the bare basename, e.g. `===FILE: torn-green-nav.user.js===`), then a fenced code block containing the whole file. Keep the existing `==UserScript==` header intact and BUMP the `@version` (increment the patch number). Only include ONE such proposal per reply, as the last thing in your message.";
+// Runs in the page world via the inspect relay; returns a JSON snapshot. Beyond
+// url/title/text it adds a depth-capped DOM skeleton (structure, not full HTML)
+// and recent console errors from the owner-only capture hook (window.__wbInspect).
+export const SNAPSHOT_JS = `
+var o = { url: location.href, title: document.title };
+try { o.text = ((document.body && document.body.innerText) || "").replace(/\\s+/g, " ").trim().slice(0, 4000); } catch (e) { o.text = ""; }
+try { var p = document.getElementById("fly-out-panel"); if (p) o.flyoutOpen = /visible___/.test(p.className); } catch (e) {}
+try {
+  var out = [];
+  (function walk(el, depth) {
+    if (!el || depth > 4 || out.length >= 80) return;
+    for (var i = 0; i < el.children.length; i++) {
+      if (out.length >= 80) break;
+      var c = el.children[i], tag = (c.tagName || "").toLowerCase();
+      if (!tag || tag === "script" || tag === "style" || tag === "svg" || tag === "noscript" || tag === "link") continue;
+      var id = c.id ? ("#" + c.id) : "";
+      var cls = (typeof c.className === "string" && c.className.trim()) ? ("." + c.className.trim().split(/\\s+/).slice(0, 2).join(".")) : "";
+      out.push(new Array(depth + 1).join("  ") + tag + id + cls);
+      walk(c, depth + 1);
+    }
+  })(document.body, 0);
+  if (out.length) o.skeleton = out.join("\\n");
+} catch (e) {}
+try { if (window.__wbInspect && window.__wbInspect.console && window.__wbInspect.console.length) o.console = window.__wbInspect.console.slice(-15); } catch (e) {}
+return JSON.stringify(o);
+`;
+const SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT || "You are an assistant embedded in the Warboard iOS app, helping the owner (a Torn player and userscript developer) with the Torn game and their userscripts. You have NO tools: you cannot run code, read or write files, browse the web, or take any action. Each message is prefixed with a SNAPSHOT of the user's CURRENT Torn page (URL, title, visible text, a compact DOM skeleton, and recent console errors/warnings if any), then a USERSCRIPTS section listing the owner's installed userscripts (and the full source of any the owner named). Use that context plus your knowledge of Torn and web/userscript development to answer. If you need information not in the context, say what you'd want to see rather than inventing it. Never claim to have run a tool, executed code, or taken an action.\n\nINSPECTING THE PAGE: The snapshot is limited. When you need more — an element's full HTML, a computed style, the value of a JS expression, console or network detail — you may request ONE read-only JavaScript query. Output a line that is EXACTLY `===INSPECT===` then a fenced code block whose body is a JS expression or IIFE that RETURNS a value (e.g. `document.querySelector('.rw-timer').outerHTML`, or `(function(){return getComputedStyle(document.querySelector('#x')).width})()`). The owner reviews and approves it before it runs on THEIR page; you then receive the result and continue — answer, or request another query. STRICTLY READ-ONLY: never click, submit, focus, navigate, or mutate the page, storage, or cookies. Keep results small — target a specific element, not the whole document. Put at most ONE `===INSPECT===` block per reply, as the last thing in your message, and never combine it with a `===FILE:===` proposal in the same reply.\n\nEDITING USERSCRIPTS: You may help the owner edit a userscript, but you only PROPOSE changes — the owner reviews and deploys them. When you propose a change to a script, output the COMPLETE new file (not a diff, not a snippet). Immediately precede it with a line that is EXACTLY `===FILE: <filename>===` (the bare basename, e.g. `===FILE: torn-green-nav.user.js===`), then a fenced code block containing the whole file. Keep the existing `==UserScript==` header intact and BUMP the `@version` (increment the patch number). Only include ONE such proposal per reply, as the last thing in your message.";
 // SECURITY: deny EVERY built-in tool so the agent has NO tools at all. Validated
 // live: with this list the agent's tool set is empty. An allow-list does NOT
 // restrict under default mode; only this complete --disallowed-tools under
@@ -109,6 +134,20 @@ export function parseProposal(text) {
   const filename = pathBasename(last[1].trim());
   if (!filename) return null;
   return { filename, content: last[2] };
+}
+
+// Detect an agent inspect request: a `===INSPECT===` line followed by a fenced
+// code block holding a read-only JS query. Returns { js } or null. The owner
+// approves it before it runs (routes.js /api/agent/inspect) — this only extracts.
+export function parseInspect(text) {
+  const s = String(text || "");
+  const re = /===INSPECT===[ \t]*\r?\n+```[^\n]*\r?\n([\s\S]*?)\r?\n?```/g;
+  let m, last = null;
+  while ((m = re.exec(s)) !== null) last = m;
+  if (!last) return null;
+  const js = last[1].trim();
+  if (!js) return null;
+  return { js };
 }
 
 // Deploy path-jail: a deployable userscript name is a bare basename ending in
@@ -206,6 +245,8 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal }) {
         if (ev.t === "delta") assistantText += ev.text || "";
         if (ev.t === "done") {
           const full = assistantText || ev.result || "";
+          const insp = parseInspect(full);
+          if (insp) forward({ t: "inspectRequest", js: insp.js });
           const prop = parseProposal(full);
           if (prop) forward({ t: "proposal", filename: prop.filename, content: prop.content });
         }

@@ -12,6 +12,7 @@ import axios from "axios";
 import { verifyTornApiKey, issueToken, verifyToken, requireAuth, isPoolEligible } from "./auth.js";
 import { handleStakeoutSync, resolveOwnerId } from "./stakeout-store.js";
 import { runAgentTurn, isValidUserscriptName } from "./agent-service.js";
+import { runJsOnDevice } from "./agent-relay-client.js";
 import { TOTP as _OTPAuthTOTP, Secret as _OTPAuthSecret } from "otpauth";
 import { readFileSync as _totpReadFile } from "node:fs";
 
@@ -476,6 +477,57 @@ router.post("/api/agent/message", requireAuth, (req, res, next) => {
   const ac = new AbortController();
   req.on("close", () => ac.abort());
   try {
+    const { sessionId: sid } = await runAgentTurn({ text, sessionId, signal: ac.signal, onEvent: send });
+    send({ t: "session", id: sid });
+    send({ t: "end" });
+  } catch (e) {
+    send({ t: "error", message: String((e && e.message) || e) });
+  }
+  res.end();
+});
+
+// Server-side read-only guard for inspect queries: defense-in-depth (the owner
+// also reviews every query) that rejects obvious mutation / navigation / network
+// / storage patterns before the JS runs on the owner's live, authenticated Torn
+// page. Not a hard sandbox — obfuscation can evade a regex, so the human approval
+// is the primary gate; this stops the blatant / prompt-injected cases.
+// Assignment patterns use `=(?!=)` so read-only comparisons (`.value === x`)
+// are NOT blocked — only actual writes (`.value = x`).
+const _INSPECT_BLOCK_RE = /\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|document\.cookie|localStorage|sessionStorage|indexedDB|\bimport\s*\(|\beval\s*\(|new\s+Function|\.innerHTML\s*=(?!=)|\.outerHTML\s*=(?!=)|\.value\s*=(?!=)|\.checked\s*=(?!=)|\.setAttribute\s*\(|\.click\s*\(|\.submit\s*\(|\.focus\s*\(|\.dispatchEvent\s*\(|\.appendChild\s*\(|\.insertBefore\s*\(|\.removeChild\s*\(|\.replaceWith\s*\(|location\s*=(?!=)|\.href\s*=(?!=)|\.src\s*=(?!=)|location\.(assign|replace|reload)|window\.open|history\.(push|replace|go|back|forward)/i;
+
+// owner → run an agent-proposed READ-ONLY inspect query on the live page, then
+// resume the turn with the result. The owner reviews the JS in the app before
+// approving; this endpoint runs it via the inspect relay and feeds the result
+// back to the agent (--resume) so it can continue.
+router.post("/api/agent/inspect", requireAuth, (req, res, next) => {
+  if (_inspectIsOwner(req)) return next();
+  return res.status(403).json({ error: "forbidden" });
+}, express.json({ limit: "64kb" }), async (req, res) => {
+  const js = (req.body && typeof req.body.js === "string") ? req.body.js : "";
+  const sessionId = (req.body && typeof req.body.sessionId === "string") ? req.body.sessionId : null;
+  if (!js.trim()) return res.status(400).json({ error: "empty js" });
+  if (!sessionId) return res.status(400).json({ error: "sessionId required" });
+  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
+  res.write(": preamble " + ".".repeat(1024) + "\n\n");
+  const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); if (typeof res.flush === "function") res.flush(); } catch {} };
+  const ac = new AbortController();
+  req.on("close", () => ac.abort());
+  try {
+    let ok, raw;
+    if (_INSPECT_BLOCK_RE.test(js)) {
+      ok = false;
+      raw = "REJECTED by the read-only guard: this query matches a mutation / navigation / network / storage pattern and was NOT run. Inspect queries must ONLY read the page (query elements, read properties/attributes, computed styles). Rewrite it as strictly read-only, or answer without it.";
+      send({ t: "inspectResult", ok: false });
+    } else {
+      const r = await runJsOnDevice(js, { timeoutMs: 12000 });
+      ok = !r.error;
+      raw = ok ? (r.value != null ? String(r.value) : "null") : ("ERROR: " + r.error);
+      send({ t: "inspectResult", ok });
+    }
+    const result = raw.length > 20000 ? (raw.slice(0, 20000) + "\n…[truncated]") : raw;
+    const text = "=== INSPECTION RESULT ===\nThe owner approved this read-only query you requested:\n" + js +
+      "\n\nResult:\n" + result +
+      "\n\nNow answer the user's question using this, or request another ===INSPECT=== query if you still need more.";
     const { sessionId: sid } = await runAgentTurn({ text, sessionId, signal: ac.signal, onEvent: send });
     send({ t: "session", id: sid });
     send({ t: "end" });
