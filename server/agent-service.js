@@ -157,20 +157,42 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal }) {
   const prompt = "=== CURRENT TORN PAGE SNAPSHOT ===\n" + snap +
     "\n\n=== USERSCRIPTS ===\n" + userscriptContext(text) +
     "\n\n=== USER MESSAGE ===\n" + String(text);
-  return new Promise((resolve) => {
-    const args = ["--print", prompt,
-      "--model", MODEL,
-      "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-      "--append-system-prompt", SYSTEM_PROMPT,
-      "--permission-mode", "bypassPermissions",
-      "--disallowed-tools", ...DISALLOWED];
-    if (sessionId) args.push("--resume", sessionId);
+  const baseArgs = ["--print", prompt,
+    "--model", MODEL,
+    "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+    "--append-system-prompt", SYSTEM_PROMPT,
+    "--permission-mode", "bypassPermissions",
+    "--disallowed-tools", ...DISALLOWED];
+
+  // iOS persists the sessionId across launches so the agent remembers past
+  // turns (--resume). But a stale id (server session gone) makes claude fail
+  // fast: "No conversation found", exit 1, NO init event — which would brick
+  // every future turn. So `attempt()` buffers events until the init/`session`
+  // event proves the process actually started; if a --resume run dies before
+  // init, we discard its output and transparently retry WITHOUT --resume (fresh
+  // session). The turn still answers — memory is lost, not the turn.
+  let currentChild = null;
+  // Seed from the signal's CURRENT state: a signal already aborted before this
+  // listener registers (the client disconnected during the snapshot fetch above)
+  // never fires "abort", so without the seed both spawns would run to completion
+  // for a client that is already gone.
+  let aborted = !!(signal && signal.aborted);
+  if (signal) signal.addEventListener("abort", () => { aborted = true; if (currentChild) currentChild.kill("SIGKILL"); }, { once: true });
+
+  const attempt = (useResume) => new Promise((resolve) => {
+    if (aborted) { resolve({ retry: false, resolvedSession: (useResume && sessionId) ? sessionId : null }); return; }
+    const args = baseArgs.slice();
+    if (useResume && sessionId) args.push("--resume", sessionId);
     const child = spawn(CLAUDE, args, { cwd: WORKDIR, env: childEnv(), stdio: ["ignore", "pipe", "pipe"] });
-    let resolvedSession = sessionId || null;
+    currentChild = child;
+    let resolvedSession = (useResume && sessionId) ? sessionId : null;
     let buf = "";
     let assistantText = "";
-    const killTimer = setTimeout(() => { onEvent({ t: "error", message: "agent turn timed out" }); child.kill("SIGKILL"); }, TURN_TIMEOUT_MS);
-    if (signal) signal.addEventListener("abort", () => child.kill("SIGKILL"), { once: true });
+    let sawInit = false;
+    let pending = [];                                  // held until init proves startup
+    const flush = () => { for (const ev of pending) onEvent(ev); pending = []; };
+    const forward = (ev) => { if (sawInit) onEvent(ev); else pending.push(ev); };
+    const killTimer = setTimeout(() => { forward({ t: "error", message: "agent turn timed out" }); child.kill("SIGKILL"); }, TURN_TIMEOUT_MS);
     child.stdout.on("data", (d) => {
       buf += d.toString();
       let nl;
@@ -179,20 +201,36 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal }) {
         if (!line) continue;
         let obj; try { obj = JSON.parse(line); } catch { continue; }
         const ev = normalizeStreamLine(obj);
-        if (ev) {
-          if (ev.t === "session") resolvedSession = ev.id;
-          if (ev.t === "delta") assistantText += ev.text || "";
-          if (ev.t === "done") {
-            const full = assistantText || ev.result || "";
-            const prop = parseProposal(full);
-            if (prop) onEvent({ t: "proposal", filename: prop.filename, content: prop.content });
-          }
-          onEvent(ev);
+        if (!ev) continue;
+        if (ev.t === "session") { sawInit = true; resolvedSession = ev.id; onEvent(ev); flush(); continue; }
+        if (ev.t === "delta") assistantText += ev.text || "";
+        if (ev.t === "done") {
+          const full = assistantText || ev.result || "";
+          const prop = parseProposal(full);
+          if (prop) forward({ t: "proposal", filename: prop.filename, content: prop.content });
         }
+        forward(ev);
       }
     });
-    child.stderr.on("data", (d) => onEvent({ t: "stderr", text: d.toString().slice(0, 500) }));
-    child.on("close", () => { clearTimeout(killTimer); resolve({ sessionId: resolvedSession }); });
-    child.on("error", (e) => { clearTimeout(killTimer); onEvent({ t: "error", message: String(e) }); resolve({ sessionId: resolvedSession }); });
+    child.stderr.on("data", (d) => forward({ t: "stderr", text: d.toString().slice(0, 500) }));
+    child.on("close", () => {
+      clearTimeout(killTimer);
+      if (currentChild === child) currentChild = null;
+      // A --resume run that never reached init = stale session → drop its output, signal retry.
+      if (!sawInit && useResume && !aborted) { resolve({ retry: true, resolvedSession: null }); return; }
+      flush();
+      resolve({ retry: false, resolvedSession });
+    });
+    child.on("error", (e) => {
+      clearTimeout(killTimer);
+      if (currentChild === child) currentChild = null;
+      forward({ t: "error", message: String(e) });
+      flush();
+      resolve({ retry: false, resolvedSession });
+    });
   });
+
+  let r = await attempt(!!sessionId);
+  if (r.retry && !aborted) r = await attempt(false);
+  return { sessionId: r.resolvedSession };
 }
