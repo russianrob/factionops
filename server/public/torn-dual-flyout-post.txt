@@ -18,6 +18,6 @@
 <img src="https://tornwar.com/torn-dual-flyout-shot.png" alt="Torn Dual Flyout menu opened on the right side">
 
 <h3>Install</h3>
-<p><a href="https://tornwar.com/scripts/torn-dual-flyout.user.js">Install Torn Dual Flyout</a></p>
+<p><a href="https://greasyfork.org/en/scripts/585201-torn-dual-flyout">Install Torn Dual Flyout on Greasy Fork</a></p>
 
 <p>If a swipe feels off or it doesn't play nice with your setup, post it here and I'll take a look.</p>
