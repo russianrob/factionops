@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.4.6
+// @version      1.4.7
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -22,6 +22,11 @@
     'border-top-left-radius:5px!important;border-top-right-radius:0!important;}' +
     'html.tmr-right #fly-out-panel:not([class*="visible___"]){transform:translateX(100%)!important;}' +
     'html.tmr-right #fly-out-panel[class*="visible___"]{box-shadow:-1px 0 5px rgba(0,0,0,.7)!important;}' +
+    'html.tmr-left #fly-out-panel{position:fixed!important;right:auto!important;left:0!important;top:36px!important;' +
+    'border-right:1px solid #444!important;border-left:0!important;' +
+    'border-top-right-radius:5px!important;border-top-left-radius:0!important;}' +
+    'html.tmr-left #fly-out-panel:not([class*="visible___"]){transform:translateX(-100%)!important;}' +
+    'html.tmr-left #fly-out-panel[class*="visible___"]{box-shadow:1px 0 5px rgba(0,0,0,.7)!important;}' +
     '#fly-out-menu-button::after{content:"◀";position:absolute;bottom:0;left:50%;transform:translateX(-50%);' +
     'font-size:11px;line-height:1;font-weight:700;background:linear-gradient(to top,#666,#888);' +
     '-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;pointer-events:none;}' +
@@ -35,9 +40,9 @@
   var CLOSE_DIST = 60;
   var HORIZ_RATIO = 2.0;
   var SYS_EDGE = 24;
-  var DEAD_TOP = 560;
+  var DEAD_TOP = 320;
 
-  function setSide(right) { html.classList.toggle("tmr-right", right); try { localStorage.setItem("tmr_side", right ? "r" : "l"); } catch (e) {} }
+  function setSide(right) { html.classList.toggle("tmr-right", right); html.classList.toggle("tmr-left", !right); try { localStorage.setItem("tmr_side", right ? "r" : "l"); } catch (e) {} }
   var savedSide = "r";
   try { savedSide = localStorage.getItem("tmr_side") || "r"; } catch (e) {}
   setSide(savedSide !== "l");
