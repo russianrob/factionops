@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.5.3
+// @version      1.5.4
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout.user.js
@@ -47,7 +47,10 @@
     'html.tdf-iconsonly #fly-out-panel [class*="toggleBtn___"]{display:none!important;}' +
     'html.tdf-iconsonly #fly-out-panel [class*="accountLinksWrap___"]{display:block!important;height:auto!important;}' +
     'html.tdf-iconsonly #fly-out-panel [class*="accountLinks___"]{flex-direction:column!important;align-items:flex-start!important;height:auto!important;}' +
-    'html.tdf-iconsonly #fly-out-panel [class*="accountLinks___"] [class*="wrap___"]{width:auto!important;margin:0!important;}';
+    'html.tdf-iconsonly #fly-out-panel [class*="accountLinks___"] [class*="wrap___"]{width:auto!important;margin:0!important;}' +
+    'html.tdf-sticky #sidebar [class*="overlay___"]{display:none!important;}' +
+    'html.tdf-sticky{overflow-y:auto!important;}' +
+    'html.tdf-sticky body{overflow:visible!important;}';
   var s = document.createElement("style");
   s.id = "torn-menu-right";
   s.textContent = css;
@@ -66,6 +69,10 @@
   function iconsOnly() { try { return localStorage.getItem("tdf_iconsonly") === "1"; } catch (e) { return false; } }
   function applyIconsOnly(on) { html.classList.toggle("tdf-iconsonly", !!on); try { localStorage.setItem("tdf_iconsonly", on ? "1" : "0"); } catch (e) {} }
   applyIconsOnly(iconsOnly());
+
+  function sticky() { try { return localStorage.getItem("tdf_sticky") === "1"; } catch (e) { return false; } }
+  function applySticky(on) { html.classList.toggle("tdf-sticky", !!on); try { localStorage.setItem("tdf_sticky", on ? "1" : "0"); } catch (e) {} }
+  applySticky(sticky());
 
   var start = null;
 
@@ -149,10 +156,12 @@
     d.id = "tdf-settings";
     d.className = "tdf-hidden";
     d.innerHTML = '<h4>Torn Dual Flyout <span class="tdf-x">×</span></h4>' +
-      '<label><input type="checkbox" class="tdf-iconsonly-cb"' + (iconsOnly() ? " checked" : "") + "> Icons only (hide menu names)</label>";
+      '<label><input type="checkbox" class="tdf-iconsonly-cb"' + (iconsOnly() ? " checked" : "") + "> Icons only (hide menu names)</label>" +
+      '<label><input type="checkbox" class="tdf-sticky-cb"' + (sticky() ? " checked" : "") + "> Sticky (scroll page while menu open)</label>";
     (document.body || html).appendChild(d);
     d.querySelector(".tdf-x").addEventListener("click", function () { d.classList.add("tdf-hidden"); });
     d.querySelector(".tdf-iconsonly-cb").addEventListener("change", function (ev) { applyIconsOnly(ev.target.checked); });
+    d.querySelector(".tdf-sticky-cb").addEventListener("change", function (ev) { applySticky(ev.target.checked); });
   }
   function toggleSettings() {
     buildSettings();
