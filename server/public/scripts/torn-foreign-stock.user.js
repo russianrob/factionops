@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.28
+// @version      0.9.29
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.28";
+  var SCRIPT_VERSION = "0.9.29";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -356,6 +356,7 @@
   function setHidden(v) { gmSet("tfs_hidden", !!v); }
   function getKey() { return gmGet("tfs_key", "") || ""; }
   function setKey(k) { gmSet("tfs_key", String(k || "").trim()); }
+  function maskKey(k) { k = String(k || ""); return k.length > 4 ? (new Array(k.length - 3).join("•") + k.slice(-4)) : k; }
   function tfsMsg(s) { var m = document.querySelector("#tfs-bar .tfs-msg"); if (m) m.textContent = s ? (" " + s) : ""; }
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]; }); }
 
@@ -769,7 +770,7 @@
       '<button class="tfs-filterbtn">Filters ▾</button>' +
       '<button class="tfs-hide" title="Hide or show the stock tables"></button>' +
       '<span class="tfs-keywrap" style="display:' + (mode === "profit" ? "inline-flex" : "none") + '">' +
-      '<input class="tfs-key" type="password" placeholder="Torn API key for profit" value="' + getKey().replace(/"/g, "") + '">' +
+      '<input class="tfs-key" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Torn API key for profit"' + (getKey() ? ' value="' + maskKey(getKey()) + '" data-masked="1"' : '') + '>' +
       '<button class="tfs-save">Save</button></span>' +
       '<span class="tfs-msg"></span>';
     function paint() {
@@ -787,10 +788,16 @@
     bar.querySelector(".tfs-refresh").addEventListener("click", function () { onChange(true); });
     bar.querySelector(".tfs-hide").addEventListener("click", function () { setHidden(!getHidden()); paint(); onChange(false); });
     bar.querySelector(".tfs-save").addEventListener("click", function () {
-      var v = bar.querySelector(".tfs-key").value.trim();
-      if (!v) { tfsMsg("enter a key"); return; }
-      setKey(v); tfsMsg("saved"); onChange(true);
+      var el = bar.querySelector(".tfs-key");
+      if (el.getAttribute("data-masked") === "1") { tfsMsg("unchanged"); return; }
+      var v = el.value.trim();
+      if (!v) { tfsMsg(getKey() ? "unchanged" : "enter a key"); return; }
+      setKey(v); el.value = maskKey(v); el.setAttribute("data-masked", "1"); tfsMsg("saved"); onChange(true);
     });
+    (function () {
+      var keyEl = bar.querySelector(".tfs-key");
+      keyEl.addEventListener("focus", function () { if (keyEl.getAttribute("data-masked") === "1") { keyEl.value = ""; keyEl.removeAttribute("data-masked"); } });
+    })();
     var focusSel = bar.querySelector(".tfs-focus");
     if (focusSel) {
       focusSel.value = gmGet("tfs_focus_country", "");
