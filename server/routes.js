@@ -519,7 +519,10 @@ router.post("/api/agent/inspect", requireAuth, (req, res, next) => {
       raw = "REJECTED by the read-only guard: this query matches a mutation / navigation / network / storage pattern and was NOT run. Inspect queries must ONLY read the page (query elements, read properties/attributes, computed styles). Rewrite it as strictly read-only, or answer without it.";
       send({ t: "inspectResult", ok: false });
     } else {
-      const r = await runJsOnDevice(js, { timeoutMs: 12000 });
+      // The on-device runner wraps the JS as a function body, so a bare
+      // expression (or IIFE) needs an explicit `return` to yield a value.
+      const jsToRun = /^\s*return\b/.test(js) ? js : ("return (" + js + ")");
+      const r = await runJsOnDevice(jsToRun, { timeoutMs: 12000 });
       ok = !r.error;
       raw = ok ? (r.value != null ? String(r.value) : "null") : ("ERROR: " + r.error);
       send({ t: "inspectResult", ok });
