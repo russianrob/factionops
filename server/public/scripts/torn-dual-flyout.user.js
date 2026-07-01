@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.4.8
+// @version      1.5.0
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout.user.js
@@ -32,7 +32,18 @@
     '#fly-out-menu-button::after{content:"◀";position:absolute;bottom:0;left:50%;transform:translateX(-50%);' +
     'font-size:11px;line-height:1;font-weight:700;background:linear-gradient(to top,#666,#888);' +
     '-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;pointer-events:none;}' +
-    'html.tmr-right #fly-out-menu-button::after{content:"▶";}';
+    'html.tmr-right #fly-out-menu-button::after{content:"▶";}' +
+    '#tdf-cog{position:absolute;background:transparent;border:0;padding:0;margin:0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:6;-webkit-tap-highlight-color:transparent;}' +
+    '#tdf-cog svg{display:block;}' +
+    '#tdf-settings{position:fixed;top:40px;left:8px;right:8px;margin:0 auto;max-width:280px;z-index:2147483000;background:#0e0f12;border:1px solid #2e333d;border-radius:8px;padding:10px 12px;color:#dde2e8;font:13px -apple-system,system-ui,sans-serif;box-shadow:0 8px 28px rgba(0,0,0,.65);}' +
+    '#tdf-settings.tdf-hidden{display:none;}' +
+    '#tdf-settings h4{margin:0 0 6px;font-size:13px;font-weight:700;color:#f3f4f6;display:flex;justify-content:space-between;align-items:center;}' +
+    '#tdf-settings .tdf-x{cursor:pointer;color:#8a8f98;font-size:18px;line-height:1;padding:0 4px;}' +
+    '#tdf-settings label{display:flex;align-items:center;gap:9px;padding:7px 0;cursor:pointer;}' +
+    '#tdf-settings input{width:16px;height:16px;accent-color:#4ade80;margin:0;flex:0 0 auto;}' +
+    'html.tdf-iconsonly #fly-out-panel a{font-size:0!important;}' +
+    'html.tdf-iconsonly #fly-out-panel a svg,html.tdf-iconsonly #fly-out-panel a img{font-size:initial!important;}' +
+    'html.tdf-iconsonly #fly-out-panel{width:auto!important;min-width:0!important;}';
   var s = document.createElement("style");
   s.id = "torn-menu-right";
   s.textContent = css;
@@ -47,6 +58,10 @@
   var savedSide = "r";
   try { savedSide = localStorage.getItem("tmr_side") || "r"; } catch (e) {}
   setSide(savedSide !== "l");
+
+  function iconsOnly() { try { return localStorage.getItem("tdf_iconsonly") === "1"; } catch (e) { return false; } }
+  function applyIconsOnly(on) { html.classList.toggle("tdf-iconsonly", !!on); try { localStorage.setItem("tdf_iconsonly", on ? "1" : "0"); } catch (e) {} }
+  applyIconsOnly(iconsOnly());
 
   var start = null;
 
@@ -123,6 +138,42 @@
       else if (isOpen()) toggleMenu();
     }, 0);
   }
+
+  function buildSettings() {
+    if (document.getElementById("tdf-settings")) return;
+    var d = document.createElement("div");
+    d.id = "tdf-settings";
+    d.className = "tdf-hidden";
+    d.innerHTML = '<h4>Torn Dual Flyout <span class="tdf-x">×</span></h4>' +
+      '<label><input type="checkbox" class="tdf-iconsonly-cb"' + (iconsOnly() ? " checked" : "") + "> Icons only (hide menu names)</label>";
+    (document.body || html).appendChild(d);
+    d.querySelector(".tdf-x").addEventListener("click", function () { d.classList.add("tdf-hidden"); });
+    d.querySelector(".tdf-iconsonly-cb").addEventListener("change", function (ev) { applyIconsOnly(ev.target.checked); });
+  }
+  function toggleSettings() {
+    buildSettings();
+    var d = document.getElementById("tdf-settings");
+    if (d) d.classList.toggle("tdf-hidden");
+  }
+  var COG_SVG = '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="#8a8f98" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.63-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.13 8.48a.49.49 0 0 0 .12.61l2.03 1.58c-.05.31-.07.62-.07.94 0 .32.02.63.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.14.24.44.32.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.26.42.49.42h4c.23 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.15.06.45-.02.59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.02-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>';
+  function ensureCog() {
+    if (document.getElementById("tdf-cog")) return;
+    var b = menuButton();
+    if (!b || !b.parentElement || !mobileActive()) return;
+    var cog = document.createElement("button");
+    cog.id = "tdf-cog";
+    cog.type = "button";
+    cog.setAttribute("aria-label", "Torn Dual Flyout settings");
+    cog.innerHTML = COG_SVG;
+    cog.style.top = b.offsetTop + "px";
+    cog.style.left = (b.offsetLeft + b.offsetWidth + 4) + "px";
+    cog.style.width = b.offsetWidth + "px";
+    cog.style.height = b.offsetHeight + "px";
+    cog.addEventListener("click", function (ev) { ev.preventDefault(); ev.stopPropagation(); toggleSettings(); });
+    b.parentElement.appendChild(cog);
+  }
+  setInterval(ensureCog, 800);
+  ensureCog();
 
   document.addEventListener("touchstart", onStart, { passive: true, capture: true });
   document.addEventListener("touchmove", onMove, { passive: true, capture: true });
