@@ -3,7 +3,7 @@
  */
 
 import express, { Router } from "express";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdirSync, statSync } from "node:fs";
 import { join as pathJoin, dirname as pathDirname, resolve as pathResolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -93,7 +93,7 @@ import * as webauthn from "./webauthn.js";
 import busboy from "busboy";
 import { createWriteStream as _uploadCreateWriteStream } from "node:fs";
 import { join as _uploadPathJoin, basename as _uploadBasename, extname as _uploadExtname } from "node:path";
-import { timingSafeEqual as _uploadTimingSafeEqual } from "node:crypto";
+import { timingSafeEqual as _uploadTimingSafeEqual, randomBytes as _shotRandomBytes } from "node:crypto";
 import { getAllowedBroadcastRoles, updateFactionSettings } from "./store.js";
 import { fetchFactionMembers, fetchFactionChain, fetchRankedWar, fetchFactionBasic, fetchRankedWarReport, fetchFactionAttacks } from "./torn-api.js";
 
@@ -428,6 +428,38 @@ router.post("/api/inspect/result", requireAuth, (req, res, next) => { if (_inspe
 router.get("/api/inspect/result", (req, res) => {
   if (!_inspectOperator(req, res)) return;
   res.json({ results: inspectRelay.drainResults(_INSPECT_OWNER) });
+});
+
+// owner → gyazo-style share: upload a base64 PNG of the current Torn page, save
+// it under the statically-served public dir, return an unguessable public URL.
+const _SHOT_DIR = pathResolve("/opt/warboard/server/public/s");
+const _SHOT_ORIGIN = process.env.PUBLIC_ORIGIN || "https://tornwar.com";
+const _SHOT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;          // 30-day retention
+function _pruneOldScreenshots() {
+  try {
+    const now = Date.now();
+    for (const f of readdirSync(_SHOT_DIR)) {
+      if (!f.endsWith(".png")) continue;
+      try { if (now - statSync(pathJoin(_SHOT_DIR, f)).mtimeMs > _SHOT_MAX_AGE_MS) unlinkSync(pathJoin(_SHOT_DIR, f)); } catch {}
+    }
+  } catch {}
+}
+router.post("/api/screenshot", requireAuth, (req, res, next) => {
+  if (_inspectIsOwner(req)) return next();
+  return res.status(403).json({ error: "forbidden" });
+}, express.json({ limit: "16mb" }), (req, res) => {
+  const raw = (req.body && typeof req.body.png === "string") ? req.body.png.replace(/^data:image\/png;base64,/, "") : "";
+  if (!raw) return res.status(400).json({ error: "png (base64) required" });
+  let buf;
+  try { buf = Buffer.from(raw, "base64"); } catch { return res.status(400).json({ error: "bad base64" }); }
+  if (buf.length < 8 || buf.length > 16 * 1024 * 1024) return res.status(400).json({ error: "empty or too large" });
+  if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)) return res.status(400).json({ error: "not a png" });
+  try { mkdirSync(_SHOT_DIR, { recursive: true }); } catch {}
+  const file = _shotRandomBytes(8).toString("hex") + ".png";
+  try { writeFileSync(pathJoin(_SHOT_DIR, file), buf, { mode: 0o644 }); }
+  catch { return res.status(500).json({ error: "write failed" }); }
+  _pruneOldScreenshots();
+  return res.json({ ok: true, url: `${_SHOT_ORIGIN}/s/${file}` });
 });
 
 // owner → chat with the in-app agent; SSE stream of normalized turn events

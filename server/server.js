@@ -87,7 +87,13 @@ app.use(
 // carry BSP + FFScouter estimates for every enemy + own faction member
 // in a ranked war (can hit a few hundred kb). 50kb was tripping 413s
 // for members with large BSP caches.
-app.use(express.json({ limit: '1mb' }));
+// /api/screenshot carries base64 PNGs (native-res Torn page shots) up to 16mb,
+// so it's exempted here and parsed by its own route-level express.json. This
+// global parser would otherwise consume the body first (body-parser sets
+// req._body, making the route-level 16mb limit a dead no-op) and 413 anything
+// over 1mb before the route runs.
+const _json1mb = express.json({ limit: '1mb' });
+app.use((req, res, next) => req.path === '/api/screenshot' ? next() : _json1mb(req, res, next));
 
 // ── Security headers ───────────────────────────────────────────────────────
 // Helmet defaults Cross-Origin-Resource-Policy to "same-origin", which
