@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.4.7
+// @version      1.4.8
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -40,7 +40,6 @@
   var CLOSE_DIST = 60;
   var HORIZ_RATIO = 2.0;
   var SYS_EDGE = 24;
-  var DEAD_TOP = 320;
 
   function setSide(right) { html.classList.toggle("tmr-right", right); html.classList.toggle("tmr-left", !right); try { localStorage.setItem("tmr_side", right ? "r" : "l"); } catch (e) {} }
   var savedSide = "r";
@@ -72,10 +71,20 @@
     } catch (err) {}
   }
 
+  function onScrollStrip(el) {
+    for (var n = el; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      if (n.scrollWidth > n.clientWidth + 4) {
+        var ox = getComputedStyle(n).overflowX;
+        if (ox === "auto" || ox === "scroll") return true;
+      }
+    }
+    return false;
+  }
+
   function onStart(e) {
     if (!e.touches || e.touches.length !== 1 || !mobileActive()) { start = null; return; }
     var t = e.touches[0];
-    if (!isOpen() && t.clientY < Math.min(DEAD_TOP, window.innerHeight * 0.7)) { start = null; return; }
+    if (!isOpen() && onScrollStrip(e.target)) { start = null; return; }
     start = { x: t.clientX, y: t.clientY, id: t.identifier, open: isOpen(), sideSet: false };
   }
 
