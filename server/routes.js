@@ -4,12 +4,14 @@
 
 import express, { Router } from "express";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
-import { join as pathJoin, dirname as pathDirname } from "node:path";
+import { join as pathJoin, dirname as pathDirname, resolve as pathResolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from 'node:url';
 import axios from "axios";
 import { verifyTornApiKey, issueToken, verifyToken, requireAuth, isPoolEligible } from "./auth.js";
 import { handleStakeoutSync, resolveOwnerId } from "./stakeout-store.js";
-import { runAgentTurn } from "./agent-service.js";
+import { runAgentTurn, isValidUserscriptName } from "./agent-service.js";
 import { TOTP as _OTPAuthTOTP, Secret as _OTPAuthSecret } from "otpauth";
 import { readFileSync as _totpReadFile } from "node:fs";
 
@@ -449,6 +451,70 @@ router.post("/api/agent/message", requireAuth, (req, res, next) => {
     send({ t: "error", message: String((e && e.message) || e) });
   }
   res.end();
+});
+
+// owner → deploy an agent-proposed userscript edit (propose → confirm → deploy).
+// Path-JAILED: filename must be a bare *.user.js basename resolving INSIDE the
+// scripts dir. Runs `node --check` on a temp file first (bad syntax never
+// touches the served file), then commits + pushes, then verifies it's served.
+const _AGENT_SCRIPTS_DIR = pathResolve("/opt/warboard/server/public/scripts");
+const _AGENT_REPO_DIR = "/opt/warboard";
+router.post("/api/agent/deploy", requireAuth, (req, res, next) => {
+  if (_inspectIsOwner(req)) return next();
+  return res.status(403).json({ error: "forbidden" });
+}, express.json({ limit: "512kb" }), async (req, res) => {
+  const filename = (req.body && typeof req.body.filename === "string") ? req.body.filename.trim() : "";
+  const content = (req.body && typeof req.body.content === "string") ? req.body.content : "";
+  if (!isValidUserscriptName(filename)) return res.status(400).json({ error: "invalid filename — must be a bare *.user.js basename" });
+  if (!content.trim()) return res.status(400).json({ error: "empty content" });
+  // Path jail: the resolved target MUST live directly inside the scripts dir.
+  const target = pathResolve(_AGENT_SCRIPTS_DIR, filename);
+  if (pathDirname(target) !== _AGENT_SCRIPTS_DIR) return res.status(400).json({ error: "path escape" });
+
+  // 1. syntax-gate on a throwaway temp file — the real file is untouched on fail.
+  let tmp = pathJoin(tmpdir(), "agent-deploy-" + Date.now() + "-" + filename);
+  try {
+    writeFileSync(tmp, content, "utf8");
+    const chk = spawnSync(process.execPath, ["--check", tmp], { encoding: "utf8", timeout: 15000 });
+    if (chk.status !== 0) return res.status(400).json({ error: "syntax check failed", stderr: String(chk.stderr || chk.stdout || "").slice(0, 2000) });
+  } catch (e) {
+    return res.status(400).json({ error: "syntax check error: " + String(e && e.message || e) });
+  } finally {
+    try { unlinkSync(tmp); } catch {}
+  }
+
+  // 2. write the served file.
+  try { writeFileSync(target, content, "utf8"); }
+  catch (e) { return res.status(500).json({ ok: false, error: "write failed: " + String(e && e.message || e) }); }
+
+  // 3. git add / commit / push from the repo root.
+  const rel = "public/scripts/" + filename;
+  const git = (args) => spawnSync("git", ["-C", _AGENT_REPO_DIR, ...args], { encoding: "utf8", timeout: 60000 });
+  try {
+    const add = git(["add", rel]);
+    if (add.status !== 0) throw new Error("git add: " + String(add.stderr || "").slice(0, 500));
+    const commit = git(["commit", "-m", "agent-deploy " + filename]);
+    if (commit.status !== 0 && !/nothing to commit/i.test(String(commit.stdout) + String(commit.stderr))) {
+      throw new Error("git commit: " + String(commit.stderr || commit.stdout || "").slice(0, 500));
+    }
+    const push = git(["push", "origin", "HEAD"]);
+    if (push.status !== 0) throw new Error("git push: " + String(push.stderr || "").slice(0, 500));
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e && e.message || e) });
+  }
+
+  // 4. verify it's live behind the static mount (best-effort; grab @version).
+  let served = false, version = null;
+  try {
+    const r = await axios.get("http://localhost:3000/scripts/" + filename, { timeout: 8000, responseType: "text", validateStatus: () => true });
+    served = r.status === 200;
+    if (served && typeof r.data === "string") {
+      const m = r.data.match(/^\/\/\s*@version\s+(.+?)\s*$/m);
+      version = m ? m[1].trim() : null;
+    }
+  } catch {}
+
+  return res.json({ ok: true, filename, served, version });
 });
 
 
