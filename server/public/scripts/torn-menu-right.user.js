@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Torn Menu Right
+// @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.4.0
-// @description  Two-way swipe for Torn's mobile menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
+// @version      1.4.1
+// @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
