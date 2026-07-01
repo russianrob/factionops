@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import axios from "axios";
 import { verifyTornApiKey, issueToken, verifyToken, requireAuth, isPoolEligible } from "./auth.js";
 import { handleStakeoutSync, resolveOwnerId } from "./stakeout-store.js";
+import { runAgentTurn } from "./agent-service.js";
 import { TOTP as _OTPAuthTOTP, Secret as _OTPAuthSecret } from "otpauth";
 import { readFileSync as _totpReadFile } from "node:fs";
 
@@ -414,7 +415,7 @@ router.get("/api/inspect/cmd", requireAuth, (req, res) => {
 });
 
 // device → post a JS result or base64 PNG screenshot (owner JWT checked BEFORE the 12mb parse)
-router.post("/api/inspect/result", requireAuth, (req, res, next) => { if (_inspectIsOwner(req)) next(); else res.status(403).json({ error: "forbidden" }); }, express.json({ limit: "12mb" }), (req, res) => {
+router.post("/api/inspect/result", requireAuth, (req, res, next) => { if (_inspectIsOwner(req)) next(); else res.status(403).json({ error: "forbidden" }); }, express.json({ limit: "64mb" }), (req, res) => {
   const b = req.body || {};
   if (b.png) inspectRelay.saveScreenshot(_INSPECT_OWNER, b.id, String(b.png));
   else inspectRelay.putResult(_INSPECT_OWNER, { id: b.id || null, kind: "js", result: b.result, error: b.error });
@@ -425,6 +426,29 @@ router.post("/api/inspect/result", requireAuth, (req, res, next) => { if (_inspe
 router.get("/api/inspect/result", (req, res) => {
   if (!_inspectOperator(req, res)) return;
   res.json({ results: inspectRelay.drainResults(_INSPECT_OWNER) });
+});
+
+// owner → chat with the in-app agent; SSE stream of normalized turn events
+router.post("/api/agent/message", requireAuth, (req, res, next) => {
+  if (_inspectIsOwner(req)) return next();
+  return res.status(403).json({ error: "forbidden" });
+}, express.json({ limit: "64kb" }), async (req, res) => {
+  const text = (req.body && typeof req.body.text === "string") ? req.body.text : "";
+  const sessionId = (req.body && typeof req.body.sessionId === "string") ? req.body.sessionId : null;
+  if (!text.trim()) return res.status(400).json({ error: "empty message" });
+  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
+  res.write(": preamble " + ".".repeat(1024) + "\n\n");
+  const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); if (typeof res.flush === "function") res.flush(); } catch {} };
+  const ac = new AbortController();
+  req.on("close", () => ac.abort());
+  try {
+    const { sessionId: sid } = await runAgentTurn({ text, sessionId, signal: ac.signal, onEvent: send });
+    send({ t: "session", id: sid });
+    send({ t: "end" });
+  } catch (e) {
+    send({ t: "error", message: String((e && e.message) || e) });
+  }
+  res.end();
 });
 
 

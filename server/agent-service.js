@@ -12,6 +12,23 @@ const AGENT_HOME = process.env.AGENT_HOME || "/opt/warboard/server/data/agent-ho
 // warboard's own long-lived Claude token (setup-token), read per-turn so rotation is picked up.
 const TOKEN_FILE = process.env.AGENT_CLAUDE_TOKEN_FILE || "/opt/warboard/server/data/.agent-claude-token";
 function agentToken() { try { return readFileSync(TOKEN_FILE, "utf8").trim(); } catch { return ""; } }
+// Give the child a CLEAN, minimal env — do NOT inherit the warboard server's env.
+// The server was started from inside a Claude Code session, so its env carries
+// CLAUDECODE / CLAUDE_CODE_* (session id, entrypoint, tmpdir, …) plus lots of
+// server vars; inheriting any of it makes the spawned agent hang (it thinks it's
+// a nested session). Only what claude needs: PATH, HOME (isolated config), the
+// OAuth token, locale/tmp.
+function childEnv() {
+  return {
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    HOME: AGENT_HOME,
+    USER: "warboard",
+    LOGNAME: "warboard",
+    LANG: process.env.LANG || "C.UTF-8",
+    TMPDIR: "/tmp",
+    CLAUDE_CODE_OAUTH_TOKEN: agentToken(),
+  };
+}
 // Page access is via SNAPSHOT INJECTION (not MCP): headless -p fires the model
 // turn before a per-invocation stdio MCP server finishes connecting, so live MCP
 // tools don't reliably reach the turn. Instead we grab the page state via the
@@ -69,7 +86,7 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal }) {
       "--permission-mode", "bypassPermissions",
       "--disallowed-tools", ...DISALLOWED];
     if (sessionId) args.push("--resume", sessionId);
-    const child = spawn(CLAUDE, args, { cwd: WORKDIR, env: { ...process.env, HOME: AGENT_HOME, CLAUDE_CODE_OAUTH_TOKEN: agentToken() }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(CLAUDE, args, { cwd: WORKDIR, env: childEnv(), stdio: ["ignore", "pipe", "pipe"] });
     let resolvedSession = sessionId || null;
     let buf = "";
     const killTimer = setTimeout(() => { onEvent({ t: "error", message: "agent turn timed out" }); child.kill("SIGKILL"); }, TURN_TIMEOUT_MS);
