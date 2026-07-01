@@ -462,7 +462,7 @@ const _AGENT_REPO_DIR = "/opt/warboard";
 router.post("/api/agent/deploy", requireAuth, (req, res, next) => {
   if (_inspectIsOwner(req)) return next();
   return res.status(403).json({ error: "forbidden" });
-}, express.json({ limit: "512kb" }), async (req, res) => {
+}, express.json({ limit: "4mb" }), async (req, res) => {
   const filename = (req.body && typeof req.body.filename === "string") ? req.body.filename.trim() : "";
   const content = (req.body && typeof req.body.content === "string") ? req.body.content : "";
   if (!isValidUserscriptName(filename)) return res.status(400).json({ error: "invalid filename — must be a bare *.user.js basename" });
@@ -471,8 +471,10 @@ router.post("/api/agent/deploy", requireAuth, (req, res, next) => {
   const target = pathResolve(_AGENT_SCRIPTS_DIR, filename);
   if (pathDirname(target) !== _AGENT_SCRIPTS_DIR) return res.status(400).json({ error: "path escape" });
 
-  // 1. syntax-gate on a throwaway temp file — the real file is untouched on fail.
-  let tmp = pathJoin(tmpdir(), "agent-deploy-" + Date.now() + "-" + filename);
+  // 1. syntax-gate on a temp file in /tmp (world-writable). NOT os.tmpdir() — the
+  //    server inherited a polluted, warboard-unwritable session TMPDIR. Real file
+  //    untouched unless this passes.
+  const tmp = "/tmp/agent-deploy-check-" + process.pid + "-" + Date.now() + ".js";
   try {
     writeFileSync(tmp, content, "utf8");
     const chk = spawnSync(process.execPath, ["--check", tmp], { encoding: "utf8", timeout: 15000 });
@@ -488,8 +490,8 @@ router.post("/api/agent/deploy", requireAuth, (req, res, next) => {
   catch (e) { return res.status(500).json({ ok: false, error: "write failed: " + String(e && e.message || e) }); }
 
   // 3. git add / commit / push from the repo root.
-  const rel = "public/scripts/" + filename;
-  const git = (args) => spawnSync("git", ["-C", _AGENT_REPO_DIR, ...args], { encoding: "utf8", timeout: 60000 });
+  const rel = target.slice(_AGENT_REPO_DIR.length + 1);   // repo-relative path to the jailed target (e.g. server/public/scripts/x)
+  const git = (args) => spawnSync("git", ["-C", _AGENT_REPO_DIR, "-c", "safe.directory=*", "-c", "user.name=Warboard Agent", "-c", "user.email=agent@tornwar.com", ...args], { encoding: "utf8", timeout: 60000, env: { ...process.env, HOME: "/tmp" } });
   try {
     const add = git(["add", rel]);
     if (add.status !== 0) throw new Error("git add: " + String(add.stderr || "").slice(0, 500));
