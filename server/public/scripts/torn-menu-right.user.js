@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Menu Right
 // @namespace    RussianRob
-// @version      1.3.0
-// @description  Two-way swipe for Torn's mobile menu: swipe left opens it on the right, swipe right opens it on the left. Swipe back toward its edge to close.
+// @version      1.4.0
+// @description  Two-way swipe for Torn's mobile menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
@@ -21,7 +21,11 @@
     'border-left:1px solid #444!important;border-right:0!important;' +
     'border-top-left-radius:5px!important;border-top-right-radius:0!important;}' +
     'html.tmr-right #fly-out-panel:not([class*="visible___"]){transform:translateX(100%)!important;}' +
-    'html.tmr-right #fly-out-panel[class*="visible___"]{box-shadow:-1px 0 5px rgba(0,0,0,.7)!important;}';
+    'html.tmr-right #fly-out-panel[class*="visible___"]{box-shadow:-1px 0 5px rgba(0,0,0,.7)!important;}' +
+    '#fly-out-menu-button::after{content:"◀";position:absolute;bottom:0;left:50%;transform:translateX(-50%);' +
+    'font-size:11px;line-height:1;font-weight:700;background:linear-gradient(to top,#666,#888);' +
+    '-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;pointer-events:none;}' +
+    'html.tmr-right #fly-out-menu-button::after{content:"▶";}';
   var s = document.createElement("style");
   s.id = "torn-menu-right";
   s.textContent = css;
