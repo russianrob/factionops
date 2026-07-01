@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Menu Right
 // @namespace    RussianRob
-// @version      1.2.1
-// @description  Moves Torn's mobile slide-out menu to the right edge and mirrors the open/close swipe (swipe left to open, swipe right to close).
+// @version      1.3.0
+// @description  Two-way swipe for Torn's mobile menu: swipe left opens it on the right, swipe right opens it on the left. Swipe back toward its edge to close.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
@@ -14,12 +14,14 @@
   if (window.__tornMenuRight) return;
   window.__tornMenuRight = true;
 
+  var html = document.documentElement;
+
   var css =
-    '#fly-out-panel{position:fixed!important;left:auto!important;right:0!important;top:36px!important;' +
+    'html.tmr-right #fly-out-panel{position:fixed!important;left:auto!important;right:0!important;top:36px!important;' +
     'border-left:1px solid #444!important;border-right:0!important;' +
     'border-top-left-radius:5px!important;border-top-right-radius:0!important;}' +
-    '#fly-out-panel:not([class*="visible___"]){transform:translateX(100%)!important;}' +
-    '#fly-out-panel[class*="visible___"]{box-shadow:-1px 0 5px rgba(0,0,0,.7)!important;}';
+    'html.tmr-right #fly-out-panel:not([class*="visible___"]){transform:translateX(100%)!important;}' +
+    'html.tmr-right #fly-out-panel[class*="visible___"]{box-shadow:-1px 0 5px rgba(0,0,0,.7)!important;}';
   var s = document.createElement("style");
   s.id = "torn-menu-right";
   s.textContent = css;
@@ -29,6 +31,9 @@
   var CLOSE_DIST = 60;
   var HORIZ_RATIO = 2.0;
   var SYS_EDGE = 24;
+
+  function setSide(right) { html.classList.toggle("tmr-right", right); }
+  setSide(true);
 
   var start = null;
 
@@ -69,9 +74,14 @@
     if (!t) return;
     var dx = t.clientX - s0.x, dy = t.clientY - s0.y;
     if (Math.abs(dx) < Math.abs(dy) * HORIZ_RATIO) return;
+    var vw = window.innerWidth;
+    var rightSide = html.classList.contains("tmr-right");
     var action = null;
-    if (!s0.open && dx <= -OPEN_DIST) action = "open";
-    else if (s0.open && dx >= CLOSE_DIST && s0.x > SYS_EDGE) action = "close";
+    if (!s0.open) {
+      if (dx <= -OPEN_DIST) { setSide(true); action = "open"; }
+      else if (dx >= OPEN_DIST) { setSide(false); action = "open"; }
+    } else if (rightSide && dx >= CLOSE_DIST && s0.x > SYS_EDGE) action = "close";
+    else if (!rightSide && dx <= -CLOSE_DIST && s0.x < vw - SYS_EDGE) action = "close";
     if (!action) return;
     setTimeout(function () {
       if (action === "open") { if (!isOpen()) toggleMenu(); }
