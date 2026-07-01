@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Menu Right
 // @namespace    RussianRob
-// @version      1.2.0
+// @version      1.2.1
 // @description  Moves Torn's mobile slide-out menu to the right edge and mirrors the open/close swipe (swipe left to open, swipe right to close).
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,6 @@
   var SYS_EDGE = 24;
 
   var start = null;
-  var committed = false;
 
   function panel() { return document.getElementById("fly-out-panel"); }
   function menuButton() { return document.getElementById("fly-out-menu-button"); }
@@ -57,29 +56,30 @@
   }
 
   function onStart(e) {
-    committed = false;
     if (!e.touches || e.touches.length !== 1 || !mobileActive()) { start = null; return; }
     var t = e.touches[0];
     start = { x: t.clientX, y: t.clientY, id: t.identifier, open: isOpen() };
   }
 
-  function onMove(e) {
-    if (!start || committed || !e.touches || e.touches.length !== 1) return;
-    var t = e.touches[0];
-    if (t.identifier !== start.id) return;
-    var dx = t.clientX - start.x, dy = t.clientY - start.y;
+  function onEnd(e) {
+    var s0 = start; start = null;
+    if (!s0 || !e.changedTouches) return;
+    var t = null, i;
+    for (i = 0; i < e.changedTouches.length; i++) { if (e.changedTouches[i].identifier === s0.id) { t = e.changedTouches[i]; break; } }
+    if (!t) return;
+    var dx = t.clientX - s0.x, dy = t.clientY - s0.y;
     if (Math.abs(dx) < Math.abs(dy) * HORIZ_RATIO) return;
-    if (!start.open) {
-      if (dx <= -OPEN_DIST) { committed = true; if (!isOpen()) toggleMenu(); }
-    } else if (dx >= CLOSE_DIST && start.x > SYS_EDGE) {
-      committed = true; if (isOpen()) toggleMenu();
-    }
+    var action = null;
+    if (!s0.open && dx <= -OPEN_DIST) action = "open";
+    else if (s0.open && dx >= CLOSE_DIST && s0.x > SYS_EDGE) action = "close";
+    if (!action) return;
+    setTimeout(function () {
+      if (action === "open") { if (!isOpen()) toggleMenu(); }
+      else if (isOpen()) toggleMenu();
+    }, 0);
   }
 
-  function onEnd() { start = null; committed = false; }
-
   document.addEventListener("touchstart", onStart, { passive: true, capture: true });
-  document.addEventListener("touchmove", onMove, { passive: true, capture: true });
   document.addEventListener("touchend", onEnd, { passive: true, capture: true });
   document.addEventListener("touchcancel", onEnd, { passive: true, capture: true });
 })();
