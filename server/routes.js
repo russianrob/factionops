@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import axios from "axios";
 import { verifyTornApiKey, issueToken, verifyToken, requireAuth, isPoolEligible } from "./auth.js";
 import { handleStakeoutSync, resolveOwnerId } from "./stakeout-store.js";
-import { runAgentTurn, runAgentTurnResolvingSources, isValidUserscriptName } from "./agent-service.js";
+import { runAgentTurn, runAgentTurnResolvingSources, isValidUserscriptName, isValidInstructionsName } from "./agent-service.js";
 import { runJsOnDevice } from "./agent-relay-client.js";
 import { TOTP as _OTPAuthTOTP, Secret as _OTPAuthSecret } from "otpauth";
 import { readFileSync as _totpReadFile } from "node:fs";
@@ -545,6 +545,7 @@ router.post("/api/agent/inspect", requireAuth, (req, res, next) => {
 // scripts dir. Runs `node --check` on a temp file first (bad syntax never
 // touches the served file), then commits + pushes, then verifies it's served.
 const _AGENT_SCRIPTS_DIR = pathResolve("/opt/warboard/server/public/scripts");
+const _AGENT_INSTRUCTIONS_DIR = pathResolve(process.env.AGENT_INSTRUCTIONS_DIR || "/opt/warboard/server/data/agent-instructions");
 const _AGENT_REPO_DIR = "/opt/warboard";
 router.post("/api/agent/deploy", requireAuth, (req, res, next) => {
   if (_inspectIsOwner(req)) return next();
@@ -552,8 +553,26 @@ router.post("/api/agent/deploy", requireAuth, (req, res, next) => {
 }, express.json({ limit: "4mb" }), async (req, res) => {
   const filename = (req.body && typeof req.body.filename === "string") ? req.body.filename.trim() : "";
   const content = (req.body && typeof req.body.content === "string") ? req.body.content : "";
-  if (!isValidUserscriptName(filename)) return res.status(400).json({ error: "invalid filename — must be a bare *.user.js basename" });
+  if (!isValidUserscriptName(filename) && !isValidInstructionsName(filename)) {
+    return res.status(400).json({ error: "invalid filename — must be a bare *.user.js userscript or a *.md instruction file" });
+  }
   if (!content.trim()) return res.status(400).json({ error: "empty content" });
+
+  // A *.md file is a standing instruction, not a script: no syntax check, no git,
+  // no serving. Path-jail it into the instructions dir and save it there. It gets
+  // read into every future agent turn by standingInstructions().
+  if (isValidInstructionsName(filename)) {
+    const mdTarget = pathResolve(_AGENT_INSTRUCTIONS_DIR, filename);
+    if (pathDirname(mdTarget) !== _AGENT_INSTRUCTIONS_DIR) return res.status(400).json({ error: "path escape" });
+    try {
+      mkdirSync(_AGENT_INSTRUCTIONS_DIR, { recursive: true });
+      writeFileSync(mdTarget, content, "utf8");
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: "write failed: " + String(e && e.message || e) });
+    }
+    return res.json({ ok: true, filename, kind: "instruction" });
+  }
+
   // Path jail: the resolved target MUST live directly inside the scripts dir.
   const target = pathResolve(_AGENT_SCRIPTS_DIR, filename);
   if (pathDirname(target) !== _AGENT_SCRIPTS_DIR) return res.status(400).json({ error: "path escape" });
