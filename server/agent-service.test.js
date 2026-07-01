@@ -32,3 +32,19 @@ test("ignores hook noise", () => {
   assert.equal(normalizeStreamLine({ type: "system", subtype: "hook_started" }), null);
   assert.equal(normalizeStreamLine({ type: "system", subtype: "hook_response" }), null);
 });
+
+import { resolveScriptSource } from "./agent-service.js";
+
+test("resolveScriptSource: returns the manifest entry's source by basename", () => {
+  const manifest = [{ filename: "x.user.js", name: "X", version: "1", enabled: true, source: "// FROM-MANIFEST" }];
+  assert.equal(resolveScriptSource("x.user.js", manifest), "// FROM-MANIFEST");
+});
+
+test("resolveScriptSource: falls back to the served dir when not in the manifest", () => {
+  // "nope.user.js" is not in the manifest and not on disk -> null (dir read fails)
+  assert.equal(resolveScriptSource("nope.user.js", [{ filename: "x.user.js", source: "// X" }]), null);
+});
+
+test("resolveScriptSource: null manifest defers entirely to the served dir", () => {
+  assert.equal(resolveScriptSource("nope.user.js", null), null);
+});

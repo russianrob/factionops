@@ -193,6 +193,19 @@ export function readScriptSource(filename) {
   try { return readFileSync(pathJoin(SCRIPTS_DIR, filename), "utf8"); } catch { return null; }
 }
 
+// Resolve a `===SOURCE: <name>===` request. Prefer the app-provided installed
+// manifest (matched by basename, so ANY installed script is readable — even one
+// installed from Greasy Fork that the server has never seen), then fall back to
+// the served directory (agent-created scripts backed up there).
+export function resolveScriptSource(filename, installed) {
+  if (Array.isArray(installed)) {
+    const base = pathBasename(String(filename || ""));
+    const hit = installed.find((s) => s && pathBasename(String(s.filename || "")) === base);
+    if (hit && typeof hit.source === "string" && hit.source) return hit.source;
+  }
+  return readScriptSource(filename);
+}
+
 // Deploy path-jail: a deployable userscript name is a bare basename ending in
 // `.user.js` with no path separators / `..` traversal. Exported for the deploy
 // route + tests.
