@@ -11,7 +11,11 @@ const SCRIPTS_DIR = process.env.AGENT_SCRIPTS_DIR || "/opt/warboard/server/publi
 // needed. CLAUDE is the world-executable copy (warboard can't read /root). HOME
 // points at warboard's isolated agent home holding its own long-lived token.
 const CLAUDE = process.env.CLAUDE_BIN || "/usr/local/bin/claude";
-const WORKDIR = process.env.AGENT_WORKDIR || "/opt/warboard/server/data/agent-workdir";
+// cwd is deliberately OUTSIDE the /opt/warboard git tree: Claude walks up from
+// cwd to the git root loading CLAUDE.md/AGENTS.md, so a repo cwd dragged
+// /opt/warboard's CLAUDE.md+AGENTS.md into every turn (~1k tokens). A bare dir
+// with no CLAUDE.md ancestors keeps the turn context clean.
+const WORKDIR = process.env.AGENT_WORKDIR || "/opt/warboard-agent";
 const AGENT_HOME = process.env.AGENT_HOME || "/opt/warboard/server/data/agent-home";
 // warboard's own long-lived Claude token (setup-token), read per-turn so rotation is picked up.
 const TOKEN_FILE = process.env.AGENT_CLAUDE_TOKEN_FILE || "/opt/warboard/server/data/.agent-claude-token";
@@ -45,6 +49,10 @@ const SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT || "You are an assistant e
 // bypassPermissions blocks. init tools[] isn't exhaustive — deny Glob/Grep too.
 const DISALLOWED = ["Task","Bash","CronCreate","CronDelete","CronList","DesignSync","Edit","EnterWorktree","ExitWorktree","Monitor","NotebookEdit","PushNotification","Read","RemoteTrigger","ReportFindings","ScheduleWakeup","SendMessage","Skill","TaskCreate","TaskGet","TaskList","TaskOutput","TaskStop","TaskUpdate","ToolSearch","WebFetch","WebSearch","Workflow","Write","Glob","Grep"];
 const TURN_TIMEOUT_MS = Number(process.env.AGENT_TURN_TIMEOUT_MS || 180000);
+// Pin Opus (the OAuth token defaults to Sonnet). --bare (added to args) strips
+// hooks/auto-memory/CLAUDE.md discovery so /opt/warboard's CLAUDE.md+AGENTS.md and
+// the SessionStart memory dump don't bloat every turn's context (pure quota waste).
+const MODEL = process.env.AGENT_MODEL || "claude-opus-4-8";
 
 // Pull a single `// @field  value` line out of a ==UserScript== header.
 function headerField(content, field) {
@@ -151,6 +159,7 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal }) {
     "\n\n=== USER MESSAGE ===\n" + String(text);
   return new Promise((resolve) => {
     const args = ["--print", prompt,
+      "--model", MODEL,
       "--output-format", "stream-json", "--verbose", "--include-partial-messages",
       "--append-system-prompt", SYSTEM_PROMPT,
       "--permission-mode", "bypassPermissions",
