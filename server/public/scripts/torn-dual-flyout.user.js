@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.4.1
+// @version      1.4.2
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -67,7 +67,18 @@
   function onStart(e) {
     if (!e.touches || e.touches.length !== 1 || !mobileActive()) { start = null; return; }
     var t = e.touches[0];
-    start = { x: t.clientX, y: t.clientY, id: t.identifier, open: isOpen() };
+    start = { x: t.clientX, y: t.clientY, id: t.identifier, open: isOpen(), sideSet: false };
+  }
+
+  function onMove(e) {
+    var s0 = start;
+    if (!s0 || s0.sideSet || s0.open || !e.touches || e.touches.length !== 1) return;
+    var t = e.touches[0];
+    if (t.identifier !== s0.id) return;
+    var dx = t.clientX - s0.x, dy = t.clientY - s0.y;
+    if (Math.abs(dx) < Math.abs(dy) * HORIZ_RATIO) return;
+    if (dx <= -OPEN_DIST) { setSide(true); s0.sideSet = true; }
+    else if (dx >= OPEN_DIST) { setSide(false); s0.sideSet = true; }
   }
 
   function onEnd(e) {
@@ -82,8 +93,8 @@
     var rightSide = html.classList.contains("tmr-right");
     var action = null;
     if (!s0.open) {
-      if (dx <= -OPEN_DIST) { setSide(true); action = "open"; }
-      else if (dx >= OPEN_DIST) { setSide(false); action = "open"; }
+      if (dx <= -OPEN_DIST) { if (!s0.sideSet) setSide(true); action = "open"; }
+      else if (dx >= OPEN_DIST) { if (!s0.sideSet) setSide(false); action = "open"; }
     } else if (rightSide && dx >= CLOSE_DIST && s0.x > SYS_EDGE) action = "close";
     else if (!rightSide && dx <= -CLOSE_DIST && s0.x < vw - SYS_EDGE) action = "close";
     if (!action) return;
@@ -94,6 +105,7 @@
   }
 
   document.addEventListener("touchstart", onStart, { passive: true, capture: true });
+  document.addEventListener("touchmove", onMove, { passive: true, capture: true });
   document.addEventListener("touchend", onEnd, { passive: true, capture: true });
   document.addEventListener("touchcancel", onEnd, { passive: true, capture: true });
 })();
