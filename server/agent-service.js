@@ -79,7 +79,7 @@ const TURN_TIMEOUT_MS = Number(process.env.AGENT_TURN_TIMEOUT_MS || 180000);
 // within this window, it's stalled (e.g. Opus overloaded) — trigger a fallback
 // to FALLBACK_MODEL instead of hanging to the 180s cap (which iOS drops as
 // "network connection lost").
-const FIRST_TOKEN_TIMEOUT_MS = Number(process.env.AGENT_FIRST_TOKEN_TIMEOUT_MS || 30000);
+const FIRST_TOKEN_TIMEOUT_MS = Number(process.env.AGENT_FIRST_TOKEN_TIMEOUT_MS || 15000);
 // Pin Opus (the OAuth token defaults to Sonnet). --bare (added to args) strips
 // hooks/auto-memory/CLAUDE.md discovery so /opt/warboard's CLAUDE.md+AGENTS.md and
 // the SessionStart memory dump don't bloat every turn's context (pure quota waste).
@@ -87,6 +87,12 @@ const MODEL = process.env.AGENT_MODEL || "claude-opus-4-8";
 // Used when MODEL stalls (no first token in FIRST_TOKEN_TIMEOUT_MS) — Opus gets
 // overloaded/rate-limited more than Sonnet, so fall back so the agent keeps working.
 const FALLBACK_MODEL = process.env.AGENT_FALLBACK_MODEL || "claude-sonnet-4-6";
+// Circuit breaker: after MODEL stalls once, skip it entirely for this long so
+// every turn during an Opus outage is fast (straight to FALLBACK_MODEL) instead
+// of eating a stall timeout each time — long turns on mobile drop the connection.
+// Auto-retries MODEL once the window passes (recovers when Opus is healthy again).
+const FALLBACK_COOLDOWN_MS = Number(process.env.AGENT_FALLBACK_COOLDOWN_MS || 300000);
+let fallbackCooldownUntil = 0;
 
 // Pull a single `// @field  value` line out of a ==UserScript== header.
 function headerField(content, field) {
@@ -375,11 +381,20 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
     });
   });
 
-  let r = await attempt(!!sessionId, MODEL);
-  if (r.retry && !aborted) r = await attempt(false, MODEL);           // stale --resume → fresh session, same model
-  if (r.stalled && !aborted && FALLBACK_MODEL && FALLBACK_MODEL !== MODEL) {
-    console.log("[agent] " + MODEL + " stalled (no first token in " + FIRST_TOKEN_TIMEOUT_MS + "ms) — falling back to " + FALLBACK_MODEL);
-    r = await attempt(false, FALLBACK_MODEL);                         // Opus stalled → answer on Sonnet
+  const skipPrimary = FALLBACK_MODEL !== MODEL && Date.now() < fallbackCooldownUntil;
+  let r;
+  if (skipPrimary) {
+    // MODEL stalled recently → go straight to the fallback (fast, no stall wait).
+    r = await attempt(!!sessionId, FALLBACK_MODEL);
+    if (r.retry && !aborted) r = await attempt(false, FALLBACK_MODEL);
+  } else {
+    r = await attempt(!!sessionId, MODEL);
+    if (r.retry && !aborted) r = await attempt(false, MODEL);         // stale --resume → fresh session, same model
+    if (r.stalled && !aborted && FALLBACK_MODEL !== MODEL) {
+      fallbackCooldownUntil = Date.now() + FALLBACK_COOLDOWN_MS;      // trip the breaker
+      console.log("[agent] " + MODEL + " stalled — using " + FALLBACK_MODEL + " for the next " + Math.round(FALLBACK_COOLDOWN_MS / 1000) + "s");
+      r = await attempt(false, FALLBACK_MODEL);                       // answer this turn on the fallback
+    }
   }
   if (r.stalled && !aborted) onEvent({ t: "error", message: "The agent connected but the model didn't respond — it may be overloaded right now. Please try again in a moment." });
   return { sessionId: r.resolvedSession };
