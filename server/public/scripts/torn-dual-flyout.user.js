@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.5.7
+// @version      1.5.8
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout.user.js
@@ -118,6 +118,29 @@
     } catch (err) {}
   }
 
+  // Sticky persistence: tapping a nav link inside the open flyout usually loads a
+  // new page (or SPA-routes), which closes the menu. In sticky mode we re-open it
+  // afterwards so it behaves like a pinned sidebar you can click through.
+  var REOPEN_KEY = "tdf_reopen";
+  function reopenSoon() {
+    var tries = 0;
+    var iv = setInterval(function () {
+      if (isOpen()) { clearInterval(iv); return; }               // already open → done
+      var b = menuButton();
+      // React props must be attached (page hydrated) before toggleMenu works.
+      if (b && mobileActive() && Object.keys(b).some(function (k) { return k.indexOf("__reactProps$") === 0; })) toggleMenu();
+      if (++tries > 40) clearInterval(iv);                        // ~6s cap
+    }, 150);
+  }
+  function maybeReopen() {
+    if (!sticky()) return;
+    var want = false;
+    try { want = sessionStorage.getItem(REOPEN_KEY) === "1"; } catch (e) {}
+    if (!want) return;
+    try { sessionStorage.removeItem(REOPEN_KEY); } catch (e) {}
+    reopenSoon();
+  }
+
   function onScrollStrip(el) {
     for (var n = el; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
       if (n.scrollWidth > n.clientWidth + 4) {
@@ -165,6 +188,8 @@
     } else if (rightSide && dx >= CLOSE_DIST && s0.x > SYS_EDGE) action = "close";
     else if (!rightSide && dx <= -CLOSE_DIST && s0.x < vw - SYS_EDGE) action = "close";
     if (!action) return;
+    // A deliberate swipe-close means the owner wants it shut — cancel any pending reopen.
+    if (action === "close") { try { sessionStorage.removeItem(REOPEN_KEY); } catch (e) {} }
     setTimeout(function () {
       if (action === "open") { if (!isOpen()) toggleMenu(); }
       else if (isOpen()) toggleMenu();
@@ -209,11 +234,19 @@
   setInterval(function () { ensureCog(); startMenuObserver(); syncMenuOpen(); }, 800);
   ensureCog();
   startMenuObserver();
+  maybeReopen();                                   // full page load after a sticky nav-tap
 
   // SPA route changes (Torn uses in-section hash routing) don't reload the script, so
-  // re-sync the open/closed state on navigation to release sticky overrides.
-  window.addEventListener("hashchange", syncMenuOpen);
-  window.addEventListener("popstate", syncMenuOpen);
+  // re-sync the open/closed state AND re-open if a sticky nav-tap asked us to.
+  window.addEventListener("hashchange", function () { syncMenuOpen(); maybeReopen(); });
+  window.addEventListener("popstate", function () { syncMenuOpen(); maybeReopen(); });
+
+  // Sticky: a nav link tapped inside the open flyout = "keep the menu" → reopen after nav.
+  document.addEventListener("click", function (e) {
+    if (!sticky() || !isOpen()) return;
+    var a = e.target && e.target.closest && e.target.closest("#fly-out-panel a");
+    if (a) { try { sessionStorage.setItem(REOPEN_KEY, "1"); } catch (e2) {} }
+  }, true);
 
   document.addEventListener("touchstart", onStart, { passive: true, capture: true });
   document.addEventListener("touchmove", onMove, { passive: true, capture: true });
