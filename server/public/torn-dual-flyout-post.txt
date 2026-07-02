@@ -1,23 +1,25 @@
 <div style="text-align:center">
 <h2>Torn Dual Flyout</h2>
-<p><em>Swipe to open Torn's mobile menu — on whichever side you like</em></p>
+<p><em>Torn's slide-out menu — on the side you want, as a compact icon rail you can scroll behind</em></p>
 </div>
 
-<p>On mobile, Torn's slide-out menu opens from the little hamburger button up in the corner. One-handed on a big phone that's an awkward reach, and it's always on the same side whether that suits your grip or not.</p>
+<p>Torn already has the mobile slide-out menu. This script doesn't add that — it just lets you decide <strong>how it behaves</strong>: which side it comes from, whether it's icons or text, and whether it stays open while you scroll.</p>
 
-<p>This script lets you just <strong>swipe to open the menu</strong> — and pick which side it comes from.</p>
+<ul>
+<li><strong>Pick your side</strong> — have the menu open on the <strong>left</strong> or the <strong>right</strong>, whichever suits how you hold your phone. Swipe left-to-right for the left, right-to-left for the right; a small ◀ / ▶ under the menu button shows the current side, and it remembers your choice between page loads.</li>
+<li><strong>Icons only</strong> — hide the menu names for a tight, one-handed icon column instead of a wide text list.</li>
+<li><strong>Sticky</strong> — keep the menu open while you scroll the page, like a pinned sidebar — it even stays open as you tap through to other pages.</li>
+</ul>
 
-<ul><li><strong>Swipe to open</strong> — swipe on the page instead of reaching for the menu button</li><li><strong>Two-way</strong> — swipe right-to-left and the menu opens on the <strong>right</strong>; swipe left-to-right and it opens on the <strong>left</strong>. Use whichever side fits how you hold your phone</li><li><strong>Side arrow</strong> — a small ◀ / ▶ under the menu button shows which side it's set to</li><li><strong>Remembers your side</strong> between page loads, so it stays where you left it</li><li><strong>Swipe back toward the edge to close</strong></li></ul>
-
-<p>It stays out of the way of the top bars, too — scrolling the icon and status rows at the top won't accidentally trigger the menu.</p>
+<p>Toggle icons-only and sticky from the little ⚙ next to the menu button. It also stays out of the way of the top bars — scrolling the icon and status rows won't set it off.</p>
 
 <p>Nothing to set up and no API key needed. Built for Torn mobile — works in Torn PDA and mobile Tampermonkey.</p>
 
 <h3>Screenshots</h3>
-<p><em>The menu opened on the right with a swipe:</em></p>
-<img src="https://tornwar.com/torn-dual-flyout-shot.png" alt="Torn Dual Flyout menu opened on the right side">
+<p><em>The menu opened on the right, icons only:</em></p>
+<img src="https://tornwar.com/torn-dual-flyout-shot.png" alt="Torn Dual Flyout menu opened on the right side as an icon rail">
 
 <h3>Install</h3>
 <p><a href="https://greasyfork.org/en/scripts/585201-torn-dual-flyout">Install Torn Dual Flyout on Greasy Fork</a></p>
 
-<p>If a swipe feels off or it doesn't play nice with your setup, post it here and I'll take a look.</p>
+<p>If something feels off or it doesn't play nice with your setup, post it here and I'll take a look.</p>
