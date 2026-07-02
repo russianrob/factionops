@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.5.6
+// @version      1.5.7
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout.user.js
@@ -89,13 +89,14 @@
   function mobileActive() { var b = menuButton(); return !!b && b.getClientRects().length > 0; }
 
   // Mirror the flyout's open/closed state onto <html> so sticky CSS only engages
-  // while the menu is actually open.
+  // while the menu is actually open. Must catch not only the panel's visible___ class
+  // toggling but also the panel being unmounted (childList) and SPA route changes.
   function syncMenuOpen() { html.classList.toggle("tdf-menu-open", isOpen()); }
   function startMenuObserver() {
     var root = document.getElementById("sidebarroot") || document.body;
     if (!root || root.__tdfMenuObs) return;
     root.__tdfMenuObs = true;
-    new MutationObserver(syncMenuOpen).observe(root, { attributes: true, attributeFilter: ["class"], subtree: true });
+    new MutationObserver(syncMenuOpen).observe(root, { attributes: true, attributeFilter: ["class"], childList: true, subtree: true });
     syncMenuOpen();
   }
 
@@ -205,9 +206,14 @@
     cog.addEventListener("click", function (ev) { ev.preventDefault(); ev.stopPropagation(); toggleSettings(); });
     b.parentElement.appendChild(cog);
   }
-  setInterval(function () { ensureCog(); startMenuObserver(); }, 800);
+  setInterval(function () { ensureCog(); startMenuObserver(); syncMenuOpen(); }, 800);
   ensureCog();
   startMenuObserver();
+
+  // SPA route changes (Torn uses in-section hash routing) don't reload the script, so
+  // re-sync the open/closed state on navigation to release sticky overrides.
+  window.addEventListener("hashchange", syncMenuOpen);
+  window.addEventListener("popstate", syncMenuOpen);
 
   document.addEventListener("touchstart", onStart, { passive: true, capture: true });
   document.addEventListener("touchmove", onMove, { passive: true, capture: true });
