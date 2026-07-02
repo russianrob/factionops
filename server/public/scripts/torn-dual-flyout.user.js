@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.5.4
+// @version      1.5.6
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout.user.js
@@ -48,9 +48,11 @@
     'html.tdf-iconsonly #fly-out-panel [class*="accountLinksWrap___"]{display:block!important;height:auto!important;}' +
     'html.tdf-iconsonly #fly-out-panel [class*="accountLinks___"]{flex-direction:column!important;align-items:flex-start!important;height:auto!important;}' +
     'html.tdf-iconsonly #fly-out-panel [class*="accountLinks___"] [class*="wrap___"]{width:auto!important;margin:0!important;}' +
-    'html.tdf-sticky #sidebar [class*="overlay___"]{display:none!important;}' +
-    'html.tdf-sticky{overflow-y:auto!important;}' +
-    'html.tdf-sticky body{overflow:visible!important;}';
+    // Sticky effects apply ONLY while the flyout is open, so a closed menu (incl. right
+    // after navigation) leaves Torn's normal scroll/header behaviour untouched.
+    'html.tdf-sticky.tdf-menu-open #sidebar [class*="overlay___"]{display:none!important;}' +
+    'html.tdf-sticky.tdf-menu-open{overflow-y:auto!important;}' +
+    'html.tdf-sticky.tdf-menu-open body{overflow:visible!important;}';
   var s = document.createElement("style");
   s.id = "torn-menu-right";
   s.textContent = css;
@@ -60,6 +62,11 @@
   var CLOSE_DIST = 60;
   var HORIZ_RATIO = 2.0;
   var SYS_EDGE = 24;
+
+  // Containers that scroll horizontally by transforming an inner track (e.g. flexslider),
+  // so they report overflow-x:hidden even though content overflows. A swipe inside these
+  // should NOT open the menu.
+  var CAROUSEL_SEL = '.flex-viewport,[class*="flex-viewport"],[class*="flexslider"],[class*="slider"],[class*="carousel"]';
 
   function setSide(right) { html.classList.toggle("tmr-right", right); html.classList.toggle("tmr-left", !right); try { localStorage.setItem("tmr_side", right ? "r" : "l"); } catch (e) {} }
   var savedSide = "r";
@@ -80,6 +87,17 @@
   function menuButton() { return document.getElementById("fly-out-menu-button"); }
   function isOpen() { var p = panel(); return !!p && /visible___/.test(p.className); }
   function mobileActive() { var b = menuButton(); return !!b && b.getClientRects().length > 0; }
+
+  // Mirror the flyout's open/closed state onto <html> so sticky CSS only engages
+  // while the menu is actually open.
+  function syncMenuOpen() { html.classList.toggle("tdf-menu-open", isOpen()); }
+  function startMenuObserver() {
+    var root = document.getElementById("sidebarroot") || document.body;
+    if (!root || root.__tdfMenuObs) return;
+    root.__tdfMenuObs = true;
+    new MutationObserver(syncMenuOpen).observe(root, { attributes: true, attributeFilter: ["class"], subtree: true });
+    syncMenuOpen();
+  }
 
   function toggleMenu() {
     var b = menuButton();
@@ -104,6 +122,8 @@
       if (n.scrollWidth > n.clientWidth + 4) {
         var ox = getComputedStyle(n).overflowX;
         if (ox === "auto" || ox === "scroll") return true;
+        // Transform-based carousels (flexslider etc.) overflow but report overflow-x:hidden.
+        if (n.matches && n.matches(CAROUSEL_SEL)) return true;
       }
     }
     return false;
@@ -185,8 +205,9 @@
     cog.addEventListener("click", function (ev) { ev.preventDefault(); ev.stopPropagation(); toggleSettings(); });
     b.parentElement.appendChild(cog);
   }
-  setInterval(ensureCog, 800);
+  setInterval(function () { ensureCog(); startMenuObserver(); }, 800);
   ensureCog();
+  startMenuObserver();
 
   document.addEventListener("touchstart", onStart, { passive: true, capture: true });
   document.addEventListener("touchmove", onMove, { passive: true, capture: true });
