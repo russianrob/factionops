@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.5.9
+// @version      1.5.10
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout.user.js
@@ -15,7 +15,7 @@
   "use strict";
   if (window.__tornMenuRight) return;
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.5.9";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.5.10";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
@@ -53,7 +53,12 @@
     // after navigation) leaves Torn's normal scroll/header behaviour untouched.
     'html.tdf-sticky.tdf-menu-open #sidebar [class*="overlay___"]{display:none!important;}' +
     'html.tdf-sticky.tdf-menu-open{overflow-y:auto!important;}' +
-    'html.tdf-sticky.tdf-menu-open body{overflow:visible!important;}';
+    'html.tdf-sticky.tdf-menu-open body{overflow:visible!important;}' +
+    // Pre-open: while a sticky reopen is pending, paint the panel already in its open
+    // position (no closed-off-screen frame, no slide-in) so there's no flash. Dropped
+    // the instant React's real open state (visible___) takes over.
+    'html.tdf-preopen #fly-out-panel{transform:none!important;transition:none!important;}' +
+    'html.tdf-preopen #sidebar [class*="overlay___"]{display:none!important;}';
   var s = document.createElement("style");
   s.id = "torn-menu-right";
   s.textContent = css;
@@ -126,11 +131,11 @@
   function reopenSoon() {
     var tries = 0;
     var iv = setInterval(function () {
-      if (isOpen()) { clearInterval(iv); return; }               // already open → done
+      if (isOpen()) { clearInterval(iv); html.classList.remove("tdf-preopen"); return; }   // real open state took over
       var b = menuButton();
       // React props must be attached (page hydrated) before toggleMenu works.
       if (b && mobileActive() && Object.keys(b).some(function (k) { return k.indexOf("__reactProps$") === 0; })) toggleMenu();
-      if (++tries > 40) clearInterval(iv);                        // ~6s cap
+      if (++tries > 40) { clearInterval(iv); html.classList.remove("tdf-preopen"); }         // gave up (~6s) → don't leave it stuck open-looking
     }, 150);
   }
   function maybeReopen() {
@@ -139,6 +144,7 @@
     try { want = sessionStorage.getItem(REOPEN_KEY) === "1"; } catch (e) {}
     if (!want) return;
     try { sessionStorage.removeItem(REOPEN_KEY); } catch (e) {}
+    html.classList.add("tdf-preopen");   // paint the panel open immediately → no closed→open flash
     reopenSoon();
   }
 
