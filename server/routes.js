@@ -476,7 +476,12 @@ router.post("/api/agent/message", requireAuth, (req, res, next) => {
   res.write(": preamble " + ".".repeat(1024) + "\n\n");
   const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); if (typeof res.flush === "function") res.flush(); } catch {} };
   const ac = new AbortController();
-  req.on("close", () => ac.abort());
+  // Abort on the RESPONSE closing (real client disconnect), NOT req 'close':
+  // IncomingMessage fires 'close' as soon as the request body is fully read, so
+  // req.on('close') aborted the turn the instant the body was parsed. (Latent
+  // since the global body-parser used to consume the body before this handler
+  // ran; surfaced when the agent routes got their own route-level parser.)
+  res.on("close", () => { if (!res.writableEnded) ac.abort(); });
   try {
     const { sessionId: sid } = await runAgentTurnResolvingSources({ text, sessionId, signal: ac.signal, onEvent: send, installed });
     send({ t: "session", id: sid });
@@ -513,7 +518,12 @@ router.post("/api/agent/inspect", requireAuth, (req, res, next) => {
   res.write(": preamble " + ".".repeat(1024) + "\n\n");
   const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); if (typeof res.flush === "function") res.flush(); } catch {} };
   const ac = new AbortController();
-  req.on("close", () => ac.abort());
+  // Abort on the RESPONSE closing (real client disconnect), NOT req 'close':
+  // IncomingMessage fires 'close' as soon as the request body is fully read, so
+  // req.on('close') aborted the turn the instant the body was parsed. (Latent
+  // since the global body-parser used to consume the body before this handler
+  // ran; surfaced when the agent routes got their own route-level parser.)
+  res.on("close", () => { if (!res.writableEnded) ac.abort(); });
   try {
     let ok, raw;
     if (_INSPECT_BLOCK_RE.test(js)) {
