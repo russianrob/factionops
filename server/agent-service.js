@@ -75,10 +75,18 @@ const SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT || "You are an assistant e
 // bypassPermissions blocks. init tools[] isn't exhaustive — deny Glob/Grep too.
 const DISALLOWED = ["Task","Bash","CronCreate","CronDelete","CronList","DesignSync","Edit","EnterWorktree","ExitWorktree","Monitor","NotebookEdit","PushNotification","Read","RemoteTrigger","ReportFindings","ScheduleWakeup","SendMessage","Skill","TaskCreate","TaskGet","TaskList","TaskOutput","TaskStop","TaskUpdate","ToolSearch","WebFetch","WebSearch","Workflow","Write","Glob","Grep"];
 const TURN_TIMEOUT_MS = Number(process.env.AGENT_TURN_TIMEOUT_MS || 180000);
+// Fast-fail: if the model connects (emits init) but streams no assistant text
+// within this window, it's stalled (e.g. Opus overloaded) — trigger a fallback
+// to FALLBACK_MODEL instead of hanging to the 180s cap (which iOS drops as
+// "network connection lost").
+const FIRST_TOKEN_TIMEOUT_MS = Number(process.env.AGENT_FIRST_TOKEN_TIMEOUT_MS || 30000);
 // Pin Opus (the OAuth token defaults to Sonnet). --bare (added to args) strips
 // hooks/auto-memory/CLAUDE.md discovery so /opt/warboard's CLAUDE.md+AGENTS.md and
 // the SessionStart memory dump don't bloat every turn's context (pure quota waste).
 const MODEL = process.env.AGENT_MODEL || "claude-opus-4-8";
+// Used when MODEL stalls (no first token in FIRST_TOKEN_TIMEOUT_MS) — Opus gets
+// overloaded/rate-limited more than Sonnet, so fall back so the agent keeps working.
+const FALLBACK_MODEL = process.env.AGENT_FALLBACK_MODEL || "claude-sonnet-4-6";
 
 // Pull a single `// @field  value` line out of a ==UserScript== header.
 function headerField(content, field) {
@@ -281,7 +289,6 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
   if (onEvent) onEvent({ t: "snapshot", ok: !/unavailable|error/.test(snap) });
   const prompt = buildTurnPrompt({ snap, text, installed, skipUserscripts });
   const baseArgs = ["--print", prompt,
-    "--model", MODEL,
     "--output-format", "stream-json", "--verbose", "--include-partial-messages",
     "--append-system-prompt", SYSTEM_PROMPT,
     "--permission-mode", "bypassPermissions",
@@ -302,9 +309,10 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
   let aborted = !!(signal && signal.aborted);
   if (signal) signal.addEventListener("abort", () => { aborted = true; if (currentChild) currentChild.kill("SIGKILL"); }, { once: true });
 
-  const attempt = (useResume) => new Promise((resolve) => {
+  const attempt = (useResume, model) => new Promise((resolve) => {
     if (aborted) { resolve({ retry: false, resolvedSession: (useResume && sessionId) ? sessionId : null }); return; }
     const args = baseArgs.slice();
+    args.push("--model", model);
     if (useResume && sessionId) args.push("--resume", sessionId);
     const child = spawn(CLAUDE, args, { cwd: WORKDIR, env: childEnv(), stdio: ["ignore", "pipe", "pipe"] });
     currentChild = child;
@@ -312,10 +320,15 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
     let buf = "";
     let assistantText = "";
     let sawInit = false;
+    let stalled = false;
     let pending = [];                                  // held until init proves startup
     const flush = () => { for (const ev of pending) onEvent(ev); pending = []; };
     const forward = (ev) => { if (sawInit) onEvent(ev); else pending.push(ev); };
     const killTimer = setTimeout(() => { forward({ t: "error", message: "agent turn timed out" }); child.kill("SIGKILL"); }, TURN_TIMEOUT_MS);
+    // No assistant output within FIRST_TOKEN_TIMEOUT_MS = the model is stalled
+    // (Opus overload/limit). Kill so the caller can fall back to another model.
+    let firstTokenTimer = setTimeout(() => { stalled = true; child.kill("SIGKILL"); }, FIRST_TOKEN_TIMEOUT_MS);
+    const gotOutput = () => { if (firstTokenTimer) { clearTimeout(firstTokenTimer); firstTokenTimer = null; } };
     child.stdout.on("data", (d) => {
       buf += d.toString();
       let nl;
@@ -326,6 +339,7 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
         const ev = normalizeStreamLine(obj);
         if (!ev) continue;
         if (ev.t === "session") { sawInit = true; resolvedSession = ev.id; onEvent(ev); flush(); continue; }
+        if (ev.t === "delta" || ev.t === "thinking") gotOutput();
         if (ev.t === "delta") assistantText += ev.text || "";
         if (ev.t === "done") {
           const full = assistantText || ev.result || "";
@@ -342,7 +356,10 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
     child.stderr.on("data", (d) => forward({ t: "stderr", text: d.toString().slice(0, 500) }));
     child.on("close", () => {
       clearTimeout(killTimer);
+      if (firstTokenTimer) { clearTimeout(firstTokenTimer); firstTokenTimer = null; }
       if (currentChild === child) currentChild = null;
+      // Stalled (no first token in the window) → tell the caller to fall back to another model.
+      if (stalled && !aborted) { resolve({ stalled: true, resolvedSession: null }); return; }
       // A --resume run that never reached init = stale session → drop its output, signal retry.
       if (!sawInit && useResume && !aborted) { resolve({ retry: true, resolvedSession: null }); return; }
       flush();
@@ -350,6 +367,7 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
     });
     child.on("error", (e) => {
       clearTimeout(killTimer);
+      if (firstTokenTimer) { clearTimeout(firstTokenTimer); firstTokenTimer = null; }
       if (currentChild === child) currentChild = null;
       forward({ t: "error", message: String(e) });
       flush();
@@ -357,8 +375,13 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
     });
   });
 
-  let r = await attempt(!!sessionId);
-  if (r.retry && !aborted) r = await attempt(false);
+  let r = await attempt(!!sessionId, MODEL);
+  if (r.retry && !aborted) r = await attempt(false, MODEL);           // stale --resume → fresh session, same model
+  if (r.stalled && !aborted && FALLBACK_MODEL && FALLBACK_MODEL !== MODEL) {
+    console.log("[agent] " + MODEL + " stalled (no first token in " + FIRST_TOKEN_TIMEOUT_MS + "ms) — falling back to " + FALLBACK_MODEL);
+    r = await attempt(false, FALLBACK_MODEL);                         // Opus stalled → answer on Sonnet
+  }
+  if (r.stalled && !aborted) onEvent({ t: "error", message: "The agent connected but the model didn't respond — it may be overloaded right now. Please try again in a moment." });
   return { sessionId: r.resolvedSession };
 }
 

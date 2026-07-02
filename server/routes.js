@@ -481,7 +481,8 @@ router.post("/api/agent/message", requireAuth, (req, res, next) => {
   // req.on('close') aborted the turn the instant the body was parsed. (Latent
   // since the global body-parser used to consume the body before this handler
   // ran; surfaced when the agent routes got their own route-level parser.)
-  res.on("close", () => { if (!res.writableEnded) ac.abort(); });
+  const ka = setInterval(() => { try { res.write(": ka\n\n"); if (typeof res.flush === "function") res.flush(); } catch {} }, 15000);
+  res.on("close", () => { clearInterval(ka); if (!res.writableEnded) ac.abort(); });
   try {
     const { sessionId: sid } = await runAgentTurnResolvingSources({ text, sessionId, signal: ac.signal, onEvent: send, installed });
     send({ t: "session", id: sid });
@@ -523,7 +524,8 @@ router.post("/api/agent/inspect", requireAuth, (req, res, next) => {
   // req.on('close') aborted the turn the instant the body was parsed. (Latent
   // since the global body-parser used to consume the body before this handler
   // ran; surfaced when the agent routes got their own route-level parser.)
-  res.on("close", () => { if (!res.writableEnded) ac.abort(); });
+  const ka = setInterval(() => { try { res.write(": ka\n\n"); if (typeof res.flush === "function") res.flush(); } catch {} }, 15000);
+  res.on("close", () => { clearInterval(ka); if (!res.writableEnded) ac.abort(); });
   try {
     let ok, raw;
     if (_INSPECT_BLOCK_RE.test(js)) {
