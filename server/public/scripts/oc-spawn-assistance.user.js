@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.57
+// @version      3.2.58
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.57';
+    const SCRIPT_VERSION = '3.2.58';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -1609,12 +1609,15 @@
     // ═══════════════════════════════════════════════════════════════════════
     //  GENERIC REQUEST  — GM_xmlhttpRequest (TornPDA) or fetch
     // ═══════════════════════════════════════════════════════════════════════
-    function gmRequest(url) {
+    function gmRequest(url, timeoutMs = 15000) {
         if (typeof GM_xmlhttpRequest === 'function') {
             return new Promise((resolve, reject) => {
+                let settled = false;
+                const guard = setTimeout(() => { if (!settled) { settled = true; reject(new Error('Request timed out — tornwar.com is slow, try again')); } }, timeoutMs + 2000);
                 GM_xmlhttpRequest({
-                    method: 'GET', url,
+                    method: 'GET', url, timeout: timeoutMs,
                     onload(r) {
+                        if (settled) return; settled = true; clearTimeout(guard);
                         try {
                             const data = JSON.parse(r.responseText);
                             resolve({ ok: r.status >= 200 && r.status < 300, status: r.status, data });
@@ -1625,11 +1628,15 @@
                             resolve({ ok: false, status: r.status, data: { error: msg } });
                         }
                     },
-                    onerror() { reject(new Error('Network error — could not reach tornwar.com')); },
+                    ontimeout() { if (settled) return; settled = true; clearTimeout(guard); reject(new Error('Request timed out — tornwar.com is slow, try again')); },
+                    onerror() { if (settled) return; settled = true; clearTimeout(guard); reject(new Error('Network error — could not reach tornwar.com')); },
                 });
             });
         }
-        return fetch(url).then(async r => {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), timeoutMs);
+        return fetch(url, { signal: ctrl.signal }).then(async r => {
+            clearTimeout(t);
             const text = await r.text();
             try { return { ok: r.ok, status: r.status, data: JSON.parse(text) }; }
             catch (e) {
@@ -1638,6 +1645,9 @@
                     : `Unexpected server response (${r.status})`;
                 return { ok: false, status: r.status, data: { error: msg } };
             }
+        }, (err) => {
+            clearTimeout(t);
+            throw new Error(err && err.name === 'AbortError' ? 'Request timed out — tornwar.com is slow, try again' : 'Network error — could not reach tornwar.com');
         });
     }
 
