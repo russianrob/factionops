@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.5.10
+// @version      1.5.12
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout.user.js
@@ -15,7 +15,7 @@
   "use strict";
   if (window.__tornMenuRight) return;
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.5.10";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.5.12";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
@@ -83,8 +83,11 @@
   function applyIconsOnly(on) { html.classList.toggle("tdf-iconsonly", !!on); try { localStorage.setItem("tdf_iconsonly", on ? "1" : "0"); } catch (e) {} }
   applyIconsOnly(iconsOnly());
 
+  // Sticky = scroll the page while the menu is open AND keep the menu open across every
+  // page load / refresh / nav. Migrate the old separate "keep open" pin into sticky.
   function sticky() { try { return localStorage.getItem("tdf_sticky") === "1"; } catch (e) { return false; } }
   function applySticky(on) { html.classList.toggle("tdf-sticky", !!on); try { localStorage.setItem("tdf_sticky", on ? "1" : "0"); } catch (e) {} }
+  try { if (localStorage.getItem("tdf_pinopen") === "1") { localStorage.setItem("tdf_sticky", "1"); localStorage.removeItem("tdf_pinopen"); } } catch (e) {}
   applySticky(sticky());
 
   var start = null;
@@ -124,27 +127,33 @@
     } catch (err) {}
   }
 
-  // Sticky persistence: tapping a nav link inside the open flyout usually loads a
-  // new page (or SPA-routes), which closes the menu. In sticky mode we re-open it
-  // afterwards so it behaves like a pinned sidebar you can click through.
-  var REOPEN_KEY = "tdf_reopen";
+  // Sticky persistence: navigating (full reload or SPA route) closes the flyout, so in
+  // sticky mode we re-open it afterwards — it behaves like a pinned sidebar you click through.
+  var reopenIv = null, reopening = false;
+  function cancelReopen() {
+    if (reopenIv) { clearInterval(reopenIv); reopenIv = null; }
+    reopening = false;
+    html.classList.remove("tdf-preopen");
+  }
   function reopenSoon() {
-    var tries = 0;
-    var iv = setInterval(function () {
-      if (isOpen()) { clearInterval(iv); html.classList.remove("tdf-preopen"); return; }   // real open state took over
+    if (reopening) return;                   // one reopen loop at a time — rapid nav must not double-toggle
+    reopening = true;
+    var tries = 0, sinceToggle = 99;         // 99 → the first hydrated tick toggles immediately
+    reopenIv = setInterval(function () {
+      if (isOpen()) { cancelReopen(); return; }   // real open state took over
       var b = menuButton();
       // React props must be attached (page hydrated) before toggleMenu works.
-      if (b && mobileActive() && Object.keys(b).some(function (k) { return k.indexOf("__reactProps$") === 0; })) toggleMenu();
-      if (++tries > 40) { clearInterval(iv); html.classList.remove("tdf-preopen"); }         // gave up (~6s) → don't leave it stuck open-looking
+      var ready = b && mobileActive() && Object.keys(b).some(function (k) { return k.indexOf("__reactProps$") === 0; });
+      // toggleMenu() is a TOGGLE, not an idempotent open — never re-fire it on the very next
+      // tick (that would shut a menu still mid-open). Toggle once, then wait ~6 ticks (~0.9s)
+      // for React to apply the open state before retrying.
+      if (ready) { if (sinceToggle >= 6) { toggleMenu(); sinceToggle = 0; } else sinceToggle++; }
+      if (++tries > 60) cancelReopen();            // gave up (~9s) → don't leave it stuck open-looking
     }, 150);
   }
   function maybeReopen() {
-    if (!sticky()) return;
-    var want = false;
-    try { want = sessionStorage.getItem(REOPEN_KEY) === "1"; } catch (e) {}
-    if (!want) return;
-    try { sessionStorage.removeItem(REOPEN_KEY); } catch (e) {}
-    html.classList.add("tdf-preopen");   // paint the panel open immediately → no closed→open flash
+    if (!sticky()) return;                   // sticky = keep the menu open across this load/nav
+    html.classList.add("tdf-preopen");       // paint the panel open immediately → no closed→open flash
     reopenSoon();
   }
 
@@ -195,8 +204,9 @@
     } else if (rightSide && dx >= CLOSE_DIST && s0.x > SYS_EDGE) action = "close";
     else if (!rightSide && dx <= -CLOSE_DIST && s0.x < vw - SYS_EDGE) action = "close";
     if (!action) return;
-    // A deliberate swipe-close means the owner wants it shut — cancel any pending reopen.
-    if (action === "close") { try { sessionStorage.removeItem(REOPEN_KEY); } catch (e) {} }
+    // A deliberate swipe-close means the owner wants it shut — abort any in-flight reopen
+    // so the interval can't fight the close (sticky still returns it on the next navigation).
+    if (action === "close") cancelReopen();
     setTimeout(function () {
       if (action === "open") { if (!isOpen()) toggleMenu(); }
       else if (isOpen()) toggleMenu();
@@ -210,11 +220,11 @@
     d.className = "tdf-hidden";
     d.innerHTML = '<h4>Torn Dual Flyout <span class="tdf-x">×</span></h4>' +
       '<label><input type="checkbox" class="tdf-iconsonly-cb"' + (iconsOnly() ? " checked" : "") + "> Icons only (hide menu names)</label>" +
-      '<label><input type="checkbox" class="tdf-sticky-cb"' + (sticky() ? " checked" : "") + "> Sticky (scroll page while menu open)</label>";
+      '<label><input type="checkbox" class="tdf-sticky-cb"' + (sticky() ? " checked" : "") + "> Sticky (keep menu open across pages + scroll while open)</label>";
     (document.body || html).appendChild(d);
     d.querySelector(".tdf-x").addEventListener("click", function () { d.classList.add("tdf-hidden"); });
     d.querySelector(".tdf-iconsonly-cb").addEventListener("change", function (ev) { applyIconsOnly(ev.target.checked); });
-    d.querySelector(".tdf-sticky-cb").addEventListener("change", function (ev) { applySticky(ev.target.checked); });
+    d.querySelector(".tdf-sticky-cb").addEventListener("change", function (ev) { applySticky(ev.target.checked); if (ev.target.checked && !isOpen()) { html.classList.add("tdf-preopen"); reopenSoon(); } });
   }
   function toggleSettings() {
     buildSettings();
@@ -241,19 +251,12 @@
   setInterval(function () { ensureCog(); startMenuObserver(); syncMenuOpen(); }, 800);
   ensureCog();
   startMenuObserver();
-  maybeReopen();                                   // full page load after a sticky nav-tap
+  maybeReopen();                                   // sticky? re-open the menu on this full page load
 
   // SPA route changes (Torn uses in-section hash routing) don't reload the script, so
-  // re-sync the open/closed state AND re-open if a sticky nav-tap asked us to.
+  // re-sync the open/closed state AND (in sticky mode) re-open the menu.
   window.addEventListener("hashchange", function () { syncMenuOpen(); maybeReopen(); });
   window.addEventListener("popstate", function () { syncMenuOpen(); maybeReopen(); });
-
-  // Sticky: a nav link tapped inside the open flyout = "keep the menu" → reopen after nav.
-  document.addEventListener("click", function (e) {
-    if (!sticky() || !isOpen()) return;
-    var a = e.target && e.target.closest && e.target.closest("#fly-out-panel a");
-    if (a) { try { sessionStorage.setItem(REOPEN_KEY, "1"); } catch (e2) {} }
-  }, true);
 
   document.addEventListener("touchstart", onStart, { passive: true, capture: true });
   document.addEventListener("touchmove", onMove, { passive: true, capture: true });
