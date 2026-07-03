@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.5.12
+// @version      1.5.13
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout.user.js
@@ -15,7 +15,7 @@
   "use strict";
   if (window.__tornMenuRight) return;
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.5.12";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.5.13";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
@@ -34,7 +34,7 @@
     'font-size:11px;line-height:1;font-weight:700;background:linear-gradient(to top,#666,#888);' +
     '-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;pointer-events:none;}' +
     'html.tmr-right #fly-out-menu-button::after{content:"▶";}' +
-    '#tdf-cog{position:absolute;background:transparent;border:0;padding:0;margin:0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:100000;-webkit-tap-highlight-color:transparent;}' +
+    '#tdf-cog{position:fixed;background:transparent;border:0;padding:0;margin:0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2147483001;pointer-events:auto;-webkit-tap-highlight-color:transparent;}' +
     '#tdf-cog svg{display:block;}' +
     '#tdf-settings{position:fixed;top:40px;left:8px;right:8px;margin:0 auto;max-width:280px;z-index:2147483000;background:#0e0f12;border:1px solid #2e333d;border-radius:8px;padding:10px 12px;color:#dde2e8;font:13px -apple-system,system-ui,sans-serif;box-shadow:0 8px 28px rgba(0,0,0,.65);}' +
     '#tdf-settings.tdf-hidden{display:none;}' +
@@ -232,21 +232,29 @@
     if (d) d.classList.toggle("tdf-hidden");
   }
   var COG_SVG = '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="#8a8f98" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.63-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.13 8.48a.49.49 0 0 0 .12.61l2.03 1.58c-.05.31-.07.62-.07.94 0 .32.02.63.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.14.24.44.32.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.26.42.49.42h4c.23 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.15.06.45-.02.59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.02-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>';
+  function positionCog(cog, b) {
+    var r = b.getBoundingClientRect();
+    cog.style.top = r.top + "px";
+    cog.style.left = (r.right + 4) + "px";
+    cog.style.width = r.width + "px";
+    cog.style.height = r.height + "px";
+  }
   function ensureCog() {
-    if (document.getElementById("tdf-cog")) return;
     var b = menuButton();
-    if (!b || !b.parentElement || !mobileActive()) return;
-    var cog = document.createElement("button");
-    cog.id = "tdf-cog";
-    cog.type = "button";
-    cog.setAttribute("aria-label", "Torn Dual Flyout settings");
-    cog.innerHTML = COG_SVG;
-    cog.style.top = b.offsetTop + "px";
-    cog.style.left = (b.offsetLeft + b.offsetWidth + 4) + "px";
-    cog.style.width = b.offsetWidth + "px";
-    cog.style.height = b.offsetHeight + "px";
-    cog.addEventListener("click", function (ev) { ev.preventDefault(); ev.stopPropagation(); toggleSettings(); });
-    b.parentElement.appendChild(cog);
+    if (!b || !mobileActive()) return;
+    var cog = document.getElementById("tdf-cog");
+    if (!cog) {
+      cog = document.createElement("button");
+      cog.id = "tdf-cog";
+      cog.type = "button";
+      cog.setAttribute("aria-label", "Torn Dual Flyout settings");
+      cog.innerHTML = COG_SVG;
+      // Lives on <body> at the top of the stacking order so the OPEN flyout can't sit over
+      // it and swallow the tap; positioned to track the menu button via getBoundingClientRect.
+      cog.addEventListener("click", function (ev) { ev.preventDefault(); ev.stopPropagation(); toggleSettings(); });
+      (document.body || html).appendChild(cog);
+    }
+    positionCog(cog, b);
   }
   setInterval(function () { ensureCog(); startMenuObserver(); syncMenuOpen(); }, 800);
   ensureCog();
