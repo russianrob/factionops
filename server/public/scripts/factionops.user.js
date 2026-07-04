@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.39
+// @version      5.1.40
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.39';
+    const SCRIPT_VERSION = '5.1.40';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -3756,10 +3756,12 @@ body.wb-chain-active {
                                     // faction members leak straight into state.statuses and
                                     // render as targets. Each member carries factionID.
                                     const fid = String(m.factionID || m.faction_id || m.factionId || '');
-                                    if (fid) {
-                                        if (state.myFactionId && fid === String(state.myFactionId)) continue;
-                                        if (state.enemyFactionId && fid !== String(state.enemyFactionId)) continue;
-                                    }
+                                    // Fail closed: only render a member we can positively confirm is the
+                                    // enemy faction. Without a known enemyFactionId (no war context — e.g.
+                                    // stream not connected / key rate-limited so myFactionId never loaded),
+                                    // render NOBODY rather than leaking our own members in as attack targets.
+                                    if (state.myFactionId && fid === String(state.myFactionId)) continue;
+                                    if (!state.enemyFactionId || fid !== String(state.enemyFactionId)) continue;
                                     const st = m.status || {};
                                     const text = String(st.text || st.status || '');
                                     if (!text) continue;
@@ -7315,6 +7317,34 @@ body.wb-chain-active {
 
     let chainBarRef = null; // cached reference to the moved #barChain element
 
+    // Push the DOM-read chain to warboard so its chain-monitor gates its own
+    // Torn poll (saves the shared pool-key budget). DOM-sourced = no Torn call,
+    // so it works even when the user's key is rate-limited. Throttled to ~5s
+    // (under the server's 8s freshness gate) + immediately on a count change.
+    let _lastChainPushAt = 0;
+    let _lastChainPushCurrent = -1;
+    function pushChainToServer() {
+        if (!state.jwtToken) return;
+        const warId = deriveWarId();
+        if (!warId) return;
+        const c = state.chain;
+        if (!c || typeof c.current !== 'number') return;
+        const now = Date.now();
+        const changed = c.current !== _lastChainPushCurrent;
+        if (!changed && now - _lastChainPushAt < 5000) return;
+        _lastChainPushAt = now;
+        _lastChainPushCurrent = c.current;
+        postAction('/api/chain-update', {
+            warId,
+            chainData: {
+                current:  c.current || 0,
+                timeout:  c.timeout || 0,
+                cooldown: c.cooldown || 0,
+                serverTimestamp: Math.floor(now / 1000),
+            },
+        }).catch(() => {});
+    }
+
     function parseChainFromDOM() {
         const bar = chainBarRef || document.getElementById('barChain');
         if (!bar) return false;
@@ -7365,6 +7395,7 @@ body.wb-chain-active {
         if (changed) {
         }
 
+        pushChainToServer();
         return true;
     }
 
