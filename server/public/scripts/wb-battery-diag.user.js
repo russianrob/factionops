@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Warboard Battery Diag
 // @namespace    tornwar.com
-// @version      0.2.8
-// @description  Live overlay of what's consuming CPU/network inside the WebView — fetch / XHR / GM_xhr counts by host + caller, mutation rate, setInterval handles, page nav rate. Diagnostic only, no side effects.
+// @version      0.2.9
+// @description  Live overlay of what's consuming CPU/network inside the WebView — fetch / XHR / GM_xhr counts by host + caller, mutation rate, setInterval handles, page nav rate, plus per-key api.torn.com req/min. Diagnostic only, no side effects.
 // @author       warboard
 // @match        https://www.torn.com/*
 // @downloadURL  https://tornwar.com/scripts/wb-battery-diag.user.js
@@ -45,6 +45,7 @@
     byHost:    Object.create(null),    // hostname → count
     byPath:    Object.create(null),    // host+normalized-path → count (0.2.8)
     bySource:  Object.create(null),    // script URL → count (network)
+    apiCalls:  [],                     // 0.2.9: rolling {ts,key,sel} for api.torn.com
     mutations: 0,
     navs:      0,
     qsa:       0,
@@ -96,6 +97,34 @@
 
   function bump(map, key) { map[key] = (map[key] || 0) + 1; }
 
+  // 0.2.9: mask an API key so the overlay is screenshot-safe while
+  // still letting the owner tell keys apart. Torn keys are 16 chars;
+  // first-3…last-3 is enough to disambiguate their own keys.
+  function maskKey(k) {
+    if (!k) return '(no key)';
+    if (k.length <= 6) return k;
+    return k.slice(0, 3) + '…' + k.slice(-3);
+  }
+
+  // 0.2.9: record a call to api.torn.com into a rolling buffer, tagged
+  // by masked key + selections. Buffer self-prunes by time at render;
+  // hard cap the array so a long session can't grow it unbounded.
+  // NOTE: only sees calls made INSIDE this WebView (userscripts + PDA
+  // app polling). Server-side callers (Tornium etc.) never appear here
+  // — Torn's own API log is the source of truth for those.
+  function recordApiCall(rawUrl) {
+    try {
+      const u = new URL(String(rawUrl), location.href);
+      if (u.hostname !== 'api.torn.com') return;
+      const key = u.searchParams.get('key') || '';
+      const sel = u.searchParams.get('selections') || '';
+      stats.apiCalls.push({ ts: Date.now(), key: maskKey(key), sel });
+      if (stats.apiCalls.length > 3000) {
+        stats.apiCalls.splice(0, stats.apiCalls.length - 3000);
+      }
+    } catch (_) {}
+  }
+
   // 0.2.8: normalize URL path for byPath bucketing. Strips:
   //   - query string + hash (huge cardinality killer)
   //   - trailing numeric IDs (so /user/12345 collapses with /user/67890)
@@ -129,6 +158,7 @@
         bump(stats.byHost, host);
         bump(stats.byPath, normalizeUrl(url));
         bump(stats.bySource, attributeCaller());
+        recordApiCall(url);
       } catch (_) {}
       return origFetch.call(this, input, init);
     };
@@ -143,6 +173,7 @@
         bump(stats.byHost, host);
         bump(stats.byPath, normalizeUrl(url));
         bump(stats.bySource, attributeCaller());
+        recordApiCall(url);
       } catch (_) {}
       return origXhrOpen.call(this, method, url, ...rest);
     };
@@ -158,6 +189,7 @@
         bump(stats.byHost, host);
         bump(stats.byPath, normalizeUrl(opts.url || ''));
         bump(stats.bySource, attributeCaller());
+        recordApiCall(opts.url || '');
       } catch (_) {}
       return origGm(opts);
     };
@@ -294,6 +326,7 @@
     reset.addEventListener('click', () => {
       stats.startTs = Date.now();
       stats.fetch = stats.xhr = stats.gmxhr = stats.mutations = stats.navs = stats.qsa = stats.timeouts = stats.setIntervalCalls = 0;
+      stats.apiCalls.length = 0;
       for (const k of Object.keys(stats.byHost)) delete stats.byHost[k];
       for (const k of Object.keys(stats.bySource)) delete stats.bySource[k];
     });
@@ -329,6 +362,26 @@
       const key = caller + ' @ ' + ms + 'ms\n  ' + fnShort;
       intByKey[key] = (intByKey[key] || 0) + 1;
     }
+
+    // 0.2.9: rolling 60s api.torn.com view, bucketed by masked key.
+    const nowTs = Date.now();
+    const recentApi = stats.apiCalls.filter(c => nowTs - c.ts <= 60000);
+    const apiByKey = {};      // key → count
+    const apiSelByKey = {};   // key → { selections → count }
+    for (const c of recentApi) {
+      apiByKey[c.key] = (apiByKey[c.key] || 0) + 1;
+      const sel = c.sel || '(none)';
+      (apiSelByKey[c.key] = apiSelByKey[c.key] || {});
+      apiSelByKey[c.key][sel] = (apiSelByKey[c.key][sel] || 0) + 1;
+    }
+    const apiRows = Object.entries(apiByKey).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => {
+      const sels = apiSelByKey[k] || {};
+      const topSel = Object.entries(sels).sort((a, b) => b[1] - a[1])[0];
+      const selStr = topSel ? String(topSel[0]).slice(0, 34) : '';
+      const escSel = selStr.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `<div style="padding-left:6px">${k} <span style="color:#8ba">${n}/m</span>${escSel ? `<br><span style="padding-left:14px;color:#667;font-size:9px">↳ ${escSel}</span>` : ''}</div>`;
+    }).join('');
+
     body.innerHTML = `
       <div style="margin-bottom:6px;color:#8ba">elapsed: ${elapsedSec.toFixed(0)}s</div>
       <div><strong>Network</strong> (/min):
@@ -340,6 +393,12 @@
       ${topN(stats.byHost, 6).map(([h, n]) => `<div style="padding-left:6px">${h} <span style="color:#8ba">${n} (${perMin(n)}/m)</span></div>`).join('')}
       <div style="color:#8ba;margin-top:3px;font-size:10px">top callers:</div>
       ${topN(stats.bySource, 6).map(([s, n]) => `<div style="padding-left:6px">${s} <span style="color:#8ba">${n}</span></div>`).join('')}
+
+      <div style="margin-top:6px"><strong>API (torn)</strong> — last 60s:
+        <b>${recentApi.length}</b> req/min (in-WebView only)
+      </div>
+      ${apiRows || '<div style="padding-left:6px;color:#667;font-size:10px">no api.torn.com calls yet</div>'}
+      <div style="padding-left:6px;color:#556;font-size:9px;margin-top:2px">server-side callers (Tornium etc.) not visible here</div>
 
       <div style="margin-top:6px"><strong>DOM</strong>:
         mutations <b>${perMin(stats.mutations)}</b>/m ·
@@ -391,6 +450,12 @@
     setInterval(() => safe('post-tick', () => {
       const windowSec = (Date.now() - _windowStart) / 1000;
       if (windowSec < 5) return;
+      // 0.2.9: snapshot last-60s api.torn.com counts per masked key.
+      const nowTs = Date.now();
+      const apiPerKey60s = Object.create(null);
+      for (const c of stats.apiCalls) {
+        if (nowTs - c.ts <= 60000) apiPerKey60s[c.key] = (apiPerKey60s[c.key] || 0) + 1;
+      }
       const payload = {
         windowSec,
         ua: navigator.userAgent || '',
@@ -406,11 +471,13 @@
         byHost:          Object.assign({}, stats.byHost),
         byPath:          Object.assign({}, stats.byPath),
         bySource:        Object.assign({}, stats.bySource),
+        apiPerKey60s:    Object.assign({}, apiPerKey60s),         // 0.2.9: masked-key req/min
         qsaBySource:     Object.assign({}, stats.qsaBySource),     // 0.2.3: immediate
         qsaByOriginator: Object.assign({}, stats.qsaByOriginator), // 0.2.5: outermost
       };
       // Reset counters before send so next window starts clean. (Don't
-      // reset interval handles — those are live.)
+      // reset interval handles — those are live. Don't reset apiCalls —
+      // it's a rolling time-pruned buffer, not a per-window counter.)
       _windowStart = Date.now();
       stats.fetch = stats.xhr = stats.gmxhr = stats.mutations = stats.qsa = stats.navs = stats.timeouts = 0;
       for (const k of Object.keys(stats.byHost)) delete stats.byHost[k];
