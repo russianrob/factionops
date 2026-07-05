@@ -109,6 +109,9 @@ export function ingestWar(factionId, war, result) {
     const synthKey = `archived_${fid}_${eid}_${Math.floor(endedMs / 1000)}`;
     if (synthKey !== warKey && entry.wars[synthKey]) delete entry.wars[synthKey];
   }
+  // Per-member xanax-taken (playerId -> count) from the live war object;
+  // empty on backfill / wars polled before xanax tracking existed.
+  const xanaxTakenMap = (war && war.xanaxStats && war.xanaxStats.taken) || {};
   entry.wars[warKey] = {
     warKey,
     warId: String((result.warId != null ? result.warId : (war && war.warId)) ?? warKey),
@@ -131,21 +134,43 @@ export function ingestWar(factionId, war, result) {
     payoutMode: result.mode || null,
     payoutComputedAt: Number(result.generatedAt) || Date.now(),
     capturedAt: Date.now(),
-    members: result.members.map(m => ({
-      playerId: String(m.playerId),
-      name: String(m.name || `Player ${m.playerId}`),
-      level: Number(m.level) || null,
-      warHits: Number(m.attackCount) || 0,
-      totalAttacks: Number(m.totalAttacks) || 0,
-      score: (m.score != null ? Number(m.score) : null),
-      sharePct: (m.sharePct != null ? Number(m.sharePct) : null),
-      dollarPayout: (m.dollarPayout != null ? Number(m.dollarPayout) : null),
-      avgFf: (m.avgFf != null ? Number(m.avgFf) : null),
-      maxFf: (m.maxFf != null ? Number(m.maxFf) : null),
-      tornScore: (m.tornScore != null ? Number(m.tornScore) : null),
-      tornAttacks: (m.tornAttacks != null ? Number(m.tornAttacks) : null),
-      breakdown: (m.breakdown && typeof m.breakdown === "object") ? m.breakdown : {},
-    })),
+    // Full frozen xanax-taken map (playerId -> count) + names, so takers who
+    // made ZERO attacks — absent from result.members but the worst misuse
+    // cases — are still recorded. null when the war had no xanax tracking.
+    xanaxStats: (war && war.xanaxStats && war.xanaxStats.taken)
+      ? {
+          taken: { ...war.xanaxStats.taken },
+          names: { ...(war.xanaxStats.names || {}) },
+          lastPolledAt: Number(war.xanaxStats.lastPolledAt) || null,
+        }
+      : null,
+    members: result.members.map(m => {
+      const totalAttacks = Number(m.totalAttacks) || 0;
+      // Xanax accountability, frozen at capture. 1 xanax = 250e = 10 expected
+      // attacks; deficit = expected - all attacks made (war + non-war). Zeroed
+      // when the war carried no xanax tracking (backfill / pre-tracking wars).
+      const xanaxTaken = Number(xanaxTakenMap[String(m.playerId)]) || 0;
+      const xanaxDeficit = Math.max(0, xanaxTaken * 10 - totalAttacks);
+      const xanaxFlagged = xanaxTaken > 0 && xanaxDeficit > 0;
+      return {
+        playerId: String(m.playerId),
+        name: String(m.name || `Player ${m.playerId}`),
+        level: Number(m.level) || null,
+        warHits: Number(m.attackCount) || 0,
+        totalAttacks,
+        score: (m.score != null ? Number(m.score) : null),
+        sharePct: (m.sharePct != null ? Number(m.sharePct) : null),
+        dollarPayout: (m.dollarPayout != null ? Number(m.dollarPayout) : null),
+        avgFf: (m.avgFf != null ? Number(m.avgFf) : null),
+        maxFf: (m.maxFf != null ? Number(m.maxFf) : null),
+        tornScore: (m.tornScore != null ? Number(m.tornScore) : null),
+        tornAttacks: (m.tornAttacks != null ? Number(m.tornAttacks) : null),
+        breakdown: (m.breakdown && typeof m.breakdown === "object") ? m.breakdown : {},
+        xanaxTaken,
+        xanaxDeficit,
+        xanaxFlagged,
+      };
+    }),
   };
   entry.dirty = true;
   _scheduleSave(entry, fid);
@@ -231,7 +256,7 @@ export function aggregateByMember(factionId) {
     for (const m of w.members) {
       const pid = String(m.playerId);
       if (!byId[pid]) {
-        byId[pid] = { playerId: pid, name: m.name, level: m.level || null, wars: 0, warHits: 0, totalAttacks: 0, breakdown: {} };
+        byId[pid] = { playerId: pid, name: m.name, level: m.level || null, wars: 0, warHits: 0, totalAttacks: 0, xanaxTaken: 0, xanaxWarsFlagged: 0, breakdown: {} };
       }
       const agg = byId[pid];
       if (m.name) agg.name = m.name;          // freshest name wins
@@ -239,6 +264,8 @@ export function aggregateByMember(factionId) {
       agg.wars += 1;
       agg.warHits += Number(m.warHits) || 0;
       agg.totalAttacks += Number(m.totalAttacks) || 0;
+      agg.xanaxTaken += Number(m.xanaxTaken) || 0;
+      if (m.xanaxFlagged) agg.xanaxWarsFlagged += 1;
       const bd = m.breakdown || {};
       for (const k in bd) agg.breakdown[k] = (agg.breakdown[k] || 0) + (Number(bd[k]) || 0);
     }
