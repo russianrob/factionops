@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.2
+// @version      3.4.3
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.2';
+    var SCRIPT_VERSION = '3.4.3';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -414,15 +414,20 @@
             try {
                 var ds = new DecompressionStream('gzip');
                 var writer = ds.writable.getWriter();
-                writer.write(new Uint8Array(arrayBuffer));
-                writer.close();
                 var reader = ds.readable.getReader();
                 var chunks = [];
-                while (true) {
-                    var result = await reader.read();
-                    if (result.done) break;
-                    chunks.push(result.value);
-                }
+                var pump = (async function () {
+                    await writer.write(new Uint8Array(arrayBuffer));
+                    await writer.close();
+                })();
+                var drain = (async function () {
+                    while (true) {
+                        var result = await reader.read();
+                        if (result.done) break;
+                        chunks.push(result.value);
+                    }
+                })();
+                await Promise.all([pump, drain]);
                 var totalLength = chunks.reduce(function(acc, c) { return acc + c.length; }, 0);
                 var merged = new Uint8Array(totalLength);
                 var offset = 0;
