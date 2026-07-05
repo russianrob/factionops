@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.3
+// @version      3.4.4
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.3';
+    var SCRIPT_VERSION = '3.4.4';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1273,6 +1273,18 @@
                         break;
                     }
                 }
+            }
+        }
+
+        if (bonuses.some(function (b) { return b.level == null; })) {
+            var lbText = (el.textContent || '');
+            for (var lb = 0; lb < bonuses.length; lb++) {
+                if (bonuses[lb].level != null) continue;
+                var lbPat = String(bonuses[lb].name).replace(/[-\s]+/g, '[-\\s]?');
+                var lbA = lbText.match(new RegExp('(\\d+)\\s*%\\s*' + lbPat, 'i'));
+                var lbB = lbA ? null : lbText.match(new RegExp(lbPat + '\\s*(\\d+)\\s*%', 'i'));
+                var lbN = lbA ? parseInt(lbA[1], 10) : (lbB ? parseInt(lbB[1], 10) : 0);
+                if (lbN > 0) bonuses[lb].level = lbN;
             }
         }
 
