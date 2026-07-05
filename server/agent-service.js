@@ -294,7 +294,7 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
   } catch (e) { snap = "(page snapshot error: " + String(e) + ")"; }
   if (onEvent) onEvent({ t: "snapshot", ok: !/unavailable|error/.test(snap) });
   const prompt = buildTurnPrompt({ snap, text, installed, skipUserscripts });
-  const baseArgs = ["--print", prompt,
+  const baseArgs = ["--print",
     "--output-format", "stream-json", "--verbose", "--include-partial-messages",
     "--append-system-prompt", SYSTEM_PROMPT,
     "--permission-mode", "bypassPermissions",
@@ -320,8 +320,14 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
     const args = baseArgs.slice();
     args.push("--model", model);
     if (useResume && sessionId) args.push("--resume", sessionId);
-    const child = spawn(CLAUDE, args, { cwd: WORKDIR, env: childEnv(), stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(CLAUDE, args, { cwd: WORKDIR, env: childEnv(), stdio: ["pipe", "pipe", "pipe"] });
     currentChild = child;
+    // Feed the prompt via stdin, not argv: the full source of a large script
+    // (e.g. RW Pricer, ~130KB with embedded pako) overflows the OS per-arg size
+    // limit → spawn E2BIG. stdin has no such cap. Swallow EPIPE if the child
+    // dies before draining it.
+    child.stdin.on("error", () => {});
+    try { child.stdin.write(prompt); child.stdin.end(); } catch (e) {}
     let resolvedSession = (useResume && sessionId) ? sessionId : null;
     let buf = "";
     let assistantText = "";
