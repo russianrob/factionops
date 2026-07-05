@@ -7519,6 +7519,71 @@ router.post('/api/admin/xanax-backfill', async (req, res) => {
   }
 });
 
+// Local-only: backfill xanax accountability onto HISTORICAL wars stored in
+// war-history, by re-fetching faction armoury news per war window and writing
+// through the in-memory war-history store (avoids clobbering its state).
+// One-off maintenance tool — 127.0.0.1 only, no key needed.
+router.post('/api/admin/xanax-backfill-history', async (req, res) => {
+  const ip = req.ip || req.socket?.remoteAddress || '';
+  if (ip !== '127.0.0.1' && ip !== '::1' && ip !== '::ffff:127.0.0.1') {
+    return res.status(403).json({ error: 'localhost only' });
+  }
+  const factionId = String(req.query.factionId || '');
+  if (!factionId) return res.status(400).json({ error: 'factionId required' });
+  const onlyKey = req.query.warKey ? String(req.query.warKey) : null;
+  const PRE = 24 * 3600, POST = 24 * 3600;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  try {
+    const torn = await import('./torn-api.js');
+    const xt = await import('./xanax-tracker.js');
+    const wars = warHistory.listWars(factionId).filter(w => !onlyKey || w.warKey === onlyKey);
+    const results = [];
+    for (const wmeta of wars) {
+      const startSec = wmeta.warStart ? Math.floor(wmeta.warStart / 1000) : null;
+      const endSec = wmeta.warEndedAt ? Math.floor(wmeta.warEndedAt / 1000) : null;
+      if (!startSec || !endSec) { results.push({ warKey: wmeta.warKey, skipped: 'no window' }); continue; }
+      const fromTs = startSec - PRE;
+      const toTs = Math.min(endSec + POST, Math.floor(Date.now() / 1000));
+      const all = [], seen = new Set();
+      let to = toTs, ok = true, errMsg = null;
+      for (let page = 0; page < 120; page++) {
+        const apiKey = store.getPollingKey(factionId, 'xanax-tracker', page);
+        if (!apiKey) { ok = false; errMsg = 'no pool key'; break; }
+        let batch;
+        try { batch = await torn.fetchFactionArmouryNewsRange(factionId, apiKey, fromTs, to); }
+        catch (e) { ok = false; errMsg = e.message; break; }
+        if (batch.length === 0) break;
+        let oldest = Infinity;
+        for (const e of batch) { if (seen.has(e.id)) continue; seen.add(e.id); all.push(e); if (e.timestamp < oldest) oldest = e.timestamp; }
+        if (batch.length < 100 || oldest <= fromTs) break;
+        to = oldest - 1;
+        await sleep(250);
+      }
+      // Net taken: used +1, deposited -qty, floored at 0 (mirrors the tracker).
+      const taken = {}, names = {};
+      for (const e of all) {
+        const p = xt._internal.parseXanaxEntry(e.news);
+        if (!p) continue;
+        names[p.playerId] = p.playerName;
+        if (p.type === 'deposited') taken[p.playerId] = Math.max(0, (taken[p.playerId] || 0) - p.qty);
+        else taken[p.playerId] = (taken[p.playerId] || 0) + p.qty;
+      }
+      let patched = null;
+      if (ok) patched = warHistory.backfillXanaxForWar(factionId, wmeta.warKey, taken, names, { lastPolledAt: toTs, from: fromTs, to: toTs });
+      results.push({
+        warKey: wmeta.warKey, enemy: wmeta.enemyFactionName,
+        entries: all.length, xanaxMembers: Object.keys(taken).length,
+        totalXanax: Object.values(taken).reduce((s, n) => s + n, 0),
+        patched: patched ? patched.patched : null, ok, error: errMsg,
+      });
+      await sleep(400);
+    }
+    res.json({ ok: true, factionId, wars: results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── /upload (basic-auth) — same drop UI, gated by HTTP basic auth ───
 // Browser prompts for username + password on first visit; password is
 // read from /etc/warboard/upload-password. Username is ignored —

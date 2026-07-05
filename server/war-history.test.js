@@ -9,7 +9,7 @@ import { join } from 'node:path';
 // war-history.js resolves its data dir from DATA_DIR at import time, so point
 // it at a throwaway temp dir BEFORE importing (dynamic import for ordering).
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'wh-xanax-test-'));
-const { ingestWar, getWar, aggregateByMember } = await import('./war-history.js');
+const { ingestWar, getWar, aggregateByMember, backfillXanaxForWar } = await import('./war-history.js');
 
 function mkResult(members, over = {}) {
   return {
@@ -72,6 +72,32 @@ test('ingestWar retains war-level xanax for no-show takers absent from the membe
   const stored = getWar(factionId, key);
   assert.strictEqual(stored.xanaxStats.taken['333'], 5, 'no-show taker retained at war level');
   assert.strictEqual(stored.xanaxStats.taken['111'], 8);
+});
+
+test('backfillXanaxForWar patches an already-stored war with re-fetched xanax', () => {
+  const factionId = '999000006';
+  // historical war ingested with no xanax tracking
+  const key = ingestWar(factionId,
+    { warEndedAt: 1783000000000, realWarId: 90006, enemyFactionId: 560 },
+    mkResult([
+      { playerId: '111', name: 'Winter', level: 50, attackCount: 8, totalAttacks: 10 },
+      { playerId: '222', name: 'Clean', level: 40, attackCount: 40, totalAttacks: 45 },
+    ], { warId: 90006, enemyFactionId: 560 }));
+  assert.strictEqual(getWar(factionId, key).members.find(m => m.playerId === '111').xanaxTaken, 0);
+
+  const r = backfillXanaxForWar(factionId, key,
+    { '111': 6, '333': 3 }, { '111': 'Winter', '333': 'NoShow' },
+    { lastPolledAt: 1783000, from: 1782900, to: 1783100 });
+  assert.strictEqual(r.patched, 2);
+
+  const stored = getWar(factionId, key);
+  const winter = stored.members.find(m => m.playerId === '111');
+  assert.strictEqual(winter.xanaxTaken, 6);
+  assert.strictEqual(winter.xanaxDeficit, 50);   // 6*10 - 10
+  assert.strictEqual(winter.xanaxFlagged, true);
+  assert.strictEqual(stored.members.find(m => m.playerId === '222').xanaxTaken, 0);
+  assert.strictEqual(stored.xanaxStats.taken['333'], 3);   // no-show retained at war level
+  assert.strictEqual(backfillXanaxForWar(factionId, 'nope', {}, {}, {}), null);
 });
 
 test('aggregateByMember rolls up xanaxTaken and counts flagged wars', () => {

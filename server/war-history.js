@@ -278,6 +278,38 @@ export function warCount(factionId) {
   return Object.keys(_load(factionId).wars).length;
 }
 
+/**
+ * Backfill xanax accountability onto an ALREADY-STORED war, using a taken-map
+ * re-fetched from armoury news (playerId -> net count). Patches per-member
+ * {xanaxTaken, xanaxDeficit, xanaxFlagged} against the stored totalAttacks and
+ * sets the war-level xanaxStats map (so no-show takers absent from the member
+ * list are retained). Returns { warKey, patched } or null if the war is absent.
+ */
+export function backfillXanaxForWar(factionId, warKey, takenMap, names, meta = {}) {
+  const fid = String(factionId);
+  const w = _load(fid).wars[String(warKey)];
+  if (!w || !Array.isArray(w.members)) return null;
+  const taken = takenMap || {};
+  w.xanaxStats = {
+    taken: { ...taken },
+    names: { ...(names || {}) },
+    lastPolledAt: Number(meta.lastPolledAt) || null,
+    backfilledFrom: Number(meta.from) || null,
+    backfilledTo: Number(meta.to) || null,
+  };
+  for (const m of w.members) {
+    const totalAttacks = Number(m.totalAttacks) || 0;
+    const xanaxTaken = Number(taken[String(m.playerId)]) || 0;
+    m.xanaxTaken = xanaxTaken;
+    m.xanaxDeficit = Math.max(0, xanaxTaken * 10 - totalAttacks);
+    m.xanaxFlagged = xanaxTaken > 0 && m.xanaxDeficit > 0;
+  }
+  const entry = _load(fid);
+  entry.dirty = true;
+  _scheduleSave(entry, fid);
+  return { warKey: String(warKey), patched: w.members.length };
+}
+
 /** Set the ranked-war score on an existing entry (score-backfill). */
 export function setScores(factionId, warKey, warScores) {
   const entry = _load(factionId);
