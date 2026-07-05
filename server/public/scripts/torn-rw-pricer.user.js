@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.1
+// @version      3.4.2
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.1';
+    var SCRIPT_VERSION = '3.4.2';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -891,6 +891,20 @@
 
     // ─── Fetch, parse, cache, and apply ──────────────────────
 
+    function applyJsonPrices(jsonData) {
+        if (jsonData.weaponPrices) weaponPrices = jsonData.weaponPrices;
+        if (jsonData.bonusPrices) bonusPrices = jsonData.bonusPrices;
+        if (jsonData.classPrices) classPrices = jsonData.classPrices;
+        if (jsonData.armourPrices) armourPrices = jsonData.armourPrices;
+        if (jsonData.armourBonusPrices) armourBonusPrices = jsonData.armourBonusPrices;
+        if (jsonData.armourSetPrices) armourSetPrices = jsonData.armourSetPrices;
+        if (jsonData.weaponComboPrices) weaponComboPrices = jsonData.weaponComboPrices;
+        if (jsonData.weaponPairComboPrices) weaponPairComboPrices = jsonData.weaponPairComboPrices;
+        if (jsonData.weaponLevelPrices) weaponLevelPrices = jsonData.weaponLevelPrices;
+        if (jsonData.armourComboPrices) armourComboPrices = jsonData.armourComboPrices;
+        if (jsonData.weaponMaxBonus) weaponMaxBonus = jsonData.weaponMaxBonus;
+    }
+
     async function fetchAndUpdatePrices() {
         if (isFetching) return;
         isFetching = true;
@@ -901,47 +915,41 @@
                 // PDA path: fetch lightweight pre-built JSON (no gzip decompression)
                 console.log('[RWP] PDA detected — fetching pre-built JSON prices');
                 var jsonData = await fetchPricesJSON();
-
-                if (jsonData.weaponPrices) weaponPrices = jsonData.weaponPrices;
-                if (jsonData.bonusPrices) bonusPrices = jsonData.bonusPrices;
-                if (jsonData.classPrices) classPrices = jsonData.classPrices;
-                if (jsonData.armourPrices) armourPrices = jsonData.armourPrices;
-                if (jsonData.armourBonusPrices) armourBonusPrices = jsonData.armourBonusPrices;
-                if (jsonData.armourSetPrices) armourSetPrices = jsonData.armourSetPrices;
-                if (jsonData.weaponComboPrices) weaponComboPrices = jsonData.weaponComboPrices;
-                if (jsonData.weaponPairComboPrices) weaponPairComboPrices = jsonData.weaponPairComboPrices;
-                if (jsonData.weaponLevelPrices) weaponLevelPrices = jsonData.weaponLevelPrices;
-                if (jsonData.armourComboPrices) armourComboPrices = jsonData.armourComboPrices;
-                if (jsonData.weaponMaxBonus) weaponMaxBonus = jsonData.weaponMaxBonus;
+                applyJsonPrices(jsonData);
 
                 var wCount = Object.keys(weaponPrices).length;
                 var cCount = Object.keys(weaponComboPrices).length;
                 console.log('[RWP] JSON update complete — ' + wCount + ' weapons, ' + cCount + ' combos loaded');
             } else {
-                // Desktop path: fetch full gzipped CSVs and parse
-                var results = await Promise.all([
-                    fetchGzip(WEAPON_CDN_URL).then(decompressGzip),
-                    fetchGzip(ARMOUR_CDN_URL).then(decompressGzip)
-                ]);
+                try {
+                    // Desktop path: fetch full gzipped CSVs and parse
+                    var results = await Promise.all([
+                        fetchGzip(WEAPON_CDN_URL).then(decompressGzip),
+                        fetchGzip(ARMOUR_CDN_URL).then(decompressGzip)
+                    ]);
 
-                var weaponData = parseCSVAndComputePrices(results[0]);
-                weaponPrices = weaponData.weaponPrices;
-                bonusPrices = weaponData.bonusPrices;
-                classPrices = weaponData.classPrices;
-                weaponComboPrices = weaponData.comboPrices;
-                weaponPairComboPrices = weaponData.pairComboPrices || {};
-                weaponLevelPrices = weaponData.levelPrices || {};
-                if (weaponData.weaponMaxBonus) weaponMaxBonus = weaponData.weaponMaxBonus;
+                    var weaponData = parseCSVAndComputePrices(results[0]);
+                    weaponPrices = weaponData.weaponPrices;
+                    bonusPrices = weaponData.bonusPrices;
+                    classPrices = weaponData.classPrices;
+                    weaponComboPrices = weaponData.comboPrices;
+                    weaponPairComboPrices = weaponData.pairComboPrices || {};
+                    weaponLevelPrices = weaponData.levelPrices || {};
+                    if (weaponData.weaponMaxBonus) weaponMaxBonus = weaponData.weaponMaxBonus;
 
-                var armourData = parseArmourCSVAndComputePrices(results[1]);
-                armourPrices = armourData.armourPrices;
-                armourBonusPrices = armourData.armourBonusPrices;
-                armourSetPrices = armourData.armourSetPrices;
-                armourComboPrices = armourData.comboPrices;
+                    var armourData = parseArmourCSVAndComputePrices(results[1]);
+                    armourPrices = armourData.armourPrices;
+                    armourBonusPrices = armourData.armourBonusPrices;
+                    armourSetPrices = armourData.armourSetPrices;
+                    armourComboPrices = armourData.comboPrices;
 
-                var wCount = Object.keys(weaponData.weaponPrices).length;
-                var cCount = Object.keys(weaponData.comboPrices).length;
-                console.log('[RWP] Live CDN update complete — ' + wCount + ' weapons, ' + cCount + ' combos loaded');
+                    var wCount = Object.keys(weaponData.weaponPrices).length;
+                    var cCount = Object.keys(weaponData.comboPrices).length;
+                    console.log('[RWP] Live CDN update complete — ' + wCount + ' weapons, ' + cCount + ' combos loaded');
+                } catch (csvErr) {
+                    console.log('[RWP] gzip CSV path failed (' + csvErr.message + ') — falling back to pre-built JSON');
+                    applyJsonPrices(await fetchPricesJSON());
+                }
             }
 
             var cacheData = JSON.stringify({
