@@ -74,6 +74,21 @@ test('ingestWar retains war-level xanax for no-show takers absent from the membe
   assert.strictEqual(stored.xanaxStats.taken['111'], 8);
 });
 
+test('re-ingest without fresh xanax preserves previously stored/backfilled xanax', () => {
+  const factionId = '999000007';
+  const withX = { warEndedAt: 1783000000000, realWarId: 90007, enemyFactionId: 561, xanaxStats: { taken: { '111': 6 }, names: { '111': 'Winter' } } };
+  const result = mkResult([{ playerId: '111', name: 'Winter', level: 50, attackCount: 8, totalAttacks: 10 }], { warId: 90007, enemyFactionId: 561 });
+  const key = ingestWar(factionId, withX, result);
+  assert.strictEqual(getWar(factionId, key).members[0].xanaxTaken, 6);
+
+  // _sweepWarHistory-style fresh recompute: same war, but `war` has NO xanaxStats
+  ingestWar(factionId, { warEndedAt: 1783000000000, realWarId: 90007, enemyFactionId: 561 }, result);
+  const m = getWar(factionId, key).members[0];
+  assert.strictEqual(m.xanaxTaken, 6, 'per-member xanax preserved across re-ingest');
+  assert.strictEqual(m.xanaxDeficit, 50);
+  assert.strictEqual(getWar(factionId, key).xanaxStats.taken['111'], 6, 'war-level map preserved');
+});
+
 test('backfillXanaxForWar patches an already-stored war with re-fetched xanax', () => {
   const factionId = '999000006';
   // historical war ingested with no xanax tracking

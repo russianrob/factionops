@@ -109,9 +109,14 @@ export function ingestWar(factionId, war, result) {
     const synthKey = `archived_${fid}_${eid}_${Math.floor(endedMs / 1000)}`;
     if (synthKey !== warKey && entry.wars[synthKey]) delete entry.wars[synthKey];
   }
-  // Per-member xanax-taken (playerId -> count) from the live war object;
-  // empty on backfill / wars polled before xanax tracking existed.
-  const xanaxTakenMap = (war && war.xanaxStats && war.xanaxStats.taken) || {};
+  // Xanax accountability source: prefer the live war's fresh xanaxStats;
+  // otherwise PRESERVE whatever was previously stored (backfill, or an earlier
+  // capture) so a re-ingest with no xanax source (e.g. a sweep recompute of a
+  // historical war) doesn't wipe it.
+  const prevWar = entry.wars[warKey];
+  const freshXanax = (war && war.xanaxStats && war.xanaxStats.taken) ? war.xanaxStats : null;
+  const effXanax = freshXanax || ((prevWar && prevWar.xanaxStats) ? prevWar.xanaxStats : null);
+  const xanaxTakenMap = (effXanax && effXanax.taken) || {};
   entry.wars[warKey] = {
     warKey,
     warId: String((result.warId != null ? result.warId : (war && war.warId)) ?? warKey),
@@ -137,11 +142,12 @@ export function ingestWar(factionId, war, result) {
     // Full frozen xanax-taken map (playerId -> count) + names, so takers who
     // made ZERO attacks — absent from result.members but the worst misuse
     // cases — are still recorded. null when the war had no xanax tracking.
-    xanaxStats: (war && war.xanaxStats && war.xanaxStats.taken)
+    xanaxStats: effXanax
       ? {
-          taken: { ...war.xanaxStats.taken },
-          names: { ...(war.xanaxStats.names || {}) },
-          lastPolledAt: Number(war.xanaxStats.lastPolledAt) || null,
+          taken: { ...(effXanax.taken || {}) },
+          names: { ...(effXanax.names || {}) },
+          lastPolledAt: Number(effXanax.lastPolledAt) || null,
+          ...(effXanax.backfilledFrom ? { backfilledFrom: effXanax.backfilledFrom, backfilledTo: effXanax.backfilledTo } : {}),
         }
       : null,
     members: result.members.map(m => {
