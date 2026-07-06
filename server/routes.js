@@ -463,6 +463,41 @@ router.post("/api/screenshot", requireAuth, (req, res, next) => {
   return res.json({ ok: true, url: `${_SHOT_ORIGIN}/s/${file}` });
 });
 
+// Dedicated single-purpose token for the "Upload to Tornwar" iOS share-sheet
+// Shortcut. Unlike /api/screenshot (owner JWT, grants the whole owner surface),
+// this token can ONLY upload a PNG and return its public link — nothing else —
+// so it is safe to embed in a Shortcut on the phone, and it never expires.
+// Stored in data/.shot-token (chmod 600), generated once.
+const _SHOT_TOKEN_FILE = pathResolve("/opt/warboard/server/data/.shot-token");
+function _shotTokenOk(req) {
+  let want = "";
+  try { want = readFileSync(_SHOT_TOKEN_FILE, "utf8").trim(); } catch { want = ""; }
+  if (!want) return false;
+  const got = String(req.get("x-shot-token") || "");
+  const a = Buffer.from(got), b = Buffer.from(want);
+  return a.length === b.length && _uploadTimingSafeEqual(a, b);
+}
+function _saveShotPng(rawIn, res) {
+  const raw = (typeof rawIn === "string") ? rawIn.replace(/^data:image\/png;base64,/, "") : "";
+  if (!raw) return res.status(400).json({ error: "png (base64) required" });
+  let buf;
+  try { buf = Buffer.from(raw, "base64"); } catch { return res.status(400).json({ error: "bad base64" }); }
+  if (buf.length < 8 || buf.length > 16 * 1024 * 1024) return res.status(400).json({ error: "empty or too large" });
+  if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)) return res.status(400).json({ error: "not a png" });
+  try { mkdirSync(_SHOT_DIR, { recursive: true }); } catch {}
+  const file = _shotRandomBytes(8).toString("hex") + ".png";
+  try { writeFileSync(pathJoin(_SHOT_DIR, file), buf, { mode: 0o644 }); }
+  catch { return res.status(500).json({ error: "write failed" }); }
+  _pruneOldScreenshots();
+  return res.json({ ok: true, url: `${_SHOT_ORIGIN}/s/${file}` });
+}
+router.post("/api/shot", (req, res, next) => {
+  if (_shotTokenOk(req)) return next();
+  return res.status(401).json({ error: "unauthorized" });
+}, express.json({ limit: "16mb" }), (req, res) => {
+  return _saveShotPng(req.body && req.body.png, res);
+});
+
 // owner → chat with the in-app agent; SSE stream of normalized turn events
 router.post("/api/agent/message", requireAuth, (req, res, next) => {
   if (_inspectIsOwner(req)) return next();
