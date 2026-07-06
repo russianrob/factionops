@@ -485,12 +485,22 @@ function _saveShotPng(rawIn, res) {
   if (buf.length < 8 || buf.length > 16 * 1024 * 1024) return res.status(400).json({ error: "empty or too large" });
   if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)) return res.status(400).json({ error: "not a png" });
   try { mkdirSync(_SHOT_DIR, { recursive: true }); } catch {}
-  const file = _shotRandomBytes(8).toString("hex") + ".png";
-  try { writeFileSync(pathJoin(_SHOT_DIR, file), buf, { mode: 0o644 }); }
+  const id = _shotRandomBytes(8).toString("hex");
+  try { writeFileSync(pathJoin(_SHOT_DIR, id + ".png"), buf, { mode: 0o644 }); }
   catch { return res.status(500).json({ error: "write failed" }); }
   _pruneOldScreenshots();
-  return res.json({ ok: true, url: `${_SHOT_ORIGIN}/s/${file}` });
+  return res.json({ ok: true, url: `${_SHOT_ORIGIN}/screenshot/${id}` });
 }
+// Serve an uploaded shot at a clean extensionless URL: tornwar.com/screenshot/<id>
+// (stored as <id>.png in _SHOT_DIR). Hex-only id guards against path traversal.
+router.get("/screenshot/:id", (req, res) => {
+  const id = String(req.params.id || "");
+  if (!/^[a-f0-9]{8,64}$/.test(id)) return res.status(404).end();
+  const p = pathJoin(_SHOT_DIR, id + ".png");
+  if (!existsSync(p)) return res.status(404).end();
+  res.type("png");
+  return res.sendFile(p);
+});
 router.post("/api/shot", (req, res, next) => {
   if (_shotTokenOk(req)) return next();
   return res.status(401).json({ error: "unauthorized" });
