@@ -502,7 +502,14 @@ router.get("/screenshot/:id", (req, res) => {
   return res.sendFile(p);
 });
 router.post("/api/shot", (req, res, next) => {
+  // Accept the dedicated shot token (Shortcut/curl) OR any valid warboard JWT
+  // (the iOS Share Extension reads the app's cached JWT from the shared App Group).
   if (_shotTokenOk(req)) return next();
+  const h = req.headers.authorization;
+  if (h) {
+    const tok = h.startsWith("Bearer ") ? h.slice(7) : h;
+    try { verifyToken(tok); return next(); } catch {}
+  }
   return res.status(401).json({ error: "unauthorized" });
 }, express.json({ limit: "16mb" }), (req, res) => {
   return _saveShotPng(req.body && req.body.png, res);
