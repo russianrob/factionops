@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.52
+// @version      3.6.53
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -72,7 +72,7 @@
 
     // v3.6.37: stamp version + post a copy diagnostic so the server log shows
     // exactly which build is installed and which clipboard path ran on a click.
-    const TPLF_VERSION = '3.6.52';
+    const TPLF_VERSION = '3.6.53';
     let _tplfDiagN = 0;
     function tplf_diag(data) {
         if (_tplfDiagN > 15) return;
@@ -1140,7 +1140,7 @@
             }
 
             const settings = loadSettings();
-            const lines = [];
+            const rows = [];
             const seenIds = new Set();
 
             // First pass: collect valid members to get total count
@@ -1217,7 +1217,7 @@
 
                 const profileLabel = name;
                 let statsString = "(Stats: N/A)";
-                const extras = [];
+                let level = null, pStats = null;
 
                 try {
                     // Faction copy: pull BOTH BSP and FFS and show them
@@ -1237,19 +1237,20 @@
                 }
 
                 try {
-                    // Try to fetch personal stats (Xanax/Boosters)
-                    const level = getMemberLevel(id, row);
-                    if (level != null) extras.push(`Lvl ${level}`);
-
-                    const pStats = await getPersonalStats(id);
-                    if (pStats && pStats.xantaken != null) extras.push(`Xan: ${pStats.xantaken.toLocaleString()}`);
-                    if (pStats && pStats.boostersused != null) extras.push(`Boosters: ${pStats.boostersused.toLocaleString()}`);
+                    level = getMemberLevel(id, row);
+                    pStats = await getPersonalStats(id);
                 } catch (apiErr) {
                     if (debug) console.error('GNSC faction copy: API/Personal stats error for', id, apiErr);
                 }
 
-                const extraStr = extras.length > 0 ? ` - ${extras.join(' - ')}` : '';
-                lines.push(`${profileLabel} - ${statsString}${extraStr}`);
+                rows.push({
+                    id: id,
+                    name: profileLabel,
+                    stats: statsString.replace(/^\(Stats:\s*/, '').replace(/\)\s*$/, '').trim(),
+                    level: (level != null) ? String(level) : '',
+                    xanax: (pStats && pStats.xantaken != null) ? pStats.xantaken.toLocaleString() : '',
+                    boosters: (pStats && pStats.boostersused != null) ? pStats.boostersused.toLocaleString() : '',
+                });
 
                 processed++;
                 if (button.isConnected) button.textContent = `${processed}/${totalMembers}`;
@@ -1266,7 +1267,7 @@
                 if (progressBarContainer) progressBarContainer.style.display = 'none';
             }, 2500);
 
-            if (!lines.length) {
+            if (!rows.length) {
                 if (debug) console.error('GNSC faction copy: no member rows parsed for side selector', sideSelector, 'targetFactionId', targetFactionId);
                 button.textContent = '❓';
                 setTimeout(() => {
@@ -1275,7 +1276,13 @@
                 return;
             }
 
-            copyToClipboard(lines.join('\n'));
+            const _esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const _header = '<tr><th>Name</th><th>Stats</th><th>Lvl</th><th>Xanax</th><th>Boosters</th></tr>';
+            const _body = rows.map((r) =>
+                `<tr><td><a href="https://www.torn.com/profiles.php?XID=${r.id}">${_esc(r.name)} [${r.id}]</a></td>` +
+                `<td>${_esc(r.stats)}</td><td>${_esc(r.level)}</td><td>${_esc(r.xanax)}</td><td>${_esc(r.boosters)}</td></tr>`
+            ).join('');
+            copyToClipboard(`<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse">${_header}${_body}</table>`);
 
             progressLabel.textContent = `✅ Copied ${totalMembers} members!`;
             if (button.isConnected) {
