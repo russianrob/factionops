@@ -3,7 +3,7 @@
  */
 
 import express, { Router } from "express";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { join as pathJoin, dirname as pathDirname, resolve as pathResolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -440,25 +440,54 @@ function _pruneOldScreenshots() {
   try {
     const now = Date.now();
     for (const f of readdirSync(_SHOT_DIR)) {
-      if (!f.endsWith(".png")) continue;
+      if (!/\.(png|jpg)$/.test(f)) continue;
       try { if (now - statSync(pathJoin(_SHOT_DIR, f)).mtimeMs > _SHOT_MAX_AGE_MS) unlinkSync(pathJoin(_SHOT_DIR, f)); } catch {}
     }
   } catch {}
 }
+// Sweep old (30-day+) screenshots at boot and once a day, so the cap is
+// enforced even during idle stretches — the on-upload prune only fires
+// when a new shot arrives.
+try { _pruneOldScreenshots(); } catch {}
+setInterval(_pruneOldScreenshots, 24 * 60 * 60 * 1000).unref();
+
+// Small preview JPEG (<=1200px, q82, ~100-250KB) for link-preview crawlers
+// (WhatsApp/iMessage/Discord/Slack) — WhatsApp only renders previews for
+// reasonably-sized images, so og:image points here rather than the raw PNG.
+function _makeShotPreview(id) {
+  const src = pathJoin(_SHOT_DIR, id + ".png");
+  const dst = pathJoin(_SHOT_DIR, id + ".jpg");
+  try {
+    spawnSync("/usr/bin/convert",
+      [src, "-resize", "1200x1200>", "-quality", "82", "-strip", dst],
+      { timeout: 20000, stdio: "ignore" });
+  } catch {}
+  return existsSync(dst);
+}
+// PNG pixel dimensions from the IHDR header (reads 24 bytes, not the file).
+function _pngSize(p) {
+  try {
+    const fd = openSync(p, "r"); const b = Buffer.alloc(24);
+    readSync(fd, b, 0, 24, 0); closeSync(fd);
+    if (b.toString("ascii", 1, 4) === "PNG") return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+  } catch {}
+  return { w: 0, h: 0 };
+}
 router.post("/api/screenshot", requireAuth, (req, res, next) => {
   if (_inspectIsOwner(req)) return next();
   return res.status(403).json({ error: "forbidden" });
-}, express.json({ limit: "16mb" }), (req, res) => {
+}, express.json({ limit: "50mb" }), (req, res) => {
   const raw = (req.body && typeof req.body.png === "string") ? req.body.png.replace(/^data:image\/png;base64,/, "") : "";
   if (!raw) return res.status(400).json({ error: "png (base64) required" });
   let buf;
   try { buf = Buffer.from(raw, "base64"); } catch { return res.status(400).json({ error: "bad base64" }); }
-  if (buf.length < 8 || buf.length > 16 * 1024 * 1024) return res.status(400).json({ error: "empty or too large" });
+  if (buf.length < 8 || buf.length > 50 * 1024 * 1024) return res.status(400).json({ error: "empty or too large" });
   if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)) return res.status(400).json({ error: "not a png" });
   try { mkdirSync(_SHOT_DIR, { recursive: true }); } catch {}
   const file = _shotRandomBytes(8).toString("hex") + ".png";
   try { writeFileSync(pathJoin(_SHOT_DIR, file), buf, { mode: 0o644 }); }
   catch { return res.status(500).json({ error: "write failed" }); }
+  _makeShotPreview(file.slice(0, -4));
   _pruneOldScreenshots();
   return res.json({ ok: true, url: `${_SHOT_ORIGIN}/s/${file}` });
 });
@@ -482,24 +511,51 @@ function _saveShotPng(rawIn, res) {
   if (!raw) return res.status(400).json({ error: "png (base64) required" });
   let buf;
   try { buf = Buffer.from(raw, "base64"); } catch { return res.status(400).json({ error: "bad base64" }); }
-  if (buf.length < 8 || buf.length > 16 * 1024 * 1024) return res.status(400).json({ error: "empty or too large" });
+  if (buf.length < 8 || buf.length > 50 * 1024 * 1024) return res.status(400).json({ error: "empty or too large" });
   if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)) return res.status(400).json({ error: "not a png" });
   try { mkdirSync(_SHOT_DIR, { recursive: true }); } catch {}
   const id = _shotRandomBytes(8).toString("hex");
   try { writeFileSync(pathJoin(_SHOT_DIR, id + ".png"), buf, { mode: 0o644 }); }
   catch { return res.status(500).json({ error: "write failed" }); }
+  _makeShotPreview(id);
   _pruneOldScreenshots();
   return res.json({ ok: true, url: `${_SHOT_ORIGIN}/screenshot/${id}` });
 }
-// Serve an uploaded shot at a clean extensionless URL: tornwar.com/screenshot/<id>
-// (stored as <id>.png in _SHOT_DIR). Hex-only id guards against path traversal.
-router.get("/screenshot/:id", (req, res) => {
-  const id = String(req.params.id || "");
-  if (!/^[a-f0-9]{8,64}$/.test(id)) return res.status(404).end();
-  const p = pathJoin(_SHOT_DIR, id + ".png");
-  if (!existsSync(p)) return res.status(404).end();
-  res.type("png");
-  return res.sendFile(p);
+// tornwar.com/screenshot/<id>      → Open Graph HTML page so link-preview
+//                                     crawlers (WhatsApp/iMessage/Discord/
+//                                     Slack) render an image preview (Gyazo-style).
+// tornwar.com/screenshot/<id>.png  → the raw PNG (also always at /s/<id>.png).
+// Hex-only id guards against path traversal.
+router.get(/^\/screenshot\/([a-f0-9]{8,64})(\.png)?$/, (req, res) => {
+  const id = req.params[0];
+  const png = pathJoin(_SHOT_DIR, id + ".png");
+  if (!existsSync(png)) return res.status(404).end();
+  if (req.params[1]) { res.type("png"); return res.sendFile(png); }   // .png → raw file
+  const o = _SHOT_ORIGIN;
+  const jpg = pathJoin(_SHOT_DIR, id + ".jpg");
+  if (!existsSync(jpg)) _makeShotPreview(id);   // lazily build preview for older shots
+  const usingJpg = existsSync(jpg);
+  const ogImg = `${o}/s/${id}${usingJpg ? ".jpg" : ".png"}`;
+  let { w, h } = _pngSize(png);
+  if (usingJpg && w && h) { const s = Math.min(1, 1200 / Math.max(w, h)); w = Math.round(w * s); h = Math.round(h * s); }
+  const dim = (w && h) ? `<meta property="og:image:width" content="${w}"><meta property="og:image:height" content="${h}">` : "";
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<title>Screenshot · Tornwar</title>` +
+    `<meta property="og:type" content="website">` +
+    `<meta property="og:site_name" content="Tornwar">` +
+    `<meta property="og:title" content="Screenshot">` +
+    `<meta property="og:url" content="${o}/screenshot/${id}">` +
+    `<meta property="og:image" content="${ogImg}">` +
+    `<meta property="og:image:type" content="${usingJpg ? "image/jpeg" : "image/png"}">` +
+    dim +
+    `<meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${ogImg}">` +
+    `<style>html,body{margin:0;height:100%;background:#0b0b0d;display:flex;align-items:center;justify-content:center}` +
+    `img{max-width:100%;max-height:100vh;object-fit:contain}</style>` +
+    `</head><body><a href="${o}/s/${id}.png"><img src="${o}/s/${id}.png" alt="Screenshot"></a></body></html>`;
+  res.set("Cache-Control", "public, max-age=600");
+  res.type("html");
+  return res.send(html);
 });
 router.post("/api/shot", (req, res, next) => {
   // Accept the dedicated shot token (Shortcut/curl) OR any valid warboard JWT
@@ -511,7 +567,7 @@ router.post("/api/shot", (req, res, next) => {
     try { verifyToken(tok); return next(); } catch {}
   }
   return res.status(401).json({ error: "unauthorized" });
-}, express.json({ limit: "16mb" }), (req, res) => {
+}, express.json({ limit: "50mb" }), (req, res) => {
   return _saveShotPng(req.body && req.body.png, res);
 });
 
@@ -7662,7 +7718,7 @@ function _uploadHandlePost(req, res) {
     if (!existsSync(_UPLOAD_DIR)) mkdirSync(_UPLOAD_DIR, { recursive: true });
     const bb = busboy({
         headers: req.headers,
-        limits: { files: 1, fileSize: 100 * 1024 * 1024 },   // 100 MB cap
+        limits: { files: 1, fileSize: 2 * 1024 * 1024 * 1024 },   // 2 GB cap (sysdiagnose etc.)
     });
     let savedAs = null;
     let aborted = false;
@@ -7680,7 +7736,7 @@ function _uploadHandlePost(req, res) {
         fileStream.pipe(out);
     });
     bb.on('finish', () => {
-        if (aborted) return res.status(413).json({ error: 'File too large (100MB max)' });
+        if (aborted) return res.status(413).json({ error: 'File too large (2GB max)' });
         if (!savedAs) return res.status(400).json({ error: 'No file in request' });
         console.log(`[upload] saved /var/uploads/${savedAs} (${req.ip})`);
         return res.json({ ok: true, savedAs });
