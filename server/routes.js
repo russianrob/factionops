@@ -506,6 +506,13 @@ function _shotTokenOk(req) {
   const a = Buffer.from(got), b = Buffer.from(want);
   return a.length === b.length && _uploadTimingSafeEqual(a, b);
 }
+// True if the request carries the dedicated shot token OR a valid warboard JWT.
+function _shotAuthOk(req) {
+  if (_shotTokenOk(req)) return true;
+  const h = req.headers.authorization;
+  if (h) { const tok = h.startsWith("Bearer ") ? h.slice(7) : h; try { verifyToken(tok); return true; } catch {} }
+  return false;
+}
 function _saveShotPng(rawIn, res) {
   const raw = (typeof rawIn === "string") ? rawIn.replace(/^data:image\/png;base64,/, "") : "";
   if (!raw) return res.status(400).json({ error: "png (base64) required" });
@@ -569,6 +576,21 @@ router.post("/api/shot", (req, res, next) => {
   return res.status(401).json({ error: "unauthorized" });
 }, express.json({ limit: "50mb" }), (req, res) => {
   return _saveShotPng(req.body && req.body.png, res);
+});
+
+// Remove a screenshot + its preview on demand (otherwise it lingers up to
+// the 30-day auto-prune). Same auth as upload: x-shot-token OR Bearer JWT.
+//   DELETE /api/shot/<id>     (<id> = the hex from a /screenshot/<id> link)
+router.delete(/^\/api\/shot\/([a-f0-9]{8,64})$/, (req, res) => {
+  if (!_shotAuthOk(req)) return res.status(401).json({ error: "unauthorized" });
+  const id = req.params[0];
+  let removed = 0;
+  for (const ext of [".png", ".jpg"]) {
+    const p = pathJoin(_SHOT_DIR, id + ext);
+    try { if (existsSync(p)) { unlinkSync(p); removed++; } } catch {}
+  }
+  if (!removed) return res.status(404).json({ error: "not found" });
+  return res.json({ ok: true, id, removed });
 });
 
 // owner → chat with the in-app agent; SSE stream of normalized turn events
