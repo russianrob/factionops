@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         TORN: Display Crime Chain
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.13
+// @version      1.0.14
 // @description  Calculates and displays your current crime chain (Crimes 2.0 DOM-compat patch)
 // @author       Ironhydedragon[2428902]
 // @match        https://www.torn.com/page.php?sid=crimes*
 // @license      MIT
 // @run-at       document-end
+// @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
 // @downloadURL https://update.greasyfork.org/scripts/585747/TORN%3A%20Display%20Crime%20Chain.user.js
 // @updateURL https://update.greasyfork.org/scripts/585747/TORN%3A%20Display%20Crime%20Chain.meta.js
 // ==/UserScript==
@@ -16,6 +18,7 @@ let lastSeenTs = 0; // newest crime-log timestamp already counted (for live upda
 let ccBase = null;  // baseline {type, s, f, c} of the on-page success/fail/critical tallies
 
 const redFlame = '#e64d1a';
+const _ccWin = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
 const PDA_API_KEY = '###PDA-APIKEY###';
 function isPDA() {
@@ -29,6 +32,25 @@ function setApiKey(apiKey) {
 }
 function getApiKey() {
   return localStorage.getItem('ihdScriptApiKey');
+}
+function promptForApiKey() {
+  const entered = _ccWin.prompt('Enter your full-access Torn API key:', getApiKey() || '');
+  if (entered == null) return;
+  const key = entered.trim();
+  if (key && key.length !== 16) { _ccWin.alert('That is not a 16-character API key.'); return; }
+  setApiKey(key);
+  location.reload();
+}
+function renderKeyHint() {
+  const titleContainerEl = document.querySelector('.crimes-app [class*="heading___"]');
+  if (!titleContainerEl || document.querySelector('#crime-chain-setkey')) return;
+  const hint = document.createElement('span');
+  hint.id = 'crime-chain-setkey';
+  hint.textContent = '⛓️ Set API key';
+  hint.title = 'Click to enter your full-access Torn API key';
+  hint.style.cssText = 'cursor:pointer;margin-left:14px;vertical-align:middle;font-weight:700;color:' + redFlame + ';';
+  hint.addEventListener('click', promptForApiKey);
+  titleContainerEl.insertAdjacentElement('afterend', hint);
 }
 
 const stylesheet = `
@@ -106,33 +128,6 @@ function renderStylesheet() {
   document.head.insertAdjacentHTML('beforeend', stylesheet);
 }
 
-function renderApiForm() {
-  const topHeaderBannerEl = document.querySelector('#topHeaderBanner');
-  if (!topHeaderBannerEl || document.querySelector('#api-form')) return;
-  const apiFormHTML = `
-      <div id="api-form" class="header-wrapper-top">
-        <div class="container clear-fix">
-          <h2>API Key</h2>
-          <input
-            id="api-form__input"
-            type="text"
-            placeholder="Enter a full-acces API key..."
-          />
-          <a href="#" id="api-form__submit"  type="btn" disabled><span class="link-text">Submit</span</button>
-        </div>
-      </div>`;
-  topHeaderBannerEl.insertAdjacentHTML('afterbegin', apiFormHTML);
-}
-function dismountApiForm() {
-  document.querySelector('#api-form').remove();
-}
-function toggleApiForm() {
-  if (document.querySelector('#api-form')) { dismountApiForm(); return; }
-  apiKeyFormController();
-  const input = document.querySelector('#api-form__input');
-  if (input) { input.value = getApiKey() || ''; input.focus(); }
-}
-
 function renderCrimeChainHTML() {
   console.log('🖼️ RENDERING CHAIN HTML'); // TEST
   // Torn regenerates the ___<hash> suffix on every crimes-app deploy, and the old
@@ -151,7 +146,7 @@ function renderCrimeChainHTML() {
   if (badgeEl && !badgeEl.dataset.ccApiClick) {
     badgeEl.dataset.ccApiClick = '1';
     badgeEl.title = 'Click to enter / update your API key';
-    badgeEl.addEventListener('click', toggleApiForm);
+    badgeEl.addEventListener('click', promptForApiKey);
   }
 }
 
@@ -207,33 +202,6 @@ async function calcCrimeChain() {
 }
 
 //// Callbacks
-function submitFormCallback() {
-  const inputEl = document.querySelector('#api-form__input');
-  const submitBtnEl = document.querySelector('#api-form__submit');
-
-  const apiKey = inputEl.value;
-  if (apiKey.length !== 16) {
-    inputEl.style.border = `2px solid ${redFlame}`;
-    submitBtnEl.disabled = true;
-    return;
-  }
-  setApiKey(apiKey);
-  dismountApiForm();
-  window.location.reload();
-}
-
-function inputValidatorCallback(event) {
-  const inputEl = document.querySelector('#api-form__input');
-  const submitBtnEl = document.querySelector('#api-form__submit');
-  if (event.target.value.length === 16) {
-    submitBtnEl.disabled = false;
-    inputEl.style.border = '1px solid #444';
-  }
-  if (event.target.value.length !== 16) {
-    submitBtnEl.disabled = true;
-  }
-}
-
 function updateCrimeCallback(mutationList) {
   for (const mutation of mutationList) {
     if (mutation.addedNodes.length > 0 && mutation.addedNodes[0].classList && [...mutation.addedNodes[0].classList].join(' ').match(/crimes-outcome-/)) {
@@ -256,23 +224,12 @@ function updateCrimeCallback(mutationList) {
 }
 
 //////// CONTROLLERS ////////
-function apiKeyFormController() {
-  renderApiForm();
-
-  // set event liseners
-  //// Event listeners
-  document.querySelector('#api-form__submit').addEventListener('click', submitFormCallback);
-  document.querySelector('#api-form__input').addEventListener('input', inputValidatorCallback);
-  document.querySelector('#api-form__input').addEventListener('keyup', (event) => {
-    if (event.key === 'Enter' || event.keyCode === 13) {
-      submitFormCallback();
-    }
-  });
-  return;
-}
-
 function initController() {
   renderStylesheet();
+
+  if (typeof GM_registerMenuCommand !== 'undefined') {
+    GM_registerMenuCommand('⛓️ Set / update API key', promptForApiKey);
+  }
 
   if (isPDA()) {
     console.log('🌟 IS PDA!!!!!', PDA_API_KEY); // TEST
@@ -281,7 +238,7 @@ function initController() {
 
   if (!getApiKey()) {
     console.log('noAPIKey found'); // TEST
-    apiKeyFormController();
+    renderKeyHint();
     return;
   }
 
@@ -321,9 +278,9 @@ function updateCrimeChainController() {
     refreshTimer = setTimeout(pollLatestCrime, 1200); // let the log settle after the crime
   };
 
-  const origFetch = window.fetch;
+  const origFetch = _ccWin.fetch;
   if (typeof origFetch === 'function') {
-    window.fetch = function (input) {
+    _ccWin.fetch = function (input) {
       const url = input && input.url ? input.url : String(input || '');
       const out = origFetch.apply(this, arguments);
       if (/crimes/i.test(url) && !/api\.torn\.com/i.test(url)) {
@@ -333,7 +290,7 @@ function updateCrimeChainController() {
     };
   }
 
-  const X = window.XMLHttpRequest;
+  const X = _ccWin.XMLHttpRequest;
   if (X && X.prototype) {
     const oOpen = X.prototype.open;
     const oSend = X.prototype.send;
@@ -384,7 +341,7 @@ function crimeCounterController() {
 }
 
 function ensureBadge() {
-  if (!getApiKey()) return;
+  if (!getApiKey()) { renderKeyHint(); return; }
   renderCrimeChainHTML();    // idempotent: bails if the heading anchor is absent or badge exists
   renderCrimeChainCurrent(); // idempotent: bails if the value node is absent
 }
@@ -417,8 +374,8 @@ const browserPromise = new Promise((res, rej) => {
     console.log('⛓️ Crime chain script ON!'); // TEST
     await Promise.race([PDAPromise, browserPromise]);
     initController();
+    badgeController();
     if (getApiKey()) {
-      badgeController();
       await loadController();
       updateCrimeChainController();
       crimeCounterController();
