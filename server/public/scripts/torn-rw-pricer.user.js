@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.4
+// @version      3.4.5
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
 // @connect      cdn.marches.cafe
-// @connect      raw.githubusercontent.com
+// @connect      tornwar.com
 // @connect      api.torn.com
 // @downloadURL https://update.greasyfork.org/scripts/569836/Torn%20RW%20Pricer.user.js
 // @updateURL https://update.greasyfork.org/scripts/569836/Torn%20RW%20Pricer.meta.js
@@ -31,14 +31,14 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.4';
+    var SCRIPT_VERSION = '3.4.5';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
     // ─── CDN URL & Cache Config ──────────────────────────────
     var WEAPON_CDN_URL = 'https://cdn.marches.cafe/items/weapon-auctions4.csv.gz';
     var ARMOUR_CDN_URL = 'https://cdn.marches.cafe/items/armour-auctions4.csv.gz';
-    var PRICES_JSON_URL = 'https://raw.githubusercontent.com/russianrob/rwp-prices/main/rwp-prices.json';
+    var PRICES_JSON_URL = 'https://tornwar.com/data/rwp-prices.json';
     var CACHE_KEY = 'rwp_price_cache';
     var CACHE_TTL = 3600000; // 1 hour in ms
     // PDA detection: apiKey is set when PDA replaces ###PDA-APIKEY###, or flutter bridge exists
