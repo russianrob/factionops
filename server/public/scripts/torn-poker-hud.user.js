@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.7
+// @version      5.8
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -22,6 +22,16 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+//
+// v5.8 (2026-07-08, private fork)
+// -----------------
+// Watcher support (sync fix)
+//   - Watched hands parsed (Table Log filled) but never synced: they stayed "synthetic"
+//     because the watcher's "Game <id> started" line packs the hand id in a styled span,
+//     so the old check read text="<id>" (no "started") and missed the marker.
+//     finalizeCurrentHand only syncs non-synthetic hands (with a real Torn id). Now the
+//     new-hand marker is matched from the whole line's text, so watched hands get their
+//     real id and upload through the same path as seated ones.
 //
 // v5.7 (2026-07-08, private fork)
 // -----------------
@@ -2131,8 +2141,13 @@
         }
         if (!text) return;
 
-        if (actor === 'Game' && /started$/.test(text)) {
-            const handId = text.replace(/\s*started$/, '').trim();
+        // New-hand marker. Seated puts "<id> started" in the action span; the watcher panel
+        // spreads "Game <id> started" across <em> + a styled id span, so `text` alone is just the
+        // id with no "started" and the old check missed it (hand stayed synthetic → never synced).
+        // Match the whole line's text so both layouts pin the real Torn hand id.
+        const _gm = node.textContent.replace(/\s+/g, ' ').trim().match(/^Game\s*(\S+)\s+started$/i);
+        if (_gm || (actor === 'Game' && /started$/.test(text))) {
+            const handId = _gm ? _gm[1] : text.replace(/\s*started$/, '').trim();
 
             if (currentHand && currentHand.synthetic) {
                 if (isStaleSyntheticHand(currentHand)) {
