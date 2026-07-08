@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.6
+// @version      3.4.7
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.6';
+    var SCRIPT_VERSION = '3.4.7';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -564,27 +564,27 @@
                 maxBonusTracker[wKey] = { price: price, bonuses: bns };
             }
 
-            // Bonus groups + combo groups (grouped by weapon rarity — CDN has no bonus level)
+            // Cross-weapon bonus groups (coarse fallback) — any sale carrying the bonus, single or double.
             if (bn1) {
                 var bKey1 = bn1 + '|' + rarityName;
                 if (!bonusGroups[bKey1]) bonusGroups[bKey1] = [];
                 bonusGroups[bKey1].push(price);
-                var cbKey1 = weaponName + '|' + bn1 + '|' + rarityName;
-                if (!comboGroups[cbKey1]) comboGroups[cbKey1] = [];
-                comboGroups[cbKey1].push(price);
-                if (!comboMaxTracker[cbKey1] || price > comboMaxTracker[cbKey1].price) {
-                    comboMaxTracker[cbKey1] = { price: price, qual: qual1 };
-                }
             }
             if (bn2) {
                 var bKey2 = bn2 + '|' + rarityName;
                 if (!bonusGroups[bKey2]) bonusGroups[bKey2] = [];
                 bonusGroups[bKey2].push(price);
-                var cbKey2 = weaponName + '|' + bn2 + '|' + rarityName;
-                if (!comboGroups[cbKey2]) comboGroups[cbKey2] = [];
-                comboGroups[cbKey2].push(price);
-                if (!comboMaxTracker[cbKey2] || price > comboMaxTracker[cbKey2].price) {
-                    comboMaxTracker[cbKey2] = { price: price, qual: qual2 };
+            }
+
+            // Weapon+bonus combo groups: SINGLE-bonus sales ONLY. Pricing a one-bonus weapon should
+            // comp against other one-bonus sales; a double-bonus sale's second-bonus premium would
+            // inflate the comp, so those feed the pair group (below) instead, not a single combo.
+            if (bn1 && !bn2) {
+                var cbKey1 = weaponName + '|' + bn1 + '|' + rarityName;
+                if (!comboGroups[cbKey1]) comboGroups[cbKey1] = [];
+                comboGroups[cbKey1].push(price);
+                if (!comboMaxTracker[cbKey1] || price > comboMaxTracker[cbKey1].price) {
+                    comboMaxTracker[cbKey1] = { price: price, qual: qual1 };
                 }
             }
 
