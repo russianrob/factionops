@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BUSTR: Busting Reminder + PDA
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.22
+// @version      1.0.23
 // @description  Guess how many busts you can do without getting jailed. Fork: bust-penalty decay corrected to Nosy's multiplicative-inverse formula (was exponential, which undervalued older busts).
 // @author       Adobi & Ironhydedragon (decay-formula fix per Nosy [890872]'s guide)
 // @match        https://www.torn.com/*
@@ -9,7 +9,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
-console.log('😎 BUSTR 1.0.22 ON');
+console.log('😎 BUSTR 1.0.23 ON');
 
 ////////  GLOBAL VARIABLES
 ////  State
@@ -1039,8 +1039,14 @@ function hardnessScoreController() {
 
   renderHardnessJailView();
   wireHardnessSortToggle();
-  renderSortToggleBar();
-  applyQuickActions();
+  // Quick-bust/bail toggles are desktop-only: inside TornPDA (isPDA()) the app's own
+  // jail bust/bail settings already do the link-rewrite, so we skip our bar + rewrite to
+  // avoid a redundant control. isPDA() is the ###PDA-APIKEY### check (TornPDA-specific);
+  // the warboard apps don't substitute it, so they keep the desktop UI + toggles.
+  if (!isPDA()) {
+    renderSortToggleBar();
+    applyQuickActions();
+  }
   const playersArr = [...document.querySelectorAll('ul.user-info-list-wrap > li')];
 
   if (playersArr[0].classList.contains('last')) return;
