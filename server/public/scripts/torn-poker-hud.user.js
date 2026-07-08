@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.9
+// @version      5.10
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -22,6 +22,15 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+//
+// v5.10 (2026-07-08, private fork)
+// -----------------
+// Coach
+//   - Overcards advice replaces the vague "don't call a big bet" with a real threshold:
+//     pair-outs -> one-card equity (rule of 2) -> a cushioned pot-odds max-call (1.5x the
+//     strict break-even, covering position + modest implied odds), shown as "% of pot" plus
+//     a "$" figure from runningPot. e.g. 6 outs (~12%) -> "don't call more than ~20% of the
+//     pot (~$X)". Only the overcards branch for now; other draw advices still say "big bet".
 //
 // v5.9 (2026-07-08, private fork)
 // -----------------
@@ -4108,13 +4117,24 @@
         // Overcards only
         const holeMax = Math.max(...holeVals);
         if (holeMax > boardMax) {
+            // Turn "a big bet" into a real number: overcard pair-outs -> one-card equity (rule of 2)
+            // -> cushioned pot-odds threshold. The cushion (1.5x the strict break-even) covers
+            // position + modest implied odds, so it's realistic rather than nittily tight.
+            // Expressed as % of pot (pot-size-independent) + a $ figure when the pot is known.
+            const _ocOuts = holeVals.filter(v => v > boardMax).length * 3;
+            const _ocEq = Math.min(_ocOuts * 2, 90) / 100;
+            const _ocPct = Math.max(5, Math.round(1.5 * _ocEq / (1 - _ocEq) * 100));
+            const _ocPot = (currentHand && currentHand.runningPot) || 0;
+            const _ocCash = _ocPot > 0 ? ` (~$${Math.round(_ocPot * _ocPct / 100).toLocaleString()})` : '';
+            const _ocMax = `~${_ocPct}% of the pot${_ocCash}`;
+            const _ocEqStr = `~${_ocOuts} outs, ~${Math.round(_ocEq * 100)}% to pair next card`;
             if (facingAction === 'bet') return _voice(
-                `Overcards facing a bet. You have nothing made yet — fold unless you have a solid read they are bluffing or the price is very cheap.${posNote}`,
-                `Overcards facing a bet. You ain't hit nothing yet, kid — get outta there unless you got a read they're running a bluff or the price is basically free.${posNote}`
+                `Overcards facing a bet — nothing made yet (${_ocEqStr}). Fold unless the bet is under ${_ocMax}, or you have a solid read they're bluffing.${posNote}`,
+                `Overcards facing a bet — you ain't hit nothing (${_ocEqStr}). Fold unless it's under ${_ocMax} or they're running a bluff, kid.${posNote}`
             );
             return _voice(
-                `You have overcards - unimproved but live. One more card could give you top pair. Cheap street is fine; do not call a big bet without a stronger read.${posNote}`,
-                `You ain't hit nothing yet but those high cards are live. One more card could hand you top pair. Take the cheap street, don't go blowing your stack on a prayer.${posNote}`
+                `You have overcards — unimproved but live (${_ocEqStr}). One more card could give you top pair. Cheap street is fine, but don't call more than ${_ocMax} without a stronger read.${posNote}`,
+                `You ain't hit nothing yet but those high cards are live (${_ocEqStr}). Cheap street's fine — don't call more than ${_ocMax} on a prayer, kid.${posNote}`
             );
         }
 
