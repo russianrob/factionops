@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.5
+// @version      5.6
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -23,14 +23,14 @@
 // CHANGELOG
 // =============================================================================
 //
-// v5.5 (2026-07-08, private fork)
+// v5.6 (2026-07-08, private fork)
 // -----------------
 // Parser
-//   - Torn reworded blind posts to plain "posted $X" (dropped the small/big-blind
-//     label), so they missed both blind branches and tripped the parser-health
-//     warning. Added a branch that recognizes the amount-only form, feeds the pot,
-//     and classifies SB/BB by amount vs the table BB (post order as fallback). SB/BB
-//     player assignment stays position-derived.
+//   - Unlabeled "posted $X" lines (a player posting to enter/re-enter mid-orbit — an
+//     entry/dead blind, distinct from the still-labeled "posted small/big blind $X"
+//     posts) were unrecognized and tripped the parser-health warning. Added a branch
+//     that feeds the amount into the pot and marks the player in-hand, without touching
+//     SB/BB flags (those stay labeled + position-derived).
 //
 // v5.4 (2026-07-05, private fork)
 // -----------------
@@ -2317,35 +2317,16 @@
             return;
         }
 
-        // Torn reworded blind posts from "posted small/big blind ($X)" to plain "posted $X"
-        // (no label). The two branches above catch the old wording; this catches the amount-only
-        // form so blinds still feed the pot and don't trip the parser-health warning. SB/BB player
-        // assignment stays position-derived (fixBlindPlayersFromPosition); blind size is classified
-        // by amount vs the known table BB, falling back to post order (SB posts first).
+        // Blind posts arrive labeled ("posted small/big blind $X") and are handled above. A plain,
+        // unlabeled "posted $X" is a different event — a player posting to enter/re-enter mid-orbit
+        // (an entry/dead blind). Feed the amount into the pot and mark them in the hand so it stops
+        // tripping the parser-health warning; it is NOT the hand's SB/BB, so leave the blind flags alone.
         if (/^posted\b/i.test(text)) {
             const amt = parseCashAmt(text);
             p.inHandPreflop = true;
             if (amt) {
                 currentHand.runningPot += amt;
                 currentHand.playerPotContrib[actor] = (currentHand.playerPotContrib[actor] || 0) + amt;
-            }
-            currentHand._blindPostSeq = (currentHand._blindPostSeq || 0) + 1;
-            const isBB = (currentTableBB && amt) ? (amt >= currentTableBB) : (currentHand._blindPostSeq >= 2);
-            if (isBB) {
-                p.postedBB = true;
-                if (!currentHand.bbPlayer) currentHand.bbPlayer = actor;
-                if (amt && (!currentHand.bbAmount || amt >= currentHand.bbAmount)) {
-                    currentHand.bbAmount = amt;
-                    if (currentTableBB !== amt && !syncTableContextFromTexture()) {
-                        currentTableBB = amt;
-                        currentTableName = getTableName(currentTableBB) || currentTableName;
-                        currentStakeTier = getStakeTier(currentTableBB);
-                        refreshAllBadges();
-                    }
-                }
-            } else {
-                p.postedSB = true;
-                if (!currentHand.sbPlayer) currentHand.sbPlayer = actor;
             }
             return;
         }
