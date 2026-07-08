@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.6
+// @version      5.7
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -22,6 +22,17 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+//
+// v5.7 (2026-07-08, private fork)
+// -----------------
+// Watcher support
+//   - The HUD now profiles tables you're WATCHING (unseated), not just ones you sit
+//     at. Torn's watcher panel renders each action as a trailing text node after the
+//     <em> subject (no <span>), and its seats carry no id="player-N" (the seat index
+//     is a playerPositioner-N class, the name in .name___). processMessage falls back
+//     to the li's own text when there's no span; captureSeatOrder + getDealerSeatId
+//     key watcher seats by a synthetic 'pos<N>' id so SB/BB/EP/LP still resolve.
+//     Seated play is unchanged. Rail a busy table and its hands sync to your collection.
 //
 // v5.6 (2026-07-08, private fork)
 // -----------------
@@ -2108,7 +2119,16 @@
     function processMessage(node) {
         const actor = node.querySelector('em')?.textContent?.trim() || '';
         const span = node.querySelector('span');
-        const text = span ? span.textContent.trim() : '';
+        let text = span ? span.textContent.trim() : '';
+        // Watcher panel (unseated view) renders the action as trailing text node(s) after the
+        // <em> subject, with no <span>. Fall back to the li's own text minus the <em> and the
+        // leading icon so watched tables parse too. The seated <span> path is untouched.
+        if (!text) {
+            const clone = node.cloneNode(true);
+            clone.querySelector('em')?.remove();
+            clone.querySelectorAll('i[class*="logIcon"], svg').forEach(el => el.remove());
+            text = clone.textContent.replace(/ /g, ' ').trim();
+        }
         if (!text) return;
 
         if (actor === 'Game' && /started$/.test(text)) {
@@ -9281,7 +9301,16 @@
             }
             if (posNum === null) return;
             const playerEl = posDiv.querySelector('[id^="player-"]');
-            if (!playerEl) return;
+            if (!playerEl) {
+                // Watcher panel: seats carry no id="player-N" — key by the positioner slot and
+                // read the name from .name___. Skip empty seats (no name node).
+                const wName = posDiv.querySelector('[class*="name___"]')?.textContent?.trim() || null;
+                if (!wName) return;
+                const wSeatId = 'pos' + posNum;
+                seenIds.add(wSeatId);
+                posSlots.push({ posNum, seatId: wSeatId, name: wName });
+                return;
+            }
             const seatId = playerEl.id.replace('player-', '');
             seenIds.add(seatId);
             const name = (playerEl.dataset.hudName && !/^__self__:/.test(playerEl.dataset.hudName))
@@ -9345,7 +9374,9 @@
         });
         if (posDiv) {
             const playerEl = posDiv.querySelector('[id^="player-"]');
-            return playerEl ? playerEl.id.replace('player-', '') : null;
+            if (playerEl) return playerEl.id.replace('player-', '');
+            // Watcher panel: no id — use the same synthetic 'pos<N>' seat id captureSeatOrder assigns.
+            return 'pos' + dealerPosNum;
         }
         // Dealer position not in any standard positioner — self seat uses a non-standard wrapper
         const selfEl = document.querySelector('[id^="player-"][class*="self___"]');
