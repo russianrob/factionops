@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.8
+// @version      5.9
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -22,6 +22,16 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+//
+// v5.9 (2026-07-08, private fork)
+// -----------------
+// Cloud sync (fix — this is the one that unblocks watched-table sync)
+//   - The sync queue never drained on the app. syncRequest required a parsed response
+//     body to count a POST as success, but the WebExt GM_xmlhttpRequest doesn't populate
+//     resp.response for responseType:'json', so every 200 fell into the failure path.
+//     Hands reached the server (applied once) but the client re-posted them forever while
+//     new hands stacked up behind them unsent — the DB froze at 40. Now any 2xx is a
+//     success and the body is read from responseText.
 //
 // v5.8 (2026-07-08, private fork)
 // -----------------
@@ -1270,8 +1280,17 @@
                 responseType: 'json',
                 onload: resp => {
                     let data = resp.response;
-                    if (typeof data === 'string') { try { data = JSON.parse(data); } catch { data = null; } }
-                    if (resp.status >= 200 && resp.status < 300 && data) onSuccess(data);
+                    // The app's WebExt GM_xmlhttpRequest doesn't populate resp.response for
+                    // responseType:'json', so `data` was null and every 200 fell into the failure
+                    // path — the sync queue never drained, re-posting the same (already-applied)
+                    // hands forever while new ones stacked up behind them. Parse responseText as the
+                    // source of truth and treat any 2xx as success even if the body is empty/absent
+                    // (the write already landed server-side).
+                    if (data == null || typeof data === 'string') {
+                        const raw = (typeof data === 'string') ? data : resp.responseText;
+                        try { data = raw ? JSON.parse(raw) : {}; } catch { data = {}; }
+                    }
+                    if (resp.status >= 200 && resp.status < 300) onSuccess(data || {});
                     else fail(new Error(`HTTP ${resp.status}`));
                 },
                 onerror: () => fail(new Error('network error')),
