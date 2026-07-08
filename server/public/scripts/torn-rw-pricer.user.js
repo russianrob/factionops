@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.5
+// @version      3.4.6
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.5';
+    var SCRIPT_VERSION = '3.4.6';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -319,7 +319,17 @@
 
     function getWeaponComboMedian(weaponName, bonusName, rarity) {
         var key = weaponName + '|' + bonusName;
-        if (weaponComboPrices[key] && weaponComboPrices[key][rarity]) return weaponComboPrices[key][rarity][1];
+        var a = weaponComboPrices[key] && weaponComboPrices[key][rarity];
+        if (a && a[3] >= COMBO_MIN_SAMPLES) return a[1];
+        return null;
+    }
+
+    // A weapon+bonus combo with too few sales for a confident median (1..COMBO_MIN_SAMPLES-1) but
+    // still a real exact-bonus comp — used as a low-confidence estimate before the weapon floor.
+    function getWeaponComboThinArray(weaponName, bonusName, rarity) {
+        var key = weaponName + '|' + bonusName;
+        var a = weaponComboPrices[key] && weaponComboPrices[key][rarity];
+        if (a && a[3] > 0 && a[3] < COMBO_MIN_SAMPLES) return a;
         return null;
     }
 
@@ -655,7 +665,9 @@
             var bonus = parts[1];
             var rar = parts[2];
             var arr = comboGroups[key].sort(function(a, b) { return a - b; });
-            if (arr.length < COMBO_MIN_SAMPLES) return; // skip thin data
+            // Keep thin combos (1..COMBO_MIN_SAMPLES-1 sales) too. getWeaponComboMedian still gates
+            // at COMBO_MIN_SAMPLES, but the derivation uses a thin combo as a low-confidence exact
+            // comp before falling to the weapon floor. The stored count (arr.length) marks confidence.
             var comboKey = weapon + '|' + bonus;
             if (!newComboPrices[comboKey]) newComboPrices[comboKey] = {};
             var entry = [
@@ -1824,6 +1836,12 @@
                 if (combo) {
                     var cArr = weaponKey ? getWeaponComboPriceArray(itemKey, b.name, rarity) : getArmourComboPriceArray(itemKey, b.name, rarity);
                     return { value: combo, source: 'combo', count: (cArr && cArr[3]) || null };
+                }
+                // Too few exact-bonus sales for a median, but a real comp exists — use it (its sale
+                // count flags it low-confidence via the tooltip's ⚠) instead of blindly flooring.
+                if (weaponKey) {
+                    var thinArr = getWeaponComboThinArray(itemKey, b.name, rarity);
+                    if (thinArr) return { value: thinArr[1], source: 'exact comp', count: thinArr[3] };
                 }
                 var bMed = bonusFn(b.name, bonusColors[b.name]);
                 var basePa = weaponKey ? getPriceArray(itemKey, rarity) : getArmourPriceArray(itemKey, rarity);
