@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BUSTR: Busting Reminder + PDA
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.21
+// @version      1.0.22
 // @description  Guess how many busts you can do without getting jailed. Fork: bust-penalty decay corrected to Nosy's multiplicative-inverse formula (was exponential, which undervalued older busts).
 // @author       Adobi & Ironhydedragon (decay-formula fix per Nosy [890872]'s guide)
 // @match        https://www.torn.com/*
@@ -9,7 +9,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
-console.log('😎 BUSTR 1.0.21 ON');
+console.log('😎 BUSTR 1.0.22 ON');
 
 ////////  GLOBAL VARIABLES
 ////  State
@@ -21,8 +21,8 @@ let GLOBAL_BUSTR_STATE = {
     },
     statsRefreshRate: 60, // time in seconds
     customPenaltyThreshold: 0, // leave at 0 if you want to use the prediction algorithm
-    quickBust: false, // armed via the inline "Quick bust" toggle on the jail page
-    // quickBail: false,
+    quickBust: false, // armed via the inline "Quick: Bust" toggle on the jail page
+    quickBail: false, // armed via the inline "Quick: Bail" toggle on the jail page
     showHardnessScore: true, // set to 'false' to remove hardnessScore rendering and reordering
     sortByHardness: true, // false = leave Torn's default order (descending time); toggle via the Hardness column header
   },
@@ -187,33 +187,35 @@ function sortByHardnessScore(playerEl, hardnessScore) {
   playerEl.style.order = (getUserSettings().sortByHardness === false) ? '' : hardnessScore;
 }
 
-// Quick bust: the TornTools/TornPDA trick — a trailing "1" on Torn's bust link is the
-// "already-confirmed" variant, so the user's OWN click on the bust icon busts directly
-// instead of showing the "use nerve to bust?" prompt. We only rewrite the link (never
-// programmatically click), so it stays one-user-click = one bust. Armed rows get a green tint.
-function applyQuickBustToRow(playerEl) {
-  const link = playerEl.querySelector('.bust');
+// Quick bust/bail: the TornTools/TornPDA trick — a trailing "1" on Torn's bust/bail link is the
+// "already-confirmed" variant, so the user's OWN click on the icon acts directly instead of the
+// "use nerve?" prompt. We only rewrite the link (never programmatically click), so it stays
+// one-user-click = one action. Armed rows get a green tint + brighter icon.
+function applyQuickActionToRow(playerEl, linkSel, iconSel, on, flag) {
+  const link = playerEl.querySelector(linkSel);
   if (!link) return;
-  const on = getUserSettings().quickBust === true;
   const href = link.getAttribute('href') || '';
-  const icon = playerEl.querySelector('.bust-icon');
+  const icon = playerEl.querySelector(iconSel);
   if (on) {
     if (href && href.charAt(href.length - 1) !== '1') link.setAttribute('href', href + '1');
     link.style.backgroundColor = '#288a0059';
     if (icon) icon.style.filter = 'brightness(1.15)';
-    link.dataset.bustrQb = '1';
-  } else if (link.dataset.bustrQb === '1') {
+    link.dataset[flag] = '1';
+  } else if (link.dataset[flag] === '1') {
     if (href && href.charAt(href.length - 1) === '1') link.setAttribute('href', href.slice(0, -1));
     link.style.removeProperty('background-color');
     if (icon) icon.style.removeProperty('filter');
-    delete link.dataset.bustrQb;
+    delete link.dataset[flag];
   }
 }
 
-function applyQuickBust() {
+function applyQuickActions() {
+  const bustOn = getUserSettings().quickBust === true;
+  const bailOn = getUserSettings().quickBail === true;
   for (const playerEl of document.querySelectorAll('ul.user-info-list-wrap > li')) {
     if (playerEl.classList.contains('last')) continue;
-    applyQuickBustToRow(playerEl);
+    applyQuickActionToRow(playerEl, '.bust', '.bust-icon', bustOn, 'bustrQb');
+    applyQuickActionToRow(playerEl, '.buy, .bye', '.bye-icon', bailOn, 'bustrQbail');
   }
 }
 
@@ -221,7 +223,8 @@ function renderSortToggleBar() {
   const titleRow = document.querySelector('.users-list-title');
   if (!titleRow) return;
   const on = getUserSettings().sortByHardness !== false;
-  const qbOn = getUserSettings().quickBust === true;
+  const bustOn = getUserSettings().quickBust === true;
+  const bailOn = getUserSettings().quickBail === true;
   let bar = document.getElementById('bustr-sort-bar');
   if (!bar) {
     bar = document.createElement('div');
@@ -235,9 +238,9 @@ function renderSortToggleBar() {
     '<span style="color:#888;margin-right:3px;">Sort:</span>'
     + '<span class="bustr-seg" data-on="1" style="' + pill(on) + '">Hardness</span>'
     + '<span class="bustr-seg" data-on="0" style="' + pill(!on) + '">Default</span>'
-    + '<span style="color:#888;margin:0 3px 0 12px;">Quick&nbsp;bust:</span>'
-    + '<span class="bustr-qb" data-qb="1" style="' + pill(qbOn, true) + '" title="One-click busting — skips the use-nerve prompt (you still click the bust icon)">On</span>'
-    + '<span class="bustr-qb" data-qb="0" style="' + pill(!qbOn) + '">Off</span>';
+    + '<span style="color:#888;margin:0 3px 0 12px;">Quick:</span>'
+    + '<span class="bustr-q" data-q="quickBust" style="' + pill(bustOn, true) + '">Bust</span>'
+    + '<span class="bustr-q" data-q="quickBail" style="' + pill(bailOn, true) + '">Bail</span>';
   bar.querySelectorAll('.bustr-seg').forEach((el) => {
     el.addEventListener('click', () => {
       const wantOn = el.dataset.on === '1';
@@ -247,12 +250,11 @@ function renderSortToggleBar() {
       renderSortToggleBar();
     });
   });
-  bar.querySelectorAll('.bustr-qb').forEach((el) => {
+  bar.querySelectorAll('.bustr-q').forEach((el) => {
     el.addEventListener('click', () => {
-      const wantOn = el.dataset.qb === '1';
-      if ((getUserSettings().quickBust === true) === wantOn) return;
-      setUserSettings({ ...getUserSettings(), quickBust: wantOn });
-      applyQuickBust();
+      const key = el.dataset.q;
+      setUserSettings({ ...getUserSettings(), [key]: getUserSettings()[key] !== true });
+      applyQuickActions();
       renderSortToggleBar();
     });
   });
@@ -977,12 +979,12 @@ async function initController() {
 //// load
 async function loadController() {
   try {
+    // Load persisted settings FIRST — the toggles (sort, quick-bust/bail) must survive reloads
+    // even when no API key is set. The key only gates the bust-count fetch below, not settings.
+    loadGlobalBustrState();
+
     // guard clause if no api key
     if (!getApiKey()) return;
-
-    if (loadGlobalBustrState()) {
-      loadGlobalBustrState();
-    }
 
     // fetch data
     const data = await fetchBustsData(getApiKey());
@@ -1038,7 +1040,7 @@ function hardnessScoreController() {
   renderHardnessJailView();
   wireHardnessSortToggle();
   renderSortToggleBar();
-  applyQuickBust();
+  applyQuickActions();
   const playersArr = [...document.querySelectorAll('ul.user-info-list-wrap > li')];
 
   if (playersArr[0].classList.contains('last')) return;
