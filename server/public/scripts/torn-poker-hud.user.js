@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.10
+// @version      5.11
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -153,6 +153,138 @@
 
 (function () {
     'use strict';
+
+    // ── opportunity-floor greenlight gate + bet-sizing reads (v5.11) ──
+    const GreenlightGate = (() => {
+        'use strict';
+        const DEFAULTS = {
+            floor: 10,
+            brakeFloor: 4,
+            prior: 0.30,
+            priorWeight: 6,
+            greenlightMargin: 0.15,
+        };
+        function cfgOf(opts) {
+            const c = Object.assign({}, DEFAULTS, opts || {});
+            c.floor = Math.max(1, Math.floor(Number(c.floor)) || 1);
+            c.brakeFloor = Math.max(1, Math.floor(Number(c.brakeFloor)) || 1);
+            c.priorWeight = Math.max(1e-9, Number(c.priorWeight) || 1e-9);
+            c.prior = Math.min(0.99, Math.max(0, Number.isFinite(c.prior) ? c.prior : DEFAULTS.prior));
+            c.greenlightMargin = Math.max(0, Number(c.greenlightMargin) || 0);
+            return c;
+        }
+        function shrink(k, n, prior, pw) { return (k + prior * pw) / (n + pw); }
+        function clean(k, n) {
+            n = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+            k = Number.isFinite(k) ? Math.max(0, Math.min(Math.floor(k), n)) : 0;
+            return [k, n];
+        }
+        function evaluate(k, n, intent, opts) {
+            const cfg = cfgOf(opts);
+            [k, n] = clean(k, n);
+            const rate = n > 0 ? k / n : null;
+            const shrunk = shrink(k, n, cfg.prior, cfg.priorWeight);
+            const confidence = n >= cfg.floor ? 'solid'
+                : (n >= Math.ceil(cfg.floor / 2) ? 'thin' : 'none');
+            if (intent === 'brake') {
+                return { allow: true, intent, rate, shrunk, n, confidence, reason: 'brake: always permitted' };
+            }
+            const allow = n >= cfg.floor;
+            return {
+                allow, intent, rate, shrunk, n, confidence,
+                reason: allow ? `gas: ${n} opps >= floor ${cfg.floor}` : `gas blocked: ${n} opps < floor ${cfg.floor}`,
+            };
+        }
+        function canGreenlight(k, n, threshold, opts) {
+            const cfg = cfgOf(opts);
+            if (!Number.isFinite(threshold) || threshold < cfg.prior + cfg.greenlightMargin) return false;
+            const g = evaluate(k, n, 'gas', opts);
+            return g.allow && g.shrunk >= threshold;
+        }
+        function isSticky(k, n, stickyBelow, opts) {
+            const cfg = cfgOf(opts);
+            const g = evaluate(k, n, 'brake', opts);
+            return g.n >= cfg.brakeFloor && g.shrunk <= (stickyBelow == null ? 0.33 : stickyBelow);
+        }
+        return { evaluate, canGreenlight, isSticky, shrink, cfgOf, DEFAULTS };
+    })();
+    const BetSizingRead = (() => {
+        'use strict';
+        const CFG = {
+            theirBigPot: 0.60,
+            heroLargePot: 0.66,
+            sdFloor: 8,
+            strengthMargin: 0.35,
+            smallStrongMax: 0.35,
+            stickyBelow: 0.33,
+            upsizeThreshold: 0.55,
+        };
+        function ensure(rec) {
+            if (!rec.sizing) rec.sizing = { strength: { small: mk3(), big: mk3() }, byStreet: {} };
+            return rec.sizing;
+        }
+        function mk3() { return { n: 0, sd: 0, strong: 0 }; }
+        function mkStreet() { return { foldSmall: { faced: 0, folded: 0 }, foldLarge: { faced: 0, folded: 0 } }; }
+        function frac(bet, pot) { return pot > 0 ? bet / pot : NaN; }
+        function recordVillainBet(rec, bet, pot) {
+            const f = frac(bet, pot);
+            if (!Number.isFinite(f)) return null;
+            const s = ensure(rec);
+            const bucket = f >= CFG.theirBigPot ? 'big' : 'small';
+            s.strength[bucket].n++;
+            return { bucket, resolved: false };
+        }
+        function resolveShowdown(rec, handle, wasStrong) {
+            if (!handle || handle.resolved || !rec.sizing) return;
+            const cell = rec.sizing.strength[handle.bucket];
+            if (!cell) return;
+            handle.resolved = true;
+            cell.sd++; if (wasStrong) cell.strong++;
+        }
+        function recordFoldToHero(rec, street, bet, pot, folded) {
+            const f = frac(bet, pot);
+            if (!Number.isFinite(f)) return;
+            const s = ensure(rec);
+            if (!s.byStreet[street]) s.byStreet[street] = mkStreet();
+            const bucket = f >= CFG.heroLargePot ? 'foldLarge' : 'foldSmall';
+            s.byStreet[street][bucket].faced++;
+            if (folded) s.byStreet[street][bucket].folded++;
+        }
+        function readSizingTells(rec, ctx) {
+            const notes = [];
+            const s = rec && rec.sizing;
+            if (!s) return notes;
+            const street = ctx && ctx.street;
+            const big = s.strength.big, sml = s.strength.small;
+            if (big.sd >= CFG.sdFloor && sml.sd >= CFG.sdFloor) {
+                const rBig = (big.strong + 0.5) / (big.sd + 1);
+                const rSml = (sml.strong + 0.5) / (sml.sd + 1);
+                if (rBig - rSml >= CFG.strengthMargin && rSml <= CFG.smallStrongMax) {
+                    notes.push({ intent: 'read', text:
+                        `Sizing tell: big bets skew value (~${Math.round(rBig * 100)}% strong at showdown vs ~${Math.round(rSml * 100)}% small, n=${big.sd}/${sml.sd}). Fold marginal hands to big bets; their small/medium bets are weak — you can widen calls slightly / value thinner.` });
+                } else if (rSml - rBig >= CFG.strengthMargin && rBig <= CFG.smallStrongMax) {
+                    notes.push({ intent: 'read', text:
+                        `Reverse sizing tell: small bets are the strong ones (trap), big bets skew air/draws (n=${big.sd}/${sml.sd}). Don't over-fold to big sizing; be wary of tiny bets.` });
+                }
+            }
+            const cell = street && s.byStreet[street];
+            if (cell) {
+                const fs = cell.foldSmall, fl = cell.foldLarge;
+                if (GreenlightGate.isSticky(fs.folded, fs.faced, CFG.stickyBelow)) {
+                    notes.push({ intent: 'brake', text:
+                        `Small ${street} bets don't fold this player (n=${fs.faced}) — don't bluff-size small here; pot-control or value.` });
+                }
+                if (ctx && ctx.bluffAlreadyGreenlit &&
+                    GreenlightGate.canGreenlight(fl.folded, fl.faced, CFG.upsizeThreshold)) {
+                    notes.push({ intent: 'gas-refinement', text:
+                        `Since you're already bluffing: size UP — they fold to large ${street} bets on a real sample (n=${fl.faced}); small ones won't get the fold.` });
+                }
+            }
+            return notes;
+        }
+        return { recordVillainBet, resolveShowdown, recordFoldToHero, readSizingTells, CFG };
+    })();
+
 
     const STATS_KEY = 'tornPokerHUD_v1';
     const STATS_BACKUP_KEY = 'tornPokerHUD_v1_backup';
@@ -4890,7 +5022,7 @@
                     ), compact: true, confidence: null, isMath: true, handsObserved
                 };
             }
-            if (street === 'flop' && foldVsFlop !== null && foldVsFlop >= 0.65) {
+            if (street === 'flop' && GreenlightGate.canGreenlight(activeStats.foldedVsFlopBetCount, activeStats.facedFlopBetCount, 0.65)) {
                 return {
                     text: v(
                         `Folded to flop pressure (folds to flop bets ${Math.round(foldVsFlop * 100)}% of the time — keep firing).`,
