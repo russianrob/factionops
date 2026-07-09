@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BUSTR: Busting Reminder + PDA
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.23
+// @version      1.0.24
 // @description  Guess how many busts you can do without getting jailed. Fork: bust-penalty decay corrected to Nosy's multiplicative-inverse formula (was exponential, which undervalued older busts).
 // @author       Adobi & Ironhydedragon (decay-formula fix per Nosy [890872]'s guide)
 // @match        https://www.torn.com/*
@@ -9,7 +9,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
-console.log('😎 BUSTR 1.0.23 ON');
+console.log('😎 BUSTR 1.0.24 ON');
 
 ////////  GLOBAL VARIABLES
 ////  State
@@ -209,9 +209,22 @@ function applyQuickActionToRow(playerEl, linkSel, iconSel, on, flag) {
   }
 }
 
+// TornTools ships its own Quick Bust / Quick Bail toggles inside its
+// "Jail Filter" panel (#jailFilter). When that's on the page we hide
+// BUSTR's Quick toggles AND un-arm our own link-rewrite so the two never
+// double up — TornTools owns it. TT randomizes the control ids per page
+// load, so match by container id + label text, never by the inner ids.
+function ttQuickActionsPresent() {
+  const jf = document.getElementById('jailFilter');
+  if (!jf) return false;
+  return [...jf.querySelectorAll('label')]
+    .some((l) => /quick (bust|bail)/i.test(l.textContent || ''));
+}
+
 function applyQuickActions() {
-  const bustOn = getUserSettings().quickBust === true;
-  const bailOn = getUserSettings().quickBail === true;
+  const ttOwns = ttQuickActionsPresent();
+  const bustOn = !ttOwns && getUserSettings().quickBust === true;
+  const bailOn = !ttOwns && getUserSettings().quickBail === true;
   for (const playerEl of document.querySelectorAll('ul.user-info-list-wrap > li')) {
     if (playerEl.classList.contains('last')) continue;
     applyQuickActionToRow(playerEl, '.bust', '.bust-icon', bustOn, 'bustrQb');
@@ -225,6 +238,8 @@ function renderSortToggleBar() {
   const on = getUserSettings().sortByHardness !== false;
   const bustOn = getUserSettings().quickBust === true;
   const bailOn = getUserSettings().quickBail === true;
+  // Defer the Quick toggles to TornTools when its jail filter is present.
+  const hideQuick = ttQuickActionsPresent();
   let bar = document.getElementById('bustr-sort-bar');
   if (!bar) {
     bar = document.createElement('div');
@@ -238,9 +253,10 @@ function renderSortToggleBar() {
     '<span style="color:#888;margin-right:3px;">Sort:</span>'
     + '<span class="bustr-seg" data-on="1" style="' + pill(on) + '">Hardness</span>'
     + '<span class="bustr-seg" data-on="0" style="' + pill(!on) + '">Default</span>'
-    + '<span style="color:#888;margin:0 3px 0 12px;">Quick:</span>'
-    + '<span class="bustr-q" data-q="quickBust" style="' + pill(bustOn, true) + '">Bust</span>'
-    + '<span class="bustr-q" data-q="quickBail" style="' + pill(bailOn, true) + '">Bail</span>';
+    + (hideQuick ? ''
+      : '<span style="color:#888;margin:0 3px 0 12px;">Quick:</span>'
+        + '<span class="bustr-q" data-q="quickBust" style="' + pill(bustOn, true) + '">Bust</span>'
+        + '<span class="bustr-q" data-q="quickBail" style="' + pill(bailOn, true) + '">Bail</span>');
   bar.querySelectorAll('.bustr-seg').forEach((el) => {
     el.addEventListener('click', () => {
       const wantOn = el.dataset.on === '1';
