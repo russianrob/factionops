@@ -200,6 +200,11 @@ export function startChainMonitor(io, warId) {
             const warPlayersForClear = store.getOnlinePlayersForWar(warId);
             push.notifyClearChainAlerts(warPlayersForClear, warId, war.warResult)
               .catch((e) => console.warn(`[chain] clear-chain-alerts push failed: ${e.message}`));
+            // Dismiss any chain Live Activity island still up when the war
+            // ends — the chain may not have broken to 0 (e.g. war target
+            // reached), so the chain==0 broadcast path won't fire.
+            broadcastChainLiveActivity(warId, war, { current: 0, timeout: 0, cooldown: 0 }, /*broke*/ true)
+              .catch((e) => console.warn(`[chain] war-end Live Activity end failed: ${e.message}`));
             // War chat is now persistent (data/war-chat.json) and
             // accumulates across war boundaries — factions asked for
             // permanent history. Manual wipe still available via
