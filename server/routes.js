@@ -10169,6 +10169,11 @@ router.post("/api/arson/recipes", express.json({ limit: '8kb' }), async (req, re
   if (!recipe.ignite && data.recipes[key]?.ignite) {
     recipe.ignite = data.recipes[key].ignite;
   }
+  // Per-recipe save stamps so the editor can show "last edited" + sort by
+  // recency. createdAt is set once and preserved across edits; updatedAt
+  // bumps every save.
+  recipe.createdAt = data.recipes[key]?.createdAt || Date.now();
+  recipe.updatedAt = Date.now();
   data.recipes[key] = recipe;
   data.updatedAt = Date.now();
   scheduleArsonSave();

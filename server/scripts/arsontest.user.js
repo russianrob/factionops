@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson Recipe Sandbox (test)
 // @namespace    tornwar.com
-// @version      0.10.8
+// @version      0.10.9
 // @description  Lightweight recipe-editor UI for arson scenarios. Floating ⚙ button on the crimes page opens a panel to add / edit / delete server-hosted recipes (tornwar.com). NO DOM modification of crime options — leaves the upstream 'arson-bang-for-buck' tooltip / hover behavior completely untouched.
 // @author       RussianRob
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -295,7 +295,7 @@
 (function () {
     'use strict';
 
-    const VERSION = '0.8.21';
+    const VERSION = '0.8.22';
     const SERVER = 'https://tornwar.com';
     const LOG = (...a) => console.log('[arsontest v' + VERSION + ']', ...a);
     const WARN = (...a) => console.warn('[arsontest]', ...a);
@@ -423,6 +423,10 @@
                     <span style="font-weight:600;color:#74c69d;font-size:13px;">Arson Recipes</span>
                     <button id="arsontest-ed-close" style="background:none;border:0;color:#eee;font-size:18px;cursor:pointer;">✕</button>
                 </div>
+                <div id="arsontest-ed-sortbar" style="display:flex;align-items:center;gap:5px;font-size:10px;color:#6b7280;">Sort:
+                    <button class="arsontest-ed-sort" data-sort="location" style="background:transparent;border:1px solid #444;color:#9ca3af;border-radius:3px;padding:1px 7px;font-size:10px;cursor:pointer;">Location</button>
+                    <button class="arsontest-ed-sort" data-sort="recent" style="background:transparent;border:1px solid #444;color:#9ca3af;border-radius:3px;padding:1px 7px;font-size:10px;cursor:pointer;">Recent</button>
+                </div>
                 <div id="arsontest-ed-list" style="overflow-y:auto;display:flex;flex-direction:column;gap:4px;max-height:40vh;font-family:monospace;font-size:11px;"></div>
                 <div style="border-top:1px solid #333;padding-top:8px;display:flex;flex-direction:column;gap:6px;">
                     <span style="font-weight:600;color:#a78bfa;">Add / update</span>
@@ -459,10 +463,22 @@
             const s = overlay.querySelector('#arsontest-ed-status');
             s.textContent = msg; s.style.color = color || '#9ca3af';
         };
+        let sortMode = 'location';
+        const relTime = (ms) => {
+            if (!ms) return '';
+            const s = Math.floor((Date.now() - ms) / 1000);
+            if (s < 45) return 'just now';
+            const m = Math.floor(s / 60); if (m < 60) return m + 'm ago';
+            const h = Math.floor(m / 60); if (h < 24) return h + 'h ago';
+            const d = Math.floor(h / 24); if (d < 30) return d + 'd ago';
+            const mo = Math.floor(d / 30); if (mo < 12) return mo + 'mo ago';
+            return Math.floor(mo / 12) + 'y ago';
+        };
         const renderList = () => {
             const list = overlay.querySelector('#arsontest-ed-list');
-            // Sort by location first (entries without location sink), then action.
+            // Sort: 'location' (place then action) or 'recent' (last-edited desc).
             const entries = Object.entries(RECIPES).sort((a, b) => {
+                if (sortMode === 'recent') return (b[1].updatedAt || 0) - (a[1].updatedAt || 0);
                 const la = (a[1].location || '￿~~~').toLowerCase();
                 const lb = (b[1].location || '￿~~~').toLowerCase();
                 if (la !== lb) return la < lb ? -1 : 1;
@@ -498,10 +514,13 @@
                     const color = ppn < 0 ? '#fca5a5' : '#74c69d';
                     ppnHtml = ` · <span style="color:${color};font-weight:600;" title="profit/nerve at current item prices">${sign}${body}/N</span>`;
                 }
-                return `<div style="display:flex;justify-content:space-between;gap:6px;padding:3px 0;border-bottom:1px solid #2a2a2a;">
+                const editedStr = relTime(r.updatedAt);
+                const editedTitle = r.updatedAt ? 'last edited ' + new Date(r.updatedAt).toLocaleString() : 'not tracked yet — save to start tracking';
+                return `<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #2a2a2a;">
                     <span style="color:#d1d5db;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.location ? r.location + ' / ' : ''}${k}\n${itemsStr}\n$${r.payout.toLocaleString()}${nerveStr}">
                         ${locStr}<b>${k}</b> · <span style="color:#9ca3af;">${itemsStr}</span> · <span style="color:#74c69d;">$${(r.payout/1000).toFixed(0)}K</span>${nerveStr}${ppnHtml}
                     </span>
+                    <span style="color:#6b7280;font-size:9px;white-space:nowrap;" title="${editedTitle}">${editedStr}</span>
                     <button class="arsontest-ed-edit" data-k="${k}" style="background:transparent;border:1px solid #444;color:#a78bfa;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;">edit</button>
                     <button class="arsontest-ed-del" data-k="${k}" style="background:transparent;border:1px solid #4a1a1a;color:#ef4444;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;">del</button>
                 </div>`;
@@ -540,6 +559,18 @@
             }));
         };
         renderList();
+
+        // Sort toggle (Location / Recent-by-last-edited). Wired once — the
+        // bar sits outside #arsontest-ed-list so renderList's innerHTML
+        // rewrite doesn't clobber it.
+        const sortBtns = overlay.querySelectorAll('.arsontest-ed-sort');
+        const paintSort = () => sortBtns.forEach(b => {
+            const on = b.dataset.sort === sortMode;
+            b.style.background = on ? '#3b3b6b' : 'transparent';
+            b.style.color = on ? '#c4b5fd' : '#9ca3af';
+        });
+        sortBtns.forEach(b => b.addEventListener('click', () => { sortMode = b.dataset.sort; paintSort(); renderList(); }));
+        paintSort();
 
         // Live Profit/Nerve readout. Recomputes on every input change so
         // admins can sanity-check before saving. Uses the same nerve
