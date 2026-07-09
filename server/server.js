@@ -461,6 +461,21 @@ app.post("/api/debug/client-log", express.json({ limit: "4kb" }), (req, res) => 
   res.status(204).end();
 });
 
+// GET beacon for contexts that can't POST (CSP/CORS) — e.g. the TornTools
+// background page reporting an init-time throw via <img>/no-cors fetch. Logged
+// as [tt-beacon] so it lands in the same warboard log stream.
+app.get("/api/debug/tt-beacon", (req, res) => {
+  const ip = req.ip || 'unknown';
+  const now = Date.now();
+  const bucket = _diagHits.get('beacon:' + ip) || { count: 0, firstAt: now };
+  if (now - bucket.firstAt > 60_000) { bucket.count = 0; bucket.firstAt = now; }
+  bucket.count++;
+  _diagHits.set('beacon:' + ip, bucket);
+  if (bucket.count > 120) return res.status(429).end();
+  console.log(`[tt-beacon] ${String(req.query.m || '').slice(0, 1500)}`);
+  res.status(204).end();
+});
+
 app.use(routes);
 
 // Health check
