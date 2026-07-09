@@ -1,10 +1,10 @@
 {
   "version": "9.0.13",
   "files": {
-    "fetch--inject.js": "2c8af6b7021993ceee095eb40371e83fb14f5a5b9f5f460d38d6f2449a7a690a",
-    "xhr--inject.js": "1ddfb4a26a2ba8a93790ef0ff629d574fafce5a81992d35535f0032595104be5",
-    "content-scripts/extension.js": "35cc4f2bc58325c2189ca2e20b584e8d27a00e90e5921b9d07d2f92e8e060948",
-    "background.js": "907f1cfd6bcb4e1f8faf6e655712fe5556fa85e63088ebde97687627539d1dad",
+    "fetch--inject.js": "3864fa2374743767df8d173081e48619a154a8bc143a466ae4f764e4e48fa36d",
+    "xhr--inject.js": "c78b1755f4c73d6d36bf7fc5c759fd7b50948c141cef5b57e44c61bd4b1b2339",
+    "content-scripts/extension.js": "c073e21a6fd83cef074457558f75e067f3cfeaa35fafdefa48cf04e291887825",
+    "background.js": "a32a17794975be0953e7cce93b6a395c4f5a1c954d600d18a35f57499aac1790",
     "manifest.json": "41cdec294b3c6977d2794bd677372c02e3c812e9d01309964d6863e22aca5800"
   },
   "manifest": {
