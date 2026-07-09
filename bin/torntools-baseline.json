@@ -1,14 +1,14 @@
 {
-  "version": "9.0.7",
+  "version": "9.0.13",
   "files": {
-    "fetch--inject.js": "bbfefe2c6fea8b528d2847561bd099ea93cc241fb77a8ae95a9adc201286d8ef",
-    "xhr--inject.js": "663a2c08a23d5bd9d450e29735b83e2c867729c574ef4af8c61243144be7eb19",
-    "content-scripts/extension.js": "bab4d89b3d9e1fe92b1e15db3c64c36aa53f6a0871b48e338de3d036bc3ba29f",
-    "background.js": "f13f4002c6b06eea83f162f130a9a3694804e52571f5800b27bb4672cc63eeb9",
-    "manifest.json": "0fb83cbfdfea2266feba581c1a07545f819c938b62bf56d5464e2a3927a41f0e"
+    "fetch--inject.js": "2c8af6b7021993ceee095eb40371e83fb14f5a5b9f5f460d38d6f2449a7a690a",
+    "xhr--inject.js": "1ddfb4a26a2ba8a93790ef0ff629d574fafce5a81992d35535f0032595104be5",
+    "content-scripts/extension.js": "35cc4f2bc58325c2189ca2e20b584e8d27a00e90e5921b9d07d2f92e8e060948",
+    "background.js": "907f1cfd6bcb4e1f8faf6e655712fe5556fa85e63088ebde97687627539d1dad",
+    "manifest.json": "41cdec294b3c6977d2794bd677372c02e3c812e9d01309964d6863e22aca5800"
   },
   "manifest": {
-    "version": "9.0.7",
+    "version": "9.0.13",
     "permissions": [
       "alarms",
       "background",
