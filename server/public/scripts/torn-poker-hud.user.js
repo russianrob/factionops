@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.11
+// @version      5.12
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -5752,7 +5752,7 @@
             }
             // Fold-to-3bet context — fires when opponent opens preflop (good time to consider a squeeze)
             if (street === 'preflop' && actionType === 'raise' && !currentHand?.perPlayer?.[playerName]?.threeBet && dm.foldTo3BetPct !== null) {
-                if (dm.foldTo3BetPct >= 0.70) {
+                if (GreenlightGate.canGreenlight(activeStats.foldTo3BetCount, activeStats.foldTo3BetOpportunities, 0.70)) {
                     hudPush(
                         `Folds to 3-bets ${Math.round(dm.foldTo3BetPct * 100)}% — good spot to squeeze if you have a hand.`,
                         `Folds to 3-bets ${Math.round(dm.foldTo3BetPct * 100)}% — they hate pressure. Good spot to squeeze.`
@@ -5767,7 +5767,7 @@
 
             // Fold vs flop bet and postflop fold rate
             if (street === 'flop' && actionType === 'check' && dm.foldVsFlopBet !== null) {
-                if (dm.foldVsFlopBet >= 0.60) hudPush(
+                if (GreenlightGate.canGreenlight(activeStats.foldedVsFlopBetCount, activeStats.facedFlopBetCount, 0.60)) hudPush(
                     `They fold to flop bets ${Math.round(dm.foldVsFlopBet * 100)}% — a c-bet often works.`,
                     `They fold to flop bets ${Math.round(dm.foldVsFlopBet * 100)}% — a c-bet often works. Print money.`
                 );
@@ -5786,6 +5786,8 @@
                     `They rarely fold post-flop — expect them to keep coming wide.`
                 );
             }
+
+            for (const _sz of BetSizingRead.readSizingTells(rawStats, { street })) hudPush(_sz.text, _sz.text);
 
             // Sizing vs their baseline
             if ((actionType === 'bet' || actionType === 'raise') && betPct !== null && dm.avgRaisePct !== null && (activeStats.raisePctSamples || 0) >= 5) {
@@ -7576,7 +7578,7 @@
         // ── Per-street fold stats ────────────────────────────────
         // Flop fold-to-bet
         if (oppDm?.foldVsFlopBet != null) {
-            if (oppDm.foldVsFlopBet >= 0.60) {
+            if (GreenlightGate.canGreenlight(oppRaw.foldedVsFlopBetCount, oppRaw.facedFlopBetCount, 0.60)) {
                 score += 2;
                 if (!contextNote) contextNote = _voice(
                     `Opponent folds flop bets ${Math.round(oppDm.foldVsFlopBet * 100)}% — strong fold target.`,
@@ -7594,7 +7596,7 @@
         const foldTurnN = oppRaw?.foldedVsTurnBetCount || 0;
         const foldVsTurn = facedTurn >= 3 ? foldTurnN / facedTurn : null;
         if (foldVsTurn != null && (isTurn || isRiver)) {
-            if (foldVsTurn >= 0.55) {
+            if (GreenlightGate.canGreenlight(oppRaw.foldedVsTurnBetCount, oppRaw.facedTurnBetCount, 0.55)) {
                 score += 2;
                 if (!contextNote) contextNote = _voice(
                     `Opponent folds turn bets ${Math.round(foldVsTurn * 100)}% — good barrel target.`,
@@ -7616,7 +7618,7 @@
         const foldRiverN = oppRaw?.foldedVsRiverBetCount || 0;
         const foldVsRiver = facedRiver >= 3 ? foldRiverN / facedRiver : null;
         if (foldVsRiver != null && isRiver) {
-            if (foldVsRiver >= 0.50) {
+            if (GreenlightGate.canGreenlight(oppRaw.foldedVsRiverBetCount, oppRaw.facedRiverBetCount, 0.50)) {
                 score += 2;
                 if (!contextNote) contextNote = _voice(
                     `Opponent folds river bets ${Math.round(foldVsRiver * 100)}% — last street fold target.`,
@@ -9153,7 +9155,7 @@
                 const as = rs ? getActiveStats(rs, currentTableBB) : null;
                 const d = as ? getDisplayMetrics(as) : null;
                 if (!d) continue;
-                if (d.foldVsFlopBet !== null && d.foldVsFlopBet >= 0.65) foldyOpp.push({ name, rate: d.foldVsFlopBet });
+                if (GreenlightGate.canGreenlight(as.foldedVsFlopBetCount, as.facedFlopBetCount, 0.65)) foldyOpp.push({ name, rate: d.foldVsFlopBet });
                 else if (d.foldVsFlopBet !== null && d.foldVsFlopBet <= 0.30) callyOpp.push({ name, rate: d.foldVsFlopBet });
             }
 
@@ -10153,6 +10155,10 @@
                 if (facedFlopBet) {
                     s.facedFlopBetCount++;
                     if (p.foldedOnFlop) s.foldedVsFlopBetCount++;
+                    if (name !== localPlayerName && currentHand.flopBettor === localPlayerName) {
+                        const _hb = (currentHand.perPlayer[localPlayerName]?.betAmts || []).find(_b => _b.street === 'flop' && _b.potBefore > 0);
+                        if (_hb) BetSizingRead.recordFoldToHero(s, 'flop', _hb.amt, _hb.potBefore, !!p.foldedOnFlop);
+                    }
                 }
 
                 // Cbet tracking — preflop aggressor who saw the flop had a cbet opportunity.
@@ -10195,6 +10201,14 @@
                     if (p.showdownRank >= 0) {
                         if (p.showdownRank <= 1) s.showdownWeak++;
                         else s.showdownStrong++;
+                        if (name !== localPlayerName && p.betAmts) {
+                            let _bb = null;
+                            for (const _b of p.betAmts) {
+                                if (_b.street === 'preflop' || !(_b.potBefore > 0)) continue;
+                                if (!_bb || _b.amt / _b.potBefore > _bb.amt / _bb.potBefore) _bb = _b;
+                            }
+                            if (_bb) BetSizingRead.resolveShowdown(s, BetSizingRead.recordVillainBet(s, _bb.amt, _bb.potBefore), p.showdownRank >= 2);
+                        }
                     }
                 }
                 if (p.wonNoShowdown) s.wonNoShowdownCount++;
@@ -11124,7 +11138,7 @@
         const m = computeMetrics(s);
 
         if (m?.foldVsFlopBet != null) {
-            if (m.foldVsFlopBet >= 0.65)
+            if (GreenlightGate.canGreenlight(s.foldedVsFlopBetCount, s.facedFlopBetCount, 0.65))
                 tags.push({ label: `Folds flop bets ${Math.round(m.foldVsFlopBet * 100)}% — c-bet freely`, color: '#27ae60' });
             else if (m.foldVsFlopBet <= 0.30)
                 tags.push({ label: `Calls flop bets ${Math.round((1 - m.foldVsFlopBet) * 100)}% — don't bluff`, color: '#e74c3c' });
@@ -12432,7 +12446,7 @@
 
         const exploits = [];
         if (m.foldVsFlopBet != null) {
-            if (m.foldVsFlopBet >= 0.65)
+            if (GreenlightGate.canGreenlight(s.foldedVsFlopBetCount, s.facedFlopBetCount, 0.65))
                 exploits.push(`<b>C-bet every flop</b> — they fold to flop bets ${pct(m.foldVsFlopBet)} of the time. You don't need to connect with the board.`);
             else if (m.foldVsFlopBet <= 0.30)
                 exploits.push(`<b>Cut your bluffs on the flop</b> — they only fold ${pct(m.foldVsFlopBet)}. Only bet when you have real equity behind it.`);
@@ -12446,7 +12460,7 @@
                 exploits.push(`<b>Tighten your open range</b> when they're left to act — they 3-bet ${pct(m.threeBetPct)}. Don't open junk and get blown off it.`);
         }
         if (m.foldTo3BetPct != null) {
-            if (m.foldTo3BetPct >= 0.70)
+            if (GreenlightGate.canGreenlight(s.foldTo3BetCount, s.foldTo3BetOpportunities, 0.70))
                 exploits.push(`<b>3-bet them light</b> — they fold to 3-bets ${pct(m.foldTo3BetPct)} of the time. Squeeze them off wide opens with almost anything.`);
             else if (m.foldTo3BetPct <= 0.30)
                 exploits.push(`<b>Don't 3-bet without a real hand</b> — they call or re-raise 3-bets ${pct(1 - m.foldTo3BetPct)} of the time. Light squeezes will get you in trouble.`);
