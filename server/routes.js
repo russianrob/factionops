@@ -6,6 +6,7 @@ import express, { Router } from "express";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { join as pathJoin, dirname as pathDirname, resolve as pathResolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { scheduleArsonPublish } from "./arson-github-publish.js";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from 'node:url';
 import axios from "axios";
@@ -9955,6 +9956,7 @@ function scheduleArsonSave() {
     _arsonSaveTimer = null;
     try {
       writeFileSync(ARSON_RECIPES_FILE, JSON.stringify(_arsonRecipes, null, 2));
+      scheduleArsonPublish();
     } catch (e) { console.error('[arson-recipes] save error:', e.message); }
   }, 1000);
 }
