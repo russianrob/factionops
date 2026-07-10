@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.40
+// @version      5.1.41
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.40';
+    const SCRIPT_VERSION = '5.1.41';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -6991,6 +6991,8 @@ body.wb-chain-active {
     let chainTimeoutAnchor = 0;    // timeout value when last set (seconds)
     let chainTimeoutAnchorAt = 0;  // Date.now() when last set
     let lastChainCurrent = -1;     // track chain count for monotonic guard
+    let chainLastIncreaseAt = 0;
+    let _prevChainCurrentForAlert = -1;
 
     function setChainTimeout(value) {
         // Monotonic guard: chain timers only count DOWN, so reject values
@@ -7026,12 +7028,18 @@ body.wb-chain-active {
                 const elapsed = (Date.now() - chainTimeoutAnchorAt) / 1000;
                 state.chain.timeout = Math.max(0, chainTimeoutAnchor - elapsed);
             }
+            if (_prevChainCurrentForAlert >= 0 && state.chain.current > _prevChainCurrentForAlert) {
+                chainLastIncreaseAt = Date.now();
+            }
+            _prevChainCurrentForAlert = state.chain.current;
+            const _sinceHit = chainLastIncreaseAt > 0 ? (Date.now() - chainLastIncreaseAt) / 1000 : Infinity;
+            const chainTimeoutPlausible = state.chain.timeout >= (300 - _sinceHit) - 60;
             // Chain break sound + notification alerts (only during active wars)
             // Only alert if chain data is fresh (anchor set within last 60s — avoids stale countdown alerts)
             const anchorAge = chainTimeoutAnchorAt > 0 ? (Date.now() - chainTimeoutAnchorAt) / 1000 : Infinity;
             const chainDataFresh = anchorAge < 120; // anchor less than 2 min old
             const _chainFocusOK = IS_PDA || (typeof document.hasFocus === 'function' ? document.hasFocus() : !document.hidden);
-            if (CONFIG.CHAIN_ALERT && _chainFocusOK && isWarActive() && chainDataFresh && state.chain.timeout > 0 && state.chain.current >= 10) {
+            if (CONFIG.CHAIN_ALERT && _chainFocusOK && isWarActive() && chainDataFresh && chainTimeoutPlausible && state.chain.timeout > 0 && state.chain.current >= 10) {
                 // Panic at 30s
                 if (state.chain.timeout <= 30 && !state.chainPanicFired) {
                     playChainAlert();
