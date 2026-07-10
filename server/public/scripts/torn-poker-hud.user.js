@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.14
+// @version      5.15
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -2090,7 +2090,7 @@
                 raisedPreflop: false,
                 foldedPreflop: false,
                 limpedPreflop: false,
-                facedPreflopRaise: currentHand.preflopRaiseCount > 0,
+                facedPreflopRaise: false,
                 threeBet: false,
                 facedThreeBet: false,
                 foldedToThreeBet: false,
@@ -2529,6 +2529,7 @@
         if (/^folded?$/i.test(text)) {
             if (street === 'preflop') {
                 p.foldedPreflop = true;
+                if (currentHand.preflopRaiseCount > 0) p.facedPreflopRaise = true;
                 p.inHandPreflop = true;
                 if (p.facedThreeBet) p.foldedToThreeBet = true;
                 updatePositionIndicator('active');
