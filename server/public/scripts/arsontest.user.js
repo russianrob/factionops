@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson Recipe Sandbox (test)
 // @namespace    tornwar.com
-// @version      0.10.9
+// @version      0.10.10
 // @description  Lightweight recipe-editor UI for arson scenarios. Floating ⚙ button on the crimes page opens a panel to add / edit / delete server-hosted recipes (tornwar.com). NO DOM modification of crime options — leaves the upstream 'arson-bang-for-buck' tooltip / hover behavior completely untouched.
 // @author       RussianRob
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -488,7 +488,8 @@
             const listValueMap = loadItemValueMap();
             list.innerHTML = entries.map(([k, r]) => {
                 const itemsStr = Object.entries(r.items).map(([n, q]) => q + ' ' + n).join(', ');
-                const nerveStr = r.nerve ? (' · ' + r.nerve + 'N') : '';
+                const _nrv = (r.nerve && r.nerve > 0) ? r.nerve : autoCalcArsonNerve(r.items, r.stoke, r.dampen, r.flamethrower, r.ignite);
+                const nerveStr = _nrv > 0 ? (' · ' + _nrv + 'N') : '';
                 const locStr = r.location
                     ? `<span style="color:#f4a261;font-weight:700;">${r.location}</span> · `
                     : `<span style="color:#6b7280;font-style:italic;">(no location)</span> · `;
@@ -807,7 +808,8 @@
         const payoutStr = recipe.payout >= 1000
             ? '$' + Math.round(recipe.payout / 1000) + 'K'
             : '$' + recipe.payout;
-        const nerveStr = recipe.nerve ? (' · ' + recipe.nerve + 'N') : '';
+        const _nrv = (recipe.nerve && recipe.nerve > 0) ? recipe.nerve : autoCalcArsonNerve(recipe.items, recipe.stoke, recipe.dampen, recipe.flamethrower, recipe.ignite);
+        const nerveStr = _nrv > 0 ? (' · ' + _nrv + 'N') : '';
         const locStr = recipe.location ? recipe.location + ' · ' : '';
         return locStr + itemsStr + stokeStr + dampenStr + ' · ' + payoutStr + nerveStr + flameStr;
     }
