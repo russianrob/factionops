@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.12
+// @version      5.13
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -2541,6 +2541,8 @@
                 p.postFolds++;
                 if (p[street]) p[street].folds++;
                 if (street === 'flop') p.foldedOnFlop = true;
+                if (street === 'turn') p.foldedOnTurn = true;
+                if (street === 'river') p.foldedOnRiver = true;
                 if (street === 'river') p.riverAction = 'folded river';
                 if (actor === localPlayerName && (street === 'flop' || street === 'turn' || street === 'river')) {
                     currentHand.selfFoldStreet = street;
@@ -2633,6 +2635,14 @@
                 if (street === 'flop' && !currentHand.flopBetOccurred) {
                     currentHand.flopBetOccurred = true;
                     currentHand.flopBettor = actor;
+                }
+                if (street === 'turn' && !currentHand.turnBetOccurred) {
+                    currentHand.turnBetOccurred = true;
+                    currentHand.turnBettor = actor;
+                }
+                if (street === 'river' && !currentHand.riverBetOccurred) {
+                    currentHand.riverBetOccurred = true;
+                    currentHand.riverBettor = actor;
                 }
                 if (street === 'river') {
                     p.riverAction = betAmt != null ? `bet $${betAmt.toLocaleString()}` : 'bet';
@@ -5787,7 +5797,8 @@
                 );
             }
 
-            for (const _sz of BetSizingRead.readSizingTells(rawStats, { street })) hudPush(_sz.text, _sz.text);
+            const _bluffGL = (actionType === 'bet' || actionType === 'raise') && GreenlightGate.canGreenlight(activeStats.foldedVsFlopBetCount, activeStats.facedFlopBetCount, 0.60);
+            for (const _sz of BetSizingRead.readSizingTells(rawStats, { street, bluffAlreadyGreenlit: _bluffGL })) hudPush(_sz.text, _sz.text);
 
             // Sizing vs their baseline
             if ((actionType === 'bet' || actionType === 'raise') && betPct !== null && dm.avgRaisePct !== null && (activeStats.raisePctSamples || 0) >= 5) {
@@ -10160,6 +10171,17 @@
                         if (_hb) BetSizingRead.recordFoldToHero(s, 'flop', _hb.amt, _hb.potBefore, !!p.foldedOnFlop);
                     }
                 }
+                if (name !== localPlayerName && !p.foldedPreflop && !p.foldedOnFlop) {
+                    const _hp = currentHand.perPlayer[localPlayerName];
+                    if (currentHand.turnBettor === localPlayerName) {
+                        const _ht = (_hp?.betAmts || []).find(_b => _b.street === 'turn' && _b.potBefore > 0);
+                        if (_ht) BetSizingRead.recordFoldToHero(s, 'turn', _ht.amt, _ht.potBefore, !!p.foldedOnTurn);
+                    }
+                    if (currentHand.riverBettor === localPlayerName && !p.foldedOnTurn) {
+                        const _hr = (_hp?.betAmts || []).find(_b => _b.street === 'river' && _b.potBefore > 0);
+                        if (_hr) BetSizingRead.recordFoldToHero(s, 'river', _hr.amt, _hr.potBefore, !!p.foldedOnRiver);
+                    }
+                }
 
                 // Cbet tracking — preflop aggressor who saw the flop had a cbet opportunity.
                 // They "made" it if they were the flop bettor.
@@ -11154,7 +11176,7 @@
         }
 
         if (m?.threeBetPct != null) {
-            if (m.threeBetPct <= 0.03)
+            if (s.threeBetOpportunities >= 15 && GreenlightGate.shrink(s.threeBetCount, s.threeBetOpportunities, 0.06, 6) <= 0.03)
                 tags.push({ label: 'Rarely 3-bets — raise wide vs them', color: '#27ae60' });
             else if (m.threeBetPct >= 0.12)
                 tags.push({ label: `3-bets ${Math.round(m.threeBetPct * 100)}% — be cautious raising`, color: '#e74c3c' });
@@ -12454,7 +12476,7 @@
         if (m.limpPct != null && m.limpPct >= 0.25)
             exploits.push(`<b>Isolate their limps</b> — they limp in ${pct(m.limpPct)} of the time. Raise it up in position to play heads-up with a range advantage against a weak entry.`);
         if (m.threeBetPct != null) {
-            if (m.threeBetPct <= 0.03)
+            if (s.threeBetOpportunities >= 15 && GreenlightGate.shrink(s.threeBetCount, s.threeBetOpportunities, 0.06, 6) <= 0.03)
                 exploits.push(`<b>Open wide when they're in the blinds</b> — they almost never 3-bet (${pct(m.threeBetPct)}). Steal freely and don't respect their flat-calls.`);
             else if (m.threeBetPct >= 0.12)
                 exploits.push(`<b>Tighten your open range</b> when they're left to act — they 3-bet ${pct(m.threeBetPct)}. Don't open junk and get blown off it.`);
