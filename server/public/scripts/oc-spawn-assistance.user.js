@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.60
+// @version      3.2.62
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.58';
+    const SCRIPT_VERSION = '3.2.62';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -1609,7 +1609,17 @@
     // ═══════════════════════════════════════════════════════════════════════
     //  GENERIC REQUEST  — GM_xmlhttpRequest (TornPDA) or fetch
     // ═══════════════════════════════════════════════════════════════════════
+    const _gmInflight = new Map();
     function gmRequest(url, timeoutMs = 15000) {
+        const _hit = _gmInflight.get(url);
+        if (_hit) return _hit;
+        const _p = _gmRequestRaw(url, timeoutMs);
+        _gmInflight.set(url, _p);
+        const _clr = () => { if (_gmInflight.get(url) === _p) _gmInflight.delete(url); };
+        _p.then(_clr, _clr);
+        return _p;
+    }
+    function _gmRequestRaw(url, timeoutMs = 15000) {
         if (typeof GM_xmlhttpRequest === 'function') {
             return new Promise((resolve, reject) => {
                 let settled = false;
