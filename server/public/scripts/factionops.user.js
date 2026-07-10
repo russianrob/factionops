@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.43
+// @version      5.1.44
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.43';
+    const SCRIPT_VERSION = '5.1.44';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -11018,7 +11018,7 @@ body.wb-chain-active {
         }
 
         // Chain data — intercepted API is the fast path for timeout
-        if (data.chain && !CHAIN_POLL_ONLY) {
+        if (data.chain) {
             const chain = data.chain;
             state.chain.current = chain.current || 0;
             state.chain.max = chain.max || 0;
@@ -11030,7 +11030,7 @@ body.wb-chain-active {
                     adjustedTimeout = Math.max(0, adjustedTimeout - cacheAge);
                 }
             }
-            setChainTimeout(adjustedTimeout);
+            setChainTimeout(adjustedTimeout, 'intercept');
             state.chain.cooldown = chain.cooldown || 0;
             chainCooldownSetAt = Date.now();
             chainCooldownSetVal = state.chain.cooldown;
