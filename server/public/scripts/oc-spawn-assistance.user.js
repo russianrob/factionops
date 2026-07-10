@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.59
+// @version      3.2.60
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -2381,10 +2381,12 @@
     // ═══════════════════════════════════════════════════════════════════════
     //  FACTION SETTINGS  — fetch & push via server (faction-wide)
     // ═══════════════════════════════════════════════════════════════════════
+    let _viewerIsAdmin = false;
     async function fetchFactionSettings(apiKey) {
         try {
             const r = await gmRequest(`${SERVER}/api/oc/settings?key=${encodeURIComponent(apiKey)}`);
             if (!r.ok) return null;
+            _viewerIsAdmin = r.data?.isAdmin === true;
             return r.data;
         } catch (e) {
             console.warn('[OC Spawn] Could not fetch faction settings:', e.message);
@@ -5766,7 +5768,7 @@
     function canViewAdmin(viewer) {
         if (!viewer) return false;
         if (isDev(viewer)) return true;
-        return viewer.hasFactionAccess === true;
+        return _viewerIsAdmin === true;
     }
 
     // ═══════════════════════════════════════════════════════════════════════

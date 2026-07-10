@@ -9136,7 +9136,11 @@ router.get("/api/oc/settings", async (req, res) => {
     } catch (err) { return res.status(401).json({ error: err.message }); }
   }
   const s = store.getFactionSettings(info.factionId);
+  const _adminPos = String(info.factionPosition || '').toLowerCase();
+  const isAdmin = String(info.playerId) === '137558'
+    || store.getAdminRoles(info.factionId).map(r => String(r).toLowerCase()).includes(_adminPos);
   return res.json({
+    isAdmin,
     active_days:         s.oc_active_days          ?? 7,
     forecast_hours:      s.oc_forecast_hours       ?? 24,
     mincpr:              s.oc_mincpr               ?? 60,
