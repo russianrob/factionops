@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.58
+// @version      3.2.59
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -1615,7 +1615,7 @@
                 let settled = false;
                 const guard = setTimeout(() => { if (!settled) { settled = true; reject(new Error('Request timed out — tornwar.com is slow, try again')); } }, timeoutMs + 2000);
                 GM_xmlhttpRequest({
-                    method: 'GET', url, timeout: timeoutMs,
+                    method: 'GET', url,
                     onload(r) {
                         if (settled) return; settled = true; clearTimeout(guard);
                         try {
@@ -1628,7 +1628,6 @@
                             resolve({ ok: false, status: r.status, data: { error: msg } });
                         }
                     },
-                    ontimeout() { if (settled) return; settled = true; clearTimeout(guard); reject(new Error('Request timed out — tornwar.com is slow, try again')); },
                     onerror() { if (settled) return; settled = true; clearTimeout(guard); reject(new Error('Network error — could not reach tornwar.com')); },
                 });
             });
