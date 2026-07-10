@@ -54,6 +54,10 @@ const backoffs = new Map();
 const lastAlertSent = new Map();
 /** Last time we sent a chain panic push per warId. */
 const lastPanicSent = new Map();
+/** Wall-clock (ms) of the last chain-count INCREASE per warId. A qualifying
+ * hit resets Torn's chain timer to ~5:00, so a recent increase means a low
+ * reported timeout is a stale/lagging snapshot, not a real break. */
+const lastChainIncreaseAt = new Map();
 /** Last time we checked war score per warId. */
 const lastScoreCheck = new Map();
 /** Track if we already notified war target reached per warId. */
@@ -75,6 +79,7 @@ async function _processChain(warId, war, chain, io, source) {
   const countChanged = (prevChain.current || 0) !== (chain.current || 0);
   const cooldownFlipped = ((prevChain.cooldown || 0) > 0) !== ((chain.cooldown || 0) > 0);
   const broke = (prevChain.current || 0) > 0 && (chain.current || 0) === 0;
+  if ((chain.current || 0) > (prevChain.current || 0)) lastChainIncreaseAt.set(warId, Date.now());
   const tokenCount = liveActivityTokens.listForWar(warId).length;
   console.log(`[chain/${source}] war=${warId} prev=${prevChain.current||0} curr=${chain.current||0} cooldown=${chain.cooldown} timeout=${chain.timeout} tokens=${tokenCount} willPush=${countChanged || cooldownFlipped || broke}`);
   if (countChanged || cooldownFlipped || broke) {
@@ -84,7 +89,16 @@ async function _processChain(warId, war, chain, io, source) {
   }
 
   const isCoolingDown = chain.cooldown > 0;
-  if (!isCoolingDown && chain.timeout > 0 && chain.current >= CHAIN_MIN_HITS) {
+  // A qualifying hit resets Torn's chain timer to ~5:00, so if the count went
+  // up within the last ~2 min the timer physically can't be near zero — reject
+  // the low reading as a stale/lagging snapshot instead of pushing a false
+  // "chain dying" alert to everyone. Real stalls (no hit for minutes) still fire.
+  const secsSinceHit = (Date.now() - (lastChainIncreaseAt.get(warId) || 0)) / 1000;
+  const timerPlausible = chain.timeout >= (300 - secsSinceHit) - 60;
+  if (!isCoolingDown && !timerPlausible && chain.timeout > 0 && chain.timeout <= CHAIN_ALERT_THRESHOLD && chain.current >= CHAIN_MIN_HITS) {
+    console.log(`[chain] SUPPRESSED stale alert: chain ${chain.current}, timeout=${Math.round(chain.timeout)}s but only ${Math.round(secsSinceHit)}s since last hit (${source})`);
+  }
+  if (!isCoolingDown && timerPlausible && chain.timeout > 0 && chain.current >= CHAIN_MIN_HITS) {
     if (chain.timeout <= CHAIN_PANIC_THRESHOLD) {
       const lastPanic = lastPanicSent.get(warId) || 0;
       if (Date.now() - lastPanic > CHAIN_PANIC_COOLDOWN_MS) {
@@ -347,6 +361,8 @@ export function stopChainMonitor(warId) {
   }
   backoffs.delete(warId);
   lastAlertSent.delete(warId);
+  lastPanicSent.delete(warId);
+  lastChainIncreaseAt.delete(warId);
   lastScoreCheck.delete(warId);
   warTargetNotified.delete(warId);
   console.log(`[chain] Stopped monitoring for war ${warId}`);
