@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.41
+// @version      5.1.42
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.41';
+    const SCRIPT_VERSION = '5.1.42';
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -7390,10 +7390,7 @@ body.wb-chain-active {
             } else if (parts.length === 3 && parts.every(p => !isNaN(p))) {
                 seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
             }
-            if (seconds > 0) {
-                setChainTimeout(seconds);
-            } else if (text === '' || text === '00:00') {
-                // Chain not active or expired
+            if (seconds <= 0 && (text === '' || text === '00:00')) {
                 state.chain.timeout = 0;
                 chainTimeoutAnchor = 0;
                 chainTimeoutAnchorAt = 0;
@@ -8517,15 +8514,14 @@ body.wb-chain-active {
             // Cache reference before Torn's JS can lose the ID
             chainBarRef = chainBar;
 
-            // If API poll was started as a fallback, stop it now
-            stopDirectChainPoll();
+            startDirectChainPoll();
 
             // Give PDA's DOM a tick to settle after the move, then start observer
             // Pass the element directly — getElementById may fail after move in PDA
             setTimeout(() => {
                 if (startChainDOMObserver(chainBar)) {
                     usingChainDOM = true;
-                    log('Using DOM chain reader — no API calls for chain data');
+                    log('Chain: DOM for count, API poll for timeout');
                 } else {
                     // Observer couldn't start even though bar was found — fall back
                     log('DOM observer failed after move — falling back to API poll');
@@ -8572,7 +8568,7 @@ body.wb-chain-active {
             const fallback = document.getElementById('fo-chain-fallback');
             if (fallback) fallback.style.display = 'none';
 
-            stopDirectChainPoll();
+            startDirectChainPoll();
             setTimeout(() => {
                 if (startChainDOMObserver(chainBar)) {
                     usingChainDOM = true;
