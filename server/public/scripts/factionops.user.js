@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.42
+// @version      5.1.43
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,8 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.42';
+    const SCRIPT_VERSION = '5.1.43';
+    const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
@@ -4859,7 +4860,7 @@ body.wb-chain-active {
         if (data.retals) { state.retals = data.retals; if (typeof renderRetalList === 'function') renderRetalList(); }
 
         // ── Chain ──
-        if (data.chainData) {
+        if (data.chainData && !CHAIN_POLL_ONLY) {
             const oldCurrent = state.chain.current;
             const chainChanged = data.chainData.current !== oldCurrent;
             state.chain.current = data.chainData.current ?? state.chain.current;
@@ -6993,8 +6994,14 @@ body.wb-chain-active {
     let lastChainCurrent = -1;     // track chain count for monotonic guard
     let chainLastIncreaseAt = 0;
     let _prevChainCurrentForAlert = -1;
+    let _lastChainSource = 'none';
+    function _chainAlertDiag(kind) {
+        const sh = chainLastIncreaseAt > 0 ? Math.round((Date.now() - chainLastIncreaseAt) / 1000) : -1;
+        try { httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log', headers: { 'Content-Type': 'application/json' }, data: JSON.stringify({ tag: 'fo-chain-alert', data: { v: SCRIPT_VERSION, kind, cur: state.chain.current, to: Math.round(state.chain.timeout), anchor: Math.round(chainTimeoutAnchor || 0), anchorAge: chainTimeoutAnchorAt ? Math.round((Date.now() - chainTimeoutAnchorAt) / 1000) : -1, src: _lastChainSource, sinceHit: sh, pollOnly: CHAIN_POLL_ONLY } }), onload() {}, onerror() {} }); } catch (_) {}
+    }
 
-    function setChainTimeout(value) {
+    function setChainTimeout(value, source) {
+        if (source) _lastChainSource = source;
         // Monotonic guard: chain timers only count DOWN, so reject values
         // that are HIGHER than our current countdown — they come from stale
         // cached API responses. Allow higher values only when chain count
@@ -7042,6 +7049,7 @@ body.wb-chain-active {
             if (CONFIG.CHAIN_ALERT && _chainFocusOK && isWarActive() && chainDataFresh && chainTimeoutPlausible && state.chain.timeout > 0 && state.chain.current >= 10) {
                 // Panic at 30s
                 if (state.chain.timeout <= 30 && !state.chainPanicFired) {
+                    _chainAlertDiag('panic');
                     playChainAlert();
                     firePdaNotification('chain_alert',
                         '\uD83D\uDD34 CHAIN DYING! ' + Math.round(state.chain.timeout) + 's!',
@@ -7049,6 +7057,7 @@ body.wb-chain-active {
                     state.chainPanicFired = true;
                 // Warning at 60s
                 } else if (state.chain.timeout <= CONFIG.CHAIN_ALERT_THRESHOLD && !state.chainAlertFired) {
+                    _chainAlertDiag('warn');
                     playChainAlert();
                     firePdaNotification('chain_alert',
                         '\uD83D\uDEA8 CHAIN BREAKING!',
@@ -7128,7 +7137,7 @@ body.wb-chain-active {
                                     adjustedTimeout = Math.max(0, adjustedTimeout - cacheAge);
                                 }
                             }
-                            setChainTimeout(adjustedTimeout);
+                            setChainTimeout(adjustedTimeout, 'poll');
                             state.chain.cooldown = chain.cooldown || 0;
                             updateChainBar();
 
@@ -8495,6 +8504,13 @@ body.wb-chain-active {
         retryCount = retryCount || 0;
         const container = document.getElementById('fo-torn-chain');
         if (!container) return;
+        if (CHAIN_POLL_ONLY) {
+            container.style.display = 'none';
+            const fb = document.getElementById('fo-chain-fallback');
+            if (fb) fb.style.display = '';
+            startDirectChainPoll();
+            return;
+        }
 
         // Try multiple selectors for Torn's chain bar
         // Desktop: a#barChain  |  PDA may use different structure
@@ -11002,7 +11018,7 @@ body.wb-chain-active {
         }
 
         // Chain data — intercepted API is the fast path for timeout
-        if (data.chain) {
+        if (data.chain && !CHAIN_POLL_ONLY) {
             const chain = data.chain;
             state.chain.current = chain.current || 0;
             state.chain.max = chain.max || 0;
@@ -11767,7 +11783,7 @@ body.wb-chain-active {
                         if (msg.warScores) state.warScores = msg.warScores;
                         if (msg.warEta) state.warEta = msg.warEta;
 
-                        if (msg.chain || msg.chainData) {                            const c = msg.chain || msg.chainData;
+                        if ((msg.chain || msg.chainData) && !CHAIN_POLL_ONLY) {                            const c = msg.chain || msg.chainData;
                             const { timeout, cooldown, ...rest } = c;
                             Object.assign(state.chain, rest);
                             if (timeout != null) {
