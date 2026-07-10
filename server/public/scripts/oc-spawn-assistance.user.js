@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.62
+// @version      3.2.63
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -298,7 +298,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.62';
+    const SCRIPT_VERSION = '3.2.63';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -5973,7 +5973,8 @@
             container.innerHTML = '<div style="padding:24px;color:#9ca3af;font-size:13px;text-align:center;">Loading war list…</div>';
             try {
                 const r = await gmRequest(`${SERVER}/api/war/payouts/list?key=${encodeURIComponent(apiKey)}`);
-                _payoutsState.wars = Array.isArray(r?.wars) ? r.wars : [];
+                if (!r.ok) throw new Error(r.data?.error || `Server error (${r.status})`);
+                _payoutsState.wars = Array.isArray(r.data?.wars) ? r.data.wars : [];
                 if (_payoutsState.wars.length > 0 && !_payoutsState.selectedWarId) {
                     _payoutsState.selectedWarId = _payoutsState.wars[0].warId;
                 }
@@ -6069,7 +6070,9 @@
         if (lootStr) params.set('loot', lootStr);
         if (opts.forceFresh) params.set('fresh', '1');
         try {
-            const result = await gmRequest(`${SERVER}/api/war/${encodeURIComponent(warId)}/payouts?${params.toString()}`);
+            const r = await gmRequest(`${SERVER}/api/war/${encodeURIComponent(warId)}/payouts?${params.toString()}`);
+            if (!r.ok) throw new Error(r.data?.error || `Server error (${r.status})`);
+            const result = r.data;
             _payoutsState.lastResult = result;
             renderPayoutsTable(body, result);
         } catch (e) {
