@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.17
+// @version      5.18
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -2425,7 +2425,7 @@
                         .length;
                     if (sawFlopCount > 0 && sawFlopCount !== currentHand.selfFoldNumOpps) {
                         const result = _monteCarlo(currentHand.selfHoleCards, [], 800, sawFlopCount);
-                        currentHand.selfFoldEquity = result.win;
+                        currentHand.selfFoldEquity = result.equity;
                         currentHand.selfFoldNumOpps = sawFlopCount;
                     }
                 }
@@ -2935,7 +2935,7 @@
             for (let s = 1; s <= 10; s++) {
                 let hits = 0, missing = null, uh = false;
                 for (let v = s; v <= s + 4; v++) { if (rs.has(v)) hits++; else missing = v; if (hs.has(v)) uh = true; }
-                if (hits === 4 && uh && (missing === s || missing === s + 4)) { hasOesd = true; break; }
+                if (hits === 4 && uh && (missing === s || missing === s + 4) && !((s === 1 && missing === 5) || (s === 10 && missing === 10))) { hasOesd = true; break; }
             }
         }
 
@@ -2945,7 +2945,7 @@
         const uniqHits = [...new Set(holeHits)];
         const isTopPair = uniqHits.length >= 1 && holeVals.some(v => v === boardMax);
         const isSecondPair = uniqHits.length >= 1 && !isTopPair;
-        const madeQuads = hasPocket && boardRankCounts[holeRanks[0]] >= 3;
+        const madeQuads = hasPocket && boardRankCounts[holeRanks[0]] >= 2;
         const madeSet = !madeQuads && hasPocket && boardRankCounts[holeRanks[0]] >= 1;
         const madeTrips = !hasPocket && uniqHits.length === 1 && boardRankCounts[uniqHits[0]] >= 2;
         const madeTwoPair = !hasPocket && uniqHits.length === 2;
@@ -2960,7 +2960,7 @@
 
         if (hasMadeFlush || hasStraight || madeQuads || madeSet || madeTrips || madeTwoPairFH || madeTripsFullH) return 'strong';
         if (madeTwoPair || madeSecondPairPlusBoardPair || overpair || isTopPair) return 'made';
-        if (hasFlushDraw || hasOesd) return 'semi';
+        if ((hasFlushDraw || hasOesd) && board.length < 5) return 'semi';
         if (isSecondPair || isUnderpair) return 'bottom_pair';
         if (holeMax > boardMax) return 'overcards';
         return 'air';
@@ -3215,7 +3215,7 @@
         // Only fire in the tight window where the call is borderline
         if (Math.abs(margin) > 10) return '';
         // Don't fire on clearly strong or clearly weak hands
-        if (handStrength === 'strong' || handStrength === 'fold') return '';
+        if (handStrength === 'strong' || handStrength === 'air' || handStrength === 'overcards' || handStrength == null) return '';
         // Frequency anchor: 50% at break-even, scales 2.5%/point toward call (max 75%, min 25%).
         const callFreq = Math.max(25, Math.min(75, Math.round(50 + margin * 2.5)));
         return _voice(
@@ -3237,7 +3237,7 @@
         }
         const isWet = !!(texture?.isFlushy || texture?.straightConnected);
         // Deep SPR + weak hand: keep pot small
-        if (spr != null && spr > 8 && handStrength === 'pair') return ' Bet 25–33% pot to keep it small.';
+        if (spr != null && spr > 8 && handStrength === 'pair' && !isWet) return ' Bet 25–33% pot to keep it small.';
         if (isWet) {
             if (handStrength === 'strong') return ' Bet 66–80% pot to charge draws.';
             if (handStrength === 'pair') return ' Bet 50–66% pot.';
@@ -3556,7 +3556,7 @@
         const uniqueHoleHits = [...new Set(holeHitRanks)];
         const isTopPair = uniqueHoleHits.length >= 1 && holeVals.some(v => v === boardMax);
         const isSecondPair = uniqueHoleHits.length >= 1 && !isTopPair;
-        const madeQuads = hasPocket && boardRankCounts[holeRanks[0]] >= 3;
+        const madeQuads = hasPocket && boardRankCounts[holeRanks[0]] >= 2;
         const madeSet = !madeQuads && hasPocket && boardRankCounts[holeRanks[0]] >= 1;
         const madeTrips = !hasPocket && uniqueHoleHits.length === 1 && boardRankCounts[uniqueHoleHits[0]] >= 2;
         const madeTwoPair = !hasPocket && uniqueHoleHits.length === 2;
@@ -3959,11 +3959,11 @@
             const flushLabel = hasNutFlushDraw ? 'nut flush draw' : flushIsWeak ? 'weak flush draw' : 'flush draw';
             const straightLabel = straightDraw.oesd ? 'open-ender' : 'gutshot';
             const eq = calcExactDrawEquity(holeCards, board, true, drawSuit, straightDraw);
-            const rawEq = eq ? (isTurn ? eq.equityTurn : eq.equityFlop) : null;
+            const rawEq = eq ? eq.equityTurn : null;
             const eqNote = rawEq != null
                 ? (potOdds != null
                     ? ` ~${rawEq}% equity, need ${potOdds}% to call${rawEq > potOdds ? ' — odds are there' : ' — close, but combo draws play strong as semi-bluffs'}.`
-                    : ` ~${rawEq}% equity to river.`)
+                    : ` ~${rawEq}% to hit.`)
                 : '';
             if (facingAction === 'bet') return _voice(
                 `${flushLabel} + ${straightLabel}.${eqNote} Big combo draw — strong semi-bluff candidate. Raise for fold equity or call if the price is right.${sprNote}${posNote}${oppStr}`,
@@ -3980,7 +3980,7 @@
             const drawType = hasNutFlushDraw ? 'nut flush draw' : flushIsWeak ? 'weak flush draw' : 'flush draw';
             const pairDesc = pocketUnderpair ? 'Pocket pair' : 'Pair';
             const eq = calcExactDrawEquity(holeCards, board, true, drawSuit, null);
-            const rawEq = eq ? (isTurn ? eq.equityTurn : eq.equityFlop) : null;
+            const rawEq = eq ? eq.equityTurn : null;
             // Draw equity only — pair adds additional equity on top
             const eqNote = rawEq != null
                 ? (potOdds != null
@@ -4000,9 +4000,9 @@
         // Flush draw (not river)
         if (hasFlushDraw) {
             const eq = calcExactDrawEquity(holeCards, board, true, drawSuit, null);
-            const rawEq = eq ? (isTurn ? eq.equityTurn : eq.equityFlop) : null;
+            const rawEq = eq ? eq.equityTurn : null;
             // eqStr: plain equity % — used in weak-draw warning (parenthetical footnote)
-            const eqStr = rawEq != null ? (isTurn ? `~${rawEq}% to hit` : `~${rawEq}% equity to river`) : '';
+            const eqStr = rawEq != null ? `~${rawEq}% to hit` : '';
             // eqNote: equity + pot odds verdict — used in main advice sentences
             const eqNote = rawEq != null
                 ? (potOdds != null
@@ -4067,7 +4067,7 @@
         if (hasStraightDraw && pocketUnderpair) {
             const drawLabel = straightDraw.oesd ? 'open-ended straight draw' : 'gutshot straight draw';
             const eq = calcExactDrawEquity(holeCards, board, false, null, straightDraw);
-            const rawEq = eq ? (isTurn ? eq.equityTurn : eq.equityFlop) : null;
+            const rawEq = eq ? eq.equityTurn : null;
             // Draw equity only — pair adds additional equity on top of this
             const eqNote = rawEq != null
                 ? (potOdds != null
@@ -4087,7 +4087,7 @@
         // Straight draw (not river)
         if (hasStraightDraw && !uniqueHoleHits.length) {
             const eq = calcExactDrawEquity(holeCards, board, false, null, straightDraw);
-            const rawEqSD = eq ? (isTurn ? eq.equityTurn : eq.equityFlop) : null;
+            const rawEqSD = eq ? eq.equityTurn : null;
             const drawLabel = straightDraw.oesd ? 'Open-ended straight draw' : 'Gutshot straight draw';
             // eqNote: equity + pot odds verdict inserted before the action advice
             const eqNote = rawEqSD != null
@@ -4333,32 +4333,32 @@
         if (isPair) {
             if (hi >= 10) { strength = 'premium'; action = 'raise'; }
             else if (hi >= 7) { strength = 'strong'; action = facingRaise ? 'call' : 'raise'; }
-            else if (hi >= 5) { strength = 'playable'; action = facingRaise && position === 'EP' ? 'fold' : 'call'; }
+            else if (hi >= 5) { strength = 'playable'; action = facingRaise && (position === 'EP' || position === 'SB') ? 'fold' : 'call'; }
             else { strength = 'marginal'; action = facingRaise ? 'fold' : (position === 'LP' ? 'call' : 'fold'); }
         } else if (hi === 14) { // Ace-x
             if (lo >= 13 || (lo >= 12 && suited)) { strength = 'premium'; action = 'raise'; }
             else if (lo >= 12 || (lo >= 10 && suited)) { strength = 'strong'; action = 'raise'; }
-            else if (suited && lo >= 2) { strength = 'playable'; action = facingRaise && position === 'EP' ? 'fold' : (position === 'EP' ? 'fold' : 'call'); }
-            else if (lo >= 10) { strength = 'playable'; action = facingRaise ? 'fold' : (position === 'LP' ? 'raise' : 'fold'); }
+            else if (suited && lo >= 2) { strength = 'playable'; action = facingRaise && (position === 'EP' || position === 'SB') ? 'fold' : (position === 'EP' ? 'fold' : 'call'); }
+            else if (lo >= 10) { strength = 'playable'; action = facingRaise ? 'fold' : ((position === 'LP' || position === 'SB') ? 'raise' : 'fold'); }
             else { strength = 'marginal'; action = facingRaise ? 'fold' : (position === 'LP' ? 'fold' : 'fold'); }
         } else if (hi === 13) { // King-x
             if (lo >= 12 && suited) { strength = 'strong'; action = facingRaise ? 'call' : 'raise'; }
-            else if (lo >= 11) { strength = 'playable'; action = facingRaise && position === 'EP' ? 'fold' : (position === 'LP' ? 'raise' : 'call'); }
-            else if (suited && lo >= 9) { strength = 'playable'; action = facingRaise ? 'fold' : (position === 'LP' ? 'raise' : 'fold'); }
+            else if (lo >= 11) { strength = 'playable'; action = facingRaise && (position === 'EP' || position === 'SB') ? 'fold' : (position === 'LP' ? 'raise' : 'call'); }
+            else if (suited && lo >= 9) { strength = 'playable'; action = facingRaise ? 'fold' : ((position === 'LP' || position === 'SB') ? 'raise' : 'fold'); }
             else { strength = 'marginal'; action = 'fold'; }
         } else if (hi === 12) { // Queen-x
             if (lo >= 11 && suited) { strength = 'strong'; action = facingRaise ? 'call' : 'raise'; }
             else if (lo >= 10 && suited) { strength = 'playable'; action = facingRaise ? 'fold' : (position === 'LP' ? 'raise' : 'call'); }
-            else if (lo >= 11) { strength = 'playable'; action = facingRaise && position === 'EP' ? 'fold' : 'call'; }
+            else if (lo >= 11) { strength = 'playable'; action = facingRaise && (position === 'EP' || position === 'SB') ? 'fold' : 'call'; }
             else { strength = 'marginal'; action = 'fold'; }
         } else if (hi === 11) { // Jack-x
             if (lo >= 10 && suited) { strength = 'strong'; action = facingRaise ? 'call' : 'raise'; }
-            else if (lo >= 9 && suited) { strength = 'playable'; action = facingRaise ? 'fold' : (position === 'LP' ? 'raise' : 'fold'); }
+            else if (lo >= 9 && suited) { strength = 'playable'; action = facingRaise ? 'fold' : ((position === 'LP' || position === 'SB') ? 'raise' : 'fold'); }
             else { strength = 'marginal'; action = 'fold'; }
         } else if (suited && gap <= 1 && lo >= 5) {
             // Suited connectors / one-gappers (65s, 76s, 87s, 98s, T9s etc.)
             strength = 'playable';
-            action = facingRaise ? (position === 'LP' ? 'call' : 'fold') : (position === 'LP' ? 'raise' : 'fold');
+            action = facingRaise ? (position === 'LP' ? 'call' : 'fold') : ((position === 'LP' || position === 'SB') ? 'raise' : 'fold');
         } else {
             strength = 'weak';
             action = 'fold';
@@ -4370,7 +4370,7 @@
     // ── Short-stack push/fold ────────────────────────────────────
     // Below ~15 BB effective the chart's raise/call/fold advice is wrong: correct play
     // collapses to all-in or fold. Thresholds approximate Nash push/fold ranges using the
-    // hand's percentile in _HAND_ORDER (110 classes, strongest first).
+    // hand's percentile in _HAND_ORDER (100 classes, strongest first).
     function _pushFoldThreshold(effBB, position, facingRaise, raisers) {
         if (facingRaise) {
             let t = effBB <= 5 ? 0.25 : effBB <= 10 ? 0.15 : 0.10;
@@ -4379,7 +4379,7 @@
             return Math.min(t, 1);
         }
         const table = effBB <= 5
-            ? { EP: 0.35, MP: 0.45, LP: 0.60, SB: 1.00, BB: 0.45 }
+            ? { EP: 0.35, MP: 0.45, LP: 0.60, SB: 0.75, BB: 0.45 }
             : effBB <= 10
                 ? { EP: 0.20, MP: 0.30, LP: 0.45, SB: 0.60, BB: 0.30 }
                 : { EP: 0.13, MP: 0.20, LP: 0.30, SB: 0.45, BB: 0.20 };
@@ -4394,11 +4394,12 @@
 
         const idx = _HAND_ORDER.indexOf(ch);
         const pct = idx >= 0 ? (idx + 1) / _HAND_ORDER.length : 1;
-        const pctStr = idx >= 0 ? `top ${Math.max(1, Math.round(pct * 100))}%` : 'bottom of the deck';
+        const _dispPct = idx >= 0 ? (idx + 1) / 169 : 1;
+        const pctStr = idx >= 0 ? `top ${Math.max(1, Math.round(_dispPct * 100))}%` : 'bottom of the deck';
         const bbStr = `${Math.round(effBB)} BB`;
         const posLabel = { EP: 'early position', MP: 'mid position', LP: 'late position', SB: 'the small blind', BB: 'the big blind' }[position] || 'your position';
         const threshold = _pushFoldThreshold(effBB, position, facingRaise, raisers);
-        const needStr = `top ${Math.max(1, Math.round(threshold * 100))}%`;
+        const needStr = `top ${Math.max(1, Math.round(threshold * _HAND_ORDER.length / 169 * 100))}%`;
         const shouldCommit = pct <= threshold;
 
         // Big blind, unraised, nobody limped: the flop is free, never fold
@@ -4836,10 +4837,12 @@
         return map[decision] || '';
     }
 
-    function refineFoldByOwnHand(decision, handsObserved) {
+    function refineFoldByOwnHand(decision, handsObserved, typeKey) {
         if (decision !== 'fold') return { decision, tagOverride: null };
         const own = classifySelfHandStrength();
         if (own === 'strong') return { decision: null, tagOverride: null };
+        const passive = typeKey === 'FISH' || typeKey === 'CALLING_STATION' || typeKey === 'LOOSE_PASSIVE';
+        if (passive && (own === 'made' || own === 'semi' || own === 'bottom_pair')) return { decision: 'context_dependent', tagOverride: null };
         if ((handsObserved || 0) < 10) return { decision: 'context_dependent', tagOverride: null };
         if (own === 'made') return { decision: 'fold', tagOverride: '→ vs their range: FOLD' };
         return { decision: 'fold', tagOverride: null };
@@ -5301,7 +5304,7 @@
                 }
             }
 
-            const _rf = refineFoldByOwnHand(decision, handsObserved);
+            const _rf = refineFoldByOwnHand(decision, handsObserved, typeKey);
             const tag = _rf.tagOverride ? ` ${_rf.tagOverride}` : (_rf.decision ? ` ${actionTag(_rf.decision)}` : '');
             return { text: parts.join(' ') + tag, confidence, isMath: false, handsObserved };
         }
@@ -5416,7 +5419,7 @@
                         `${playerName} is a ${cls.type.label.toLowerCase()} firing on the river.${bluffMsg} River bets from maniacs are weighted toward bluffs — they can't win at showdown, so they have to bet.`,
                         `${playerName} is a ${cls.type.label.toLowerCase()} firing on the river.${bluffMsgDuke} River bets from maniacs skew bluff — they can't win at showdown, so they gotta bet.`
                     );
-                    decision = bluffRate > 0.20 ? 'call' : 'context_dependent';
+                    decision = 'call';
                 } else {
                     if (sz) push(
                         `${playerName} is a ${cls.type.label.toLowerCase()} betting ${sz}.${bluffMsg} Do not auto-fold — this sizing means nothing on its own.`,
@@ -5884,7 +5887,7 @@
         }
 
         // ── SYNTHESIZED ACTION TAG ────────────────────────────────
-        const _rf = refineFoldByOwnHand(decision, handsObserved);
+        const _rf = refineFoldByOwnHand(decision, handsObserved, typeKey);
         if (_rf.tagOverride) parts.push(_rf.tagOverride);
         else if (_rf.decision) parts.push(actionTag(_rf.decision));
 
@@ -7329,11 +7332,6 @@
         // Pot odds verdict — appended where call/fold decisions are at stake
         // Only fires postflop when we have a facing bet amount
         const _isDuke = hudSettings.coachPersonality === 'duke';
-        const poVerdict = (!isPreflop && potOdds != null)
-            ? (win > potOdds
-                ? (_isDuke ? ` Need ${potOdds}% to call — the math's with you, kid.` : ` Need ${potOdds}% to call — you have the equity.`)
-                : (_isDuke ? ` Need ${potOdds}% to call — odds ain't there, pal.` : ` Need ${potOdds}% to call — odds are against you.`))
-            : '';
 
         // Premium preflop hands — never override, the advice is correct regardless of field
         if (isPreflop && /pocket aces|pocket kings|pocket queens|pocket jacks|pocket tens|cowboys/i.test(baseText))
@@ -7374,6 +7372,15 @@
             else if (win >= 18) bracket = 'behind';
             else bracket = 'fold_territory';
         }
+
+        const _behindBracket = (bracket === 'behind' || bracket === 'fold_territory');
+        const poVerdict = (!isPreflop && potOdds != null)
+            ? (win > potOdds && !_behindBracket
+                ? (_isDuke ? ` Need ${potOdds}% to call — the math's with you, kid.` : ` Need ${potOdds}% to call — you have the equity.`)
+                : (win > potOdds
+                    ? ` Need ${potOdds}% to call — immediate price fits, but you're behind (reverse-implied odds).`
+                    : (_isDuke ? ` Need ${potOdds}% to call — odds ain't there, pal.` : ` Need ${potOdds}% to call — odds are against you.`)))
+            : '';
 
         const oppStr = numOpp > 1 ? ` in a ${_activePlayers}-way pot` : '';
 
@@ -7628,7 +7635,7 @@
                 );
             } else if (foldVsTurn >= 0.40) {
                 score += 1;
-            } else if (foldVsTurn < 0.25) {
+            } else if (GreenlightGate.isSticky(foldTurnN, facedTurn, 0.25)) {
                 score -= 1;
                 if (!contextNote) contextNote = _voice(
                     `Opponent only folds ${Math.round(foldVsTurn * 100)}% to turn bets — they are stubborn on this street.`,
@@ -7650,7 +7657,7 @@
                 );
             } else if (foldVsRiver >= 0.35) {
                 score += 1;
-            } else if (foldVsRiver < 0.25) {
+            } else if (GreenlightGate.isSticky(foldRiverN, facedRiver, 0.25)) {
                 score -= 2;
                 if (!contextNote) contextNote = _voice(
                     `Opponent only folds ${Math.round(foldVsRiver * 100)}% on the river — they call rivers.`,
@@ -8350,8 +8357,8 @@
             try {
                 const cacheKey = `${currentHand.selfHoleCards.join(',')}|${board.join(',')}|${numOpp}|${aggressor?.name || ''}|${actionType || ''}|vm${villainCombos ? villainCombos.length : 0}`;
                 if (_oddsCache.key !== cacheKey) {
-                    const { win } = _monteCarlo(currentHand.selfHoleCards, board, 800, numOpp, aggressorCombos, villainCombos);
-                    _oddsCache = { key: cacheKey, win };
+                    const { equity } = _monteCarlo(currentHand.selfHoleCards, board, 800, numOpp, aggressorCombos, villainCombos);
+                    _oddsCache = { key: cacheKey, win: equity };
                 }
             } catch { /* MC unavailable — _oddsCache keeps last value */ }
             // _applyWinContext always runs — uses whatever win% we have
@@ -14646,8 +14653,8 @@
 
                     <div class="tphud-help-sec">Draw Equity</div>
                     <div class="tphud-help-grid">
-                        <span class="tphud-help-term">~X% equity to river</span>
-                        <span class="tphud-help-def">Your chance of completing your draw by the river (two cards still to come on the flop).<br><em>Calculated as: outs × 4 on the flop, outs × 2 on the turn.</em></span>
+                        <span class="tphud-help-term">~X% to hit</span>
+                        <span class="tphud-help-def">Your chance of completing your draw on the next card (rule of two: outs × 2). This is the equity that matters when facing a bet — you are paying to see one card.<br><em>Full by-the-river equity (outs × 4 on the flop) is higher, but only realized if you see both cards cheaply.</em></span>
 
                         <span class="tphud-help-term">Outs</span>
                         <span class="tphud-help-def">Cards left in the deck that complete your hand.<br><em>Flush draw = 9 outs (~36% to hit by river).<br>Open-ended straight draw = 8 outs (~32%).<br>Gutshot straight draw = 4 outs (~16%).</em></span>
@@ -17782,6 +17789,7 @@
         const total = wins + ties + losses;
         return {
             win: (wins / total * 100).toFixed(1),
+            equity: ((wins + ties / 2) / total * 100).toFixed(1),
             tie: (ties / total * 100).toFixed(1),
             lose: (losses / total * 100).toFixed(1)
         };
