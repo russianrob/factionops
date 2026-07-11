@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.15
+// @version      5.16
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -8351,7 +8351,7 @@
         if (ownLean && facingAct === 'bet' && street !== 'preflop' && gtoMath.potOdds != null) {
             const win = parseFloat(_oddsCache?.win);
             if (!isNaN(win)) {
-                const mixNote = getMixNote(win, gtoMath.potOdds, null);
+                const mixNote = getMixNote(win, gtoMath.potOdds, classifySelfHandStrength());
                 if (mixNote) ownLean = ownLean + mixNote;
             }
         }
