@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.16
+// @version      5.17
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -4836,6 +4836,15 @@
         return map[decision] || '';
     }
 
+    function refineFoldByOwnHand(decision, handsObserved) {
+        if (decision !== 'fold') return { decision, tagOverride: null };
+        const own = classifySelfHandStrength();
+        if (own === 'strong') return { decision: null, tagOverride: null };
+        if ((handsObserved || 0) < 10) return { decision: 'context_dependent', tagOverride: null };
+        if (own === 'made') return { decision: 'fold', tagOverride: '→ vs their range: FOLD' };
+        return { decision: 'fold', tagOverride: null };
+    }
+
     // Returns true when this action is worth a full detailed coach entry.
     // Low-signal actions (routine preflop limps, small calls, etc.) get a compact one-liner instead.
     function isHighSignal(actionType, betPct, street, typeKey, dm, isTilting, isAggSpike, aggHistory, isRiver) {
@@ -5292,7 +5301,8 @@
                 }
             }
 
-            const tag = decision ? ` ${actionTag(decision)}` : '';
+            const _rf = refineFoldByOwnHand(decision, handsObserved);
+            const tag = _rf.tagOverride ? ` ${_rf.tagOverride}` : (_rf.decision ? ` ${actionTag(_rf.decision)}` : '');
             return { text: parts.join(' ') + tag, confidence, isMath: false, handsObserved };
         }
 
@@ -5874,7 +5884,9 @@
         }
 
         // ── SYNTHESIZED ACTION TAG ────────────────────────────────
-        if (decision) parts.push(actionTag(decision));
+        const _rf = refineFoldByOwnHand(decision, handsObserved);
+        if (_rf.tagOverride) parts.push(_rf.tagOverride);
+        else if (_rf.decision) parts.push(actionTag(_rf.decision));
 
         if (!parts.length) return buildMechanisticMessage(playerName, actionType, betPct, texture, potPct, amount, amountForPot, street);
 
