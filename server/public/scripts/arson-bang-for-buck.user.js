@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.059
+// @version      1.00.060
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -3910,11 +3910,13 @@ function createSettingsUI() {
     // FIX: hashed class `appHeader___gUnYC` → attribute substring match.
     // The header element also has the stable class `crimes-app-header`,
     // which is the most reliable selector. Fall back to the hash-prefix match.
-    const header = document.querySelector('#react-root .crimes-app-header')
-                || document.querySelector('#react-root [class*="appHeader___"]');
+    const header = Array.from(document.querySelectorAll('#react-root [class*="crimeSlider___"] [class*="titleBar___"]'))
+                .find(tb => /arson/i.test(tb.textContent))
+                || Array.from(document.querySelectorAll('#react-root [class*="titleBar___"]'))
+                .find(tb => /arson/i.test(tb.textContent));
     if (!header) return;
  
-    const hasArson = header.textContent.includes('Arson');
+    const hasArson = /arson/i.test(header.textContent);
     const existingButton = document.querySelector('#itemValuesButton');
     const existingPanel = document.querySelector('#settingsPanel');
  
@@ -4120,8 +4122,8 @@ function createSettingsUI() {
  
             renderFuelItems(); // Default view
  
-            const _arsonHeading = header.querySelector('h4, [class*="heading___"]');
-            if (_arsonHeading) _arsonHeading.insertAdjacentElement('afterend', newButton);
+            const _arsonTitle = header.querySelector('[class*="title___"]');
+            if (_arsonTitle) _arsonTitle.insertAdjacentElement('afterend', newButton);
             else header.appendChild(newButton);
             header.appendChild(newPanel);
  
