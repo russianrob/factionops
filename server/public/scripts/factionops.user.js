@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.44
+// @version      5.1.45
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.44';
+    const SCRIPT_VERSION = '5.1.45';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -8504,13 +8504,6 @@ body.wb-chain-active {
         retryCount = retryCount || 0;
         const container = document.getElementById('fo-torn-chain');
         if (!container) return;
-        if (CHAIN_POLL_ONLY) {
-            container.style.display = 'none';
-            const fb = document.getElementById('fo-chain-fallback');
-            if (fb) fb.style.display = '';
-            startDirectChainPoll();
-            return;
-        }
 
         // Try multiple selectors for Torn's chain bar
         // Desktop: a#barChain  |  PDA may use different structure
@@ -8525,6 +8518,9 @@ body.wb-chain-active {
             tornChainOriginalNext = chainBar.nextSibling;
             // Move (not clone) — Torn's JS keeps updating it in place
             container.appendChild(chainBar);
+            container.style.display = '';
+            const _fbHide = document.getElementById('fo-chain-fallback');
+            if (_fbHide) _fbHide.style.display = 'none';
             log('Moved Torn chain bar into overlay header');
 
             // Cache reference before Torn's JS can lose the ID
