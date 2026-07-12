@@ -452,7 +452,7 @@ function _pruneOldScreenshots() {
 try { _pruneOldScreenshots(); } catch {}
 setInterval(_pruneOldScreenshots, 24 * 60 * 60 * 1000).unref();
 
-// Small preview JPEG (<=1200px, q82, ~100-250KB) for link-preview crawlers
+// High-quality preview JPEG (<=1600px, q90) for link-preview crawlers + as the
 // (WhatsApp/iMessage/Discord/Slack) — WhatsApp only renders previews for
 // reasonably-sized images, so og:image points here rather than the raw PNG.
 function _makeShotPreview(id) {
@@ -460,7 +460,7 @@ function _makeShotPreview(id) {
   const dst = pathJoin(_SHOT_DIR, id + ".jpg");
   try {
     spawnSync("/usr/bin/convert",
-      [src, "-resize", "1200x1200>", "-quality", "82", "-strip", dst],
+      [src, "-resize", "1600x1600>", "-quality", "90", "-strip", dst],
       { timeout: 20000, stdio: "ignore" });
   } catch {}
   return existsSync(dst);
@@ -488,9 +488,9 @@ router.post("/api/screenshot", requireAuth, (req, res, next) => {
   const file = _shotRandomBytes(8).toString("hex") + ".png";
   try { writeFileSync(pathJoin(_SHOT_DIR, file), buf, { mode: 0o644 }); }
   catch { return res.status(500).json({ error: "write failed" }); }
-  _makeShotPreview(file.slice(0, -4));
+  const _hasJpg = _makeShotPreview(file.slice(0, -4));
   _pruneOldScreenshots();
-  return res.json({ ok: true, url: `${_SHOT_ORIGIN}/s/${file}` });
+  return res.json({ ok: true, url: `${_SHOT_ORIGIN}/s/${_hasJpg ? file.slice(0, -4) + '.jpg' : file}` });
 });
 
 // Dedicated single-purpose token for the "Upload to Tornwar" iOS share-sheet
@@ -525,9 +525,9 @@ function _saveShotPng(rawIn, res) {
   const id = _shotRandomBytes(8).toString("hex");
   try { writeFileSync(pathJoin(_SHOT_DIR, id + ".png"), buf, { mode: 0o644 }); }
   catch { return res.status(500).json({ error: "write failed" }); }
-  _makeShotPreview(id);
+  const _hasJpg = _makeShotPreview(id);
   _pruneOldScreenshots();
-  return res.json({ ok: true, url: `${_SHOT_ORIGIN}/s/${id}.png` });
+  return res.json({ ok: true, url: `${_SHOT_ORIGIN}/s/${id}.${_hasJpg ? 'jpg' : 'png'}` });
 }
 // tornwar.com/screenshot/<id>      → Open Graph HTML page so link-preview
 //                                     crawlers (WhatsApp/iMessage/Discord/
