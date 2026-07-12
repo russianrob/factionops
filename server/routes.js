@@ -527,7 +527,7 @@ function _saveShotPng(rawIn, res) {
   catch { return res.status(500).json({ error: "write failed" }); }
   _makeShotPreview(id);
   _pruneOldScreenshots();
-  return res.json({ ok: true, url: `${_SHOT_ORIGIN}/screenshot/${id}` });
+  return res.json({ ok: true, url: `${_SHOT_ORIGIN}/s/${id}.png` });
 }
 // tornwar.com/screenshot/<id>      → Open Graph HTML page so link-preview
 //                                     crawlers (WhatsApp/iMessage/Discord/
