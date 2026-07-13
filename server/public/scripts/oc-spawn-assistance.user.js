@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.67
+// @version      3.2.68
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.67';
+    const SCRIPT_VERSION = '3.2.68';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7479,8 +7479,9 @@
                         let bb = msg.querySelector('.ocs-chat-bal');
                         if (bb) { if (bb.textContent !== txt) bb.textContent = txt; }
                         else {
-                            bb = document.createElement('span'); bb.className = 'ocs-chat-bal'; bb.textContent = txt; bb.title = 'Faction vault balance';
-                            bb.style.cssText = 'color:#ffd54a;font-size:9px;font-weight:700;letter-spacing:0.3px;';
+                            bb = document.createElement('a'); bb.className = 'ocs-chat-bal'; bb.textContent = txt; bb.title = 'Vault balance — click to pay this member';
+                            bb.href = 'https://www.torn.com/factions.php?step=your#/tab=controls&addMoneyTo=' + id;
+                            bb.style.cssText = 'color:#ffd54a;font-size:9px;font-weight:700;letter-spacing:0.3px;cursor:pointer;text-decoration:none;';
                             const ocBadge = msg.querySelector('.ocs-chat-oc');
                             if (ocBadge && ocBadge.parentElement) ocBadge.parentElement.insertBefore(bb, ocBadge.nextSibling);
                             else if (link.nextSibling) link.parentElement.insertBefore(bb, link.nextSibling);
