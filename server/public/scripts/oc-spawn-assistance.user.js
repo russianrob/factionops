@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.63
+// @version      3.2.64
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
-// @match        https://www.torn.com/factions.php*
+// @match        https://www.torn.com/*
 // @grant        GM_addStyle
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -197,6 +197,7 @@
 
 (function () {
     'use strict';
+    if (!location.href.includes('factions.php')) return;
 
     // 2026-05-24 — PDA Android GM polyfill. TM's @grant occasionally fails
     // to bind GM_xxx as local vars on Android (xentac repro). Defining on
@@ -298,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.63';
+    const SCRIPT_VERSION = '3.2.64';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7207,6 +7208,7 @@
 //    @match / @grant / @connect. Built-in diag (tag oc-item-worth) to verify.
 (function () {
   "use strict";
+  if (!location.href.includes('factions.php')) return;
   const NAMES_URL  = "https://tornwar.com/api/oc/item-values"; // {byName} — for tooltip $0 rewrite
   const VALUE_URL  = "https://tornwar.com/api/oc/value";        // ?ids= → {values:{id:price}} — for per-OC total
   const CACHE_KEY  = "ocw_item_values_v1";
@@ -7361,3 +7363,143 @@
   loadNames(() => { applyOverrides(); try { new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true }); } catch (_) {} });
 })();
 
+
+// ── Faction chat badges: [In OC] / [OC: N ago] / vault balance ($, admins) ──
+//    Ported from torn-faction-offline-highlight. Runs on EVERY Torn page (the
+//    chat is a global sidebar); shares oc-spawn's API key + admin gate. The
+//    heavy OC UI above stays gated to factions.php.
+(function () {
+    'use strict';
+    const API_BASE = 'https://api.torn.com';
+    const SERVER   = 'https://tornwar.com';
+    const REANNOTATE_MS = 60000;
+    const OCDATA_MS = 300000;
+    const VAULT_MS  = 120000;
+
+    function getKey() { try { return GM_getValue('oc_spawn_api_key', '') || ''; } catch (_) { return ''; } }
+    function apiFetch(url) {
+        return new Promise((resolve, reject) => {
+            if (typeof GM_xmlhttpRequest === 'function') {
+                GM_xmlhttpRequest({ method: 'GET', url,
+                    onload(r) { try { resolve(JSON.parse(r.responseText)); } catch (e) { reject(e); } },
+                    onerror: reject });
+            } else { fetch(url).then(r => r.json()).then(resolve).catch(reject); }
+        });
+    }
+
+    let lastOCMap = {}, inActiveOCIDs = new Set(), allFactionMemberIDs = new Set(), newMemberIDs = new Set();
+    let vaultBalanceMap = {}, viewerIsOcAdmin = false, dataReady = false;
+
+    function hoursAgo(ts) { return (Date.now() / 1000 - ts) / 3600; }
+    function formatDuration(h) {
+        if (h < 1) return Math.round(h * 60) + 'm';
+        if (h < 24) return Math.round(h) + 'h';
+        const d = Math.floor(h / 24), r = Math.round(h % 24);
+        return r > 0 ? d + 'd ' + r + 'h' : d + 'd';
+    }
+    function formatMoney(n) {
+        n = Number(n) || 0;
+        if (n >= 1e9) return '$' + (n / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'b';
+        if (n >= 1e6) return '$' + (n / 1e6).toFixed(1).replace(/\.?0+$/, '') + 'm';
+        if (n >= 1e3) return '$' + Math.round(n / 1e3) + 'k';
+        return '$' + n;
+    }
+
+    async function buildOCData() {
+        const key = getKey(); if (!key) return;
+        const [members, avail, completed] = await Promise.all([
+            apiFetch(`${API_BASE}/v2/faction/?selections=members&key=${key}`).catch(() => ({})),
+            apiFetch(`${API_BASE}/v2/faction/crimes?cat=available&key=${key}`).catch(() => ({})),
+            apiFetch(`${API_BASE}/v2/faction/crimes?cat=completed&sort=DESC&key=${key}`).catch(() => ({})),
+        ]);
+        const all = new Set(), news = new Set();
+        const mArr = Array.isArray(members.members) ? members.members
+            : (members.members && typeof members.members === 'object'
+                ? Object.entries(members.members).map(([id, m]) => ({ id: parseInt(id), ...m })) : []);
+        for (const m of mArr) { if (!m.id) continue; const id = String(m.id); all.add(id); if (m.days_in_faction != null && m.days_in_faction < 3) news.add(id); }
+        if (all.size) { allFactionMemberIDs = all; newMemberIDs = news; dataReady = true; }
+        const inOC = new Set();
+        for (const c of (avail.crimes || [])) { if (!c.slots) continue; for (const s of c.slots) { const uid = s.user && (s.user.id || s.user.user_id); if (uid) inOC.add(String(uid)); } }
+        inActiveOCIDs = inOC;
+        const map = {};
+        for (const c of (completed.crimes || [])) { if (!c.slots) continue; const ts = c.executed_at || c.created_at || 0; const nm = c.name || 'Unknown'; for (const s of c.slots) { const uid = s.user && (s.user.id || s.user.user_id); if (!uid) continue; const id = String(uid); if (!map[id] || ts > map[id].timestamp) map[id] = { timestamp: ts, crimeName: nm }; } }
+        if (Object.keys(map).length) lastOCMap = map;
+    }
+
+    async function buildVault() {
+        const key = getKey(); if (!key) { viewerIsOcAdmin = false; vaultBalanceMap = {}; return; }
+        viewerIsOcAdmin = await apiFetch(`${SERVER}/api/oc/settings?key=${encodeURIComponent(key)}`)
+            .then(d => !!(d && d.isAdmin === true)).catch(() => viewerIsOcAdmin);
+        if (!viewerIsOcAdmin) { vaultBalanceMap = {}; return; }
+        vaultBalanceMap = await apiFetch(`${API_BASE}/faction/?selections=donations&key=${encodeURIComponent(key)}&comment=wb-ocspawn`)
+            .then(d => { const out = {}; const don = d && d.donations; if (don) for (const uid in don) { const b = Number(don[uid].money_balance ?? don[uid].money ?? 0); if (b > 0) out[String(uid)] = b; } return out; })
+            .catch(() => vaultBalanceMap);
+    }
+
+    function annotateChat() {
+        if (!dataReady) return;
+        const chatAreas = document.querySelectorAll('[class*="chat" i], [id*="chat" i]');
+        if (!chatAreas.length) return;
+        chatAreas.forEach(area => {
+            area.querySelectorAll('a[href*="XID="]').forEach(link => {
+                const m = link.href.match(/XID=(\d+)/i); if (!m) return;
+                const id = m[1];
+                if (link.querySelector('img')) return;
+                if (allFactionMemberIDs.size > 0 && !allFactionMemberIDs.has(id)) return;
+                if (newMemberIDs.has(id)) return;
+                const msg = link.closest('[class*="message" i]') || link.closest('[class*="msg" i]') || link.closest('li') || link.parentElement;
+                if (!msg) return;
+                if (!link.dataset.ocsChatDone) {
+                    link.dataset.ocsChatDone = '1';
+                    if (!msg.querySelector('.ocs-chat-oc')) {
+                        const badge = document.createElement('span');
+                        badge.className = 'ocs-chat-oc';
+                        badge.style.cssText = 'font-size:9px;font-weight:700;letter-spacing:0.3px;';
+                        if (inActiveOCIDs.has(id)) { badge.textContent = ' [In OC]'; badge.title = 'Currently in an active OC'; badge.style.color = '#2196f3'; }
+                        else {
+                            const oc = lastOCMap[id];
+                            if (oc) { const h = hoursAgo(oc.timestamp); badge.textContent = ' [OC: ' + formatDuration(h) + ' ago]'; badge.title = oc.crimeName; badge.style.color = h > 168 ? '#ff4444' : h > 72 ? '#ffa500' : '#4caf50'; }
+                            else { badge.textContent = ' [OC: never]'; badge.style.color = '#ff4444'; }
+                        }
+                        if (link.nextSibling) link.parentElement.insertBefore(badge, link.nextSibling); else link.parentElement.appendChild(badge);
+                    }
+                }
+                if (viewerIsOcAdmin) {
+                    const bal = vaultBalanceMap[id];
+                    if (bal != null) {
+                        const txt = ' ' + formatMoney(bal);
+                        let bb = msg.querySelector('.ocs-chat-bal');
+                        if (bb) { if (bb.textContent !== txt) bb.textContent = txt; }
+                        else {
+                            bb = document.createElement('span'); bb.className = 'ocs-chat-bal'; bb.textContent = txt; bb.title = 'Faction vault balance';
+                            bb.style.cssText = 'color:#ffd54a;font-size:9px;font-weight:700;letter-spacing:0.3px;';
+                            const ocBadge = msg.querySelector('.ocs-chat-oc');
+                            if (ocBadge && ocBadge.parentElement) ocBadge.parentElement.insertBefore(bb, ocBadge.nextSibling);
+                            else if (link.nextSibling) link.parentElement.insertBefore(bb, link.nextSibling);
+                            else link.parentElement.appendChild(bb);
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    function start() {
+        if (!getKey()) return;
+        buildOCData().then(() => buildVault()).then(annotateChat);
+        setInterval(() => { buildOCData().then(annotateChat); }, OCDATA_MS);
+        setInterval(() => { buildVault().then(annotateChat); }, VAULT_MS);
+        setInterval(annotateChat, REANNOTATE_MS);
+        let deb = null;
+        try {
+            new MutationObserver((muts) => {
+                if (muts.every(x => x.target && x.target.classList && (x.target.classList.contains('ocs-chat-oc') || x.target.classList.contains('ocs-chat-bal')))) return;
+                if (deb) return;
+                deb = setTimeout(() => { deb = null; annotateChat(); }, 250);
+            }).observe(document.body, { childList: true, subtree: true });
+        } catch (_) {}
+    }
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+    else start();
+})();
