@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LocalStorage Usage
 // @namespace    tornwar.com
-// @version      1.0.0
+// @version      1.0.1
 // @description  Shows what is filling this origin's localStorage, largest first, with a two-tap delete so you can clear space when Torn (chat, etc.) hits QuotaExceededError. PDA-safe.
 // @author       RussianRob
 // @match        https://www.torn.com/*

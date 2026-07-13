@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LocalStorage Usage
 // @namespace    tornwar.com
-// @version      1.0.0
+// @version      1.0.1
 // @description  Shows what is filling this origin's localStorage, largest first, with a two-tap delete so you can clear space when Torn (chat, etc.) hits QuotaExceededError. PDA-safe.
 // @author       RussianRob
 // @match        https://www.torn.com/*
@@ -14,7 +14,7 @@
 
 (function () {
     'use strict';
-    const SCRIPT_VERSION = '1.0.0';
+    const SCRIPT_VERSION = '1.0.1';
     const BTN_POS_KEY = 'lsu_btn_pos';
     const QUOTA_KB = 5 * 1024;
     const LOCK_RE = /token|auth|session|login|csrf/i;
@@ -74,7 +74,8 @@
             list.appendChild(e);
             return;
         }
-        data.rows.forEach((r) => {
+        const MAX_ROWS = 100;
+        data.rows.slice(0, MAX_ROWS).forEach((r) => {
             const row = document.createElement('div');
             row.className = 'lsu-row';
             const name = document.createElement('span');
@@ -114,6 +115,12 @@
             }
             list.appendChild(row);
         });
+        if (data.rows.length > MAX_ROWS) {
+            const more = document.createElement('div');
+            more.className = 'lsu-empty';
+            more.textContent = '+ ' + (data.rows.length - MAX_ROWS) + ' more smaller keys not shown';
+            list.appendChild(more);
+        }
     }
 
     function boot() {
