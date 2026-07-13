@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.7
+// @version      3.4.8
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.7';
+    var SCRIPT_VERSION = '3.4.8';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -227,12 +227,23 @@
 
     function safeSet(key, val) {
         try {
-            if (typeof GM_setValue === 'function') { GM_setValue(key, val); return; }
+            if (typeof GM_setValue === 'function') { GM_setValue(key, val); try { localStorage.removeItem(key); } catch (e2) {} return; }
         } catch (e) {}
         try {
-            localStorage.setItem(key, JSON.stringify(val));
+            var s = JSON.stringify(val);
+            if (s.length > 51200) { try { localStorage.removeItem(key); } catch (e3) {} return; }
+            localStorage.setItem(key, s);
         } catch (e) {}
     }
+
+    (function purgeStaleLocalStorageCaches() {
+        try {
+            if (typeof GM_setValue !== 'function') return;
+            ['rwp_price_cache', 'rwp_networth_data_cache', 'rwp_badge_cache', 'rwp_torn_items_marketprice', 'rwp_uid_details_cache'].forEach(function (k) {
+                try { localStorage.removeItem(k); } catch (e) {}
+            });
+        } catch (e) {}
+    })();
 
     function normalizeWeaponName(raw) {
         if (!raw) return '';
