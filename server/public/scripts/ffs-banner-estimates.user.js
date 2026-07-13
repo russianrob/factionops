@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.39
+// @version      2.73.40
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2421,19 +2421,23 @@ if (!singleton) {
     }
   }
 
+  // wb51/wb78: skip FFS gauge injection on the Crimes tab — the stats
+  // chip in each OC slot clutters the crime card layout. Shared by both
+  // paint paths (check_mutation and the delayed ffs_probe) so neither
+  // drifts out of scope. Matches tab=crimes in the hash (Torn's React
+  // router) or the query string (legacy deep link).
+  function ffs_isOnCrimesTab() {
+    return /tab=crimes/i.test(location.hash + location.search)
+      || !!document.getElementById('faction-crimes-root');
+  }
+
   const check_mutation = async function (node) {
     if (!node.querySelectorAll) {
       return;
     }
     var honor_bars = Array.from(node.querySelectorAll(".honor-text-wrap"));
     var name_elems = Array.from(node.querySelectorAll(".user.name"));
-    // wb51: skip FFS gauge injection on the Crimes tab. User feedback
-    // that the stats chip in each OC slot clutters the crime card
-    // layout. Scope check matches tab=crimes in either the hash
-    // (Torn's React router) or the query string (legacy deep link).
-    const onCrimesTab = /tab=crimes/i.test(location.hash + location.search)
-      || !!document.getElementById('faction-crimes-root');
-    if (onCrimesTab) {
+    if (ffs_isOnCrimesTab()) {
       return;
     }
     if (honor_bars.length > 0) {
@@ -2576,7 +2580,7 @@ if (!singleton) {
     try {
       const unpainted = Array.from(document.querySelectorAll(".honor-text-wrap"))
         .filter(el => !el.classList.contains("ff-scouter-indicator"));
-      if (unpainted.length > 0) {
+      if (unpainted.length > 0 && !ffs_isOnCrimesTab()) {
         const profileXidMatch = /\/profiles\.php\?XID=(\d+)/i.exec(location.href);
         if (profileXidMatch) {
           const pid = profileXidMatch[1];
@@ -3073,7 +3077,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.39';
+  const SCRIPT_VERSION = '2.73.40';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
