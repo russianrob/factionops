@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.64
+// @version      3.2.65
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.64';
+    const SCRIPT_VERSION = '3.2.65';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7426,14 +7426,24 @@
         if (Object.keys(map).length) lastOCMap = map;
     }
 
+    function _vdiag(o) { try { GM_xmlhttpRequest({ method: 'POST', url: SERVER + '/api/debug/client-log', headers: { 'Content-Type': 'application/json' }, data: JSON.stringify({ tag: 'ocs-vault', data: o }), onload() {}, onerror() {} }); } catch (_) {} }
     async function buildVault() {
         const key = getKey(); if (!key) { viewerIsOcAdmin = false; vaultBalanceMap = {}; return; }
-        viewerIsOcAdmin = await apiFetch(`${SERVER}/api/oc/settings?key=${encodeURIComponent(key)}`)
-            .then(d => !!(d && d.isAdmin === true)).catch(() => viewerIsOcAdmin);
-        if (!viewerIsOcAdmin) { vaultBalanceMap = {}; return; }
-        vaultBalanceMap = await apiFetch(`${API_BASE}/faction/?selections=donations&key=${encodeURIComponent(key)}&comment=wb-ocspawn`)
-            .then(d => { const out = {}; const don = d && d.donations; if (don) for (const uid in don) { const b = Number(don[uid].money_balance ?? don[uid].money ?? 0); if (b > 0) out[String(uid)] = b; } return out; })
-            .catch(() => vaultBalanceMap);
+        let fid = 0;
+        try {
+            const st = await apiFetch(`${SERVER}/api/oc/settings?key=${encodeURIComponent(key)}`);
+            viewerIsOcAdmin = !!(st && st.isAdmin === true);
+            fid = Number(st && st.factionId) || 0;
+        } catch (_) {}
+        if (!viewerIsOcAdmin || !fid) { vaultBalanceMap = {}; _vdiag({ admin: viewerIsOcAdmin, fid, why: 'no-admin-or-fid' }); return; }
+        try {
+            const d = await apiFetch(`${API_BASE}/faction/${fid}?selections=donations&key=${encodeURIComponent(key)}&comment=wb-ocspawn`);
+            if (d && d.error) { _vdiag({ admin: true, fid, apiErr: d.error.error || d.error }); return; }
+            const out = {}; const don = d && d.donations;
+            if (don) for (const uid in don) { const b = Number(don[uid].money_balance ?? don[uid].money ?? 0); if (b > 0) out[String(uid)] = b; }
+            vaultBalanceMap = out;
+            _vdiag({ admin: true, fid, count: Object.keys(out).length });
+        } catch (e) { _vdiag({ admin: true, fid, threw: (e && e.message) || 'err' }); }
     }
 
     function annotateChat() {
