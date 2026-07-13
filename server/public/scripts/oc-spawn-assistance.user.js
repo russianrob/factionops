@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.66
+// @version      3.2.67
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -299,7 +299,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.66';
+    const SCRIPT_VERSION = '3.2.67';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -7492,18 +7492,73 @@
         });
     }
 
+    function findNotParticipating() {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
+            acceptNode(node) {
+                if (node.closest && (node.closest('[class*="chat" i]') || node.closest('[id*="chat" i]'))) return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+            }
+        });
+        let headerEl = null;
+        while (walker.nextNode()) {
+            const el = walker.currentNode;
+            for (const child of el.childNodes) { if (child.nodeType === 3 && child.textContent.includes("aren't participating")) { headerEl = el; break; } }
+            if (headerEl) break;
+        }
+        if (!headerEl) return null;
+        const npLinks = [];
+        let sibling = headerEl.nextElementSibling;
+        if (!sibling && headerEl.parentElement) sibling = headerEl.parentElement.nextElementSibling;
+        while (sibling) {
+            const sibText = sibling.textContent || '';
+            if (sibText.includes('scenario') && !sibText.includes("aren't participating")) { if (sibling.querySelector('h4, h5, [class*="header"], [class*="title"]')) break; }
+            sibling.querySelectorAll('a[href*="XID="]').forEach(l => npLinks.push(l));
+            sibling = sibling.nextElementSibling;
+        }
+        if (npLinks.length === 0 && headerEl.parentElement) {
+            const parent = headerEl.parentElement;
+            parent.querySelectorAll('a[href*="XID="]').forEach(link => { if (headerEl.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING) npLinks.push(link); });
+            return npLinks.length ? { links: npLinks } : null;
+        }
+        return npLinks.length ? { links: npLinks } : null;
+    }
+
+    function annotateNotParticipating() {
+        if (Object.keys(lastOCMap).length === 0) return;
+        const result = findNotParticipating();
+        if (!result) return;
+        result.links.forEach(link => {
+            const mm = link.href.match(/XID=(\d+)/i); if (!mm) return;
+            const id = mm[1];
+            if (newMemberIDs.has(id)) return;
+            const card = link.closest('[class*="member"]') || link.closest('[class*="user"]') || link.closest('li') || link.closest('div[class]') || link.parentElement;
+            if (!card) return;
+            if (card.querySelector('.ocs-oc-badge')) return;
+            const badge = document.createElement('div');
+            badge.className = 'ocs-oc-badge';
+            const oc = lastOCMap[id];
+            if (oc) { const h = hoursAgo(oc.timestamp); badge.textContent = 'Last OC: ' + formatDuration(h) + ' ago'; badge.title = oc.crimeName; badge.style.color = h > 168 ? '#ff4444' : h > 72 ? '#ffa500' : '#4caf50'; }
+            else { badge.textContent = 'Last OC: Never'; badge.style.color = '#ff4444'; }
+            badge.style.cssText += ';font-size:9px;font-weight:700;text-align:center;width:100%;display:block;padding:1px 0;letter-spacing:0.3px;';
+            card.style.position = 'relative';
+            card.appendChild(badge);
+        });
+    }
+
+    function annotateAll() { annotateChat(); annotateNotParticipating(); }
+
     function start() {
         if (!getKey()) return;
-        buildOCData().then(() => buildVault()).then(annotateChat);
-        setInterval(() => { buildOCData().then(annotateChat); }, OCDATA_MS);
-        setInterval(() => { buildVault().then(annotateChat); }, VAULT_MS);
-        setInterval(annotateChat, REANNOTATE_MS);
+        buildOCData().then(() => buildVault()).then(annotateAll);
+        setInterval(() => { buildOCData().then(annotateAll); }, OCDATA_MS);
+        setInterval(() => { buildVault().then(annotateAll); }, VAULT_MS);
+        setInterval(annotateAll, REANNOTATE_MS);
         let deb = null;
         try {
             new MutationObserver((muts) => {
-                if (muts.every(x => x.target && x.target.classList && (x.target.classList.contains('ocs-chat-oc') || x.target.classList.contains('ocs-chat-bal')))) return;
+                if (muts.every(x => x.target && x.target.classList && (x.target.classList.contains('ocs-chat-oc') || x.target.classList.contains('ocs-chat-bal') || x.target.classList.contains('ocs-oc-badge')))) return;
                 if (deb) return;
-                deb = setTimeout(() => { deb = null; annotateChat(); }, 250);
+                deb = setTimeout(() => { deb = null; annotateAll(); }, 250);
             }).observe(document.body, { childList: true, subtree: true });
         } catch (_) {}
     }
