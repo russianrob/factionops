@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.9
+// @version      3.4.10
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.9';
+    var SCRIPT_VERSION = '3.4.10';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -435,9 +435,8 @@
         var lo = null, hi = null;
         for (var i = 0; i < levels.length; i++) { if (levels[i] < level) lo = levels[i]; if (levels[i] > level && hi === null) hi = levels[i]; }
         if (lo !== null && hi !== null) return { value: Math.round(val(lo) + (val(hi) - val(lo)) * (level - lo) / (hi - lo)), count: pts[lo].c + pts[hi].c };
-        if (hi !== null) return { value: Math.round(val(hi)), count: pts[hi].c };
-        if (lo !== null) return { value: Math.round(val(lo)), count: pts[lo].c };
-        return null;
+        if (hi !== null) return { value: Math.round(val(hi)), count: pts[hi].c };   // below range = low roll, clamp to lowest known %
+        return null;   // above the observed %-range = HIGH roll -> no downward correction (a higher roll is worth MORE)
     }
 
     // ─── Percentile computation ──────────────────────────────
@@ -1902,9 +1901,19 @@
             var bonusValueInfo = function(b) {
                 var r0 = _bonusValueRaw(b);
                 if (weaponKey && b.level && r0 && r0.source !== 'exact %' && r0.value != null) {
-                    var curve = getCombinedLevelValue(itemKey, b.name, b.level);
-                    if (curve && curve.value != null && curve.value < r0.value) {
-                        return { value: curve.value, source: 'level %', count: curve.count };
+                    // Only a genuine LOW-OUTLIER roll: target below THIS rarity's own observed %-range.
+                    // A low roll on a high rarity means a 2nd bonus set the rarity — that's the case the
+                    // %-agnostic combo over-inflates. High rolls are left untouched so we never under-price.
+                    var lvR = weaponLevelPrices[itemKey + '|' + b.name];
+                    lvR = lvR && lvR[rarity];
+                    if (lvR) {
+                        var minR = Math.min.apply(null, Object.keys(lvR).map(Number));
+                        if (b.level < minR) {
+                            var curve = getCombinedLevelValue(itemKey, b.name, b.level);
+                            if (curve && curve.value != null && curve.value < r0.value) {
+                                return { value: curve.value, source: 'level %', count: curve.count };
+                            }
+                        }
                     }
                 }
                 return r0;
