@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.060
+// @version      1.00.061
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -3784,10 +3784,10 @@ function applyThemeColors() {
         high:     'rgba(255, 215, 0, 0.45)',
         jackpot:  'rgba(70, 130, 180, 0.3)'
     } : {
-        negative: 'rgba(81, 55, 55, 1.0)',
-        low: 'rgba(200, 185, 30, 0.15)',
-        high: 'rgba(40, 144, 69, 0.15)',
-        jackpot: 'rgba(20, 255, 20, 0.20)'
+        negative: 'rgba(190, 55, 55, 0.45)',
+        low: 'rgba(220, 180, 50, 0.30)',
+        high: 'rgba(70, 190, 95, 0.30)',
+        jackpot: 'rgba(50, 225, 115, 0.48)'
     };
  
     const lightColors = isColorblind ? {
