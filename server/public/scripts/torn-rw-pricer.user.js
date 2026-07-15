@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.8
+// @version      3.4.9
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.8';
+    var SCRIPT_VERSION = '3.4.9';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -405,6 +405,39 @@
         if (!lv || !lv[rarity]) return null;
         var v = lv[rarity][level];
         return (Array.isArray(v) && v.length > 1) ? v[1] : null;
+    }
+
+    // Combined per-% value curve across ALL rarities for a weapon+bonus. For a single
+    // bonus, rarity is essentially derived from the roll %, so the exact-% sales at every
+    // rarity form one continuous %→value curve. Used as a downward-only correction so a
+    // low roll never inherits the %-agnostic combo median of much higher rolls.
+    function getCombinedLevelValue(weaponName, bonusName, level) {
+        if (!level) return null;
+        var lv = weaponLevelPrices[weaponName + '|' + bonusName];
+        if (!lv) return null;
+        var pts = {};
+        for (var rr in lv) {
+            var m = lv[rr];
+            for (var Lk in m) {
+                var lvl = Number(Lk);
+                var arr = m[Lk];
+                var v = Array.isArray(arr) ? arr[0] : arr;
+                var c = (Array.isArray(arr) && arr.length > 1) ? arr[1] : 1;
+                if (v == null) continue;
+                if (!pts[lvl]) pts[lvl] = { s: 0, c: 0 };
+                pts[lvl].s += v * c; pts[lvl].c += c;
+            }
+        }
+        var levels = Object.keys(pts).map(Number).sort(function(a, b) { return a - b; });
+        if (!levels.length) return null;
+        function val(x) { return pts[x].s / pts[x].c; }
+        if (pts[level]) return { value: Math.round(val(level)), count: pts[level].c };
+        var lo = null, hi = null;
+        for (var i = 0; i < levels.length; i++) { if (levels[i] < level) lo = levels[i]; if (levels[i] > level && hi === null) hi = levels[i]; }
+        if (lo !== null && hi !== null) return { value: Math.round(val(lo) + (val(hi) - val(lo)) * (level - lo) / (hi - lo)), count: pts[lo].c + pts[hi].c };
+        if (hi !== null) return { value: Math.round(val(hi)), count: pts[hi].c };
+        if (lo !== null) return { value: Math.round(val(lo)), count: pts[lo].c };
+        return null;
     }
 
     // ─── Percentile computation ──────────────────────────────
@@ -1835,7 +1868,7 @@
 
             var estimatedPrice = median;
             var deriv = [];   // tooltip derivation lines: {label, amt, src, n, prem}
-            var bonusValueInfo = function(b) {
+            var _bonusValueRaw = function(b) {
                 if (weaponKey && b.level) {
                     var lvlCount = getWeaponLevelCount(itemKey, b.name, rarity, b.level);
                     if (lvlCount) {
@@ -1861,6 +1894,20 @@
                 var bvFloor = (basePa && basePa[0]) ? Math.max(basePa[0], Math.round(median * 0.03)) : Math.round(median * 0.1);
                 if (bvFloor > bMed) return { value: bvFloor, source: 'weapon floor', count: (basePa && basePa[3]) || null };
                 return { value: bMed, source: 'bonus median', count: (bArr && bArr[3]) || null };
+            };
+            // Downward-only combined-% curve correction. A low bonus roll must not inherit the
+            // %-agnostic combo median of much higher rolls (e.g. a 10% Revitalize priced off
+            // 13–16% sales). Skips the high-confidence same-rarity 'exact %' path and never
+            // raises an estimate, so it cannot inflate any weapon vs prior behaviour.
+            var bonusValueInfo = function(b) {
+                var r0 = _bonusValueRaw(b);
+                if (weaponKey && b.level && r0 && r0.source !== 'exact %' && r0.value != null) {
+                    var curve = getCombinedLevelValue(itemKey, b.name, b.level);
+                    if (curve && curve.value != null && curve.value < r0.value) {
+                        return { value: curve.value, source: 'level %', count: curve.count };
+                    }
+                }
+                return r0;
             };
             function derivLabel(b) { return b.name + (b.level ? ' ' + b.level + '%' : ''); }
             if (bonuses.length === 1) {
