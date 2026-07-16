@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.3
+// @version     1.0.4
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4) with material prices auto-updated from live Torn market prices via tornwar.com — no API key, works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -4195,6 +4195,126 @@
     });
     return root;
   }
+  function buildLogsTab(ctx) {
+    const root = el("div");
+    const note = el("p", "pyro-s-section-note");
+    note.innerHTML = `${ICON_INFO}<span>Report an observed arson recipe. Pick a scenario (fields pre-fill from the current data), fix anything that's wrong, then Submit — it's sent to the server and copied to your clipboard.</span>`;
+    root.appendChild(note);
+    const group = el("div", "pyro-s-group");
+    const mkRow = (labelText, control) => {
+      const row = el("div", "pyro-s-key-row");
+      const lab = el("span", "pyro-s-label");
+      lab.textContent = labelText;
+      row.appendChild(lab);
+      row.appendChild(control);
+      group.appendChild(row);
+      return control;
+    };
+    const scenSelect = el("select", "pyro-s-key-input");
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "— select scenario —";
+    scenSelect.appendChild(blank);
+    [...SCENARIOS].sort((a, b) => a.scenarioName.localeCompare(b.scenarioName)).forEach((s) => {
+      const o = document.createElement("option");
+      o.value = s.scenarioName;
+      o.textContent = s.scenarioName;
+      scenSelect.appendChild(o);
+    });
+    mkRow("Scenario", scenSelect);
+    const mkInput = (labelText, placeholder) => {
+      const inp = el("input", "pyro-s-key-input");
+      inp.type = "text";
+      inp.placeholder = placeholder;
+      inp.autocomplete = "off";
+      inp.spellcheck = false;
+      return mkRow(labelText, inp);
+    };
+    const payoutInp = mkInput("Payout", "e.g. 50000");
+    const placeInp = mkInput("Place", "e.g. 1 Kerosene");
+    const igniteInp = mkInput("Ignite", "e.g. Flamethrower");
+    const stokeInp = mkInput("Stoke", "e.g. blank");
+    const fmtActions = (arr) => Array.isArray(arr) ? arr.map((a) => `${a.qty} ${CATALOG[a.resourceId]?.name ?? a.resourceId}`).join(", ") : "";
+    scenSelect.addEventListener("change", () => {
+      const s = SCENARIOS.find((x) => x.scenarioName === scenSelect.value);
+      payoutInp.value = s && s.payout != null ? String(s.payout) : "";
+      placeInp.value = s ? fmtActions(s.actions?.place) : "";
+      igniteInp.value = s ? fmtActions(s.actions?.ignite) : "";
+      stokeInp.value = s ? fmtActions(s.actions?.stoke) : "";
+    });
+    const btnRow = el("div", "pyro-s-key-row");
+    const submitBtn = el("button", "pyro-s-btn");
+    submitBtn.textContent = "Submit";
+    btnRow.appendChild(submitBtn);
+    group.appendChild(btnRow);
+    const status = el("div", "pyro-s-status");
+    group.appendChild(status);
+    root.appendChild(group);
+    submitBtn.addEventListener("click", () => {
+      const scenario = scenSelect.value.trim();
+      if (!scenario) {
+        setErrStatus(status, "Pick a scenario first.");
+        status.className = "pyro-s-status err";
+        return;
+      }
+      const entry = {
+        scenario,
+        payout: payoutInp.value.trim(),
+        place: placeInp.value.trim(),
+        ignite: igniteInp.value.trim(),
+        stoke: stokeInp.value.trim()
+      };
+      const line = `${entry.scenario} | payout ${entry.payout || "-"} | place: ${entry.place || "-"} | ignite: ${entry.ignite || "-"} | stoke: ${entry.stoke || "-"}`;
+      let copied = false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(line);
+          copied = true;
+        } else {
+          const ta = document.createElement("textarea");
+          ta.value = line;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          document.execCommand("copy");
+          ta.remove();
+          copied = true;
+        }
+      } catch (_) {
+      }
+      submitBtn.disabled = true;
+      status.textContent = "Submitting…";
+      status.className = "pyro-s-status";
+      const done = (ok, msg) => {
+        submitBtn.disabled = false;
+        if (ok) {
+          setOkStatus(status, msg);
+          status.className = "pyro-s-status ok";
+        } else {
+          setErrStatus(status, msg);
+          status.className = "pyro-s-status err";
+        }
+      };
+      const okMsg = copied ? "Submitted — copied to clipboard" : "Submitted";
+      try {
+        GM_xmlhttpRequest({
+          method: "POST",
+          url: "https://tornwar.com/api/arson/logs",
+          headers: { "Content-Type": "application/json" },
+          data: JSON.stringify(entry),
+          timeout: 1e4,
+          onload: (resp) => done(resp.status >= 200 && resp.status < 300, resp.status >= 200 && resp.status < 300 ? okMsg : `Server error ${resp.status}${copied ? " (copied)" : ""}`),
+          onerror: () => done(false, copied ? "Network error (copied to clipboard)" : "Network error"),
+          ontimeout: () => done(false, copied ? "Timed out (copied to clipboard)" : "Timed out")
+        });
+      } catch (_) {
+        done(false, copied ? "Submit failed (copied to clipboard)" : "Submit failed");
+      }
+    });
+    return root;
+  }
   function formatTimestamp(ts) {
     return new Date(ts).toLocaleString(void 0, {
       month: "short",
@@ -4207,7 +4327,8 @@
     const tabs = [
       { id: "prices", label: "Prices" },
       { id: "thresholds", label: "Thresholds" },
-      { id: "api", label: "API" }
+      { id: "api", label: "API" },
+      { id: "logs", label: "Logs" }
     ];
     const bar = el("div", "pyro-tab-bar");
     for (const tab of tabs) {
@@ -4237,6 +4358,8 @@
         return buildThresholdsTab(ctx);
       case "api":
         return buildApiTab(ctx);
+      case "logs":
+        return buildLogsTab(ctx);
       default:
         return buildPricesTab(ctx, panel);
     }

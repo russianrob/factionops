@@ -9970,6 +9970,42 @@ router.get("/api/arson/recipes", async (req, res) => {
   return res.json(loadArsonRecipes());
 });
 
+// ── Arson logs: user-submitted observed recipes from the ledger "Logs" tab ──
+const ARSON_LOGS_FILE = pathJoin(OC_HISTORY_DIR, '..', 'arson-logs.json');
+function loadArsonLogs() {
+  try {
+    const arr = JSON.parse(readFileSync(ARSON_LOGS_FILE, 'utf-8'));
+    return Array.isArray(arr) ? arr : [];
+  } catch (_) { return []; }
+}
+router.get("/api/arson/logs", (req, res) => {
+  return res.json({ logs: loadArsonLogs() });
+});
+router.post("/api/arson/logs", express.json({ limit: '4kb' }), (req, res) => {
+  try {
+    const b = req.body || {};
+    const scenario = String(b.scenario || '').slice(0, 120).trim();
+    if (!scenario) return res.status(400).json({ error: 'scenario required' });
+    const entry = {
+      scenario,
+      payout: String(b.payout == null ? '' : b.payout).slice(0, 40),
+      place: String(b.place || '').slice(0, 300),
+      ignite: String(b.ignite || '').slice(0, 160),
+      stoke: String(b.stoke || '').slice(0, 300),
+      ts: Date.now(),
+    };
+    let logs = loadArsonLogs();
+    logs.push(entry);
+    if (logs.length > 5000) logs = logs.slice(-5000);
+    writeFileSync(ARSON_LOGS_FILE, JSON.stringify(logs, null, 2));
+    console.log(`[arson-logs] +'${scenario}' (${logs.length} total)`);
+    return res.json({ ok: true, count: logs.length });
+  } catch (e) {
+    console.error('[arson-logs] save error:', e.message);
+    return res.status(500).json({ error: 'save failed' });
+  }
+});
+
 // Daily-fresh material prices for the arson cost calc, sourced from the shared
 // public item-market-value cache (Torn /torn?selections=items) and keyed by the
 // material NAMES the recipes use. No user API key needed — the bfb userscript
