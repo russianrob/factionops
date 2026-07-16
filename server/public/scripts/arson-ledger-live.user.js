@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.4
+// @version     1.0.5
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4) with material prices auto-updated from live Torn market prices via tornwar.com — no API key, works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -4782,6 +4782,25 @@
   function isArsonPage() {
     return !!document.querySelector(SEL.ROOT);
   }
+  var _pyroTipImg = null;
+  function bindNameTap(section, rawName) {
+    const img = section.querySelector("img");
+    if (!img || img.dataset.pyroNameTap) return;
+    img.dataset.pyroNameTap = "1";
+    img.style.cursor = "pointer";
+    img.addEventListener("click", (e) => {
+      e.stopPropagation();
+      tryTooltip((api) => {
+        if (_pyroTipImg === img) {
+          try { api.hide(); } catch (_) {}
+          _pyroTipImg = null;
+        } else {
+          api.show(img, rawName);
+          _pyroTipImg = img;
+        }
+      });
+    });
+  }
   function scanPage() {
     if (!isArsonPage()) return;
     const prices = effectivePrices();
@@ -4791,6 +4810,7 @@
       const scenarioEl = section.querySelector('[class*="scenario___"]');
       const rawName = scenarioEl?.textContent?.trim() ?? "";
       if (!rawName) return;
+      bindNameTap(section, rawName);
       const scenario = scenarioIndex.get(rawName.toLowerCase()) ?? null;
       const ranked = scenario ? rankForScenario(scenario, prices, thresholds) : null;
       applyToSection(section, ranked);
