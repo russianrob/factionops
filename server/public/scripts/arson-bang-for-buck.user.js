@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arson bang for buck (tornwar fork)
 // @namespace    tornwar.com
-// @version      1.00.061
+// @version      1.00.062
 // @description  Profit-per-nerve + how-to-perform tooltips on the crimes page. Mirror of neth392's 1.00.040-fix3 with download/update URLs pointing at tornwar.com so future patches auto-update. wb2: auto-syncs recipe edits from the tornwar server (written by arsontest) into the tooltip data.
 // @author       Para_Thenics, auboli77 (fix3 patches by neth392; mirrored by RussianRob)
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -3572,6 +3572,64 @@ function saveItemValues() {
  
 //  Call this immediately after defining it
 loadItemValues();
+
+// wb3: sync live item market values from tornwar (the same feed the server
+// refreshes daily) so Profit/Nerve is IDENTICAL on every device instead of
+// drifting off stale defaults or per-device localStorage edits. Overlays in
+// memory (server = authoritative live price); does not persist, so a manual
+// edit on disk is preserved but the fresh server price wins at runtime.
+const WB_ITEMVALS_URL   = 'https://tornwar.com/data/item-market-values.json';
+const WB_ITEMVALS_CACHE = 'bfb_server_itemvalues_v1';
+const WB_ITEMVALS_TTL   = 30 * 60 * 1000;
+
+function wbApplyServerItemValues(payload) {
+    // tornwar feed is { values:{id:val}, byName:{name:val}, ... }; accept a flat map too (cached form)
+    const map = (payload && typeof payload === 'object' && payload.byName) ? payload.byName : payload;
+    if (!map || typeof map !== 'object') return false;
+    const lowerToKey = {};
+    for (const k in itemValues) lowerToKey[k.toLowerCase()] = k;
+    let changed = false;
+    for (const name in map) {
+        const v = map[name];
+        if (v == null || isNaN(Number(v))) continue;
+        const key = lowerToKey[String(name).toLowerCase()];
+        if (key && String(itemValues[key]) !== String(v)) { itemValues[key] = String(v); changed = true; }
+    }
+    return changed;
+}
+
+function wbRefreshServerItemValues() {
+    try {
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: WB_ITEMVALS_URL,
+            timeout: 10000,
+            onload: (resp) => {
+                if (resp.status < 200 || resp.status >= 300) return;
+                let map;
+                try { map = JSON.parse(resp.responseText); } catch (_) { return; }
+                try { GM_setValue(WB_ITEMVALS_CACHE, JSON.stringify({ ts: Date.now(), map: (map.byName || map) })); } catch (_) {}
+                if (wbApplyServerItemValues(map) && typeof wbDeriveProfitPerNerveAll === 'function') {
+                    wbDeriveProfitPerNerveAll();
+                    if (typeof wbApplyHighlightsToAllCards === 'function') wbApplyHighlightsToAllCards();
+                }
+            },
+        });
+    } catch (_) { /* GM_xmlhttpRequest unavailable — silent no-op */ }
+}
+
+try {
+    const _ivCached = GM_getValue(WB_ITEMVALS_CACHE, '');
+    if (_ivCached) {
+        const _ivp = JSON.parse(_ivCached);
+        if (_ivp && _ivp.map) wbApplyServerItemValues(_ivp.map);
+        if (!_ivp || !_ivp.ts || (Date.now() - _ivp.ts) > WB_ITEMVALS_TTL) wbRefreshServerItemValues();
+    } else {
+        wbRefreshServerItemValues();
+    }
+} catch (_) {
+    wbRefreshServerItemValues();
+}
  
  
  
