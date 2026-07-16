@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.7
+// @version     1.0.8
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4) with material prices auto-updated from live Torn market prices via tornwar.com — no API key, works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -4315,6 +4315,129 @@
     });
     return root;
   }
+  var ARSON_OVERRIDES_URL = "https://tornwar.com/data/arson-overrides.json";
+  var _arsonOverridesCache = null;
+  function _arsonNameToId() {
+    var m = {};
+    for (var id in CATALOG) { var c = CATALOG[id]; if (c && c.name) m[String(c.name).toLowerCase()] = c.id; }
+    return m;
+  }
+  function parseArsonActions(text) {
+    if (!text) return [];
+    var nameToId = _arsonNameToId();
+    var out = [];
+    String(text).split(",").forEach(function (part) {
+      var mm = part.trim().match(/^(\d+)\s+(.+)$/);
+      if (!mm) return;
+      var qty = parseInt(mm[1], 10);
+      var rid = nameToId[mm[2].trim().toLowerCase()];
+      if (rid && qty > 0) out.push({ resourceId: rid, qty: qty });
+    });
+    return out;
+  }
+  function fmtArsonActions(arr) {
+    return Array.isArray(arr) ? arr.map(function (a) { return a.qty + " " + ((CATALOG[a.resourceId] && CATALOG[a.resourceId].name) || a.resourceId); }).join(", ") : "";
+  }
+  function applyArsonOverrides() {
+    if (!_arsonOverridesCache || !_arsonOverridesCache.scenarios) return;
+    var sc = _arsonOverridesCache.scenarios;
+    for (var k in sc) { var s = sc[k]; if (s && s.scenarioName) scenarioIndex.set(String(s.scenarioName).toLowerCase(), s); }
+  }
+  function wbFetchOverrides() {
+    try {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url: ARSON_OVERRIDES_URL,
+        timeout: 1e4,
+        onload: function (r) {
+          if (r.status < 200 || r.status >= 300) return;
+          var o; try { o = JSON.parse(r.responseText); } catch (_) { return; }
+          if (!o || !o.scenarios) return;
+          _arsonOverridesCache = o;
+          applyArsonOverrides();
+          resetScans();
+        }
+      });
+    } catch (_) {}
+  }
+  function checkArsonAdmin(key) {
+    if (!key) return;
+    try {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url: "https://api.torn.com/user/?selections=basic&key=" + encodeURIComponent(key),
+        timeout: 1e4,
+        onload: function (r) {
+          var d; try { d = JSON.parse(r.responseText); } catch (_) { return; }
+          isArsonAdmin = !!(d && !d.error && Number(d.player_id) === ARSON_ADMIN_ID);
+          store_set(KEY_ARSON_ADMIN, isArsonAdmin ? "1" : "0");
+        }
+      });
+    } catch (_) {}
+  }
+  function buildReviewTab(ctx) {
+    var root = el("div");
+    var note = el("p", "pyro-s-section-note");
+    note.innerHTML = ICON_INFO + "<span>Pending submissions. <strong>Approve</strong> overlays the recipe for everyone; <strong>Reject</strong> discards it.</span>";
+    root.appendChild(note);
+    var list = el("div", "pyro-s-group");
+    root.appendChild(list);
+    function render(logs) {
+      list.textContent = "";
+      if (!logs.length) { var e = el("p", "pyro-s-section-note"); e.textContent = "No pending logs."; list.appendChild(e); return; }
+      logs.slice().reverse().forEach(function (log) {
+        var card = el("div", "pyro-s-group");
+        card.style.cssText = "border-top:1px solid var(--pyro-tooltip-border,#333);padding:8px 0;";
+        var title = el("div"); title.style.fontWeight = "600"; title.textContent = log.scenario; card.appendChild(title);
+        var cur = scenarioIndex.get(String(log.scenario).toLowerCase());
+        var curEl = el("div"); curEl.style.cssText = "opacity:.65;font-size:11px;";
+        curEl.textContent = "current: " + (cur ? ("payout " + (cur.payout != null ? cur.payout : "?") + " · place " + fmtArsonActions(cur.actions && cur.actions.place) + " · ignite " + fmtArsonActions(cur.actions && cur.actions.ignite) + (cur.actions && cur.actions.stoke ? " · stoke " + fmtArsonActions(cur.actions.stoke) : "")) : "(unknown)");
+        card.appendChild(curEl);
+        var logEl = el("div"); logEl.style.fontSize = "11px";
+        logEl.textContent = "logged: payout " + (log.payout || "-") + " · place " + (log.place || "-") + " · ignite " + (log.ignite || "-") + (log.stoke ? " · stoke " + log.stoke : "");
+        card.appendChild(logEl);
+        var row = el("div", "pyro-s-key-row");
+        var approve = el("button", "pyro-s-btn"); approve.textContent = "Approve";
+        var reject = el("button", "pyro-s-btn"); reject.textContent = "Reject"; reject.style.opacity = ".8";
+        row.appendChild(approve); row.appendChild(reject); card.appendChild(row);
+        var st = el("div", "pyro-s-status"); card.appendChild(st);
+        list.appendChild(card);
+        function post(url, body, onOk) {
+          approve.disabled = reject.disabled = true;
+          GM_xmlhttpRequest({
+            method: "POST", url: url, headers: { "Content-Type": "application/json" }, data: JSON.stringify(body), timeout: 1e4,
+            onload: function (rr) {
+              if (rr.status >= 200 && rr.status < 300) { onOk(); }
+              else { setErrStatus(st, rr.status === 403 ? "Not authorized" : ("Failed " + rr.status)); st.className = "pyro-s-status err"; approve.disabled = reject.disabled = false; }
+            },
+            onerror: function () { setErrStatus(st, "Network error"); st.className = "pyro-s-status err"; approve.disabled = reject.disabled = false; }
+          });
+        }
+        approve.addEventListener("click", function () {
+          st.textContent = "Approving…"; st.className = "pyro-s-status";
+          var patch = { payout: parseInt(String(log.payout).replace(/[^\d]/g, ""), 10) || 0, actions: {} };
+          var p = parseArsonActions(log.place); if (p.length) patch.actions.place = p;
+          var ig = parseArsonActions(log.ignite); if (ig.length) patch.actions.ignite = ig;
+          var sk = parseArsonActions(log.stoke); if (sk.length) patch.actions.stoke = sk;
+          post("https://tornwar.com/api/arson/approve", { key: ctx.getApiKey(), scenario: log.scenario, patch: patch, ts: log.ts }, function () { wbFetchOverrides(); load(); });
+        });
+        reject.addEventListener("click", function () {
+          st.textContent = "Rejecting…"; st.className = "pyro-s-status";
+          post("https://tornwar.com/api/arson/reject", { key: ctx.getApiKey(), ts: log.ts }, function () { load(); });
+        });
+      });
+    }
+    function load() {
+      list.textContent = "Loading…";
+      GM_xmlhttpRequest({
+        method: "GET", url: "https://tornwar.com/api/arson/logs", timeout: 1e4,
+        onload: function (r) { var d; try { d = JSON.parse(r.responseText); } catch (_) { list.textContent = "Failed to load."; return; } render((d && d.logs) || []); },
+        onerror: function () { list.textContent = "Failed to load."; }
+      });
+    }
+    load();
+    return root;
+  }
   function formatTimestamp(ts) {
     return new Date(ts).toLocaleString(void 0, {
       month: "short",
@@ -4330,6 +4453,7 @@
       { id: "api", label: "API" },
       { id: "logs", label: "Logs" }
     ];
+    if (isArsonAdmin) tabs.push({ id: "review", label: "Review" });
     const bar = el("div", "pyro-tab-bar");
     for (const tab of tabs) {
       const btn = el("button", tab.id === activeId ? "pyro-tab active" : "pyro-tab");
@@ -4360,6 +4484,8 @@
         return buildApiTab(ctx);
       case "logs":
         return buildLogsTab(ctx);
+      case "review":
+        return buildReviewTab(ctx);
       default:
         return buildPricesTab(ctx, panel);
     }
@@ -4460,6 +4586,9 @@
   var apiPrices = {};
   var apiKey = "";
   var apiLastRefresh = 0;
+  var ARSON_ADMIN_ID = 137558;
+  var KEY_ARSON_ADMIN = "pyroLedger.v1.arsonAdmin";
+  var isArsonAdmin = store_get(KEY_ARSON_ADMIN, "") === "1";
   var thresholds = { ...DEFAULT_THRESHOLDS };
   var activeTab = "prices";
   var showObservedPayouts = true;
@@ -4536,6 +4665,7 @@
   function setApiKey(key) {
     apiKey = key;
     store_set(KEY_API_KEY, apiKey);
+    checkArsonAdmin(key);
   }
   function setActiveTab(tab) {
     activeTab = tab;
@@ -4588,6 +4718,7 @@
         );
         if (Array.isArray(cached) && cached.length > 0) {
           populateScenarioIndex(cached);
+          applyArsonOverrides();
           resetScans();
         }
       } catch {
@@ -4605,6 +4736,7 @@
           store_set(KEY_SCENARIOS_CACHE, r.responseText);
           store_set(KEY_SCENARIOS_TS, String(now));
           populateScenarioIndex(fresh);
+          applyArsonOverrides();
           resetScans();
         } catch {
         }
@@ -4866,7 +4998,10 @@
   function start() {
     loadState();
     wbFetchAutoPrices();
+    wbFetchOverrides();
+    if (apiKey) checkArsonAdmin(apiKey);
     populateScenarioIndex(SCENARIOS);
+    applyArsonOverrides();
     injectHighlightStyles();
     observer.observe(document.body, { childList: true, subtree: true });
     scheduleScenarioRefresh();

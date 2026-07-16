@@ -10006,6 +10006,64 @@ router.post("/api/arson/logs", express.json({ limit: '4kb' }), (req, res) => {
   }
 });
 
+// ── Arson overrides: admin-approved recipe corrections (ledger "Review" tab) ──
+// Approvals write here; the ledger fetches /data/arson-overrides.json and
+// overlays these on top of Yukio's base scenarios (override wins). Admin gate:
+// the caller's Torn API key must belong to player ARSON_ADMIN_ID.
+const ARSON_OVERRIDES_FILE = pathJoin(OC_HISTORY_DIR, '..', 'arson-overrides.json');
+const ARSON_ADMIN_ID = 137558;
+function loadArsonOverrides() {
+  try {
+    const o = JSON.parse(readFileSync(ARSON_OVERRIDES_FILE, 'utf-8'));
+    if (o && typeof o === 'object' && o.scenarios) return o;
+  } catch (_) {}
+  return { scenarios: {}, updatedAt: 0 };
+}
+const _arsonAdminCache = new Map(); // key -> ts of last successful verify (avoids per-approve Torn calls + rate-limit flakiness)
+async function verifyArsonAdmin(key) {
+  if (!key || typeof key !== 'string' || key.length < 10) return false;
+  const cached = _arsonAdminCache.get(key);
+  if (cached && Date.now() - cached < 600000) return true;
+  try {
+    const r = await fetch(`https://api.torn.com/user/?selections=basic&key=${encodeURIComponent(key)}`);
+    const d = await r.json();
+    if (d && !d.error && Number(d.player_id) === ARSON_ADMIN_ID) { _arsonAdminCache.set(key, Date.now()); return true; }
+    return false; // don't cache failures — a transient rate-limit shouldn't lock the admin out
+  } catch (_) { return false; }
+}
+router.post("/api/arson/approve", express.json({ limit: '8kb' }), async (req, res) => {
+  const b = req.body || {};
+  if (!(await verifyArsonAdmin(b.key))) return res.status(403).json({ error: 'not authorized' });
+  const scenario = String(b.scenario || '').trim();
+  const patch = b.patch;
+  if (!scenario || !patch || typeof patch !== 'object') return res.status(400).json({ error: 'scenario + patch required' });
+  const ov = loadArsonOverrides();
+  ov.scenarios[scenario.toLowerCase()] = {
+    scenarioName: scenario,
+    payout: Number(patch.payout) || 0,
+    actions: (patch.actions && typeof patch.actions === 'object') ? patch.actions : {},
+    approvedAt: Date.now(),
+  };
+  ov.updatedAt = Date.now();
+  try { writeFileSync(ARSON_OVERRIDES_FILE, JSON.stringify(ov, null, 2)); }
+  catch (e) { console.error('[arson-approve] write error:', e.message); return res.status(500).json({ error: 'write failed' }); }
+  if (b.ts != null) {
+    const logs = loadArsonLogs().filter((l) => l.ts !== Number(b.ts));
+    try { writeFileSync(ARSON_LOGS_FILE, JSON.stringify(logs, null, 2)); } catch (_) {}
+  }
+  console.log(`[arson-approve] '${scenario}' approved`);
+  return res.json({ ok: true, scenarios: Object.keys(ov.scenarios).length });
+});
+router.post("/api/arson/reject", express.json({ limit: '2kb' }), async (req, res) => {
+  const b = req.body || {};
+  if (!(await verifyArsonAdmin(b.key))) return res.status(403).json({ error: 'not authorized' });
+  if (b.ts == null) return res.status(400).json({ error: 'ts required' });
+  const logs = loadArsonLogs().filter((l) => l.ts !== Number(b.ts));
+  try { writeFileSync(ARSON_LOGS_FILE, JSON.stringify(logs, null, 2)); }
+  catch (e) { console.error('[arson-reject] write error:', e.message); return res.status(500).json({ error: 'write failed' }); }
+  return res.json({ ok: true });
+});
+
 // Daily-fresh material prices for the arson cost calc, sourced from the shared
 // public item-market-value cache (Torn /torn?selections=items) and keyed by the
 // material NAMES the recipes use. No user API key needed — the bfb userscript
