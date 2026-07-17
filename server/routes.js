@@ -10009,9 +10009,9 @@ router.post("/api/arson/logs", express.json({ limit: '4kb' }), (req, res) => {
 // ── Arson overrides: admin-approved recipe corrections (ledger "Review" tab) ──
 // Approvals write here; the ledger fetches /data/arson-overrides.json and
 // overlays these on top of Yukio's base scenarios (override wins). Admin gate:
-// the caller's Torn API key must belong to player ARSON_ADMIN_ID.
+// the caller's Torn API key must belong to one of ARSON_ADMIN_IDS.
 const ARSON_OVERRIDES_FILE = pathJoin(OC_HISTORY_DIR, '..', 'arson-overrides.json');
-const ARSON_ADMIN_ID = 137558;
+const ARSON_ADMIN_IDS = [137558, 906148]; // RussianRob, Yukio
 function loadArsonOverrides() {
   try {
     const o = JSON.parse(readFileSync(ARSON_OVERRIDES_FILE, 'utf-8'));
@@ -10027,7 +10027,7 @@ async function verifyArsonAdmin(key) {
   try {
     const r = await fetch(`https://api.torn.com/user/?selections=basic&key=${encodeURIComponent(key)}`);
     const d = await r.json();
-    if (d && !d.error && Number(d.player_id) === ARSON_ADMIN_ID) { _arsonAdminCache.set(key, Date.now()); return true; }
+    if (d && !d.error && ARSON_ADMIN_IDS.includes(Number(d.player_id))) { _arsonAdminCache.set(key, Date.now()); return true; }
     return false; // don't cache failures — a transient rate-limit shouldn't lock the admin out
   } catch (_) { return false; }
 }

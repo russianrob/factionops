@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.10
+// @version     1.0.11
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4) with material prices auto-updated from live Torn market prices via tornwar.com — no API key, works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -4370,7 +4370,7 @@
         timeout: 1e4,
         onload: function (r) {
           var d; try { d = JSON.parse(r.responseText); } catch (_) { return; }
-          isArsonAdmin = !!(d && !d.error && Number(d.player_id) === ARSON_ADMIN_ID);
+          isArsonAdmin = !!(d && !d.error && ARSON_ADMIN_IDS.includes(Number(d.player_id)));
           store_set(KEY_ARSON_ADMIN, isArsonAdmin ? "1" : "0");
         }
       });
@@ -4587,7 +4587,7 @@
   var apiPrices = {};
   var apiKey = "";
   var apiLastRefresh = 0;
-  var ARSON_ADMIN_ID = 137558;
+  var ARSON_ADMIN_IDS = [137558, 906148];
   var KEY_ARSON_ADMIN = "pyroLedger.v1.arsonAdmin";
   var isArsonAdmin = store_get(KEY_ARSON_ADMIN, "") === "1";
   var thresholds = { ...DEFAULT_THRESHOLDS };
