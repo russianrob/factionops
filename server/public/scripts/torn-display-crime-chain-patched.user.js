@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN: Display Crime Chain
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.16
+// @version      1.0.17
 // @description  Calculates and displays your current crime chain (Crimes 2.0 DOM-compat patch)
 // @author       Ironhydedragon[2428902]
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -164,17 +164,17 @@ function renderCrimeChainCurrent() {
   el.textContent = Math.floor(crimeChain);
 }
 
-const KEY_NERVE_SHOWN = 'ihdCrimeChainNerveShown';
+let nerveShown = false; // session-only — deliberately NOT persisted, so the readout hides on reload
 
 function fmtNerve(n) {
   return '🔥 ' + Math.round(n).toLocaleString() + ' nerve';
 }
 
 function getNerveShown() {
-  try { return localStorage.getItem(KEY_NERVE_SHOWN) === '1'; } catch (e) { return false; }
+  return nerveShown;
 }
 function setNerveShown(on) {
-  try { localStorage.setItem(KEY_NERVE_SHOWN, on ? '1' : '0'); } catch (e) {}
+  nerveShown = !!on;
 }
 
 // Single source of truth for the readout's DOM. Always re-queries the live node
