@@ -9992,6 +9992,7 @@ router.post("/api/arson/logs", express.json({ limit: '4kb' }), (req, res) => {
       place: String(b.place || '').slice(0, 300),
       ignite: String(b.ignite || '').slice(0, 160),
       stoke: String(b.stoke || '').slice(0, 300),
+      stokeTime: (b.stokeTime === 'early' || b.stokeTime === 'late') ? b.stokeTime : '',
       ts: Date.now(),
     };
     let logs = loadArsonLogs();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.11
+// @version     1.0.12
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4) with material prices auto-updated from live Torn market prices via tornwar.com — no API key, works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -4233,7 +4233,21 @@
     const payoutInp = mkInput("Payout", "e.g. 50000");
     const placeInp = mkInput("Place", "e.g. 1 Kerosene");
     const igniteInp = mkInput("Ignite", "e.g. Flamethrower");
-    const stokeInp = mkInput("Stoke", "e.g. blank");
+    const stokeInp = el("input", "pyro-s-key-input");
+    stokeInp.type = "text";
+    stokeInp.placeholder = "e.g. 1 Hydrogen Tank";
+    stokeInp.autocomplete = "off";
+    stokeInp.spellcheck = false;
+    const stokeTimeSel = el("select", "pyro-s-key-input");
+    stokeTimeSel.style.cssText = "flex:0 0 auto;width:auto;min-width:64px;";
+    [["", "—"], ["early", "early"], ["late", "late"]].forEach(([v, t]) => { const o = document.createElement("option"); o.value = v; o.textContent = t; stokeTimeSel.appendChild(o); });
+    const stokeRow = el("div", "pyro-s-key-row");
+    const stokeLab = el("span", "pyro-s-label");
+    stokeLab.textContent = "Stoke";
+    stokeRow.appendChild(stokeLab);
+    stokeRow.appendChild(stokeInp);
+    stokeRow.appendChild(stokeTimeSel);
+    group.appendChild(stokeRow);
     const fmtActions = (arr) => Array.isArray(arr) ? arr.map((a) => `${a.qty} ${CATALOG[a.resourceId]?.name ?? a.resourceId}`).join(", ") : "";
     scenSelect.addEventListener("change", () => {
       const s = SCENARIOS.find((x) => x.scenarioName === scenSelect.value);
@@ -4241,6 +4255,7 @@
       placeInp.value = s ? fmtActions(s.actions?.place) : "";
       igniteInp.value = s ? fmtActions(s.actions?.ignite) : "";
       stokeInp.value = s ? fmtActions(s.actions?.stoke) : "";
+      stokeTimeSel.value = s && s.actions && s.actions.stokeTime ? s.actions.stokeTime : "";
     });
     const btnRow = el("div", "pyro-s-key-row");
     const submitBtn = el("button", "pyro-s-btn");
@@ -4262,9 +4277,10 @@
         payout: payoutInp.value.trim(),
         place: placeInp.value.trim(),
         ignite: igniteInp.value.trim(),
-        stoke: stokeInp.value.trim()
+        stoke: stokeInp.value.trim(),
+        stokeTime: stokeTimeSel.value
       };
-      const line = `${entry.scenario} | payout ${entry.payout || "-"} | place: ${entry.place || "-"} | ignite: ${entry.ignite || "-"} | stoke: ${entry.stoke || "-"}`;
+      const line = `${entry.scenario} | payout ${entry.payout || "-"} | place: ${entry.place || "-"} | ignite: ${entry.ignite || "-"} | stoke: ${entry.stoke || "-"}${entry.stokeTime ? " (" + entry.stokeTime + ")" : ""}`;
       let copied = false;
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -4392,10 +4408,10 @@
         var title = el("div"); title.style.fontWeight = "600"; title.textContent = log.scenario; card.appendChild(title);
         var cur = scenarioIndex.get(String(log.scenario).toLowerCase());
         var curEl = el("div"); curEl.style.cssText = "opacity:.65;font-size:11px;";
-        curEl.textContent = "current: " + (cur ? ("payout " + (cur.payout != null ? cur.payout : "?") + " · place " + fmtArsonActions(cur.actions && cur.actions.place) + " · ignite " + fmtArsonActions(cur.actions && cur.actions.ignite) + (cur.actions && cur.actions.stoke ? " · stoke " + fmtArsonActions(cur.actions.stoke) : "")) : "(unknown)");
+        curEl.textContent = "current: " + (cur ? ("payout " + (cur.payout != null ? cur.payout : "?") + " · place " + fmtArsonActions(cur.actions && cur.actions.place) + " · ignite " + fmtArsonActions(cur.actions && cur.actions.ignite) + (cur.actions && cur.actions.stoke ? " · stoke " + fmtArsonActions(cur.actions.stoke) + (cur.actions.stokeTime ? " (" + cur.actions.stokeTime + ")" : "") : "")) : "(unknown)");
         card.appendChild(curEl);
         var logEl = el("div"); logEl.style.fontSize = "11px";
-        logEl.textContent = "logged: payout " + (log.payout || "-") + " · place " + (log.place || "-") + " · ignite " + (log.ignite || "-") + (log.stoke ? " · stoke " + log.stoke : "");
+        logEl.textContent = "logged: payout " + (log.payout || "-") + " · place " + (log.place || "-") + " · ignite " + (log.ignite || "-") + (log.stoke ? " · stoke " + log.stoke + (log.stokeTime ? " (" + log.stokeTime + ")" : "") : "");
         card.appendChild(logEl);
         var row = el("div", "pyro-s-key-row");
         var approve = el("button", "pyro-s-btn"); approve.textContent = "Approve";
@@ -4420,6 +4436,7 @@
           var p = parseArsonActions(log.place); if (p.length) patch.actions.place = p;
           var ig = parseArsonActions(log.ignite); if (ig.length) patch.actions.ignite = ig;
           var sk = parseArsonActions(log.stoke); if (sk.length) patch.actions.stoke = sk;
+          if (sk.length && (log.stokeTime === "early" || log.stokeTime === "late")) patch.actions.stokeTime = log.stokeTime;
           post("https://tornwar.com/api/arson/approve", { key: ctx.getApiKey(), scenario: log.scenario, patch: patch, ts: log.ts }, function () { wbFetchOverrides(); load(); });
         });
         reject.addEventListener("click", function () {
