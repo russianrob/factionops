@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN: Display Crime Chain
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.14
+// @version      1.0.15
 // @description  Calculates and displays your current crime chain (Crimes 2.0 DOM-compat patch)
 // @author       Ironhydedragon[2428902]
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -16,6 +16,12 @@
 let crimeChain = 0;
 let lastSeenTs = 0; // newest crime-log timestamp already counted (for live updates)
 let ccBase = null;  // baseline {type, s, f, c} of the on-page success/fail/critical tallies
+let chainNerve = 0;  // total nerve spent building the current chain (since last critical fail)
+let chainCrimes = 0; // number of crime attempts in the current chain window
+let avgNerveCost = 4; // running mean nerve/crime (seeded from the log) — used for instant optimistic ticks
+let nerveDirty = false;   // optimistic nerve pending exact reconciliation from the (server-cached) log
+let nerveError = false;   // last nerve walk hit an API error (bad / rate-limited key)
+let reconcileInFlight = false;
 
 const redFlame = '#e64d1a';
 const _ccWin = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
@@ -140,13 +146,14 @@ function renderCrimeChainHTML() {
     <span id="crime-chain" aria-labelledby="crime-chain" style="display:inline-flex;align-items:center;gap:6px;margin-left:14px;vertical-align:middle;font-weight:700;color:${redFlame};">
       <svg fill="${redFlame}" height="15" width="14" viewBox="0 0 31.891 31.891" xmlns="http://www.w3.org/2000/svg"><g><path d="M30.543,5.74l-4.078-4.035c-1.805-1.777-4.736-1.789-6.545-0.02l-4.525,4.414c-1.812,1.768-1.82,4.648-0.02,6.424 l2.586-2.484c-0.262-0.791,0.061-1.697,0.701-2.324l2.879-2.807c0.912-0.885,2.375-0.881,3.275,0.01l2.449,2.42 c0.9,0.891,0.896,2.326-0.01,3.213l-2.879,2.809c-0.609,0.594-1.609,0.92-2.385,0.711l-2.533,2.486 c1.803,1.781,4.732,1.789,6.545,0.02l4.52-4.41C32.34,10.396,32.346,7.519,30.543,5.74z"></path><path d="M13.975,21.894c0.215,0.773-0.129,1.773-0.752,2.381l-2.689,2.627c-0.922,0.9-2.414,0.895-3.332-0.012l-2.498-2.461 c-0.916-0.906-0.91-2.379,0.012-3.275l2.691-2.627c0.656-0.637,1.598-0.961,2.42-0.689l2.594-2.57 c-1.836-1.811-4.824-1.82-6.668-0.02l-4.363,4.26c-1.846,1.803-1.855,4.734-0.02,6.549l4.154,4.107 c1.834,1.809,4.82,1.818,6.668,0.018l4.363-4.26c1.844-1.805,1.852-4.734,0.02-6.547L13.975,21.894z"></path><path d="M11.139,20.722c0.611,0.617,1.611,0.623,2.234,0.008l7.455-7.416c0.621-0.617,0.625-1.615,0.008-2.234 c-0.613-0.615-1.611-0.619-2.23-0.006l-7.457,7.414C10.529,19.103,10.525,20.101,11.139,20.722z"></path></g></svg>
       <span aria-label="current crime chain" id="crime-chain__current" title="Current crime chain">###</span>
+      <span id="crime-chain__nerve" style="display:none;font-weight:600;">🔥 …</span>
     </span>`;
   titleContainerEl.insertAdjacentHTML('afterend', crimeChainHTML);
   const badgeEl = document.querySelector('#crime-chain');
-  if (badgeEl && !badgeEl.dataset.ccApiClick) {
-    badgeEl.dataset.ccApiClick = '1';
-    badgeEl.title = 'Click to enter / update your API key';
-    badgeEl.addEventListener('click', promptForApiKey);
+  if (badgeEl && !badgeEl.dataset.ccNerveClick) {
+    badgeEl.dataset.ccNerveClick = '1';
+    badgeEl.title = 'Click to show nerve spent building this chain';
+    badgeEl.addEventListener('click', onBadgeNerveClick);
   }
 }
 
@@ -157,47 +164,157 @@ function renderCrimeChainCurrent() {
   el.textContent = Math.floor(crimeChain);
 }
 
+const KEY_NERVE_SHOWN = 'ihdCrimeChainNerveShown';
+
+function fmtNerve(n) {
+  return '🔥 ' + Math.round(n).toLocaleString() + ' nerve';
+}
+
+function getNerveShown() {
+  try { return localStorage.getItem(KEY_NERVE_SHOWN) === '1'; } catch (e) { return false; }
+}
+function setNerveShown(on) {
+  try { localStorage.setItem(KEY_NERVE_SHOWN, on ? '1' : '0'); } catch (e) {}
+}
+
+// Single source of truth for the readout's DOM. Always re-queries the live node
+// (React tears the badge down and rebuilds it), so it can never write to a stale
+// detached node, and it reads visibility straight from the persisted flag.
+function renderNerveReadout() {
+  const nEl = document.querySelector('#crime-chain__nerve');
+  if (!nEl) return;
+  if (!getNerveShown()) { nEl.style.display = 'none'; return; }
+  nEl.style.display = 'inline';
+  nEl.textContent = chainNerve > 0 ? fmtNerve(chainNerve) : (nerveError ? '🔥 ?' : '🔥 …');
+  nEl.title = chainCrimes
+    ? (chainCrimes + ' crimes since last reset · avg ' + (chainNerve / chainCrimes).toFixed(1) + ' nerve/crime')
+    : '';
+}
+
+// Pull an exact figure from the log and snap the display to it (used on open/click).
+// Uses the same forward-only guard as reconcileNerve so an open during live play can't
+// yank the number back to a still-cached log; when it's behind, keep the optimistic
+// value and leave it dirty for the reconcile loop.
+async function refreshNerveExact() {
+  try {
+    const res = await walkChain();
+    nerveError = false;
+    if (res.crimes > 0) avgNerveCost = res.nerve / res.crimes;
+    if (res.crimes >= chainCrimes) {
+      chainNerve = res.nerve;
+      chainCrimes = res.crimes;
+      nerveDirty = false;
+    } else {
+      nerveDirty = true;
+    }
+  } catch (error) {
+    console.error(error); // TEST
+    nerveError = true;
+  }
+  renderNerveReadout();
+}
+
+// Badge click: toggle the readout AND remember the choice so it survives a refresh.
+function onBadgeNerveClick() {
+  const shown = !getNerveShown();
+  setNerveShown(shown);
+  renderNerveReadout();
+  if (shown) refreshNerveExact();
+}
+
+// Re-apply the readout after a fresh badge render (React rebuild / page load).
+function restoreNerveReadout() {
+  renderNerveReadout();
+}
+
+// The on-page counters tick instantly but carry no nerve cost, and the crime log is
+// server-cached ~1 min — so on each detected crime add an optimistic estimate (running
+// mean nerve/crime) for an instant bump, mark it dirty, and let reconcileNerve() snap it
+// to the exact log figure once the log catches up. Mirrors the chain counter math.
+function bumpNerveOptimistic(dS, dF, dC) {
+  if (dC > 0) { chainNerve = 0; chainCrimes = 0; nerveDirty = false; }
+  else {
+    const n = (dS > 0 ? dS : 0) + (dF > 0 ? dF : 0);
+    if (n > 0) { chainNerve += n * avgNerveCost; chainCrimes += n; nerveDirty = true; }
+  }
+  renderNerveReadout();
+}
+
+// While an optimistic estimate is outstanding, re-walk the log and snap to the exact
+// figure — but only once the (cached) log has caught up to our count, so the number
+// never jumps backwards mid-session.
+async function reconcileNerve() {
+  if (!nerveDirty || reconcileInFlight || !getApiKey()) return;
+  reconcileInFlight = true;
+  try {
+    const res = await walkChain();
+    nerveError = false;
+    if (res.crimes > 0) avgNerveCost = res.nerve / res.crimes;
+    if (res.crimes >= chainCrimes) {
+      chainNerve = res.nerve;
+      chainCrimes = res.crimes;
+      nerveDirty = false;
+      renderNerveReadout();
+    }
+  } catch (error) {
+    console.error(error); // TEST
+  } finally {
+    reconcileInFlight = false;
+  }
+}
+
 async function fetchCrimes(toTimestamp) {
   const response = await fetch(`https://api.torn.com/user/?selections=log&cat=136${toTimestamp ? '&to=' + toTimestamp : ''}&key=${getApiKey()}`);
   const data = await response.json();
+  if (data && data.error) throw new Error('Torn API error ' + data.error.code + ': ' + data.error.error);
   return data;
+}
+
+// Walk the crime log back to the last critical fail (the point the chain last hit 0)
+// and replay it, tallying the chain AND the exact nerve each crime cost (log entries
+// carry data.nerve). Critical fails reset both — that nerve belonged to the old chain.
+// Returns a snapshot without mutating globals, so it's safe to call on demand.
+async function walkChain() {
+  let dataCollector = [];
+  function dataCollectorUnshifter(fetchData) {
+    for (const log in fetchData.log) {
+      if (fetchData.log[log].title && fetchData.log[log].title.match(/Crime (success|fail|critical fail|item add)/gi)) {
+        dataCollector.unshift(fetchData.log[log]);
+      }
+    }
+  }
+  dataCollectorUnshifter(await fetchCrimes());
+  while (dataCollector.filter((log) => log.title.match(/Crime critical fail/i)).length < 1) {
+    if (!dataCollector.length) break; // no crime logs at all — don't deref [0]
+    const before = dataCollector.length;
+    dataCollectorUnshifter(await fetchCrimes(dataCollector[0].timestamp - 1));
+    if (dataCollector.length === before) break; // no older entries returned — stop (avoid infinite API loop)
+  }
+
+  let chain = 0, nerve = 0, crimes = 0, maxTs = 0;
+  for (const d of dataCollector) {
+    const nv = (d.data && typeof d.data.nerve === 'number') ? d.data.nerve : 0;
+    if (d.timestamp > maxTs) maxTs = d.timestamp;
+    if (d.title.match(/Crime success/i)) { chain++; nerve += nv; crimes++; }
+    if (d.title.match(/Crime fail/i)) { chain = chain ? chain / 2 : 0; nerve += nv; crimes++; }
+    if (d.title.match(/Crime critical fail/i)) { chain = 0; nerve = 0; crimes = 0; }
+  }
+  return { chain, nerve, crimes, maxTs };
 }
 
 async function calcCrimeChain() {
   try {
-    let dataCollector = [];
-
-    const initialData = await fetchCrimes();
-    function dataCollectorUnshifter(fetchData) {
-      for (const log in fetchData.log) {
-        if (fetchData.log[log].title.match(/Crime (success|fail|critical fail|item add)/gi)) {
-          dataCollector.unshift(fetchData.log[log]);
-        }
-      }
-    }
-    dataCollectorUnshifter(initialData);
-    while (dataCollector.filter((log) => log.title.match(/Crime critical fail/i)).length < 1) {
-      if (!dataCollector.length) break; // no crime logs at all — don't deref [0]
-      const before = dataCollector.length;
-      const data = await fetchCrimes(dataCollector[0].timestamp - 1);
-      dataCollectorUnshifter(data);
-      if (dataCollector.length === before) break; // no older entries returned — stop (avoid infinite API loop)
-    }
-
-    for (const d of dataCollector) {
-      if (d.title.match(/Crime success/i)) {
-        crimeChain++;
-      }
-      if (d.title.match(/Crime fail/i)) {
-        crimeChain = crimeChain ? crimeChain / 2 : 0;
-      }
-      if (d.title.match(/Crime critical fail/i)) {
-        crimeChain = 0;
-      }
-    }
-    lastSeenTs = dataCollector.reduce((mx, d) => Math.max(mx, d.timestamp || 0), lastSeenTs);
+    const res = await walkChain();
+    crimeChain = res.chain;
+    chainNerve = res.nerve;
+    chainCrimes = res.crimes;
+    if (res.crimes > 0) avgNerveCost = res.nerve / res.crimes;
+    nerveError = false;
+    nerveDirty = false;
+    lastSeenTs = Math.max(lastSeenTs, res.maxTs || 0);
   } catch (error) {
     console.error(error); // TEST
+    nerveError = true;
   }
 }
 
@@ -248,6 +365,7 @@ function initController() {
 async function loadController() {
   await calcCrimeChain();
   renderCrimeChainCurrent();
+  renderNerveReadout();
 }
 
 async function pollLatestCrime() {
@@ -262,7 +380,7 @@ async function pollLatestCrime() {
       else if (e.title.match(/Crime success/i)) crimeChain++;
       lastSeenTs = e.timestamp;
     }
-    if (fresh.length) renderCrimeChainCurrent();
+    if (fresh.length) { renderCrimeChainCurrent(); nerveDirty = true; } // let reconcileNerve re-walk for exact nerve
   } catch (error) {
     console.error(error); // TEST
   }
@@ -330,6 +448,7 @@ function crimeCounterTick() {
   if (dC > 0) crimeChain = 0;
   else if (dF > 0) { for (let k = 0; k < dF; k++) crimeChain = crimeChain ? crimeChain / 2 : 0; }
   else crimeChain += dS;
+  bumpNerveOptimistic(dS, dF, dC);
   ccBase = cur;
   lastSeenTs = Math.floor(Date.now() / 1000);
   renderCrimeChainCurrent();
@@ -338,12 +457,14 @@ function crimeCounterTick() {
 function crimeCounterController() {
   ccBase = readCrimeCounters();
   setInterval(crimeCounterTick, 300);
+  setInterval(reconcileNerve, 10000); // snap optimistic nerve to the exact log figure once it catches up
 }
 
 function ensureBadge() {
   if (!getApiKey()) { renderKeyHint(); return; }
   renderCrimeChainHTML();    // idempotent: bails if the heading anchor is absent or badge exists
   renderCrimeChainCurrent(); // idempotent: bails if the value node is absent
+  restoreNerveReadout();     // re-open the nerve readout if the user left it shown
 }
 
 function badgeController() {
