@@ -4250,7 +4250,7 @@
     group.appendChild(stokeRow);
     const fmtActions = (arr) => Array.isArray(arr) ? arr.map((a) => `${a.qty} ${CATALOG[a.resourceId]?.name ?? a.resourceId}`).join(", ") : "";
     scenSelect.addEventListener("change", () => {
-      const s = SCENARIOS.find((x) => x.scenarioName === scenSelect.value);
+      const s = scenarioIndex.get(scenSelect.value.toLowerCase()) || SCENARIOS.find((x) => x.scenarioName === scenSelect.value);
       payoutInp.value = s && s.payout != null ? String(s.payout) : "";
       placeInp.value = s ? fmtActions(s.actions?.place) : "";
       igniteInp.value = s ? fmtActions(s.actions?.ignite) : "";
