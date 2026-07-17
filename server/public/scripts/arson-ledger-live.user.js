@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.14
+// @version     1.0.15
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4) with material prices auto-updated from live Torn market prices via tornwar.com — no API key, works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -4333,6 +4333,15 @@
   }
   var ARSON_OVERRIDES_URL = "https://tornwar.com/data/arson-overrides.json";
   var _arsonOverridesCache = null;
+  var KEY_OVERRIDES_CACHE = "pyroLedger.v1.overridesCache";
+  function loadCachedOverrides() {
+    try {
+      var raw = store_get(KEY_OVERRIDES_CACHE, "");
+      if (!raw) return;
+      var o = JSON.parse(raw);
+      if (o && o.scenarios) _arsonOverridesCache = o;
+    } catch (_) {}
+  }
   function _arsonNameToId() {
     var m = {};
     for (var id in CATALOG) { var c = CATALOG[id]; if (c && c.name) m[String(c.name).toLowerCase()] = c.id; }
@@ -4371,8 +4380,10 @@
           var o; try { o = JSON.parse(r.responseText); } catch (_) { return; }
           if (!o || !o.scenarios) return;
           _arsonOverridesCache = o;
+          try { store_set(KEY_OVERRIDES_CACHE, r.responseText); } catch (_) {}
           applyArsonOverrides();
           resetScans();
+          refreshVisibleTooltip();
         }
       });
     } catch (_) {}
@@ -4866,13 +4877,22 @@
     return section.classList.contains("pending-collect") || !!section.closest(SEL.PENDING_COLLECT);
   }
   var tooltipState = /* @__PURE__ */ new WeakMap();
+  function refreshVisibleTooltip() {
+    if (!visibleMobileSection) return;
+    var st = tooltipState.get(visibleMobileSection);
+    if (!st || !st.hoverTarget) return;
+    tryTooltip(function (api) {
+      api.show(st.hoverTarget, st.getContent(), { position: "top", theme: "dark" });
+    });
+  }
   function wireTooltip(section, hoverTarget, getContent) {
     const existing = tooltipState.get(section);
     if (existing) {
       existing.getContent = getContent;
+      existing.hoverTarget = hoverTarget;
       return;
     }
-    const state = { getContent };
+    const state = { getContent, hoverTarget };
     tooltipState.set(section, state);
     const useTapOnlyTooltip = isIosDevice();
     if (!useTapOnlyTooltip) {
@@ -5026,6 +5046,7 @@
     wbFetchOverrides();
     if (apiKey) checkArsonAdmin(apiKey);
     populateScenarioIndex(SCENARIOS);
+    loadCachedOverrides();
     applyArsonOverrides();
     injectHighlightStyles();
     observer.observe(document.body, { childList: true, subtree: true });
