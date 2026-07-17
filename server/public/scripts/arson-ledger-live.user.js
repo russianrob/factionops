@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.13
+// @version     1.0.14
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4) with material prices auto-updated from live Torn market prices via tornwar.com — no API key, works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -4903,6 +4903,7 @@
             theme: "dark"
           });
           visibleMobileSection = section;
+          _pyroTipImg = null; // the shared tooltip now shows a recipe, not a name
         }
       });
     });
@@ -4945,7 +4946,12 @@
     img.dataset.pyroNameTap = "1";
     img.style.cursor = "pointer";
     img.addEventListener("click", (e) => {
-      e.stopPropagation();
+      // stopImmediatePropagation (not just stopPropagation): on sections with no
+      // fire-meter the recipe tooltip binds its click to this SAME .crime-image, so
+      // only blocking bubbling would still let that sibling handler fire and fight
+      // over the one shared tooltip. This handler is registered first (scanPage runs
+      // bindNameTap before applyToSection), so this suppresses the recipe handler.
+      e.stopImmediatePropagation();
       tryTooltip((api) => {
         if (_pyroTipImg === img) {
           try { api.hide(); } catch (_) {}
@@ -4953,6 +4959,7 @@
         } else {
           api.show(img, rawName);
           _pyroTipImg = img;
+          visibleMobileSection = null; // the shared tooltip now shows the name, not a recipe
         }
       });
     });
