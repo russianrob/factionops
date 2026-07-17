@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.15
-// @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4) with material prices auto-updated from live Torn market prices via tornwar.com — no API key, works in Torn PDA.
+// @version     1.0.16
+// @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4). Material prices update from live Torn market data using your own Torn API key (entered in the API tab). Works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
 // @license     MIT
@@ -3659,47 +3659,11 @@
     }
   }
 
-  // ── Live Prices fork: keyless auto-prices from tornwar.com ────────────────
-  // Pulls /api/items/prices (Torn item id -> live market_price) through the
-  // SAME tornIdToResource map + settingsCtx.setApiPrices the manual Refresh
-  // uses — so no API key and no @require. PDA-safe (GM_xmlhttpRequest), cached,
-  // re-pulled every 5 min.
-  var WB_AUTO_PRICES_URL = "https://tornwar.com/api/items/prices";
-  var WB_AUTO_PRICES_KEY = "wb_auto_prices_v1";
-  var WB_AUTO_PRICES_TTL = 5 * 60 * 1e3;
-  function wbApplyAutoPrices(byId) {
-    if (!byId || typeof byId !== "object") return;
-    const prices = {};
-    for (const [tornId, resourceId] of tornIdToResource) {
-      const p = Number(byId[tornId]);
-      if (p > 0) prices[resourceId] = p;
-    }
-    if (Object.keys(prices).length === 0) return;
-    try { settingsCtx.setApiPrices(prices, Date.now()); } catch (_) {}
-    try { scheduleScenarioRefresh(); } catch (_) {}
-  }
-  function wbFetchAutoPrices() {
-    let cached = null;
-    try { const raw = GM_getValue(WB_AUTO_PRICES_KEY, ""); if (raw) cached = JSON.parse(raw); } catch (_) {}
-    if (cached && cached.byId) wbApplyAutoPrices(cached.byId);
-    if (cached && cached.ts && Date.now() - cached.ts < WB_AUTO_PRICES_TTL) return;
-    try {
-      GM_xmlhttpRequest({
-        method: "GET",
-        url: WB_AUTO_PRICES_URL,
-        timeout: 1e4,
-        onload: (resp) => {
-          if (resp.status < 200 || resp.status >= 300) return;
-          let body;
-          try { body = JSON.parse(resp.responseText); } catch (_) { return; }
-          const byId = body && body.prices;
-          if (!byId) return;
-          wbApplyAutoPrices(byId);
-          try { GM_setValue(WB_AUTO_PRICES_KEY, JSON.stringify({ ts: Date.now(), byId })); } catch (_) {}
-        }
-      });
-    } catch (_) {}
-  }
+  // Material prices come from the user's OWN Torn API key: fetchApiPrices() (above)
+  // is triggered by the API tab's Refresh button and auto-runs when a key is saved,
+  // writing into apiPrices via setApiPrices. The keyless tornwar server price feed
+  // (/api/items/prices) was removed per user request — the ledger no longer pulls
+  // prices from the server, only from the player's own API key.
 
   // src/userscripts/arsonists-ledger/icons.ts
   var S = 'xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
@@ -5042,7 +5006,6 @@
   });
   function start() {
     loadState();
-    wbFetchAutoPrices();
     wbFetchOverrides();
     if (apiKey) checkArsonAdmin(apiKey);
     populateScenarioIndex(SCENARIOS);
