@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN: Display Crime Chain
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.15
+// @version      1.0.16
 // @description  Calculates and displays your current crime chain (Crimes 2.0 DOM-compat patch)
 // @author       Ironhydedragon[2428902]
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -480,20 +480,19 @@ function badgeController() {
   ensureBadge();
 }
 
-//// Promise race conditions
-// necessary as PDA scripts are inject after window.onload
-const PDAPromise = new Promise((res, rej) => {
-  if (document.readyState === 'complete') res();
-});
-
-const browserPromise = new Promise((res, rej) => {
-  window.addEventListener('load', () => res());
-});
-
-(async () => {
+//// Startup gate. The old Promise.race([readyState==='complete', window 'load'])
+// could deadlock in a sandboxed webext runtime that injected the script AFTER
+// 'load' had already fired while readyState wasn't yet 'complete' — both promises
+// stayed pending forever, so initController() never ran (no badge, no hint, not
+// even the stylesheet). Instead, run once on whichever of DOMContentLoaded / load
+// / a short fallback timeout fires first — this can't wedge. badgeController's
+// MutationObserver still handles the SPA mounting its anchor later.
+let __ccStarted = false;
+async function ccStart() {
+  if (__ccStarted) return;
+  __ccStarted = true;
   try {
     console.log('⛓️ Crime chain script ON!'); // TEST
-    await Promise.race([PDAPromise, browserPromise]);
     initController();
     badgeController();
     if (getApiKey()) {
@@ -504,4 +503,12 @@ const browserPromise = new Promise((res, rej) => {
   } catch (error) {
     console.error(error); // TEST
   }
-})();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', ccStart, { once: true });
+  window.addEventListener('load', ccStart, { once: true });
+  setTimeout(ccStart, 1500); // final backstop: never deadlock if neither event fires in this runtime
+} else {
+  ccStart(); // interactive/complete — the DOM body already exists, run now
+}
