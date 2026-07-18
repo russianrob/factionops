@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.47
+// @version      5.1.48
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.47';
+    const SCRIPT_VERSION = '5.1.48';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -104,9 +104,10 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
         // become a fallback for teammates whose own BSP cache is empty
         // for those targets.
         SHARE_BSP: GM_getValue('factionops_share_bsp', false),
-        // Beta: replace the 1s poll with a hanging GET /api/poll-long (long-poll
-        // + deltas) when no SSE/Socket.IO is up (i.e. phones). Off by default.
-        USE_LONGPOLL: GM_getValue('factionops_use_longpoll', false),
+        // Replace the 1s poll with a hanging GET /api/poll-long (long-poll +
+        // deltas) when no SSE/Socket.IO is up (i.e. phones). Default ON, with an
+        // auto-fallback to the standard poll if the transport fails on a device.
+        USE_LONGPOLL: GM_getValue('factionops_use_longpoll', true),
         // v5.0.26: bumped per user request — was 5 min / 15 min.
         // Regular calls: 15 min auto-expire (auto-uncall-on-attack
         // is a separate server-side change, see backlog).
@@ -4686,6 +4687,13 @@ body.wb-chain-active {
     // so it degrades gracefully wherever the platform caps the hold duration.
     let _lpCursor = 0;
     let _lpWarId = null;
+    // Auto-fallback: if long-poll NEVER succeeds on this device (broken transport),
+    // give up after a few tries and revert to the standard 1s/5s poll for the
+    // session. Transient errors after it has worked at least once do NOT disable
+    // it (those are just normal network blips, handled by the usual backoff).
+    let _lpEverSucceeded = false;
+    let _lpFailStreak = 0;
+    let _lpDisabled = false;
     function longPollFetch(warId, since, timeoutMs) {
         const url = `${CONFIG.SERVER_URL}/api/poll-long?warId=${encodeURIComponent(warId)}&since=${since || 0}&_t=${Date.now()}`;
         const headers = { 'Authorization': `Bearer ${state.jwtToken}` };
@@ -4729,6 +4737,8 @@ body.wb-chain-active {
                 updateConnectionUI();
             }
             pollErrorCount = 0;
+            _lpEverSucceeded = true;
+            _lpFailStreak = 0;
             if (data) {
                 if (typeof data.v === 'number') _lpCursor = data.v;
                 // Partial-safe: applyServerData only touches sections that are present.
@@ -4736,6 +4746,13 @@ body.wb-chain-active {
             }
         } catch (err) {
             pollErrorCount++;
+            _lpFailStreak++;
+            // Never worked on this device → the transport is unsupported here; stop
+            // trying and let pollOnce/scheduleNextPoll route back to the standard poll.
+            if (!_lpEverSucceeded && _lpFailStreak >= 3 && !_lpDisabled) {
+                _lpDisabled = true;
+                warn('Long-poll unsupported here — falling back to standard polling for this session');
+            }
             if (state.connected && pollErrorCount >= 5) {
                 state.connected = false;
                 if (_disconnectGraceTimer) clearTimeout(_disconnectGraceTimer);
@@ -4759,8 +4776,9 @@ body.wb-chain-active {
             return;
         }
 
-        // Long-poll transport takes over when enabled and no realtime is connected.
-        if (CONFIG.USE_LONGPOLL && !sseConnected && !(realtimeSocket && realtimeSocket.connected)) {
+        // Long-poll transport takes over when enabled, not auto-disabled, and no
+        // realtime is connected.
+        if (CONFIG.USE_LONGPOLL && !_lpDisabled && !sseConnected && !(realtimeSocket && realtimeSocket.connected)) {
             return longPollOnce(warId);
         }
 
@@ -4853,7 +4871,7 @@ body.wb-chain-active {
 
         // In long-poll mode the wait already happened inside the held request, so
         // reconnect after just a tiny gap; error backoff below still applies.
-        const longPoll = CONFIG.USE_LONGPOLL && !sseConnected && !(realtimeSocket && realtimeSocket.connected);
+        const longPoll = CONFIG.USE_LONGPOLL && !_lpDisabled && !sseConnected && !(realtimeSocket && realtimeSocket.connected);
         const desired = longPoll ? LONGPOLL_GAP_MS : (isWarActive() ? POLL_FAST_MS : POLL_IDLE_MS);
         if (desired !== currentPollInterval) {
             log('Poll interval changed: ' + currentPollInterval + 'ms → ' + desired + 'ms');
