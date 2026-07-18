@@ -714,21 +714,30 @@ export function getKeyPoolingOpt(playerId) {
 }
 
 /**
- * Create a default pool opt-in for a player if they don't already have
- * an explicit record. Called from /api/auth. Existing records (including
- * explicit opt-outs) are preserved. If meta (accessLevel, factionSelections)
- * is provided AND the existing record predates per-purpose routing,
- * backfill the capabilities so the router can dispatch correctly.
+ * Ensure an eligible signed-in player's key is in the pool. Called from
+ * /api/auth. Key pooling is MANDATORY (the opt-out toggle was removed): a
+ * prior USER opt-out is overridden back to enabled, but a SYSTEM quarantine
+ * (a key demoted for repeated errors) is preserved so a known-broken key
+ * doesn't churn back in. If meta (accessLevel, factionSelections) is provided
+ * and the record predates per-purpose routing, backfill the capabilities.
  */
 export function ensureDefaultPoolOpt(playerId, factionId, meta = {}) {
   const pid = String(playerId);
   const existing = keyPoolingOpt.get(pid);
   if (existing) {
-    // Backfill auth metadata onto pre-routing entries so the per-purpose
-    // router can start dispatching them correctly without forcing the
-    // user to re-toggle in settings.
     let changed = false;
     const patched = { ...existing };
+    // Mandatory pooling: override a prior USER opt-out (enabled:false with no
+    // quarantine) back to enabled and re-point it at the faction they're now
+    // authing under, so every signed-in officer's key helps even the load.
+    // A SYSTEM quarantine (quarantinedAt set) is left alone.
+    if (existing.enabled === false && !existing.quarantinedAt) {
+      patched.enabled = true;
+      patched.factionId = String(factionId || "");
+      changed = true;
+    }
+    // Backfill auth metadata onto pre-routing entries so the per-purpose
+    // router can start dispatching them correctly without a re-toggle.
     if (meta.accessLevel != null && existing.accessLevel == null) {
       patched.accessLevel = Number(meta.accessLevel); changed = true;
     }

@@ -2086,12 +2086,35 @@ router.get("/api/stream", (req, res, next) => {
 });
 
 
+// Runtime kill-switch for /api/poll. `touch <DATA_DIR>/poll-paused.flag` to
+// pause: mobile/PDA clients (which use polling as their PRIMARY transport since
+// Socket.IO is blocked in the WebView) get 503s, escalate to their ~30s backoff
+// cap and show "disconnected" — which is exactly the CPU-lag relief we want.
+// Socket.IO desktop clients are unaffected. Delete the flag to resume. No
+// redeploy needed; the flag is re-checked at most once every 2s.
+let _pollPausedCache = { val: false, at: 0 };
+function isPollPaused() {
+  const now = Date.now();
+  if (now - _pollPausedCache.at > 2000) {
+    try {
+      const flag = pathJoin(process.env.DATA_DIR || pathJoin(__routes_dir, 'data'), 'poll-paused.flag');
+      _pollPausedCache.val = existsSync(flag);
+    } catch { _pollPausedCache.val = false; }
+    _pollPausedCache.at = now;
+  }
+  return _pollPausedCache.val;
+}
+
 // ── GET /api/poll ────────────────────────────────────────────────────────
 // Returns full war state for the authenticated player's faction.
 // The client polls this endpoint at 1-2s intervals instead of using Socket.IO.
 // Accepts token via Authorization header OR ?token= query param (for PDA).
 
 router.get("/api/poll", (req, res, next) => {
+  // Kill-switch — short-circuit before auth so a paused fleet backs off cheaply.
+  if (isPollPaused()) {
+    return res.status(503).json({ paused: true, message: "FactionOps polling is temporarily paused" });
+  }
   // Allow token in query string for PDA (PDA_httpGet can't set headers)
   if (!req.headers.authorization && req.query.token) {
     req.headers.authorization = `Bearer ${req.query.token}`;
@@ -2442,10 +2465,15 @@ router.get("/api/pool-opt", requireAuth, (req, res) => {
 
 router.post("/api/pool-opt", requireAuth, async (req, res) => {
   const { enabled } = (req.body || {});
-  // Opt-OUT is always allowed. Opt-IN must re-verify the key has at
-  // least one pool-routable faction selection — Public/Minimal keys
-  // (or Limited keys with no useful selections) can't help any poller
-  // so we refuse up front with an actionable message.
+  // Key pooling is mandatory for signed-in members (the opt-out toggle was
+  // removed) — refuse opt-out attempts (a stale cached client or a direct API
+  // call) so every officer's key stays available to even the API-call load.
+  if (!enabled) {
+    return res.status(403).json({ error: "Key pooling is required for FactionOps members and can't be disabled." });
+  }
+  // Opt-IN re-verifies the key has at least one pool-routable faction
+  // selection — Public/Minimal keys (or Limited keys with no useful
+  // selections) can't help any poller, so we refuse with an actionable message.
   let meta = {};
   let useful = [];
   if (enabled) {
