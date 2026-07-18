@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.10
+// @version      3.4.11
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.10';
+    var SCRIPT_VERSION = '3.4.11';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1832,8 +1832,19 @@
         for (var i = 0; i < containers.length; i++) {
             var el = containers[i];
 
-            // Skip already processed
-            if (el.getAttribute('data-rwp-priced') === '1' || el.querySelector('.rwp-price-tag')) continue;
+            // Skip already processed — EXCEPT a row that was priced before its bonus
+            // was in the DOM. Armoury rows load bonuses lazily and inventory details
+            // only appear on expand, so the first pass can only produce a base median.
+            // Once the bonus shows up, drop that stale badge and re-price bonus-aware
+            // so the row matches the expanded "RWP Est" instead of showing two prices.
+            if (el.getAttribute('data-rwp-priced') === '1' || el.querySelector('.rwp-price-tag')) {
+                if (el.getAttribute('data-rwp-nobonus') !== '1') continue;
+                if (extractBonuses(el).length === 0) continue;
+                var staleTag = el.querySelector('.rwp-price-tag');
+                if (staleTag && staleTag.parentNode) staleTag.parentNode.removeChild(staleTag);
+                el.removeAttribute('data-rwp-priced');
+                el.removeAttribute('data-rwp-nobonus');
+            }
 
             var rawName = extractWeaponName(el);
             var normalizedName = normalizeWeaponName(rawName);
@@ -2016,6 +2027,10 @@
             }
 
             el.setAttribute('data-rwp-priced', '1');
+            // Flag rows priced while no bonus was visible yet, so the next pass can
+            // upgrade them to the bonus-aware estimate once the bonus loads in.
+            if (bonuses.length === 0) el.setAttribute('data-rwp-nobonus', '1');
+            else el.removeAttribute('data-rwp-nobonus');
         }
     }
 
