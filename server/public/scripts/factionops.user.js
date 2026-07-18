@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.49
+// @version      5.1.50
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.49';
+    const SCRIPT_VERSION = '5.1.50';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -4449,8 +4449,8 @@ body.wb-chain-active {
     // requests overlapped and GM_xmlhttpRequest queue filled up. 1000ms is
     // the sweet spot — feels live, stays well under the browser's
     // concurrent-socket limit and the server global rate limiter.
-    const POLL_FAST_MS  = 2000;  // War active: 2s — this is now only the FALLBACK path (long-poll is default); gentler than the old 1s
-    const POLL_IDLE_MS  = 5000;  // No war: 5s
+    const POLL_FAST_MS  = 5000;   // War active: 5s — FALLBACK path only (long-poll is the default transport)
+    const POLL_IDLE_MS  = 20000;  // No war: 20s — FALLBACK path only
     const LONGPOLL_GAP_MS = 250; // beta long-poll: tiny reconnect gap (the hang IS the wait)
     let currentPollInterval = POLL_IDLE_MS;
 
