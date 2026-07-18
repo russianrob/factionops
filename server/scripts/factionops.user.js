@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.46
+// @version      5.1.47
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.46';
+    const SCRIPT_VERSION = '5.1.47';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -104,6 +104,9 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
         // become a fallback for teammates whose own BSP cache is empty
         // for those targets.
         SHARE_BSP: GM_getValue('factionops_share_bsp', false),
+        // Beta: replace the 1s poll with a hanging GET /api/poll-long (long-poll
+        // + deltas) when no SSE/Socket.IO is up (i.e. phones). Off by default.
+        USE_LONGPOLL: GM_getValue('factionops_use_longpoll', false),
         // v5.0.26: bumped per user request — was 5 min / 15 min.
         // Regular calls: 15 min auto-expire (auto-uncall-on-attack
         // is a separate server-side change, see backlog).
@@ -134,6 +137,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
             ENEMY_ATTACK_NOTIF: 'factionops_enemy_attack_notif',
             KEEP_ALIVE: 'factionops_keep_alive',
             SHARE_BSP: 'factionops_share_bsp',
+            USE_LONGPOLL: 'factionops_use_longpoll',
         };
         if (gmKeys[key]) {
             GM_setValue(gmKeys[key], value);
@@ -4446,9 +4450,11 @@ body.wb-chain-active {
     // concurrent-socket limit and the server global rate limiter.
     const POLL_FAST_MS  = 1000;  // War active: 1s (CommandCenter; only used when Socket.IO is unavailable)
     const POLL_IDLE_MS  = 5000;  // No war: 5s
+    const LONGPOLL_GAP_MS = 250; // beta long-poll: tiny reconnect gap (the hang IS the wait)
     let currentPollInterval = POLL_IDLE_MS;
 
     let pollTimer = null;
+    let pollEpoch = 0; // bumped when a fresh poll loop starts, so a stale in-flight long-poll can't reschedule a loop it no longer owns
     let pollErrorCount = 0;
     /** v5.0.24: grace timer that delays the "disconnected" UI by 15s.
      *  Mobile data on PDA has frequent sub-second blips that recover
@@ -4670,11 +4676,92 @@ body.wb-chain-active {
     /**
      * Single poll cycle: fetch server state, diff against local, fire notifications.
      */
+    // ── Long-poll transport (beta, CONFIG.USE_LONGPOLL) ────────────────────
+    // When enabled AND no SSE/Socket.IO is up (phones), replace the 1s/5s poll
+    // with a hanging GET /api/poll-long: the server holds it until the war state
+    // changes (or ~25s), then returns ONLY the changed sections, which we feed
+    // through the existing (partial-safe) applyServerData. Idle = one held
+    // connection and zero re-renders; a change wakes it in ~1s with a tiny
+    // payload. Any timeout/abort is treated as "no change" and we simply re-poll,
+    // so it degrades gracefully wherever the platform caps the hold duration.
+    let _lpCursor = 0;
+    let _lpWarId = null;
+    function longPollFetch(warId, since, timeoutMs) {
+        const url = `${CONFIG.SERVER_URL}/api/poll-long?warId=${encodeURIComponent(warId)}&since=${since || 0}&_t=${Date.now()}`;
+        const headers = { 'Authorization': `Bearer ${state.jwtToken}` };
+        return new Promise((resolve, reject) => {
+            if (!state.jwtToken) return reject(new Error('Not authenticated'));
+            const done = (res) => {
+                if (!res || typeof res.status !== 'number') return resolve(null);
+                if (res.status < 200 || res.status >= 300) return reject(new Error('HTTP ' + res.status));
+                try { resolve(JSON.parse(res.responseText)); } catch (_) { resolve(null); }
+            };
+            if (IS_PDA && typeof PDA_httpGet === 'function') {
+                // PDA holds the GET per its native timeout; the server responds in
+                // <=25s so we usually get the real delta, otherwise we re-poll.
+                PDA_httpGet(url, headers)
+                    .then(r => done(typeof r === 'string' ? { status: 200, responseText: r } : r))
+                    .catch(e => reject(e instanceof Error ? e : new Error('Network error')));
+            } else if (typeof GM_xmlhttpRequest === 'function') {
+                GM_xmlhttpRequest({
+                    method: 'GET', url, headers, timeout: timeoutMs,
+                    onload: done,
+                    onerror: (e) => reject(e instanceof Error ? e : new Error('Network error')),
+                    ontimeout: () => resolve(null), // no change within the hold → re-poll
+                });
+            } else {
+                fetch(url, { headers })
+                    .then(async r => done({ status: r.status, responseText: await r.text() }))
+                    .catch(e => reject(e));
+            }
+        });
+    }
+    async function longPollOnce(warId) {
+        const myEpoch = pollEpoch;
+        // New war (enemy switch / different warId) → resync from version 0.
+        if (warId !== _lpWarId) { _lpWarId = warId; _lpCursor = 0; }
+        try {
+            const data = await longPollFetch(warId, _lpCursor, 35000);
+            if (!state.connected) {
+                state.connected = true;
+                state.connecting = false;
+                if (_disconnectGraceTimer) { clearTimeout(_disconnectGraceTimer); _disconnectGraceTimer = null; }
+                updateConnectionUI();
+            }
+            pollErrorCount = 0;
+            if (data) {
+                if (typeof data.v === 'number') _lpCursor = data.v;
+                // Partial-safe: applyServerData only touches sections that are present.
+                if (data.changed) applyServerData(data.changed);
+            }
+        } catch (err) {
+            pollErrorCount++;
+            if (state.connected && pollErrorCount >= 5) {
+                state.connected = false;
+                if (_disconnectGraceTimer) clearTimeout(_disconnectGraceTimer);
+                _disconnectGraceTimer = setTimeout(() => { _disconnectGraceTimer = null; if (!state.connected) updateConnectionUI(); }, 15000);
+                warn('Long-poll failed (5+):', err.message);
+            }
+            if (err.message && err.message.includes('401')) {
+                try { await authenticate(); pollErrorCount = 0; } catch (e) { warn('Re-auth failed:', e.message); }
+            }
+        } finally {
+            // Only reschedule if THIS invocation still owns the current loop — guards
+            // against a stop→start flap during the long hang spawning a duplicate loop.
+            if (myEpoch === pollEpoch && pollTimer && !sseConnected && !(realtimeSocket && realtimeSocket.connected)) scheduleNextPoll();
+        }
+    }
+
     async function pollOnce() {
         const warId = deriveWarId();
         if (!warId || !state.jwtToken) {
             if (IS_PDA) log('pollOnce skip — warId:', warId, 'jwt:', !!state.jwtToken, 'factionId:', state.myFactionId);
             return;
+        }
+
+        // Long-poll transport takes over when enabled and no realtime is connected.
+        if (CONFIG.USE_LONGPOLL && !sseConnected && !(realtimeSocket && realtimeSocket.connected)) {
+            return longPollOnce(warId);
         }
 
         try {
@@ -4754,6 +4841,7 @@ body.wb-chain-active {
         log('Starting adaptive poll loop (fast=' + POLL_FAST_MS + 'ms, idle=' + POLL_IDLE_MS + 'ms)');
 
         // Initialize timer placeholder
+        pollEpoch++; // new loop generation
         pollTimer = true;
 
         // Immediate first poll
@@ -4763,7 +4851,10 @@ body.wb-chain-active {
     function scheduleNextPoll() {
         if (!pollTimer || sseConnected || (realtimeSocket && realtimeSocket.connected)) return;
 
-        const desired = isWarActive() ? POLL_FAST_MS : POLL_IDLE_MS;
+        // In long-poll mode the wait already happened inside the held request, so
+        // reconnect after just a tiny gap; error backoff below still applies.
+        const longPoll = CONFIG.USE_LONGPOLL && !sseConnected && !(realtimeSocket && realtimeSocket.connected);
+        const desired = longPoll ? LONGPOLL_GAP_MS : (isWarActive() ? POLL_FAST_MS : POLL_IDLE_MS);
         if (desired !== currentPollInterval) {
             log('Poll interval changed: ' + currentPollInterval + 'ms → ' + desired + 'ms');
             currentPollInterval = desired;
@@ -6123,6 +6214,20 @@ body.wb-chain-active {
                 <strong>Limited</strong> key — never a Full key.
             </div>
 
+            <div class="wb-settings-row">
+                <span>Long-poll transport (beta)</span>
+                <label class="wb-toggle">
+                    <input type="checkbox" id="wb-toggle-longpoll" ${CONFIG.USE_LONGPOLL ? 'checked' : ''}>
+                    <span class="wb-toggle-slider"></span>
+                </label>
+            </div>
+            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
+                Experimental. On phones this replaces the 1-second poll with a
+                held connection that only wakes on real changes — much lighter on
+                CPU/battery. Falls back automatically if unsupported; desktop uses
+                real-time and is unaffected. Takes effect within a few seconds.
+            </div>
+
             <div style="margin: 14px 0;">
                 <label for="wb-input-broadcast-roles">Custom Admin Roles (comma-separated)</label>
                 <div style="display:flex;gap:6px;">
@@ -6350,6 +6455,16 @@ body.wb-chain-active {
                 stopKeepAlive();
             }
         });
+
+        const longPollToggle = document.getElementById('wb-toggle-longpoll');
+        if (longPollToggle) {
+            longPollToggle.addEventListener('change', (e) => {
+                // The transport is re-chosen on the next poll cycle (pollOnce reads
+                // CONFIG.USE_LONGPOLL each time), so no reload is needed.
+                setConfig('USE_LONGPOLL', e.target.checked);
+                showToast('Long-poll ' + (e.target.checked ? 'enabled' : 'disabled') + ' — applies within a few seconds', 'info');
+            });
+        }
 
         // Key-pool participation is automatic and mandatory for everyone signed
         // in (see the disclosure note in settings) — the opt-out toggle was removed
