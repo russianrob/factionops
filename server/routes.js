@@ -247,6 +247,8 @@ function broadcastWarUpdate(warId) {
   if (io) io.to(`war_${warId}`).emit("war_update", payload);
   // Push to SSE stream clients
   broadcastSSE(warId, payload);
+  // Instant-wake any held /api/poll-long waiters for this war (no-op if none).
+  wakeLongPoll(warId);
 }
 
 /** Track call expiry timers so they can be cancelled. */
@@ -2246,6 +2248,135 @@ router.get("/api/poll", (req, res, next) => {
     // if nothing's pending — no extra round-trip cost when idle.
     broadcasts: pendingBroadcasts.drainForPlayer(playerId),
   });
+});
+
+// ── GET /api/poll-long — long-poll + delta (PROTOTYPE, additive) ───────────
+// Efficient stand-in for the 1s /api/poll on phones (which can't hold an
+// SSE/Socket.IO connection): the request HANGS until the war state actually
+// changes (or ~25s), then returns ONLY the sections that changed since the
+// client's `since` version. Change detection hashes the in-memory war state, so
+// ONE server-side check catches every mutation — routes, socket-handlers,
+// war-status-monitor — without instrumenting the ~20 scattered mutation sites.
+// /api/poll is left completely untouched.
+
+// Per-war, player-independent sections we version + diff (hashed once per war).
+function _lpWarSections(war, warId, factionId) {
+  return {
+    enemyStatuses: war.enemyStatuses || {},
+    calls: war.calls || {},
+    priorities: war.priorities || {},
+    retals: war.incomingRetals || [],
+    chainData: war.chainData || null,
+    warTarget: war.warTarget || null,
+    warScores: war.warScores || null,
+    warEnded: war.warEnded || false,
+    warResult: war.warResult || null,
+    strategy: war.strategy || null,
+    enemyActivityByHour: war.enemyActivityByHour || null,
+    ourFactionOnline: war.ourFactionOnline || null,
+    enemyFactionId: war.enemyFactionId || null,
+    enemyFactionName: war.enemyFactionName || null,
+    onlinePlayers: store.getOnlinePlayersForWar(warId),
+    viewers: store.getViewersForWar(warId),
+    memberBars: store.getFactionBars(factionId),
+  };
+}
+// Bump the war's long-poll version + per-section stamps for whatever changed
+// since the last check. Returns true if anything moved.
+function _lpRefresh(war, sections) {
+  if (!war._lph) { war._lph = {}; war._secv = {}; war._lpv = 0; }
+  let bumped = false;
+  for (const k in sections) {
+    const j = JSON.stringify(sections[k]);
+    if (war._lph[k] !== j) {
+      if (!bumped) { war._lpv++; bumped = true; }
+      war._lph[k] = j;
+      war._secv[k] = war._lpv;
+    }
+  }
+  return bumped;
+}
+// Build the {v, full, changed} body: only sections whose stamp is newer than
+// the client's `since` (all of them when since===0 or a stale cursor).
+function _lpBuildDelta(war, sections, since, playerId) {
+  const full = !(since > 0);
+  const changed = {};
+  for (const k in sections) {
+    if (full || (war._secv[k] || 0) > since) changed[k] = sections[k];
+  }
+  const bc = pendingBroadcasts.drainForPlayer(playerId);
+  if (bc && bc.length) changed.broadcasts = bc;
+  return { v: war._lpv, full, changed };
+}
+
+const _lpWaiters = new Set();
+let _lpTicker = null;
+function _lpStartTicker() {
+  if (_lpTicker) return;
+  _lpTicker = setInterval(_lpTick, 1000);
+  if (_lpTicker.unref) _lpTicker.unref();
+}
+function _lpFinish(w, body) {
+  _lpWaiters.delete(w);
+  if (!w.res.headersSent) { try { w.res.json(body); } catch (_) {} }
+}
+function _lpServe(w, war) {
+  const sections = _lpWarSections(war, w.warId, w.factionId);
+  _lpRefresh(war, sections);
+  if (war._lpv > w.since) { _lpFinish(w, _lpBuildDelta(war, sections, w.since, w.playerId)); return true; }
+  return false;
+}
+function _lpTick() {
+  if (_lpWaiters.size === 0) { clearInterval(_lpTicker); _lpTicker = null; return; }
+  const now = Date.now();
+  for (const w of [..._lpWaiters]) {
+    const war = store.getWar(w.warId);
+    if (!war) { _lpFinish(w, { v: 0, full: false, changed: {}, gone: true }); continue; }
+    if (_lpServe(w, war)) continue;
+    if (now - w.at > 25000) _lpFinish(w, { v: war._lpv, full: false, changed: {}, keepalive: true });
+  }
+}
+// Instant wake for client-initiated changes: calls/priorities/target/etc. route
+// through broadcastWarUpdate, which calls this. Server-poller changes (enemy
+// statuses) are picked up by the 1s ticker instead.
+function wakeLongPoll(warId) {
+  if (_lpWaiters.size === 0) return;
+  const war = store.getWar(warId);
+  for (const w of [..._lpWaiters]) {
+    if (w.warId !== warId) continue;
+    if (!war) { _lpFinish(w, { v: 0, full: false, changed: {}, gone: true }); continue; }
+    _lpServe(w, war);
+  }
+}
+
+router.get("/api/poll-long", (req, res, next) => {
+  if (!req.headers.authorization && req.query.token) {
+    req.headers.authorization = `Bearer ${req.query.token}`;
+  }
+  next();
+}, requireAuth, async (req, res) => {
+  const { playerId, factionId } = req.user;
+  const { warId, enemyFactionId } = req.query;
+  if (!warId) return res.status(400).json({ error: "warId query parameter is required" });
+  const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null);
+  if (war.factionId !== factionId) return res.status(403).json({ error: "You are not a member of this war's faction" });
+  war.lastClientPollAt = Date.now();
+
+  const since = parseInt(req.query.since, 10) || 0;
+  const sections = _lpWarSections(war, warId, factionId);
+  _lpRefresh(war, sections);
+
+  if (since !== war._lpv) {
+    // since=0 → full; since<_lpv → delta; since>_lpv (stale cursor, e.g. a
+    // server restart reset _lpv) → full resync.
+    const effSince = (since > 0 && since < war._lpv) ? since : 0;
+    return res.json(_lpBuildDelta(war, sections, effSince, playerId));
+  }
+  // Caught up (since === current version) → hold until a change or ~25s.
+  const w = { res, req, warId, factionId, playerId, since, at: Date.now() };
+  _lpWaiters.add(w);
+  _lpStartTicker();
+  req.on("close", () => { _lpWaiters.delete(w); });
 });
 
 // ── GET /api/war/:warId/strategy ─────────────────────────────────────
