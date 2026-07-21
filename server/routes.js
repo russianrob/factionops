@@ -4340,6 +4340,12 @@ function analyzeWarReport(ourData, enemyData, estimates, warScores, warEffort) {
     winReasoning,
     strengthsWeaknesses,
     enemyVulnerabilities: enemyAnalysis.vulnerabilities,
+    // Inactive (24h+ since last action) rosters for BOTH factions — ours flags
+    // members likely to no-show; theirs flags safe/dead-weight targets.
+    inactivePlayers: {
+      our: ourAnalysis.vulnerabilities.inactive,
+      enemy: enemyAnalysis.vulnerabilities.inactive,
+    },
     warEffort: {
       our: warEffort.our || null,
       enemy: warEffort.enemy || null,

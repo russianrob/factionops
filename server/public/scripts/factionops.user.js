@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.51
+// @version      5.1.52
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.51';
+    const SCRIPT_VERSION = '5.1.52';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12292,6 +12292,7 @@ body.wb-chain-active {
         const sw = report.strengthsWeaknesses;
         const ev = report.enemyVulnerabilities;
         const we = report.warEffort; // war-effort roster (>=5 hits, avg recent wars)
+        const inact = report.inactivePlayers; // {our, enemy} inactive 24h+
 
         const winClass = wp >= 70 ? 'high' : wp >= 40 ? 'mid' : 'low';
 
@@ -12477,6 +12478,31 @@ body.wb-chain-active {
                     <div class="wb-scout-compare-side theirs">
                         <div class="wb-scout-compare-row"><span class="lbl">Avg fighters</span><span class="val" style="color:#e17055;font-weight:700">${enemyWe.avg != null ? enemyWe.avg : '—'}</span></div>
                         ${perWarRows(enemyWe)}
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        // Inactive players (24h+ since last action) for BOTH factions. Ours =
+        // likely no-shows to chase up; theirs = safe/dead-weight targets.
+        if (inact && ((inact.our && inact.our.length) || (inact.enemy && inact.enemy.length))) {
+            const ourIn = inact.our || [], enemyIn = inact.enemy || [];
+            const list = (arr, color) => {
+                if (!arr.length) return '<div style="font-size:10px;color:var(--wb-text-muted)">none</div>';
+                return arr.slice(0, 12).map(m => `<div style="display:flex;justify-content:space-between;font-size:10px;"><span style="color:${color}">${escapeHtml(m.name)} <span style="color:var(--wb-text-muted)">Lv${m.level}</span></span><span style="color:var(--wb-text-muted)">${formatDuration(m.lastActionAgo)}</span></div>`).join('')
+                    + (arr.length > 12 ? `<div style="opacity:0.5;font-size:10px">... and ${arr.length - 12} more</div>` : '');
+            };
+            html += `<div style="margin-top:8px;">
+                <div style="font-size:11px;font-weight:600;color:var(--wb-text-muted);margin-bottom:4px;">Inactive Players (24h+)</div>
+                <div class="wb-scout-compare">
+                    <div class="wb-scout-compare-side ours">
+                        <div class="wb-scout-compare-row"><span class="lbl">Ours inactive</span><span class="val" style="color:#fdcb6e;font-weight:700">${ourIn.length}</span></div>
+                        ${list(ourIn, '#fdcb6e')}
+                    </div>
+                    <div class="wb-scout-compare-vs">VS</div>
+                    <div class="wb-scout-compare-side theirs">
+                        <div class="wb-scout-compare-row"><span class="lbl">Theirs inactive</span><span class="val" style="color:#00b894;font-weight:700">${enemyIn.length}</span></div>
+                        ${list(enemyIn, '#00b894')}
                     </div>
                 </div>
             </div>`;
