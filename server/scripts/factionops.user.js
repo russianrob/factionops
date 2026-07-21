@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.52
+// @version      5.1.53
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.52';
+    const SCRIPT_VERSION = '5.1.53';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12276,6 +12276,60 @@ body.wb-chain-active {
         return Math.floor(seconds / 86400) + 'd';
     }
 
+    // Waterfall of the win-probability calculation. Renders report.winBreakdown
+    // (base 50 → each factor's ± points → clamped final) as horizontal floating
+    // bars on a 0–100 scale: green helps us, red hurts us, neutral = totals /
+    // no-effect. Every row is labelled with its Δ so colour isn't the only channel.
+    // Collapsed by default so it doesn't dominate the report.
+    function renderWinWaterfall(bd) {
+        if (!Array.isArray(bd) || bd.length < 2) return '';
+        const GREEN = 'var(--wb-online-green, #00b894)';
+        const RED = '#d63031';
+        const NEUTRAL = 'var(--wb-text-muted, #636e72)';
+        const final = bd[bd.length - 1];
+        const finalPct = final ? final.running : '';
+        const rows = bd.map(b => {
+            const isFinal = b.final;
+            const isBase = b.factor === 'Base (even odds)';
+            let seg;
+            if (isBase || isFinal) {
+                const col = isFinal ? 'var(--wb-text, #dfe6e9)' : NEUTRAL;
+                const op = isFinal ? '0.9' : '0.55';
+                seg = `<div style="position:absolute;top:3px;height:14px;left:0;width:${b.running}%;background:${col};opacity:${op};border-radius:3px;"></div>`;
+            } else if (b.delta === 0) {
+                seg = `<div style="position:absolute;top:6px;left:${b.running}%;width:7px;height:7px;border-radius:50%;background:${NEUTRAL};transform:translateX(-3px);"></div>`;
+            } else {
+                const prev = b.running - b.delta;
+                const lo = Math.min(prev, b.running), hi = Math.max(prev, b.running);
+                const col = b.delta > 0 ? GREEN : RED;
+                seg = `<div style="position:absolute;top:0;bottom:0;left:${prev}%;width:2px;background:${NEUTRAL};opacity:.35;"></div>` +
+                      `<div style="position:absolute;top:3px;height:14px;left:${lo}%;width:${hi - lo}%;background:${col};border-radius:3px;"></div>`;
+            }
+            const vs = (b.us != null || b.them != null) && !isFinal
+                ? `<span style="color:var(--wb-text-muted);font-weight:400;font-size:9px;"> ${b.us != null ? escapeHtml(b.us) : '—'} v ${b.them != null ? escapeHtml(b.them) : '—'}</span>` : '';
+            const dLabel = isFinal ? finalPct + '%' : b.delta > 0 ? '+' + b.delta : b.delta < 0 ? '−' + Math.abs(b.delta) : '0';
+            const dCol = isFinal ? 'var(--wb-text, #dfe6e9)' : b.delta > 0 ? GREEN : b.delta < 0 ? RED : NEUTRAL;
+            return `<div style="display:grid;grid-template-columns:120px 1fr 40px;align-items:center;gap:6px;padding:2px 0;${isFinal ? 'border-top:1px solid var(--wb-border);margin-top:3px;padding-top:5px;' : ''}">
+                <div style="font-size:10px;${isFinal ? 'font-weight:700;' : 'font-weight:600;'}">${escapeHtml(b.factor)}${vs}</div>
+                <div style="position:relative;height:20px;">${seg}<div style="position:absolute;top:-2px;bottom:-2px;left:50%;width:1px;background:var(--wb-border);opacity:.5;"></div></div>
+                <div style="text-align:right;font-size:11px;font-weight:700;color:${dCol};font-variant-numeric:tabular-nums;">${dLabel}</div>
+            </div>`;
+        }).join('');
+        const clampNote = final && final.clamped ? `<div style="font-size:9px;color:var(--wb-text-muted);margin-top:3px;">Clamped to 5–95 (raw ${final.raw}).</div>` : '';
+        return `<details class="wb-scout-waterfall" style="margin-bottom:8px;">
+            <summary style="cursor:pointer;font-size:11px;color:var(--wb-text-muted);text-align:center;">Why ${finalPct}%? — factor breakdown</summary>
+            <div style="margin-top:6px;padding:6px 4px;">
+                ${rows}
+                <div style="display:flex;gap:12px;justify-content:center;font-size:9px;color:var(--wb-text-muted);margin-top:5px;">
+                    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${GREEN};vertical-align:-1px;"></span> helps us</span>
+                    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${RED};vertical-align:-1px;"></span> hurts us</span>
+                    <span>midline = even (50%)</span>
+                </div>
+                ${clampNote}
+            </div>
+        </details>`;
+    }
+
     function renderScoutReport(report) {
         const body = document.getElementById('wb-scout-body');
         if (!body) return;
@@ -12288,6 +12342,7 @@ body.wb-chain-active {
         const comp = report.composition;
         const bp = report.battlePlan;
         const wp = report.winProbability;
+        const bd = report.winBreakdown; // per-factor waterfall of the win %
         const wr = report.winReasoning;
         const sw = report.strengthsWeaknesses;
         const ev = report.enemyVulnerabilities;
@@ -12324,6 +12379,7 @@ body.wb-chain-active {
             <div style="text-align:center;margin-bottom:8px;">
                 <span class="wb-scout-win-badge ${winClass}">Win Probability: ${wp}%</span>
             </div>
+            ${renderWinWaterfall(bd)}
             <div class="wb-scout-compare">
                 <div class="wb-scout-compare-side ours">
                     <h4>${escapeHtml(wo.our.name)}</h4>

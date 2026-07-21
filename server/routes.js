@@ -4275,17 +4275,33 @@ function analyzeWarReport(ourData, enemyData, estimates, warScores, warEffort) {
   };
 
   // ── Win probability ──
+  // winBreakdown records each factor's point delta + running total so the
+  // client can render a waterfall of exactly this computation (no model
+  // duplication client-side). label/us/them are for the graph rows.
   let winScore = 50;
+  const winBreakdown = [{ factor: 'Base (even odds)', us: null, them: null, delta: 0, running: 50 }];
+  const addFactor = (factor, us, them, delta) => {
+    winScore += delta;
+    winBreakdown.push({ factor, us: us == null ? null : String(us), them: them == null ? null : String(them), delta, running: winScore });
+  };
+
   // Member advantage
   const ourMemberCount = ourAnalysis.overview.memberCount;
   const enemyMemberCount = enemyAnalysis.overview.memberCount;
-  if (ourMemberCount > enemyMemberCount * 1.2) winScore += 5;
-  else if (enemyMemberCount > ourMemberCount * 1.2) winScore -= 5;
+  let dMembers = 0;
+  if (ourMemberCount > enemyMemberCount * 1.2) dMembers = 5;
+  else if (enemyMemberCount > ourMemberCount * 1.2) dMembers = -5;
+  addFactor('Members', ourMemberCount, enemyMemberCount, dMembers);
+
   // Level advantage
-  if (ourAnalysis.strength.avgLevel > enemyAnalysis.strength.avgLevel + 10) winScore += 10;
-  else if (enemyAnalysis.strength.avgLevel > ourAnalysis.strength.avgLevel + 10) winScore -= 10;
-  else if (ourAnalysis.strength.avgLevel > enemyAnalysis.strength.avgLevel + 3) winScore += 5;
-  else if (enemyAnalysis.strength.avgLevel > ourAnalysis.strength.avgLevel + 3) winScore -= 5;
+  const ourLvl = ourAnalysis.strength.avgLevel, enemyLvl = enemyAnalysis.strength.avgLevel;
+  let dLevel = 0;
+  if (ourLvl > enemyLvl + 10) dLevel = 10;
+  else if (enemyLvl > ourLvl + 10) dLevel = -10;
+  else if (ourLvl > enemyLvl + 3) dLevel = 5;
+  else if (enemyLvl > ourLvl + 3) dLevel = -5;
+  addFactor('Avg level', ourLvl, enemyLvl, dLevel);
+
   // Active roster. Prefer the war-effort roster (members who actually fought,
   // averaged over recent finished wars) — it's time-of-day independent, unlike
   // the live "active in last 30 min" snapshot. Fall back to the snapshot when a
@@ -4295,22 +4311,40 @@ function analyzeWarReport(ourData, enemyData, estimates, warScores, warEffort) {
   const rosterFromWarEffort = ourWE != null && enemyWE != null;
   const ourRoster = ourWE != null ? ourWE : ourAnalysis.activityPatterns.activeCombatRoster;
   const enemyRoster = enemyWE != null ? enemyWE : enemyAnalysis.activityPatterns.activeCombatRoster;
-  if (ourRoster > enemyRoster * 1.5) winScore += 10;
-  else if (enemyRoster > ourRoster * 1.5) winScore -= 10;
+  let dRoster = 0;
+  if (ourRoster > enemyRoster * 1.5) dRoster = 10;
+  else if (enemyRoster > ourRoster * 1.5) dRoster = -10;
+  addFactor(rosterFromWarEffort ? 'Active roster (war effort)' : 'Active roster (live)', ourRoster, enemyRoster, dRoster);
+
   // Stat tier advantage
-  if (ourTiers.S > enemyTiers.S) winScore += 8;
-  else if (enemyTiers.S > ourTiers.S) winScore -= 8;
-  if (ourTiers.A > enemyTiers.A) winScore += 5;
-  else if (enemyTiers.A > ourTiers.A) winScore -= 5;
+  let dTierS = 0;
+  if (ourTiers.S > enemyTiers.S) dTierS = 8;
+  else if (enemyTiers.S > ourTiers.S) dTierS = -8;
+  addFactor('S-tier (5B+)', ourTiers.S, enemyTiers.S, dTierS);
+  let dTierA = 0;
+  if (ourTiers.A > enemyTiers.A) dTierA = 5;
+  else if (enemyTiers.A > ourTiers.A) dTierA = -5;
+  addFactor('A-tier (1–5B)', ourTiers.A, enemyTiers.A, dTierA);
+
   // Chain capability
-  if (ourAnalysis.overview.bestChain > enemyAnalysis.overview.bestChain * 1.5) winScore += 5;
-  else if (enemyAnalysis.overview.bestChain > ourAnalysis.overview.bestChain * 1.5) winScore -= 5;
+  const ourChain = ourAnalysis.overview.bestChain, enemyChain = enemyAnalysis.overview.bestChain;
+  let dChain = 0;
+  if (ourChain > enemyChain * 1.5) dChain = 5;
+  else if (enemyChain > ourChain * 1.5) dChain = -5;
+  addFactor('Best chain', ourChain, enemyChain, dChain);
+
   // Enemy vulnerabilities
   const enemyHospPct = enemyMemberCount > 0 ? enemyAnalysis.vulnerabilities.hospitalized.length / enemyMemberCount : 0;
-  if (enemyHospPct > 0.3) winScore += 8;
-  else if (enemyHospPct > 0.15) winScore += 4;
+  let dHosp = 0;
+  if (enemyHospPct > 0.3) dHosp = 8;
+  else if (enemyHospPct > 0.15) dHosp = 4;
+  addFactor('Enemy hospitalized', null, Math.round(enemyHospPct * 100) + '%', dHosp);
 
+  const rawWinScore = winScore;
   winScore = Math.max(5, Math.min(95, winScore));
+  // Final row for the waterfall: the clamped result. Flag whether the [5,95]
+  // clamp actually bound (so the graph can note it) — usually it doesn't.
+  winBreakdown.push({ factor: 'Win probability', us: null, them: null, delta: null, running: winScore, clamped: winScore !== rawWinScore, raw: rawWinScore, final: true });
 
   let winReasoning = [];
   if (winScore >= 70) winReasoning.push("Strong overall advantage");
@@ -4337,6 +4371,7 @@ function analyzeWarReport(ourData, enemyData, estimates, warScores, warEffort) {
     composition,
     battlePlan,
     winProbability: winScore,
+    winBreakdown,
     winReasoning,
     strengthsWeaknesses,
     enemyVulnerabilities: enemyAnalysis.vulnerabilities,
