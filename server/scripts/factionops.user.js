@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.53
+// @version      5.1.54
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.53';
+    const SCRIPT_VERSION = '5.1.54';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12528,14 +12528,19 @@ body.wb-chain-active {
                 <div class="wb-scout-compare">
                     <div class="wb-scout-compare-side ours">
                         <div class="wb-scout-compare-row"><span class="lbl">Avg fighters</span><span class="val" style="color:#e17055;font-weight:700">${ourWe.avg != null ? ourWe.avg : '—'}</span></div>
+                        <div class="wb-scout-compare-row"><span class="lbl">Energy used</span><span class="val" style="color:#74b9ff">${ourWe.avgEnergy != null ? ourWe.avgEnergy.toLocaleString() + 'e' : '—'}</span></div>
+                        ${ourWe.perFighterEnergy ? `<div class="wb-scout-compare-row"><span class="lbl">Per fighter</span><span class="val" style="color:var(--wb-text-muted)">${ourWe.perFighterEnergy.toLocaleString()}e</span></div>` : ''}
                         ${perWarRows(ourWe)}
                     </div>
                     <div class="wb-scout-compare-vs">VS</div>
                     <div class="wb-scout-compare-side theirs">
                         <div class="wb-scout-compare-row"><span class="lbl">Avg fighters</span><span class="val" style="color:#e17055;font-weight:700">${enemyWe.avg != null ? enemyWe.avg : '—'}</span></div>
+                        <div class="wb-scout-compare-row"><span class="lbl">Energy used</span><span class="val" style="color:#74b9ff">${enemyWe.avgEnergy != null ? enemyWe.avgEnergy.toLocaleString() + 'e' : '—'}</span></div>
+                        ${enemyWe.perFighterEnergy ? `<div class="wb-scout-compare-row"><span class="lbl">Per fighter</span><span class="val" style="color:var(--wb-text-muted)">${enemyWe.perFighterEnergy.toLocaleString()}e</span></div>` : ''}
                         ${perWarRows(enemyWe)}
                     </div>
                 </div>
+                <div style="font-size:9px;color:var(--wb-text-muted);margin-top:3px;">Energy = active roster's total attacks × 25e, avg over recent wars — how much sustained pressure they can bring.</div>
             </div>`;
         }
 

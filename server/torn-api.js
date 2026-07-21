@@ -448,6 +448,7 @@ export async function fetchUserBars(apiKey) {
 // aggressively per faction.
 const _warEffortCache = new Map(); // factionId -> { ts, value }
 const WAR_EFFORT_TTL_MS = 12 * 60 * 60 * 1000; // 12h — finished wars never change
+const ENERGY_PER_ATTACK = 25; // Torn: every attack costs 25 energy
 
 export async function fetchFactionWarEffort(factionId, apiKey, opts = {}) {
   const minHits = opts.minHits != null ? opts.minHits : 5; // a "real" participant
@@ -481,14 +482,25 @@ export async function fetchFactionWarEffort(factionId, apiKey, opts = {}) {
       const me = facs.find((f) => String(f.id) === fid);
       const members = (me && me.members) || [];
       if (!members.length) continue;
-      const hitters = members.filter((m) => (m.attacks || 0) >= minHits).length;
+      const active = members.filter((m) => (m.attacks || 0) >= minHits);
+      const hitters = active.length;
+      // Energy the active roster spends in a war = their total attacks × 25e.
+      const activeAttacks = active.reduce((a, m) => a + (m.attacks || 0), 0);
+      const activeEnergy = activeAttacks * ENERGY_PER_ATTACK;
       const opp = (w.factions || []).find((f) => String(f.id) !== fid);
-      perWar.push({ warId: w.id, opp: opp ? opp.name : null, roster: members.length, hitters });
+      perWar.push({ warId: w.id, opp: opp ? opp.name : null, roster: members.length, hitters, activeAttacks, activeEnergy });
     } catch (_) { /* skip a war that won't load; average the rest */ }
   }
 
+  const mean = (k) => Math.round(perWar.reduce((a, b) => a + b[k], 0) / perWar.length);
   const value = perWar.length
-    ? { avg: Math.round(perWar.reduce((a, b) => a + b.hitters, 0) / perWar.length), warsUsed: perWar.length, perWar, minHits, source: 'war-effort' }
+    ? {
+        avg: mean('hitters'), warsUsed: perWar.length, perWar, minHits, source: 'war-effort',
+        // Energy the active roster burns per war (avg), and per-fighter.
+        avgAttacks: mean('activeAttacks'),
+        avgEnergy: mean('activeEnergy'),
+        perFighterEnergy: mean('hitters') ? Math.round(mean('activeEnergy') / mean('hitters')) : 0,
+      }
     : { avg: null, warsUsed: 0, perWar: [], minHits, source: 'none' };
 
   _warEffortCache.set(fid, { ts: Date.now(), value });
