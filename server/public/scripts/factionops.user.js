@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.57
+// @version      5.1.58
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.57';
+    const SCRIPT_VERSION = '5.1.58';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12300,10 +12300,13 @@ body.wb-chain-active {
             const isFinal = b.final;
             const isBase = b.factor === 'Base (even odds)';
             let seg;
-            if (isBase || isFinal) {
-                const col = isFinal ? FAV : NEUTRAL;
-                const op = isFinal ? '1' : '0.55';
-                seg = `<div style="position:absolute;top:3px;height:14px;left:0;width:${b.running}%;background:${col};opacity:${op};border-radius:3px;"></div>`;
+            if (isFinal) {
+                // Anchor at the even (50%) line, extend to the result — favorable
+                // right (green), unfavorable left (red). Never crosses the midline.
+                const lo = Math.min(50, b.running), hi = Math.max(50, b.running);
+                seg = `<div style="position:absolute;top:3px;height:14px;left:${lo}%;width:${hi - lo}%;background:${FAV};border-radius:3px;"></div>`;
+            } else if (isBase) {
+                seg = `<div style="position:absolute;top:3px;height:14px;left:0;width:${b.running}%;background:${NEUTRAL};opacity:0.55;border-radius:3px;"></div>`;
             } else if (b.delta === 0) {
                 seg = `<div style="position:absolute;top:6px;left:${b.running}%;width:7px;height:7px;border-radius:50%;background:${NEUTRAL};transform:translateX(-3px);"></div>`;
             } else {

@@ -195,7 +195,10 @@
     if (kind === 'base') {
       seg += `<div class="seg base" style="left:${pos(D0)}%;width:${pos(running) - pos(D0)}%"></div>`;
     } else if (kind === 'final') {
-      seg += `<div class="seg final" style="left:${pos(D0)}%;width:${pos(running) - pos(D0)}%;background:${favColor(running)};opacity:1"></div>`;
+      // Anchor at the even (50%) line and extend to the result — favorable to the
+      // right (green), unfavorable to the left (red). Never crosses the midline.
+      const a = pos(Math.min(50, running)), b = pos(Math.max(50, running));
+      seg += `<div class="seg final" style="left:${a}%;width:${b - a}%;background:${favColor(running)};opacity:1"></div>`;
     } else if (kind === 'zero') {
       seg += `<div class="seg base" style="left:${pos(running) - 0.6}%;width:6px;opacity:.5"></div>`;
     } else {
