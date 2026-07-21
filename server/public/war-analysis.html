@@ -10,74 +10,74 @@
 <style>
   :root{
     --surface:#fcfcfb; --panel:#ffffff; --ink:#1a1a19; --muted:#6b6b68;
-    --line:#e6e6e3; --grid:#efefec;
+    --line:#e6e6e3; --grid:#d8d8d3;
     --good:#0ca30c; --good-ink:#006300; --bad:#d03b3b; --bad-ink:#b02525;
-    --neutral:#8a8a86; --neutral-fill:#c9c9c4;
-    --accent:#1a1a19;
+    --neutral:#8a8a86; --neutral-fill:#c9c9c4; --accent:#1a1a19;
   }
   @media (prefers-color-scheme: dark){
     :root{
       --surface:#1a1a19; --panel:#232320; --ink:#f0efe9; --muted:#a3a29b;
-      --line:#333330; --grid:#2a2a27;
+      --line:#333330; --grid:#3a3a36;
       --good:#0ca30c; --good-ink:#3cc93c; --bad:#d03b3b; --bad-ink:#e86a6a;
       --neutral:#8a8a86; --neutral-fill:#4a4a46; --accent:#f0efe9;
     }
   }
   :root[data-theme="dark"]{
     --surface:#1a1a19; --panel:#232320; --ink:#f0efe9; --muted:#a3a29b;
-    --line:#333330; --grid:#2a2a27;
+    --line:#333330; --grid:#3a3a36;
     --good:#0ca30c; --good-ink:#3cc93c; --bad:#d03b3b; --bad-ink:#e86a6a;
     --neutral:#8a8a86; --neutral-fill:#4a4a46; --accent:#f0efe9;
   }
   :root[data-theme="light"]{
     --surface:#fcfcfb; --panel:#ffffff; --ink:#1a1a19; --muted:#6b6b68;
-    --line:#e6e6e3; --grid:#efefec;
+    --line:#e6e6e3; --grid:#d8d8d3;
     --good:#0ca30c; --good-ink:#006300; --bad:#d03b3b; --bad-ink:#b02525;
     --neutral:#8a8a86; --neutral-fill:#c9c9c4; --accent:#1a1a19;
   }
   *{box-sizing:border-box}
-  body{background:var(--surface);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0;padding:28px 20px 40px}
-  .wrap{max-width:760px;margin:0 auto}
-  h1{font-size:22px;font-weight:750;margin:0 0 3px;letter-spacing:-.01em}
-  .sub{color:var(--muted);font-size:13px;margin:0 0 4px}
-  .headline{display:flex;align-items:baseline;gap:10px;margin:14px 0 22px}
-  .bignum{font-size:52px;font-weight:800;line-height:1;color:var(--good-ink);letter-spacing:-.02em}
-  .bignum .pct{font-size:26px;font-weight:700}
-  .verdict{font-size:13px;color:var(--muted);max-width:280px}
-  .chart{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 18px 10px}
-  .rowlbl-head{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;padding:0 0 10px;border-bottom:1px solid var(--line);margin-bottom:6px}
-  .row{display:grid;grid-template-columns:210px 1fr 54px;align-items:center;gap:10px;padding:5px 0}
-  .row .factor{font-size:13px;font-weight:600}
-  .row .vs{font-size:11px;color:var(--muted);font-weight:400;display:block;margin-top:1px}
-  .track{position:relative;height:26px}
-  /* faint gridline at 50 (even odds) and axis frame */
-  .track::before{content:"";position:absolute;top:-3px;bottom:-3px;left:50%;width:1px;background:var(--grid)}
-  .seg{position:absolute;top:3px;height:20px;border-radius:4px}
+  body{background:var(--surface);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0;padding:24px 16px 40px}
+  .wrap{max-width:680px;margin:0 auto}
+  h1{font-size:21px;font-weight:750;margin:0 0 3px;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 16px}
+  .headline{display:flex;align-items:baseline;gap:12px;margin:12px 0 20px;flex-wrap:wrap}
+  .bignum{font-size:48px;font-weight:800;line-height:1;color:var(--good-ink);letter-spacing:-.02em}
+  .bignum .pct{font-size:24px;font-weight:700}
+  .verdict{font-size:13px;color:var(--muted);flex:1;min-width:210px}
+  .chart{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 14px 12px}
+  .scalebar{position:relative;height:16px;margin-left:var(--labelw);margin-right:var(--deltaw);border-bottom:1px solid var(--line);margin-bottom:8px}
+  .evenlbl{position:absolute;top:0;transform:translateX(-50%);font-size:10px;color:var(--muted);white-space:nowrap}
+  .row{display:grid;grid-template-columns:var(--labelw) 1fr var(--deltaw);align-items:center;gap:8px;padding:4px 0}
+  .row .factor{font-size:13px;font-weight:600;line-height:1.25}
+  .row .vs{font-size:10.5px;color:var(--muted);font-weight:400;display:block;margin-top:1px}
+  .track{position:relative;height:24px}
+  .track .midline{position:absolute;top:-4px;bottom:-4px;width:1px;background:var(--grid)}
+  .seg{position:absolute;top:2px;height:20px;border-radius:4px;min-width:3px}
   .seg.good{background:var(--good)}
   .seg.bad{background:var(--bad)}
-  .seg.base,.seg.final{background:var(--neutral-fill)}
+  .seg.base{background:var(--neutral-fill)}
   .seg.final{background:var(--accent);opacity:.9}
-  .connector{position:absolute;top:0;bottom:0;width:2px;background:var(--muted);opacity:.35}
-  .dot{position:absolute;top:9px;width:8px;height:8px;border-radius:50%;background:var(--neutral);transform:translateX(-4px)}
+  .connector{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--muted);opacity:.4}
+  .runlbl{position:absolute;top:4px;font-size:9px;color:var(--muted);transform:translateX(4px)}
   .delta{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;font-size:14px}
   .delta.good{color:var(--good-ink)}
   .delta.bad{color:var(--bad-ink)}
   .delta.zero{color:var(--muted);font-weight:500}
   .delta.tot{color:var(--ink);font-weight:800}
-  .axis{display:grid;grid-template-columns:210px 1fr 54px;gap:10px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
-  .ticks{position:relative;height:16px;font-size:10px;color:var(--muted)}
-  .ticks span{position:absolute;transform:translateX(-50%)}
-  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:16px 2px 0}
+  .row.final{border-top:1px solid var(--line);margin-top:4px;padding-top:7px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin:14px 2px 0}
   .legend b{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:5px}
-  .note{font-size:12px;color:var(--muted);margin-top:18px;line-height:1.6}
+  .note{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.6}
   .note code{background:var(--grid);padding:1px 5px;border-radius:4px;font-size:11px}
-  details{margin-top:16px;font-size:13px}
+  details{margin-top:14px;font-size:13px}
   summary{cursor:pointer;color:var(--muted);font-weight:600}
   table{border-collapse:collapse;width:100%;margin-top:10px;font-size:12.5px}
   th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
   th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
   td.n{text-align:right;font-variant-numeric:tabular-nums}
   .g{color:var(--good-ink)} .b{color:var(--bad-ink)}
+  /* wider label + delta gutters on desktop, tighter on phones */
+  .wrap{--labelw:150px;--deltaw:46px}
+  @media (max-width:480px){ .wrap{--labelw:118px;--deltaw:42px} .row .factor{font-size:12px} }
 </style>
 
 <div class="wrap">
@@ -86,33 +86,26 @@
 
   <div class="headline">
     <div class="bignum">72<span class="pct">%</span></div>
-    <div class="verdict">Model starts every matchup at an even <b>50%</b>, then adds or subtracts fixed points for six advantages. Net here: <b>+22</b>.</div>
+    <div class="verdict">Every matchup starts at an even <b>50%</b>; the model then adds or subtracts fixed points per advantage. Net here: <b>+22</b>. Bars show each factor stepping the running total from 50% to 72%.</div>
   </div>
 
   <div class="chart" id="chart">
-    <div class="rowlbl-head"><span>Factor (us vs them)</span><span>50% ————— running total ————— 72%</span><span style="text-align:right">Δ</span></div>
+    <div class="scalebar" id="scalebar"></div>
     <!-- rows injected -->
-    <div class="axis">
-      <div></div>
-      <div class="ticks"><span style="left:0%">0</span><span style="left:25%">25</span><span style="left:50%">50</span><span style="left:75%">75</span><span style="left:100%">100</span></div>
-      <div></div>
-    </div>
   </div>
 
   <div class="legend">
-    <span><b style="background:var(--good)"></b>Helps us (▲ points)</span>
-    <span><b style="background:var(--bad)"></b>Hurts us (▼ points)</span>
+    <span><b style="background:var(--good)"></b>Helps us (points ▲)</span>
+    <span><b style="background:var(--bad)"></b>Hurts us (points ▼)</span>
     <span><b style="background:var(--neutral-fill)"></b>No effect / totals</span>
   </div>
 
   <p class="note">
-    <b>How each point is assigned</b> (fixed buckets, not a statistical model): avg level &gt;+10 → +10; active roster &gt;1.5× → +10; more S-tier → ±8; more A-tier → ±5; best chain &gt;1.5× → +5; enemy &gt;30% hospitalized → +8. Members and hospital % contributed <b>0</b> here (too close / none in hospital). Final value is clamped to <code>5–95</code> (not binding at 72).
+    <b>How each point is assigned</b> (fixed buckets, not a statistical model): avg level &gt;+10 → +10; active roster &gt;1.5× → +10; more S-tier → ±8; more A-tier → ±5; best chain &gt;1.5× → +5; enemy &gt;30% hospitalized → +8. Members and hospital % contributed <b>0</b> here. Final value is clamped to <code>5–95</code> (not binding at 72).
     <br><br>
-    <b>The one thing dragging us down:</b> PA&nbsp;-&nbsp;Mavericks have <b>7 elite (5B+) fighters to our 4</b> — that's the −8. Everything else favors us: higher average level (57.8 vs 41), far more members who actually fight (<b>52 vs 20</b>, averaged over each faction's last 3 wars), more A-tier depth (14 vs 8), and a bigger proven chain (10k vs 2.5k).
+    <b>The one thing dragging us down:</b> PA&nbsp;-&nbsp;Mavericks have <b>7 elite (5B+) fighters to our 4</b> — the −8. Everything else favors us: higher average level (57.8 vs 41), far more members who actually fight (<b>52 vs 20</b>, avg of each faction's last 3 wars), more A-tier depth (14 vs 8), and a bigger proven chain (10k vs 2.5k).
     <br><br>
-    <span style="opacity:.75"><b>Active roster</b> is now the <b>war-effort roster</b> — members with ≥5 hits, averaged over the last 3 finished ranked wars — not a live "online in the last 30 min" snapshot, so it no longer swings with what time you scout. Stats are from <b>FFScouter</b>.</span>
-    <br><br>
-    <span style="opacity:.75"><b>Not a scoring factor, but context:</b> PA&nbsp;-&nbsp;Mavericks have <b>14 members inactive 24h+</b> (we have 0). Inactivity doesn't add or subtract win-probability points directly — but it's why their war-effort roster is just 20 of 76, which is what earns the +10 above. The scout report lists both factions' inactive players.</span>
+    <span style="opacity:.8"><b>Active roster</b> is the <b>war-effort roster</b> — members with ≥5 hits, averaged over the last 3 finished wars — not a live "online now" snapshot, so it doesn't swing with scout time. PA-Mavericks also have <b>14 members inactive 24h+</b> (we have 0), which is why their war-effort roster is only 20 of 76.</span>
   </p>
 
   <details>
@@ -125,7 +118,7 @@
 </div>
 
 <script>
-  // [label, us, them, delta, running]  — reconstructed from the live scout report
+  // [label, us, them, delta, running, kind]
   const rows = [
     ["Base (even odds)", "—", "—", 0, 50, "base"],
     ["Members", "79", "76", 0, 50, "zero"],
@@ -137,27 +130,39 @@
     ["Enemy hospitalized", "—", "0%", 0, 72, "zero"],
     ["Win probability", "", "", null, 72, "final"]
   ];
+
+  // Zoom the x-axis to the range actually in play (with padding) so the bars
+  // aren't a sliver near the middle of a full 0–100 axis. Domain from the
+  // running totals; the 50% "even" line stays marked.
+  const runs = rows.map(r => r[4]);
+  const lo = Math.min(...runs, 50), hi = Math.max(...runs, 50);
+  const pad = Math.max(6, (hi - lo) * 0.35);
+  const D0 = Math.floor(lo - pad), D1 = Math.ceil(hi + pad);
+  const pos = v => ((v - D0) / (D1 - D0)) * 100;   // value → % across the track
+
   const chart = document.getElementById('chart');
-  const axis = chart.querySelector('.axis');
-  const pct = v => v + "%";
+  // "even 50%" marker on the scale bar
+  document.getElementById('scalebar').innerHTML =
+    `<span class="evenlbl" style="left:${pos(50)}%">even · 50%</span>`;
+
   rows.forEach(r => {
     const [label, us, them, delta, running, kind] = r;
     const row = document.createElement('div');
-    row.className = 'row';
-    // build the bar segment
-    let seg = "";
-    if (kind === "base") {
-      seg = `<div class="seg base" style="left:0%;width:${running}%"></div>`;
-    } else if (kind === "final") {
-      seg = `<div class="seg final" style="left:0%;width:${running}%"></div>`;
-    } else if (kind === "zero") {
-      seg = `<div class="dot" style="left:${running}%"></div>`;
+    row.className = 'row' + (kind === 'final' ? ' final' : '');
+    let seg = `<div class="midline" style="left:${pos(50)}%"></div>`;
+    if (kind === 'base') {
+      seg += `<div class="seg base" style="left:${pos(D0)}%;width:${pos(running) - pos(D0)}%"></div>`;
+    } else if (kind === 'final') {
+      seg += `<div class="seg final" style="left:${pos(D0)}%;width:${pos(running) - pos(D0)}%"></div>`;
+    } else if (kind === 'zero') {
+      seg += `<div class="seg base" style="left:${pos(running) - 0.6}%;width:6px;opacity:.5"></div>`;
     } else {
       const prev = running - delta;
-      const lo = Math.min(prev, running), hi = Math.max(prev, running);
-      const cls = delta >= 0 ? "good" : "bad";
-      seg = `<div class="connector" style="left:${prev}%"></div>` +
-            `<div class="seg ${cls}" style="left:${lo}%;width:${hi - lo}%"></div>`;
+      const a = pos(Math.min(prev, running)), b = pos(Math.max(prev, running));
+      const cls = delta >= 0 ? 'good' : 'bad';
+      seg += `<div class="connector" style="left:${pos(prev)}%"></div>` +
+             `<div class="seg ${cls}" style="left:${a}%;width:${b - a}%"></div>` +
+             `<div class="runlbl" style="left:${pos(running)}%">${running}</div>`;
     }
     const vs = (us !== "" && kind !== "base" && kind !== "final")
       ? `<span class="vs">${us} vs ${them}</span>` : "";
@@ -168,10 +173,9 @@
       `<div class="factor">${label}${vs}</div>` +
       `<div class="track">${seg}</div>` +
       `<div class="delta ${dCls}">${dLabel}</div>`;
-    chart.insertBefore(row, axis);
+    chart.appendChild(row);
   });
 
-  // data table
   const tb = document.getElementById('tbody');
   rows.filter(r => r[5] !== 'base' && r[5] !== 'final').forEach(r => {
     const [label, us, them, delta] = r;
