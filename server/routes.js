@@ -97,7 +97,7 @@ import { createWriteStream as _uploadCreateWriteStream } from "node:fs";
 import { join as _uploadPathJoin, basename as _uploadBasename, extname as _uploadExtname } from "node:path";
 import { timingSafeEqual as _uploadTimingSafeEqual, randomBytes as _shotRandomBytes } from "node:crypto";
 import { getAllowedBroadcastRoles, updateFactionSettings } from "./store.js";
-import { fetchFactionMembers, fetchFactionChain, fetchRankedWar, fetchFactionBasic, fetchRankedWarReport, fetchFactionAttacks, fetchFactionWarEffort } from "./torn-api.js";
+import { fetchFactionMembers, fetchFactionChain, fetchRankedWar, fetchFactionBasic, fetchRankedWarReport, fetchFactionAttacks, fetchFactionWarEffort, fetchFactionChainActivity } from "./torn-api.js";
 
 /** Mask an API key for safe logging — shows only last 4 chars. */
 const maskKey = (key) => key ? `****${String(key).slice(-4)}` : '****';
@@ -4452,13 +4452,15 @@ async function handleWarReport(req, res) {
 
   try {
     scoutReportCooldowns.set(warId, Date.now());
-    const [ourData, enemyData, ourWarEffort, enemyWarEffort] = await Promise.all([
+    const [ourData, enemyData, ourWarEffort, enemyWarEffort, enemyChainActivity] = await Promise.all([
       fetchFactionBasic(war.factionId, apiKey),
       fetchFactionBasic(war.enemyFactionId, apiKey),
       // War-effort rosters (members who actually fought, avg of recent wars).
       // Non-fatal: a failure just falls back to the live activity snapshot.
       fetchFactionWarEffort(war.factionId, apiKey).catch((e) => { console.warn(`[scout] our war-effort failed: ${e.message}`); return null; }),
       fetchFactionWarEffort(war.enemyFactionId, apiKey).catch((e) => { console.warn(`[scout] enemy war-effort failed: ${e.message}`); return null; }),
+      // Enemy attack windows (when they run chains) — from their recent wars.
+      fetchFactionChainActivity(war.enemyFactionId, apiKey).catch((e) => { console.warn(`[scout] enemy chain-activity failed: ${e.message}`); return null; }),
     ]);
 
     // Collect member IDs needing an estimate. fetchFactionBasic returns
@@ -4506,6 +4508,8 @@ async function handleWarReport(req, res) {
 
     const warScores = war.warScores || null;
     const report = analyzeWarReport(ourData, enemyData, estimates, warScores, { our: ourWarEffort, enemy: enemyWarEffort });
+    // Enemy attack windows (chain-activity histogram) — attached post-build.
+    report.enemyAttackWindows = enemyChainActivity;
     _scoutReportCache.set(warId, {
       ts: Date.now(),
       report,

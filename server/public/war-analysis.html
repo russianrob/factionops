@@ -115,6 +115,25 @@
     <p class="note" style="margin-top:8px;">How much energy each active roster burns in a war — total attacks × 25e, averaged over their last 3 wars. A rough measure of the sustained pressure they can bring; per-fighter energy is similar (~860e), so the gap is roster size.</p>
   </div>
 
+  <div class="chart" style="margin-top:14px;">
+    <div class="rowlbl-head" style="border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:8px;"><span>PA - Mavericks top fighters</span><span style="text-align:right;text-transform:none;letter-spacing:0;">avg / war</span></div>
+    <table><thead><tr><th>Fighter</th><th class="n">Lvl</th><th class="n">Attacks</th><th class="n">Energy</th></tr></thead>
+      <tbody>
+        <tr><td>Kidnapped</td><td class="n">100</td><td class="n b">51</td><td class="n">1,275e</td></tr>
+        <tr><td>Diewood</td><td class="n">65</td><td class="n b">48</td><td class="n">1,200e</td></tr>
+        <tr><td>GhoiB</td><td class="n">45</td><td class="n b">46</td><td class="n">1,150e</td></tr>
+        <tr><td>WarcryMR</td><td class="n">69</td><td class="n b">45</td><td class="n">1,125e</td></tr>
+        <tr><td>Trixxx</td><td class="n">93</td><td class="n b">42</td><td class="n">1,050e</td></tr>
+      </tbody></table>
+    <p class="note" style="margin-top:8px;">Their heaviest hitters, averaged over recent wars (attacks × 25e = energy). Their top fighter (Kidnapped) is a fraction of what our roster brings — the gap is depth, not top-end output.</p>
+  </div>
+
+  <div class="chart" style="margin-top:14px;">
+    <div class="rowlbl-head" style="border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:8px;"><span id="aw-title">PA - Mavericks attack windows</span><span style="text-align:right;text-transform:none;letter-spacing:0;">when they chain</span></div>
+    <div id="aw-bars" style="display:flex;align-items:flex-end;gap:2px;height:70px;"></div>
+    <p class="note" style="margin-top:8px;" id="aw-note"></p>
+  </div>
+
   <details>
     <summary>Data table</summary>
     <table>
@@ -194,6 +213,27 @@
   });
   tb.insertAdjacentHTML('beforeend',
     `<tr><td><b>Win probability</b></td><td></td><td></td><td class="n"></td><td class="n"><b>72</b></td></tr>`);
+
+  // Enemy attack windows — chained hits by hour (UTC), converted to the viewer's
+  // local timezone. From PA-Mavericks' last 3 wars (5 chains, 2,070 chained hits).
+  const hoursUTC = [10,0,14,0,0,0,0,0,0,0,0,0,0,659,0,0,0,0,0,0,608,779,0,0];
+  const off = Math.round(-(new Date().getTimezoneOffset() / 60));
+  const local = new Array(24).fill(0);
+  for (let u = 0; u < 24; u++) local[((u + off) % 24 + 24) % 24] += hoursUTC[u];
+  const max = Math.max(...local, 1);
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+  document.getElementById('aw-title').textContent = 'PA - Mavericks attack windows · ' + tz;
+  document.getElementById('aw-bars').innerHTML = local.map((v, h) => {
+    const pct = v / max * 100;
+    const col = pct >= 70 ? 'var(--bad)' : pct >= 30 ? '#e08a2b' : 'var(--neutral)';
+    return `<div title="${String(h).padStart(2,'0')}:00 — ${v} hits" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;">
+      <div style="width:78%;height:${v > 0 ? Math.max(4, pct) : 0}%;background:${col};border-radius:2px 2px 0 0;"></div>
+      <div style="font-size:8px;color:var(--muted);margin-top:2px;">${h % 3 === 0 ? h : ''}</div></div>`;
+  }).join('');
+  const peaks = local.map((v, h) => ({ h, v })).filter(x => x.v > 0).sort((a, b) => b.v - a.v).slice(0, 3)
+    .map(x => String(x.h).padStart(2, '0') + ':00').join(', ');
+  document.getElementById('aw-note').innerHTML =
+    'Peak push hours (your time): <b>' + peaks + '</b>. Built from the start times of the chains they ran in their last 3 wars — coordinated pushes only, not every hit. Non-chained attack timing in a third-party war isn\'t exposed by the API.';
 </script>
 
 </body>

@@ -470,8 +470,10 @@ export async function fetchFactionWarEffort(factionId, apiKey, opts = {}) {
     .sort((a, b) => b.end - a.end)
     .slice(0, warCount);
 
-  // 2. Per-war report → count this faction's members with >= minHits attacks.
+  // 2. Per-war report → count this faction's members with >= minHits attacks,
+  //    and aggregate each member's attacks so we can rank their top fighters.
   const perWar = [];
+  const memberAgg = new Map(); // playerId -> { name, level, totalAttacks, wars }
   for (const w of finished) {
     try {
       const repRes = await fetch(`https://api.torn.com/v2/faction/${encodeURIComponent(w.id)}/rankedwarreport?key=${key}&comment=wb-api`);
@@ -489,8 +491,27 @@ export async function fetchFactionWarEffort(factionId, apiKey, opts = {}) {
       const activeEnergy = activeAttacks * ENERGY_PER_ATTACK;
       const opp = (w.factions || []).find((f) => String(f.id) !== fid);
       perWar.push({ warId: w.id, opp: opp ? opp.name : null, roster: members.length, hitters, activeAttacks, activeEnergy });
+      for (const m of members) {
+        const pid = String(m.id);
+        const agg = memberAgg.get(pid) || { id: pid, name: m.name, level: m.level, totalAttacks: 0, wars: 0 };
+        agg.name = m.name; agg.level = m.level;
+        agg.totalAttacks += (m.attacks || 0);
+        if ((m.attacks || 0) > 0) agg.wars += 1;
+        memberAgg.set(pid, agg);
+      }
     } catch (_) { /* skip a war that won't load; average the rest */ }
   }
+
+  // Top fighters: highest total attacks over the fetched wars, with per-war
+  // averages and the energy that implies (attacks × 25e).
+  const topFighters = [...memberAgg.values()]
+    .filter((m) => m.totalAttacks > 0)
+    .sort((a, b) => b.totalAttacks - a.totalAttacks)
+    .slice(0, 5)
+    .map((m) => {
+      const avgAttacks = Math.round(m.totalAttacks / Math.max(1, m.wars));
+      return { id: m.id, name: m.name, level: m.level, wars: m.wars, avgAttacks, avgEnergy: avgAttacks * ENERGY_PER_ATTACK };
+    });
 
   const mean = (k) => Math.round(perWar.reduce((a, b) => a + b[k], 0) / perWar.length);
   const value = perWar.length
@@ -500,9 +521,74 @@ export async function fetchFactionWarEffort(factionId, apiKey, opts = {}) {
         avgAttacks: mean('activeAttacks'),
         avgEnergy: mean('activeEnergy'),
         perFighterEnergy: mean('hitters') ? Math.round(mean('activeEnergy') / mean('hitters')) : 0,
+        topFighters,
       }
-    : { avg: null, warsUsed: 0, perWar: [], minHits, source: 'none' };
+    : { avg: null, warsUsed: 0, perWar: [], minHits, source: 'none', topFighters: [] };
 
   _warEffortCache.set(fid, { ts: Date.now(), value });
+  return value;
+}
+
+// "Attack windows" — WHEN a faction actually hits, profiled from the timestamped
+// chains it ran during its recent finished wars. The rankedwarreport has no
+// timing and another faction's attack log is blocked, but /v2/faction/{id}/chains
+// IS readable for any faction, so chain start times reveal a faction's
+// coordinated-push hours. Captures chained hits only (organized pushes), not
+// every attack — but that's the most useful thing for war planning. Returns a
+// 24-slot UTC histogram of chained hits; the client converts to local time.
+const _chainActivityCache = new Map(); // factionId -> { ts, value }
+
+export async function fetchFactionChainActivity(factionId, apiKey, opts = {}) {
+  const warCount = opts.warCount != null ? opts.warCount : 3;
+  const fid = String(factionId);
+
+  const cached = _chainActivityCache.get(fid);
+  if (cached && (Date.now() - cached.ts) < WAR_EFFORT_TTL_MS) return cached.value;
+
+  const key = encodeURIComponent(apiKey);
+  const listRes = await fetch(`https://api.torn.com/v2/faction/${encodeURIComponent(fid)}/rankedwars?key=${key}&comment=wb-api`);
+  if (!listRes.ok) throw new Error(`Torn API returned HTTP ${listRes.status}`);
+  const listData = await listRes.json();
+  if (listData.error) throw new Error(`Torn API error: ${listData.error.error} (code ${listData.error.code})`);
+  const finished = (listData.rankedwars || [])
+    .filter((w) => w && w.end > 0)
+    .sort((a, b) => b.end - a.end)
+    .slice(0, warCount);
+
+  const hoursUTC = new Array(24).fill(0);
+  let totalChains = 0, totalHits = 0, warsUsed = 0;
+  for (const w of finished) {
+    let warHits = 0;
+    const seen = new Set();
+    let to = w.end;
+    // Chains are immutable; paginate back through the war window (100/page).
+    for (let i = 0; i < 15; i++) {
+      const res = await fetch(`https://api.torn.com/v2/faction/${encodeURIComponent(fid)}/chains?key=${key}&from=${w.start}&to=${to}&sort=DESC&limit=100&comment=wb-api`);
+      if (!res.ok) break;
+      const data = await res.json();
+      if (data.error) break;
+      const chains = data.chains || [];
+      if (!chains.length) break;
+      for (const ch of chains) {
+        if (ch.start >= w.start && ch.start <= w.end && !seen.has(ch.id)) {
+          seen.add(ch.id);
+          const h = new Date(ch.start * 1000).getUTCHours(); // bucket by chain start hour (UTC)
+          hoursUTC[h] += (ch.chain || 0);
+          totalHits += (ch.chain || 0);
+          warHits += (ch.chain || 0);
+          totalChains += 1;
+        }
+      }
+      const minStart = Math.min(...chains.map((c) => c.start));
+      if (minStart <= w.start || chains.length < 100) break;
+      to = minStart - 1;
+    }
+    if (warHits > 0) warsUsed += 1;
+  }
+
+  const value = totalHits > 0
+    ? { hoursUTC, totalChains, totalHits, warsUsed, source: 'chains' }
+    : { hoursUTC, totalChains: 0, totalHits: 0, warsUsed, source: 'none' };
+  _chainActivityCache.set(fid, { ts: Date.now(), value });
   return value;
 }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.54
+// @version      5.1.55
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.54';
+    const SCRIPT_VERSION = '5.1.55';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12348,6 +12348,8 @@ body.wb-chain-active {
         const ev = report.enemyVulnerabilities;
         const we = report.warEffort; // war-effort roster (>=5 hits, avg recent wars)
         const inact = report.inactivePlayers; // {our, enemy} inactive 24h+
+        const aw = report.enemyAttackWindows; // {hoursUTC[24]} chain-activity
+        const etf = we && we.enemy ? we.enemy.topFighters : null; // enemy top 5
 
         const winClass = wp >= 70 ? 'high' : wp >= 40 ? 'mid' : 'low';
 
@@ -12541,6 +12543,48 @@ body.wb-chain-active {
                     </div>
                 </div>
                 <div style="font-size:9px;color:var(--wb-text-muted);margin-top:3px;">Energy = active roster's total attacks × 25e, avg over recent wars — how much sustained pressure they can bring.</div>
+            </div>`;
+        }
+
+        // Enemy top fighters — who does the damage, and how much energy they burn.
+        if (etf && etf.length) {
+            html += `<div style="margin-top:8px;">
+                <div style="font-size:11px;font-weight:600;color:var(--wb-text-muted);margin-bottom:4px;">Enemy Top Fighters (avg per war)</div>
+                <table class="wb-scout-table">
+                    <tr><th>Fighter</th><th style="text-align:center">Lvl</th><th style="text-align:right">Attacks</th><th style="text-align:right">Energy</th></tr>
+                    ${etf.map(f => `<tr>
+                        <td>${escapeHtml(f.name)}</td>
+                        <td style="text-align:center">${f.level}</td>
+                        <td style="text-align:right;color:#e17055;font-weight:700">${f.avgAttacks}</td>
+                        <td style="text-align:right;color:#74b9ff">${f.avgEnergy.toLocaleString()}e</td>
+                    </tr>`).join('')}
+                </table>
+            </div>`;
+        }
+
+        // Enemy attack windows — when they run chains, from recent wars. hoursUTC
+        // is a 24-slot histogram of chained hits; convert to the viewer's local
+        // time so "when do they hit" reads right wherever you are.
+        if (aw && aw.source === 'chains' && aw.totalHits > 0) {
+            const local = new Array(24).fill(0);
+            const offset = -(new Date().getTimezoneOffset() / 60); // hours East of UTC
+            for (let u = 0; u < 24; u++) { const h = ((u + Math.round(offset)) % 24 + 24) % 24; local[h] += aw.hoursUTC[u] || 0; }
+            const max = Math.max(...local, 1);
+            const tzName = (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local');
+            const bars = local.map((v, h) => {
+                const pct = Math.round(v / max * 100);
+                const on = v > 0;
+                return `<div title="${String(h).padStart(2,'0')}:00 — ${v} hits" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:46px;">
+                    <div style="width:70%;height:${on ? Math.max(6, pct) : 0}%;background:${pct >= 70 ? '#d63031' : pct >= 30 ? '#e17055' : '#74b9ff'};border-radius:2px 2px 0 0;"></div>
+                    <div style="font-size:7px;color:var(--wb-text-muted);margin-top:1px;">${h % 3 === 0 ? h : ''}</div>
+                </div>`;
+            }).join('');
+            const peaks = local.map((v, h) => ({ h, v })).filter(x => x.v > 0).sort((a, b) => b.v - a.v).slice(0, 3)
+                .map(x => `${String(x.h).padStart(2,'0')}:00`).join(', ');
+            html += `<div style="margin-top:8px;">
+                <div style="font-size:11px;font-weight:600;color:var(--wb-text-muted);margin-bottom:2px;">Enemy Attack Windows <span style="font-weight:400">(when they chain · ${tzName})</span></div>
+                <div style="display:flex;align-items:flex-end;gap:1px;">${bars}</div>
+                <div style="font-size:9px;color:var(--wb-text-muted);margin-top:3px;">Peak push hours: <b>${peaks}</b>. From ${aw.totalChains} chains (${aw.totalHits.toLocaleString()} hits) across their last ${aw.warsUsed} wars — coordinated pushes only, not every hit.</div>
             </div>`;
         }
 
