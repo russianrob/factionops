@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.55
+// @version      5.1.56
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.55';
+    const SCRIPT_VERSION = '5.1.56';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12566,11 +12566,11 @@ body.wb-chain-active {
         // is a 24-slot histogram of chained hits; convert to the viewer's local
         // time so "when do they hit" reads right wherever you are.
         if (aw && aw.source === 'chains' && aw.totalHits > 0) {
-            const local = new Array(24).fill(0);
-            const offset = -(new Date().getTimezoneOffset() / 60); // hours East of UTC
-            for (let u = 0; u < 24; u++) { const h = ((u + Math.round(offset)) % 24 + 24) % 24; local[h] += aw.hoursUTC[u] || 0; }
+            // Show in TCT (Torn City Time = UTC), which is how Torn shows time —
+            // hoursUTC is already UTC, so no conversion.
+            const local = aw.hoursUTC;
             const max = Math.max(...local, 1);
-            const tzName = (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local');
+            const tzName = 'TCT';
             const bars = local.map((v, h) => {
                 const pct = Math.round(v / max * 100);
                 const on = v > 0;

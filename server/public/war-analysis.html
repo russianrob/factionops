@@ -214,15 +214,12 @@
   tb.insertAdjacentHTML('beforeend',
     `<tr><td><b>Win probability</b></td><td></td><td></td><td class="n"></td><td class="n"><b>72</b></td></tr>`);
 
-  // Enemy attack windows — chained hits by hour (UTC), converted to the viewer's
-  // local timezone. From PA-Mavericks' last 3 wars (5 chains, 2,070 chained hits).
-  const hoursUTC = [10,0,14,0,0,0,0,0,0,0,0,0,0,659,0,0,0,0,0,0,608,779,0,0];
-  const off = Math.round(-(new Date().getTimezoneOffset() / 60));
-  const local = new Array(24).fill(0);
-  for (let u = 0; u < 24; u++) local[((u + off) % 24 + 24) % 24] += hoursUTC[u];
+  // Enemy attack windows — chained hits by hour in TCT (Torn City Time = UTC),
+  // which is how Torn shows time. From PA-Mavericks' last 3 wars (5 chains,
+  // 2,070 chained hits). No conversion — the data is already TCT.
+  const local = [10,0,14,0,0,0,0,0,0,0,0,0,0,659,0,0,0,0,0,0,608,779,0,0];
   const max = Math.max(...local, 1);
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
-  document.getElementById('aw-title').textContent = 'PA - Mavericks attack windows · ' + tz;
+  document.getElementById('aw-title').textContent = 'PA - Mavericks attack windows · TCT';
   document.getElementById('aw-bars').innerHTML = local.map((v, h) => {
     const pct = v / max * 100;
     const col = pct >= 70 ? 'var(--bad)' : pct >= 30 ? '#e08a2b' : 'var(--neutral)';
@@ -233,7 +230,7 @@
   const peaks = local.map((v, h) => ({ h, v })).filter(x => x.v > 0).sort((a, b) => b.v - a.v).slice(0, 3)
     .map(x => String(x.h).padStart(2, '0') + ':00').join(', ');
   document.getElementById('aw-note').innerHTML =
-    'Peak push hours (your time): <b>' + peaks + '</b>. Built from the start times of the chains they ran in their last 3 wars — coordinated pushes only, not every hit. Non-chained attack timing in a third-party war isn\'t exposed by the API.';
+    'Peak push hours (TCT): <b>' + peaks + '</b>. Built from the start times of the chains they ran in their last 3 wars — coordinated pushes only, not every hit. Non-chained attack timing in a third-party war isn\'t exposed by the API.';
 </script>
 
 </body>
