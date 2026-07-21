@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.50
+// @version      5.1.51
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.50';
+    const SCRIPT_VERSION = '5.1.51';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12291,6 +12291,7 @@ body.wb-chain-active {
         const wr = report.winReasoning;
         const sw = report.strengthsWeaknesses;
         const ev = report.enemyVulnerabilities;
+        const we = report.warEffort; // war-effort roster (>=5 hits, avg recent wars)
 
         const winClass = wp >= 70 ? 'high' : wp >= 40 ? 'mid' : 'low';
 
@@ -12449,6 +12450,37 @@ body.wb-chain-active {
                     <div class="wb-scout-compare-row" style="border-top:1px solid var(--wb-border);padding-top:4px;margin-top:4px;"><span class="lbl">Combat Ready</span><span class="val" style="color:#e17055;font-weight:700">${act.enemy.activeCombatRoster}</span></div>
                 </div>
             </div>`;
+
+        // War-effort roster: how many members actually FOUGHT (>=5 hits), averaged
+        // over each faction's recent finished wars. Time-independent, unlike the
+        // live "Combat Ready" snapshot above — and it's what drives the win-prob
+        // active-roster factor when available.
+        if (we && ((we.our && we.our.avg != null) || (we.enemy && we.enemy.avg != null))) {
+            const ourWe = we.our || {}, enemyWe = we.enemy || {};
+            const usedWe = we.usedForWinFactor === 'war-effort';
+            const perWarRows = (side) => {
+                const pw = (side && side.perWar) || [];
+                if (!pw.length) return '<div style="font-size:10px;color:var(--wb-text-muted)">no war history</div>';
+                return pw.map(w => `<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--wb-text-muted)"><span>vs ${escapeHtml(w.opp || '?')}</span><span style="color:#e17055">${w.hitters}</span></div>`).join('');
+            };
+            html += `<div style="margin-top:8px;">
+                <div style="font-size:11px;font-weight:600;color:var(--wb-text-muted);margin-bottom:4px;">
+                    War Effort &mdash; fighters with &ge;${(ourWe.minHits || enemyWe.minHits || 5)} hits, avg last ${Math.max(ourWe.warsUsed || 0, enemyWe.warsUsed || 0) || 3} wars
+                    ${usedWe ? '<span style="color:#00b894"> ✓ used for win %</span>' : '<span style="opacity:0.6"> (live snapshot used instead)</span>'}
+                </div>
+                <div class="wb-scout-compare">
+                    <div class="wb-scout-compare-side ours">
+                        <div class="wb-scout-compare-row"><span class="lbl">Avg fighters</span><span class="val" style="color:#e17055;font-weight:700">${ourWe.avg != null ? ourWe.avg : '—'}</span></div>
+                        ${perWarRows(ourWe)}
+                    </div>
+                    <div class="wb-scout-compare-vs">VS</div>
+                    <div class="wb-scout-compare-side theirs">
+                        <div class="wb-scout-compare-row"><span class="lbl">Avg fighters</span><span class="val" style="color:#e17055;font-weight:700">${enemyWe.avg != null ? enemyWe.avg : '—'}</span></div>
+                        ${perWarRows(enemyWe)}
+                    </div>
+                </div>
+            </div>`;
+        }
 
         // Enemy vulnerability windows
         if (ev) {
