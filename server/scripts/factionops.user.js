@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.56
+// @version      5.1.57
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.56';
+    const SCRIPT_VERSION = '5.1.57';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12288,13 +12288,21 @@ body.wb-chain-active {
         const NEUTRAL = 'var(--wb-text-muted, #636e72)';
         const final = bd[bd.length - 1];
         const finalPct = final ? final.running : '';
+        // Favorability shade for the final bar: green when favored, red when not,
+        // darker the stronger the edge (light near 50%, deep toward 5/95).
+        const favColor = (wp) => {
+            if (wp === 50) return NEUTRAL;
+            const fav = wp >= 50, t = Math.min(1, Math.abs(wp - 50) / 45);
+            return `hsl(${fav ? 135 : 4},${fav ? 58 : 62}%,${fav ? (66 - t * 38) : (60 - t * 22)}%)`;
+        };
+        const FAV = favColor(finalPct);
         const rows = bd.map(b => {
             const isFinal = b.final;
             const isBase = b.factor === 'Base (even odds)';
             let seg;
             if (isBase || isFinal) {
-                const col = isFinal ? 'var(--wb-text, #dfe6e9)' : NEUTRAL;
-                const op = isFinal ? '0.9' : '0.55';
+                const col = isFinal ? FAV : NEUTRAL;
+                const op = isFinal ? '1' : '0.55';
                 seg = `<div style="position:absolute;top:3px;height:14px;left:0;width:${b.running}%;background:${col};opacity:${op};border-radius:3px;"></div>`;
             } else if (b.delta === 0) {
                 seg = `<div style="position:absolute;top:6px;left:${b.running}%;width:7px;height:7px;border-radius:50%;background:${NEUTRAL};transform:translateX(-3px);"></div>`;
@@ -12308,7 +12316,7 @@ body.wb-chain-active {
             const vs = (b.us != null || b.them != null) && !isFinal
                 ? `<span style="color:var(--wb-text-muted);font-weight:400;font-size:9px;"> ${b.us != null ? escapeHtml(b.us) : '—'} v ${b.them != null ? escapeHtml(b.them) : '—'}</span>` : '';
             const dLabel = isFinal ? finalPct + '%' : b.delta > 0 ? '+' + b.delta : b.delta < 0 ? '−' + Math.abs(b.delta) : '0';
-            const dCol = isFinal ? 'var(--wb-text, #dfe6e9)' : b.delta > 0 ? GREEN : b.delta < 0 ? RED : NEUTRAL;
+            const dCol = isFinal ? FAV : b.delta > 0 ? GREEN : b.delta < 0 ? RED : NEUTRAL;
             return `<div style="display:grid;grid-template-columns:120px 1fr 40px;align-items:center;gap:6px;padding:2px 0;${isFinal ? 'border-top:1px solid var(--wb-border);margin-top:3px;padding-top:5px;' : ''}">
                 <div style="font-size:10px;${isFinal ? 'font-weight:700;' : 'font-weight:600;'}">${escapeHtml(b.factor)}${vs}</div>
                 <div style="position:relative;height:20px;">${seg}<div style="position:absolute;top:-2px;bottom:-2px;left:50%;width:1px;background:var(--wb-border);opacity:.5;"></div></div>

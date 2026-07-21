@@ -157,6 +157,18 @@
     ["Win probability", "", "", null, 72, "final"]
   ];
 
+  // Favorability shade: green when favored (>50%), red when not, and darker the
+  // stronger the edge (light near 50%, deep at the 5/95 extremes).
+  function favColor(wp) {
+    if (wp === 50) return 'var(--neutral)';
+    const fav = wp >= 50;
+    const t = Math.min(1, Math.abs(wp - 50) / 45);            // 0 weak … 1 strong
+    const hue = fav ? 135 : 4;
+    const sat = fav ? 58 : 62;
+    const light = fav ? (66 - t * 38) : (60 - t * 22);        // lighter→darker
+    return `hsl(${hue},${sat}%,${light}%)`;
+  }
+
   // Zoom the x-axis to the range actually in play (with padding) so the bars
   // aren't a sliver near the middle of a full 0–100 axis. Domain from the
   // running totals; the 50% "even" line stays marked.
@@ -165,6 +177,10 @@
   const pad = Math.max(6, (hi - lo) * 0.35);
   const D0 = Math.floor(lo - pad), D1 = Math.ceil(hi + pad);
   const pos = v => ((v - D0) / (D1 - D0)) * 100;   // value → % across the track
+
+  // Color the headline number + final delta label by favorability too.
+  const WP = 72;
+  const bn = document.querySelector('.bignum'); if (bn) bn.style.color = favColor(WP);
 
   const chart = document.getElementById('chart');
   // "even 50%" marker on the scale bar
@@ -179,7 +195,7 @@
     if (kind === 'base') {
       seg += `<div class="seg base" style="left:${pos(D0)}%;width:${pos(running) - pos(D0)}%"></div>`;
     } else if (kind === 'final') {
-      seg += `<div class="seg final" style="left:${pos(D0)}%;width:${pos(running) - pos(D0)}%"></div>`;
+      seg += `<div class="seg final" style="left:${pos(D0)}%;width:${pos(running) - pos(D0)}%;background:${favColor(running)};opacity:1"></div>`;
     } else if (kind === 'zero') {
       seg += `<div class="seg base" style="left:${pos(running) - 0.6}%;width:6px;opacity:.5"></div>`;
     } else {
@@ -195,10 +211,11 @@
     const dLabel = delta === null ? "72%"
       : delta > 0 ? "+" + delta : delta < 0 ? "−" + Math.abs(delta) : "0";
     const dCls = kind === "final" ? "tot" : delta > 0 ? "good" : delta < 0 ? "bad" : "zero";
+    const dStyle = kind === 'final' ? ` style="color:${favColor(running)}"` : '';
     row.innerHTML =
       `<div class="factor">${label}${vs}</div>` +
       `<div class="track">${seg}</div>` +
-      `<div class="delta ${dCls}">${dLabel}</div>`;
+      `<div class="delta ${dCls}"${dStyle}>${dLabel}</div>`;
     chart.appendChild(row);
   });
 
