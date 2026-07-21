@@ -97,7 +97,7 @@ import { createWriteStream as _uploadCreateWriteStream } from "node:fs";
 import { join as _uploadPathJoin, basename as _uploadBasename, extname as _uploadExtname } from "node:path";
 import { timingSafeEqual as _uploadTimingSafeEqual, randomBytes as _shotRandomBytes } from "node:crypto";
 import { getAllowedBroadcastRoles, updateFactionSettings } from "./store.js";
-import { fetchFactionMembers, fetchFactionChain, fetchRankedWar, fetchFactionBasic, fetchRankedWarReport, fetchFactionAttacks } from "./torn-api.js";
+import { fetchFactionMembers, fetchFactionChain, fetchRankedWar, fetchFactionBasic, fetchRankedWarReport, fetchFactionAttacks, fetchFactionWarEffort } from "./torn-api.js";
 
 /** Mask an API key for safe logging — shows only last 4 chars. */
 const maskKey = (key) => key ? `****${String(key).slice(-4)}` : '****';
@@ -4082,9 +4082,13 @@ function getStatTier(stats, level, hasEstimates) {
   return "D";
 }
 
-/** Full ranked war analysis — compares both factions with stat estimates. */
-function analyzeWarReport(ourData, enemyData, estimates, warScores) {
+/** Full ranked war analysis — compares both factions with stat estimates.
+ *  warEffort (optional) = { our, enemy } war-effort rosters from
+ *  fetchFactionWarEffort; when present it drives the active-roster win factor
+ *  instead of the volatile live "active in last 30 min" snapshot. */
+function analyzeWarReport(ourData, enemyData, estimates, warScores, warEffort) {
   estimates = estimates || {};
+  warEffort = warEffort || {};
 
   const ourAnalysis = analyzeFaction(ourData, estimates);
   const enemyAnalysis = analyzeFaction(enemyData, estimates);
@@ -4282,9 +4286,17 @@ function analyzeWarReport(ourData, enemyData, estimates, warScores) {
   else if (enemyAnalysis.strength.avgLevel > ourAnalysis.strength.avgLevel + 10) winScore -= 10;
   else if (ourAnalysis.strength.avgLevel > enemyAnalysis.strength.avgLevel + 3) winScore += 5;
   else if (enemyAnalysis.strength.avgLevel > ourAnalysis.strength.avgLevel + 3) winScore -= 5;
-  // Active roster
-  if (ourAnalysis.activityPatterns.activeCombatRoster > enemyAnalysis.activityPatterns.activeCombatRoster * 1.5) winScore += 10;
-  else if (enemyAnalysis.activityPatterns.activeCombatRoster > ourAnalysis.activityPatterns.activeCombatRoster * 1.5) winScore -= 10;
+  // Active roster. Prefer the war-effort roster (members who actually fought,
+  // averaged over recent finished wars) — it's time-of-day independent, unlike
+  // the live "active in last 30 min" snapshot. Fall back to the snapshot when a
+  // faction has no readable war history.
+  const ourWE = warEffort.our && warEffort.our.avg != null ? warEffort.our.avg : null;
+  const enemyWE = warEffort.enemy && warEffort.enemy.avg != null ? warEffort.enemy.avg : null;
+  const rosterFromWarEffort = ourWE != null && enemyWE != null;
+  const ourRoster = ourWE != null ? ourWE : ourAnalysis.activityPatterns.activeCombatRoster;
+  const enemyRoster = enemyWE != null ? enemyWE : enemyAnalysis.activityPatterns.activeCombatRoster;
+  if (ourRoster > enemyRoster * 1.5) winScore += 10;
+  else if (enemyRoster > ourRoster * 1.5) winScore -= 10;
   // Stat tier advantage
   if (ourTiers.S > enemyTiers.S) winScore += 8;
   else if (enemyTiers.S > ourTiers.S) winScore -= 8;
@@ -4307,8 +4319,8 @@ function analyzeWarReport(ourData, enemyData, estimates, warScores) {
 
   if (ourTiers.S > enemyTiers.S) winReasoning.push("Top-end advantage (" + ourTiers.S + " vs " + enemyTiers.S + " S-tier)");
   else if (enemyTiers.S > ourTiers.S) winReasoning.push("Enemy has top-end advantage (" + enemyTiers.S + " vs " + ourTiers.S + " S-tier)");
-  if (ourAnalysis.activityPatterns.activeCombatRoster > enemyAnalysis.activityPatterns.activeCombatRoster)
-    winReasoning.push("More active fighters (" + ourAnalysis.activityPatterns.activeCombatRoster + " vs " + enemyAnalysis.activityPatterns.activeCombatRoster + ")");
+  if (ourRoster > enemyRoster)
+    winReasoning.push("More active fighters (" + ourRoster + " vs " + enemyRoster + (rosterFromWarEffort ? ", by war effort" : "") + ")");
 
   // ── H. Strengths & Weaknesses ──
   const strengthsWeaknesses = {
@@ -4328,6 +4340,15 @@ function analyzeWarReport(ourData, enemyData, estimates, warScores) {
     winReasoning,
     strengthsWeaknesses,
     enemyVulnerabilities: enemyAnalysis.vulnerabilities,
+    warEffort: {
+      our: warEffort.our || null,
+      enemy: warEffort.enemy || null,
+      // Which roster number actually fed the win-probability factor, so the UI
+      // can show whether it used war effort or fell back to the live snapshot.
+      usedForWinFactor: rosterFromWarEffort ? 'war-effort' : 'live-snapshot',
+      ourRoster,
+      enemyRoster,
+    },
     generatedAt: Date.now(),
   };
 }
@@ -4382,17 +4403,21 @@ async function handleWarReport(req, res) {
     return res.status(503).json({ error: "No API key available — set a faction API key in settings" });
   }
 
-  // Client may pre-fill estimates (e.g. userscript with BSP cache). We
-  // merge server-side FFS results into the gaps so the native client
-  // doesn't need its own FFScouter integration. BSP > FFS in accuracy
-  // per tdup convention, so client-supplied values always win.
-  const estimates = (req.body && req.body.estimates) || {};
+  // Stats for the analysis are sourced from FFScouter (per user request —
+  // was previously seeded from the client's BSP cache). Starting empty forces
+  // the server-side FFS lookup below to fill every member from FFS, so the
+  // report's tiers/matchups are FFS-based and consistent for everyone.
+  const estimates = {};
 
   try {
     scoutReportCooldowns.set(warId, Date.now());
-    const [ourData, enemyData] = await Promise.all([
+    const [ourData, enemyData, ourWarEffort, enemyWarEffort] = await Promise.all([
       fetchFactionBasic(war.factionId, apiKey),
       fetchFactionBasic(war.enemyFactionId, apiKey),
+      // War-effort rosters (members who actually fought, avg of recent wars).
+      // Non-fatal: a failure just falls back to the live activity snapshot.
+      fetchFactionWarEffort(war.factionId, apiKey).catch((e) => { console.warn(`[scout] our war-effort failed: ${e.message}`); return null; }),
+      fetchFactionWarEffort(war.enemyFactionId, apiKey).catch((e) => { console.warn(`[scout] enemy war-effort failed: ${e.message}`); return null; }),
     ]);
 
     // Collect member IDs needing an estimate. fetchFactionBasic returns
@@ -4439,7 +4464,7 @@ async function handleWarReport(req, res) {
     }
 
     const warScores = war.warScores || null;
-    const report = analyzeWarReport(ourData, enemyData, estimates, warScores);
+    const report = analyzeWarReport(ourData, enemyData, estimates, warScores, { our: ourWarEffort, enemy: enemyWarEffort });
     _scoutReportCache.set(warId, {
       ts: Date.now(),
       report,

@@ -438,3 +438,59 @@ export async function fetchUserBars(apiKey) {
     },
   };
 }
+
+// "War-effort roster" — how many members ACTUALLY fought, averaged over a
+// faction's recent finished ranked wars. This is a far more stable input for
+// scout analysis than a live "active in the last 30 min" snapshot, which just
+// reflects whatever time of day you happened to open the report. Works for ANY
+// faction (their own past wars are readable via the API), so it lets us judge
+// an enemy we've never fought. Immutable once a war ends, so results are cached
+// aggressively per faction.
+const _warEffortCache = new Map(); // factionId -> { ts, value }
+const WAR_EFFORT_TTL_MS = 12 * 60 * 60 * 1000; // 12h — finished wars never change
+
+export async function fetchFactionWarEffort(factionId, apiKey, opts = {}) {
+  const minHits = opts.minHits != null ? opts.minHits : 5; // a "real" participant
+  const warCount = opts.warCount != null ? opts.warCount : 3; // average this many recent wars
+  const fid = String(factionId);
+
+  const cached = _warEffortCache.get(fid);
+  if (cached && (Date.now() - cached.ts) < WAR_EFFORT_TTL_MS) return cached.value;
+
+  const key = encodeURIComponent(apiKey);
+  // 1. The faction's ranked-war list, newest finished wars first.
+  const listRes = await fetch(`https://api.torn.com/v2/faction/${encodeURIComponent(fid)}/rankedwars?key=${key}&comment=wb-api`);
+  if (!listRes.ok) throw new Error(`Torn API returned HTTP ${listRes.status}`);
+  const listData = await listRes.json();
+  if (listData.error) throw new Error(`Torn API error: ${listData.error.error} (code ${listData.error.code})`);
+
+  const finished = (listData.rankedwars || [])
+    .filter((w) => w && w.end > 0)
+    .sort((a, b) => b.end - a.end)
+    .slice(0, warCount);
+
+  // 2. Per-war report → count this faction's members with >= minHits attacks.
+  const perWar = [];
+  for (const w of finished) {
+    try {
+      const repRes = await fetch(`https://api.torn.com/v2/faction/${encodeURIComponent(w.id)}/rankedwarreport?key=${key}&comment=wb-api`);
+      if (!repRes.ok) continue;
+      const rep = await repRes.json();
+      if (rep.error) continue;
+      const facs = (rep.rankedwarreport && rep.rankedwarreport.factions) || rep.factions || [];
+      const me = facs.find((f) => String(f.id) === fid);
+      const members = (me && me.members) || [];
+      if (!members.length) continue;
+      const hitters = members.filter((m) => (m.attacks || 0) >= minHits).length;
+      const opp = (w.factions || []).find((f) => String(f.id) !== fid);
+      perWar.push({ warId: w.id, opp: opp ? opp.name : null, roster: members.length, hitters });
+    } catch (_) { /* skip a war that won't load; average the rest */ }
+  }
+
+  const value = perWar.length
+    ? { avg: Math.round(perWar.reduce((a, b) => a + b.hitters, 0) / perWar.length), warsUsed: perWar.length, perWar, minHits, source: 'war-effort' }
+    : { avg: null, warsUsed: 0, perWar: [], minHits, source: 'none' };
+
+  _warEffortCache.set(fid, { ts: Date.now(), value });
+  return value;
+}
