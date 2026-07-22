@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.40
+// @version      2.73.41
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3077,7 +3077,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.40';
+  const SCRIPT_VERSION = '2.73.41';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3621,22 +3621,37 @@ if (!singleton) {
     // Find the online indicator. Primary = TornTools' ranked-war icon; plus
     // a couple of other Torn online-dot patterns as fallback.
     const icon = row.querySelector(
-      "[class*='userOnlineStatusIcon' i], [class*='onlineStatus' i], "
+      "[class*='userStatusWrap' i], [class*='userOnlineStatusIcon' i], [class*='onlineStatus' i], "
       + ".user-green-status, .user-yellow-status, .user-red-status"
     );
-    if (!icon) return '';
-    // Classic Torn status classes (unambiguous).
-    const cl = icon.getAttribute('class') || '';
-    if (/user-green-status/.test(cl))  return 'Online';
-    if (/user-yellow-status/.test(cl)) return 'Idle';
-    if (/user-red-status/.test(cl))    return 'Offline';
-    // React war icon: the status word lives in alt / title / aria-label.
-    // Normalise (lowercase + substring) so casing or extra text can't break it.
-    const raw = (icon.getAttribute('alt') || icon.getAttribute('title')
-              || icon.getAttribute('aria-label') || '').toLowerCase();
-    if (raw.includes('online'))  return 'Online';
-    if (raw.includes('idle'))    return 'Idle';
-    if (raw.includes('offline')) return 'Offline';
+    if (icon) {
+      // Classic Torn status classes (unambiguous).
+      const cl = icon.getAttribute('class') || '';
+      if (/user-green-status/.test(cl))  return 'Online';
+      if (/user-yellow-status/.test(cl)) return 'Idle';
+      if (/user-red-status/.test(cl))    return 'Offline';
+      // Current React build (wb83): the <svg> icon has NO alt/title/aria of its
+      // own — the status word lives on the aria-label of [class*="userStatusWrap"]
+      // (e.g. "chimba is offline"). Read alt, else that wrapper's aria-label (via
+      // closest, or a row-level lookup), else title. Mirrors TornTools'
+      // getUserActivity — why its war filter worked where ours (icon-only aria) did not.
+      const wrap = icon.closest("[class*='userStatusWrap' i]")
+                || icon.closest('[aria-label]')
+                || row.querySelector("[class*='userStatusWrap' i]");
+      const raw = (icon.getAttribute('alt')
+                || (wrap && wrap.getAttribute('aria-label'))
+                || icon.getAttribute('title') || '').toLowerCase();
+      // "offline" does not contain "online", so order is safe either way.
+      if (raw.includes('offline')) return 'Offline';
+      if (raw.includes('idle'))    return 'Idle';
+      if (raw.includes('online'))  return 'Online';
+    }
+    // Fallback: profile-style iconTray title ("... Online/Idle/Offline ...").
+    const tray = row.querySelector("#iconTray li[title]");
+    if (tray) {
+      const t = (tray.getAttribute('title') || '').match(/Online|Idle|Offline/i);
+      if (t) { const w = t[0].toLowerCase(); return w === 'online' ? 'Online' : w === 'idle' ? 'Idle' : 'Offline'; }
+    }
     return '';
   }
   function ffs_warRows() {
@@ -3654,17 +3669,10 @@ if (!singleton) {
       _ffsActivityDiagOnce = true;
       try {
         const samples = rows.slice(0, 6).map((row) => {
-          const icon = row.querySelector(
-            "[class*='userOnlineStatusIcon' i], [class*='onlineStatus' i], "
-            + ".user-green-status, .user-yellow-status, .user-red-status"
-          );
+          const wrap = row.querySelector("[class*='userStatusWrap' i]");
           return {
-            icon: !!icon,
-            tag: icon ? icon.tagName : null,
-            cls: icon ? String(icon.getAttribute('class') || '').slice(0, 50) : null,
-            alt: icon ? icon.getAttribute('alt') : null,
-            title: icon ? icon.getAttribute('title') : null,
-            aria: icon ? icon.getAttribute('aria-label') : null,
+            wrap: !!wrap,
+            wrapAria: wrap ? wrap.getAttribute('aria-label') : null, // wb83: the real status source
             canon: ffs_activityOf(row),
           };
         });
@@ -3677,8 +3685,9 @@ if (!singleton) {
     for (const row of rows) {
       const a = ffs_activityOf(row);
       counts[a || 'unknown']++;
-      const onlineN = Array.from(row.querySelectorAll("[class*='userOnlineStatusIcon' i]"))
-        .filter(ic => (ic.getAttribute('alt') || '').trim().toLowerCase() === 'online').length;
+      // wb83: the online-safety count now uses the corrected classifier (the old
+      // alt="online" count was always 0 on the React DOM, so the guard was dead).
+      const onlineN = (a === 'Online') ? 1 : 0;
       let hide = ffs_shouldHide(a, _ffsHideOnline, _ffsHideOffline);
       // wb70 SAFETY: never hide a row that still shows an online member, even if
       // ffs_activityOf misread it (the War-Stuff hospital chip can clobber the
