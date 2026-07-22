@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Gym Advisor
 // @namespace    RussianRob
-// @version      1.1.1
+// @version      1.2.0
 // @description  Live gym-training advisor for Torn's gym page: best-train-now per stat, single-train estimator, and a "nice number" (69/420) sequence solver. Reads your stats/happy/energy/perks live from the API (optional key) or manual entry. Math verified bit-for-bit against the Nice Stat Solver (JTS 2.0 / Vladar gym-gain formula).
 // @author       RussianRob
 // @match        https://www.torn.com/gym.php*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    var SCRIPT_VERSION = "1.1.1";
+    var SCRIPT_VERSION = "1.2.0";
 
     // ================================================================
     // Verified gym-training math. This block is the byte-for-byte port
@@ -471,11 +471,17 @@ function () {
         const minChance = (opts.minChance != null) ? opts.minChance : 50;
         const maxSteps = (opts.maxSteps != null) ? opts.maxSteps : 10;
         const niceMode = opts.niceMode || 'either';
+        // Optional explicit set of unlocked GYM_DATA indices (from live gym-page
+        // detection). Gyms don't unlock in a strict order — you can own a later
+        // specialist without an earlier one — so a single maxGymIndex can't
+        // express it; this set can. When absent, fall back to maxGymIndex only.
+        const unlockedSet = Array.isArray(opts.unlockedGyms) ? new Set(opts.unlockedGyms.map(Number)) : null;
 
         // Gyms usable for this stat, best dots first (stable sort keeps the
         // original index order on ties, same as the page).
         let availableGyms = [];
         for (let i = 0; i <= maxGymIndex; i++) {
+            if (unlockedSet && !unlockedSet.has(i)) continue;   // not unlocked
             if (GYM_DATA[i][statType] > 0) {
                 availableGyms.push({
                     id: i,
@@ -763,15 +769,28 @@ function () {
     var STAT_LABEL = { strength: 'Strength', speed: 'Speed', defense: 'Defense', dexterity: 'Dexterity' };
     var KEY_LS = 'gymAdvisorApiKey';
     var COLLAPSE_LS = 'gymAdvisorCollapsed';
-    var KEY_MAXGYM = 'gymAdvisorMaxGym';
-    // The API only exposes active_gym (the currently selected gym), not which
-    // gyms you've unlocked — and gyms unlock in a fixed sequence. So the solver
-    // is bounded by a user-set "highest gym unlocked" (persisted). Default 23 =
-    // George's, the last standard (heavyweight) gym, so it never suggests a
-    // specialist gym (Balboas … SSL) you probably don't have until you say so.
-    var GYM_DEFAULT_MAX = 23; // George's
-    function getMaxGym() { try { var v = parseInt(localStorage.getItem(KEY_MAXGYM), 10); return isNaN(v) ? GYM_DEFAULT_MAX : v; } catch (e) { return GYM_DEFAULT_MAX; } }
-    function setMaxGym(i) { try { localStorage.setItem(KEY_MAXGYM, String(i)); } catch (e) {} }
+    var KEY_UNLOCKED = 'gymAdvisorUnlocked';
+    // Which gyms you've unlocked is NOT in the API and does NOT follow a strict
+    // order (you can own a later specialist without earlier ones), so we detect
+    // it live from the gym.php page: each gym is a button[class*="gymButton___"]
+    // in the same index order as GYM_DATA, locked when its class carries
+    // "locked___" or "lockedPurchased___". The detected index set is cached so
+    // the solver still knows it if the buttons haven't rendered yet.
+    function loadUnlocked() {
+        try { var v = JSON.parse(localStorage.getItem(KEY_UNLOCKED) || 'null'); return Array.isArray(v) ? v : null; } catch (e) { return null; }
+    }
+    function saveUnlocked(arr) { try { localStorage.setItem(KEY_UNLOCKED, JSON.stringify(arr)); } catch (e) {} }
+    // Read the live gym page. Returns a sorted array of unlocked GYM_DATA indices
+    // (excluding the Jail Gym), or null if the gym buttons aren't present yet.
+    function detectUnlockedGyms() {
+        var btns = document.querySelectorAll('button[class*="gymButton___"]');
+        if (!btns.length) return null;
+        var out = [];
+        for (var i = 0; i < btns.length && i < M.GYM_DATA.length - 1; i++) { // skip Jail (last)
+            if (!/locked/i.test(String(btns[i].className || ''))) out.push(i);
+        }
+        return out.length ? out : null;
+    }
 
     // Live state. Populated from the API (with a key) or manual inputs.
     var state = {
@@ -780,7 +799,7 @@ function () {
         energy: 0,
         activeGymIdx: 7,                 // default Global Gym (index 7) until known
         mult: { strength: 1, speed: 1, defense: 1, dexterity: 1 },
-        maxGymIdx: getMaxGym(),          // highest unlocked gym (bounds the solver)
+        unlockedGyms: loadUnlocked(),    // array of unlocked indices, or null (=all)
         loaded: false,
         err: null
     };
@@ -913,26 +932,19 @@ function () {
             state.energy + 'E, ' + state.happy + ' happy</div>' + rows;
     }
 
+    // Is gym index i unlocked? (null unlocked-set = we couldn't detect → allow all)
+    function gymUnlocked(i) {
+        if (i === M.GYM_DATA.length - 1) return false; // Jail Gym — never a normal option
+        return !state.unlockedGyms || state.unlockedGyms.indexOf(i) !== -1;
+    }
     function gymOptions(selName, forStat) {
         var opts = '';
         for (var i = 0; i < M.GYM_DATA.length; i++) {
             var g = M.GYM_DATA[i];
-            // grey out gyms this stat can't train, AND gyms above your unlocked cap
-            // (except the Jail Gym at the end, which is its own special case).
-            var locked = (i > state.maxGymIdx) && i < M.GYM_DATA.length - 1;
+            var locked = !gymUnlocked(i) && i < M.GYM_DATA.length - 1;
             var disabled = (forStat && (!g[forStat] || g[forStat] <= 0)) || locked;
             opts += '<option value="' + i + '"' + (i === state.activeGymIdx ? ' selected' : '') +
                 (disabled ? ' disabled' : '') + '>' + g.name + (locked ? ' 🔒' : '') + '</option>';
-        }
-        return opts;
-    }
-
-    // Dropdown of gyms in unlock order for the "highest unlocked" picker (skips
-    // the Jail Gym, the last entry — it's a special-case gym, not a progression).
-    function maxGymOptions() {
-        var opts = '';
-        for (var i = 0; i < M.GYM_DATA.length - 1; i++) {
-            opts += '<option value="' + i + '"' + (i === state.maxGymIdx ? ' selected' : '') + '>' + M.GYM_DATA[i].name + '</option>';
         }
         return opts;
     }
@@ -969,7 +981,7 @@ function () {
                     statType: st, currentStat: state.stats[st], happy: state.happy,
                     multiplier: state.mult[st], maxSteps: maxSteps, minChance: minChance,
                     minSequences: 1, niceMode: niceMode,
-                    maxGymIndex: state.maxGymIdx   // only gyms you've unlocked
+                    unlockedGyms: state.unlockedGyms   // only gyms you've unlocked (null = all)
                 });
             } catch (e) { out.innerHTML = '<span class="ga-na">' + e.message + '</span>'; return; }
             function target(label, t) {
@@ -1031,7 +1043,8 @@ function () {
             '<div class="ga-ctl"><label class="ga-lbl">Max trains <input id="ga-solve-steps" type="number" value="10" min="1" max="50"></label>' +
             '<label class="ga-lbl">Min % <input id="ga-solve-chance" type="number" value="50" min="0" max="100"></label>' +
             '<button id="ga-solve-go" class="ga-btn">Solve</button></div>' +
-            '<div class="ga-ctl"><label class="ga-lbl" style="flex:1">Highest gym unlocked <select id="ga-maxgym" style="flex:1;min-width:0">' + maxGymOptions() + '</select></label></div>' +
+            '<div class="ga-ctl" style="align-items:center"><span id="ga-gym-status" class="ga-muted" style="flex:1;font-size:10px"></span>' +
+            '<button id="ga-gym-rescan" class="ga-btn ga-sm">Re-scan gyms</button></div>' +
             '<div id="ga-solve-out"></div></div></div>' +
             '<div class="ga-foot"><span class="ga-muted">' + maskKey(key) + '</span>' +
             '<button id="ga-refresh" class="ga-btn ga-sm">Refresh</button>' +
@@ -1049,13 +1062,13 @@ function () {
             solveToggle.textContent = 'Nice-number solver ' + (open ? '▾' : '▸');
         });
         el('ga-solve-go').addEventListener('click', renderSolver);
-        var maxg = el('ga-maxgym');
-        if (maxg) maxg.addEventListener('change', function (e) {
-            state.maxGymIdx = parseInt(e.target.value, 10);
-            setMaxGym(state.maxGymIdx);
-            // reflect the new cap in the estimator's gym list too
+        renderGymStatus();
+        var rescan = el('ga-gym-rescan');
+        if (rescan) rescan.addEventListener('click', function () {
+            applyGymDetection(true);
             var eg = el('ga-est-gym'); if (eg) eg.innerHTML = gymOptions('est');
             renderEstimator();
+            renderGymStatus();
         });
         el('ga-refresh').addEventListener('click', fetchData);
         el('ga-rekey2').addEventListener('click', function () { clearKey(); state.loaded = false; state.err = 'no-key'; render(); });
@@ -1118,12 +1131,44 @@ function () {
         render();
     }
 
-    // The gym page is a React SPA that mounts after document-idle; wait for
-    // body, build the panel once, then load data.
+    // Detect unlocked gyms from the live gym page and cache them. `force` ignores
+    // the "nothing changed" short-circuit (used by the Re-scan button).
+    function applyGymDetection(force) {
+        var found = detectUnlockedGyms();
+        if (!found) return false;              // buttons not rendered yet
+        state.unlockedGyms = found;
+        saveUnlocked(found);
+        return true;
+    }
+    function renderGymStatus() {
+        var elx = el('ga-gym-status'); if (!elx) return;
+        if (state.unlockedGyms) {
+            var n = state.unlockedGyms.length, tot = M.GYM_DATA.length - 1;
+            elx.textContent = '✓ ' + n + '/' + tot + ' gyms unlocked (auto-detected)';
+            elx.style.color = 'var(--wb, #69db7c)';
+        } else {
+            elx.textContent = 'Using all gyms — open your gym page & Re-scan to limit to yours';
+            elx.style.color = '#8a929a';
+        }
+    }
+
+    // The gym page is a React SPA that mounts after document-idle; wait for body,
+    // build the panel once, load data, and poll briefly for the gym buttons to
+    // render so unlocked-gym detection catches them.
     function boot() {
         if (!document.body) { setTimeout(boot, 200); return; }
         buildPanel();
         if (getKey()) fetchData();
+        // detect unlocked gyms once the gym-list buttons exist (retry ~10s)
+        var tries = 0;
+        (function detectLoop() {
+            if (applyGymDetection()) {
+                var eg = el('ga-est-gym'); if (eg) eg.innerHTML = gymOptions('est');
+                renderEstimator(); renderGymStatus();
+                return;
+            }
+            if (++tries < 20) setTimeout(detectLoop, 500);
+        })();
     }
     boot();
 })();
