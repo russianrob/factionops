@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.59
+// @version      5.1.60
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.59';
+    const SCRIPT_VERSION = '5.1.60';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12318,6 +12318,8 @@ body.wb-chain-active {
                 const col = b.delta > 0 ? GREEN : RED;
                 seg = `<div style="position:absolute;top:3px;height:14px;left:${lo}%;width:${hi - lo}%;background:${col};border-radius:3px;"></div>`;
             }
+            // running-total label at its cumulative position (the 50→…→final path)
+            if (!isFinal) seg += `<div style="position:absolute;top:4px;left:${pos(b.running)}%;font-size:8px;color:var(--wb-text-muted);transform:translateX(3px);font-variant-numeric:tabular-nums;">${b.running}</div>`;
             const vs = (b.us != null || b.them != null) && !isFinal
                 ? `<span style="color:var(--wb-text-muted);font-weight:400;font-size:9px;"> ${b.us != null ? escapeHtml(b.us) : '—'} v ${b.them != null ? escapeHtml(b.them) : '—'}</span>` : '';
             const dLabel = isFinal ? finalPct + '%' : b.delta > 0 ? '+' + b.delta : b.delta < 0 ? '−' + Math.abs(b.delta) : '0';

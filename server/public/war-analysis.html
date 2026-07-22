@@ -129,7 +129,7 @@
   </div>
 
   <div class="chart" style="margin-top:14px;">
-    <div class="rowlbl-head" style="border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:8px;"><span id="aw-title">PA - Mavericks attack windows</span><span style="text-align:right;text-transform:none;letter-spacing:0;">when they chain</span></div>
+    <div class="rowlbl-head" style="border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:8px;display:block;"><span id="aw-title">PA - Mavericks attack windows</span></div>
     <div id="aw-bars" style="display:flex;align-items:flex-end;gap:2px;height:70px;"></div>
     <p class="note" style="margin-top:8px;" id="aw-note"></p>
   </div>
@@ -206,6 +206,8 @@
       const cls = delta > 0 ? 'good' : 'bad';
       seg += `<div class="seg ${cls}" style="left:${a}%;width:${b - a}%"></div>`;
     }
+    // running-total label at its cumulative position (shows the 50→…→72 path)
+    if (kind !== 'final') seg += `<div class="runlbl" style="left:${pos(running)}%">${running}</div>`;
     const vs = (us !== "" && kind !== "base" && kind !== "final")
       ? `<span class="vs">${us} vs ${them}</span>` : "";
     const dLabel = delta === null ? "72%"
