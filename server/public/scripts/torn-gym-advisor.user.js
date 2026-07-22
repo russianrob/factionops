@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Gym Advisor
 // @namespace    RussianRob
-// @version      1.1.0
+// @version      1.1.1
 // @description  Live gym-training advisor for Torn's gym page: best-train-now per stat, single-train estimator, and a "nice number" (69/420) sequence solver. Reads your stats/happy/energy/perks live from the API (optional key) or manual entry. Math verified bit-for-bit against the Nice Stat Solver (JTS 2.0 / Vladar gym-gain formula).
 // @author       RussianRob
 // @match        https://www.torn.com/gym.php*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    var SCRIPT_VERSION = "1.1.0";
+    var SCRIPT_VERSION = "1.1.1";
 
     // ================================================================
     // Verified gym-training math. This block is the byte-for-byte port
@@ -763,6 +763,15 @@ function () {
     var STAT_LABEL = { strength: 'Strength', speed: 'Speed', defense: 'Defense', dexterity: 'Dexterity' };
     var KEY_LS = 'gymAdvisorApiKey';
     var COLLAPSE_LS = 'gymAdvisorCollapsed';
+    var KEY_MAXGYM = 'gymAdvisorMaxGym';
+    // The API only exposes active_gym (the currently selected gym), not which
+    // gyms you've unlocked — and gyms unlock in a fixed sequence. So the solver
+    // is bounded by a user-set "highest gym unlocked" (persisted). Default 23 =
+    // George's, the last standard (heavyweight) gym, so it never suggests a
+    // specialist gym (Balboas … SSL) you probably don't have until you say so.
+    var GYM_DEFAULT_MAX = 23; // George's
+    function getMaxGym() { try { var v = parseInt(localStorage.getItem(KEY_MAXGYM), 10); return isNaN(v) ? GYM_DEFAULT_MAX : v; } catch (e) { return GYM_DEFAULT_MAX; } }
+    function setMaxGym(i) { try { localStorage.setItem(KEY_MAXGYM, String(i)); } catch (e) {} }
 
     // Live state. Populated from the API (with a key) or manual inputs.
     var state = {
@@ -771,6 +780,7 @@ function () {
         energy: 0,
         activeGymIdx: 7,                 // default Global Gym (index 7) until known
         mult: { strength: 1, speed: 1, defense: 1, dexterity: 1 },
+        maxGymIdx: getMaxGym(),          // highest unlocked gym (bounds the solver)
         loaded: false,
         err: null
     };
@@ -907,9 +917,22 @@ function () {
         var opts = '';
         for (var i = 0; i < M.GYM_DATA.length; i++) {
             var g = M.GYM_DATA[i];
-            var disabled = forStat && (!g[forStat] || g[forStat] <= 0);
+            // grey out gyms this stat can't train, AND gyms above your unlocked cap
+            // (except the Jail Gym at the end, which is its own special case).
+            var locked = (i > state.maxGymIdx) && i < M.GYM_DATA.length - 1;
+            var disabled = (forStat && (!g[forStat] || g[forStat] <= 0)) || locked;
             opts += '<option value="' + i + '"' + (i === state.activeGymIdx ? ' selected' : '') +
-                (disabled ? ' disabled' : '') + '>' + g.name + '</option>';
+                (disabled ? ' disabled' : '') + '>' + g.name + (locked ? ' 🔒' : '') + '</option>';
+        }
+        return opts;
+    }
+
+    // Dropdown of gyms in unlock order for the "highest unlocked" picker (skips
+    // the Jail Gym, the last entry — it's a special-case gym, not a progression).
+    function maxGymOptions() {
+        var opts = '';
+        for (var i = 0; i < M.GYM_DATA.length - 1; i++) {
+            opts += '<option value="' + i + '"' + (i === state.maxGymIdx ? ' selected' : '') + '>' + M.GYM_DATA[i].name + '</option>';
         }
         return opts;
     }
@@ -945,7 +968,8 @@ function () {
                 res = M.solveSequence({
                     statType: st, currentStat: state.stats[st], happy: state.happy,
                     multiplier: state.mult[st], maxSteps: maxSteps, minChance: minChance,
-                    minSequences: 1, niceMode: niceMode
+                    minSequences: 1, niceMode: niceMode,
+                    maxGymIndex: state.maxGymIdx   // only gyms you've unlocked
                 });
             } catch (e) { out.innerHTML = '<span class="ga-na">' + e.message + '</span>'; return; }
             function target(label, t) {
@@ -1007,6 +1031,7 @@ function () {
             '<div class="ga-ctl"><label class="ga-lbl">Max trains <input id="ga-solve-steps" type="number" value="10" min="1" max="50"></label>' +
             '<label class="ga-lbl">Min % <input id="ga-solve-chance" type="number" value="50" min="0" max="100"></label>' +
             '<button id="ga-solve-go" class="ga-btn">Solve</button></div>' +
+            '<div class="ga-ctl"><label class="ga-lbl" style="flex:1">Highest gym unlocked <select id="ga-maxgym" style="flex:1;min-width:0">' + maxGymOptions() + '</select></label></div>' +
             '<div id="ga-solve-out"></div></div></div>' +
             '<div class="ga-foot"><span class="ga-muted">' + maskKey(key) + '</span>' +
             '<button id="ga-refresh" class="ga-btn ga-sm">Refresh</button>' +
@@ -1024,6 +1049,14 @@ function () {
             solveToggle.textContent = 'Nice-number solver ' + (open ? '▾' : '▸');
         });
         el('ga-solve-go').addEventListener('click', renderSolver);
+        var maxg = el('ga-maxgym');
+        if (maxg) maxg.addEventListener('change', function (e) {
+            state.maxGymIdx = parseInt(e.target.value, 10);
+            setMaxGym(state.maxGymIdx);
+            // reflect the new cap in the estimator's gym list too
+            var eg = el('ga-est-gym'); if (eg) eg.innerHTML = gymOptions('est');
+            renderEstimator();
+        });
         el('ga-refresh').addEventListener('click', fetchData);
         el('ga-rekey2').addEventListener('click', function () { clearKey(); state.loaded = false; state.err = 'no-key'; render(); });
     }
