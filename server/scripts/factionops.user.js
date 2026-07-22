@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.60
+// @version      5.1.61
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.60';
+    const SCRIPT_VERSION = '5.1.61';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12589,9 +12589,12 @@ body.wb-chain-active {
             const bars = local.map((v, h) => {
                 const pct = Math.round(v / max * 100);
                 const on = v > 0;
+                // Label every active hour (bold) + faint 0/6/12/18 refs, so each
+                // push hour is numbered rather than just every-3rd tick.
+                const lbl = on ? `<b style="color:var(--wb-text)">${h}</b>` : (h % 6 === 0 ? h : '');
                 return `<div title="${String(h).padStart(2,'0')}:00 — ${v} hits" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:46px;">
                     <div style="width:70%;height:${on ? Math.max(6, pct) : 0}%;background:${pct >= 70 ? '#d63031' : pct >= 30 ? '#e17055' : '#74b9ff'};border-radius:2px 2px 0 0;"></div>
-                    <div style="font-size:7px;color:var(--wb-text-muted);margin-top:1px;">${h % 3 === 0 ? h : ''}</div>
+                    <div style="font-size:7px;color:var(--wb-text-muted);margin-top:1px;line-height:1;">${lbl}</div>
                 </div>`;
             }).join('');
             const peaks = local.map((v, h) => ({ h, v })).filter(x => x.v > 0).sort((a, b) => b.v - a.v).slice(0, 3)
