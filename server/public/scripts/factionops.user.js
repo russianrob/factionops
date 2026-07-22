@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.58
+// @version      5.1.59
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.58';
+    const SCRIPT_VERSION = '5.1.59';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12296,25 +12296,27 @@ body.wb-chain-active {
             return `hsl(${fav ? 135 : 4},${fav ? 58 : 62}%,${fav ? (66 - t * 38) : (60 - t * 22)}%)`;
         };
         const FAV = favColor(finalPct);
+        // Diverging chart: every bar radiates from the even (50%) line — right &
+        // green when it helps, left & red when it hurts, length = its points.
+        // Symmetric domain around 50 so the centre line is dead centre.
+        const net = Math.abs((finalPct || 50) - 50);
+        const maxDelta = Math.max(0, ...bd.map(b => Math.abs(b.delta || 0)));
+        const M = Math.max(net, maxDelta) + 4;
+        const pos = (v) => ((v - (50 - M)) / (2 * M)) * 100; // value → %
+        const C = pos(50);
         const rows = bd.map(b => {
             const isFinal = b.final;
-            const isBase = b.factor === 'Base (even odds)';
             let seg;
             if (isFinal) {
-                // Anchor at the even (50%) line, extend to the result — favorable
-                // right (green), unfavorable left (red). Never crosses the midline.
-                const lo = Math.min(50, b.running), hi = Math.max(50, b.running);
+                const lo = pos(Math.min(50, b.running)), hi = pos(Math.max(50, b.running));
                 seg = `<div style="position:absolute;top:3px;height:14px;left:${lo}%;width:${hi - lo}%;background:${FAV};border-radius:3px;"></div>`;
-            } else if (isBase) {
-                seg = `<div style="position:absolute;top:3px;height:14px;left:0;width:${b.running}%;background:${NEUTRAL};opacity:0.55;border-radius:3px;"></div>`;
-            } else if (b.delta === 0) {
-                seg = `<div style="position:absolute;top:6px;left:${b.running}%;width:7px;height:7px;border-radius:50%;background:${NEUTRAL};transform:translateX(-3px);"></div>`;
+            } else if (!b.delta) {
+                seg = `<div style="position:absolute;top:6px;left:${C}%;width:7px;height:7px;border-radius:50%;background:${NEUTRAL};transform:translateX(-3px);"></div>`;
             } else {
-                const prev = b.running - b.delta;
-                const lo = Math.min(prev, b.running), hi = Math.max(prev, b.running);
+                const end = pos(50 + b.delta);
+                const lo = Math.min(C, end), hi = Math.max(C, end);
                 const col = b.delta > 0 ? GREEN : RED;
-                seg = `<div style="position:absolute;top:0;bottom:0;left:${prev}%;width:2px;background:${NEUTRAL};opacity:.35;"></div>` +
-                      `<div style="position:absolute;top:3px;height:14px;left:${lo}%;width:${hi - lo}%;background:${col};border-radius:3px;"></div>`;
+                seg = `<div style="position:absolute;top:3px;height:14px;left:${lo}%;width:${hi - lo}%;background:${col};border-radius:3px;"></div>`;
             }
             const vs = (b.us != null || b.them != null) && !isFinal
                 ? `<span style="color:var(--wb-text-muted);font-weight:400;font-size:9px;"> ${b.us != null ? escapeHtml(b.us) : '—'} v ${b.them != null ? escapeHtml(b.them) : '—'}</span>` : '';

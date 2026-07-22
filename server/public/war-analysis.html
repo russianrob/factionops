@@ -169,45 +169,42 @@
     return `hsl(${hue},${sat}%,${light}%)`;
   }
 
-  // Zoom the x-axis to the range actually in play (with padding) so the bars
-  // aren't a sliver near the middle of a full 0–100 axis. Domain from the
-  // running totals; the 50% "even" line stays marked.
-  const runs = rows.map(r => r[4]);
-  const lo = Math.min(...runs, 50), hi = Math.max(...runs, 50);
-  const pad = Math.max(6, (hi - lo) * 0.35);
-  const D0 = Math.floor(lo - pad), D1 = Math.ceil(hi + pad);
-  const pos = v => ((v - D0) / (D1 - D0)) * 100;   // value → % across the track
+  // Diverging chart: every bar radiates from the even (50%) line — right & green
+  // when it helps, left & red when it hurts, length = its points. The final
+  // Win-probability bar is the net edge from even. Symmetric domain around 50 so
+  // the centre line is dead centre.
+  const net = 72 - 50;                                        // final edge from even
+  const maxDelta = Math.max(...rows.map(r => Math.abs(r[3] || 0)));
+  const M = Math.max(Math.abs(net), maxDelta) + 4;           // half-width in points
+  const pos = v => ((v - (50 - M)) / (2 * M)) * 100;         // value → % (50 = 50%)
+  const C = pos(50);
 
   // Color the headline number + final delta label by favorability too.
   const WP = 72;
   const bn = document.querySelector('.bignum'); if (bn) bn.style.color = favColor(WP);
 
   const chart = document.getElementById('chart');
-  // "even 50%" marker on the scale bar
   document.getElementById('scalebar').innerHTML =
-    `<span class="evenlbl" style="left:${pos(50)}%">even · 50%</span>`;
+    `<span class="evenlbl" style="left:${C}%">even · 50%</span>`;
 
   rows.forEach(r => {
     const [label, us, them, delta, running, kind] = r;
     const row = document.createElement('div');
     row.className = 'row' + (kind === 'final' ? ' final' : '');
-    let seg = `<div class="midline" style="left:${pos(50)}%"></div>`;
-    if (kind === 'base') {
-      seg += `<div class="seg base" style="left:${pos(D0)}%;width:${pos(running) - pos(D0)}%"></div>`;
-    } else if (kind === 'final') {
-      // Anchor at the even (50%) line and extend to the result — favorable to the
-      // right (green), unfavorable to the left (red). Never crosses the midline.
+    let seg = `<div class="midline" style="left:${C}%"></div>`;
+    if (kind === 'final') {
+      // Net edge: from centre to the result — favorable right (green), else left.
       const a = pos(Math.min(50, running)), b = pos(Math.max(50, running));
       seg += `<div class="seg final" style="left:${a}%;width:${b - a}%;background:${favColor(running)};opacity:1"></div>`;
-    } else if (kind === 'zero') {
-      seg += `<div class="seg base" style="left:${pos(running) - 0.6}%;width:6px;opacity:.5"></div>`;
+    } else if (!delta) {
+      // no effect (base / 0-point factors) — a dot on the line
+      seg += `<div class="dot" style="left:${C}%"></div>`;
     } else {
-      const prev = running - delta;
-      const a = pos(Math.min(prev, running)), b = pos(Math.max(prev, running));
-      const cls = delta >= 0 ? 'good' : 'bad';
-      seg += `<div class="connector" style="left:${pos(prev)}%"></div>` +
-             `<div class="seg ${cls}" style="left:${a}%;width:${b - a}%"></div>` +
-             `<div class="runlbl" style="left:${pos(running)}%">${running}</div>`;
+      // diverge from centre by |delta| points
+      const end = pos(50 + delta);
+      const a = Math.min(C, end), b = Math.max(C, end);
+      const cls = delta > 0 ? 'good' : 'bad';
+      seg += `<div class="seg ${cls}" style="left:${a}%;width:${b - a}%"></div>`;
     }
     const vs = (us !== "" && kind !== "base" && kind !== "final")
       ? `<span class="vs">${us} vs ${them}</span>` : "";
