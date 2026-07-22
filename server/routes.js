@@ -6193,9 +6193,14 @@ function collectOcHistory(factionId, data) {
     const nameMap = {};
     for (const m of memberArr) { nameMap[String(m.id || m.playerId || m.uid)] = m.name || m.playerName || ''; }
 
-    // Use completedCrimes from oc-spawn cache if available, else filter from crimes array
+    // Use completedCrimes from oc-spawn cache if available, else filter from crimes array.
+    // The OC v2 API reports completed crimes as 'Successful' or 'Failure' (NOT
+    // 'Failed' — that literal matched nothing, so every failed OC was silently
+    // dropped from history, taking its flyer-delays with it). Accept all three
+    // spellings so failed OCs bake too; 'Failed' is kept as a harmless alias in
+    // case the enum ever changes back.
     const completedSrc = data.completedCrimes || crimes;
-    const completed = completedSrc.filter(c => c.status === 'Successful' || c.status === 'Failed');
+    const completed = completedSrc.filter(c => c.status === 'Successful' || c.status === 'Failure' || c.status === 'Failed');
     if (completed.length === 0) return;
 
     if (!existsSync(OC_HISTORY_DIR)) mkdirSync(OC_HISTORY_DIR, { recursive: true });
