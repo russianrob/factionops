@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Gym Advisor
 // @namespace    RussianRob
-// @version      1.0.2
+// @version      1.0.1
 // @description  Live gym-training advisor for Torn's gym page: best-train-now per stat, single-train estimator, and a "nice number" (69/420) sequence solver. Reads your stats/happy/energy/perks live from the API (optional key) or manual entry. Math verified bit-for-bit against the Nice Stat Solver (JTS 2.0 / Vladar gym-gain formula).
 // @author       RussianRob
 // @match        https://www.torn.com/gym.php*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    var SCRIPT_VERSION = "1.0.2";
+    var SCRIPT_VERSION = "1.0.1";
 
     // ================================================================
     // Verified gym-training math. This block is the byte-for-byte port
@@ -508,6 +508,7 @@ function () {
 
             const has69 = s.includes('69');
             const has420 = s.includes('420');
+            const has6969 = s.includes('6969');
 
             // Apply constraint mode
             let allow = false;
@@ -515,6 +516,8 @@ function () {
                 allow = has420;
             } else if (niceMode === '69') {
                 allow = has69;
+            } else if (niceMode === '6969') {
+                allow = has6969;
             } else { // 'either'
                 allow = has69 || has420;
             }
@@ -861,8 +864,8 @@ function () {
                 var rows = M.condensePath(t.path).map(function (r) {
                     return r.count + '× ' + r.name + ' (' + r.energy + 'E)';
                 }).join('<br>');
-                // A best-effort result landed below the min-chance you set — flag it.
-                var be = t.bestEffort ? ' <span style="color:#e08a2b">· best effort (below min %)</span>' : '';
+                // Flag only when the odds are actually below the min % you set.
+                var be = (Math.round(t.chance) < minChance) ? ' <span style="color:#e08a2b">· best effort (below your min %)</span>' : '';
                 return '<div class="ga-solve-card">' +
                     '<div class="ga-solve-head">' + label + ': <b>' + t.target.toLocaleString() + '</b> ' +
                     '<span class="ga-muted">' + Math.round(t.chance) + '% · ' + t.energy + 'E · ' + t.path.length + ' trains</span>' + be + '</div>' +
@@ -911,7 +914,7 @@ function () {
             '<div class="ga-sec"><div class="ga-h ga-toggle" id="ga-solve-toggle">Nice-number solver ▸</div>' +
             '<div id="ga-solve-wrap" style="display:none">' +
             '<div class="ga-ctl"><select id="ga-solve-stat">' + STATS.map(function (s) { return '<option value="' + s + '">' + STAT_LABEL[s] + '</option>'; }).join('') + '</select>' +
-            '<select id="ga-solve-mode"><option value="either">69 or 420</option><option value="69">69 only</option><option value="420">420 only</option></select></div>' +
+            '<select id="ga-solve-mode"><option value="either">69 or 420</option><option value="69">69 only</option><option value="420">420 only</option><option value="6969">6969 only</option></select></div>' +
             '<div class="ga-ctl"><label class="ga-lbl">Max trains <input id="ga-solve-steps" type="number" value="10" min="1" max="50"></label>' +
             '<label class="ga-lbl">Min % <input id="ga-solve-chance" type="number" value="50" min="0" max="100"></label>' +
             '<button id="ga-solve-go" class="ga-btn">Solve</button></div>' +
