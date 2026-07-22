@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Gym Advisor
 // @namespace    RussianRob
-// @version      1.0.1
+// @version      1.0.2
 // @description  Live gym-training advisor for Torn's gym page: best-train-now per stat, single-train estimator, and a "nice number" (69/420) sequence solver. Reads your stats/happy/energy/perks live from the API (optional key) or manual entry. Math verified bit-for-bit against the Nice Stat Solver (JTS 2.0 / Vladar gym-gain formula).
 // @author       RussianRob
 // @match        https://www.torn.com/gym.php*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    var SCRIPT_VERSION = "1.0.1";
+    var SCRIPT_VERSION = "1.0.2";
 
     // ================================================================
     // Verified gym-training math. This block is the byte-for-byte port
@@ -591,6 +591,25 @@ function () {
             if (t1Found && t2Found) break;
         }
 
+        // Best-effort fallback: if nothing cleared minChance but reachable nice
+        // numbers exist, surface the NEAREST one anyway (any chance), flagged, so
+        // the user sees the closest 420/69 target + its real odds instead of a
+        // dead "can't find a match". Uses a small dedicated budget so it stays
+        // cheap; skips silently when even a 0%-threshold landing can't be found
+        // (true at high stat, where exact-integer landing is impossible).
+        if (!t1Found && candidates.length > 0) {
+            const beBudget = { ops: 120000 };
+            for (let k = 0; k < candidates.length && k < MAX_SOLVE; k++) {
+                if (beBudget.ops <= 0) break;
+                const cand = candidates[k];
+                const pi = solveForTargetRange(startStat, startHappy, cand.val, fastCalc, availableGyms, bestGym, 0, maxSteps, beBudget);
+                if (pi) {
+                    t1Found = { target: cand.val, finalVal: pi.finalVal, variance: pi.totalRange, energy: pi.totalEnergy, path: pi.path, score: cand.score, chance: pi.chance, bestEffort: true };
+                    break;
+                }
+            }
+        }
+
         return { t1: t1Found, t2: t2Found, candidateCount: candidates.length, scanStart, scanLimit, availableGyms, bestGym, multiplier: mult };
     }
 
@@ -842,12 +861,15 @@ function () {
                 var rows = M.condensePath(t.path).map(function (r) {
                     return r.count + '× ' + r.name + ' (' + r.energy + 'E)';
                 }).join('<br>');
+                // A best-effort result landed below the min-chance you set — flag it.
+                var be = t.bestEffort ? ' <span style="color:#e08a2b">· best effort (below min %)</span>' : '';
                 return '<div class="ga-solve-card">' +
                     '<div class="ga-solve-head">' + label + ': <b>' + t.target.toLocaleString() + '</b> ' +
-                    '<span class="ga-muted">' + Math.round(t.chance) + '% · ' + t.energy + 'E · ' + t.path.length + ' trains</span></div>' +
+                    '<span class="ga-muted">' + Math.round(t.chance) + '% · ' + t.energy + 'E · ' + t.path.length + ' trains</span>' + be + '</div>' +
                     '<div class="ga-solve-path">' + rows + '</div></div>';
             }
-            if (res.candidateCount === 0) { out.innerHTML = '<span class="ga-na">No nice numbers reachable in ' + maxSteps + ' trains.</span>'; return; }
+            if (res.candidateCount === 0) { out.innerHTML = '<span class="ga-na">No ' + niceMode + ' numbers reachable in ' + maxSteps + ' trains — try more trains, or your per-train gains are too large to land on one (high stat).</span>'; return; }
+            if (!res.t1 && !res.t2) { out.innerHTML = '<span class="ga-na">Found ' + res.candidateCount + ' ' + niceMode + ' target' + (res.candidateCount>1?'s':'') + ' but no train path lands on one — at this stat your per-train gains overshoot a single number. Lower stats / smaller gyms can fine-tune to it.</span>'; return; }
             out.innerHTML = target('Nearest', res.t1) + target('More sequences', res.t2);
         }, 20);
     }
