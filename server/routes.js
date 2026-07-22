@@ -6500,7 +6500,10 @@ async function runFailureRisk(factionId, data) {
   const histRates = {}; // "crimeName::position" -> { succeeded, failed }
   const memberHistRates = {}; // "uid::crimeName::position" -> { succeeded, failed }
   for (const h of allHistory) {
-    if (h.status !== 'Successful' && h.status !== 'Failed') continue;
+    // OC v2 reports failures as 'Failure' (see collectOcHistory). Accept it so
+    // the failed side of these hit-rates is actually counted — the old 'Failed'
+    // literal matched nothing, so every rate here read as 100% success.
+    if (h.status !== 'Successful' && h.status !== 'Failure' && h.status !== 'Failed') continue;
     for (const slot of (h.slots || [])) {
       const posKey = `${h.crimeName}::${slot.position}`;
       if (!histRates[posKey]) histRates[posKey] = { succeeded: 0, failed: 0 };
@@ -7183,7 +7186,10 @@ function runMemberReliability(factionId, data) {
     const diff = crime.difficulty || 0;
     const status = crime.status || '';
     const isSuccess = status === 'Successful';
-    const isFailed = status === 'Failed';
+    // OC v2 reports failures as 'Failure' (see collectOcHistory); 'Failed' kept
+    // as a harmless alias. Without 'Failure' here, member reliability counted
+    // zero failures and everyone read as 100% reliable.
+    const isFailed = status === 'Failure' || status === 'Failed';
     if (!isSuccess && !isFailed) continue;
 
     for (const slot of crime.slots) {
