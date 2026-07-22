@@ -103,6 +103,7 @@ import { fetchFactionMembers, fetchFactionChain, fetchRankedWar, fetchFactionBas
 const maskKey = (key) => key ? `****${String(key).slice(-4)}` : '****';
 import { getHeatmap, resetHeatmap } from "./activity-heatmap.js";
 import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName } from "./oc-spawn.js";
+import { createFlyerDelayPoller } from "./flyer-delay-poll.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
 import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById, getItemCatalog } from "./item-values.js";
 import { getLowestListing, trackItem, getListingsById, getListingsByName, fetchNow as itemMarketFetchNow } from "./item-market.js";
@@ -5595,14 +5596,20 @@ function scheduleFlyerDelaysSave() {
   }, 30_000);
 }
 
-// A pending flyer-delay is "in-flight" only while clients keep re-observing
-// the member as a live blocker (POSTs are throttled to ~60s while the OC page
-// is open). Once the member lands — or the crime completes — observations stop
-// and the entry freezes. Because the completion-merge runs only the first time
-// a crime is seen, an entry whose crime has since aged out of the API window
-// would otherwise show "in-flight" forever. Drop any entry not re-observed
-// within this window so the Delays tab self-heals.
-const FLYER_DELAY_STALE_MS = 10 * 60 * 1000;
+// A pending flyer-delay freezes once observations stop — either because the
+// member landed or because the crime completed. We must KEEP the entry until
+// the crime actually completes (so collectOcHistory can bake the delay into
+// history) or until it's clearly an orphan (an OC that was cancelled and will
+// never complete). The server-side flyer-delay poller (below) now guarantees
+// completions get baked even when no client is watching, so the only reason to
+// drop a pending entry is orphan cleanup — hence this window is the 48h orphan
+// TTL, matching loadFlyerDelays() and the GET /api/oc/delays sweep.
+//
+// (Previously this was 10 minutes, which deleted the entry as soon as a member
+// landed a few minutes before their OC completed — the delay vanished before it
+// could ever bake. The GET's 6h "live" window still gates whether a pending
+// entry DISPLAYS as in-flight; this TTL only controls memory retention.)
+const FLYER_DELAY_STALE_MS = 48 * 60 * 60 * 1000;
 function pruneFlyerDelays(factionId) {
   const m = _flyerDelays.get(String(factionId));
   if (!m) return;
@@ -6264,6 +6271,28 @@ function collectOcHistory(factionId, data) {
     console.error('[oc-history] Error:', e.message);
   }
 }
+
+// ── Server-side flyer-delay completion poller ────────────────────────────────
+// Bakes flyer-delays into OC history without depending on a client being on the
+// crimes page when the OC completes. Only polls factions that currently have
+// pending observations in _flyerDelays, so it's free when nothing is delayed.
+// Key source mirrors the other server pollers: the faction's own stored key,
+// else a pooled member key.
+const _flyerDelayPoller = createFlyerDelayPoller({
+  flyerDelays: _flyerDelays,
+  getKey: (fid) => store.getFactionApiKey(String(fid)) || store.getApiKeyForFaction(String(fid)),
+  getOcSpawnData,
+  getCachedCompletedCrimes,
+  collectOcHistory,
+  pruneFlyerDelays,
+  log: (msg) => console.log(msg),
+});
+// Every 3 min catches a completion while it's still fresh in the API's
+// recent-completed window, without hammering. unref() so it never keeps the
+// process alive on its own. An early kick handles pending delays that survived
+// a restart (loadFlyerDelays runs on setImmediate above).
+setInterval(() => { _flyerDelayPoller.tick().catch(() => {}); }, 3 * 60 * 1000).unref();
+setTimeout(() => { _flyerDelayPoller.tick().catch(() => {}); }, 45_000).unref();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SHARED OC HISTORY LOADER — merges API completedCrimes + on-disk history
