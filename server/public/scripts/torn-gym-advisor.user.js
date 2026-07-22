@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Gym Advisor
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @description  Live gym-training advisor for Torn's gym page: best-train-now per stat, single-train estimator, and a "nice number" (69/420) sequence solver. Reads your stats/happy/energy/perks live from the API (optional key) or manual entry. Math verified bit-for-bit against the Nice Stat Solver (JTS 2.0 / Vladar gym-gain formula).
 // @author       RussianRob
 // @match        https://www.torn.com/gym.php*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    var SCRIPT_VERSION = '1.0.0';
+    var SCRIPT_VERSION = "1.0.1";
 
     // ================================================================
     // Verified gym-training math. This block is the byte-for-byte port
@@ -295,7 +295,7 @@ function () {
     //          the success chance against minChance.
     // Returns { path, finalVal, totalRange, totalEnergy, chance } or null.
     // ------------------------------------------------------------------
-    function solveForTargetRange(start, startHappy, targetInt, fastCalc, gyms, bulkGym, minChance, maxSteps) {
+    function solveForTargetRange(start, startHappy, targetInt, fastCalc, gyms, bulkGym, minChance, maxSteps, budget) {
         let simStat = start;
         let simHappy = startHappy;
         let path = [];
@@ -343,13 +343,20 @@ function () {
             return b.dots - a.dots;
         });
 
-        // Queue: [value, happy, historyArray]
+        // Queue: [value, happy, historyArray]. Dequeue via a head pointer (O(1))
+        // instead of queue.shift() (O(n)) — at high stat the queue grows to
+        // hundreds of thousands of nodes, and shift() made the whole BFS O(n²),
+        // which was the freeze. `budget` (optional, shared across a hunt's solves)
+        // caps total BFS work so an unsolvable high-stat run can't spin forever.
         let queue = [[simStat, simHappy, []]];
+        let head = 0;
         let visited = new Set();
         let maxOps = 100000;
+        const QUEUE_CAP = 200000;
 
-        while (queue.length > 0 && maxOps-- > 0) {
-            let [curVal, curHappy, curHist] = queue.shift();
+        while (head < queue.length && maxOps-- > 0) {
+            if (budget) { if (budget.ops <= 0) return null; budget.ops--; }
+            let [curVal, curHappy, curHist] = queue[head++];
             const stepsUsed = path.length + curHist.length;
             const stepsRemaining = maxSteps - stepsUsed;
             if (stepsRemaining <= 0) continue;
@@ -394,13 +401,15 @@ function () {
             if (visited.has(key)) continue;
             visited.add(key);
 
-            for (let g of searchGyms) {
-                let step = fastCalc(curVal, curHappy, g.dots, g.energy);
-                if (step.avg <= 0) continue;
-                let nextVal = curVal + step.avg;
+            if (queue.length < QUEUE_CAP) {
+                for (let g of searchGyms) {
+                    let step = fastCalc(curVal, curHappy, g.dots, g.energy);
+                    if (step.avg <= 0) continue;
+                    let nextVal = curVal + step.avg;
 
-                if (nextVal < targetInt + 1) {
-                    queue.push([nextVal, step.nextHappy, [...curHist, g]]);
+                    if (nextVal < targetInt + 1) {
+                        queue.push([nextVal, step.nextHappy, [...curHist, g]]);
+                    }
                 }
             }
         }
@@ -486,7 +495,15 @@ function () {
         let t2Found = null;
         let candidates = [];
 
-        for (let i = scanStart; i < scanLimit; i++) {
+        // Scan the reachable range for "nice" numbers, NEAREST first. Two hard
+        // bounds so it can't freeze on high-stat accounts (where the reachable
+        // range spans 1M+ integers): stop after MAX_SCAN integers, and stop once
+        // we have enough candidates. Rare patterns like "420" used to scan the
+        // whole million-wide range because the candidate cap never tripped —
+        // MAX_SCAN closes that. We only need the NEAREST nice targets anyway.
+        const MAX_SCAN = 250000;
+        const scanEnd = Math.min(scanLimit, scanStart + MAX_SCAN);
+        for (let i = scanStart; i < scanEnd; i++) {
             let s = i.toString();
 
             const has69 = s.includes('69');
@@ -518,7 +535,7 @@ function () {
                 candidates.push({ val: i, score: score });
             }
 
-            if (candidates.length > 10000) break;
+            if (candidates.length >= 2000) break;
         }
 
         if (candidates.length === 0) {
@@ -526,8 +543,16 @@ function () {
         }
 
         // --- SOLVE ---
-        for (let k = 0; k < candidates.length; k++) {
+        // Only path-solve the NEAREST candidates, and share ONE op budget across
+        // all of them. Each solve is a bounded BFS, but running full-cost failing
+        // solves on many candidates (common at high stat, where exact integer
+        // landings are near-impossible) was the other half of the freeze. The
+        // shared budget hard-caps total work; the nearest candidates are plenty.
+        const MAX_SOLVE = 250;
+        const solveBudget = { ops: 400000 };
+        for (let k = 0; k < candidates.length && k < MAX_SOLVE; k++) {
             let cand = candidates[k];
+            if (solveBudget.ops <= 0) break;
 
             if (cand.score === minSeq && t1Found) continue;
             if (cand.score > minSeq && t2Found) continue;
@@ -540,7 +565,8 @@ function () {
                 availableGyms,
                 bestGym,
                 minChance,
-                maxSteps
+                maxSteps,
+                solveBudget
             );
 
             if (pathInfo) {

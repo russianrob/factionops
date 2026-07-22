@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Gym Advisor
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @description  Live gym-training advisor for Torn's gym page: best-train-now per stat, single-train estimator, and a "nice number" (69/420) sequence solver. Reads your stats/happy/energy/perks live from the API (optional key) or manual entry. Math verified bit-for-bit against the Nice Stat Solver (JTS 2.0 / Vladar gym-gain formula).
 // @author       RussianRob
 // @match        https://www.torn.com/gym.php*
