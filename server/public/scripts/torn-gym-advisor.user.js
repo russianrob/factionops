@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Gym Advisor
 // @namespace    RussianRob
-// @version      1.0.3
+// @version      1.1.0
 // @description  Live gym-training advisor for Torn's gym page: best-train-now per stat, single-train estimator, and a "nice number" (69/420) sequence solver. Reads your stats/happy/energy/perks live from the API (optional key) or manual entry. Math verified bit-for-bit against the Nice Stat Solver (JTS 2.0 / Vladar gym-gain formula).
 // @author       RussianRob
 // @match        https://www.torn.com/gym.php*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    var SCRIPT_VERSION = "1.0.3";
+    var SCRIPT_VERSION = "1.1.0";
 
     // ================================================================
     // Verified gym-training math. This block is the byte-for-byte port
@@ -417,9 +417,21 @@ function () {
     }
 
     // ------------------------------------------------------------------
-    // Full "hunt" — DOM-free port of the original btnSolve click handler.
-    // Finds the nearest reachable "nice" targets (containing 69 / 420) and
-    // the train path to hit them.
+    // Full "hunt" — finds the nearest reachable "nice" targets (containing
+    // 69 / 420) and the train path to hit them.
+    //
+    // ALGORITHM (inverted search): the old approach enumerated every integer
+    // in the reachable window that contained the pattern, then ran a BFS per
+    // target trying to land EXACTLY on it. At high stat (per-train gain in
+    // the thousands) almost no specific integer is landable, so the budget
+    // burned out on the nearest few un-landable targets and the solver
+    // wrongly reported "no match" even though thousands of reachable stats
+    // contain the pattern. This version explores the stats you can actually
+    // REACH — breadth-first over {stat, happy, trains} expanding every
+    // available gym per node — and tests each reached stat's floor for the
+    // pattern. Nearest matches sit a few trains out, so they surface after a
+    // few BFS levels; hard caps on stored/explored states bound the worst
+    // case (no freezes). Per-train math is untouched (createFastCalculator).
     //
     // options:
     //   statType     'strength'|'speed'|'defense'|'dexterity'   (required)
@@ -430,13 +442,19 @@ function () {
     //   maxSteps     max trains (default 10)
     //   minSequences minimum count of 69/420 sequences (default 1)
     //   minChance    minimum success chance %, 0-100 (default 50)
-    //   niceMode     '420' | '69' | 'either' (default 'either')
+    //   niceMode     '420' | '69' | '6969' | 'either' (default 'either')
     //
     // Returns { t1, t2, candidateCount, scanStart, scanLimit, availableGyms,
     //           bestGym, multiplier }.
-    // t1 = nearest target with exactly minSequences sequences,
-    // t2 = nearest target with more than minSequences sequences; each is
-    // { target, finalVal, variance, energy, path, score, chance } or null.
+    // t1 = nearest reachable target with exactly minSequences sequences,
+    // t2 = nearest reachable target with more than minSequences sequences;
+    // each is { target, finalVal, variance, energy, path, score, chance,
+    // trains, bestEffort? } or null. "Nearest" = smallest target value at or
+    // above currentStat among reachable states; ties on the same target are
+    // broken by fewest trains, then highest chance. candidateCount = number
+    // of DISTINCT reachable qualifying nice integers found. If nothing
+    // clears minChance, t1 falls back to the nearest reachable qualifying
+    // target with its real (sub-threshold) chance and bestEffort: true.
     // ------------------------------------------------------------------
     function solveSequence(options) {
         const opts = options || {};
@@ -488,132 +506,203 @@ function () {
         if (scanLimit <= startStat) scanLimit = Math.ceil(startStat + 1);
         let scanStart = Math.ceil(startStat);
 
-        // --- GENERATE CANDIDATES WITH CONSTRAINTS ---
+        // --- REACHABILITY BFS (inverted search) ---
         const re69 = /69/g;
         const re420 = /420/g;
-        let t1Found = null;
-        let t2Found = null;
-        let candidates = [];
 
-        // Scan the reachable range for "nice" numbers, NEAREST first. Two hard
-        // bounds so it can't freeze on high-stat accounts (where the reachable
-        // range spans 1M+ integers): stop after MAX_SCAN integers, and stop once
-        // we have enough candidates. Rare patterns like "420" used to scan the
-        // whole million-wide range because the candidate cap never tripped —
-        // MAX_SCAN closes that. We only need the NEAREST nice targets anyway.
-        const MAX_SCAN = 250000;
-        const scanEnd = Math.min(scanLimit, scanStart + MAX_SCAN);
-        for (let i = scanStart; i < scanEnd; i++) {
-            let s = i.toString();
+        // Hard caps: MAX_NODES bounds how many states are ever stored (queue
+        // cap), MAX_EXPLORED bounds how many are dequeued/tested. Together
+        // they bound total work regardless of stat/mode, so the solver can
+        // never freeze. Shallow levels (where the nearest matches live) are
+        // fully enumerated long before either cap trips.
+        const MAX_NODES = 200000;
+        const MAX_EXPLORED = 200000;
 
-            const has69 = s.includes('69');
-            const has420 = s.includes('420');
-            const has6969 = s.includes('6969');
+        // Flat parallel-array node store. Children record their parent index
+        // and which gym produced them, so a match's path is rebuilt by
+        // walking parent links instead of copying arrays on every push.
+        const nStat = new Float64Array(MAX_NODES);
+        const nHappy = new Float64Array(MAX_NODES);
+        const nTrains = new Uint16Array(MAX_NODES);
+        const nParent = new Int32Array(MAX_NODES);
+        const nGym = new Int16Array(MAX_NODES);
+        nStat[0] = startStat;
+        nHappy[0] = startHappy;
+        nTrains[0] = 0;
+        nParent[0] = -1;
+        nGym[0] = -1;
+        let nodeCount = 1;
 
-            // Apply constraint mode
-            let allow = false;
-            if (niceMode === '420') {
-                allow = has420;
-            } else if (niceMode === '69') {
-                allow = has69;
-            } else if (niceMode === '6969') {
-                allow = has6969;
-            } else { // 'either'
-                allow = has69 || has420;
+        // Dedup on a quantized {stat, happy, trains} key so near-identical
+        // states (different gym orderings converging on the same value) are
+        // expanded only once.
+        const visited = new Set();
+
+        // Distinct qualifying nice integers seen (regardless of chance) —
+        // this is what candidateCount reports.
+        const qualifyingTargets = new Set();
+        // Per-target best entries: bestOk holds paths meeting minChance,
+        // bestAny holds the best path regardless of chance (for the
+        // best-effort fallback). "Best" = fewest trains, then highest chance.
+        const bestOk = new Map();
+        const bestAny = new Map();
+
+        // Rebuild the gym sequence for a node by walking parent links back to
+        // the root. Steps are the shared availableGyms objects, so each has
+        // { id, name, energy, dots } — the shape condensePath expects.
+        function pathForNode(idx) {
+            const steps = [];
+            let i = idx;
+            while (i > 0) {
+                steps.push(availableGyms[nGym[i]]);
+                i = nParent[i];
             }
+            steps.reverse();
+            return steps;
+        }
 
-            if (!allow) continue;
+        // Replay a node's path from the start through fastCalc to get the
+        // exact final average, the accumulated ± half-range and the energy
+        // cost, then score the landing chance against the target integer.
+        function evaluateNode(idx, target, score, trains) {
+            const path = pathForNode(idx);
+            let finalAvg = startStat;
+            let finalHappy = startHappy;
+            let totalRange = 0;
+            let totalEnergy = 0;
+            for (let i = 0; i < path.length; i++) {
+                const info = fastCalc(finalAvg, finalHappy, path[i].dots, path[i].energy);
+                finalAvg += info.avg;
+                finalHappy = info.nextHappy;
+                totalRange += info.range;
+                totalEnergy += path[i].energy;
+            }
+            const chance = getSuccessChance(finalAvg, totalRange, Math.floor(finalAvg));
+            return {
+                target: target,
+                finalVal: finalAvg,
+                variance: totalRange,
+                energy: totalEnergy,
+                path: path,
+                score: score,
+                chance: chance,
+                trains: trains
+            };
+        }
 
-            // Score = total sequences of "69" + "420"
-            let score = 0;
+        // Tiebreak within one target: fewest trains, then highest chance.
+        function betterEntry(a, b) {
+            if (a.trains !== b.trains) return a.trains < b.trains;
+            return a.chance > b.chance;
+        }
+
+        // Test a reached stat's floor for the nice pattern; record it if it
+        // qualifies. The score is a function of the target integer alone, so
+        // every path to the same target shares one score.
+        function considerNode(idx, stat, trains) {
+            const target = Math.floor(stat);
+            const s = String(target);
+
+            let allow;
+            if (niceMode === '420') {
+                allow = s.indexOf('420') !== -1;
+            } else if (niceMode === '69') {
+                allow = s.indexOf('69') !== -1;
+            } else if (niceMode === '6969') {
+                allow = s.indexOf('6969') !== -1;
+            } else { // 'either'
+                allow = s.indexOf('69') !== -1 || s.indexOf('420') !== -1;
+            }
+            if (!allow) return;
+
+            // Score = total non-overlapping sequences of "69" + "420"
             const m69 = s.match(re69);
             const m420 = s.match(re420);
-            if (m69 || m420) {
-                const c69 = m69 ? m69.length : 0;
-                const c420 = m420 ? m420.length : 0;
-                score = c69 + c420;
-            }
+            const score = (m69 ? m69.length : 0) + (m420 ? m420.length : 0);
+            if (score < minSeq) return;
 
-            if (score >= minSeq) {
-                candidates.push({ val: i, score: score });
-            }
+            qualifyingTargets.add(target);
 
-            if (candidates.length >= 2000) break;
-        }
+            // Only pay for a path replay when this node could improve one of
+            // the per-target records.
+            const exAny = bestAny.get(target);
+            const exOk = bestOk.get(target);
+            if (exAny && trains > exAny.trains && exOk && trains > exOk.trains) return;
 
-        if (candidates.length === 0) {
-            return { t1: null, t2: null, candidateCount: 0, scanStart, scanLimit, availableGyms, bestGym, multiplier: mult };
-        }
-
-        // --- SOLVE ---
-        // Only path-solve the NEAREST candidates, and share ONE op budget across
-        // all of them. Each solve is a bounded BFS, but running full-cost failing
-        // solves on many candidates (common at high stat, where exact integer
-        // landings are near-impossible) was the other half of the freeze. The
-        // shared budget hard-caps total work; the nearest candidates are plenty.
-        const MAX_SOLVE = 250;
-        const solveBudget = { ops: 400000 };
-        for (let k = 0; k < candidates.length && k < MAX_SOLVE; k++) {
-            let cand = candidates[k];
-            if (solveBudget.ops <= 0) break;
-
-            if (cand.score === minSeq && t1Found) continue;
-            if (cand.score > minSeq && t2Found) continue;
-
-            let pathInfo = solveForTargetRange(
-                startStat,
-                startHappy,
-                cand.val,
-                fastCalc,
-                availableGyms,
-                bestGym,
-                minChance,
-                maxSteps,
-                solveBudget
-            );
-
-            if (pathInfo) {
-                let resObj = {
-                    target: cand.val,
-                    finalVal: pathInfo.finalVal,
-                    variance: pathInfo.totalRange,
-                    energy: pathInfo.totalEnergy,
-                    path: pathInfo.path,
-                    score: cand.score,
-                    chance: pathInfo.chance
-                };
-
-                if (cand.score > minSeq && !t2Found) {
-                    t2Found = resObj;
-                }
-                if (cand.score === minSeq && !t1Found) {
-                    t1Found = resObj;
-                }
-            }
-
-            if (t1Found && t2Found) break;
-        }
-
-        // Best-effort fallback: if nothing cleared minChance but reachable nice
-        // numbers exist, surface the NEAREST one anyway (any chance), flagged, so
-        // the user sees the closest 420/69 target + its real odds instead of a
-        // dead "can't find a match". Uses a small dedicated budget so it stays
-        // cheap; skips silently when even a 0%-threshold landing can't be found
-        // (true at high stat, where exact-integer landing is impossible).
-        if (!t1Found && candidates.length > 0) {
-            const beBudget = { ops: 120000 };
-            for (let k = 0; k < candidates.length && k < MAX_SOLVE; k++) {
-                if (beBudget.ops <= 0) break;
-                const cand = candidates[k];
-                const pi = solveForTargetRange(startStat, startHappy, cand.val, fastCalc, availableGyms, bestGym, 0, maxSteps, beBudget);
-                if (pi) {
-                    t1Found = { target: cand.val, finalVal: pi.finalVal, variance: pi.totalRange, energy: pi.totalEnergy, path: pi.path, score: cand.score, chance: pi.chance, bestEffort: true };
-                    break;
-                }
+            const entry = evaluateNode(idx, target, score, trains);
+            if (!exAny || betterEntry(entry, exAny)) bestAny.set(target, entry);
+            if (entry.chance >= minChance) {
+                if (!exOk || betterEntry(entry, exOk)) bestOk.set(target, entry);
             }
         }
 
-        return { t1: t1Found, t2: t2Found, candidateCount: candidates.length, scanStart, scanLimit, availableGyms, bestGym, multiplier: mult };
+        // Breadth-first sweep. O(1) dequeue via head index (never .shift()).
+        let head = 0;
+        let explored = 0;
+        while (head < nodeCount && explored < MAX_EXPLORED) {
+            const idx = head++;
+            explored++;
+            const stat = nStat[idx];
+            const happy = nHappy[idx];
+            const trains = nTrains[idx];
+
+            // The start itself (0 trains) is not a candidate — a nice number
+            // only counts if a train path lands on it.
+            if (trains >= 1) considerNode(idx, stat, trains);
+
+            if (trains >= maxSteps) continue;
+            if (nodeCount >= MAX_NODES) continue; // store full: keep testing queued nodes, stop growing
+
+            for (let g = 0; g < availableGyms.length; g++) {
+                const gym = availableGyms[g];
+                const step = fastCalc(stat, happy, gym.dots, gym.energy);
+                if (step.avg <= 0) continue;
+                const childStat = stat + step.avg;
+                const childHappy = step.nextHappy;
+                const key = Math.round(childStat * 100) + '|' + Math.round(childHappy * 10) + '|' + (trains + 1);
+                if (visited.has(key)) continue;
+                visited.add(key);
+                nStat[nodeCount] = childStat;
+                nHappy[nodeCount] = childHappy;
+                nTrains[nodeCount] = trains + 1;
+                nParent[nodeCount] = idx;
+                nGym[nodeCount] = g;
+                nodeCount++;
+                if (nodeCount >= MAX_NODES) break;
+            }
+        }
+
+        // --- PICK WINNERS ---
+        // t1 = nearest qualifying target with score EXACTLY minSeq,
+        // t2 = nearest qualifying target with score > minSeq,
+        // both restricted to entries meeting minChance. Per-target tiebreaks
+        // (fewest trains, then highest chance) were applied while recording.
+        let t1Found = null;
+        let t2Found = null;
+        for (const entry of bestOk.values()) {
+            if (entry.score === minSeq) {
+                if (!t1Found || entry.target < t1Found.target) t1Found = entry;
+            } else if (entry.score > minSeq) {
+                if (!t2Found || entry.target < t2Found.target) t2Found = entry;
+            }
+        }
+
+        // Best-effort fallback: if no t1 cleared the strict channel (exact
+        // score + minChance) but qualifying nice numbers ARE reachable,
+        // surface the nearest one anyway with its real chance, flagged, so
+        // the user sees the closest nice target + its odds instead of a dead
+        // "can't find a match". (Also covers modes like '6969' where every
+        // match scores above minSeq, mirroring the original's behavior.)
+        if (!t1Found && bestAny.size > 0) {
+            let nearestTarget = -1;
+            for (const target of bestAny.keys()) {
+                if (nearestTarget === -1 || target < nearestTarget) nearestTarget = target;
+            }
+            const entry = bestOk.get(nearestTarget) || bestAny.get(nearestTarget);
+            t1Found = Object.assign({}, entry, { bestEffort: true });
+        }
+
+        return { t1: t1Found, t2: t2Found, candidateCount: qualifyingTargets.size, scanStart, scanLimit, availableGyms, bestGym, multiplier: mult };
     }
 
     // Collapse a train path (array of gym steps) into display rows of
@@ -871,8 +960,8 @@ function () {
                     '<span class="ga-muted">' + Math.round(t.chance) + '% · ' + t.energy + 'E · ' + t.path.length + ' trains</span>' + be + '</div>' +
                     '<div class="ga-solve-path">' + rows + '</div></div>';
             }
-            if (res.candidateCount === 0) { out.innerHTML = '<span class="ga-na">No ' + niceMode + ' numbers reachable in ' + maxSteps + ' trains — try more trains, or your per-train gains are too large to land on one (high stat).</span>'; return; }
-            if (!res.t1 && !res.t2) { out.innerHTML = '<span class="ga-na">Found ' + res.candidateCount + ' ' + niceMode + ' target' + (res.candidateCount>1?'s':'') + ' but no train path lands on one — at this stat your per-train gains overshoot a single number. Lower stats / smaller gyms can fine-tune to it.</span>'; return; }
+            if (res.candidateCount === 0) { out.innerHTML = '<span class="ga-na">No ' + niceMode + ' number is reachable within ' + maxSteps + ' trains. Try increasing Max trains.</span>'; return; }
+            if (!res.t1 && !res.t2) { out.innerHTML = '<span class="ga-na">' + res.candidateCount + ' ' + niceMode + ' target' + (res.candidateCount>1?'s':'') + ' reachable, but none met your criteria — try lowering the Min %.</span>'; return; }
             out.innerHTML = target('Nearest', res.t1) + target('More sequences', res.t2);
         }, 20);
     }
