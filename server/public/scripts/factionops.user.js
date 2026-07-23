@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.61
+// @version      5.1.62
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.61';
+    const SCRIPT_VERSION = '5.1.62';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -7161,7 +7161,9 @@ body.wb-chain-active {
             const anchorAge = chainTimeoutAnchorAt > 0 ? (Date.now() - chainTimeoutAnchorAt) / 1000 : Infinity;
             const chainDataFresh = anchorAge < 120; // anchor less than 2 min old
             const _chainFocusOK = IS_PDA || (typeof document.hasFocus === 'function' ? document.hasFocus() : !document.hidden);
-            if (CONFIG.CHAIN_ALERT && _chainFocusOK && isWarActive() && chainDataFresh && chainTimeoutPlausible && state.chain.timeout > 0 && state.chain.current >= 10) {
+            // Fire on ANY active chain you're watching (not war-only): the focus
+            // gate keeps it compliant, current>=10 + freshness keep it relevant.
+            if (CONFIG.CHAIN_ALERT && _chainFocusOK && chainDataFresh && chainTimeoutPlausible && state.chain.timeout > 0 && state.chain.current >= 10) {
                 // Panic at 30s
                 if (state.chain.timeout <= 30 && !state.chainPanicFired) {
                     _chainAlertDiag('panic');
@@ -7257,6 +7259,20 @@ body.wb-chain-active {
                             updateChainBar();
 
                             if (chain.current !== oldCurrent) {
+                                // Bonus-imminent alert. The original lived in the now-dead
+                                // !CHAIN_POLL_ONLY block, so under poll-only it never fired.
+                                // Fire on each hit within 3 of the next bonus milestone.
+                                const nextBonus = nextBonusMilestone(chain.current + 1);
+                                const hitsToBonus = nextBonus ? nextBonus - chain.current : null;
+                                const coolingDown = (chain.cooldown || 0) > 0;
+                                const focusOK = IS_PDA || (typeof document.hasFocus === 'function' ? document.hasFocus() : !document.hidden);
+                                if (CONFIG.CHAIN_ALERT && focusOK && !coolingDown && hitsToBonus !== null && hitsToBonus > 0 && hitsToBonus <= 3 && chain.current >= 10) {
+                                    showToast(`BONUS HIT in ${hitsToBonus}! Target: ${nextBonus}`, 'error');
+                                    playChainAlert();
+                                    firePdaNotification('bonus_imminent',
+                                        '💥 Bonus Hit Imminent',
+                                        `Chain at ${chain.current}/${nextBonus} — ${hitsToBonus} hit${hitsToBonus > 1 ? 's' : ''} to bonus!`);
+                                }
                             }
 
                             // Forward to warboard so the server's chain
