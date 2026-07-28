@@ -735,3 +735,38 @@ test("tfsStoreRowImgId extracts the item id from the store image", () => {
   };
   assert.strictEqual(mod.tfsStoreRowImgId(row), "229");
 });
+
+test("hazard display: fresh wait shows 50%/90% horizons", () => {
+  const m = mod;
+  const qs = [2400, 3000, 3600, 4200, 4800, 5400, 6000, 6600, 7200, 7800, 8400];
+  const entry = { interval: 5400, intLo: 3600, intHi: 7200, qs, last: 1000, n: 10, rel: "med" };
+  const out = m.modelEstimate(entry, (1000 + 600) * 1000); // 10 min after restock
+  assert.match(out, /^50%: ~/);
+  assert.match(out, /90%: ~/);
+  assert.match(out, /\(med\)$/);
+});
+
+test("hazard display: deep overdue reads 'any poll now'", () => {
+  const m = mod;
+  const qs = [2400, 3000, 3600, 4200, 4800, 5400, 6000, 6600, 7200, 7800, 8400];
+  const entry = { interval: 5400, qs, last: 1000, n: 10, rel: "low" };
+  const out = m.modelEstimate(entry, (1000 + 9000) * 1000); // way past max gap
+  assert.match(out, /overdue/);
+});
+
+test("cdf/invCdf round-trip and monotonicity", () => {
+  const m = mod;
+  const qs = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100];
+  assert.equal(m.cdfAt(qs, 50), 0);
+  assert.equal(m.cdfAt(qs, 2000), 1);
+  const mid = m.cdfAt(qs, 600);
+  assert.ok(mid > 0.4 && mid < 0.6);
+  assert.ok(Math.abs(m.invCdf(qs, m.cdfAt(qs, 640)) - 640) < 15);
+});
+
+test("high-reliability entries keep the crisp point countdown", () => {
+  const m = mod;
+  const entry = { interval: 5400, qs: [5000,5100,5200,5300,5400,5400,5500,5600,5700,5800,5900], last: 1000, rel: "high" };
+  const out = m.modelEstimate(entry, (1000 + 600) * 1000);
+  assert.match(out, /^~every /);
+});

@@ -117,6 +117,9 @@ export function computeEntry(restocks, samples, nowSec) {
   if (restocks && restocks.length >= 2) {
     const g = gaps(restocks).filter((x) => x >= MIN_GAP);
     if (g.length >= 1) {
+      const qs = g.length >= 6
+        ? Array.from({ length: 11 }, (_, i) => Math.round(percentile(g, i / 10)))
+        : null;
       entry = {
         interval: Math.round(median(g)),
         // honest uncertainty: gaps swing wildly on event days — the script
@@ -127,6 +130,7 @@ export function computeEntry(restocks, samples, nowSec) {
         n: g.length,
         rel: reliabilityTier(g.length, coeffVar(g))
       };
+      if (qs) entry.qs = qs; // hazard curve: script computes P(restock by t)
     }
   }
 
@@ -160,7 +164,7 @@ export function buildModel(state, nowSec) {
       if (!e) continue;
       const restockFresh = e.last != null && (nowSec - e.last) <= STALE_DROP;
       if (!restockFresh && e.last != null) {
-        delete e.interval; delete e.intLo; delete e.intHi; delete e.last; delete e.n; delete e.rel;
+        delete e.interval; delete e.intLo; delete e.intHi; delete e.qs; delete e.last; delete e.n; delete e.rel;
       }
       if (restockFresh || e.sellReady) {
         if (!items[c]) items[c] = {};

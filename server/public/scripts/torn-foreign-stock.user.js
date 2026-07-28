@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.30
+// @version      0.9.31
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.30";
+  var SCRIPT_VERSION = "0.9.31";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -105,12 +105,44 @@
     var m = Math.round(sec / 60);
     return (m < 60) ? (m + "m") : (Math.floor(m / 60) + "h " + (m % 60) + "m");
   }
+  // Empirical CDF over the published gap quantiles (11 points, linear interp).
+  function cdfAt(qs, y) {
+    var last = qs.length - 1;
+    if (y <= qs[0]) return 0;
+    if (y >= qs[last]) return 1;
+    for (var i = 1; i <= last; i++) {
+      if (y <= qs[i]) {
+        var f0 = (i - 1) / last, f1 = i / last;
+        var frac = (y - qs[i - 1]) / Math.max(1, qs[i] - qs[i - 1]);
+        return f0 + (f1 - f0) * frac;
+      }
+    }
+    return 1;
+  }
+  function invCdf(qs, pTarget) {
+    var last = qs.length - 1;
+    if (pTarget <= 0) return qs[0];
+    if (pTarget >= 1) return qs[last];
+    var idx = pTarget * last;
+    var i = Math.floor(idx);
+    if (i >= last) return qs[last];
+    return qs[i] + (qs[i + 1] - qs[i]) * (idx - i);
+  }
   function modelEstimate(entry, nowMs) {
     if (!entry || !entry.interval) return null;
     var nowSec = Math.floor(nowMs / 1000);
     var interval = entry.interval;
     var since = nowSec - entry.last;
     var rel = entry.rel || "low";
+    // Hazard curve: given we've already waited `since`, when does the
+    // CONDITIONAL probability of a restock hit 50% / 90%?
+    if (rel !== "high" && entry.qs && entry.qs.length >= 5 && since >= 0) {
+      var F0 = cdfAt(entry.qs, since);
+      if (F0 >= 0.97) return "overdue · any poll now (" + rel + ")";
+      var t50 = invCdf(entry.qs, F0 + 0.5 * (1 - F0)) - since;
+      var t90 = invCdf(entry.qs, F0 + 0.9 * (1 - F0)) - since;
+      return "50%: ~" + fmtDuration(Math.max(60, t50)) + " · 90%: ~" + fmtDuration(Math.max(60, t90)) + " (" + rel + ")";
+    }
     // Noisy cadence (rel not high): show the honest p25-p75 window instead of
     // a point estimate — be in the shop from the EARLY edge on event days.
     if (rel !== "high" && entry.intLo && entry.intHi && since >= 0) {
@@ -1010,7 +1042,7 @@
       normalizeCountryName: normalizeCountryName, COUNTRY_MAP: COUNTRY_MAP,
       parseYataExport: parseYataExport, fmtMoney: fmtMoney, fmtProfit: fmtProfit, formatAge: formatAge,
       buildRows: buildRows, sortRows: sortRows, restockEta: restockEta,
-      fmtDuration: fmtDuration, modelEstimate: modelEstimate, restockDisplay: restockDisplay,
+      fmtDuration: fmtDuration, modelEstimate: modelEstimate, restockDisplay: restockDisplay, cdfAt: cdfAt, invCdf: invCdf,
       itemCategory: itemCategory, rowVisible: rowVisible, countryVisible: countryVisible,
       parseFlightMinutes: parseFlightMinutes, landVerdict: landVerdict,
       parseTravelState: parseTravelState, parseAriaTravel: parseAriaTravel, domTravelState: domTravelState,
