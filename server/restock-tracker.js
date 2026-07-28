@@ -245,7 +245,10 @@ async function pollOnce() {
               title: "🔄 Restock: " + (w.label || (c + "/" + id)),
               body: it.quantity + " units just landed — they go fast",
               tag: "restock-" + c + "-" + id,
-              url: "https://www.torn.com/page.php?sid=travel",
+              // sw.js notificationclick reads data.url (top-level url is
+              // ignored and falls back to the faction war page); the APNs
+              // and FCM senders forward data.* too.
+              data: { url: "https://www.torn.com/page.php?sid=travel" },
             }, "restock_alert", { urgency: "high" }).catch((e) => console.error("[restock] push failed:", e.message));
           }
         }
