@@ -119,6 +119,10 @@ export function computeEntry(restocks, samples, nowSec) {
     if (g.length >= 1) {
       entry = {
         interval: Math.round(median(g)),
+        // honest uncertainty: gaps swing wildly on event days — the script
+        // shows a p25–p75 window instead of a point when rel isn't high
+        intLo: Math.round(percentile(g, 0.25)),
+        intHi: Math.round(percentile(g, 0.75)),
         last: restocks[restocks.length - 1],
         n: g.length,
         rel: reliabilityTier(g.length, coeffVar(g))
@@ -156,7 +160,7 @@ export function buildModel(state, nowSec) {
       if (!e) continue;
       const restockFresh = e.last != null && (nowSec - e.last) <= STALE_DROP;
       if (!restockFresh && e.last != null) {
-        delete e.interval; delete e.last; delete e.n; delete e.rel;
+        delete e.interval; delete e.intLo; delete e.intHi; delete e.last; delete e.n; delete e.rel;
       }
       if (restockFresh || e.sellReady) {
         if (!items[c]) items[c] = {};

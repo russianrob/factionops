@@ -321,3 +321,10 @@ test("small-cap items still register their small restocks", () => {
   item = recordSample(item, 18, 1120);             // real restock for this item
   assert.equal(item.restocks.length, 1);
 });
+
+test("computeEntry publishes p25-p75 interval window", () => {
+  const rs = [0, 1000, 3000, 4500, 7000];
+  const e = computeEntry(rs, [], 7100);
+  assert.ok(e.intLo <= e.interval && e.interval <= e.intHi);
+  assert.ok(e.intLo >= 180);
+});

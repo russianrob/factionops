@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.29
+// @version      0.9.30
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.29";
+  var SCRIPT_VERSION = "0.9.30";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -110,9 +110,22 @@
     var nowSec = Math.floor(nowMs / 1000);
     var interval = entry.interval;
     var since = nowSec - entry.last;
+    var rel = entry.rel || "low";
+    // Noisy cadence (rel not high): show the honest p25-p75 window instead of
+    // a point estimate — be in the shop from the EARLY edge on event days.
+    if (rel !== "high" && entry.intLo && entry.intHi && since >= 0) {
+      var loLeft = (entry.last + entry.intLo) - nowSec;
+      var hiLeft = (entry.last + entry.intHi) - nowSec;
+      if (hiLeft > 0) {
+        if (loLeft > 0) {
+          return "~in " + fmtDuration(loLeft) + "–" + fmtDuration(hiLeft) + " (" + rel + ")";
+        }
+        return "window open · ≤" + fmtDuration(hiLeft) + " (" + rel + ")";
+      }
+    }
     var leftSec = (since < 0) ? -since : (interval - (since % interval));
     if (leftSec <= 0) leftSec = interval;
-    return "~every " + fmtDuration(interval) + " · ~" + fmtDuration(leftSec) + " (" + (entry.rel || "low") + ")";
+    return "~every " + fmtDuration(interval) + " · ~" + fmtDuration(leftSec) + " (" + rel + ")";
   }
   function restockDisplay(nextRestock, entry, nowMs, qty) {
     var live = restockEta(nextRestock, nowMs);
