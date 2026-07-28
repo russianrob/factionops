@@ -186,11 +186,13 @@ export function buildModel(state, nowSec) {
 }
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
+import { sendToPlayer } from "./push-notifications.js";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = join(__dirname, "data", "restock-state.json");
+const ALERTS_FILE = join(__dirname, "data", "restock-alerts.json");
 const TOKEN_FILE = join(__dirname, "data", ".ghtoken");
 const PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
 const REPO = "russianrob/torn-foreign-restock";
@@ -198,6 +200,11 @@ const MODEL_PATH = "restock-model.json";
 const GH_API = `https://api.github.com/repos/${REPO}/contents/${MODEL_PATH}`;
 
 let _state = {};
+let _alerts = { player: null, watches: [] };
+function loadAlerts() {
+  try { if (existsSync(ALERTS_FILE)) _alerts = JSON.parse(readFileSync(ALERTS_FILE, "utf-8")) || _alerts; }
+  catch (e) { console.error("[restock] alerts load failed:", e.message); }
+}
 
 function loadState() {
   try { if (existsSync(STATE_FILE)) _state = JSON.parse(readFileSync(STATE_FILE, "utf-8")) || {}; }
@@ -227,7 +234,21 @@ async function pollOnce() {
       if (!_state[c]) _state[c] = {};
       for (const it of (stocks[c].stocks || [])) {
         const id = String(it.id);
+        const prevLen = (_state[c][id] && _state[c][id].restocks || []).length;
         _state[c][id] = recordSample(_state[c][id], it.quantity, now);
+        // Watched item just visibly restocked -> push immediately. Detection
+        // beats prediction on randomized-cadence items.
+        if (_alerts.player && (_state[c][id].restocks || []).length > prevLen) {
+          const w = _alerts.watches.find((x) => x.c === c && x.id === id);
+          if (w) {
+            sendToPlayer(_alerts.player, {
+              title: "🔄 Restock: " + (w.label || (c + "/" + id)),
+              body: it.quantity + " units just landed — they go fast",
+              tag: "restock-" + c + "-" + id,
+              url: "https://www.torn.com/page.php?sid=travel",
+            }, "restock_alert", { urgency: "high" }).catch((e) => console.error("[restock] push failed:", e.message));
+          }
+        }
       }
     }
     saveState();
@@ -290,6 +311,7 @@ async function publishModel() {
 }
 
 export function startRestockTracker() {
+  loadAlerts();
   loadState();
   pollOnce().catch(() => {});
   setInterval(() => { pollOnce().catch(() => {}); }, 60_000);

@@ -45,6 +45,7 @@ export const NOTIFICATION_TYPES = {
   enemy_attacking: { label: "Enemy Attacking",        description: "When an enemy is caught mid-attack by the poller",  default: false },
   enemy_surge:     { label: "Enemy Online Surge",     description: "When the enemy faction's online count jumps sharply (rallying)", default: false },
   stakeout_alert:  { label: "Stakeout Alerts",        description: "A watched player/faction hit a trigger (online, out of hospital, landed, revivable…)", default: true },
+  restock_alert:   { label: "Foreign Restock Alerts", description: "When a watched foreign-shop item restocks (watchlist on the server)", default: false },
   // oc: true marks a type as OC-Spawn-only. The FactionOps settings UI
   // filters these out via /api/push/types so war-overlay users don't see
   // OC-specific toggles; they're managed instead from the /notifications
