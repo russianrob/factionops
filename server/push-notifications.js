@@ -402,7 +402,7 @@ async function hasWarEnded(warId) {
 /**
  * Notify war room that a target was called.
  */
-export async function notifyTargetCalled(warPlayers, warId, callerName, targetName, excludePlayerId) {
+export async function notifyTargetCalled(warPlayers, warId, callerName, targetName, excludePlayerId, targetId) {
   if (!(await hasWarStarted(warId))) return;
   await sendToWar(
     () => warPlayers,
@@ -412,7 +412,9 @@ export async function notifyTargetCalled(warPlayers, warId, callerName, targetNa
       body: `${callerName} called ${targetName}`,
       tag: `call-${targetName}`,
       icon: "/icon-192.png",
-      data: { type: "call", warId },
+      // targetId lets sw.js resolve the attack page on tap — without it the
+      // "Attack" action button falls back to the faction war page.
+      data: { type: "call", warId, targetId },
     },
     "target_called",
     excludePlayerId,

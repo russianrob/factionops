@@ -2714,7 +2714,7 @@ router.post("/api/call", requireAuth, (req, res) => {
 
   // Push notification to war room (except the caller)
   const warPlayers = store.getOnlinePlayersForWar(warId);
-  push.notifyTargetCalled(warPlayers, warId, playerName, targetName || targetId, playerId);
+  push.notifyTargetCalled(warPlayers, warId, playerName, targetName || targetId, playerId, targetId);
 
   return res.json({ ok: true, call: callData });
 });
