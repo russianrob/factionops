@@ -328,3 +328,11 @@ test("computeEntry publishes p25-p75 interval window", () => {
   assert.ok(e.intLo <= e.interval && e.interval <= e.intHi);
   assert.ok(e.intLo >= 180);
 });
+
+test("fused gaps de-fuse to the underlying interval", () => {
+  // five clean ~1h gaps + one 3h monster (2 invisible restocks inside)
+  const rs = [0, 3600, 7200, 10800, 14400, 18000, 28800];
+  const e = computeEntry(rs, [], 28900);
+  assert.ok(e.interval >= 3300 && e.interval <= 3900, `interval ${e.interval}`);
+  assert.ok(e.intHi < 7200, `p75 should not carry the fused tail, got ${e.intHi}`);
+});

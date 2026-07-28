@@ -115,8 +115,18 @@ export function depletionReliability(usableIntervals, maxDropShare, coverage) {
 export function computeEntry(restocks, samples, nowSec) {
   let entry = null;
   if (restocks && restocks.length >= 2) {
-    const g = gaps(restocks).filter((x) => x >= MIN_GAP);
+    let g = gaps(restocks).filter((x) => x >= MIN_GAP);
     if (g.length >= 1) {
+      // De-fuse: a gap ~k× the median almost certainly hides k-1 restocks
+      // that sold out between polls — divide it back to the underlying
+      // interval so the tail of the distribution isn't observation noise.
+      const m0 = median(g);
+      if (m0 > 0) {
+        g = g.map((x) => {
+          const k = Math.round(x / m0);
+          return (x > 1.75 * m0 && k >= 2) ? x / k : x;
+        });
+      }
       const qs = g.length >= 6
         ? Array.from({ length: 11 }, (_, i) => Math.round(percentile(g, i / 10)))
         : null;
