@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { median, coeffVar, reliabilityTier, safetyFactor, recordSample } from "./restock-tracker.js";
+import { median, coeffVar, reliabilityTier, safetyFactor } from "./restock-tracker.js";
 
 test("median", () => {
   assert.strictEqual(median([5]), 5);
@@ -39,7 +39,7 @@ import { gaps, recordSample, computeEntry, buildModel } from "./restock-tracker.
 test("recordSample records a restock only when qty increases (within freshness)", () => {
   let it = { qty: null, restocks: [], lastSeen: null };
   it = recordSample(it, 5, 100);
-  assert.deepStrictEqual(it, { qty: 5, restocks: [], lastSeen: 100, samples: [[100, 5]] });
+  assert.deepStrictEqual(it, { qty: 5, restocks: [], lastSeen: 100, samples: [[100, 5]], maxQty: 5 });
   it = recordSample(it, 3, 160);
   assert.deepStrictEqual(it.restocks, []);
   it = recordSample(it, 9, 220);
