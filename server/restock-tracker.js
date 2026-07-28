@@ -50,13 +50,18 @@ export function percentile(nums, p) {
 }
 
 export function recordSample(item, curQty, nowSec) {
-  const prev = item || { qty: null, restocks: [], lastSeen: null, samples: [] };
+  const prev = item || { qty: null, restocks: [], lastSeen: null, samples: [], maxQty: 0 };
   if (typeof curQty !== "number" || !isFinite(curQty)) {
-    return { qty: prev.qty, restocks: (prev.restocks || []).slice(), lastSeen: prev.lastSeen, samples: (prev.samples || []).slice() };
+    return { qty: prev.qty, restocks: (prev.restocks || []).slice(), lastSeen: prev.lastSeen, samples: (prev.samples || []).slice(), maxQty: prev.maxQty || 0 };
   }
+  const maxQty = Math.max(prev.maxQty || 0, curQty);
   let restocks = (prev.restocks || []).slice();
   const fresh = (prev.lastSeen == null) || (nowSec - prev.lastSeen) <= ABSENT_MAX;
-  if (prev.qty != null && curQty > prev.qty && fresh) {
+  // A rise only counts as a RESTOCK if it's a meaningful chunk of the item's
+  // known stock size — tiny +1/+13 blips are player sell-backs on camped
+  // items (rampant on event days) and were corrupting the gap data.
+  const minJump = Math.max(3, Math.round(maxQty * 0.05));
+  if (prev.qty != null && curQty - prev.qty >= minJump && fresh) {
     restocks.push(nowSec);
     if (restocks.length > 24) restocks = restocks.slice(restocks.length - 24);
   }
@@ -65,7 +70,7 @@ export function recordSample(item, curQty, nowSec) {
   const minAge = nowSec - WINDOW_SEC - 120;
   samples = samples.filter((s) => s[0] >= minAge);
   if (samples.length > SAMPLE_CAP) samples = samples.slice(samples.length - SAMPLE_CAP);
-  return { qty: curQty, restocks: restocks, lastSeen: nowSec, samples: samples };
+  return { qty: curQty, restocks: restocks, lastSeen: nowSec, samples: samples, maxQty: maxQty };
 }
 
 export function computeSellRate(samples, nowSec) {

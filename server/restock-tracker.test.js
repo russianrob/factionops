@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { median, coeffVar, reliabilityTier, safetyFactor } from "./restock-tracker.js";
+import { median, coeffVar, reliabilityTier, safetyFactor, recordSample } from "./restock-tracker.js";
 
 test("median", () => {
   assert.strictEqual(median([5]), 5);
@@ -300,4 +300,24 @@ test("safetyFactor: Tiger Day (Jul 28-29 TCT) runs 1.4, normal days 1.15", () =>
   assert.equal(safetyFactor(jul29), 1.4);
   assert.equal(safetyFactor(jul30), 1.15);
   assert.equal(safetyFactor(feb1), 1.15);
+});
+
+test("sell-back blips don't count as restocks; real restocks do", () => {
+  let item = recordSample(null, 2500, 1000);       // first sight, big stock
+  item = recordSample(item, 0, 1060);              // sold out
+  item = recordSample(item, 1, 1120);              // +1 sell-back — not a restock
+  assert.equal(item.restocks.length, 0);
+  item = recordSample(item, 0, 1180);
+  item = recordSample(item, 91, 1240);             // +91 on a 2500-cap item — still a blip
+  assert.equal(item.restocks.length, 0);
+  item = recordSample(item, 0, 1300);
+  item = recordSample(item, 2400, 1360);           // the real restock
+  assert.equal(item.restocks.length, 1);
+});
+
+test("small-cap items still register their small restocks", () => {
+  let item = recordSample(null, 20, 1000);         // cap ~20
+  item = recordSample(item, 0, 1060);
+  item = recordSample(item, 18, 1120);             // real restock for this item
+  assert.equal(item.restocks.length, 1);
 });
