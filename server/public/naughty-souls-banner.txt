@@ -1,0 +1,56 @@
+<div style="width: 100%; max-width: 700px; margin: 0 auto; background-image: url('https://iili.io/CqWE7rF.md.png'); background-size: 100%; background-position: top; background-repeat: no-repeat; background-color: #000000; color: white; border: 2px solid #ff1a7a; font-family: Arial, sans-serif; padding-top: 28.57%; padding-left: 1%; padding-right: 1%; text-align: left; overflow: hidden;">
+  <!-- Welcome Message -->
+  <p style="font-size: 14px; margin: 0 0 35px 30px; color: white; line-height: 1.6;">
+    Welcome to <span style="color: #ff1a7a; font-weight: bold;">Naughty Souls!</span> We're $3xy!
+  </p>
+  <!-- BENEFITS TITLE -->
+  <div style="margin-bottom: 10px; margin-left: 30px;">
+    <span style="font-size: 16px; color: #ff1a7a; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Benefits</span>
+  </div>
+  <!-- BENEFITS LIST -->
+  <div style="font-size: 12px; color: white; font-weight: bold; text-transform: uppercase; line-height: 1.4; margin-left: 30px; margin-bottom: 25px; max-width: 420px;">
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>90% RANKED WAR PAYOUTS</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>UP TO LEVEL 10 OC</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>17% STEADFAST</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>50% CANS + BEER</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>MAX TOLERATION</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>+40 NERVE</p>
+    <p style="margin: 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>+10 TRAVEL ITEMS</p>
+  </div>
+  <!-- EXPECTATIONS TITLE -->
+  <div style="margin-bottom: 10px; margin-left: 30px;">
+    <span style="font-size: 16px; color: #ff1a7a; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Expectations</span>
+  </div>
+  <!-- EXPECTATIONS LIST -->
+  <div style="font-size: 12px; color: white; line-height: 1.1; font-weight: bold; margin-left: 30px; margin-bottom: 20px; max-width: 420px;">
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>50 XANAX/MONTH</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>A FRIENDLY ATTITUDE</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>DONATOR STATUS</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>MULTIPLE DAILY LOGINS</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>LIVE IN A PRIVATE ISLAND</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>1% CONTRIBUTION IN WARS/CHAINS</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>JOIN FACTION DISCORD / TORNSTATS</p>
+    <p style="margin: 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>BE IN TORN FOR OCS</p>
+  </div>
+  <!-- ADVERTISEMENT PARAGRAPH -->
+  <p style="font-size: 12px; margin: 0 0 35px 30px; color: white; line-height: 1.4; max-width: 420px;">
+    If you meet our expectations and want to join <span style="color: #ff1a7a; font-weight: bold;">Naughty Souls</span>, please contact our leadership team below.
+  </p>
+  <!-- VERTICALLY STACKED SIGNATURES -->
+  <div style="margin-left: 30px; margin-bottom: 20px;">
+    <!-- LEADER -->
+    <div style="margin-bottom: 25px;">
+      <span style="color: #ff1a7a; font-size: 11px; text-transform: uppercase; letter-spacing: 1.1px; display: block; margin-bottom: 6px; font-weight: bold;">Leader</span>
+      <a style="display: inline-block;" href="/160655">
+        <img style="display: block; height: auto; max-width: 100%;" src="/sigs/21_160655.png" alt="21_160655.png" />
+      </a>
+    </div>
+    <!-- CO-LEADER -->
+    <div>
+      <span style="color: #ff1a7a; font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; display: block; margin-bottom: 6px; font-weight: bold;">Co-Leader</span>
+      <a style="display: inline-block;" href="/959585">
+        <img style="display: block; height: auto; max-width: 100%;" src="/sigs/21_959585.png" alt="21_959585.png" />
+      </a>
+    </div>
+  </div>
+</div>

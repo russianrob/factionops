@@ -1,0 +1,128 @@
+RIVER7.TOP — FAKE CRYPTOCURRENCY EXCHANGE — EVIDENCE BUNDLE
+============================================================
+Generated: 2026-05-12
+
+SUMMARY
+-------
+The domain river7.top operated as a fake cryptocurrency exchange and
+defrauded a real victim. The .top registry has since taken the domain
+down under "serverHold" status — the registry only applies serverHold
+after established abuse complaints, so the scam classification is
+already confirmed by the registry's action.
+
+DOMAIN
+------
+Domain:               river7.top
+Registrar:            Gname.com Pte. Ltd. (Singapore, IANA ID 1923)
+Registrar abuse:      complaint@gname.com
+Registry status:      serverHold (DNS removed by registry)
+WHOIS registration:   2026-01-06
+WHOIS expiry:         2027-01-06
+SSL when live:        Let's Encrypt DV
+Hosting when live:    AWS India (13.205.75.73)
+DNS when live:        Cloudflare (share-dns.com / share-dns.net)
+Site title at scan:   "CRYPTOCURRENCY EXCHANGE"
+Industry tags:        Cryptocurrency
+Scamadviser score:    0/100 ("Likely Unsafe")
+Scamadviser report:   https://www.scamadviser.com/check-website/river7.top
+
+OPERATOR ROTATION PATTERN
+-------------------------
+The same operator runs a numbered domain rotation. All registered but
+DNS-dead at the time of this report (burned in earlier abuse cycles):
+  river0.top
+  river2.top
+  river3.top
+  river6.top
+  river7.top   <-- the live one that defrauded the victim
+  river11.top
+  river14.top
+  river20.top
+
+Currently pre-staged for next deployment (DNS pointed at GitHub Pages,
+HTTP 404 awaiting publish):
+  river9.top   (registrar: NameSilo, abuse: abuse@namesilo.com)
+               (DNS: ebony.dnspod.net / mackerel.dnspod.net)
+               (MX: mx1/2/3.feishu.cn)
+
+ON-CHAIN CLUSTER (Bitcoin)
+--------------------------
+Reference transaction:
+  734252e761ca30ff3ef5359539c5354aa226f44a270bc215d82b9198b0123624
+  Block 939464  •  March 5, 2026 18:45:18 UTC
+  Explorer: https://mempool.space/tx/734252e761ca30ff3ef5359539c5354aa226f44a270bc215d82b9198b0123624
+
+WALLET 1 — Level-1 rotation address (received scam payouts):
+  3NzPCJkhgtPHpkNh9QnoiZY4QUkHBNfgsL
+    7 lifetime transactions
+    0.009596 BTC total received across 5 inflows (March 5-6, 2026)
+    Currently empty
+    Both outflows consolidated to wallet 2 below
+    Explorer: https://mempool.space/address/3NzPCJkhgtPHpkNh9QnoiZY4QUkHBNfgsL
+
+WALLET 2 — Operations consolidation hub (the operational core):
+  bc1q2ud54l8x6qeyfldxq7kej0sm2hylqs9gn60het
+    2,365 lifetime transactions
+    85.103888 BTC total received (~$8.5 million USD)
+    0.31 BTC current balance
+    This is a sustained multiple-victim fraud operation, not a
+    single-incident wallet
+    Explorer: https://mempool.space/address/bc1q2ud54l8x6qeyfldxq7kej0sm2hylqs9gn60het
+
+WALLET 3 — Likely cash-out endpoint (high-volume downstream):
+  1NqEAUHgeUaxWuFKdQ9udVqEjnavwkaRy4
+    6,469 lifetime transactions
+    248.96 BTC total received
+    Volume / pattern consistent with an exchange deposit address
+    where the operator cashes out to fiat
+    Explorer: https://mempool.space/address/1NqEAUHgeUaxWuFKdQ9udVqEjnavwkaRy4
+
+WALLET 4 — Mid-volume downstream (further consolidation or service):
+  bc1q07nagz80g3a0yzgpp9zcqrlex78plfe2mmnxua
+    501 lifetime transactions
+    30.27 BTC total received
+    Explorer: https://mempool.space/address/bc1q07nagz80g3a0yzgpp9zcqrlex78plfe2mmnxua
+
+INFLOW SOURCES (sender wallets paying into wallet 1)
+----------------------------------------------------
+Two of the senders are exchange-tier hot wallets — these are almost
+certainly tier-1 KYC exchanges (e.g., Binance / Coinbase / Kraken)
+distributing user withdrawals. The victim's deposit therefore likely
+originated from a real KYC exchange, traceable via subpoena.
+
+  352zzNHvsBTaUUNzqB5xbMo8EYdpvHJQB2
+    29,321 transactions, 396,244 BTC total handled
+    Exchange-tier hot wallet
+
+  bc1qx9n80t5q7tfmutzaj0ramzzzsvtveara68zntc
+    14,838 transactions, 527,221 BTC total handled
+    Exchange-tier hot wallet
+
+  bc1qqkv84mx50qfy9nh808zdstg0z86m9fcxmaze8j
+    34 transactions, 1,133 BTC handled
+    Mid-volume sender
+
+  bc1qdt7z2q2rpucpt7gxadcrlpzxg36vlfm7eluy82
+    2 transactions, 1.22 BTC handled
+    Single-use throwaway
+
+  bc1qk0wk4erys5g7kz8qys9ywf30gm4arv2saafqj2
+    2 transactions, 3.63 BTC handled
+    Single-use throwaway
+
+REQUEST TO READERS / EXCHANGES
+------------------------------
+Please flag this cluster as fraud-associated. Receiving exchanges
+should treat any deposits from these wallets as suspicious and
+hold them pending KYC verification. Anyone with reports from victims
+of river7.top, the wider numbered river-domain rotation, or the
+related wallet cluster — please link your reports for aggregation.
+
+EVIDENCE LINKS
+--------------
+Scam classification:    https://www.scamadviser.com/check-website/river7.top
+Reference transaction:  https://mempool.space/tx/734252e761ca30ff3ef5359539c5354aa226f44a270bc215d82b9198b0123624
+Operations wallet:      https://mempool.space/address/bc1q2ud54l8x6qeyfldxq7kej0sm2hylqs9gn60het
+Cash-out wallet:        https://mempool.space/address/1NqEAUHgeUaxWuFKdQ9udVqEjnavwkaRy4
+
+END OF EVIDENCE BUNDLE

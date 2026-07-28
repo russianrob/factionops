@@ -1,0 +1,20 @@
+Subject: Appeal of Claim Denial - Robert Hay, Policy LP8107822559
+
+To the Appeals Panel,
+
+I'm appealing the denial on this claim under N.J.S.A. 17:29E-9. The denial rests on two findings, and I think both of them are based on a misreading of my actual policy.
+
+The denial quotes Section II.F.3 as "This exclusion does not apply to 'property damage' caused by fire, smoke or explosion." That's not the F.3 in my contract. The Tenant Water Damage Endorsement (LEM-2095) is listed under "Documents Attached to This Policy" on my Declarations, and it replaces F.3 to add "or water" to that carve-out, so the operative text reads "fire, smoke, explosion or water." Whatever the panel concludes about "water" on these facts, the review should be against the policy as endorsed, not the form text.
+
+On the substance of F.3, the clubhouse isn't a property "rented to" me. There's no clubhouse rental contract and no per-event reservation fee. I do pay a monthly amenity fee, but that fee buys access to the building's shared amenities, not exclusive use of any one of them. It works like a gym membership. Every other resident in my building has the same access I have. Reserving the room for an evening as a resident perk isn't custody or control in any sense F.3 was written for. New Jersey courts read care-custody-control exclusions narrowly, see Pep Boys v. Cigna, 274 N.J. Super. 339 (1994). The denial's reading would carve out almost every guest-mishap scenario in a common area, which isn't how Coverage E is supposed to work.
+
+The clubhouse also satisfies the policy's own definition of "insured location" in two places: B.6.c (premises used in connection with the residence premises) and B.6.h (premises occasionally rented to an insured for other than business use). The denial letter doesn't engage with either.
+
+The other reason given in the denial is that Christina Fox isn't a Definition 5 "insured." That's true. It's also not the test under Coverage E. The denial itself quotes the trigger from Section II.A.1: "for which an 'insured' is legally liable." The question isn't who caused the damage, it's whether an insured is legally liable for it. I'm the named insured, and I am liable to the landlord under several provisions of my lease. Paragraph 2 makes co-tenants jointly and severally liable for all obligations under the lease. Paragraph 20 makes the tenant pay for damages caused by visitors. Paragraph 24 makes the tenant responsible for guests and invitees. Rules and Regulations A.10 says each tenant is responsible for the actions of their guests. So Christina's status under the policy doesn't matter. Coverage E follows my liability, the same way it pays out when, say, an insured's dog bites someone the insured has never met.
+
+I'd ask the panel to reverse the denial and confirm Coverage E will respond to any reasonable damage charge from Summit Hill at Springfield LLC arising from this incident. If the panel still denies, please cite the specific operative policy language supporting that, including the endorsed version of any exclusion relied on.
+
+Thank you,
+Robert Hay
+Policy LP8107822559
+[phone]

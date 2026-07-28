@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naughty Souls banner — responsive preview</title>
+<style>
+  body { margin: 0; background: #0d0d0f; color: #ccc; font-family: system-ui, Arial, sans-serif; }
+  .toolbar { position: sticky; top: 0; background: #16161a; padding: 12px 16px; border-bottom: 1px solid #2a2a30; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; z-index: 10; }
+  .toolbar input[type=range] { width: min(55vw, 460px); }
+  .w { font: 700 14px ui-monospace, monospace; color: #6ee7b7; min-width: 64px; }
+  .toolbar button { background: #2a3447; color: #e6e8ee; border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
+  .hint { font-size: 12px; color: #888; }
+  .stage { padding: 24px 16px; display: flex; justify-content: center; }
+  .frame { width: 700px; max-width: 100%; outline: 1px dashed #333; transition: width .04s linear; }
+</style></head><body>
+  <div class="toolbar">
+    <label>Width&nbsp;<input id="w" type="range" min="240" max="900" value="600"></label>
+    <span class="w" id="wlabel">600px</span>
+    <button data-w="360">📱 360</button><button data-w="500">500</button><button data-w="600">600</button><button data-w="700">700 (cap)</button>
+    <span class="hint">CSS-drawn pink arrows now — guaranteed pink in browser &amp; Torn. Drag to test scaling.</span>
+  </div>
+  <div class="stage"><div class="frame" id="frame">
+<div style="width: 100%; max-width: 700px; margin: 0 auto; background-image: url('https://iili.io/CqWE7rF.md.png'); background-size: 100%; background-position: top; background-repeat: no-repeat; background-color: #000000; color: white; border: 2px solid #ff1a7a; font-family: Arial, sans-serif; padding-top: 28.57%; padding-left: 1%; padding-right: 1%; text-align: left; overflow: hidden;">
+  <!-- Welcome Message -->
+  <p style="font-size: 14px; margin: 0 0 35px 30px; color: white; line-height: 1.6;">
+    Welcome to <span style="color: #ff1a7a; font-weight: bold;">Naughty Souls!</span> We're $3xy!
+  </p>
+  <!-- BENEFITS TITLE -->
+  <div style="margin-bottom: 10px; margin-left: 30px;">
+    <span style="font-size: 16px; color: #ff1a7a; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Benefits</span>
+  </div>
+  <!-- BENEFITS LIST -->
+  <div style="font-size: 12px; color: white; font-weight: bold; text-transform: uppercase; line-height: 1.4; margin-left: 30px; margin-bottom: 25px; max-width: 420px;">
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>90% RANKED WAR PAYOUTS</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>UP TO LEVEL 10 OC</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>17% STEADFAST</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>50% CANS + BEER</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>MAX TOLERATION</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>+40 NERVE</p>
+    <p style="margin: 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>+10 TRAVEL ITEMS</p>
+  </div>
+  <!-- EXPECTATIONS TITLE -->
+  <div style="margin-bottom: 10px; margin-left: 30px;">
+    <span style="font-size: 16px; color: #ff1a7a; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Expectations</span>
+  </div>
+  <!-- EXPECTATIONS LIST -->
+  <div style="font-size: 12px; color: white; line-height: 1.1; font-weight: bold; margin-left: 30px; margin-bottom: 20px; max-width: 420px;">
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>50 XANAX/MONTH</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>A FRIENDLY ATTITUDE</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>DONATOR STATUS</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>MULTIPLE DAILY LOGINS</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>LIVE IN A PRIVATE ISLAND</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>1% CONTRIBUTION IN WARS/CHAINS</p>
+    <p style="margin: 0 0 10px 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>JOIN FACTION DISCORD / TORNSTATS</p>
+    <p style="margin: 0;"><span style="display: inline-block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #ff1a7a; margin-right: 10px; vertical-align: middle;"></span>BE IN TORN FOR OCS</p>
+  </div>
+  <!-- ADVERTISEMENT PARAGRAPH -->
+  <p style="font-size: 12px; margin: 0 0 35px 30px; color: white; line-height: 1.4; max-width: 420px;">
+    If you meet our expectations and want to join <span style="color: #ff1a7a; font-weight: bold;">Naughty Souls</span>, please contact our leadership team below.
+  </p>
+  <!-- VERTICALLY STACKED SIGNATURES -->
+  <div style="margin-left: 30px; margin-bottom: 20px;">
+    <!-- LEADER -->
+    <div style="margin-bottom: 25px;">
+      <span style="color: #ff1a7a; font-size: 11px; text-transform: uppercase; letter-spacing: 1.1px; display: block; margin-bottom: 6px; font-weight: bold;">Leader</span>
+      <a style="display: inline-block;" href="https://www.torn.com/160655">
+        <img style="display: block; height: auto; max-width: 100%;" src="https://www.torn.com/sigs/21_160655.png" alt="21_160655.png" />
+      </a>
+    </div>
+    <!-- CO-LEADER -->
+    <div>
+      <span style="color: #ff1a7a; font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; display: block; margin-bottom: 6px; font-weight: bold;">Co-Leader</span>
+      <a style="display: inline-block;" href="https://www.torn.com/959585">
+        <img style="display: block; height: auto; max-width: 100%;" src="https://www.torn.com/sigs/21_959585.png" alt="21_959585.png" />
+      </a>
+    </div>
+  </div>
+</div>
+  </div></div>
+  <script>
+    var w = document.getElementById('w'), f = document.getElementById('frame'), l = document.getElementById('wlabel');
+    function set(v) { v = Math.max(240, Math.min(900, v | 0)); w.value = v; f.style.width = v + 'px'; l.textContent = v + 'px'; }
+    w.addEventListener('input', function () { set(+w.value); });
+    Array.prototype.forEach.call(document.querySelectorAll('.toolbar button'), function (b) { b.addEventListener('click', function () { set(+b.getAttribute('data-w')); }); });
+    set(600);
+  </script>
+</body></html>

@@ -1,0 +1,1 @@
+"total "+Math.round(Object.keys(localStorage).reduce(function(s,k){return s+(localStorage.getItem(k)||"").length},0)/1024)+"kb / "+localStorage.length+" keys | "+Object.keys(localStorage).map(function(k){return [k,(localStorage.getItem(k)||"").length]}).sort(function(a,b){return b[1]-a[1]}).slice(0,12).map(function(x){return x[0]+"="+Math.round(x[1]/1024)+"kb"}).join(", ")

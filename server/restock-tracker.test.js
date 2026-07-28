@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { median, coeffVar, reliabilityTier } from "./restock-tracker.js";
+import { median, coeffVar, reliabilityTier, safetyFactor } from "./restock-tracker.js";
 
 test("median", () => {
   assert.strictEqual(median([5]), 5);
@@ -289,4 +289,15 @@ test("buildModel drops a stale restock-only item but keeps a fresh sell rate", (
   const model = buildModel(state, now);
   assert.ok(model.items.mex["9"]);
   assert.strictEqual(model.items.mex["9"].sellReady, true);
+});
+
+test("safetyFactor: Tiger Day (Jul 28-29 TCT) runs 1.4, normal days 1.15", () => {
+  const jul28 = Date.UTC(2026, 6, 28, 12) / 1000;
+  const jul29 = Date.UTC(2026, 6, 29, 3) / 1000;
+  const jul30 = Date.UTC(2026, 6, 30, 12) / 1000;
+  const feb1 = Date.UTC(2026, 1, 1, 12) / 1000;
+  assert.equal(safetyFactor(jul28), 1.4);
+  assert.equal(safetyFactor(jul29), 1.4);
+  assert.equal(safetyFactor(jul30), 1.15);
+  assert.equal(safetyFactor(feb1), 1.15);
 });

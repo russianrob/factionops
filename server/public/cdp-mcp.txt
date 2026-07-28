@@ -1,0 +1,1 @@
+claude mcp add -s user playwright-cdp -- npx -y @playwright/mcp@0.0.76 --cdp-endpoint http://localhost:9222

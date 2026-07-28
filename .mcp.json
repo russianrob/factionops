@@ -12,6 +12,18 @@
       "env": {
         "AUTH_TOKEN": "agp_019cfc57-2aba-7a11-addc-4f5af71f7ef4"
       }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.76",
+        "--headless",
+        "--no-sandbox",
+        "--browser",
+        "chromium"
+      ],
+      "env": {}
     }
   }
 }

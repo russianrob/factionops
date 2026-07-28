@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FactionOps — Quick Start for Members</title>
+<meta name="description" content="Two-minute getting-started guide for faction members using FactionOps during a war.">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="theme-color" content="#0a0a0f">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg-deep:#0a0a0f; --bg-surface:#12121a; --bg-card:#181825; --border:#2a2a3a;
+  --text-primary:#e0e0ea; --text-secondary:#8888a0; --text-muted:#55556a;
+  --accent:#00d4aa; --accent-dim:#00d4aa80; --accent-glow:#00d4aa40;
+  --red:#ff4757; --orange:#ffa502; --yellow:#fdcb6e;
+}
+html{scroll-behavior:smooth;background:var(--bg-deep);color:var(--text-primary);font-family:'Inter',system-ui,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+body{background:var(--bg-deep);overflow-x:hidden}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+code,kbd,.mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:0.92em}
+kbd{background:#23232f;border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:1px 6px;font-size:0.85em;color:#fff}
+
+.wrap{max-width:760px;margin:0 auto;padding:48px 24px 96px}
+
+.hero{text-align:center;padding:24px 0 36px;border-bottom:1px solid var(--border);margin-bottom:36px}
+.hero .pill{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);background:rgba(0,212,170,0.08);border:1px solid var(--accent-dim);border-radius:99px;padding:5px 14px;margin-bottom:18px}
+.hero h1{font-size:36px;line-height:1.15;font-weight:800;letter-spacing:-0.02em;color:#fff;margin-bottom:12px}
+.hero p{color:var(--text-secondary);font-size:16px;max-width:520px;margin:0 auto}
+
+h2{font-size:22px;font-weight:700;color:#fff;margin:44px 0 14px;letter-spacing:-0.01em}
+h2 .num{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--accent);background:rgba(0,212,170,0.08);border:1px solid var(--accent-dim);border-radius:6px;padding:2px 8px;margin-right:10px;vertical-align:middle;font-weight:600}
+h3{font-size:16px;font-weight:600;color:#cfcfdc;margin:18px 0 8px}
+p,li{font-size:15px;color:var(--text-primary);margin-bottom:10px}
+ul,ol{padding-left:22px}li{margin-bottom:8px}
+strong{color:#fff;font-weight:600}
+
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin:14px 0}
+.card.warn{border-color:#7a4a00;background:linear-gradient(180deg,rgba(253,203,110,0.06),transparent)}
+.card.danger{border-color:#7a1a1a;background:linear-gradient(180deg,rgba(255,71,87,0.06),transparent)}
+.card.ok{border-color:#175a4a;background:linear-gradient(180deg,rgba(0,212,170,0.05),transparent)}
+
+.lead{font-size:13px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:6px}
+.lead.warn{color:var(--yellow)}
+.lead.danger{color:var(--red)}
+.lead.ok{color:var(--accent)}
+
+.btn{display:inline-block;background:var(--accent);color:#001a14;font-weight:700;padding:10px 18px;border-radius:6px;font-size:14px;margin:6px 6px 6px 0}
+.btn:hover{text-decoration:none;background:#00ffc8}
+.btn.alt{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+.btn.alt:hover{background:rgba(0,212,170,0.1)}
+
+.tag{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid;margin-right:4px}
+.tag-call{color:var(--accent);border-color:var(--accent-dim);background:rgba(0,212,170,0.08)}
+.tag-deal{color:var(--yellow);border-color:rgba(253,203,110,0.4);background:rgba(253,203,110,0.08)}
+.tag-mine{color:#7ea7ff;border-color:#3a5180;background:rgba(126,167,255,0.08)}
+
+footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);color:var(--text-muted);font-size:12px;text-align:center}
+footer a{color:var(--text-secondary)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="hero">
+  <div class="pill">For All Members</div>
+  <h1>FactionOps — Quick Start</h1>
+  <p>Two minutes. Read it once. Then you'll know what to do during a war.</p>
+</div>
+
+<h2><span class="num">1</span>Install the script</h2>
+<p>FactionOps is a Tampermonkey userscript. If you don't have Tampermonkey:</p>
+<ul>
+  <li><strong>Desktop browsers (Chrome / Edge / Brave / Firefox):</strong> install the Tampermonkey extension from your browser's add-on store.</li>
+  <li><strong>Torn PDA mobile app:</strong> open <em>Userscripts</em> in PDA settings — userscripts are supported natively, no extension needed.</li>
+</ul>
+<p>Then click this link <strong>once</strong> and Tampermonkey will offer to install:</p>
+<p><a class="btn" href="/scripts/factionops.user.js">Install FactionOps</a></p>
+<p style="color:var(--text-muted);font-size:13px">When Tampermonkey shows the install prompt, click <strong>Install</strong>. Updates roll out automatically — you don't need to re-install when versions change.</p>
+
+<h2><span class="num">2</span>First-time setup (API key)</h2>
+<p>FactionOps needs your Torn API key to read war / faction data. <strong>Limited Access tier is fine</strong> (Public usually works too — Limited just enables more features).</p>
+<p><strong>Torn PDA users:</strong> nothing to do — FactionOps auto-uses PDA's managed API key. You should see the overlay on faction war pages immediately.</p>
+<p><strong>Desktop / browser users:</strong></p>
+<ol>
+  <li>Open any Torn faction page (e.g. <code>factions.php</code>) — the FactionOps overlay should appear in the corner.</li>
+  <li>Click the <strong>⚙ gear icon</strong> in the FactionOps panel (top-right of the overlay).</li>
+  <li>Paste your Torn API key into the API Key field, click <strong>Save</strong>.</li>
+  <li>Refresh the page. The overlay now has your data and you're set — the key is stored locally on your device only.</li>
+</ol>
+<p style="color:var(--text-muted);font-size:13px">Don't have a key? Get one at <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener">torn.com/preferences.php#tab=api</a> — pick <strong>Limited Access</strong>. If the overlay doesn't appear at all, refresh once; if still missing, check Tampermonkey is enabled for <code>torn.com</code> in your browser's extensions menu.</p>
+
+<div class="card">
+  <div class="lead ok">Overlay quick reference</div>
+  <ul style="margin-bottom:0">
+    <li><strong>⚙ gear icon</strong> — opens Settings (API key, preferences, faction key pool toggle)</li>
+    <li><strong>Click the FactionOps logo / icon</strong> — closes the overlay (click again to reopen)</li>
+  </ul>
+</div>
+
+<h2><span class="num">3</span>Calling enemy targets <span class="tag tag-call">Call</span></h2>
+<div class="card">
+  <p><strong>"Calling" a target reserves them for you</strong> so two faction members don't waste energy hitting the same enemy at the same time.</p>
+  <ol>
+    <li>On the war page, find an enemy you want to attack.</li>
+    <li>Click the <strong>Call</strong> button on their row.</li>
+    <li>The whole faction now sees the target tagged with your name in their FactionOps overlay. A toast notification pops up for everyone: <em>"<strong>YourName</strong> called <strong>EnemyName</strong>."</em></li>
+    <li>Go attack. When you're done (or you change your mind), click <strong>Call</strong> again to release them — others can now take them.</li>
+  </ol>
+  <p style="margin-top:8px;color:var(--text-secondary);font-size:14px">If a target already has someone else's name on it (<span class="tag tag-mine">Called by Other</span>), <strong>don't hit them</strong> unless you've coordinated. Pick a different target.</p>
+</div>
+
+<h2><span class="num">4</span>Deal calls — DO NOT ATTACK <span class="tag tag-deal">🔒 Deal</span></h2>
+<div class="card danger">
+  <div class="lead danger">Important</div>
+  <p>Sometimes leadership arranges <strong>a deal with the enemy faction</strong> — for example, holding off on a specific player so the enemy holds off on one of ours, or coordinating a hospitalization swap.</p>
+  <p>When a deal is in place, the target shows <strong><span class="tag tag-deal">🔒 Deal</span></strong> next to their name in your FactionOps overlay, and you'll see a toast: <em>"<strong>Admin</strong> called <strong>EnemyName</strong> 🔒 Deal."</em></p>
+  <p style="font-weight:700;color:var(--red);margin-top:10px">If you see the 🔒 Deal badge on a target — do NOT attack them.</p>
+  <p style="color:var(--text-secondary);font-size:14px">Deal calls expire automatically after 15 minutes. If the badge disappears, the deal is over and the target is fair game again. If you're unsure, ask in faction chat before swinging.</p>
+</div>
+
+<h2><span class="num">5</span>Chain bar</h2>
+<p>FactionOps shows the faction's live chain count + a "Next Up" queue at the top of the page. Watch for:</p>
+<ul>
+  <li><strong>The chain timer dropping toward zero</strong> — if no one's hitting, jump in to keep it alive.</li>
+  <li><strong>"Next Up" suggestions</strong> — a list of optimal hospital-trade or low-stat targets the script picks for you. Click one to be taken straight to the attack page.</li>
+  <li><strong>Bonus drops (every 25, 50, 100, etc.)</strong> — these are usually called by leadership. Don't take a bonus hit unless leadership has assigned it to you.</li>
+</ul>
+
+<h2><span class="num">6</span>The five rules</h2>
+<div class="card ok">
+  <ol>
+    <li><strong>Always click Call before attacking</strong> so the faction can see you've taken the target.</li>
+    <li><strong>Click Call again to release</strong> when you're done or moving on.</li>
+    <li><strong>Don't hit targets called by others</strong> unless coordinated.</li>
+    <li><strong>Never hit a 🔒 Deal target.</strong> Period.</li>
+    <li><strong>Don't take bonus hits</strong> (25 / 50 / 100 / 250 / 500 / 1000 / 2500 / 5000 / 10000 / 25000) unless leadership assigns you.</li>
+  </ol>
+</div>
+
+<h2><span class="num">7</span>Push notifications (optional but recommended)</h2>
+<p>FactionOps can push you alerts even when Torn isn't open — chain breaking, vault requests, OC slots ready, etc. Notifications go through a small companion page you install once per device.</p>
+
+<h3>Set up (mobile browser — iPhone Safari 16.4+ or Android Chrome)</h3>
+<ol>
+  <li>Open <a href="https://tornwar.com/notifications" target="_blank" rel="noopener"><strong>tornwar.com/notifications</strong></a> in <strong>Safari</strong> (iPhone) or <strong>Chrome</strong> (Android). Don't use Torn PDA's in-app browser — Web Push doesn't work there.</li>
+  <li><strong>Add to Home Screen</strong> — this is required on iPhone for Web Push to work:
+    <ul>
+      <li><em>iPhone Safari:</em> tap the <strong>Share</strong> button → <strong>Add to Home Screen</strong> → Add</li>
+      <li><em>Android Chrome:</em> tap the menu (⋮) → <strong>Add to Home screen</strong> / <strong>Install app</strong></li>
+    </ul>
+  </li>
+  <li>Open the new "OC Notif" icon from your home screen.</li>
+  <li>Paste your Torn API key (same one you used in FactionOps), tap <strong>Login</strong>.</li>
+  <li>Tap <strong>Enable Notifications</strong> — your phone will ask permission, tap Allow.</li>
+  <li>Toggle which alert types you want (vault requests, chain alerts, OC ready, etc.). Defaults are sensible.</li>
+  <li>Tap <strong>Send Test Notification</strong> to confirm it works. You should get a test push within a few seconds.</li>
+</ol>
+
+<h3>Set up (desktop — Chrome / Edge / Firefox)</h3>
+<ol>
+  <li>Open <a href="https://tornwar.com/notifications" target="_blank" rel="noopener">tornwar.com/notifications</a>.</li>
+  <li>Paste your API key, tap <strong>Login</strong>.</li>
+  <li>Tap <strong>Enable Notifications</strong>, click Allow when the browser asks for permission.</li>
+  <li>Toggle the alert types you want, send a test notification to confirm.</li>
+</ol>
+<p style="color:var(--text-muted);font-size:13px">Desktop notifications fire even when your browser is in the background. If you close all browser windows, they stop until you reopen one — for always-on alerts, install on mobile too.</p>
+
+<div class="card warn">
+  <div class="lead warn">Torn PDA users — read this</div>
+  <p>The Torn PDA app's in-app browser <strong>can't receive Web Push</strong> directly (it's a known Flutter limitation). Two workarounds:</p>
+  <ol>
+    <li><strong>Recommended:</strong> set up notifications on a separate device — iPhone Safari (with Add to Home Screen) or Android Chrome — using the steps above. PDA stays as your gameplay app; the other device receives the alerts.</li>
+    <li>If you use Android, you can do this on the same phone: install the notifications PWA in Chrome, separately from PDA. Both apps then run side-by-side — PDA for play, PWA for alerts.</li>
+  </ol>
+</div>
+
+<h2><span class="num">8</span>Native apps (optional)</h2>
+<p>Don't want to keep a browser tab open all the time? FactionOps has native apps for iOS and Android. They bundle the war overlay <em>and</em> push notifications in one install — no Tampermonkey, no PWA juggling, no "what device am I on" question.</p>
+
+<h3>Android</h3>
+<ol>
+  <li>On your Android phone, download <a href="https://tornwar.com/warboard.apk" target="_blank" rel="noopener"><strong>tornwar.com/warboard.apk</strong></a>.</li>
+  <li>Tap the downloaded file. Android will warn you it's from an unknown source — tap <strong>Settings</strong> → enable <strong>Allow from this source</strong> for your browser → back → <strong>Install</strong>.</li>
+  <li>Open the app, paste your Torn API key (same one as the script), tap <strong>Sign in</strong>.</li>
+  <li>Grant notification permission when prompted.</li>
+</ol>
+<p style="color:var(--text-muted);font-size:13px">The app auto-updates from the same URL. If you ever need to reinstall, the link is the same.</p>
+
+<h3>iOS</h3>
+<p>Distributed via Apple TestFlight (Apple's beta channel — same install flow as any TestFlight app).</p>
+<ol>
+  <li>Install Apple's <strong>TestFlight</strong> app from the App Store if you don't already have it.</li>
+  <li>Message <strong>RussianRob [137558]</strong> in Torn with the email address tied to your Apple ID and ask for a TestFlight invite.</li>
+  <li>You'll get an email invite — tap <strong>View in TestFlight</strong> → <strong>Accept</strong> → <strong>Install</strong>.</li>
+  <li>Open the app, paste your Torn API key, sign in. Grant notification permission.</li>
+</ol>
+<p style="color:var(--text-muted);font-size:13px">iOS app extras: Live Activity (lock-screen chain timer) and Dynamic Island support on iPhone 14 Pro+ models.</p>
+
+<h3>What about Mac / Desktop?</h3>
+<p>There's no separate desktop app needed — the userscript + browser is the desktop experience. If you want background push on a Mac without a browser open, install the iOS app on your iPhone (it's always on you anyway).</p>
+
+<div class="card ok">
+  <div class="lead ok">Quick decision guide</div>
+  <ul style="margin-bottom:0">
+    <li><strong>Android phone:</strong> install the APK above. Done.</li>
+    <li><strong>iPhone:</strong> get the TestFlight invite. Best in-game experience for iOS.</li>
+    <li><strong>Desktop only:</strong> userscript + Section 7 PWA notifications cover you.</li>
+    <li><strong>Torn PDA user:</strong> keep PDA for play; add the native app (or a separate-device PWA) for push.</li>
+  </ul>
+</div>
+
+<h2><span class="num">9</span>Help</h2>
+<ul>
+  <li><strong>Script not loading / overlay missing:</strong> refresh the page once. If still nothing, check Tampermonkey is enabled for <code>torn.com</code> in your browser's extensions menu.</li>
+  <li><strong>Got logged out / "invalid API key" error:</strong> click the <strong>⚙ gear</strong> in the FactionOps overlay → re-paste your API key → Save → refresh.</li>
+  <li><strong>Wrong faction shown / blank data:</strong> verify the API key in the gear menu belongs to the right Torn account.</li>
+  <li><strong>Anything else:</strong> message faction leadership in-game.</li>
+</ul>
+
+<footer>
+  <p>FactionOps · Members' Quick Start · Bookmark <a href="https://tornwar.com/start.html">tornwar.com/start.html</a></p>
+</footer>
+
+</div>
+</body>
+</html>

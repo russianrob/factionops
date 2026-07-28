@@ -1,0 +1,40 @@
+==========================================================
+ CDP BROWSER SETUP  (gives the agent your logged-in Chrome)
+==========================================================
+Each command is ONE line. No backslashes. Select the whole
+line and copy. Steps 1 and 2 run on your MAC. Step 3 runs
+on the SERVER.
+
+----------------------------------------------------------
+STEP 1  -  MAC TERMINAL  -  launch Chrome with debug port
+----------------------------------------------------------
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222 --user-data-dir="$HOME/chrome-cdp-profile"
+
+  - A fresh Chrome window opens (separate profile, leaves
+    your normal Chrome alone). LOG INTO TORN in it once.
+  - Leave this Terminal tab running. Do NOT close it.
+  - Check it works: open  http://localhost:9222/json/version
+    in a tab -> you should see JSON.
+
+----------------------------------------------------------
+STEP 2  -  MAC TERMINAL (new tab, Cmd+T)  -  tunnel to server
+----------------------------------------------------------
+ssh -N -R 9222:localhost:9222 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 root@tornwar.com
+
+  - Leave this tab running too. It looks like it "hangs" -
+    that is correct, the tunnel is open.
+
+----------------------------------------------------------
+STEP 3  -  ON THE SERVER  -  register the second MCP (once)
+----------------------------------------------------------
+claude mcp add -s user playwright-cdp -- npx -y @playwright/mcp@0.0.76 --cdp-endpoint http://localhost:9222
+
+  - Sits alongside the existing headless "playwright" MCP.
+  - Or just tell the agent "run it" and it does step 3.
+
+==========================================================
+Once steps 1+2 are up, the agent uses "playwright-cdp" to
+drive YOUR real, logged-in Torn browser. Keep it read-only
+(no game actions). Tunnel down = it just errors; bring the
+tunnel back up and retry.
+==========================================================

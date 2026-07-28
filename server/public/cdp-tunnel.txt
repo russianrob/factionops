@@ -1,0 +1,1 @@
+ssh -N -R 9222:localhost:9222 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 root@tornwar.com

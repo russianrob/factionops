@@ -1,9 +1,13 @@
 {
   "mcpServers": {
     "warboard-inspect": {
-      "command": "node",
-      "args": ["/opt/warboard/server/agent-mcp-inspect.mjs"],
-      "env": { "INSPECT_TOKEN_FILE": "/opt/warboard/server/data/.inspect-token" }
+      "command": "/usr/bin/node",
+      "args": [
+        "/opt/warboard/server/agent-mcp-inspect.mjs"
+      ],
+      "env": {
+        "INSPECT_TOKEN_FILE": "/opt/warboard/server/data/.inspect-token"
+      }
     }
   }
 }

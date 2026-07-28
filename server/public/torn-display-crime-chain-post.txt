@@ -1,0 +1,3 @@
+<p>Updated this for Crimes 2.0 (it had stopped displaying) and made the chain update instantly as you commit crimes instead of lagging behind. Credit to Ironhydedragon for the original — this is just a compatibility fix on top of it.</p>
+
+<p><a href="https://greasyfork.org/en/scripts/585747-torn-display-crime-chain">Updated version on Greasy Fork</a></p>

@@ -34,7 +34,13 @@ const SAMPLE_CAP = 40;
 const MIN_SAMPLES_IN_WINDOW = 6;
 const MIN_OBSERVED_SEC = 600;
 const MIN_UNITS_OBSERVED = 3;
-const SAFETY = 1.15;
+const SAFETY_BASE = 1.15;
+// World Tiger Day (annual Torn event, Jul 28-29 TCT): foreign-stock demand
+// spikes for two days — run sell-out predictions extra-conservative.
+export function safetyFactor(nowSec) {
+  const d = new Date(nowSec * 1000);
+  return (d.getUTCMonth() === 6 && (d.getUTCDate() === 28 || d.getUTCDate() === 29)) ? 1.4 : SAFETY_BASE;
+}
 
 export function percentile(nums, p) {
   if (!nums || !nums.length) return 0;
@@ -126,7 +132,7 @@ export function computeEntry(restocks, samples, nowSec) {
     const modelQty = samples[samples.length - 1][1];
     entry.sellRate = sr.sellRate;
     entry.srel = depletionReliability(sr.usableIntervals, sr.maxDropShare, sr.observedSec / WINDOW_SEC);
-    entry.secToSellout = Math.round(modelQty / (sr.sellRate * SAFETY));
+    entry.secToSellout = Math.round(modelQty / (sr.sellRate * safetyFactor(nowSec)));
     entry.modelQty = modelQty;
     entry.n2 = sr.usableIntervals;
     entry.obsSec = sr.observedSec;

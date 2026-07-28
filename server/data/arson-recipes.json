@@ -1,33 +1,45 @@
 {
   "version": 5,
-  "updatedAt": 1779324878393,
+  "updatedAt": 1784160227868,
   "recipes": {
     "a hot lead": {
       "items": {
         "gasoline": 1
       },
-      "payout": 22000
+      "payout": 22000,
+      "location": "Cottage",
+      "createdAt": 1783701550339,
+      "updatedAt": 1783701550339
     },
     "a rash decision": {
       "items": {
         "gasoline": 1
       },
       "payout": 11000,
-      "ignite": "lighter"
+      "location": "Beach Hut",
+      "ignite": "lighter",
+      "createdAt": 1784076425410,
+      "updatedAt": 1784139921173
     },
     "a treat for the tricked": {
       "items": {
         "kabuki mask": 1,
         "gasoline": 1
       },
-      "payout": 71000
+      "payout": 71000,
+      "location": "Candle Shop",
+      "createdAt": 1783860170555,
+      "updatedAt": 1784139921186
     },
     "always read the label": {
       "items": {
         "gasoline": 5,
         "flamethrower": 1
       },
-      "payout": 170000
+      "payout": 170000,
+      "location": "Pharmacy",
+      "createdAt": 1784076426141,
+      "updatedAt": 1784076426141
     },
     "ash or credit?": {
       "items": {
@@ -45,14 +57,19 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 13000
+      "payout": 13000,
+      "location": "Lifeguard Hut",
+      "createdAt": 1783701550296,
+      "updatedAt": 1783797844338
     },
     "bagged and tagged": {
       "items": {
         "gasoline": 1
       },
       "payout": 1600,
-      "location": "Hunting Lodge"
+      "location": "Hunting Lodge · Bagged and Tagged",
+      "createdAt": 1783887067289,
+      "updatedAt": 1783887067290
     },
     "banking on it": {
       "items": {
@@ -69,9 +86,12 @@
     },
     "beggars can't be choosers": {
       "items": {
-        "gasoline, 2 thermite": 5
+        "gasoline": 5,
+        "thermite": 2
       },
-      "payout": 480000
+      "payout": 480000,
+      "createdAt": 1783729036189,
+      "updatedAt": 1783729036189
     },
     "beyond repair": {
       "items": {
@@ -79,7 +99,10 @@
         "gasoline": 4,
         "flamethrower": 1
       },
-      "payout": 93500
+      "payout": 93500,
+      "location": "Mechanic Shop",
+      "createdAt": 1784160195405,
+      "updatedAt": 1784160195405
     },
     "bone of contention": {
       "items": {
@@ -87,7 +110,10 @@
         "blanket": 1
       },
       "payout": 43000,
-      "ignite": "lighter"
+      "location": "Self Storage Container",
+      "ignite": "lighter",
+      "createdAt": 1783729336515,
+      "updatedAt": 1783797844333
     },
     "boxing clever": {
       "items": {
@@ -110,14 +136,22 @@
         "kerosene": 1
       },
       "payout": 32000,
-      "ignite": "lighter"
+      "location": "Self Storage Container",
+      "ignite": "lighter",
+      "createdAt": 1784076425414,
+      "updatedAt": 1784139921138
     },
     "burned cookies": {
       "items": {
-        "diesel, 2 magnesium shavings": 2,
+        "diesel": 2,
+        "magnesium shavings": 2
+      },
+      "payout": 81000,
+      "stoke": {
         "diesel": 1
       },
-      "payout": 81000
+      "createdAt": 1783729036192,
+      "updatedAt": 1783729036192
     },
     "burning liability": {
       "items": {
@@ -137,13 +171,21 @@
       "items": {
         "kerosene": 4
       },
-      "payout": 490000
+      "payout": 490000,
+      "nerve": 30,
+      "flamethrower": true,
+      "ignite": "flamethrower",
+      "createdAt": 1783567403517,
+      "updatedAt": 1783567403517
     },
     "carrying a torch": {
       "items": {
         "gasoline": 2
       },
-      "payout": 44500
+      "payout": 44500,
+      "location": "Church",
+      "createdAt": 1783701550325,
+      "updatedAt": 1783704929315
     },
     "chasing targets": {
       "items": {
@@ -162,13 +204,19 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 33500
+      "payout": 33500,
+      "location": "Adult Store",
+      "createdAt": 1783860170547,
+      "updatedAt": 1783860170547
     },
     "cleansed through fire": {
       "items": {
         "diesel": 1
       },
-      "payout": 46000
+      "payout": 46000,
+      "location": "Penthouse",
+      "createdAt": 1783729336574,
+      "updatedAt": 1783729336574
     },
     "clinical exposure": {
       "items": {
@@ -183,7 +231,10 @@
         "hydrogen tank": 3
       },
       "payout": 150000,
-      "ignite": "lighter"
+      "location": "Cafe",
+      "ignite": "lighter",
+      "createdAt": 1783860175523,
+      "updatedAt": 1783860175523
     },
     "cook it rare": {
       "items": {
@@ -210,7 +261,10 @@
         "gasoline": 1
       },
       "payout": 57000,
-      "ignite": "lighter"
+      "location": "Theater",
+      "ignite": "lighter",
+      "createdAt": 1783905925823,
+      "updatedAt": 1783905925823
     },
     "cut corners": {
       "items": {
@@ -222,16 +276,22 @@
     "daddy's girl": {
       "items": {
         "kerosene": 1,
-        "methane tank, 1 hydrogen tank": 1
+        "methane tank": 1,
+        "hydrogen tank": 1
       },
       "payout": 330000,
-      "ignite": "lighter"
+      "ignite": "lighter",
+      "createdAt": 1783729036197,
+      "updatedAt": 1783729036197
     },
     "damned if you don't": {
       "items": {
         "gasoline": 1
       },
-      "payout": 74000
+      "payout": 74000,
+      "location": "Loanshark Office",
+      "createdAt": 1783905925853,
+      "updatedAt": 1783905925853
     },
     "dead giveaway": {
       "items": {
@@ -245,7 +305,10 @@
         "hydrogen tank": 2
       },
       "payout": 95000,
-      "ignite": "lighter"
+      "location": "Diner",
+      "ignite": "lighter",
+      "createdAt": 1783905925823,
+      "updatedAt": 1783905925823
     },
     "dirty money": {
       "items": {
@@ -266,14 +329,20 @@
         "hydrogen tank": 1
       },
       "payout": 33000,
-      "ignite": "lighter"
+      "location": "Cottage",
+      "ignite": "lighter",
+      "createdAt": 1783860170630,
+      "updatedAt": 1784139921175
     },
     "fight fire with fire": {
       "items": {
         "gasoline": 2
       },
       "payout": 81000,
-      "ignite": "lighter"
+      "location": "Suburban Home",
+      "ignite": "lighter",
+      "createdAt": 1783729336584,
+      "updatedAt": 1783797844331
     },
     "final markdown": {
       "items": {
@@ -286,7 +355,10 @@
         "gasoline": 1
       },
       "payout": 125000,
-      "ignite": "lighter"
+      "location": "Shopping Mall",
+      "ignite": "lighter",
+      "createdAt": 1783701551517,
+      "updatedAt": 1783701551517
     },
     "fire in the belly": {
       "items": {
@@ -327,14 +399,20 @@
         "gasoline": 2,
         "potassium nitrate": 2
       },
-      "payout": 230000
+      "payout": 230000,
+      "location": "Nightclub",
+      "createdAt": 1783701551470,
+      "updatedAt": 1783701551470
     },
     "hair today...": {
       "items": {
         "hydrogen tank": 2
       },
       "payout": 93000,
-      "ignite": "lighter"
+      "location": "Hair Salon",
+      "ignite": "lighter",
+      "createdAt": 1783701551862,
+      "updatedAt": 1783701551862
     },
     "hold fire": {
       "items": {
@@ -365,7 +443,10 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 18000
+      "payout": 18000,
+      "location": "Mobile Home",
+      "createdAt": 1783860170607,
+      "updatedAt": 1783860170607
     },
     "hot on the trail": {
       "items": {
@@ -378,7 +459,10 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 57500
+      "payout": 57500,
+      "location": "Grocery Store",
+      "createdAt": 1783701550278,
+      "updatedAt": 1783704929310
     },
     "hot trend": {
       "items": {
@@ -406,20 +490,29 @@
         "hydrogen tank": 2
       },
       "payout": 120000,
-      "ignite": "lighter"
+      "location": "Arcade",
+      "ignite": "lighter",
+      "createdAt": 1783701551163,
+      "updatedAt": 1783701551163
     },
     "it's a write off": {
       "items": {
         "gasoline": 2
       },
       "payout": 225000,
-      "ignite": "lighter"
+      "location": "Lakehouse",
+      "ignite": "lighter",
+      "createdAt": 1783729336523,
+      "updatedAt": 1783729336523
     },
     "it's not all white": {
       "items": {
         "hydrogen tank": 2
       },
-      "payout": 140000
+      "payout": 140000,
+      "location": "Paper Mill",
+      "createdAt": 1784160227868,
+      "updatedAt": 1784160227868
     },
     "landmark decision": {
       "items": {
@@ -432,7 +525,9 @@
         "gasoline": 2
       },
       "payout": 52000,
-      "location": "Subway"
+      "location": "Subway",
+      "createdAt": 1783704887115,
+      "updatedAt": 1783797844336
     },
     "like for like": {
       "items": {
@@ -473,7 +568,10 @@
         "hydrogen tank": 2
       },
       "payout": 120000,
-      "ignite": "lighter"
+      "location": "Apartment",
+      "ignite": "lighter",
+      "createdAt": 1783701551163,
+      "updatedAt": 1783701551163
     },
     "mallrats": {
       "items": {
@@ -491,10 +589,13 @@
     },
     "mental block": {
       "items": {
-        "gasoline, 1 thermite": 5,
+        "gasoline": 5,
+        "thermite": 1,
         "flamethrower": 1
       },
-      "payout": 580000
+      "payout": 580000,
+      "createdAt": 1783729036181,
+      "updatedAt": 1783729036181
     },
     "milk milk, lemonade": {
       "items": {
@@ -514,7 +615,10 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 17500
+      "payout": 17500,
+      "location": "Adult Store",
+      "createdAt": 1783989233716,
+      "updatedAt": 1783989233716
     },
     "open house": {
       "items": {
@@ -537,7 +641,10 @@
         "hydrogen tank": 1
       },
       "payout": 16000,
-      "ignite": "lighter"
+      "location": "Hunting Lodge",
+      "ignite": "lighter",
+      "createdAt": 1783860170532,
+      "updatedAt": 1783860170532
     },
     "piggy in the middle": {
       "items": {
@@ -551,21 +658,32 @@
         "gasoline": 1
       },
       "payout": 120000,
-      "ignite": "lighter"
+      "location": "Flower Shop",
+      "ignite": "lighter",
+      "createdAt": 1784076426129,
+      "updatedAt": 1784076426129
     },
     "playing with fire": {
       "items": {
         "gasoline": 2
       },
       "payout": 210000,
-      "ignite": "lighter"
+      "location": "Laboratory",
+      "ignite": "lighter",
+      "createdAt": 1783860175558,
+      "updatedAt": 1783860175558
     },
     "point of no return": {
       "items": {
-        "gasoline, 1 thermite": 1,
+        "gasoline": 1,
+        "thermite": 1
+      },
+      "payout": 90000,
+      "stoke": {
         "magnesium shavings": 2
       },
-      "payout": 90000
+      "createdAt": 1783729036193,
+      "updatedAt": 1783729036193
     },
     "pyro for pornos": {
       "items": {
@@ -578,19 +696,28 @@
         "hydrogen tank": 2
       },
       "payout": 90000,
-      "ignite": "lighter"
+      "location": "Apartment",
+      "ignite": "lighter",
+      "createdAt": 1783989233730,
+      "updatedAt": 1783989233730
     },
     "raze the steaks": {
       "items": {
         "gasoline": 5
       },
-      "payout": 250000
+      "payout": 250000,
+      "location": "Slaughterhouse",
+      "createdAt": 1783729337135,
+      "updatedAt": 1783729337135
     },
     "remote possibility": {
       "items": {
         "gasoline": 3
       },
-      "payout": 102500
+      "payout": 102500,
+      "location": "Subway",
+      "createdAt": 1783701550301,
+      "updatedAt": 1784139921113
     },
     "rest in peace": {
       "items": {
@@ -609,7 +736,10 @@
       "items": {
         "kerosene": 1
       },
-      "payout": 50000
+      "payout": 50000,
+      "location": "Bazaar",
+      "createdAt": 1784076425400,
+      "updatedAt": 1784139921174
     },
     "rock the boat": {
       "items": {
@@ -629,7 +759,10 @@
         "kerosene": 1
       },
       "payout": 37000,
-      "ignite": "lighter"
+      "location": "Game Shop",
+      "ignite": "lighter",
+      "createdAt": 1783701551868,
+      "updatedAt": 1783701551868
     },
     "set 'em straight": {
       "items": {
@@ -652,9 +785,13 @@
     },
     "smoke signals": {
       "items": {
-        "diesel, 1 magnesium shavings": 2
+        "diesel": 2,
+        "magnesium shavings": 1
       },
-      "payout": 120000
+      "payout": 120000,
+      "location": "Waste Facility",
+      "createdAt": 1783729036195,
+      "updatedAt": 1783797844342
     },
     "smoke screen": {
       "items": {
@@ -668,7 +805,10 @@
         "gasoline": 2
       },
       "payout": 200000,
-      "ignite": "lighter"
+      "location": "Arms Warehouse",
+      "ignite": "lighter",
+      "createdAt": 1784076426130,
+      "updatedAt": 1784076426130
     },
     "sofa king cheap": {
       "items": {
@@ -686,9 +826,14 @@
     },
     "spirit level": {
       "items": {
-        "gasoline": 3
+        "gasoline": 4
       },
-      "payout": 280000
+      "payout": 280000,
+      "nerve": 25,
+      "location": "Hotel",
+      "flamethrower": false,
+      "createdAt": 1783567201295,
+      "updatedAt": 1783701551881
     },
     "stick to the script": {
       "items": {
@@ -726,21 +871,30 @@
         "hard drive": 1,
         "gasoline": 3
       },
-      "payout": 110000
+      "payout": 110000,
+      "location": "Waste Facility",
+      "createdAt": 1784076426146,
+      "updatedAt": 1784076426146
     },
     "the ashes of empire": {
       "items": {
         "gasoline": 2
       },
       "payout": 175000,
-      "ignite": "lighter"
+      "location": "Palace",
+      "ignite": "lighter",
+      "createdAt": 1783701551464,
+      "updatedAt": 1783701551464
     },
     "the bad samaritan": {
       "items": {
         "gasoline": 2,
         "flamethrower": 1
       },
-      "payout": 22000
+      "payout": 22000,
+      "location": "Shack",
+      "createdAt": 1784076425398,
+      "updatedAt": 1784139921108
     },
     "the fat is in the fire": {
       "items": {
@@ -787,11 +941,13 @@
     },
     "under the table": {
       "items": {
-        "gasoline": 1,
-        "lighter": 1,
-        "methane": 2
+        "gasoline": 2
       },
-      "payout": 400000
+      "payout": 400000,
+      "nerve": 25,
+      "flamethrower": true,
+      "createdAt": 1783567303904,
+      "updatedAt": 1783567303904
     },
     "unspilled beans": {
       "items": {
@@ -811,7 +967,10 @@
         "hydrogen tank": 2
       },
       "payout": 90000,
-      "ignite": "lighter"
+      "location": "Distillery",
+      "ignite": "lighter",
+      "createdAt": 1783989233726,
+      "updatedAt": 1783989233726
     },
     "wired for war": {
       "items": {
@@ -846,19 +1005,28 @@
         "gasoline": 2
       },
       "payout": 55000,
-      "ignite": "1 molotov cocktail"
+      "location": "Bazaar",
+      "ignite": "1 molotov cocktail",
+      "createdAt": 1783905925820,
+      "updatedAt": 1783905925820
     },
     "all mouth and trousers": {
       "items": {
         "gasoline": 2
       },
-      "payout": 51000
+      "payout": 51000,
+      "location": "Clothing Store",
+      "createdAt": 1783905925852,
+      "updatedAt": 1783905925852
     },
     "apart of the problem": {
       "items": {
         "gasoline": 6
       },
-      "payout": 265000
+      "payout": 265000,
+      "location": "Factory",
+      "createdAt": 1783989233715,
+      "updatedAt": 1783989233715
     },
     "ashes to ancestors": {
       "items": {
@@ -874,9 +1042,12 @@
         "gasoline": 1
       },
       "payout": 20000,
+      "location": "Beach Hut",
       "stoke": {
         "gasoline": 1
-      }
+      },
+      "createdAt": 1783701550297,
+      "updatedAt": 1783701550297
     },
     "body of evidence": {
       "items": {
@@ -889,22 +1060,31 @@
       "items": {
         "gasoline": 5
       },
-      "payout": 130000
+      "payout": 130000,
+      "location": "Fertilizer Plant",
+      "createdAt": 1784160195443,
+      "updatedAt": 1784160195443
     },
     "burn notice": {
       "items": {
         "gasoline": 4
       },
       "payout": 175000,
+      "location": "Police Safehouse",
       "stoke": {
         "gasoline": 3
-      }
+      },
+      "createdAt": 1783989233699,
+      "updatedAt": 1783989233699
     },
     "burn rubber": {
       "items": {
         "gasoline": 2
       },
-      "payout": 50000
+      "payout": 50000,
+      "location": "Motorcycle Club",
+      "createdAt": 1783860170560,
+      "updatedAt": 1784139921114
     },
     "burning calories": {
       "items": {
@@ -939,7 +1119,10 @@
       "items": {
         "gasoline": 4
       },
-      "payout": 90000
+      "payout": 90000,
+      "location": "Office Block",
+      "createdAt": 1783860170640,
+      "updatedAt": 1783860170640
     },
     "child's play": {
       "items": {
@@ -952,9 +1135,12 @@
         "gasoline": 5
       },
       "payout": 150000,
+      "location": "Cleaning Agency",
       "stoke": {
         "diesel": 1
-      }
+      },
+      "createdAt": 1783989233679,
+      "updatedAt": 1783989233679
     },
     "eight lives": {
       "items": {
@@ -978,7 +1164,10 @@
       "items": {
         "gasoline": 4
       },
-      "payout": 64500
+      "payout": 64500,
+      "location": "Luxury Villa",
+      "createdAt": 1783860170614,
+      "updatedAt": 1783860170614
     },
     "final cut": {
       "items": {
@@ -996,7 +1185,10 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 22000
+      "payout": 22000,
+      "location": "Bungalow",
+      "createdAt": 1783701550296,
+      "updatedAt": 1784139921168
     },
     "foul play": {
       "items": {
@@ -1007,15 +1199,23 @@
     },
     "going viral": {
       "items": {
-        "gasoline": 4
+        "gasoline": 3
       },
-      "payout": 190000
+      "payout": 190000,
+      "nerve": 25,
+      "location": "Warehouse",
+      "flamethrower": true,
+      "createdAt": 1783701440842,
+      "updatedAt": 1783701551162
     },
     "hot gossip": {
       "items": {
         "gasoline": 3
       },
-      "payout": 62000
+      "payout": 62000,
+      "location": "Newspaper Office",
+      "createdAt": 1784160195415,
+      "updatedAt": 1784160195415
     },
     "house edge": {
       "items": {
@@ -1027,7 +1227,10 @@
       "items": {
         "gasoline": 4
       },
-      "payout": 165000
+      "payout": 165000,
+      "location": "Post Office",
+      "createdAt": 1784160227336,
+      "updatedAt": 1784160227336
     },
     "marx & sparks": {
       "items": {
@@ -1039,13 +1242,19 @@
       "items": {
         "gasoline": 4
       },
-      "payout": 31500
+      "payout": 31500,
+      "location": "Beach Hut",
+      "createdAt": 1783729336591,
+      "updatedAt": 1783797844334
     },
     "on fire at the box office": {
       "items": {
         "hydrogen tank": 1
       },
-      "payout": 10000
+      "payout": 10000,
+      "location": "Hunting Lodge",
+      "createdAt": 1783729336542,
+      "updatedAt": 1783797844333
     },
     "one rotten apple": {
       "items": {
@@ -1063,7 +1272,10 @@
       "items": {
         "gasoline": 5
       },
-      "payout": 125000
+      "payout": 125000,
+      "location": "Library",
+      "createdAt": 1783860175522,
+      "updatedAt": 1783860175522
     },
     "shielded from the truth": {
       "items": {
@@ -1091,27 +1303,39 @@
         "gasoline": 4
       },
       "payout": 85000,
+      "location": "Drugs Lab",
       "stoke": {
         "diesel": 1
-      }
+      },
+      "createdAt": 1783989233701,
+      "updatedAt": 1783989233701
     },
     "the male gaze": {
       "items": {
         "gasoline": 4
       },
-      "payout": 130000
+      "payout": 130000,
+      "location": "Lingerie Store",
+      "createdAt": 1783905925853,
+      "updatedAt": 1783905925853
     },
     "the plane truth": {
       "items": {
         "gasoline": 3
       },
-      "payout": 38000
+      "payout": 38000,
+      "location": "Travel Agent",
+      "createdAt": 1783729336564,
+      "updatedAt": 1783797844342
     },
     "totally armless": {
       "items": {
         "kerosene": 2
       },
-      "payout": 44000
+      "payout": 44000,
+      "location": "Arms Warehouse",
+      "createdAt": 1783860170568,
+      "updatedAt": 1783860170568
     },
     "unpopular mechanics": {
       "items": {
@@ -1123,13 +1347,19 @@
       "items": {
         "gasoline": 4
       },
-      "payout": 81000
+      "payout": 81000,
+      "location": "Strip Club",
+      "createdAt": 1783729336540,
+      "updatedAt": 1784139921143
     },
     "workplace burnout": {
       "items": {
         "gasoline": 4
       },
-      "payout": 100000
+      "payout": 100000,
+      "location": "Office Block",
+      "createdAt": 1783860170561,
+      "updatedAt": 1783860170561
     },
     "a black mark": {
       "items": {
@@ -1142,15 +1372,21 @@
         "hydrogen tank": 1
       },
       "payout": 235000,
+      "location": "Warehouse",
       "stoke": {
         "hydrogen tank": 1
-      }
+      },
+      "createdAt": 1783729337136,
+      "updatedAt": 1783729337136
     },
     "a dirty job": {
       "items": {
         "gasoline": 1
       },
-      "payout": 32000
+      "payout": 32000,
+      "location": "Apartment",
+      "createdAt": 1784160195400,
+      "updatedAt": 1784160195400
     },
     "a fungus among us": {
       "items": {
@@ -1163,15 +1399,21 @@
         "gasoline": 4
       },
       "payout": 180000,
+      "location": "Townhouse",
       "stoke": {
         "flamethrower": 1
-      }
+      },
+      "createdAt": 1783989233728,
+      "updatedAt": 1783989233728
     },
     "anon starter": {
       "items": {
         "gasoline": 1
       },
-      "payout": 31000
+      "payout": 31000,
+      "location": "Bazaar",
+      "createdAt": 1783860170598,
+      "updatedAt": 1783860170598
     },
     "bald faced destruction": {
       "items": {
@@ -1190,9 +1432,12 @@
         "gasoline": 2
       },
       "payout": 180000,
+      "location": "Toy Shop",
       "stoke": {
         "flamethrower": 1
-      }
+      },
+      "createdAt": 1784160227337,
+      "updatedAt": 1784160227337
     },
     "burn after screening": {
       "items": {
@@ -1204,7 +1449,10 @@
       "items": {
         "gasoline": 3
       },
-      "payout": 96000
+      "payout": 96000,
+      "location": "Casino",
+      "createdAt": 1783860175550,
+      "updatedAt": 1783860175550
     },
     "burning ambition": {
       "items": {
@@ -1261,7 +1509,10 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 20000
+      "payout": 20000,
+      "location": "Mobile Home",
+      "createdAt": 1783860170517,
+      "updatedAt": 1783860170517
     },
     "from the ashes": {
       "items": {
@@ -1273,19 +1524,28 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 34000
+      "payout": 34000,
+      "location": "Chemical Plant",
+      "createdAt": 1783729336592,
+      "updatedAt": 1783797844335
     },
     "get wrecked": {
       "items": {
         "gasoline": 2
       },
-      "payout": 84000
+      "payout": 84000,
+      "location": "Distillery",
+      "createdAt": 1784076425399,
+      "updatedAt": 1784139921175
     },
     "green with envy": {
       "items": {
         "gasoline": 4
       },
-      "payout": 120000
+      "payout": 120000,
+      "location": "Recycling Facility",
+      "createdAt": 1783860170612,
+      "updatedAt": 1783860170612
     },
     "gym'll fix it": {
       "items": {
@@ -1297,7 +1557,10 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 40000
+      "payout": 40000,
+      "location": "Lakehouse",
+      "createdAt": 1783729336585,
+      "updatedAt": 1783797844332
     },
     "hide and seek": {
       "items": {
@@ -1321,13 +1584,19 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 49000
+      "payout": 49000,
+      "location": "Pub",
+      "createdAt": 1783701550333,
+      "updatedAt": 1783704929275
     },
     "hot dog": {
       "items": {
         "gasoline": 1
       },
-      "payout": 30500
+      "payout": 30500,
+      "location": "Apartment",
+      "createdAt": 1784160195404,
+      "updatedAt": 1784160195404
     },
     "hot out of the gate": {
       "items": {
@@ -1339,7 +1608,10 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 50000
+      "payout": 50000,
+      "location": "Detective Agency",
+      "createdAt": 1783701550344,
+      "updatedAt": 1784139921170
     },
     "igniting curiosity": {
       "items": {
@@ -1351,13 +1623,19 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 20500
+      "payout": 20500,
+      "location": "Barbershop",
+      "createdAt": 1783989233727,
+      "updatedAt": 1783989233727
     },
     "kindling spirits": {
       "items": {
         "gasoline": 4
       },
-      "payout": 92500
+      "payout": 92500,
+      "location": "Manor House",
+      "createdAt": 1783701550313,
+      "updatedAt": 1783704929349
     },
     "letter of the law": {
       "items": {
@@ -1378,7 +1656,10 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 30000
+      "payout": 30000,
+      "location": "Cottage",
+      "createdAt": 1783860170541,
+      "updatedAt": 1784160195396
     },
     "marked for salvation": {
       "items": {
@@ -1403,27 +1684,39 @@
         "hydrogen tank": 1
       },
       "payout": 155000,
+      "location": "Ranch",
       "stoke": {
         "hydrogen tank": 1
-      }
+      },
+      "createdAt": 1783860175521,
+      "updatedAt": 1783860175521
     },
     "old school": {
       "items": {
         "gasoline": 3
       },
-      "payout": 62500
+      "payout": 62500,
+      "location": "Warehouse",
+      "createdAt": 1783701550346,
+      "updatedAt": 1783704929274
     },
     "party pooper": {
       "items": {
         "gasoline": 2
       },
-      "payout": 62000
+      "payout": 62000,
+      "location": "Nightclub",
+      "createdAt": 1783905925850,
+      "updatedAt": 1783905925850
     },
     "political firestorm": {
       "items": {
         "gasoline": 2
       },
-      "payout": 40000
+      "payout": 40000,
+      "location": "Suburban Home",
+      "createdAt": 1783701550298,
+      "updatedAt": 1783704929307
     },
     "raising hell": {
       "items": {
@@ -1438,7 +1731,10 @@
       "items": {
         "gasoline": 3
       },
-      "payout": 71000
+      "payout": 71000,
+      "location": "Medical Center",
+      "createdAt": 1783989233700,
+      "updatedAt": 1783989233700
     },
     "smoke on the water": {
       "items": {
@@ -1450,22 +1746,31 @@
       "items": {
         "gasoline": 1
       },
-      "payout": 21000
+      "payout": 21000,
+      "location": "Shack",
+      "createdAt": 1783905925822,
+      "updatedAt": 1783905925822
     },
     "smoldering resentment": {
       "items": {
         "gasoline": 1
       },
-      "payout": 10000
+      "payout": 10000,
+      "location": "Self Storage Container",
+      "createdAt": 1783905925791,
+      "updatedAt": 1783905925791
     },
     "stroke of fortune": {
       "items": {
         "gasoline": 3
       },
       "payout": 120000,
+      "location": "Hardware Store",
       "stoke": {
         "flamethrower": 1
-      }
+      },
+      "createdAt": 1783701550297,
+      "updatedAt": 1783704929314
     },
     "that place is history": {
       "items": {
@@ -1478,9 +1783,12 @@
         "diesel": 1
       },
       "payout": 130000,
+      "location": "Art Gallery",
       "stoke": {
         "potassium nitrate": 1
-      }
+      },
+      "createdAt": 1783989233720,
+      "updatedAt": 1783989233720
     },
     "the empyre strikes back": {
       "items": {
@@ -1493,21 +1801,30 @@
         "gasoline": 3
       },
       "payout": 140000,
+      "location": "Ranch",
       "stoke": {
         "flamethrower": 1
-      }
+      },
+      "createdAt": 1783729336565,
+      "updatedAt": 1783797844339
     },
     "the midnight oil": {
       "items": {
         "gasoline": 3
       },
-      "payout": 75000
+      "payout": 75000,
+      "location": "College",
+      "createdAt": 1784160195401,
+      "updatedAt": 1784160195401
     },
     "third-degree burn": {
       "items": {
         "gasoline": 1
       },
-      "payout": 29000
+      "payout": 29000,
+      "location": "Community Center",
+      "createdAt": 1783701550278,
+      "updatedAt": 1783797844341
     },
     "turn up the heat": {
       "items": {
@@ -1531,7 +1848,10 @@
       "items": {
         "gasoline": 3
       },
-      "payout": 110000
+      "payout": 110000,
+      "location": "Church",
+      "createdAt": 1784076425717,
+      "updatedAt": 1784139921109
     },
     "where there's a will": {
       "items": {
@@ -1543,7 +1863,10 @@
       "items": {
         "gasoline": 2
       },
-      "payout": 78500
+      "payout": 78500,
+      "location": "Medical Center",
+      "createdAt": 1783701550353,
+      "updatedAt": 1783704929312
     }
   }
 }
