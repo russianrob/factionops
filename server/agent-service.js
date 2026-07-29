@@ -172,6 +172,36 @@ export function parseProposal(text) {
   return { filename, content: last[2] };
 }
 
+// The snapshot only signals failure via the exact "(page snapshot unavailable:
+// ...)" / "(page snapshot error: ...)" strings runAgentTurn assembles. Grepping
+// the WHOLE payload for /error/ marked every healthy snapshot as failed — the
+// console-capture section virtually always carries {"kind":"error"} entries —
+// so the app footer said "no snapshot" forever. Anchor on the failure prefixes.
+export function snapshotOk(snap) {
+  return !/^\(page snapshot (unavailable|error)/.test(String(snap));
+}
+
+// A claude child killed mid-session-write (client disconnect, timeout) leaves
+// the session file ending in an unanswered user entry. Every later --resume of
+// that session then emits the CLI's synthetic "No response requested." no-op —
+// answering the stale entry, re-queueing the real prompt, never calling the
+// model — forever. Detect the marker so the caller can retry on a fresh session.
+export function isWedgedReply(text) {
+  return /^No response requested\.?$/.test(String(text || "").trim());
+}
+
+// One turn at a time: a disconnect no longer kills the in-flight child (that
+// mid-write SIGKILL is what wedges sessions), so a client reconnect could
+// otherwise spawn a second claude writing the SAME session file while the
+// orphan still runs. Single owner → a global gate is enough; the orphan is
+// hard-capped by TURN_TIMEOUT_MS so waits are bounded.
+let _turnChain = Promise.resolve();
+export function withTurnLock(fn) {
+  const run = _turnChain.then(fn, fn);
+  _turnChain = run.then(() => {}, () => {});
+  return run;
+}
+
 // Detect an agent inspect request: a `===INSPECT===` line followed by a fenced
 // code block holding a read-only JS query. Returns { js } or null. The owner
 // approves it before it runs (routes.js /api/agent/inspect) — this only extracts.
@@ -292,7 +322,7 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
     const r = await runJsOnDevice(SNAPSHOT_JS, { timeoutMs: 8000 });
     snap = r.error ? ("(page snapshot unavailable: " + r.error + ")") : (r.value || "(empty)");
   } catch (e) { snap = "(page snapshot error: " + String(e) + ")"; }
-  if (onEvent) onEvent({ t: "snapshot", ok: !/unavailable|error/.test(snap) });
+  if (onEvent) onEvent({ t: "snapshot", ok: snapshotOk(snap) });
   const prompt = buildTurnPrompt({ snap, text, installed, skipUserscripts });
   const baseArgs = ["--print",
     "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -313,7 +343,13 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
   // never fires "abort", so without the seed both spawns would run to completion
   // for a client that is already gone.
   let aborted = !!(signal && signal.aborted);
-  if (signal) signal.addEventListener("abort", () => { aborted = true; if (currentChild) currentChild.kill("SIGKILL"); }, { once: true });
+  // Abort blocks FURTHER attempts but must NOT SIGKILL a mid-turn child:
+  // killing claude while it writes the session file leaves a trailing
+  // unanswered user entry that wedges every future --resume of the session
+  // (synthetic "No response requested." turns; see isWedgedReply). Streaming
+  // to the gone client is already a no-op, and TURN_TIMEOUT_MS still
+  // hard-caps the orphaned turn.
+  if (signal) signal.addEventListener("abort", () => { aborted = true; }, { once: true });
 
   const attempt = (useResume, model) => new Promise((resolve) => {
     if (aborted) { resolve({ retry: false, resolvedSession: (useResume && sessionId) ? sessionId : null }); return; }
@@ -333,6 +369,14 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
     let assistantText = "";
     let sawInit = false;
     let stalled = false;
+    // Wedge gate — only resume attempts can hit a corrupted session. Hold
+    // deltas while the reply is still a prefix of the synthetic marker so a
+    // wedged turn can be discarded (and retried fresh) without the marker
+    // text ever reaching the chat transcript.
+    const WEDGE_MARKER = "No response requested.";
+    let wedgeHold = !!(useResume && sessionId);
+    let heldDeltas = [];
+    let wedged = false;
     let pending = [];                                  // held until init proves startup
     const flush = () => { for (const ev of pending) onEvent(ev); pending = []; };
     const forward = (ev) => { if (sawInit) onEvent(ev); else pending.push(ev); };
@@ -352,9 +396,27 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
         if (!ev) continue;
         if (ev.t === "session") { sawInit = true; resolvedSession = ev.id; onEvent(ev); flush(); continue; }
         if (ev.t === "delta" || ev.t === "thinking") gotOutput();
-        if (ev.t === "delta") assistantText += ev.text || "";
+        if (ev.t === "delta") {
+          assistantText += ev.text || "";
+          if (wedgeHold) {
+            heldDeltas.push(ev);
+            // Diverged from the marker → a real reply; release the held run.
+            if (!WEDGE_MARKER.startsWith(assistantText.trim())) {
+              wedgeHold = false;
+              for (const h of heldDeltas) forward(h);
+              heldDeltas = [];
+            }
+            continue;
+          }
+        }
         if (ev.t === "done") {
           const full = assistantText || ev.result || "";
+          if (wedgeHold) {
+            if (isWedgedReply(full)) { wedged = true; heldDeltas = []; continue; }
+            wedgeHold = false;
+            for (const h of heldDeltas) forward(h);
+            heldDeltas = [];
+          }
           const src = parseSource(full);
           if (src) forward({ t: "sourceRequest", filename: src.filename });
           const insp = parseInspect(full);
@@ -374,6 +436,8 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
       if (stalled && !aborted) { resolve({ stalled: true, resolvedSession: null }); return; }
       // A --resume run that never reached init = stale session → drop its output, signal retry.
       if (!sawInit && useResume && !aborted) { resolve({ retry: true, resolvedSession: null }); return; }
+      // Wedged session (synthetic no-op reply) → drop its output, retry fresh.
+      if (wedged && !aborted) { console.log("[agent] wedged session " + (sessionId || "?") + " — retrying on a fresh session"); resolve({ retry: true, resolvedSession: null }); return; }
       flush();
       resolve({ retry: false, resolvedSession });
     });
@@ -411,7 +475,13 @@ export async function runAgentTurn({ text, sessionId, onEvent, signal, skipUsers
 // with the source injected — no client round-trip / approval (safe read of the
 // owner's own script). Bounded so it can't run away; sourceRequest events are
 // consumed here, not streamed. The agent routes call this instead of runAgentTurn.
-export async function runAgentTurnResolvingSources({ text, sessionId, onEvent, signal, installed }) {
+// The lock spans the whole logical turn (all source hops) so a reconnecting
+// client can't interleave a second claude onto the same session file.
+export function runAgentTurnResolvingSources(opts) {
+  return withTurnLock(() => _runAgentTurnResolvingSources(opts));
+}
+
+async function _runAgentTurnResolvingSources({ text, sessionId, onEvent, signal, installed }) {
   let sid = sessionId, msg = text, first = true, guard = 0, requested = null;
   const wrapped = (ev) => {
     if (ev && ev.t === "sourceRequest") { requested = ev.filename; return; }

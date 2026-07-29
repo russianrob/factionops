@@ -91,3 +91,60 @@ test("agent route parser accepts a >1MB installedScripts body", async () => {
   assert.equal(res.status, 200);
   assert.equal(JSON.parse(res.body).n, 400);
 });
+
+// ── snapshot ok flag ────────────────────────────────────────────────────────
+// The footer said "no snapshot" on every turn even though the agent saw the
+// page fine: the ok flag grepped the WHOLE payload for /error/, and the
+// console-capture section virtually always contains {"kind":"error"} entries.
+import { snapshotOk, isWedgedReply, withTurnLock } from "./agent-service.js";
+
+test("snapshotOk: healthy snapshot with console error entries is ok", () => {
+  const snap = JSON.stringify({ url: "https://www.torn.com/factions.php", title: "Factions | TORN",
+    text: "member list", console: [{ kind: "error", msg: "[FF Scouter V2] boom" }] });
+  assert.equal(snapshotOk(snap), true);
+});
+
+test("snapshotOk: page text containing the word error is still ok", () => {
+  assert.equal(snapshotOk('{"url":"x","text":"an error occurred in chat"}'), true);
+});
+
+test("snapshotOk: relay failure strings are not ok", () => {
+  assert.equal(snapshotOk("(page snapshot unavailable: relay not connected)"), false);
+  assert.equal(snapshotOk("(page snapshot error: Error: timeout)"), false);
+});
+
+// ── wedged-session marker ───────────────────────────────────────────────────
+// A child SIGKILLed mid-session-write leaves a trailing unanswered user entry;
+// every later --resume then emits the CLI's synthetic no-op instead of calling
+// the model. The marker must be detected so the turn retries on a fresh session.
+test("isWedgedReply: synthetic no-op marker detected", () => {
+  assert.equal(isWedgedReply("No response requested."), true);
+  assert.equal(isWedgedReply("  No response requested.\n"), true);
+  assert.equal(isWedgedReply("No response requested"), true);
+});
+
+test("isWedgedReply: real replies and empties pass through", () => {
+  assert.equal(isWedgedReply("Here is the fix — bump @version and…"), false);
+  assert.equal(isWedgedReply("No response requested. Just kidding, here's more."), false);
+  assert.equal(isWedgedReply(""), false);
+  assert.equal(isWedgedReply(null), false);
+});
+
+// ── turn serialization ──────────────────────────────────────────────────────
+// With disconnect no longer killing the child, a reconnect must not spawn a
+// second claude writing the SAME session file while the orphan still runs.
+test("withTurnLock: overlapping turns run sequentially, results intact", async () => {
+  const order = [];
+  const slow = withTurnLock(async () => { order.push("a-start"); await new Promise(r => setTimeout(r, 40)); order.push("a-end"); return "A"; });
+  const fast = withTurnLock(async () => { order.push("b-start"); return "B"; });
+  const [ra, rb] = await Promise.all([slow, fast]);
+  assert.deepEqual(order, ["a-start", "a-end", "b-start"]);
+  assert.equal(ra, "A"); assert.equal(rb, "B");
+});
+
+test("withTurnLock: a rejected turn does not block the next", async () => {
+  const boom = withTurnLock(async () => { throw new Error("boom"); });
+  await assert.rejects(boom, /boom/);
+  const next = await withTurnLock(async () => "ok");
+  assert.equal(next, "ok");
+});
