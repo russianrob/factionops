@@ -224,6 +224,11 @@ let _publishing = false;
 async function pollOnce() {
   if (_polling) return;
   _polling = true;
+  // Re-read the (tiny) watchlist every poll: a boot that races a file write
+  // loads nothing and the hook stays SILENTLY disarmed until the next reload
+  // — that ate the 22:30 EDT Jul 28 SA-Xanax alert. Also lets watchlist
+  // edits apply without a server reload.
+  loadAlerts();
   try {
     const r = await fetch(PROMBOT_URL);
     if (!r.ok) { console.error("[restock] poll http", r.status); return; }
@@ -241,6 +246,7 @@ async function pollOnce() {
         if (_alerts.player && (_state[c][id].restocks || []).length > prevLen) {
           const w = _alerts.watches.find((x) => x.c === c && x.id === id);
           if (w) {
+            console.log("[restock] alert fire: " + (w.label || (c + "/" + id)) + " qty=" + it.quantity);
             sendToPlayer(_alerts.player, {
               title: "🔄 Restock: " + (w.label || (c + "/" + id)),
               body: it.quantity + " units just landed — they go fast",
