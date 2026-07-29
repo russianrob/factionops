@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.44
+// @version      2.73.45
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3077,7 +3077,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.44';
+  const SCRIPT_VERSION = '2.73.45';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3211,10 +3211,18 @@ if (!singleton) {
       + "[class*='members-list' i] li, "
       + "[class*='members-cont' i] li"
     );
-    let painted = 0, skippedNoAnchor = 0, skippedNoStatus = 0, notTraveling = 0;
+    let painted = 0, skippedNoAnchor = 0, skippedNoStatus = 0, notTraveling = 0, skippedWrapper = 0;
     rows.forEach(row => {
-      const a = row.querySelector('a[href*="XID="]');
-      if (!a) { skippedNoAnchor++; return; }
+      const anchors = row.querySelectorAll('a[href*="XID="]');
+      if (anchors.length === 0) { skippedNoAnchor++; return; }
+      // wb86: the broad selector union also matches WRAPPER nodes (outer
+      // li/containers holding the whole list — wb67's xidN>1 signal). A
+      // wrapper's first .status is some OTHER member's cell, so painting it
+      // stamps member A's countdown onto member B's cell; the real row then
+      // writes it back every pass and the cell visibly flaps between two
+      // flight times. Real member rows contain exactly ONE profile anchor.
+      if (anchors.length > 1) { skippedWrapper++; return; }
+      const a = anchors[0];
       const m = a.href.match(/XID=(\d+)/);
       if (!m) { skippedNoAnchor++; return; }
       const uid = m[1];
@@ -3394,7 +3402,7 @@ if (!singleton) {
     ffs_travelDiag({
       href: location.href,
       rowCount: rows.length,
-      painted, skippedNoAnchor, skippedNoStatus, notTraveling,
+      painted, skippedNoAnchor, skippedNoStatus, notTraveling, skippedWrapper,
       travellingKnown: Object.keys(_ffsMemberCountdowns).length,
     });
     // wb48/wb61: after the paint pass, re-apply ordering. ffs_applyWarSort is
