@@ -113,6 +113,7 @@ import { hasXanaxSubscription, grantFactionAccess, getXanaxSubscription } from "
 import { startChainMonitor, recordClientChainData } from "./chain-monitor.js";
 import { startEnemySurgeMonitor, stopEnemySurgeMonitor } from "./enemy-surge-monitor.js";
 import * as push from "./push-notifications.js";
+import * as restockTracker from "./restock-tracker.js";
 import { isFactionAllowed, getAllSubscriptions, getOwnerFactionId, getSubscriptionRejectionMessage } from "./subscription-manager.js";
 
 const router = Router();
