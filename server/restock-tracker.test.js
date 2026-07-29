@@ -336,3 +336,30 @@ test("fused gaps de-fuse to the underlying interval", () => {
   assert.ok(e.interval >= 3300 && e.interval <= 3900, `interval ${e.interval}`);
   assert.ok(e.intHi < 7200, `p75 should not carry the fused tail, got ${e.intHi}`);
 });
+
+// ── watchlist sanitizer (notifications-page editor) ─────────────────────────
+import { sanitizeWatches } from "./restock-tracker.js";
+
+test("sanitizeWatches: valid watch passes, label auto-filled from catalog", () => {
+  const cat = { sou: [{ id: "206", name: "Xanax" }] };
+  const out = sanitizeWatches([{ c: "sou", id: "206" }], cat);
+  assert.deepEqual(out, [{ c: "sou", id: "206", label: "Xanax" }]);
+});
+
+test("sanitizeWatches: unknown item in known country dropped; unknown country kept", () => {
+  const cat = { sou: [{ id: "206", name: "Xanax" }] };
+  assert.equal(sanitizeWatches([{ c: "sou", id: "999" }], cat).length, 0);
+  assert.equal(sanitizeWatches([{ c: "mex", id: "1" }], cat).length, 1); // catalog silent on mex
+});
+
+test("sanitizeWatches: garbage shapes and floods rejected", () => {
+  const flood = Array.from({ length: 50 }, (_, i) => ({ c: "mex", id: String(i + 1) }));
+  assert.equal(sanitizeWatches(flood, {}).length, 20);
+  assert.equal(sanitizeWatches([{ c: "MEXICO", id: "1" }, { c: "mex", id: "abc" }, null, "x"], {}).length, 0);
+  assert.equal(sanitizeWatches("not-an-array", {}).length, 0);
+});
+
+test("sanitizeWatches: custom label kept and capped", () => {
+  const out = sanitizeWatches([{ c: "sou", id: "206", label: "  Xanax — South Africa  " }], {});
+  assert.equal(out[0].label, "Xanax — South Africa");
+});

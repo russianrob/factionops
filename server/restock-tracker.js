@@ -201,6 +201,40 @@ const GH_API = `https://api.github.com/repos/${REPO}/contents/${MODEL_PATH}`;
 
 let _state = {};
 let _alerts = { player: null, watches: [] };
+// Country-keyed item catalog captured from the last poll — feeds the
+// /notifications watchlist editor's pickers. Names come from prombot.
+let _catalog = {};
+export function getRestockCatalog() { return _catalog; }
+export function getRestockWatches() { loadAlerts(); return { player: _alerts.player, watches: _alerts.watches || [] }; }
+// Pure validator: keep only well-formed watches that exist in the catalog
+// (when the catalog knows the country), auto-fill labels, cap at 20.
+export function sanitizeWatches(input, catalog) {
+  const out = [];
+  if (!Array.isArray(input)) return out;
+  for (const w of input) {
+    if (!w || typeof w.c !== "string" || !/^[a-z]{3}$/.test(w.c)) continue;
+    const id = String(w.id || "");
+    if (!/^\d{1,6}$/.test(id)) continue;
+    const items = (catalog && catalog[w.c]) || null;
+    const hit = items ? items.find((it) => String(it.id) === id) : null;
+    if (items && !hit) continue;                       // known country, unknown item
+    const label = (typeof w.label === "string" && w.label.trim())
+      ? w.label.trim().slice(0, 60)
+      : (hit ? hit.name : (w.c + "/" + id));
+    out.push({ c: w.c, id, label });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+export function setRestockWatches(playerId, watches) {
+  loadAlerts();
+  const pid = String(playerId);
+  if (_alerts.player && String(_alerts.player) !== pid) throw new Error("watchlist-owned");
+  const clean = sanitizeWatches(watches, _catalog);
+  _alerts = { player: pid, watches: clean };
+  writeFileSync(ALERTS_FILE, JSON.stringify(_alerts, null, 2));
+  return clean;
+}
 function loadAlerts() {
   try { if (existsSync(ALERTS_FILE)) _alerts = JSON.parse(readFileSync(ALERTS_FILE, "utf-8")) || _alerts; }
   catch (e) { console.error("[restock] alerts load failed:", e.message); }
@@ -237,6 +271,7 @@ async function pollOnce() {
     const now = Math.floor(Date.now() / 1000);
     for (const c in stocks) {
       if (!_state[c]) _state[c] = {};
+      _catalog[c] = (stocks[c].stocks || []).map((s) => ({ id: String(s.id), name: s.name || String(s.id) }));
       for (const it of (stocks[c].stocks || [])) {
         const id = String(it.id);
         const prevLen = (_state[c][id] && _state[c][id].restocks || []).length;
