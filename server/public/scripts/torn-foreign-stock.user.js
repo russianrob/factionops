@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.31
+// @version      0.9.32
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.31";
+  var SCRIPT_VERSION = "0.9.32";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -644,6 +644,20 @@
     var m = String(img.getAttribute("src") || "").match(/\/images\/items\/(\d+)/);
     return m ? m[1] : null;
   }
+  // Legacy-table cell scan: the warboard app's WKWebView gets the OLD abroad
+  // store (a real <table> with Item | Name | Stock | Cost | Buy), not the React
+  // grid, so the row___/srOnly path above matches nothing and the overlay fell
+  // back to the minutes-stale crowd feed. Stock = the first cell whose text is
+  // ONLY digits/commas; the cost cell always carries "$" so it never matches.
+  function tfsLegacyStockFromTexts(texts) {
+    for (var i = 0; i < texts.length; i++) {
+      var raw = String(texts[i] == null ? "" : texts[i]).trim();
+      if (raw.indexOf("$") !== -1) continue;
+      if (!/^[\d,]+$/.test(raw)) continue;
+      return parseInt(raw.replace(/,/g, ""), 10);
+    }
+    return null;
+  }
   function tfsLiveStock(rows) {
     var live = {}, byId = {};
     try {
@@ -654,6 +668,17 @@
         if (!id || !byId[id]) continue;
         var q = tfsStockFromRow(storeRows[j]);
         if (q != null) live[id] = q;
+      }
+      // Fallback for the legacy <table> layout (warboard WKWebView).
+      var trs = document.querySelectorAll("table tr");
+      for (var k = 0; k < trs.length; k++) {
+        var tid = tfsStoreRowImgId(trs[k]);
+        if (!tid || !byId[tid] || live[tid] != null) continue;
+        var tds = trs[k].querySelectorAll("td");
+        var texts = [];
+        for (var t = 0; t < tds.length; t++) texts.push(tds[t].textContent);
+        var lq = tfsLegacyStockFromTexts(texts);
+        if (lq != null) live[tid] = lq;
       }
     } catch (e) {}
     return live;
@@ -1048,7 +1073,8 @@
       parseTravelState: parseTravelState, parseAriaTravel: parseAriaTravel, domTravelState: domTravelState,
       getTravelMethod: getTravelMethod, readFlightMinutes: readFlightMinutes,
       travelRowsHtml: travelRowsHtml, getFilters: getFilters,
-      tfsStockFromRow: tfsStockFromRow, tfsCellLabel: tfsCellLabel, tfsStoreRowImgId: tfsStoreRowImgId
+      tfsStockFromRow: tfsStockFromRow, tfsCellLabel: tfsCellLabel, tfsStoreRowImgId: tfsStoreRowImgId,
+      tfsLegacyStockFromTexts: tfsLegacyStockFromTexts
     };
     module.exports.getStock = getStock;
     module.exports.getPrices = getPrices;

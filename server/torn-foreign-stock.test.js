@@ -770,3 +770,19 @@ test("high-reliability entries keep the crisp point countdown", () => {
   const out = m.modelEstimate(entry, (1000 + 600) * 1000);
   assert.match(out, /^~every /);
 });
+
+// ── tfsLegacyStockFromTexts (0.9.32) ────────────────────────────────────────
+// The warboard app's WKWebView renders the abroad store as the legacy
+// <table>, not the React grid — the overlay must read stock from its cells.
+test("legacy table: stock cell parsed, cost cell skipped", () => {
+  assert.equal(mod.tfsLegacyStockFromTexts(["", "African Violet", "6,986", "$2,000", ""]), 6986);
+});
+test("legacy table: zero stock is 0, not null", () => {
+  assert.equal(mod.tfsLegacyStockFromTexts(["", "Afro Comb", "0", "$50,000", ""]), 0);
+});
+test("legacy table: digit-bearing names don't false-match", () => {
+  assert.equal(mod.tfsLegacyStockFromTexts(["", "Mag 7", "1,234", "$800", ""]), 1234);
+});
+test("legacy table: no numeric cell -> null", () => {
+  assert.equal(mod.tfsLegacyStockFromTexts(["", "Spear", "Out of stock", "$500", ""]), null);
+});
