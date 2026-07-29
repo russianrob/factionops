@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.47
+// @version      2.73.48
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2947,57 +2947,7 @@ if (!singleton) {
     }
   }
 
-  // wb87 TEMPORARY forensic tracer: record EVERY mutation on the first
-  // travel-chip status cell for 30s (old->new values, full classNames) and
-  // POST batches through ffs_travelDiag. Three flicker fixes in a row missed
-  // because the visible mechanism was never captured; this ends the guessing.
-  let _ffsTraceStarted = false;
-  function ffs_startFlickerTrace() {
-    if (_ffsTraceStarted) return;
-    const chip = document.querySelector('.ffs-travel-status');
-    if (!chip) return;
-    const cell = chip.closest('.status') || chip.closest('[class*="status" i]') || chip.parentElement;
-    if (!cell) return;
-    _ffsTraceStarted = true;
-    const t0 = Date.now();
-    let batch = [];
-    const cls = (n) => {
-      if (!n) return '';
-      if (n.nodeType === 3) return '#text:' + String(n.textContent || '').slice(0, 30);
-      const c = (typeof n.className === 'string') ? n.className : '';
-      return n.nodeName + (c ? ('.' + c) : '');
-    };
-    const mo = new MutationObserver((muts) => {
-      for (const m of muts) {
-        const rec = {
-          t: Math.round((Date.now() - t0) / 10) / 100,
-          ty: m.type,
-          tgt: cls(m.target),
-        };
-        if (m.type === 'attributes') { rec.attr = m.attributeName; rec.old = m.oldValue; rec.now = m.target.getAttribute(m.attributeName); }
-        if (m.type === 'characterData') { rec.old = m.oldValue; rec.now = m.target.textContent; }
-        if (m.type === 'childList') {
-          rec.add = Array.from(m.addedNodes).map(cls);
-          rec.rem = Array.from(m.removedNodes).map(cls);
-          rec.cellText = String(cell.textContent || '').slice(0, 30);
-        }
-        batch.push(rec);
-      }
-    });
-    mo.observe(cell, { childList: true, subtree: true, characterData: true, characterDataOldValue: true, attributes: true, attributeOldValue: true });
-    const flusher = setInterval(() => {
-      if (batch.length) { ffs_travelDiag({ source: 'flicker-trace', n: batch.length, e: batch.slice(0, 40) }); batch = []; }
-    }, 5000);
-    setTimeout(() => {
-      clearInterval(flusher);
-      try { mo.disconnect(); } catch (_) {}
-      if (batch.length) ffs_travelDiag({ source: 'flicker-trace', n: batch.length, e: batch.slice(0, 40), last: true });
-      else ffs_travelDiag({ source: 'flicker-trace', n: 0, note: 'no mutations in final window', last: true });
-    }, 30000);
-    ffs_travelDiag({ source: 'flicker-trace-armed', cell: (typeof cell.className === 'string' ? cell.className : ''), chipHTML: String(cell.innerHTML || '').slice(0, 300) });
-  }
   function ffs_detectAndFetchTravellersFromDom() {
-    ffs_startFlickerTrace();
     if (!key) return;
     // Walk every row with a profile link + status cell containing "Traveling"
     // or "Returning". This works even when Torn's v2 API hides the landing
@@ -3127,7 +3077,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.47';
+  const SCRIPT_VERSION = '2.73.48';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
