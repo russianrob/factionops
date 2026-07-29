@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.43
+// @version      2.73.44
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3077,7 +3077,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.43';
+  const SCRIPT_VERSION = '2.73.44';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3270,9 +3270,12 @@ if (!singleton) {
           : "";
 
         if (statusSpan && valueSpan) {
-          statusSpan.dataset.ffsCountry = countryLabel;
-          statusSpan.dataset.ffsTime = countdownText;
-          statusSpan.dataset.ffsLand = String(until); // wb72: for the 250ms ticker
+          // wb85: only write attributes that actually changed — setAttribute
+          // fires observers (TornTools watches these lists too) even when the
+          // value is identical, and 12 chips x 3 writes/paint was pure noise.
+          if (statusSpan.dataset.ffsCountry !== countryLabel) statusSpan.dataset.ffsCountry = countryLabel;
+          if (statusSpan.dataset.ffsTime !== countdownText) statusSpan.dataset.ffsTime = countdownText;
+          if (statusSpan.dataset.ffsLand !== String(until)) statusSpan.dataset.ffsLand = String(until); // wb72: for the 250ms ticker
           const showCountry = statusSpan.dataset.ffsShowCountry === "1";
           // wb81: never blank the chip — if the country is somehow unknown,
           // keep showing the time so the plane doesn't shift to a lone icon.
@@ -3351,7 +3354,7 @@ if (!singleton) {
           const jail = hospState === 'Jail';
           let hospSpan = statusEl.querySelector('.ffs-hosp-status');
           if (hospSpan) {
-            hospSpan.dataset.ffsUntil = String(hospUntil); // wb71: for the 250ms lightweight ticker
+            if (hospSpan.dataset.ffsUntil !== String(hospUntil)) hospSpan.dataset.ffsUntil = String(hospUntil); // wb71: for the 250ms lightweight ticker
             const valueSpan = hospSpan.querySelector('.ffs-hosp-val');
             if (valueSpan && valueSpan.textContent !== timeStr) valueSpan.textContent = timeStr;
             hospSpan.classList.toggle('imminent', imminent);
@@ -3410,12 +3413,15 @@ if (!singleton) {
       ffs_clearActivityFilter(); // wb64: off member-list pages — no bar, no hidden rows
     }
     } finally {
-      // wb84: re-arm on the next frame — after this frame's mutations (ours)
-      // have already been swallowed, so they can't self-trigger a repaint.
+      // wb85: re-arm SYNCHRONOUSLY. Mutations made while disconnected are
+      // never delivered, so our own writes still can't self-trigger — and
+      // unlike the wb84 rAF deferral there is no blind window: JS is
+      // single-threaded, so React cannot wipe a chip mid-paint. The rAF gap
+      // (up to ~12 paints/sec x ~16ms on a busy war list) left ~20% of each
+      // second unobserved — a React wipe landing there showed the bare
+      // "Traveling" text for up to 1s. That was the residual flicker.
       if (_ffsTravelObs && _ffsTravelObsTarget && _ffsTravelObsTarget.isConnected) {
-        requestAnimationFrame(() => {
-          try { _ffsTravelObs.observe(_ffsTravelObsTarget, { childList: true, subtree: true }); } catch (_) {}
-        });
+        try { _ffsTravelObs.observe(_ffsTravelObsTarget, { childList: true, subtree: true }); } catch (_) {}
       }
     }
   }
