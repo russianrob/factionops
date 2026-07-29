@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import axios from "axios";
 import { verifyTornApiKey, issueToken, verifyToken, requireAuth, isPoolEligible } from "./auth.js";
 import { handleStakeoutSync, resolveOwnerId } from "./stakeout-store.js";
-import { runAgentTurn, runAgentTurnResolvingSources, isValidUserscriptName, isValidInstructionsName } from "./agent-service.js";
+import { runAgentTurn, runAgentTurnResolvingSources, isValidUserscriptName, isValidInstructionsName, stubProposalError } from "./agent-service.js";
 import { runJsOnDevice } from "./agent-relay-client.js";
 import { TOTP as _OTPAuthTOTP, Secret as _OTPAuthSecret } from "otpauth";
 import { readFileSync as _totpReadFile } from "node:fs";
@@ -724,6 +724,13 @@ router.post("/api/agent/deploy", requireAuth, (req, res, next) => {
   // Path jail: the resolved target MUST live directly inside the scripts dir.
   const target = pathResolve(_AGENT_SCRIPTS_DIR, filename);
   if (pathDirname(target) !== _AGENT_SCRIPTS_DIR) return res.status(400).json({ error: "path escape" });
+
+  // Stub gate: a header-only or drastically shrunken "complete file" would
+  // replace a working script with a fragment (node --check passes comments).
+  let _prevSize = 0;
+  try { _prevSize = statSync(target).size; } catch {}
+  const stubErr = stubProposalError(content, _prevSize);
+  if (stubErr) return res.status(400).json({ error: stubErr });
 
   // 1. syntax-gate on a temp file in /tmp (world-writable). NOT os.tmpdir() — the
   //    server inherited a polluted, warboard-unwritable session TMPDIR. Real file

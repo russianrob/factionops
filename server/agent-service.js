@@ -202,6 +202,24 @@ export function withTurnLock(fn) {
   return run;
 }
 
+// Deploy sanity gate for *.user.js proposals. The agent aborting mid-block
+// leaves `===FILE:` + a header-only fence, which parseProposal happily
+// captures and `node --check` happily passes (a file of comments is valid
+// JS) — that shipped a 20-line stub over the 5,700-line FFS Banner once.
+// Returns an error string to reject with, or null if the proposal is sane.
+export function stubProposalError(content, prevSize) {
+  const code = String(content || "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/[^\n]*$/gm, "")
+    .trim();
+  if (!code) return "proposal contains no executable code (metadata/comments only) — refusing to replace a script with a stub";
+  if (prevSize > 4096 && String(content).length < prevSize * 0.5) {
+    return "proposal is " + String(content).length + " bytes but the existing script is " + prevSize +
+      " — refusing a >50% shrink (likely a truncated proposal); deploy manually if intentional";
+  }
+  return null;
+}
+
 // Detect an agent inspect request: a `===INSPECT===` line followed by a fenced
 // code block holding a read-only JS query. Returns { js } or null. The owner
 // approves it before it runs (routes.js /api/agent/inspect) — this only extracts.

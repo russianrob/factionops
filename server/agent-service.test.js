@@ -148,3 +148,26 @@ test("withTurnLock: a rejected turn does not block the next", async () => {
   const next = await withTurnLock(async () => "ok");
   assert.equal(next, "ok");
 });
+
+// ── deploy stub gate ────────────────────────────────────────────────────────
+// The agent aborting a ===FILE: block mid-reply leaves a header-only fence
+// that parses as a valid proposal and passes node --check — the deploy gate
+// must catch it (and truncated near-empty rewrites of big scripts).
+import { stubProposalError } from "./agent-service.js";
+
+test("stubProposalError: header-only userscript is rejected", () => {
+  const header = "// ==UserScript==\n// @name X\n// @version 1.0\n// ==/UserScript==\n";
+  assert.match(stubProposalError(header, 0), /no executable code/);
+});
+
+test("stubProposalError: >50% shrink of a big script is rejected", () => {
+  const small = "// ==UserScript==\n// @name X\n// ==/UserScript==\nconsole.log(1);\n";
+  assert.match(stubProposalError(small, 230000), /shrink/);
+});
+
+test("stubProposalError: real script passes, small files may shrink freely", () => {
+  const real = "// ==UserScript==\n// @name X\n// ==/UserScript==\n(function(){ console.log('hi'); })();\n";
+  assert.equal(stubProposalError(real, 0), null);
+  assert.equal(stubProposalError(real, 3000), null);   // existing file small — no ratio gate
+  assert.equal(stubProposalError("x".repeat(120000), 230000), null); // 52% — over the line
+});
