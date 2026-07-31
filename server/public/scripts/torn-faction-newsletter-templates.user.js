@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.21
+// @version      1.0.22
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -11,12 +11,60 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.21";
+  var SCRIPT_VERSION = "1.0.22";
   var STORAGE_KEY = "fnt_templates";
   var menuHideGen = 0;
 
   function getTemplates() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { return {}; } }
   function saveTemplates(t) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(t)); } catch (e) {} }
+  // ── export / import ──────────────────────────────────────────────────────
+  // Templates live in localStorage, which is per-device (and, in the warboard
+  // app, wiped by "Clear web data"). These move them between devices as plain
+  // JSON text — copyable through any channel, no file picker required, which
+  // matters on PDA where downloads are awkward.
+
+  /** Wrap templates in a versioned envelope. `onlyName` exports just that one;
+   *  an unknown name falls back to everything rather than writing an empty file. */
+  function exportPayload(templates, onlyName, nowIso) {
+    var all = templates || {};
+    var out = (onlyName && all[onlyName]) ? (function () { var o = {}; o[onlyName] = all[onlyName]; return o; })() : all;
+    return { fnt: 1, exported: nowIso, templates: out };
+  }
+
+  /** A template is anything object-shaped — we keep whatever fields it carries
+   *  so a future field survives a round trip through an older version. */
+  function looksLikeTemplate(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
+
+  /** Accepts our envelope OR a bare name->template map (hand-edited, or an
+   *  export from before the envelope existed). Never throws. */
+  function parseImport(text) {
+    var raw;
+    try { raw = JSON.parse(String(text || "")); }
+    catch (e) { return { ok: false, error: "That isn't valid JSON." }; }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "Expected a JSON object of templates." };
+    var src = (raw.templates && typeof raw.templates === "object" && !Array.isArray(raw.templates)) ? raw.templates : raw;
+    var out = {}, kept = 0;
+    for (var k in src) {
+      if (!Object.prototype.hasOwnProperty.call(src, k)) continue;
+      if (k === "fnt" || k === "exported") continue;
+      if (looksLikeTemplate(src[k])) { out[k] = src[k]; kept++; }
+    }
+    if (!kept) return { ok: false, error: "No templates found in that text." };
+    return { ok: true, templates: out };
+  }
+
+  /** Incoming wins on a name clash. Returns a NEW map — never mutates. */
+  function mergeImport(existing, incoming) {
+    var merged = {}, added = 0, replaced = 0, k;
+    for (k in (existing || {})) if (Object.prototype.hasOwnProperty.call(existing, k)) merged[k] = existing[k];
+    for (k in (incoming || {})) {
+      if (!Object.prototype.hasOwnProperty.call(incoming, k)) continue;
+      if (Object.prototype.hasOwnProperty.call(merged, k)) replaced++; else added++;
+      merged[k] = incoming[k];
+    }
+    return { merged: merged, added: added, replaced: replaced };
+  }
+
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]; }); }
 
   function onNewsletterPage() { return /factions\.php/.test(location.pathname) && /option=newsletter/.test(location.hash); }
@@ -182,6 +230,46 @@
     return '<button id="' + id + '" type="button" style="background:' + bg + ';color:#e6e9ee;border:1px solid #2e333d;border-radius:6px;padding:3px 11px;cursor:pointer;font-size:12px;">' + label + "</button>";
   }
 
+  /** Copy/paste box. Deliberately text rather than a file picker: it works
+   *  identically on desktop and inside the Torn PDA / warboard webviews, and
+   *  the JSON can travel by any channel (mail, notes, chat). */
+  function fntOverlay(title, initialText, readOnly, onConfirm) {
+    var old = document.getElementById("fnt-ov"); if (old) old.remove();
+    var ov = document.createElement("div");
+    ov.id = "fnt-ov";
+    ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:16px;";
+    ov.innerHTML =
+      '<div style="background:#16181d;border:1px solid #2e333d;border-radius:9px;padding:14px;max-width:640px;width:100%;box-shadow:0 6px 24px rgba(0,0,0,.5);">'
+      + '<div style="font-weight:700;color:#e8c44a;margin-bottom:8px;">' + esc(title) + "</div>"
+      + '<textarea id="fnt-ov-ta" spellcheck="false" style="width:100%;height:220px;box-sizing:border-box;background:#0e0f12;color:#dde2e8;border:1px solid #2e333d;border-radius:6px;padding:8px;font-family:monospace;font-size:12px;resize:vertical;"></textarea>'
+      + '<div id="fnt-ov-msg" style="color:#7a818c;font-size:11px;min-height:15px;margin-top:6px;"></div>'
+      + '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px;">'
+      + btn("fnt-ov-ok", readOnly ? "Copy" : "Import", "#2f6b45")
+      + btn("fnt-ov-close", "Close", "#20242c")
+      + "</div></div>";
+    document.body.appendChild(ov);
+    var ta = ov.querySelector("#fnt-ov-ta");
+    ta.value = initialText || "";
+    ta.readOnly = !!readOnly;
+    var m = ov.querySelector("#fnt-ov-msg");
+    function say(t) { if (m) m.textContent = t || ""; }
+    if (readOnly) { try { ta.focus(); ta.select(); } catch (e) {} } else { try { ta.focus(); } catch (e) {} }
+    ov.querySelector("#fnt-ov-close").addEventListener("click", function () { ov.remove(); });
+    ov.addEventListener("click", function (e) { if (e.target === ov) ov.remove(); });
+    ov.querySelector("#fnt-ov-ok").addEventListener("click", function () {
+      if (readOnly) {
+        // Must run synchronously inside the tap — PDA's webview refuses a
+        // clipboard write from an async continuation.
+        try { ta.select(); document.execCommand("copy"); say("Copied. Paste it on the other device's Import."); }
+        catch (e) { say("Select the text above and copy manually."); }
+        return;
+      }
+      var res = onConfirm(ta.value);
+      if (res && res.error) { say(res.error); return; }
+      ov.remove();
+    });
+  }
+
   function refreshSelect(sel) {
     var t = getTemplates(), names = Object.keys(t).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
     sel.innerHTML = '<option value="__fnt_blank__">-</option>'
@@ -203,6 +291,8 @@
       + btn("fnt-qsend", "⚡ Quick Send", "#2f6b45")
       + btn("fnt-save", "Save current…", "#20242c")
       + btn("fnt-del", "Delete", "#20242c")
+      + btn("fnt-exp", "Export", "#20242c")
+      + btn("fnt-imp", "Import", "#20242c")
       + '<span id="fnt-msg" style="color:#7a818c;"></span>';
     editor.insertAdjacentElement("beforebegin", panel);
 
@@ -256,6 +346,31 @@
       if (!confirm('Delete template "' + n + '"?')) return;
       delete t[n]; saveTemplates(t); refreshSelect(sel); updateGroupInd(); msg("deleted");
     });
+
+    panel.querySelector("#fnt-exp").addEventListener("click", function () {
+      var t = getTemplates(), names = Object.keys(t);
+      if (!names.length) { msg("nothing to export"); return; }
+      // A template selected in the dropdown exports alone; "-" exports all,
+      // which is the device-migration case.
+      var only = (sel.value && sel.value !== "__fnt_blank__" && t[sel.value]) ? sel.value : null;
+      var payload = exportPayload(t, only, new Date().toISOString());
+      var count = Object.keys(payload.templates).length;
+      fntOverlay(
+        only ? ('Export "' + only + '"') : ("Export all " + count + " templates"),
+        JSON.stringify(payload, null, 2), true, null);
+    });
+
+    panel.querySelector("#fnt-imp").addEventListener("click", function () {
+      fntOverlay("Import templates — paste the exported text", "", false, function (text) {
+        var parsed = parseImport(text);
+        if (!parsed.ok) return { error: parsed.error };
+        var r = mergeImport(getTemplates(), parsed.templates);
+        saveTemplates(r.merged);
+        refreshSelect(sel); updateGroupInd();
+        msg("imported " + r.added + " new" + (r.replaced ? ", replaced " + r.replaced : ""));
+        return null;
+      });
+    });
     installTinyBlank();
     if (sel.value === "__fnt_blank__" && getBody()) setBody("");
   }
@@ -291,4 +406,8 @@
     }
   }).observe(document.body, { childList: true, subtree: true });
   ensure();
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = { exportPayload: exportPayload, parseImport: parseImport, mergeImport: mergeImport };
+  }
 })();
