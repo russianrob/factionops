@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.24
+// @version      1.0.25
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -11,7 +11,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.24";
+  var SCRIPT_VERSION = "1.0.25";
   var STORAGE_KEY = "fnt_templates";
   var menuHideGen = 0;
 
@@ -240,6 +240,22 @@
    *
    *  MUST be invoked synchronously from the click handler: the picker requires
    *  transient user activation, which is spent by any prior await. */
+  /** Mobile route: hand the JSON to the OS share sheet as a real file, which
+   *  offers "Save to Files" / Drive / mail. Web Share Level 2. This is the only
+   *  thing that produces a FILE inside the PDA and warboard webviews, where
+   *  <a download> is blocked outright — those webviews do allow <input
+   *  type="file">, which is why Import already works there and Export didn't.
+   *  Like the picker, it needs transient activation, so no awaits before it. */
+  function fntShareFile(text, filename, done) {
+    var file;
+    try { file = new File([text], filename, { type: "application/json" }); }
+    catch (e) { done("unsupported"); return; }
+    if (!navigator.canShare || !navigator.canShare({ files: [file] })) { done("unsupported"); return; }
+    navigator.share({ files: [file], title: filename })
+      .then(function () { done("shared"); })
+      .catch(function (e) { done(e && e.name === "AbortError" ? "cancelled" : "unsupported"); });
+  }
+
   function fntSaveAs(text, filename, done) {
     if (typeof window.showSaveFilePicker !== "function") { done("unsupported"); return; }
     var opts = {
@@ -303,11 +319,16 @@
         var name = (opts && opts.filename) || "torn-newsletter-templates.json";
         // Prefer the real Save-as dialog; fall back to a straight download,
         // and finally to the copy box that is already on screen.
+        // Desktop picker -> mobile share sheet -> plain download -> copy box.
         fntSaveAs(ta.value, name, function (outcome, savedAs) {
           if (outcome === "saved") { say("Saved as " + (savedAs || name) + "."); return; }
           if (outcome === "cancelled") { say(""); return; }
-          if (fntDownload(ta.value, name)) say("Saved " + name + " to your downloads folder.");
-          else say("This browser blocked the download — use Copy instead.");
+          fntShareFile(ta.value, name, function (shareOutcome) {
+            if (shareOutcome === "shared") { say("Shared " + name + " — pick Save to Files."); return; }
+            if (shareOutcome === "cancelled") { say(""); return; }
+            if (fntDownload(ta.value, name)) say("Saved " + name + " to your downloads folder.");
+            else say("No file route on this device — use Copy instead.");
+          });
         });
       });
     } else {
