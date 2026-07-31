@@ -96,3 +96,52 @@ test("exactly at the cap still sends individually", () => {
 test("empty input produces no notifications", () => {
   assert.deepEqual(buildNotifications([]), []);
 });
+
+// ── hospital release warning ────────────────────────────────────────────────
+// Hospital is NOT a predictable deadline: meds, revives and defensive
+// extensions all move it. Scheduling it on-device fired warnings after the
+// user had already medded out, because only a fresh poll could cancel the
+// queued alert. Detecting it server-side on each poll cannot be stale — if
+// the state says Okay, nothing is sent.
+import { hospitalWarning } from "./personal-events.js";
+
+const NOW = 1_785_600_000_000;
+const hosp = (secsLeft) => ({ state: "Hospital", until: Math.floor(NOW / 1000) + secsLeft });
+
+test("warns once when release is inside the window", () => {
+  const w = hospitalWarning(hosp(70), NOW, null);
+  assert.equal(w.warn, true);
+  assert.equal(w.until, hosp(70).until);
+  assert.ok(w.seconds >= 65 && w.seconds <= 75, `got ${w.seconds}`);
+});
+
+test("does NOT warn twice for the same hospital stay", () => {
+  const s = hosp(70);
+  assert.equal(hospitalWarning(s, NOW, s.until).warn, false);
+});
+
+test("a NEW stay after the first warns again", () => {
+  const first = hosp(70);
+  const later = { state: "Hospital", until: first.until + 3600 };
+  assert.equal(hospitalWarning(later, NOW, first.until).warn, false, "still far out");
+  const soon = { state: "Hospital", until: Math.floor(NOW / 1000) + 50 };
+  assert.equal(hospitalWarning(soon, NOW, first.until).warn, true, "different stay, in window");
+});
+
+test("medding out means state is no longer Hospital — never warns", () => {
+  assert.equal(hospitalWarning({ state: "Okay", until: 0 }, NOW, null).warn, false);
+  assert.equal(hospitalWarning({ state: "Traveling", until: 0 }, NOW, null).warn, false);
+  assert.equal(hospitalWarning({ state: "Jail", until: Math.floor(NOW / 1000) + 70 }, NOW, null).warn, false);
+});
+
+test("too far out, or already released, does not warn", () => {
+  assert.equal(hospitalWarning(hosp(600), NOW, null).warn, false, "10 min out");
+  assert.equal(hospitalWarning(hosp(0), NOW, null).warn, false, "already up");
+  assert.equal(hospitalWarning(hosp(-30), NOW, null).warn, false, "past");
+});
+
+test("tolerates junk without throwing", () => {
+  assert.equal(hospitalWarning(null, NOW, null).warn, false);
+  assert.equal(hospitalWarning({}, NOW, null).warn, false);
+  assert.equal(hospitalWarning({ state: "Hospital", until: "soon" }, NOW, null).warn, false);
+});

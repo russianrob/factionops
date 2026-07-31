@@ -4,8 +4,9 @@
 // and pushes anything new straight to the warboard app (APNs/FCM — no Web Push
 // copy). This has to live on the server: iOS suspends the app and warboard has
 // no BGTaskScheduler, so a closed app cannot notice that someone attacked you.
-// Predictable deadlines (flight, hospital) are handled locally on-device
-// instead — see BarNotificationScheduler in the iOS app.
+// Flight warnings stay on-device (a flight cannot land early, so scheduling
+// ahead is safe). Hospital does NOT: meds, revives and extensions move the
+// release, so it is evaluated here on every poll instead — see hospitalWarning.
 //
 // Cost is ~1.3 calls/min against the player's OWN key (100/min budget), so it
 // never touches the faction pool and scales to faction-wide opt-in later.
@@ -15,7 +16,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as store from "./store.js";
 import * as push from "./push-notifications.js";
-import { pickNewEvents, buildNotifications } from "./personal-events.js";
+import { pickNewEvents, buildNotifications, hospitalWarning } from "./personal-events.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = join(__dirname, "data", "personal-events-state.json");
@@ -60,7 +61,9 @@ async function pollPlayer(playerId) {
   const key = store.getApiKeyForPlayer(playerId);
   if (!key) return;                       // no stored key — silently skip
 
-  const url = `https://api.torn.com/user/?selections=events&limit=${EVENT_LIMIT}` +
+  // `profile` rides along in the SAME call — status.state/until for the
+  // hospital warning costs nothing extra.
+  const url = `https://api.torn.com/user/?selections=events,profile&limit=${EVENT_LIMIT}` +
               `&key=${encodeURIComponent(key)}&comment=wb-personal`;
   let json;
   try {
@@ -76,9 +79,29 @@ async function pollPlayer(playerId) {
     return;
   }
 
-  const prev = _state[playerId] || { seen: [], firstRunDone: false };
+  const prev = _state[playerId] || { seen: [], firstRunDone: false, warnedHospUntil: null };
+
+  // Evaluated fresh every poll rather than scheduled ahead: if the player
+  // medded out, state is no longer Hospital and nothing is sent. This ran
+  // on-device before and fired after people had already left.
+  const hw = hospitalWarning(json.status, Date.now(), prev.warnedHospUntil);
+  if (hw.warn) {
+    prev.warnedHospUntil = hw.until;
+    _state[playerId] = { ...prev };
+    saveState();
+    console.log(`[personal] ${playerId} -> hospital out in ~${hw.seconds}s`);
+    await push.sendToPlayer(playerId, {
+      title: "Out of hospital soon 🏥",
+      body: `You leave hospital in about ${hw.seconds} seconds.`,
+      tag: "hospital-out",
+      data: { url: "https://www.torn.com" },
+    }, "torn_event", { urgency: "high", nativeOnly: true }).catch((e) =>
+      console.error("[personal] hospital push failed:", e.message));
+  } else if (json.status && json.status.state !== "Hospital" && prev.warnedHospUntil != null) {
+    prev.warnedHospUntil = null;                 // released — arm for the next stay
+  }
   const { fresh, seen } = pickNewEvents(json.events, new Set(prev.seen), !prev.firstRunDone);
-  _state[playerId] = { seen: [...seen], firstRunDone: true };
+  _state[playerId] = { seen: [...seen], firstRunDone: true, warnedHospUntil: prev.warnedHospUntil ?? null };
   saveState();
 
   if (!prev.firstRunDone) {

@@ -65,6 +65,36 @@ export function pickNewEvents(events, seenIds, firstRun) {
   return { fresh, seen };
 }
 
+// How close to release the hospital warning fires. Wider than the 60s the user
+// asked for because the watcher only looks every 45s — a 60s-exact window would
+// be missed whenever a poll straddled it. Erring wide means the warning lands
+// somewhere in 45–105s, which reads as "about a minute" and is never late.
+const HOSPITAL_WARN_WINDOW_SEC = 105;
+
+/**
+ * Decide whether to warn that hospital time is nearly up.
+ *
+ * Deliberately evaluated fresh on every poll rather than scheduled ahead:
+ * hospital is NOT a fixed deadline — meds, revives and defensive extensions all
+ * move it. An on-device timer queued minutes earlier cannot know the user
+ * medded out, and fired anyway. Here, if the state isn't Hospital, nothing is
+ * sent, so a stale warning is structurally impossible.
+ *
+ * `lastWarnedUntil` dedupes per hospital STAY (keyed on the release instant),
+ * so a single stay warns once but a fresh one still warns.
+ */
+export function hospitalWarning(status, nowMs, lastWarnedUntil) {
+  const no = { warn: false };
+  if (!status || typeof status !== "object") return no;
+  if (status.state !== "Hospital") return no;          // medded out / revived / never in
+  const until = Number(status.until);
+  if (!Number.isFinite(until) || until <= 0) return no;
+  const seconds = Math.round(until - nowMs / 1000);
+  if (seconds <= 0 || seconds > HOSPITAL_WARN_WINDOW_SEC) return no;
+  if (lastWarnedUntil != null && Number(lastWarnedUntil) === until) return no;
+  return { warn: true, until, seconds };
+}
+
 /**
  * Shape events into notification payloads. Below the burst cap each event gets
  * its own banner carrying the event's own wording; above it, one summary.
