@@ -45,6 +45,11 @@ export const NOTIFICATION_TYPES = {
   enemy_attacking: { label: "Enemy Attacking",        description: "When an enemy is caught mid-attack by the poller",  default: false },
   enemy_surge:     { label: "Enemy Online Surge",     description: "When the enemy faction's online count jumps sharply (rallying)", default: false },
   stakeout_alert:  { label: "Stakeout Alerts",        description: "A watched player/faction hit a trigger (online, out of hospital, landed, revivable…)", default: true },
+  torn_event: {
+    label: "Torn Events",
+    description: "Everything that happens to you in Torn — attacks, money, items, mail.",
+    default: false,
+  },
   restock_alert:   { label: "Foreign Restock Alerts", description: "When a watched foreign-shop item restocks (watchlist on the server)", default: false },
   // oc: true marks a type as OC-Spawn-only. The FactionOps settings UI
   // filters these out via /api/push/types so war-overlay users don't see
@@ -237,10 +242,18 @@ export function getSubscribedPlayerIds() {
  * @param {object} [pushOptions] - web-push options (e.g. { urgency: 'high' })
  */
 export async function sendToPlayer(playerId, payload, notifType, pushOptions) {
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
-
   // Check preference if a type is specified
   if (notifType && !isTypeEnabled(playerId, notifType)) return;
+
+  // nativeOnly: deliver ONLY through FCM/APNs — i.e. as a warboard app banner —
+  // and skip the Web Push channel. Without it a player subscribed to both the
+  // PWA and the app gets two banners for the same event.
+  if (pushOptions && pushOptions.nativeOnly) {
+    await fanoutFcm([playerId], payload, notifType).catch(() => {});
+    return;
+  }
+
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
 
   const subs = subscriptions[playerId];
   if (!subs || subs.length === 0) return;

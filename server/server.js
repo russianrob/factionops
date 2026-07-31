@@ -40,6 +40,7 @@ import * as stakeoutStore from "./stakeout-store.js";
 import { startWatcher as startStakeoutWatcher, stopWatcher as stopStakeoutWatcher } from "./stakeout-watcher.js";
 import { startRwpRefresh } from "./rwp-refresh.js";
 import { startRestockTracker } from "./restock-tracker.js";
+import { startPersonalWatcher } from "./personal-watcher.js";
 import * as itemMarket from "./item-market.js";
 import { loadSubscriptions } from "./push-notifications.js";
 import { fetchRankedWar } from "./torn-api.js";
@@ -627,6 +628,7 @@ else console.log("[stakeout-watcher] disabled (set STAKEOUT_WATCHER=1 to enable 
 // auction CSVs so the PDA path (which can't gunzip the CDN) gets fresh prices.
 startRwpRefresh();
 startRestockTracker();
+startPersonalWatcher();
 // Item-market lowest-listing cache: value OC reward artifacts (e.g. Priceless
 // Painting) the bulk catalog prices at $0. Seed from OC history, then refresh
 // the live lowest listings every ~12 min on the owner's key.
