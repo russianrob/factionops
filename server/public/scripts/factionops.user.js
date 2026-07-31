@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.62
+// @version      5.1.63
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.62';
+    const SCRIPT_VERSION = '5.1.63';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -539,7 +539,21 @@ html.wb-theme-light {
 .wb-chain-bar.wb-chain-imminent {
     border-bottom-color: var(--wb-bonus-warning);
     background: linear-gradient(135deg, #2e0f0f 0%, #4a1010 100%);
+}
+/* v5.1.63: the imminent glow pulses via a pseudo-element's OPACITY, not via
+   box-shadow on the bar itself. box-shadow cannot be GPU-composited, so
+   animating it forced a full repaint every frame (~60fps) for the entire time
+   a chain was imminent — i.e. exactly when the phone is awake and being
+   watched. Opacity animates on the compositor, so the same pulse is
+   effectively free. Keep it this way; do not animate box-shadow/filter here. */
+.wb-chain-bar.wb-chain-imminent::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-shadow: 0 0 20px rgba(255,118,117,0.7);
     animation: wb-chain-pulse 0.6s ease-in-out infinite alternate;
+    will-change: opacity;
 }
 .wb-chain-section {
     display: flex;
@@ -976,8 +990,8 @@ html.wb-theme-light {
     50%      { opacity: 0.5; }
 }
 @keyframes wb-chain-pulse {
-    from { box-shadow: 0 0 8px rgba(255,118,117,0.3); }
-    to   { box-shadow: 0 0 20px rgba(255,118,117,0.7); }
+    from { opacity: 0.35; }
+    to   { opacity: 1; }
 }
 
 /* Ensure Torn content doesn't sit under our chain bar */
