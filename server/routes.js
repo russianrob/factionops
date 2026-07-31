@@ -114,6 +114,7 @@ import { startChainMonitor, recordClientChainData } from "./chain-monitor.js";
 import { startEnemySurgeMonitor, stopEnemySurgeMonitor } from "./enemy-surge-monitor.js";
 import * as push from "./push-notifications.js";
 import * as restockTracker from "./restock-tracker.js";
+import { normalizeChainData, chainWithLiveTimeout, chainHashKey } from "./chain-data.js";
 import { isFactionAllowed, getAllSubscriptions, getOwnerFactionId, getSubscriptionRejectionMessage } from "./subscription-manager.js";
 
 const router = Router();
@@ -234,7 +235,7 @@ function broadcastWarUpdate(warId) {
     priorities: war.priorities,
     enemyStatuses: war.enemyStatuses,
     retals: war.incomingRetals || [],
-    chainData: war.chainData,
+    chainData: chainWithLiveTimeout(war.chainData, Date.now()),
     onlinePlayers: store.getOnlinePlayersForWar(warId),
     viewers: store.getViewersForWar(warId),
     ourFactionOnline: war.ourFactionOnline || null,
@@ -1919,7 +1920,7 @@ router.get("/api/faction/:factionId/war", requireAuth, (req, res) => {
         priorities: war.priorities,
         enemyStatuses: war.enemyStatuses,
         retals: war.incomingRetals || [],
-        chainData: war.chainData,
+        chainData: chainWithLiveTimeout(war.chainData, Date.now()),
       });
     }
   }
@@ -1958,7 +1959,7 @@ router.get("/api/faction/:factionId/war", requireAuth, (req, res) => {
         priorities: mostRecent.priorities,
         enemyStatuses: mostRecent.enemyStatuses,
         retals: mostRecent.incomingRetals || [],
-        chainData: mostRecent.chainData,
+        chainData: chainWithLiveTimeout(mostRecent.chainData, Date.now()),
       });
     }
   }
@@ -2046,7 +2047,7 @@ router.get("/api/stream", (req, res, next) => {
     priorities: war.priorities,
     enemyStatuses: war.enemyStatuses,
     retals: war.incomingRetals || [],
-    chainData: war.chainData,
+    chainData: chainWithLiveTimeout(war.chainData, Date.now()),
     onlinePlayers: store.getOnlinePlayersForWar(warId),
     viewers: store.getViewersForWar(warId),
     ourFactionOnline: war.ourFactionOnline || null,
@@ -2236,7 +2237,7 @@ router.get("/api/poll", (req, res, next) => {
     priorities: war.priorities,
     enemyStatuses: war.enemyStatuses,
     retals: war.incomingRetals || [],
-    chainData: war.chainData,
+    chainData: chainWithLiveTimeout(war.chainData, Date.now()),
     onlinePlayers: store.getOnlinePlayersForWar(warId),
     viewers: store.getViewersForWar(warId),
     ourFactionOnline: war.ourFactionOnline || null,
@@ -2275,7 +2276,7 @@ function _lpWarSections(war, warId, factionId) {
     calls: war.calls || {},
     priorities: war.priorities || {},
     retals: war.incomingRetals || [],
-    chainData: war.chainData || null,
+    chainData: chainHashKey(war.chainData) || null,
     warTarget: war.warTarget || null,
     warScores: war.warScores || null,
     warEnded: war.warEnded || false,
@@ -2313,6 +2314,9 @@ function _lpBuildDelta(war, sections, since, playerId) {
   for (const k in sections) {
     if (full || (war._secv[k] || 0) > since) changed[k] = sections[k];
   }
+  // Storage and the hash are deliberately free of the decrementing countdown;
+  // re-derive it here so clients still reading `timeout` are unaffected.
+  if (changed.chainData) changed.chainData = chainWithLiveTimeout(war.chainData, Date.now());
   const bc = pendingBroadcasts.drainForPlayer(playerId);
   if (bc && bc.length) changed.broadcasts = bc;
   return { v: war._lpv, full, changed };
@@ -3266,7 +3270,11 @@ router.post("/api/status", requireAuth, async (req, res) => {
 
   // Chain data update from client (for display sync only — push alerts handled by server chain monitor)
   if (chainData && typeof chainData === "object") {
-    war.chainData = { ...war.chainData, ...chainData };
+    // Normalize to an absolute end instant so a member re-pushing the same
+    // chain a second later writes IDENTICAL bytes — otherwise every push
+    // bumped the war version and woke every member's long-poll. chain-data.js
+    // explains the mechanism.
+    war.chainData = normalizeChainData({ ...war.chainData, ...chainData }, Date.now());
     store.saveState();
   }
 

@@ -15,6 +15,7 @@ import { fetchFactionChain, fetchRankedWar } from "./torn-api.js";
 import * as push from "./push-notifications.js";
 import * as apns from "./apns.js";
 import * as liveActivityTokens from "./live-activity-tokens.js";
+import { normalizeChainData, chainWithLiveTimeout } from "./chain-data.js";
 
 // Fallback interval when we can't resolve the dynamic one (e.g. no war
 // context yet). Normal operation uses store.getPollInterval(factionId,
@@ -71,8 +72,12 @@ const warTargetNotified = new Map();
  * data came from a client or our own poll.
  */
 async function _processChain(warId, war, chain, io, source) {
-  const prevChain = { ...war.chainData };
-  war.chainData = chain;
+  const prevChain = chainWithLiveTimeout({ ...war.chainData }, Date.now());
+  // Store by absolute end instant. `chain` keeps its live `timeout` for the
+  // alert thresholds below; only the STORED copy is normalized, so the record
+  // stops changing on every poll and the long-poll can stay held. See
+  // chain-data.js for why that matters.
+  war.chainData = normalizeChainData(chain, Date.now());
   war.chainDataUpdatedAt = Date.now();
   store.saveState();
 
