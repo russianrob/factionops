@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.23
+// @version      1.0.24
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -11,7 +11,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.23";
+  var SCRIPT_VERSION = "1.0.24";
   var STORAGE_KEY = "fnt_templates";
   var menuHideGen = 0;
 
@@ -233,6 +233,29 @@
   /** Copy/paste box. Deliberately text rather than a file picker: it works
    *  identically on desktop and inside the Torn PDA / warboard webviews, and
    *  the JSON can travel by any channel (mail, notes, chat). */
+  /** Native "Save as…" dialog so the user picks the folder and filename.
+   *  File System Access API — Chrome/Edge/Opera only; Firefox and Safari don't
+   *  implement it, and neither do the PDA/warboard webviews, so callers fall
+   *  back to a plain download and then to copy/paste.
+   *
+   *  MUST be invoked synchronously from the click handler: the picker requires
+   *  transient user activation, which is spent by any prior await. */
+  function fntSaveAs(text, filename, done) {
+    if (typeof window.showSaveFilePicker !== "function") { done("unsupported"); return; }
+    var opts = {
+      suggestedName: filename,
+      types: [{ description: "JSON file", accept: { "application/json": [".json"] } }],
+    };
+    window.showSaveFilePicker(opts).then(function (handle) {
+      return handle.createWritable().then(function (w) {
+        return w.write(text).then(function () { return w.close(); });
+      }).then(function () { done("saved", handle.name || filename); });
+    }).catch(function (e) {
+      // The user closing the dialog is not an error worth shouting about.
+      done(e && e.name === "AbortError" ? "cancelled" : "failed");
+    });
+  }
+
   /** Offer the text as a downloadable .json. Returns false if the browser
    *  wouldn't take it — iOS WKWebView in particular has patchy download
    *  support, which is exactly why the copy/paste box stays. */
@@ -278,8 +301,14 @@
     if (readOnly) {
       fileBtn.addEventListener("click", function () {
         var name = (opts && opts.filename) || "torn-newsletter-templates.json";
-        if (!fntDownload(ta.value, name)) say("This browser blocked the download — use Copy instead.");
-        else say("Saved " + name + " to your downloads.");
+        // Prefer the real Save-as dialog; fall back to a straight download,
+        // and finally to the copy box that is already on screen.
+        fntSaveAs(ta.value, name, function (outcome, savedAs) {
+          if (outcome === "saved") { say("Saved as " + (savedAs || name) + "."); return; }
+          if (outcome === "cancelled") { say(""); return; }
+          if (fntDownload(ta.value, name)) say("Saved " + name + " to your downloads folder.");
+          else say("This browser blocked the download — use Copy instead.");
+        });
       });
     } else {
       fileBtn.addEventListener("click", function () { try { fileInput.click(); } catch (e) { say("Couldn't open the file picker — paste the text instead."); } });
