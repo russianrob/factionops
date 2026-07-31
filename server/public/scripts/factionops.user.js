@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.63
+// @version      5.1.64
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.63';
+    const SCRIPT_VERSION = '5.1.64';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -11875,27 +11875,16 @@ body.wb-chain-active {
     // SECTION 19: CALL EXPIRY VISUAL FEEDBACK
     // =========================================================================
 
-    /**
-     * Provides visual feedback showing how close a call is to expiring.
-     * Fades the call badge as it ages.
-     */
-    function updateCallAges() {
-        const now = Date.now();
-        for (const [targetId, callData] of Object.entries(state.calls)) {
-            if (!callData.calledAt) continue;
-            const age = now - callData.calledAt;
-            const timeout = callData.isDeal ? CONFIG.DEAL_TIMEOUT : CONFIG.CALL_TIMEOUT;
-            const ratio = Math.min(age / timeout, 1);
-
-            const el = document.getElementById(`wb-call-${targetId}`);
-            if (el) {
-                // Fade opacity as call ages
-                const opacity = 1 - (ratio * 0.5); // fade from 1.0 to 0.5
-                el.style.opacity = String(opacity);
-            }
-        }
-        requestAnimationFrame(updateCallAges);
-    }
+    /* v5.1.64: updateCallAges deleted — it was a self-rearming requestAnimationFrame
+       loop that could never do anything. It looked up `wb-call-<id>`, but those ids
+       are created only in enhanceRow(), reachable solely via
+       enhanceRow <- scanAndEnhanceRows <- setupMutationObserver <- initWarPage,
+       and initWarPage has ZERO callers (detectPageAndInit routes elsewhere). The
+       live overlay uses `fo-call-<id>`. So every lookup missed while the loop kept
+       the render pipeline off frame-idle at ~60fps — started from main(), so it ran
+       on every matched Torn page, overlay or not, and its handle was never stored so
+       deactivateWarOverlay could not cancel it. If call-age fading is wanted again,
+       target `fo-call-<id>` from the existing 1Hz accumulator, not rAF. */
 
     // =========================================================================
     // SECTION 20: TAB COORDINATION
@@ -14595,9 +14584,6 @@ body.wb-chain-active {
 
         // 8. Detect page type and initialise appropriate enhancements
         detectPageAndInit();
-
-        // 9. Start call age visual feedback loop
-        requestAnimationFrame(updateCallAges);
 
         log('FactionOps initialised');
     }
