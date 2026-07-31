@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Newsletter Templates
 // @namespace    RussianRob
-// @version      1.0.22
+// @version      1.0.23
 // @description  Save and apply reusable templates for your faction newsletter (factions.php → Controls → Newsletter). Inspired by Glasnost's Torn Mail Templates.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -11,7 +11,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "1.0.22";
+  var SCRIPT_VERSION = "1.0.23";
   var STORAGE_KEY = "fnt_templates";
   var menuHideGen = 0;
 
@@ -233,7 +233,23 @@
   /** Copy/paste box. Deliberately text rather than a file picker: it works
    *  identically on desktop and inside the Torn PDA / warboard webviews, and
    *  the JSON can travel by any channel (mail, notes, chat). */
-  function fntOverlay(title, initialText, readOnly, onConfirm) {
+  /** Offer the text as a downloadable .json. Returns false if the browser
+   *  wouldn't take it — iOS WKWebView in particular has patchy download
+   *  support, which is exactly why the copy/paste box stays. */
+  function fntDownload(text, filename) {
+    try {
+      var blob = new Blob([text], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url; a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { try { a.remove(); URL.revokeObjectURL(url); } catch (e) {} }, 1000);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function fntOverlay(title, initialText, readOnly, onConfirm, opts) {
     var old = document.getElementById("fnt-ov"); if (old) old.remove();
     var ov = document.createElement("div");
     ov.id = "fnt-ov";
@@ -243,9 +259,12 @@
       + '<div style="font-weight:700;color:#e8c44a;margin-bottom:8px;">' + esc(title) + "</div>"
       + '<textarea id="fnt-ov-ta" spellcheck="false" style="width:100%;height:220px;box-sizing:border-box;background:#0e0f12;color:#dde2e8;border:1px solid #2e333d;border-radius:6px;padding:8px;font-family:monospace;font-size:12px;resize:vertical;"></textarea>'
       + '<div id="fnt-ov-msg" style="color:#7a818c;font-size:11px;min-height:15px;margin-top:6px;"></div>'
-      + '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px;">'
+      + '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px;flex-wrap:wrap;">'
+      + (readOnly ? btn("fnt-ov-file", "💾 Save file", "#20242c")
+                  : btn("fnt-ov-file", "📂 Choose file", "#20242c"))
       + btn("fnt-ov-ok", readOnly ? "Copy" : "Import", "#2f6b45")
       + btn("fnt-ov-close", "Close", "#20242c")
+      + '<input id="fnt-ov-input" type="file" accept=".json,application/json" style="display:none;">'
       + "</div></div>";
     document.body.appendChild(ov);
     var ta = ov.querySelector("#fnt-ov-ta");
@@ -254,6 +273,29 @@
     var m = ov.querySelector("#fnt-ov-msg");
     function say(t) { if (m) m.textContent = t || ""; }
     if (readOnly) { try { ta.focus(); ta.select(); } catch (e) {} } else { try { ta.focus(); } catch (e) {} }
+    var fileBtn = ov.querySelector("#fnt-ov-file");
+    var fileInput = ov.querySelector("#fnt-ov-input");
+    if (readOnly) {
+      fileBtn.addEventListener("click", function () {
+        var name = (opts && opts.filename) || "torn-newsletter-templates.json";
+        if (!fntDownload(ta.value, name)) say("This browser blocked the download — use Copy instead.");
+        else say("Saved " + name + " to your downloads.");
+      });
+    } else {
+      fileBtn.addEventListener("click", function () { try { fileInput.click(); } catch (e) { say("Couldn't open the file picker — paste the text instead."); } });
+      fileInput.addEventListener("change", function () {
+        var f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        var rd = new FileReader();
+        rd.onerror = function () { say("Couldn't read that file."); };
+        rd.onload = function () {
+          ta.value = String(rd.result || "");     // show it, so a rejection is inspectable
+          var res = onConfirm(ta.value);
+          if (res && res.error) say(res.error); else ov.remove();
+        };
+        rd.readAsText(f);
+      });
+    }
     ov.querySelector("#fnt-ov-close").addEventListener("click", function () { ov.remove(); });
     ov.addEventListener("click", function (e) { if (e.target === ov) ov.remove(); });
     ov.querySelector("#fnt-ov-ok").addEventListener("click", function () {
@@ -355,9 +397,11 @@
       var only = (sel.value && sel.value !== "__fnt_blank__" && t[sel.value]) ? sel.value : null;
       var payload = exportPayload(t, only, new Date().toISOString());
       var count = Object.keys(payload.templates).length;
+      var stamp = payload.exported.slice(0, 10);
+      var fname = "torn-newsletter-templates-" + (only ? only.replace(/[^\w\-]+/g, "_") + "-" : "") + stamp + ".json";
       fntOverlay(
         only ? ('Export "' + only + '"') : ("Export all " + count + " templates"),
-        JSON.stringify(payload, null, 2), true, null);
+        JSON.stringify(payload, null, 2), true, null, { filename: fname });
     });
 
     panel.querySelector("#fnt-imp").addEventListener("click", function () {
