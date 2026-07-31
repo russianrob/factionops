@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.64
+// @version      5.1.65
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -86,7 +86,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.64';
+    const SCRIPT_VERSION = '5.1.65';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -4988,9 +4988,20 @@ body.wb-chain-active {
             const chainChanged = data.chainData.current !== oldCurrent;
             state.chain.current = data.chainData.current ?? state.chain.current;
             state.chain.max = data.chainData.max ?? state.chain.max;
-            const serverTimeout = data.chainData.timeout ?? 0;
-            if (chainChanged || state.chain.timeout <= 0 || Math.abs(serverTimeout - state.chain.timeout) > 3) {
-                setChainTimeout(serverTimeout);
+            // v5.1.65: the server now stores the chain's ABSOLUTE end instant
+            // (chainEndsAt, epoch ms) instead of a countdown that decremented
+            // every second. Anchoring straight to it is exact — immune to
+            // request latency — and, because the stored value only changes when
+            // something really happens, it stops re-anchoring on every poll.
+            // `timeout` is still sent (server recomputes it) for older clients.
+            const serverEndsAt = Number(data.chainData.chainEndsAt);
+            if (Number.isFinite(serverEndsAt) && serverEndsAt > 0) {
+                setChainDeadline(serverEndsAt);
+            } else {
+                const serverTimeout = data.chainData.timeout ?? 0;
+                if (chainChanged || state.chain.timeout <= 0 || Math.abs(serverTimeout - state.chain.timeout) > 3) {
+                    setChainTimeout(serverTimeout);
+                }
             }
             state.chain.cooldown = data.chainData.cooldown ?? 0;
             chainCooldownSetAt = Date.now();
@@ -7149,6 +7160,24 @@ body.wb-chain-active {
         chainTimeoutAnchor = value;
         chainTimeoutAnchorAt = Date.now();
     }
+    /**
+     * v5.1.65: anchor the countdown to an ABSOLUTE end instant from the server.
+     * Preferred over setChainTimeout(seconds), which has to guess how much of
+     * the value was eaten by request latency. Re-anchoring to the same deadline
+     * is a no-op, so a repeated poll no longer nudges the display.
+     */
+    function setChainDeadline(endsAtMs) {
+        if (!Number.isFinite(endsAtMs) || endsAtMs <= 0) return;
+        const remaining = Math.max(0, (endsAtMs - Date.now()) / 1000);
+        // Same deadline (within a second) — nothing to do.
+        if (chainTimeoutAnchorAt > 0 &&
+            Math.abs((chainTimeoutAnchorAt + chainTimeoutAnchor * 1000) - endsAtMs) < 1000) return;
+        lastChainCurrent = state.chain.current;
+        state.chain.timeout = remaining;
+        chainTimeoutAnchor = remaining;
+        chainTimeoutAnchorAt = Date.now();
+    }
+
     // Cooldown wall-clock anchors (cooldown only comes from server, no conflict)
     let chainCooldownSetAt = 0;
     let chainCooldownSetVal = 0;
@@ -7492,8 +7521,14 @@ body.wb-chain-active {
         const c = state.chain;
         if (!c || typeof c.current !== 'number') return;
         const now = Date.now();
+        // v5.1.65: only push when the chain ACTUALLY moved. The old rule
+        // ("push if unchanged and >5s since last") was a 12/min heartbeat per
+        // member; each one rewrote war.chainData, bumped the long-poll version
+        // and woke every other member's radio. The server polls the chain
+        // itself every ~10s, so an unchanged push tells it nothing it does not
+        // already know. A 60s floor is kept purely as a liveness signal.
         const changed = c.current !== _lastChainPushCurrent;
-        if (!changed && now - _lastChainPushAt < 5000) return;
+        if (!changed && now - _lastChainPushAt < 60000) return;
         _lastChainPushAt = now;
         _lastChainPushCurrent = c.current;
         postAction('/api/chain-update', {
@@ -7581,9 +7616,11 @@ body.wb-chain-active {
             characterData: true,
         });
 
-        // Backup: poll every 2s in case MutationObserver misses something
-        // (e.g. Torn replaces elements instead of updating text)
-        chainDOMReadInterval = setInterval(parseChainFromDOM, 2000);
+        // Backup only — the MutationObserver above is the real detector, and
+        // the server independently polls the chain every ~10s. v5.1.65: 2s ->
+        // 10s; a 2-second re-parse of Torn's chain bar bought nothing that the
+        // observer had not already caught a moment earlier.
+        chainDOMReadInterval = setInterval(parseChainFromDOM, 10000);
 
         log('Chain DOM observer started (zero API calls)');
         return true;
