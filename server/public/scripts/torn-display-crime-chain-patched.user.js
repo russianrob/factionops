@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN: Display Crime Chain
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.18
+// @version      1.0.19
 // @description  Calculates and displays your current crime chain (Crimes 2.0 DOM-compat patch)
 // @author       Ironhydedragon[2428902]
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -19,7 +19,8 @@ let ccBase = null;  // baseline {type, s, f, c} of the on-page success/fail/crit
 let chainNerve = 0;  // total nerve spent building the current chain (since last critical fail)
 let chainCrimes = 0; // number of crime attempts in the current chain window
 let avgNerveCost = 4; // running mean nerve/crime (seeded from the log) — used for instant optimistic ticks
-let nerveDirty = false;   // optimistic nerve pending exact reconciliation from the (server-cached) log
+let nerveDirty = false;
+let lastNerveBar = null;  // previous nerve-bar reading — differencing it measures what a crime actually cost
 let nerveError = false;   // last nerve walk hit an API error (bad / rate-limited key)
 let reconcileInFlight = false;
 
@@ -237,29 +238,35 @@ function restoreNerveReadout() {
 // the readout by 4 or 5 until the (server-cached, ~1 min) log caught up, and
 // stayed wrong entirely if the log walk failed.
 //
-// The header nerve BAR also carries a nerve___ class ("Nerve:39 / 130"), hence
-// two guards: skip anything that is also a bar___, and require pure digits.
-function readCrimeNerveCost() {
-  const els = document.querySelectorAll('[class*="nerve___"]');
-  for (const el of els) {
-    if (/bar___/.test(String(el.className || ''))) continue;
-    const t = String(el.textContent || '').trim();
-    if (/^\d+$/.test(t)) {
-      const n = parseInt(t, 10);
-      if (n > 0 && n <= 100) return n;   // sane per-crime range
-    }
-  }
-  return null;
+// v1.0.19: the per-crime chip is NOT the cost. Measured live across four
+// arsons: the chip read 5 while the nerve bar dropped exactly 3 each time
+// (23 -> 20 -> 17 -> 14). On #/searchforcash the same chip happened to be
+// right (2). So it agrees sometimes and lies sometimes — useless as a source.
+//
+// The BAR is ground truth: it shows what was actually spent, whatever perks or
+// discounts apply. Safe to difference because the tick runs every 300ms while
+// nerve regenerates 1 per 5 minutes — regen is ~0 over the window, and it only
+// ever RAISES the bar, so any decrease is a spend.
+function readNerveBar() {
+  const el = document.querySelector('[class*="bar___"][class*="nerve___"]');
+  if (!el) return null;
+  const m = String(el.textContent || '').match(/(\d+)\s*\/\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
 }
 
-function bumpNerveOptimistic(dS, dF, dC) {
+function bumpNerveOptimistic(dS, dF, dC, measured) {
   if (dC > 0) { chainNerve = 0; chainCrimes = 0; nerveDirty = false; }
   else {
     const n = (dS > 0 ? dS : 0) + (dF > 0 ? dF : 0);
-    // Real cost of the crime actually on screen; fall back to the running mean
-    // only on the hub, where no single crime is selected.
-    const cost = readCrimeNerveCost() ?? avgNerveCost;
-    if (n > 0) { chainNerve += n * cost; chainCrimes += n; nerveDirty = true; }
+    // `measured` is the bar's TOTAL drop for this tick, however many crimes it
+    // covered — already a total, so it must not be multiplied by n. The running
+    // mean is only a fallback for when the bar can't be read.
+    const ok = measured != null && measured > 0 && measured <= 100 * n;
+    if (n > 0) {
+      chainNerve += ok ? measured : n * avgNerveCost;
+      chainCrimes += n;
+      nerveDirty = true;
+    }
   }
   renderNerveReadout();
 }
@@ -465,6 +472,12 @@ function readCrimeCounters() {
 
 function crimeCounterTick() {
   const cur = readCrimeCounters();
+  // Sample the bar EVERY tick, not just on a crime: nerve regenerates between
+  // crimes, and a stale baseline would understate the next drop.
+  const nerveNow = readNerveBar();
+  const spent = (lastNerveBar != null && nerveNow != null && nerveNow < lastNerveBar)
+    ? lastNerveBar - nerveNow : null;
+  lastNerveBar = nerveNow;
   if (!cur) { ccBase = null; return; }                              // hub / counters not present
   if (!ccBase || ccBase.type !== cur.type) { ccBase = cur; return; } // first sight or crime-type switch — baseline only
   const dS = cur.s - ccBase.s, dF = cur.f - ccBase.f, dC = cur.c - ccBase.c;
@@ -472,7 +485,7 @@ function crimeCounterTick() {
   if (dC > 0) crimeChain = 0;
   else if (dF > 0) { for (let k = 0; k < dF; k++) crimeChain = crimeChain ? crimeChain / 2 : 0; }
   else crimeChain += dS;
-  bumpNerveOptimistic(dS, dF, dC);
+  bumpNerveOptimistic(dS, dF, dC, spent);
   ccBase = cur;
   lastSeenTs = Math.floor(Date.now() / 1000);
   renderCrimeChainCurrent();
