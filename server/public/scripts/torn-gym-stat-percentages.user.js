@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Gym Stat Percentages 
 // @namespace    torn-gym-stat-percentages
-// @version      2.1.1
+// @version      2.1.2
 // @author       RussianRob
 // @description  Shows each gym battle stat as a percentage of your total next to the stat name, plus a compact summary line and your faction's Steadfast gym-gain bonus per stat.
 // @match        https://www.torn.com/gym.php*
@@ -33,8 +33,16 @@
         CACHE_TTL_MS: 30 * 60 * 1000,
 
         perks: null,       // { strength, defense, speed, dexterity } whole percentages
-        state: 'nokey',    // nokey | loading | ok | error
+        // Starts as 'init', NOT 'nokey': until the stored key has actually been
+        // read we know nothing, and claiming "click to set API key" to someone who
+        // already has one was the flash on every refresh.
+        state: 'init',     // init | nokey | loading | ok | error
         message: '',
+        onUpdate: null,    // set by the controller so results paint immediately
+
+        notify() {
+            try { if (typeof this.onUpdate === 'function') this.onUpdate(); } catch (e) { /* never break the caller */ }
+        },
 
         store(key, value) {
             try {
@@ -95,25 +103,34 @@
             return out;
         },
 
-        loadCache() {
+        readCache() {
             try {
                 const raw = this.read(this.CACHE_STORE);
-                if (!raw) return false;
+                if (!raw) return null;
                 const cached = JSON.parse(raw);
-                if (!cached || !cached.perks) return false;
-                if (Date.now() - Number(cached.at || 0) > this.CACHE_TTL_MS) return false;
-                this.perks = cached.perks;
-                this.state = 'ok';
-                return true;
-            } catch (e) { return false; }
+                if (!cached || !cached.perks) return null;
+                return cached;
+            } catch (e) { return null; }
         },
 
         load() {
             const key = this.getKey();
-            if (!key) { this.state = 'nokey'; return; }
-            if (this.loadCache()) return;
+            if (!key) { this.state = 'nokey'; this.notify(); return; }
 
-            this.state = 'loading';
+            // Stale-while-revalidate: show whatever was cached straight away, even
+            // if past its TTL, then refresh behind it. Reading the cache is
+            // synchronous, so with a warm cache the numbers are there on the first
+            // paint and there is no gap to sit through at all.
+            const cached = this.readCache();
+            if (cached) {
+                this.perks = cached.perks;
+                this.state = 'ok';
+                this.notify();
+                if (Date.now() - Number(cached.at || 0) <= this.CACHE_TTL_MS) return;
+            } else {
+                this.state = 'loading';
+                this.notify();
+            }
             // api.torn.com sends CORS headers, so a plain fetch works — and avoids
             // the GM_xmlhttpRequest shims, which report failure on requests that
             // actually completed in some hosts.
@@ -121,18 +138,26 @@
                 .then((r) => r.json())
                 .then((data) => {
                     if (!data || data.error) {
-                        this.state = 'error';
-                        this.message = (data && data.error && data.error.error) || 'API error';
+                        this.fail((data && data.error && data.error.error) || 'API error');
                         return;
                     }
                     this.perks = this.parse(data.faction_perks);
                     this.state = 'ok';
                     this.store(this.CACHE_STORE, JSON.stringify({ at: Date.now(), perks: this.perks }));
+                    this.notify();
                 })
-                .catch((e) => {
-                    this.state = 'error';
-                    this.message = String((e && e.message) || e);
-                });
+                .catch((e) => this.fail(String((e && e.message) || e)));
+        },
+
+        /**
+         * A failed REFRESH must not wipe numbers that are already on screen —
+         * slightly stale values beat an error message where the figures were.
+         */
+        fail(message) {
+            if (this.perks) { this.notify(); return; }
+            this.state = 'error';
+            this.message = message;
+            this.notify();
         },
 
         /** Short per-stat badge, e.g. "+14%". Null when there is nothing to say. */
@@ -143,6 +168,9 @@
 
         /** Fully-labelled line for the summary bar, which disambiguates the badges. */
         summary() {
+            // 'init' shows nothing at all: better a bar with one line for a moment
+            // than a line that states something untrue about your key.
+            if (this.state === 'init') return '';
             if (this.state === 'nokey') return 'Steadfast: click to set API key';
             if (this.state === 'loading') return 'Steadfast: loading…';
             if (this.state === 'error') return 'Steadfast: ' + this.message;
@@ -339,10 +367,16 @@
         refreshIntervalMs: 3000,
 
         start() {
+            // Order matters: load() reads the cache synchronously, so doing it
+            // BEFORE the first update() means a warm cache is already on screen at
+            // the first paint. It used to run after, so every refresh painted
+            // "click to set API key" first and only corrected on the next 3s tick.
+            Steadfast.onUpdate = () => this.update();
+            Steadfast.load();
+
             this.update();
             setInterval(() => this.update(), this.refreshIntervalMs);
             this.attachTrainClickHandler();
-            Steadfast.load();
         },
 
         isGymStillPresent() {
