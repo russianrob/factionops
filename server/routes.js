@@ -114,6 +114,7 @@ import { startChainMonitor, recordClientChainData } from "./chain-monitor.js";
 import { startEnemySurgeMonitor, stopEnemySurgeMonitor } from "./enemy-surge-monitor.js";
 import * as push from "./push-notifications.js";
 import * as restockTracker from "./restock-tracker.js";
+import { applyNerveReading, buildResponse, parseMaxNervePerks } from "./nerve-tracker.js";
 import { normalizeChainData, chainWithLiveTimeout, chainHashKey } from "./chain-data.js";
 import { isFactionAllowed, getAllSubscriptions, getOwnerFactionId, getSubscriptionRejectionMessage } from "./subscription-manager.js";
 
@@ -10981,6 +10982,72 @@ router.post("/api/oc/vault-fulfillment-report", async (req, res) => {
 // OC Spawn Assistance settings panel can read/write them without needing
 // a FactionOps JWT. Currently exposes vault_request only; extend the
 // whitelist as more OC-spawn-originated notification types appear.
+// ── Natural Nerve Bar tracking (CE-per-Nerve userscript) ──────────────────
+// The script deliberately holds NO API key in the browser ("API key stays on
+// the server — script just reads from the endpoint"), so this reads the owner's
+// stored key. CE itself is invisible in the API; a rise in nerve.maximum is the
+// only signal, and perks are subtracted so a perk change isn't mistaken for it.
+const NERVE_STATE_FILE = pathJoin(pathDirname(fileURLToPath(import.meta.url)), 'data', 'nerve-tracker.json');
+const NERVE_OWNER_ID = '137558';
+let _nerveCache = { at: 0, body: null };
+
+function loadNerveState() {
+  try { return JSON.parse(readFileSync(NERVE_STATE_FILE, 'utf-8')) || {}; } catch { return {}; }
+}
+function saveNerveState(st) {
+  try { writeFileSync(NERVE_STATE_FILE, JSON.stringify(st, null, 2)); }
+  catch (e) { console.error('[nerve] save failed:', e.message); }
+}
+
+router.get("/api/nerve-tracker", async (req, res) => {
+  // The script polls every 30 min per client, but several devices and reloads
+  // add up — cache so this never becomes a drain on the owner's own key budget.
+  if (_nerveCache.body && Date.now() - _nerveCache.at < 120000) return res.json(_nerveCache.body);
+  const key = store.getApiKeyForPlayer(NERVE_OWNER_ID);
+  if (!key) return res.status(503).json({ error: 'no stored key' });
+  try {
+    const r = await fetch(`https://api.torn.com/user/?selections=bars,perks&key=${encodeURIComponent(key)}&comment=wb-nerve`);
+    const j = await r.json();
+    if (!j || j.error) return res.status(502).json({ error: j?.error?.error || 'torn error' });
+    const nerveMax = Number(j?.nerve?.maximum) || 0;
+    const perkNerve = parseMaxNervePerks(j);
+    const base = nerveMax - perkNerve;
+
+    const prev = loadNerveState();
+    const { state, increased } = applyNerveReading(prev, base, Math.floor(Date.now() / 1000));
+    if (JSON.stringify(state) !== JSON.stringify(prev)) saveNerveState(state);
+    if (increased) console.log(`[nerve] NNB increased to ${base} (max ${nerveMax}, perks ${perkNerve})`);
+
+    const body = buildResponse(state, nerveMax, perkNerve);
+    _nerveCache = { at: Date.now(), body };
+    return res.json(body);
+  } catch (e) {
+    return res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+// Manual corrections from the script's panel. Values only, tightly validated —
+// the perk total is read from Torn now, so factionOffset is just a fallback.
+router.post("/api/nerve-tracker/config", express.json({ limit: '1kb' }), (req, res) => {
+  const b = req.body || {};
+  const st = loadNerveState();
+  if (b.factionOffset != null) {
+    const n = Number(b.factionOffset);
+    if (!Number.isFinite(n) || n < 0 || n > 500) return res.status(400).json({ error: 'factionOffset out of range' });
+    st.factionOffset = Math.round(n);
+  }
+  if (b.lastNNBIncreaseAt != null) {
+    const t = Number(b.lastNNBIncreaseAt);
+    if (!Number.isFinite(t) || t < 1000000000 || t > Date.now() / 1000 + 86400) {
+      return res.status(400).json({ error: 'lastNNBIncreaseAt out of range' });
+    }
+    st.lastNNBIncreaseAt = Math.floor(t);
+  }
+  saveNerveState(st);
+  _nerveCache = { at: 0, body: null };          // force a fresh read next GET
+  return res.json({ ok: true });
+});
+
 const OC_PUSH_PREF_KEYS = new Set(["vault_request", "oc_ready_to_spawn", "oc_completed", "restock_alert"]);
 
 // ── Foreign-restock watchlist (feeds restock-tracker's push alerts) ──
