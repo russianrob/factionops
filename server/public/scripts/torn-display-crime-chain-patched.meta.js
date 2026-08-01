@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN: Display Crime Chain
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.17
+// @version      1.0.18
 // @description  Calculates and displays your current crime chain (Crimes 2.0 DOM-compat patch)
 // @author       Ironhydedragon[2428902]
 // @match        https://www.torn.com/page.php?sid=crimes*

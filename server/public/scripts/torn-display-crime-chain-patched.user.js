@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN: Display Crime Chain
 // @namespace    http://torn.city.com.dot.com.com
-// @version      1.0.17
+// @version      1.0.18
 // @description  Calculates and displays your current crime chain (Crimes 2.0 DOM-compat patch)
 // @author       Ironhydedragon[2428902]
 // @match        https://www.torn.com/page.php?sid=crimes*
@@ -231,11 +231,35 @@ function restoreNerveReadout() {
 // server-cached ~1 min — so on each detected crime add an optimistic estimate (running
 // mean nerve/crime) for an instant bump, mark it dirty, and let reconcileNerve() snap it
 // to the exact log figure once the log catches up. Mirrors the chain counter math.
+// The page shows each crime's ACTUAL nerve cost (class nerve___<hash>), so the
+// optimistic tick doesn't have to guess. Previously it added avgNerveCost — the
+// running mean across every crime type in the chain — so a nerve-2 crime bumped
+// the readout by 4 or 5 until the (server-cached, ~1 min) log caught up, and
+// stayed wrong entirely if the log walk failed.
+//
+// The header nerve BAR also carries a nerve___ class ("Nerve:39 / 130"), hence
+// two guards: skip anything that is also a bar___, and require pure digits.
+function readCrimeNerveCost() {
+  const els = document.querySelectorAll('[class*="nerve___"]');
+  for (const el of els) {
+    if (/bar___/.test(String(el.className || ''))) continue;
+    const t = String(el.textContent || '').trim();
+    if (/^\d+$/.test(t)) {
+      const n = parseInt(t, 10);
+      if (n > 0 && n <= 100) return n;   // sane per-crime range
+    }
+  }
+  return null;
+}
+
 function bumpNerveOptimistic(dS, dF, dC) {
   if (dC > 0) { chainNerve = 0; chainCrimes = 0; nerveDirty = false; }
   else {
     const n = (dS > 0 ? dS : 0) + (dF > 0 ? dF : 0);
-    if (n > 0) { chainNerve += n * avgNerveCost; chainCrimes += n; nerveDirty = true; }
+    // Real cost of the crime actually on screen; fall back to the running mean
+    // only on the hub, where no single crime is selected.
+    const cost = readCrimeNerveCost() ?? avgNerveCost;
+    if (n > 0) { chainNerve += n * cost; chainCrimes += n; nerveDirty = true; }
   }
   renderNerveReadout();
 }
