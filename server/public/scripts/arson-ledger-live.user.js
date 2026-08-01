@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.17
+// @version     1.0.18
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4). Material prices update from live Torn market data using your own Torn API key (entered in the API tab). Works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -4279,7 +4279,7 @@
       };
       const okMsg = copied ? "Submitted — copied to clipboard" : "Submitted";
       try {
-        GM_xmlhttpRequest({
+        wbHttp({
           method: "POST",
           url: "https://tornwar.com/api/arson/logs",
           headers: { "Content-Type": "application/json" },
@@ -4295,6 +4295,52 @@
     });
     return root;
   }
+  // Transport for our own tornwar.com endpoints.
+  //
+  // GM_xmlhttpRequest is unreliable inside the warboard iOS webview: a POST
+  // reached the server and was saved, yet the shim still invoked onerror, so
+  // the UI reported "Network error" for a submission that had actually
+  // succeeded — and the Review tab's GET failed the same way. tornwar.com
+  // serves proper CORS for https://www.torn.com (including a 204 preflight
+  // allowing POST + content-type), so plain fetch works from the page and
+  // skips the bridge entirely. GM_xmlhttpRequest stays as the fallback for any
+  // host where fetch is blocked.
+  function wbHttp(opts) {
+    var method = opts.method || "GET";
+    var url = opts.url;
+    var body = opts.data || null;
+    var headers = opts.headers || {};
+    var timeout = opts.timeout || 1e4;
+    var settled = false;
+    function ok(status, text) { if (!settled) { settled = true; opts.onload && opts.onload({ status: status, responseText: text }); } }
+    function fail(reason) { if (!settled) { settled = true; (reason === "timeout" ? (opts.ontimeout || opts.onerror) : opts.onerror) && (reason === "timeout" ? (opts.ontimeout || opts.onerror)() : opts.onerror()); } }
+
+    function viaGM() {
+      try {
+        GM_xmlhttpRequest({
+          method: method, url: url, headers: headers, data: body, timeout: timeout,
+          onload: function (r) { ok(r && r.status, (r && r.responseText) || ""); },
+          onerror: function () { fail("error"); },
+          ontimeout: function () { fail("timeout"); }
+        });
+      } catch (_) { fail("error"); }
+    }
+
+    if (typeof fetch !== "function") { viaGM(); return; }
+    var ctl = (typeof AbortController === "function") ? new AbortController() : null;
+    var timer = setTimeout(function () { try { ctl && ctl.abort(); } catch (_) {} }, timeout);
+    var init = { method: method, headers: headers };
+    if (body != null) init.body = body;
+    if (ctl) init.signal = ctl.signal;
+    fetch(url, init).then(function (r) {
+      return r.text().then(function (t) { clearTimeout(timer); ok(r.status, t); });
+    }).catch(function () {
+      clearTimeout(timer);
+      // fetch blocked (CSP, offline, aborted) — try the bridge before giving up.
+      if (!settled) viaGM();
+    });
+  }
+
   var ARSON_OVERRIDES_URL = "https://tornwar.com/data/arson-overrides.json";
   var _arsonOverridesCache = null;
   var KEY_OVERRIDES_CACHE = "pyroLedger.v1.overridesCache";
@@ -4334,7 +4380,7 @@
   }
   function wbFetchOverrides() {
     try {
-      GM_xmlhttpRequest({
+      wbHttp({
         method: "GET",
         url: ARSON_OVERRIDES_URL + "?t=" + Date.now(),
         headers: { "Cache-Control": "no-cache" },
@@ -4430,7 +4476,7 @@
 
       addBtn.disabled = true;
       addSt.textContent = "Saving…"; addSt.className = "pyro-s-status";
-      GM_xmlhttpRequest({
+      wbHttp({
         method: "POST", url: "https://tornwar.com/api/arson/approve",
         headers: { "Content-Type": "application/json" }, timeout: 1e4,
         data: JSON.stringify({ key: ctx.getApiKey(), scenario: name, patch: patch }),
@@ -4473,7 +4519,7 @@
         list.appendChild(card);
         function post(url, body, onOk) {
           approve.disabled = reject.disabled = true;
-          GM_xmlhttpRequest({
+          wbHttp({
             method: "POST", url: url, headers: { "Content-Type": "application/json" }, data: JSON.stringify(body), timeout: 1e4,
             onload: function (rr) {
               if (rr.status >= 200 && rr.status < 300) { onOk(); }
@@ -4499,7 +4545,7 @@
     }
     function load() {
       list.textContent = "Loading…";
-      GM_xmlhttpRequest({
+      wbHttp({
         method: "GET", url: "https://tornwar.com/api/arson/logs", timeout: 1e4,
         onload: function (r) { var d; try { d = JSON.parse(r.responseText); } catch (_) { list.textContent = "Failed to load."; return; } render((d && d.logs) || []); },
         onerror: function () { list.textContent = "Failed to load."; }
@@ -4795,7 +4841,7 @@
       }
       return;
     }
-    GM_xmlhttpRequest({
+    wbHttp({
       method: "GET",
       url: SCENARIOS_URL,
       onload(r) {
