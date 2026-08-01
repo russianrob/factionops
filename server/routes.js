@@ -114,7 +114,7 @@ import { startChainMonitor, recordClientChainData } from "./chain-monitor.js";
 import { startEnemySurgeMonitor, stopEnemySurgeMonitor } from "./enemy-surge-monitor.js";
 import * as push from "./push-notifications.js";
 import * as restockTracker from "./restock-tracker.js";
-import { applyNerveReading, buildResponse, parseMaxNervePerks } from "./nerve-tracker.js";
+import { applyNerveReading, buildResponse, hasPerkData, parseMaxNervePerks } from "./nerve-tracker.js";
 import { normalizeChainData, chainWithLiveTimeout, chainHashKey } from "./chain-data.js";
 import { isFactionAllowed, getAllSubscriptions, getOwnerFactionId, getSubscriptionRejectionMessage } from "./subscription-manager.js";
 
@@ -11010,11 +11010,18 @@ router.get("/api/nerve-tracker", async (req, res) => {
     const j = await r.json();
     if (!j || j.error) return res.status(502).json({ error: j?.error?.error || 'torn error' });
     const nerveMax = Number(j?.nerve?.maximum) || 0;
-    const perkNerve = parseMaxNervePerks(j);
-    const base = nerveMax - perkNerve;
+    // Ask whether perks came back at all before trusting the total:
+    // parseMaxNervePerks answers 0 for "no perks" AND for "no perk data", and a
+    // bars-only response would otherwise make base == max — a phantom jump the
+    // size of the whole perk total, recorded as an NNB increase that never
+    // happened.
+    const perkNerve = hasPerkData(j) ? parseMaxNervePerks(j) : null;
 
     const prev = loadNerveState();
-    const { state, increased } = applyNerveReading(prev, base, Math.floor(Date.now() / 1000));
+    let state = prev, increased = false;
+    if (perkNerve != null && nerveMax > 0) {
+      ({ state, increased } = applyNerveReading(prev, nerveMax - perkNerve, Math.floor(Date.now() / 1000)));
+    }
     if (JSON.stringify(state) !== JSON.stringify(prev)) saveNerveState(state);
     if (increased) console.log(`[nerve] NNB increased to ${base} (max ${nerveMax}, perks ${perkNerve})`);
 

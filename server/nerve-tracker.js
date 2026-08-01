@@ -33,6 +33,21 @@ export function parseMaxNervePerks(perks) {
 }
 
 /**
+ * Did the payload actually carry perk data?
+ *
+ * parseMaxNervePerks returns 0 for BOTH "no maximum-nerve perks" and "no perk
+ * data at all", and the two must not be confused: treating a bars-only
+ * response as "no perks" makes base == max, which looks like a sudden jump the
+ * size of the whole perk total (+45 here) and would stamp a fake NNB increase.
+ * Callers ask this first and pass null when it is false.
+ */
+export function hasPerkData(payload) {
+  return Object.entries(payload || {}).some(
+    ([k, v]) => /_perks$/.test(k) && Array.isArray(v),
+  );
+}
+
+/**
  * Fold a fresh BASE nerve reading (max minus perks) into stored state.
  * Returns { state, increased }; `increased` is true only on a genuine CE step.
  */
@@ -46,12 +61,38 @@ export function applyNerveReading(prev, baseNerve, nowSec) {
   }
 
   const last = Number(state.lastSeenBase);
+  const clearPending = () => { delete state.pendingBase; delete state.pendingSince; };
+
+  if (!Number.isFinite(last) || last <= 0) {  // first sight — nothing to compare against
+    state.lastSeenBase = base;
+    clearPending();
+    return { state, increased: false };
+  }
+
+  if (base <= last) {  // unchanged, or dropped (a perk vanishing) — re-baseline
+    state.lastSeenBase = base;
+    clearPending();
+    return { state, increased: false };
+  }
+
+  // The base rose. Confirm it on a second consecutive poll before believing it.
+  //
+  // The discriminator is PERMANENCE, not size. A real CE step never reverts; a
+  // bad read does. Torn's log shows this account's max nerve swinging by 15-30
+  // roughly monthly as the faction toggles its nerve perk for a life perk, and
+  // base only stays put because max and perks are read from the same response —
+  // if those two are ever skewed by a single poll, base moves by a perk-sized
+  // amount. Waiting one poll costs ~2 minutes on an event that happens every
+  // few months, and unlike a magnitude threshold it cannot miss a small step.
+  if (state.pendingBase !== base) {
+    state.pendingBase = base;
+    state.pendingSince = nowSec;
+    return { state, increased: false };  // lastSeenBase deliberately not moved yet
+  }
+
   state.lastSeenBase = base;
-
-  if (!Number.isFinite(last) || last <= 0) return { state, increased: false }; // first sight
-  if (base <= last) return { state, increased: false };                        // never counts down
-
-  state.lastNNBIncreaseAt = nowSec;
+  state.lastNNBIncreaseAt = Number(state.pendingSince) || nowSec;  // credit first sighting
+  clearPending();
   return { state, increased: true };
 }
 
