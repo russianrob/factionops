@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Extensions - Gym Torn Gain
 // @namespace    TornExtensions
-// @version      1.5.4
+// @version      1.5.5
 // @description  calculates gym gain based on Vladars calculations — fork that stores the API key directly (fixes the uid-cookie key-storage bug) and hardens the gym-page DOM injection
 // @author       Xradiation (key-storage + DOM fix by RussianRob)
 // @match        https://www.torn.com/gym.php*
@@ -232,7 +232,7 @@ function getKey(){
 <div class="tutorial-desc bottom-round cont-gray p10" tabindex="0">
 <p>Happy: <input id="happy" type="number" class="input___2D0YE" required> Energy: <input type="number" id="energy" class="input___2D0YE" required></p>
 <p>Gym: <select id="gyms">
-<option>Premier Fitness</option><option>Average Joes</option><option>Woody's Workout</option><option>Beach Bods</option><option>Silver Gym</option><option>Pour Femme</option><option>Davies Den</option><option>Global Gym</option><option>Knuckle Heads</option><option>Pioneer Fitness</option><option>Anabolic Anomalies</option><option>Core</option><option>Racing Fitness</option><option>Complete Cardio</option><option>Legs Bums and Tums</option><option>Deep Burn</option><option>Apollo Gym</option><option>Gun Shop</option><option>Force Training</option><option>Cha Cha's</option><option>Atlas</option><option>Last Round</option><option>The Edge</option><option>George's</option><option>Balboas Gym</option><option>Frontline Fitness</option><option>Gym </option><option>Mr Isoyamas</option><option>Total Rebound</option><option>Elites</option><option>Sports Science Lab</option>
+<option>Premier Fitness</option><option>Average Joes</option><option>Woody's Workout</option><option>Beach Bods</option><option>Silver Gym</option><option>Pour Femme</option><option>Davies Den</option><option>Global Gym</option><option>Knuckle Heads</option><option>Pioneer Fitness</option><option>Anabolic Anomalies</option><option>Core</option><option>Racing Fitness</option><option>Complete Cardio</option><option>Legs Bums and Tums</option><option>Deep Burn</option><option>Apollo Gym</option><option>Gun Shop</option><option>Force Training</option><option>Cha Cha's</option><option>Atlas</option><option>Last Round</option><option>The Edge</option><option>George's</option><option>Balboas Gym</option><option>Frontline Fitness</option><option>Gym 3000</option><option>Mr. Isoyamas</option><option>Total Rebound</option><option>Elites</option><option>Sports Science Lab</option>
 </select></p>
 <p>speed: <input id="spe" type="number" class="input___2D0YE" required> str: <input id="str" type="number" class="input___2D0YE" required> dex: <input id="dex" type="number" class="input___2D0YE" required> def: <input id="def" type="number" class="input___2D0YE" required>
 <p><button id="estimateButton">calculate</button>
@@ -253,6 +253,13 @@ function getKey(){
             let gymThis = Gymlist2.filter(function(g) {
                 return g.Gym == gym
             });
+            // The dropdown labels and Gymlist2 are two hand-maintained lists; when
+            // they drift the next line reads gymThis[0].Spe of undefined and the
+            // panel dies silently in the console. Say so instead.
+            if (!gymThis.length) {
+                alert('Custom Estimation: "' + gym + '" is not in the gym table, so it cannot be estimated.');
+                return;
+            }
             // These were hard-coded to 1, which shadowed the module-level modifiers
             // and made every Custom Estimation ignore perks completely. With the
             // faction Steadfast per-stat gym gains that understates the answer by
@@ -286,7 +293,9 @@ function getKey(){
             let pct = (m) => (m >= 1 ? '+' : '') + ROUND((m - 1) * 100, 2) + '%';
             let perkLine = perkMods
                 ? `perks applied — str ${pct(modifierStr)}, spe ${pct(modifierSpe)}, def ${pct(modifierDef)}, dex ${pct(modifierDex)}`
-                : 'NO perks applied — set your API key (these numbers are low)';
+                : (apiKey
+                    ? 'NO perks applied — stats still loading or the API call failed; reload and retry (these numbers are low)'
+                    : 'NO perks applied — set your API key (these numbers are low)');
             alert(`\n
             ${perkLine}\n
             speed: ${gainSpe[0]} Total:${gainSpe[1]}\n
