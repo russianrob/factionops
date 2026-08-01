@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.16
+// @version     1.0.17
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4). Material prices update from live Torn market data using your own Torn API key (entered in the API tab). Works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -4372,6 +4372,83 @@
     var note = el("p", "pyro-s-section-note");
     note.innerHTML = ICON_INFO + "<span>Pending submissions. <strong>Approve</strong> overlays the recipe for everyone; <strong>Reject</strong> discards it.</span>";
     root.appendChild(note);
+
+    // ── Add a scenario directly ───────────────────────────────────────────
+    // /api/arson/approve writes an override keyed by name, and the ledger
+    // applies overrides with scenarioIndex.set() — which ADDS an unknown name
+    // rather than only replacing a known one. So the same endpoint that
+    // approves a correction can introduce a brand-new scenario; previously the
+    // only way in was to log a run of it first and then approve that log.
+    var addWrap = el("div", "pyro-s-group");
+    addWrap.style.cssText = "border-top:1px solid var(--pyro-tooltip-border,#333);padding:8px 0;margin-bottom:4px;";
+    var addTitle = el("div"); addTitle.style.cssText = "font-weight:600;margin-bottom:4px;";
+    addTitle.textContent = "Add / edit a scenario";
+    addWrap.appendChild(addTitle);
+    var addHint = el("div"); addHint.style.cssText = "opacity:.65;font-size:11px;margin-bottom:6px;";
+    addHint.textContent = "Items as \"3 Gasoline, 1 Flamethrower\". An existing name is overwritten.";
+    addWrap.appendChild(addHint);
+
+    function addField(label, placeholder, numeric) {
+      var row = el("div"); row.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:4px;";
+      var lab = el("div"); lab.style.cssText = "width:64px;font-size:11px;opacity:.8;flex:none;";
+      lab.textContent = label;
+      var inp = document.createElement("input");
+      inp.className = "pyro-s-input";
+      inp.type = numeric ? "number" : "text";
+      inp.placeholder = placeholder || "";
+      inp.style.cssText = "flex:1;min-width:0;";
+      row.appendChild(lab); row.appendChild(inp); addWrap.appendChild(row);
+      return inp;
+    }
+    var fName = addField("Name", "Scenario name");
+    var fPayout = addField("Payout", "220000", true);
+    var fPlace = addField("Place", "3 Gasoline");
+    var fIgnite = addField("Ignite", "1 Flamethrower");
+    var fStoke = addField("Stoke", "optional");
+    var fStokeTime = addField("Stoke at", "early / late");
+
+    var addRow = el("div", "pyro-s-key-row");
+    var addBtn = el("button", "pyro-s-btn"); addBtn.textContent = "Save scenario";
+    addRow.appendChild(addBtn); addWrap.appendChild(addRow);
+    var addSt = el("div", "pyro-s-status"); addWrap.appendChild(addSt);
+    root.appendChild(addWrap);
+
+    addBtn.addEventListener("click", function () {
+      var name = String(fName.value || "").trim();
+      if (!name) { setErrStatus(addSt, "Name required"); addSt.className = "pyro-s-status err"; return; }
+      var payout = parseInt(String(fPayout.value).replace(/[^\d]/g, ""), 10) || 0;
+      var patch = { payout: payout, actions: {} };
+      var pl = parseArsonActions(fPlace.value); if (pl.length) patch.actions.place = pl;
+      var ig = parseArsonActions(fIgnite.value); if (ig.length) patch.actions.ignite = ig;
+      var sk = parseArsonActions(fStoke.value); if (sk.length) patch.actions.stoke = sk;
+      var stTime = String(fStokeTime.value || "").trim().toLowerCase();
+      if (sk.length && (stTime === "early" || stTime === "late")) patch.actions.stokeTime = stTime;
+      // An unparsed item line is almost always a typo in the item NAME —
+      // silently saving an empty action list would look like it worked.
+      if (String(fPlace.value || "").trim() && !pl.length) { setErrStatus(addSt, "Couldn't read Place items"); addSt.className = "pyro-s-status err"; return; }
+      if (String(fIgnite.value || "").trim() && !ig.length) { setErrStatus(addSt, "Couldn't read Ignite items"); addSt.className = "pyro-s-status err"; return; }
+
+      addBtn.disabled = true;
+      addSt.textContent = "Saving…"; addSt.className = "pyro-s-status";
+      GM_xmlhttpRequest({
+        method: "POST", url: "https://tornwar.com/api/arson/approve",
+        headers: { "Content-Type": "application/json" }, timeout: 1e4,
+        data: JSON.stringify({ key: ctx.getApiKey(), scenario: name, patch: patch }),
+        onload: function (rr) {
+          addBtn.disabled = false;
+          if (rr.status >= 200 && rr.status < 300) {
+            addSt.textContent = "Saved — live for everyone."; addSt.className = "pyro-s-status";
+            fName.value = fPayout.value = fPlace.value = fIgnite.value = fStoke.value = fStokeTime.value = "";
+            wbFetchOverrides();
+          } else {
+            setErrStatus(addSt, rr.status === 403 ? "Not authorized" : ("Failed " + rr.status));
+            addSt.className = "pyro-s-status err";
+          }
+        },
+        onerror: function () { addBtn.disabled = false; setErrStatus(addSt, "Network error"); addSt.className = "pyro-s-status err"; }
+      });
+    });
+
     var list = el("div", "pyro-s-group");
     root.appendChild(list);
     function render(logs) {
