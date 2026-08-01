@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Extensions - Gym Torn Gain
 // @namespace    TornExtensions
-// @version      1.5.3
+// @version      1.5.4
 // @description  calculates gym gain based on Vladars calculations — fork that stores the API key directly (fixes the uid-cookie key-storage bug) and hardens the gym-page DOM injection
 // @author       Xradiation (key-storage + DOM fix by RussianRob)
 // @match        https://www.torn.com/gym.php*
@@ -42,6 +42,10 @@ function getKey(){
     //minified vars
     var Gymlist2=[{Gym:"Premier Fitness",Energy:5,Str:2,Spe:2,Def:2,Dex:2},{Gym:"Average Joes",Energy:5,Str:2.4,Spe:2.4,Def:2.8,Dex:2.4},{Gym:"Woody's Workout",Energy:5,Str:2.8,Spe:3.2,Def:3,Dex:2.8},{Gym:"Beach Bods",Energy:5,Str:3.2,Spe:3.2,Def:3.2,Dex:"0"},{Gym:"Silver Gym",Energy:5,Str:3.4,Spe:3.6,Def:3.4,Dex:3.2},{Gym:"Pour Femme",Energy:5,Str:3.4,Spe:3.6,Def:3.6,Dex:3.8},{Gym:"Davies Den",Energy:5,Str:3.7,Spe:"0",Def:3.7,Dex:3.7},{Gym:"Global Gym",Energy:5,Str:4,Spe:4,Def:4,Dex:4},{Gym:"Knuckle Heads",Energy:10,Str:4.8,Spe:4.4,Def:4,Dex:4.2},{Gym:"Pioneer Fitness",Energy:10,Str:4.4,Spe:4.6,Def:4.8,Dex:4.4},{Gym:"Anabolic Anomalies",Energy:10,Str:5,Spe:4.6,Def:5.2,Dex:4.6},{Gym:"Core",Energy:10,Str:5,Spe:5.2,Def:5,Dex:5},{Gym:"Racing Fitness",Energy:10,Str:5,Spe:5.4,Def:4.8,Dex:5.2},{Gym:"Complete Cardio",Energy:10,Str:5.5,Spe:5.8,Def:5.5,Dex:5.2},{Gym:"Legs Bums and Tums",Energy:10,Str:"0",Spe:5.6,Def:5.6,Dex:5.8},{Gym:"Deep Burn",Energy:10,Str:6,Spe:6,Def:6,Dex:6},{Gym:"Apollo Gym",Energy:10,Str:6,Spe:6.2,Def:6.4,Dex:6.2},{Gym:"Gun Shop",Energy:10,Str:6.6,Spe:6.4,Def:6.2,Dex:6.2},{Gym:"Force Training",Energy:10,Str:6.4,Spe:6.6,Def:6.4,Dex:6.8},{Gym:"Cha Cha's",Energy:10,Str:6.4,Spe:6.4,Def:6.8,Dex:7},{Gym:"Atlas",Energy:10,Str:7,Spe:6.4,Def:6.4,Dex:6.6},{Gym:"Last Round",Energy:10,Str:6.8,Spe:6.6,Def:7,Dex:6.6},{Gym:"The Edge",Energy:10,Str:6.8,Spe:7,Def:7,Dex:6.8},{Gym:"George's",Energy:10,Str:7.3,Spe:7.3,Def:7.3,Dex:7.3},{Gym:"Balboas Gym",Energy:25,Str:"0",Spe:"0",Def:7.5,Dex:7.5},{Gym:"Frontline Fitness",Energy:25,Str:7.5,Spe:7.5,Def:"0",Dex:"0"},{Gym:"Gym 3000",Energy:50,Str:8,Spe:"0",Def:"0",Dex:"0"},{Gym:"Mr. Isoyamas",Energy:50,Str:"0",Spe:"0",Def:8,Dex:"0"},{Gym:"Total Rebound",Energy:50,Str:"0",Spe:8,Def:"0",Dex:"0"},{Gym:"Elites",Energy:50,Str:"0",Spe:"0",Def:"0",Dex:8},{Gym:"Sports Science Lab",Energy:25,Str:9,Spe:9,Def:9,Dex:9}];
     var Gym,gymNumber,speed,strength,defense,dexterity,strength_modifier,defense_modifier,speed_modifier,dexterity_modifier,happy,energy,i,n,modifierSpe=1,modifierAll=1,modifierStr=1,modifierDex=1,modifierDef=1,a=3.480061091*Math.pow(10,-7),b=250,c=3.091619094*Math.pow(10,-6),d=6.82775184551527*Math.pow(10,-5),e=-.0301431777;
+    // Finished per-stat perk multipliers, snapshotted once the API parse below
+    // completes. Null until then, which the Custom Estimation panel reports
+    // rather than quietly pretending you have no perks.
+    var perkMods = null;
     var apiKey = getKey();
 
     if (!apiKey) {
@@ -154,6 +158,10 @@ function getKey(){
                 modifierSpe *= modifierAll;
                 modifierDef *= modifierAll;
                 modifierDex *= modifierAll;
+                // Share the finished multipliers with the Custom Estimation panel.
+                // They already fold in every perk source parsed above, including the
+                // faction Steadfast per-stat gym gains.
+                perkMods = { str: modifierStr, spe: modifierSpe, def: modifierDef, dex: modifierDex };
                 var GymDotsSpe = Gymlist2[gymNumber].Spe;
                 var GymDotsDef = Gymlist2[gymNumber].Def;
                 var GymDotsDex = Gymlist2[gymNumber].Dex;
@@ -245,10 +253,14 @@ function getKey(){
             let gymThis = Gymlist2.filter(function(g) {
                 return g.Gym == gym
             });
-            let modifierStr = 1;
-            let modifierSpe = 1;
-            let modifierDef = 1;
-            let modifierDex = 1;
+            // These were hard-coded to 1, which shadowed the module-level modifiers
+            // and made every Custom Estimation ignore perks completely. With the
+            // faction Steadfast per-stat gym gains that understates the answer by
+            // well over 10%, and silently — the panel looked like it was working.
+            let modifierStr = perkMods ? perkMods.str : 1;
+            let modifierSpe = perkMods ? perkMods.spe : 1;
+            let modifierDef = perkMods ? perkMods.def : 1;
+            let modifierDex = perkMods ? perkMods.dex : 1;
             speed = parseInt($('#spe').val());
             defense = parseInt($('#def').val());
             dexterity = parseInt($('#dex').val());
@@ -269,7 +281,14 @@ function getKey(){
                 Def: gainDef[1],
                 Spe: gainSpe[1]
             });
+            // State the perk percentages actually applied. Without this the panel
+            // gives no way to tell a correct answer from a perk-less one.
+            let pct = (m) => (m >= 1 ? '+' : '') + ROUND((m - 1) * 100, 2) + '%';
+            let perkLine = perkMods
+                ? `perks applied — str ${pct(modifierStr)}, spe ${pct(modifierSpe)}, def ${pct(modifierDef)}, dex ${pct(modifierDex)}`
+                : 'NO perks applied — set your API key (these numbers are low)';
             alert(`\n
+            ${perkLine}\n
             speed: ${gainSpe[0]} Total:${gainSpe[1]}\n
             defense: ${gainDef[0]} Total:${gainDef[1]}\n
             dexterity: ${gainDex[0]} Total:${gainDex[1]}\n
