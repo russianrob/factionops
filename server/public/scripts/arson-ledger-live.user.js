@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.18
+// @version     1.0.19
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4). Material prices update from live Torn market data using your own Torn API key (entered in the API tab). Works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -4204,7 +4204,8 @@
     stokeInp.spellcheck = false;
     const stokeTimeSel = el("select", "pyro-s-key-input");
     stokeTimeSel.style.cssText = "flex:0 0 auto;width:auto;min-width:64px;";
-    [["", "—"], ["early", "early"], ["late", "late"]].forEach(([v, t]) => { const o = document.createElement("option"); o.value = v; o.textContent = t; stokeTimeSel.appendChild(o); });
+    // Derived from STOKE_TIMES so the picker and the validators cannot drift.
+    [["", "—"]].concat(STOKE_TIMES.map(function (t) { return [t, t]; })).forEach(([v, t]) => { const o = document.createElement("option"); o.value = v; o.textContent = t; stokeTimeSel.appendChild(o); });
     const stokeRow = el("div", "pyro-s-key-row");
     const stokeLab = el("span", "pyro-s-label");
     stokeLab.textContent = "Stoke";
@@ -4305,6 +4306,13 @@
   // allowing POST + content-type), so plain fetch works from the page and
   // skips the bridge entirely. GM_xmlhttpRequest stays as the fallback for any
   // host where fetch is blocked.
+  // Stoke timings a log/override may carry. "maybe" records genuine
+  // uncertainty — some scenarios don't clearly need a stoke, and forcing a
+  // choice between early and late made loggers guess, which is worse data
+  // than an honest "unsure".
+  var STOKE_TIMES = ["early", "late", "maybe"];
+  function isStokeTime(v) { return STOKE_TIMES.indexOf(String(v || "").trim().toLowerCase()) !== -1; }
+
   function wbHttp(opts) {
     var method = opts.method || "GET";
     var url = opts.url;
@@ -4468,7 +4476,7 @@
       var ig = parseArsonActions(fIgnite.value); if (ig.length) patch.actions.ignite = ig;
       var sk = parseArsonActions(fStoke.value); if (sk.length) patch.actions.stoke = sk;
       var stTime = String(fStokeTime.value || "").trim().toLowerCase();
-      if (sk.length && (stTime === "early" || stTime === "late")) patch.actions.stokeTime = stTime;
+      if (sk.length && isStokeTime(stTime)) patch.actions.stokeTime = stTime;
       // An unparsed item line is almost always a typo in the item NAME —
       // silently saving an empty action list would look like it worked.
       if (String(fPlace.value || "").trim() && !pl.length) { setErrStatus(addSt, "Couldn't read Place items"); addSt.className = "pyro-s-status err"; return; }
@@ -4534,7 +4542,7 @@
           var p = parseArsonActions(log.place); if (p.length) patch.actions.place = p;
           var ig = parseArsonActions(log.ignite); if (ig.length) patch.actions.ignite = ig;
           var sk = parseArsonActions(log.stoke); if (sk.length) patch.actions.stoke = sk;
-          if (sk.length && (log.stokeTime === "early" || log.stokeTime === "late")) patch.actions.stokeTime = log.stokeTime;
+          if (sk.length && isStokeTime(log.stokeTime)) patch.actions.stokeTime = log.stokeTime;
           post("https://tornwar.com/api/arson/approve", { key: ctx.getApiKey(), scenario: log.scenario, patch: patch, ts: log.ts }, function () { wbFetchOverrides(); load(); });
         });
         reject.addEventListener("click", function () {

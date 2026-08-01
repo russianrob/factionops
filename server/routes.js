@@ -10266,6 +10266,7 @@ function loadArsonLogs() {
 router.get("/api/arson/logs", (req, res) => {
   return res.json({ logs: loadArsonLogs() });
 });
+const ARSON_STOKE_TIMES = ['early', 'late', 'maybe'];
 router.post("/api/arson/logs", express.json({ limit: '4kb' }), (req, res) => {
   try {
     const b = req.body || {};
@@ -10277,7 +10278,10 @@ router.post("/api/arson/logs", express.json({ limit: '4kb' }), (req, res) => {
       place: String(b.place || '').slice(0, 300),
       ignite: String(b.ignite || '').slice(0, 160),
       stoke: String(b.stoke || '').slice(0, 300),
-      stokeTime: (b.stokeTime === 'early' || b.stokeTime === 'late') ? b.stokeTime : '',
+      // 'maybe' records genuine uncertainty about whether/when a stoke is
+      // needed; forcing early-vs-late made loggers guess, which is worse data
+      // than an honest 'unsure'. Keep the allowlist — anything else is dropped.
+      stokeTime: ARSON_STOKE_TIMES.includes(b.stokeTime) ? b.stokeTime : '',
       ts: Date.now(),
     };
     let logs = loadArsonLogs();
@@ -10344,9 +10348,14 @@ router.post("/api/arson/reject", express.json({ limit: '2kb' }), async (req, res
   const b = req.body || {};
   if (!(await verifyArsonAdmin(b.key))) return res.status(403).json({ error: 'not authorized' });
   if (b.ts == null) return res.status(400).json({ error: 'ts required' });
-  const logs = loadArsonLogs().filter((l) => l.ts !== Number(b.ts));
+  const before = loadArsonLogs();
+  const logs = before.filter((l) => l.ts !== Number(b.ts));
   try { writeFileSync(ARSON_LOGS_FILE, JSON.stringify(logs, null, 2)); }
   catch (e) { console.error('[arson-reject] write error:', e.message); return res.status(500).json({ error: 'write failed' }); }
+  // Approve logs a line; reject did not, so a rejected entry vanished with no
+  // trace and its disappearance was indistinguishable from data loss.
+  const gone = before.find((l) => l.ts === Number(b.ts));
+  console.log(`[arson-reject] '${gone ? gone.scenario : b.ts}' rejected (${logs.length} left)`);
   return res.json({ ok: true });
 });
 
