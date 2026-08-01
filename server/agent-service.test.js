@@ -171,3 +171,69 @@ test("stubProposalError: real script passes, small files may shrink freely", () 
   assert.equal(stubProposalError(real, 3000), null);   // existing file small — no ratio gate
   assert.equal(stubProposalError("x".repeat(120000), 230000), null); // 52% — over the line
 });
+
+// ── deploy filename sanitising ──────────────────────────────────────────────
+// The agent derives a filename from a script's @name, which arrives
+// percent-encoded ("TORN%3A%20Easy%20Player%20Net%20Worth%20Display.user.js").
+// The validator only allowed [a-zA-Z0-9._-], so every such install failed with
+// "invalid filename" AFTER the script had already been installed on-device —
+// the backup silently didn't happen.
+import { sanitizeDeployName } from "./agent-service.js";
+
+test("the real failing case becomes a usable filename", () => {
+  const out = sanitizeDeployName("TORN%3A%20Easy%20Player%20Net%20Worth%20Display.user.js");
+  assert.equal(out, "TORN-Easy-Player-Net-Worth-Display.user.js");
+});
+
+test("already-valid names pass through UNCHANGED, so redeploys overwrite in place", () => {
+  for (const n of ["factionops.user.js", "torn-foreign-stock.user.js",
+                   "ffs-banner-estimates.user.js", "always-check-bug-bounty.md"]) {
+    assert.equal(sanitizeDeployName(n), n);
+  }
+});
+
+test("decoding must not open a path traversal", () => {
+  // %2F -> "/" and %2E%2E -> ".." only AFTER decoding; stripping has to happen after.
+  for (const bad of [
+    "..%2F..%2Fetc%2Fpasswd.user.js",
+    "%2E%2E%2F%2E%2E%2Fshadow.user.js",
+    "../../evil.user.js",
+    "/etc/cron.d/evil.user.js",
+    "sub%2Fdir%2Fscript.user.js",
+  ]) {
+    const out = sanitizeDeployName(bad);
+    if (out === null) continue;
+    assert.ok(!out.includes("/"), `slash survived in ${out}`);
+    assert.ok(!out.includes("\\"), `backslash survived in ${out}`);
+    assert.ok(!out.includes(".."), `dot-dot survived in ${out}`);
+  }
+});
+
+test("spaces, colons and unicode collapse to a single separator", () => {
+  assert.equal(sanitizeDeployName("My  Cool: Script!.user.js"), "My-Cool-Script.user.js");
+  assert.equal(sanitizeDeployName("café ☕ tool.user.js"), "caf-tool.user.js");
+});
+
+test("malformed percent-encoding is tolerated, not thrown on", () => {
+  // decodeURIComponent("%") throws URIError — must be caught.
+  assert.doesNotThrow(() => sanitizeDeployName("100%.user.js"));
+  assert.doesNotThrow(() => sanitizeDeployName("%zz%.user.js"));
+  const out = sanitizeDeployName("100%.user.js");
+  assert.ok(out === null || out.endsWith(".user.js"));
+});
+
+test("the required suffix is preserved and a stem is required", () => {
+  assert.ok(sanitizeDeployName("x.md").endsWith(".md"));
+  assert.equal(sanitizeDeployName("notascript.txt"), null, "wrong suffix");
+  assert.equal(sanitizeDeployName(".user.js"), null, "no stem");
+  assert.equal(sanitizeDeployName("%20%20.user.js"), null, "stem is only separators");
+  assert.equal(sanitizeDeployName(""), null);
+  assert.equal(sanitizeDeployName(null), null);
+  assert.equal(sanitizeDeployName(12345), null);
+});
+
+test("absurdly long names are capped but keep their suffix", () => {
+  const out = sanitizeDeployName("a".repeat(500) + ".user.js");
+  assert.ok(out.length <= 128, `length ${out.length}`);
+  assert.ok(out.endsWith(".user.js"));
+});

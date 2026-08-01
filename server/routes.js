@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import axios from "axios";
 import { verifyTornApiKey, issueToken, verifyToken, requireAuth, isPoolEligible } from "./auth.js";
 import { handleStakeoutSync, resolveOwnerId } from "./stakeout-store.js";
-import { runAgentTurn, runAgentTurnResolvingSources, isValidUserscriptName, isValidInstructionsName, stubProposalError } from "./agent-service.js";
+import { runAgentTurn, runAgentTurnResolvingSources, isValidUserscriptName, isValidInstructionsName, stubProposalError, sanitizeDeployName } from "./agent-service.js";
 import { runJsOnDevice } from "./agent-relay-client.js";
 import { TOTP as _OTPAuthTOTP, Secret as _OTPAuthSecret } from "otpauth";
 import { readFileSync as _totpReadFile } from "node:fs";
@@ -701,7 +701,14 @@ router.post("/api/agent/deploy", requireAuth, (req, res, next) => {
   if (_inspectIsOwner(req)) return next();
   return res.status(403).json({ error: "forbidden" });
 }, express.json({ limit: "4mb" }), async (req, res) => {
-  const filename = (req.body && typeof req.body.filename === "string") ? req.body.filename.trim() : "";
+  // The agent derives filenames from a script's @name, which arrives
+  // percent-encoded ("TORN%3A%20Easy%20Player…"). Coerce to a safe bare
+  // basename first — decode-then-strip, so %2F can't smuggle a path — instead
+  // of rejecting, which failed the backup AFTER the script had already
+  // installed on-device. Already-valid names pass through unchanged, so a
+  // redeploy still overwrites the same file.
+  const rawFilename = (req.body && typeof req.body.filename === "string") ? req.body.filename.trim() : "";
+  const filename = sanitizeDeployName(rawFilename) || rawFilename;
   const content = (req.body && typeof req.body.content === "string") ? req.body.content : "";
   if (!isValidUserscriptName(filename) && !isValidInstructionsName(filename)) {
     return res.status(400).json({ error: "invalid filename — must be a bare *.user.js userscript or a *.md instruction file" });

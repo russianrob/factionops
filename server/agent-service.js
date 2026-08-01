@@ -271,6 +271,44 @@ export function resolveScriptSource(filename, installed) {
 // Deploy path-jail: a deployable userscript name is a bare basename ending in
 // `.user.js` with no path separators / `..` traversal. Exported for the deploy
 // route + tests.
+/**
+ * Coerce a proposed deploy filename into a safe bare basename, or null.
+ *
+ * The agent derives filenames from a script's @name, which arrives
+ * percent-encoded ("TORN%3A%20Easy%20Player...user.js"). The validators below
+ * only accept [a-zA-Z0-9._-], so those installs failed the server backup even
+ * though the script had already installed on-device.
+ *
+ * Order matters for safety: decode FIRST, then take the last path segment, then
+ * strip. Decoding can CREATE separators (%2F -> "/", %2E%2E -> ".."), so
+ * stripping before decoding would let traversal through.
+ */
+export function sanitizeDeployName(raw) {
+  if (typeof raw !== "string" || !raw) return null;
+  let name = raw;
+  try { name = decodeURIComponent(raw); } catch { /* malformed % — use as-is */ }
+
+  // Last segment only: defeats "../.." and absolute paths regardless of origin.
+  name = name.split(/[\\/]/).pop() || "";
+
+  const suffix = /\.user\.js$/i.test(name) ? ".user.js"
+               : /\.md$/i.test(name) ? ".md"
+               : null;
+  if (!suffix) return null;
+
+  let stem = name.slice(0, name.length - suffix.length)
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")   // anything else becomes one separator
+    .replace(/\.{2,}/g, ".")             // no ".." can survive
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");      // no leading/trailing separator or dot
+  if (!stem) return null;
+
+  const maxStem = 128 - suffix.length;
+  if (stem.length > maxStem) stem = stem.slice(0, maxStem).replace(/[-.]+$/, "");
+  if (!stem) return null;
+  return stem + suffix;
+}
+
 export function isValidUserscriptName(name) {
   return typeof name === "string" && /^[a-zA-Z0-9._-]+\.user\.js$/.test(name);
 }
