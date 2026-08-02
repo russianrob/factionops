@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.66
+// @version      5.1.67
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -92,7 +92,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.66';
+    const SCRIPT_VERSION = '5.1.67';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -5185,31 +5185,46 @@ body.wb-chain-active {
             timeout: 15000,
         });
 
-        // One-shot transport report. The server has logged ZERO client diagnostics
-        // to date, so which transport actually wins in each host has been guesswork
-        // — this makes it answerable from the warboard log instead. Plain fetch, not
-        // GM_xmlhttpRequest: tornwar sends CORS for torn.com, and the GM shim is the
-        // very thing under suspicion here.
+        // One-shot transport report, so which transport wins per host is answerable
+        // from the warboard log instead of inferred from connection counts.
+        //
+        // MUST go through GM_xmlhttpRequest, not fetch. Measured on warboard-iOS:
+        // every page-context request to tornwar.com fails with "TypeError: Load
+        // failed" — even a static .meta.js — because Torn's connect-src CSP is
+        // enforced by WKWebView. GM_xhr does the request natively and is the only
+        // channel that escapes it, which is exactly why the long-poll at :4734 uses
+        // it too. A fetch-based report would be silently lost on the one host this
+        // report exists to describe.
         setTimeout(() => {
             try {
                 const active = (realtimeSocket && realtimeSocket.connected)
                     ? (realtimeSocket.io?.engine?.transport?.name || 'unknown')
                     : null;
-                fetch(CONFIG.SERVER_URL + '/api/debug/client-log', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        tag: 'fo-transport',
-                        data: {
-                            v: SCRIPT_VERSION,
-                            warboard: IS_WARBOARD,
-                            pda: IS_PDA,
-                            socket: active,
-                            sse: !!sseConnected,
-                            longpoll: !!(CONFIG.USE_LONGPOLL && !_lpDisabled),
-                        },
-                    }),
-                }).catch(() => {});
+                const body = JSON.stringify({
+                    tag: 'fo-transport',
+                    data: {
+                        v: SCRIPT_VERSION,
+                        warboard: IS_WARBOARD,
+                        pda: IS_PDA,
+                        socket: active,
+                        sse: !!sseConnected,
+                        longpoll: !!(CONFIG.USE_LONGPOLL && !_lpDisabled),
+                    },
+                });
+                const url = CONFIG.SERVER_URL + '/api/debug/client-log';
+                if (typeof GM_xmlhttpRequest === 'function') {
+                    GM_xmlhttpRequest({
+                        method: 'POST', url, data: body,
+                        headers: { 'Content-Type': 'application/json' },
+                        onload: function () {}, onerror: function () {},
+                    });
+                } else {
+                    fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body,
+                    }).catch(() => {});
+                }
             } catch (e) { /* diagnostics must never break the overlay */ }
         }, 20000);
 
