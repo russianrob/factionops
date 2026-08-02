@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.68
+// @version      5.1.69
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -92,7 +92,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.68';
+    const SCRIPT_VERSION = '5.1.69';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -5152,12 +5152,24 @@ body.wb-chain-active {
             connectSSEStream();
         }
 
-        // 2. Also attempt standard Socket.IO (now "unblocked").
-        // Note: On desktop, this may still be blocked by browser CSP, but will work on PDA
-        // or if the user has specific browser permissions.
+        // 2. Also attempt standard Socket.IO. Still worth trying on desktop —
+        // it connects there for several players daily — but it is impossible in
+        // the two webview hosts, so don't burn a doomed retry loop in them.
         if (IS_PDA) {
             log('PDA detected — skipping Socket.IO (blocked by WebView). Using HTTP polling.');
             // (Note: Socket.IO is blocked in PDA's specific sandbox, SSE/Poll is preferred there)
+            return;
+        }
+        // Measured on warboard-iOS: EVERY page-context request to tornwar fails
+        // with "TypeError: Load failed" — even a static .meta.js — because
+        // WKWebView enforces Torn's connect-src CSP. Socket.IO's handshake is a
+        // page-context XHR, so it can never complete here; it just returns
+        // "xhr poll error". With reconnection:true and reconnectionAttempts:
+        // Infinity below, that is a doomed request every 2-30s forever, on
+        // battery. warboard reaches the server through GM_xmlhttpRequest only,
+        // which is what the SSE transport above uses.
+        if (IS_WARBOARD) {
+            log('warboard detected — skipping Socket.IO (page-context XHR blocked by CSP). Using SSE.');
             return;
         }
 
