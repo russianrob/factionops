@@ -32,12 +32,19 @@ const WATCH_BUNDLE_ID = "com.tornwar.warboard.watchkitapp";
 const POLL_INTERVAL_MS = Number(process.env.STATUS_LA_POLL_MS) || 5 * 60 * 1000; // 5 min
 const POLL_JITTER_MS = 30 * 1000; // spread initial start so all users don't poll the same instant
 
-// watchOS budgets background pushes to a watch app to a handful per hour and
-// silently drops the excess — no error, no log, the complication simply keeps
-// its old value. The LA cadence (2-5 min) is far over that, which is why the
-// watch sat on a stale reading for 31h while every push returned HTTP 200.
-// Live Activity keeps the fast cadence; the watch gets its own slower one.
-const WATCH_MIN_INTERVAL_MS = 15 * 60 * 1000;
+// The binding constraint is NOT the APNs push budget — it is WidgetKit's
+// refresh budget of roughly 40-70 reloads PER DAY, which every push consumes
+// via WatchBarsStore's reloadAllTimelines(). Exhaust it and WidgetKit stops
+// redrawing the complication at all, so pushes keep being accepted while the
+// watch face sits on a stale reading (it sat on one for 31h, at HTTP 200).
+//
+// Budget arithmetic, since both mechanisms share one allowance:
+//   this push cadence  30 min -> 48/day
+//   timeline policy     4 h   ->  6/day  (StatusComplication.swift)
+//                             -> ~54/day total, inside the range.
+// The first fix used a 15-min floor: 96/day on its own, still over. Err low —
+// Apple documents a range, not a number.
+const WATCH_MIN_INTERVAL_MS = 30 * 60 * 1000;
 const _lastWatchPushAt = new Map(); // playerId -> ms
 let _timer = null;
 let _started = false;
