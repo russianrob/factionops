@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.67
+// @version      5.1.68
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -92,7 +92,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.67';
+    const SCRIPT_VERSION = '5.1.68';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -5373,12 +5373,12 @@ body.wb-chain-active {
      */
     function canUseSSEStream() {
         if (IS_PDA) return false;
-        // warboard's GM_xmlhttpRequest resolves once, on completion — it implements
-        // onload/onerror and has NO onprogress (gm-bootstrap.js:43-65). An SSE
-        // stream never completes, so onload never fires and not a single event is
-        // ever delivered: the request just hangs. Attempting it there costs a dead
-        // socket and delays the fallback, so skip straight to Socket.IO.
-        if (IS_WARBOARD) return false;
+        // warboard USED to be skipped here: its GM_xmlhttpRequest resolved only on
+        // completion, and an SSE stream never completes, so the request hung and
+        // delivered nothing. warboard 0.11.276 implements onloadstart/onprogress
+        // streaming, so it can now serve SSE like Stay does — and skipping it would
+        // pin warboard to long-polling forever. Older builds are handled by the
+        // watchdog in connectSSEStream() rather than by refusing to try.
         if (realtimeSocket && realtimeSocket.connected) return false;
         if (typeof GM_xmlhttpRequest !== 'function') return false;
         return true;
@@ -5401,17 +5401,30 @@ body.wb-chain-active {
         sseLastLength = 0;
         sseConnected = false;
 
+        // Watchdog: a GM shim without streaming callbacks (warboard before
+        // 0.11.276) leaves this request open forever, silently delivering
+        // nothing. Give it 12s to report a start, then abort so the connection
+        // isn't left dangling and long-poll owns the transport cleanly.
+        const sseWatchdog = setTimeout(() => {
+            if (sseConnected) return;
+            warn('SSE never started after 12s — aborting; host GM shim likely has no onprogress');
+            try { if (sseAbort && typeof sseAbort.abort === 'function') sseAbort.abort(); } catch (e) {}
+            sseAbort = null;
+            if (!pollTimer) startPolling();
+        }, 12000);
+
         sseAbort = GM_xmlhttpRequest({
             method: 'GET',
             url: url,
             responseType: 'text',
-            onloadstart: () => { sseConnected = true; log("SSE stream started"); updateRtBadge("sse"); if (pollTimer) stopPolling(true); },
+            onloadstart: () => { clearTimeout(sseWatchdog); sseConnected = true; log("SSE stream started"); updateRtBadge("sse"); if (pollTimer) stopPolling(true); },
             timeout: 0,
             onprogress: (resp) => {
                 if (!resp || resp.responseText === undefined || resp.responseText === null) {
                     return;
                 }
                 if (!sseConnected) {
+                    clearTimeout(sseWatchdog);
                     sseConnected = true;
                     log('SSE stream connected');
                     updateRtBadge('sse');
