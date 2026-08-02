@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Torn Ranked War Timer
-// @version      1.7.1
+// @version      1.7.2
 // @author       RussianRob
 // @description  Timer for Ranked Wars
 // @license      MIT
@@ -32,7 +32,6 @@
 (function () {
     'use strict';
 
-    const WIKI_URL = 'https://wiki.torn.com/wiki/Ranked_War';
 
     function isDesktopLike() {
         // Treat wider viewports as desktop; PDA/mobile usually < 1000px.
@@ -154,6 +153,8 @@
         return true;
     }
 
+    const DISPLAY_ID = 'wb-war-timer';
+
     const initInterval = setInterval(() => {
         const found = findWarBox();
         if (!found) return;
@@ -163,12 +164,27 @@
 
         clearInterval(initInterval);
 
-        const display = document.createElement('div');
-        display.style.marginLeft = '10px';
-        display.style.fontWeight = 'bold';
-        display.style.cursor = 'pointer';
-        display.style.display = 'inline-block';
-        display.onclick = () => window.open(WIKI_URL, '_blank', 'noopener,noreferrer');
+        // Idempotent injection. This used to append unconditionally, so every
+        // run of the script added ANOTHER badge — the user ended up with four.
+        // On Android PDA the script runs more than once per page (a plain
+        // reload still leaves two), and the old window.open(WIKI_URL) click
+        // re-entered it as well, which is why tapping the timer spawned copies.
+        // Adopt whatever is already on the page and delete any strays, so no
+        // number of runs can produce more than one badge.
+        const existing = document.querySelectorAll('#' + DISPLAY_ID);
+        let display = existing[0] || null;
+        for (let i = 1; i < existing.length; i++) existing[i].remove();
+
+        const isNew = !display;
+        if (isNew) {
+            display = document.createElement('div');
+            display.id = DISPLAY_ID;
+            display.style.marginLeft = '10px';
+            display.style.fontWeight = 'bold';
+            display.style.display = 'inline-block';
+            // Deliberately NOT clickable: no cursor:pointer, no onclick. The
+            // wiki link it used to open was the source of the duplicates.
+        }
 
         let headerContainer =
             warBox.querySelector('[class*="header"], [class*="title"]') ||
@@ -177,7 +193,7 @@
 
         if (!headerContainer) return;
 
-        headerContainer.appendChild(display);
+        if (isNew) headerContainer.appendChild(display);
 
         const ok = updateWarTimer(display, warBox);
         if (!ok && !document.body.contains(display)) {
