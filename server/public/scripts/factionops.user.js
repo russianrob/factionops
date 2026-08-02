@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.65
+// @version      5.1.66
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -84,9 +84,15 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
 
     // --- Torn PDA Detection ---
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
+
+    // --- warboard-iOS Detection ---
+    // The warboard app injects its GM shim over a WKWebView message handler named
+    // gmBridge; nothing else exposes that. Needed because warboard is NOT PDA but
+    // still can't use the SSE transport — see canUseSSEStream().
+    const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.65';
+    const SCRIPT_VERSION = '5.1.66';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -5179,6 +5185,34 @@ body.wb-chain-active {
             timeout: 15000,
         });
 
+        // One-shot transport report. The server has logged ZERO client diagnostics
+        // to date, so which transport actually wins in each host has been guesswork
+        // — this makes it answerable from the warboard log instead. Plain fetch, not
+        // GM_xmlhttpRequest: tornwar sends CORS for torn.com, and the GM shim is the
+        // very thing under suspicion here.
+        setTimeout(() => {
+            try {
+                const active = (realtimeSocket && realtimeSocket.connected)
+                    ? (realtimeSocket.io?.engine?.transport?.name || 'unknown')
+                    : null;
+                fetch(CONFIG.SERVER_URL + '/api/debug/client-log', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tag: 'fo-transport',
+                        data: {
+                            v: SCRIPT_VERSION,
+                            warboard: IS_WARBOARD,
+                            pda: IS_PDA,
+                            socket: active,
+                            sse: !!sseConnected,
+                            longpoll: !!(CONFIG.USE_LONGPOLL && !_lpDisabled),
+                        },
+                    }),
+                }).catch(() => {});
+            } catch (e) { /* diagnostics must never break the overlay */ }
+        }, 20000);
+
         realtimeSocket.on('connect', () => {
             const transport = realtimeSocket.io?.engine?.transport?.name || 'unknown';
             log('Socket.IO connected:', realtimeSocket.id, 'transport:', transport);
@@ -5324,6 +5358,12 @@ body.wb-chain-active {
      */
     function canUseSSEStream() {
         if (IS_PDA) return false;
+        // warboard's GM_xmlhttpRequest resolves once, on completion — it implements
+        // onload/onerror and has NO onprogress (gm-bootstrap.js:43-65). An SSE
+        // stream never completes, so onload never fires and not a single event is
+        // ever delivered: the request just hangs. Attempting it there costs a dead
+        // socket and delays the fallback, so skip straight to Socket.IO.
+        if (IS_WARBOARD) return false;
         if (realtimeSocket && realtimeSocket.connected) return false;
         if (typeof GM_xmlhttpRequest !== 'function') return false;
         return true;
