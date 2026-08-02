@@ -31,6 +31,14 @@ const WATCH_BUNDLE_ID = "com.tornwar.warboard.watchkitapp";
 
 const POLL_INTERVAL_MS = Number(process.env.STATUS_LA_POLL_MS) || 5 * 60 * 1000; // 5 min
 const POLL_JITTER_MS = 30 * 1000; // spread initial start so all users don't poll the same instant
+
+// watchOS budgets background pushes to a watch app to a handful per hour and
+// silently drops the excess — no error, no log, the complication simply keeps
+// its old value. The LA cadence (2-5 min) is far over that, which is why the
+// watch sat on a stale reading for 31h while every push returned HTTP 200.
+// Live Activity keeps the fast cadence; the watch gets its own slower one.
+const WATCH_MIN_INTERVAL_MS = 15 * 60 * 1000;
+const _lastWatchPushAt = new Map(); // playerId -> ms
 let _timer = null;
 let _started = false;
 
@@ -110,19 +118,31 @@ async function tick() {
       }
     }
 
-    // Channel 2: Apple Watch background push.
-    if (row.watchToken) {
+    // Channel 2: Apple Watch background push, rate-limited independently.
+    const lastWatch = _lastWatchPushAt.get(row.playerId) || 0;
+    if (row.watchToken && Date.now() - lastWatch >= WATCH_MIN_INTERVAL_MS) {
+      _lastWatchPushAt.set(row.playerId, Date.now());
       // Same ContentState dict — the watch decodes it from userInfo
       // and updates WatchBarsStore which reloads StatusComplication.
       const result = await apns.sendBackgroundUpdate(row.watchToken, { bars: state }, {
         topic: WATCH_BUNDLE_ID,
       });
+      // Log the OUTCOME, not just the reap. This branch used to be silent for
+      // every failure except a dead token, so a push that APNs rejected — wrong
+      // topic, auth error, throttling — looked identical to one that worked.
+      // The watch sat on a stale reading for 31h and nothing said a word.
+      const reason = result.reason || result.status || "";
       if (!result.ok) {
-        const reason = result.reason || result.status || "";
+        console.log(`[status-la] watch push FAILED for ${row.playerId}: ${JSON.stringify(result)}`);
         if (reason === "BadDeviceToken" || reason === "Unregistered" || result.status === 410) {
           watchTokens.remove({ token: row.watchToken });
           console.log(`[status-la] reaped dead watch token for player ${row.playerId} (${reason})`);
         }
+      } else {
+        // Accepted by APNs. NOT proof the watch applied it — watchOS budgets
+        // background pushes to a watch app and silently drops the excess — but
+        // it does separate "we sent it" from "Apple refused it".
+        console.log(`[status-la] watch push accepted for ${row.playerId} (E:${state.energyCurrent}/${state.energyMax})`);
       }
     }
   }
