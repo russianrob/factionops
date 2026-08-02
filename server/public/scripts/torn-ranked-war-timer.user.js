@@ -13,6 +13,18 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.7.2  - Timer is no longer clickable and can no longer duplicate.
+//           Removed the onclick that opened the Ranked War wiki: on PDA's
+//           webview window.open re-enters the script rather than opening a
+//           popup, so every tap ran the injection again and added another
+//           badge. cursor:pointer went with it. Injection is now idempotent
+//           — it adopts any existing #wb-war-timer and deletes strays, so
+//           PDA running the script twice per page (the two-after-reload
+//           case) can no longer leave more than one.
+//           Update URLs repointed to GreasyFork 562468, now canonical.
+// v1.7.1  - noopener/noreferrer on the _blank wiki link (defense-in-depth
+//           for the PDA Android GM-redefine bug). Superseded by 1.7.2,
+//           which removes the link entirely.
 // v1.7.0  - Hash-agnostic selectors. Replaced literal CSS-module hashes
 //           (.rankBox___OzP3D, .timer___fSGg8, .target___NBVXq) with
 //           substring matches ([class*="rankBox___"], etc) so the script
