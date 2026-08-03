@@ -1,0 +1,76 @@
+TornTools — third-party copyright notice and source offer
+=========================================================
+
+WHAT THIS DIRECTORY IS
+
+  /ext/torntools/<version>/ holds compiled ("object code") builds of TornTools,
+  a browser extension for Torn.com. They are modified for the warboard-iOS
+  WebExtension runtime and served over the air to that app.
+
+  TornTools is NOT a warboard project. It is redistributed here under the terms
+  of its own license, with the modifications described below.
+
+
+UPSTREAM PROJECT
+
+  Homepage    https://github.com/Mephiles/torntools_extension
+  Authors     Gregor Kaljulaid   (Mephiles [2087524])        — original author
+              Kobe De Peuter     (DeKleineKobini [2114440])  — co-developer
+  License     GNU General Public License, version 3
+              Full text: ./LICENSE.txt (verbatim from the upstream tree)
+
+
+CORRESPONDING SOURCE — GPL-3.0 section 6(d)
+
+  Each subdirectory is built from the upstream git tag matching its `upstream`
+  field in version.json. For example /ext/torntools/9.1.1.1/ is built from
+  upstream tag 9.1.1:
+
+      git clone --branch 9.1.1 https://github.com/Mephiles/torntools_extension.git
+      bun install && bun run build:userscripts && bun run build:chrome
+
+  Sourcemaps (*.map) are stripped from these builds purely to halve the download
+  on a phone. They are present in the upstream build output produced by the
+  commands above.
+
+
+MODIFICATIONS — GPL-3.0 section 5(a)
+
+  Modified by RussianRob [137558], 2026-06-13 through 2026-08-03, to run inside
+  warboard-iOS's WebExtension runtime (an off-main WKWebView), which is not
+  Chrome and differs from it in ways these patches compensate for:
+
+    #1  _background.js = a compatibility prelude + the stock background.js.
+        The runtime runs the MV3 background as a plain page, not a service
+        worker, so some service-worker globals need stubbing.
+    #2  manifest.json version is re-stamped with the warboard package version
+        (e.g. 9.1.1.1) so the over-the-air updater can order releases. The
+        upstream version it was built from is recorded in version.json.
+    #3  _bg.html is added — the background host loads a real page rather than
+        the manifest's service_worker entry.
+    #4  A "Hide Chat" re-tick fix is appended to content-scripts/extension.js.
+    #5  A passthrough guard is inserted into fetch--inject.js so Cloudflare and
+        non-Torn responses are not cloned and read. That clone stalls
+        Cloudflare's own challenge inside WKWebView.
+    #6  The `userdata.travel` null guard is restored in showIconBars. Upstream
+        9.1.1 dropped it, so the icon renderer throws whenever the player is
+        not travelling.
+
+  These are compatibility shims. No TornTools feature is added, removed, or
+  altered in behaviour by them.
+
+  SOURCE OF THE MODIFICATIONS — the packager that applies every patch above,
+  including the full text of each one, is public:
+
+      https://github.com/russianrob/factionops
+        bin/package-torntools.mjs      (all six patches + their verification)
+        bin/torntools-prelude.js       (patch #1 prelude)
+        bin/torntools-hidechat-fix.js  (patch #4)
+
+  Combining that packager with the upstream tag reproduces these trees exactly.
+
+
+NO WARRANTY
+
+  As stated in sections 15 and 16 of the GPL, this software is provided without
+  warranty of any kind, by upstream and by warboard alike.

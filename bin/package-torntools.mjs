@@ -1,6 +1,7 @@
 // Package a stock TornTools build into warboard's server-hosted form: apply the
 // warboard patches — #1 _background.js prelude, #2 manifest re-seed version,
-// #3 _bg.html, #4 Hide-Chat re-tick fix, #5 Cloudflare fetch passthrough — drop
+// #3 _bg.html, #4 Hide-Chat re-tick fix, #5 Cloudflare fetch passthrough,
+// #6 showIconBars travel null guard — drop
 // *.map, lay it under public/ext/torntools/<version>/, and emit version.json
 // (per-file sha256). verifyPatches() then fails the build if any patch didn't
 // land. Run:  node bin/package-torntools.mjs <stockDir> <version>
@@ -28,6 +29,32 @@ const FETCH_PASSTHROUGH =
   'const __wbu=(response&&response.url)||(typeof input==="string"?input:(input&&input.url))||""; ' +
   'if(typeof __wbu!=="string"||__wbu.indexOf("torn.com/")===-1||__wbu.indexOf("/cdn-cgi/")!==-1){resolve(response);return;}';
 const FETCH_PASSTHROUGH_MARKER = "warboard: pass Cloudflare/non-Torn";
+
+// patch #6: TornTools 9.1.1 dropped the `userdata.travel &&` null guard from
+// showIconBars (upstream 35d6ac34, part of the userdata.chain -> userdata.bars.chain
+// reshape). `travel` is absent from userdata whenever you are not abroad, so the
+// renderer throws a TypeError on every icon update while you are in Torn.
+//
+// 9.0.13:  if (settings.pages.icon.travel && userdata.travel && userdata.travel.time_left > 0)
+// 9.1.1:   if (settings.pages.icon.travel && userdata.travel.time_left > 0)
+//
+// Harmless on desktop Chrome — the toolbar icon just skips a bar, and the main
+// update cycle catches it. It matters here only because warboard's prelude beacons
+// unhandled background rejections to the server, and onInstall/onStartup/the
+// settings listener all call showIconBars() bare. Confirmed live: zero beacons in
+// the three months before 9.1.1, twelve in the six hours after.
+//
+// Both call sites need it; each string appears exactly once in the stock bundle.
+const TRAVEL_GUARDS = [
+  {
+    from: "settings.pages.icon.travel && userdata.travel.time_left > 0",
+    to: "settings.pages.icon.travel && userdata.travel && userdata.travel.time_left > 0",
+  },
+  {
+    from: "if (userdata.travel.time_left <= 0) return;",
+    to: "if (!userdata.travel || userdata.travel.time_left <= 0) return;",
+  },
+];
 
 function walk(dir, base = dir) {
   const out = [];
@@ -60,6 +87,15 @@ export function verifyPatches(verDir, version) {
   const fetchInj = join(verDir, "fetch--inject.js");
   if (!existsSync(fetchInj) || !readFileSync(fetchInj, "utf8").includes(FETCH_PASSTHROUGH_MARKER))
     fail("#5 (Cloudflare fetch passthrough)", "fetch--inject.js missing the Cloudflare passthrough guard");
+  // Assert both directions: the guarded form present AND no bare deref left.
+  // Neither `from` string is a substring of its `to`, so the absence check is
+  // meaningful — it catches a future upstream edit that reintroduces the
+  // unguarded pattern at a call site this patch doesn't know about.
+  const bg = readFileSync(join(verDir, "_background.js"), "utf8");
+  for (const { from, to } of TRAVEL_GUARDS) {
+    if (!bg.includes(to)) fail("#6 (showIconBars travel guard)", `_background.js missing the guarded form: ${to}`);
+    if (bg.includes(from)) fail("#6 (showIconBars travel guard)", `_background.js still contains an unguarded deref: ${from}`);
+  }
 }
 
 export function packageTornTools({ stockDir, outDir, version, baseUrlPath = "/ext/torntools/" }) {
@@ -74,7 +110,17 @@ export function packageTornTools({ stockDir, outDir, version, baseUrlPath = "/ex
   }
 
   // patch #1: _background.js = prelude + stock background.js
-  writeFileSync(join(verDir, "_background.js"), PRELUDE + "\n" + readFileSync(join(stockDir, "background.js"), "utf8"));
+  // patch #6 rides along here: restore the travel null guards before the prelude
+  // is prepended, so the shipped _background.js never contains the bare deref.
+  let bgSrc = readFileSync(join(stockDir, "background.js"), "utf8");
+  for (const { from, to } of TRAVEL_GUARDS) {
+    if (bgSrc.includes(to)) continue;   // upstream fixed it — nothing to do
+    if (!bgSrc.includes(from)) {
+      throw new Error(`package-torntools: patch #6 (showIconBars travel guard) anchor not found in background.js: ${from}\nTornTools' icon-bar renderer changed; re-check whether the null guard is still needed and update the patch.`);
+    }
+    bgSrc = bgSrc.replace(from, to);
+  }
+  writeFileSync(join(verDir, "_background.js"), PRELUDE + "\n" + bgSrc);
   // patch #2: manifest version = re-seed marker
   const mani = JSON.parse(readFileSync(join(verDir, "manifest.json"), "utf8"));
   const upstream = mani.version;
