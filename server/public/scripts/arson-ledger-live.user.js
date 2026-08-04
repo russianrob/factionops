@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.22
+// @version     1.0.23
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4). Material prices update from live Torn market data using your own Torn API key (entered in the API tab). Works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -21,6 +21,13 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.23 - Propagate approvals to everyone within seconds. Replaced the 24h
+//           TTL + hardcoded SCENARIOS_VERSION hash with an If-None-Match
+//           conditional GET; nginx already serves an ETag, so an unchanged
+//           check is a 304 with an empty body rather than a fresh 88KB. The old
+//           scheme only invalidated when the constant was hand-bumped, so an
+//           approval stayed invisible to other users for up to a day while
+//           looking correct to the approver, whose path force-refreshed.
 // v1.0.22 - Restore parseArsonActions + _arsonNameToId. Removing the overrides
 //           layer in 1.0.20 deleted a whole contiguous block, and those two
 //           lived inside it while having nothing to do with overrides. The
@@ -43,11 +50,6 @@
 "use strict";
 (() => {
   // src/data/scenarios-version.ts
-  // Content hash of arsonists-ledger-scenarios.json. It keys the localStorage
-  // cache, so bumping it forces every client to refetch on next load. MUST be
-  // bumped whenever that file changes — otherwise clients keep serving a cached
-  // copy for up to SCENARIOS_TTL_MS (24h) and an approval appears to do nothing.
-  var SCENARIOS_VERSION = "49e2b04c5ebe";
 
   // src/data/catalog.ts
   var CATALOG_UPDATED = "2026-06-08";
@@ -4346,14 +4348,23 @@
     var headers = opts.headers || {};
     var timeout = opts.timeout || 1e4;
     var settled = false;
-    function ok(status, text) { if (!settled) { settled = true; opts.onload && opts.onload({ status: status, responseText: text }); } }
+    // getHeader lets callers read ETag / Last-Modified. Both transports supply
+    // it so a caller never has to know which one ran: GM hands back a raw header
+    // blob, fetch hands back a Headers object.
+    function ok(status, text, getHeader) { if (!settled) { settled = true; opts.onload && opts.onload({ status: status, responseText: text, getHeader: getHeader || function () { return null; } }); } }
     function fail(reason) { if (!settled) { settled = true; (reason === "timeout" ? (opts.ontimeout || opts.onerror) : opts.onerror) && (reason === "timeout" ? (opts.ontimeout || opts.onerror)() : opts.onerror()); } }
 
     function viaGM() {
       try {
         GM_xmlhttpRequest({
           method: method, url: url, headers: headers, data: body, timeout: timeout,
-          onload: function (r) { ok(r && r.status, (r && r.responseText) || ""); },
+          onload: function (r) {
+            var raw = (r && r.responseHeaders) || "";
+            ok(r && r.status, (r && r.responseText) || "", function (name) {
+              var m = new RegExp("^" + name + ":\\s*(.+)$", "im").exec(raw);
+              return m ? m[1].trim() : null;
+            });
+          },
           onerror: function () { fail("error"); },
           ontimeout: function () { fail("timeout"); }
         });
@@ -4367,7 +4378,10 @@
     if (body != null) init.body = body;
     if (ctl) init.signal = ctl.signal;
     fetch(url, init).then(function (r) {
-      return r.text().then(function (t) { clearTimeout(timer); ok(r.status, t); });
+      return r.text().then(function (t) {
+        clearTimeout(timer);
+        ok(r.status, t, function (name) { return r.headers.get(name); });
+      });
     }).catch(function () {
       clearTimeout(timer);
       // fetch blocked (CSP, offline, aborted) — try the bridge before giving up.
@@ -4535,7 +4549,7 @@
           var ig = parseArsonActions(log.ignite); if (ig.length) patch.actions.ignite = ig;
           var sk = parseArsonActions(log.stoke); if (sk.length) patch.actions.stoke = sk;
           if (sk.length && isStokeTime(log.stokeTime)) patch.actions.stokeTime = log.stokeTime;
-          post("https://tornwar.com/api/arson/approve", { key: ctx.getApiKey(), scenario: log.scenario, patch: patch, ts: log.ts }, function () { scheduleScenarioRefresh(true); load(); });
+          post("https://tornwar.com/api/arson/approve", { key: ctx.getApiKey(), scenario: log.scenario, patch: patch, ts: log.ts }, function () { scheduleScenarioRefresh(); load(); });
         });
         reject.addEventListener("click", function () {
           st.textContent = "Rejecting…"; st.className = "pyro-s-status";
@@ -4806,10 +4820,9 @@
     }
     store_set(KEY_CATALOG_UPDATED, CATALOG_UPDATED);
   }
-  var KEY_SCENARIOS_CACHE = `pyroLedger.${SCENARIOS_VERSION}.scenariosCache`;
-  var KEY_SCENARIOS_TS = `pyroLedger.${SCENARIOS_VERSION}.scenariosTs`;
+  var KEY_SCENARIOS_CACHE = "pyroLedger.v1.scenariosCache";
+  var KEY_SCENARIOS_ETAG = "pyroLedger.v1.scenariosEtag";
   var SCENARIOS_URL = "https://tornwar.com/data/arsonists-ledger-scenarios.json";
-  var SCENARIOS_TTL_MS = 24 * 60 * 60 * 1e3;
   var scenarioIndex = /* @__PURE__ */ new Map();
   function withObservedPayout(scenario) {
     const observedPayout = scenario.observedPayout ?? OBSERVED_PAYOUTS[scenario.scenarioName];
@@ -4823,38 +4836,45 @@
       if (!scenarioIndex.has(key)) scenarioIndex.set(key, scenario);
     }
   }
-  // `force` bypasses the 24h TTL. Approvals used to live in a separate,
-  // cache-busted overrides file and so appeared instantly; now that they are
-  // upserted into the scenarios file itself, the TTL would hide a fresh approval
-  // for up to a day. Only the approve path forces.
-  function scheduleScenarioRefresh(force) {
-    if (typeof GM_xmlhttpRequest === "undefined") return;
-    const ts = parseInt(store_get(KEY_SCENARIOS_TS, "0"), 10) || 0;
-    const now = Date.now();
-    if (!force && now - ts < SCENARIOS_TTL_MS) {
-      try {
-        const cached = JSON.parse(
-          store_get(KEY_SCENARIOS_CACHE, "")
-        );
-        if (Array.isArray(cached) && cached.length > 0) {
-          populateScenarioIndex(cached);
-          resetScans();
-        }
-      } catch {
+  // Render the cache immediately, then ask the server whether it changed.
+  //
+  // Replaces a 24h TTL plus a hardcoded SCENARIOS_VERSION content hash. That
+  // scheme only invalidated when someone remembered to bump the constant, so an
+  // approval was invisible to everyone else for up to a day — and the approver
+  // could not tell, because their own path force-refreshed.
+  //
+  // nginx already serves an ETag for this file, so an unchanged check costs a
+  // 304 with an empty body (~739 bytes, ~33ms) instead of re-downloading 88KB.
+  // Over a day of normal use that is LESS traffic than the TTL refetch it
+  // replaces, and an approval lands on everyone's next crimes-page load.
+  function scheduleScenarioRefresh() {
+    // Paint from cache first so there is no wait for the network.
+    try {
+      const cached = JSON.parse(store_get(KEY_SCENARIOS_CACHE, ""));
+      if (Array.isArray(cached) && cached.length > 0) {
+        populateScenarioIndex(cached);
+        resetScans();
       }
-      return;
+    } catch {
     }
+    const etag = store_get(KEY_SCENARIOS_ETAG, "");
+    const headers = { "Cache-Control": "no-cache" };
+    // Skip the conditional header when there is no cache to validate, so a
+    // fresh install cannot be told 304 with nothing to fall back on.
+    if (etag && store_get(KEY_SCENARIOS_CACHE, "")) headers["If-None-Match"] = etag;
     wbHttp({
       method: "GET",
-      url: force ? SCENARIOS_URL + "?t=" + now : SCENARIOS_URL,
-      headers: force ? { "Cache-Control": "no-cache" } : undefined,
+      url: SCENARIOS_URL,
+      headers,
       onload(r) {
+        if (r.status === 304) return;      // unchanged — the cache we painted is current
         if (r.status !== 200) return;
         try {
           const fresh = JSON.parse(r.responseText);
           if (!Array.isArray(fresh) || fresh.length === 0) return;
           store_set(KEY_SCENARIOS_CACHE, r.responseText);
-          store_set(KEY_SCENARIOS_TS, String(now));
+          const et = r.getHeader("ETag");
+          if (et) store_set(KEY_SCENARIOS_ETAG, et);
           populateScenarioIndex(fresh);
           resetScans();
           refreshVisibleTooltip();
