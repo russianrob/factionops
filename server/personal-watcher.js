@@ -23,7 +23,17 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = join(__dirname, "data", "personal-events-state.json");
 const WATCH_FILE = join(__dirname, "data", "personal-watch.json");
 
-const POLL_MS = 45_000;
+// 3 minutes, matching TornPDA — the Torn-endorsed app doing the same job. Its
+// alerts.ts shards users across three staggered jobs ("0,3,6,9,…", "1,4,7,…",
+// "2,5,8,…"), i.e. every user checked every 3 min, watching the same set:
+// hospital, travel, energy, nerve, life, drug, events.
+//
+// Was 45s. That is 1,920 calls/day on the player's own key and it exhausted
+// Torn's DAILY read cap at ~03:39 EDT, after which every poll failed and attack
+// + hospital alerts were dead until reset — silently, for two thirds of every
+// day. Trading 45s of latency for alerts that actually work around the clock is
+// not a close call.
+const POLL_MS = 180_000;
 
 // Overnight quiet window. Polling every 45s round the clock exhausted Torn's
 // DAILY read cap by ~04:00 EDT, after which every poll failed and attack +
