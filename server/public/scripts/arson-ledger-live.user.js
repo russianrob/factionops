@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.23
+// @version     1.0.24
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4). Material prices update from live Torn market data using your own Torn API key (entered in the API tab). Works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -21,6 +21,10 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.24 - Build the scenario picker from live data instead of the baked-in
+//           SCENARIOS constant. A scenario added to the served file existed
+//           everywhere except the dropdown you select it from, so it could not
+//           be logged or edited — it was priced in tooltips but unpickable.
 // v1.0.23 - Propagate approvals to everyone within seconds. Replaced the 24h
 //           TTL + hardcoded SCENARIOS_VERSION hash with an If-None-Match
 //           conditional GET; nginx already serves an ETag, so an unchanged
@@ -4207,7 +4211,15 @@
     blank.value = "";
     blank.textContent = "— select scenario —";
     scenSelect.appendChild(blank);
-    [...SCENARIOS].sort((a, b) => a.scenarioName.localeCompare(b.scenarioName)).forEach((s) => {
+    // Live scenarios, not the baked-in SCENARIOS constant. That constant is a
+    // build-time snapshot; anything approved since — or added to the served
+    // file — exists only in scenarioIndex. Building the picker from the
+    // constant made a new scenario unselectable: present in the data, priced in
+    // tooltips, and absent from the one list you choose it from.
+    // scenarioIndex is seeded from SCENARIOS at init, so it is never empty; the
+    // fallback is belt and braces.
+    const pickable = scenarioIndex.size ? [...scenarioIndex.values()] : SCENARIOS;
+    [...pickable].sort((a, b) => a.scenarioName.localeCompare(b.scenarioName)).forEach((s) => {
       const o = document.createElement("option");
       o.value = s.scenarioName;
       o.textContent = s.scenarioName;
