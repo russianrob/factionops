@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.20
+// @version     1.0.21
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4). Material prices update from live Torn market data using your own Torn API key (entered in the API tab). Works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -21,6 +21,10 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.21 - Bump SCENARIOS_VERSION to the new content hash. 1.0.20 moved
+//           approvals into the scenarios file but left the cache key alone, so
+//           clients holding a pre-migration copy kept serving it for up to 24h
+//           and an approved payout looked like it had not applied.
 // v1.0.20 - Approvals now land directly in arsonists-ledger-scenarios.json, so
 //           the ledger reads one file instead of merging a separate overrides
 //           layer over it. Removed ARSON_OVERRIDES_URL, its fetch and its
@@ -33,7 +37,11 @@
 "use strict";
 (() => {
   // src/data/scenarios-version.ts
-  var SCENARIOS_VERSION = "62485e76b64c";
+  // Content hash of arsonists-ledger-scenarios.json. It keys the localStorage
+  // cache, so bumping it forces every client to refetch on next load. MUST be
+  // bumped whenever that file changes — otherwise clients keep serving a cached
+  // copy for up to SCENARIOS_TTL_MS (24h) and an approval appears to do nothing.
+  var SCENARIOS_VERSION = "49e2b04c5ebe";
 
   // src/data/catalog.ts
   var CATALOG_UPDATED = "2026-06-08";
