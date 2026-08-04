@@ -85,6 +85,7 @@ import * as store from "./store.js";
 import * as chat from "./chat.js";
 import { encrypt as encryptKey, decrypt as decryptKey, isEncrypted as isEncryptedKey } from "./key-encryption.js";
 import { crimesFingerprint, shouldRecompute as shouldRecomputeEngines } from "./oc-engine-cache.js";
+import { upsertScenario } from "./arson-scenarios.js";
 import * as pendingBroadcasts from "./pending-broadcasts.js";
 import * as inspectRelay from "./inspect-relay.js";
 import * as missingOverrides from "./missing-overrides.js";
@@ -10328,6 +10329,14 @@ router.post("/api/arson/logs", express.json({ limit: '4kb' }), (req, res) => {
 // overlays these on top of Yukio's base scenarios (override wins). Admin gate:
 // the caller's Torn API key must belong to one of ARSON_ADMIN_IDS.
 const ARSON_OVERRIDES_FILE = pathJoin(OC_HISTORY_DIR, '..', 'arson-overrides.json');
+// Approvals now land here directly. arson-overrides.json is frozen: old ledger
+// copies still read it and see the values that were migrated in, so they keep
+// working — they just stop receiving NEW approvals until the script updates.
+const ARSON_SCENARIOS_FILE = pathJoin(OC_HISTORY_DIR, '..', 'arsonists-ledger-scenarios.json');
+function loadArsonScenarios() {
+  try { return JSON.parse(readFileSync(ARSON_SCENARIOS_FILE, 'utf8')) || []; }
+  catch (_) { return []; }
+}
 const ARSON_ADMIN_IDS = [137558, 906148]; // RussianRob, Yukio
 function loadArsonOverrides() {
   try {
@@ -10354,22 +10363,23 @@ router.post("/api/arson/approve", express.json({ limit: '8kb' }), async (req, re
   const scenario = String(b.scenario || '').trim();
   const patch = b.patch;
   if (!scenario || !patch || typeof patch !== 'object') return res.status(400).json({ error: 'scenario + patch required' });
-  const ov = loadArsonOverrides();
-  ov.scenarios[scenario.toLowerCase()] = {
+  // Fold straight into the ledger's scenarios file. The record shapes are
+  // identical, so this is an upsert rather than a translation, and the ledger
+  // no longer has to merge two files at runtime.
+  const before = loadArsonScenarios();
+  const after = upsertScenario(before, {
     scenarioName: scenario,
     payout: Number(patch.payout) || 0,
     actions: (patch.actions && typeof patch.actions === 'object') ? patch.actions : {},
-    approvedAt: Date.now(),
-  };
-  ov.updatedAt = Date.now();
-  try { writeFileSync(ARSON_OVERRIDES_FILE, JSON.stringify(ov, null, 2)); }
+  });
+  try { writeFileSync(ARSON_SCENARIOS_FILE, JSON.stringify(after, null, 2)); }
   catch (e) { console.error('[arson-approve] write error:', e.message); return res.status(500).json({ error: 'write failed' }); }
   if (b.ts != null) {
     const logs = loadArsonLogs().filter((l) => l.ts !== Number(b.ts));
     try { writeFileSync(ARSON_LOGS_FILE, JSON.stringify(logs, null, 2)); } catch (_) {}
   }
-  console.log(`[arson-approve] '${scenario}' approved`);
-  return res.json({ ok: true, scenarios: Object.keys(ov.scenarios).length });
+  console.log(`[arson-approve] '${scenario}' ${after.length > before.length ? 'added' : 'updated'} (${after.length} scenarios)`);
+  return res.json({ ok: true, scenarios: after.length });
 });
 router.post("/api/arson/reject", express.json({ limit: '2kb' }), async (req, res) => {
   const b = req.body || {};

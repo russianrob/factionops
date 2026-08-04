@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.19
+// @version     1.0.20
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4). Material prices update from live Torn market data using your own Torn API key (entered in the API tab). Works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -17,6 +17,18 @@
 // @downloadURL https://tornwar.com/scripts/arson-ledger-live.user.js
 // @updateURL https://tornwar.com/scripts/arson-ledger-live.meta.js
 // ==/UserScript==
+
+// =============================================================================
+// CHANGELOG
+// =============================================================================
+// v1.0.20 - Approvals now land directly in arsonists-ledger-scenarios.json, so
+//           the ledger reads one file instead of merging a separate overrides
+//           layer over it. Removed ARSON_OVERRIDES_URL, its fetch and its
+//           localStorage cache. scheduleScenarioRefresh(force) bypasses the 24h
+//           TTL and cache-busts after an approval — without it a fresh approval
+//           would have been hidden for up to a day, which the old cache-busted
+//           overrides fetch never was.
+// =============================================================================
 
 "use strict";
 (() => {
@@ -4349,63 +4361,12 @@
     });
   }
 
-  var ARSON_OVERRIDES_URL = "https://tornwar.com/data/arson-overrides.json";
-  var _arsonOverridesCache = null;
-  var KEY_OVERRIDES_CACHE = "pyroLedger.v1.overridesCache";
-  function loadCachedOverrides() {
-    try {
-      var raw = store_get(KEY_OVERRIDES_CACHE, "");
-      if (!raw) return;
-      var o = JSON.parse(raw);
-      if (o && o.scenarios) _arsonOverridesCache = o;
-    } catch (_) {}
-  }
-  function _arsonNameToId() {
-    var m = {};
-    for (var id in CATALOG) { var c = CATALOG[id]; if (c && c.name) m[String(c.name).toLowerCase()] = c.id; }
-    return m;
-  }
-  function parseArsonActions(text) {
-    if (!text) return [];
-    var nameToId = _arsonNameToId();
-    var out = [];
-    String(text).split(",").forEach(function (part) {
-      var mm = part.trim().match(/^(\d+)\s+(.+)$/);
-      if (!mm) return;
-      var qty = parseInt(mm[1], 10);
-      var rid = nameToId[mm[2].trim().toLowerCase()];
-      if (rid && qty > 0) out.push({ resourceId: rid, qty: qty });
-    });
-    return out;
-  }
   function fmtArsonActions(arr) {
     return Array.isArray(arr) ? arr.map(function (a) { return a.qty + " " + ((CATALOG[a.resourceId] && CATALOG[a.resourceId].name) || a.resourceId); }).join(", ") : "";
   }
-  function applyArsonOverrides() {
-    if (!_arsonOverridesCache || !_arsonOverridesCache.scenarios) return;
-    var sc = _arsonOverridesCache.scenarios;
-    for (var k in sc) { var s = sc[k]; if (s && s.scenarioName) scenarioIndex.set(String(s.scenarioName).toLowerCase(), s); }
-  }
-  function wbFetchOverrides() {
-    try {
-      wbHttp({
-        method: "GET",
-        url: ARSON_OVERRIDES_URL + "?t=" + Date.now(),
-        headers: { "Cache-Control": "no-cache" },
-        timeout: 1e4,
-        onload: function (r) {
-          if (r.status < 200 || r.status >= 300) return;
-          var o; try { o = JSON.parse(r.responseText); } catch (_) { return; }
-          if (!o || !o.scenarios) return;
-          _arsonOverridesCache = o;
-          try { store_set(KEY_OVERRIDES_CACHE, r.responseText); } catch (_) {}
-          applyArsonOverrides();
-          resetScans();
-          refreshVisibleTooltip();
-        }
-      });
-    } catch (_) {}
-  }
+  // Approvals now land directly in arsonists-ledger-scenarios.json, so there is
+  // no second file to fetch and merge. The override layer and its localStorage
+  // cache were removed in 1.0.20; the server upserts the scenario record itself.
   function checkArsonAdmin(key) {
     if (!key) return;
     try {
@@ -4493,7 +4454,6 @@
           if (rr.status >= 200 && rr.status < 300) {
             addSt.textContent = "Saved — live for everyone."; addSt.className = "pyro-s-status";
             fName.value = fPayout.value = fPlace.value = fIgnite.value = fStoke.value = fStokeTime.value = "";
-            wbFetchOverrides();
           } else {
             setErrStatus(addSt, rr.status === 403 ? "Not authorized" : ("Failed " + rr.status));
             addSt.className = "pyro-s-status err";
@@ -4543,7 +4503,7 @@
           var ig = parseArsonActions(log.ignite); if (ig.length) patch.actions.ignite = ig;
           var sk = parseArsonActions(log.stoke); if (sk.length) patch.actions.stoke = sk;
           if (sk.length && isStokeTime(log.stokeTime)) patch.actions.stokeTime = log.stokeTime;
-          post("https://tornwar.com/api/arson/approve", { key: ctx.getApiKey(), scenario: log.scenario, patch: patch, ts: log.ts }, function () { wbFetchOverrides(); load(); });
+          post("https://tornwar.com/api/arson/approve", { key: ctx.getApiKey(), scenario: log.scenario, patch: patch, ts: log.ts }, function () { scheduleScenarioRefresh(true); load(); });
         });
         reject.addEventListener("click", function () {
           st.textContent = "Rejecting…"; st.className = "pyro-s-status";
@@ -4831,18 +4791,21 @@
       if (!scenarioIndex.has(key)) scenarioIndex.set(key, scenario);
     }
   }
-  function scheduleScenarioRefresh() {
+  // `force` bypasses the 24h TTL. Approvals used to live in a separate,
+  // cache-busted overrides file and so appeared instantly; now that they are
+  // upserted into the scenarios file itself, the TTL would hide a fresh approval
+  // for up to a day. Only the approve path forces.
+  function scheduleScenarioRefresh(force) {
     if (typeof GM_xmlhttpRequest === "undefined") return;
     const ts = parseInt(store_get(KEY_SCENARIOS_TS, "0"), 10) || 0;
     const now = Date.now();
-    if (now - ts < SCENARIOS_TTL_MS) {
+    if (!force && now - ts < SCENARIOS_TTL_MS) {
       try {
         const cached = JSON.parse(
           store_get(KEY_SCENARIOS_CACHE, "")
         );
         if (Array.isArray(cached) && cached.length > 0) {
           populateScenarioIndex(cached);
-          applyArsonOverrides();
           resetScans();
         }
       } catch {
@@ -4851,7 +4814,8 @@
     }
     wbHttp({
       method: "GET",
-      url: SCENARIOS_URL,
+      url: force ? SCENARIOS_URL + "?t=" + now : SCENARIOS_URL,
+      headers: force ? { "Cache-Control": "no-cache" } : undefined,
       onload(r) {
         if (r.status !== 200) return;
         try {
@@ -4860,8 +4824,8 @@
           store_set(KEY_SCENARIOS_CACHE, r.responseText);
           store_set(KEY_SCENARIOS_TS, String(now));
           populateScenarioIndex(fresh);
-          applyArsonOverrides();
           resetScans();
+          refreshVisibleTooltip();
         } catch {
         }
       },
@@ -5137,11 +5101,8 @@
   });
   function start() {
     loadState();
-    wbFetchOverrides();
     if (apiKey) checkArsonAdmin(apiKey);
     populateScenarioIndex(SCENARIOS);
-    loadCachedOverrides();
-    applyArsonOverrides();
     injectHighlightStyles();
     observer.observe(document.body, { childList: true, subtree: true });
     scheduleScenarioRefresh();

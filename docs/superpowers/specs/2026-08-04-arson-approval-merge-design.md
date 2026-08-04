@@ -2,7 +2,7 @@
 
 **Status:** approved 2026-08-04
 **Goal:** approving a crime log updates `arsonists-ledger-scenarios.json` directly,
-with the replaced values kept so a bad approval stays a one-line fix.
+so the ledger reads one file instead of merging two.
 
 ## Why
 
@@ -37,27 +37,24 @@ writer, no generator, and no cron entry under root or `warboard`. Its mtime is
    **case-insensitively**. The ledger's own keys are mixed-case
    (`"A Black Mark"`) while overrides were lowercased, so an exact match would
    miss every existing entry.
-3. If found: push the current `{ payout, actions, replacedAt }` onto that
-   record's `history`, then overwrite `payout` and `actions`.
+3. If found: overwrite `payout` and `actions`, keeping the record's existing
+   `scenarioName` casing — the ledger displays that name, so rewriting
+   "A Black Mark" to "a black mark" because that is how the log arrived would be
+   a visible regression.
 4. If not found: append a new record. New scenarios are a normal case — the
    ledger discovers scenarios Torn adds.
 5. Write the file, then remove the pending log entry exactly as today.
 
-`history` is capped at the 10 most recent entries. Unbounded growth in a file
-fetched by every client on every page load is a cost with no reader.
+## No reversibility layer
 
-## Reversibility
+An earlier draft kept replaced values in a capped `history` array on each
+record, so a mistyped approval could be rolled back. Dropped on the user's call,
+and they were right: a wrong approval is already corrected by submitting a new
+log with the right numbers and approving it, which overwrites. `history` would
+have been a second mechanism for something already possible — carried in a file
+every client downloads on every page load.
 
-The property being preserved is that a mistyped approval is cheap to undo.
-Today that is deleting one key from the overrides file; afterwards it is copying
-`history[0]` back over `payout` and `actions`.
-
-`history` lives on the record rather than in a sidecar, so it cannot drift from
-the value it describes — a separate file would reintroduce exactly the two-file
-coupling this change removes.
-
-The ledger ignores unknown fields, so `history` needs no client change and old
-installed copies keep working.
+`revertScenario` was specced and is not built.
 
 ## Migration of the existing 10
 
@@ -66,12 +63,18 @@ them right now. Merging without migrating would silently revert them —
 `going viral` and `a black mark` would drop from 180000 back to their base
 values with nothing on screen to say so.
 
-A one-time script folds them in using the same upsert, which **does** write
-`history`. An earlier draft of this spec said it should not, on the grounds that
-there was "no prior approved value to preserve". That was backwards: the base
-record's payout is precisely the value a revert should restore. Skipping it
-would migrate the 10 in as unrevertable — losing, for exactly the records most
-likely to need it, the property this whole change exists to keep.
+A one-time script folds them in with the same upsert. Applied 2026-08-04:
+248 -> 249 records, 9 updated and 1 appended, with a timestamped backup of the
+scenarios file taken first.
+
+Only 5 were real changes; the other 5 overrides already matched their base
+record exactly, so those approvals had been no-ops:
+
+    Point of No Return    90000 -> 140000
+    A Black Mark         220000 -> 180000
+    Spirit Level         330000 -> 320000
+    Igniting Curiosity   260000 -> 210000
+    + A Thong of Lice and Fire (new, 220000)
 
 `arson-overrides.json` is left on disk, unmodified, as a fallback until the
 merged numbers have been eyeballed. It stops being read once the ledger drops
@@ -92,31 +95,36 @@ and needs no dual-write.
 
 `server/arson-scenarios.js` — a pure module:
 
-- `upsertScenario(list, { scenarioName, payout, actions }, now)` → new list
-- `revertScenario(list, scenarioName)` → new list, restoring `history[0]`
+- `upsertScenario(list, { scenarioName, payout, actions })` → new list
 
 Pure and list-in/list-out so it is testable with `node`, matching the existing
 convention (`server/oc-engine-cache.test.js`). `routes.js` handles only file I/O
 and the admin check.
 
-`revertScenario` ships with the change rather than later: reversibility that
-exists only as a documented manual edit is not reversibility, and the test for
-it is what proves `history` is actually usable.
+
 
 ## Tests
 
-`server/arson-scenarios.test.js`:
+`server/arson-scenarios.test.js` — 8 tests:
 
-1. **Existing scenario is updated in place** — count stays 248, payout changes.
-2. **Case-insensitive match** — approving `"a black mark"` updates
-   `"A Black Mark"` rather than appending a duplicate.
-3. **Previous value goes to history** — `history[0].payout` is the old payout.
-4. **Unknown scenario is appended** — count becomes 249.
-5. **History is capped at 10** — an 11th approval drops the oldest.
-6. **Revert restores the previous value** — payout and actions both come back.
-7. **Revert pops the history entry** so a second revert steps back further.
-8. **Revert on a record with no history is a no-op**, not a crash.
-9. **Input list is not mutated** — callers get a new list.
+1. Existing scenario updated in place, list length unchanged.
+2. Actions replaced wholesale, not merged — an approval describes the full
+   recipe, so merging would strand actions the new log deliberately dropped.
+3. Case-insensitive match, so approving "a black mark" updates "A Black Mark"
+   rather than appending a duplicate.
+4. Existing `scenarioName` casing preserved on update — the ledger displays it.
+5. Unknown scenario appended.
+6. Appended scenario keeps its submitted casing.
+7. Input list not mutated.
+8. Non-array input yields a single-record list.
+
+**Client-side TTL, found while wiring it up.** `SCENARIOS_TTL_MS` is 24 h. The
+old overrides fetch was cache-busted and so approvals appeared instantly; folding
+them into the scenarios file would have hidden a fresh approval for up to a day.
+`scheduleScenarioRefresh(force)` now bypasses the TTL and cache-busts, and the
+approve path is the only caller that forces. It also calls
+`refreshVisibleTooltip()`, which the override path did and the scenarios path
+did not — without it an approval would not update the panel already on screen.
 
 ## Out of scope
 
