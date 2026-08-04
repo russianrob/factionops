@@ -84,6 +84,7 @@ function _adminLoginClear(ip) { _adminLoginAttempts.delete(ip); }
 import * as store from "./store.js";
 import * as chat from "./chat.js";
 import { encrypt as encryptKey, decrypt as decryptKey, isEncrypted as isEncryptedKey } from "./key-encryption.js";
+import { crimesFingerprint, shouldRecompute as shouldRecomputeEngines } from "./oc-engine-cache.js";
 import * as pendingBroadcasts from "./pending-broadcasts.js";
 import * as inspectRelay from "./inspect-relay.js";
 import * as missingOverrides from "./missing-overrides.js";
@@ -5565,7 +5566,7 @@ const _spawnKeyCache  = new Map(); // keySuffix  → { ts, factionId, playerName
 // enough that real recoveries (key permission re-enabled, faction
 // re-joined, Torn cache settles) propagate within an hour.
 const _spawnKeySuspect = new Map();
-const _engineCache    = new Map(); // factionId  → { ts, engines, settingsHash }
+const _engineCache    = new Map(); // factionId  → { ts, engines, settingsHash, fingerprint }
 // Always-on engine cache for /api/oc/engines — runs ALL six engines
 // regardless of faction settings, so the warboard-native client gets a
 // complete payload without depending on the admin having toggled them
@@ -8652,7 +8653,19 @@ router.get("/api/oc/spawn-key", async (req, res) => {
       : key);
 
     // Run engines if enabled — cached per faction for 1 hour (same TTL as CPR cache)
-    if (!_engineCache.has(fid) || (Date.now() - _engineCache.get(fid).ts) > 3600_000 || _engineCache.get(fid).settingsHash !== engineSettingsHash(fSettings)) {
+    // Recompute when the CRIME SET changes, not merely when an hour has passed.
+    // Keying on faction + settings alone meant a spawn, a fill or an ended crime
+    // stayed invisible for up to an hour: the Failure Risk panel listed a crime
+    // the faction no longer had and omitted six it did. The TTL is kept because
+    // the engines also fold in OC history and role weights, which move on their
+    // own.
+    const _fp = crimesFingerprint(data.crimes || data.availableCrimes);
+    if (shouldRecomputeEngines(_engineCache.get(fid), {
+          settingsHash: engineSettingsHash(fSettings),
+          fingerprint: _fp,
+          now: Date.now(),
+          ttlMs: 3600_000,
+        })) {
       // v3.2.12: hydrate role weights from tornprobability.com so the
       // failure-risk + slot-optimizer engines can pick weakest links
       // and rank danger slots properly. 12h cache inside getRoleWeights
@@ -8666,7 +8679,7 @@ router.get("/api/oc/spawn-key", async (req, res) => {
       if (fSettings.engine_member_reliability) engines.memberReliability = runMemberReliability(fid, data);
 
 
-      _engineCache.set(fid, { ts: Date.now(), engines, settingsHash: engineSettingsHash(fSettings) });
+      _engineCache.set(fid, { ts: Date.now(), engines, settingsHash: engineSettingsHash(fSettings), fingerprint: _fp });
     }
     const engines = { ..._engineCache.get(fid).engines };
 
@@ -8752,7 +8765,13 @@ router.get("/api/oc/spawn-key", async (req, res) => {
           }
           // Run engines on fallback data too
           const fS2engines = {};
-          if (!_engineCache.has(fid) || (Date.now() - _engineCache.get(fid).ts) > 3600_000) {
+          const _fp2 = crimesFingerprint(data.crimes || data.availableCrimes);
+          if (shouldRecomputeEngines(_engineCache.get(fid), {
+                settingsHash: engineSettingsHash(fS2),
+                fingerprint: _fp2,
+                now: Date.now(),
+                ttlMs: 3600_000,
+              })) {
             // v3.2.12: hydrate role weights here too (fallback path).
             data.weights = await getRoleWeights();
             if (fS2.engine_slot_optimizer) fS2engines.slotOptimizer = runSlotOptimizer(fid, data);
@@ -8760,7 +8779,7 @@ router.get("/api/oc/spawn-key", async (req, res) => {
             if (fS2.engine_cpr_forecaster) fS2engines.cprForecaster = runCprForecaster(fid, data);
             if (fS2.engine_member_projector) fS2engines.memberProjector = runMemberProjector(fid, data);
             if (fS2.engine_member_reliability) fS2engines.memberReliability = runMemberReliability(fid, data);
-            _engineCache.set(fid, { ts: Date.now(), engines: fS2engines, settingsHash: engineSettingsHash(fS2) });
+            _engineCache.set(fid, { ts: Date.now(), engines: fS2engines, settingsHash: engineSettingsHash(fS2), fingerprint: _fp2 });
           }
           const retryEngines = { ...(_engineCache.get(fid)?.engines || {}) };
           if (fS2.engine_auto_dispatcher ?? true) {
