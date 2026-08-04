@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.21
+// @version     1.0.22
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4). Material prices update from live Torn market data using your own Torn API key (entered in the API tab). Works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -21,6 +21,12 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.22 - Restore parseArsonActions + _arsonNameToId. Removing the overrides
+//           layer in 1.0.20 deleted a whole contiguous block, and those two
+//           lived inside it while having nothing to do with overrides. The
+//           approve handler calls parseArsonActions BEFORE issuing the request,
+//           so a click threw ReferenceError, never sent anything, and left the
+//           button reading "Approving..." forever with the log still pending.
 // v1.0.21 - Bump SCENARIOS_VERSION to the new content hash. 1.0.20 moved
 //           approvals into the scenarios file but left the cache key alone, so
 //           clients holding a pre-migration copy kept serving it for up to 24h
@@ -4369,6 +4375,24 @@
     });
   }
 
+  function _arsonNameToId() {
+    var m = {};
+    for (var id in CATALOG) { var c = CATALOG[id]; if (c && c.name) m[String(c.name).toLowerCase()] = c.id; }
+    return m;
+  }
+  function parseArsonActions(text) {
+    if (!text) return [];
+    var nameToId = _arsonNameToId();
+    var out = [];
+    String(text).split(",").forEach(function (part) {
+      var mm = part.trim().match(/^(\d+)\s+(.+)$/);
+      if (!mm) return;
+      var qty = parseInt(mm[1], 10);
+      var rid = nameToId[mm[2].trim().toLowerCase()];
+      if (rid && qty > 0) out.push({ resourceId: rid, qty: qty });
+    });
+    return out;
+  }
   function fmtArsonActions(arr) {
     return Array.isArray(arr) ? arr.map(function (a) { return a.qty + " " + ((CATALOG[a.resourceId] && CATALOG[a.resourceId].name) || a.resourceId); }).join(", ") : "";
   }
