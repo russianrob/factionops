@@ -17,12 +17,30 @@ import { fileURLToPath } from "node:url";
 import * as store from "./store.js";
 import * as push from "./push-notifications.js";
 import { pickNewEvents, buildNotifications, hospitalWarning } from "./personal-events.js";
+import { isQuietHour } from "./personal-quiet-hours.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = join(__dirname, "data", "personal-events-state.json");
 const WATCH_FILE = join(__dirname, "data", "personal-watch.json");
 
 const POLL_MS = 45_000;
+
+// Overnight quiet window. Polling every 45s round the clock exhausted Torn's
+// DAILY read cap by ~04:00 EDT, after which every poll failed and attack +
+// hospital alerts were dead for the rest of the day — silently. Skipping the
+// hours the player is asleep preserves the budget for the hours they are not,
+// and stops 3am pushes into the bargain.
+//
+// NOTE the cost comment at the top of this file reasons about the 100/min
+// budget, which 45s never troubles. The daily cap is the limit that actually
+// binds here, and it was not considered.
+const QUIET = {
+  enabled: process.env.PERSONAL_QUIET_DISABLED !== "1",
+  startHour: Number(process.env.PERSONAL_QUIET_START ?? 22),
+  endHour: Number(process.env.PERSONAL_QUIET_END ?? 6),
+  timeZone: process.env.PERSONAL_QUIET_TZ || "America/New_York",
+};
+let _quietLogged = false;
 const EVENT_LIMIT = 25;
 
 /** playerId -> { seen: string[], firstRunDone: bool } */
@@ -125,6 +143,15 @@ async function pollPlayer(playerId) {
 
 async function pollOnce() {
   if (_polling) return;
+  if (isQuietHour(new Date(), QUIET)) {
+    // Log the transition only — one line a night, not one every 45s.
+    if (!_quietLogged) {
+      console.log(`[personal] quiet hours (${QUIET.startHour}:00-${QUIET.endHour}:00 ${QUIET.timeZone}) — polling paused`);
+      _quietLogged = true;
+    }
+    return;
+  }
+  if (_quietLogged) { console.log("[personal] quiet hours over — polling resumed"); _quietLogged = false; }
   _polling = true;
   try {
     loadWatch();                          // pick up watchlist edits without a reload
