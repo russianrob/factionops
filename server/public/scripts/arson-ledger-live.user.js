@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Arsonist's Ledger — Live Prices
 // @namespace   RussianRob
-// @version     1.0.24
+// @version     1.0.25
 // @description Arson profit-per-nerve calculator (Yukio's Torn Arsonist's Ledger v1.0.4). Material prices update from live Torn market data using your own Torn API key (entered in the API tab). Works in Torn PDA.
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @author      RussianRob (fork of Yukio [906148]'s Torn Arsonist's Ledger)
@@ -21,6 +21,10 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.25 - Refresh scenarios after Save scenario. The save reached the server
+//           but the local index was never reloaded, so a newly added scenario
+//           stayed missing from the Logs picker until a page reload — the one
+//           place you need it in order to log the thing you just added.
 // v1.0.24 - Build the scenario picker from live data instead of the baked-in
 //           SCENARIOS constant. A scenario added to the served file existed
 //           everywhere except the dropdown you select it from, so it could not
@@ -4512,6 +4516,12 @@
           if (rr.status >= 200 && rr.status < 300) {
             addSt.textContent = "Saved — live for everyone."; addSt.className = "pyro-s-status";
             fName.value = fPayout.value = fPlace.value = fIgnite.value = fStoke.value = fStokeTime.value = "";
+            // Pull the file back so scenarioIndex learns about what we just
+            // saved. Without this the server has the scenario and the local
+            // index does not, so the Logs picker — rebuilt from the index on
+            // every tab switch — still cannot offer it until a page reload.
+            // "Live for everyone" was true of the server and false here.
+            scheduleScenarioRefresh();
           } else {
             setErrStatus(addSt, rr.status === 403 ? "Not authorized" : ("Failed " + rr.status));
             addSt.className = "pyro-s-status err";
