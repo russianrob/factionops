@@ -324,6 +324,10 @@ export function chunkSegment(text, maxLines = 220, overlap = 40) {
 // prices pdftotext mangles — Sonnet reads the layout reliably. `images` is an
 // array of base64 PNG strings.
 export async function claudeExtractImage(images, prompt, opts = {}) {
+  // Sonnet reads the grouped "your choice, one price" deli tiles correctly where
+  // Haiku misassigns them — but Sonnet-5's extended THINKING (~1200 tokens) trips
+  // the token's output-per-minute limit and reliably 429s. Disabling thinking
+  // (below) keeps Sonnet's accuracy with a small, fast response (~8s, no 429).
   const model = opts.model || process.env.CIRCULAR_VISION_MODEL || "claude-sonnet-5";
   const tokenFile = opts.tokenFile || process.env.AGENT_CLAUDE_TOKEN_FILE || "/opt/warboard/server/data/.agent-claude-token";
   const maxTokens = opts.maxTokens || 8000;
@@ -336,6 +340,9 @@ export async function claudeExtractImage(images, prompt, opts = {}) {
   ];
   const body = JSON.stringify({
     model, max_tokens: maxTokens, system: EXTRACT_SYSTEM,
+    // Extended thinking is what trips the output-per-minute limit (429). Extraction
+    // needs none — disable it for a small, fast, accurate response.
+    thinking: { type: "disabled" },
     messages: [{ role: "user", content }],
   });
   const headers = {

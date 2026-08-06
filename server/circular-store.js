@@ -102,9 +102,17 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
   const pages = findDeliPages(pageTexts);
   if (!pages.length) return { state: "no-deli-pages" };
 
+  // The main extraction just fired ~30 Haiku calls (concurrency 4); that burst
+  // saturates the token's short-window rate limit, so the vision calls 429 if
+  // they follow immediately. Wait for the window to clear first. Weekly async
+  // job — the minute costs nothing. Tests pass cooldownMs:0.
+  const cooldownMs = opts.cooldownMs != null ? opts.cooldownMs : 60000;
+  if (cooldownMs) await new Promise(r => setTimeout(r, cooldownMs));
+
   // One vision call PER PAGE, a single image each. A two-image request trips a
   // per-request limit (single images succeed even at 96% of the 5h budget; two
-  // 429 at 4%), so never batch them. Space the calls a few seconds apart.
+  // 429 at 4%), so never batch them. Space the calls well apart — this token's
+  // window is tight enough that 4s was not enough.
   const offersAll = [];
   let pageFailures = 0;
   for (let i = 0; i < pages.length; i++) {
@@ -118,7 +126,7 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
     try {
       for (const o of extractJsonArray(await vision([img], buildDeliVisionPrompt()))) offersAll.push(o);
     } catch { pageFailures++; }
-    if (i < pages.length - 1) await new Promise(r => setTimeout(r, 4000));
+    if (i < pages.length - 1) await new Promise(r => setTimeout(r, 25000));
   }
 
   const fills = matchDeliOffers(offersAll);
