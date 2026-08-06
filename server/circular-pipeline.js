@@ -314,6 +314,52 @@ export function chunkSegment(text, maxLines = 220, overlap = 40) {
   return out;
 }
 
+// Vision extraction: read one or more PNG images with the model and return its
+// text. Same OAuth-token API path as claudeExtract, but the message content is
+// image blocks + the prompt. Used for the deli page, whose grouped/detached
+// prices pdftotext mangles — Sonnet reads the layout reliably. `images` is an
+// array of base64 PNG strings.
+export async function claudeExtractImage(images, prompt, opts = {}) {
+  const model = opts.model || process.env.CIRCULAR_VISION_MODEL || "claude-sonnet-5";
+  const tokenFile = opts.tokenFile || process.env.AGENT_CLAUDE_TOKEN_FILE || "/opt/warboard/server/data/.agent-claude-token";
+  const maxTokens = opts.maxTokens || 8000;
+  const doFetch = opts.fetchImpl || globalThis.fetch;
+  let token = "";
+  try { token = (opts.readFile || defaultReadFile)(tokenFile).trim(); } catch {}
+  const content = [
+    ...images.map(b64 => ({ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } })),
+    { type: "text", text: prompt },
+  ];
+  const body = JSON.stringify({
+    model, max_tokens: maxTokens, system: EXTRACT_SYSTEM,
+    messages: [{ role: "user", content }],
+  });
+  const headers = {
+    "content-type": "application/json", "anthropic-version": "2023-06-01",
+    "authorization": "Bearer " + token, "anthropic-beta": "oauth-2025-04-20",
+  };
+  // The OAuth token has a tight rate limit; vision requests are token-heavy and
+  // 429 readily under any concurrent warboard API activity. This is a once-a-week
+  // call, so back off generously (respecting Retry-After) rather than failing.
+  const backoff = [8000, 20000, 40000, 60000];
+  let lastErr;
+  for (let attempt = 0; attempt < backoff.length; attempt++) {
+    try {
+      const r = await doFetch("https://api.anthropic.com/v1/messages", { method: "POST", headers, body });
+      if (r.status === 429 || r.status === 529 || r.status >= 500) {
+        lastErr = new Error("api " + r.status);
+        const ra = parseInt(r.headers.get("retry-after") || "", 10);
+        await sleep(Number.isFinite(ra) ? ra * 1000 : backoff[attempt]);
+        continue;
+      }
+      if (!r.ok) throw new Error("api " + r.status + ": " + (await r.text()).slice(0, 200));
+      const d = await r.json();
+      return (d.content || []).map(c => c.text || "").join("");
+    } catch (e) { lastErr = e; await sleep(backoff[attempt]); }
+  }
+  throw lastErr;
+}
+
 // Extract offers from one page's raw text: split into physical-page segments,
 // window any oversized segment, run each chunk through the injected extractor,
 // merge (dedup absorbs window overlap). `extractor(prompt)` returns the model's

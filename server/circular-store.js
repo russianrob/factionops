@@ -12,19 +12,27 @@
 /// one URL == one week == one job. A re-POST of the same URL returns the existing
 /// job rather than re-running extraction (idempotency).
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import {
-  mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, rmSync,
+  mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, rmSync, copyFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import {
   jobIdForUrl, parseValidRange, mergeOffers, coverageCheck, extractPage, claudeExtract,
+  claudeExtractImage, extractJsonArray,
 } from "./circular-pipeline.js";
+import {
+  findDeliPages, buildDeliVisionPrompt, matchDeliOffers, countFilled, fillSheetXml, dateRangeLabel,
+} from "./deli-form.js";
 
 const execFileP = promisify(execFile);
 
 const DATA_DIR = process.env.CIRCULAR_DIR || "/opt/warboard/server/data/circular";
+const DELI_TEMPLATE = process.env.DELI_TEMPLATE || "/opt/warboard/server/data/deli-form-template.xlsx";
+const DELI_FORM_LATEST = process.env.DELI_FORM_LATEST || "/opt/warboard/server/public/deli-form-latest.xlsx";
+const XLSX_TOOL = "/opt/warboard/server/bin/xlsx-tool.py";
+const DELI_MIN_FILLED = 8;   // overwrite guard: below this, keep the existing form
 const MAX_PDF_BYTES = 200 * 1024 * 1024;   // circulars run ~77 MB; 200 MB is generous headroom
 const KEEP_JOBS = 10;                       // prune older weeks — a book a week, ~2.5 months retained
 const PAGE_CONCURRENCY = 4;
@@ -76,6 +84,55 @@ async function runPool(items, limit, fn) {
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return results;
+}
+
+// Generate the filled bulk-sale deli/cheese form from a week's circular. The
+// deli page's grouped/detached prices defeat text extraction, so this reads the
+// deli page(s) by VISION, matches under the user's rules (deli-form.js), and
+// fills the template. Runs as a follow-on step after the main extraction has
+// already persisted — a failure here never loses the offers or the job.
+//
+// Overwrite guard: the public /bulksale file (which the user has bookmarked and
+// approved) is replaced ONLY when the match filled at least DELI_MIN_FILLED rows.
+// A weak/garbage read writes a dated candidate and keeps the good form in place.
+export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
+  const vision = opts.visionExtractor || ((imgs, prompt) => claudeExtractImage(imgs, prompt));
+  const formLatest = opts.formLatest || DELI_FORM_LATEST;
+  const template = opts.template || DELI_TEMPLATE;
+  const pages = findDeliPages(pageTexts);
+  if (!pages.length) return { state: "no-deli-pages" };
+
+  const images = [];
+  for (const p of pages) {
+    const srcBase = join(dir, `deli-src-${p}`);
+    await execFileP("pdftoppm", ["-f", String(p), "-l", String(p), "-r", "150", "-singlefile", "-png", join(dir, "circular.pdf"), srcBase]);
+    const png = join(dir, `deli-p${p}.png`);
+    // ~1000px wide keeps each image small enough for the token's usage budget
+    // while the deli prices (large type) stay legible.
+    await execFileP("convert", [srcBase + ".png", "-resize", "1000x", png]);
+    images.push(readFileSync(png).toString("base64"));
+  }
+
+  const offers = extractJsonArray(await vision(images, buildDeliVisionPrompt()));
+  const fills = matchDeliOffers(offers);
+  const filled = countFilled(fills);
+  const dateRange = dateRangeLabel(range.validFrom, range.validThru);
+
+  // Fill the template's Production sheet (JS, tested) then repack the xlsx (the
+  // one thing Node stdlib can't do — python zip tool).
+  const sheetXml = execFileSync("python3", [XLSX_TOOL, "extract", template, "xl/worksheets/sheet1.xml"]).toString();
+  const filledXml = fillSheetXml(sheetXml, fills, dateRange);
+  const tmpXml = join(dir, "sheet1-filled.xml");
+  writeFileSync(tmpXml, filledXml);
+  const dated = join(DATA_DIR, `deli-form-${range.validFrom || "latest"}.xlsx`);
+  execFileSync("python3", [XLSX_TOOL, "replace", template, "xl/worksheets/sheet1.xml", tmpXml, dated]);
+
+  const summary = fills.map(f => ({ item: f.item, brand: f.brand, price: f.price }));
+  if (filled >= DELI_MIN_FILLED) {
+    copyFileSync(dated, formLatest);
+    return { state: "ok", filled, pages, dateRange, fills: summary };
+  }
+  return { state: "low-confidence", filled, pages, candidate: dated, fills: summary };
 }
 
 // The whole pipeline. Async; the route kicks this off and returns 202 without
@@ -141,13 +198,22 @@ export async function processCircular(url, opts = {}) {
     };
     writeFileSync(join(dir, "offers.json"), JSON.stringify(result, null, 1));
     writeFileSync(join(DATA_DIR, "latest.json"), JSON.stringify(result, null, 1));
+
+    // Deli/cheese bulk-sale form — a follow-on step. The offers above are already
+    // persisted, so a vision/rate-limit failure here degrades to a status note
+    // and keeps the existing /bulksale form; it never sinks the job.
+    let deliForm;
+    try { deliForm = await generateDeliForm(dir, pageTexts, range); }
+    catch (e) { deliForm = { state: "error", error: String((e && e.message) || e) }; }
+
     writeStatus(jobId, {
       state: "done", offerCount: offers.length,
       coverageFlags: coverage.length, coverage,
       validFrom: result.validFrom, validThru: result.validThru,
+      deliForm,
     });
     pruneOldJobs();
-    return { jobId, offerCount: offers.length, coverage };
+    return { jobId, offerCount: offers.length, coverage, deliForm };
   } catch (e) {
     writeStatus(jobId, { state: "error", error: String((e && e.message) || e) });
     throw e;
