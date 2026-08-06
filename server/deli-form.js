@@ -44,7 +44,10 @@ export const DELI_ROWS = [
   { row: 10, item: "Roast Beef",   match: t => /roast beef/.test(t),
     label: o => { const s = `${o.product || ""} ${o.description || ""}`.toLowerCase();
       return /eye round/.test(s) ? "Eye Round" : /london broil/.test(s) ? "London Broil" : "Regular"; } },
-  { row: 11, item: "American",     match: t => /american/.test(t) && !/\bham\b|turkey|chicken/.test(t) },
+  // American cheese — but NOT "American Cheddar" (that's a sharp cheddar, belongs
+  // in the Cheddar row). Without the cheddar exclusion, "Ultra Sharp American
+  // Cheddar" wrongly filled American.
+  { row: 11, item: "American",     match: t => /american/.test(t) && !/cheddar/.test(t) && !/\bham\b|turkey|chicken/.test(t) },
   { row: 12, item: "Provolone",    match: t => /provolone/.test(t) },
   { row: 13, item: "Mozzarella",   match: t => /mozzarella/.test(t) },
   { row: 14, item: "Muenster",     match: t => /muenster|munster/.test(t) },

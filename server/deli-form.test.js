@@ -97,6 +97,16 @@ test("flavored vs domestic ham splits on the description, not the brand", () => 
   assert.equal(m.find(r => r.item === "Domestic Ham").price, null);
 });
 
+test("'American Cheddar' fills Cheddar, not American; real American cheese fills American", () => {
+  const offers = [
+    { product: "Bowl & Basket Muenster", brand: "Bowl & Basket", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Ultra Sharp American Cheddar or" },
+    { product: "Black Bear American Cheese", brand: "Black Bear", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Yellow or White, Premium" },
+  ];
+  const m = matchDeliOffers(offers);
+  assert.equal(m.find(r => r.item === "American").brand, "Black Bear");   // real American cheese, not the Cheddar tile
+  assert.equal(m.find(r => r.item === "Cheddar").price, 5.99);            // the "American Cheddar" lands here
+});
+
 test("Roast Beef cell shows the cut (Eye Round / London Broil / Regular), not the brand", () => {
   const mk = (product, desc) => matchDeliOffers([{ product, brand: "Black Bear", priceText: "$13.99 lb", pricePerLb: 13.99, unit: "lb", description: desc }]).find(r => r.item === "Roast Beef").brand;
   assert.equal(mk("Black Bear London Broil Roast Beef", "Top Round"), "London Broil");
