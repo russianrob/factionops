@@ -50,6 +50,7 @@ export function closersForDay(employees, dayKey) {
 export const TASK_EXCLUSIONS = [
   { match: /block/i, exclude: ["RITA", "CARMELA"] },                       // blocking pack-out cases
   { match: /pre-?slice|boar'?s?\s*head/i, exclude: ["RITA", "CARMELA"] },  // pre-slice, incl. Boar's Head
+  { match: /cleaning\s*log/i, exclude: ["RITA", "CARMELA"] },              // the 5:30pm cleaning log
   { match: /cheese\s*table/i, exclude: ["CARMELA"] },                      // bringing cheese tables in
 ];
 export function excludedForTask(text) {

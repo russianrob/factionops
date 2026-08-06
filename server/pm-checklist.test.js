@@ -67,6 +67,7 @@ test("excludedForTask flags the physical tasks for the right people", () => {
   assert.deepEqual([...excludedForTask("Fill up the Boar’s Head pre-slice")], ["RITA", "CARMELA"]);
   assert.deepEqual([...excludedForTask("Fill up pre-slice & salad case")], ["RITA", "CARMELA"]);
   assert.deepEqual([...excludedForTask("Put Cheese tables into our cooler")], ["CARMELA"]);
+  assert.deepEqual([...excludedForTask("Complete 5:30pm cleaning log")], ["RITA", "CARMELA"]);
   assert.deepEqual([...excludedForTask("Clean the glass on the counter tops")], []);  // no exclusion
   // "cheese" in a non-table task must NOT trigger the cheese-table exclusion:
   assert.deepEqual([...excludedForTask("Make sure all open meats & cheese have a lid")], []);
