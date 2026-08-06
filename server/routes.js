@@ -632,8 +632,16 @@ function _circularAuthOk(req) {
 router.post("/api/circular", (req, res, next) => {
   if (_circularAuthOk(req)) return next();
   return res.status(401).json({ error: "unauthorized" });
-}, express.json({ limit: "16kb" }), (req, res) => {
-  const url = req.body && typeof req.body.url === "string" ? req.body.url.trim() : "";
+}, express.text({ type: ["text/*", "application/octet-stream"], limit: "64kb" }), (req, res) => {
+  // Accept the URL three ways so the hand-built Shortcut can be as simple as
+  // possible: a ?url= query param, a JSON {url} body (parsed by the global
+  // parser → req.body is an object), or a plain-text body that IS the url
+  // (parsed here → req.body is a string). The text form is the easiest to build
+  // by hand: Request Body = Text = Shortcut Input, no JSON dictionary.
+  let url = "";
+  if (typeof req.query.url === "string" && req.query.url.trim()) url = req.query.url.trim();
+  else if (typeof req.body === "string" && req.body.trim()) url = req.body.trim();
+  else if (req.body && typeof req.body === "object" && typeof req.body.url === "string") url = req.body.url.trim();
   const v = validateCircularUrl(url);
   if (!v.ok) return res.status(400).json({ error: "bad url", reason: v.reason });
   const jobId = circularJobId(v.url);
