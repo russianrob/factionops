@@ -46,6 +46,7 @@ export const DELI_ROWS = [
   { row: 12, item: "Mozzarella",   match: t => /mozzarella/.test(t) },
   { row: 13, item: "Muenster",     match: t => /muenster|munster/.test(t) },
   { row: 14, item: "Swiss",        match: t => /swiss/.test(t) },
+  { row: 15, item: "Cheddar",      match: t => /cheddar/.test(t) },
 ];
 
 // ── Matching ────────────────────────────────────────────────────────────────

@@ -42,6 +42,7 @@ test("matchDeliOffers reproduces the user-approved 12 rows exactly", () => {
     "Mozzarella": [null, null],
     "Muenster": ["Bowl & Basket", 5.99],
     "Swiss": ["Bowl & Basket", 5.99],
+    "Cheddar": [null, null],   // added; no per-lb deli cheddar this week
   };
   for (const row of got) {
     const [brand, price] = expect[row.item];
