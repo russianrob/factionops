@@ -88,6 +88,7 @@ import { crimesFingerprint, shouldRecompute as shouldRecomputeEngines } from "./
 import { upsertScenario } from "./arson-scenarios.js";
 import { processCircular, readStatus as readCircularStatus, readLatest as readCircularLatest, jobIdForUrl as circularJobId } from "./circular-store.js";
 import { validateCircularUrl, buildShortcutPlist } from "./circular-pipeline.js";
+import { generateTasks, readSchedule as readTaskSchedule, parseSchedule, OUT_LATEST as TASKS_LATEST_FILE } from "./pm-checklist-store.js";
 import * as pendingBroadcasts from "./pending-broadcasts.js";
 import * as inspectRelay from "./inspect-relay.js";
 import * as missingOverrides from "./missing-overrides.js";
@@ -680,6 +681,39 @@ router.get("/api/circular/latest", (req, res) => {
   const latest = readCircularLatest();
   if (!latest) return res.status(404).json({ error: "no circular yet" });
   return res.json(latest);
+});
+
+//   GET /tasks   — today's PM (2nd-shift) Appy checklist, tasks assigned to the
+// day's 9pm-or-later closers. Public but noindex (global X-Robots-Tag).
+router.get("/tasks", (req, res) => {
+  let body;
+  try { body = readFileSync(TASKS_LATEST_FILE); } catch { return res.status(404).json({ error: "no checklist yet" }); }
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", 'attachment; filename="PM Checklist.xlsx"');
+  res.setHeader("Content-Length", String(body.length));
+  return res.end(body);
+});
+
+//   POST /api/schedule   { image: "<base64>" }  — upload the weekly Appy schedule
+// image. Server reads it (vision) into a per-weekday closer map, DELETES the raw
+// image, and regenerates today's checklist. Auth: circular token OR owner.
+router.post("/api/schedule", (req, res, next) => {
+  if (_circularAuthOk(req)) return next();
+  return res.status(401).json({ error: "unauthorized" });
+}, express.json({ limit: "25mb" }), async (req, res) => {
+  const image = req.body && req.body.image;
+  if (!image || typeof image !== "string") return res.status(400).json({ error: "no image" });
+  const b64 = image.replace(/^data:image\/\w+;base64,/, "");
+  const tmp = pathResolve("/opt/warboard/server/data/tasks/upload-" + Date.now() + ".png");
+  try {
+    writeFileSync(tmp, Buffer.from(b64, "base64"));
+    const sched = await parseSchedule(tmp);                 // parses + deletes the image
+    const today = generateTasks(new Date());
+    return res.json({ ok: true, weekStart: sched.weekStart, byDay: sched.byDay, today });
+  } catch (e) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
+    return res.status(500).json({ error: String((e && e.message) || e) });
+  }
 });
 
 //   GET /bulksale   — download the latest filled bulk-sale deli/cheese form.

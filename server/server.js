@@ -94,7 +94,7 @@ app.use(
 // req._body, making the route-level 16mb limit a dead no-op) and 413 anything
 // over 1mb before the route runs.
 const _json1mb = express.json({ limit: '1mb' });
-const _jsonExempt = new Set(["/api/screenshot", "/api/shot", "/api/agent/message", "/api/agent/inspect"]);
+const _jsonExempt = new Set(["/api/screenshot", "/api/shot", "/api/agent/message", "/api/agent/inspect", "/api/schedule"]);
 app.use((req, res, next) => _jsonExempt.has(req.path) ? next() : _json1mb(req, res, next));
 
 // ── Security headers ───────────────────────────────────────────────────────
@@ -112,6 +112,12 @@ app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
+
+// Keep everything under tornwar.com out of search engines — these are personal
+// tools and data (bulksale form, tasks checklist, script feeds), not public
+// pages. X-Robots-Tag on every response + a blanket robots.txt disallow.
+app.use((req, res, next) => { res.setHeader('X-Robots-Tag', 'noindex, nofollow'); next(); });
+app.get('/robots.txt', (req, res) => { res.type('text/plain').send('User-agent: *\nDisallow: /\n'); });
 
 // ── Rate limiting ────────────────────────────────────────────────────────
 
