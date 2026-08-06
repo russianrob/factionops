@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   firstNameUpper, shiftEndHour, closersForDay, assignAlternating, dayKeyForDate, fillChecklistXml,
-  excludedForTask, resolveTaskTexts, parseSharedStrings,
+  excludedForTask, resolveTaskTexts, parseSharedStrings, excelSerial,
 } from "./pm-checklist.js";
 
 // This week's schedule (as vision returns it), enough to exercise the rules.
@@ -104,6 +104,15 @@ test("parseSharedStrings + resolveTaskTexts pull each task row's column-A text",
 test("dayKeyForDate maps a Date to its weekday key", () => {
   assert.equal(dayKeyForDate(new Date("2026-08-06T12:00:00")), "Thu");
   assert.equal(dayKeyForDate(new Date("2026-08-02T12:00:00")), "Sun");
+});
+
+test("excelSerial gives the Excel date serial; fillChecklistXml stamps D1 as a fixed value", () => {
+  assert.equal(excelSerial(new Date(2026, 7, 6)), 46240);
+  assert.equal(excelSerial(new Date(2026, 7, 7)), 46241);
+  const sheet = '<row r="1"><c r="D1" s="5" t="n"><f>TODAY()</f><v>46240</v></c></row>';
+  const out = fillChecklistXml(sheet, {}, 46241);
+  assert.match(out, /<c r="D1" s="5" t="n"><v>46241<\/v><\/c>/);
+  assert.ok(!out.includes("TODAY()"), "self-updating formula removed");
 });
 
 test("fillChecklistXml writes names into E cells as inline strings, keeps style", () => {

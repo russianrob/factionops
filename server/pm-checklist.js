@@ -105,13 +105,24 @@ export function resolveTaskTexts(sheetXml, sharedStrings, rows) {
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export function dayKeyForDate(d) { return DOW[d.getDay()]; }
 
+// Excel date serial (days since 1899-12-30) for a Date — for the checklist's
+// date cell.
+export function excelSerial(date) {
+  return Math.round((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(1899, 11, 30)) / 86400000);
+}
+
 // Fill the checklist sheet1.xml: put each assigned name into the E cell of its
-// task row (inline string, preserving the cell style). The date cell is a
-// =TODAY() formula, so it self-updates — left alone. Pure over the XML string.
-export function fillChecklistXml(sheetXml, assignments) {
+// task row (inline string, preserving the cell style), and set the date cell (D1)
+// to `dateSerial` as a FIXED value — the template's =TODAY() formula would show
+// whenever the file is opened, not the day the list is FOR. Pure over the XML.
+export function fillChecklistXml(sheetXml, assignments, dateSerial) {
   let xml = sheetXml;
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const styleOf = (ref) => { const m = xml.match(new RegExp(`<c r="${ref}"([^>]*)>`)); const s = m && m[1].match(/s="(\d+)"/); return s ? ` s="${s[1]}"` : ""; };
+  if (dateSerial != null) {
+    const s = styleOf("D1");
+    xml = xml.replace(/<c r="D1"[^>]*>[\s\S]*?<\/c>/, `<c r="D1"${s} t="n"><v>${dateSerial}</v></c>`);
+  }
   for (const [row, name] of Object.entries(assignments)) {
     const ref = `E${row}`, s = styleOf(ref);
     const cell = `<c r="${ref}"${s} t="inlineStr"><is><t>${esc(name)}</t></is></c>`;

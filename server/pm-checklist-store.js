@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { claudeExtractImage, extractJsonArray } from "./circular-pipeline.js";
 import {
   closersForDay, assignAlternating, dayKeyForDate, fillChecklistXml, buildScheduleVisionPrompt,
-  resolveTaskTexts, parseSharedStrings,
+  resolveTaskTexts, parseSharedStrings, excelSerial,
 } from "./pm-checklist.js";
 
 const DATA_DIR = process.env.TASKS_DIR || "/opt/warboard/server/data/tasks";
@@ -96,7 +96,7 @@ export function generateTasks(date, opts = {}) {
   const ss = execFileSync("python3", [XLSX_TOOL, "extract", template, "xl/sharedStrings.xml"]).toString();
   const tasks = resolveTaskTexts(sheet, parseSharedStrings(ss), TASK_ROWS);   // {row, text} for exclusion matching
   const assignments = assignAlternating(tasks, closers);
-  const filled = fillChecklistXml(sheet, assignments);
+  const filled = fillChecklistXml(sheet, assignments, excelSerial(date));
   const tmpXml = join(DATA_DIR, "sheet1-filled.xml");
   writeFileSync(tmpXml, filled);
   execFileSync("python3", [XLSX_TOOL, "replace", template, "xl/worksheets/sheet1.xml", tmpXml, outLatest]);
