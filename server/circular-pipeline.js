@@ -53,7 +53,11 @@ export function jobIdForUrl(url) {
 const MONTHS = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12 };
 export function parseValidRange(rawText) {
   const t = String(rawText).replace(/\s+/g, " ");
-  const m = t.match(/valid\s+\w+,\s*([a-z]+)\s+(\d+)(?:st|nd|rd|th)?\s+thru\s+\w+,\s*([a-z]+)\s+(\d+)(?:st|nd|rd|th)?,?\s*(\d{4})/i);
+  // Two banner formats seen: the cover's "OFFERS VALID SUNDAY, AUGUST 2ND THRU
+  // SATURDAY, AUGUST 8TH, 2026" and the per-page disclaimer's "…effective Sun.,
+  // August 9 thru Sat., August 15, 2026". Match either: an optional abbreviated
+  // day (with period), the month, the day number, "thru", the same again, year.
+  const m = t.match(/\b(?:offers\s+valid|valid|effective)\s+[a-z]+\.?,?\s*([a-z]+)\s+(\d+)(?:st|nd|rd|th)?\s+thru\s+[a-z]+\.?,?\s*([a-z]+)\s+(\d+)(?:st|nd|rd|th)?,?\s*(\d{4})/i);
   if (!m) return null;
   const fromMo = MONTHS[m[1].toLowerCase()], thruMo = MONTHS[m[3].toLowerCase()], year = +m[5];
   if (!fromMo || !thruMo) return null;
