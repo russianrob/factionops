@@ -52,7 +52,12 @@ export const DELI_ROWS = [
   { row: 13, item: "Mozzarella",   match: t => /mozzarella/.test(t) },
   { row: 14, item: "Muenster",     match: t => /muenster|munster/.test(t) },
   { row: 15, item: "Swiss",        match: t => /swiss/.test(t) },
-  { row: 16, item: "Cheddar",      match: t => /cheddar/.test(t) },
+  // Cheddar cell includes the sharpness variety (e.g. "Bowl & Basket Ultra Sharp")
+  // when the text names one, since that's how the user identifies the cheddar.
+  { row: 16, item: "Cheddar",      match: t => /cheddar/.test(t),
+    label: o => { const brand = (o.brand || "").trim();
+      const m = `${o.product || ""} ${o.description || ""}`.match(/\b(extra sharp|ultra sharp|sharp|medium|mild)\b/i);
+      return m ? `${brand} ${m[1].replace(/\b\w/g, c => c.toUpperCase())}`.trim() : (brand || null); } },
 ];
 
 // ── Matching ────────────────────────────────────────────────────────────────

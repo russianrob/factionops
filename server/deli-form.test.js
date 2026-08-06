@@ -104,7 +104,9 @@ test("'American Cheddar' fills Cheddar, not American; real American cheese fills
   ];
   const m = matchDeliOffers(offers);
   assert.equal(m.find(r => r.item === "American").brand, "Black Bear");   // real American cheese, not the Cheddar tile
-  assert.equal(m.find(r => r.item === "Cheddar").price, 5.99);            // the "American Cheddar" lands here
+  const ched = m.find(r => r.item === "Cheddar");
+  assert.equal(ched.price, 5.99);            // the "American Cheddar" lands here
+  assert.equal(ched.brand, "Bowl & Basket Ultra Sharp");   // sharpness variety appended
 });
 
 test("Roast Beef cell shows the cut (Eye Round / London Broil / Regular), not the brand", () => {
