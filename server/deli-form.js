@@ -87,9 +87,9 @@ export function countFilled(fills) { return fills.filter(f => f.price != null).l
 // "Store Sliced" (the deli counter's own phrasing — specific enough that even a
 // single occurrence is a real by-the-pound item, e.g. the lone "Black Bear Eye
 // Round Roast Beef (Deli) Store Sliced $10.99" tucked into a "Lunchbox
-// Essentials" grocery page). Raw-meat/produce pages have high "lb" counts but
-// ZERO "Store Sliced", so lb density is NOT a usable signal. Returns page
-// numbers; caller logs them and treats [] as a hard failure.
+// Essentials" grocery page — a locked-in price valid this week too). Raw-meat/
+// produce pages have high "lb" counts but ZERO "Store Sliced", so lb density is
+// NOT a usable signal. Returns page numbers; caller treats [] as a hard failure.
 export function findDeliPages(pageTexts) {
   const pages = [];
   for (const { page, text } of pageTexts) {
