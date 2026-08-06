@@ -629,7 +629,9 @@ function _circularAuthOk(req) {
 // Validates the URL, then either returns the existing job for that week (a
 // re-fired Shortcut is idempotent) or kicks off extraction in the background and
 // returns 202 immediately — the fetch+pdftotext+extract takes minutes.
-router.post("/api/circular", (req, res, next) => {
+// /bulksale is a friendly alias for /api/circular — easier to type into the
+// phone Shortcut. Both paths hit the same handler.
+router.post(["/api/circular", "/bulksale"], (req, res, next) => {
   if (_circularAuthOk(req)) return next();
   return res.status(401).json({ error: "unauthorized" });
 }, express.text({ type: ["text/*", "application/octet-stream"], limit: "64kb" }),
