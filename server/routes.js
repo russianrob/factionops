@@ -700,13 +700,17 @@ router.get("/tasks", (req, res) => {
 router.post("/api/schedule", (req, res, next) => {
   if (_circularAuthOk(req)) return next();
   return res.status(401).json({ error: "unauthorized" });
-}, express.json({ limit: "25mb" }), async (req, res) => {
-  const image = req.body && req.body.image;
-  if (!image || typeof image !== "string") return res.status(400).json({ error: "no image" });
-  const b64 = image.replace(/^data:image\/\w+;base64,/, "");
+}, express.raw({ type: ["image/*", "application/octet-stream", "application/pdf"], limit: "25mb" }),
+   express.json({ limit: "25mb" }), async (req, res) => {
+  // Accept the schedule either as a raw image/PDF body (Shortcut "Request Body =
+  // File") or as JSON {image: "<base64>"} — whichever is easiest to build.
+  let buf = null;
+  if (Buffer.isBuffer(req.body) && req.body.length > 100) buf = req.body;
+  else if (req.body && typeof req.body.image === "string") buf = Buffer.from(req.body.image.replace(/^data:[^;]+;base64,/, ""), "base64");
+  if (!buf) return res.status(400).json({ error: "no image" });
   const tmp = pathResolve("/opt/warboard/server/data/tasks/upload-" + Date.now() + ".png");
   try {
-    writeFileSync(tmp, Buffer.from(b64, "base64"));
+    writeFileSync(tmp, buf);
     const sched = await parseSchedule(tmp);                 // parses + deletes the image
     const today = generateTasks(new Date());
     return res.json({ ok: true, weekStart: sched.weekStart, byDay: sched.byDay, today });
