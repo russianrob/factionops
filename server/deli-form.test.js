@@ -119,9 +119,11 @@ test("findDeliPages detects the header page and Store-Sliced pages, not raw-meat
     { page: 2, text: "Chicken Breast $2.49 lb Pork Chops $2.99 lb Beef $5.99 lb lb lb" }, // raw meat, high lb, no Store Sliced
     { page: 5, text: "Deli, Specialty Cheese & Snacking\nCarando Genoa Salami Store Sliced" },
     { page: 4, text: "Black Bear Turkey Breast Store Sliced ... Land O'Lakes American Store Sliced" }, // 2 Store Sliced
+    { page: 10, text: "Black Bear Eye Round Roast Beef (Deli) Store Sliced $10.99" }, // 1 Store Sliced (lunchbox page)
   ]);
   assert.ok(pages.includes(5), "header page");
   assert.ok(pages.includes(4), "Store-Sliced page (Turkey/American)");
+  assert.ok(pages.includes(10), "single Store-Sliced item (roast beef on a grocery page)");
   assert.ok(!pages.includes(1) && !pages.includes(2), "raw-meat/other pages excluded");
 });
 

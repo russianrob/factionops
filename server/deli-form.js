@@ -83,18 +83,19 @@ export function countFilled(fills) { return fills.filter(f => f.price != null).l
 
 // ── Deli-page detection ─────────────────────────────────────────────────────
 
-// Which PDF pages hold the deli counter. Primary signal is the literal section
-// header; the reliable secondary is "Store Sliced" — the deli counter's own
-// phrasing, which appears only on deli pages (raw-meat/produce pages have high
-// "lb" counts but ZERO "Store Sliced", so lb density is NOT a usable signal).
-// This week: pages 4 (2) and 5 (14); every other page 0. Returns page numbers;
-// caller logs them and treats [] as a hard failure.
+// Which PDF pages hold deli-counter items. Signal = the section header OR any
+// "Store Sliced" (the deli counter's own phrasing — specific enough that even a
+// single occurrence is a real by-the-pound item, e.g. the lone "Black Bear Eye
+// Round Roast Beef (Deli) Store Sliced $10.99" tucked into a "Lunchbox
+// Essentials" grocery page). Raw-meat/produce pages have high "lb" counts but
+// ZERO "Store Sliced", so lb density is NOT a usable signal. Returns page
+// numbers; caller logs them and treats [] as a hard failure.
 export function findDeliPages(pageTexts) {
   const pages = [];
   for (const { page, text } of pageTexts) {
     const header = /Deli,?\s*Specialty\s*Cheese/i.test(text);
     const sliced = (text.match(/Store\s*Sliced/gi) || []).length;
-    if (header || sliced >= 2) pages.push(page);
+    if (header || sliced >= 1) pages.push(page);
   }
   return pages;
 }
