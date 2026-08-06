@@ -45,13 +45,58 @@ export function closersForDay(employees, dayKey) {
   return out;
 }
 
-// Alternate the task rows among the closers: row i → closers[i % n]. Returns a
-// { rowNumber: NAME } map. No closers → empty (nothing assigned).
-export function assignAlternating(taskRows, closers) {
+// Per-task exclusions — some tasks are too physical for certain people, so they
+// never get assigned those even when closing. Matched on the task's text.
+export const TASK_EXCLUSIONS = [
+  { match: /block/i, exclude: ["RITA", "CARMELA"] },                       // blocking pack-out cases
+  { match: /pre-?slice|boar'?s?\s*head/i, exclude: ["RITA", "CARMELA"] },  // pre-slice, incl. Boar's Head
+  { match: /cheese\s*table/i, exclude: ["CARMELA"] },                      // bringing cheese tables in
+];
+export function excludedForTask(text) {
+  const s = new Set();
+  for (const r of TASK_EXCLUSIONS) if (r.match.test(String(text))) r.exclude.forEach(n => s.add(n));
+  return s;
+}
+
+// Alternate the tasks among the closers (task i → closers[i % n]) BUT skip anyone
+// excluded from that specific task, handing it to the next eligible closer.
+// `tasks` is [{row, text}] (a bare row number is treated as text-less). Returns a
+// { rowNumber: NAME } map; a task with no eligible closer is left unassigned.
+export function assignAlternating(tasks, closers) {
   const out = {};
   if (!closers || !closers.length) return out;
-  taskRows.forEach((row, i) => { out[row] = closers[i % closers.length]; });
+  const T = tasks.map(t => (typeof t === "object" ? t : { row: t, text: "" }));
+  const n = closers.length;
+  T.forEach((t, i) => {
+    const excl = excludedForTask(t.text || "");
+    for (let k = 0; k < n; k++) {
+      const cand = closers[(i + k) % n];
+      if (!excl.has(cand)) { out[t.row] = cand; break; }
+    }
+  });
   return out;
+}
+
+// Resolve the ss table + each task row's column-A text (for exclusion matching).
+export function parseSharedStrings(xml) {
+  return String(xml).split("<si>").slice(1).map(b => {
+    const inner = b.split("</si>")[0];
+    return [...inner.matchAll(/<t[^>]*>([^<]*)<\/t>/g)].map(m => m[1]).join("");
+  });
+}
+export function resolveTaskTexts(sheetXml, sharedStrings, rows) {
+  return rows.map(row => {
+    const cell = String(sheetXml).match(new RegExp(`<c r="A${row}"([^>]*)>([\\s\\S]*?)</c>`));
+    let text = "";
+    if (cell) {
+      const isShared = /t="s"/.test(cell[1]);
+      const inlineM = cell[2].match(/<t[^>]*>([^<]*)<\/t>/);
+      const vM = cell[2].match(/<v>(\d+)<\/v>/);
+      if (isShared && vM) text = sharedStrings[+vM[1]] || "";
+      else if (inlineM) text = inlineM[1];
+    }
+    return { row, text };
+  });
 }
 
 // The three-letter day key for a Date (used to map a calendar date onto the

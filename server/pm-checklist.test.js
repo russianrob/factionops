@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   firstNameUpper, shiftEndHour, closersForDay, assignAlternating, dayKeyForDate, fillChecklistXml,
+  excludedForTask, resolveTaskTexts, parseSharedStrings,
 } from "./pm-checklist.js";
 
 // This week's schedule (as vision returns it), enough to exercise the rules.
@@ -59,6 +60,44 @@ test("assignAlternating with three closers cycles through all", () => {
 
 test("assignAlternating with no closers assigns nothing", () => {
   assert.deepEqual(assignAlternating([4, 5, 6], []), {});
+});
+
+test("excludedForTask flags the physical tasks for the right people", () => {
+  assert.deepEqual([...excludedForTask("Block pack-out cases as per standards")], ["RITA", "CARMELA"]);
+  assert.deepEqual([...excludedForTask("Fill up the Boar’s Head pre-slice")], ["RITA", "CARMELA"]);
+  assert.deepEqual([...excludedForTask("Fill up pre-slice & salad case")], ["RITA", "CARMELA"]);
+  assert.deepEqual([...excludedForTask("Put Cheese tables into our cooler")], ["CARMELA"]);
+  assert.deepEqual([...excludedForTask("Clean the glass on the counter tops")], []);  // no exclusion
+  // "cheese" in a non-table task must NOT trigger the cheese-table exclusion:
+  assert.deepEqual([...excludedForTask("Make sure all open meats & cheese have a lid")], []);
+});
+
+test("Rita never gets blocking/pre-slice — it goes to the co-closer", () => {
+  const tasks = [
+    { row: 5, text: "Fill up pre-slice & salad case" },   // Rita excluded
+    { row: 8, text: "Fill up the Boar’s Head pre-slice" }, // Rita excluded
+    { row: 10, text: "Block pack-out cases" },             // Rita excluded
+    { row: 6, text: "Make sure open meats have a lid" },   // no exclusion
+  ];
+  const a = assignAlternating(tasks, ["LATISHA", "RITA"]);
+  assert.equal(a[5], "LATISHA");   // would be LATISHA anyway (i=0)
+  assert.equal(a[8], "LATISHA");   // i=1 → RITA excluded → next eligible LATISHA
+  assert.equal(a[10], "LATISHA");  // i=2 → LATISHA
+  assert.equal(a[6], "RITA");      // i=3 → RITA (no exclusion) — Rita still gets non-physical tasks
+});
+
+test("Carmela excluded from cheese tables specifically", () => {
+  const a = assignAlternating([{ row: 12, text: "Put Cheese tables into our cooler" }], ["CARMELA", "TAHJ"]);
+  assert.equal(a[12], "TAHJ");   // CARMELA (i=0) excluded → TAHJ
+});
+
+test("parseSharedStrings + resolveTaskTexts pull each task row's column-A text", () => {
+  const ss = '<sst><si><t>Header</t></si><si><t>Block pack-out cases</t></si></sst>';
+  const sheet = '<row r="10"><c r="A10" s="11" t="s"><v>1</v></c></row>'
+    + '<row r="11"><c r="A11" s="11" t="inlineStr"><is><t>Clean the glass</t></is></c></row>';
+  const strings = parseSharedStrings(ss);
+  assert.deepEqual(resolveTaskTexts(sheet, strings, [10, 11]),
+    [{ row: 10, text: "Block pack-out cases" }, { row: 11, text: "Clean the glass" }]);
 });
 
 test("dayKeyForDate maps a Date to its weekday key", () => {
