@@ -629,9 +629,7 @@ function _circularAuthOk(req) {
 // Validates the URL, then either returns the existing job for that week (a
 // re-fired Shortcut is idempotent) or kicks off extraction in the background and
 // returns 202 immediately — the fetch+pdftotext+extract takes minutes.
-// /bulksale is a friendly alias for /api/circular — easier to type into the
-// phone Shortcut. Both paths hit the same handler.
-router.post(["/api/circular", "/bulksale"], (req, res, next) => {
+router.post("/api/circular", (req, res, next) => {
   if (_circularAuthOk(req)) return next();
   return res.status(401).json({ error: "unauthorized" });
 }, express.text({ type: ["text/*", "application/octet-stream"], limit: "64kb" }),
@@ -682,6 +680,20 @@ router.get("/api/circular/latest", (req, res) => {
   const latest = readCircularLatest();
   if (!latest) return res.status(404).json({ error: "no circular yet" });
   return res.json(latest);
+});
+
+//   GET /bulksale   — download the latest filled bulk-sale deli/cheese form.
+// A permanent, simple link (bookmarkable) that always serves the current week's
+// generated .xlsx. Ungated: it's just this week's deli sale prices for one store.
+const _DELI_FORM_FILE = pathResolve("/opt/warboard/server/public/deli-form-latest.xlsx");
+router.get("/bulksale", (req, res) => {
+  if (!existsSync(_DELI_FORM_FILE)) return res.status(404).json({ error: "no form yet" });
+  let body;
+  try { body = readFileSync(_DELI_FORM_FILE); } catch { return res.status(404).json({ error: "no form yet" }); }
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", 'attachment; filename="Bulk Sale Form.xlsx"');
+  res.setHeader("Content-Length", String(body.length));
+  return res.end(body);
 });
 
 //   GET /api/circular/shortcut?k=<token>   — download the installable iOS Shortcut
