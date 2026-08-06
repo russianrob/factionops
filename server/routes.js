@@ -87,7 +87,7 @@ import { encrypt as encryptKey, decrypt as decryptKey, isEncrypted as isEncrypte
 import { crimesFingerprint, shouldRecompute as shouldRecomputeEngines } from "./oc-engine-cache.js";
 import { upsertScenario } from "./arson-scenarios.js";
 import { processCircular, readStatus as readCircularStatus, readLatest as readCircularLatest, jobIdForUrl as circularJobId } from "./circular-store.js";
-import { validateCircularUrl } from "./circular-pipeline.js";
+import { validateCircularUrl, buildShortcutPlist } from "./circular-pipeline.js";
 import * as pendingBroadcasts from "./pending-broadcasts.js";
 import * as inspectRelay from "./inspect-relay.js";
 import * as missingOverrides from "./missing-overrides.js";
@@ -670,6 +670,28 @@ router.get("/api/circular/latest", (req, res) => {
   const latest = readCircularLatest();
   if (!latest) return res.status(404).json({ error: "no circular yet" });
   return res.json(latest);
+});
+
+//   GET /api/circular/shortcut?k=<token>   — download the installable iOS Shortcut
+// Tapping a link can't carry a header, so the token rides in the query string
+// (?k=). That doubles as the gate: the .shortcut embeds the token, so it must
+// only be served to whoever already holds it — the download link IS the secret.
+// Served as application/x-shortcut so Safari hands it to the Shortcuts app.
+router.get("/api/circular/shortcut", (req, res) => {
+  let want = "";
+  try { want = readFileSync(_CIRCULAR_TOKEN_FILE, "utf8").trim(); } catch { want = ""; }
+  const got = String(req.query.k || "");
+  const a = Buffer.from(got), b = Buffer.from(want);
+  if (!want || a.length !== b.length || !_uploadTimingSafeEqual(a, b)) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  // Send as a Buffer so express does not append "; charset=utf-8" to the type —
+  // the Shortcuts handler wants a bare application/x-shortcut.
+  const body = Buffer.from(buildShortcutPlist(want), "utf8");
+  res.setHeader("Content-Type", "application/x-shortcut");
+  res.setHeader("Content-Disposition", 'attachment; filename="Send Circular to Warboard.shortcut"');
+  res.setHeader("Content-Length", String(body.length));
+  return res.end(body);
 });
 
 // owner → chat with the in-app agent; SSE stream of normalized turn events

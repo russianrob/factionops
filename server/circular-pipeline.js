@@ -131,6 +131,109 @@ export function coverageCheck(rawText, offers) {
   return { missed: uniq, missedCount: uniq.length };
 }
 
+// ── Installable iOS Shortcut ────────────────────────────────────────────────
+
+// Build an (unsigned) .shortcut plist for a share-sheet action that POSTs the
+// shared URL to /api/circular. The user taps a link, iOS imports it — modulo the
+// one-time "Allow Untrusted Shortcuts" toggle that all unsigned shortcuts need.
+//
+// The one fiddly part is getting the shared URL into the JSON body: the value of
+// the "url" key is not a plain string but a WFTextTokenString whose single
+// object-replacement char (U+FFFC) is backed by an ExtensionInput attachment
+// (i.e. "Shortcut Input" — what the share sheet handed in). WFWorkflowTypes must
+// include ActionExtension and WFWorkflowInputContentItemClasses must include
+// WFURLContentItem or the shortcut never appears in the share sheet at all.
+const OBJ = "￼"; // object-replacement char an attachment binds to
+function xmlEscape(s) { return String(s).replace(/[<>&'"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[c])); }
+export function buildShortcutPlist(token, endpoint = "https://tornwar.com/api/circular") {
+  const tok = xmlEscape(token);
+  const url = xmlEscape(endpoint);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>WFWorkflowActions</key>
+	<array>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.downloadurl</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFURL</key>
+				<string>${url}</string>
+				<key>WFHTTPMethod</key>
+				<string>POST</string>
+				<key>WFHTTPBodyType</key>
+				<string>JSON</string>
+				<key>WFHTTPHeaders</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>WFDictionaryFieldValueItems</key>
+						<array>
+							<dict>
+								<key>WFItemType</key><integer>0</integer>
+								<key>WFKey</key>
+								<dict><key>Value</key><dict><key>string</key><string>x-circular-token</string></dict><key>WFSerializationType</key><string>WFTextTokenString</string></dict>
+								<key>WFValue</key>
+								<dict><key>Value</key><dict><key>string</key><string>${tok}</string></dict><key>WFSerializationType</key><string>WFTextTokenString</string></dict>
+							</dict>
+						</array>
+					</dict>
+					<key>WFSerializationType</key><string>WFDictionaryFieldValue</string>
+				</dict>
+				<key>WFJSONValues</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>WFDictionaryFieldValueItems</key>
+						<array>
+							<dict>
+								<key>WFItemType</key><integer>0</integer>
+								<key>WFKey</key>
+								<dict><key>Value</key><dict><key>string</key><string>url</string></dict><key>WFSerializationType</key><string>WFTextTokenString</string></dict>
+								<key>WFValue</key>
+								<dict>
+									<key>Value</key>
+									<dict>
+										<key>string</key><string>${OBJ}</string>
+										<key>attachmentsByRange</key>
+										<dict><key>{0, 1}</key><dict><key>Type</key><string>ExtensionInput</string></dict></dict>
+									</dict>
+									<key>WFSerializationType</key><string>WFTextTokenString</string>
+								</dict>
+							</dict>
+						</array>
+					</dict>
+					<key>WFSerializationType</key><string>WFDictionaryFieldValue</string>
+				</dict>
+			</dict>
+		</dict>
+	</array>
+	<key>WFWorkflowClientVersion</key><string>2605.0.5</string>
+	<key>WFWorkflowMinimumClientVersion</key><integer>900</integer>
+	<key>WFWorkflowMinimumClientVersionString</key><string>900</string>
+	<key>WFWorkflowHasShortcutInputVariables</key><true/>
+	<key>WFWorkflowName</key><string>Send Circular to Warboard</string>
+	<key>WFWorkflowIcon</key>
+	<dict>
+		<key>WFWorkflowIconStartColor</key><integer>4292093695</integer>
+		<key>WFWorkflowIconGlyphNumber</key><integer>59769</integer>
+	</dict>
+	<key>WFWorkflowImportQuestions</key><array/>
+	<key>WFWorkflowInputContentItemClasses</key>
+	<array>
+		<string>WFURLContentItem</string>
+		<string>WFStringContentItem</string>
+		<string>WFSafariWebPageContentItem</string>
+	</array>
+	<key>WFWorkflowTypes</key>
+	<array><string>ActionExtension</string></array>
+</dict>
+</plist>
+`;
+}
+
 // ── Extraction prompt (proven against the 2026-08-02 book) ──────────────────
 
 export function buildExtractPrompt(segmentText) {
