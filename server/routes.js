@@ -709,15 +709,28 @@ router.post("/api/schedule", (req, res, next) => {
   else if (req.body && typeof req.body.image === "string") buf = Buffer.from(req.body.image.replace(/^data:[^;]+;base64,/, ""), "base64");
   if (!buf) return res.status(400).json({ error: "no image" });
   const tmp = pathResolve("/opt/warboard/server/data/tasks/upload-" + Date.now() + ".png");
-  try {
-    writeFileSync(tmp, buf);
-    const sched = await parseSchedule(tmp);                 // parses + deletes the image
-    const today = generateTasks(new Date());
-    return res.json({ ok: true, weekStart: sched.weekStart, byDay: sched.byDay, today });
-  } catch (e) {
-    try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
-    return res.status(500).json({ error: String((e && e.message) || e) });
-  }
+  try { writeFileSync(tmp, buf); } catch (e) { return res.status(500).json({ error: "write failed" }); }
+  // Respond immediately — the vision parse can take a couple minutes (it retries
+  // against the shared AI rate limit), which would time the phone out. Parse in
+  // the background; parseSchedule deletes the image whether it succeeds or fails,
+  // and refreshes today's checklist on success. Status is visible in GET /tasks/status.
+  res.status(202).json({ ok: true, state: "processing" });
+  _tasksParseState = { state: "processing", at: new Date().toISOString() };
+  parseSchedule(tmp).then((sched) => {
+    generateTasks(new Date());
+    _tasksParseState = { state: "done", at: new Date().toISOString(), weekStart: sched.weekStart, byDay: sched.byDay };
+    console.log("[tasks] schedule parsed", JSON.stringify(sched.byDay));
+  }).catch((e) => {
+    _tasksParseState = { state: "error", at: new Date().toISOString(), error: String((e && e.message) || e) };
+    console.error("[tasks] schedule parse failed:", String((e && e.message) || e));
+  });
+});
+let _tasksParseState = { state: "idle" };
+
+//   GET /tasks/status  — last schedule-parse outcome (owner/token) for debugging
+router.get("/tasks/status", (req, res) => {
+  if (!_circularAuthOk(req)) return res.status(401).json({ error: "unauthorized" });
+  return res.json(_tasksParseState);
 });
 
 //   GET /bulksale   — download the latest filled bulk-sale deli/cheese form.

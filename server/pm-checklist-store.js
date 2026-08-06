@@ -45,28 +45,31 @@ export async function parseSchedule(imagePath, opts = {}) {
   const now = opts.now || new Date();
   // resize for a lean vision payload
   const png = join(DATA_DIR, "sched-resized.png");
-  execFileSync("convert", [imagePath, "-resize", "1500x", png]);
-  const raw = await vision([readFileSync(png).toString("base64")], buildScheduleVisionPrompt());
-  // vision returns a JSON OBJECT here, not an array
-  let parsed;
-  try { const a = raw.indexOf("{"), b = raw.lastIndexOf("}"); parsed = JSON.parse(raw.slice(a, b + 1)); }
-  catch { throw new Error("schedule vision returned unparseable JSON"); }
-  const employees = parsed.employees || [];
-  const weekDates = parsed.weekDates || {};
-  const byDay = {}, isoByDay = {};
-  for (const day of DOW) {
-    byDay[day] = closersForDay(employees, day);
-    if (weekDates[day]) isoByDay[day] = mdToISO(weekDates[day], now);
+  // Privacy: the raw schedule image and its resized copy are ALWAYS deleted —
+  // whether the parse succeeds or the vision call fails (e.g. rate-limited) — so
+  // a failed upload never leaves an employee schedule sitting on disk.
+  try {
+    execFileSync("convert", [imagePath, "-resize", "1500x", png]);
+    const raw = await vision([readFileSync(png).toString("base64")], buildScheduleVisionPrompt());
+    let parsed;
+    try { const a = raw.indexOf("{"), b = raw.lastIndexOf("}"); parsed = JSON.parse(raw.slice(a, b + 1)); }
+    catch { throw new Error("schedule vision returned unparseable JSON"); }
+    const employees = parsed.employees || [];
+    const weekDates = parsed.weekDates || {};
+    const byDay = {}, isoByDay = {};
+    for (const day of DOW) {
+      byDay[day] = closersForDay(employees, day);
+      if (weekDates[day]) isoByDay[day] = mdToISO(weekDates[day], now);
+    }
+    const result = {
+      weekStart: isoByDay.Sun || null, isoByDay, byDay,
+      parsedAt: now.toISOString(), employeeCount: employees.length,
+    };
+    writeSchedule(result);
+    return result;
+  } finally {
+    for (const p of [imagePath, png]) { try { if (existsSync(p)) unlinkSync(p); } catch {} }
   }
-  const weekStart = isoByDay.Sun || null;
-  const result = {
-    weekStart, isoByDay, byDay,
-    parsedAt: now.toISOString(), employeeCount: employees.length,
-  };
-  writeSchedule(result);
-  // privacy: drop the raw image + the resized copy
-  for (const p of [imagePath, png]) { try { if (existsSync(p)) unlinkSync(p); } catch {} }
-  return result;
 }
 
 // Fill and publish the checklist for `date` (a Date). Uses the stored schedule's
