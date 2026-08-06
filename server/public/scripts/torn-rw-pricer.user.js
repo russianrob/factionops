@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.11
+// @version      3.4.12
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -31,7 +31,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.11';
+    var SCRIPT_VERSION = '3.4.12';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1394,7 +1394,7 @@
 
     // ─── Badge creation ──────────────────────────────────────
 
-    function createBadge(itemName, rarity, median, bonuses, bonusFn, estimatedPrice, priceArray, bonusPriceArrays, bonusColors, comboPriceArrays, maxBonusNames, derivation) {
+    function createBadge(itemName, rarity, median, bonuses, bonusFn, estimatedPrice, priceArray, bonusPriceArrays, bonusColors, comboPriceArrays, maxBonusNames, derivation, range) {
         var color = RARITY_COLORS[rarity] || '#e8c44a';
         var badge = document.createElement('span');
         badge.className = 'rwp-price-tag';
@@ -1414,10 +1414,20 @@
 
         var displayPrice = estimatedPrice || median;
         var label = (bonuses.length > 0 && estimatedPrice && estimatedPrice !== median) ? 'RWP Est' : 'RWP';
+        // fmtMoney with the leading $ stripped — for the high end of a range.
+        var fmtBare = function(n) { return fmtMoney(n).replace(/^\$/, ''); };
+        var valueText = fmtMoney(displayPrice);
+        if (range) {
+            // No real comps: show the band (floor→median) with a ⚠ so it can't be
+            // mistaken for a firm price. Stored for the tooltip too.
+            badge.setAttribute('data-rwp-range', JSON.stringify(range));
+            label = 'RWP ⚠';
+            valueText = fmtMoney(range.low) + '–' + fmtBare(range.high);
+        }
 
         var html = '<span class="rwp-price-tag-inner">' +
             '<span class="rwp-price-tag-label">' + label + '</span>' +
-            '<span class="rwp-price-tag-value" style="color:' + color + ';">' + fmtMoney(displayPrice) + '</span>' +
+            '<span class="rwp-price-tag-value" style="color:' + color + ';">' + valueText + '</span>' +
             '</span>';
         badge.innerHTML = html;
 
@@ -1468,12 +1478,21 @@
         var deriv = null;
         try { deriv = JSON.parse(badge.getAttribute('data-rwp-deriv')); } catch (e) {}
         var estVal = parseFloat(badge.getAttribute('data-rwp-est')) || 0;
+        var estRange = null;
+        try { estRange = JSON.parse(badge.getAttribute('data-rwp-range')); } catch (e) {}
+        var fmtBareTip = function(n) { return fmtMoney(n).replace(/^\$/, ''); };
 
         var tooltip = document.createElement('div');
         tooltip.className = 'rwp-price-tooltip';
         tooltip._rwpBadge = badge;
 
-        var html = '<div class="rwp-tooltip-header" style="color:' + color + ';">' + itemName + ' <span style="opacity:0.6;">(' + rarity + ')</span>' + (estVal ? '<span style="float:right;font-weight:700;">' + fmtMoney(estVal) + '</span>' : '') + '</div>';
+        // Header shows the band when there are no comps, else the single estimate.
+        var headerRight = estRange ? (fmtMoney(estRange.low) + '–' + fmtBareTip(estRange.high))
+            : (estVal ? fmtMoney(estVal) : '');
+        var html = '<div class="rwp-tooltip-header" style="color:' + color + ';">' + itemName + ' <span style="opacity:0.6;">(' + rarity + ')</span>' + (headerRight ? '<span style="float:right;font-weight:700;">' + headerRight + '</span>' : '') + '</div>';
+        if (estRange) {
+            html += '<div style="margin:4px 0 2px;font-size:11px;line-height:1.35;color:#e8a44a;">⚠ No sales for this bonus at ' + rarity + '. Range = base-weapon floor → median; treat as a lower bound, not a firm price.</div>';
+        }
 
         var salesMeta = function(n) {
             if (n == null) return '';
@@ -1877,6 +1896,7 @@
             }
 
             var estimatedPrice = median;
+            var estSource = null;   // source of the dominant estimate value (for the no-comp range display)
             var deriv = [];   // tooltip derivation lines: {label, amt, src, n, prem}
             var _bonusValueRaw = function(b) {
                 if (weaponKey && b.level) {
@@ -1933,12 +1953,14 @@
             if (bonuses.length === 1) {
                 var i0 = bonusValueInfo(bonuses[0]);
                 estimatedPrice = i0.value;
+                estSource = i0.source;
                 deriv.push({ label: derivLabel(bonuses[0]), amt: i0.value, src: i0.source, n: i0.count, prem: false });
             } else if (bonuses.length >= 2) {
                 var pairMed = (weaponKey && bonuses.length === 2)
                     ? getWeaponPairComboMedian(itemKey, bonuses[0].name, bonuses[1].name, rarity) : null;
                 if (pairMed) {
                     estimatedPrice = pairMed;
+                    estSource = 'exact pair';
                     var pArr = getWeaponPairComboArray(itemKey, bonuses[0].name, bonuses[1].name, rarity);
                     deriv.push({ label: bonuses[0].name + ' + ' + bonuses[1].name, amt: pairMed, src: 'exact pair', n: (pArr && pArr[3]) || null, prem: false });
                 } else {
@@ -1951,6 +1973,7 @@
                     var maxIdx = 0;
                     for (var mi = 1; mi < infos.length; mi++) { if (infos[mi].value > infos[maxIdx].value) maxIdx = mi; }
                     estimatedPrice = infos[maxIdx].value;
+                    estSource = infos[maxIdx].source;
                     for (var pv = 0; pv < infos.length; pv++) {
                         var inf = infos[pv];
                         if (pv === maxIdx) {
@@ -1989,7 +2012,15 @@
                 maxBonusNames = weaponMaxBonus[weaponKey][rarity];
             }
 
-            badge = createBadge(weaponKey || armourKey, rarity, median, bonusNames, bonusFn, estimatedPrice, itemPriceArray, Object.keys(bonusPriceArrays).length > 0 ? bonusPriceArrays : null, bonusColors, Object.keys(comboPriceArrays).length > 0 ? comboPriceArrays : null, maxBonusNames, deriv);
+            // No-comp range: when the estimate is only the weapon FLOOR (no sales
+            // for this bonus at this rarity), a single number reads as a real price
+            // when it is really a lower bound — e.g. a Specialist 41% Red ArmaLite
+            // shown as $2.03B (the base MIN) while the base median is $6.49B. Show
+            // the honest band floor→median with a ⚠ instead of that lone number.
+            var estRange = (estSource === 'weapon floor' && estimatedPrice != null && median != null && estimatedPrice < median)
+                ? { low: estimatedPrice, high: median } : null;
+
+            badge = createBadge(weaponKey || armourKey, rarity, median, bonusNames, bonusFn, estimatedPrice, itemPriceArray, Object.keys(bonusPriceArrays).length > 0 ? bonusPriceArrays : null, bonusColors, Object.keys(comboPriceArrays).length > 0 ? comboPriceArrays : null, maxBonusNames, deriv, estRange);
 
             // Find insertion point — after name element
             // Faction armoury collapsed row: insert right after the weapon name
