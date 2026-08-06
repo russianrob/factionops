@@ -86,6 +86,8 @@ import * as chat from "./chat.js";
 import { encrypt as encryptKey, decrypt as decryptKey, isEncrypted as isEncryptedKey } from "./key-encryption.js";
 import { crimesFingerprint, shouldRecompute as shouldRecomputeEngines } from "./oc-engine-cache.js";
 import { upsertScenario } from "./arson-scenarios.js";
+import { processCircular, readStatus as readCircularStatus, readLatest as readCircularLatest, jobIdForUrl as circularJobId } from "./circular-store.js";
+import { validateCircularUrl } from "./circular-pipeline.js";
 import * as pendingBroadcasts from "./pending-broadcasts.js";
 import * as inspectRelay from "./inspect-relay.js";
 import * as missingOverrides from "./missing-overrides.js";
@@ -600,6 +602,74 @@ router.delete(/^\/api\/shot\/([a-f0-9]{8,64})$/, (req, res) => {
   }
   if (!removed) return res.status(404).json({ error: "not found" });
   return res.json({ ok: true, id, removed });
+});
+
+// ── Weekly grocery circular ─────────────────────────────────────────────────
+// A phone Shortcut POSTs the week's circular PDF URL; the server fetches it,
+// pdftotext's it, and extracts structured offers with headless claude. See
+// circular-pipeline.js / circular-store.js. Auth mirrors /api/shot: a dedicated
+// token (for the unattended Shortcut) OR an owner JWT.
+const _CIRCULAR_TOKEN_FILE = pathResolve("/opt/warboard/server/data/.circular-token");
+function _circularTokenOk(req) {
+  let want = "";
+  try { want = readFileSync(_CIRCULAR_TOKEN_FILE, "utf8").trim(); } catch { want = ""; }
+  if (!want) return false;
+  const got = String(req.get("x-circular-token") || "");
+  const a = Buffer.from(got), b = Buffer.from(want);
+  return a.length === b.length && _uploadTimingSafeEqual(a, b);
+}
+function _circularAuthOk(req) {
+  if (_circularTokenOk(req)) return true;
+  const h = req.headers.authorization;
+  if (h) { const tok = h.startsWith("Bearer ") ? h.slice(7) : h; try { return _inspectIsOwner({ user: verifyToken(tok) }); } catch {} }
+  return false;
+}
+
+//   POST /api/circular   { url: "<cloudfront .pdf>" }
+// Validates the URL, then either returns the existing job for that week (a
+// re-fired Shortcut is idempotent) or kicks off extraction in the background and
+// returns 202 immediately — the fetch+pdftotext+extract takes minutes.
+router.post("/api/circular", (req, res, next) => {
+  if (_circularAuthOk(req)) return next();
+  return res.status(401).json({ error: "unauthorized" });
+}, express.json({ limit: "16kb" }), (req, res) => {
+  const url = req.body && typeof req.body.url === "string" ? req.body.url.trim() : "";
+  const v = validateCircularUrl(url);
+  if (!v.ok) return res.status(400).json({ error: "bad url", reason: v.reason });
+  const jobId = circularJobId(v.url);
+  const existing = readCircularStatus(jobId);
+  // Re-POST of a week already done/in-flight: hand back the job, don't re-extract
+  // — UNLESS an in-flight job has gone stale. A pm2 reload mid-extraction leaves
+  // status at "fetching"/"extracting" forever; without this, every retry would
+  // bounce off it as idempotent and the week would be silently dead.
+  if (existing && existing.state && existing.state !== "error") {
+    const inFlight = existing.state === "fetching" || existing.state === "extracting";
+    const ageMs = Date.now() - Date.parse(existing.updatedAt || 0);
+    const stale = inFlight && (!existing.updatedAt || ageMs > 20 * 60 * 1000);
+    if (!stale) {
+      return res.status(200).json({ jobId, state: existing.state, idempotent: true });
+    }
+    // fall through: re-run the stale job
+  }
+  res.status(202).json({ jobId, state: "accepted" });
+  // Fire-and-forget: the response is already sent; errors land in status.json.
+  processCircular(v.url).catch((e) => { try { console.error("[circular]", jobId, String(e && e.message || e)); } catch {} });
+});
+
+//   GET /api/circular/status/<jobId>   — owner polls progress
+router.get(/^\/api\/circular\/status\/([a-f0-9]{6,40})$/, (req, res) => {
+  if (!_circularAuthOk(req)) return res.status(401).json({ error: "unauthorized" });
+  const st = readCircularStatus(req.params[0]);
+  if (!st) return res.status(404).json({ error: "no such job" });
+  return res.json(st);
+});
+
+//   GET /api/circular/latest   — the most recent completed circular's offers
+router.get("/api/circular/latest", (req, res) => {
+  if (!_circularAuthOk(req)) return res.status(401).json({ error: "unauthorized" });
+  const latest = readCircularLatest();
+  if (!latest) return res.status(404).json({ error: "no circular yet" });
+  return res.json(latest);
 });
 
 // owner → chat with the in-app agent; SSE stream of normalized turn events
