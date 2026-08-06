@@ -14,8 +14,8 @@
 // ── Rules (user-set) ────────────────────────────────────────────────────────
 
 // Named brand exclusions — a genuine preference, kept as a list, not buried in a
-// regex. The user does not buy Carolina.
-export const EXCLUDE_BRANDS = ["carolina"];
+// regex. The user does not buy Carolina or Butterball (both turkey brands).
+export const EXCLUDE_BRANDS = ["carolina", "butterball"];
 
 // A ham is "flavored" when its name/description carries a flavor word; otherwise
 // it is a domestic ham. Encoding the REASON (not "Glen Rock") means next week's
@@ -24,7 +24,7 @@ export const EXCLUDE_BRANDS = ["carolina"];
 const FLAVOR_WORDS = /\b(honey|maple|glazed|brown sugar|virginia|black forest|cajun|peppered|pepper[- ]crusted|rosemary|prosciutt)\b/i;
 export function isFlavoredHam(text) { return FLAVOR_WORDS.test(String(text)); }
 
-// The 12 form rows, in sheet order (row = Production-sheet row number). Each has
+// The form rows, in sheet order (row = Production-sheet row number). Each has
 // a predicate over an offer {product, description}. Ham rows share the flavored
 // split. Predicates are intentionally narrow so raw-meat / packaged lookalikes
 // (chicken thighs, mozzarella cups) do not leak in — the per-lb filter in
@@ -34,19 +34,22 @@ export const DELI_ROWS = [
   { row: 4,  item: "Chicken",      match: t => /chicken breast/.test(t) && !/tender|thigh|drumstick|ground|wing|nugget|breaded|roaster|family/.test(t) },
   { row: 5,  item: "Domestic Ham", match: t => /\bham\b/.test(t) && !/turkey|chicken/.test(t) && !isFlavoredHam(t) },
   { row: 6,  item: "Flavored Ham", match: t => /\bham\b/.test(t) && !/turkey|chicken/.test(t) && isFlavoredHam(t) },
-  { row: 7,  item: "Salami",       match: t => /salami/.test(t) },
-  { row: 8,  item: "Pepperoni",    match: t => /pepperoni/.test(t) },
+  { row: 7,  item: "Bologna",      match: t => /bologna/.test(t) },
+  // Salami: only Black Bear, and the cell always reads just "Black Bear" (the
+  // product is "Black Bear Classico Genoa Salami" — drop the "Classico" sub-line).
+  { row: 8,  item: "Salami",       match: t => /salami/.test(t) && /black bear/.test(t), label: () => "Black Bear" },
+  { row: 9,  item: "Pepperoni",    match: t => /pepperoni/.test(t) },
   // Roast Beef's cell shows the CUT, not the brand: Eye Round, London Broil, or
   // "Regular" when it's neither.
-  { row: 9,  item: "Roast Beef",   match: t => /roast beef/.test(t),
+  { row: 10, item: "Roast Beef",   match: t => /roast beef/.test(t),
     label: o => { const s = `${o.product || ""} ${o.description || ""}`.toLowerCase();
       return /eye round/.test(s) ? "Eye Round" : /london broil/.test(s) ? "London Broil" : "Regular"; } },
-  { row: 10, item: "American",     match: t => /american/.test(t) && !/\bham\b|turkey|chicken/.test(t) },
-  { row: 11, item: "Provolone",    match: t => /provolone/.test(t) },
-  { row: 12, item: "Mozzarella",   match: t => /mozzarella/.test(t) },
-  { row: 13, item: "Muenster",     match: t => /muenster|munster/.test(t) },
-  { row: 14, item: "Swiss",        match: t => /swiss/.test(t) },
-  { row: 15, item: "Cheddar",      match: t => /cheddar/.test(t) },
+  { row: 11, item: "American",     match: t => /american/.test(t) && !/\bham\b|turkey|chicken/.test(t) },
+  { row: 12, item: "Provolone",    match: t => /provolone/.test(t) },
+  { row: 13, item: "Mozzarella",   match: t => /mozzarella/.test(t) },
+  { row: 14, item: "Muenster",     match: t => /muenster|munster/.test(t) },
+  { row: 15, item: "Swiss",        match: t => /swiss/.test(t) },
+  { row: 16, item: "Cheddar",      match: t => /cheddar/.test(t) },
 ];
 
 // ── Matching ────────────────────────────────────────────────────────────────

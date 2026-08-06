@@ -9,13 +9,15 @@ import {
 const WEEK_0802 = [
   { product: "Black Bear Turkey Breast", brand: "Black Bear", priceText: "$11.99 lb", pricePerLb: 11.99, unit: "lb", description: "Store Sliced, Oven Gold" },
   { product: "Carolina Smoked Turkey", brand: "Carolina", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced, Honey, Oil-Braised" },
+  { product: "Butterball Turkey Breast", brand: "Butterball", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced, Oven Roasted" },
   { product: "Bowl & Basket Chicken Breast", brand: "Bowl & Basket", priceText: "$7.99 lb", pricePerLb: 7.99, unit: "lb", description: "Store Sliced, Oven Roasted, BBQ or Buffalo" },
   { product: "Black Bear Deli Classic Ham", brand: "Black Bear", priceText: "$7.99 lb", pricePerLb: 7.99, unit: "lb", description: "Store Sliced, Deep Smoked, Maple Glazed, Prosciuttini" },
   { product: "Farmland Domestic Ham", brand: "Farmland", priceText: "$3.99 lb", pricePerLb: 3.99, unit: "lb", description: "Store Sliced" },
   { product: "Smithfield Domestic Ham", brand: "Smithfield", priceText: "$4.99 lb", pricePerLb: 4.99, unit: "lb", description: "Store Sliced, 97% Fat Free" },
   { product: "Glen Rock Virginia Ham", brand: "Glen Rock", priceText: "$4.99 lb", pricePerLb: 4.99, unit: "lb", description: "Store Sliced, Honey or Virginia" },
   { product: "Bowl & Basket Ham Off the Bone", brand: "Bowl & Basket", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced, Double Smoked, Perfectly Sweet & Salty" },
-  { product: "Carando Genoa Salami", brand: "Carando", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced, Hard or Genoa" },
+  { product: "Bowl & Basket Bologna", brand: "Bowl & Basket", priceText: "$3.99 lb", pricePerLb: 3.99, unit: "lb", description: "Store Sliced" },
+  { product: "Black Bear Classico Genoa Salami", brand: "Black Bear Classico", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced, Hard or Genoa" },
   { product: "Black Bear London Broil Roast Beef", brand: "Black Bear", priceText: "$13.99 lb", pricePerLb: 13.99, unit: "lb", description: "Store Sliced, Top Round, Extra Lean" },
   { product: "Land O'Lakes American", brand: "Land O'Lakes", priceText: "$4.99 lb", pricePerLb: 4.99, unit: "lb", description: "Store Sliced Deli Cheese" },
   { product: "Auricchio Provolone", brand: "Auricchio", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced, Mild" },
@@ -34,7 +36,8 @@ test("matchDeliOffers reproduces the user-approved 12 rows exactly", () => {
     "Chicken": ["Bowl & Basket", 7.99],
     "Domestic Ham": ["Farmland", 3.99],
     "Flavored Ham": ["Glen Rock", 4.99],
-    "Salami": ["Carando", 5.99],
+    "Bologna": ["Bowl & Basket", 3.99],
+    "Salami": ["Black Bear", 5.99],   // Black-Bear-only, "Classico" dropped from the cell
     "Pepperoni": [null, null],
     "Roast Beef": ["London Broil", 13.99],   // cut, not brand
     "American": ["Land O'Lakes", 4.99],
@@ -55,6 +58,22 @@ test("Carolina is excluded even though it is the cheapest turkey", () => {
   const got = matchDeliOffers(WEEK_0802);
   const turkey = got.find(r => r.item === "Turkey");
   assert.equal(turkey.brand, "Black Bear");   // NOT Carolina @ 5.99
+});
+
+test("Butterball is excluded from Turkey (like Carolina)", () => {
+  // Fixture has Butterball @5.99, Carolina @5.99, Black Bear @11.99 — both cheaper
+  // brands are excluded, so Black Bear wins despite being pricier.
+  assert.equal(matchDeliOffers(WEEK_0802).find(r => r.item === "Turkey").brand, "Black Bear");
+  assert.equal(matchDeliOffers(WEEK_0802).find(r => r.item === "Turkey").price, 11.99);
+});
+
+test("Salami is Black-Bear-only and its cell reads just 'Black Bear' (no Classico)", () => {
+  const salami = matchDeliOffers(WEEK_0802).find(r => r.item === "Salami");
+  assert.equal(salami.brand, "Black Bear");   // NOT "Black Bear Classico"
+  assert.equal(salami.price, 5.99);
+  // A cheaper non-Black-Bear salami must NOT be chosen — the row stays blank:
+  const other = matchDeliOffers([{ product: "Carando Genoa Salami", brand: "Carando", priceText: "$3.99 lb", pricePerLb: 3.99, unit: "lb", description: "" }]);
+  assert.equal(other.find(r => r.item === "Salami").price, null);
 });
 
 test("raw chicken thighs never fill the deli Chicken row", () => {
@@ -91,7 +110,7 @@ test("cheapest wins within a row", () => {
 });
 
 test("countFilled reports non-blank rows (guard input)", () => {
-  assert.equal(countFilled(matchDeliOffers(WEEK_0802)), 10);  // all but Pepperoni + Mozzarella
+  assert.equal(countFilled(matchDeliOffers(WEEK_0802)), 11);  // all but Pepperoni + Mozzarella
 });
 
 test("findDeliPages detects the header page and Store-Sliced pages, not raw-meat", () => {
