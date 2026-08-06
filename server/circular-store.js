@@ -102,19 +102,26 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
   const pages = findDeliPages(pageTexts);
   if (!pages.length) return { state: "no-deli-pages" };
 
-  const images = [];
-  for (const p of pages) {
+  // One vision call PER PAGE, a single image each. A two-image request trips a
+  // per-request limit (single images succeed even at 96% of the 5h budget; two
+  // 429 at 4%), so never batch them. Space the calls a few seconds apart.
+  const offersAll = [];
+  let pageFailures = 0;
+  for (let i = 0; i < pages.length; i++) {
+    const p = pages[i];
     const srcBase = join(dir, `deli-src-${p}`);
     await execFileP("pdftoppm", ["-f", String(p), "-l", String(p), "-r", "150", "-singlefile", "-png", join(dir, "circular.pdf"), srcBase]);
     const png = join(dir, `deli-p${p}.png`);
-    // ~1000px wide keeps each image small enough for the token's usage budget
-    // while the deli prices (large type) stay legible.
+    // ~1000px wide keeps each image small while the deli prices (large type) stay legible.
     await execFileP("convert", [srcBase + ".png", "-resize", "1000x", png]);
-    images.push(readFileSync(png).toString("base64"));
+    const img = readFileSync(png).toString("base64");
+    try {
+      for (const o of extractJsonArray(await vision([img], buildDeliVisionPrompt()))) offersAll.push(o);
+    } catch { pageFailures++; }
+    if (i < pages.length - 1) await new Promise(r => setTimeout(r, 4000));
   }
 
-  const offers = extractJsonArray(await vision(images, buildDeliVisionPrompt()));
-  const fills = matchDeliOffers(offers);
+  const fills = matchDeliOffers(offersAll);
   const filled = countFilled(fills);
   const dateRange = dateRangeLabel(range.validFrom, range.validThru);
 
@@ -128,11 +135,15 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
   execFileSync("python3", [XLSX_TOOL, "replace", template, "xl/worksheets/sheet1.xml", tmpXml, dated]);
 
   const summary = fills.map(f => ({ item: f.item, brand: f.brand, price: f.price }));
-  if (filled >= DELI_MIN_FILLED) {
+  // Promote to the public /bulksale form only on a CLEAN, well-filled run. Any
+  // page whose vision call failed → low-confidence, even if the surviving pages
+  // filled >=8: a partial read that blanks Turkey/American must not overwrite a
+  // good form.
+  if (filled >= DELI_MIN_FILLED && pageFailures === 0) {
     copyFileSync(dated, formLatest);
     return { state: "ok", filled, pages, dateRange, fills: summary };
   }
-  return { state: "low-confidence", filled, pages, candidate: dated, fills: summary };
+  return { state: "low-confidence", filled, pageFailures, pages, candidate: dated, fills: summary };
 }
 
 // The whole pipeline. Async; the route kicks this off and returns 202 without
