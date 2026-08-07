@@ -59,22 +59,37 @@ export function excludedForTask(text) {
   return s;
 }
 
-// Alternate the tasks among the closers (task i → closers[i % n]) BUT skip anyone
-// excluded from that specific task, handing it to the next eligible closer.
+// Assign the tasks to the closers by the owner's rule: give each task the
+// person's-can't-do ones to whoever CAN, then fill the doable tasks with the
+// others so the load ends up even. Concretely — process MOST-CONSTRAINED tasks
+// first (fewest eligible closers): a task Rita & Carmela are both barred from has
+// only one eligible closer, so it's placed before the free tasks and lands on
+// that closer; the free tasks (anyone) then go to whoever currently holds the
+// fewest, which fills Rita & Carmela instead of piling a stray free task onto the
+// sink. Ties (same eligible-count) keep the original row order; ties on the count
+// break by closer order. With no exclusions this is a plain even round-robin.
 // `tasks` is [{row, text}] (a bare row number is treated as text-less). Returns a
 // { rowNumber: NAME } map; a task with no eligible closer is left unassigned.
 export function assignAlternating(tasks, closers) {
   const out = {};
   if (!closers || !closers.length) return out;
   const T = tasks.map(t => (typeof t === "object" ? t : { row: t, text: "" }));
-  const n = closers.length;
-  T.forEach((t, i) => {
+  const counts = new Map(closers.map(c => [c, 0]));
+  // Eligible closers per task (in closers order), then most-constrained first.
+  const items = T.map((t, idx) => {
     const excl = excludedForTask(t.text || "");
-    for (let k = 0; k < n; k++) {
-      const cand = closers[(i + k) % n];
-      if (!excl.has(cand)) { out[t.row] = cand; break; }
-    }
+    return { t, idx, eligible: closers.filter(c => !excl.has(c)) };
   });
+  items.sort((a, b) => (a.eligible.length - b.eligible.length) || (a.idx - b.idx));
+  for (const it of items) {
+    let best = null;
+    for (const c of it.eligible) {             // eligible keeps closers order = stable tie-break
+      if (best === null || counts.get(c) < counts.get(best)) best = c;
+    }
+    if (best === null) continue;               // no eligible closer → unassigned
+    out[it.t.row] = best;
+    counts.set(best, counts.get(best) + 1);
+  }
   return out;
 }
 

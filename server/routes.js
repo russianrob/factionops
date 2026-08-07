@@ -586,7 +586,7 @@ router.post("/api/shot", (req, res, next) => {
     try { verifyToken(tok); return next(); } catch {}
   }
   return res.status(401).json({ error: "unauthorized" });
-}, express.json({ limit: "50mb" }), (req, res) => {
+}, express.json({ limit: "500mb" }), (req, res) => {
   return _saveShotPng(req.body && req.body.png, res);
 });
 
@@ -704,10 +704,15 @@ router.post("/api/schedule", (req, res, next) => {
    express.json({ limit: "25mb" }), async (req, res) => {
   // Accept the schedule either as a raw image/PDF body (Shortcut "Request Body =
   // File") or as JSON {image: "<base64>"} — whichever is easiest to build.
+  // Diagnostic: log what actually arrived so a rejected upload can be pinned to a
+  // cause (empty body from a background Shortcut run, or a content-type the raw
+  // parser didn't capture) instead of guessed.
+  const _isBuf = Buffer.isBuffer(req.body);
+  console.log(`[tasks] /api/schedule recv ct=${req.headers["content-type"] || "(none)"} isBuffer=${_isBuf} len=${_isBuf ? req.body.length : "-"} hasImageField=${!!(req.body && typeof req.body.image === "string")} ua=${(req.headers["user-agent"] || "").slice(0, 40)}`);
   let buf = null;
   if (Buffer.isBuffer(req.body) && req.body.length > 100) buf = req.body;
   else if (req.body && typeof req.body.image === "string") buf = Buffer.from(req.body.image.replace(/^data:[^;]+;base64,/, ""), "base64");
-  if (!buf) return res.status(400).json({ error: "no image" });
+  if (!buf) { console.warn("[tasks] /api/schedule 400 no-image (see recv line above)"); return res.status(400).json({ error: "no image" }); }
   const tmp = pathResolve("/opt/warboard/server/data/tasks/upload-" + Date.now() + ".png");
   try { writeFileSync(tmp, buf); } catch (e) { return res.status(500).json({ error: "write failed" }); }
   // Respond immediately — the vision parse can take a couple minutes (it retries

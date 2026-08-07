@@ -62,6 +62,45 @@ test("assignAlternating with no closers assigns nothing", () => {
   assert.deepEqual(assignAlternating([4, 5, 6], []), {});
 });
 
+test("assignAlternating load-balances — free tasks steer to the lighter closers, not piled on the exclusion-sink", () => {
+  // pre-slice + Boar's Head can ONLY go to LATISHA (Rita+Carmela excluded), which
+  // pre-loads her with 2. The 3 free tasks must then go to Rita/Carmela to even
+  // it out — NOT back onto LATISHA (that's the 8/2/2 bug we're fixing).
+  const tasks = [
+    { row: 5, text: "Fill up pre-slice & salad case" },     // Rita+Carmela excluded
+    { row: 8, text: "Fill up the Boar’s Head pre-slice" },  // Rita+Carmela excluded
+    { row: 6, text: "Make sure open meats have a lid" },     // free
+    { row: 9, text: "Fill up supplies (wax paper)" },        // free
+    { row: 7, text: "Fill up the back bar" },                // free
+  ];
+  const a = assignAlternating(tasks, ["LATISHA", "RITA", "CARMELA"]);
+  assert.equal(a[5], "LATISHA");                 // only she can
+  assert.equal(a[8], "LATISHA");                 // only she can
+  const counts = {};
+  for (const n of Object.values(a)) counts[n] = (counts[n] || 0) + 1;
+  assert.equal(counts.LATISHA, 2, "LATISHA keeps only the 2 nobody else can take");
+  assert.equal(counts.RITA, 2);
+  assert.equal(counts.CARMELA, 1);
+  for (const r of [6, 9, 7]) assert.ok(["RITA", "CARMELA"].includes(a[r]), `free task r${r} → lighter closer`);
+});
+
+test("assignAlternating assigns the can't-do tasks FIRST, then fills the doable ones with Rita/Carmela (even when a free task is listed first)", () => {
+  // Owner's rule: give the tasks Rita/Carmela can't do to the other person, then
+  // fill the doable tasks with them. So even though the free task (r6) is listed
+  // FIRST, the two excluded tasks (only LATISHA can do them) are placed first,
+  // leaving the free task to fill Rita/Carmela — not pile a third onto Latisha.
+  const tasks = [
+    { row: 6, text: "Make sure open meats have a lid" },     // free — listed FIRST
+    { row: 5, text: "Fill up pre-slice & salad case" },      // Rita+Carmela excluded
+    { row: 8, text: "Fill up the Boar’s Head pre-slice" },   // Rita+Carmela excluded
+  ];
+  const a = assignAlternating(tasks, ["LATISHA", "RITA", "CARMELA"]);
+  assert.equal(a[5], "LATISHA");
+  assert.equal(a[8], "LATISHA");
+  assert.notEqual(a[6], "LATISHA", "the free task must fill Rita/Carmela, not pile on Latisha");
+  assert.ok(["RITA", "CARMELA"].includes(a[6]));
+});
+
 test("excludedForTask flags the physical tasks for the right people", () => {
   assert.deepEqual([...excludedForTask("Block pack-out cases as per standards")], ["RITA", "CARMELA"]);
   assert.deepEqual([...excludedForTask("Fill up the Boar’s Head pre-slice")], ["RITA", "CARMELA"]);
