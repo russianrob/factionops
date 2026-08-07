@@ -45,6 +45,7 @@ import * as itemMarket from "./item-market.js";
 import { loadSubscriptions } from "./push-notifications.js";
 import { fetchRankedWar } from "./torn-api.js";
 import { isFactionAllowed } from "./subscription-manager.js";
+import { apiNotFound, jsonErrorHandler } from "./http-errors.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -489,6 +490,13 @@ app.use(routes);
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });
 });
+
+// API error handling — registered LAST so it only sees requests no route
+// handled. Turns unknown /api|/data routes and any thrown error into JSON so API
+// clients never receive an HTML error page (which they'd JSON-parse → the iOS
+// app's "Unrecognized token '<'"). Non-API/browser paths keep Express defaults.
+app.use(apiNotFound);
+app.use(jsonErrorHandler);
 
 // ── HTTP + Socket.IO server ─────────────────────────────────────────────
 
