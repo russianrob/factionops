@@ -1,5 +1,5 @@
 /// Daily PM (2nd-shift) task checklist — assign the tasks to whoever's on the
-/// Appy schedule until 9pm or later that day.
+/// Appy schedule until 8pm or later that day.
 ///
 /// Flow (mirrors the circular): once a week the owner uploads the Appy schedule
 /// image; the server reads it by vision into a per-date list of closers, then
@@ -7,7 +7,7 @@
 /// operational rollover — it fills the checklist's assignment column with that
 /// day's closers, alternating the tasks between them, and posts it to /tasks.
 ///
-/// Rules (owner-set): assign only to people whose shift ends at 9:00P OR LATER;
+/// Rules (owner-set): assign only to people whose shift ends at 8:00P OR LATER;
 /// first names only, ALL-CAPS (matching the sheet); split tasks even/alternating
 /// among the closers.
 ///
@@ -31,14 +31,14 @@ export function shiftEndHour(shift) {
   return h + (+m[2]) / 60;
 }
 
-// The 9pm-or-later closers for one day column. `employees` is the parsed schedule
+// The 8pm-or-later closers for one day column. `employees` is the parsed schedule
 // [{name, job, days:{Sun:"3:00P-9:00P",…}}]; `dayKey` is "Sun".."Sat". Returns
 // ALL-CAPS first names, in schedule order, de-duplicated.
 export function closersForDay(employees, dayKey) {
   const out = [], seen = new Set();
   for (const e of employees || []) {
     const end = shiftEndHour(e.days ? e.days[dayKey] : "");
-    if (end == null || end < 21) continue;   // 21:00 = 9:00P; ">= 9pm" per owner
+    if (end == null || end < 20) continue;   // 20:00 = 8:00P; ">= 8pm" per owner
     const fn = firstNameUpper(e.name);
     if (fn && !seen.has(fn)) { seen.add(fn); out.push(fn); }
   }

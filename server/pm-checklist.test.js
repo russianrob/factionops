@@ -35,15 +35,15 @@ test("Thursday closers = Sharahon + Latisha (owner-verified)", () => {
   assert.deepEqual(closersForDay(SCHED, "Thu"), ["SHARAHON", "LATISHA"]);
 });
 
-test("9pm AND later — the 10pm closer (Rita) is included", () => {
+test("8pm AND later — the 10pm closer (Rita) counts, and so does an 8pm shift (Carmela)", () => {
   // Sunday: Latisha 3-9, Rita 3-10 → both. Ernest (2:30P) excluded.
   assert.deepEqual(closersForDay(SCHED, "Sun"), ["LATISHA", "RITA"]);
-  // Monday: Latisha 3-9, Rita 3-10; Gallucci 4-8 (before 9) excluded.
-  assert.deepEqual(closersForDay(SCHED, "Mon"), ["LATISHA", "RITA"]);
+  // Monday: Latisha 3-9, Rita 3-10, Gallucci 4-8 → all end 8pm+ now.
+  assert.deepEqual(closersForDay(SCHED, "Mon"), ["LATISHA", "RITA", "CARMELA"]);
 });
 
-test("shifts ending before 9pm and Vacation are excluded", () => {
-  // Thursday: Tahj is 10A-5P (excluded), Jackson Vacation (excluded), Ernest 2:30P.
+test("shifts ending before 8pm and Vacation are excluded", () => {
+  // Thursday: Tahj is 10A-5P (ends 5pm, excluded), Jackson Vacation (excluded).
   assert.ok(!closersForDay(SCHED, "Thu").includes("TAHJ"));
   assert.ok(!closersForDay(SCHED, "Thu").includes("SHAUN"));
 });
