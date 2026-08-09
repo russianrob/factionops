@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.69
+// @version      5.1.70
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -92,7 +92,7 @@ var io = io || (typeof globalThis !== 'undefined' && globalThis.io) || (typeof s
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.69';
+    const SCRIPT_VERSION = '5.1.70';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -1251,7 +1251,11 @@ body.wb-chain-active {
     pointer-events: auto !important;
     touch-action: manipulation;
     isolation: isolate;
-    z-index: 5;
+    /* Above .fo-broadcast-entry-bar (z-index:10): isolation seals this chip's
+       stacking context, so the absolutely-positioned detail tooltip inside it
+       can't rise on its own z-index — lifting the whole chip is what puts the
+       tooltip over the Shout bar on narrow leader layouts (was hidden behind). */
+    z-index: 20;
 }
 .fo-war-timer-icon { font-size: 12px; }
 .fo-war-timer-label { opacity: 0.6; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
