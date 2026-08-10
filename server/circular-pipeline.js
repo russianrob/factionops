@@ -269,23 +269,36 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // then returns nothing — better to overprovision than drop a whole page. 429/529
 // (rate-limit / overloaded) retry with backoff.
 const EXTRACT_SYSTEM = "You are Claude Code, Anthropic's official CLI for Claude. For this task you are a data-extraction function: you have no tools and take no actions — you only read the text given and return JSON.";
+// Build the Anthropic auth headers. PREFER a dedicated API key (x-api-key) over
+// the Claude *subscription* OAuth token: the OAuth token shares your subscription's
+// rolling rate limit (which Claude Code sessions also consume), so token-heavy
+// vision calls 429 readily; a real API key has its own billable limits and never
+// competes. Falls back to the OAuth token (with the Claude Code framing beta) when
+// no key is configured, so existing setups keep working unchanged.
+function buildAiHeaders(opts = {}) {
+  const readFile = opts.readFile || defaultReadFile;
+  let apiKey = opts.apiKey || process.env.ANTHROPIC_API_KEY || "";
+  if (!apiKey) {
+    const kf = opts.apiKeyFile || process.env.WARBOARD_ANTHROPIC_KEY_FILE || "/opt/warboard/server/data/.anthropic-api-key";
+    try { apiKey = readFile(kf).trim(); } catch {}
+  }
+  const base = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
+  if (apiKey) return { ...base, "x-api-key": apiKey };
+  const tokenFile = opts.tokenFile || process.env.AGENT_CLAUDE_TOKEN_FILE || "/opt/warboard/server/data/.agent-claude-token";
+  let token = "";
+  try { token = readFile(tokenFile).trim(); } catch {}
+  return { ...base, "authorization": "Bearer " + token, "anthropic-beta": "oauth-2025-04-20" };
+}
+
 export async function claudeExtract(prompt, opts = {}) {
   const model = opts.model || process.env.CIRCULAR_MODEL || "claude-haiku-4-5-20251001";
-  const tokenFile = opts.tokenFile || process.env.AGENT_CLAUDE_TOKEN_FILE || "/opt/warboard/server/data/.agent-claude-token";
   const maxTokens = opts.maxTokens || 16000;
   const doFetch = opts.fetchImpl || globalThis.fetch;
-  let token = "";
-  try { token = (opts.readFile || defaultReadFile)(tokenFile).trim(); } catch {}
   const body = JSON.stringify({
     model, max_tokens: maxTokens, system: EXTRACT_SYSTEM,
     messages: [{ role: "user", content: prompt }],
   });
-  const headers = {
-    "content-type": "application/json",
-    "anthropic-version": "2023-06-01",
-    "authorization": "Bearer " + token,
-    "anthropic-beta": "oauth-2025-04-20",
-  };
+  const headers = buildAiHeaders(opts);
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -329,11 +342,8 @@ export async function claudeExtractImage(images, prompt, opts = {}) {
   // the token's output-per-minute limit and reliably 429s. Disabling thinking
   // (below) keeps Sonnet's accuracy with a small, fast response (~8s, no 429).
   const model = opts.model || process.env.CIRCULAR_VISION_MODEL || "claude-sonnet-5";
-  const tokenFile = opts.tokenFile || process.env.AGENT_CLAUDE_TOKEN_FILE || "/opt/warboard/server/data/.agent-claude-token";
   const maxTokens = opts.maxTokens || 8000;
   const doFetch = opts.fetchImpl || globalThis.fetch;
-  let token = "";
-  try { token = (opts.readFile || defaultReadFile)(tokenFile).trim(); } catch {}
   const content = [
     ...images.map(b64 => ({ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } })),
     { type: "text", text: prompt },
@@ -345,13 +355,10 @@ export async function claudeExtractImage(images, prompt, opts = {}) {
     thinking: { type: "disabled" },
     messages: [{ role: "user", content }],
   });
-  const headers = {
-    "content-type": "application/json", "anthropic-version": "2023-06-01",
-    "authorization": "Bearer " + token, "anthropic-beta": "oauth-2025-04-20",
-  };
-  // The OAuth token has a tight rate limit; vision requests are token-heavy and
-  // 429 readily under any concurrent warboard API activity. This is a once-a-week
-  // call, so back off generously (respecting Retry-After) rather than failing.
+  const headers = buildAiHeaders(opts);
+  // With the OAuth token this 429s readily (shared subscription limit); with a
+  // dedicated API key it doesn't. Back off generously either way (respecting
+  // Retry-After) rather than failing — this is a once-a-week call.
   const backoff = [8000, 20000, 40000, 60000];
   let lastErr;
   for (let attempt = 0; attempt < backoff.length; attempt++) {
