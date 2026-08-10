@@ -774,6 +774,7 @@ const PURPOSE_REQUIRED_SELECTION = {
   "chain":         "chain",
   "xanax-tracker": "armorynews",
   "retals":        "attacks",
+  "post-war":      "attacks",
 };
 
 /** Look up the faction selection a poller's purpose requires, if any. */

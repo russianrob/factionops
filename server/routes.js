@@ -4943,9 +4943,14 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   const ourMemberList = Object.entries(ourMembers).map(([id, m]) => {
     const bleed = bleedByMember[id] || { timesAttacked: 0, respectBled: 0 };
     const attempts = attemptsByMember[id] || { total: 0, failed: 0 };
-    const allAttempts = allAttemptsByMember[id] || 0;
-    const xanax = Number(xanaxTaken[id]) || 0;
+    // War hits from the ranked-war report are a hard lower bound on energy
+    // spent (energy spent ≥ successful war hits). Floor allAttempts at them so
+    // an empty/failed faction attacks-feed doesn't collapse every member to 0
+    // and flag the whole roster in xanax accountability. No-op when the feed is
+    // healthy, since all-attacks (war + non-war + failed) ≥ war hits.
     const attacks = m.attacks || 0;
+    const allAttempts = Math.max(allAttemptsByMember[id] || 0, attacks);
+    const xanax = Number(xanaxTaken[id]) || 0;
     // 1 xanax = 250 energy = 10 attacks at 25 e each. Credit EVERY attack the
     // member made (war + non-war) — energy is energy, so non-war hits still
     // count toward the xanax they pulled. Anything short = unaccounted energy.
@@ -5642,8 +5647,38 @@ async function handlePostWarReport(req, res) {
           // come through (Torn's ranked_war flag is set only on attacks
           // that actually scored — failures get stripped under the
           // default filter, which broke the new energy efficiency calc).
-          attackLog = await fetchFactionAttacks(war.factionId, apiKey, startTs, endTs, { rankedWarOnly: false });
-          console.log(`[post-war] Fetched ${attackLog.length} faction attacks (war + non-war) for bleed + energy analysis`);
+          //
+          // 2026-08-11: rotate through pool keys, quarantining any that fail
+          // with code 7 ("Incorrect ID-entity relation" — the key's owner left
+          // the faction or lost API access). Mirrors war-payouts.js. Without
+          // rotation a single dead faction key throws code 7, attackLog stays
+          // [], and BOTH bleed analysis AND xanax accountability collapse to
+          // zero (every member shows 0 hits and gets flagged).
+          const POOL_RETRY_LIMIT = 8;
+          const triedKeys = new Set();
+          let rotErr = null;
+          for (let attempt = 0; attempt < POOL_RETRY_LIMIT; attempt++) {
+            const candidate = store.getPollingKey(war.factionId, "post-war", attempt);
+            if (!candidate) break;
+            if (triedKeys.has(candidate)) continue;
+            triedKeys.add(candidate);
+            try {
+              attackLog = await fetchFactionAttacks(war.factionId, candidate, startTs, endTs, { rankedWarOnly: false });
+              console.log(`[post-war] Fetched ${attackLog.length} faction attacks (war + non-war) for bleed + energy analysis`);
+              rotErr = null;
+              break;
+            } catch (err) {
+              rotErr = err;
+              if (err.code === 7) {
+                store.quarantinePoolKey(candidate, war.factionId, `post-war: code 7 (${err.message})`);
+                continue; // dead key for this faction — try the next
+              }
+              throw err; // transient (rate limit / network) — stop rotating
+            }
+          }
+          if (rotErr) {
+            console.warn(`[post-war] Attack log unavailable after ${triedKeys.size} key(s): ${rotErr.message} — falling back to war hits`);
+          }
         }
       } catch (atkErr) {
         console.warn(`[post-war] Attack log fetch failed (bleed analysis will be skipped):`, atkErr.message);
