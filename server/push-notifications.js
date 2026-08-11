@@ -253,6 +253,14 @@ export async function sendToPlayer(playerId, payload, notifType, pushOptions) {
     return;
   }
 
+  // FCM/APNs fanout — independent native-app transport. Fire it BEFORE the
+  // web-push early-returns below: a native-app-only user has NO web-push
+  // subscription, so the `subs.length === 0` return (and the no-VAPID return)
+  // would otherwise skip their banner entirely — the gap where app-only members
+  // got no chain alerts. Pref/type gate already passed above; harmless no-op for
+  // players without an FCM token.
+  fanoutFcm([playerId], payload, notifType).catch(() => { /* logged inside */ });
+
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
 
   const subs = subscriptions[playerId];
@@ -328,10 +336,8 @@ export async function sendToPlayer(playerId, payload, notifType, pushOptions) {
     `)`
   );
 
-  // FCM fanout — independent transport for native Android devices.
-  // Pref gate already passed above (no need to re-check). Failure of
-  // FCM doesn't block the Web Push success above; logged separately.
-  fanoutFcm([playerId], payload, notifType).catch(() => { /* logged inside */ });
+  // (FCM fanout now fires above, before the web-push early-returns, so
+  // native-app-only users aren't skipped.)
 }
 
 // Lazy-loaded FCM fan-out. Imported on first call so the module load
