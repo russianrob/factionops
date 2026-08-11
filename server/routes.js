@@ -5594,6 +5594,7 @@ async function handlePostWarReport(req, res) {
   let warReportData = null;
   let attackLog = null;
   let cacheStatus = "miss";
+  let cached = null; // hoisted so the xanax step can read a frozen fallback
   // Serve from cache. ENDED wars: permanent, but guard against a prior war that
   // reused this warboard warId (enemy-match). ACTIVE wars: the report is for the
   // LAST COMPLETED war (its data is final), so also serve from cache — within a
@@ -5602,7 +5603,7 @@ async function handlePostWarReport(req, res) {
   // differs from the active war, so the enemy-match guard is ended-only.
   const POST_WAR_ACTIVE_TTL_MS = 3 * 60 * 60 * 1000; // 3h
   {
-    const cached = loadPostWarCache(warId);
+    cached = loadPostWarCache(warId);
     if (cached && cached.warReportData) {
       if (war.warEnded) {
         // 2026-05-17: validate the cached report is FOR THIS war, not an older
@@ -5622,6 +5623,7 @@ async function handlePostWarReport(req, res) {
           cacheStatus   = "hit";
         } else {
           console.log(`[post-war] discarding stale cache for ${warId}: cached enemy ${cachedEnemyId} != current enemy ${war.enemyFactionId}`);
+          cached = null; // reject fully — don't let its xanax/fetchedAt leak into a different war's report
         }
       } else if (Date.now() - (cached.fetchedAt || 0) < POST_WAR_ACTIVE_TTL_MS) {
         warReportData = cached.warReportData;
@@ -5709,35 +5711,67 @@ async function handlePostWarReport(req, res) {
       } catch (atkErr) {
         console.warn(`[post-war] Attack log fetch failed (bleed analysis will be skipped):`, atkErr.message);
       }
-      // Persist to cache when the report's data is FINAL: the war ended, OR the
-      // report is for a COMPLETED ranked war (winner set) — which is what the
-      // endpoint returns even during an ACTIVE war. Caching a completed-war
-      // report lets a retry after a slow first fetch serve instantly instead of
-      // re-running the fetch and timing the client out. Never cache the active
-      // war's OWN partial data (no winner) — that still changes.
-      const reportIsFinal = war.warEnded
-        || (warReportData && warReportData.winner && String(warReportData.winner) !== "0");
-      if (reportIsFinal) {
+      // Cache is written AFTER xanax is resolved (below) so the frozen report
+      // carries its xanax and survives a war rollover reusing war_<fid>.
+    }
+
+    // Xanax accountability stats. The live tracker (xanax-tracker.js) is keyed
+    // by the reused warboard warId ('war_<fid>'), so it always describes the war
+    // that is CURRENTLY active — not necessarily the (completed) war this report
+    // is for. The frozen copy in the cache is only trustworthy when it belongs
+    // to the SAME ranked war we're serving: the report id is unique per war, so
+    // match on it (a war rollover reuses the warId but never the report id). This
+    // guards against a stale frozen copy from a prior war leaking into a
+    // different war's report — the same hazard the enemy-match guard above
+    // catches for warReportData/attackLog.
+    const cachedXanax = (cached && cached.warReportData && warReportData
+      && String(cached.warReportData.id) === String(warReportData.id)
+      && cached.xanaxStats && cached.xanaxStats.taken
+      && Object.keys(cached.xanaxStats.taken).length) ? cached.xanaxStats : null;
+    // rolledOver: a newer war is active, so the live tracker has moved on to it
+    // and no longer describes THIS already-completed report. Use ONLY the frozen
+    // same-war copy — never the live tracker, which is the wrong war.
+    const rolledOver = !war.warEnded;
+    let xanaxStats = null;
+    if (rolledOver) {
+      xanaxStats = cachedXanax;
+    } else {
+      // This report's war is still the current one, so the live tracker
+      // describes it and reflects any backfills — prefer it, falling back to the
+      // frozen copy if the tracker was reset (pm2 restart / post-war window elapsed).
+      try {
+        const xt = await import("./xanax-tracker.js");
+        xanaxStats = xt.getStats(warId);
+        if (!xanaxStats || xanaxStats.lastPolledAt === 0) xanaxStats = null;
+      } catch (xtErr) {
+        console.warn(`[post-war] xanax-tracker import failed:`, xtErr.message);
+        xanaxStats = null;
+      }
+      const liveHasXanax = !!(xanaxStats && xanaxStats.taken && Object.keys(xanaxStats.taken).length);
+      if (!liveHasXanax && cachedXanax) xanaxStats = cachedXanax;
+    }
+
+    // Freeze the report into the cache once its data is FINAL: the war ended,
+    // OR the report is for a completed ranked war (winner set) — which the
+    // endpoint returns even mid-active-war. Persisting the RESOLVED xanaxStats
+    // here (not at fetch time) means a later war rollover that resets the live
+    // tracker can't wipe accountability — the frozen copy survives. On a fresh
+    // fetch (miss) always write; on a cache hit only write to self-heal a cache
+    // that lacks xanax we've now resolved, preserving the original fetchedAt.
+    const reportIsFinal = war.warEnded
+      || (warReportData && warReportData.winner && String(warReportData.winner) !== "0");
+    if (reportIsFinal) {
+      const haveXanaxNow = !!(xanaxStats && xanaxStats.taken && Object.keys(xanaxStats.taken).length);
+      const shouldWrite = cacheStatus !== "hit" || (!cachedXanax && haveXanaxNow);
+      if (shouldWrite) {
         savePostWarCache(warId, {
           warReportData,
           attackLog,
-          fetchedAt: Date.now(),
+          xanaxStats,
+          fetchedAt: cacheStatus === "hit" ? (cached.fetchedAt || Date.now()) : Date.now(),
         });
-        cacheStatus = "stored";
+        if (cacheStatus === "miss") cacheStatus = "stored";
       }
-    }
-
-    // Xanax accountability stats — populated by xanax-tracker.js while
-    // the war is active. Always re-read from war.xanaxStats so backfill
-    // updates flow through even when the rest is cached.
-    let xanaxStats;
-    try {
-      const xt = await import("./xanax-tracker.js");
-      xanaxStats = xt.getStats(warId);
-      if (!xanaxStats || xanaxStats.lastPolledAt === 0) xanaxStats = null;
-    } catch (xtErr) {
-      console.warn(`[post-war] xanax-tracker import failed:`, xtErr.message);
-      xanaxStats = null;
     }
 
     // Per-user attack telemetry — captured live during the war by each
@@ -11766,3 +11800,4 @@ startOcReadyPoller({
 });
 
 export default router;
+
