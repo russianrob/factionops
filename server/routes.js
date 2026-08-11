@@ -5594,30 +5594,39 @@ async function handlePostWarReport(req, res) {
   let warReportData = null;
   let attackLog = null;
   let cacheStatus = "miss";
-  if (war.warEnded) {
+  // Serve from cache. ENDED wars: permanent, but guard against a prior war that
+  // reused this warboard warId (enemy-match). ACTIVE wars: the report is for the
+  // LAST COMPLETED war (its data is final), so also serve from cache — within a
+  // TTL — so repeated opens don't re-run the slow wide-window fetch, which times
+  // the client out (499) and then trips the cooldown (429). The cached enemy
+  // differs from the active war, so the enemy-match guard is ended-only.
+  const POST_WAR_ACTIVE_TTL_MS = 3 * 60 * 60 * 1000; // 3h
+  {
     const cached = loadPostWarCache(warId);
     if (cached && cached.warReportData) {
-      // 2026-05-17: validate the cached report is FOR THIS war, not
-      // an older war that reused the same warboard internal warId.
-      // The warboard's warId is keyed by faction ('war_42055') so when
-      // a new ranked war starts against a new opponent, the cache
-      // file from the previous war keeps serving until invalidated.
-      // Bug case: Mile High Club just ended, user opens post-war
-      // report, sees Knockout/Ringside from 7 days earlier.
-      const factions = Array.isArray(cached.warReportData.factions)
-        ? cached.warReportData.factions : [];
-      const cachedEnemyId = factions
-        .map(f => String(f.id))
-        .find(id => id !== String(war.factionId));
-      const matches = !war.enemyFactionId
-        || !cachedEnemyId
-        || String(cachedEnemyId) === String(war.enemyFactionId);
-      if (matches) {
+      if (war.warEnded) {
+        // 2026-05-17: validate the cached report is FOR THIS war, not an older
+        // war that reused the same warboard internal warId ('war_42055'), so a
+        // just-ended war doesn't show the previous opponent's report.
+        const factions = Array.isArray(cached.warReportData.factions)
+          ? cached.warReportData.factions : [];
+        const cachedEnemyId = factions
+          .map(f => String(f.id))
+          .find(id => id !== String(war.factionId));
+        const matches = !war.enemyFactionId
+          || !cachedEnemyId
+          || String(cachedEnemyId) === String(war.enemyFactionId);
+        if (matches) {
+          warReportData = cached.warReportData;
+          attackLog     = cached.attackLog || [];
+          cacheStatus   = "hit";
+        } else {
+          console.log(`[post-war] discarding stale cache for ${warId}: cached enemy ${cachedEnemyId} != current enemy ${war.enemyFactionId}`);
+        }
+      } else if (Date.now() - (cached.fetchedAt || 0) < POST_WAR_ACTIVE_TTL_MS) {
         warReportData = cached.warReportData;
         attackLog     = cached.attackLog || [];
         cacheStatus   = "hit";
-      } else {
-        console.log(`[post-war] discarding stale cache for ${warId}: cached enemy ${cachedEnemyId} != current enemy ${war.enemyFactionId}`);
       }
     }
   }
@@ -5700,9 +5709,15 @@ async function handlePostWarReport(req, res) {
       } catch (atkErr) {
         console.warn(`[post-war] Attack log fetch failed (bleed analysis will be skipped):`, atkErr.message);
       }
-      // Persist to cache only when the war is ended — active wars'
-      // data still changes, so caching would freeze stale numbers.
-      if (war.warEnded) {
+      // Persist to cache when the report's data is FINAL: the war ended, OR the
+      // report is for a COMPLETED ranked war (winner set) — which is what the
+      // endpoint returns even during an ACTIVE war. Caching a completed-war
+      // report lets a retry after a slow first fetch serve instantly instead of
+      // re-running the fetch and timing the client out. Never cache the active
+      // war's OWN partial data (no winner) — that still changes.
+      const reportIsFinal = war.warEnded
+        || (warReportData && warReportData.winner && String(warReportData.winner) !== "0");
+      if (reportIsFinal) {
         savePostWarCache(warId, {
           warReportData,
           attackLog,
