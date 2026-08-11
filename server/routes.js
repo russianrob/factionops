@@ -95,6 +95,7 @@ import * as missingOverrides from "./missing-overrides.js";
 import * as ocCheckpointHistory from "./oc-checkpoint-history.js";
 import * as warPayouts from "./war-payouts.js";
 import * as warHistory from "./war-history.js";
+import * as xanaxModel from "./xanax-model.js";
 import * as attackLedger from "./attack-ledger.js";
 import * as webauthn from "./webauthn.js";
 import busboy from "busboy";
@@ -4959,11 +4960,12 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
     const attacks = m.attacks || 0;
     const allAttempts = Math.max(allAttemptsByMember[id] || 0, attacks);
     const xanax = Number(xanaxTaken[id]) || 0;
-    // 1 xanax = 250 energy = 10 attacks at 25 e each. Credit EVERY attack the
-    // member made (war + non-war) — energy is energy, so non-war hits still
-    // count toward the xanax they pulled. Anything short = unaccounted energy.
-    const expectedAttacks = xanax * 10;
-    const attackDeficit = Math.max(0, expectedAttacks - allAttempts);
+    // Expected = 250e per vial + a flat ~150e natural-regen credit, at 25e per
+    // attack (see xanax-model.js). Credit EVERY attack the member made (war +
+    // non-war) — energy is energy. A shortfall past the grace margin means they
+    // coasted on the free regen the war handed them, not just the vial.
+    const expectedAttacks = xanaxModel.expectedAttacks(xanax);
+    const attackDeficit = xanaxModel.deficit(xanax, allAttempts);
     return {
       id,
       name: m.name || "Unknown",
@@ -4985,7 +4987,7 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
       xanaxTaken: xanax,
       expectedAttacks,
       attackDeficit: xanax > 0 ? attackDeficit : null,
-      xanaxFlagged: xanax > 0 && attackDeficit > 0,
+      xanaxFlagged: xanaxModel.flagged(xanax, allAttempts),
       // Times this member overdosed during the war (0 when OD tracking wasn't
       // running, e.g. pre-feature wars). An OD wastes the xanax and benches
       // them — so it explains a deficit as recklessness rather than a no-show.
@@ -5409,7 +5411,7 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
     // didn't translate it to ≥ N×10 attacks, they're flagged. No
     // exceptions — the leader can interpret context if needed; the
     // report just surfaces the math.
-    rule: "1 xanax = 10 expected attacks (250 energy ÷ 25 e per atk); war AND non-war hits both count as energy spent. Window = 24h pre-war + war + 24h post-war chain finish.",
+    rule: "Expected = 10 attacks per xanax (250e) + 6 for ~150e natural regen over the war, at 25e/attack; war AND non-war hits both count as energy spent. Flagged only when short by more than a 3-attack grace. Window = 24h pre-war + war + 24h post-war chain finish.",
   };
 
   // ── ATTACK TELEMETRY ──

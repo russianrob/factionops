@@ -26,6 +26,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { dirname, join as pathJoin } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as xanaxModel from "./xanax-model.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || pathJoin(__dirname, "data");
@@ -174,8 +175,8 @@ export function ingestWar(factionId, war, result) {
       // attacks; deficit = expected - all attacks made (war + non-war). Zeroed
       // when the war carried no xanax tracking (backfill / pre-tracking wars).
       const xanaxTaken = Number(xanaxTakenMap[String(m.playerId)]) || 0;
-      const xanaxDeficit = Math.max(0, xanaxTaken * 10 - totalAttacks);
-      const xanaxFlagged = xanaxTaken > 0 && xanaxDeficit > 0;
+      const xanaxDeficit = xanaxModel.deficit(xanaxTaken, totalAttacks);
+      const xanaxFlagged = xanaxModel.flagged(xanaxTaken, totalAttacks);
       // Times this member overdosed during the war (0 pre-tracking). An OD wastes
       // the xanax entirely, so it reframes a deficit as reckless, not a no-show.
       const overdosedThisWar = Number(odByPlayer[String(m.playerId)]?.count) || 0;
@@ -329,8 +330,8 @@ export function backfillXanaxForWar(factionId, warKey, takenMap, names, meta = {
     const totalAttacks = Number(m.totalAttacks) || 0;
     const xanaxTaken = Number(taken[String(m.playerId)]) || 0;
     m.xanaxTaken = xanaxTaken;
-    m.xanaxDeficit = Math.max(0, xanaxTaken * 10 - totalAttacks);
-    m.xanaxFlagged = xanaxTaken > 0 && m.xanaxDeficit > 0;
+    m.xanaxDeficit = xanaxModel.deficit(xanaxTaken, totalAttacks);
+    m.xanaxFlagged = xanaxModel.flagged(xanaxTaken, totalAttacks);
   }
   const entry = _load(fid);
   entry.dirty = true;
