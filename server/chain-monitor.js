@@ -39,7 +39,7 @@ let _chainPollCursor = 0;
 const CHAIN_MIN_HITS = 10;        // only alert when chain >= 10 (real chain)
 const CHAIN_ALERT_COOLDOWN_MS = 30_000; // max one alert push per 30s per war
 const CHAIN_PANIC_COOLDOWN_MS = 20_000; // max one panic push per 20s per war
-const WAR_SCORE_CHECK_INTERVAL = 30_000; // check war score every 30s
+const WAR_SCORE_CHECK_INTERVAL = 300_000; // check war score every 5 min (score/ETA don't need 30s freshness)
 
 /** Bonus hit thresholds in Torn chain mechanics. */
 const BONUS_HITS = [

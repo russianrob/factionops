@@ -20,21 +20,3 @@ export function enemyProfilePrewarDelay(warStart, baseDelay, nowSec) {
   if (startsInSec <= ENEMY_PROFILE_RAMP_SEC) return baseDelay; // active or imminent
   return Math.max(baseDelay, ENEMY_PROFILE_PREWAR_MS);         // upcoming → throttle
 }
-
-// Torn states where the member physically cannot be mid-attack — no point
-// spending a profile poll on them. (offline/idle activity is handled
-// separately by the `activity` check.)
-const CANT_ATTACK = new Set(["hospital", "traveling", "jail", "federal"]);
-
-/**
- * Whether an enemy is worth polling for live "attacking" detection: they
- * must be online (at the keyboard) AND free to act (not hospital / in
- * transit / jail / federal). Offline & idle members can't be mid-attack —
- * the moment they act they flip to online and the 15s war-status poll
- * re-includes them, so the sweep can safely skip them. `s` is a
- * war.enemyStatuses entry { activity, status, ... }.
- */
-export function couldBeAttacking(s) {
-  if (!s || s.activity !== "online") return false;
-  return !CANT_ATTACK.has(String(s.status || "okay"));
-}
