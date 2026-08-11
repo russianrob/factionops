@@ -994,21 +994,14 @@ export function getPollInterval(factionId, purpose) {
     "war-status":    { min: 15_000, max: 30_000 }, // Torn cache ~30s
     "attacks-feed":  { min: 15_000, max: 60_000 }, // our faction's attacks feed
     "enemy-attacks": { min: 10_000, max: 30_000 }, // (unused — Torn blocks other factions' attacks)
-    // Per-enemy profile round-robin. Concurrency scales with pool size
-    // up to the cap in war-status-monitor.js. At each tick we fire
-    // min(n, ids.length, 20) parallel requests — one call per key per
-    // tick at full concurrency. Per-key rate at floor = 60/floor_sec.
-    //
-    // Prior 700ms floor put per-key rate at ~86/min — which only works
-    // if the key owner isn't using their own key. In practice owners
-    // burn 20-50/min in their browser (OC spawn, link-formatter, etc.),
-    // so 86/min + 30/min = 429. 2000ms floor = ~30/min/key, leaving
-    // 70/min headroom for owner browser activity.
-    //
-    // Sweep latency trade-off with 70 enemies, 7-key pool, 2s floor:
-    // ceil(70/7) * 2s = 20s full sweep. Torn's member-basic cache is
-    // 30s anyway, so 20s is as tight as this endpoint rewards.
-    "enemy-profile": { min: 2000, max: 3500 },
+    // Per-enemy profile round-robin. Slowed to a flat 30s (2026-08-11): the
+    // basic war-status roster poll already refreshes every enemy every ~30s in
+    // ONE call, so a faster per-enemy sweep mostly duplicated it while dominating
+    // API usage. At 30s the sweep's remaining unique job is the per-enemy
+    // "attacking" push detection; hospital timers + online status ride the basic
+    // poll and tick down client-side between polls. Flat min=max so a bigger key
+    // pool doesn't speed it back up.
+    "enemy-profile": { min: 30_000, max: 30_000 },
   };
   const c = config[purpose] || config["war-status"];
   // Divide the conservative max by pool size, floor at min.
