@@ -19,6 +19,13 @@ import { enemyProfilePrewarDelay, couldBeAttacking } from "./enemy-profile-gate.
 // scales with current pool size.
 const POLL_INTERVAL_MS = 30_000;
 const MAX_BACKOFF_MS = 120_000;   // max 2 minutes between retries on failure
+// Our own faction is polled on a MUCH slower cadence than the enemy: the 30s
+// loop exists for enemy hospital-timer freshness, which our roster doesn't need.
+// This fetch only drives the online/idle counters and the overdose watch — a
+// Xanax OD benches a member for hours, so 10-min resolution catches every OD
+// with room to spare, and it cuts our-faction API calls ~20× during a war.
+const OUR_FACTION_INTERVAL_MS = 10 * 60_000; // 10 minutes
+const lastOurFactionPoll = new Map();        // warId -> ms epoch of last our-roster fetch
 
 const nextWarStatus = (war) =>
   war && war.factionId
@@ -203,21 +210,30 @@ export function startWarStatusMonitor(io, warId) {
         }
       } catch (_) { /* non-critical */ }
 
-      // Record our faction's online count for the activity heatmap + header display
-      try {
-        const ourMembers = await fetchFactionMembers(war.factionId, apiKey);
-        const ourOnline = Object.values(ourMembers).filter(
-          (m) => m.activity === "online",
-        ).length;
-        const ourIdle = Object.values(ourMembers).filter(
-          (m) => m.activity === "idle",
-        ).length;
-        const ourTotal = Object.keys(ourMembers).length;
-        recordSample(war.factionId, ourOnline + ourIdle, ourTotal);
-        // Store on war for poll response
-        war.ourFactionOnline = { online: ourOnline, idle: ourIdle, total: ourTotal };
-      } catch (_) {
-        // Non-critical — skip silently
+      // Our own faction: online-count for the header/heatmap + the overdose
+      // watch, throttled to OUR_FACTION_INTERVAL_MS (10 min) independent of the
+      // 30s enemy cadence. One fetch feeds both — the OD watch adds no API call.
+      const lastOur = lastOurFactionPoll.get(warId) || 0;
+      if (Date.now() - lastOur >= OUR_FACTION_INTERVAL_MS) {
+        lastOurFactionPoll.set(warId, Date.now());
+        try {
+          const ourMembers = await fetchFactionMembers(war.factionId, apiKey);
+          const ourOnline = Object.values(ourMembers).filter(
+            (m) => m.activity === "online",
+          ).length;
+          const ourIdle = Object.values(ourMembers).filter(
+            (m) => m.activity === "idle",
+          ).length;
+          const ourTotal = Object.keys(ourMembers).length;
+          recordSample(war.factionId, ourOnline + ourIdle, ourTotal);
+          // Store on war for poll response
+          war.ourFactionOnline = { online: ourOnline, idle: ourIdle, total: ourTotal };
+          // Overdose accountability: same roster carries each member's hospital
+          // status; edge-count anyone newly in an "overdosing on Xanax" state.
+          import("./od-tracker.js").then(m => m.recordRoster(warId, ourMembers)).catch(() => {});
+        } catch (_) {
+          // Non-critical — skip silently
+        }
       }
 
       // ── Recalculate warEta from stored scores/target so non-war-page clients stay in sync ──
@@ -596,6 +612,7 @@ export function stopWarStatusMonitor(warId) {
     timeouts.delete(warId);
   }
   backoffs.delete(warId);
+  lastOurFactionPoll.delete(warId);
   const id = intervals.get(warId);
   if (id) clearInterval(id);
   intervals.delete(warId);

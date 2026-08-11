@@ -117,6 +117,11 @@ export function ingestWar(factionId, war, result) {
   const freshXanax = (war && war.xanaxStats && war.xanaxStats.taken) ? war.xanaxStats : null;
   const effXanax = freshXanax || ((prevWar && prevWar.xanaxStats) ? prevWar.xanaxStats : null);
   const xanaxTakenMap = (effXanax && effXanax.taken) || {};
+  // Overdose accountability source: same preserve-if-missing rule as xanax, so a
+  // re-ingest without a live odStats doesn't wipe the captured count.
+  const freshOd = (war && war.odStats && war.odStats.byPlayer) ? war.odStats : null;
+  const effOd = freshOd || ((prevWar && prevWar.odStats) ? prevWar.odStats : null);
+  const odByPlayer = (effOd && effOd.byPlayer) || {};
   entry.wars[warKey] = {
     warKey,
     warId: String((result.warId != null ? result.warId : (war && war.warId)) ?? warKey),
@@ -150,6 +155,19 @@ export function ingestWar(factionId, war, result) {
           ...(effXanax.backfilledFrom ? { backfilledFrom: effXanax.backfilledFrom, backfilledTo: effXanax.backfilledTo } : {}),
         }
       : null,
+    // Per-war overdose counts (playerId -> times overdosed during the war),
+    // captured live by od-tracker from the roster poll. null pre-tracking.
+    odStats: effOd
+      ? {
+          lastPolledAt: Number(effOd.lastPolledAt) || null,
+          byPlayer: Object.fromEntries(
+            Object.entries(odByPlayer).map(([pid, o]) => [pid, {
+              name: String((o && o.name) || `Player ${pid}`),
+              count: Number(o && o.count) || 0,
+            }]),
+          ),
+        }
+      : null,
     members: result.members.map(m => {
       const totalAttacks = Number(m.totalAttacks) || 0;
       // Xanax accountability, frozen at capture. 1 xanax = 250e = 10 expected
@@ -158,6 +176,9 @@ export function ingestWar(factionId, war, result) {
       const xanaxTaken = Number(xanaxTakenMap[String(m.playerId)]) || 0;
       const xanaxDeficit = Math.max(0, xanaxTaken * 10 - totalAttacks);
       const xanaxFlagged = xanaxTaken > 0 && xanaxDeficit > 0;
+      // Times this member overdosed during the war (0 pre-tracking). An OD wastes
+      // the xanax entirely, so it reframes a deficit as reckless, not a no-show.
+      const overdosedThisWar = Number(odByPlayer[String(m.playerId)]?.count) || 0;
       return {
         playerId: String(m.playerId),
         name: String(m.name || `Player ${m.playerId}`),
@@ -175,6 +196,7 @@ export function ingestWar(factionId, war, result) {
         xanaxTaken,
         xanaxDeficit,
         xanaxFlagged,
+        overdosedThisWar,
       };
     }),
   };

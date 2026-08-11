@@ -4848,7 +4848,7 @@ const postWarReportCooldowns = new Map();
 const POST_WAR_REPORT_COOLDOWN_MS = 60000;
 
 /** Analyze ranked war report data into a structured post-war performance breakdown. */
-function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, telemetry, war) {
+function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, telemetry, war, odStats) {
   estimates = estimates || {};
   telemetry = Array.isArray(telemetry) ? telemetry : [];
   const report = warReportData || {};
@@ -4947,6 +4947,7 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   // v2 API returns 'score' per member which IS the respect/score contribution
   // There's no separate 'respect' field — score is used for both
   const xanaxTaken = (xanaxStats && xanaxStats.taken) || {};
+  const odByPlayer = (odStats && odStats.byPlayer) || {};
   const ourMemberList = Object.entries(ourMembers).map(([id, m]) => {
     const bleed = bleedByMember[id] || { timesAttacked: 0, respectBled: 0 };
     const attempts = attemptsByMember[id] || { total: 0, failed: 0 };
@@ -4985,6 +4986,10 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
       expectedAttacks,
       attackDeficit: xanax > 0 ? attackDeficit : null,
       xanaxFlagged: xanax > 0 && attackDeficit > 0,
+      // Times this member overdosed during the war (0 when OD tracking wasn't
+      // running, e.g. pre-feature wars). An OD wastes the xanax and benches
+      // them — so it explains a deficit as recklessness rather than a no-show.
+      overdosedThisWar: Number(odByPlayer[id]?.count) || 0,
     };
   });
 
@@ -5385,6 +5390,7 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
       expectedAttacks: m.expectedAttacks,
       attackDeficit: m.attackDeficit,
       flagged: m.xanaxFlagged,
+      overdosedThisWar: m.overdosedThisWar || 0,
     }))
     .sort((a, b) => (b.attackDeficit || 0) - (a.attackDeficit || 0));
   const xanaxAccountability = {
@@ -5392,6 +5398,11 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
     totalXanaxTaken: xanaxTookList.reduce((s, m) => s + (m.xanaxTaken || 0), 0),
     membersWhoTook:  xanaxTookList.length,
     membersFlagged:  xanaxRows.length, // rows is flagged-only now
+    // Overdose accountability rides alongside xanax: enabled once OD tracking has
+    // any data for this war; totals count ODs across the whole roster.
+    odEnabled: !!(odStats && odStats.byPlayer && Object.keys(odStats.byPlayer).length),
+    overdosesTotal: Object.values(odByPlayer).reduce((s, o) => s + (Number(o?.count) || 0), 0),
+    membersOverdosed: Object.values(odByPlayer).filter(o => (Number(o?.count) || 0) > 0).length,
     rows: xanaxRows,
     // Plainspoken accountability: 1 xanax = 250 energy = 10 attacks. If
     // a member took xanax in the 24h before war + during the war and
@@ -5751,6 +5762,28 @@ async function handlePostWarReport(req, res) {
       if (!liveHasXanax && cachedXanax) xanaxStats = cachedXanax;
     }
 
+    // Overdose accountability — resolved with the SAME rollover + report-id guard
+    // as xanax. The live od-tracker is keyed by the reused warId, so once a newer
+    // war is active it describes THAT war; use the frozen same-war copy instead.
+    const cachedOd = (cached && cached.warReportData && warReportData
+      && String(cached.warReportData.id) === String(warReportData.id)
+      && cached.odStats && cached.odStats.byPlayer
+      && Object.keys(cached.odStats.byPlayer).length) ? cached.odStats : null;
+    let odStats = null;
+    if (rolledOver) {
+      odStats = cachedOd;
+    } else {
+      try {
+        const odt = await import("./od-tracker.js");
+        odStats = odt.getOdStats(warId);
+        if (!odStats || !odStats.byPlayer || !Object.keys(odStats.byPlayer).length) odStats = null;
+      } catch (odErr) {
+        console.warn(`[post-war] od-tracker import failed:`, odErr.message);
+        odStats = null;
+      }
+      if (!odStats && cachedOd) odStats = cachedOd;
+    }
+
     // Freeze the report into the cache once its data is FINAL: the war ended,
     // OR the report is for a completed ranked war (winner set) — which the
     // endpoint returns even mid-active-war. Persisting the RESOLVED xanaxStats
@@ -5762,12 +5795,16 @@ async function handlePostWarReport(req, res) {
       || (warReportData && warReportData.winner && String(warReportData.winner) !== "0");
     if (reportIsFinal) {
       const haveXanaxNow = !!(xanaxStats && xanaxStats.taken && Object.keys(xanaxStats.taken).length);
-      const shouldWrite = cacheStatus !== "hit" || (!cachedXanax && haveXanaxNow);
+      const haveOdNow = !!(odStats && odStats.byPlayer && Object.keys(odStats.byPlayer).length);
+      const shouldWrite = cacheStatus !== "hit"
+        || (!cachedXanax && haveXanaxNow)
+        || (!cachedOd && haveOdNow);
       if (shouldWrite) {
         savePostWarCache(warId, {
           warReportData,
           attackLog,
           xanaxStats,
+          odStats,
           fetchedAt: cacheStatus === "hit" ? (cached.fetchedAt || Date.now()) : Date.now(),
         });
         if (cacheStatus === "miss") cacheStatus = "stored";
@@ -5780,7 +5817,7 @@ async function handlePostWarReport(req, res) {
     // Android in-app browsers since it doesn't depend on userscript hooks.
     const telemetry = attackLedger.getAttacksForWar(warId, war.factionId);
 
-    const report = analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, telemetry, war);
+    const report = analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, telemetry, war, odStats);
     console.log(`[post-war] Generated for war ${warId} (faction: ${factionId}, cache: ${cacheStatus}, xanax: ${xanaxStats ? `${Object.keys(xanaxStats.taken).length} member(s)` : 'none'}, telemetry: ${telemetry.length} fights)`);
     return res.json({ report });
   } catch (err) {
@@ -11800,4 +11837,5 @@ startOcReadyPoller({
 });
 
 export default router;
+
 
