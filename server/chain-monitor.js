@@ -71,6 +71,22 @@ const warTargetNotified = new Map();
  * `source` arg is just for log lines so we can see in pm2 whether the
  * data came from a client or our own poll.
  */
+/**
+ * Audience for chain / war PUSH notifications: every faction member warboard
+ * knows about — NOT store.getOnlinePlayersForWar, which lists only players with
+ * a LIVE warboard session. A push notification exists to reach a LOCKED phone
+ * (which by definition has no live session), so gating the audience on "online"
+ * silently dropped exactly the people who needed it — the reported symptom that
+ * chain alerts only arrived while factionops was open. The push layer filters
+ * this list to members with a registered subscription (isSubscribed), so
+ * non-subscribed / departed members are still skipped.
+ */
+function pushAudience(war) {
+  return war && war.factionId
+    ? store.getPlayerIdsForFaction(war.factionId).map((id) => ({ id }))
+    : [];
+}
+
 async function _processChain(warId, war, chain, io, source) {
   const prevChain = chainWithLiveTimeout({ ...war.chainData }, Date.now());
   // Store by absolute end instant. `chain` keeps its live `timeout` for the
@@ -108,7 +124,7 @@ async function _processChain(warId, war, chain, io, source) {
       const lastPanic = lastPanicSent.get(warId) || 0;
       if (Date.now() - lastPanic > CHAIN_PANIC_COOLDOWN_MS) {
         lastPanicSent.set(warId, Date.now());
-        const warPlayers = store.getOnlinePlayersForWar(warId);
+        const warPlayers = pushAudience(war);
         push.notifyChainPanic(warPlayers, warId, chain.current, Math.round(chain.timeout));
         console.log(`[chain] PANIC alert: chain ${chain.current}, ${Math.round(chain.timeout)}s remaining (${source})`);
       }
@@ -116,7 +132,7 @@ async function _processChain(warId, war, chain, io, source) {
       const lastAlert = lastAlertSent.get(warId) || 0;
       if (Date.now() - lastAlert > CHAIN_ALERT_COOLDOWN_MS) {
         lastAlertSent.set(warId, Date.now());
-        const warPlayers = store.getOnlinePlayersForWar(warId);
+        const warPlayers = pushAudience(war);
         push.notifyChainAlert(warPlayers, warId, chain.current, chain.timeout, Math.round(chain.timeout));
         console.log(`[chain] Warning alert: chain ${chain.current}, ${Math.round(chain.timeout)}s remaining (${source})`);
       }
@@ -125,7 +141,7 @@ async function _processChain(warId, war, chain, io, source) {
   if (!isCoolingDown && chain.current >= CHAIN_MIN_HITS) {
     const nextBonus = BONUS_HITS.find((b) => b > chain.current);
     if (nextBonus && nextBonus - chain.current <= 2 && (prevChain.current || 0) < chain.current) {
-      const warPlayers = store.getOnlinePlayersForWar(warId);
+      const warPlayers = pushAudience(war);
       push.notifyBonusImminent(warPlayers, warId, chain.current, nextBonus);
     }
   }
@@ -216,7 +232,7 @@ export function startChainMonitor(io, warId) {
             // sw.js leaves chain-break notifications pinned to the OS
             // notification panel until manual swipe — surfacing
             // day-old "chain breaking" alerts at random.
-            const warPlayersForClear = store.getOnlinePlayersForWar(warId);
+            const warPlayersForClear = pushAudience(war);
             push.notifyClearChainAlerts(warPlayersForClear, warId, war.warResult)
               .catch((e) => console.warn(`[chain] clear-chain-alerts push failed: ${e.message}`));
             // Dismiss any chain Live Activity island still up when the war
@@ -314,7 +330,7 @@ export function startChainMonitor(io, warId) {
                 warTargetNotified.set(warId, true);
                 war.warTarget.notifiedAt = Date.now();
                 store.saveState();
-                const warPlayers = store.getOnlinePlayersForWar(warId);
+                const warPlayers = pushAudience(war);
                 push.notifyWarTargetReached(warPlayers, warId, war.warTarget.value, rw.myScore);
                 console.log(`[chain] War target ${war.warTarget.value} reached! Score: ${rw.myScore} (server poll)`);
               }
