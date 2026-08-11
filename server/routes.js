@@ -4907,15 +4907,22 @@ function analyzePostWarReport(warReportData, estimates, attackLog, xanaxStats, t
   const ourFactionId_str = String(ourFaction.id || "");
   const enemyFactionId_str = String(enemyFaction.id || "");
   for (const atk of attackLog) {
+    // The attack log spans 24h pre-war + war + 24h post-war so allAttempts
+    // (energy spent) matches the xanax accountability window. Bleed and
+    // war-attempt tallies are war-only concepts — gate them to [warStart,
+    // warEnd]; the allAttempts tally below intentionally counts the full span.
+    const atkTs = atk.timestamp_ended || atk.timestamp_started || 0;
+    const inWarWindow = !warStart || !warEnd || (atkTs >= warStart && atkTs <= warEnd);
     // Enemy attacked one of our members
-    if (String(atk.defender_faction) === ourFactionId_str && String(atk.attacker_faction) !== ourFactionId_str) {
+    if (inWarWindow && String(atk.defender_faction) === ourFactionId_str && String(atk.attacker_faction) !== ourFactionId_str) {
       const defId = String(atk.defender_id);
       if (!bleedByMember[defId]) bleedByMember[defId] = { timesAttacked: 0, respectBled: 0 };
       bleedByMember[defId].timesAttacked++;
       bleedByMember[defId].respectBled += (atk.respect_gain || atk.respect || 0);
     }
     // We attacked the enemy faction — count as war attempt
-    if (String(atk.attacker_faction) === ourFactionId_str
+    if (inWarWindow
+        && String(atk.attacker_faction) === ourFactionId_str
         && enemyFactionId_str
         && String(atk.defender_faction) === enemyFactionId_str) {
       const aid = String(atk.attacker_id || "");
@@ -5643,6 +5650,16 @@ async function handlePostWarReport(req, res) {
         const startTs = warReportData.rankedwarreport?.start || warReportData.start || 0;
         const endTs = warReportData.rankedwarreport?.end || warReportData.end || 0;
         if (startTs && endTs) {
+          // Widen the fetch to the xanax accountability window (24h pre-war +
+          // war + 24h post-war) so energy a member banked pre-war or spent
+          // chaining post-war is credited — matching the window the rule text
+          // and xanax-tracker already use. Bleed + war-attempt tallies are
+          // re-scoped back to [start,end] inside analyzePostWarReport, so only
+          // allAttempts (energy spent) widens.
+          const { PRE_WAR_LOOKBACK_SEC, POST_WAR_LOOKAHEAD_SEC } = await import("./xanax-tracker.js");
+          const nowSec = Math.floor(Date.now() / 1000);
+          const fetchFrom = startTs - PRE_WAR_LOOKBACK_SEC;
+          const fetchTo = Math.min(endTs + POST_WAR_LOOKAHEAD_SEC, nowSec);
           // 2026-05-23: rankedWarOnly:false so losses/stalemates/escapes
           // come through (Torn's ranked_war flag is set only on attacks
           // that actually scored — failures get stripped under the
@@ -5663,8 +5680,8 @@ async function handlePostWarReport(req, res) {
             if (triedKeys.has(candidate)) continue;
             triedKeys.add(candidate);
             try {
-              attackLog = await fetchFactionAttacks(war.factionId, candidate, startTs, endTs, { rankedWarOnly: false });
-              console.log(`[post-war] Fetched ${attackLog.length} faction attacks (war + non-war) for bleed + energy analysis`);
+              attackLog = await fetchFactionAttacks(war.factionId, candidate, fetchFrom, fetchTo, { rankedWarOnly: false });
+              console.log(`[post-war] Fetched ${attackLog.length} faction attacks (24h pre + war + 24h post) for bleed + energy analysis`);
               rotErr = null;
               break;
             } catch (err) {
