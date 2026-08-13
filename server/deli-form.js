@@ -35,10 +35,15 @@ export const DELI_ROWS = [
   { row: 5,  item: "Domestic Ham", match: t => /\bham\b/.test(t) && !/turkey|chicken/.test(t) && !isFlavoredHam(t) },
   { row: 6,  item: "Flavored Ham", match: t => /\bham\b/.test(t) && !/turkey|chicken/.test(t) && isFlavoredHam(t) },
   { row: 7,  item: "Bologna",      match: t => /bologna/.test(t) },
-  // Salami: only Black Bear, and the cell always reads just "Black Bear" (the
-  // product is "Black Bear Classico Genoa Salami" — drop the "Classico" sub-line).
-  { row: 8,  item: "Salami",       match: t => /salami/.test(t) && /black bear/.test(t), label: () => "Black Bear" },
-  { row: 9,  item: "Pepperoni",    match: t => /pepperoni/.test(t) },
+  // Salami: any brand on sale (Carando Genoa, Black Bear, etc.) — NOT Black-Bear-
+  // only, which skipped this week's Carando. The cell shows the brand with the
+  // "Classico" sub-brand stripped (Black Bear's product is "Black Bear Classico
+  // Genoa Salami"; the deli cell just reads "Black Bear").
+  { row: 8,  item: "Salami",       match: t => /salami/.test(t),
+    label: o => { const b = (o.brand || "").replace(/\bclassico\b/i, "").replace(/\s+/g, " ").trim(); return b || null; } },
+  // Pepperoni is rarely on the circular; when it isn't, the user's standing
+  // order is Black Bear at $7.99, so fall back to that instead of a blank cell.
+  { row: 9,  item: "Pepperoni",    match: t => /pepperoni/.test(t), def: { brand: "Black Bear", price: 7.99 } },
   // Roast Beef's cell shows the CUT, not the brand: Eye Round, London Broil, or
   // "Regular" when it's neither.
   { row: 10, item: "Roast Beef",   match: t => /roast beef/.test(t),
@@ -54,7 +59,9 @@ export const DELI_ROWS = [
   { row: 15, item: "Swiss",        match: t => /swiss/.test(t) },
   // Cheddar cell includes the sharpness variety (e.g. "Bowl & Basket Ultra Sharp")
   // when the text names one, since that's how the user identifies the cheddar.
-  { row: 16, item: "Cheddar",      match: t => /cheddar/.test(t),
+  // Exclude "-wurst" sausages (a Black Bear "Cheddarwurst" bratwurst wrongly
+  // filled Cheddar at $3.99) and other non-cheese uses of the word.
+  { row: 16, item: "Cheddar",      match: t => /cheddar/.test(t) && !/wurst|sausage|brat\b/.test(t),
     label: o => { const brand = (o.brand || "").trim();
       const m = `${o.product || ""} ${o.description || ""}`.match(/\b(extra sharp|ultra sharp|sharp|medium|mild)\b/i);
       return m ? `${brand} ${m[1].replace(/\b\w/g, c => c.toUpperCase())}`.trim() : (brand || null); } },
@@ -75,10 +82,12 @@ const excluded = (o) => EXCLUDE_BRANDS.some(b => (String(o.brand || "") + " " + 
 // blank.
 export function matchDeliOffers(offers) {
   const usable = offers.filter(o => isPerLb(o) && num(o) != null && !excluded(o));
-  return DELI_ROWS.map(({ row, item, match, label }) => {
+  return DELI_ROWS.map(({ row, item, match, label, def }) => {
     const t = (o) => `${o.product || ""} ${o.description || ""}`.toLowerCase();
     const cands = usable.filter(o => match(t(o))).sort((a, b) => num(a) - num(b));
-    if (!cands.length) return { row, item, brand: null, price: null };
+    // No deal this week: use the row's standing default (e.g. Pepperoni →
+    // Black Bear $7.99) if it has one, otherwise leave the cell blank.
+    if (!cands.length) return { row, item, brand: def ? def.brand : null, price: def ? def.price : null };
     const best = cands[0];
     // A row may override how its "brand" cell is labelled (Roast Beef shows the
     // cut, not the maker); default is the offer's brand.
@@ -111,7 +120,7 @@ export function findDeliPages(pageTexts) {
 // ── Vision prompt for the deli page ─────────────────────────────────────────
 
 export function buildDeliVisionPrompt() {
-  return `These images are the "Deli, Specialty Cheese & Snacking" section of a supermarket weekly circular (one physical page, split top/bottom). Extract every DELI-COUNTER item — the ones sold by the pound, "Store Sliced".
+  return `This is ONE page from a supermarket weekly circular. Find EVERY DELI-COUNTER item on it — the ones sold BY THE POUND and marked "Store Sliced" (sliced turkey, ham, salami, bologna, roast beef, and deli cheeses: American, provolone, mozzarella, muenster, swiss, cheddar). They usually sit in a dedicated "Deli / Specialty Cheese" section, but they ALSO appear as featured tiles ANYWHERE on the page — e.g. a front-page store-brand showcase with a "Store Sliced ... $X.YY lb" turkey or American cheese. Look over the WHOLE page, not just a deli-labelled block. Some pages have NONE — return an empty array [] if so.
 
 Return ONLY a JSON array. Each element:
 {"product": string, "brand": string, "priceText": string, "pricePerLb": number|null, "unit": "lb"|"each"|null, "description": string}

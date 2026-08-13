@@ -38,7 +38,7 @@ test("matchDeliOffers reproduces the user-approved 12 rows exactly", () => {
     "Flavored Ham": ["Glen Rock", 4.99],
     "Bologna": ["Bowl & Basket", 3.99],
     "Salami": ["Black Bear", 5.99],   // Black-Bear-only, "Classico" dropped from the cell
-    "Pepperoni": [null, null],
+    "Pepperoni": ["Black Bear", 7.99],   // standing default when none on sale
     "Roast Beef": ["London Broil", 13.99],   // cut, not brand
     "American": ["Land O'Lakes", 4.99],
     "Provolone": ["Auricchio", 5.99],
@@ -54,6 +54,22 @@ test("matchDeliOffers reproduces the user-approved 12 rows exactly", () => {
   }
 });
 
+test("Salami: catches ANY brand (Carando Genoa), not just Black Bear", () => {
+  const carando = matchDeliOffers([
+    { product: "Carando Genoa Salami", brand: "Carando", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced, Hard" },
+  ]).find(r => r.item === "Salami");
+  assert.equal(carando.brand, "Carando");
+  assert.equal(carando.price, 5.99);
+});
+
+test("Salami: Black Bear still strips the 'Classico' sub-brand from the cell", () => {
+  const bb = matchDeliOffers([
+    { product: "Black Bear Classico Genoa Salami", brand: "Black Bear Classico", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced, Hard or Genoa" },
+  ]).find(r => r.item === "Salami");
+  assert.equal(bb.brand, "Black Bear");
+  assert.equal(bb.price, 5.99);
+});
+
 test("Carolina is excluded even though it is the cheapest turkey", () => {
   const got = matchDeliOffers(WEEK_0802);
   const turkey = got.find(r => r.item === "Turkey");
@@ -67,13 +83,36 @@ test("Butterball is excluded from Turkey (like Carolina)", () => {
   assert.equal(matchDeliOffers(WEEK_0802).find(r => r.item === "Turkey").price, 11.99);
 });
 
-test("Salami is Black-Bear-only and its cell reads just 'Black Bear' (no Classico)", () => {
+test("Salami: WEEK_0802 yields Black Bear with 'Classico' stripped; any brand qualifies", () => {
   const salami = matchDeliOffers(WEEK_0802).find(r => r.item === "Salami");
   assert.equal(salami.brand, "Black Bear");   // NOT "Black Bear Classico"
   assert.equal(salami.price, 5.99);
-  // A cheaper non-Black-Bear salami must NOT be chosen — the row stays blank:
-  const other = matchDeliOffers([{ product: "Carando Genoa Salami", brand: "Carando", priceText: "$3.99 lb", pricePerLb: 3.99, unit: "lb", description: "" }]);
-  assert.equal(other.find(r => r.item === "Salami").price, null);
+  // Any-brand now (was Black-Bear-only): a Carando salami DOES fill the row.
+  const row = matchDeliOffers([{ product: "Carando Genoa Salami", brand: "Carando", priceText: "$3.99 lb", pricePerLb: 3.99, unit: "lb", description: "" }])
+    .find(r => r.item === "Salami");
+  assert.equal(row.brand, "Carando");
+  assert.equal(row.price, 3.99);
+});
+
+test("Pepperoni defaults to Black Bear $7.99 when none is on sale", () => {
+  const p = matchDeliOffers([{ product: "Auricchio Provolone", brand: "Auricchio", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "" }])
+    .find(r => r.item === "Pepperoni");
+  assert.equal(p.brand, "Black Bear");
+  assert.equal(p.price, 7.99);
+});
+
+test("Pepperoni on sale overrides the default", () => {
+  const p = matchDeliOffers([{ product: "Margherita Pepperoni", brand: "Margherita", priceText: "$6.99 lb", pricePerLb: 6.99, unit: "lb", description: "Store Sliced" }])
+    .find(r => r.item === "Pepperoni");
+  assert.equal(p.brand, "Margherita");
+  assert.equal(p.price, 6.99);
+});
+
+test("a 'Cheddarwurst' bratwurst never fills the Cheddar cheese row", () => {
+  const got = matchDeliOffers([
+    { product: "Black Bear Bratwurst", brand: "Black Bear", priceText: "$3.99 lb", pricePerLb: 3.99, unit: "lb", description: "Cheddarwurst, Knockwurst" },
+  ]).find(r => r.item === "Cheddar");
+  assert.equal(got.price, null);   // NOT $3.99 from the Cheddarwurst
 });
 
 test("raw chicken thighs never fill the deli Chicken row", () => {
@@ -122,7 +161,7 @@ test("cheapest wins within a row", () => {
 });
 
 test("countFilled reports non-blank rows (guard input)", () => {
-  assert.equal(countFilled(matchDeliOffers(WEEK_0802)), 11);  // all but Pepperoni + Mozzarella
+  assert.equal(countFilled(matchDeliOffers(WEEK_0802)), 12);  // all but Mozzarella (Pepperoni now defaults to Black Bear $7.99)
 });
 
 test("findDeliPages detects the header page and Store-Sliced pages, not raw-meat", () => {
