@@ -41,16 +41,37 @@ const warMeta = list.map(it => ({
   result: it.result,
   tookXanax: it.xN,
 }));
+// Per-war dosers = war-report members who dosed PLUS players in xanaxStats.taken
+// (captured from armoury-news) who are MISSING from members[]. members[] is the
+// ranked-war REPORT — it only lists members who SCORED, so someone who took
+// Xanax but threw 0 war hits has no war-report row and is silently dropped (which
+// is also why a war header can read "36 dosed" but the body lists only 31). These
+// are the purest abusers — dose, do nothing. No war record ⇒ 0 attacks known ⇒
+// full deficit; net-zero takers (deposited it all back) are not abusers.
+function warDosers(w) {
+  const out = [];
+  const memberIds = new Set((w.members || []).map(m => String(m.playerId)));
+  for (const m of (w.members || [])) {
+    if ((m.xanaxTaken || 0) <= 0) continue;
+    out.push({ id: String(m.playerId), name: m.name, x: m.xanaxTaken, h: m.warHits, ta: Number(m.totalAttacks) || 0, left: false });
+  }
+  const taken = (w.xanaxStats && w.xanaxStats.taken) || {}, names = (w.xanaxStats && w.xanaxStats.names) || {};
+  for (const [id, x] of Object.entries(taken)) {
+    if (memberIds.has(String(id))) continue;   // already a roster member
+    const xn = Number(x) || 0;
+    if (xn <= 0) continue;                      // net-zero (returned it all) — not an abuser
+    out.push({ id: String(id), name: names[id] || `#${id}`, x: xn, h: 0, ta: 0, left: true });
+  }
+  return out;
+}
 const players = {};
 list.forEach((it, ci) => {
-  for (const m of it.w.members) {
-    if ((m.xanaxTaken || 0) <= 0) continue;
-    const p = players[m.playerId] || (players[m.playerId] = { name: m.name, cells: Array(N).fill(null), xanax: 0, deficit: 0, flagged: 0 });
-    p.name = m.name;
-    const ta = Number(m.totalAttacks) || 0;
-    const def = xm.deficit(m.xanaxTaken, ta), flag = xm.flagged(m.xanaxTaken, ta);
-    p.cells[ci] = { x: m.xanaxTaken, h: m.warHits, def, flag };
-    p.xanax += m.xanaxTaken; p.deficit += def; if (flag) p.flagged++;
+  for (const d of warDosers(it.w)) {
+    const p = players[d.id] || (players[d.id] = { name: d.name, cells: Array(N).fill(null), xanax: 0, deficit: 0, flagged: 0 });
+    p.name = d.name;
+    const def = xm.deficit(d.x, d.ta), flag = xm.flagged(d.x, d.ta);
+    p.cells[ci] = { x: d.x, h: d.h, def, flag, left: d.left };
+    p.xanax += d.x; p.deficit += def; if (flag) p.flagged++;
   }
 });
 const playerList = Object.values(players);
@@ -95,12 +116,8 @@ const readBullets = [
 // wars; this is the complete picture of the single latest war. ──
 const latest = list.length ? list[list.length - 1] : null;
 const latestMeta = warMeta.length ? warMeta[warMeta.length - 1] : null;
-const latestDosers = (latest ? latest.w.members : [])
-  .filter(m => (m.xanaxTaken || 0) > 0)
-  .map(m => {
-    const ta = Number(m.totalAttacks) || 0;
-    return { name: m.name, x: m.xanaxTaken, h: m.warHits, def: xm.deficit(m.xanaxTaken, ta), flag: xm.flagged(m.xanaxTaken, ta) };
-  })
+const latestDosers = (latest ? warDosers(latest.w) : [])
+  .map(d => ({ name: d.name, x: d.x, h: d.h, def: xm.deficit(d.x, d.ta), flag: xm.flagged(d.x, d.ta), left: d.left }))
   .sort((a, b) => b.def - a.def || b.x - a.x);
 const latestFlagged = latestDosers.filter(d => d.flag).length;
 const latestDefTotal = latestDosers.reduce((s, d) => s + d.def, 0);
@@ -117,7 +134,7 @@ const latestSection = latest ? `
     <div class="lgrid">
       ${latestDosers.length ? latestDosers.map((d, i) => `<div class="lrow ${sev(d.def, true)}">
         <span class="lrank">${i + 1}</span>
-        <span class="lname">${d.flag ? '<span class="flag">⚑</span> ' : ""}${esc(d.name)}</span>
+        <span class="lname">${d.flag ? '<span class="flag">⚑</span> ' : ""}${esc(d.name)}${d.left ? ' <span class="lgone" title="Took Xanax but has no ranked-war record — 0 war hits, so the war report omits them">no war hits</span>' : ""}</span>
         <span class="lxh">${d.x}x → ${d.h}h</span>
         <span class="ldef">${d.def > 0 ? `<b>${d.def}</b> short` : '<span class="ok">on target</span>'}</span>
       </div>`).join("") : '<div class="lrow"><span class="lempty">No members dosed Xanax in the most recent war.</span></div>'}
@@ -291,6 +308,7 @@ tbody tr:not(.band):hover td,tbody tr:not(.band):hover th.name{background:color-
 .ldef{font-size:13px;font-weight:700;text-align:right} .ldef .ok{font-size:12px;font-weight:700}
 .lrow.none .ldef .ok{color:var(--none-fg)} .lrow.low .ldef b{color:var(--low-fg)} .lrow.mid .ldef b{color:var(--mid-fg)} .lrow.high .ldef b{color:var(--high-fg)}
 .lempty{color:var(--faint);font-weight:600}
+.lgone{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--faint);background:color-mix(in srgb,var(--faint) 16%,transparent);border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:middle;white-space:nowrap}
 </style>`;
 
 const outHtml = `<!DOCTYPE html>
