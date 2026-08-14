@@ -90,6 +90,40 @@ const readBullets = [
   `<li><b>${flagged.length}</b> of ${totalDosed} members who dosed came up short of the xanax + regen bar by more than the ${xm.DEFICIT_GRACE}-attack grace.</li>`,
 ].filter(Boolean).join("\n      ");
 
+// ── Most-recent-war focus: EVERY member who dosed in the newest war (not just
+// the flagged), ranked worst→best. The matrix above is flagged-only across N
+// wars; this is the complete picture of the single latest war. ──
+const latest = list.length ? list[list.length - 1] : null;
+const latestMeta = warMeta.length ? warMeta[warMeta.length - 1] : null;
+const latestDosers = (latest ? latest.w.members : [])
+  .filter(m => (m.xanaxTaken || 0) > 0)
+  .map(m => {
+    const ta = Number(m.totalAttacks) || 0;
+    return { name: m.name, x: m.xanaxTaken, h: m.warHits, def: xm.deficit(m.xanaxTaken, ta), flag: xm.flagged(m.xanaxTaken, ta) };
+  })
+  .sort((a, b) => b.def - a.def || b.x - a.x);
+const latestFlagged = latestDosers.filter(d => d.flag).length;
+const latestDefTotal = latestDosers.reduce((s, d) => s + d.def, 0);
+const rescls = r => r === "victory" ? "victory" : r === "defeat" ? "defeat" : "draw";
+const latestSection = latest ? `
+  <div class="panel latest">
+    <div class="lhead">
+      <span class="lchip ${rescls(latestMeta.result)}">${latestMeta.result === "victory" ? "W" : latestMeta.result === "defeat" ? "L" : "="}</span>
+      <div>
+        <h2>Most recent war — <span class="lenemy">${esc(latestMeta.enemy)}</span></h2>
+        <span class="lmeta">${latestMeta.date} · ${latestDosers.length} dosed · <b class="${latestFlagged ? "bad" : ""}">${latestFlagged}</b> flagged · ${latestDefTotal} total deficit</span>
+      </div>
+    </div>
+    <div class="lgrid">
+      ${latestDosers.length ? latestDosers.map((d, i) => `<div class="lrow ${sev(d.def, true)}">
+        <span class="lrank">${i + 1}</span>
+        <span class="lname">${d.flag ? '<span class="flag">⚑</span> ' : ""}${esc(d.name)}</span>
+        <span class="lxh">${d.x}x → ${d.h}h</span>
+        <span class="ldef">${d.def > 0 ? `<b>${d.def}</b> short` : '<span class="ok">on target</span>'}</span>
+      </div>`).join("") : '<div class="lrow"><span class="lempty">No members dosed Xanax in the most recent war.</span></div>'}
+    </div>
+  </div>` : "";
+
 const body = `<div class="wrap"><div class="inner">
   <p class="eyebrow">Dead Fragment · Faction ${FACTION} · Ranked War Xanax Accountability</p>
   <h1>Who's burning Xanax without hitting</h1>
@@ -110,6 +144,8 @@ const body = `<div class="wrap"><div class="inner">
     ${clean.length ? `<div style="margin-top:12px;font-size:13px;color:var(--muted)">Took the most and <b style="color:var(--win)">still delivered</b> (0 deficit) — volume isn't abuse:</div>
     <div class="clean">${clean.map(p => `<span class="chip">${esc(p.name)} · ${p.xanax}x → 0 def</span>`).join("")}</div>` : ""}
   </div>
+
+  ${latestSection}
 
   <div class="panel"><div class="scroll">
   <table>
@@ -239,6 +275,22 @@ tbody tr:not(.band):hover td,tbody tr:not(.band):hover th.name{background:color-
 .chip{font-size:12px;background:var(--none-bg);color:var(--none-fg);border-radius:20px;padding:4px 11px;font-weight:700}
 .foot{font-size:12px;color:var(--faint);margin:14px 2px 0;max-width:70ch}
 .foot code{background:color-mix(in srgb,var(--accent) 12%,transparent);padding:1px 5px;border-radius:4px;font-size:11px}
+.latest{margin-bottom:22px}
+.latest .lhead{display:flex;align-items:center;gap:12px;padding:14px 16px 13px;border-bottom:1px solid var(--line)}
+.lchip{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;font-size:14px;font-weight:800;color:#fff;flex:none}
+.lchip.victory{background:var(--win)} .lchip.defeat{background:var(--loss)} .lchip.draw{background:var(--faint)}
+.latest h2{font-size:16px;margin:0 0 2px;letter-spacing:-.01em} .latest h2 .lenemy{color:var(--accent-ink)}
+.lmeta{font-size:12px;color:var(--muted);font-weight:600} .lmeta b{color:var(--ink)} .lmeta b.bad{color:var(--loss)}
+.lgrid{display:flex;flex-direction:column}
+.lrow{display:grid;grid-template-columns:26px 1fr auto minmax(72px,auto);align-items:center;gap:12px;padding:9px 16px;border-bottom:1px solid var(--line2);font-size:14px}
+.lrow:last-child{border-bottom:none}
+.lrow.none{background:var(--none-bg)} .lrow.low{background:var(--low-bg)} .lrow.mid{background:var(--mid-bg)} .lrow.high{background:var(--high-bg)}
+.lrank{font-size:12px;font-weight:800;color:var(--faint);text-align:center}
+.lname{font-weight:700} .lname .flag{font-size:11px}
+.lxh{font-size:12px;color:var(--muted);font-weight:600}
+.ldef{font-size:13px;font-weight:700;text-align:right} .ldef .ok{font-size:12px;font-weight:700}
+.lrow.none .ldef .ok{color:var(--none-fg)} .lrow.low .ldef b{color:var(--low-fg)} .lrow.mid .ldef b{color:var(--mid-fg)} .lrow.high .ldef b{color:var(--high-fg)}
+.lempty{color:var(--faint);font-weight:600}
 </style>`;
 
 const outHtml = `<!DOCTYPE html>
