@@ -144,7 +144,7 @@ const latestSection = latest ? `
 const body = `<div class="wrap"><div class="inner">
   <p class="eyebrow">Dead Fragment · Faction ${FACTION} · Ranked War Xanax Accountability</p>
   <h1>Who's burning Xanax without hitting</h1>
-  <p class="sub">Last ${N} ranked wars. <b>Expected</b> = 10 attacks per Xanax (250e) <b>+ 6 for the ~150e of natural regen</b> a member burns over a war, at 25e/attack. <b>Deficit</b> = expected minus attacks actually thrown (war <em>and</em> non-war both count). A cell flags only when the miss clears a <b>${xm.DEFICIT_GRACE}-attack grace</b> — so "did the vial minimum and coasted" shows, but a 1–2 attack miss doesn't.</p>
+  <p class="sub">Last ${N} ranked wars. <b>Expected</b> = 10 attacks per Xanax (250e ÷ 25e). A member's own <b>~150e of natural regen (~6 attacks)</b> is credited to their <em>first ~6 attacks</em>, so only attacks beyond that count toward the vials. <b>Deficit</b> = 10 × Xanax − attacks past the first ~6 (war <em>and</em> non-war both count). A cell flags only when the miss clears a <b>${xm.DEFICIT_GRACE}-attack grace</b> — so "took the vial and coasted" shows, but a 1–2 attack miss doesn't.</p>
 
   <div class="stats">
     <div class="stat"><b>${N}</b><span>wars · ${wins} W / ${losses} L</span></div>
@@ -189,7 +189,7 @@ const body = `<div class="wrap"><div class="inner">
   </div>
   </div>
 
-  <p class="foot"><b>Expected includes a flat ~150e natural-regen credit</b> (+6 attacks) on top of each vial, and a member is flagged only when short by more than a ${xm.DEFICIT_GRACE}-attack grace — 150e is an estimate, so small misses are deliberately ignored. <b>Counts are net of deposits</b> — Xanax a member returns to the armoury is subtracted from what they used (floored at 0). Source: warboard war-history for faction ${FACTION}. Deficit can also be inflated by a member who was hospitalized, travelling, or offline after dosing — the model can't see that, which is why <b>repeat</b> names matter more than any single war. Columns oldest → newest. <b>Updated ${updated}</b> · auto-refreshes hourly.</p>
+  <p class="foot"><b>The ~150e of natural regen (~6 attacks) is the member's OWN energy — credited to their first ~6 attacks, not added to the bar</b>, so the expectation is a flat 10 attacks per vial and only attacks past the first ~6 count toward it (took 2 vials, made 6 → those 6 were regen, deficit 20). A member is flagged only when short by more than a ${xm.DEFICIT_GRACE}-attack grace — 150e is an estimate, so small misses are deliberately ignored. <b>Counts are net of deposits</b> — Xanax a member returns to the armoury is subtracted from what they used (floored at 0). Source: warboard war-history for faction ${FACTION}. Deficit can also be inflated by a member who was hospitalized, travelling, or offline after dosing — the model can't see that, which is why <b>repeat</b> names matter more than any single war. Columns oldest → newest. <b>Updated ${updated}</b> · auto-refreshes hourly.</p>
 </div></div>`;
 
 const head = `<title>Xanax Accountability — Last ${N} Wars</title>
