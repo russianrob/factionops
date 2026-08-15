@@ -126,8 +126,13 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
     const srcBase = join(dir, `deli-src-${p}`);
     await execFileP("pdftoppm", ["-f", String(p), "-l", String(p), "-r", "150", "-singlefile", "-png", join(dir, "circular.pdf"), srcBase]);
     const png = join(dir, `deli-p${p}.png`);
-    // ~1000px wide keeps each image small while the deli prices (large type) stay legible.
-    await execFileP("convert", [srcBase + ".png", "-resize", "1000x", png]);
+    // 1600px, not 1000. On the DEDICATED deli page the prices are large type and
+    // 1000px read them fine, but deli items also appear as small tiles on the dense
+    // FRONT page among ~30 other products, and at 1000px those were illegible: the
+    // 2026-08-16 circular's "Bowl & Basket Turkey Breast $8.99" and "American Cheese
+    // $3.99" returned ZERO offers for page 1 on every attempt, silently blanking two
+    // rows. Same page at 1600px returns both. Verified 2026-08-15.
+    await execFileP("convert", [srcBase + ".png", "-resize", "1600x", png]);
     const img = readFileSync(png).toString("base64");
     try {
       for (const o of extractJsonArray(await vision([img], buildDeliVisionPrompt()))) offersAll.push(o);
