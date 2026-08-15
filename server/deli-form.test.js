@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  matchDeliOffers, isFlavoredHam, findDeliPages, countFilled, countMatched, fillSheetXml, dateRangeLabel,
+  matchDeliOffers, isFlavoredHam, findDeliPages, countFilled, countMatched, promoteDecision, fillSheetXml, dateRangeLabel,
 } from "./deli-form.js";
 
 // Fixture: this week's deli offers as the VISION step should return them —
@@ -272,4 +272,62 @@ test("a real match is not marked fromDefault", () => {
     .find(r => r.item === "Bologna");
   assert.equal(b.price, 3.99);
   assert.equal(b.fromDefault, undefined);   // same price as the default, but genuinely read
+});
+
+// ── promoteDecision ─────────────────────────────────────────────────────────
+// Whether a freshly-generated form may replace the one the user has bookmarked.
+
+test("promoteDecision: a clean, well-filled run promotes", () => {
+  assert.equal(promoteDecision({ matched: 10, pageFailures: 0, minMatched: 7 }).promote, true);
+});
+
+test("promoteDecision: a page whose vision call failed blocks promotion", () => {
+  const d = promoteDecision({ matched: 12, pageFailures: 1, minMatched: 7 });
+  assert.equal(d.promote, false);
+  assert.match(d.reason, /page/i);
+});
+
+test("promoteDecision: too few circular matches blocks promotion", () => {
+  const d = promoteDecision({ matched: 6, pageFailures: 0, minMatched: 7 });
+  assert.equal(d.promote, false);
+  assert.match(d.reason, /circular matches/i);
+});
+
+test("promoteDecision: a WEAKER re-read of the SAME week is refused", () => {
+  // The real incident: a 1000px render read page 1 as empty, blanking Turkey and
+  // American. It still cleared minMatched, so it overwrote a strictly better form.
+  const d = promoteDecision({
+    matched: 8, pageFailures: 0, minMatched: 7,
+    validFrom: "2026-08-16",
+    previous: { validFrom: "2026-08-16", matched: 10 },
+  });
+  assert.equal(d.promote, false);
+  assert.match(d.reason, /fewer|regress/i);
+});
+
+test("promoteDecision: an EQUAL re-read of the same week still promotes", () => {
+  // Re-running after a rule change (e.g. adding standing defaults) must not be
+  // blocked when the circular-read quality is unchanged.
+  const d = promoteDecision({
+    matched: 10, pageFailures: 0, minMatched: 7,
+    validFrom: "2026-08-16",
+    previous: { validFrom: "2026-08-16", matched: 10 },
+  });
+  assert.equal(d.promote, true);
+});
+
+test("promoteDecision: a NEW week with fewer deals is NOT a regression", () => {
+  // A quiet sale week legitimately has fewer matches than a busy one. The guard
+  // must only compare like with like, or it would freeze the form forever.
+  const d = promoteDecision({
+    matched: 8, pageFailures: 0, minMatched: 7,
+    validFrom: "2026-08-23",
+    previous: { validFrom: "2026-08-16", matched: 12 },
+  });
+  assert.equal(d.promote, true);
+});
+
+test("promoteDecision: no previous record → falls back to the threshold alone", () => {
+  assert.equal(promoteDecision({ matched: 7, pageFailures: 0, minMatched: 7, validFrom: "2026-08-16" }).promote, true);
+  assert.equal(promoteDecision({ matched: 6, pageFailures: 0, minMatched: 7, validFrom: "2026-08-16" }).promote, false);
 });

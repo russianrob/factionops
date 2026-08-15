@@ -23,7 +23,7 @@ import {
   claudeExtractImage, extractJsonArray,
 } from "./circular-pipeline.js";
 import {
-  findDeliPages, buildDeliVisionPrompt, matchDeliOffers, countFilled, countMatched, fillSheetXml, dateRangeLabel,
+  findDeliPages, buildDeliVisionPrompt, matchDeliOffers, countFilled, countMatched, promoteDecision, fillSheetXml, dateRangeLabel,
 } from "./deli-form.js";
 
 const execFileP = promisify(execFile);
@@ -155,15 +155,32 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
   execFileSync("python3", [XLSX_TOOL, "replace", template, "xl/worksheets/sheet1.xml", tmpXml, dated]);
 
   const summary = fills.map(f => ({ item: f.item, brand: f.brand, price: f.price }));
-  // Promote to the public /bulksale form only on a CLEAN, well-filled run. Any
-  // page whose vision call failed → low-confidence, even if the surviving pages
-  // filled >=8: a partial read that blanks Turkey/American must not overwrite a
-  // good form.
-  if (matched >= DELI_MIN_MATCHED && pageFailures === 0) {
+
+  // What is currently published, so a re-read of the SAME week that finds less
+  // can be refused. Lives in DATA_DIR, NOT beside the form: public/ is root-owned
+  // and the server runs as `warboard`, so it can overwrite the existing form file
+  // but cannot create a new one there. A missing/corrupt sidecar just means "no
+  // baseline", never a hard failure.
+  const sidecar = join(DATA_DIR, "deli-form-latest.json");
+  let previous = null;
+  try { previous = JSON.parse(readFileSync(sidecar, "utf8")); } catch {}
+
+  const decision = promoteDecision({
+    matched, pageFailures, minMatched: DELI_MIN_MATCHED,
+    validFrom: range.validFrom, previous,
+  });
+  if (decision.promote) {
     copyFileSync(dated, formLatest);
+    try {
+      writeFileSync(sidecar, JSON.stringify({
+        validFrom: range.validFrom, validThru: range.validThru,
+        matched, filled, dateRange, promotedAt: new Date().toISOString(), fills: summary,
+      }, null, 1));
+    } catch (e) { /* the form is published; a missing sidecar only costs the next comparison */ }
     return { state: "ok", filled, matched, pages, dateRange, fills: summary };
   }
-  return { state: "low-confidence", filled, matched, pageFailures, pages, candidate: dated, fills: summary };
+  console.warn(`[deli] not promoting: ${decision.reason}`);
+  return { state: "low-confidence", reason: decision.reason, filled, matched, pageFailures, pages, candidate: dated, fills: summary };
 }
 
 // The whole pipeline. Async; the route kicks this off and returns 202 without

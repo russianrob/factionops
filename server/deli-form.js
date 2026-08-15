@@ -113,6 +113,38 @@ export function matchDeliOffers(offers) {
 
 export function countFilled(fills) { return fills.filter(f => f.price != null).length; }
 
+/// May a freshly-generated form replace the one the user has bookmarked?
+///
+/// Three gates, in order of how badly they'd hurt:
+///   1. any page whose vision call threw — a partial read must never publish;
+///   2. too few circular-supplied rows — the blunt quality floor;
+///   3. **fewer matches than the form already published FOR THIS SAME WEEK.**
+///
+/// Gate 3 exists because gates 1 and 2 both passed on 2026-08-15 while a
+/// regenerate silently blanked Turkey and American: the deli pages were being
+/// rendered too small for the front-page tiles, the read still cleared the floor
+/// with 8 matches, and it overwrote a form that had 10. A re-read of the same
+/// circular that finds LESS than last time is a worse read, not a quieter week.
+///
+/// It compares only within one week on purpose. Across weeks a lower count is
+/// ordinary — a quiet sale week really does have fewer deals — and blocking that
+/// would freeze the form permanently at the high-water mark of a busy week.
+/// Equal counts promote, so re-running after a rule change (adding a standing
+/// default, say) is never blocked.
+export function promoteDecision({ matched, pageFailures = 0, minMatched, validFrom, previous } = {}) {
+  if (pageFailures > 0) {
+    return { promote: false, reason: `${pageFailures} page(s) failed the vision read` };
+  }
+  if (matched < minMatched) {
+    return { promote: false, reason: `only ${matched} circular matches, need ${minMatched}` };
+  }
+  if (previous && validFrom && previous.validFrom === validFrom && matched < previous.matched) {
+    return { promote: false,
+      reason: `fewer matches than the form already published for ${validFrom} (${matched} < ${previous.matched}) — refusing to regress it` };
+  }
+  return { promote: true, reason: "ok" };
+}
+
 /// Rows the CIRCULAR actually supplied — standing defaults excluded. This is the
 /// number the overwrite guard must use: `countFilled` includes defaults, which
 /// fill even when the vision read returned nothing at all, so gating on it would
