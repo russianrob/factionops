@@ -23,7 +23,7 @@ import {
   claudeExtractImage, extractJsonArray,
 } from "./circular-pipeline.js";
 import {
-  findDeliPages, buildDeliVisionPrompt, matchDeliOffers, countFilled, fillSheetXml, dateRangeLabel,
+  findDeliPages, buildDeliVisionPrompt, matchDeliOffers, countFilled, countMatched, fillSheetXml, dateRangeLabel,
 } from "./deli-form.js";
 
 const execFileP = promisify(execFile);
@@ -32,7 +32,12 @@ const DATA_DIR = process.env.CIRCULAR_DIR || "/opt/warboard/server/data/circular
 const DELI_TEMPLATE = process.env.DELI_TEMPLATE || "/opt/warboard/server/data/deli-form-template.xlsx";
 const DELI_FORM_LATEST = process.env.DELI_FORM_LATEST || "/opt/warboard/server/public/deli-form-latest.xlsx";
 const XLSX_TOOL = "/opt/warboard/server/bin/xlsx-tool.py";
-const DELI_MIN_FILLED = 8;   // overwrite guard: below this, keep the existing form
+const DELI_MIN_MATCHED = 7;  // overwrite guard: below this many rows READ FROM THE
+                             // CIRCULAR, keep the existing form. Counts real matches
+                             // only — standing defaults (Pepperoni, Bologna, Cheddar,
+                             // Roast Beef) fill even when the vision read returned
+                             // nothing, so counting them would let a degraded run
+                             // clobber the form the user has bookmarked and approved.
 const MAX_PDF_BYTES = 200 * 1024 * 1024;   // circulars run ~77 MB; 200 MB is generous headroom
 const KEEP_JOBS = 10;                       // prune older weeks — a book a week, ~2.5 months retained
 const PAGE_CONCURRENCY = 4;
@@ -93,7 +98,8 @@ async function runPool(items, limit, fn) {
 // already persisted — a failure here never loses the offers or the job.
 //
 // Overwrite guard: the public /bulksale file (which the user has bookmarked and
-// approved) is replaced ONLY when the match filled at least DELI_MIN_FILLED rows.
+// approved) is replaced ONLY when at least DELI_MIN_MATCHED rows came from the
+// CIRCULAR itself (standing defaults do not count toward it).
 // A weak/garbage read writes a dated candidate and keeps the good form in place.
 export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
   const vision = opts.visionExtractor || ((imgs, prompt) => claudeExtractImage(imgs, prompt));
@@ -131,6 +137,7 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
 
   const fills = matchDeliOffers(offersAll);
   const filled = countFilled(fills);
+  const matched = countMatched(fills);
   const dateRange = dateRangeLabel(range.validFrom, range.validThru);
 
   // Fill the template's Production sheet (JS, tested) then repack the xlsx (the
@@ -147,11 +154,11 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
   // page whose vision call failed → low-confidence, even if the surviving pages
   // filled >=8: a partial read that blanks Turkey/American must not overwrite a
   // good form.
-  if (filled >= DELI_MIN_FILLED && pageFailures === 0) {
+  if (matched >= DELI_MIN_MATCHED && pageFailures === 0) {
     copyFileSync(dated, formLatest);
-    return { state: "ok", filled, pages, dateRange, fills: summary };
+    return { state: "ok", filled, matched, pages, dateRange, fills: summary };
   }
-  return { state: "low-confidence", filled, pageFailures, pages, candidate: dated, fills: summary };
+  return { state: "low-confidence", filled, matched, pageFailures, pages, candidate: dated, fills: summary };
 }
 
 // The whole pipeline. Async; the route kicks this off and returns 202 without

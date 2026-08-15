@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  matchDeliOffers, isFlavoredHam, findDeliPages, countFilled, fillSheetXml, dateRangeLabel,
+  matchDeliOffers, isFlavoredHam, findDeliPages, countFilled, countMatched, fillSheetXml, dateRangeLabel,
 } from "./deli-form.js";
 
 // Fixture: this week's deli offers as the VISION step should return them —
@@ -45,7 +45,7 @@ test("matchDeliOffers reproduces the user-approved 12 rows exactly", () => {
     "Mozzarella": [null, null],
     "Muenster": ["Bowl & Basket", 5.99],
     "Swiss": ["Bowl & Basket", 5.99],
-    "Cheddar": [null, null],   // added; no per-lb deli cheddar this week
+    "Cheddar": ["Bowl & Basket", 6.99],   // no deli cheddar on this circular -> standing default
   };
   for (const row of got) {
     const [brand, price] = expect[row.item];
@@ -108,11 +108,59 @@ test("Pepperoni on sale overrides the default", () => {
   assert.equal(p.price, 6.99);
 });
 
+// Standing defaults, same shape as Pepperoni: an item the user buys every week
+// regardless, so a blank cell is worse than last-known price. The circular's own
+// deal still wins whenever there is one.
+const NO_DELI = [{ product: "Auricchio Provolone", brand: "Auricchio", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "" }];
+
+test("Bologna defaults to Bowl & Basket $3.99 when none is on sale", () => {
+  const b = matchDeliOffers(NO_DELI).find(r => r.item === "Bologna");
+  assert.equal(b.brand, "Bowl & Basket");
+  assert.equal(b.price, 3.99);
+});
+
+test("Bologna on sale overrides the default", () => {
+  const b = matchDeliOffers([{ product: "Dietz & Watson Bologna", brand: "Dietz & Watson", priceText: "$4.99 lb", pricePerLb: 4.99, unit: "lb", description: "Store Sliced" }])
+    .find(r => r.item === "Bologna");
+  assert.equal(b.brand, "Dietz & Watson");
+  assert.equal(b.price, 4.99);
+});
+
+test("Cheddar defaults to Bowl & Basket $6.99 when none is on sale", () => {
+  const c = matchDeliOffers(NO_DELI).find(r => r.item === "Cheddar");
+  assert.equal(c.brand, "Bowl & Basket");
+  assert.equal(c.price, 6.99);
+});
+
+test("Cheddar on sale overrides the default, keeping its sharpness label", () => {
+  const c = matchDeliOffers([{ product: "Bowl & Basket Ultra Sharp Cheddar", brand: "Bowl & Basket", priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced" }])
+    .find(r => r.item === "Cheddar");
+  assert.equal(c.brand, "Bowl & Basket Ultra Sharp");
+  assert.equal(c.price, 5.99);
+});
+
+test("Roast Beef defaults to Eye Round $10.99 when none is on sale", () => {
+  // The Roast Beef cell carries the CUT, not the maker — so the default's
+  // "brand" is the cut, matching what the label function produces on a real deal.
+  const r = matchDeliOffers(NO_DELI).find(x => x.item === "Roast Beef");
+  assert.equal(r.brand, "Eye Round");
+  assert.equal(r.price, 10.99);
+});
+
+test("Roast Beef on sale overrides the default and still shows the cut", () => {
+  const r = matchDeliOffers([{ product: "Black Bear London Broil Roast Beef", brand: "Black Bear", priceText: "$9.99 lb", pricePerLb: 9.99, unit: "lb", description: "Store Sliced" }])
+    .find(x => x.item === "Roast Beef");
+  assert.equal(r.brand, "London Broil");
+  assert.equal(r.price, 9.99);
+});
+
 test("a 'Cheddarwurst' bratwurst never fills the Cheddar cheese row", () => {
   const got = matchDeliOffers([
     { product: "Black Bear Bratwurst", brand: "Black Bear", priceText: "$3.99 lb", pricePerLb: 3.99, unit: "lb", description: "Cheddarwurst, Knockwurst" },
   ]).find(r => r.item === "Cheddar");
-  assert.equal(got.price, null);   // NOT $3.99 from the Cheddarwurst
+  assert.notEqual(got.price, 3.99);        // the point: NOT the Cheddarwurst's price
+  assert.equal(got.price, 6.99);           // falls through to the standing default
+  assert.equal(got.fromDefault, true);     // and is marked as not-from-the-circular
 });
 
 test("raw chicken thighs never fill the deli Chicken row", () => {
@@ -161,7 +209,8 @@ test("cheapest wins within a row", () => {
 });
 
 test("countFilled reports non-blank rows (guard input)", () => {
-  assert.equal(countFilled(matchDeliOffers(WEEK_0802)), 12);  // all but Mozzarella (Pepperoni now defaults to Black Bear $7.99)
+  // All but Mozzarella: Pepperoni and Cheddar are standing defaults this week.
+  assert.equal(countFilled(matchDeliOffers(WEEK_0802)), 13);
 });
 
 test("findDeliPages detects the header page and Store-Sliced pages, not raw-meat", () => {
@@ -205,4 +254,22 @@ test("fillSheetXml escapes XML in brand names (Bowl & Basket)", () => {
   const sheet = '<row r="13"><c r="C13" s="11" t="s"><v>1</v></c><c r="D13" s="12" t="n"><v>1</v></c></row>';
   const out = fillSheetXml(sheet, [{ row: 13, item: "Muenster", brand: "Bowl & Basket", price: 5.99 }], null);
   assert.match(out, /Bowl &amp; Basket/);
+});
+
+test("the overwrite guard counts circular matches only, not standing defaults", () => {
+  // The guard exists to stop a degraded vision read replacing the user's approved
+  // form. Defaults fill even when the read returned NOTHING, so counting them
+  // would defeat it: four free rows would be most of the way to the threshold.
+  const nothingRead = matchDeliOffers([]);
+  assert.equal(countMatched(nothingRead), 0);          // guard sees zero
+  assert.equal(countFilled(nothingRead), 4);           // but four cells are populated
+  assert.deepEqual(nothingRead.filter(f => f.price != null).map(f => f.item).sort(),
+                   ["Bologna", "Cheddar", "Pepperoni", "Roast Beef"]);
+});
+
+test("a real match is not marked fromDefault", () => {
+  const b = matchDeliOffers([{ product: "Bowl & Basket Bologna", brand: "Bowl & Basket", priceText: "$3.99 lb", pricePerLb: 3.99, unit: "lb", description: "Store Sliced" }])
+    .find(r => r.item === "Bologna");
+  assert.equal(b.price, 3.99);
+  assert.equal(b.fromDefault, undefined);   // same price as the default, but genuinely read
 });

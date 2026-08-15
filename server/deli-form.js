@@ -34,7 +34,8 @@ export const DELI_ROWS = [
   { row: 4,  item: "Chicken",      match: t => /chicken breast/.test(t) && !/tender|thigh|drumstick|ground|wing|nugget|breaded|roaster|family/.test(t) },
   { row: 5,  item: "Domestic Ham", match: t => /\bham\b/.test(t) && !/turkey|chicken/.test(t) && !isFlavoredHam(t) },
   { row: 6,  item: "Flavored Ham", match: t => /\bham\b/.test(t) && !/turkey|chicken/.test(t) && isFlavoredHam(t) },
-  { row: 7,  item: "Bologna",      match: t => /bologna/.test(t) },
+  // Bowl & Basket bologna is the standing buy at $3.99 when nothing beats it.
+  { row: 7,  item: "Bologna",      match: t => /bologna/.test(t), def: { brand: "Bowl & Basket", price: 3.99 } },
   // Salami: any brand on sale (Carando Genoa, Black Bear, etc.) — NOT Black-Bear-
   // only, which skipped this week's Carando. The cell shows the brand with the
   // "Classico" sub-brand stripped (Black Bear's product is "Black Bear Classico
@@ -46,7 +47,10 @@ export const DELI_ROWS = [
   { row: 9,  item: "Pepperoni",    match: t => /pepperoni/.test(t), def: { brand: "Black Bear", price: 7.99 } },
   // Roast Beef's cell shows the CUT, not the brand: Eye Round, London Broil, or
   // "Regular" when it's neither.
+  // The standing buy is the eye round at $10.99; `def.brand` is the CUT here, to
+  // match what `label` puts in the cell on a week that does have a deal.
   { row: 10, item: "Roast Beef",   match: t => /roast beef/.test(t),
+    def: { brand: "Eye Round", price: 10.99 },
     label: o => { const s = `${o.product || ""} ${o.description || ""}`.toLowerCase();
       return /eye round/.test(s) ? "Eye Round" : /london broil/.test(s) ? "London Broil" : "Regular"; } },
   // American cheese — but NOT "American Cheddar" (that's a sharp cheddar, belongs
@@ -61,7 +65,10 @@ export const DELI_ROWS = [
   // when the text names one, since that's how the user identifies the cheddar.
   // Exclude "-wurst" sausages (a Black Bear "Cheddarwurst" bratwurst wrongly
   // filled Cheddar at $3.99) and other non-cheese uses of the word.
+  // Standing buy: Bowl & Basket at $6.99. No sharpness on the default — the
+  // label below adds one only when a real offer names it.
   { row: 16, item: "Cheddar",      match: t => /cheddar/.test(t) && !/wurst|sausage|brat\b/.test(t),
+    def: { brand: "Bowl & Basket", price: 6.99 },
     label: o => { const brand = (o.brand || "").trim();
       const m = `${o.product || ""} ${o.description || ""}`.match(/\b(extra sharp|ultra sharp|sharp|medium|mild)\b/i);
       return m ? `${brand} ${m[1].replace(/\b\w/g, c => c.toUpperCase())}`.trim() : (brand || null); } },
@@ -87,7 +94,15 @@ export function matchDeliOffers(offers) {
     const cands = usable.filter(o => match(t(o))).sort((a, b) => num(a) - num(b));
     // No deal this week: use the row's standing default (e.g. Pepperoni →
     // Black Bear $7.99) if it has one, otherwise leave the cell blank.
-    if (!cands.length) return { row, item, brand: def ? def.brand : null, price: def ? def.price : null };
+    // `fromDefault` marks a cell the circular did NOT supply. The overwrite guard
+    // counts only real matches: defaults fill regardless of how badly the vision
+    // read went, so counting them would let a half-broken read clear the bar and
+    // clobber the user's approved form.
+    if (!cands.length) {
+      return def
+        ? { row, item, brand: def.brand, price: def.price, fromDefault: true }
+        : { row, item, brand: null, price: null };
+    }
     const best = cands[0];
     // A row may override how its "brand" cell is labelled (Roast Beef shows the
     // cut, not the maker); default is the offer's brand.
@@ -97,6 +112,12 @@ export function matchDeliOffers(offers) {
 }
 
 export function countFilled(fills) { return fills.filter(f => f.price != null).length; }
+
+/// Rows the CIRCULAR actually supplied — standing defaults excluded. This is the
+/// number the overwrite guard must use: `countFilled` includes defaults, which
+/// fill even when the vision read returned nothing at all, so gating on it would
+/// let a badly-degraded run overwrite the user's approved form.
+export function countMatched(fills) { return fills.filter(f => f.price != null && !f.fromDefault).length; }
 
 // ── Deli-page detection ─────────────────────────────────────────────────────
 
