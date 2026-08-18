@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.32
+// @version      0.9.33
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -20,7 +20,7 @@
 // ==/UserScript==
 (function () {
   "use strict";
-  var SCRIPT_VERSION = "0.9.32";
+  var SCRIPT_VERSION = "0.9.33";
   var YATA_URL = "https://yata.yt/api/v1/travel/export/";
   var PROMBOT_URL = "https://api.prombot.co.uk/api/travel";
   var TORN_ITEMS_URL = "https://api.torn.com/v2/torn?selections=items&key=";
@@ -135,17 +135,31 @@
     var since = nowSec - entry.last;
     var rel = entry.rel || "low";
     // Hazard curve: given we've already waited `since`, when does the
-    // CONDITIONAL probability of a restock hit 50% / 90%?
-    if (rel !== "high" && entry.qs && entry.qs.length >= 5 && since >= 0) {
+    // CONDITIONAL probability of a restock reach 10% and 50%?
+    //
+    // This used to be gated on `rel !== "high"`, which had it exactly backwards.
+    // The items with the MOST observations fell through to the bare
+    // `interval - (since % interval)` point estimate at the bottom of this
+    // function. Japan Xanax is rel:"high" on 23 samples whose gaps span
+    // 116-157 min; the point estimate put a restock 20 minutes late, and for
+    // something that sells out in seconds late is the same as never.
+    // Reliability describes how well the SHAPE of the distribution is known,
+    // not that the distribution has no width.
+    //
+    // The EARLIEST plausible time leads, because that is the one worth planning
+    // around: arriving after a restock on a fast seller means arriving to an
+    // empty shop, so the floor is actionable where the median is not.
+    if (entry.qs && entry.qs.length >= 5 && since >= 0) {
       var F0 = cdfAt(entry.qs, since);
       if (F0 >= 0.97) return "overdue · any poll now (" + rel + ")";
+      var t10 = invCdf(entry.qs, F0 + 0.1 * (1 - F0)) - since;
       var t50 = invCdf(entry.qs, F0 + 0.5 * (1 - F0)) - since;
-      var t90 = invCdf(entry.qs, F0 + 0.9 * (1 - F0)) - since;
-      return "50%: ~" + fmtDuration(Math.max(60, t50)) + " · 90%: ~" + fmtDuration(Math.max(60, t90)) + " (" + rel + ")";
+      return "earliest ~" + fmtDuration(Math.max(60, t10)) + " · 50%: ~" + fmtDuration(Math.max(60, t50)) + " (" + rel + ")";
     }
-    // Noisy cadence (rel not high): show the honest p25-p75 window instead of
-    // a point estimate — be in the shop from the EARLY edge on event days.
-    if (rel !== "high" && entry.intLo && entry.intHi && since >= 0) {
+    // Fewer than 5 quantiles to work with: fall back to the published p25-p75
+    // window, which still beats a point estimate — be in the shop from the
+    // EARLY edge on event days. Also no longer gated on reliability.
+    if (entry.intLo && entry.intHi && since >= 0) {
       var loLeft = (entry.last + entry.intLo) - nowSec;
       var hiLeft = (entry.last + entry.intHi) - nowSec;
       if (hiLeft > 0) {
@@ -161,8 +175,13 @@
   }
   function restockDisplay(nextRestock, entry, nowMs, qty) {
     var live = restockEta(nextRestock, nowMs);
-    if (live && !live.due) return "restocks in " + live.text;
     var est = modelEstimate(entry, nowMs);
+    // The model wins when it can express a WINDOW. The feed's `nextRestock` is
+    // a bare timestamp with no spread, and it used to short-circuit this
+    // function entirely — so an item whose gaps we have measured 23 times still
+    // showed a single point, with none of the range we know about.
+    if (est && entry && entry.qs && entry.qs.length >= 5) return est;
+    if (live && !live.due) return "restocks in " + live.text;
     if (est) return est;
     if (live && live.due) return "restock due";
     return (qty > 0) ? "in stock" : "out of stock";
@@ -201,13 +220,20 @@
     ctx = ctx || {};
     if (!ctx.sellReady || ctx.flightMinutes == null) return null;
     var qty = ctx.qty, F = ctx.flightMinutes;
+    // Two different uncertainties, and they used to share one badge. `srel` is
+    // how well we know the SELL rate (how fast the shop drains); `rel` on the
+    // restock entry is how well we know WHEN stock arrives. A verdict headlined
+    // by a restock time carried the sell-rate confidence, so "high confidence"
+    // meant "we are sure how fast it sells" while reading as "we are sure it
+    // lands at 17:04". Each verdict now reports on the number it actually shows.
     var lowConf = (ctx.srel === "low");
+    var lowRestockConf = (((ctx.restockEntry && ctx.restockEntry.rel) || "low") === "low");
     var nowSec = Math.floor((ctx.nowMs != null ? ctx.nowMs : Date.now()) / 1000);
     var rSec = nextRestockSec(ctx.nextRestock, ctx.restockEntry, nowSec);
     var R = (rSec == null) ? null : (rSec - nowSec) / 60;
     if (qty <= 0) {
       if (R != null && R <= F) {
-        return { state: "GONE_THEN_RESTOCKED", text: "🔄 Restocks ~" + Math.max(1, Math.round(R)) + "m before you land", lowConf: lowConf };
+        return { state: "GONE_THEN_RESTOCKED", text: "🔄 Restocks ~" + Math.max(1, Math.round(R)) + "m before you land", lowConf: lowRestockConf };
       }
       return { state: "GONE", text: "❌ Out of stock", lowConf: lowConf };
     }
@@ -226,7 +252,9 @@
       return { state: "RISKY", text: riskyText, lowConf: lowConf };
     }
     if (R != null && R <= F && R > M) {
-      return { state: "GONE_THEN_RESTOCKED", text: "🔄 Sells out, but restocks ~" + Math.max(1, Math.round(R)) + "m before you land", lowConf: lowConf };
+      // Both numbers matter here — it sells out AND restocks — so it is only
+      // trustworthy when both are.
+      return { state: "GONE_THEN_RESTOCKED", text: "🔄 Sells out, but restocks ~" + Math.max(1, Math.round(R)) + "m before you land", lowConf: (lowConf || lowRestockConf) };
     }
     return { state: "GONE", text: "❌ Will sell out before you land", lowConf: lowConf };
   }
