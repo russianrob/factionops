@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.72
+// @version      5.1.73
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -77,7 +77,7 @@
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.72';
+    const SCRIPT_VERSION = '5.1.73';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -5249,6 +5249,20 @@ body.wb-chain-active {
     let sseConnected = false;
     let sseRetryTimer = null;
     const SSE_RETRY_MS = 5000; // retry after 5s on disconnect
+    // Liveness. The 12s watchdog in connectSSEStream only guards the stream
+    // STARTING; once sseConnected flipped true nothing ever asked again whether
+    // the stream was still alive. A half-open connection — laptop sleeps, phone
+    // changes network, a middlebox drops the socket without a FIN — left
+    // sseConnected true forever, and because startPolling() refuses to run while
+    // sseConnected is true, the overlay sat behind a green RT badge showing
+    // pre-drop data until the page was reloaded by hand.
+    //
+    // The server writes a heartbeat every 5s (routes.js), so silence is a
+    // reliable death signal. 20s = four missed heartbeats, chosen so a single
+    // slow beat or one throttled timer tick can't trigger a false reconnect.
+    let sseLastMessageAt = 0;
+    let sseStaleTimer = null;
+    const SSE_STALE_MS = 20000;
 
     /**
      * Can we use GM_xmlhttpRequest streaming?
@@ -5283,6 +5297,17 @@ body.wb-chain-active {
         log('Connecting SSE stream to', CONFIG.SERVER_URL + '/api/stream');
         sseLastLength = 0;
         sseConnected = false;
+        // Start every stream on an empty buffer. sseLastLength was always reset
+        // here and in both teardowns, but window.sseBuffer never was — so a
+        // stream cut mid-event (between `data:` and its terminating blank line)
+        // left a partial JSON fragment behind, and the NEXT stream's first
+        // chunk was appended to it. That produced one unparseable event which
+        // the catch below swallows silently, and the event lost was the
+        // reconnect's initial full-state snapshot — so the overlay kept showing
+        // pre-drop data with no error anywhere.
+        window.sseBuffer = '';
+        sseLastMessageAt = Date.now();
+        startSSEStaleWatch();
 
         // Watchdog: a GM shim without streaming callbacks (warboard before
         // 0.11.276) leaves this request open forever, silently delivering
@@ -5293,6 +5318,11 @@ body.wb-chain-active {
             warn('SSE never started after 12s — aborting; host GM shim likely has no onprogress');
             try { if (sseAbort && typeof sseAbort.abort === 'function') sseAbort.abort(); } catch (e) {}
             sseAbort = null;
+            // The liveness interval was armed at connect time. Nothing else on
+            // this path clears it, and a stream that never started will never
+            // reach cleanupSSE, so without this the interval survives every
+            // failed attempt and accumulates one timer per retry.
+            stopSSEStaleWatch();
             if (!pollTimer) startPolling();
         }, 12000);
 
@@ -5300,7 +5330,7 @@ body.wb-chain-active {
             method: 'GET',
             url: url,
             responseType: 'text',
-            onloadstart: () => { clearTimeout(sseWatchdog); sseConnected = true; log("SSE stream started"); updateRtBadge("sse"); if (pollTimer) stopPolling(true); },
+            onloadstart: () => { clearTimeout(sseWatchdog); sseConnected = true; sseLastMessageAt = Date.now(); log("SSE stream started"); updateRtBadge("sse"); if (pollTimer) stopPolling(true); },
             timeout: 0,
             onprogress: (resp) => {
                 if (!resp || resp.responseText === undefined || resp.responseText === null) {
@@ -5316,6 +5346,12 @@ body.wb-chain-active {
                         stopPolling(true);
                     }
                 }
+
+                // Any byte at all — heartbeat, keepalive comment or a real event
+                // — proves the stream is still alive. Stamped before parsing so
+                // a malformed event still counts as liveness: the connection is
+                // the thing being judged here, not the payload.
+                sseLastMessageAt = Date.now();
 
                 // Append new data to buffer (using the existing sseLastLength method)
                 const responseText = resp.responseText || '';
@@ -5382,11 +5418,44 @@ body.wb-chain-active {
         });
     }
 
+    /// Watch an ESTABLISHED stream for silence. Separate from the 12s startup
+    /// watchdog, which only ever asked whether the stream began.
+    ///
+    /// Deliberately NOT gated on document.hidden: PDA's WebView reports
+    /// hidden=true while the user is actively looking at the page, so gating
+    /// would disable the check on the host that needs it most. A background tab
+    /// whose timers get throttled may come back, see a large gap and reconnect
+    /// unnecessarily — that is the cheap direction to be wrong, since a spurious
+    /// reconnect costs one request and a missed death costs the whole war.
+    function startSSEStaleWatch() {
+        stopSSEStaleWatch();
+        sseStaleTimer = setInterval(() => {
+            if (!sseConnected) return;
+            if (Date.now() - sseLastMessageAt <= SSE_STALE_MS) return;
+            warn('SSE silent for ' + Math.round((Date.now() - sseLastMessageAt) / 1000)
+                + 's (heartbeat is every 5s) — treating the stream as dead');
+            // Abort first so the dead request cannot later fire onload/onerror
+            // and race the reconnect we are about to schedule.
+            try { if (sseAbort && typeof sseAbort.abort === 'function') sseAbort.abort(); } catch (e) {}
+            cleanupSSE();      // clears sseConnected, which is what lets polling restart
+            scheduleSSERetry();
+        }, 5000);
+    }
+
+    function stopSSEStaleWatch() {
+        if (sseStaleTimer) { clearInterval(sseStaleTimer); sseStaleTimer = null; }
+    }
+
     function cleanupSSE() {
+        stopSSEStaleWatch();
         sseConnected = false;
         sseAbort = null;
         sseLastLength = 0;
-        
+        // Drop any half-written event with the stream that was writing it —
+        // otherwise the fragment is prepended to the next stream's first chunk
+        // and eats that stream's opening full-state snapshot.
+        window.sseBuffer = '';
+
         // Only restart polling if we aren't currently trying to reconnect
         // and no other real-time connection exists.
         if (!sseRetryTimer && !sseConnected && !(realtimeSocket && realtimeSocket.connected)) {
@@ -5397,12 +5466,14 @@ body.wb-chain-active {
 
     function disconnectSSEStream() {
         if (sseRetryTimer) { clearTimeout(sseRetryTimer); sseRetryTimer = null; }
+        stopSSEStaleWatch();
         if (sseAbort && typeof sseAbort.abort === 'function') {
             sseAbort.abort();
         }
         sseConnected = false;
         sseAbort = null;
         sseLastLength = 0;
+        window.sseBuffer = '';   // same reason as cleanupSSE
         updateRtBadge(false);
     }
 
