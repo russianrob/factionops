@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.73
+// @version      5.1.75
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -77,7 +77,7 @@
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.73';
+    const SCRIPT_VERSION = '5.1.75';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -1394,6 +1394,23 @@ body.wb-chain-active {
     font-size: 12px; padding: 0 4px; line-height: 1;
 }
 .fo-stats-filter-clear:hover { color: var(--wb-text); }
+/* The personal-key controls borrow .fo-stats-filter-clear for its flat look,
+   but that class is a ~12px-tall box built for a ✕ under a mouse cursor. On a
+   360px phone the key button lands within a few px of the filter's ✕ and the
+   'Hide online' checkbox, so a thumb miss wipes the stats filter or hides every
+   online target mid-war. Give the three NEW controls a real touch box. (The
+   pre-existing #fo-stats-filter-clear has the same flaw and is left alone —
+   not part of this change.) */
+#fo-myffs-btn, #fo-myffs-save, #fo-myffs-clear {
+    min-height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    padding: 0 10px;
+    letter-spacing: 0;
+    text-transform: none;
+}
 .fo-stats-filter-hint {
     color: #636e72; font-size: 10px; margin-left: 6px;
 }
@@ -1594,6 +1611,19 @@ body.wb-chain-active {
     padding: 1px 5px; border-radius: 8px;
     line-height: 1; white-space: nowrap;
     display: inline-block;
+}
+
+/* Personal FF score chip — nests inside .fo-ff-inline, background set inline
+   from ffColor() so it uses FFScouter's own blue→green→red ramp. Only rendered
+   for a member who set their own FFScouter key. */
+.fo-ff-score {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 4px;
+    border-radius: 6px;
+    color: #fff;
+    font-weight: 700;
+    text-shadow: 0 1px 1px rgba(0,0,0,0.45);
 }
 
 /* Status Pill */
@@ -3107,9 +3137,18 @@ body.wb-chain-active {
             const parsed = c ? parseBsHuman(c.bsHuman) : null;
             return parsed !== null ? parsed : null;
         };
+        // One key snapshot for the whole sort. The comparator runs O(n log n)
+        // times and activeFfsKey() is a synchronous storage read each call —
+        // on PDA that is a bridge hop, so resolving it per comparison would put
+        // hundreds of them inside a sort.
+        let ffSortKey = null;
+        try { ffSortKey = activeFfsKey(); } catch (_) {}
         const getFfRating = (it) => {
-            const c = (typeof ffCache !== 'undefined') ? ffCache[it.targetId] : null;
-            return (c && typeof c.value === 'number') ? c.value : null;
+            // Attacker-relative, so it must go through the active-key check:
+            // a score cached under a previous key would silently reorder the
+            // target list against a different attacker's stats — the same
+            // wrong-person harm as a mis-shown chip, just harder to notice.
+            try { return ffValueFor(it.targetId, ffSortKey); } catch (_) { return null; }
         };
 
         const statsMap = new Map();
@@ -4144,10 +4183,149 @@ body.wb-chain-active {
 
     // ── Fair Fight (ffscouter.com) ─────────────────────────────────────────
 
-    /** In-memory FF cache: targetId → { value, lastUpdated, bsHuman, fetchedAt } */
+    /** In-memory FF cache: targetId → { value, keyFp, lastUpdated, bsHuman, fetchedAt } */
     const ffCache = {};
     const FF_CACHE_TTL = 60 * 60 * 1000; // 1 hour
     let ffFetchInFlight = false;
+
+    // ── Personal FFScouter key (per-member) ────────────────────────────────
+    // bs_estimate is a property of the TARGET, so the faction can share one
+    // key and one server-side cache for it. The FF (fair fight) score is not:
+    // it is computed RELATIVE TO THE ATTACKER. A score fetched with the
+    // faction owner's key is scored against the OWNER's battle stats, so
+    // showing it to a weaker member would tell them a fight is easy when it
+    // is not. That is why 5.1.73 showed no FF score at all. A member who sets
+    // their OWN FFScouter key gets a score computed against their own stats —
+    // and only then is it safe to put an FF number on screen.
+    const MY_FFS_KEY_STORE = 'factionops_my_ffs_key';
+
+    /**
+     * Read the member's own FFScouter key.
+     * PDA's GM storage hands values back as raw STRINGS while the localStorage
+     * shim hands back parsed JSON, so coerce rather than trusting the type.
+     */
+    function getMyFfsKey() {
+        if (typeof GM_getValue !== 'function') return '';
+        try { return String(GM_getValue(MY_FFS_KEY_STORE, '') || '').trim(); }
+        catch (_) { return ''; }
+    }
+
+    /**
+     * Persist the member's own FFScouter key ('' clears it). We overwrite with
+     * '' instead of GM_deleteValue: that function is not in this script's GM
+     * shim and is not guaranteed on PDA, where an unguarded GM_* call aborts
+     * the whole script.
+     */
+    function setMyFfsKey(key) {
+        if (typeof GM_setValue !== 'function') return;
+        try { GM_setValue(MY_FFS_KEY_STORE, String(key || '').trim()); } catch (_) {}
+    }
+
+    /** Last-4 mask. Nothing anywhere may render or log more of a key than this. */
+    function maskFfsKey(key) {
+        const k = String(key || '');
+        return k.length >= 4 ? '…' + k.slice(-4) : '…';
+    }
+
+    /**
+     * Short non-reversible fingerprint (djb2) that stamps each cached FF score
+     * with the key that produced it. We stamp the fingerprint rather than the
+     * key so no cache entry ever carries key material.
+     */
+    function ffKeyFp(key) {
+        const s = String(key || '');
+        if (!s) return '';
+        let h = 5381;
+        for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+        return h.toString(36);
+    }
+
+    /**
+     * The key FF requests go out with: the member's own FFScouter key when set,
+     * otherwise their own Torn key (the pre-5.1.74 direct-fallback path).
+     * Both are the member's own, so both yield attacker-correct scores.
+     */
+    function activeFfsKey() {
+        const mine = getMyFfsKey();
+        if (mine) return { key: mine, fp: ffKeyFp(mine), personal: true };
+        const own = CONFIG.API_KEY || '';
+        return { key: own, fp: ffKeyFp(own), personal: false };
+    }
+
+    /**
+     * FF score for a target, but ONLY when it was fetched with the key that is
+     * still active. A score cached under a different key is scored against a
+     * different attacker's stats — worse than no score, because it looks real.
+     */
+    function ffValueFor(targetId, snapshot) {
+        const c = ffCache[targetId];
+        if (!c || typeof c.value !== 'number') return null;
+        // activeFfsKey() is a synchronous GM storage read plus a djb2 pass, and
+        // this runs once per badge per repaint (and O(n log n) times inside the
+        // sort comparator). Callers that loop pass a per-pass snapshot. It stays
+        // a PER-PASS snapshot rather than a module-level memo so that clearing
+        // the key in another tab still makes the chips vanish on the next
+        // repaint instead of hanging around until reload.
+        const active = snapshot || activeFfsKey();
+        if (!active.fp || c.keyFp !== active.fp) return null;
+        return c.value;
+    }
+
+    /**
+     * FF score to DISPLAY. The chip is specifically the payoff for setting your
+     * own FFScouter key. We deliberately don't show one for the Torn-key
+     * fallback: that path only fires on a server miss, so the chip would
+     * appear and vanish with server health rather than with anything the
+     * member did.
+     */
+    function ffChipValue(targetId, snapshot) {
+        const active = snapshot || activeFfsKey();
+        return active.personal ? ffValueFor(targetId, active) : null;
+    }
+
+    /**
+     * FFScouter's own wording, ported from ffs-banner-estimates'
+     * get_difficulty_text so the chip reads the way users already expect.
+     */
+    function ffDifficultyText(ff) {
+        if (ff <= 1) return 'Extremely easy';
+        if (ff <= 2) return 'Easy';
+        if (ff <= 3.5) return 'Moderately difficult';
+        if (ff <= 4.5) return 'Difficult';
+        return 'May be impossible';
+    }
+
+    /**
+     * Repaint every "is a personal key live?" readout from storage.
+     * Assigned by initWarOverlay once the inline control exists; a no-op until
+     * then, and after, because the two surfaces (inline button + Settings
+     * status line) can each be absent. This is the ONLY thing telling a member
+     * whether the FF numbers on screen were scored against their own stats, so
+     * it must never disagree with storage — a green masked button with no key
+     * saved would positively assert "these numbers are yours" when they are
+     * not shown at all.
+     */
+    let repaintMyFfsUi = () => {};
+
+    /**
+     * Drop every cached FF entry, repaint the key readouts and the badges,
+     * then refetch. Called when the personal key is saved or cleared from
+     * EITHER surface: entries stamped with the old key must not survive, or a
+     * stale attacker-relative score would keep driving both the FF chip and
+     * the stats-sort fallback under a different attacker. Every key-change
+     * path funnels through here, which is why the repaint lives here rather
+     * than in the individual click handlers — the Settings save/clear and the
+     * modal-wide Save have no reference to the inline button.
+     */
+    function resetFfCacheForKeyChange() {
+        // A new key deserves a clean verdict: the old key's rejection says
+        // nothing about this one, and re-saving is the documented way to retry.
+        ffPersonalKeyRejected = false;
+        try { repaintMyFfsUi(); } catch (_) {}
+        for (const k of Object.keys(ffCache)) delete ffCache[k];
+        try { updateAllFfBadges(); } catch (_) {}
+        try { fetchFairFightBatch(); } catch (_) {}
+    }
 
     /**
      * Try the warboard server's cached enemy-stats endpoint first.
@@ -4171,27 +4349,129 @@ body.wb-chain-active {
     }
 
     /**
+     * True when the member's OWN FFScouter key was refused (typo'd, expired,
+     * rate-limited) or cannot be used on this host. Drives the button's error
+     * state and is cleared on every key change and on the next success. Holds
+     * a boolean only — never the key, never the wire error text.
+     */
+    let ffPersonalKeyRejected = false;
+
+    /** How soon a degraded (personal-key-failed) entry becomes stale again. */
+    const FF_DEGRADE_RETRY = 10 * 60 * 1000;
+
+    /**
+     * The member's own key failed, so the direct path gave us nothing. Without
+     * this they would get NO stat estimates at all — the column the whole
+     * faction relies on, which worked fine in 5.1.73 — for the rest of the
+     * session, with only a console line to explain it. Degrade to the shared
+     * server endpoint, which still yields stat estimates (never an FF score,
+     * because the server's key belongs to someone else).
+     *
+     * The entries are stamped with the CURRENT key's fingerprint even though
+     * they carry no FF score. That is deliberate and load-bearing: `needed`
+     * below refetches a personal member's entries on fingerprint mismatch, so
+     * stamping these null would make every data tick fire another doomed
+     * ffscouter call AND another server call — a request storm lasting the
+     * whole war. Attribution stays safe because ffValueFor() requires a
+     * numeric `value`, so a keyFp sitting on a null-value entry can never put
+     * a score on screen. fetchedAt is backdated so the key is retried in ~10
+     * minutes instead of sitting dead for the full 1-hour TTL; re-saving the
+     * key (even the same one) wipes the cache and retries immediately, which
+     * is the manual recovery path the error state points at.
+     */
+    function ffDegradeToServer(active, ids) {
+        ffPersonalKeyRejected = true;
+        try { repaintMyFfsUi(); } catch (_) {}
+        const ts = Date.now() - (FF_CACHE_TTL - FF_DEGRADE_RETRY);
+        const batch = Array.isArray(ids) ? ids : [];
+        // Tombstone the batch SYNCHRONOUSLY, before awaiting the server. The
+        // server round-trip takes long enough for a data tick to slip through
+        // the cleared ffFetchInFlight and fire another doomed direct call plus
+        // another server call; with these in place `needed` is already empty.
+        // The .then() below upgrades them in place with real stat estimates.
+        for (const id of batch) {
+            ffCache[id] = { value: null, keyFp: active.fp, stats: null, lastUpdated: 0, bsHuman: null, fetchedAt: ts };
+        }
+        fetchEnemyStatsFromServer().then((estimates) => {
+            const est = estimates || {};
+            let okCount = 0;
+            // ONLY the batch that just failed. The server map covers every
+            // target in the war, and blanket-writing it would overwrite good
+            // direct-path entries from earlier successful batches — wiping
+            // every FF chip on screen because one later batch timed out.
+            for (const id of batch) {
+                const n = Number(est[id]);
+                if (Number.isFinite(n) && n > 0) {
+                    ffCache[id] = {
+                        value: null,
+                        keyFp: active.fp,
+                        stats: n,
+                        bsHuman: formatBspNumber(n),
+                        lastUpdated: 0,
+                        fetchedAt: ts,
+                    };
+                    okCount++;
+                } else {
+                    // The server had nothing either. Still needs a backdated
+                    // tombstone, or the id stays in `needed` and we hammer both
+                    // endpoints on every data tick.
+                    ffCache[id] = { value: null, keyFp: active.fp, stats: null, lastUpdated: 0, bsHuman: null, fetchedAt: ts };
+                }
+            }
+            log('FF: direct call unusable — degraded to shared server estimates for', okCount, 'of', batch.length, 'targets');
+            try { updateAllFfBadges(); } catch (_) {}
+        }).catch(() => {});
+    }
+
+    /**
      * Batch-fetch enemy stat estimates. Server-cached path first
      * (shared across faction, 30-min TTL); direct ffscouter.com call as
      * fallback for when the server has no FFS key or returns an error.
-     * Stores values in ffCache as { stats, bsHuman, fetchedAt } — no FF
-     * score; we only show stat estimates in the overlay.
+     * The server path returns stat estimates only, so a member with their own
+     * FFScouter key skips it entirely: one direct call yields both the stat
+     * estimate and their personal, attacker-relative FF score.
      */
     async function fetchFairFightBatch() {
         if (ffFetchInFlight) return;
 
+        // Resolve the key ONCE, here, and carry it through both the server
+        // branch and the response handler below. If the member changes their
+        // key mid-flight, the in-flight response lands stamped with the OLD
+        // fingerprint and is discarded by the guards further down.
+        const active = activeFfsKey();
         const allIds = Object.keys(state.statuses);
         const now = Date.now();
         const needed = allIds.filter((id) => {
             const c = ffCache[id];
-            return !c || (now - c.fetchedAt) > FF_CACHE_TTL;
+            if (!c || (now - c.fetchedAt) > FF_CACHE_TTL) return true;
+            // Staleness alone is not enough. Under a personal key, an entry
+            // produced by a DIFFERENT key — or by the shared server path, which
+            // stamps keyFp:null — carries no FF score for this member and never
+            // will, yet its fresh fetchedAt would keep it out of `needed` for a
+            // full hour. That is how a key saved mid-flight, or saved in another
+            // tab, ends with a green button and no chips anywhere.
+            // Gated on `personal` because a no-key member's entries are
+            // legitimately keyFp:null — without the gate they would refetch on
+            // every single data tick.
+            if (active.personal && c.keyFp !== active.fp) return true;
+            return false;
         });
         if (needed.length === 0) return;
 
         ffFetchInFlight = true;
         try {
-            // Try the server's cached endpoint first.
-            const serverEstimates = await fetchEnemyStatsFromServer();
+            // Try the server's cached endpoint first — but only when we have no
+            // personal key, since the server can't produce a personal FF score.
+            const serverEstimates = active.personal ? null : await fetchEnemyStatsFromServer();
+            // The key may have changed during that await. Writing now would
+            // stamp every target with a FRESH fetchedAt under the old identity;
+            // re-dispatch instead so the member sees scores immediately rather
+            // than waiting for the next tick to notice the mismatch.
+            if (active.fp !== activeFfsKey().fp) {
+                ffFetchInFlight = false;
+                fetchFairFightBatch();
+                return;
+            }
             if (serverEstimates && Object.keys(serverEstimates).length > 0) {
                 const ts = Date.now();
                 for (const [pid, total] of Object.entries(serverEstimates)) {
@@ -4199,6 +4479,7 @@ body.wb-chain-active {
                     if (!Number.isFinite(n) || n <= 0) continue;
                     ffCache[pid] = {
                         value: null,            // server endpoint doesn't return FF score
+                        keyFp: null,            // …so there is no attacker to attribute it to
                         stats: n,
                         bsHuman: formatBspNumber(n),
                         lastUpdated: 0,
@@ -4213,52 +4494,115 @@ body.wb-chain-active {
         } catch (e) {
             log('FF: server enemy-stats threw:', e && e.message);
         }
-        // Fallback: direct ffscouter.com call with user's own API key.
-        // The GM_xmlhttpRequest callbacks below reset ffFetchInFlight.
-        const apiKey = CONFIG.API_KEY;
+        // Direct ffscouter.com call: the primary path when the member set their
+        // own FFScouter key, the fallback (with their own Torn key) otherwise.
+        // The httpRequest callbacks below reset ffFetchInFlight.
+        const apiKey = active.key;
         if (!apiKey) { ffFetchInFlight = false; return; }
 
         const batchSize = 50;
         const batch = needed.slice(0, batchSize);
+
+        // This is the ONLY path for a member with a personal key. Torn PDA does
+        // not expose GM_xmlhttpRequest at all (the polyfill at the top of the
+        // file deliberately skips it, and httpRequest() routes PDA through
+        // PDA_httpGet for exactly this reason), so a bare call here would blank
+        // the entire stats column on the primary mobile host. Go through
+        // httpRequest(), and if even that has no transport, degrade to the
+        // shared server rather than returning empty-handed.
+        if (!IS_PDA && typeof GM_xmlhttpRequest !== 'function') {
+            ffFetchInFlight = false;
+            if (active.personal) ffDegradeToServer(active, batch);
+            return;
+        }
+
         const url = `https://ffscouter.com/api/v1/get-stats?key=${encodeURIComponent(apiKey)}&targets=${batch.join(',')}`;
 
-        log('FF: server miss, falling back to ffscouter.com for', batch.length, 'targets');
+        // Counts only — the request URL embeds the key, so it is never logged.
+        log(active.personal
+            ? 'FF: personal key set, direct ffscouter.com call for'
+            : 'FF: server miss, falling back to ffscouter.com for', batch.length, 'targets');
 
-        GM_xmlhttpRequest({
+        // A direct call that fails under a PERSONAL key must not leave the
+        // member with nothing: fall back to the shared server for stat
+        // estimates. Under the Torn-key fallback there is no point — we only
+        // got here because the server already came up empty.
+        const failed = (why) => {
+            log('FF: direct call failed —', why);
+            if (active.personal) ffDegradeToServer(active, batch);
+        };
+
+        // httpRequest()'s PDA branch ignores timeout/ontimeout, so every path
+        // that clears ffFetchInFlight must also be covered by onload/onerror.
+        httpRequest({
             method: 'GET',
             url: url,
             timeout: 15000,
             onload: function (resp) {
                 ffFetchInFlight = false;
-                if (resp.status !== 200) {
-                    log('FF: API returned', resp.status);
+                if (!resp || resp.status !== 200) {
+                    // Status code only. The response body of a rejected key can
+                    // echo request context, and the URL carries the key itself.
+                    log('FF: API returned', resp && resp.status);
+                    failed('http ' + (resp && resp.status));
                     return;
                 }
                 try {
                     const data = JSON.parse(resp.responseText);
                     if (data && data.error) {
                         log('FF: API error:', data.error);
+                        failed('api error');
                         return;
                     }
-                    if (!Array.isArray(data)) return;
+                    if (!Array.isArray(data)) { failed('unexpected response shape'); return; }
+                    // We got a usable answer under this key, so any previous
+                    // rejection state is stale — clear it and repaint.
+                    if (ffPersonalKeyRejected) {
+                        ffPersonalKeyRejected = false;
+                        try { repaintMyFfsUi(); } catch (_) {}
+                    }
+                    // Key changed while this was in flight. The entries would be
+                    // stamped with the old fp and so never displayed — but they
+                    // would carry a FRESH fetchedAt, satisfying FF_CACHE_TTL and
+                    // starving the refetch for up to an hour. Discard and go
+                    // again under the new key so the member sees scores now.
+                    if (active.fp !== activeFfsKey().fp) {
+                        ffFetchInFlight = false;
+                        fetchFairFightBatch();
+                        return;
+                    }
                     const ts = Date.now();
                     for (const entry of data) {
                         if (!entry || !entry.player_id) continue;
                         const id = String(entry.player_id);
-                        // Normalised cache shape: { value (FF score), stats
-                        // (raw bs_estimate), bsHuman (formatted), lastUpdated,
-                        // fetchedAt }. value+lastUpdated retained for any
-                        // legacy code path; overlay rendering only uses stats/
-                        // bsHuman.
+                        // Normalised cache shape: { value (FF score), keyFp
+                        // (fingerprint of the key that scored it), stats (raw
+                        // bs_estimate), bsHuman (formatted), lastUpdated,
+                        // fetchedAt }. keyFp is what makes the FF score safe to
+                        // read back: it identifies WHOSE stats it was scored
+                        // against. fair_fight is nullable in the API response.
+                        //
+                        // keyFp is stamped on EVERY entry this path writes,
+                        // including the no-data tombstone and stats-only rows.
+                        // The `needed` filter above refetches a personal
+                        // member's entries whenever the fingerprint doesn't
+                        // match, so leaving these null would put a target with
+                        // no FF data into a permanent refetch loop. It stays
+                        // attribution-safe because ffValueFor() requires a
+                        // numeric `value` before it will return anything.
                         const rawStats = Number(entry.bs_estimate);
                         const stats = Number.isFinite(rawStats) && rawStats > 0 ? rawStats : null;
                         const bsHuman = entry.bs_estimate_human
                             || (stats != null ? formatBspNumber(stats) : null);
-                        if (entry.fair_fight == null && stats == null) {
-                            ffCache[id] = { value: null, stats: null, lastUpdated: 0, bsHuman: null, fetchedAt: ts };
+                        const ffNum = (entry.no_data || entry.fair_fight == null)
+                            ? null : Number(entry.fair_fight);
+                        const ffVal = Number.isFinite(ffNum) ? ffNum : null;
+                        if (ffVal == null && stats == null) {
+                            ffCache[id] = { value: null, keyFp: active.fp, stats: null, lastUpdated: 0, bsHuman: null, fetchedAt: ts };
                         } else {
                             ffCache[id] = {
-                                value: entry.fair_fight != null ? entry.fair_fight : null,
+                                value: ffVal,
+                                keyFp: active.fp,
                                 stats,
                                 lastUpdated: entry.last_updated || 0,
                                 bsHuman,
@@ -4266,14 +4610,18 @@ body.wb-chain-active {
                             };
                         }
                     }
-                    // Re-render inline FF badges
-                    updateAllFfBadges();
+                    // Re-render inline FF badges. Isolated from the parse try:
+                    // a DOM exception in here is not a bad response, and letting
+                    // it reach the catch below would degrade a batch that had
+                    // just been written correctly.
+                    try { updateAllFfBadges(); } catch (_) {}
                 } catch (e) {
                     log('FF: parse error', e);
+                    failed('parse error');
                 }
             },
-            onerror: function () { ffFetchInFlight = false; },
-            ontimeout: function () { ffFetchInFlight = false; },
+            onerror: function () { ffFetchInFlight = false; failed('network error'); },
+            ontimeout: function () { ffFetchInFlight = false; failed('timeout'); },
         });
     }
 
@@ -4298,12 +4646,19 @@ body.wb-chain-active {
         return `rgb(${r},${g},${b})`;
     }
 
-    /** Render an inline FF badge element. */
-    function renderInlineFf(el, targetId) {
+    /**
+     * Render an inline FF badge element.
+     * `snapshot` is an optional pre-resolved activeFfsKey() shared across a
+     * whole repaint pass — see updateAllFfBadges. Omitted, it resolves itself.
+     */
+    function renderInlineFf(el, targetId, snapshot) {
         // Priority: BSP (local cache or faction-shared pool — EXACT stats
         // from profile visits) → server-cached FFS estimate → direct-
-        // ffscouter estimate (already in ffCache). User wants no FF score
-        // shown in the overlay, stats number only.
+        // ffscouter estimate (already in ffCache).
+        // The stats number is shown to everyone; the FF chip beside it appears
+        // only for a member who set their own FFScouter key, because only then
+        // is the score computed against their own battle stats.
+        const ffVal = ffChipValue(targetId, snapshot);
         let statsNum = null;
         let source = '';
 
@@ -4326,36 +4681,67 @@ body.wb-chain-active {
             }
         }
 
-        if (statsNum == null) {
+        if (statsNum == null && ffVal == null) {
             if (el.dataset.foCache === 'empty') return;
             el.dataset.foCache = 'empty';
             el.textContent = '';
             el.className = 'fo-ff-inline';
             el.style.color = '';
             el.style.background = '';
+            el.title = '';
             return;
         }
-        const tier = bspTier(statsNum);
-        const human = formatBspNumber(statsNum);
-        const key = `stats_${human}_${tier}_${source}`;
+        const tier = statsNum != null ? bspTier(statsNum) : 'unknown';
+        const human = statsNum != null ? formatBspNumber(statsNum) : '';
+        const ffTxt = ffVal != null ? ffVal.toFixed(2) : '';
+        // The FF value is part of the repaint key: clearing the personal key
+        // takes the chip away, and without it in the key that repaint would be
+        // skipped by the early-out below and a dead chip would stay on screen.
+        const key = `stats_${human}_${tier}_${source}_ff${ffTxt}`;
         if (el.dataset.foCache === key) return;
         el.dataset.foCache = key;
-        el.className = 'fo-ff-inline fo-ff-stats-' + tier;
-        el.textContent = human;
+        el.className = 'fo-ff-inline' + (statsNum != null ? ' fo-ff-stats-' + tier : '');
         // Tier-based subtle color: s=red (3B+), a=yellow (1-3B),
         // b=green (500M-1B), c=gray (<500M).
         const tierColor = ({ s: '#ff4f57', a: '#f5a623', b: '#7ed957', c: '#9aa3b2', unknown: '' })[tier];
         el.style.color = tierColor || '';
-        el.style.background = 'rgba(255,255,255,0.06)';
-        el.title = `Stats: ${human} (${source})`;
+        el.style.background = statsNum != null ? 'rgba(255,255,255,0.06)' : '';
+        // Assigning textContent first also clears any previous chip child.
+        el.textContent = human;
+        let title = statsNum != null ? `Stats: ${human} (${source})` : '';
+        if (ffVal != null) {
+            // Chip nests INSIDE the stats badge rather than becoming another
+            // .fo-sub-row flex child: the sub-row already wraps at ~360px on a
+            // phone, and the badge's white-space:nowrap keeps the pair together.
+            const chip = document.createElement('span');
+            chip.className = 'fo-ff-score';
+            chip.textContent = ffTxt;
+            // Same blue→green→red ramp FFScouter uses on its own banners, so
+            // the colour carries the meaning members already read it as.
+            chip.style.background = ffColor(ffVal);
+            // No stats number to sit beside → drop the separating margin so the
+            // lone chip doesn't render with a dead 4px indent.
+            if (!human) chip.style.marginLeft = '0';
+            el.appendChild(chip);
+            title = (title ? title + ' · ' : '')
+                + `FF ${ffTxt} — ${ffDifficultyText(ffVal)} (scored with your own key)`;
+        }
+        el.title = title;
     }
 
     /** Update all rendered FF badges from cache. */
     function updateAllFfBadges() {
         const badges = document.querySelectorAll('[id^="fo-ff-inline-"]');
+        // Resolve the active key ONCE for the pass. This runs on every FF fetch
+        // and every render, so on a 100-target war the per-badge version cost
+        // ~200 synchronous storage reads a pass where 5.1.73 cost zero.
+        // Deliberately not memoised across passes: a key cleared in another tab
+        // must still make the chips disappear on the very next repaint.
+        let snapshot = null;
+        try { snapshot = activeFfsKey(); } catch (_) {}
         badges.forEach((el) => {
             const tid = el.id.replace('fo-ff-inline-', '');
-            renderInlineFf(el, tid);
+            renderInlineFf(el, tid, snapshot);
         });
     }
 
@@ -6221,6 +6607,38 @@ body.wb-chain-active {
             ${CONFIG.IS_PDA ? '<div style="font-size:11px;color:#87ceeb;margin-bottom:8px;">\u2705 Torn PDA detected — using PDA-managed API key.</div>' : ''}
             <div id="wb-verify-result" style="font-size:11px;margin-bottom:10px;min-height:14px;"></div>
 
+            <!-- v5.1.74: PER-MEMBER FFScouter key. Distinct from the admin /
+                 faction-wide key further down (wb-input-ffs-key, oc_ffs_key),
+                 which is shared and can only produce target stat estimates.
+                 The FF score is relative to the attacker, so it only means
+                 anything when fetched with YOUR key. type="text", never
+                 password: a password field makes password managers offer to
+                 autofill and save an API key as a site credential. -->
+            <label for="wb-input-my-ffs-key">My FFScouter Key <span style="font-weight:400;opacity:0.6;font-size:11px;">(optional, personal)</span></label>
+            <!-- wrap + min-width: three controls don't fit one 360px phone row,
+                 and a squeezed key input is unusable — let the buttons drop. -->
+            <div style="display:flex;gap:6px;flex-wrap:wrap;row-gap:6px;">
+                <input type="text" id="wb-input-my-ffs-key" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Your own key from ffscouter.com" style="margin-bottom:0;flex:1 1 160px;min-width:140px;font-family:monospace;">
+                <button class="wb-btn wb-btn-sm" id="wb-btn-save-my-ffs-key">Save</button>
+                <button class="wb-btn wb-btn-sm" id="wb-btn-clear-my-ffs-key">Clear</button>
+            </div>
+            <div id="wb-my-ffs-key-status" style="font-size:11px;opacity:0.7;margin-top:4px;min-height:14px;">
+                ${!getMyFfsKey()
+                    ? 'Not set — stat estimates only, no FF score.'
+                    : (ffPersonalKeyRejected
+                        ? 'Saved (' + escapeHtml(maskFfsKey(getMyFfsKey())) + ') — FFScouter is not returning scores for it; stat estimates only.'
+                        : 'Saved (' + escapeHtml(maskFfsKey(getMyFfsKey())) + ') — showing your personal FF scores.')}
+            </div>
+            <div style="font-size:11px;opacity:0.6;margin:4px 0 14px 0;">
+                A fair-fight score is calculated against <b>your</b> battle stats, so
+                the faction's shared key can't produce one for you — a score fetched
+                with someone else's key would call a fight easy that isn't. Set your
+                own key (any Torn key registered at
+                <a href="https://ffscouter.com" target="_blank" style="color:#60a5fa;">ffscouter.com</a>)
+                and each target gets an FF chip next to its stat estimate.
+                Stored only in this browser; sent only to ffscouter.com.
+            </div>
+
             <div class="wb-settings-row">
                 <span>Theme</span>
                 <div style="display:flex;align-items:center;gap:8px;">
@@ -6471,6 +6889,38 @@ body.wb-chain-active {
                 resultEl.style.color = 'var(--wb-call-red)';
             }
         });
+
+        // ---- Personal FFScouter key ----
+        // Both handlers wipe ffCache: entries fetched under the previous key
+        // are scored against a different attacker and must not outlive it.
+        // The input is never repopulated with the key — only a last-4 mask is
+        // ever shown, and the key is never logged.
+        const myFfsStatusEl = document.getElementById('wb-my-ffs-key-status');
+        const myFfsInputEl = document.getElementById('wb-input-my-ffs-key');
+
+        if (myFfsInputEl) {
+            document.getElementById('wb-btn-save-my-ffs-key').addEventListener('click', () => {
+                const key = myFfsInputEl.value.trim();
+                if (!key) {
+                    myFfsStatusEl.textContent = 'Paste a key first, or press Clear to remove the saved one.';
+                    myFfsStatusEl.style.color = 'var(--wb-idle-yellow)';
+                    return;
+                }
+                setMyFfsKey(key);
+                myFfsInputEl.value = '';   // don't leave the key sitting in the DOM
+                myFfsStatusEl.textContent = `Saved (${maskFfsKey(key)}) — showing your personal FF scores.`;
+                myFfsStatusEl.style.color = 'var(--wb-call-green)';
+                resetFfCacheForKeyChange();
+            });
+
+            document.getElementById('wb-btn-clear-my-ffs-key').addEventListener('click', () => {
+                setMyFfsKey('');
+                myFfsInputEl.value = '';
+                myFfsStatusEl.textContent = 'Cleared — stat estimates only, no FF score.';
+                myFfsStatusEl.style.color = '';
+                resetFfCacheForKeyChange();
+            });
+        }
 
         document.getElementById('wb-toggle-theme').addEventListener('change', (e) => {
             const theme = e.target.checked ? 'light' : 'dark';
@@ -6921,6 +7371,16 @@ body.wb-chain-active {
 
             setConfig('SERVER_URL', serverUrl);
             setConfig('API_KEY', apiKey);
+
+            // This modal-wide Save closes the panel, so a member who pastes
+            // their FFScouter key and hits Save here instead of the field's own
+            // Save button would silently lose it. Commit it too. Only a
+            // non-empty value: clearing is deliberate and stays on Clear.
+            const myFfsPending = (document.getElementById('wb-input-my-ffs-key') || {}).value;
+            if (myFfsPending && String(myFfsPending).trim()) {
+                setMyFfsKey(String(myFfsPending).trim());
+                resetFfCacheForKeyChange();
+            }
 
             stopPolling();
             disconnectRealtime();
@@ -9364,10 +9824,44 @@ body.wb-chain-active {
             ` : ''}
             <div class="fo-sort-bar" id="fo-sort-bar">
                 <span class="fo-sort-label">Stats:</span>
+                <!-- Personal FFScouter key, sat directly beside the Stats header
+                     rather than buried in Settings: this is the row people are
+                     already on when they want to know how hard a target is.
+                     Placed BEFORE the min/max inputs so it stays on the header
+                     line — the row already wraps (the hint span below uses
+                     flex-basis:100%), and anything appended after the two
+                     checkboxes would fall to a second line on a phone.
+                     The label doubles as the state readout, because otherwise a
+                     member has no way to tell whether the FF numbers on screen
+                     are computed for them or absent entirely. -->
+                <!-- Sizing (touch box, padding, letter-spacing) lives in the
+                     injected #fo-myffs-btn rule, NOT inline: an inline padding
+                     here would outrank the stylesheet and silently undo the
+                     28px thumb target. -->
+                <button class="fo-stats-filter-clear" id="fo-myffs-btn" style="margin-right:2px;"
+                        title="Your own FFScouter key — FF scores are relative to YOUR stats, so they only appear with your own key">🔑 <span id="fo-myffs-label">FF</span></button>
                 <input class="fo-stats-filter-input" id="fo-stats-filter-min" placeholder="min" title="Min stats — e.g. 10M, 1.5B, 100000">
                 <span style="color:#636e72;">–</span>
                 <input class="fo-stats-filter-input" id="fo-stats-filter-max" placeholder="max" title="Max stats — e.g. 50M, 2B, 1000000">
                 <button class="fo-stats-filter-clear" id="fo-stats-filter-clear" title="Clear filter">✕</button>
+                <span id="fo-myffs-row" style="display:none;flex-basis:100%;margin-top:5px;gap:5px;align-items:center;">
+                    <!-- type=text, never password: a password field triggers the
+                         browser's password manager and it starts offering to save
+                         and autofill Torn API keys. -->
+                    <!-- autocapitalize/autocorrect off: iOS soft keyboards
+                         (PDA and the warboard app) default to sentence case, so
+                         a hand-typed key gets its first character upper-cased.
+                         Keys are case-sensitive, so ffscouter silently rejects
+                         it and the only trace is a console line nobody reads on
+                         a phone. enterkeyhint=done + the keydown handler below
+                         mean the soft keyboard's Go key saves. -->
+                    <input type="text" id="fo-myffs-input" spellcheck="false" autocomplete="off"
+                           autocapitalize="off" autocorrect="off" enterkeyhint="done"
+                           placeholder="Torn key registered at ffscouter.com"
+                           style="flex:1;min-width:0;font-family:monospace;font-size:11px;padding:5px 6px;background:rgba(0,0,0,0.25);border:1px solid var(--wb-border,#2d3436);border-radius:4px;color:var(--wb-text);">
+                    <button class="fo-stats-filter-clear" id="fo-myffs-save">Save</button>
+                    <button class="fo-stats-filter-clear" id="fo-myffs-clear">Clear</button>
+                </span>
                 <label class="fo-sort-label" style="margin-left:8px;display:flex;align-items:center;gap:3px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:11px;color:var(--wb-text);">
                     <input type="checkbox" id="fo-hide-online" style="margin:0;cursor:pointer;">
                     Hide online
@@ -9471,6 +9965,105 @@ body.wb-chain-active {
                 if (minEl) minEl.value = '';
                 if (maxEl) maxEl.value = '';
                 applyStatsFilter();
+            });
+        }
+
+        // Personal FFScouter key, inline on the Stats row. Same storage and the
+        // same cache invalidation as the Settings field — two surfaces, one
+        // value — so whichever one you touch, both read back the same state on
+        // the next render.
+        const myFfsBtn = overlay.querySelector('#fo-myffs-btn');
+        const myFfsRow = overlay.querySelector('#fo-myffs-row');
+        const myFfsInput = overlay.querySelector('#fo-myffs-input');
+        if (myFfsBtn && myFfsRow && myFfsInput) {
+            // The button IS the status readout: masked last-4 and an accent
+            // colour when a personal key is live, muted when it is not. Without
+            // this a member has no way to tell whether the FF numbers they are
+            // reading are their own — which is the entire point of the feature.
+            function paintMyFfsBtn() {
+                const k = getMyFfsKey();
+                const label = overlay.querySelector('#fo-myffs-label');
+                const rejected = k && ffPersonalKeyRejected;
+                if (label) label.textContent = !k ? 'FF' : (rejected ? 'FF?' : maskFfsKey(k));
+                // Set the whole `border` shorthand, not borderColor: the shared
+                // .fo-stats-filter-clear class sets `border: 0`, so a colour
+                // alone lands on a zero-width border and renders nothing — half
+                // the "your key is live" affordance would silently not appear.
+                // --wb-call-red is the theme's existing warning tone and is
+                // defined in both light and dark palettes.
+                const accent = rejected ? 'var(--wb-call-red)' : 'var(--wb-call-green)';
+                myFfsBtn.style.color = k ? accent : '';
+                myFfsBtn.style.border = k ? ('1px solid ' + accent) : '';
+                myFfsBtn.title = !k
+                    ? 'Your own FFScouter key — FF scores are relative to YOUR stats, so they only appear with your own key'
+                    // Deliberately neutral: the same state covers a rejected
+                    // key, a rate limit and a dropped connection, and claiming
+                    // "your key is bad" on a network blip would send people
+                    // hunting a key that is fine.
+                    : (rejected
+                        ? 'FFScouter is not returning scores — showing shared stat estimates only. Check your key, or tap to re-enter it.'
+                        : 'Your personal FFScouter key is set — FF scores are computed against your own stats');
+            }
+            // Publish the repaint so every key-change path reaches it, including
+            // the Settings field and the modal-wide Save, which have no handle
+            // on this button. Without it a Settings-side Clear leaves the button
+            // green with a stale mask — positively asserting "these FF numbers
+            // are yours" when none are being shown at all.
+            repaintMyFfsUi = function () {
+                try { paintMyFfsBtn(); } catch (_) {}
+                // The Settings modal is created and destroyed on demand, so its
+                // status line may be absent — refresh it only when present.
+                try {
+                    const st = document.getElementById('wb-my-ffs-key-status');
+                    if (st) {
+                        const k = getMyFfsKey();
+                        st.textContent = k
+                            ? (ffPersonalKeyRejected
+                                ? 'Saved (' + maskFfsKey(k) + ') — FFScouter is not returning scores for it; stat estimates only.'
+                                : 'Saved (' + maskFfsKey(k) + ') — showing your personal FF scores.')
+                            : 'Not set — stat estimates only, no FF score.';
+                        st.style.color = k ? (ffPersonalKeyRejected ? 'var(--wb-idle-yellow)' : 'var(--wb-call-green)') : '';
+                    }
+                } catch (_) {}
+            };
+            paintMyFfsBtn();
+            myFfsBtn.addEventListener('click', () => {
+                const open = myFfsRow.style.display !== 'none';
+                myFfsRow.style.display = open ? 'none' : 'flex';
+                // Clear UNCONDITIONALLY, not just on open. Typing a key and then
+                // dismissing the panel with this same button used to leave the
+                // raw key sitting in a hidden <input> in the live Torn DOM for
+                // the rest of the page session — readable by every other
+                // userscript on the page. Never pre-fill it either.
+                myFfsInput.value = '';
+                if (!open) myFfsInput.focus();
+            });
+            const saveBtn = overlay.querySelector('#fo-myffs-save');
+            if (saveBtn) saveBtn.addEventListener('click', () => {
+                const k = myFfsInput.value.trim();
+                if (!k) return;
+                setMyFfsKey(k);
+                myFfsInput.value = '';
+                myFfsRow.style.display = 'none';
+                // Drop every cached score stamped with the previous key, so a
+                // number computed for someone else can never survive the switch.
+                // This also repaints the button via repaintMyFfsUi.
+                resetFfCacheForKeyChange();
+                renderOverlay();
+            });
+            // The soft keyboard's Go/Done key. Without it a phone user must
+            // dismiss the keyboard — which on iOS often scrolls the sort bar
+            // away — before they can reach Save.
+            myFfsInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); saveBtn && saveBtn.click(); }
+            });
+            const clrBtn = overlay.querySelector('#fo-myffs-clear');
+            if (clrBtn) clrBtn.addEventListener('click', () => {
+                setMyFfsKey('');
+                myFfsInput.value = '';
+                myFfsRow.style.display = 'none';
+                resetFfCacheForKeyChange();
+                renderOverlay();
             });
         }
 
