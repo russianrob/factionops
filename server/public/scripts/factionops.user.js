@@ -5156,21 +5156,40 @@ body.wb-chain-active {
         // overlay spent several seconds with no realtime transport at all on
         // every single page load.
         //
-        // The chain is now SSE first (started above through GM_xmlhttpRequest,
-        // the only channel that escapes Torn's CSP), with HTTP polling as the
-        // always-running safety net beneath it. `realtimeSocket` stays null for
-        // the life of the page, which is exactly what every
+        // The chain is now SSE first, started above through GM_xmlhttpRequest —
+        // the only channel that escapes Torn's CSP. `realtimeSocket` stays null
+        // for the life of the page, which is exactly what every
         // `realtimeSocket && realtimeSocket.connected` guard in the polling path
-        // already treats as "no socket" — so those guards keep working unchanged
+        // already treats as "no socket", so those guards keep working unchanged
         // rather than needing to be touched.
         //
-        // Worth knowing when reading the event flow: SSE carries `global_toast`,
-        // `assist_request` and `enemy_surge` only. `war_update`, `war_state`,
-        // `retals`, `retal_request`, `member_bars` and `war_ended` reach the
-        // overlay through polling. That split is not introduced here — it is how
-        // those events have arrived since 5.1.68, because the Socket.IO handlers
-        // that used to carry them stopped running when the socket stopped
-        // connecting.
+        // Polling is an ALTERNATIVE to SSE, not a safety net beneath it. Do not
+        // read the two as running together: connectSSEStream's onloadstart and
+        // its first onprogress both call stopPolling(true), and startPolling /
+        // scheduleNextPoll then refuse to restart while `sseConnected` is true.
+        // So a live SSE stream means polling is stopped, and anything SSE fails
+        // to deliver is not quietly backfilled by a poll.
+        //
+        // What SSE actually carries: nearly everything. The parser branches on
+        // `type` for global_toast / assist_request / enemy_surge, and every
+        // other frame falls to the catch-all `applyServerData(data)` below —
+        // the same consumer /api/poll-long feeds. That covers the war payload
+        // (routes.js:260, the identical object the old war_update emit sent),
+        // retals, calls, enemyStatuses and memberBars. The deleted
+        // `realtimeSocket.on('war_update')` and `on('war_state')` handlers did
+        // nothing but call applyServerData themselves, so removing them removed
+        // duplicate plumbing, not a delivery path.
+        //
+        // Known gaps, NOT introduced here — all dead since 5.1.68, when the
+        // socket stopped connecting and took its handlers down with it:
+        //   - retal_request reaches nothing at all. No SSE branch, and /api/poll
+        //     carries no retal-request field, so "Retal request sent!" shows the
+        //     sender a confirmation nobody else ever receives. Fixing it is one
+        //     else-if mirroring the assist_request branch.
+        //   - chain-monitor.js:249 and :320 emit war_ended and the periodic
+        //     war_update to the Socket.IO room only, with no broadcastSSE beside
+        //     them, so a quiet stretch can leave an SSE client's score and ETA
+        //     frozen until some other event triggers broadcastWarUpdate.
 
         // One-shot transport report, so which transport actually carries events
         // per host stays answerable from the warboard log instead of inferred.
