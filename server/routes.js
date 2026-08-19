@@ -86,7 +86,7 @@ import * as chat from "./chat.js";
 import { encrypt as encryptKey, decrypt as decryptKey, isEncrypted as isEncryptedKey } from "./key-encryption.js";
 import { crimesFingerprint, shouldRecompute as shouldRecomputeEngines } from "./oc-engine-cache.js";
 import { upsertScenario } from "./arson-scenarios.js";
-import { processCircular, readStatus as readCircularStatus, readLatest as readCircularLatest, jobIdForUrl as circularJobId, jobIdForBytes as circularJobIdForBytes } from "./circular-store.js";
+import { processCircular, readStatus as readCircularStatus, readLatest as readCircularLatest, jobIdForUrl as circularJobId, jobIdForBytes as circularJobIdForBytes, DATA_DIR as CIRCULAR_DIR } from "./circular-store.js";
 import { validateCircularUrl, buildShortcutPlist } from "./circular-pipeline.js";
 import { generateTasks, readSchedule as readTaskSchedule, parseSchedule, OUT_LATEST as TASKS_LATEST_FILE } from "./pm-checklist-store.js";
 import * as pendingBroadcasts from "./pending-broadcasts.js";
@@ -691,6 +691,22 @@ router.post("/api/circular", (req, res, next) => {
                : (typeof req.body === "string" ? req.body.length : JSON.stringify(req.body || "").length);
     const preview = Buffer.isBuffer(req.body) ? "<binary>" : String(url || "").slice(0, 120);
     console.error("[circular] rejected:", v.reason, `| content-type=${ct} bytes=${size} got=${JSON.stringify(preview)}`);
+    // Keep the body itself when it is text and substantial. A 120-char preview
+    // told us the Shortcut was posting extracted PDF TEXT rather than a link,
+    // but not whether that text carries the offers — and asking for another
+    // send to find out costs a round trip each time. Text only, capped, and
+    // only the most recent few are kept.
+    try {
+      if (!Buffer.isBuffer(req.body) && typeof url === "string" && url.length > 500) {
+        const dir = pathJoin(CIRCULAR_DIR, "rejected");
+        mkdirSync(dir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        writeFileSync(pathJoin(dir, `${stamp}.txt`), url.slice(0, 1024 * 1024), "utf8");
+        for (const stale of readdirSync(dir).sort().slice(0, -3)) {
+          try { unlinkSync(pathJoin(dir, stale)); } catch {}
+        }
+      }
+    } catch {}
     return res.status(400).json({ error: "bad url", reason: v.reason });
   }
   const jobId = circularJobId(v.url);
