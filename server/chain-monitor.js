@@ -244,7 +244,14 @@ export function startChainMonitor(io, warId) {
             // accumulates across war boundaries — factions asked for
             // permanent history. Manual wipe still available via
             // chat.clearForWar() if an admin ever needs it.
-            // Broadcast war-ended event to all clients
+            // Broadcast war-ended event to all clients, over BOTH transports.
+            //
+            // This used to emit to the Socket.IO war room only. No client has
+            // joined that room since 5.1.68 (join_war was sent from the socket
+            // connect handler, which stopped running when the socket stopped
+            // connecting, and was removed outright in 5.1.72) — so this event
+            // has been reaching nobody, and the war-ended banner never raised
+            // itself from here.
             if (io) {
               io.to(`war_${warId}`).emit('war_ended', {
                 warId,
@@ -254,6 +261,21 @@ export function startChainMonitor(io, warId) {
                 endedAt: war.warEndedAt,
               });
             }
+            // NOT the same payload: the Socket.IO event's field names
+            // (`result`, `myScore`, `endedAt`) are read by nothing on the
+            // client. `applyServerData` keys off `warEnded` — which is what
+            // raises the banner — plus `warResult` and `warScores`. Copying the
+            // socket payload verbatim would deliver a message that parses fine
+            // and does nothing at all.
+            //
+            // Dynamic import because routes.js imports THIS module (routes.js:120),
+            // so a static import would close the cycle. Same pattern as
+            // retal-tracker.js:85.
+            import("./routes.js").then(r => r.broadcastSSE(warId, {
+              warEnded: true,
+              warResult: war.warResult,
+              warScores: war.warScores,
+            })).catch(() => {});
           }
           if (rw) {
             // Store scores on war object so clients can display them
@@ -312,17 +334,32 @@ export function startChainMonitor(io, warId) {
 
             store.saveState();
 
-            // Broadcast updated scores to all connected clients (Socket.IO)
-            if (io) {
-              const pct = (war.warTarget && war.warTarget.value && war.warScores)
-                ? Math.min(100, Math.floor((war.warScores.myScore / war.warTarget.value) * 100))
-                : null;
-              io.to(`war_${warId}`).emit('war_update', {
-                warScores: war.warScores,
-                warEta: war.warEta,
-                warPercentage: pct,
-              });
-            }
+            // Broadcast updated scores to all connected clients, over BOTH
+            // transports.
+            //
+            // This is the periodic score refresh, and it was Socket.IO-only —
+            // reaching nobody since 5.1.68, for the reason above. It matters
+            // more than it looks: an SSE client STOPS polling once its stream is
+            // live (connectSSEStream calls stopPolling, and startPolling refuses
+            // to restart while sseConnected), so in a quiet stretch — no calls,
+            // no status changes to trigger broadcastWarUpdate — the score and
+            // ETA on screen simply froze, with nothing underneath to backfill
+            // them.
+            //
+            // `pct` is computed outside the `if (io)` now: SSE must get it
+            // whether or not a Socket.IO server is attached.
+            const pct = (war.warTarget && war.warTarget.value && war.warScores)
+              ? Math.min(100, Math.floor((war.warScores.myScore / war.warTarget.value) * 100))
+              : null;
+            const scorePayload = {
+              warScores: war.warScores,
+              warEta: war.warEta,
+              warPercentage: pct,
+            };
+            if (io) io.to(`war_${warId}`).emit('war_update', scorePayload);
+            // Field names here already match what `applyServerData` reads, so
+            // this one IS the same payload. Dynamic import per the note above.
+            import("./routes.js").then(r => r.broadcastSSE(warId, scorePayload)).catch(() => {});
 
             // Check if custom war target reached
             if (war.warTarget && war.warTarget.value && !war.warTarget.notifiedAt && !warTargetNotified.get(warId)) {

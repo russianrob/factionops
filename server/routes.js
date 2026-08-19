@@ -2346,9 +2346,24 @@ router.get("/api/stream", (req, res, next) => {
 
   // Heartbeat every 5s to keep connection alive
   const heartbeat = setInterval(() => {
-    try { 
+    try {
       res.write(`data: ${JSON.stringify({ type: "heartbeat", ts: Date.now() })}\n\n`);
       if (typeof res.flush === "function") res.flush();
+      // Keep this war marked "someone is watching" for as long as the stream is
+      // open. `lastClientPollAt` was set once, above, when the stream connected
+      // and then never again — but retal-tracker's viewed() treats it as a
+      // 60s liveness window (RETAL_ACTIVE_MS), and its other test, a non-empty
+      // Socket.IO war room, has been permanently false since 5.1.68. An SSE
+      // client also stops polling once its stream is live, so nothing else
+      // refreshed the field: 60 seconds after connecting, a faction whose
+      // members are all on SSE stopped being counted as watching and the retal
+      // tracker quietly stopped fetching new retals for them.
+      //
+      // Re-read from the store rather than closing over `war`: the reference
+      // captured at connect can be replaced by a later store load, and this
+      // interval outlives that.
+      const liveWar = store.getWar(warId);
+      if (liveWar) liveWar.lastClientPollAt = Date.now();
     } catch (_) {}
   }, 5000);
 
