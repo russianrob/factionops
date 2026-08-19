@@ -331,3 +331,22 @@ test("promoteDecision: no previous record → falls back to the threshold alone"
   assert.equal(promoteDecision({ matched: 7, pageFailures: 0, minMatched: 7, validFrom: "2026-08-16" }).promote, true);
   assert.equal(promoteDecision({ matched: 6, pageFailures: 0, minMatched: 7, validFrom: "2026-08-16" }).promote, false);
 });
+
+// A flavour named after another meat must not disqualify the row. Real tile from
+// the 08/23 book: nine flavours, one of them "Bacon Lovers", and the bare
+// /bacon/ exclusion blanked a $9.99/lb turkey breast.
+test("turkey breast with a Bacon Lovers flavour still fills the Turkey row", () => {
+  const offers = [{
+    product: "Turkey Breast", brand: "Black Bear", priceText: "$9.99 lb", pricePerLb: 9.99, unit: "lb",
+    description: "Store Sliced, Deli Classic, Catering, Oven-Roasted, Honey, Mesquite Smoked, Black Peppered, Cajun, Bacon Lovers or Honey Maple Glazed",
+  }];
+  const turkey = matchDeliOffers(offers).find(f => f.item === "Turkey");
+  assert.equal(turkey.price, 9.99, "Bacon Lovers is a flavour, not turkey bacon");
+  assert.equal(turkey.brand, "Black Bear");
+});
+
+// The exclusion still has to do its actual job.
+test("turkey bacon is still kept out of the Turkey row", () => {
+  const offers = [{ product: "Turkey Bacon", brand: "Bowl & Basket", priceText: "$4.99 lb", pricePerLb: 4.99, unit: "lb", description: "Store Sliced" }];
+  assert.equal(matchDeliOffers(offers).find(f => f.item === "Turkey").price, null);
+});

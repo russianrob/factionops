@@ -30,7 +30,13 @@ export function isFlavoredHam(text) { return FLAVOR_WORDS.test(String(text)); }
 // (chicken thighs, mozzarella cups) do not leak in — the per-lb filter in
 // matchDeliOffers is the second guard.
 export const DELI_ROWS = [
-  { row: 3,  item: "Turkey",       match: t => /turkey/.test(t) && !/kielbasa|bacon|burger|ground|roaster/.test(t) },
+  // "bacon" must be the PRODUCT (turkey bacon), not a flavour. Black Bear's
+  // Turkey Breast lists "Bacon Lovers" among nine flavours, and a bare /bacon/
+  // exclusion blanked a $9.99/lb turkey breast — the same row that has been
+  // wrongly blanked before, by a different cause.
+  { row: 3,  item: "Turkey",       match: t => /turkey/.test(t)
+      && !/kielbasa|burger|ground|roaster/.test(t)
+      && !/turkey bacon|bacon turkey/.test(t) },
   { row: 4,  item: "Chicken",      match: t => /chicken breast/.test(t) && !/tender|thigh|drumstick|ground|wing|nugget|breaded|roaster|family/.test(t) },
   { row: 5,  item: "Domestic Ham", match: t => /\bham\b/.test(t) && !/turkey|chicken/.test(t) && !isFlavoredHam(t) },
   { row: 6,  item: "Flavored Ham", match: t => /\bham\b/.test(t) && !/turkey|chicken/.test(t) && isFlavoredHam(t) },
