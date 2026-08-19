@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.76
+// @version      5.1.77
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -77,7 +77,7 @@
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.76';
+    const SCRIPT_VERSION = '5.1.77';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -4697,36 +4697,40 @@ body.wb-chain-active {
         // The FF value is part of the repaint key: clearing the personal key
         // takes the chip away, and without it in the key that repaint would be
         // skipped by the early-out below and a dead chip would stay on screen.
-        const key = `stats_${human}_${tier}_${source}_ff${ffTxt}`;
+        // This badge renders the FF chip ONLY — never a stats number.
+        //
+        // The sibling .fo-bsp-inline badge already owns the stat for BOTH
+        // sources: it prints the BSP TBS when a prediction exists, and falls
+        // back to the ffCache entry's bsHuman when it does not. Printing the
+        // number here too put it on the row twice — visible before the chip
+        // existed as a bare repeat of the same figure, and unmistakable once
+        // the chip landed beside it ("[153301] 716m" then "716.1M 2.81", two
+        // formatters disagreeing about the same value).
+        //
+        // `statsNum` is still computed above, because whether a stat is known
+        // at all decides the tooltip and, together with `ffVal`, whether this
+        // badge should render anything.
+        const key = `ff${ffTxt}_${source}`;
         if (el.dataset.foCache === key) return;
         el.dataset.foCache = key;
-        el.className = 'fo-ff-inline' + (statsNum != null ? ' fo-ff-stats-' + tier : '');
-        // Tier-based subtle color: s=red (3B+), a=yellow (1-3B),
-        // b=green (500M-1B), c=gray (<500M).
-        const tierColor = ({ s: '#ff4f57', a: '#f5a623', b: '#7ed957', c: '#9aa3b2', unknown: '' })[tier];
-        el.style.color = tierColor || '';
-        el.style.background = statsNum != null ? 'rgba(255,255,255,0.06)' : '';
-        // Assigning textContent first also clears any previous chip child.
-        el.textContent = human;
-        let title = statsNum != null ? `Stats: ${human} (${source})` : '';
-        if (ffVal != null) {
-            // Chip nests INSIDE the stats badge rather than becoming another
-            // .fo-sub-row flex child: the sub-row already wraps at ~360px on a
-            // phone, and the badge's white-space:nowrap keeps the pair together.
-            const chip = document.createElement('span');
-            chip.className = 'fo-ff-score';
-            chip.textContent = ffTxt;
-            // Same blue→green→red ramp FFScouter uses on its own banners, so
-            // the colour carries the meaning members already read it as.
-            chip.style.background = ffColor(ffVal);
-            // No stats number to sit beside → drop the separating margin so the
-            // lone chip doesn't render with a dead 4px indent.
-            if (!human) chip.style.marginLeft = '0';
-            el.appendChild(chip);
-            title = (title ? title + ' · ' : '')
-                + `FF ${ffTxt} — ${ffDifficultyText(ffVal)} (scored with your own key)`;
-        }
-        el.title = title;
+        el.className = 'fo-ff-inline';
+        el.style.color = '';
+        el.style.background = '';
+        // Clears any previous chip child as well as any stale text.
+        el.textContent = '';
+        if (ffVal == null) { el.title = ''; return; }
+        const chip = document.createElement('span');
+        chip.className = 'fo-ff-score';
+        chip.textContent = ffTxt;
+        // Same blue→green→red ramp FFScouter uses on its own banners, so the
+        // colour carries the meaning members already read it as.
+        chip.style.background = ffColor(ffVal);
+        // Nothing precedes the chip in this badge any more, so the separating
+        // margin would render as a dead indent against the BSP badge.
+        chip.style.marginLeft = '0';
+        el.appendChild(chip);
+        el.title = `FF ${ffTxt} — ${ffDifficultyText(ffVal)} (scored with your own key)`
+            + (statsNum != null ? ` · stats ${human} (${source})` : '');
     }
 
     /** Update all rendered FF badges from cache. */
