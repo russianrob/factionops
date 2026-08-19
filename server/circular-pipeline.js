@@ -49,6 +49,14 @@ export function jobIdForUrl(url) {
   return createHash("sha1").update(String(url)).digest("hex").slice(0, 16);
 }
 
+// Same idea for a PDF posted directly: there is no URL to key on, so the bytes
+// ARE the key. Re-posting the same file lands on the same job instead of
+// re-running a multi-minute extraction, which is the property jobIdForUrl gives
+// the link path.
+export function jobIdForBytes(buf) {
+  return createHash("sha1").update(buf).digest("hex").slice(0, 16);
+}
+
 // "OFFERS VALID SUNDAY, AUGUST 2ND THRU SATURDAY, AUGUST 8TH, 2026" → ISO dates.
 const MONTHS = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12 };
 export function parseValidRange(rawText) {

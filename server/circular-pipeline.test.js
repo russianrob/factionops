@@ -2,8 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   validateCircularUrl, jobIdForUrl, parseValidRange, splitDisclaimerSegments,
-  extractJsonArray, mergeOffers, coverageCheck, extractPage, chunkSegment,
-} from "./circular-pipeline.js";
+  extractJsonArray, mergeOffers, coverageCheck, extractPage, chunkSegment, jobIdForBytes } from "./circular-pipeline.js";
 
 test("validateCircularUrl accepts an https cloudfront pdf", () => {
   const r = validateCircularUrl("https://d16fzx5hhs0dp6.cloudfront.net/a/b_31Jul2026_SM.pdf");
@@ -135,4 +134,32 @@ test("extractPage splits segments and runs the injected extractor per segment", 
   assert.equal(r.segments, 2);
   assert.equal(calls.length, 2, "one extractor call per physical-page segment");
   assert.deepEqual(r.offers.map(o => o.product).sort(), ["Avocados", "Rice"]);
+});
+
+// ── PDF posted directly ──────────────────────────────────────────────────────
+// The link path keys a job on the URL so a re-fired Shortcut is idempotent. An
+// upload has no URL, so the bytes are the key and must give the same property.
+test("jobIdForBytes is stable and content-addressed", () => {
+  const a = Buffer.from("%PDF-1.4 hello");
+  const b = Buffer.from("%PDF-1.4 hello");
+  const c = Buffer.from("%PDF-1.4 different");
+  assert.equal(jobIdForBytes(a), jobIdForBytes(b), "same bytes must reuse the job");
+  assert.notEqual(jobIdForBytes(a), jobIdForBytes(c), "different weeks must not collide");
+  assert.match(jobIdForBytes(a), /^[a-f0-9]{16}$/, "must be filesystem-safe");
+});
+
+// The reason the upload path exists: this is what the phone actually sent, and
+// it was rejected with "not a URL" because a PDF is not one.
+test("a PDF body is not mistaken for a URL", () => {
+  const pdf = Buffer.from("%PDF-1.7\n%\xe2\xe3\xcf\xd3\n", "latin1");
+  assert.equal(pdf.subarray(0, 5).toString("latin1"), "%PDF-", "sniff must match the route's");
+  assert.equal(validateCircularUrl(pdf.toString("utf8")).ok, false);
+});
+
+// A Shortcut posting a plain link as application/octet-stream must still be
+// treated as a link — the route sniffs the body rather than trusting the header.
+test("octet-stream carrying a link is still a link", () => {
+  const body = Buffer.from("https://d16fzx5hhs0dp6.cloudfront.net/x/y.pdf");
+  assert.notEqual(body.subarray(0, 5).toString("latin1"), "%PDF-");
+  assert.equal(validateCircularUrl(body.toString("utf8").trim()).ok, true);
 });

@@ -86,7 +86,7 @@ import * as chat from "./chat.js";
 import { encrypt as encryptKey, decrypt as decryptKey, isEncrypted as isEncryptedKey } from "./key-encryption.js";
 import { crimesFingerprint, shouldRecompute as shouldRecomputeEngines } from "./oc-engine-cache.js";
 import { upsertScenario } from "./arson-scenarios.js";
-import { processCircular, readStatus as readCircularStatus, readLatest as readCircularLatest, jobIdForUrl as circularJobId } from "./circular-store.js";
+import { processCircular, readStatus as readCircularStatus, readLatest as readCircularLatest, jobIdForUrl as circularJobId, jobIdForBytes as circularJobIdForBytes } from "./circular-store.js";
 import { validateCircularUrl, buildShortcutPlist } from "./circular-pipeline.js";
 import { generateTasks, readSchedule as readTaskSchedule, parseSchedule, OUT_LATEST as TASKS_LATEST_FILE } from "./pm-checklist-store.js";
 import * as pendingBroadcasts from "./pending-broadcasts.js";
@@ -634,20 +634,65 @@ function _circularAuthOk(req) {
 router.post("/api/circular", (req, res, next) => {
   if (_circularAuthOk(req)) return next();
   return res.status(401).json({ error: "unauthorized" });
-}, express.text({ type: ["text/*", "application/octet-stream"], limit: "64kb" }),
-   express.urlencoded({ extended: false, limit: "64kb" }), (req, res) => {
+}, express.json({ limit: "64kb" }),
+   express.urlencoded({ extended: false, limit: "64kb" }),
+   express.text({ type: "text/*", limit: "64kb" }),
+   // The circular PDF itself, ~77 MB. Also catches octet-stream, which iOS
+   // Shortcuts sometimes uses for a plain string — so the body is sniffed
+   // below rather than trusted by content-type.
+   express.raw({ type: ["application/pdf", "application/octet-stream"], limit: "200mb" }),
+   (req, res) => {
   // Accept the URL every way the Shortcuts "Get Contents of URL" body types can
   // send it, since iOS versions differ on which they offer:
-  //   • JSON body {url:…}  → global json parser → req.body is an object
+  //   • JSON body {url:…}  → express.json → req.body is an object
   //   • Form body url=…    → express.urlencoded → req.body is an object
   //   • plain-text body    → express.text → req.body is a string
   //   • ?url= query param  → req.query.url
-  let url = "";
-  if (typeof req.query.url === "string" && req.query.url.trim()) url = req.query.url.trim();
-  else if (typeof req.body === "string" && req.body.trim()) url = req.body.trim();
-  else if (req.body && typeof req.body === "object" && typeof req.body.url === "string") url = req.body.url.trim();
+  //   • the PDF itself     → express.raw → req.body is a Buffer starting %PDF-
+  let url = "", pdf = null;
+  if (Buffer.isBuffer(req.body)) {
+    // Sniff, don't trust the header: a Shortcut that posts a link as
+    // octet-stream and one that posts a file are the same content-type.
+    if (req.body.length >= 5 && req.body.subarray(0, 5).toString("latin1") === "%PDF-") pdf = req.body;
+    else url = req.body.toString("utf8").trim();
+  }
+  if (!pdf) {
+    if (typeof req.query.url === "string" && req.query.url.trim()) url = req.query.url.trim();
+    else if (typeof req.body === "string" && req.body.trim()) url = req.body.trim();
+    else if (req.body && !Buffer.isBuffer(req.body) && typeof req.body === "object"
+             && typeof req.body.url === "string") url = req.body.url.trim();
+  }
+
+  // A PDF posted directly: no link to validate or fetch, the bytes are the job.
+  if (pdf) {
+    const jobId = circularJobIdForBytes(pdf);
+    const existing = readCircularStatus(jobId);
+    if (existing && existing.state && existing.state !== "error") {
+      const inFlight = existing.state === "fetching" || existing.state === "extracting";
+      const ageMs = Date.now() - Date.parse(existing.updatedAt || 0);
+      if (!(inFlight && (!existing.updatedAt || ageMs > 20 * 60 * 1000))) {
+        return res.status(200).json({ jobId, state: existing.state, idempotent: true });
+      }
+    }
+    console.log("[circular]", jobId, `accepted upload (${pdf.length} bytes)`);
+    res.status(202).json({ jobId, state: "accepted", via: "upload" });
+    processCircular(`upload:${jobId}`, { pdfBuffer: pdf, jobId })
+      .catch((e) => { try { console.error("[circular]", jobId, String(e && e.message || e)); } catch {} });
+    return;
+  }
+
   const v = validateCircularUrl(url);
-  if (!v.ok) return res.status(400).json({ error: "bad url", reason: v.reason });
+  if (!v.ok) {
+    // Log it. A rejection used to vanish, leaving only a status code and a
+    // response length in nginx — the reason had to be inferred from the byte
+    // count of the JSON. Body preview is capped and never echoes a PDF.
+    const ct = String(req.get("content-type") || "none");
+    const size = Buffer.isBuffer(req.body) ? req.body.length
+               : (typeof req.body === "string" ? req.body.length : JSON.stringify(req.body || "").length);
+    const preview = Buffer.isBuffer(req.body) ? "<binary>" : String(url || "").slice(0, 120);
+    console.error("[circular] rejected:", v.reason, `| content-type=${ct} bytes=${size} got=${JSON.stringify(preview)}`);
+    return res.status(400).json({ error: "bad url", reason: v.reason });
+  }
   const jobId = circularJobId(v.url);
   const existing = readCircularStatus(jobId);
   // Re-POST of a week already done/in-flight: hand back the job, don't re-extract

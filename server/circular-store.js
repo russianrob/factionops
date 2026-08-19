@@ -20,8 +20,7 @@ import {
 import { join } from "node:path";
 import {
   jobIdForUrl, parseValidRange, mergeOffers, coverageCheck, extractPage, claudeExtract,
-  claudeExtractImage, extractJsonArray,
-} from "./circular-pipeline.js";
+  claudeExtractImage, extractJsonArray, jobIdForBytes } from "./circular-pipeline.js";
 import {
   findDeliPages, buildDeliVisionPrompt, matchDeliOffers, countFilled, countMatched, promoteDecision, fillSheetXml, dateRangeLabel,
 } from "./deli-form.js";
@@ -187,8 +186,12 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
 // awaiting. Every stage updates status.json so the owner can poll. Injectable
 // deps (fetchImpl, extractor) keep it drivable from a test/CLI without the real
 // network — production passes neither and gets the real ones.
+// `url` is the CloudFront link to fetch. For a PDF posted directly there is no
+// link, so the caller passes `opts.pdfBuffer` (the bytes) and `opts.jobId`
+// (hashed from those bytes) and the fetch is skipped — everything downstream
+// works from circular.pdf on disk either way.
 export async function processCircular(url, opts = {}) {
-  const jobId = jobIdForUrl(url);
+  const jobId = opts.jobId || jobIdForUrl(url);
   const dir = jobDir(jobId);
   const extractor = opts.extractor || ((prompt) => claudeExtract(prompt));
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
@@ -199,9 +202,16 @@ export async function processCircular(url, opts = {}) {
   try {
     // ── Fetch ────────────────────────────────────────────────────────────
     const pdfPath = join(dir, "circular.pdf");
-    const resp = await fetchImpl(url, { redirect: "follow" });
-    if (!resp.ok) throw new Error(`fetch ${resp.status}`);
-    const buf = Buffer.from(await resp.arrayBuffer());
+    let buf;
+    if (opts.pdfBuffer) {
+      buf = opts.pdfBuffer;                       // posted directly; nothing to fetch
+    } else {
+      const resp = await fetchImpl(url, { redirect: "follow" });
+      if (!resp.ok) throw new Error(`fetch ${resp.status}`);
+      buf = Buffer.from(await resp.arrayBuffer());
+    }
+    // Both paths get the same checks — an uploaded file is no more trustworthy
+    // than a fetched one.
     if (buf.length > MAX_PDF_BYTES) throw new Error(`pdf too large (${buf.length} bytes)`);
     if (buf.length < 1000 || buf.slice(0, 5).toString() !== "%PDF-") throw new Error("not a PDF");
     writeFileSync(pdfPath, buf);
@@ -268,4 +278,4 @@ export async function processCircular(url, opts = {}) {
   }
 }
 
-export { jobIdForUrl, DATA_DIR };
+export { jobIdForUrl, jobIdForBytes, DATA_DIR };
