@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.75
+// @version      5.1.76
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -77,7 +77,7 @@
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.75';
+    const SCRIPT_VERSION = '5.1.76';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -6765,7 +6765,16 @@ body.wb-chain-active {
             <div style="margin: 14px 0;">
                 <label for="wb-input-ffs-key">FFScouter API Key <span style="font-weight:400;opacity:0.6;font-size:11px;">(optional, admin-only)</span></label>
                 <div style="display:flex;gap:6px;">
-                    <input type="password" id="wb-input-ffs-key" placeholder="Paste a Torn key registered at ffscouter.com" style="margin-bottom:0;flex:1;font-family:monospace;">
+                    <!-- type=text, never password. A password field makes the
+                         browser's password manager offer to save and then
+                         autofill Torn API keys, which silently overwrites what
+                         the admin typed and stores a credential where nobody
+                         expects to find one. The key is never at rest in this
+                         field anyway: the saved value is shown only as a masked
+                         placeholder, and .value is cleared the moment it saves,
+                         so there is nothing here for type=password to conceal. -->
+                    <input type="text" id="wb-input-ffs-key" spellcheck="false" autocomplete="off"
+                           placeholder="Paste a Torn key registered at ffscouter.com" style="margin-bottom:0;flex:1;font-family:monospace;">
                     <button class="wb-btn wb-btn-sm" id="wb-btn-save-ffs-key">Save</button>
                 </div>
                 <div id="fo-ffs-key-result" style="font-size:11px;opacity:0.6;margin-top:4px;min-height:14px;">
