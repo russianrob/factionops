@@ -88,6 +88,7 @@ import { crimesFingerprint, shouldRecompute as shouldRecomputeEngines } from "./
 import { upsertScenario } from "./arson-scenarios.js";
 import { processCircular, readStatus as readCircularStatus, readLatest as readCircularLatest, jobIdForUrl as circularJobId, jobIdForBytes as circularJobIdForBytes, DATA_DIR as CIRCULAR_DIR } from "./circular-store.js";
 import { validateCircularUrl, buildShortcutPlist } from "./circular-pipeline.js";
+import { processPlanner, looksLikePlanner, readLatestPlanner, listPlanners } from "./planner-store.js";
 import { generateTasks, readSchedule as readTaskSchedule, parseSchedule, OUT_LATEST as TASKS_LATEST_FILE } from "./pm-checklist-store.js";
 import * as pendingBroadcasts from "./pending-broadcasts.js";
 import * as inspectRelay from "./inspect-relay.js";
@@ -681,6 +682,19 @@ router.post("/api/circular", (req, res, next) => {
     return;
   }
 
+  // The weekly merchandising planner arrives here as text the Shortcut has
+  // already pulled out of its PDF — no link, no file. It is a different document
+  // from the circular (staff brief vs customer price book) so it gets its own
+  // store rather than being forced through a pipeline built for offer tiles.
+  if (!pdf && looksLikePlanner(url)) {
+    const p = processPlanner(url);
+    console.log("[planner] accepted", `${url.length} bytes`);
+    res.status(202).json({ kind: "planner", state: "accepted", bytes: url.length });
+    p.then(r => console.log("[planner]", r.id, r.state, "weekOf", r.weekOf))
+     .catch(e => { try { console.error("[planner]", String(e && e.message || e)); } catch {} });
+    return;
+  }
+
   const v = validateCircularUrl(url);
   if (!v.ok) {
     // Log it. A rejection used to vanish, leaving only a status code and a
@@ -727,6 +741,19 @@ router.post("/api/circular", (req, res, next) => {
   res.status(202).json({ jobId, state: "accepted" });
   // Fire-and-forget: the response is already sent; errors land in status.json.
   processCircular(v.url).catch((e) => { try { console.error("[circular]", jobId, String(e && e.message || e)); } catch {} });
+});
+
+//   GET /api/planner/latest     — the most recent weekly merchandising brief
+//   GET /api/planner             — every brief held, newest week first
+router.get("/api/planner/latest", (req, res) => {
+  if (!_circularAuthOk(req)) return res.status(401).json({ error: "unauthorized" });
+  const p = readLatestPlanner();
+  if (!p) return res.status(404).json({ error: "no planner yet" });
+  return res.json(p);
+});
+router.get("/api/planner", (req, res) => {
+  if (!_circularAuthOk(req)) return res.status(401).json({ error: "unauthorized" });
+  return res.json({ planners: listPlanners() });
 });
 
 //   GET /api/circular/status/<jobId>   — owner polls progress
