@@ -514,7 +514,12 @@ function startAttacksFeedMonitor(io, warId) {
           description: 'Hospitalized',
           until: untilSec,
           lastAction: existing.lastAction || 'Unknown',
-          activity: 'offline',
+          // Being hospitalised says NOTHING about whether they are online, and
+          // stamping 'offline' here discarded the real value we already had —
+          // which the client's "hide offline" filter then acted on, hiding
+          // people who were sitting right there. Preserve what we know; only
+          // default when we have never known.
+          activity: existing.activity || 'offline',
         };
 
         if (!war.enemyStatuses) war.enemyStatuses = {};
@@ -596,7 +601,10 @@ function applyAttackOverrides(warId, freshStatuses) {
       status: 'hospital',
       description: 'Hospitalized',
       until: Math.max(fresh.until || 0, ov.until),
-      activity: 'offline',
+      // Same reason as the hospital write above: `fresh` already carries the
+      // real activity from Torn's last_action, so overwriting it here threw
+      // away good data while holding a cached hospital state.
+      activity: fresh.activity || 'offline',
     };
   }
 }
