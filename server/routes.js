@@ -2076,7 +2076,17 @@ router.post("/api/auth", async (req, res) => {
       poolEligibilityReason: eligibility.reason,
     });
   } catch (err) {
-    console.error("[auth] Authentication failed:", err.message);
+    // Log WHO and WHAT, never the key itself. A bare "Incorrect key (code 2)"
+    // is undiagnosable: it cannot distinguish one person fat-fingering a paste
+    // from a script build sending a malformed key for everyone. scriptName and
+    // scriptVersion already arrive in the body and were being discarded here;
+    // the last-4 fingerprint groups repeat attempts from one key without ever
+    // storing or printing the credential.
+    const _b = req.body || {};
+    const _k = typeof _b.apiKey === "string" ? _b.apiKey : "";
+    const _fp = _k ? `…${_k.slice(-4)} (len ${_k.length})` : "(empty)";
+    console.error("[auth] Authentication failed:", err.message,
+      `| script=${_b.scriptName || "?"} v=${_b.scriptVersion || "?"} key=${_fp}`);
     return res.status(401).json({ error: err.message });
   }
 });
