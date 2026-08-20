@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.12
+// @version      3.4.13
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item*
 // @match        https://www.torn.com/bazaar*
+// @match        https://www.torn.com/displaycase.php*
+// @match        https://www.torn.com/page.php?sid=displayCase*
 // @match        https://www.torn.com/amarket*
 // @match        https://www.torn.com/trade.php*
 // @match        https://www.torn.com/page.php?sid=ItemMarket*
@@ -31,7 +33,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.12';
+    var SCRIPT_VERSION = '3.4.13';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
