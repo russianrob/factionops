@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.78
+// @version      5.1.79
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -77,7 +77,7 @@
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.78';
+    const SCRIPT_VERSION = '5.1.79';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -6032,6 +6032,12 @@ body.wb-chain-active {
                         socket: null,          // permanent: no socket is created
                         sse: !!sseConnected,
                         longpoll: !!(CONFIG.USE_LONGPOLL && !_lpDisabled),
+                        // Who and why. Without the id every report looked alike, so a
+                        // single user reporting "I dropped to polling" could not be
+                        // found in a faction's worth of rows.
+                        pid: (state && state.myPlayerId) ? String(state.myPlayerId) : null,
+                        reason: sseReason,
+                        quiet: sseLastMessageAt ? Math.round((Date.now() - sseLastMessageAt) / 1000) : null,
                     },
                 });
                 const url = CONFIG.SERVER_URL + '/api/debug/client-log';
@@ -6083,21 +6089,28 @@ body.wb-chain-active {
     let sseLastMessageAt = 0;
     let sseStaleTimer = null;
     const SSE_STALE_MS = 20000;
+    // Why SSE is not carrying events right now. The transport report used to say
+    // only WHETHER sse was live, which answers "is it broken" but never "why" —
+    // and a user on warboard reporting they had dropped to polling could not be
+    // told apart from a user on PDA, where SSE is refused by design. Set at every
+    // point that refuses or tears down a stream, and shipped with the report.
+    let sseReason = 'init';
+    function setSseReason(r) { sseReason = r; }
 
     /**
      * Can we use GM_xmlhttpRequest streaming?
      * Must be on Tampermonkey (not PDA), and Socket.IO must not already be connected.
      */
     function canUseSSEStream() {
-        if (IS_PDA) return false;
+        if (IS_PDA) { setSseReason('pda-gate'); return false; }
         // warboard USED to be skipped here: its GM_xmlhttpRequest resolved only on
         // completion, and an SSE stream never completes, so the request hung and
         // delivered nothing. warboard 0.11.276 implements onloadstart/onprogress
         // streaming, so it can now serve SSE like Stay does — and skipping it would
         // pin warboard to long-polling forever. Older builds are handled by the
         // watchdog in connectSSEStream() rather than by refusing to try.
-        if (realtimeSocket && realtimeSocket.connected) return false;
-        if (typeof GM_xmlhttpRequest !== 'function') return false;
+        if (realtimeSocket && realtimeSocket.connected) { setSseReason('socket-active'); return false; }
+        if (typeof GM_xmlhttpRequest !== 'function') { setSseReason('no-gm-xhr'); return false; }
         return true;
     }
 
@@ -6136,6 +6149,7 @@ body.wb-chain-active {
         const sseWatchdog = setTimeout(() => {
             if (sseConnected) return;
             warn('SSE never started after 12s — aborting; host GM shim likely has no onprogress');
+            setSseReason('watchdog-never-started');
             try { if (sseAbort && typeof sseAbort.abort === 'function') sseAbort.abort(); } catch (e) {}
             sseAbort = null;
             // The liveness interval was armed at connect time. Nothing else on
@@ -6150,7 +6164,7 @@ body.wb-chain-active {
             method: 'GET',
             url: url,
             responseType: 'text',
-            onloadstart: () => { clearTimeout(sseWatchdog); sseConnected = true; sseLastMessageAt = Date.now(); log("SSE stream started"); updateRtBadge("sse"); if (pollTimer) stopPolling(true); },
+            onloadstart: () => { clearTimeout(sseWatchdog); sseConnected = true; setSseReason('ok'); sseLastMessageAt = Date.now(); log("SSE stream started"); updateRtBadge("sse"); if (pollTimer) stopPolling(true); },
             timeout: 0,
             onprogress: (resp) => {
                 if (!resp || resp.responseText === undefined || resp.responseText === null) {
@@ -6252,6 +6266,7 @@ body.wb-chain-active {
         sseStaleTimer = setInterval(() => {
             if (!sseConnected) return;
             if (Date.now() - sseLastMessageAt <= SSE_STALE_MS) return;
+            setSseReason('watchdog-went-silent');
             warn('SSE silent for ' + Math.round((Date.now() - sseLastMessageAt) / 1000)
                 + 's (heartbeat is every 5s) — treating the stream as dead');
             // Abort first so the dead request cannot later fire onload/onerror
