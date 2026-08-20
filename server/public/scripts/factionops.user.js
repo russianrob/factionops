@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.78
+// @version      5.1.79
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -77,7 +77,7 @@
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.78';
+    const SCRIPT_VERSION = '5.1.79';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -6069,6 +6069,25 @@ body.wb-chain-active {
     let sseConnected = false;
     let sseRetryTimer = null;
     const SSE_RETRY_MS = 5000; // retry after 5s on disconnect
+    // Failed FIRST connects, counted separately from mid-stream drops.
+    //
+    // The 12s startup watchdog used to be terminal: it aborted, called
+    // startPolling() and never tried SSE again for the whole session. One
+    // unlucky first connect — a slow request on launch, a network change, the
+    // app resuming — and the client sat on polling until the user happened to
+    // reload. That is exactly what was seen in the field, and the tell was that
+    // reloading always fixed it, because a reload is the only thing that
+    // re-enters connectSSEStream.
+    //
+    // It now retries like the stale watchdog already did, but with a CAP and
+    // backoff. The cap matters: this watchdog exists for hosts whose GM shim
+    // cannot stream at all (warboard before 0.11.276), and on those an
+    // uncapped retry is an infinite doomed request every few seconds, on
+    // battery. After SSE_START_MAX_TRIES we stop and let polling own the
+    // transport for the session, which is the old behaviour — reached only
+    // once we have evidence rather than assumed from one failure.
+    let sseStartFailures = 0;
+    const SSE_START_MAX_TRIES = 3;
     // Liveness. The 12s watchdog in connectSSEStream only guards the stream
     // STARTING; once sseConnected flipped true nothing ever asked again whether
     // the stream was still alive. A half-open connection — laptop sleeps, phone
@@ -6144,13 +6163,31 @@ body.wb-chain-active {
             // failed attempt and accumulates one timer per retry.
             stopSSEStaleWatch();
             if (!pollTimer) startPolling();
+            // Retry the first connect rather than giving up on SSE for the
+            // session. Backoff grows per failure so a host that genuinely
+            // cannot stream is not hammered while we find that out.
+            sseStartFailures++;
+            if (sseStartFailures < SSE_START_MAX_TRIES) {
+                const delay = SSE_RETRY_MS * sseStartFailures;   // 5s, 10s
+                log('SSE start failed (' + sseStartFailures + '/' + SSE_START_MAX_TRIES
+                    + ') — retrying in ' + (delay / 1000) + 's');
+                if (!sseRetryTimer) {
+                    sseRetryTimer = setTimeout(() => {
+                        sseRetryTimer = null;
+                        if (canUseSSEStream() && state.jwtToken) connectSSEStream();
+                    }, delay);
+                }
+            } else {
+                warn('SSE start failed ' + SSE_START_MAX_TRIES
+                    + ' times — this host cannot stream; polling owns the transport');
+            }
         }, 12000);
 
         sseAbort = GM_xmlhttpRequest({
             method: 'GET',
             url: url,
             responseType: 'text',
-            onloadstart: () => { clearTimeout(sseWatchdog); sseConnected = true; sseLastMessageAt = Date.now(); log("SSE stream started"); updateRtBadge("sse"); if (pollTimer) stopPolling(true); },
+            onloadstart: () => { clearTimeout(sseWatchdog); sseStartFailures = 0; sseConnected = true; sseLastMessageAt = Date.now(); log("SSE stream started"); updateRtBadge("sse"); if (pollTimer) stopPolling(true); },
             timeout: 0,
             onprogress: (resp) => {
                 if (!resp || resp.responseText === undefined || resp.responseText === null) {
