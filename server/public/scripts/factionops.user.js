@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.77
+// @version      5.1.78
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -77,7 +77,7 @@
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.77';
+    const SCRIPT_VERSION = '5.1.78';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -3301,6 +3301,256 @@ body.wb-chain-active {
         return 'ok';
     }
 
+    // ── Own-faction leak defence ─────────────────────────────────────────
+    // Many paths can write into state.statuses (server poll/SSE, the
+    // getwarusers fetch intercept, profile intercepts, peer relay, socket
+    // frames). Every one of them is *meant* to be enemy-only, but a single
+    // unguarded path — present or future — puts OUR OWN faction members in
+    // the target list with FF chips and ATK buttons: rows that can never be
+    // attacked, so noise at best and a misdirected call at worst. Status
+    // entries carry no faction id, so once a wrong id is in there nothing
+    // downstream can tell it apart.
+    //
+    // Rather than keep patching ingestion, we keep a positive allow-list of
+    // ids that arrived from a source that is enemy-only BY CONSTRUCTION,
+    // and filter again where rows are produced.
+    //
+    // Deliberately module-level and NOT on `state`: it is session memory,
+    // must never be serialised out, and must never be overwritten by a
+    // server payload landing in applyServerData.
+    const confirmedEnemyIds = new Set();
+
+    // Ids proven enemy by the getwarusers intercept, which reads the LIVE war
+    // payload and checks each member's own factionID against
+    // state.enemyFactionId. That is stronger evidence than anything the
+    // server echoes back, so these survive the allow-list rebuild below.
+    const warUsersVerifiedIds = new Set();
+
+    // Ids proven to be OUR OWN faction's members. Kept separate from
+    // state.memberBars on purpose: memberBars is a *freshness* cache for the
+    // Faction Cooldowns panel — the server evicts entries older than 24h
+    // (store.js getFactionBars) and the /api/faction/bars handler REPLACES
+    // the map wholesale, so it shrinks. Identity must only ever grow within a
+    // session, otherwise a member who goes quiet silently becomes "not
+    // definitively ours" again and can be rendered as a target.
+    const knownOwnMemberIds = new Set();
+
+    // The allow-list may only be used to HIDE once we have an AUTHORITATIVE
+    // roster. Verified against the server: /api/poll (routes.js:2524) and the
+    // long-poll section diff (routes.js:2561) always ship the whole
+    // war.enemyStatuses map, but war-status-monitor.js broadcasts PARTIAL
+    // frames over SSE — `{ enemyStatuses: updates }` (:369) and
+    // `{ enemyStatuses: { [targetId]: updated } }` (:748). Enforcing
+    // membership off a 2-id delta would hide the other 40 enemies, which is
+    // exactly the mid-chain empty target list we must never cause. So every
+    // enemyStatuses frame UNIONS into the set (delta or not), and only an
+    // authoritative snapshot flips this flag and unlocks enforcement.
+    let enemyRosterConfirmed = false;
+
+    // Set by the ranked-war intercept when IT flips the enemy faction, so
+    // applyServerData can ignore the server's stale echo of the war we just
+    // left. See the intercept and the change-detection branch for the full
+    // reasoning; 2 minutes comfortably covers the server's detection lag.
+    let _intentionalEnemyFlipFrom = null;
+    let _intentionalEnemyFlipAt = 0;
+    const ENEMY_FLIP_ECHO_GRACE_MS = 120000;
+
+    /**
+     * True when this id is one of OUR OWN faction members.
+     *
+     * Three sources, all definitive — a player is only ever in one faction,
+     * and it is never both ours and the enemy's:
+     *   1. state.myPlayerId — you cannot attack yourself. Checked FIRST and
+     *      independently of any cache, because Torn's realtime feed pushes
+     *      updateStatus/updateIcons frames for the logged-in user constantly
+     *      (that is how your own status icons update), so without this you
+     *      can be inserted into your own target list.
+     *   2. knownOwnMemberIds — union-only identity set (see above).
+     *   3. state.memberBars — kept as a live fallback for entries that landed
+     *      before the harvest below was wired.
+     */
+    function isOwnFactionMember(id) {
+        const key = String(id);
+        if (!key) return false;
+        if (state.myPlayerId && key === String(state.myPlayerId)) return true;
+        if (knownOwnMemberIds.has(key)) return true;
+        if (!state.memberBars) return false;
+        return Object.prototype.hasOwnProperty.call(state.memberBars, key);
+    }
+
+    /**
+     * Record ids proven to be our own faction's members. Called from every
+     * memberBars delivery and from the getwarusers intercept's own-faction
+     * half — the latter matters because memberBars only ever contains members
+     * who SELF-REPORT bars, so a teammate who does not run FactionOps is in
+     * nobody's memberBars and would otherwise never be recognised as ours.
+     */
+    function noteOwnMemberIds(ids) {
+        if (!ids) return;
+        for (const id of ids) {
+            const key = String(id);
+            if (!key) continue;
+            knownOwnMemberIds.add(key);
+            // Keep the two sets consistent: the relay filter reads
+            // confirmedEnemyIds, so an id we now know is ours must stop
+            // vouching for itself there too.
+            confirmedEnemyIds.delete(key);
+        }
+    }
+
+    /**
+     * Record ids that came from an enemy-only-by-construction source:
+     *   - data.enemyStatuses from the server (built from the war record)
+     *   - the getwarusers intercept, which is faction-id guarded and
+     *     fail-closed
+     * Own-faction ids are rejected at add time, so even a poisoned server
+     * payload cannot launder one of our own ids into "confirmed enemy".
+     * Ids are String()-normalised because memberBars/statuses keys are
+     * strings and one numeric key would silently break every lookup.
+     */
+    function confirmEnemyIds(ids) {
+        if (!ids) return;
+        for (const id of ids) {
+            const key = String(id);
+            if (!key || isOwnFactionMember(key)) continue;
+            confirmedEnemyIds.add(key);
+        }
+    }
+
+    /**
+     * REBUILD the allow-list from an authoritative full roster instead of
+     * unioning into it.
+     *
+     * This is the difference between a fix and a laundering machine. The
+     * server's war.enemyStatuses is NOT enemy-only by construction: POST
+     * /api/status writes any targetId a client reports straight into it with
+     * no faction check, so an old-version client (or any future unguarded
+     * relay path) can put our own members into the war record, and the next
+     * poll hands them back to everyone inside `enemyStatuses`. If we only
+     * ever UNIONED, that poisoned id would be allow-listed permanently for
+     * the rest of the session and no purge could ever remove it.
+     *
+     * The server heals itself — war-status-monitor replaces war.enemyStatuses
+     * wholesale from the Torn API every cycle — so rebuilding lets that heal
+     * reach the client instead of being overridden by a sticky local memory.
+     *
+     * getwarusers-verified ids are re-added because they were proven against
+     * the live war payload, which outranks a server echo.
+     *
+     * KNOWN, BOUNDED COST — do not "fix" this by going back to union-only: an
+     * enemy who joins mid-war and is seen ONLY via Torn's WebSocket push (not
+     * yet in the server's roster) drops off the allow-list here and is hidden
+     * until the next monitor refetch lands, roughly one poll cycle. That is
+     * acceptable; a permanently un-removable own-faction row is not.
+     */
+    function rebuildConfirmedEnemyIds(rosterIds) {
+        confirmedEnemyIds.clear();
+        confirmEnemyIds(rosterIds);
+        // Re-add live-verified ids AFTER the roster, so they survive even if
+        // the server's snapshot lags behind the war page.
+        confirmEnemyIds(warUsersVerifiedIds);
+    }
+
+    /**
+     * Drop the whole allow-list. Called wherever the enemy faction changes
+     * and state.statuses is wiped — without this the set holds ids from the
+     * PREVIOUS war and would wrongly vouch for them across a war change.
+     */
+    function resetConfirmedEnemyIds() {
+        confirmedEnemyIds.clear();
+        // The live-verified set is per-war too — without clearing it, the
+        // previous enemy's members would be re-added by every rebuild and
+        // keep vouching for themselves after the war changed, which is the
+        // exact bug this reset exists to prevent. knownOwnMemberIds is NOT
+        // cleared: our own roster does not change when the opponent does.
+        warUsersVerifiedIds.clear();
+        // Relock enforcement too — the next war's roster has not landed yet,
+        // so until it does we must stay permissive rather than hide everyone.
+        enemyRosterConfirmed = false;
+    }
+
+    /**
+     * THE render-time predicate. Every place a target row is produced runs
+     * an id through this.
+     *
+     * CRITICAL BALANCE — this must never hide a genuine enemy mid-war:
+     *  - Own-faction identity is definitive, so an id known to be ours is
+     *    always dropped (self, harvested war-page roster, or memberBars).
+     *  - The allow-list is EMPTY early in a session (before the first poll
+     *    returns), and unenforceable until an AUTHORITATIVE roster snapshot
+     *    has landed. In either case we fall back to "not one of ours" alone
+     *    rather than rendering nobody: a few permissive seconds beats an
+     *    empty target list during a chain.
+     */
+    function isRenderableEnemyId(id) {
+        const key = String(id);
+        if (isOwnFactionMember(key)) return false;
+        if (!enemyRosterConfirmed || confirmedEnemyIds.size === 0) return true;
+        return confirmedEnemyIds.has(key);
+    }
+
+    // Purge logging state — we want ONE line per purge event (not per row,
+    // not per render tick), because this log is how we find out whether the
+    // leak is still happening in the field.
+    let _lastPurgeSignature = '';
+    let _lastPurgeLogAt = 0;
+
+    /**
+     * Remove non-enemy ids from state.statuses so the bad row does not
+     * persist and existing bad state clears itself. Mirrors
+     * isRenderableEnemyId exactly, including the permissive fallback.
+     *
+     * On "does not disappear on refresh": state.statuses is NOT persisted
+     * client-side, so the row surviving a reload was never local memory — it
+     * was the server echoing the id back inside enemyStatuses every poll.
+     * Purging alone cannot fix that; it is fixed by (a) the relay filter in
+     * flushPeerRelay, which stops us feeding own-faction ids into the war
+     * record in the first place, and (b) rebuildConfirmedEnemyIds, which
+     * lets the server's roster refresh drop a poisoned id from the allow-list
+     * instead of us vouching for it forever.
+     *
+     * Idempotent by construction, which is also the answer to the merge
+     * race: a poll already in flight when this runs re-inserts only ids the
+     * server vouched for, mergeStatusesMonotonic independently refuses any
+     * incoming id we know is ours, and anything else is simply purged again
+     * on the next refresh. A genuine enemy purged during a stale window
+     * comes straight back on the next poll.
+     */
+    function purgeNonEnemyStatuses() {
+        const removed = [];
+        let ours = 0;
+        let unconfirmed = 0;
+        for (const id of Object.keys(state.statuses)) {
+            if (isOwnFactionMember(id)) {
+                ours++;
+                removed.push(id);
+            } else if (enemyRosterConfirmed && confirmedEnemyIds.size > 0
+                       && !confirmedEnemyIds.has(String(id))) {
+                unconfirmed++;
+                removed.push(id);
+            }
+        }
+        if (removed.length === 0) return 0;
+        for (const id of removed) {
+            // Only state.statuses is touched. calls/priorities are
+            // server-synced and would be re-delivered anyway; deleting them
+            // here would fight the server rather than fix anything.
+            delete state.statuses[id];
+        }
+        const signature = removed.slice().sort().join(',');
+        const now = Date.now();
+        // Log when the offending set changes, or once a minute if the same
+        // ids keep being re-injected — enough to diagnose, never a flood.
+        if (signature !== _lastPurgeSignature || (now - _lastPurgeLogAt) > 60000) {
+            _lastPurgeSignature = signature;
+            _lastPurgeLogAt = now;
+            warn('[own-faction-guard] purged ' + removed.length
+                + ' non-enemy target(s) from state.statuses ('
+                + ours + ' own-faction, ' + unconfirmed + ' unconfirmed)');
+        }
+        return removed.length;
+    }
+
     /**
      * Merge incoming statuses into state.statuses with a monotonic guard
      * on `until` timers. Prevents server polls from bumping hospital/jail
@@ -3314,6 +3564,15 @@ body.wb-chain-active {
      */
     function mergeStatusesMonotonic(incoming) {
         for (const [targetId, newData] of Object.entries(incoming)) {
+            // Race guard against purgeNonEnemyStatuses: a request already in
+            // flight when a purge ran must not resurrect an id we removed.
+            // Only the DEFINITIVE half of the render predicate is applied
+            // here — an id we know is one of our own members can never be a
+            // real enemy, so dropping it at ingestion cannot hide a target.
+            // The allow-list half stays render-side, where
+            // being permissive is safe; enforcing it here could silently
+            // discard a genuine enemy that only ever arrives via peer relay.
+            if (isOwnFactionMember(targetId)) continue;
             const existing = state.statuses[targetId];
             if (!existing) {
                 state.statuses[targetId] = newData;
@@ -3814,8 +4073,31 @@ body.wb-chain-active {
                                     // enemy faction. Without a known enemyFactionId (no war context — e.g.
                                     // stream not connected / key rate-limited so myFactionId never loaded),
                                     // render NOBODY rather than leaking our own members in as attack targets.
-                                    if (state.myFactionId && fid === String(state.myFactionId)) continue;
+                                    if (state.myFactionId && fid === String(state.myFactionId)) {
+                                        // Harvest the OWN-faction half. This is the
+                                        // only client-side source of own-member ids
+                                        // that does not depend on the member running
+                                        // FactionOps: memberBars holds only members
+                                        // who self-report bars, so a teammate who
+                                        // does not use the script is in nobody's
+                                        // memberBars and would otherwise never be
+                                        // recognised as ours. Live war payload, so
+                                        // it is definitive.
+                                        try { noteOwnMemberIds([uid]); } catch (_) {}
+                                        continue;
+                                    }
                                     if (!state.enemyFactionId || fid !== String(state.enemyFactionId)) continue;
+                                    // Proven enemy against the LIVE war payload. That
+                                    // outranks any cached identity: state.memberBars
+                                    // keeps entries for 24h, so a player who left us
+                                    // for the opponent (defector, lent merc, ordinary
+                                    // roster churn between back-to-back wars) would
+                                    // still look like ours and be hidden — the one
+                                    // way a real, attackable enemy could vanish.
+                                    // Correct both caches here.
+                                    knownOwnMemberIds.delete(uid);
+                                    if (state.memberBars) delete state.memberBars[uid];
+                                    warUsersVerifiedIds.add(uid);
                                     const st = m.status || {};
                                     const text = String(st.text || st.status || '');
                                     if (!text) continue;
@@ -3829,6 +4111,14 @@ body.wb-chain-active {
                                 }
                                 if (count > 0) {
                                     log('[fetch-intercept] getwarusers captured', count, 'members');
+                                    // Enemy-only by construction: every uid in
+                                    // `batch` passed the fail-closed faction-id
+                                    // check above. Confirm BEFORE merging so the
+                                    // render filter already vouches for them.
+                                    // Union only — deliberately does NOT unlock
+                                    // the hide-unconfirmed rule, since we can't
+                                    // prove warDesc.members is never paginated.
+                                    try { confirmEnemyIds(Object.keys(batch)); } catch (_) {}
                                     try { mergeStatusesMonotonic(batch); } catch (_) {}
                                     try { queuePeerRelay(batch); } catch (_) {}
                                 }
@@ -3889,6 +4179,39 @@ body.wb-chain-active {
         peerRelayTimer = null;
         const batch = peerRelayBatch;
         peerRelayBatch = {};
+        if (Object.keys(batch).length === 0) return;
+
+        // ── Own-faction leak defence: the upstream chokepoint ──
+        // Every queuePeerRelay() call site funnels through here, including
+        // the pagehide keepalive flush, so this one filter covers them all.
+        //
+        // This matters more than any render-side filter: POST /api/status
+        // merges whatever targetIds we send straight into war.enemyStatuses
+        // with no faction check, and the next /api/poll hands that map back
+        // to EVERY member of the faction. So an unfiltered relay does not
+        // just pollute this tab — it publishes our own members to the whole
+        // war as "enemies", on every teammate's screen.
+        //
+        // The WebSocket intercept is the path that makes this concrete: it
+        // relays whatever userId Torn pushes for the page you are looking at,
+        // which on the war page includes our own faction's rows.
+        //
+        // STRICT here, deliberately, unlike the render filter: an id must be
+        // positively confirmed enemy, not merely "not known to be ours".
+        // Being strict is safe on the relay specifically because dropping a
+        // relay costs nothing — the server runs its own pollers and
+        // war-status-monitor re-fetches the whole enemy roster every cycle,
+        // so a dropped observation is re-derived within one cycle. Being
+        // strict at RENDER time would be unsafe, which is why the two
+        // predicates differ.
+        //
+        // Filtering at flush rather than at queue time is intentional: the
+        // queue debounces for 500ms, so a first poll landing inside that
+        // window can still rescue an observation instead of dropping it.
+        for (const id of Object.keys(batch)) {
+            if (confirmedEnemyIds.has(String(id)) && !isOwnFactionMember(id)) continue;
+            delete batch[id];
+        }
         if (Object.keys(batch).length === 0) return;
         const warId = deriveWarId();
         if (!warId || !state.jwtToken) return;
@@ -5141,7 +5464,9 @@ body.wb-chain-active {
             if (data) {
                 if (typeof data.v === 'number') _lpCursor = data.v;
                 // Partial-safe: applyServerData only touches sections that are present.
-                if (data.changed) applyServerData(data.changed);
+                // Section-level diff: when enemyStatuses is present at all it is the
+                // WHOLE map (routes.js:2561), so this counts as a full roster.
+                if (data.changed) applyServerData(data.changed, { fullRoster: true });
             }
         } catch (err) {
             pollErrorCount++;
@@ -5201,7 +5526,9 @@ body.wb-chain-active {
                 log('Polling connected');
             }
 
-            applyServerData(data);
+            // /api/poll always returns the whole war.enemyStatuses map
+            // (routes.js:2517) — a full roster, so it may unlock hiding.
+            applyServerData(data, { fullRoster: true });
 
         } catch (err) {
             pollErrorCount++;
@@ -5314,21 +5641,126 @@ body.wb-chain-active {
      * Apply server data to local state and re-render.
      * Used by both pollOnce() and Socket.IO war_update handler.
      */
-    function applyServerData(data) {
-        // ── Statuses FIRST (so target names are available for call toasts) ──
-        if (data.enemyStatuses) {
-            mergeStatusesMonotonic(data.enemyStatuses);
-        }
+    function applyServerData(data, opts) {
+        // Is this frame a COMPLETE enemy roster, or a delta?
+        //  - callers that know pass { fullRoster: true } (the /api/poll
+        //    response and the long-poll section diff, both of which ship the
+        //    whole war.enemyStatuses map)
+        //  - anything carrying `warId` is a broadcastWarUpdate payload
+        //    (routes.js:236), also the full map
+        //  - everything else — notably war-status-monitor's SSE deltas — is
+        //    treated as partial, so it may add to the allow-list but never
+        //    unlocks hiding.
+        const _fullRoster = !!(opts && opts.fullRoster) || data.warId != null;
 
         // Faction cooldown dashboard updates (Option B self-reports,
         // delivered via SSE or Socket.IO payloads).
+        //
+        // ORDER MATTERS — this block runs BEFORE the enemyStatuses block on
+        // purpose. memberBars is one of our own-member identity sources, and
+        // confirmEnemyIds() rejects ids it knows are ours. Handling statuses
+        // first would mean that on the FIRST poll of every session — the one
+        // where memberBars is still empty — any own-faction id present in the
+        // server's map got permanently added to the allow-list before we had
+        // the evidence to reject it.
         if (data.memberBars && typeof data.memberBars === 'object') {
             console.log('[fo-bars] applyServerData got memberBars:', Object.keys(data.memberBars));
             if (!state.memberBars) state.memberBars = {};
             for (const [pid, entry] of Object.entries(data.memberBars)) {
                 state.memberBars[String(pid)] = entry;
             }
+            // Feed the union-only identity set: memberBars itself shrinks
+            // (24h server-side eviction, wholesale replace at overlay init),
+            // and identity must never shrink.
+            noteOwnMemberIds(Object.keys(data.memberBars));
             if (typeof renderFactionBars === 'function') renderFactionBars();
+        }
+
+        // Is this frame an AUTHORITATIVE complete roster? Three conditions,
+        // and all three are load-bearing:
+        //
+        //  1. _fullRoster — the transport ships the whole map, not a delta.
+        //  2. NON-EMPTY — `if (data.enemyStatuses)` is true for `{}`, and the
+        //     server legitimately sends `{}` (routes.js wipes the map on an
+        //     enemy-faction change). An empty map carries no roster
+        //     information; letting it unlock hiding would enforce against
+        //     whatever partial set we happened to have and hide real enemies
+        //     mid-chain.
+        //  3. A faction API key is stored — without one, war-status-monitor
+        //     cannot do a roster fetch at all and war.enemyStatuses is built
+        //     up incrementally from attack observations, i.e. a handful of
+        //     ids. That map is still shipped whole, so completeness cannot be
+        //     inferred from the transport alone. Read from `data` when
+        //     present because state.factionKeyStored is only assigned further
+        //     down this same function, i.e. after this check on the first poll.
+        const _rosterIds = data.enemyStatuses ? Object.keys(data.enemyStatuses) : [];
+        const _keyStored = (data.factionKeyStored !== undefined)
+            ? !!data.factionKeyStored
+            : (state.factionKeyStored !== false);
+        const _authoritative = _fullRoster && _rosterIds.length > 0 && _keyStored;
+
+        // ── Enemy faction id, including CHANGES ──
+        // Handled up here, before statuses are merged, because a change has
+        // to wipe the old war's state BEFORE the new war's roster lands in
+        // the same payload — wiping afterwards would delete what we just
+        // merged.
+        //
+        // The old code only ever set this when it was unset, so a war flip
+        // seen through the server alone left state.enemyFactionId stale,
+        // which in turn made the getwarusers guard (`fid !== enemyFactionId`
+        // → continue) reject the ENTIRE new enemy roster.
+        //
+        // Change detection is gated on an authoritative payload on purpose.
+        // The ranked-war intercept flips to the new enemy the moment Torn
+        // says so, while the server keeps echoing the OLD id for a few
+        // seconds until its own detection catches up. Reacting to a bare
+        // stale echo would revert us to the previous war — wiping statuses
+        // AND calls — and then flip back, thrashing mid-war.
+        if (data.enemyFactionId) {
+            const _incomingEnemy = String(data.enemyFactionId);
+            if (!state.enemyFactionId) {
+                // First sighting: adopt it, but never wipe — there is no
+                // previous war whose state needs clearing.
+                state.enemyFactionId = data.enemyFactionId;
+            } else if (_authoritative && _incomingEnemy !== String(state.enemyFactionId)
+                       // Suppress the server's stale echo of a war the
+                       // ranked-war intercept just moved us off. That echo is
+                       // "authoritative" by every structural test — full map,
+                       // non-empty, key stored — because it IS a complete
+                       // snapshot, just of the war that already ended.
+                       // Reverting to it would wipe the new war's statuses and
+                       // calls and rebuild the allow-list from the dead war's
+                       // roster, hiding every real target mid-chain. Only the
+                       // id we flipped away from is suppressed, and only
+                       // briefly, so a genuine later change still lands.
+                       && !(_intentionalEnemyFlipFrom === _incomingEnemy
+                            && (Date.now() - _intentionalEnemyFlipAt) < ENEMY_FLIP_ECHO_GRACE_MS)) {
+                log('[own-faction-guard] server reports enemy faction change '
+                    + state.enemyFactionId + ' -> ' + _incomingEnemy + ' — resetting war state');
+                state.enemyFactionId = data.enemyFactionId;
+                state.statuses = {};
+                state.calls = {};
+                state.priorities = {};
+                resetConfirmedEnemyIds();
+            }
+        }
+
+        // ── Statuses (target names feed call toasts, so keep this early) ──
+        if (data.enemyStatuses) {
+            if (_authoritative) {
+                // REBUILD rather than union — see rebuildConfirmedEnemyIds.
+                // This is what lets the server's own roster refresh evict a
+                // poisoned id from our allow-list, instead of us remembering
+                // it forever.
+                rebuildConfirmedEnemyIds(_rosterIds);
+                enemyRosterConfirmed = true;
+            } else {
+                // Delta, empty, or unverifiable: may ADD to the allow-list
+                // (these ids still came from the war record) but must never
+                // narrow it and must never unlock hiding.
+                confirmEnemyIds(_rosterIds);
+            }
+            mergeStatusesMonotonic(data.enemyStatuses);
         }
 
         // ── Priorities ──
@@ -5423,10 +5855,8 @@ body.wb-chain-active {
             state.ourFactionOnline = data.ourFactionOnline;
         }
 
-        // Store enemyFactionId from server if we didn't have it
-        if (data.enemyFactionId && !state.enemyFactionId) {
-            state.enemyFactionId = data.enemyFactionId;
-        }
+        // (enemyFactionId, including change detection, is handled near the
+        // top of this function — it must run before the statuses merge.)
         if (data.enemyFactionName) {
             state.enemyFactionName = data.enemyFactionName;
             const enemyEl = document.getElementById('fo-enemy-name');
@@ -8473,6 +8903,12 @@ body.wb-chain-active {
             if (id) (rowsById[id] || (rowsById[id] = [])).push(row);
         });
         for (const targetId of Object.keys(state.statuses)) {
+            // This loop runs off the rAF tick, which can fire before the
+            // first purge in _refreshAllRowsImpl has run this second — and it
+            // does more than paint a class: it raises a toast AND a PDA
+            // notification carrying an attack link. A freshly leaked own
+            // member must not be able to trigger "<name> is attacking".
+            if (!isRenderableEnemyId(targetId)) continue;
             const s = state.statuses[targetId];
             const active = !!(s.lastAttackAt && (nowSec - s.lastAttackAt) < WINDOW);
             const rows = rowsById[targetId];
@@ -8519,6 +8955,10 @@ body.wb-chain-active {
         // Collect hospital targets that aren't called and still have a timer
         const hospitalTargets = [];
         for (const [targetId, s] of Object.entries(state.statuses)) {
+            // Next Up also runs straight off the rAF tick, where no purge has
+            // necessarily run yet this second — apply the predicate so a leak
+            // can't flash one of our own members into the queue.
+            if (!isRenderableEnemyId(targetId)) continue;
             const rem = statusRemainingSec(s);
             if (normalizeStatus(s.status) === 'hospital' && rem > 0 && !state.calls[targetId]) {
                 hospitalTargets.push({ targetId, until: rem, name: s.name || `#${targetId}` });
@@ -8742,6 +9182,28 @@ body.wb-chain-active {
             // Might be a header row or empty — skip silently
             return;
         }
+
+        // Second place target rows are produced (renderOverlay is the other).
+        // These are Torn's OWN member rows for whichever faction the user is
+        // currently viewing — which is exactly how our own members end up
+        // wearing ATK/Call cells when someone clicks their own faction on the
+        // war page.
+        //
+        // Only the own-faction half of the predicate is applied here, NOT the
+        // allow-list half: MEMBER_LIST_SELECTORS also match a plain faction
+        // profile's member list, so a user scouting a third faction (retal
+        // target, next war) would otherwise lose their ATK/Call cells for a
+        // faction that legitimately isn't the current enemy.
+        //
+        // Deliberately returns WITHOUT adding the row to `enhancedRows`:
+        // marking it would freeze the decision for the life of the page, so a
+        // row skipped while identity was mid-load would never get its cells.
+        // Unmarked, scanAndEnhanceRows re-evaluates it next observer cycle.
+        //
+        // This guard only covers rows we have NOT already enhanced — the
+        // early return above fires first. Rows enhanced before we learned who
+        // is ours are stripped by the un-enhance sweep in _refreshAllRowsImpl.
+        if (isOwnFactionMember(targetId)) return;
 
         enhancedRows.add(row);
         row.classList.add('wb-sortable-row');
@@ -9100,6 +9562,14 @@ body.wb-chain-active {
         });
     }
     function _refreshAllRowsImpl() {
+        // Purge non-enemy ids BEFORE any row work. This sits here rather
+        // than inside renderOverlay because renderOverlay only runs when the
+        // overlay is actually open — Next Up, the enemy-attacking badges,
+        // the footer counts and the rAF status timers all consume
+        // state.statuses regardless, and would otherwise keep counting our
+        // own members as enemies with the overlay closed.
+        try { purgeNonEnemyStatuses(); } catch (_) {}
+
         // Check war-ended state on every refresh cycle
         if (state.warEnded && !warEndedBannerShown) showWarEndedBanner();
 
@@ -9113,6 +9583,31 @@ body.wb-chain-active {
         const rows = document.querySelectorAll('[data-wb-target-id]');
         rows.forEach((row) => {
             const targetId = row.dataset.wbTargetId;
+
+            // UN-ENHANCE sweep. enhanceRow's guard only protects rows it has
+            // not already touched — it returns early on `enhancedRows.has(row)`
+            // before any check runs, and nothing ever strips cells back off.
+            // That is exactly the reported repro: the MutationObserver fires
+            // as soon as Torn's war-page member list renders, which routinely
+            // beats both /api/faction/bars and the first poll, so rows get
+            // enhanced while we still have no idea who is on our side. Without
+            // this sweep those ATK/Call cells stay on our own members for the
+            // life of the page, no matter what we learn afterwards.
+            //
+            // OWN half only, matching enhanceRow: these selectors also match a
+            // plain faction profile's member list, so enforcing the allow-list
+            // here would strip cells from someone scouting a third faction.
+            if (isOwnFactionMember(targetId)) {
+                const cells = document.getElementById('wb-cells-' + targetId);
+                if (cells && cells.parentNode) cells.parentNode.removeChild(cells);
+                row.classList.remove('wb-sortable-row');
+                delete row.dataset.wbTargetId;
+                // Let it be enhanced again later if it turns out to be a
+                // legitimate target (e.g. corrected by a getwarusers payload).
+                try { enhancedRows.delete(row); } catch (_) {}
+                return;
+            }
+
             updateTargetRow(targetId);
         });
         // Only trigger sort when overlay is NOT active — overlay handles its own sorting
@@ -9127,8 +9622,11 @@ body.wb-chain-active {
         }
         const enemyOnlineEl = document.getElementById('fo-enemy-online-count');
         if (enemyOnlineEl) {
-            const enemyOnline = Object.values(state.statuses).filter(
-                (s) => s.activity && s.activity.toLowerCase() === 'online'
+            // Count only ids that can actually be rendered, so the header
+            // cannot read "38 enemy" over a list of 35 rows.
+            const enemyOnline = Object.entries(state.statuses).filter(
+                ([id, s]) => isRenderableEnemyId(id)
+                    && s.activity && s.activity.toLowerCase() === 'online'
             ).length;
             enemyOnlineEl.textContent = `${enemyOnline} enemy`;
         }
@@ -10217,7 +10715,13 @@ body.wb-chain-active {
         getAction('/api/faction/bars').then((r) => {
             console.log('[fo-bars] /api/faction/bars response:', r);
             if (r && r.memberBars) {
+                // NOTE this REPLACES the map (the panel wants a clean
+                // snapshot), whereas applyServerData merges into it. That is
+                // why identity lives in the union-only knownOwnMemberIds set
+                // and not in memberBars: opening the overlay must not be able
+                // to shrink our notion of who is on our side.
                 state.memberBars = r.memberBars;
+                noteOwnMemberIds(Object.keys(r.memberBars));
                 console.log('[fo-bars] applied memberBars, keys=', Object.keys(r.memberBars));
                 renderFactionBars();
             } else {
@@ -10321,7 +10825,12 @@ body.wb-chain-active {
         const list = document.getElementById('fo-target-list');
         if (!list) return;
 
-        const allIds = Object.keys(state.statuses);
+        // Belt to the purge's braces: filter at the single point overlay rows
+        // are produced (this one loop feeds BOTH the attackable list and the
+        // collapsed unavailable section), so a leak from any ingestion path —
+        // including one added later — can never reach the screen even if the
+        // purge has not run yet this tick.
+        const allIds = Object.keys(state.statuses).filter(isRenderableEnemyId);
         const unavailableStatuses = ['traveling', 'abroad', 'jail'];
         const hiddenStatuses = ['federal', 'fallen'];
 
@@ -10587,8 +11096,11 @@ body.wb-chain-active {
 
         const enemyOnlineEl = document.getElementById('fo-enemy-online-count');
         if (enemyOnlineEl) {
-            const enemyOnline = Object.values(state.statuses).filter(
-                (s) => s.activity && s.activity.toLowerCase() === 'online'
+            // Count only ids that can actually be rendered, so the header
+            // cannot read "38 enemy" over a list of 35 rows.
+            const enemyOnline = Object.entries(state.statuses).filter(
+                ([id, s]) => isRenderableEnemyId(id)
+                    && s.activity && s.activity.toLowerCase() === 'online'
             ).length;
             enemyOnlineEl.textContent = `${enemyOnline} enemy`;
         }
@@ -11855,10 +12367,27 @@ body.wb-chain-active {
                 if (!myFid) continue;
                 const enemyFid = fids.find(f => String(f) !== String(myFid));
                 if (enemyFid && state.enemyFactionId !== enemyFid) {
+                    // Remember which war we flipped AWAY from, and when. The
+                    // server detects a war change on its own schedule, so for
+                    // a short window after this it keeps echoing the OLD
+                    // enemy id alongside the OLD war's complete roster — a
+                    // payload that looks fully authoritative. Without this
+                    // record, applyServerData's change detection would treat
+                    // that echo as a real change and revert us to the dead
+                    // war, hiding every genuine new-war target right when the
+                    // chain starts. This intercept read Torn's own payload,
+                    // so it outranks a server echo until the server catches up.
+                    _intentionalEnemyFlipFrom = state.enemyFactionId ? String(state.enemyFactionId) : null;
+                    _intentionalEnemyFlipAt = Date.now();
+
                     // WIPE STALE WAR DATA if enemy changed (bug fix)
                     state.statuses = {};
                     state.calls = {};
                     state.priorities = {};
+                    // The allow-list is per-war. Ids confirmed against the
+                    // PREVIOUS enemy would otherwise keep vouching for
+                    // themselves after the war changed.
+                    resetConfirmedEnemyIds();
 
                     state.enemyFactionId = enemyFid;
                     state.enemyFactionName = factions[enemyFid]?.name || null;
