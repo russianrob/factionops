@@ -326,8 +326,153 @@ export async function fetchRecentFactionAttacks(factionId, apiKey, fromTs) {
 }
 
 /**
+ * Absent-participant sentinel. Torn's v1 attacks feed represents an
+ * anonymous attacker (stealthed hit on us, attacker identity hidden) as
+ * the EMPTY STRING in all four attacker_* fields — measured on the live
+ * war: 64 of 799 rows came back as
+ *   { attacker_id: "", attacker_name: "", attacker_faction: "",
+ *     attacker_factionname: "", ... stealthed: 1 }
+ * Not 0, not null, not undefined. v2 instead sends `attacker: null` for
+ * the same rows. We reproduce v1's "" exactly so downstream coercions
+ * like `String(atk.attacker_faction || "")` in war-payouts.js behave
+ * identically to before.
+ */
+const V2_ABSENT = "";
+
+/**
+ * Second, DIFFERENT absent case: the participant is present and named but
+ * belongs to no faction. v1 does NOT use "" here — it emits the NUMBER 0
+ * for the faction id (and "" for the faction name). Measured on the live
+ * war: 78 rows had a named defender whose v2 `defender.faction` was null
+ * and whose v1 `defender_faction` was `0` (type number), with
+ * `defender_factionname` still "". Collapsing both cases to "" was a real
+ * mismatch against v1, so the two are kept distinct.
+ */
+const V2_NO_FACTION_ID = 0;
+
+/**
+ * Map one v2 `/v2/faction/attacks` row onto the v1
+ * `faction/{id}?selections=attacks` row shape, field for field.
+ *
+ * Every caller (war-payouts.js, attack-ledger.js, routes.js) consumes the
+ * v1 shape, so this function is the entire compatibility surface. The v1
+ * row has exactly 21 fields — verified by scanning 799 live rows — and we
+ * emit all 21, never a subset, so no caller ever reads `undefined` for a
+ * field that used to be present.
+ */
+function mapV2AttackToV1(row) {
+  const atk = row.attacker || null;
+  const def = row.defender || null;
+  const m = row.modifiers || {};
+
+  // v2 gives booleans where v1 gives 0/1 ints. The ranked-war filter
+  // below does a STRICT `=== 1`, so passing a raw `true` through would
+  // match nothing and every payout would compute from an empty attack
+  // list. Coerce to 1/0.
+  const toInt = (v) => (v === true || v === 1 ? 1 : 0);
+
+  return {
+    code: row.code,
+
+    // v1 `timestamp_started` / `timestamp_ended` are v2's `started` / `ended`.
+    timestamp_started: Number(row.started) || 0,
+    timestamp_ended: Number(row.ended) || 0,
+
+    // v2 nests the participants; v1 flattens them. `attacker`/`defender`
+    // are null on anonymous/stealthed rows, so read defensively — a bare
+    // `row.attacker.id` throws mid-war on ~8% of rows.
+    // Note the two distinct absent cases (see the constants above):
+    // no participant object at all ⇒ "" everywhere; participant present
+    // but factionless ⇒ faction id 0, faction name "".
+    //
+    // ONE DELIBERATE DIVERGENCE from v1: v1 HTML-escapes faction names
+    // (it returned "Leafy&#039;s Tree" where v2 returns "Leafy's Tree").
+    // We pass v2's raw name through rather than re-inserting entities,
+    // because the escaped form is a rendering artefact, not the datum,
+    // and re-escaping here would double-encode for JSON consumers. No
+    // current caller of this function reads *_factionname at all
+    // (attack-ledger.js does, but it is fed by the per-member
+    // user/attacks feed, not by this one). If a future caller ever
+    // interpolates these into HTML it must escape at the render site.
+    attacker_id: atk ? atk.id : V2_ABSENT,
+    attacker_name: atk ? atk.name : V2_ABSENT,
+    attacker_faction: !atk ? V2_ABSENT : (atk.faction ? atk.faction.id : V2_NO_FACTION_ID),
+    attacker_factionname: !atk ? V2_ABSENT : (atk.faction ? atk.faction.name : V2_ABSENT),
+    defender_id: def ? def.id : V2_ABSENT,
+    defender_name: def ? def.name : V2_ABSENT,
+    defender_faction: !def ? V2_ABSENT : (def.faction ? def.faction.id : V2_NO_FACTION_ID),
+    defender_factionname: !def ? V2_ABSENT : (def.faction ? def.faction.name : V2_ABSENT),
+
+    result: row.result,
+
+    // v1 int flags ← v2 booleans.
+    stealthed: toInt(row.is_stealthed),
+    raid: toInt(row.is_raid),
+    ranked_war: toInt(row.is_ranked_war),
+
+    // v2 has NO `respect` field. Of the rows returned by THIS function
+    // exactly one consumer reads `.respect` — routes.js:5025's
+    // `(atk.respect_gain || atk.respect || 0)`, and only as a fallback
+    // behind `respect_gain`. (The other ~30 `.respect` hits across
+    // routes.js are on faction-MEMBER and OC-reward objects, which do not
+    // come from here; attack-ledger.js:86 reads the per-member
+    // user/attacks feed, also not this one.) Measured on live v1 data:
+    // `respect === respect_gain` in 100/100 rows in the reference probe,
+    // in all 599 rows of an independent scan, and bucketed by result
+    // (Attacked 90/90, Assist 4/4, Lost 3/3, Interrupted 1/1,
+    // Stalemate 1/1, Arrested 1/1) including every zero-respect row —
+    // zero divergences. So mapping from `respect_gain` is
+    // behaviour-identical, not a silent zeroing of that fallback.
+    respect: Number(row.respect_gain) || 0,
+    respect_gain: Number(row.respect_gain) || 0,
+    respect_loss: Number(row.respect_loss) || 0,
+
+    // v1 emits `is_interrupted` as a real boolean (measured: values
+    // false/true across 799 live rows, never 0/1), and so does v2 —
+    // pass it through unchanged rather than "fixing" it to an int.
+    is_interrupted: row.is_interrupted === true,
+
+    chain: Number(row.chain) || 0,
+
+    // The modifier KEY NAMES diverge between versions and this is not
+    // cosmetic — war-payouts.js reads the v1 names directly:
+    //   v2 `group`   → v1 `group_attack`   (classify() assist detection)
+    //   v2 `chain`   → v1 `chain_bonus`    (divided out of fair_score)
+    //   v2 `warlord` → v1 `warlord_bonus`  (divided out of fair_score)
+    // Passing v2's object through verbatim would leave those three
+    // undefined: assists would stop being detected at all, and
+    // `Number(m.chain_bonus) || 1` would silently fall back to 1, so
+    // every chained hit's fair_score would be inflated by the chain
+    // multiplier. Both are money errors, so rename explicitly.
+    //
+    // v1 omits `warlord_bonus` on some rows while v2 always sends
+    // `warlord`; emitting it always is a safe superset because every
+    // consumer reads it as `Number(m.warlord_bonus) || 1`.
+    modifiers: {
+      fair_fight: Number(m.fair_fight) || 0,
+      war: Number(m.war) || 0,
+      retaliation: Number(m.retaliation) || 0,
+      group_attack: Number(m.group) || 0,
+      overseas: Number(m.overseas) || 0,
+      chain_bonus: Number(m.chain) || 0,
+      warlord_bonus: Number(m.warlord) || 0,
+    },
+
+    // Deliberately NOT emitted, because v1 never had them and no caller
+    // reads them: v2's `id` (used only as our dedupe key, kept out of
+    // the returned row so the shape stays exactly v1's), `level` on each
+    // participant, `is_territory_war`, `territory_war_id` and
+    // `finishing_hit_effects`. Conversely there is no v2 source for a v1
+    // `assist` field — but v1 has no such field either (war-payouts
+    // probes `atk.assist` only as belt-and-braces for other feeds), so
+    // nothing regresses.
+  };
+}
+
+/**
  * Fetch faction attack log for a time period, paginating through all results.
- * Returns array of attack objects. Filters to ranked_war attacks only.
+ * Returns array of attack objects in the v1 shape. Filters to ranked_war
+ * attacks only unless options.rankedWarOnly === false.
  */
 export async function fetchFactionAttacks(factionId, apiKey, fromTs, toTs, options = {}) {
   // v5.0.57: opt-in to ALL attacks (not just ranked_war) so callers
@@ -336,15 +481,77 @@ export async function fetchFactionAttacks(factionId, apiKey, fromTs, toTs, optio
   // bleed analysis, etc.) keep their previous behavior unchanged.
   const rankedWarOnly = options.rankedWarOnly !== false;
   const allAttacks = [];
+  // v5.0.69: dedupe key. v2's `from` bound is INCLUSIVE and our cursor
+  // deliberately does NOT step past it (see below), so consecutive pages
+  // overlap. `id` is the stable per-attack identifier v2 carries (v1 had
+  // none, only a `code` hash), so it is what we dedupe on — falling back
+  // to `code`, which v2 also sends, if a row ever arrives without an id.
+  const seenIds = new Set();
   let currentFrom = fromTs;
+  // Guard the `to` bound against nullish/empty callers: Number(null),
+  // Number("") and Number(false) are all 0 AND all finite, so a bare
+  // Number.isFinite() test would send `to=0` and return an empty walk
+  // instead of the intended unbounded one.
+  const toNum = (toTs === null || toTs === undefined || toTs === "") ? NaN : Number(toTs);
+  const hasTo = Number.isFinite(toNum) && toNum > 0;
+  const toBound = hasTo ? toNum : null;
   // v5.0.62: bumped from 30 → 200. Torn returns ≤100 attacks per
   // page; busy ranked wars (e.g. Ringside 41296 had ~3700+ ranked
   // attacks across 90 members) blew past the prior 3000-attack
   // ceiling and Payouts under-counted by 40-60%.
   const MAX_PAGES = 200;
+  // Torn's per-page cap. Written once: the "did this page come back
+  // FULL?" test below must track whatever we ask for, or a smaller
+  // `limit` would stop looking like a full page and the saturated-second
+  // branch would never fire.
+  const PAGE_LIMIT = 100;
 
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const url = `https://api.torn.com/faction/${encodeURIComponent(factionId)}?selections=attacks&from=${currentFrom}&to=${toTs}&key=${encodeURIComponent(apiKey)}&comment=wb-api`;
+  // Hoisted out of the `for` header so the post-loop truncation check can
+  // see how many pages we actually burned.
+  let page = 0;
+  for (; page < MAX_PAGES; page++) {
+    // v5.0.69: moved from v1 `faction/{id}?selections=attacks` to v2
+    // `/v2/faction/attacks`. The v1 feed exposes no per-attack id, which
+    // forced a timestamp cursor that had to advance to maxTs+1 — and any
+    // attack sharing that final second beyond the 100-row page cap was
+    // skipped with no error. Measured on a live war window that lost 69
+    // of 2790 attacks (~2.5%), mis-allocating real payout money. v2 rows
+    // carry `id`, so we can dedupe instead of stepping the clock forward
+    // past rows we never saw.
+    //
+    // Probed against the live API, do not "simplify" any of these:
+    //   - `offset` is IGNORED (offset=5 returns page 1), so offset paging
+    //     is not an option; `from` is the only usable cursor.
+    //   - `from`/`to`/`sort` all key on the `ended` timestamp, NOT
+    //     `started`. Our cursor therefore tracks max(ended).
+    //   - `sort=ASC` orders by `ended`; `id` is NOT monotonic within that
+    //     order, so `id` is a dedupe key only, never the cursor value.
+    //
+    // `factionId` MUST stay in the path. It is not decorative: it is the
+    // key↔faction consistency check that both callers are built around.
+    // Probed live with a 42055 pool key:
+    //   /v2/faction/42055/attacks → 200, same 100 ids, same order
+    //   /v2/faction/38761/attacks → {"code":7,"Incorrect ID-entity relation"}
+    //   /v2/faction/attacks       → 200, scoped to the KEY OWNER's faction
+    // Dropping the id therefore makes code 7 unreachable. Pool keys are
+    // selected by the pool opt's RECORDED factionId (store.js
+    // getPooledKeysForFaction), so a key whose owner has left the faction
+    // stays in the pool; today it throws code 7 and war-payouts.js:315 /
+    // routes.js:5813 quarantine it and rotate. With an id-less URL that
+    // same key would return 200 carrying a STRANGER faction's attacks,
+    // every row would be dropped by the `attacker_faction === ourFid`
+    // guards downstream, and payouts would silently compute zeros forever
+    // (the pool picks deterministically, so it would be the same dead key
+    // every time). Keep the id; keep the 7.
+    const params = new URLSearchParams({
+      limit: String(PAGE_LIMIT),
+      sort: "ASC",
+      from: String(currentFrom),
+      key: apiKey,
+      comment: "wb-api",
+    });
+    if (hasTo) params.set("to", String(toBound));
+    const url = `https://api.torn.com/v2/faction/${encodeURIComponent(factionId)}/attacks?${params}`;
     // v5.0.67: retry-with-backoff on transient code 5 (rate limit) so
     // a busy moment in the shared key pool doesn't kill an in-progress
     // multi-page fetch. Only retry code 5 — code 7 (key invalid) is
@@ -373,30 +580,113 @@ export async function fetchFactionAttacks(factionId, apiKey, fromTs, toTs, optio
       throw e;
     }
 
-    const attacks = Object.values(data.attacks || {});
-    if (attacks.length === 0) break;
+    // v2 returns `attacks` as a JSON ARRAY (v1 returned an id-keyed
+    // object). Tolerate both so a future shape change degrades rather
+    // than silently yielding zero attacks.
+    const rows = Array.isArray(data.attacks)
+      ? data.attacks
+      : Object.values(data.attacks || {});
+    if (rows.length === 0) break; // true end of the feed
 
-    const filtered = rankedWarOnly
-      ? attacks.filter(a => a.ranked_war === 1)
-      : attacks;
-    allAttacks.push(...filtered);
+    // Walk the page once: advance the cursor over EVERY row (seen or
+    // not) but only map/keep ids we have not already taken.
+    let maxEnded = currentFrom;
+    let idlessRows = 0;
+    for (const row of rows) {
+      // Cursor stays strictly in the `ended` domain. Probed: from/to/sort
+      // all key on `ended`, never `started` — a page fetched with from=T
+      // legitimately contains rows whose `started` is minutes before T.
+      // Letting a `started` value reach the cursor would mix domains, and
+      // an in-progress row with a null `ended` sorted last could push the
+      // cursor PAST the page's real end, skipping rows in between — the
+      // exact loss shape this rewrite exists to remove. Rows with no
+      // `ended` are still mapped and kept; they just don't move the cursor.
+      const ended = Number(row.ended) || 0;
+      if (ended > maxEnded) maxEnded = ended;
 
-    // v5.0.63: paginate until we've definitively covered the requested
-    // window. Old logic broke on `attacks.length < 100` — but the v1
-    // attacks endpoint can return <100 in a partial sub-window even
-    // when far more attacks exist after the last batch's maxTs (the
-    // Ringside fetch was stopping at page 38 / 99 attacks, missing
-    // the next ~8 hours of the 19h war). Now we paginate until either
-    // (a) the API returns zero (true end), or (b) the next from would
-    // pass our requested toTs.
-    const maxTs = Math.max(...attacks.map(a => a.timestamp_ended || a.timestamp_started || 0));
-    if (maxTs <= currentFrom) break; // no progress (would infinite-loop)
-    currentFrom = maxTs + 1;
-    if (currentFrom > toTs) break; // walked past the end of the requested window
+      // `id` is the dedupe key; `code` (the same hash v1 used) is a
+      // perfectly good fallback, so fall back rather than silently
+      // dropping the row. Numbers and strings never collide in the Set.
+      const id = row.id ?? row.code;
+      if (id === undefined || id === null) { idlessRows++; continue; } // cannot dedupe safely
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+
+      const mapped = mapV2AttackToV1(row);
+      // Filter on the MAPPED row, so the strict `=== 1` compares against
+      // our int, not v2's raw boolean. Dedupe/cursor above run on the
+      // unfiltered page — filtering first would let a page of non-war
+      // attacks look "empty" and stall pagination.
+      if (rankedWarOnly && mapped.ranked_war !== 1) continue;
+      allAttacks.push(mapped);
+    }
+
+    if (idlessRows > 0) {
+      console.warn(
+        `[torn-api] fetchFactionAttacks: ${idlessRows} row(s) at from=${currentFrom} ` +
+        `(faction ${factionId}) carried neither \`id\` nor \`code\` and were dropped from ` +
+        `the result (undedupable); their \`ended\` still advances the cursor.`
+      );
+    }
+
+    // ---- Cursor advance / termination ----
+    //
+    // The point of the rewrite is that we never step the cursor past rows
+    // we have not seen, so `from` stays INCLUSIVE at max(ended) — no +1.
+    // Repeating a second is safe because `seenIds` absorbs the overlap,
+    // whereas v1's `maxTs + 1` silently dropped every attack sharing that
+    // second beyond the page cap.
+    //
+    // Exactly three outcomes, and every one of them either advances
+    // `currentFrom` strictly or leaves the loop, so this terminates:
+    //
+    //  1. Cursor moved  → take it and page on.
+    //  2. Cursor did NOT move and the page came back FULL ⇒ (because
+    //     `from` is inclusive on `ended`, every row satisfies
+    //     ended >= currentFrom, so "maxEnded didn't move" means EVERY row
+    //     sits exactly on `currentFrom`) ≥PAGE_LIMIT attacks share that
+    //     one second. v2 has no offset paging — `offset` is ignored, and
+    //     identical params return the identical page — so the overflow of
+    //     that second is unreachable by any query we can make. Skip PAST
+    //     the second rather than aborting: aborting would throw away the
+    //     entire remainder of the war window (unbounded loss) to avoid
+    //     losing one second's tail (bounded loss, and exactly what v1 did
+    //     here anyway). Worst case therefore equals v1; every other case
+    //     keeps the rewrite's gain — and unlike v1 it is logged.
+    //     Note the rows already collected from this page are kept; only
+    //     the unreachable 101st-and-beyond of that second are lost.
+    //  3. Cursor did not move and the page was SHORT → we are looking at
+    //     the tail of the feed we have already taken. Done.
+    if (maxEnded > currentFrom) {
+      currentFrom = maxEnded; // NOTE: no +1, by design (`from` is inclusive)
+    } else if (rows.length >= PAGE_LIMIT) {
+      console.warn(
+        `[torn-api] fetchFactionAttacks: ≥${PAGE_LIMIT} attacks share ended=${currentFrom} ` +
+        `(faction ${factionId}, key ${maskKey(apiKey)}) and v2 has no offset paging — ` +
+        `skipping that second's overflow and resuming at ${currentFrom + 1}; ` +
+        `${seenIds.size} unique attacks collected so far.`
+      );
+      currentFrom = currentFrom + 1;
+    } else {
+      break; // short page that cannot move the cursor = end of the feed
+    }
 
     // v5.0.62: pace at ≤100 calls/minute (Torn rate limit per key) so
     // long busy wars (200+ pages) don't trip code 5. 700ms = ~85 RPM.
+    // Deliberately NOT skipped by the saturated-second branch above: that
+    // branch fires during the busiest moment of a chain, which is the
+    // worst possible time to fire the next request immediately.
     await new Promise(resolve => setTimeout(resolve, 700));
+  }
+
+  // Falling out of the loop at the cap is truncation, and truncation that
+  // nobody can see is the whole class of bug this rewrite removes. Say so.
+  if (page >= MAX_PAGES) {
+    console.warn(
+      `[torn-api] fetchFactionAttacks: hit MAX_PAGES (${MAX_PAGES}) for faction ${factionId} ` +
+      `at from=${currentFrom} — result is TRUNCATED at ${seenIds.size} unique attacks; ` +
+      `window [${fromTs},${hasTo ? toBound : "now"}] is NOT fully covered.`
+    );
   }
 
   return allAttacks;
