@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.48
+// @version      2.73.49
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3077,7 +3077,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.48';
+  const SCRIPT_VERSION = '2.73.49';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3693,7 +3693,19 @@ if (!singleton) {
   function ffs_warRows() {
     const out = [];
     document.querySelectorAll("ul.f-war-list li, [class*='members-list' i] li").forEach((li) => {
-      if (li.querySelector("a[href*='XID=']")) out.push(li);
+      // EXACTLY one XID link, not "at least one". Torn's React list nests an
+      // <li> that wraps every member row, and that wrapper contains an XID link
+      // for all of them — so `querySelector` (any) accepted it as a member row.
+      // The activity classifier then read the wrapper as Idle/Offline and the
+      // filter put .ffs-hidden on it, which hid the ENTIRE list rather than one
+      // row. That is the "tick Hide offline and everyone disappears" report;
+      // re-entering the war page rebuilt the DOM without the wrapper matching,
+      // which is why the rows came back.
+      //
+      // The filter diagnostic already recorded the tell — a hidden "row" with
+      // xidN:176 and cls "descriptions" — it simply never gated on it. A real
+      // member row links its own player exactly once.
+      if (li.querySelectorAll("a[href*='XID=']").length === 1) out.push(li);
     });
     return out;
   }
