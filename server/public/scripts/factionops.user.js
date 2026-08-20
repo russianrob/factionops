@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.79
+// @version      5.1.78
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -77,7 +77,7 @@
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.79';
+    const SCRIPT_VERSION = '5.1.78';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -10861,21 +10861,11 @@ body.wb-chain-active {
                     _onlineFilteredOut++;
                     continue;
                 }
-                // v5.1.12: hide-offline — idle + offline, i.e. last action
-                // 5+ min per Torn's classification.
-                //
-                // UNKNOWN activity is NOT hidden. It used to be ("no signal
-                // they're active"), and that turned a data gap into a blank
-                // screen: tick the box and all 161 targets vanished, including
-                // people plainly online, because activity had not been
-                // populated for them yet. Re-entering the war page repopulated
-                // it and they came back — the tell that this was missing data,
-                // not offline players.
-                //
-                // Failing open costs a few rows you might have wanted hidden.
-                // Failing closed costs the entire target list mid-chain, so
-                // the asymmetry decides it.
-                if (_hideOffline && activity && activity !== 'online') {
+                // v5.1.12: hide-offline — anything NOT online (idle +
+                // offline, i.e. last action 5+ min per Torn's
+                // classification). Unknown activity treated as offline
+                // since we have no signal they're active.
+                if (_hideOffline && activity !== 'online') {
                     _offlineFilteredOut++;
                     continue;
                 }
