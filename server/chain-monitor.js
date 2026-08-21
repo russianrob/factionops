@@ -39,7 +39,47 @@ let _chainPollCursor = 0;
 const CHAIN_MIN_HITS = 10;        // only alert when chain >= 10 (real chain)
 const CHAIN_ALERT_COOLDOWN_MS = 30_000; // max one alert push per 30s per war
 const CHAIN_PANIC_COOLDOWN_MS = 20_000; // max one panic push per 20s per war
-const WAR_SCORE_CHECK_INTERVAL = 300_000; // check war score every 5 min (score/ETA don't need 30s freshness)
+const WAR_SCORE_CHECK_INTERVAL = 300_000; // normal cadence (score/ETA don't need 30s freshness)
+// Endgame cadence. The score check below is the ONLY thing that detects a
+// war ending, so its interval IS the delay between a war finishing on Torn
+// and FactionOps saying so — at the flat 5-minute cadence an ended war kept
+// showing as live for up to 5 minutes (observed 2026-08-21, war 47710).
+// Speeding up only near the finish keeps the key pool untouched for the 99%
+// of a war that isn't the end.
+const WAR_SCORE_ENDGAME_INTERVAL = 30_000;
+// Ceiling on how soon a FAILED check may be retried.
+const WAR_SCORE_RETRY_INTERVAL = 60_000;
+// How close the margin must come to the target to count as endgame.
+const ENDGAME_MARGIN_RATIO = 0.9;
+
+/**
+ * How long to wait before the next ranked-war score check.
+ *
+ * Keyed off the MARGIN between the two factions rather than either raw
+ * score, because a ranked war ends when one faction's LEAD reaches the
+ * target. Faction 42055 finished 24169 vs 10567 against a 13900 target:
+ * the winning score passed the target hours before the war ended, while
+ * the margin (13602) is what actually converged on it. Reading a raw
+ * score here would flip every war into endgame cadence early and hold it
+ * there.
+ *
+ * Scope note: this picks a POLLING CADENCE only. The warEta calculations
+ * elsewhere in this file still use their existing model — deliberately
+ * left alone, tracked separately.
+ */
+export function warScoreCheckInterval(war) {
+  try {
+    const target = Number(war?.warEta?.currentTarget) || Number(war?.warOrigTarget) || 0;
+    if (!target || !war?.warScores) return WAR_SCORE_CHECK_INTERVAL;
+    const my = Number(war.warScores.myScore) || 0;
+    const enemy = Number(war.warScores.enemyScore) || 0;
+    return Math.abs(my - enemy) >= target * ENDGAME_MARGIN_RATIO
+      ? WAR_SCORE_ENDGAME_INTERVAL
+      : WAR_SCORE_CHECK_INTERVAL;
+  } catch (_) {
+    return WAR_SCORE_CHECK_INTERVAL;
+  }
+}
 
 /** Bonus hit thresholds in Torn chain mechanics. */
 const BONUS_HITS = [
@@ -198,22 +238,30 @@ export function startChainMonitor(io, warId) {
     const skipChainFetch = ageMs < CLIENT_CHAIN_FRESH_MS;
 
     try {
-      if (skipChainFetch) {
-        console.log(`[chain/skip] war=${warId} client data is ${Math.round(ageMs / 1000)}s old (gate=${CLIENT_CHAIN_FRESH_MS / 1000}s)`);
-        backoffs.set(warId, POLL_INTERVAL_MS);
-      } else {
-        const chain = await fetchFactionChain(war.factionId, apiKey);
-        // Note: removed cache age compensation — it was over-correcting and
-        // causing false chain alerts (e.g. 128s timeout reported as 58s).
-        // Torn's chain.timeout is already the value at time of API response.
-        await _processChain(warId, war, chain, io, "poll");
-        backoffs.set(warId, POLL_INTERVAL_MS);
-      }
+      // Deferred, not handled here: the war-score check below is the only
+      // war-end detector, and it sat downstream of this fetch in the same
+      // try — so any chain API hiccup skipped end-detection for that whole
+      // tick. Rethrown after the check so the outer catch still runs its
+      // key quarantine/demote and backoff exactly as before.
+      let chainErr = null;
+      try {
+        if (skipChainFetch) {
+          console.log(`[chain/skip] war=${warId} client data is ${Math.round(ageMs / 1000)}s old (gate=${CLIENT_CHAIN_FRESH_MS / 1000}s)`);
+          backoffs.set(warId, POLL_INTERVAL_MS);
+        } else {
+          const chain = await fetchFactionChain(war.factionId, apiKey);
+          // Note: removed cache age compensation — it was over-correcting and
+          // causing false chain alerts (e.g. 128s timeout reported as 58s).
+          // Torn's chain.timeout is already the value at time of API response.
+          await _processChain(warId, war, chain, io, "poll");
+          backoffs.set(warId, POLL_INTERVAL_MS);
+        }
+      } catch (e) { chainErr = e; }
 
-      // ── War score check (every 60s) ──
+      // ── War score check (adaptive: 5 min normally, 30s near the finish) ──
+      const scoreDueIn = warScoreCheckInterval(war);
       const lastCheck = lastScoreCheck.get(warId) || 0;
-      if (Date.now() - lastCheck > WAR_SCORE_CHECK_INTERVAL) {
-        lastScoreCheck.set(warId, Date.now());
+      if (Date.now() - lastCheck > scoreDueIn) {
         try {
           const rw = await fetchRankedWar(war.factionId, apiKey);
           if (!rw && war.warScores && !war.warEnded) {
@@ -373,11 +421,22 @@ export function startChainMonitor(io, warId) {
               }
             }
           }
+          // Stamped on COMPLETION, not before the fetch. Stamping up front
+          // meant a single thrown check forfeited the entire window, so one
+          // transient Torn error delayed war-end detection by a further five
+          // minutes on top of the cadence.
+          lastScoreCheck.set(warId, Date.now());
         } catch (scoreErr) {
-          console.error(`[chain] War score check failed: ${scoreErr.message}`);
+          // Retry sooner than the normal cadence, but never sooner than the
+          // cadence itself — otherwise a Torn outage turns every chain tick
+          // (~10-20s) into an extra ranked-war call against the pool.
+          const retryIn = Math.min(scoreDueIn, WAR_SCORE_RETRY_INTERVAL);
+          lastScoreCheck.set(warId, Date.now() - Math.max(0, scoreDueIn - retryIn));
+          console.error(`[chain] War score check failed: ${scoreErr.message} (retry in ${Math.round(retryIn / 1000)}s)`);
         }
       }
 
+      if (chainErr) throw chainErr;
       scheduleNext(nextChain(war));
     } catch (err) {
       if (/Incorrect ID-entity relation/i.test(err.message)) {
