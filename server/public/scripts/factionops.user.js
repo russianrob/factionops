@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.79
+// @version      5.1.80
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -77,7 +77,7 @@
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.79';
+    const SCRIPT_VERSION = '5.1.80';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -95,6 +95,15 @@
         // become a fallback for teammates whose own BSP cache is empty
         // for those targets.
         SHARE_BSP: GM_getValue('factionops_share_bsp', false),
+        // Post the call into Torn faction chat. Default OFF: this writes to a
+        // shared channel every member reads, so it must be each member's own
+        // explicit choice and must never arrive switched on via an update.
+        //
+        // Stored as the STRINGS '1'/'0', not a boolean. PDA's GM storage hands
+        // values back as strings and `!!"false"` is truthy, so a boolean
+        // written here round-trips as permanently-ON for every PDA user who
+        // never opted in — precisely the accident this default exists to stop.
+        CALL_CHAT: (String(GM_getValue('factionops_call_chat', '0')) === '1') ? '1' : '0',
         // Replace the 1s poll with a hanging GET /api/poll-long (long-poll +
         // deltas) when no SSE/Socket.IO is up (i.e. phones). Default ON, with an
         // auto-fallback to the standard poll if the transport fails on a device.
@@ -129,6 +138,7 @@
             ENEMY_ATTACK_NOTIF: 'factionops_enemy_attack_notif',
             KEEP_ALIVE: 'factionops_keep_alive',
             SHARE_BSP: 'factionops_share_bsp',
+            CALL_CHAT: 'factionops_call_chat',
             USE_LONGPOLL: 'factionops_use_longpoll',
         };
         if (gmKeys[key]) {
@@ -6525,8 +6535,11 @@ body.wb-chain-active {
     //   Deal:     'I have a med deal with <Name>' ← no timer per user
     // Deals are arrangements, not race-the-clock events, so the time
     // suffix doesn't add value there.
-    function copyCallTextToClipboard(targetId, targetName, isDeal) {
-        if (!targetName) return;
+    /// The call message. Extracted so the clipboard copy and the faction-chat
+    /// post share ONE source of truth — two copies of this wording would drift
+    /// the first time either is edited.
+    function callChatText(targetId, targetName, isDeal) {
+        if (!targetName) return null;
         let text = isDeal
             ? 'I have a med deal with ' + targetName
             : 'I got ' + targetName;
@@ -6540,8 +6553,14 @@ body.wb-chain-active {
                         text += ' in ' + mins + (mins === 1 ? ' minute' : ' minutes');
                     }
                 }
-            } catch (_) { /* don't let timer calc kill the copy */ }
+            } catch (_) { /* don't let timer calc kill the message */ }
         }
+        return text;
+    }
+
+    function copyCallTextToClipboard(targetId, targetName, isDeal) {
+        const text = callChatText(targetId, targetName, isDeal);
+        if (!text) return;
         try {
             if (typeof GM_setClipboard === 'function') {
                 GM_setClipboard(text, 'text');
@@ -6553,6 +6572,259 @@ body.wb-chain-active {
                 navigator.clipboard.writeText(text).catch(() => {});
             }
         } catch (_) {}
+    }
+
+    // ── Posting a call into Torn faction chat ────────────────────────────
+    //
+    // Owner-authorized; the owner reports an admin allowed it for another
+    // script doing the same thing. The line the admin drew is PRESENCE, not
+    // pixels: a script acting while you are asleep is bannable, a script
+    // turning one click of yours into a smarter version of itself is not.
+    // Pressing CALL is the action; this is that action being carried out.
+    // So the ONE rule everything below protects: nothing posts without a
+    // fresh CALL press. No timers, no retries, no resend on failure, no send
+    // on re-render, no send on uncall.
+
+    // Diagnostics keyed by REASON, not latched once globally. A single global
+    // latch spent its one shot on the first benign miss of the page — usually
+    // 'no-faction-id' before auth lands — and then never reported the selector
+    // break we actually want to hear about. Capped so a Torn rebuild cannot
+    // turn this into a flood.
+    const _callChatDiagSeen = new Set();
+    function reportCallChatDiag(data) {
+        try {
+            const r = String((data && data.reason) || '?');
+            if (_callChatDiagSeen.has(r) || _callChatDiagSeen.size >= 5) return;
+            _callChatDiagSeen.add(r);
+            const body = JSON.stringify({ tag: 'fo-call-chat',
+                data: Object.assign({ v: SCRIPT_VERSION, pda: IS_PDA, warboard: IS_WARBOARD }, data) });
+            const url = CONFIG.SERVER_URL + '/api/debug/client-log';
+            if (typeof GM_xmlhttpRequest === 'function') {
+                GM_xmlhttpRequest({ method: 'POST', url, data: body,
+                    headers: { 'Content-Type': 'application/json' },
+                    onload: function () {}, onerror: function () {} });
+            } else {
+                fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => {});
+            }
+        } catch (_) { /* diagnostics must never break a call */ }
+    }
+
+    /// Our faction's channel toggle. Scoped to state.myFactionId — a bare
+    /// [id^="channel_panel_button:faction-"] matches ANY faction box, and
+    /// posting a war call into another faction's chat is the worst outcome
+    /// here. The id contains a ':' so it is not a valid bare CSS #id;
+    /// getElementById is required (a bare selector throws and kills the handler).
+    function factionChatToggleButton() {
+        const fid = state.myFactionId;
+        if (!fid || String(fid) === '0') return null;   // auth stores '0' for factionless
+        return document.getElementById('channel_panel_button:faction-' + fid);
+    }
+
+    /// The channel content box. `faction-<id>` is generic enough that other
+    /// page markup could use it, so provenance is checked against #chatRoot
+    /// rather than trusting the first match in document order.
+    function factionChatBox() {
+        const fid = state.myFactionId;
+        if (!fid || String(fid) === '0') return null;
+        const el = document.getElementById('faction-' + fid);
+        return (el && el.closest && el.closest('#chatRoot')) ? el : null;
+    }
+
+    // One send in flight at a time. Two calls in quick succession would other-
+    // wise interleave through the SHARED textarea: A writes its text, B over-
+    // writes it, then A's deferred check clicks send while React holds B — A
+    // is silently lost and its diagnostic still reports success.
+    let _callChatBusy = false;
+
+    function sendCallToChat(text) {
+        if (!text || _callChatBusy) return;
+        const btn = factionChatToggleButton();
+        if (!btn) {
+            // These two must stay distinguishable: before auth lands there is
+            // no faction id and the miss is benign; afterwards it means Torn
+            // renamed the id and the feature is silently broken.
+            reportCallChatDiag({ reason: (!state.myFactionId || String(state.myFactionId) === '0')
+                ? 'no-faction-id' : 'no-channel-button' });
+            return;
+        }
+        _callChatBusy = true;
+        const wasOpen = /opened___/.test(String(btn.className || ''));
+        if (!wasOpen) { try { btn.click(); } catch (_) {} }
+
+        let retried = false;
+        const attempt = () => {
+            try {
+                const box = factionChatBox();
+                const ta = box && box.querySelector('textarea[class*="textarea___"]');
+                if (!ta) {
+                    // Only if WE opened it may React still be mounting the input
+                    // row. One re-LOOK, never a re-send: this branch sits
+                    // upstream of any send, so it cannot duplicate a message.
+                    if (!wasOpen && !retried) { retried = true; setTimeout(attempt, 250); return; }
+                    _callChatBusy = false;
+                    reportCallChatDiag({ reason: box ? 'no-textarea' : 'no-box', wasOpen });
+                    return;
+                }
+                doSend(box, ta, wasOpen);
+            } catch (_) { _callChatBusy = false; }
+        };
+
+        function doSend(box, ta, wasOpen2) {
+            // NEVER type over a draft, and not merely out of politeness: the
+            // send button is disabled ONLY while the box is empty, so with a
+            // draft present it is already enabled and `!disabled` proves
+            // nothing about whether React took OUR text. If the native setter
+            // ever stops working — a Torn rebuild, exactly what the diagnostic
+            // exists to catch — we would click send on the user's half-typed
+            // draft and post THAT to faction chat while the log said 'ok'.
+            if (ta.value) {
+                _callChatBusy = false;
+                reportCallChatDiag({ reason: 'draft-present', wasOpen: wasOpen2 });
+                return;
+            }
+            // Page realm, not ours: in a true isolated world (Firefox TM Xray)
+            // our HTMLTextAreaElement is a different class from the page's, so
+            // the setter would not apply and the keyCode expandos below would
+            // be invisible to page-world React.
+            const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+            let nativeSetter = false;
+            try {
+                // MUST be HTMLTextAreaElement — the HTMLInputElement setter
+                // silently no-ops on a textarea and React never sees the value.
+                const d = Object.getOwnPropertyDescriptor(
+                    (W.HTMLTextAreaElement || HTMLTextAreaElement).prototype, 'value');
+                if (d && typeof d.set === 'function') { d.set.call(ta, text); nativeSetter = true; }
+                else { ta.value = text; }
+                // React 16+ keeps its OWN copy of the value on the node
+                // (_valueTracker) and swallows the change event when the
+                // tracker already matches what it reads back. The native
+                // setter alone updated the DOM — so the text appeared on
+                // screen — while React went on believing the box was empty,
+                // which is exactly why the send button never enabled and
+                // nothing posted. Rewinding the tracker to '' guarantees a
+                // mismatch, so onChange fires and React's state catches up.
+                try {
+                    const tracker = ta._valueTracker;
+                    if (tracker && typeof tracker.setValue === 'function') tracker.setValue('');
+                } catch (_) { /* no tracker on this build — the setter alone may suffice */ }
+                ta.dispatchEvent(new (W.Event || Event)('input', { bubbles: true }));
+            } catch (_) {
+                _callChatBusy = false;
+                reportCallChatDiag({ reason: 'set-value-threw', wasOpen: wasOpen2, nativeSetter });
+                return;
+            }
+            // React may not flush the disabled -> enabled flip inside dispatch,
+            // so the go/no-go check happens one macrotask later. setTimeout and
+            // NOT rAF: rAF does not run in a hidden tab, which would park the
+            // send and fire a stale war call minutes later.
+            setTimeout(() => {
+                let clickedSend = false, enterFallback = false, reason = 'ok', enabled = false;
+                try {
+                    // Re-resolve BOTH nodes. React can remount the input row; a
+                    // detached textarea still reports our value (nothing
+                    // re-renders a dead node), so Enter would fire into a node
+                    // with no listeners while the log claimed success.
+                    const liveBox = factionChatBox() || box;
+                    const liveTa = liveBox.querySelector('textarea[class*="textarea___"]') || ta;
+                    // Scope to the row that OWNS the textarea. Box-wide takes
+                    // the first icon button in document order — a header control
+                    // or a per-message action would win, would not be disabled,
+                    // and we would click a control nobody sanctioned.
+                    const row = liveTa.parentElement || liveBox;
+                    const sendBtn = row.querySelector('button[class*="iconWrapper___"]')
+                        || liveBox.querySelector('button[class*="iconWrapper___"]');
+                    if (sendBtn && !sendBtn.disabled) {
+                        enabled = true;
+                        sendBtn.click();
+                        clickedSend = true;
+                    } else if (document.contains(liveTa) && liveTa.value === text) {
+                        // Enter is tried even when the button sits DISABLED,
+                        // which is the case that was failing: the button is
+                        // gated on React's state, and if React never took our
+                        // value it stays disabled forever. But the textarea's
+                        // own onKeyDown handler may read e.target.value — the
+                        // DOM value — which IS our text. So the keyboard path
+                        // can succeed exactly where the button path cannot.
+                        //
+                        // Safe because of the draft guard upstream: the box was
+                        // empty before we typed, so Enter can only send OUR
+                        // text or nothing. It can never send something the user
+                        // was part-way through writing.
+                        enabled = !!(sendBtn && !sendBtn.disabled);
+                        const ev = new (W.KeyboardEvent || KeyboardEvent)('keydown',
+                            { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
+                        // React's synthetic events read the legacy fields, which
+                        // are not settable through the init dict.
+                        try {
+                            Object.defineProperty(ev, 'keyCode', { get: () => 13 });
+                            Object.defineProperty(ev, 'which', { get: () => 13 });
+                        } catch (_) {}
+                        liveTa.dispatchEvent(ev);
+                        enterFallback = true; reason = 'enter-fallback';
+                    } else {
+                        reason = 'no-send-button-and-value-not-taken';
+                    }
+                    // Put the box back to empty. It WAS empty before we typed
+                    // (the draft guard guarantees that), so leftover text is
+                    // not a draft — but the guard on the NEXT call cannot tell
+                    // the difference and would refuse forever. One failed send
+                    // would otherwise poison every later call.
+                    // Takes the node to clear rather than closing over one:
+                    // the check below runs 400ms later and must act on
+                    // whatever textarea is live THEN, not the one we captured.
+                    const clearBox = (node) => {
+                        try {
+                            if (!node) return;
+                            const d2 = Object.getOwnPropertyDescriptor(
+                                (W.HTMLTextAreaElement || HTMLTextAreaElement).prototype, 'value');
+                            if (d2 && typeof d2.set === 'function') d2.set.call(node, '');
+                            else node.value = '';
+                            // Seed the tracker with the OLD text so React sees
+                            // a change to '' and runs onChange. Setting it to
+                            // '' would make React treat the clear as a no-op.
+                            const t2 = node._valueTracker;
+                            if (t2 && typeof t2.setValue === 'function') t2.setValue(text);
+                            node.dispatchEvent(new (W.Event || Event)('input', { bubbles: true }));
+                        } catch (_) {}
+                    };
+                    const done = (r) => {
+                        _callChatBusy = false;
+                        reportCallChatDiag({ reason: r, wasOpen: wasOpen2, nativeSetter,
+                            enabledAfterInput: enabled, clickedSend, enterFallback });
+                    };
+                    if (!clickedSend && !enterFallback) { clearBox(liveTa); done(reason); return; }
+                    // Torn empties the textarea when a message actually goes
+                    // out, so the box is its own receipt. Read it a beat later:
+                    // still our text = nothing was sent, whichever path we
+                    // took. This is what tells 'the click was swallowed' apart
+                    // from 'it worked'. No retry on failure — clean up and
+                    // report, and the next post needs a fresh CALL press.
+                    setTimeout(() => {
+                        let sent, node = null;
+                        try {
+                            // Re-resolve, do NOT reuse liveTa. 400ms is long
+                            // enough for React to remount the input row (an
+                            // inbound chat message is enough). A detached node
+                            // would read as "gone, so it sent" while the FRESH
+                            // textarea still holds our text — reinstating the
+                            // permanent draft-present poison this check exists
+                            // to prevent.
+                            const b2 = factionChatBox() || liveBox;
+                            node = b2 && b2.querySelector('textarea[class*="textarea___"]');
+                            sent = !node || node.value !== text;
+                        } catch (_) { sent = false; }
+                        if (!sent) clearBox(node);
+                        done((clickedSend ? 'click' : 'enter') + (sent ? '-sent' : '-did-not-send'));
+                    }, 400);
+                    return;
+                } catch (_) { reason = 'send-threw'; }
+                _callChatBusy = false;
+                reportCallChatDiag({ reason, wasOpen: wasOpen2, nativeSetter,
+                    enabledAfterInput: enabled, clickedSend, enterFallback });
+            }, 0);
+        }
+
+        attempt();
     }
 
     function emitCallTarget(targetId, isDeal) {
@@ -6597,6 +6869,16 @@ body.wb-chain-active {
             );
             return;
         }
+        // Captured BEFORE the optimistic write below destroys the evidence.
+        // The preflight above deliberately does not block a re-call of the
+        // SAME target, and two paths re-enter here for one gesture: on
+        // Android/PDA the Call button binds both a 600ms long-press timer and
+        // `contextmenu`, which Chromium fires at ~500ms with no touchcancel to
+        // clear the timer; and the Next-Up Call button is rebuilt without
+        // filtering on state.calls, so a double-tap re-enters too. A duplicate
+        // row update is invisible; a duplicate CHAT POST is two identical war
+        // calls in front of the whole faction. So only the chat send is gated.
+        const priorCall = state.calls[tid];
         // Optimistic update
         state.calls[tid] = {
             calledBy: { id: state.myPlayerId, name: state.myPlayerName || 'You' },
@@ -6608,11 +6890,31 @@ body.wb-chain-active {
         const targetName = state.statuses[tid]?.name || null;
         // v5.0.95: copy call message to clipboard — wording branches
         // on isDeal flag. Fires on the optimistic update so clipboard
-        // is ready before the server round-trip.
+        // is ready before the server round-trip. Stays HERE and stays
+        // synchronous: PDA's clipboard only works inside the tap.
         if (targetName) copyCallTextToClipboard(tid, targetName, !!isDeal);
+        // Composed HERE, synchronously, and carried into the .then() below.
+        // Computing it after the round-trip lost the " in N minutes" suffix:
+        // statusRemainingSec reads state.statuses[tid], and a status refresh
+        // landing during the POST replaces that entry, so the timer the
+        // clipboard captured was already gone by the time chat asked for it.
+        // One composition, one string, clipboard and chat byte-identical.
+        const chatText = targetName ? callChatText(tid, targetName, !!isDeal) : null;
         const payload = { warId, targetId: tid, targetName };
         if (isDeal) payload.isDeal = true;
         postAction('/api/call', payload)
+            .then(() => {
+                // Chat posts only AFTER the server accepts. The clipboard can
+                // be optimistic because it is private; this is not. A 409 from
+                // a teammate calling first rolls the call back below — but a
+                // chat message cannot be retracted, and announcing a call you
+                // did not get sends two people at one target.
+                if (!chatText || CONFIG.CALL_CHAT !== '1' || priorCall) return;
+                // Still ours, and not uncalled during the round trip.
+                const now = state.calls[tid];
+                if (!now || String(now.calledBy?.id) !== String(state.myPlayerId)) return;
+                try { sendCallToChat(chatText); } catch (_) {}
+            })
             .catch(e => {
                 warn('Call failed:', e.message);
                 delete state.calls[tid];
@@ -7159,6 +7461,21 @@ body.wb-chain-active {
                 </label>
             </div>
 
+            <div class="wb-settings-row">
+                <span>Post my calls to faction chat</span>
+                <label class="wb-toggle">
+                    <input type="checkbox" id="wb-toggle-call-chat" ${CONFIG.CALL_CHAT === '1' ? 'checked' : ''}>
+                    <span class="wb-toggle-slider"></span>
+                </label>
+            </div>
+            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
+                Typing the call into Torn's faction chat for you when you press
+                Call — the same text that already goes to your clipboard. Off by
+                default, and it only ever fires from a Call you pressed. If
+                faction chat is closed, or you were mid-way through typing
+                something, it leaves the message on your clipboard instead.
+            </div>
+
             <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
                 <strong>Faction key pool:</strong> your API key is used
                 alongside other officers' keys to spread the faction's
@@ -7439,6 +7756,19 @@ body.wb-chain-active {
                 } else {
                     showToast('Stopped sharing BSP cache', 'info');
                 }
+            });
+        }
+
+        const callChatToggle = document.getElementById('wb-toggle-call-chat');
+        if (callChatToggle) {
+            callChatToggle.addEventListener('change', (e) => {
+                // '1'/'0' strings, never booleans — PDA's GM storage returns
+                // strings and `!!"false"` is truthy, which would leave this
+                // permanently on for anyone who switched it off there.
+                setConfig('CALL_CHAT', e.target.checked ? '1' : '0');
+                showToast(e.target.checked
+                    ? 'Calls will be typed into faction chat'
+                    : 'Calls stay on your clipboard only', 'info');
             });
         }
 
