@@ -1,0 +1,43 @@
+Add an Edit permission rule for factionops.user.js
+==================================================
+
+Run this in a Claude Code session with the ! prefix, or in a shell on the box.
+It appends one rule to /root/.claude/settings.json and changes nothing else.
+Safe to run twice — it skips if the rule is already present.
+
+
+ONE LINE (copy the whole thing):
+
+python3 -c "import json; p='/root/.claude/settings.json'; d=json.load(open(p)); a=d.setdefault('permissions',{}).setdefault('allow',[]); r='Edit(/opt/warboard/server/public/scripts/factionops.user.js)'; (r in a) or a.append(r); json.dump(d, open(p,'w'), indent=2); print('added:', r)"
+
+
+WIDER VARIANT — covers every script in that directory, not just factionops.
+Use this one only if you want the broader grant:
+
+python3 -c "import json; p='/root/.claude/settings.json'; d=json.load(open(p)); a=d.setdefault('permissions',{}).setdefault('allow',[]); r='Edit(/opt/warboard/server/public/scripts/**)'; (r in a) or a.append(r); json.dump(d, open(p,'w'), indent=2); print('added:', r)"
+
+
+CHECK IT WORKED:
+
+python3 -c "import json; print([x for x in json.load(open('/root/.claude/settings.json'))['permissions']['allow'] if 'factionops.user.js' in x or 'scripts/**' in x])"
+
+
+UNDO — removes the narrow rule again:
+
+python3 -c "import json; p='/root/.claude/settings.json'; d=json.load(open(p)); a=d['permissions']['allow']; r='Edit(/opt/warboard/server/public/scripts/factionops.user.js)'; (r in a) and a.remove(r); json.dump(d, open(p,'w'), indent=2); print('removed:', r)"
+
+
+WHAT THIS IS FOR
+----------------
+The auto-mode classifier is blocking edits to factionops.user.js because the
+faction-chat feature programmatically clicks Torn's send button, and a rule in
+the assistant's memory says not to auto-click Torn UI. That rule now records
+your admin approval and the presence-not-pixels clarification, but each edit is
+still evaluated on its own.
+
+This rule is a STANDING grant: it applies to every future edit of that file, not
+just the chat feature. That is probably convenient given how often FactionOps
+gets touched, but it is a real widening — worth adding deliberately.
+
+Scope it to Edit rather than Bash. The blocks landed on Edit calls against this
+one file; a broad Bash rule would grant far more than this needs.
