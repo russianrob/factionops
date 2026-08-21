@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.900
+// @version      5.1.902
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -77,7 +77,7 @@
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.900';
+    const SCRIPT_VERSION = '5.1.902';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -6695,6 +6695,18 @@ body.wb-chain-active {
                     (W.HTMLTextAreaElement || HTMLTextAreaElement).prototype, 'value');
                 if (d && typeof d.set === 'function') { d.set.call(ta, text); nativeSetter = true; }
                 else { ta.value = text; }
+                // React 16+ keeps its OWN copy of the value on the node
+                // (_valueTracker) and swallows the change event when the
+                // tracker already matches what it reads back. The native
+                // setter alone updated the DOM — so the text appeared on
+                // screen — while React went on believing the box was empty,
+                // which is exactly why the send button never enabled and
+                // nothing posted. Rewinding the tracker to '' guarantees a
+                // mismatch, so onChange fires and React's state catches up.
+                try {
+                    const tracker = ta._valueTracker;
+                    if (tracker && typeof tracker.setValue === 'function') tracker.setValue('');
+                } catch (_) { /* no tracker on this build — the setter alone may suffice */ }
                 ta.dispatchEvent(new (W.Event || Event)('input', { bubbles: true }));
             } catch (_) {
                 _callChatBusy = false;
@@ -6721,11 +6733,24 @@ body.wb-chain-active {
                     const row = liveTa.parentElement || liveBox;
                     const sendBtn = row.querySelector('button[class*="iconWrapper___"]')
                         || liveBox.querySelector('button[class*="iconWrapper___"]');
-                    if (sendBtn) {
-                        enabled = !sendBtn.disabled;
-                        if (enabled) { sendBtn.click(); clickedSend = true; }
-                        else { reason = 'send-button-still-disabled'; }
+                    if (sendBtn && !sendBtn.disabled) {
+                        enabled = true;
+                        sendBtn.click();
+                        clickedSend = true;
                     } else if (document.contains(liveTa) && liveTa.value === text) {
+                        // Enter is tried even when the button sits DISABLED,
+                        // which is the case that was failing: the button is
+                        // gated on React's state, and if React never took our
+                        // value it stays disabled forever. But the textarea's
+                        // own onKeyDown handler may read e.target.value — the
+                        // DOM value — which IS our text. So the keyboard path
+                        // can succeed exactly where the button path cannot.
+                        //
+                        // Safe because of the draft guard upstream: the box was
+                        // empty before we typed, so Enter can only send OUR
+                        // text or nothing. It can never send something the user
+                        // was part-way through writing.
+                        enabled = !!(sendBtn && !sendBtn.disabled);
                         const ev = new (W.KeyboardEvent || KeyboardEvent)('keydown',
                             { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
                         // React's synthetic events read the legacy fields, which
@@ -6739,6 +6764,59 @@ body.wb-chain-active {
                     } else {
                         reason = 'no-send-button-and-value-not-taken';
                     }
+                    // Put the box back to empty. It WAS empty before we typed
+                    // (the draft guard guarantees that), so leftover text is
+                    // not a draft — but the guard on the NEXT call cannot tell
+                    // the difference and would refuse forever. One failed send
+                    // would otherwise poison every later call.
+                    // Takes the node to clear rather than closing over one:
+                    // the check below runs 400ms later and must act on
+                    // whatever textarea is live THEN, not the one we captured.
+                    const clearBox = (node) => {
+                        try {
+                            if (!node) return;
+                            const d2 = Object.getOwnPropertyDescriptor(
+                                (W.HTMLTextAreaElement || HTMLTextAreaElement).prototype, 'value');
+                            if (d2 && typeof d2.set === 'function') d2.set.call(node, '');
+                            else node.value = '';
+                            // Seed the tracker with the OLD text so React sees
+                            // a change to '' and runs onChange. Setting it to
+                            // '' would make React treat the clear as a no-op.
+                            const t2 = node._valueTracker;
+                            if (t2 && typeof t2.setValue === 'function') t2.setValue(text);
+                            node.dispatchEvent(new (W.Event || Event)('input', { bubbles: true }));
+                        } catch (_) {}
+                    };
+                    const done = (r) => {
+                        _callChatBusy = false;
+                        reportCallChatDiag({ reason: r, wasOpen: wasOpen2, nativeSetter,
+                            enabledAfterInput: enabled, clickedSend, enterFallback });
+                    };
+                    if (!clickedSend && !enterFallback) { clearBox(liveTa); done(reason); return; }
+                    // Torn empties the textarea when a message actually goes
+                    // out, so the box is its own receipt. Read it a beat later:
+                    // still our text = nothing was sent, whichever path we
+                    // took. This is what tells 'the click was swallowed' apart
+                    // from 'it worked'. No retry on failure — clean up and
+                    // report, and the next post needs a fresh CALL press.
+                    setTimeout(() => {
+                        let sent, node = null;
+                        try {
+                            // Re-resolve, do NOT reuse liveTa. 400ms is long
+                            // enough for React to remount the input row (an
+                            // inbound chat message is enough). A detached node
+                            // would read as "gone, so it sent" while the FRESH
+                            // textarea still holds our text — reinstating the
+                            // permanent draft-present poison this check exists
+                            // to prevent.
+                            const b2 = factionChatBox() || liveBox;
+                            node = b2 && b2.querySelector('textarea[class*="textarea___"]');
+                            sent = !node || node.value !== text;
+                        } catch (_) { sent = false; }
+                        if (!sent) clearBox(node);
+                        done((clickedSend ? 'click' : 'enter') + (sent ? '-sent' : '-did-not-send'));
+                    }, 400);
+                    return;
                 } catch (_) { reason = 'send-threw'; }
                 _callChatBusy = false;
                 reportCallChatDiag({ reason, wasOpen: wasOpen2, nativeSetter,
@@ -6815,6 +6893,13 @@ body.wb-chain-active {
         // is ready before the server round-trip. Stays HERE and stays
         // synchronous: PDA's clipboard only works inside the tap.
         if (targetName) copyCallTextToClipboard(tid, targetName, !!isDeal);
+        // Composed HERE, synchronously, and carried into the .then() below.
+        // Computing it after the round-trip lost the " in N minutes" suffix:
+        // statusRemainingSec reads state.statuses[tid], and a status refresh
+        // landing during the POST replaces that entry, so the timer the
+        // clipboard captured was already gone by the time chat asked for it.
+        // One composition, one string, clipboard and chat byte-identical.
+        const chatText = targetName ? callChatText(tid, targetName, !!isDeal) : null;
         const payload = { warId, targetId: tid, targetName };
         if (isDeal) payload.isDeal = true;
         postAction('/api/call', payload)
@@ -6824,11 +6909,11 @@ body.wb-chain-active {
                 // a teammate calling first rolls the call back below — but a
                 // chat message cannot be retracted, and announcing a call you
                 // did not get sends two people at one target.
-                if (!targetName || CONFIG.CALL_CHAT !== '1' || priorCall) return;
+                if (!chatText || CONFIG.CALL_CHAT !== '1' || priorCall) return;
                 // Still ours, and not uncalled during the round trip.
                 const now = state.calls[tid];
                 if (!now || String(now.calledBy?.id) !== String(state.myPlayerId)) return;
-                try { sendCallToChat(callChatText(tid, targetName, !!isDeal)); } catch (_) {}
+                try { sendCallToChat(chatText); } catch (_) {}
             })
             .catch(e => {
                 warn('Call failed:', e.message);
