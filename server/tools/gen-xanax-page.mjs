@@ -98,7 +98,7 @@ function cell(c) {
 function row(p) {
   const badgeCls = p.flagged >= 2 ? "b-hot" : "b-warn";
   const totCls = p.deficit > 20 ? "high" : p.deficit > 8 ? "mid" : p.deficit > 0 ? "low" : "none";
-  return `<tr><th class="name" scope="row">${esc(p.name)}</th>${p.cells.map(cell).join("")}<td class="tot ${totCls}">${p.deficit}</td><td class="fl"><span class="badge ${badgeCls}">${p.flagged}/${N}</span></td></tr>`;
+  return `<tr><th class="name" scope="row" title="${esc(p.name)}">${esc(p.name)}</th>${p.cells.map(cell).join("")}<td class="tot ${totCls}">${p.deficit}</td><td class="fl"><span class="badge ${badgeCls}">${p.flagged}/${N}</span></td></tr>`;
 }
 function band(label, sub) {
   return `<tr class="band"><th class="name" scope="rowgroup">${label}<small>${sub}</small></th>${warMeta.map(() => '<td></td>').join("")}<td></td><td></td></tr>`;
@@ -261,6 +261,7 @@ th.war .wenemy{display:block;font-size:11px;color:var(--muted);font-weight:600;m
 th.war .wtook{display:block;font-size:10px;color:var(--faint);font-weight:600;margin-top:2px}
 th.hcol{background:var(--panel);border-bottom:2px solid var(--line);font-size:11px;color:var(--faint);font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:0 8px 12px;vertical-align:bottom;text-align:center}
 tbody th.name{width:1%;min-width:116px;max-width:210px;overflow:hidden;text-overflow:ellipsis;text-align:left;font-weight:700;font-size:13.5px;padding:0 14px;white-space:nowrap;border-bottom:1px solid var(--line2);background:var(--panel);position:sticky;left:0;z-index:2}
+@media (max-width:520px){tbody th.name,th.corner{min-width:104px;max-width:124px}tbody th.name{padding:0 10px}th.corner{padding-left:10px;padding-right:10px}}
 tr.band th.name{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:800;padding:16px 14px 7px;border-bottom:1px solid var(--line);background:var(--panel)}
 tr.band small{display:block;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:600;font-size:11px;margin-top:2px}
 tr.band td{border-bottom:1px solid var(--line);background:var(--panel)}
