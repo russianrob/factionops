@@ -252,7 +252,7 @@ h1{font-size:clamp(24px,4.5vw,36px);line-height:1.1;margin:0 0 8px;letter-spacin
 .scroll{overflow-x:auto}
 table{border-collapse:separate;border-spacing:0;width:100%;min-width:640px}
 thead th{position:sticky;top:0;z-index:3}
-th.corner{position:sticky;left:0;z-index:4;text-align:left;padding:14px 14px 12px;font-size:12px;color:var(--faint);font-weight:700;letter-spacing:.04em;vertical-align:bottom;background:var(--panel)}
+th.corner{position:sticky;left:0;z-index:4;width:1%;min-width:116px;max-width:210px;text-align:left;padding:14px 14px 12px;font-size:12px;color:var(--faint);font-weight:700;letter-spacing:.04em;vertical-align:bottom;background:var(--panel)}
 th.war{padding:10px 8px 12px;text-align:center;background:var(--panel);border-bottom:2px solid var(--line);min-width:96px;vertical-align:bottom}
 th.war .wres{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;font-size:12px;font-weight:800;color:#fff;margin-bottom:5px}
 th.war.victory .wres{background:var(--win)} th.war.defeat .wres{background:var(--loss)}
@@ -260,7 +260,7 @@ th.war .wdate{display:block;font-size:13px;font-weight:800;letter-spacing:-.01em
 th.war .wenemy{display:block;font-size:11px;color:var(--muted);font-weight:600;max-width:96px;margin:1px auto 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 th.war .wtook{display:block;font-size:10px;color:var(--faint);font-weight:600;margin-top:2px}
 th.hcol{background:var(--panel);border-bottom:2px solid var(--line);font-size:11px;color:var(--faint);font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:0 8px 12px;vertical-align:bottom;text-align:center}
-tbody th.name{text-align:left;font-weight:700;font-size:13.5px;padding:0 14px;white-space:nowrap;border-bottom:1px solid var(--line2);background:var(--panel);position:sticky;left:0;z-index:2}
+tbody th.name{width:1%;min-width:116px;max-width:210px;overflow:hidden;text-overflow:ellipsis;text-align:left;font-weight:700;font-size:13.5px;padding:0 14px;white-space:nowrap;border-bottom:1px solid var(--line2);background:var(--panel);position:sticky;left:0;z-index:2}
 tr.band th.name{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:800;padding:16px 14px 7px;border-bottom:1px solid var(--line);background:var(--panel)}
 tr.band small{display:block;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:600;font-size:11px;margin-top:2px}
 tr.band td{border-bottom:1px solid var(--line);background:var(--panel)}
