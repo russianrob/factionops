@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.14
+// @version      0.9.15
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,31 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.15 — War stack contradicted itself twice, and both cost real energy.
+ *
+ *         It said "Do not take a Xanax". That is backwards: a stack is built BY
+ *         taking them. Each banks 250e above the cap, and above the cap Torn
+ *         pauses regen, so a stacked bar bleeds nothing while it waits. Sitting
+ *         AT the cap is the only state that does bleed — so the old advice held
+ *         you in the one place that loses energy. The verdict now says to take
+ *         one when the drug cooldown is clear, you have one, and it will not
+ *         spill past the 1,000e ceiling; otherwise it says hold and why. The
+ *         Stock tab's Xanax row reads USE while stacking instead of BUY.
+ *
+ *         And it billed you for obeying. Time at the cap was booked as missed
+ *         energy even while the coach was telling you to leave the bar alone.
+ *         That waste feeds calibration().usage, which goalPlan() multiplies
+ *         into every ETA, so one war dragged the whole plan toward the 0.3
+ *         floor and held it there for the fourteen days AFTER the war ended.
+ *         Waste is no longer booked while stacking, and the live card reframes
+ *         the streak — it still shows how long the bar has been held, which is
+ *         the number that matters during a war, just not as a loss.
+ *
+ *         What did NOT change: the cap time is still subtracted from absorbed
+ *         regen when working out what you spent. That regen genuinely never
+ *         landed whatever it is called, and handing it back as spend would make
+ *         a held-then-dumped bar read as more energy trained than ever left it.
+ *         A test pins the spend figure identical with stacking on and off.
 * 0.9.14 — A full segment said "Torn should hand it over on your next train".
  *         It will not: once the gym exp is earned the gym is gated on the FEE,
  *         not on more training — the wiki is explicit that you Activate it and
@@ -799,6 +824,9 @@
   var H = 3600;
   var M = 60;
   var BOOSTER_CAP = 24 * H;
+  // Ceiling a war stack is built up to; Xanax past it spills.
+  var STACK_CAP = 1000;
+
   var BOOSTER_CAP_PERK = 48 * H;
 
   // The faction perk lifts the booster ceiling from 24h to 48h, and the script
@@ -3126,7 +3154,12 @@
   }
 
   // Pure, so it can be tested: one window between two observations.
-  function ledgerDelta(prevE, prevT, nowE, nowT, max, secPerE, fullAt) {
+  // `stacking` is war stack: the coach itself is telling you to hold the bar
+  // ("Leave energy alone. Don't train."), so time at cap is stored energy
+  // rather than energy you let slip, and booking it as waste penalised you
+  // for following your own plan. It changes only what the cap time is CALLED
+  // -- see the absorbed maths below, which still has to subtract it.
+  function ledgerDelta(prevE, prevT, nowE, nowT, max, secPerE, fullAt, stacking) {
     var out = { used: 0, wasted: 0 };
     // A drop is a drop: spending is instantaneous, so record it whether or not
     // a measurable window has passed. Waste is a rate over time and does need
@@ -3171,7 +3204,8 @@
       if (reached && fullAt && fullAt > prevT && fullAt <= nowT) fill = (fullAt - prevT) / 1000;
       var refill = nowE < prevE ? nowE * secPerE : 0;
       var atCap = elapsed - fill - refill;
-      if (atCap > 0) out.wasted = atCap / secPerE;
+      var capped = atCap > 0 ? atCap / secPerE : 0;
+      out.wasted = stacking ? 0 : capped;
 
       // Spend is the drop PLUS whatever regenerated back in behind it. The drop
       // alone loses every point that refilled after a session: train the bar
@@ -3183,7 +3217,11 @@
       // Only valid while the bar is at or below the cap. Above it Torn pauses
       // regen entirely, so nothing is absorbed and the raw drop is already the
       // whole story — which is why banking keeps the simple reading below.
-      var absorbed = Math.max(0, elapsed / secPerE - out.wasted);
+      // `capped`, not out.wasted: the regen genuinely never landed, whatever we
+      // call it. Using out.wasted here would hand that regen back as spend the
+      // moment war stack suppressed it, and a held-then-dumped bar would read
+      // as more energy trained than ever left it.
+      var absorbed = Math.max(0, elapsed / secPerE - capped);
       out.used = Math.max(0, prevE + absorbed - nowE);
     }
     return out;
@@ -3212,7 +3250,8 @@
     var now = Date.now();
     var prev = state.lastSeen;
     if (prev && typeof prev.e === "number" && prev.t && now >= prev.t) {
-      var d = ledgerDelta(prev.e, prev.t, state.energy, now, max, energyRate(), prev.fullAt);
+      var d = ledgerDelta(prev.e, prev.t, state.energy, now, max, energyRate(),
+                          prev.fullAt, !!state.warStack);
       // The train log used to be driven by comparing energy between API polls —
       // but the page updates state.energy live every second, so the drop was
       // already absorbed before a payload arrived and a whole session logged
@@ -3797,7 +3836,7 @@
     var toFull = timeToFull();
     var full = barFull();
     var xans = state.items.xanax || 0;
-    var afterXan = Math.min(1000, state.energy + 250);
+    var afterXan = Math.min(STACK_CAP, state.energy + 250);
     var cans =
       (state.items.munster || 0) +
       (state.items.redcow || 0) +
@@ -3805,12 +3844,30 @@
       (state.items.cans || 0);
 
     if (state.warStack) {
+      // This used to read "Do not take a Xanax", which contradicts the mechanic
+      // it is advising: a stack is built BY taking them. Each banks 250e above
+      // the cap, and above the cap Torn pauses regen, so a stacked bar loses
+      // nothing while it waits. Sitting AT the cap instead is the only state
+      // that bleeds. What stays true is not TRAINING it away.
+      var stackRoom = STACK_CAP - state.energy;
+      var takeXan = state.drugCd <= 0 && xans > 0 && stackRoom >= 250;
+      var nowText = takeXan
+        ? "Take a Xanax. " + state.energy + " \u2192 " + afterXan + "e banked."
+        : state.drugCd > 0
+          ? "Hold. Next Xanax in " + fmtCd(state.drugCd) + " \u2014 " + state.energy +
+            "/" + fmt(STACK_CAP) + " banked."
+          : xans <= 0
+            ? "Hold. No Xanax in your inventory to stack with."
+            : "Hold at " + state.energy + "e. Another Xanax would spill past the " +
+              fmt(STACK_CAP) + "e ceiling.";
       return {
         kind: "stack",
-        move: "War stack. Hold energy.",
-        why: "Do not take a Xanax. Don\u2019t train. Coach only pings if you hit 1,000e.",
+        move: "War stack. " + (takeXan ? "Take a Xanax." : "Hold energy."),
+        why: "Xanax is how the stack grows \u2014 each banks 250e above the cap, where " +
+             "regen is paused and nothing bleeds. Don\u2019t train it away. Coach only " +
+             "pings if you hit " + fmt(STACK_CAP) + "e.",
         steps: [
-          { t: "NOW", text: "Leave energy alone. " + state.energy + "/" + state.energyMax + "." },
+          { t: "NOW", text: nowText },
           { t: "AFTER", text: "When the chain is over, turn stack off and go back to your gym loop." },
         ],
       };
@@ -4625,10 +4682,17 @@
     var streak = capStreak();
     var t = ledgerWindow(1);
     var pct = t.used + t.wasted > 0 ? Math.round((t.used / (t.used + t.wasted)) * 100) : null;
-    var head = streak && streak.sec >= 1
-      ? '<div class="gcb-waste" style="margin:0 0 9px">Bar has been full for ' + fmtCd(streak.sec) +
-        " \u2014 that is <b>" + fmt(missed(streak.lost)) + "e</b> of regen you did not get.</div>"
-      : "";
+    // Two readings of the same full bar. Off stack it is regen you let slip. On
+    // stack the coach itself said "Leave energy alone. Don't train", so billing
+    // you for obeying is the same contradiction 0.9.12 fixed in the gym advice.
+    // The duration still shows -- during a war, how long the stack has been
+    // held is the most useful number on the screen.
+    var head = !(streak && streak.sec >= 1) ? ""
+      : state.warStack
+        ? '<div class="gcb-waste" style="margin:0 0 9px">Bar has been full for ' + fmtCd(streak.sec) +
+          " \u2014 held for the stack, so it is not counted as missed.</div>"
+        : '<div class="gcb-waste" style="margin:0 0 9px">Bar has been full for ' + fmtCd(streak.sec) +
+          " \u2014 that is <b>" + fmt(missed(streak.lost)) + "e</b> of regen you did not get.</div>";
     return (
       '<div class="gc-card"><h3>Energy used vs missed</h3>' + head +
       '<div class="row"><span>Spent today</span><b>' + fmt(t.used) + "e</b></div>" +
@@ -5141,7 +5205,9 @@
     var g90 = projectDays(90, e.total, state.focus);
     var tot = state.stats.str + state.stats.def + state.stats.spe + state.stats.dex;
     var live = state.status === "live";
-    var xanOk = state.drugCd <= 0 && !state.warStack && state.items.xanax > 0;
+    // Not gated on war stack any more: stacking is exactly when you want to be
+    // using them.
+    var xanOk = state.drugCd <= 0 && state.items.xanax > 0;
     var cans = state.items.munster + state.items.redcow + state.items.tourine + state.items.cans;
 
     var coachHtml =

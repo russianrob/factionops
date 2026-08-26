@@ -32,12 +32,21 @@
     };
   }
   function inventory(cat) {
+    // Xanax is a Drug, and ITEM_MAP asks for it by that category. Listing it
+    // under Energy Drink meant cat=Drug came back empty and state.items.xanax
+    // was 0 in every browser test, so no xanax advice was ever exercised.
+    if (cat === "Drug") {
+      return { inventory: [
+        { ID: 206, name: "Xanax", quantity: N(cfg.xan, 85) },
+        { ID: 205, name: "Vicodin", quantity: N(cfg.vicodin, 0) },
+        { ID: 203, name: "LSD", quantity: N(cfg.lsd, 0) }
+      ] };
+    }
     if (cat !== "Energy Drink") return { inventory: [] };
     return { inventory: [
       { ID: 985, name: "Can of Goose Juice", quantity: N(cfg.cans, 21) },
       { ID: 554, name: "Can of Rockstar Rudolph", quantity: N(cfg.rudolph, 0) },
-      { ID: 986, name: "Can of Damp Valley", quantity: N(cfg.damp, 0) },
-      { ID: 206, name: "Xanax", quantity: N(cfg.xan, 85) }
+      { ID: 986, name: "Can of Damp Valley", quantity: N(cfg.damp, 0) }
     ] };
   }
 

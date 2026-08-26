@@ -186,5 +186,44 @@ t("missed never goes negative", () => {
   assert.strictEqual(missed(-5), 0);
   assert.strictEqual(missed(undefined), 0);
 });
+// ---- war stack -------------------------------------------------------------
+// While war stack is on the coach itself says "Leave energy alone. Don't
+// train." Booking every second of obeying as waste drags calibration().usage
+// toward its 0.3 floor, and goalPlan() multiplies every ETA by that -- so one
+// war left the whole plan pessimistic for the fourteen days AFTER it ended.
+
+t("war stack: a bar held at cap is stored energy, not waste", () => {
+  const d = ledgerDelta(150, 0, 150, 2 * HOUR, 150, R, 0, true);
+  assert.strictEqual(d.wasted, 0, "booked " + d.wasted + "e against a deliberate hold");
+});
+
+t("war stack still records what you actually spend", () => {
+  // Holding does not mean idle -- the stack gets dumped into attacks, and that
+  // energy really did leave the bar.
+  const d = ledgerDelta(150, 0, 30, 10 * 60e3, 150, R, 0, true);
+  assert.ok(d.used > 120, "spend was swallowed along with the waste: " + d.used);
+});
+
+t("war stack changes what the cap time is CALLED, not the physics", () => {
+  // The trap: `used` is derived by subtracting the un-landed regen from the
+  // window. Zeroing the waste outright hands that regen back as spend, so a
+  // bar held at cap and then dumped reads as 180e trained when 150e left it.
+  const on  = ledgerDelta(150, 0, 30, 3 * HOUR, 150, R, 0, true);
+  const off = ledgerDelta(150, 0, 30, 3 * HOUR, 150, R, 0, false);
+  assert.strictEqual(Math.round(on.used), Math.round(off.used),
+    "spend moved when the label changed: " + on.used + " against " + off.used);
+  assert.strictEqual(Math.round(on.used), 150, "got " + on.used);
+});
+
+t("turning war stack off restores ordinary waste accounting", () => {
+  const off = ledgerDelta(150, 0, 150, 2 * HOUR, 150, R, 0, false);
+  assert.strictEqual(Math.round(off.wasted), 40, "got " + off.wasted);
+});
+
+t("the flag defaults to off, so nothing changes for existing callers", () => {
+  const d = ledgerDelta(150, 0, 150, 2 * HOUR, 150, R);
+  assert.strictEqual(Math.round(d.wasted), 40, "got " + d.wasted);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
