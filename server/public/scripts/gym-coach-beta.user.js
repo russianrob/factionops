@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.13
+// @version      0.9.14
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,10 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.14 — A full segment said "Torn should hand it over on your next train".
+ *         It will not: once the gym exp is earned the gym is gated on the FEE,
+ *         not on more training — the wiki is explicit that you Activate it and
+ *         buy the membership. The old line sent you to spend energy on nothing.
 * 0.9.13 — "How much energy until the next gym?" Torn has always tracked this
  *         and paints it as a whole-number percentage on gym.php — on the gym
  *         button marked inProgress___, which is easy to miss because it is not
@@ -2347,7 +2351,7 @@
       Math.max(2, Math.min(100, est.pct)) + '%"></i></div><b>' + fmt(est.remainMax) + "e</b></div>" +
       '<div class="muted" style="margin-top:8px">' +
       (est.remainMax <= 0
-        ? "The bar is full — Torn should hand it over on your next train."
+        ? "Segment done — the gym is earned. It opens when you Activate it and buy the membership, not by training more."
         : fmt(est.remainMin) + "–" + fmt(est.remainMax) + "e still to train" +
           (days > 0 ? ", about " + days + " day" + (days === 1 ? "" : "s") +
             " at " + fmt(Math.round(eff)) + "e a day" : "")) +

@@ -91,6 +91,16 @@ await t("the Music Store perk shows through to the figure", async () => {
   assert.strictEqual(remaining(plain.card), 36610);
 });
 
+await t("a full bar sends you to buy the membership, not to train more", async () => {
+  // Torn gates the unlock on the FEE once the exp is earned -- the wiki is
+  // explicit: "click the [Activate] button ... and click the Buy Membership
+  // button". Telling someone to keep training here wastes real energy.
+  const r = await panel({ owned: 18, pct: 100, gym: 18 });
+  assert.match(r.card, /membership/i, r.card);
+  assert.ok(!/still to train/.test(r.card), "still counting down at 100%: " + r.card);
+  assert.ok(!/next train/i.test(r.card), "implies training completes it: " + r.card);
+});
+
 await t("a reading left over from a gym you have since bought is dropped", async () => {
   // The stored percentage belongs to a segment that is over. Torn paints no bar
   // for it any more, so nothing overwrites the reading -- it has to be judged
