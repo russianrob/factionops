@@ -1,0 +1,80 @@
+/* Test harness only. Stubs the GM_* surface and the Torn API so the panel can
+   be rendered head-first against arbitrary states. Never shipped. */
+(function () {
+  var cfg = {};
+  try {
+    var q = new URLSearchParams(location.search).get("cfg");
+    if (q) cfg = JSON.parse(q);
+  } catch (e) {}
+  var mem = Object.assign({ gcb_v1_api_key: "harness0000000000key" }, cfg.mem || {});
+  window.GM_getValue = function (k, d) { return k in mem ? mem[k] : d; };
+  window.GM_setValue = function (k, v) { mem[k] = v; };
+  window.GM_addStyle = function (css) {
+    var s = document.createElement("style"); s.textContent = css;
+    document.head.appendChild(s); return s;
+  };
+
+  var N = function (v, d) { return v === undefined ? d : v; };
+  var STATS = cfg.stats || { str: 614000000, def: 12000000, spe: 9000000, dex: 8000000 };
+
+  function userPayload() {
+    var max = N(cfg.energyMax, 150);
+    return {
+      energy: { current: N(cfg.energy, 100), maximum: max, fulltime: N(cfg.fulltime, 600) },
+      happy: { current: N(cfg.happy, 4300), maximum: N(cfg.happyMax, 5000) },
+      cooldowns: { drug: N(cfg.drug, 0), booster: N(cfg.booster, 0), medical: 0 },
+      strength: STATS.str, defense: STATS.def, speed: STATS.spe, dexterity: STATS.dex,
+      active_gym: N(cfg.gym, 23),
+      faction_perks: ["+ 10% energy drink effect"],
+      job_perks: N(cfg.jobPerks, []), book_perks: [], property_perks: ["+ 2% gym gains"],
+      education_perks: ["+ 1% gym gains"], enhancer_perks: [], company_perks: [],
+      merit_perks: [], stock_perks: N(cfg.stockPerks, ["+ 100 energy every 7 days"])
+    };
+  }
+  function inventory(cat) {
+    if (cat !== "Energy Drink") return { inventory: [] };
+    return { inventory: [
+      { ID: 985, name: "Can of Goose Juice", quantity: N(cfg.cans, 21) },
+      { ID: 554, name: "Can of Rockstar Rudolph", quantity: N(cfg.rudolph, 0) },
+      { ID: 986, name: "Can of Damp Valley", quantity: N(cfg.damp, 0) },
+      { ID: 206, name: "Xanax", quantity: N(cfg.xan, 85) }
+    ] };
+  }
+
+  function answer(url) {
+    if (/selections=calendar/.test(url)) return { competitions: [] };
+    if (/\/user\/inventory/.test(url)) {
+      var m = /cat=([^&]+)/.exec(url);
+      return inventory(m ? decodeURIComponent(m[1]) : "");
+    }
+    if (/api\.torn\.com\/user/.test(url)) return userPayload();
+    if (/weav3r\.dev/.test(url)) {
+      var id = (/marketplace\/(\d+)/.exec(url) || [])[1] || "0";
+      // real ballpark figures so the ranking is actually exercised
+      var REAL = { 206: 823800, 367: 13549997, 985: 434950, 986: 561000,
+                   987: 812000, 530: 1780000, 532: 2140000, 533: 2620000 };
+      var p = REAL[id];
+      if (!p) return { item_id: +id, item_name: "Unlisted", market_price: 0, listings: [] };
+      return { item_id: +id, item_name: "Stub", market_price: Math.round(p * 1.02),
+               bazaar_average: p, listings: [{ item_id: +id, price: p, quantity: 5 }] };
+    }
+    return {};
+  }
+  window.GM_xmlhttpRequest = function (o) {
+    setTimeout(function () {
+      var body = JSON.stringify(answer(o.url));
+      if (o.onload) o.onload({ status: 200, responseText: body, response: body });
+    }, 0);
+  };
+  window.GM = { getValue: window.GM_getValue, setValue: window.GM_setValue,
+                xmlHttpRequest: window.GM_xmlhttpRequest };
+
+  // Stand in for Torn PDA's notification bridge so scheduling can be observed.
+  window.__pdaCalls = [];
+  window.flutter_inappwebview = {
+    callHandler: function (name, payload) {
+      window.__pdaCalls.push({ name: name, payload: payload });
+      return Promise.resolve();
+    }
+  };
+})();

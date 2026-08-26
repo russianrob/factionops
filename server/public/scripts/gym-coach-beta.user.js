@@ -1,0 +1,6346 @@
+// ==UserScript==
+// @name         Gym Coach Beta
+// @namespace    RussianRob
+// @version      0.9.13
+// @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
+// @author       RussianRob
+// @license      MIT
+// @match        https://www.torn.com/*
+// @match        https://*.torn.com/*
+// @match        https://www.torn.com/gym.php*
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_xmlhttpRequest
+// @grant        GM.getValue
+// @grant        GM.setValue
+// @grant        GM.xmlHttpRequest
+// @connect      api.torn.com
+// @connect      weav3r.dev
+// @connect      www.torn.com
+// @connect      torn.com
+// @run-at       document-end
+// @downloadURL  https://tornwar.com/scripts/gym-coach-beta.user.js
+// @updateURL    https://tornwar.com/scripts/gym-coach-beta.user.js
+// ==/UserScript==
+
+/*
+ * Gym Coach — free for everyone (MIT)
+ * Built for rcexyz [2598755] by AaronPMC [4431836]
+ *
+ * CHANGELOG
+* 0.9.13 — "How much energy until the next gym?" Torn has always tracked this
+ *         and paints it as a whole-number percentage on gym.php — on the gym
+ *         button marked inProgress___, which is easy to miss because it is not
+ *         a progress bar, a progressbar role, or any text on the page. Reading
+ *         it turns the question into arithmetic, so nothing has to be summed
+ *         out of the training logs.
+ *
+ *         The segment lengths come from the wiki's "Estimate E for next gym"
+ *         column. They are PER-SEGMENT — energy trained while AT a gym, not a
+ *         lifetime running total. Two things prove it: read cumulatively, the
+ *         18,000 -> 18,100 pair would be a 100-energy segment (about ten
+ *         trains) between segments of 5,580 and 6,040; and the segments sum to
+ *         551,255 energy for George's, about a year at a heavy 1,470e/day,
+ *         which is the grind players describe. The cumulative reading puts
+ *         George's at ten weeks.
+ *
+ *         The Music Store's "Well Tuned" perk (+30% gym experience) is applied,
+ *         read as a number off the perk line rather than hardcoded. It is kept
+ *         strictly apart from the stat multipliers: gym EXP changes when the
+ *         next gym arrives and nothing about what a train is worth, and a test
+ *         pins that it never leaks into the gain model.
+ *
+ *         Shown as a range, because a whole-number percent cannot say more than
+ *         that. Silent rather than wrong where it has to be: a reading left
+ *         over from a gym you have since bought, and the specialist gyms, which
+ *         are gated on stat ratios and have no energy answer at all.
+* 0.9.12 — 0.9.11 argued with itself: "Bar full. Train Strength at Force
+ *         Training" one line above "George\u2019s trains Strength 14% faster
+ *         \u2014 switch before you spend this bar". Both true, together
+ *         useless. The gym advice was bolted on as a sibling step instead of
+ *         changing the advice it contradicted.
+ *
+ *         One gym per verdict now. When a better gym is available the training
+ *         steps name THAT gym, and the switch is the first thing on the card
+ *         rather than a footnote under an instruction to stay put. There is a
+ *         test for the invariant itself \u2014 the steps card may never mention
+ *         two different gyms \u2014 because that is the property that was
+ *         broken, and it is cheaper to pin than any particular wording.
+* 0.9.11 — The coach reads which gym you are in and has always taken it as
+ *         given. It will now tell you when a gym you ALREADY OWN trains your
+ *         stat faster for the same energy: Anabolic Anomalies and George\u2019s
+ *         are both 10e a train, and George\u2019s returns 46% more. That is not
+ *         a trade-off, it is a third of every bar thrown away, and the coach was
+ *         cheerfully telling you to spend it.
+ *
+ *         Same energy per train or cheaper, only. A gym with more dots that also
+ *         costs more energy is a real trade \u2014 more per train against fewer
+ *         trains \u2014 and the coach does not get to make that call. Balboas
+ *         beats George\u2019s on Defense dots and costs 25e against 10e, so it
+ *         is never pushed.
+ *
+ *         Which gyms you own is not in the API \u2014 `user?selections=gym`
+ *         returns active_gym and nothing else \u2014 so it is read off gym.php,
+ *         the page you are already standing on, at no API cost. Button order is
+ *         1:1 with the gym table by index, because Torn spells a few names
+ *         differently. Gyms unlock OUT of order, so the actual set is stored
+ *         rather than a highest-unlocked mark. A half-rendered list is ignored:
+ *         five buttons is React mid-render, not a player who owns five gyms.
+ *
+ *         And a gym that cannot train the stat at all now names one that can,
+ *         instead of leaving you to work it out.
+* 0.9.10 — Xanax capped at 3 a day, not 4. 0.9.9 derived four from a nominal
+ *         ~6h cooldown; in practice a fourth does not fit, reported from
+ *         actually taking them. Three is now both the default and the ceiling.
+* 0.9.9 — Three corrections to "Worth it?", all of them things it was stating
+ *         confidently and wrongly.
+ *
+ *         It said "until Strength is done" while quoting a figure that was the
+ *         WHOLE schedule \u2014 every goal, not that one. Mine, from 0.9.0,
+ *         when the ranking moved to the whole plan and the sentence did not
+ *         follow. It names one goal only when there is one, and says "every
+ *         goal" otherwise. "over the run" now reads "over the whole plan",
+ *         since the old word left it genuinely ambiguous whether a day or the
+ *         whole thing was meant.
+ *
+ *         Xanax was capped at 6 a day. The drug cooldown is about 6h, so four
+ *         is the ceiling and the card was pricing a fifth and sixth that no
+ *         amount of money can buy \u2014 taking one early is an overdose, not
+ *         a faster plan.
+ *
+ *         And cans were ranked by money, which put a Can of Goose Juice ABOVE a
+ *         Red Cow: 8e for $433k is cheaper per energy than 38e for $2.39m. It
+ *         is also a quarter of the energy in an identical 2h booster slot, and
+ *         once the booster is high that slot is the scarcer currency. Cans now
+ *         rank strongest first with money only breaking ties between equals,
+ *         they sit as a block below the things that cost money alone, and each
+ *         one shows what its slot is worth in energy per booster-hour.
+* 0.9.8 — Every can is listed, not only the ones in your bag. Holding one weak
+ *         can hid the other eight, and with them the comparison that actually
+ *         decides what to buy: a can costs the same 2h of booster cooldown
+ *         whatever its strength, so a Damp Valley and a Taurine Elite take the
+ *         IDENTICAL slot for 15e against 45e. Twelve slots a day is 180e or
+ *         540e depending only on which can fills them, and you could not notice
+ *         that about a can you could not see.
+ *
+ *         Held cans lead the list, then the strongest of the rest, and each row
+ *         says which it is. Unheld cans are tickable on purpose \u2014 planning
+ *         a purchase is a real use \u2014 and they count toward the projection,
+ *         because a tick that did nothing would be a lie in the other
+ *         direction. What stops that going quiet is a line under the group
+ *         naming the energy your plan is claiming from cans you do not hold.
+ *
+ *         "Worth it?" picks all nine up as purchase candidates and prices them,
+ *         so a can three times the strength for one and a half times the money
+ *         climbs the ranking on its own.
+ *
+ *         This REVERSES 0.7.1, which hid unheld cans so a configured can could
+ *         not inflate a projection silently. That risk is real and has not been
+ *         waved away \u2014 the safeguard moved from hiding the row to naming
+ *         the consequence.
+* 0.9.7 — "Train 150e into Strength at Balboas Gym" \u2014 which trains Defense
+ *         and Dexterity only. The advice never once looked at whether the gym
+ *         you are standing in can train the stat it is telling you to spend a
+ *         bar on. Nine of the 31 cannot train something: Balboas has no
+ *         Strength or Speed, Legs Bums and Tums no Strength, Beach Bods no
+ *         Dexterity, Davies Den no Speed, and the four specialist gyms train
+ *         exactly one stat each.
+ *
+ *         The verdict now says so before any branch that could send you to the
+ *         machine, happy jump included, and names what the gym DOES train so
+ *         the next move is obvious: move gyms, or switch to one of those.
+ *
+ *         The projections always knew \u2014 gainOne has returned 0 for a
+ *         zero-dot stat since the beginning, and the goal schedule refuses to
+ *         build a leg it cannot finish. Only the sentence at the top was
+ *         guessing.
+* 0.9.6 — Buy a can you owned none of and it stayed invisible until Torn\u2019s
+ *         inventory cache expired, minutes later. 0.7.0 added the item-page
+ *         scrape for exactly this, and it was already capturing the new can \u2014
+ *         nothing read it. freshQty can only CORRECT a row that already exists,
+ *         and a can you owned none of has no API row to correct, so the scraped
+ *         count had nowhere to land.
+ *
+ *         The scrape can now ADD a can outright, not just adjust one. Only cans:
+ *         it covers the whole item page, and a Xanax count has no business in
+ *         the drink list. Still only while the scrape is newer than the API
+ *         reading, so Torn takes back over the moment it catches up.
+ *
+ *         The scrape runs on item.php, so a can bought and never looked at is
+ *         still unknown until the API refreshes \u2014 open your items once and
+ *         it is picked up immediately.
+* 0.9.5 — A bar full for 39 minutes while the app was closed reported "full for
+ *         44s" and 0e missed. The script cannot watch a bar it is not running
+ *         beside, so the time has to be reconstructed on the way back in — and
+ *         three things stopped that working.
+ *
+ *         It already KNEW when the bar would fill: that instant is what the
+ *         "energy full" notification is scheduled from. It was computed, armed
+ *         and thrown away. It is kept now, and a bar found full on reopen is
+ *         dated from it rather than from the moment the panel happened to look.
+ *         Only where the bar demonstrably got there — it ended at the cap, or
+ *         ended lower than it started so a spend could have followed — because
+ *         a prediction on a bar that merely rose and stopped short was wrong,
+ *         and trusting it books waste that never happened.
+ *
+ *         The regen rate was not persisted. A full bar reports fulltime 0, so a
+ *         cold start that opens ON a full bar could never derive the rate and
+ *         fell back to Torn\u2019s non-donator base of 180s a point. At a
+ *         donator\u2019s 120s that is every inferred fill half again too long,
+ *         and it read 13e where the honest answer was 19e.
+ *
+ *         And a zero-length streak rendered as "Bar has been full for READY",
+ *         fmtCd(0) meeting a sentence it was never written for. No streak, no
+ *         line.
+* 0.9.4 — Spent energy was measured as the drop between two readings, which
+ *         loses every point that refilled behind a session. Train the bar away,
+ *         come back an hour later, and the hour of regen made the session read
+ *         an hour smaller than it was: 150e spent showed as 100e.
+ *
+ *         It is an energy balance now. Regen that did not land in the bar is
+ *         the waste 0.9.2 started counting, so what remains is what the bar
+ *         absorbed, and the rest of the balance is what left it. Above the cap
+ *         Torn pauses regen entirely, so nothing is absorbed there and banking
+ *         keeps the plain reading it always had.
+ *
+ *         Two consequences worth knowing. A window that ends HIGHER than it
+ *         started can still book spending — twenty points arrive, ten are still
+ *         in the bar, so ten were spent, where the old rule saw a rise and
+ *         recorded nothing. And a can drunk below the cap has to be clamped:
+ *         the balance reads it as negative spending, which would quietly
+ *         subtract a hundred from the day.
+* 0.9.3 — The verdict never mentioned the cans you had already budgeted. At
+ *         25/150 with four a day in the plan it said "Nothing. Bar isn\u2019t
+ *         full. Xan isn\u2019t ready." and left you waiting four hours for
+ *         energy you had decided to buy.
+ *
+ *         Both waiting branches now lead with the cans instead: what to drink,
+ *         what it adds, and how many more trains that is. It counts only cans
+ *         you actually hold, and stops at the booster ceiling.
+ *
+ *         How many is the interesting part. Not the whole day\u2019s budget —
+ *         twelve cans at 25/150 would bank most of it above the cap, where
+ *         natural regen is paused. It suggests just enough to FILL the bar,
+ *         which splits a big budget across the day on its own: twelve a day
+ *         comes out as three sessions of four without needing to model a
+ *         session at all. The line says which, so "5 of the 12 a day you
+ *         budget \u2014 the rest keep for later sessions".
+ *
+ *         A full bar gets no can advice at all; the answer there is to train.
+ *         Holding none of what you budget says exactly that rather than
+ *         suggesting a drink you cannot take.
+* 0.9.2 — Missed energy read 0 after a full bar had sat for hours. Waste was
+ *         only booked when the window ENDED at the cap, so the commonest case
+ *         there is went uncounted: the bar sits full, you train, and by the
+ *         time the panel looks again it has started refilling \u2014 the
+ *         reading is below the cap and every one of those hours was discarded.
+ *         Three hours capped then a session read 0 missed; it now reads 310.
+ *
+ *         The window is accounted as time instead of as a snapshot of where it
+ *         ended: climbing to the cap and climbing back after a spend are both
+ *         absorbed, and whatever is left over is the bar sitting full with
+ *         nowhere to put the regen. The refill leg assumes the spend emptied
+ *         the bar \u2014 the most generous reading available \u2014 so the
+ *         figure is a floor, never more waste than really happened.
+ *
+ *         Banking is untouched: above the cap regen is paused on purpose, and
+ *         all eight of those cases still book nothing.
+* 0.9.1 — The settings wheel had become where the script kept its actual
+ *         features. Seven cards behind an icon that reads as "preferences",
+ *         and while you were in there no tab was lit, so it did not even look
+ *         like a place you could be.
+ *
+ *         It is split by what the thing IS. Goals, energy sources and playstyle
+ *         are what you DECIDE, and they move every projection in the script, so
+ *         they are a visible Plan tab now, alongside Calibration and Worth it?.
+ *         An API key and a raw perk dump are what you configure once; only
+ *         those stay behind the cog.
+ *
+ *         A tab still needs a reason to be tapped, so the Now page carries one
+ *         line saying what the plan is \u2014 "Defense \u2192 150,000,000 \u00b7
+ *         switch in 5 days \u00b7 all goals 9.7 months" \u2014 which taps
+ *         through to it. With nothing set it reads "No goals set \u2014 tap to
+ *         plan your route", so the feature announces itself instead of waiting
+ *         to be found.
+ *
+ *         The tab bar was a hardcoded three-column grid; a fourth tab wrapped
+ *         into a clipped second row rather than fitting. It is four columns now
+ *         and holds one row down to 360px.
+* 0.9.0 — Goals rotate, and you can say what comes first.
+ *
+ *         Setting a goal used to take the choice away: the plan ran one whole
+ *         stat at a time, shortest first, and the manual pickers disappeared.
+ *         With three 1b goals that means one stat climbing for six months while
+ *         the other two sit still. Now an increment can be set \u2014 50m, 100m,
+ *         250m or 500m \u2014 and each stat climbs to the next milestone in
+ *         turn, so they rise together. A stat that is behind catches up on its
+ *         own first: at 105m against 150m it takes one leg by itself, then all
+ *         three rotate.
+ *
+ *         Rotation is free. A stat\u2019s gains depend only on its own value,
+ *         so interleaving cannot change any stat\u2019s total training time \u2014
+ *         you are choosing what stays balanced along the way, not paying for
+ *         it. Making that true in the code meant counting TRAINS and dividing
+ *         once at the end. The old maths walked whole days and rounded up at
+ *         the end of every goal; with three goals that was invisible, but at
+ *         50m increments it is 52 legs, and it would have reported 24 days of
+ *         cost against a true cost of about 0.1.
+ *
+ *         The \u25b2 on each goal moves that stat earlier in the order, and the
+ *         list is drawn in the order it will be trained so the move is visible.
+ *         Untouched, the order is still shortest-first. The Trend chart draws
+ *         the same schedule as a staircase, and "Worth it?" ranks purchases
+ *         against the whole schedule rather than whichever leg is in progress
+ *         \u2014 pricing cans against a ten-day milestone read as nonsense.
+* 0.8.1 — 149/150 read "capped \u00b7 regen paused, spend it", drew a full red
+ *         bar, and told you to train immediately. None of that was true: regen
+ *         was still running, and at 10e a train 149e is fourteen trains where
+ *         150e is fifteen \u2014 so the advice was to throw a train away for
+ *         the sake of thirty seconds. The cause was two points of slack in the
+ *         definition of "full", inherited from the stable script and never
+ *         explained, copied into six places. There is now one definition: full
+ *         means at or above YOUR maximum. Below it you get "full in 30s" and
+ *         are told to wait; the energy-full ping is armed again for the last
+ *         two points, where it used to be silently skipped.
+* 0.8.0 — Projections correct themselves against what actually happened, and a
+ *         "Worth it?" card ranks money against time.
+ *
+ *         Calibration keeps two figures apart rather than blending them. The
+ *         GAIN MODEL is what you really gained divided by what the model
+ *         predicted for the energy you really spent \u2014 does the arithmetic
+ *         hold? USAGE is the energy that reached the gym as a share of the
+ *         energy that passed through your bar \u2014 do you actually spend it?
+ *         Goal ETAs multiply by both, so a bar left sitting full now shows up
+ *         as days added to the goal instead of a number with no consequence.
+ *         Measured over the last 14 complete days, using only days where a
+ *         single stat moved; below seven such days it stays out of the way and
+ *         says so. Usage is measured against energy you HAD, never against the
+ *         size of your plan \u2014 measuring against the plan would drop usage
+ *         by exactly the amount any new source added, so every "what if I
+ *         bought this" answer came back as no change at all.
+ *
+ *         Worth it? asks what one more a day would buy you, for the goal you
+ *         are training now. Prices are the cheapest live bazaar or item-market
+ *         listing, so the ranking is by cost per day saved rather than by
+ *         sticker price. A source too small to matter one at a time is quoted
+ *         at the smallest count that does move the date, rather than silently
+ *         vanishing. Refills are bought with points and Mc Smoogle is capital
+ *         you keep, so neither is ranked as spend; Mc Smoogle gets its own line
+ *         and its own smallest-number-of-increments answer.
+ *
+ *         Prices come from weav3r.dev, which mirrors both halves of the item
+ *         market in one unauthenticated call, so this costs nothing from the
+ *         100-a-minute key budget. What leaves the browser is an item ID. If
+ *         that host is unreachable, Torn\u2019s own item market is tried next
+ *         \u2014 one API call, and the bazaar half is lost.
+* 0.7.2 — The booster meter said "room for 0 more cans" at 46h 42m of a 48h
+ *         cap. Torn only requires you to be UNDER the cap to drink, so a can
+ *         can carry you past it \u2014 the headroom is rounded up now, not down.
+ * 0.7.1 — The can list under Energy sources shows only cans you actually hold,
+ *         read from your inventory rather than a fixed set of staples. A can
+ *         you have already configured stays listed even at zero, so a setting
+ *         cannot disappear and quietly change the projection.
+ * 0.7.0 — Reads item counts from the item page instead of waiting on the API,
+ *         which Torn caches for minutes \u2014 drink a can and the old number
+ *         lingered. Visiting the item page now records what is actually there,
+ *         and those counts are used while they are newer than the API reading,
+ *         which takes over again once Torn catches up.
+ * 0.6.1 — Sessions logged the energy spent but no stat gain. Energy moves the
+ *         instant you train, while Torn caches battle stats for up to about
+ *         thirty seconds \u2014 and the entry was written two seconds later, so
+ *         the stats had not moved yet and every gain read as nothing. It now
+ *         waits for the stats to actually change before writing, and records
+ *         the session without a gain rather than losing it if they never do.
+ * 0.6.0 — Whole training sessions were missing from the log. It was driven by
+ *         comparing energy between API polls, but the page updates energy live
+ *         every second, so the drop was absorbed before a payload arrived and
+ *         nothing was recorded \u2014 which is why "Spent today" was right while
+ *         the log stayed empty. The log is now driven by the same observation
+ *         the ledger uses, so it catches training started any way at all, not
+ *         only a click the script recognises. An observed drop still has to be
+ *         backed by a real stat gain before it becomes an entry.
+ * 0.5.6 — Mc Smoogle Corp added as an energy source: 100 energy every 7 days
+ *         per increment, so about 14 a day each. Counted in increments rather
+ *         than shares, because the share threshold moves with the price. Torn
+ *         does not expose stock benefits through the perks API, so this cannot
+ *         be detected \u2014 tick it and set how many increments you hold. The
+ *         daily total also sums whatever sources exist now rather than a fixed
+ *         list, which had silently excluded anything added later.
+ * 0.5.5 — Phantom "Trained 5e" entries. There are two train loggers and 0.3.3
+ *         only fixed one: a second, poll-driven logger compared energy between
+ *         API readings, but energy is updated live from the page while the API
+ *         lags, so a stale poll a few points lower looked like a small session.
+ *         It now requires the stat to have actually gone up \u2014 a real train
+ *         always raises the stat, a stale reading does not \u2014 stands down
+ *         while a click-driven train is being measured, and attributes the gain
+ *         to the stat that moved instead of the total of all four, which is
+ *         where "+1,685,994,823" for a 250e session came from.
+ * 0.5.4 — Restores WAIT_FULL_MAX, a constant an earlier edit deleted. Four
+ *         places used it, so the panel threw and drew nothing as soon as the
+ *         coach reached a "wait for a full bar" branch. node --check cannot see
+ *         a missing variable, so the build now scans for identifiers that are
+ *         used but never declared.
+ * 0.5.3 — A failure while drawing the panel used to leave an empty box: the
+ *         element exists and is styled, so it looks like the script is fine and
+ *         has nothing to say. The draw is wrapped now, and a failure shows the
+ *         message and stack in the panel itself, with a retry button.
+ * 0.5.2 — Set gains a "Perks Torn sent" card listing every perk line from all
+ *         nine sources, ticking the ones the script is actually using. A perk
+ *         it ignores can then be named rather than guessed at \u2014 which is
+ *         what it took to work out that education perks omit the word "gym".
+ * 0.5.1 — Off the Now tab, the verdict and energy meter collapse into a single
+ *         tappable line, giving Stock and Trend roughly a third more room. The
+ *         line still carries the verdict and your energy, and tapping it goes
+ *         back to Now.
+ * 0.5.0 — Goals. Set a target on any stat — type a number or shorthand like
+ *         150m — and the coach works out how long each takes at your energy,
+ *         gym, happy and perks, then trains them one at a time. Shortest goal
+ *         first: the total is the same whatever the order, so this finishes
+ *         something soonest. The Trend chart becomes the schedule, each stat
+ *         climbing only in its own window and flattening at its target before
+ *         the next one starts. The manual priority and second-skill pickers are
+ *         still there, and take over whenever no goal is set.
+ * 0.4.0 — The projection chart showed all four stats climbing, including ones
+ *         you never train. It was drawing four separate "what if all your
+ *         energy went here" lines, which reads as a forecast. Only the stat you
+ *         train grows now; the rest stay flat. Gym perks from education,
+ *         property, merit, stock and enhancers were also being dropped whenever
+ *         the perk text did not contain the word "gym" — education perks
+ *         usually read "+ 1%% strength gain" — so the filter is widened,
+ *         with drink, happy, nerve and crime perks explicitly excluded. The
+ *         perks card now lists every source that contributed and the exact line
+ *         it counted, so a multiplier that looks wrong can be traced.
+ * 0.3.10 — Missed energy is floored rather than rounded. Regen arrives in whole
+ *          points, so half a point at the cap has cost you nothing yet, and
+ *          rounding meant ninety seconds at a full bar reported "1 missed" \u2014
+ *          which reads as a mistake you did not make. The fraction is still
+ *          accumulated, it is just not claimed until a whole point is gone.
+ * 0.3.9 — Banking energy above the cap is no longer counted as missed. Regen
+ *         does pause above the cap, and the old rule counted that as waste \u2014
+ *         so drinking ten cans past 150 booked the whole stockpiling session,
+ *         and every hour spent working through banked energy, as energy you had
+ *         let slip. Missed now means only what it should: the bar sat AT the
+ *         cap and regen fell on the floor.
+ * 0.3.8 — The booster cooldown has left the 12-hour rail and has its own meter.
+ *         A 28h cooldown filled a 12h rail completely and read as "maxed" when
+ *         it was little over half of a 48h ceiling. The rail is a time window,
+ *         and the booster is not a wait but a budget with a cap, so it now
+ *         shows how much of the ceiling is used and how many more cans fit
+ *         under it. Also ports the Caffeine Consumption event from the Drink
+ *         Gains script: while it runs, every can is worth double, read from
+ *         Torn\u2019s calendar and cached for 12 hours.
+ * 0.3.7 — Every can now has its real value, taken from the Drink Gains script
+ *         (torn-can-energy 1.2.2) rather than guessed: Goose Juice 5, Damp
+ *         Valley 10, Crocozade 15, Munster and Santa Shooters 20, Red Cow and
+ *         Rockstar Rudolph 25, Taurine Elite and X-MASS 30 — matched on
+ *         item id first, since names drift with events. Values are also
+ *         perk-adjusted: books and faction, job or company perks that raise
+ *         energy-drink or consumable gain are read from your perks and applied,
+ *         so what is shown is what YOU get, and the projections follow. The
+ *         source filters now list the cans you actually hold, so a seasonal can
+ *         can be ticked instead of being unrepresentable.
+ * 0.3.6 — Energy drinks are their own section rather than a sub-list tucked
+ *         under an unrelated row, and the rows finally have styles: five CSS
+ *         blocks added in earlier versions never actually landed (the string
+ *         they anchored to did not exist, and only the markup edit beside them
+ *         was asserted), so the drink rows and the Set-pane tick boxes were
+ *         rendering unstyled. The tick box also shared a class name with the
+ *         energy bar's 1px tick marks and was being styled as one.
+ * 0.3.5 — The energy-drink line expands into the cans you actually hold, each
+ *         with its own USE button, strongest first. Munster, Red Cow and
+ *         Taurine show their energy; anything else is listed by name and count
+ *         rather than assigned a figure that would be a guess. Also: the
+ *         booster ceiling is no longer hardcoded to 24h. The faction perk
+ *         raises it to 48h, detected from your perks and also inferred from
+ *         the bar itself \u2014 a cooldown above 24h cannot exist without the
+ *         perk, so seeing one proves it. Before this the coach told you to
+ *         hold cans you could still use.
+ * 0.3.4 — "Spent today" was losing nearly everything. The ledger only wrote
+ *         itself to storage after 20 credited events, but a whole training
+ *         session credits exactly ONCE — so every session was discarded when
+ *         the page navigated, and the figure was whatever single window
+ *         happened to survive. Spending is now written through immediately,
+ *         the rest flushes on a 15-second clock instead of a counter, and the
+ *         ledger is saved on pagehide and when the tab is hidden.
+ * 0.3.3 — The train log reported the wrong number. It printed state.energy at
+ *         the moment of the click — your remaining balance — labelled as if it
+ *         were what the session cost, so a 150e session showed "150e" only by
+ *         coincidence and a click on an empty bar logged "0e". It now records
+ *         the energy actually spent and the stat actually gained, measured
+ *         after the refresh, and a click that trained nothing writes no line.
+ * 0.3.2 — War stack and the 10-star bonus switched themselves ON at every
+ *         reload: Torn PDA returns stored values as STRINGS, and !!"false" is
+ *         true. Booleans are now parsed rather than coerced, which also fixes
+ *         the panel ignoring whether you had tucked it away. The 10-star Adult
+ *         Novelties switch is gone \u2014 it is read from your perks and listed
+ *         with the faction and company lines under Gym perks. Energy sources
+ *         became tick boxes, with each can listed separately because Munster,
+ *         Red Cow and Taurine are +20, +25 and +30. And a plain-English pass
+ *         over the coach: no more "CD pops" or "dump Strength" \u2014 it says
+ *         "cooldown reaches 0" and "train Strength".
+ * 0.3.1 — Fixes waking up to a full bar and being told it had been full for a
+ *         second. At boot state.energy is 0 meaning "not read yet", not "empty",
+ *         but the ledger tick ran anyway: it cleared the overnight cap streak
+ *         and booked a phantom spend of the whole bar. The ledger now waits for
+ *         a real reading from the API or the page. The streak also falls back to
+ *         the last stored reading when it was already full, so an upgrade or a
+ *         cold start still reports the hours rather than starting from zero.
+ * 0.3.0 — Two changes. The floating badge is gone: it duplicated the in-gym
+ *         "GYM COACH" button and sat over Torn's chrome, so the panel now
+ *         opens from the gym page only. And the script keeps an energy ledger
+ *         \u2014 what you spent against what your bar dropped while already full.
+ *         Waste is worked out by comparing two observations rather than by
+ *         running a timer, so eight hours asleep on a full bar is counted, not
+ *         missed. The Now tab shows the live figure ("full for 2h 04m, that is
+ *         41e you did not get"); the Trend tab charts spent vs missed per day.
+ * 0.2.5 — Badge is circular, and the three tab blocks became one segmented
+ *         control: a single bordered track with the selected tab as an amber
+ *         pill inside it. Reads as one switch rather than three buttons
+ *         competing for attention, and gives the amber back to the verdict.
+ * 0.2.4 — THE FIX for the script never running under Torn PDA. Line 903 held
+ *         a curly apostrophe inside a SINGLE-quoted string:
+ *         return \'<span class="chip bad">DON\u2019T</span>\';
+ *         GMforPDA normalises typographic quotes to straight ASCII when it
+ *         processes the source, which closed the string at DON\' and left T as
+ *         a stray token: "SyntaxError: Unexpected identifier \'T\'. Expected a
+ *         \';\' following a return statement." The file never parsed, so nothing
+ *         ran at all — no button, no error anywhere visible. Only PDA rewrites
+ *         the source, hence it worked in Safari and Tampermonkey. All curly
+ *         quotes in code are now \\u escapes, so no quote character exists in
+ *         the source to normalise. Caught by gym-diag, which registered an
+ *         error handler and reported the exception off the device.
+ * 0.2.3 — Reverts the @grant unsafeWindow added in the previous version. It was
+ *         a guess, and bisection probes carrying it stopped running under PDA
+ *         entirely, while the same header without it runs. The body references
+ *         unsafeWindow only behind typeof guards, so the grant bought nothing.
+ * 0.2.2 — REVERTED in the next version: declared @grant unsafeWindow. The body references unsafeWindow five
+ *         times (guarded PDA-detection fallbacks) but the header never granted
+ *         it. Torn PDA would not run the file at all in that state — no button,
+ *         no error, dead before the first statement — while Safari and
+ *         Tampermonkey ran it fine. FactionOps uses unsafeWindow and grants it,
+ *         and works under PDA; that was the difference.
+ * 0.2.1 — Fixes the script never running under Torn PDA at all. The file
+ *         carried the API-key placeholder TWICE: the real one, and a decoy
+ *         split across two string literals on the line above, used to detect
+ *         whether PDA had substituted a key. PDA rewrites that placeholder by
+ *         matching the source text before it injects, and a greedy match spans
+ *         from the decoy to the real one, deleting the code between and leaving
+ *         an unbalanced bracket. The file then fails to parse, so nothing runs:
+ *         no button, no error, nothing in the console. Only PDA rewrites the
+ *         source, which is why it worked in Safari and Tampermonkey. There is
+ *         now exactly one placeholder, single-quoted, as in the scripts known
+ *         to work under PDA; substitution is detected from the value itself.
+ * 0.2.0 — Badge code rewritten. It is a real <button> styled by one
+ *         setAttribute call instead of a <div> with twenty-one
+ *         style.setProperty calls — a rejected value used to leave it
+ *         half-styled with no error. Taps go through the browser's own click
+ *         handling, so the touchend dedupe that could swallow the first tap is
+ *         gone. Mounting now re-checks for ~20 seconds instead of stopping at
+ *         the first success, so a late gym render still gets a badge.
+ * 0.1.10 — Removed the diagnostic beacon and its @connect entry. It reported
+ *          version and mount state to tornwar.com to work out why the script
+ *          was not running; the script makes no request anywhere but the Torn
+ *          API now.
+ * 0.1.9 — @updateURL pointed at the .meta.js, which is 950 bytes of pure
+ *         comments. A runtime that installs whatever @updateURL returns as the
+ *         script body — Torn PDA behaves this way, and warboard-iOS did the
+ *         same until 0.11.223 — ends up with an inert script that still lists
+ *         the right version. No badge, no error, nothing. It now points at the
+ *         .user.js, which is what the upstream PDA build always did.
+ * 0.1.8 — Temporary boot beacon, to tell "not installed" apart from "installed
+ *         but old" apart from "running and invisible" \u2014 they look the same
+ *         from outside. Reports version, path and capability flags only.
+ * 0.1.7 — The beta was invisible on PDA whenever the stable script was also
+ *         installed, in two ways. The badge on PDA next to the stable script. Both
+ *         pin themselves with !important to the same corner at the same size in
+ *         the same green reading "GYM", so they overlapped exactly and only the
+ *         top one could be tapped. The beta badge now sits a badge-height above,
+ *         is amber, and reads BETA; the in-gym dock button is likewise labelled
+ *         and coloured apart. Both panels also claim the maximum z-index, so
+ *         the beta now re-appends itself when opened, which is the only way to
+ *         come in front of a panel that cannot be outranked.
+ * 0.1.6 — Centred the owner line.
+ * 0.1.5 — Owner line is just the name and ID now; the licence sentence and the
+ *         built-for credit live in the script header, which is where anyone
+ *         checking provenance looks anyway.
+ * 0.1.4 — Dropped the footer. Its Tuck Away button duplicated the header\u2019s
+ *         minimise and its timestamp duplicated the header\u2019s, so it was ~57px
+ *         of the scrolling area spent on nothing. The header timestamp now
+ *         carries the .gc-ago hook so the once-a-second ticker keeps it live.
+ * 0.1.3 — Energy read wrong once you banked past the cap. The meter clamped
+ *         to the maximum, so a real 194/150 showed as 150/150 and the train
+ *         count lost four goes; it now shows the true figure with the overflow
+ *         drawn past a cap marker. "Full in" was also stale: the API's fulltime
+ *         is measured at the energy it was polled at and never ticked down, so
+ *         after a xanax it counted toward a level already passed. It is now a
+ *         per-point rate derived from that same payload, applied to live energy,
+ *         and it reads zero at or above the cap.
+ * 0.1.2 — The tab buttons sat on a dark plate: the stable stylesheet paints
+ *         .tabs itself, and the beta override only replaced its layout. Reset
+ *         its background, radius and margin. The scrolling area was also being
+ *         starved by the pinned header — the 12-hour rail moved into the Now
+ *         tab (it is Now information, and it cost ~90px on tabs it says nothing
+ *         about), the verdict and meters tightened, and the panel grew to 92dvh.
+ *         The content area went from about an eighth of the panel to nearly half.
+ * 0.1.1 — Seeds history and coach settings from the stable script on first
+ *         run, so Trend is not blank beside a stable copy holding weeks of it.
+ *         Renamed the in-gym dock button and the DOM-observer flag, which both
+ *         scripts were still fighting over.
+ * 0.1.0 — First beta of the redesigned overlay, forked from stable 0.10.7.
+ *         The verdict is a header, not a tab: what to do next, why, and the
+ *         energy and cooldown state behind it are all above the tab bar. Six
+ *         tabs became three — Now (steps, live stats, perks), Stock (items),
+ *         Trend (chart, projection, log) — with settings behind the cog. Adds
+ *         an energy bar ticked per train and a 12-hour cooldown rail. Reads
+ *         the stable script's saved API key but never writes to its settings.
+ */
+
+(function () {
+  "use strict";
+
+  var PILL_ID = "gcb-pill";
+  var PANEL_ID = "gcb-panel";
+  var STYLE_ID = "gcb-style";
+
+  // The floating badge is gone (0.3.0). It duplicated the in-gym "GYM COACH"
+  // button, and a circle pinned over Torn's own chrome is in the way far more
+  // often than it is wanted. The panel opens from the gym page button only.
+  // These are kept as no-ops so the call sites that re-pin a badge do nothing
+  // rather than throw.
+  function pinFab() {}
+  function mountFabNow() { return true; }
+
+  var OWNER_TAG = "rcexyz [2598755]";
+  var OWNER_ASCII =
+    "█▀█ █▀▀ █▀▀ ▀▄▀ █ █ ▀▀█\n" +
+    "█▀▄ █   █▀▀  █  ▀▄▀  █ \n" +
+    "█ █ █▄▄ █▄▄ ▄▀▄  █  █▄▄";
+
+  var OWNER_NOTICE =
+    "Free for everyone. Built for rcexyz [2598755] by AaronPMC [4431836].";
+
+  // The stable script opens with ASCII art roughly 150px tall. In a layout
+  // whose whole point is that the verdict is the first thing you see, that is
+  // the most expensive space on the panel. The credit stays; the art goes.
+  function ownerBannerHtml() {
+    return '<div class="gcb-own">' + OWNER_TAG + "</div>";
+  }
+
+  var NS = "gcb_v1";
+  var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
+  var GC_VERSION = "0.9.12";
+  var COMMENT = "GymCoach-AaronPMC";
+
+  // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
+  // way the scripts that work under Torn PDA write it. The previous version
+  // built a decoy by joining two halves of the token on the line above, to
+  // detect whether PDA had substituted a key. That gave the file a second,
+  // split occurrence — and PDA rewrites the placeholder by matching the
+  // source text, so a greedy match runs from the decoy's opening to the real
+  // one's close and deletes everything between, leaving unbalanced brackets.
+  // The file then fails to parse and the script never runs at all: no button,
+  // no error. Detect substitution from the value itself instead.
+  var PDA_INJECTED_KEY = '###PDA-APIKEY###';
+  var HAS_PDA_KEY = PDA_INJECTED_KEY.indexOf("##") === -1 && PDA_INJECTED_KEY.length > 8;
+
+  var GYMS = [
+    { Gym: "Premier Fitness", Energy: 5, Str: 2, Spe: 2, Def: 2, Dex: 2 },
+    { Gym: "Average Joes", Energy: 5, Str: 2.4, Spe: 2.4, Def: 2.8, Dex: 2.4 },
+    { Gym: "Woody's Workout", Energy: 5, Str: 2.8, Spe: 3.2, Def: 3, Dex: 2.8 },
+    { Gym: "Beach Bods", Energy: 5, Str: 3.2, Spe: 3.2, Def: 3.2, Dex: 0 },
+    { Gym: "Silver Gym", Energy: 5, Str: 3.4, Spe: 3.6, Def: 3.4, Dex: 3.2 },
+    { Gym: "Pour Femme", Energy: 5, Str: 3.4, Spe: 3.6, Def: 3.6, Dex: 3.8 },
+    { Gym: "Davies Den", Energy: 5, Str: 3.7, Spe: 0, Def: 3.7, Dex: 3.7 },
+    { Gym: "Global Gym", Energy: 5, Str: 4, Spe: 4, Def: 4, Dex: 4 },
+    { Gym: "Knuckle Heads", Energy: 10, Str: 4.8, Spe: 4.4, Def: 4, Dex: 4.2 },
+    { Gym: "Pioneer Fitness", Energy: 10, Str: 4.4, Spe: 4.6, Def: 4.8, Dex: 4.4 },
+    { Gym: "Anabolic Anomalies", Energy: 10, Str: 5, Spe: 4.6, Def: 5.2, Dex: 4.6 },
+    { Gym: "Core", Energy: 10, Str: 5, Spe: 5.2, Def: 5, Dex: 5 },
+    { Gym: "Racing Fitness", Energy: 10, Str: 5, Spe: 5.4, Def: 4.8, Dex: 5.2 },
+    { Gym: "Complete Cardio", Energy: 10, Str: 5.5, Spe: 5.8, Def: 5.5, Dex: 5.2 },
+    { Gym: "Legs Bums and Tums", Energy: 10, Str: 0, Spe: 5.6, Def: 5.6, Dex: 5.8 },
+    { Gym: "Deep Burn", Energy: 10, Str: 6, Spe: 6, Def: 6, Dex: 6 },
+    { Gym: "Apollo Gym", Energy: 10, Str: 6, Spe: 6.2, Def: 6.4, Dex: 6.2 },
+    { Gym: "Gun Shop", Energy: 10, Str: 6.6, Spe: 6.4, Def: 6.2, Dex: 6.2 },
+    { Gym: "Force Training", Energy: 10, Str: 6.4, Spe: 6.6, Def: 6.4, Dex: 6.8 },
+    { Gym: "Cha Cha's", Energy: 10, Str: 6.4, Spe: 6.4, Def: 6.8, Dex: 7 },
+    { Gym: "Atlas", Energy: 10, Str: 7, Spe: 6.4, Def: 6.4, Dex: 6.6 },
+    { Gym: "Last Round", Energy: 10, Str: 6.8, Spe: 6.6, Def: 7, Dex: 6.6 },
+    { Gym: "The Edge", Energy: 10, Str: 6.8, Spe: 7, Def: 7, Dex: 6.8 },
+    { Gym: "George's", Energy: 10, Str: 7.3, Spe: 7.3, Def: 7.3, Dex: 7.3 },
+    { Gym: "Balboas Gym", Energy: 25, Str: 0, Spe: 0, Def: 7.5, Dex: 7.5 },
+    { Gym: "Frontline Fitness", Energy: 25, Str: 7.5, Spe: 7.5, Def: 0, Dex: 0 },
+    { Gym: "Gym 3000", Energy: 50, Str: 8, Spe: 0, Def: 0, Dex: 0 },
+    { Gym: "Mr. Isoyamas", Energy: 50, Str: 0, Spe: 0, Def: 8, Dex: 0 },
+    { Gym: "Total Rebound", Energy: 50, Str: 0, Spe: 8, Def: 0, Dex: 0 },
+    { Gym: "Elites", Energy: 50, Str: 0, Spe: 0, Def: 0, Dex: 8 },
+    { Gym: "Sports Science Lab", Energy: 25, Str: 9, Spe: 9, Def: 9, Dex: 9 },
+  ];
+
+  // Energy trained WHILE AT a gym before the next one unlocks. Index i is the
+  // segment that ends by unlocking Torn gym i+2, so the segment leading to gym
+  // G is GYM_SEGMENT_E[G - 2] — there is no segment leading to gym 1, and the
+  // specialist gyms (25+) are not on this ladder at all.
+  //
+  // These are PER-SEGMENT, not a cumulative running total. Two things say so.
+  // Read cumulatively, 18,000 -> 18,100 would be a 100-energy segment (about
+  // ten trains) sitting between segments of 5,580 and 6,040. And the segments
+  // sum to 551,255 energy to reach George's — roughly a year at a heavy
+  // 1,470e/day, which is the grind players actually describe; the cumulative
+  // reading would make it 106,305, about ten weeks.
+  //
+  // Source: wiki.torn.com/wiki/Gym, column "Estimate E for next gym". The same
+  // 23 values ship in TornTools (gym-progress) and in Qaim [2370947]'s
+  // Torn Gym Energy Calculator (MIT).
+  var GYM_SEGMENT_E = [
+    200, 500, 1000, 2000, 2750, 3000, 3500, 4000, 6000, 7000, 8000, 11000,
+    12420, 18000, 18100, 24140, 31260, 36610, 46640, 56520, 67775, 84535,
+    106305,
+  ];
+
+  var ITEM_MAP = [
+    { key: "xanax", test: /xanax/i, cat: "Drug" },
+    { key: "lsd", test: /^lsd$/i, cat: "Drug" },
+    { key: "ecstasy", test: /ecstasy/i, cat: "Drug" },
+    { key: "vicodin", test: /vicodin/i, cat: "Drug" },
+    { key: "munster", test: /munster/i, cat: "Energy Drink" },
+    { key: "redcow", test: /red cow/i, cat: "Energy Drink" },
+    { key: "tourine", test: /tourine|taurine elite/i, cat: "Energy Drink" },
+    { key: "cans", test: /can of |bottle of pumpkin|bottle of kandy|bottle of christmas|santa shooters|rockstar rudolph|x-mass/i, cat: "Energy Drink" },
+    { key: "fhc", test: /feathery hotel/i },
+    { key: "edvd", test: /erotic dvd/i },
+    { key: "nandrolone", test: /nandrolone/i },
+  ];
+  var HAPPY_CANDY =
+    /lollipop|bon\s?bon|chocolate|cupcake|pixie|jawbreaker|cotton candy|revels|mints|sweets|toffee|caramel|gingerbread|stollen|easter egg|chocolate egg|honeycomb|doughnut|donut|cookie|brownie|fudge|marshmallow|ice cream|candy apple|candy corn|truffle|praline|macaron|birthday cake|wedding cake|pumpkin pie|humbug|sherbet|tootsie|kisses|sweet hearts|reindeer dropping|bloody eyeball|gobstopper|nougat|liquorice|licorice|wine gum|cola bottle|bubblegum|popcorn|popsicle|sundae|muffin|waffle|pancake|parfait|cheesecake|candy cane|candy/i;
+  // Lifted from the Drink Gains script (torn-can-energy 1.2.2), which already
+  // carries a verified table by item id and name. Matching on the id first
+  // because names drift with events; the pattern is the fallback.
+  var CAN_TYPES = [
+    { k: "goose",   ids: [985], test: /goose juice/i,          label: "Can of Goose Juice",      e: 5 },
+    { k: "damp",    ids: [986], test: /damp valley/i,          label: "Can of Damp Valley",      e: 10 },
+    { k: "croco",   ids: [987], test: /crocozade/i,            label: "Can of Crocozade",        e: 15 },
+    { k: "munster", ids: [530], test: /munster/i,              label: "Can of Munster",          e: 20 },
+    { k: "santa",   ids: [553], test: /santa shooters/i,       label: "Can of Santa Shooters",   e: 20 },
+    { k: "redcow",  ids: [532], test: /red cow/i,              label: "Can of Red Cow",          e: 25 },
+    { k: "rudolph", ids: [554], test: /rockstar rudolph/i,     label: "Can of Rockstar Rudolph", e: 25 },
+    { k: "tourine", ids: [533], test: /taurine elite|tourine/i, label: "Can of Taurine Elite",   e: 30 },
+    { k: "xmass",   ids: [555], test: /x-?mass/i,              label: "Can of X-MASS",           e: 30 }
+  ];
+  var CLASSIC_CANS = { munster: 1, redcow: 1, tourine: 1 };
+
+  function canType(name, id) {
+    var n = String(name || "");
+    for (var i = 0; i < CAN_TYPES.length; i++) {
+      if (id && CAN_TYPES[i].ids.indexOf(Number(id)) !== -1) return CAN_TYPES[i];
+    }
+    for (var j = 0; j < CAN_TYPES.length; j++) {
+      if (CAN_TYPES[j].test.test(n)) return CAN_TYPES[j];
+    }
+    return null;
+  }
+
+  // Caffeine Consumption doubles every can for its duration. Ported from the
+  // Drink Gains script, window and all: Torn's calendar gives whole-day
+  // boundaries, so a day of slack either side matches how the event actually
+  // runs rather than cutting out at midnight UTC.
+  var CAL_TTL = 12 * 3600 * 1000;
+
+  function eventActive(events, matcher, now) {
+    var ev = null;
+    (events || []).forEach(function (e) { if (!ev && matcher(e)) ev = e; });
+    if (!ev) return false;
+    var start = ev.start * 1000 - 86400000;
+    var end = ev.end * 1000 + 86400000;
+    return now > start && now < end;
+  }
+
+  function caffeineOn() {
+    return eventActive(state.calEvents, function (e) {
+      return /^caffeinecon/i.test(String((e && e.title) || "").trim());
+    }, Date.now());
+  }
+
+  // Perk-adjusted and event-adjusted, so what is shown is what YOU get now.
+  function canEnergy(t) {
+    if (!t || !t.e) return 0;
+    var mult = state.canMult > 0 ? state.canMult : 1;
+    return Math.round(t.e * mult) * (caffeineOn() ? 2 : 1);
+  }
+
+  function refreshCalendar() {
+    var key = resolveKey();
+    if (!key) return;
+    if (Date.now() - (state.calAt || 0) < CAL_TTL) return;
+    state.calAt = Date.now();
+    storeSet("calAt", state.calAt);
+    httpGet("https://api.torn.com/v2/torn?selections=calendar&key=" + encodeURIComponent(key))
+      .then(function (d) {
+        if (!d || d.error) return;
+        var cal = d.calendar;
+        var events = cal && Array.isArray(cal.events) ? cal.events : [];
+        state.calEvents = events;
+        storeSet("calEvents", events);
+        renderPanel();
+      })
+      ["catch"](function () {});
+  }
+
+  function drinkEnergy(name, id) {
+    var t = canType(name, id);
+    return t ? canEnergy(t) : 0; // still unknown: show the name, claim nothing
+  }
+
+  var FALLBACK_IDS = { xanax: 206, ecstasy: 197, edvd: 366, lsd: 199, munster: 530, redcow: 532, tourine: 533, fhc: 367, vicodin: 205 };
+  var H = 3600;
+  var M = 60;
+  var BOOSTER_CAP = 24 * H;
+  var BOOSTER_CAP_PERK = 48 * H;
+
+  // The faction perk lifts the booster ceiling from 24h to 48h, and the script
+  // was capping everyone at 24 — telling you to hold cans you could still use.
+  // Detected two ways, because neither alone is reliable: from the perk text,
+  // and from the bar itself. A cooldown above 24h cannot exist without the
+  // perk, so observing one proves it, whatever the perk happens to be called.
+  function boosterCap() {
+    return state.boosterPerk ? BOOSTER_CAP_PERK : BOOSTER_CAP;
+  }
+
+  function noteBoosterPerk() {
+    if (state.boosterPerk) return;
+    if ((state.boosterCd || 0) > BOOSTER_CAP) {
+      state.boosterPerk = true;
+      storeSet("boosterPerk", true);
+    }
+  }
+  var CANDY_FX = {
+    35: { happy: 25, boost: 30 * M },
+    36: { happy: 35, boost: 30 * M },
+    310: { happy: 25, boost: 30 * M },
+    366: { happy: 2500, boost: 6 * H },
+  };
+  function rollDrugCd() {
+    return 6 * H + Math.floor(Math.random() * (2 * H + 1));
+  }
+  function boosterOpen(cd) {
+    return (Number(cd) || 0) < boosterCap();
+  }
+  function candyFx(id) {
+    return CANDY_FX[Number(id)] || { happy: 25, boost: 30 * M };
+  }
+  function happyFxText(h) {
+    if (!h) return "";
+    if (h.kind === "edvd") {
+      return "+" + (state.adultNov ? "5,000" : "2,500") + " happy · +6h booster";
+    }
+    if (h.kind === "drug") return "Doubles current happy · 6–8h drug cooldown";
+    var fx = candyFx(h.id);
+    return "+" + fx.happy + " happy · +" + Math.round(fx.boost / 60) + "m booster";
+  }
+  function itemFxShort(key) {
+    var map = {
+      xanax: "+250e cap 1,000 · +75 happy · 6–8h drug cooldown",
+      cans: "Munster +20e / Red Cow +25e / Taurine +30e · +2h booster each",
+      fhc: "Refills energy · +500 happy · +6h booster",
+      nandrolone: "Not part of your gym routine",
+      edvd: "+2,500 happy (+5,000 w/ 10★ AN) · +6h booster",
+      candy: "Typical +25 happy · +30m booster (Big Box +35)",
+      ecstasy: "Doubles happy · 6–8h drug cooldown",
+      lsd: "+50e · +5 nerve · +200–500 happy · 6–8h drug cooldown",
+      vicodin: "+75 happy · +25% battle stats · 6–8h drug cooldown",
+    };
+    return map[key] || "";
+  }
+
+  var state = {
+    tab: "now",
+    open: false,
+    warStack: false,
+    focus: "str",
+    focus2: "none",
+    goals: { str: 0, def: 0, spe: 0, dex: 0 },
+    mode: "xan",
+    adultNov: false,
+    status: "boot",
+    statusText: "Starting…",
+    lastFetch: 0,
+    lastTrain: 0,
+    flash: "",
+    energy: 0,
+    energyMax: 150,
+    energyFulltime: 0,
+    energySecPerE: 0,
+    lastSeen: null,
+    energyKnown: false,
+    ledger: [],
+    prices: {},
+    gymsOwned: [],
+    unlock: null,
+    gymExpMult: 1,
+    goalOrder: [],
+    goalStep: 5e7,
+    mcsCost: 0,
+    src: { xan: 3, refill: 0, fhc: 0, munster: 0, redcow: 0, tourine: 0 },
+    happy: 0,
+    happyMax: 0,
+    drugCd: 0,
+    boosterCd: 0,
+    boosterPerk: false,
+    canMult: 1,
+    calEvents: [],
+    calAt: 0,
+    gymName: "Gym",
+    gymEnergy: 25,
+    dots: { str: 2, def: 2, spe: 2, dex: 2 },
+    stats: { str: 0, def: 0, spe: 0, dex: 0 },
+    perks: { str: 1, def: 1, spe: 1, dex: 1, all: 1 },
+    perkHits: {},
+    perkRaw: {},
+    items: { xanax: 0, lsd: 0, ecstasy: 0, vicodin: 0, munster: 0, redcow: 0, tourine: 0, cans: 0, fhc: 0, edvd: 0, candy: 0, nandrolone: 0 },
+    itemIds: {},
+    happyList: [],
+    drinkList: [],
+    invDom: null,
+    log: [],
+    invDiag: null,
+    invUnavailable: "",
+    invTally: null,
+    energyDom: "",
+    pendingUse: null,
+    rawQty: null,
+    rawHappy: null,
+    invAt: 0,
+    toast: null,
+    invCatErr: "",
+    // Compact daily stat history. One entry per day: {d: days-since-epoch,
+    // v: [str, def, spe, dex]}. Arrays rather than named keys because
+    // storeSet mirrors into localStorage, which Torn shares across every
+    // script on the page — a year of named-key objects is several times
+    // the size for no benefit.
+    hist: [],
+    histRange: 30,
+    fetchInFlight: false,
+  };
+
+  var lastTickSig = "";
+  var pollTimer = null;
+  var cdTimer = null;
+  var observers = [];
+  var clickHandler = null;
+  var draftKey = "";
+  var keyBoxFocused = false;
+
+  function pdaGlobal(name) {
+    try {
+      if (name === "PDA_httpGet" && typeof PDA_httpGet === "function") return PDA_httpGet;
+      if (name === "PDA_httpPost" && typeof PDA_httpPost === "function") return PDA_httpPost;
+    } catch (_) {}
+    try {
+      if (typeof window !== "undefined" && typeof window[name] === "function") return window[name];
+    } catch (_) {}
+    try {
+      if (typeof unsafeWindow !== "undefined" && unsafeWindow && typeof unsafeWindow[name] === "function") {
+        return unsafeWindow[name].bind(unsafeWindow);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function pdaReady() {
+    try {
+      if (window.__PDA_platformReadyPromise) return window.__PDA_platformReadyPromise;
+    } catch (_) {}
+    try {
+      if (typeof unsafeWindow !== "undefined" && unsafeWindow && unsafeWindow.__PDA_platformReadyPromise) {
+        return unsafeWindow.__PDA_platformReadyPromise;
+      }
+    } catch (_) {}
+    return Promise.resolve();
+  }
+
+  function waitMs(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  function pdaText(res) {
+    if (res == null) return "";
+    if (typeof res === "string") return res;
+    if (typeof res !== "object") return String(res);
+    if (typeof res.responseText === "string") return res.responseText;
+    if (typeof res.data === "string") return res.data;
+    if (res.data != null && typeof res.data === "object") {
+      try {
+        return JSON.stringify(res.data);
+      } catch (_) {}
+    }
+    return "";
+  }
+
+  function pdaStatus(res) {
+    if (res && typeof res === "object" && isFinite(res.status)) return Number(res.status);
+    return 200;
+  }
+
+  function gmXhr(opts) {
+    try {
+      if (typeof GM_xmlhttpRequest === "function") {
+        GM_xmlhttpRequest(opts);
+        return true;
+      }
+    } catch (_) {}
+    try {
+      if (typeof GM !== "undefined" && GM && typeof GM.xmlHttpRequest === "function") {
+        GM.xmlHttpRequest(opts);
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function httpGet(url) {
+    return new Promise(function (resolve, reject) {
+      function finish(text, next) {
+        var data;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          if (next) return next();
+          return reject(new Error("Bad JSON"));
+        }
+        if (data && data.error) {
+          var err = new Error(data.error.error || "API error");
+          err.code = data.error.code;
+          return reject(err);
+        }
+        resolve(data);
+      }
+
+      function viaGm() {
+        if (
+          gmXhr({
+            method: "GET",
+            url: url,
+            anonymous: true,
+            onload: function (res) {
+              finish(res && res.responseText != null ? String(res.responseText) : "", null);
+            },
+            onerror: function () {
+              reject(new Error("API request failed"));
+            },
+          })
+        )
+          return;
+        reject(new Error("API request failed"));
+      }
+
+      function viaPda() {
+        var get = pdaGlobal("PDA_httpGet");
+        if (!get) return viaGm();
+        var done = false;
+        function onRes(res) {
+          if (done) return;
+          done = true;
+          var text = pdaText(res);
+          if (!text) return viaGm();
+          finish(text, viaGm);
+        }
+        try {
+          var ret = get(url);
+          if (ret && typeof ret.then === "function") {
+            ret.then(onRes, function () {
+              try {
+                get(url, onRes);
+              } catch (_) {
+                viaGm();
+              }
+            });
+            return;
+          }
+          if (ret != null && ret !== "") {
+            onRes(ret);
+            return;
+          }
+        } catch (_) {}
+        try {
+          get(url, onRes);
+        } catch (_) {
+          viaGm();
+        }
+      }
+
+      fetch(url)
+        .then(function (r) {
+          return r.text();
+        })
+        .then(function (t) {
+          if (!t) return viaPda();
+          finish(t, viaPda);
+        })
+        .catch(function () {
+          viaPda();
+        });
+    });
+  }
+
+  function pdaRequest(kind, url, headers, body) {
+    var fn = kind === "POST" ? pdaGlobal("PDA_httpPost") : pdaGlobal("PDA_httpGet");
+    if (!fn) return Promise.reject(new Error("no PDA http"));
+    function once() {
+      var ret;
+      try {
+        ret = kind === "POST" ? fn(url, headers || {}, body || "") : fn(url);
+      } catch (e) {
+        return Promise.reject(e);
+      }
+      if (ret && typeof ret.then === "function") return ret;
+      return Promise.resolve(ret);
+    }
+    return once().then(function (res) {
+      if (res == null || res === "") return waitMs(2100).then(once);
+      return res;
+    });
+  }
+
+  function storeGet(key, fallback) {
+    var k = NS + "_" + key;
+    try {
+      if (typeof GM_getValue === "function") {
+        var v = GM_getValue(k, fallback);
+        if (v !== undefined && v !== null) return v;
+      }
+    } catch (_) {}
+    try {
+      if (typeof GM !== "undefined" && GM && typeof GM.getValue === "function") {
+        var gv = GM.getValue(k, fallback);
+        if (gv && typeof gv.then === "function") {
+          /* async GM 4 — localStorage is the sync source of truth */
+        } else if (gv !== undefined && gv !== null) return gv;
+      }
+    } catch (_) {}
+    try {
+      var raw = localStorage.getItem(k);
+      if (raw == null) return fallback;
+      try {
+        return JSON.parse(raw);
+      } catch (e) {
+        return raw;
+      }
+    } catch (_) {}
+    return fallback;
+  }
+
+  function storeSet(key, value) {
+    var k = NS + "_" + key;
+    try {
+      if (typeof GM_setValue === "function") GM_setValue(k, value);
+    } catch (_) {}
+    try {
+      if (typeof GM !== "undefined" && GM && typeof GM.setValue === "function") GM.setValue(k, value);
+    } catch (_) {}
+    try {
+      localStorage.setItem(k, typeof value === "string" ? value : JSON.stringify(value));
+    } catch (_) {}
+  }
+
+  // Read a value out of the stable script's namespace. The beta never writes
+  // there — a beta that corrupts the settings of the copy you rely on is worse
+  // than one that asks you to paste a key.
+  function stableGet(key, fallback) {
+    var k = STABLE_NS + "_" + key;
+    try {
+      if (typeof GM_getValue === "function") {
+        var v = GM_getValue(k, undefined);
+        if (v !== undefined && v !== null) return v;
+      }
+    } catch (_) {}
+    try {
+      var raw = localStorage.getItem(k);
+      if (raw == null) return fallback;
+      try { return JSON.parse(raw); } catch (e) { return raw; }
+    } catch (_) {}
+    return fallback;
+  }
+
+  // Torn PDA hands stored values back as STRINGS, so !!"false" is true and
+  // every reload silently switched War stack and the 10-star bonus on. Parse
+  // the value instead of coercing it.
+  function storeBool(key, def) {
+    var v = storeGet(key, def);
+    if (typeof v === "boolean") return v;
+    if (typeof v === "number") return v !== 0;
+    if (typeof v === "string") {
+      var t = v.trim().toLowerCase();
+      if (t === "true" || t === "1" || t === "yes" || t === "on") return true;
+      if (t === "false" || t === "0" || t === "no" || t === "off" || t === "") return false;
+    }
+    return !!def;
+  }
+
+  function resolveKey() {
+    var injected = String(PDA_INJECTED_KEY || "").trim();
+    if (injected && injected.indexOf("###") === -1 && injected.length > 8) return injected;
+    var own = String(storeGet("api_key", "") || "").trim();
+    if (own) return own;
+    return String(stableGet("api_key", "") || "").trim();
+  }
+
+  function keySource() {
+    if (HAS_PDA_KEY && resolveKey()) return "Torn PDA";
+    if (String(storeGet("api_key", "") || "").trim()) return "saved key";
+    if (resolveKey()) return "stable script";
+    return "none";
+  }
+
+  function fmt(n) {
+    if (!isFinite(n)) return "—";
+    return Math.round(n).toLocaleString("en-US");
+  }
+
+  function fmtCd(s) {
+    s = Math.max(0, Math.floor(s));
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    if (!s) return "READY";
+    if (h && m) return h + "h " + m + "m";
+    if (h) return h + "h";
+    if (m) return m + "m";
+    return s + "s";
+  }
+
+  function ROUND(num, places) {
+    return +(Math.round(num + "e+" + places) + "e-" + places);
+  }
+
+  function httpPost(url, body) {
+    var headers = {
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "X-Requested-With": "XMLHttpRequest",
+    };
+    return new Promise(function (resolve, reject) {
+      function finish(ok, text) {
+        var data = {};
+        try {
+          data = JSON.parse(text || "{}");
+        } catch (_) {
+          data = { text: text };
+        }
+        if (!ok && !data.success && !data.items) return reject(new Error("Use failed"));
+        resolve(data);
+      }
+
+      fetch(url, { method: "POST", credentials: "include", headers: headers, body: body })
+        .then(function (r) {
+          return r.text().then(function (t) {
+            finish(r.ok, t);
+          });
+        })
+        .catch(function () {
+          pdaRequest("POST", url, headers, body)
+            .then(function (res) {
+              var text = pdaText(res);
+              var status = pdaStatus(res);
+              finish(status >= 200 && status < 300, text);
+            })
+            .catch(function () {
+              if (
+                gmXhr({
+                  method: "POST",
+                  url: url,
+                  headers: headers,
+                  data: body,
+                  onload: function (res) {
+                    var status = res && isFinite(res.status) ? Number(res.status) : 0;
+                    finish(status >= 200 && status < 300, (res && res.responseText) || "");
+                  },
+                  onerror: function () {
+                    finish(false, "");
+                  },
+                })
+              )
+                return;
+              finish(false, "");
+            });
+        });
+    });
+  }
+
+  var toastTimer = null;
+  function showToast(title, body, ms) {
+    state.toast = { title: title, body: body, until: Date.now() + (ms || 2600) };
+    var panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+    var el = panel.querySelector(".gc-toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "gc-toast";
+      panel.appendChild(el);
+    }
+    el.innerHTML = "<b>" + title + "</b><span>" + body + "</span>";
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      state.toast = null;
+      var p2 = document.getElementById(PANEL_ID);
+      var e2 = p2 && p2.querySelector(".gc-toast");
+      if (e2) e2.classList.remove("show");
+    }, ms || 2600);
+  }
+
+  function esc(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function idForKey(key) {
+    var ids = state.itemIds || {};
+    if (key === "cans") return ids.munster || ids.redcow || ids.tourine || ids.cans || FALLBACK_IDS.munster;
+    if (key === "candy") {
+      var hit = (state.happyList || []).filter(function (h) {
+        return h.kind === "candy" && h.id;
+      })[0];
+      return (hit && hit.id) || ids.candy;
+    }
+    return ids[key] || FALLBACK_IDS[key] || 0;
+  }
+
+  function itemTip(key) {
+    var tick = nextTickSec();
+    var drugLeft = fmtCd(state.drugCd);
+    var boostLeft = fmtCd(state.boosterCd);
+    var map = {
+      xanax: [
+        "Xanax",
+        "+250 energy (caps at 1,000) and +75 happy. Starts a shared drug cooldown of 6–8 hours (random). Side effects while it lasts, including a battle-stat penalty. Overdose can wipe energy, nerve, and happy. Cooldown now: " + drugLeft + ".",
+      ],
+      cans: [
+        "Energy drinks",
+        "Munster +20e, Red Cow +25e, Taurine Elite +30e. Each adds 2 hours to booster cooldown (keep using until that bar passes your cap \u2014 24h, or 48h with the faction perk). No drug cooldown. Live booster: " + boostLeft + ".",
+      ],
+      lsd: [
+        "Skip LSD",
+        "+50 energy, +5 nerve, +200–500 happy. Same 6–8h drug cooldown as Xanax — it would block your Xanax. Leave it.",
+      ],
+      fhc: [
+        "Don\u2019t use FHC",
+        "Feathery Hotel Coupon refills your energy bar, +500 happy, and adds 6 hours booster cooldown. That\u2019s a travel / refill coupon, not your gym routine.",
+      ],
+      nandrolone: [
+        "Optional",
+        "Not part of the xan + gym or happy-jump loop. Leave it.",
+      ],
+      edvd: [
+        "Erotic DVDs",
+        state.mode !== "jump"
+          ? "Happy jump is off. An e-dvd is +2,500 happy (+5,000 with 10★ Adult Novelties) and +6h booster cooldown."
+          : "Each e-dvd: +2,500 happy (+5,000 with 10★ Adult Novelties) and +6h booster. Use on the :00/:15/:30/:45 tick with candy, before ecstasy. Booster " + boostLeft + ". Next tick " + fmtCd(tick) + ".",
+      ],
+      candy: [
+        "Happy candy",
+        state.mode !== "jump"
+          ? "Happy jump is off. Typical candy is +25 happy and +30 min booster (Big Box of Chocolate Bars is +35 / 30 min). The booster cooldown stacks, so you can keep using them until it is over 24h."
+          : "Typical candy: +25 happy and +30 min booster (Big Box +35). Stacks on the booster bar, up to your cap. After the tick (" + fmtCd(tick) + "), candy then e-dvds, ecstasy last.",
+      ],
+      ecstasy: [
+        "Ecstasy last",
+        "Doubles current happiness. Starts the same 6–8h drug cooldown as Xanax — take it last, after the other happy items. Drug cooldown now: " + drugLeft + ".",
+      ],
+      vicodin: [
+        "Skip vicodin",
+        "+75 happy and +25% all battle stats (temporary). Starts a 6–8h drug cooldown, so it would block Xanax and ecstasy. Don\u2019t mix it into your gym routine.",
+      ],
+    };
+    return map[key] || ["Hold", "Not now."];
+  }
+
+  function useTornItem(itemId) {
+    var body = "step=useItem&id=" + encodeURIComponent(itemId) + "&itemID=" + encodeURIComponent(itemId);
+    return httpPost("https://www.torn.com/item.php?rfcv=" + Date.now(), body).then(function (data) {
+      if (data && (data.success || data.items || data.text)) return data;
+      return httpPost(
+        "https://www.torn.com/page.php?sid=itemsUse&rfcv=" + Date.now(),
+        "step=useItem&itemID=" + encodeURIComponent(itemId) + "&id=" + encodeURIComponent(itemId)
+      );
+    });
+  }
+
+  // Torn caches the API for ~30s, so re-fetching right after a use returns the
+  // PRE-use count and the number appears frozen. We know exactly what we just
+  // consumed, so drop it locally and let the next real fetch reconcile. Only
+  // ever applied after Torn accepts the use.
+  // Decrementing the display is not enough on its own: the refresh that follows
+  // a use reads Torn's ~30s cache, which still holds the PRE-use count, and
+  // overwrites it — the number drops then springs back. So the use is recorded
+  // as PENDING and re-applied to every fetch until the API actually catches up.
+  function decrementItemLocal(id) {
+    id = Number(id) || 0;
+    if (!id) return "";
+    var hit = "";
+    var ids = state.itemIds || {};
+    for (var k in ids) {
+      if (Number(ids[k]) === id) {
+        hit = k;
+        break;
+      }
+    }
+    if (!hit) return "";
+    if (!state.rawQty) {
+      state.rawQty = {};
+      for (var bk in state.items) state.rawQty[bk] = state.items[bk];
+    }
+    var pend = state.pendingUse || (state.pendingUse = {});
+    var cur = pend[id] || { key: hit, n: 0, at: 0 };
+    cur.key = hit;
+    cur.n += 1;
+    cur.at = Date.now();
+    pend[id] = cur;
+    applyPendingUses();
+    return hit;
+  }
+
+  // Subtracts still-unconfirmed uses from the counts the API handed us.
+  // IDEMPOTENT ON PURPOSE: it always recomputes from the raw API baseline
+  // rather than from the current display, because it runs on every use AND on
+  // every fetch. Subtracting from the already-adjusted value double-counted —
+  // two uses in a row read 44 instead of 45.
+  function applyPendingUses() {
+    var pend = state.pendingUse;
+    if (!pend || !state.rawQty) return;
+    var now = Date.now();
+    var byKey = {};
+    var byId = {};
+    for (var id in pend) {
+      var p = pend[id];
+      // Give up after two minutes. If the API still disagrees by then the use
+      // did not land, and holding the adjustment forever would lie the other way.
+      if (now - p.at > 1800000) {
+        delete pend[id];
+        continue;
+      }
+      byKey[p.key] = (byKey[p.key] || 0) + p.n;
+      byId[id] = (byId[id] || 0) + p.n;
+    }
+    for (var k in byKey) {
+      var base = state.rawQty[k];
+      if (base === undefined) continue;
+      state.items[k] = Math.max(0, Number(base) - byKey[k]);
+    }
+    var list = state.happyList || [];
+    for (var i = 0; i < list.length; i++) {
+      var raw = state.rawHappy ? state.rawHappy[list[i].id] : undefined;
+      if (raw === undefined) continue;
+      var n = byId[list[i].id] || 0;
+      list[i].qty = Math.max(0, Number(raw) - n);
+    }
+  }
+
+  function useItemId(id) {
+    id = Number(id) || 0;
+    if (!id) {
+      showToast("Can\u2019t use", "No item id yet. Refresh, then try again.");
+      return;
+    }
+    if (state.usingItem) return;
+    state.usingItem = true;
+    useTornItem(id)
+      .then(function () {
+        decrementItemLocal(id);
+        showToast("Used", "Took one. Refreshing bars.");
+        state.flash = "USED";
+        if (state.open) renderPanel();
+        setTimeout(function () {
+          state.flash = "";
+          if (state.open) renderPanel();
+        }, 1200);
+        return refresh("stock");
+      })
+      .catch(function () {
+        showToast("Didn\u2019t use", "Torn didn\u2019t accept it. Open items and use it there, then refresh.");
+      })
+      .then(function () {
+        state.usingItem = false;
+      });
+  }
+
+  function useItemKey(key) {
+    useItemId(idForKey(key));
+  }
+
+  function itemChip(row) {
+    var rec = String(row.rec || "");
+    if (rec === "USE") return '<button type="button" class="chip use" data-use="' + row.key + '">USE</button>';
+    if (/DON/.test(rec)) return '<span class="chip bad">DON\u2019T</span>';
+    return '<button type="button" class="chip ' + (row.cls || "muted") + '" data-tip="' + row.key + '">' + rec + "</button>";
+  }
+
+  function happyItemChip(h) {
+    var jumpGo = state.mode === "jump" && nextTickSec() <= 90;
+    var key = h.kind === "edvd" ? "edvd" : h.kind === "drug" ? "ecstasy" : "candy";
+    var canBoost = boosterOpen(state.boosterCd);
+    if (h.kind === "drug") {
+      if (state.mode !== "jump") return itemChip({ key: key, rec: "OFF", cls: "muted" });
+      if (jumpGo && state.drugCd <= 0 && h.id) {
+        return '<button type="button" class="chip use" data-use-id="' + h.id + '">USE</button>';
+      }
+      return itemChip({ key: key, rec: "LAST", cls: "warn" });
+    }
+    if (state.mode !== "jump") return itemChip({ key: key, rec: "OFF", cls: "muted" });
+    var canUse = jumpGo && h.id && canBoost;
+    if (canUse) return '<button type="button" class="chip use" data-use-id="' + h.id + '">USE</button>';
+    return itemChip({ key: key, rec: "HOLD", cls: "muted" });
+  }
+
+  function happyKitText() {
+    var list = (state.happyList || []).filter(function (h) {
+      return h.kind !== "drug";
+    });
+    if (!list.length) {
+      return "every Candy-type item you have (chocolates, lollipops, bags of sweets, cupcakes, eggs, …) plus e-dvds, then ecstasy last";
+    }
+    return (
+      list
+        .map(function (h) {
+          return h.qty + "× " + h.name;
+        })
+        .join(", ") + ", then ecstasy last"
+    );
+  }
+
+  function apiUrl(selections) {
+    return (
+      "https://api.torn.com/user/?selections=" +
+      selections +
+      "&key=" +
+      encodeURIComponent(resolveKey()) +
+      "&comment=" +
+      encodeURIComponent(COMMENT)
+    );
+  }
+
+  var INV_PAGE = 250; // spec maximum; the default of 20 would silently truncate
+
+  // `cat` is REQUIRED in practice. Torn's own OpenAPI spec marks it optional
+  // for /user/inventory, but omitting it answers "Incorrect category" — the
+  // runtime and the published spec disagree, and the runtime wins. So walk the
+  // categories this coach actually reads. Anything outside these (weapons,
+  // armour, plushies) is irrelevant here and not worth the requests.
+  var INV_CATS = ["Drug", "Energy Drink", "Candy", "Alcohol", "Booster", "Supply Pack", "Enhancer"];
+
+  function invUrlV2(cat, offset) {
+    return (
+      "https://api.torn.com/v2/user/inventory?cat=" +
+      encodeURIComponent(cat) +
+      "&limit=" +
+      INV_PAGE +
+      "&offset=" +
+      (offset || 0) +
+      "&key=" +
+      encodeURIComponent(resolveKey()) +
+      "&comment=" +
+      encodeURIComponent(COMMENT)
+    );
+  }
+
+  function fetchInvCat(cat, offset, acc) {
+    offset = offset || 0;
+    acc = acc || [];
+    return httpGet(invUrlV2(cat, offset)).then(function (data) {
+      var block = data && data.inventory;
+      var rows = block && Array.isArray(block.items) ? block.items : Array.isArray(block) ? block : [];
+      for (var ri = 0; ri < rows.length; ri++) {
+        if (rows[ri] && typeof rows[ri] === "object") rows[ri]._cat = cat;
+      }
+      acc = acc.concat(rows);
+      if (rows.length === INV_PAGE && acc.length < 2000) return fetchInvCat(cat, offset + INV_PAGE, acc);
+      return acc;
+    });
+  }
+
+  // One category failing must not lose the others, so each resolves to [] on
+  // error and the per-category tally is reported for diagnosis.
+  function fetchInventoryV2() {
+    var tally = {};
+    var seq = INV_CATS.reduce(function (chain, cat) {
+      return chain.then(function (all) {
+        return fetchInvCat(cat, 0, []).then(
+          function (rows) {
+            tally[cat] = rows.length;
+            return all.concat(rows);
+          },
+          function (err) {
+            tally[cat] = "err";
+            state.invCatErr = (err && err.message) || "failed";
+            return all;
+          }
+        );
+      });
+    }, Promise.resolve([]));
+    return seq.then(function (all) {
+      state.invTally = tally;
+      return all;
+    });
+  }
+
+  // Torn's API caches user bars server-side for ~30s, so no poll rate can make
+  // energy current — the API is behind Torn's own page. The header bar is live,
+  // so read that and let the API keep supplying everything else. Several
+  // selector shapes are tried because Torn's bar markup has changed across
+  // versions and the hashed React classes are not stable; whichever hits is
+  // reported so a future rebuild is one screenshot away.
+  function readEnergyFromDom() {
+    var pat = /(\d[\d,]*)\s*\/\s*(\d[\d,]*)/;
+    function parse(el, how) {
+      if (!el) return null;
+      var m = String(el.textContent || "").replace(/\s+/g, " ").match(pat);
+      if (!m) return null;
+      var cur = Number(String(m[1]).replace(/,/g, ""));
+      var max = Number(String(m[2]).replace(/,/g, ""));
+      if (!max || max > 5000 || cur > 20000) return null;
+      return { cur: cur, max: max, how: how };
+    }
+    try {
+      var byId = document.getElementById("barEnergy");
+      var hit = parse(byId, "#barEnergy");
+      if (hit) return hit;
+      var pre = document.querySelector('[id^="barEnergy"]');
+      hit = parse(pre, "[id^=barEnergy]");
+      if (hit) return hit;
+      // Last resort: the icon/label carries the word energy somewhere above the
+      // number, so walk likely containers rather than the whole document.
+      var nodes = document.querySelectorAll('[class*="bar"],[id*="energy"],[class*="energy"]');
+      for (var i = 0; i < nodes.length && i < 60; i++) {
+        var n = nodes[i];
+        var txt = String(n.textContent || "");
+        if (txt.length > 60) continue;
+        if (!/energy/i.test(String(n.className) + " " + String(n.id))) continue;
+        hit = parse(n, "scan");
+        if (hit) return hit;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // Adopt the live bar whenever it disagrees with the cached API value.
+  function syncEnergyFromDom() {
+    var d = readEnergyFromDom();
+    if (!d) {
+      state.energyDom = "";
+      return false;
+    }
+    state.energyDom = d.how + " " + d.cur + "/" + d.max;
+    state.energyKnown = true;
+    var changed = false;
+    if (d.cur !== state.energy) {
+      state.energy = d.cur;
+      state.energyKnown = true;
+      changed = true;
+    }
+    if (d.max && d.max !== state.energyMax) {
+      state.energyMax = d.max;
+      changed = true;
+    }
+    return changed;
+  }
+
+  // --- item page scan --------------------------------------------------------
+  // Torn caches the inventory API for minutes, so a can you just drank still
+  // shows in the old count. The item page is the truth and you are already
+  // standing on it when you use things, so read the counts from there and
+  // prefer them whenever they are newer than the API's.
+  function rowQty(row) {
+    try {
+      var el = row.querySelector('[class*="qty"], [class*="Qty"], [class*="amount"]');
+      var m = el && /(\d[\d,]*)/.exec(String(el.textContent || ""));
+      if (m) return Number(String(m[1]).replace(/,/g, ""));
+      // Falls back to the "xN" Torn prints beside the name.
+      var m2 = /\bx\s?(\d[\d,]*)\b/i.exec(String(row.textContent || ""));
+      if (m2) return Number(String(m2[1]).replace(/,/g, ""));
+    } catch (_) {}
+    return null;
+  }
+
+  function scanItemPage() {
+    if (!/item\.php/i.test(location.href)) return false;
+    var rows;
+    try {
+      rows = document.querySelectorAll(
+        "ul.items-cont > li[data-item], ul.items-list > li[data-item], li.show-item-info[data-item], li[data-item]"
+      );
+    } catch (_) { return false; }
+    if (!rows || !rows.length) return false;
+    var out = {}, n = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var id = Number(rows[i].getAttribute("data-item")) || 0;
+      if (!id) continue;
+      var q = rowQty(rows[i]);
+      if (q == null) continue;
+      out[id] = q;
+      n += 1;
+    }
+    if (!n) return false;
+    state.invDom = { at: Date.now(), qty: out, n: n };
+    storeSet("invDom", state.invDom);
+    return true;
+  }
+
+  // Cans the item page saw that the API has not caught up with at all.
+  //
+  // freshQty can only CORRECT a row that already exists, and a can you owned
+  // none of has no API row to correct — so buying a new type stayed invisible
+  // until Torn's inventory cache expired, minutes later. The scrape already
+  // captured it; nothing read it. Only cans are adopted: the scrape covers the
+  // whole item page, and a Xanax count has no business in the drink list.
+  function adoptScrapedCans(drinks) {
+    if (!domFresher()) return drinks;
+    var qty = state.invDom.qty;
+    CAN_TYPES.forEach(function (t) {
+      var already = drinks.some(function (d) {
+        return t.ids.indexOf(Number(d.id)) !== -1;
+      });
+      if (already) return;
+      for (var i = 0; i < t.ids.length; i++) {
+        var id = t.ids[i];
+        var q = qty[id];
+        if (typeof q === "number" && q > 0) {
+          drinks.push({ id: id, name: t.label, qty: q, e: drinkEnergy(t.label, id) });
+          break;
+        }
+      }
+    });
+    return drinks;
+  }
+
+  // The scraped count wins only while it is newer than the API reading, so a
+  // fresh API fetch still takes over once Torn catches up.
+  function domFresher() {
+    var d = state.invDom;
+    return !!(d && d.qty && d.at && d.at > (state.invAt || 0));
+  }
+
+  function freshQty(id, apiQty) {
+    if (!id || !domFresher()) return apiQty;
+    var v = state.invDom.qty[id];
+    return typeof v === "number" ? v : apiQty;
+  }
+
+  function countItems(inv) {
+    var out = { xanax: 0, lsd: 0, ecstasy: 0, vicodin: 0, munster: 0, redcow: 0, tourine: 0, cans: 0, fhc: 0, edvd: 0, candy: 0, nandrolone: 0 };
+    var ids = {};
+    var happy = [];
+    var drinks = [];
+    if (!inv) return { qty: out, ids: ids, happy: happy, drinks: drinks };
+    var list = Array.isArray(inv)
+      ? inv
+      : Object.keys(inv).map(function (k) {
+          return inv[k];
+        });
+    list.forEach(function (it) {
+      if (!it) return;
+      var name = String(it.name || "");
+      var qty = Number(it.amount != null ? it.amount : it.quantity != null ? it.quantity : it.qty || 0) || 0;
+      if (!qty) return;
+      var id = Number(it.ID != null ? it.ID : it.id || 0) || 0;
+      var type = String(it.type || "").toLowerCase();
+      var isCandy = type === "candy" || type.indexOf("candy") !== -1 || HAPPY_CANDY.test(name);
+      var key = "";
+      var rowCat = it._cat || "";
+      ITEM_MAP.forEach(function (m) {
+        // When we know the row's real category, a pattern tied to a different
+        // one cannot claim it. Falls back to name-only when the category is
+        // unknown (a v1-shaped payload).
+        if (m.cat && rowCat && m.cat !== rowCat) return;
+        if (m.test.test(name)) key = m.key;
+      });
+      if (!key && isCandy) key = "candy";
+      if (key) {
+        // Show every row feeding the drink total with its category: either we
+        // are adding rows we should not, or the API is reporting a stale amount
+        // for the one row that is a real drink. Opposite fixes, identical total.
+        out[key] = (out[key] || 0) + qty;
+        if (id && !ids[key]) ids[key] = id;
+      }
+      // Category says drink, name says otherwise -> trust the name. Matched on
+      // the name ALONE here: a row tagged with the wrong category has its
+      // normal match suppressed, so it would otherwise arrive with no key at
+      // all and be admitted by the tag it should have been rejected for.
+      var nameKey = "";
+      ITEM_MAP.forEach(function (m) { if (m.test.test(name)) nameKey = m.key; });
+      var drinkByName = nameKey === "munster" || nameKey === "redcow" ||
+                        nameKey === "tourine" || nameKey === "cans";
+      var notDrink = nameKey && !drinkByName;
+      if (drinkByName || (rowCat === "Energy Drink" && !notDrink)) {
+        drinks.push({ id: id, name: name, qty: qty, e: drinkEnergy(name, id) });
+      }
+      if (key === "edvd" || key === "candy" || key === "ecstasy" || isCandy) {
+        var kind = key === "edvd" ? "edvd" : key === "ecstasy" ? "drug" : "candy";
+        happy.push({ id: id, name: name, qty: qty, kind: kind });
+      }
+    });
+    return { qty: out, ids: ids, happy: happy, drinks: drinks };
+  }
+
+  function applyCountedItems(parsed) {
+    if (!parsed) return;
+    var raw = parsed.qty;
+    // A pending use is CONFIRMED once the API's own number falls below what it
+    // last reported — that is the cache expiring, not our guess. Clear it then,
+    // or the subtraction would be applied twice.
+    var pend = state.pendingUse;
+    if (pend) {
+      // Retire pending uses by how much the API has ACTUALLY come down. Clearing
+      // on the first sign of any drop was wrong: three pending uses all vanished
+      // the moment the API acknowledged one, and the count sprang back up by two.
+      var dropped = {};
+      for (var dk in raw) {
+        var was = state.rawQty ? state.rawQty[dk] : undefined;
+        if (was !== undefined && Number(raw[dk]) < Number(was)) dropped[dk] = Number(was) - Number(raw[dk]);
+      }
+      for (var id in pend) {
+        var k = pend[id].key;
+        var credit = dropped[k] || 0;
+        if (!credit) continue;
+        var take = Math.min(credit, pend[id].n);
+        pend[id].n -= take;
+        dropped[k] = credit - take;
+        if (pend[id].n <= 0) delete pend[id];
+      }
+    }
+    state.rawQty = {};
+    for (var rk in raw) state.rawQty[rk] = raw[rk];
+    state.items = raw;
+    state.itemIds = parsed.ids || {};
+    state.happyList = parsed.happy || [];
+    (parsed.drinks || []).forEach(function (d) { d.qty = freshQty(d.id, d.qty); });
+    adoptScrapedCans(parsed.drinks || []);
+    state.drinkList = (parsed.drinks || []).filter(function (d) { return d.qty > 0; }).sort(function (a, b) {
+      return (b.e || 0) - (a.e || 0) || b.qty - a.qty;   // strongest first
+    });
+    state.rawHappy = {};
+    for (var hi = 0; hi < state.happyList.length; hi++) {
+      state.rawHappy[state.happyList[hi].id] = state.happyList[hi].qty;
+    }
+    applyPendingUses();
+    // The candidate list is built from the cans you actually hold, so it is not
+    // final until the inventory has landed. Asking for prices before this point
+    // fetches the placeholder staples and never the cans in your bag.
+    refreshPrices();
+  }
+
+  function extractPercentMult(string) {
+    var s = String(string);
+    var m = s.match(/([+-]?\d+(?:\.\d+)?)\s*%/);
+    if (m) return parseFloat(m[1]) / 100 + 1;
+    m = s.toLowerCase().match(/gym\s+gains[^\d]*(\d+(?:\.\d+)?)/) || s.toLowerCase().match(/(\d+(?:\.\d+)?)[^\d]*gym\s+gains/);
+    if (m) return parseFloat(m[1]) / 100 + 1;
+    return null;
+  }
+
+  function isGymPerkLine(s) {
+    var lower = String(s || "").toLowerCase();
+    // Perks that raise a different bar entirely, and must never be mistaken
+    // for a gym multiplier.
+    if (/energy drink|consumable|happy|nerve|crime|drug|medical|booster|life|awareness/.test(lower)) return false;
+    if (lower.indexOf("gym") !== -1) return lower.indexOf("gain") !== -1 || /gym\s+train/.test(lower);
+    // Education and company perks often read "+ 1% strength gain" with no
+    // mention of a gym at all, and were being dropped on the floor.
+    return /\b(strength|defen[cs]e|speed|dexterity|all stats?|battle stats?)\b/.test(lower) &&
+      /gain|train/.test(lower);
+  }
+
+  function parsePerks(data) {
+    var mods = { all: 1, str: 1, spe: 1, def: 1, dex: 1 };
+    var hits = {};   // source -> the lines actually counted, for display
+    var adultNov = false;
+    var boosterPerk = false;
+    // Books and faction/job perks raise what a can is worth. Scanned from the
+    // raw perk arrays rather than the gym-perk filter, because these lines are
+    // not stat perks and the filter would drop them.
+    var canMult = 1;
+    [data.faction_perks, data.job_perks, data.book_perks, data.company_perks].forEach(function (arr) {
+      (arr || []).forEach(function (line) {
+        var txt = String(line || "");
+        if (!/energy drinks?/i.test(txt) && !/consumable gain/i.test(txt)) return;
+        var n = parseInt(txt.replace(/\D+/g, ""), 10);
+        if (!isNaN(n) && n > 0 && n < 500) canMult *= 1 + n / 100;
+      });
+    });
+    function apply(list, source) {
+      if (!list || !list.length) return;
+      for (var i = 0; i < list.length; i++) {
+        var s = String(list[i] || "");
+        var lower = s.toLowerCase();
+        // Checked before the gym-perk filter: the Adult Novelties line is not a
+        // stat perk, so the filter would drop it before we ever saw it.
+        if (lower.indexOf("adult novelt") !== -1) adultNov = true;
+        // The faction perk that lifts the booster ceiling to 48h. Torn's exact
+        // wording is not something to bet on, so this is deliberately broad —
+        // and it is only ever a shortcut, because noteBoosterPerk() proves the
+        // same thing from a cooldown above 24h no matter what the line says.
+        if ((lower.indexOf("booster") !== -1 || lower.indexOf("energy drink") !== -1) &&
+            /\b(24|48)\b|cooldown|cap|maximum/.test(lower)) boosterPerk = true;
+        if (!isGymPerkLine(s)) continue;
+        var n = extractPercentMult(s);
+        if (!n) continue;
+        if (lower.indexOf("strength") !== -1) mods.str *= n;
+        else if (lower.indexOf("speed") !== -1) mods.spe *= n;
+        else if (lower.indexOf("defense") !== -1 || lower.indexOf("defence") !== -1) mods.def *= n;
+        else if (lower.indexOf("dexterity") !== -1) mods.dex *= n;
+        else mods.all *= n;
+        (hits[source] = hits[source] || []).push(s);
+      }
+    }
+    apply(data.job_perks, "job");
+    apply(data.property_perks, "property");
+    apply(data.education_perks, "education");
+    apply(data.merit_perks, "merit");
+    apply(data.faction_perks, "faction");
+    apply(data.company_perks, "company");
+    apply(data.stock_perks, "stock");
+    apply(data.book_perks, "book");
+    apply(data.enhancer_perks, "enhancer");
+    return {
+      str: mods.str * mods.all,
+      def: mods.def * mods.all,
+      spe: mods.spe * mods.all,
+      dex: mods.dex * mods.all,
+      all: mods.all,
+      hits: hits,
+      raw: {
+        faction: data.faction_perks || [], company: data.company_perks || [],
+        job: data.job_perks || [], education: data.education_perks || [],
+        property: data.property_perks || [], merit: data.merit_perks || [],
+        stock: data.stock_perks || [], book: data.book_perks || [],
+        enhancer: data.enhancer_perks || []
+      },
+      adultNov: adultNov,
+      boosterPerk: boosterPerk,
+      canMult: canMult,
+    };
+  }
+
+  // One line per source, showing the exact perk text that was counted — so a
+  // multiplier that looks wrong can be traced to the line that caused it.
+  function perkSourceLine(source, label) {
+    var lines = (state.perkHits || {})[source];
+    return lines && lines.length ? label + ": " + lines.join(" \u00b7 ") : "";
+  }
+
+  function perkPct(mult) {
+    var pct = Math.round(((Number(mult) || 1) - 1) * 1000) / 10;
+    if (!pct) return "0%";
+    return (pct > 0 ? "+" : "") + pct + "%";
+  }
+
+  function gainOne(stat, happy, dots, energyP, perk, typ) {
+    var S = stat;
+    if (S > 5e7) S = 5e7 + (S - 5e7) / (8.77635 * Math.log(S));
+    var H = happy || 1;
+    var coeffs = { str: [1600, 1700, 700], spe: [1600, 2000, 1350], dex: [1800, 1500, 1000], def: [2100, -600, 1500] }[typ];
+    var A = coeffs[0];
+    var B = coeffs[1];
+    return (
+      (S * ROUND(1 + 0.07 * ROUND(Math.log(1 + H / 250), 4), 4) +
+        8 * Math.pow(H, 1.05) +
+        (1 - Math.pow(H / 99999, 2)) * A +
+        B) *
+      (1 / 200000) *
+      dots *
+      energyP *
+      perk
+    );
+  }
+
+  function projectDays(days, energyPerDay, typ) {
+    var stat = state.stats[typ] || 0;
+    if (!stat) return 0;
+    var gym = GYMS.filter(function (g) {
+      return g.Gym === state.gymName;
+    })[0] || GYMS[GYMS.length - 1];
+    var energyP = gym.Energy || 25;
+    var dots = Number(gym[{ str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[typ]]) || 0;
+    if (!dots) return 0;
+    var trains = Math.floor(energyPerDay / energyP) * days;
+    var total = 0;
+    var happy = state.happyMax || state.happy || 5000;
+    for (var i = 0; i < trains; i++) {
+      total += gainOne(stat + total, happy, dots, energyP, state.perks[typ] || 1, typ);
+    }
+    return total;
+  }
+
+  // What a day's energy actually looks like for YOU. Previously this was a flat
+  // 720 with refills and cans contributing nothing, so every projection was the
+  // same number regardless of how you play. Natural regen now comes from Torn's
+  // own rate, and the rest is whatever sources you have switched on.
+  // Each source is a tick box plus a count. Cans are listed individually
+  // because they are not interchangeable: Munster is +20, Red Cow +25,
+  // Taurine +30, and which one you actually drink changes the projection.
+  var XAN_E = 250;
+  var SRC_BASE = [
+    // THREE, not six, and not four either. The drug cooldown a xanax leaves is
+    // long enough that a fourth does not fit in a day — reported from actually
+    // taking them, which beats arithmetic off a nominal cooldown. The old cap
+    // of 6 had "Worth it?" pricing a fifth and sixth that no amount of money
+    // can buy; taking one early is an overdose, not a faster plan.
+    { k: "xan",     label: "Xanax",         e: 250, unit: "+250e",     def: 3, max: 3,  grp: "" },
+    { k: "refill",  label: "Energy refill", e: 0,   unit: "+full bar", def: 1, max: 4,  grp: "" },
+    { k: "fhc",     label: "Hotel coupon",  e: 0,   unit: "+full bar", def: 1, max: 4,  grp: "" },
+    // Mc Smoogle Corp pays 100 energy every 7 days per increment, so the daily
+    // figure is 100/7. Counted in increments rather than shares because the
+    // share threshold moves with the price.
+    { k: "mcs",     label: "Mc Smoogle Corp", e: 100 / 7, unit: "+100e / 7 days", def: 1, max: 5, grp: "" },
+  ];
+
+  // Cans you hold, plus the three staples so the list is never empty. Anything
+  // seasonal only appears once it is actually in your inventory.
+  function srcRows() {
+    var held = {};
+    (state.drinkList || []).forEach(function (d) {
+      var t = canType(d.name, d.id);
+      if (t) held[t.k] = (held[t.k] || 0) + (Number(d.qty) || 0);
+    });
+    // EVERY can, not just the ones in your bag. Listing only what you hold hid
+    // the comparison that matters: each can costs the same 2h of booster
+    // cooldown whatever its strength, so a Damp Valley and a Taurine Elite take
+    // the identical slot for 15e against 45e. You cannot notice that about a
+    // can you cannot see. Held cans lead, then the strongest of the rest, and
+    // `held` rides on the row so the UI can mark a plan built on a cupboard you
+    // do not own.
+    var list = CAN_TYPES.slice().sort(function (a, b) {
+      var ha = (held[a.k] || 0) > 0, hb = (held[b.k] || 0) > 0;
+      if (ha !== hb) return ha ? -1 : 1;
+      return canEnergy(b) - canEnergy(a);
+    });
+    return SRC_BASE.concat(
+      list.map(function (t) {
+        var e = canEnergy(t);
+        return { k: t.k, label: t.label, e: e, unit: "+" + e + "e", def: 4, max: 24,
+                 grp: "cans", held: held[t.k] || 0 };
+      })
+    );
+  }
+
+  function srcRow(k) {
+    var rows = srcRows();
+    for (var i = 0; i < rows.length; i++) if (rows[i].k === k) return rows[i];
+    return null;
+  }
+
+  function srcCount(k) {
+    var v = state.src && state.src[k];
+    var row = srcRow(k);
+    var lim = row ? row.max : 24;
+    return typeof v === "number" && v > 0 ? Math.min(v, lim) : 0;
+  }
+
+  // Refills and coupons are worth a full bar, so their value follows YOUR max.
+  function srcEnergy(k) {
+    var row = srcRow(k);
+    if (!row) return 0;
+    var per = row.e || (state.energyMax || 150);
+    return srcCount(k) * per;
+  }
+
+  // --- goals -----------------------------------------------------------------
+  // You name a target per stat; the plan works out how long each takes at your
+  // current energy, gym, happy and perks, and trains them one at a time. Order
+  // does not change the total (training one stat does not speed up another), so
+  // the shortest goal goes first — that way something is finished soonest.
+  var goalCache = { key: "", val: null };
+
+  function parseGoal(txt) {
+    var t = String(txt == null ? "" : txt).trim().toLowerCase().replace(/,/g, "").replace(/\s+/g, "");
+    if (!t) return 0;
+    var m = /^([0-9]*\.?[0-9]+)([kmb])?$/.exec(t);
+    if (!m) return NaN;
+    var n = parseFloat(m[1]);
+    if (!isFinite(n) || n < 0) return NaN;
+    var mult = m[2] === "k" ? 1e3 : m[2] === "m" ? 1e6 : m[2] === "b" ? 1e9 : 1;
+    return Math.round(n * mult);
+  }
+
+  function fmtDays(d) {
+    if (!isFinite(d)) return "not at this rate";
+    if (d <= 0) return "done";
+    // Days come from trains divided by trains-a-day, so they arrive fractional.
+    // Under a rotation that is dozens of legs, each one of them a fraction.
+    if (d < 1) {
+      var hrs = Math.round(d * 24);
+      return hrs <= 1 ? "under an hour" : hrs + " hours";
+    }
+    if (d < 60) {
+      var n = Math.round(d);
+      return n + " day" + (n === 1 ? "" : "s");
+    }
+    if (d < 730) return (d / 30.44).toFixed(1).replace(/\.0$/, "") + " months";
+    return (d / 365.25).toFixed(1).replace(/\.0$/, "") + " years";
+  }
+
+  // --- calibration ----------------------------------------------------------
+  // The gain model is a model. It assumes a happy value, a perk multiplier and
+  // a gym you may not have been in, and it assumes you spend every point of
+  // energy the plan says you have. Both assumptions are checkable after the
+  // fact: the stat history says what you really gained, the ledger says what
+  // you really spent. Two separate corrections come out of that, kept apart on
+  // purpose — one number blending them tells you nothing you can act on.
+  //
+  //   model factor  actual gain / gain predicted for the energy REALLY spent
+  //                 -> is the gain arithmetic right?
+  //   usage factor  energy really spent / energy that passed through the bar
+  //                 -> do you actually spend it? this is where missed energy lands
+  //
+  // Usage deliberately measures against energy you HAD, not energy the plan
+  // assumes. Measuring against the plan looked equivalent and was not: adding a
+  // can to the plan would drop usage by exactly the amount the can added, so
+  // every "what if I bought this" answer came back as no change at all.
+  //
+  // ETAs multiply by both. Caveat worth knowing: the ledger counts every point
+  // that leaves the bar, so attacks and other spending land in the usage factor
+  // as though they were training.
+  var CAL_WINDOW = 14;    // complete days examined (today is partial, so excluded)
+  var CAL_MIN_DAYS = 7;   // usable days before the correction is applied at all
+  var CAL_MODEL_LO = 0.5, CAL_MODEL_HI = 1.5;
+  var CAL_USAGE_LO = 0.3, CAL_USAGE_HI = 1.5;
+
+  function calClamp(v, lo, hi) {
+    if (!isFinite(v) || !(v > 0)) return 1;
+    return v < lo ? lo : v > hi ? hi : v;
+  }
+
+  // What the model says one day of `energy` into `k` yields starting from
+  // `startStat`. projectDays() always starts from the CURRENT stat, which is
+  // wrong when replaying history: a day two weeks ago started lower, and gains
+  // shrink as the stat grows, so reusing today's figure understates the past.
+  function predictDay(startStat, energy, k, gymName) {
+    var gym = GYMS.filter(function (g) { return g.Gym === gymName; })[0] || GYMS[GYMS.length - 1];
+    var energyP = gym.Energy || 25;
+    var dots = Number(gym[{ str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[k]]) || 0;
+    if (!dots || !(startStat > 0)) return 0;
+    var trains = Math.floor((energy || 0) / energyP);
+    var happy = state.happyMax || state.happy || 5000;
+    var perk = (state.perks && state.perks[k]) || 1;
+    var tot = 0;
+    for (var i = 0; i < trains; i++) tot += gainOne(startStat + tot, happy, dots, energyP, perk, k);
+    return tot;
+  }
+
+  function calibration() {
+    var out = { ok: false, days: 0, looked: 0, model: 1, usage: 1,
+                actual: 0, predicted: 0, used: 0, wasted: 0, uDays: 0, reason: "" };
+    var today = dayKey(Date.now());
+    var first = today - CAL_WINDOW, last = today - 1;
+
+    var byDay = {};
+    (state.ledger || []).forEach(function (e) {
+      if (e && typeof e.d === "number") byDay[e.d] = e;
+    });
+    var vAt = {};
+    (state.hist || []).forEach(function (h) {
+      if (h && typeof h.d === "number" && h.v) vAt[h.d] = h.v;
+    });
+
+    var IDX = { str: 0, def: 1, spe: 2, dex: 3 };
+    var d, k;
+    for (d = first; d <= last; d++) {
+      var cur = vAt[d], prev = vAt[d - 1];
+      if (!cur || !prev) continue;   // a gap: this delta is not one day's work
+      out.looked += 1;
+      var moved = [];
+      for (k in IDX) {
+        var g = (cur[IDX[k]] || 0) - (prev[IDX[k]] || 0);
+        if (g > 0) moved.push({ k: k, g: g, from: prev[IDX[k]] || 0 });
+      }
+      // Two stats moving means the day's energy was split in a ratio nothing
+      // recorded. Guessing it would be inventing the measurement, so skip.
+      if (moved.length !== 1) continue;
+      var e = byDay[d] && byDay[d].used;
+      if (!(e > 0)) continue;
+      var p = predictDay(moved[0].from, e, moved[0].k, state.gymName);
+      if (!(p > 0)) continue;
+      out.actual += moved[0].g;
+      out.predicted += p;
+      out.days += 1;
+    }
+
+    // Usage spans every complete day the ledger actually covers — not just the
+    // usable ones. A day you banked a full bar and never trained is precisely
+    // the day that should drag this down. Days with no bucket at all are days
+    // the script never ran; those are unmeasured, not zero.
+    for (d = first; d <= last; d++) {
+      if (!byDay[d]) continue;
+      out.uDays += 1;
+      out.used += byDay[d].used || 0;
+      out.wasted += byDay[d].wasted || 0;
+    }
+
+    if (out.days < CAL_MIN_DAYS) {
+      out.reason = out.days + " of " + CAL_MIN_DAYS + " days measured";
+      return out;
+    }
+    if (!(out.predicted > 0) || !(out.used + out.wasted > 0)) {
+      out.reason = "not enough recorded energy yet";
+      return out;
+    }
+    out.model = calClamp(out.actual / out.predicted, CAL_MODEL_LO, CAL_MODEL_HI);
+    out.usage = calClamp(out.used / (out.used + out.wasted), CAL_USAGE_LO, CAL_USAGE_HI);
+    out.ok = true;
+    return out;
+  }
+
+  // --- schedule --------------------------------------------------------------
+  // Goals used to run one whole stat at a time, shortest first. That finishes
+  // something soonest but leaves everything else untouched for months. With an
+  // increment set, each stat climbs to the next milestone in turn, so they rise
+  // together and a stat that is behind catches up on its own before the
+  // rotation settles.
+  //
+  // Everything below counts TRAINS, not days, and divides once at the end.
+  // A leg does not consume the rest of your day when it ends, so rounding each
+  // leg up would invent a cost rotation does not have: at 50m increments that
+  // is 52 legs and 24 imaginary days against a true cost of about 0.1.
+  //
+  // Counting trains has a second benefit. The trains needed to reach a target
+  // do not depend on how much energy you have a day — only on the gym. So
+  // "what if I had more energy" is a division, not another walk.
+  var GOAL_STEPS = [0, 5e7, 1e8, 2.5e8, 5e8];
+  var GOAL_STEP_DEFAULT = 5e7;
+  var GOAL_MAX_TRAINS = 4e6; // backstop against an unreachable target
+
+  function gymFor() {
+    return GYMS.filter(function (g) { return g.Gym === state.gymName; })[0] || GYMS[GYMS.length - 1];
+  }
+
+  function dotsFor(k, gym) {
+    return Number((gym || gymFor())[{ str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[k]]) || 0;
+  }
+
+  // Trains to take a stat from one value to another, and where it lands.
+  function trainsTo(k, from, to, mf) {
+    var gym = gymFor();
+    var dots = dotsFor(k, gym);
+    if (!dots || !(to > from)) return null;
+    var energyP = gym.Energy || 25;
+    var happy = state.happyMax || state.happy || 5000;
+    var perk = (state.perks && state.perks[k]) || 1;
+    var f = mf > 0 ? mf : 1;
+    var s = from, t = 0;
+    while (s < to && t < GOAL_MAX_TRAINS) {
+      s += gainOne(s, happy, dots, energyP, perk, k) * f;
+      t += 1;
+    }
+    // Ran out of backstop without arriving. Reporting the backstop as a real
+    // leg would put four million trains of work into the schedule and read as a
+    // finish date; the goal is simply not reachable, and rows say so.
+    if (s < to) return null;
+    return { trains: t, end: Math.min(s, to) };
+  }
+
+  function trainsPerDay(energyPerDay) {
+    var gym = gymFor();
+    return Math.floor((energyPerDay || 0) / (gym.Energy || 25));
+  }
+
+  // Milestones: multiples of the increment, plus every target in its own right
+  // so a smaller goal is not dragged past itself waiting for the next multiple.
+  function goalLevels(step, targets) {
+    var maxT = 0, k;
+    for (k in targets) if (targets[k] > maxT) maxT = targets[k];
+    var out = [];
+    if (step > 0) for (var L = step; L < maxT; L += step) out.push(L);
+    for (k in targets) out.push(targets[k]);
+    out.sort(function (a, b) { return a - b; });
+    return out.filter(function (v, i) { return i === 0 || v !== out[i - 1]; });
+  }
+
+  // Stats still to train, in the order they will be trained. A hand-set order
+  // wins; anything it does not mention falls back to shortest-first, which is
+  // what the plan did before ordering existed.
+  function orderedGoalKeys(mf) {
+    var g = state.goals || {};
+    var have = HIST_KEYS.filter(function (k) {
+      return (Number(g[k]) || 0) > (state.stats[k] || 0);
+    });
+    var saved = Array.isArray(state.goalOrder) ? state.goalOrder : [];
+    var out = [];
+    saved.forEach(function (k) {
+      if (have.indexOf(k) !== -1 && out.indexOf(k) === -1) out.push(k);
+    });
+    var rest = have.filter(function (k) { return out.indexOf(k) === -1; });
+    var solo = {};
+    rest.forEach(function (k) {
+      var r = trainsTo(k, state.stats[k] || 0, Number(g[k]) || 0, mf);
+      solo[k] = r ? r.trains : Infinity;
+    });
+    rest.sort(function (a, b) { return solo[a] - solo[b]; });
+    return out.concat(rest);
+  }
+
+  function goalSegments(mf) {
+    var keys = orderedGoalKeys(mf);
+    if (!keys.length) return [];
+    var g = state.goals || {};
+    var targets = {}, cur = {};
+    keys.forEach(function (k) {
+      targets[k] = Number(g[k]) || 0;
+      cur[k] = state.stats[k] || 0;
+    });
+    var step = Number(state.goalStep) || 0;
+    var levels = goalLevels(step, targets);
+    var segs = [], at = 0;
+    levels.forEach(function (L) {
+      keys.forEach(function (k) {
+        var cap = Math.min(L, targets[k]);
+        if (cur[k] >= cap) return;
+        var r = trainsTo(k, cur[k], cap, mf);
+        if (!r || !r.trains) return;
+        segs.push({ k: k, from: cur[k], to: r.end, cap: cap, target: targets[k],
+                    trains: r.trains, at: at });
+        at += r.trains;
+        cur[k] = r.end;
+      });
+    });
+    return segs;
+  }
+
+  // "How much energy until the next gym?" — Torn tracks this itself and paints
+  // it as a whole-number percentage on gym.php; all this does is turn that
+  // percentage back into energy and put a date on it.
+  //
+  // Deliberately silent rather than wrong in three cases: nothing scanned yet,
+  // a reading left over from a gym you have since unlocked, and the specialist
+  // gyms, which are gated on stat ratios and have no energy answer at all.
+  function unlockHtml() {
+    if (state.tab !== "trend") return "";
+    var owned = state.gymsOwned || [];
+    if (!owned.length) return "";
+    var haveAll = true;
+    for (var i = 0; i < 24; i++) if (owned.indexOf(i) === -1) { haveAll = false; break; }
+    if (haveAll) {
+      return '<div class="gc-card"><h3>Next gym unlock</h3>' +
+        '<div class="muted">Every standard gym is unlocked, and George\'s is the end of the ' +
+        'ladder — no more gym exp is earned past it. The specialist gyms are gated on stat ' +
+        'ratios rather than energy, so there is no figure to give.</div></div>';
+    }
+    var u = state.unlock;
+    if (!u) return "";
+    // A gym you have since bought: the stored percentage belongs to a segment
+    // that is over. Better to show nothing than to count down to something you
+    // already own.
+    if (owned.indexOf(u.gymId - 1) !== -1) return "";
+    var est = unlockEstimate(u.gymId, u.pct, state.gymExpMult);
+    if (!est || !est.gym) return "";
+
+    var cal = calibration();
+    var eff = dailyEnergy().total * (cal.ok ? cal.usage : 1);
+    var days = eff > 0 ? Math.ceil(est.remainMax / eff) : 0;
+    var perk = state.gymExpMult > 1
+      ? ' · ' + perkPct(state.gymExpMult) + ' gym exp applied'
+      : "";
+    return '<div class="gc-card"><h3>Next gym unlock</h3>' +
+      '<div class="muted" style="margin-bottom:8px">' + est.gym.Gym +
+      " · " + fmt(est.req) + "e segment" + perk + "</div>" +
+      '<div class="proj"><span>' + est.pct + '%</span><div class="bar"><i style="width:' +
+      Math.max(2, Math.min(100, est.pct)) + '%"></i></div><b>' + fmt(est.remainMax) + "e</b></div>" +
+      '<div class="muted" style="margin-top:8px">' +
+      (est.remainMax <= 0
+        ? "The bar is full — Torn should hand it over on your next train."
+        : fmt(est.remainMin) + "–" + fmt(est.remainMax) + "e still to train" +
+          (days > 0 ? ", about " + days + " day" + (days === 1 ? "" : "s") +
+            " at " + fmt(Math.round(eff)) + "e a day" : "")) +
+      // Torn shows whole percents only, so the truth sits inside that percent.
+      // Quoting one number here would be false precision.
+      "</div></div>";
+  }
+
+  function goalPlan() {
+    var cal = calibration();
+    var e = dailyEnergy().total;
+    // The plan's energy is what you INTEND to spend. The usage factor turns it
+    // into what you have actually been spending, which is what an honest ETA
+    // has to be built on.
+    var eff = cal.ok ? e * cal.usage : e;
+    var st = state.stats || {};
+    var g = state.goals || {};
+    var key = [e, state.gymName, state.happyMax, st.str, st.def, st.spe, st.dex,
+               g.str, g.def, g.spe, g.dex, state.goalStep,
+               (state.goalOrder || []).join(","),
+               cal.ok ? cal.model.toFixed(4) + "/" + cal.usage.toFixed(4) : "raw"].join("|");
+    if (goalCache.key === key && goalCache.val) return goalCache.val;
+
+    var mf = cal.ok ? cal.model : 1;
+    var segs = goalSegments(mf);
+    var perDay = trainsPerDay(eff);
+    // Trains only become days here, once, at the end.
+    var toDays = function (t) { return perDay > 0 ? t / perDay : Infinity; };
+
+    var byStat = {};
+    var totalTrains = 0;
+    segs.forEach(function (sg) {
+      var r = byStat[sg.k];
+      if (!r) {
+        r = byStat[sg.k] = { k: sg.k, target: sg.target, cur: st[sg.k] || 0,
+                             done: false, trains: 0, startTrains: sg.at, endTrains: 0 };
+      }
+      r.trains += sg.trains;
+      r.endTrains = sg.at + sg.trains;
+      totalTrains += sg.trains;
+    });
+
+    var rows = [];
+    HIST_KEYS.forEach(function (k) {
+      var target = Number(g[k]) || 0;
+      if (!target) return;
+      var cur = st[k] || 0;
+      var r = byStat[k];
+      if (r) {
+        r.days = toDays(r.trains);
+        r.startsIn = toDays(r.startTrains);
+        r.doneIn = toDays(r.endTrains);
+        rows.push(r);
+      } else {
+        // Either already reached, or no dots for it at this gym.
+        rows.push({ k: k, target: target, cur: cur, done: cur >= target,
+                    trains: 0, days: cur >= target ? 0 : Infinity,
+                    startsIn: 0, doneIn: cur >= target ? 0 : Infinity });
+      }
+    });
+    // Finished goals sink to the bottom; the rest keep the order they are
+    // actually trained in, which is the schedule's order, not a re-sort.
+    rows.sort(function (a, b) {
+      if (a.done !== b.done) return a.done ? 1 : -1;
+      return (a.startsIn || 0) - (b.startsIn || 0);
+    });
+
+    var out = {
+      rows: rows, segments: segs, cal: cal, energy: eff,
+      perDay: perDay, totalTrains: totalTrains,
+      total: toDays(totalTrains),
+      now: segs.length ? segs[0] : null,
+      next: null,
+      step: Number(state.goalStep) || 0
+    };
+    for (var i = 0; i < rows.length; i++) if (!rows[i].done) { out.next = rows[i]; break; }
+    goalCache.key = key;
+    goalCache.val = out;
+    return out;
+  }
+
+  // What the whole schedule costs in days at some other daily energy. Trains
+  // are fixed by the gym, so this is a division rather than another walk — and
+  // it is exact, where re-walking each leg would re-round every one of them.
+  function scheduleDays(totalTrains, energyPerDay) {
+    var per = trainsPerDay(energyPerDay);
+    return per > 0 ? totalTrains / per : Infinity;
+  }
+
+  // --- prices and value ------------------------------------------------------
+  // Ranking money against time needs a price, and the price that matters is the
+  // cheapest one you can actually buy at. weav3r.dev mirrors both halves of the
+  // item market in one unauthenticated call — the market price AND live bazaar
+  // listings — so this costs nothing from Torn's 100-a-minute budget. Torn's own
+  // item market is the fallback if that host is unreachable: one API call, and
+  // the bazaar half is lost.
+  var PRICE_TTL = 6 * 3600 * 1000;
+  var PRICE_HOST = "https://weav3r.dev/api/marketplace/";
+  var XAN_ID = 206, FHC_ID = 367;
+
+  function canIdFor(k) {
+    for (var i = 0; i < CAN_TYPES.length; i++) {
+      if (CAN_TYPES[i].k === k) return CAN_TYPES[i].ids[0];
+    }
+    return 0;
+  }
+
+  function srcItemId(k) {
+    if (k === "xan") return XAN_ID;
+    if (k === "fhc") return FHC_ID;
+    return canIdFor(k);
+  }
+
+  function priceOf(id) {
+    var p = state.prices[String(id)];
+    return p && p.p > 0 ? p.p : 0;
+  }
+
+  function priceStale(id) {
+    var p = state.prices[String(id)];
+    return !p || !(p.at > Date.now() - PRICE_TTL);
+  }
+
+  // Cheapest of every live bazaar listing and the item-market price. A zero or a
+  // missing array means "no price known", never "free" — item pages with no
+  // listings answer exactly that way.
+  function parseWeav3r(d) {
+    if (!d || typeof d !== "object") return 0;
+    var best = 0;
+    if (Array.isArray(d.listings)) {
+      d.listings.forEach(function (l) {
+        var v = Number(l && l.price) || 0;
+        if (v > 0 && (!best || v < best)) best = v;
+      });
+    }
+    var mk = Number(d.market_price) || 0;
+    if (mk > 0 && (!best || mk < best)) best = mk;
+    return best;
+  }
+
+  // Torn has answered item-market listings in more than one shape across v1 and
+  // v2, so walk for the cheapest cost/price rather than pinning one layout.
+  function parseTornMarket(d) {
+    var best = 0;
+    function walk(n, depth) {
+      if (!n || depth > 4 || typeof n !== "object") return;
+      if (Array.isArray(n)) { n.forEach(function (x) { walk(x, depth + 1); }); return; }
+      var v = Number(n.cost || n.price) || 0;
+      if (v > 0 && (!best || v < best)) best = v;
+      for (var k in n) if (n[k] && typeof n[k] === "object") walk(n[k], depth + 1);
+    }
+    walk(d && (d.itemmarket || d), 0);
+    return best;
+  }
+
+  function setPrice(id, p, src) {
+    if (!(p > 0)) return false;
+    state.prices[String(id)] = { p: p, at: Date.now(), src: src };
+    storeSet("prices", state.prices);
+    return true;
+  }
+
+  var pricesInFlight = 0;
+
+  function fetchPrice(id) {
+    return httpGet(PRICE_HOST + id + "?limit=5").then(function (d) {
+      var p = parseWeav3r(d);
+      if (p > 0) return setPrice(id, p, "bazaar");
+      throw new Error("no listing");
+    }).catch(function () {
+      // weav3r unreachable or silent: fall back to Torn's own item market. Costs
+      // one call from the key budget, which is why it is not the first choice.
+      var key = resolveKey();
+      if (!key) return false;
+      return httpGet("https://api.torn.com/market/" + id + "?selections=itemmarket&key=" +
+                     encodeURIComponent(key) + "&comment=" + encodeURIComponent(COMMENT))
+        .then(function (d2) { return setPrice(id, parseTornMarket(d2), "market"); })
+        .catch(function () { return false; });
+    });
+  }
+
+  function refreshPrices() {
+    if (pricesInFlight) return;
+    // Nothing on screen needs a price until there is a goal to shorten, so no
+    // goal means no outbound request at all.
+    if (!hasGoals()) return;
+    var want = [];
+    valueCandidates().forEach(function (c) {
+      if (priceStale(c.id) && want.indexOf(c.id) === -1) want.push(c.id);
+    });
+    if (!want.length) return;
+    pricesInFlight = want.length;
+    var got = 0;
+    want.forEach(function (id) {
+      fetchPrice(id).then(function (ok) { if (ok) got += 1; }).catch(function () {})
+        .then(function () {
+          pricesInFlight -= 1;
+          if (!pricesInFlight && got) renderPanel();
+        });
+    });
+  }
+
+  // One more of each thing, every day, for as long as the goal takes. Refills
+  // are bought with points rather than money and Mc Smoogle is capital you keep
+  // rather than money you spend, so neither belongs in a per-day cost ranking.
+  function valueCandidates() {
+    var out = [];
+    srcRows().forEach(function (r) {
+      if (r.k === "refill" || r.k === "mcs") return;
+      var id = srcItemId(r.k);
+      if (!id) return;
+      out.push({ k: r.k, label: r.label, id: id, e: r.e || (state.energyMax || 150),
+                 grp: r.grp || "" });
+    });
+    return out;
+  }
+
+  // One more a day is the natural question, but against a 2,000e plan one more
+  // can is a rounding error and the row would simply vanish — which reads as
+  // "cans do nothing" rather than "one is not enough". So step up to the
+  // smallest daily count that actually moves the finish date, and say which.
+  var VALUE_STEPS = [1, 2, 3, 5, 10, 15, 20, 24];
+  var MCS_MAX_EXTRA = 4;  // the block tops out at five increments
+  var VALUE_STEP_MAX_DAYS = 400; // past this, one a day always shows a change
+
+  var valueCache = { key: "", val: null };
+
+  function valuePlan() {
+    var plan = hasGoals() ? goalPlan() : null;
+    if (!plan || !(plan.totalTrains > 0)) return null;
+    var cal = plan.cal;
+    // Against the WHOLE schedule, not the leg you happen to be on. With an
+    // increment set, "until Strength is done" is a ten-day milestone, and
+    // pricing a can against that reads as an absurd cost per day saved.
+    var base = plan.total;
+    if (!isFinite(base)) return null;
+
+    var sig = [plan.totalTrains, base, plan.energy, plan.step,
+               cal && cal.ok ? cal.model.toFixed(4) + "/" + cal.usage.toFixed(4) : "raw",
+               state.mcsCost].join("|");
+    valueCandidates().forEach(function (c) { sig += "|" + c.id + ":" + priceOf(c.id); });
+    if (valueCache.key === sig && valueCache.val) return valueCache.val;
+
+    var rows = [];
+    valueCandidates().forEach(function (c) {
+      // The added energy goes through the same usage factor the baseline did,
+      // or the two ETAs are not measured the same way and the diff is fiction.
+      var per = c.e * (cal && cal.ok ? cal.usage : 1);
+      var steps = base <= VALUE_STEP_MAX_DAYS ? VALUE_STEPS : [1];
+      var n = 0, days = base;
+      for (var i = 0; i < steps.length; i++) {
+        var d = scheduleDays(plan.totalTrains, (plan.energy || 0) + per * steps[i]);
+        if (!isFinite(d)) continue;
+        if (d < base) { n = steps[i]; days = d; break; }
+      }
+      if (!n) return;   // not even 24 a day changes the finish date
+      var saved = base - days;
+      var price = priceOf(c.id);
+      var spend = price * n;   // per day, at the count this row is quoting
+      rows.push({
+        k: c.k, label: c.label, id: c.id, e: c.e, n: n, price: price, grp: c.grp || "",
+        src: (state.prices[String(c.id)] || {}).src || "",
+        days: days, saved: saved,
+        total: price > 0 ? spend * days : 0,
+        each: price > 0 ? (spend * days) / saved : 0
+      });
+    });
+    // Two different scarcities, so two different orderings.
+    //
+    // A xanax or a coupon costs money and nothing else, so cheapest-per-day-
+    // saved is the whole answer. A CAN also costs a booster slot — every can is
+    // 2h on the cooldown whatever its strength, and a 48h ceiling refilling at
+    // 24h a day is about twelve slots, full stop. Ranking cans by money put a
+    // Goose Juice above a Red Cow because 8e for $433k is cheaper PER ENERGY
+    // than 38e for $2.39m; it is also a quarter of the energy in an identical
+    // slot, which is the cost that actually binds once the booster is high.
+    //
+    // So cans sort by energy — with the slot fixed, energy per booster-hour is
+    // just e/2 and ranking by it is ranking by strength — and money only breaks
+    // ties between equals. Everything else keeps the money ranking.
+    rows.sort(function (a, b) {
+      if ((a.price > 0) !== (b.price > 0)) return a.price > 0 ? -1 : 1;
+      var ac = a.grp === "cans", bc = b.grp === "cans";
+      if (ac !== bc) return ac ? 1 : -1;          // cans as a block, after the rest
+      if (ac && bc) {
+        if (b.e !== a.e) return b.e - a.e;        // the slot is fixed: take the most energy
+        if (a.price > 0 && b.price > 0) return a.price - b.price;
+        return 0;
+      }
+      if (a.price > 0) return a.each - b.each;
+      return b.saved - a.saved;
+    });
+    // Mc Smoogle is bought in whole increments and each pays 100e a week, so it
+    // gets the same smallest-count-that-matters treatment as the consumables —
+    // but it is capital you keep, not money you spend, so it is not ranked
+    // alongside them.
+    var mcsPer = (100 / 7) * (cal && cal.ok ? cal.usage : 1);
+    var mcs = { n: 0, days: base, saved: 0 };
+    for (var mi = 1; mi <= MCS_MAX_EXTRA; mi++) {
+      var md = scheduleDays(plan.totalTrains, (plan.energy || 0) + mcsPer * mi);
+      if (isFinite(md) && md < base) { mcs = { n: mi, days: md, saved: base - md }; break; }
+    }
+
+    var out = { goal: plan.next, base: base, rows: rows, mcs: mcs, cal: cal,
+                everything: plan.rows.filter(function (r) { return !r.done; }).length > 1 };
+    valueCache.key = sig;
+    valueCache.val = out;
+    return out;
+  }
+
+  // Three caches hold a shape derived from the schedule. Anything that changes
+  // the schedule has to clear all three, so they are cleared together rather
+  // than remembered separately at each call site.
+  function resetPlanCaches() {
+    goalCache.key = "";
+    histProjCache.key = "";
+    valueCache.key = "";
+  }
+
+  // Move a stat one place earlier in the training order. The stored order is
+  // seeded from the current running order the first time it is touched, so a
+  // single tap does not scramble everything else into some default.
+  function raiseGoal(k) {
+    var plan = hasGoals() ? goalPlan() : null;
+    if (!plan) return;
+    var cur = plan.rows.filter(function (r) { return !r.done; }).map(function (r) { return r.k; });
+    var i = cur.indexOf(k);
+    if (i <= 0) return;
+    cur.splice(i, 1);
+    cur.splice(i - 1, 0, k);
+    state.goalOrder = cur;
+    storeSet("goalOrder", cur);
+    resetPlanCaches();
+    applyGoalFocus();
+    renderPanel();
+  }
+
+  function hasGoals() {
+    var g = state.goals || {};
+    return !!(g.str || g.def || g.spe || g.dex);
+  }
+
+  // Goals drive the focus. Everything downstream — the verdict, the steps, the
+  // projection — already keys off state.focus, so this is the only wiring the
+  // rest of the script needs.
+  function applyGoalFocus() {
+    if (!hasGoals()) return;
+    var plan = goalPlan();
+    // The leg being trained right now, which under rotation is not the same as
+    // the stat whose goal finishes first.
+    var k = plan.now ? plan.now.k : plan.next ? plan.next.k : "";
+    if (k && k !== state.focus) state.focus = k;
+  }
+
+  function dailyEnergy() {
+    var natural = Math.round(86400 / energyRate());
+    var out = { natural: natural, xan: 0, refill: 0, fhc: 0, cans: 0, mcs: 0, total: 0 };
+    var extra = 0;
+    srcRows().forEach(function (r) {
+      // War stacking means the xans are being banked, not spent on the gym.
+      if (r.k === "xan" && state.warStack) return;
+      var v = srcEnergy(r.k);
+      extra += v;
+      if (r.grp === "cans") out.cans += v;
+      else out[r.k] = (out[r.k] || 0) + v;
+    });
+    // Sum what was actually counted. Naming each bucket meant a source added
+    // later was shown in the list and silently left out of the total.
+    out.total = natural + extra;
+    return out;
+  }
+
+  var SRC_PRESETS = [
+    { id: "xan",       label: "Xan",         set: { xan: 3, refill: 0, fhc: 0, munster: 0, redcow: 0, tourine: 0 } },
+    { id: "xanref",    label: "Xan + refill", set: { xan: 3, refill: 1, fhc: 0, munster: 0, redcow: 0, tourine: 0 } },
+    { id: "xanrefcan", label: "+ cans",      set: { xan: 3, refill: 1, fhc: 0, munster: 0, redcow: 4, tourine: 0 } },
+    { id: "all",       label: "Everything",  set: { xan: 4, refill: 1, fhc: 1, munster: 0, redcow: 0, tourine: 8 } }
+  ];
+
+  function srcPresetId() {
+    for (var i = 0; i < SRC_PRESETS.length; i++) {
+      var p = SRC_PRESETS[i], hit = true;
+      for (var k in p.set) if (srcCount(k) !== p.set[k]) { hit = false; break; }
+      if (hit) return p.id;
+    }
+    return "";
+  }
+
+  // The manual pickers. Only shown when no goals are set — with goals, the
+  // coach chooses the stat and a picker beside it would just contradict it.
+  function pickerCards() {
+    return (
+      '<div class="gc-card"><h3>Priority skill</h3><p class="muted">Everything the coach says — training, happy jumps, projections — applies to this stat first.</p><div class="pick">' +
+      [
+        ["str", "Strength"],
+        ["def", "Defense"],
+        ["spe", "Speed"],
+        ["dex", "Dexterity"],
+      ]
+        .map(function (p) {
+          return pickBtn("focus", p[0], p[1], state.focus === p[0]);
+        })
+        .join("") +
+      "</div></div>" +
+      '<div class="gc-card"><h3>Second skill</h3><p class="muted">Optional. After the main training session, leftover energy can go here. Leave none if you only train one stat.</p><div class="pick">' +
+      [["none", "None"]]
+        .concat([
+          ["str", "Strength"],
+          ["def", "Defense"],
+          ["spe", "Speed"],
+          ["dex", "Dexterity"],
+        ])
+        .map(function (p) {
+          return pickBtn("focus2", p[0], p[1], (state.focus2 || "none") === p[0]);
+        })
+        .join("") +
+      "</div></div>"
+    );
+  }
+
+  var STAT_LABEL = { str: "Strength", def: "Defense", spe: "Speed", dex: "Dexterity" };
+
+  function stepLabel(v) {
+    if (!v) return "Off";
+    return v >= 1e9 ? v / 1e9 + "b" : Math.round(v / 1e6) + "m";
+  }
+
+  function goalsHtml() {
+    var plan = hasGoals() ? goalPlan() : null;
+    var nowK = plan && plan.now ? plan.now.k : plan && plan.next ? plan.next.k : "";
+    var order = plan ? plan.rows.filter(function (r) { return !r.done; }).map(function (r) { return r.k; }) : [];
+
+    // In the order they will be trained, so the arrow visibly does something.
+    // Rendering in a fixed stat order meant reordering changed only a line of
+    // small print and read as having done nothing at all.
+    var listed = plan ? plan.rows.map(function (r) { return r.k; }) : [];
+    HIST_KEYS.forEach(function (k) { if (listed.indexOf(k) === -1) listed.push(k); });
+
+    var rows = listed.map(function (k) {
+      var target = Number((state.goals || {})[k]) || 0;
+      var cur = state.stats[k] || 0;
+      var row = null;
+      if (plan) plan.rows.forEach(function (r) { if (r.k === k) row = r; });
+      var note = "";
+      if (row) {
+        if (row.done) note = "reached";
+        else if (!isFinite(row.days)) note = "not reachable at this rate";
+        else note = fmtDays(row.days) + " of training" +
+          (row.startsIn > 0 ? ", starting in " + fmtDays(row.startsIn) : "") +
+          " \u00b7 done in " + fmtDays(row.doneIn);
+      }
+      // The arrow only appears where it can do something: on a goal that is not
+      // finished and is not already first in the running order.
+      var pos = order.indexOf(k);
+      var canRaise = pos > 0;
+      return (
+        '<div class="gcb-goal' + (row && row.done ? " done" : "") + (k === nowK ? " now" : "") + '">' +
+        '<div class="gcb-gtop"><span class="gcb-gname">' +
+        (canRaise
+          ? '<button class="gcb-up" data-raise="' + k + '" title="Train this sooner" aria-label="Move ' +
+            STAT_LABEL[k] + ' earlier">\u25b2</button>'
+          : '<span class="gcb-up ghost" aria-hidden="true">\u25b2</span>') +
+        STAT_LABEL[k] + "</span>" +
+        '<span class="gcb-gcur">' + fmt(cur) + "</span></div>" +
+        '<input class="gc-in gcb-gin" data-goal="' + k + '" type="text" inputmode="decimal" ' +
+        'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" ' +
+        'placeholder="no goal" value="' + (target ? esc(fmt(target)) : "") + '">' +
+        (note ? '<div class="gcb-gnote">' + note + "</div>" : "") +
+        "</div>"
+      );
+    }).join("");
+
+    var step = Number(state.goalStep) || 0;
+    var picker =
+      '<div class="row" style="margin-top:10px"><span>Rotate every</span></div>' +
+      '<div class="pick">' +
+      GOAL_STEPS.map(function (v) {
+        return pickBtn("goalstep", String(v), stepLabel(v), step === v);
+      }).join("") +
+      "</div>";
+
+    var summary;
+    if (!plan || !plan.rows.length) {
+      summary = '<p class="muted" style="margin:8px 0 0">Set a target on any stat and the coach trains toward it. Type a number, or shorthand like 150m or 1.2b.</p>';
+    } else if (!plan.next) {
+      summary = '<p class="ok" style="margin:8px 0 0">Every goal reached.</p>';
+    } else {
+      var legs = plan.segments.length;
+      var nowSeg = plan.now;
+      summary =
+        '<div class="row" style="margin-top:8px"><span>Training now</span><b class="ok">' +
+        (nowSeg ? STAT_LABEL[nowSeg.k] : STAT_LABEL[plan.next.k]) + "</b></div>" +
+        (nowSeg && step > 0
+          ? '<div class="row"><span>Until</span><b>' + fmt(Math.round(nowSeg.cap)) + "</b></div>" +
+            '<div class="row"><span>Then switch in</span><b>' +
+            fmtDays(nowSeg.trains / (plan.perDay || 1)) + "</b></div>"
+          : "") +
+        '<div class="row"><span>All goals done in</span><b>' + fmtDays(plan.total) + "</b></div>" +
+        '<p class="muted" style="margin:8px 0 0">' +
+        (step > 0
+          ? "Every stat climbs to the next " + stepLabel(step) +
+            " in turn, so they rise together instead of one finishing months before the next starts \u2014 " +
+            legs + " legs in all. Interleaving is free: a stat\u2019s gains depend only on its own value, " +
+            "so the total is the same either way."
+          : "One stat at a time, in the order below. Set a rotation above to keep them level instead.") +
+        " At " + fmt(Math.round(plan.energy || dailyEnergy().total)) + "e a day at " +
+        (state.gymName || "your gym") +
+        (plan.cal && plan.cal.ok ? ", from what you have really been spending" : "") +
+        ". The \u25b2 moves a stat earlier in the order.</p>";
+    }
+    return '<div class="gc-card"><h3>Goals</h3><div class="gcb-goals">' + rows + "</div>" +
+      picker + summary + "</div>" +
+      calibrationHtml(plan) + valueHtml();
+  }
+
+  // How far off the model reads, in words rather than a bare ratio.
+  // Money, short enough to sit in a row on a phone.
+  function fmtMoney(n) {
+    n = Math.round(Number(n) || 0);
+    if (n <= 0) return "\u2014";
+    if (n >= 1e9) return "$" + (n / 1e9).toFixed(n >= 1e10 ? 0 : 2) + "b";
+    if (n >= 1e6) return "$" + (n / 1e6).toFixed(n >= 1e7 ? 1 : 2) + "m";
+    if (n >= 1e3) return "$" + Math.round(n / 1e3) + "k";
+    return "$" + n;
+  }
+
+  function valueHtml() {
+    var vp = valuePlan();
+    if (!vp) return "";
+    var priced = 0;
+    vp.rows.forEach(function (r) { if (r.price > 0) priced += 1; });
+
+    var mcs = vp.mcs || { n: 0, saved: 0 };
+    var mcsCost = state.mcsCost > 0 ? state.mcsCost * mcs.n : 0;
+
+    var rows = vp.rows.map(function (r) {
+      var right = r.price > 0
+        ? fmtMoney(r.price * r.n) + (r.n > 1 ? " a day" : " each")
+        : '<span class="muted">no price yet</span>';
+      var note = fmtDays(r.saved) + " sooner" +
+        (r.price > 0
+          ? " \u00b7 " + fmtMoney(r.total) + " over the whole plan \u00b7 " +
+            fmtMoney(r.each) + " a day saved"
+          : "") +
+        // The figure that decides between cans. Every can is 2h of booster
+        // whatever it holds, so this is what the slot is actually worth.
+        (r.grp === "cans" ? " \u00b7 " + fmt(Math.round(r.e / 2)) + "e per booster-hour" : "");
+      return (
+        '<div class="gcb-val">' +
+        '<div class="gcb-gtop"><span class="gcb-gname">' + esc(r.label) +
+        (r.n > 1 ? " \u00d7" + r.n + " a day, +" + fmt(r.e * r.n) + "e"
+                 : " +" + fmt(r.e) + "e a day") + "</span>" +
+        "<span class=\"gcb-gcur\">" + right + "</span></div>" +
+        '<div class="gcb-gnote">' + note + "</div></div>"
+      );
+    }).join("");
+
+    return (
+      '<div class="gc-card"><h3>Worth it?</h3>' +
+      // `base` is the WHOLE schedule — plan.total — so naming one stat here was
+      // simply wrong once there was more than one goal. Name the single goal
+      // when there is only one, and say "every goal" when there are several.
+      '<p class="muted" style="margin:0 0 8px">One more a day, every day, until ' +
+      (vp.everything ? "every goal is done"
+                     : STAT_LABEL[vp.goal.k] + " is done") +
+      " \u2014 " + fmtDays(vp.base) + " as things stand." +
+      "</p>" +
+      '<div class="gcb-goals">' + rows + "</div>" +
+      (vp.rows.some(function (r) { return r.grp === "cans"; })
+        ? '<p class="muted" style="margin:8px 0 0">Cans are listed strongest first, not cheapest: ' +
+          "each one is 2h of booster cooldown whatever it holds, and a 48h ceiling refilling at 24h " +
+          "a day is about twelve slots. Once the booster is high the slot costs more than the can does."
+          + "</p>"
+        : "") +
+      '<div class="gcb-val" style="margin-top:8px">' +
+      '<div class="gcb-gtop"><span class="gcb-gname">Mc Smoogle, ' +
+      (mcs.n > 1 ? mcs.n + " more increments" : "one more increment") + "</span>" +
+      '<span class="gcb-gcur">' + (mcsCost > 0 ? fmtMoney(mcsCost) : "\u2014") + "</span></div>" +
+      '<div class="gcb-gnote">' +
+      (mcs.saved > 0
+        ? fmtDays(mcs.saved) + " sooner" +
+          (mcsCost > 0 ? " \u00b7 " + fmtMoney(mcsCost / mcs.saved) + " a day saved" : "")
+        : "even " + MCS_MAX_EXTRA + " more increments would not move this goal") +
+      " \u00b7 capital you keep, not money you spend</div>" +
+      '<input class="gc-in gcb-gin" data-mcscost="1" type="text" inputmode="decimal" ' +
+      'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" ' +
+      'placeholder="cost of the next increment" value="' +
+      (state.mcsCost ? esc(fmt(state.mcsCost)) : "") + '"></div>' +
+      '<p class="muted" style="margin:8px 0 0">' +
+      (priced
+        ? "Cheapest live bazaar or item-market listing, refreshed every few hours. Prices move; treat these as a ranking, not a quote."
+        : "Fetching prices\u2026 if they do not appear, the price host is unreachable and Torn\u2019s own item market is tried next.") +
+      "</p></div>"
+    );
+  }
+
+  function calModelWords(m) {
+    var off = Math.round(Math.abs(m - 1) * 100);
+    if (off < 2) return "spot on";
+    return off + "% " + (m < 1 ? "optimistic" : "pessimistic");
+  }
+
+  // What the missed energy is actually costing, in days on the goal you are
+  // training right now. A percentage nobody can act on; a number of days they can.
+  // What the energy you never spent costs across the whole schedule, in days.
+  // Per-goal would understate it under rotation, where one goal is only ever a
+  // slice of what you are actually working towards.
+  function calCostDays(plan) {
+    if (!plan || !plan.cal || !plan.cal.ok || !(plan.totalTrains > 0)) return 0;
+    if (plan.cal.usage >= 0.999) return 0;
+    var full = scheduleDays(plan.totalTrains, dailyEnergy().total);
+    if (!isFinite(full) || !isFinite(plan.total)) return 0;
+    return Math.max(0, plan.total - full);
+  }
+
+  function calibrationHtml(plan) {
+    var cal = (plan && plan.cal) || calibration();
+    if (!cal.ok) {
+      return (
+        '<div class="gc-card"><h3>Calibration</h3>' +
+        '<p class="muted" style="margin:0">Still learning \u2014 ' + esc(cal.reason) +
+        ". Once a week of single-stat training is on record, projections are corrected " +
+        "against what you actually gained and actually spent. Until then they use the raw model." +
+        "</p></div>"
+      );
+    }
+    var perDay = cal.days > 0 ? cal.actual / cal.days : 0;
+    var predDay = cal.days > 0 ? cal.predicted / cal.days : 0;
+    var usePct = Math.round(cal.usage * 100);
+    var cost = calCostDays(plan);
+    var spentDay = cal.uDays > 0 ? cal.used / cal.uDays : 0;
+    var lostDay = cal.uDays > 0 ? cal.wasted / cal.uDays : 0;
+    return (
+      '<div class="gc-card"><h3>Calibration</h3>' +
+      '<div class="row"><span>Gain model</span><b class="' + (Math.abs(cal.model - 1) < 0.05 ? "ok" : "warn") + '">' +
+        calModelWords(cal.model) + "</b></div>" +
+      '<div class="row"><span>You gained</span><b>' + fmt(Math.round(perDay)) + " a day</b></div>" +
+      '<div class="row"><span>It predicted</span><b>' + fmt(Math.round(predDay)) + " a day</b></div>" +
+      '<div class="row" style="margin-top:6px"><span>Energy used</span><b class="' + (usePct >= 90 ? "ok" : "warn") + '">' +
+        usePct + "% of what you had</b></div>" +
+      '<div class="row"><span>Reached the gym</span><b>' + fmt(Math.round(spentDay)) + "e a day</b></div>" +
+      '<div class="row"><span>Evaporated at a full bar</span><b class="' + (lostDay >= 1 ? "warn" : "ok") + '">' +
+        fmt(Math.round(lostDay)) + "e a day</b></div>" +
+      (cost >= 1 && plan && plan.next
+        ? '<p class="warn" style="margin:8px 0 0">Energy you never spent is adding about ' +
+          fmtDays(cost) + " to " + STAT_LABEL[plan.next.k] + "."
+          + "</p>"
+        : "") +
+      '<p class="muted" style="margin:8px 0 0">Projections are scaled by both figures, measured over ' +
+      cal.days + " day" + (cal.days === 1 ? "" : "s") + " of the last " + CAL_WINDOW +
+      ". Every point that leaves your bar counts as spent, so attacks land here too." +
+      "</p></div>"
+    );
+  }
+
+  // Everything Torn sends, not just the lines that matched a gym rule. A perk
+  // the script is ignoring shows up here in its own words, which beats guessing
+  // at what a stock or property benefit is called.
+  function rawPerksHtml() {
+    var raw = state.perkRaw || {};
+    var order = [
+      ["faction", "Faction"], ["company", "Company"], ["job", "Job"],
+      ["education", "Education"], ["property", "Property"], ["merit", "Merit"],
+      ["stock", "Stock"], ["book", "Book"], ["enhancer", "Enhancer"]
+    ];
+    var used = {};
+    Object.keys(state.perkHits || {}).forEach(function (k) {
+      (state.perkHits[k] || []).forEach(function (line) { used[k + "|" + line] = true; });
+    });
+    var body = order.map(function (pair) {
+      var lines = raw[pair[0]] || [];
+      if (!lines.length) return "";
+      return '<div class="gcb-grp">' + pair[1] + "</div>" +
+        lines.map(function (line) {
+          var on = used[pair[0] + "|" + line];
+          return '<div class="gcb-rawp' + (on ? " on" : "") + '">' +
+            (on ? "\u2713 " : "\u00b7 ") + esc(String(line)) + "</div>";
+        }).join("");
+    }).join("");
+    if (!body) return "";
+    return '<div class="gc-card"><h3>Perks Torn sent</h3>' +
+      '<p class="muted" style="margin:0 0 6px">A tick means the script is using it. Everything else is listed so a benefit it is ignoring can be named.</p>' +
+      body + "</div>";
+  }
+
+  // Cans the plan counts on that are not in your inventory. Ticking one is
+  // allowed on purpose — planning a purchase is a real use — but the projection
+  // is then describing a bag you have to go and buy, and it should say so.
+  function wishlistNote() {
+    var want = srcRows().filter(function (r) {
+      return r.grp === "cans" && srcCount(r.k) > 0 && !(r.held > 0);
+    });
+    if (!want.length) return "";
+    var e = 0;
+    want.forEach(function (r) { e += srcEnergy(r.k); });
+    return '<div class="gcb-wish">Your plan counts ' + fmt(e) + "e a day from " +
+      want.map(function (r) { return esc(r.label); }).join(", ") +
+      ", which you are not holding. Buy them or untick them \u2014 until then the " +
+      "projections are describing a cupboard you do not have.</div>";
+  }
+
+  function srcHtml() {
+    var e = dailyEnergy();
+    var now = srcPresetId();
+    function rowHtml(r) {
+      var n = srcCount(r.k);
+      var on = n > 0;
+      var val = srcEnergy(r.k);
+      return (
+        '<div class="gcb-src' + (on ? " on" : "") + '">' +
+        '<button class="gcb-chk" data-tick="' + r.k + '" aria-pressed="' + (on ? "true" : "false") +
+        '" aria-label="' + esc(r.label) + '">' + (on ? "\u2713" : "") + "</button>" +
+        '<span class="gcb-nm">' + r.label + "<i>" + r.unit +
+        (on && val ? " \u00b7 " + fmt(val) + "e" : "") +
+        // A can can be ticked before you own one — you may be planning a
+        // purchase — so the row has to say which are cupboard and which are
+        // wishlist, or the projection quietly describes a bag you do not have.
+        (r.grp === "cans"
+          ? (r.held > 0 ? " \u00b7 " + fmt(r.held) + " held"
+                        : on ? " \u00b7 none held" : " \u00b7 not held")
+          : "") +
+        "</i></span>" +
+        '<span class="gcb-step">' +
+        '<button data-src="' + r.k + '" data-delta="-1"' + (n <= 0 ? " disabled" : "") + ">\u2212</button>" +
+        "<b>" + n + "</b>" +
+        '<button data-src="' + r.k + '" data-delta="1"' + (n >= r.max ? " disabled" : "") + ">+</button>" +
+        "</span></div>"
+      );
+    }
+    return (
+      '<div class="gc-card"><h3>Energy sources</h3>' +
+      '<p class="muted" style="margin:0 0 8px">Tick what you actually use. Everything here feeds the projections \u2014 the Trend chart and the 7/30/90 day figures move with it.</p>' +
+      '<div class="pick">' +
+      SRC_PRESETS.map(function (p) {
+        return '<button data-preset="' + p.id + '" class="' + (now === p.id ? "on" : "") + '">' + p.label + "</button>";
+      }).join("") +
+      "</div>" +
+      '<div class="gcb-srcs">' +
+      srcRows().filter(function (r) { return r.grp !== "cans"; }).map(rowHtml).join("") +
+      '<div class="gcb-grp">Energy cans</div>' +
+      srcRows().filter(function (r) { return r.grp === "cans"; }).map(rowHtml).join("") +
+      wishlistNote() +
+      "</div>" +
+      '<div class="row"><span>Natural regen</span><b>' + fmt(e.natural) + "e</b></div>" +
+      (e.xan ? '<div class="row"><span>Xanax</span><b>' + fmt(e.xan) + "e</b></div>" : "") +
+      (e.refill ? '<div class="row"><span>Refills</span><b>' + fmt(e.refill) + "e</b></div>" : "") +
+      (e.fhc ? '<div class="row"><span>Coupons</span><b>' + fmt(e.fhc) + "e</b></div>" : "") +
+      (e.mcs ? '<div class="row"><span>Mc Smoogle Corp</span><b>' + fmt(e.mcs) + "e</b></div>" : "") +
+      (e.cans ? '<div class="row"><span>Cans</span><b>' + fmt(e.cans) + "e</b></div>" : "") +
+      '<div class="row"><span>Total per day</span><b class="ok">' + fmt(e.total) + "e</b></div>" +
+      (state.warStack ? '<p class="muted" style="margin:8px 0 0">War stack is on, so Xanax is banked rather than spent \u2014 it is left out of the total.</p>' : "") +
+      "</div>"
+    );
+  }
+
+  // --- energy ledger -------------------------------------------------------
+  // What your bar produced versus what you actually spent. Waste is regen the
+  // bar dropped because it was already full: sit at 150/150 for two hours and
+  // that is two hours of regen you never received.
+  //
+  // Deliberately computed by COMPARING TWO OBSERVATIONS rather than by running
+  // a timer. A timer only counts while a Torn page is open, which is exactly
+  // when you are least likely to be wasting energy. Comparing observations
+  // catches the overnight case: last seen full eight hours ago, still full now,
+  // therefore eight hours of regen went in the bin.
+  var LEDGER_DAYS = 90;
+
+  function energyRate() {
+    // Torn's base is 5 energy per 15 minutes. The real figure is derived from
+    // the API on the first poll; this is only the value before that lands.
+    return state.energySecPerE || 180;
+  }
+
+  // Pure, so it can be tested: one window between two observations.
+  function ledgerDelta(prevE, prevT, nowE, nowT, max, secPerE, fullAt) {
+    var out = { used: 0, wasted: 0 };
+    // A drop is a drop: spending is instantaneous, so record it whether or not
+    // a measurable window has passed. Waste is a rate over time and does need
+    // a valid window, so it stays behind the guard below.
+    if (nowE < prevE) out.used = prevE - nowE;
+    var elapsed = (nowT - prevT) / 1000;
+    if (!(elapsed > 0) || !(secPerE > 0)) return out;
+    if (elapsed > 48 * 3600) elapsed = 48 * 3600; // clock changes, long sleeps
+    // Waste means regen you did not receive because the bar was already full and
+    // you left it there. Being ABOVE the cap is a different thing entirely:
+    // that is energy you put there on purpose with cans or a xanax, and the
+    // paused regen is the known price of stockpiling, not something you let
+    // slip. Counting it made a ten-can session read as waste while you were
+    // actively banking. So a window only counts while the bar is AT the cap,
+    // and neither end of it is above.
+    var overNow = nowE > max;
+    var overPrev = prevE > max;
+    if (!overNow && !overPrev) {
+      // Account for the window as time, not as a snapshot of where it ended.
+      // Requiring it to END at the cap threw away the commonest case there is:
+      // the bar sits full for hours, you train, and by the time the panel looks
+      // again the bar has already started refilling — so the reading is below
+      // the cap and every one of those hours was discarded.
+      //
+      //   fill    climbing to the cap at the start; absorbed, not wasted
+      //   refill  climbing back after a spend; also absorbed, not wasted
+      //   rest    the bar sat full with nowhere to put the regen
+      //
+      // The refill leg assumes the spend emptied the bar, which is the most
+      // generous reading available and makes this a floor: never more waste
+      // than actually happened.
+      var fill = prevE >= max ? 0 : (max - prevE) * secPerE;
+      // When the bar filled is not a guess: it is the instant the "energy full"
+      // notification was scheduled for, back when the rate was known and the
+      // bar was still climbing. Prefer it over re-deriving the fill from a rate
+      // that may since have gone stale.
+      // Only where the bar demonstrably got there: it ended at the cap, or it
+      // ended lower than it started so a spend could have followed the fill. A
+      // prediction on a bar that merely rose and stopped short was wrong, and
+      // trusting it books waste that never happened.
+      var reached = nowE >= max || nowE < prevE;
+      if (reached && fullAt && fullAt > prevT && fullAt <= nowT) fill = (fullAt - prevT) / 1000;
+      var refill = nowE < prevE ? nowE * secPerE : 0;
+      var atCap = elapsed - fill - refill;
+      if (atCap > 0) out.wasted = atCap / secPerE;
+
+      // Spend is the drop PLUS whatever regenerated back in behind it. The drop
+      // alone loses every point that refilled after a session: train the bar
+      // away, come back an hour later, and the hour of regen makes the session
+      // read an hour smaller than it was. Regen that did not land in the bar is
+      // exactly the waste above, so what remains is what the bar absorbed, and
+      // the rest of the balance is what left it.
+      //
+      // Only valid while the bar is at or below the cap. Above it Torn pauses
+      // regen entirely, so nothing is absorbed and the raw drop is already the
+      // whole story — which is why banking keeps the simple reading below.
+      var absorbed = Math.max(0, elapsed / secPerE - out.wasted);
+      out.used = Math.max(0, prevE + absorbed - nowE);
+    }
+    return out;
+  }
+
+  function ledgerBucket() {
+    var d = dayKey(Date.now());
+    var last = state.ledger[state.ledger.length - 1];
+    if (!last || last.d !== d) {
+      last = { d: d, used: 0, wasted: 0 };
+      state.ledger.push(last);
+      if (state.ledger.length > LEDGER_DAYS) state.ledger = state.ledger.slice(-LEDGER_DAYS);
+    }
+    return last;
+  }
+
+  var ledgerDirty = 0;
+  var ledgerFlushAt = 0;
+  function ledgerObserve(force) {
+    // Until a real reading lands, state.energy is 0 — which is not "the bar is
+    // empty", it is "we do not know yet". Observing then wiped the overnight
+    // cap streak and booked a phantom spend of the whole bar. Wait for a
+    // reading from the API or the page before touching the ledger.
+    if (!state.energyKnown) return;
+    var max = state.energyMax || 150;
+    var now = Date.now();
+    var prev = state.lastSeen;
+    if (prev && typeof prev.e === "number" && prev.t && now >= prev.t) {
+      var d = ledgerDelta(prev.e, prev.t, state.energy, now, max, energyRate(), prev.fullAt);
+      // The train log used to be driven by comparing energy between API polls —
+      // but the page updates state.energy live every second, so the drop was
+      // already absorbed before a payload arrived and a whole session logged
+      // nothing. The ledger sees every drop, which is why "Spent today" was
+      // right while the log was empty, so drive the log from here instead. It
+      // catches training started any way at all, not just a click we recognise.
+      if (d.used >= 5 && !pendingTrain) {
+        pendingTrain = {
+          skill: "", observed: true, at: Date.now(), preE: prev.e, gym: state.gymName,
+          preStats: prev.stats || { str: state.stats.str, def: state.stats.def,
+                                    spe: state.stats.spe, dex: state.stats.dex }
+        };
+        refresh("train").then(function () { finaliseTrain(); }, function () { finaliseTrain(); });
+        setTimeout(function () { finaliseTrain(true); }, GAIN_WAIT_MS + 4000);
+      }
+      if (d.used > 0 || d.wasted > 0) {
+        var b = ledgerBucket();
+        b.used += d.used;
+        b.wasted += d.wasted;
+        ledgerDirty += 1;
+        // Spending is rare and irreplaceable: a whole training session credits
+        // exactly ONCE, so batching it behind a counter meant every session was
+        // lost the moment the page navigated. Waste credits every second while
+        // the bar is full, so that one can wait for the timer below.
+        if (d.used > 0) force = true;
+      }
+    }
+    var capSince = state.lastSeen && state.lastSeen.capSince;
+    // While the bar is climbing, remember when it is due to fill — the same
+    // instant the notification is armed for. Once it IS full that stored value
+    // is the moment it filled, which is the only way to know how long a bar has
+    // been sitting full while the app was closed.
+    var fullAt = state.lastSeen && state.lastSeen.fullAt;
+    if (state.energy >= max) {
+      if (!capSince) capSince = fullAt && fullAt <= now ? fullAt : now;
+    } else {
+      capSince = 0;
+      fullAt = now + timeToFull() * 1000;
+    }
+    state.lastSeen = {
+      e: state.energy, t: now, capSince: capSince, fullAt: fullAt,
+      // Kept so an observed drop can be checked against a real stat gain later.
+      stats: { str: state.stats.str, def: state.stats.def, spe: state.stats.spe, dex: state.stats.dex }
+    };
+    // Flush on a clock rather than a count. A count assumes many small credits;
+    // spending arrives as one big one, so a counter could sit unflushed for the
+    // entire visit.
+    if (force || (ledgerDirty > 0 && now - ledgerFlushAt > 15000)) {
+      ledgerDirty = 0;
+      ledgerFlushAt = now;
+      storeSet("ledger", state.ledger);
+      storeSet("lastSeen", state.lastSeen);
+    }
+  }
+
+  // How long the bar has been full right now, and what that has cost.
+  function capStreak() {
+    var max = state.energyMax || 150;
+    if (!state.energyKnown || state.energy < max) return null;
+    var prev = state.lastSeen;
+    var since = prev && prev.capSince;
+    // If capSince was never written but the last stored reading was already
+    // full, the streak is at least that old. Covers upgrades from a build that
+    // did not track it, and any run where the first observation is the full bar.
+    if (!since && prev && typeof prev.e === "number" && prev.e >= max && prev.t) since = prev.t;
+    // Filled while the app was closed: the prediction is older than anything an
+    // observation could know, and it is the honest answer.
+    if (prev && prev.fullAt && prev.fullAt <= Date.now() && (!since || prev.fullAt < since)) {
+      since = prev.fullAt;
+    }
+    if (!since) return null;
+    var sec = Math.max(0, (Date.now() - since) / 1000);
+    return { sec: sec, lost: sec / energyRate() };
+  }
+
+  // Missed energy is FLOORED, never rounded. Regen arrives in whole points, so
+  // half a point at the cap has not cost you anything yet — rounding it up made
+  // ninety seconds at a full bar report "1 missed", which reads as a mistake
+  // you did not make. The fraction is still accumulated; it just is not claimed
+  // until a whole point is genuinely gone.
+  function missed(n) {
+    return Math.floor(Math.max(0, n || 0));
+  }
+
+  function ledgerWindow(days) {
+    var cut = dayKey(Date.now()) - days + 1;
+    var used = 0, wasted = 0;
+    state.ledger.forEach(function (e) {
+      if (e.d >= cut) { used += e.used || 0; wasted += e.wasted || 0; }
+    });
+    return { used: used, wasted: wasted };
+  }
+
+  // How long a "wait for a full bar first" suggestion may ask you to wait.
+  // Lost when an earlier edit sliced this region out; the four places that use
+  // it then threw ReferenceError on the one code path that reaches them.
+  var WAIT_FULL_MAX = 45 * 60;
+
+  // Full means at or above the cap — the point where regen genuinely stops.
+  // This allowed two points of slack, inherited from the stable script and
+  // never explained, which made 149/150 report "capped, regen paused" while
+  // regen was still running. Worse, it drove the advice: at 149e and 10e a
+  // train that is 14 trains, and thirty seconds of waiting makes it 15, so the
+  // coach was recommending you throw a train away.
+  function barFull(e) {
+    var v = e === undefined ? state.energy || 0 : e;
+    return v >= (state.energyMax || 150);
+  }
+
+  function timeToFull() {
+    var max = state.energyMax || 150;
+    var e = state.energy || 0;
+    if (e >= max) return 0; // already full, or banked above the cap
+    return Math.max(0, Math.round((max - e) * energyRate()));
+  }
+
+  function nextTickSec() {
+    var d = new Date();
+    var left = (15 - (d.getMinutes() % 15)) * 60 - d.getSeconds();
+    if (left <= 0) left += 15 * 60;
+    return left;
+  }
+
+  // Energy as a bar you can read at a glance, with a tick per train so "how
+  // many goes have I got" is a count rather than a division.
+  function energyMeterHtml() {
+    var max = state.energyMax || 150;
+    var e = Math.max(0, state.energy || 0); // NOT clamped — xanax banks energy above the cap
+    var cost = state.gymEnergy || 25;
+    var over = Math.max(0, e - max);
+    var trains = Math.floor(e / cost);
+    // When you are over the cap the bar has to be able to draw past it, so the
+    // scale is whichever is larger and the cap becomes a marker on the track.
+    var scale = Math.max(e, max) || 1;
+    var capX = (max / scale) * 100;
+    var ticks = "";
+    var n = Math.floor(max / cost);
+    if (n > 1 && n <= 12) {
+      for (var i = 1; i < n; i++) {
+        ticks += '<span class="gcb-tick" style="left:' + ((i * cost * 100) / scale).toFixed(2) + '%"></span>';
+      }
+    }
+    var note;
+    if (over > 0) note = over + " over the " + max + " cap \u00b7 regen paused, spend it";
+    else if (e >= max) note = "capped \u00b7 regen paused, spend it";
+    else note = "full in " + fmtCd(timeToFull());
+    return (
+      '<div class="gcb-mtop"><span class="gcb-mlab">Energy ' +
+      (state.energyDom ? "live" : "api") +
+      '</span><span class="gcb-mval' + (over > 0 ? " over" : "") + '">' + e + " / " + max + "</span></div>" +
+      '<div class="gcb-track">' +
+      '<span class="gcb-fill' + (over > 0 ? "" : e >= max ? " full" : "") +
+      '" style="width:' + ((Math.min(e, max) / scale) * 100).toFixed(2) + '%"></span>' +
+      (over > 0
+        ? '<span class="gcb-over" style="left:' + capX.toFixed(2) + '%;width:' + (100 - capX).toFixed(2) + '%"></span>' +
+          '<span class="gcb-capmark" style="left:' + capX.toFixed(2) + '%"></span>'
+        : "") +
+      ticks + "</div>" +
+      '<span class="gcb-note">' + trains + " train" + (trains === 1 ? "" : "s") + " at " + cost + "e \u00b7 " + note + "</span>"
+    );
+  }
+
+  // The next twelve hours as one picture: how long each cooldown still blocks
+  // you, and when energy tops out. Twelve because that is the outer edge of a
+  // xanax cooldown, so the longest thing you wait on always fits.
+  // One line on the front page saying what the plan is and where to change it.
+  // Everything it names lived behind a settings icon, so someone who never
+  // tapped a cog never learned there was a plan to make at all.
+  function planStripHtml() {
+    if (!hasGoals()) {
+      return (
+        '<button type="button" class="gcb-strip" data-tab="plan">' +
+        '<span class="gcb-striplab">Plan</span>' +
+        '<span class="gcb-striptxt">No goals set \u2014 tap to plan your route</span>' +
+        '<span class="gcb-stripgo">\u203a</span></button>'
+      );
+    }
+    var plan = goalPlan();
+    var bits = [];
+    if (plan.now) {
+      bits.push(STAT_LABEL[plan.now.k] + " \u2192 " + fmt(Math.round(plan.now.cap)));
+      if (plan.step > 0 && plan.perDay > 0) {
+        bits.push("switch in " + fmtDays(plan.now.trains / plan.perDay));
+      }
+    } else if (plan.next) {
+      bits.push(STAT_LABEL[plan.next.k]);
+    }
+    if (isFinite(plan.total)) bits.push("all goals " + fmtDays(plan.total));
+    if (!bits.length) return "";
+    return (
+      '<button type="button" class="gcb-strip" data-tab="plan">' +
+      '<span class="gcb-striplab">Plan</span>' +
+      '<span class="gcb-striptxt">' + esc(bits.join(" \u00b7 ")) + "</span>" +
+      '<span class="gcb-stripgo">\u203a</span></button>'
+    );
+  }
+
+  function railHtml() {
+    var SPAN = 12 * 3600;
+    var pct = function (sec) { return Math.max(0, Math.min(100, (sec / SPAN) * 100)); };
+    // Only things that genuinely happen inside the next 12 hours belong on a
+    // 12-hour rail. The booster cooldown is not a wait, it is a budget with a
+    // ceiling, and at 28h it filled the rail and read as "maxed" when it was
+    // barely half of a 48h cap. It has its own meter below now.
+    var bands = "";
+    if (state.drugCd > 0) bands += '<span class="gcb-band" style="left:0;width:' + pct(state.drugCd).toFixed(2) + '%;background:#f2a03d"></span>';
+    var full = timeToFull();
+    var mark = full > 0 && full < SPAN ? '<span class="gcb-mark" style="left:' + pct(full).toFixed(2) + '%"></span>' : "";
+    var key = [];
+    if (state.drugCd > 0) key.push('<span><i style="background:#f2a03d"></i>drug ' + fmtCd(state.drugCd) + "</span>");
+    else key.push('<span><i style="background:#3fbf7f"></i>drug ready</span>');
+    if (full > 0) key.push('<span><i style="background:#e8edf2"></i>energy full ' + fmtCd(full) + "</span>");
+    return (
+      '<div class="gcb-mtop"><span class="gcb-mlab">Next 12 hours</span>' +
+      '<span class="gcb-mval" style="color:#8895a5;font-size:11px">tick ' + fmtCd(nextTickSec()) + "</span></div>" +
+      '<div class="gcb-rail">' + bands + mark + "</div>" +
+      '<div class="gcb-ticks"><span>now</span><span>+3h</span><span>+6h</span><span>+9h</span><span>+12h</span></div>' +
+      '<div class="gcb-key">' + key.join("") + "</div>" +
+      boosterMeterHtml()
+    );
+  }
+
+  // How much of the booster ceiling is used, and how many more cans fit under
+  // it — which is the question the number is actually there to answer.
+  function boosterMeterHtml() {
+    var cap = boosterCap();
+    var cd = Math.max(0, state.boosterCd || 0);
+    var headroom = Math.max(0, cap - cd);
+    // Torn checks only that you are UNDER the cap when you drink, so a can can
+    // carry you past it — at 46h42m you can still take one and land at 48h42m.
+    // Flooring the headroom said "room for 0 more" when there was room for one.
+    var fits = Math.ceil(headroom / (2 * 3600));
+    var used = cap > 0 ? Math.min(100, (cd / cap) * 100) : 0;
+    var tight = used >= 90;
+    return (
+      '<div class="gcb-mtop" style="margin-top:11px"><span class="gcb-mlab">Booster</span>' +
+      '<span class="gcb-mval' + (tight ? " over" : "") + '">' + fmtCd(cd) + " / " + Math.round(cap / 3600) + "h</span></div>" +
+      '<div class="gcb-track"><span class="gcb-fill' + (tight ? " full" : "") +
+      '" style="width:' + used.toFixed(2) + '%"></span></div>' +
+      '<span class="gcb-note">' +
+      (headroom <= 0
+        ? "At the ceiling \u2014 no more cans until it drops."
+        : fmtCd(headroom) + " of headroom \u00b7 room for " + fits + " more can" + (fits === 1 ? "" : "s")) +
+      (state.boosterPerk ? " \u00b7 48h cap from your faction perk" : "") +
+      "</span>"
+    );
+  }
+
+  function stepsHtml(steps) {
+    if (!steps || !steps.length) return "";
+    // Steps are allowed to be conditional — gymStep returns null when you are
+    // already in the best gym you own — so drop the empties here rather than
+    // making every branch write `|| {}`.
+    steps = steps.filter(Boolean);
+    if (!steps.length) return "";
+    return (
+      '<ol class="steps">' +
+      steps
+        .map(function (s) {
+          return '<li><span class="when">' + s.t + "</span><span>" + s.text + "</span></li>";
+        })
+        .join("") +
+      "</ol>"
+    );
+  }
+
+  function pickBtn(attr, id, label, on) {
+    return (
+      '<button class="gc-btn' +
+      (on ? "" : " secondary") +
+      '" data-' +
+      attr +
+      '="' +
+      id +
+      '">' +
+      label +
+      "</button>"
+    );
+  }
+
+  // Cans your plan budgets, against what you actually hold and what the booster
+  // ceiling still allows. The verdict used to say "Nothing. Bar isn't full."
+  // while four cans a day sat in the plan and the bar took four hours to refill
+  // — advice to wait for energy you had already decided to buy.
+  function cansOnHand() {
+    var maxE = state.energyMax || 150;
+    var have = Math.max(0, state.energy || 0);
+    // A full bar does not need a can. The verdict already says train.
+    if (have >= maxE) return null;
+
+    var held = {};
+    (state.drinkList || []).forEach(function (d) {
+      var t = canType(d.name, d.id);
+      if (t) held[t.k] = (held[t.k] || 0) + (d.qty || 0);
+    });
+    var known = (state.invAt || 0) > 0;
+    var list = [], perDay = 0;
+    srcRows().forEach(function (r) {
+      if (r.grp !== "cans") return;
+      var want = srcCount(r.k);
+      if (want <= 0) return;
+      perDay += want;
+      // A can you hold none of is a plan, not a drink. But drinkList starts as
+      // an empty array, so "none held" and "not read yet" look identical from
+      // the list alone — invAt is the only thing that separates them, and
+      // reading it wrong means either silence on a cold start or advice to
+      // drink cans you do not own.
+      var n = known ? Math.min(want, held[r.k] || 0) : want;
+      if (n > 0 && r.e > 0) list.push({ k: r.k, label: r.label, n: n, e: r.e });
+    });
+    if (!perDay) return null;
+
+    var headroom = Math.max(0, boosterCap() - Math.max(0, state.boosterCd || 0));
+    // Torn only checks that you are UNDER the ceiling when you drink, so the
+    // last one may carry you past it.
+    var fits = Math.ceil(headroom / (2 * 3600));
+    if (!list.length) return { n: 0, e: 0, fits: fits, perDay: perDay, blocked: false, dry: true };
+    if (fits <= 0) return { n: 0, e: 0, fits: 0, perDay: perDay, blocked: true, dry: false };
+
+    // Enough to fill the bar and no more. Drinking the whole day's budget at
+    // once would bank most of it above the cap, where natural regen pauses —
+    // and a budget of twelve is three sessions of four, not one of twelve.
+    // Stopping at the cap splits them across the day without needing to model
+    // a session at all.
+    list.sort(function (x, y) { return y.e - x.e; }); // strongest first
+    var count = {}, order = [], n = 0, e = 0;
+    for (var i = 0; i < list.length && n < fits; i++) {
+      for (var j = 0; j < list[i].n && n < fits; j++) {
+        if (have + e >= maxE) break;
+        if (count[list[i].label] === undefined) { count[list[i].label] = 0; order.push(list[i].label); }
+        count[list[i].label] += 1;
+        e += list[i].e;
+        n += 1;
+      }
+    }
+    if (!n) return null;
+    var label = order.map(function (l) { return count[l] + " \u00d7 " + l; }).join(", ");
+    return { n: n, e: e, fits: fits, perDay: perDay, blocked: false, dry: false,
+             label: label, capped: n >= fits && have + e < maxE };
+  }
+
+  // A better gym you already own, as one line for the verdict.
+  function gymStep(k) {
+    var b = betterGym(k);
+    if (!b) return null;
+    var cur = GYMS.filter(function (g) { return g.Gym === state.gymName; })[0];
+    var e = cur ? Number(cur.Energy) || 25 : 25;
+    return {
+      t: "SWITCH",
+      text: b.pct === null
+        ? "Change gym to " + b.gym.Gym + " first \u2014 " + state.gymName + " cannot train " +
+          STAT_LABEL[k] + " at all, and you have " + b.gym.Gym + " unlocked."
+        : "Change gym to " + b.gym.Gym + " first \u2014 it trains " + STAT_LABEL[k] + " " +
+          b.pct + "% faster for the same " + fmt(e) + "e a train, and you have it unlocked."
+    };
+  }
+
+  // One step for the verdict, or null when there is nothing worth saying.
+  function canStep(waitText) {
+    var c = cansOnHand();
+    if (!c) return null;
+    if (c.blocked) {
+      return { t: "CANS", text: "Your booster cooldown is at the ceiling, so no cans until it drops." };
+    }
+    if (c.dry) {
+      return { t: "CANS", text: "Your plan budgets " + c.perDay + " can" + (c.perDay === 1 ? "" : "s") +
+        " a day but you are holding none." };
+    }
+    var cost = state.gymEnergy || 25;
+    var trains = Math.floor(c.e / cost);
+    return {
+      t: "CANS",
+      text: "Drink " + c.label + " (+" + fmt(c.e) + "e" +
+        (trains > 0 ? ", " + trains + " more train" + (trains === 1 ? "" : "s") : "") + ")" +
+        (waitText ? " instead of waiting " + waitText + " for the bar" : "") + "." +
+        (c.perDay > c.n
+          ? " That is " + c.n + " of the " + c.perDay + " a day you budget — enough to fill the bar; the rest keep for later sessions."
+          : "") +
+        (c.capped ? " Only " + c.fits + " fit before the booster ceiling." : "")
+    };
+  }
+
+  // --- how far off the next gym is ------------------------------------------
+  // Torn already tracks this and paints it: the gym you are working toward
+  // carries inProgress___ and a whole-number percentage. That percentage is the
+  // share of the segment already trained, so the rest of the answer is just the
+  // segment length. Nothing needs summing out of the training logs.
+  //
+  // Returns the 1-based Torn gym id being unlocked and the percentage, or null
+  // when there is nothing to report — every standard gym already unlocked, or a
+  // button caught half-rendered. Guessing from a partial button is worse than
+  // staying quiet, which is why both halves have to be present.
+  function unlockScan(nodes) {
+    if (!nodes) return null;
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (!n || !/inProgress/.test(String(n.className || ""))) continue;
+      if (typeof n.querySelector !== "function") continue;
+      // The icon child carries the id: "gymIcon___xx gym-24___yy". Position in
+      // the list would work too, but only while Torn keeps three rows of eight.
+      var icon = n.querySelector('[class*="gym-"]');
+      var m = icon && String(icon.className || "").match(/gym-(\d+)/);
+      var pctEl = n.querySelector('[class*="percentage"]');
+      var pm = pctEl && String(pctEl.textContent || "").match(/(\d+(?:\.\d+)?)\s*%/);
+      if (!m || !pm) continue;
+      return { gymId: parseInt(m[1], 10), pct: parseFloat(pm[1]) };
+    }
+    return null;
+  }
+
+  // The Music Store's "Well Tuned" perk reads "30% gym experience" and makes
+  // every gym unlock 30% sooner. It is NOT a stat multiplier — isGymPerkLine()
+  // drops it on purpose, and must keep doing so or every projection in the
+  // script inflates by 30%. The number is read from the line rather than
+  // hardcoded, so a reworded or retuned perk still lands correctly.
+  function gymExpMult(data) {
+    var mult = 1;
+    [(data || {}).job_perks, (data || {}).company_perks].forEach(function (arr) {
+      (arr || []).forEach(function (line) {
+        var s = String(line || "");
+        if (!/gym\s+experience/i.test(s)) return;
+        var n = extractPercentMult(s);
+        if (n && n > 1 && n < 6) mult *= n;
+      });
+    });
+    return mult;
+  }
+
+  // gymId is the gym being unlocked, pct how much of its segment is done.
+  function unlockEstimate(gymId, pct, expMult) {
+    var req = GYM_SEGMENT_E[gymId - 2];
+    if (!req) return null;              // gym 1, or a specialist — stat-gated
+    if (expMult && expMult > 1) req = Math.round(req / expMult);
+    // Torn shows a whole number, so the truth sits somewhere inside that
+    // percent. Reporting a range is honest; reporting a single figure is not.
+    var p = Math.max(0, Math.min(100, Number(pct) || 0));
+    var remainMax = Math.round(req * (100 - p) / 100);
+    var remainMin = Math.max(0, Math.round(req * (100 - Math.min(100, p + 1)) / 100));
+    return {
+      gymId: gymId, pct: p, req: req,
+      remainMin: remainMin, remainMax: remainMax,
+      gym: GYMS[gymId - 1] || null,
+    };
+  }
+
+  // --- which gyms you actually own ------------------------------------------
+  // Torn's API does not expose it: `user?selections=gym` returns active_gym and
+  // nothing else. gym.php renders all 32 buttons though, and a locked one says
+  // so in its class — so the page you are already standing on is the only
+  // source, and it is free.
+  //
+  // Button order is 1:1 with GYMS by INDEX, not by name (Torn spells a few
+  // differently: "Woody's Workout Club" against "Woodys Workout"). The 32nd
+  // button is a jail placeholder with no GYMS entry, so the walk stops at the
+  // end of the table rather than at the end of the list.
+  function gymsUnlocked(nodes) {
+    var out = [];
+    if (!nodes) return out;
+    var n = Math.min(nodes.length, GYMS.length);
+    for (var i = 0; i < n; i++) {
+      // `locked___` and `lockedPurchased___` both mean unusable; one regex
+      // catches both. The active gym also carries `active___`, which is not a
+      // lock and must not read as one.
+      if (/locked/i.test(String((nodes[i] && nodes[i].className) || ""))) continue;
+      out.push(i);
+    }
+    return out;
+  }
+
+  function scanGymList() {
+    if (!/gym\.php/i.test(location.href)) return false;
+    var btns;
+    try { btns = document.querySelectorAll('button[class*="gymButton"]'); } catch (_) { return false; }
+    // The React list renders late; a handful of buttons means a half-built page,
+    // and half a page would read as "most gyms locked" and hide real upgrades.
+    if (!btns || btns.length < 20) return false;
+    var owned = gymsUnlocked(btns);
+    if (!owned.length) return false;
+    state.gymsOwned = owned;
+    storeSet("gymsOwned", owned);
+    // gym.php is the only place the unlock percentage exists, so it is read
+    // here and kept — the Trend tab has to answer while you are somewhere else.
+    // A null reading is never persisted over a real one: once every standard
+    // gym is yours Torn simply stops painting the bar, and that case is decided
+    // by the owned set rather than by the absence of a percentage.
+    var u = unlockScan(btns);
+    if (u) {
+      u.t = Date.now();
+      state.unlock = u;
+      storeSet("unlock", u);
+    }
+    return true;
+  }
+
+  // The best gym you OWN for this stat, or null when you are already in it.
+  //
+  // Same energy per train or cheaper, only. A gym with more dots that also costs
+  // more energy is a genuine trade — more per train against fewer trains — and
+  // the coach does not get to make that call for you. What it will not stay
+  // quiet about is the case with no trade in it at all: Anabolic Anomalies and
+  // George's are both 10e a train, and George's returns 46% more.
+  function betterGym(k) {
+    var owned = state.gymsOwned;
+    if (!owned || !owned.length) return null;   // never scanned: say nothing
+    var cur = GYMS.filter(function (g) { return g.Gym === state.gymName; })[0];
+    if (!cur) return null;
+    var DOT = { str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[k];
+    if (!DOT) return null;
+    var curDots = Number(cur[DOT]) || 0;
+    var curE = Number(cur.Energy) || 25;
+    var best = null;
+    owned.forEach(function (i) {
+      var g = GYMS[i];
+      if (!g || g.Gym === cur.Gym) return;
+      var d = Number(g[DOT]) || 0;
+      var e = Number(g.Energy) || 25;
+      if (e > curE || d <= curDots) return;
+      if (!best) { best = g; return; }
+      var bd = Number(best[DOT]) || 0;
+      if (d > bd || (d === bd && e < (Number(best.Energy) || 25))) best = g;
+    });
+    if (!best) return null;
+    return {
+      gym: best,
+      // A percentage against zero dots is not a number anyone can act on — from
+      // a gym that cannot train the stat at all, the answer is "this one can".
+      pct: curDots > 0 ? Math.round((Number(best[DOT]) / curDots - 1) * 100) : null
+    };
+  }
+
+  // Nine of the 31 gyms cannot train some stat at all: Balboas is Defense and
+  // Dexterity only, Legs Bums and Tums has no Strength, and the four specialist
+  // gyms train exactly one stat each. The advice never looked, so it cheerfully
+  // said "Train 150e into Strength at Balboas Gym" — a bar you cannot spend.
+  function gymDots(k) {
+    return Number((state.dots || {})[k]) || 0;
+  }
+
+  // Whether the dot table has actually been read. All-zero means "no gym data
+  // yet", not "this gym trains nothing" — firing the block on a cold start
+  // would accuse every gym of being untrainable before the first poll lands.
+  function dotsKnown() {
+    return HIST_KEYS.some(function (k) { return gymDots(k) > 0; });
+  }
+
+  // The verdict for a stat this gym cannot train, or null when it can.
+  function gymBlockedFor(k) {
+    if (!k || !dotsKnown() || gymDots(k) > 0) return null;
+    var gym = state.gymName || "This gym";
+    var can = HIST_KEYS.filter(function (x) { return gymDots(x) > 0; })
+                       .map(function (x) { return STAT_LABEL[x]; });
+    var list = can.length > 1
+      ? can.slice(0, -1).join(", ") + " and " + can[can.length - 1]
+      : can[0] || "nothing";
+    return {
+      kind: "wait",
+      move: gym + " cannot train " + STAT_LABEL[k] + ".",
+      why: gym + " trains " + list + " only, so a bar spent here does nothing for " +
+           STAT_LABEL[k] + ".",
+      steps: [
+        { t: "NOW", text: "Do not train here. The energy would go into a stat you are not working on." },
+        gymStep(k) ||
+          { t: "PICK", text: "Either move to a gym that trains " + STAT_LABEL[k] +
+                             ", or change the stat you are training to " + list + "." },
+        { t: "THEN", text: "Come back and the coach picks up where it left off." }
+      ]
+    };
+  }
+
+  function coach() {
+    // Before any branch that could tell you to spend a bar.
+    var blocked = gymBlockedFor(state.focus);
+    if (blocked) return blocked;
+
+    var focus = focusLabel();
+    // Where you SHOULD train, which is not always where you are. Naming the
+    // current gym while a SWITCH step sits underneath saying to leave it is a
+    // card arguing with itself — "Train Strength at Force Training" one line
+    // above "George's trains Strength 14% faster". One gym per verdict.
+    var upgrade = betterGym(state.focus);
+    var gym = (upgrade ? upgrade.gym.Gym : state.gymName) || "your gym";
+    var toFull = timeToFull();
+    var full = barFull();
+    var xans = state.items.xanax || 0;
+    var afterXan = Math.min(1000, state.energy + 250);
+    var cans =
+      (state.items.munster || 0) +
+      (state.items.redcow || 0) +
+      (state.items.tourine || 0) +
+      (state.items.cans || 0);
+
+    if (state.warStack) {
+      return {
+        kind: "stack",
+        move: "War stack. Hold energy.",
+        why: "Do not take a Xanax. Don\u2019t train. Coach only pings if you hit 1,000e.",
+        steps: [
+          { t: "NOW", text: "Leave energy alone. " + state.energy + "/" + state.energyMax + "." },
+          { t: "AFTER", text: "When the chain is over, turn stack off and go back to your gym loop." },
+        ],
+      };
+    }
+
+    if (state.mode === "jump") return jumpCoach();
+
+    if (!resolveKey() && state.status !== "live") {
+      return {
+        kind: "wait",
+        move: "Connect a key so this can run live.",
+        why: "Torn PDA injects your Limited API key. If Set still asks, paste one there.",
+        steps: [{ t: "SET", text: "Open Set. If the key isn\u2019t injected, paste a Limited API key." }],
+      };
+    }
+
+    if (state.drugCd <= 0 && xans <= 0) {
+      return {
+        kind: "wait",
+        move: "Buy some Xanax. Your drug cooldown is clear and your bar is empty.",
+        why: "Your routine is Xanax + train " + focus + ". No xans means you\u2019re only on natural energy.",
+        steps: [
+          { t: "NOW", text: "Buy at least 3 xanax." },
+          {
+            t: "THEN",
+            text: full
+              ? "Bar is full — train " + focus + " so you don\u2019t overflow while shopping."
+              : "Wait " + fmtCd(toFull) + " for a full bar, then xan.",
+          },
+        ],
+      };
+    }
+
+    if (state.drugCd <= 0) {
+      var waitFull = !full && toFull > 0 && toFull <= WAIT_FULL_MAX;
+      if (waitFull) {
+        var fat = (state.energyMax || 150) + 250;
+        return {
+          kind: "wait",
+          move: "Wait " + fmtCd(toFull) + " for a full bar, then take a xan.",
+          why:
+            "Xan is ready but you\u2019re at " +
+            state.energy +
+            "/" +
+            state.energyMax +
+            ". Waiting lets you train " +
+            fat +
+            "e into " +
+            focus +
+            " instead of " +
+            afterXan +
+            "e.",
+          steps: [
+            { t: "NOW", text: "Do not take a Xanax. Do not train. Let energy fill. " + fmtCd(toFull) + " left." },
+            { t: "+" + fmtCd(toFull), text: "Bar hits " + state.energyMax + ". Take 1 Xanax (" + xans + " left)." },
+            { t: "THEN", text: "Train " + fat + "e into " + focus + " at " + gym + ". One session. Don\u2019t split stats." },
+            {
+              t: "WAIT",
+              text: "The drug cooldown starts (about 6–8h). While it counts down, spend your natural energy whenever the bar fills. Never overflow.",
+            },
+            {
+              t: "NEXT",
+              text: "cooldown reaches 0 → wait for a full bar if it is under ~45m → take a Xanax → train " + focus + " again.",
+            },
+          ],
+          waste: "If you take a Xanax now you would only train " + afterXan + "e. Waiting picks up the rest of the bar.",
+        };
+      }
+      var trainNow = full ? Math.min(1000, state.energy + 250) : afterXan;
+      var canAdd = boosterOpen(state.boosterCd) && cans > 0;
+      return {
+        kind: "go",
+        move: full
+          ? "Take a Xanax now, then train " + trainNow + "e " + focus + "."
+          : "Take a xan now (" + state.energy + "e → " + afterXan + "e), then train " + focus + ".",
+        why: full
+          ? "Bar is full and your drug cooldown is clear. Take the Xanax first, so this session is " + trainNow + "e, not " + state.energy + "e."
+          : "Your drug cooldown is clear. Waiting for a full bar would take " +
+            fmtCd(toFull) +
+            " and delay your next Xanax. Take it, then train " +
+            focus +
+            ", the cooldown starts.",
+        steps: [
+          {
+            t: "NOW",
+            text:
+              "Take 1 Xanax. You have " +
+              xans +
+              "." +
+              (canAdd ? " Booster is under 24h — cans after the xan if you want a bigger training session." : ""),
+          },
+          { t: "THEN", text: "Go to " + gym + ". Spend ALL your energy on " + focus + "." + leftoverNote() },
+          { t: "WAIT", text: "Drug cooldown is about 6–8h. Do not take a Xanax until this says READY." },
+          {
+            t: "BETWEEN",
+            text: "When energy fills, train " + focus + " again. Never leave the bar sitting full while the cooldown is still running.",
+          },
+          {
+            t: "REPEAT",
+            text: "cooldown reaches 0 → wait for full bar if under ~45m → take a Xanax → train " + focus + ".",
+          },
+        ],
+      };
+    }
+
+    if (full) {
+      return {
+        kind: "go",
+        move: "Train " + focus + " now. Don\u2019t sit on a full bar.",
+        why: "Xan is on cooldown " + fmtCd(state.drugCd) + ". Overflowing energy is stats you never get back.",
+        steps: [
+          gymStep(state.focus),
+          { t: "NOW", text: "Train " + state.energy + "e into " + focus + " at " + gym + "." },
+          { t: "WAIT", text: "Drug cooldown: " + fmtCd(state.drugCd) + ". Let the bar fill again while it ticks." },
+          {
+            t: "GOAL",
+            text: "Be at a full bar when xan comes off cooldown, then take a Xanax and train " + focus + " in one go.",
+          },
+        ],
+      };
+    }
+
+    if (toFull > 0 && state.drugCd < toFull) {
+      var extra = toFull - state.drugCd;
+      return {
+        kind: "wait",
+        move: "Wait " + fmtCd(state.drugCd) + " for xan, then train " + focus + ".",
+        why:
+          "Energy is " +
+          state.energy +
+          "/" +
+          state.energyMax +
+          " (full in " +
+          fmtCd(toFull) +
+          "). Your drug cooldown reaches 0 first. Don\u2019t train this bar away unless you\u2019re about to overflow.",
+        steps: [
+          canStep(fmtCd(toFull)) ||
+            { t: "NOW", text: "Nothing. Bar isn\u2019t full. Xan isn\u2019t ready." },
+          {
+            t: "+" + fmtCd(state.drugCd),
+            text:
+              extra <= WAIT_FULL_MAX
+                ? "Xanax cooldown reaches 0. Wait the extra " + fmtCd(extra) + " for a full bar, then take a xan."
+                : "Xanax cooldown reaches 0. Take a xan now, then train " + focus + ".",
+          },
+          { t: "THEN", text: "Train " + focus + " at " + gym + "." },
+          { t: "LOOP", text: "Wait the next drug cooldown. Train whenever energy fills so you never overflow." },
+        ],
+      };
+    }
+
+    return {
+      kind: "wait",
+      move: "Wait " + fmtCd(toFull) + " for full energy, then train " + focus + ".",
+      why:
+        "Xan still has " +
+        fmtCd(state.drugCd) +
+        " left on its cooldown. Fill the bar, spend it, do not let it overflow. Xanax after that.",
+      steps: [
+        gymStep(state.focus),
+        canStep(fmtCd(toFull)) || {
+          t: "NOW",
+          text: "Let energy fill. " + state.energy + "/" + state.energyMax + " · " + fmtCd(toFull) + " left.",
+        },
+        {
+          t: "+" + fmtCd(toFull),
+          text: "Bar full. Train " + focus + " at " + gym + ". Don\u2019t wait — overflow is wasted.",
+        },
+        {
+          t: "+" + fmtCd(state.drugCd),
+          text: "Xan ready. Prefer a full bar, then take a Xanax and train " + focus + " again.",
+        },
+      ],
+    };
+  }
+
+  function jumpCoach() {
+    var tick = nextTickSec();
+    var focus = focusLabel();
+    var xtc = state.items.ecstasy || 0;
+    var stacked = state.energy >= 750;
+    var edvdHappy = state.adultNov ? 5000 : 2500;
+
+    if (state.drugCd > 0 && state.energy < 1000 && !stacked) {
+      return {
+        kind: "wait",
+        move: "Jump prep. Wait " + fmtCd(state.drugCd) + " then xan to stack energy.",
+        why:
+          "Happy jump wants a fat energy pool first. You\u2019re at " +
+          state.energy +
+          "e. Stack xans to ~750–1000e, CDs clear, then hit the :00 / :15 / :30 / :45 tick.",
+        steps: [
+          { t: "NOW", text: "Don\u2019t train this energy. You\u2019re banking for a jump." },
+          { t: "+" + fmtCd(state.drugCd), text: "Take 1 Xanax. Repeat until you\u2019re near 1,000e (usually 3–4 xans)." },
+          { t: "THEN", text: "Let drug AND booster cooldowns hit zero." },
+          { t: "TICK", text: "Wait for xx:00 / :15 / :30 / :45. Next tick in " + fmtCd(tick) + "." },
+          {
+            t: "JUMP",
+            text:
+              "Happy items (" +
+              happyKitText() +
+              "). E-dvds +" +
+              edvdHappy +
+              " each. Then spend ALL your energy on " +
+              focus +
+              ", refill if you want a second training session before the next tick.",
+          },
+        ],
+      };
+    }
+
+    if (!stacked && state.drugCd <= 0) {
+      return {
+        kind: "go",
+        move: "Xan to stack. Don\u2019t train yet.",
+        why: "Jump mode is on. Bank energy to ~1,000 before you touch happy items.",
+        steps: [
+          { t: "NOW", text: "Take 1 Xanax. Energy " + state.energy + " → " + Math.min(1000, state.energy + 250) + "." },
+          { t: "REPEAT", text: "Each time the drug cooldown clears, take another Xanax until 750–1000e." },
+          { t: "STOP", text: "Do not gym until the jump window." },
+        ],
+      };
+    }
+
+    if (state.drugCd > 0 || state.boosterCd > 30 * 60) {
+      return {
+        kind: "wait",
+        move: "Energy is stacked. Wait CDs, then jump on the tick.",
+        why: "Don\u2019t train. Overcap happy dies every 15 minutes. You need CDs clear so you can pop items + ecstasy.",
+        steps: [
+          { t: "NOW", text: state.energy + "e banked. Hold it." },
+          { t: "TIMERS", text: "Drug " + fmtCd(state.drugCd) + " · booster " + fmtCd(state.boosterCd) },
+          { t: "TICK", text: "Next happy tick in " + fmtCd(tick) + "." },
+          {
+            t: "GO",
+            text: happyKitText() + ". Train " + focus + " immediately.",
+          },
+        ],
+      };
+    }
+
+    if (tick > 90) {
+      return {
+        kind: "wait",
+        move: "Jump window in " + fmtCd(tick) + ". Don\u2019t use items yet.",
+        why:
+          "Overcap happy wipes at the quarter hour. Use items right after the tick, ecstasy last, then train " +
+          focus +
+          " before the next one.",
+        steps: [
+          { t: "NOW", text: "Hands off. " + state.energy + "e ready." },
+          { t: "+" + fmtCd(tick), text: "Tick. " + happyKitText() + "." },
+          { t: "THEN", text: "Ecstasy LAST — it doubles current happy. You have " + xtc + "." },
+          {
+            t: "DUMP",
+            text: "All energy into " + focus + " as fast as you can. Optional points refill + second training session before the next tick.",
+          },
+        ],
+      };
+    }
+
+    return {
+      kind: "go",
+      move: "TICK. Happy items, ecstasy last, then train " + focus + " now.",
+      why: "This is the jump. Items → ecstasy → gym → refill if you can before the next wipe.",
+      steps: [
+        {
+          t: "1",
+          text: happyKitText() + ". E-dvds +" + edvdHappy + " each. Don\u2019t overcap the booster bar.",
+        },
+        { t: "2", text: "Ecstasy. Always last. " + xtc + " in inventory." },
+        { t: "3", text: "Spend every point of energy on " + focus + "." },
+        { t: "4", text: "Use a points refill if you have one, then train again before the next :15 reset." },
+      ],
+    };
+  }
+
+  function leftoverNote() {
+    if (!state.focus2 || state.focus2 === "none" || state.focus2 === state.focus) return "";
+    var labels = { str: "Strength", def: "Defense", spe: "Speed", dex: "Dexterity" };
+    return " Leftover energy can go to " + (labels[state.focus2] || "the second skill") + ".";
+  }
+
+  function focusLabel() {
+    return { str: "Strength", def: "Defense", spe: "Speed", dex: "Dexterity" }[state.focus] || "Strength";
+  }
+
+  // Declared here, above BOTH users. They were 1,700 lines below the poll-driven
+  // logger that reads them and worked only by var hoisting — the same ordering
+  // fragility that lost WAIT_FULL_MAX.
+  // Was a poll-observed energy drop really a training session? Extracted so it
+  // can be tested directly — the first version of these tests reimplemented the
+  // rule inside the test, so mutating the real code changed nothing and every
+  // mutation passed.
+  function pollTrainEntry(prevE, nowE, prevStats, nowStats, gymName, busy) {
+    var skill = inferTrainSkillFromDelta(prevStats, nowStats);
+    var gkey = STAT_KEY[skill];
+    var gained = gkey ? Math.max(0, (nowStats[gkey] || 0) - (prevStats[gkey] || 0)) : 0;
+    // energy is updated live from the page while the API lags, so a stale poll
+    // a few points lower is not a session. A real train always raises the stat.
+    if (!prevE || nowE >= prevE - 4) return "";
+    if (gained <= 0) return "";
+    if (busy) return "";   // the click handler is already measuring this one
+    return "Trained" + (skill ? " " + skill : "") +
+      " \u00b7 " + fmt(prevE - nowE) + "e spent" +
+      " \u00b7 +" + fmt(gained) +
+      " @ " + (gymName || "gym");
+  }
+
+  var pendingTrain = null;
+  var STAT_KEY = { Strength: "str", Defense: "def", Speed: "spe", Dexterity: "dex" };
+
+  function applyUserPayload(data, withInv) {
+    var e = data.energy || {};
+    var h = data.happy || {};
+    var cd = data.cooldowns || {};
+    var prevE = state.energy;
+    var prevStats = {
+      str: state.stats.str,
+      def: state.stats.def,
+      spe: state.stats.spe,
+      dex: state.stats.dex,
+    };
+
+    state.energy = Number(e.current) || 0;
+    state.energyKnown = true;
+    state.energyMax = Number(e.maximum) || 150;
+    state.energyFulltime = Number(e.fulltime) || 0;
+    // fulltime answers "how long from THIS energy", so it is only usable while
+    // the energy it was measured at is still current — and the DOM updates
+    // energy between polls. Convert it to a per-point rate, which stays true as
+    // energy moves. Keep the last good rate if this payload cannot supply one.
+    var eGap = (Number(e.maximum) || 150) - (Number(e.current) || 0);
+    if (eGap > 0 && state.energyFulltime > 0) {
+      state.energySecPerE = state.energyFulltime / eGap;
+      // Persist it. A full bar reports fulltime 0, so a cold start that opens
+      // ON a full bar can never derive the rate and fell back to Torn's base of
+      // 180s a point. For a perked bar nearer 30s that makes every inferred
+      // fill six times too long, which silently zeroed the waste.
+      storeSet("energySecPerE", state.energySecPerE);
+    }
+    state.happy = Number(h.current) || 0;
+    state.happyMax = Number(h.maximum) || 0;
+    state.drugCd = Number(cd.drug) || 0;
+    state.boosterCd = Number(cd.booster) || 0;
+    state.stats = {
+      str: Number(data.strength) || 0,
+      def: Number(data.defense) || 0,
+      spe: Number(data.speed) || 0,
+      dex: Number(data.dexterity) || 0,
+    };
+    if (data.active_gym) {
+      var gym = GYMS[data.active_gym - 1] || GYMS[0];
+      state.gymName = gym.Gym;
+      state.gymEnergy = gym.Energy;
+      state.dots = { str: Number(gym.Str) || 0, def: Number(gym.Def) || 0, spe: Number(gym.Spe) || 0, dex: Number(gym.Dex) || 0 };
+    }
+    var parsed = parsePerks(data);
+    state.perks = parsed;
+    state.perkHits = parsed.hits || {};
+    state.perkRaw = parsed.raw || {};
+    // Read from your perks rather than a switch you had to remember to set.
+    state.adultNov = !!parsed.adultNov;
+    state.canMult = parsed.canMult > 0 ? parsed.canMult : 1;
+    // Kept apart from the stat multipliers on purpose: gym EXP changes how fast
+    // the NEXT GYM arrives and nothing about what a train is worth.
+    state.gymExpMult = gymExpMult(data);
+    // Sticky: the perk is a faction benefit, so once seen keep it until a perk
+    // payload positively says otherwise.
+    if (parsed.boosterPerk && !state.boosterPerk) { state.boosterPerk = true; storeSet("boosterPerk", true); }
+    noteBoosterPerk();
+    if (withInv) {
+      var invRaw = data.inventory;
+      var invRows = !invRaw ? 0 : Array.isArray(invRaw) ? invRaw.length : Object.keys(invRaw).length;
+      if (typeof invRaw === "string") {
+        // Torn sent a STRING where the item list should be. Object.keys() on a
+        // string yields character indices, so countItems was walking it letter
+        // by letter — every "row" one char with no name and no quantity, which
+        // is why 46 rows matched nothing. Keep the last good counts rather than
+        // overwrite them with a fabricated zero.
+        state.invUnavailable = invRaw;
+        state.invDiag = { at: Date.now(), present: false, rows: 0, matched: 0 };
+      } else if (invRaw) {
+        state.invUnavailable = "";
+        var counted = countItems(invRaw);
+        applyCountedItems(counted);
+        var matched = 0;
+        for (var ck in counted.qty) if (counted.qty[ck]) matched++;
+        // Every row came back ?name/?qty, so the field names are not what this
+        // parser assumes. Train the first row verbatim rather than guess which
+        // renaming happened.
+        var sample = [];
+        try {
+          var isArr = Array.isArray(invRaw);
+          var keys0 = isArr ? null : Object.keys(invRaw).slice(0, 3);
+          var rowsArr = isArr ? invRaw : Object.keys(invRaw).map(function (k) { return invRaw[k]; });
+          var first = rowsArr[0];
+          sample.push((isArr ? "array" : "object keyed " + JSON.stringify(keys0)) + ", row0 is " + typeof first);
+          try {
+            sample.push(String(JSON.stringify(first)).slice(0, 160));
+          } catch (_) {
+            sample.push("row0 not serialisable");
+          }
+        } catch (e) {
+          sample.push("diag threw: " + (e && e.message));
+        }
+        state.invDiag = { at: Date.now(), present: true, rows: invRows, matched: matched, sample: sample };
+      } else {
+        // Payload came back without an inventory block at all — that is an API
+        // or key-scope answer, not a counting bug, and the two look identical
+        // from the Items tab.
+        state.invDiag = { at: Date.now(), present: false, rows: 0, matched: 0 };
+      }
+    }
+    state.lastFetch = Date.now();
+    state.status = "live";
+    state.statusText = "Live";
+    recordHistory();
+
+    var newTot = state.stats.str + state.stats.def + state.stats.spe + state.stats.dex;
+    var prevTot = prevStats.str + prevStats.def + prevStats.spe + prevStats.dex;
+    // A second, poll-driven train logger, for training the click handler did not
+    // see. It compared energy between readings — but state.energy is updated
+    // live from the page while the API lags, so a stale poll reading a few
+    // points lower looked exactly like a small session and logged a train that
+    // never happened. A real train ALWAYS raises the stat, so require that as
+    // corroboration, and attribute the gain to the stat that actually moved
+    // rather than to the total of all four.
+    // Superseded by the ledger-driven path: this compared energy between
+    // payloads, which the live page update had already absorbed.
+    if (false) {
+      state.flash = "TRAINED";
+      state.lastTrain = Date.now();
+      setTimeout(function () {
+        state.flash = "";
+        renderPanel();
+      }, 1800);
+    }
+  }
+
+  function inferTrainSkillFromDelta(prev, next) {
+    var keys = ["str", "def", "spe", "dex"];
+    var labels = { str: "Strength", def: "Defense", spe: "Speed", dex: "Dexterity" };
+    var best = "";
+    var bestD = 0;
+    keys.forEach(function (k) {
+      var d = (next[k] || 0) - (prev[k] || 0);
+      if (d > bestD) {
+        bestD = d;
+        best = labels[k];
+      }
+    });
+    return best;
+  }
+
+  var DAY_MS = 86400000;
+  var HIST_CAP = 400; // ~13 months; the chart's longest range is 365d
+
+  function dayKey(ms) {
+    return Math.floor(ms / DAY_MS);
+  }
+
+  // Upsert TODAY's stat snapshot. Last write of a day wins, so a day ends up
+  // holding the stats as of its final refresh — which is what a daily
+  // progression line wants. Cheap enough to call on every successful fetch.
+  function recordHistory() {
+    var st = state.stats;
+    if (!st) return;
+    var v = [st.str | 0, st.def | 0, st.spe | 0, st.dex | 0];
+    if (!(v[0] || v[1] || v[2] || v[3])) return; // never record a failed read as a real zero
+    var d = dayKey(Date.now());
+    var last = state.hist.length ? state.hist[state.hist.length - 1] : null;
+    if (last && last.d === d) {
+      if (last.v[0] === v[0] && last.v[1] === v[1] && last.v[2] === v[2] && last.v[3] === v[3]) return;
+      last.v = v;
+    } else if (last && last.d > d) {
+      return; // clock went backwards; leave the series alone rather than corrupt it
+    } else {
+      state.hist.push({ d: d, v: v });
+      if (state.hist.length > HIST_CAP) state.hist = state.hist.slice(state.hist.length - HIST_CAP);
+    }
+    storeSet("hist", state.hist);
+  }
+
+  // ── Progression chart ──────────────────────────────────────────────────
+  // Inline SVG on purpose: no library (Torn's CSP blocks external script) and
+  // no canvas (retina scaling plus PDA's webview is more trouble than paths).
+  var HIST_KEYS = ["str", "def", "spe", "dex"];
+  var HIST_COLOURS = { str: "#e8a33d", def: "#3d9ae8", spe: "#e85f8a", dex: "#2ecc71" };
+
+  function histWindow(days) {
+    var cut = dayKey(Date.now()) - days;
+    return state.hist.filter(function (e) {
+      return e.d >= cut;
+    });
+  }
+
+  // Forward projection reuses the script's own gain model, sampled rather than
+  // stepped per-day: projectDays already loops every train internally, so a
+  // per-day loop over a year would be tens of thousands of gainOne calls on a
+  // phone. Eight samples is smooth enough at this size.
+  var histProjCache = { key: "", val: null };
+
+  function histProjection(days) {
+    var e = dailyEnergy();
+    // Measured: 381,176 gainOne calls for the 365d view, and renderPanel runs on
+    // the poll timer — so without this the Prog tab recomputes a third of a
+    // million gain steps every few seconds and stutters while you scroll it.
+    // The curve only moves when the stats, the gym, the energy budget or the
+    // range move, so key on exactly those.
+    var st = state.stats || {};
+    var g = state.goals || {};
+    var key = [days, e.total, state.gymName, state.focus, st.str, st.def, st.spe, st.dex,
+               g.str, g.def, g.spe, g.dex, state.goalStep,
+               (state.goalOrder || []).join(",")].join("|");
+    if (histProjCache.key === key && histProjCache.val) return histProjCache.val;
+    var out = {};
+    // With goals set, the chart IS the schedule: each stat climbs only during
+    // its own window and flattens at its target, then the next one starts. With
+    // no goals it falls back to the single stat you picked. Either way it never
+    // draws a stat you are not training — it used to project all four at once,
+    // as four separate hypotheticals, which reads as a forecast.
+    var plan = hasGoals() ? goalPlan() : null;
+    // A stat can now hold several windows rather than one — with an increment
+    // set it climbs, waits its turn, and climbs again. Its gains depend only on
+    // its own value, so what matters at any date is how many days of training
+    // it has HAD by then, whether that came in one block or six.
+    var windows = {};
+    if (plan && plan.perDay > 0) {
+      plan.segments.forEach(function (sg) {
+        (windows[sg.k] || (windows[sg.k] = [])).push({
+          from: sg.at / plan.perDay,
+          len: sg.trains / plan.perDay,
+          cap: sg.cap
+        });
+      });
+    }
+    HIST_KEYS.forEach(function (k) {
+      var ws = windows[k];
+      var trained = plan ? !!(ws && ws.length) : k === state.focus;
+      var target = plan && ws ? ws[ws.length - 1].cap : 0;
+      var pts = [];
+      for (var i = 0; i <= 8; i++) {
+        var d = Math.round((days * i) / 8);
+        var add = 0;
+        if (trained && d) {
+          var span = 0;
+          if (ws) {
+            ws.forEach(function (w) { span += Math.max(0, Math.min(d - w.from, w.len)); });
+          } else {
+            span = d;
+          }
+          if (span > 0) add = projectDays(span, e.total, k);
+        }
+        var v = (state.stats[k] || 0) + add;
+        if (target && v > target) v = target;   // it stops at the goal, not past it
+        pts.push({ d: d, v: v });
+      }
+      out[k] = pts;
+    });
+    histProjCache.key = key;
+    histProjCache.val = out;
+    return out;
+  }
+
+  // Compact axis label: 1.2b / 340m / 12.4k / 850. The gutter is ~34px wide in
+  // a 360-unit viewBox, so full comma numbers do not fit on a phone — the delta
+  // cards under the chart carry the exact figures.
+  function fmtAxis(n) {
+    if (!isFinite(n)) return "";
+    var a = Math.abs(n);
+    var s;
+    if (a >= 1e9) s = (n / 1e9).toFixed(a >= 1e10 ? 0 : 1) + "b";
+    else if (a >= 1e6) s = (n / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "m";
+    else if (a >= 1e3) s = (n / 1e3).toFixed(a >= 1e4 ? 0 : 1) + "k";
+    else return String(Math.round(n));
+    return s.replace(".0", "");
+  }
+
+  // "Aug 22" from an absolute day index (the dayKey integer). Past 90 days the
+  // day of the month tells you nothing and two labels a season apart can share
+  // it, so long ranges switch to month + year: "Aug '27".
+  function fmtDay(d, byYear) {
+    var dt = new Date(d * DAY_MS);
+    // dayKey counts UTC days, so the label has to be read back in UTC. Reading
+    // it with local getters puts everyone west of UTC a day behind their own
+    // calendar — UTC midnight of Aug 22 is Aug 21, 8pm in New York.
+    var mon = dt.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
+    if (byYear) return mon + " '" + String(dt.getUTCFullYear()).slice(-2);
+    return mon + " " + dt.getUTCDate();
+  }
+
+  // Round the axis step to something a person reads without decoding: 1, 2,
+  // 2.5 or 5 times a power of ten. Dividing the raw max into four gives
+  // gridlines like 433k and 865k, which are numbers nobody asked for.
+  function niceStep(raw) {
+    if (!(raw > 0)) return 1;
+    var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    var n = raw / mag;
+    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+  }
+
+  function histChart(days) {
+    var win = histWindow(days);
+    var proj = histProjection(days);
+    var W = 360, H = 176, PADR = 8, PADT = 12, PADB = 30;
+    var today = dayKey(Date.now());
+    var firstRec = win.length ? win[0].d : today;
+    var pastSpan = Math.max(1, today - firstRec); // days of history actually held
+
+    // Every value that will be drawn, per stat, so the scale decision sees the
+    // projection too — otherwise the dashed half runs off the top.
+    var vals = {};
+    HIST_KEYS.forEach(function (k, i) {
+      vals[k] = win.map(function (e) { return e.v[i]; }).concat(proj[k].map(function (p) { return p.v; }));
+    });
+
+    // One shared axis, anchored at zero. Anchoring there is what makes it safe:
+    // a stat that is a thousandth of the biggest draws as a flat line along the
+    // floor, which is the truth about it, and its real numbers are in the legend
+    // and the cards. Scaling each line to its own range instead would put four
+    // unrelated y axes on one picture and there would be no number to print.
+    var lo = 0, hi = -Infinity;
+    HIST_KEYS.forEach(function (k) {
+      vals[k].forEach(function (v) { if (v < lo) lo = v; if (v > hi) hi = v; });
+    });
+    if (!isFinite(hi)) return { svg: "", empty: true, legend: "" };
+
+    var PADL = 36; // gutter for the value labels
+    var SPLIT = PADL + (W - PADL - PADR) * 0.42; // "now" sits here, always
+    var sx = function (d) {
+      if (d <= today) {
+        // Recorded side: map [firstRec .. today] across the left share.
+        var t = pastSpan ? (d - firstRec) / pastSpan : 1;
+        if (t < 0) t = 0;
+        return PADL + t * (SPLIT - PADL);
+      }
+      // Projected side: map [today .. today+days] across the right share.
+      return SPLIT + ((d - today) / days) * (W - PADR - SPLIT);
+    };
+
+    // Extend the top to a whole number of steps so every gridline is round.
+    var axLo = lo, axHi = hi;
+    if (axHi - axLo < 1) axHi = axLo + 1;
+    // niceStep rounds up, so step lands between a quarter and a half of the
+    // range, which pins the line count to 4 or 5 — no clamp needed, and the top
+    // gridline never floats a whole empty step above the data.
+    var step = niceStep((axHi - axLo) / 4);
+    var GRID = Math.ceil((axHi - axLo) / step);
+    axHi = axLo + step * GRID;
+    var sy = function (k, v) {
+      return PADT + (1 - (v - axLo) / (axHi - axLo)) * (H - PADT - PADB);
+    };
+
+    // --- x axis: dates the labels can actually be told apart at ---
+    var cand = [];
+    var byYear = days > 90;
+    if (win.length > 1) cand.push({ x: PADL, t: fmtDay(firstRec, byYear), a: "start" });
+    cand.push({ x: SPLIT, t: "now", a: "middle" });
+    var steps = days <= 7 ? 1 : days <= 90 ? 2 : 3;
+    for (var s = 1; s <= steps; s++) {
+      var dd = Math.round((days * s) / steps);
+      cand.push({ x: sx(today + dd), t: fmtDay(today + dd, byYear), a: s === steps ? "end" : "middle" });
+    }
+    // The step counts above are chosen so the labels never crowd: the recorded
+    // side is a fixed 42% share and the projected side is cut into at most
+    // three, which leaves >=60 units between labels at every range.
+    var xl = cand;
+
+    var parts = [];
+
+    // --- grid ---
+    for (var g = 0; g <= GRID; g++) {
+      var gy = (PADT + (g / GRID) * (H - PADT - PADB)).toFixed(1);
+      parts.push('<line x1="' + PADL + '" y1="' + gy + '" x2="' + (W - PADR) + '" y2="' + gy +
+        '" stroke="#2a313a" stroke-width="1"/>');
+      var gv = axHi - (g / GRID) * (axHi - axLo);
+      parts.push('<text x="' + (PADL - 5) + '" y="' + (Number(gy) + 3).toFixed(1) +
+        '" fill="#8a93a0" font-size="9" text-anchor="end">' + esc(fmtAxis(gv)) + "</text>");
+    }
+    xl.forEach(function (c) {
+      parts.push('<line x1="' + c.x.toFixed(1) + '" y1="' + PADT + '" x2="' + c.x.toFixed(1) +
+        '" y2="' + (H - PADB) + '" stroke="#2a313a" stroke-width="1"/>');
+      parts.push('<text x="' + c.x.toFixed(1) + '" y="' + (H - PADB + 13) +
+        '" fill="#8a93a0" font-size="9" text-anchor="' + c.a + '">' + esc(c.t) + "</text>");
+    });
+
+    // --- the "now" divider, drawn over the grid so it reads as the split ---
+    var nowX = sx(today).toFixed(1);
+    parts.push('<line x1="' + nowX + '" y1="' + (PADT - 4) + '" x2="' + nowX + '" y2="' + (H - PADB) +
+      '" stroke="#9aa3b0" stroke-width="1" stroke-dasharray="3 3"/>');
+    parts.push('<text x="' + nowX + '" y="' + (PADT - 6) +
+      '" fill="#9aa3b0" font-size="9" text-anchor="middle">now</text>');
+
+    HIST_KEYS.forEach(function (k, i) {
+      var c = HIST_COLOURS[k];
+      if (win.length > 1) {
+        var solid = win.map(function (e, n) {
+          return (n ? "L" : "M") + sx(e.d).toFixed(1) + " " + sy(k, e.v[i]).toFixed(1);
+        }).join(" ");
+        parts.push('<path d="' + solid + '" fill="none" stroke="' + c + '" stroke-width="1.6"/>');
+      }
+      var dash = proj[k].map(function (p, n) {
+        return (n ? "L" : "M") + sx(today + p.d).toFixed(1) + " " + sy(k, p.v).toFixed(1);
+      }).join(" ");
+      parts.push('<path d="' + dash + '" fill="none" stroke="' + c + '" stroke-width="1.4" stroke-dasharray="4 3" opacity="0.85"/>');
+      // A dot on the last projected point so the end of each line is findable
+      // even where two of them run together.
+      var lastP = proj[k][proj[k].length - 1];
+      parts.push('<circle cx="' + sx(today + lastP.d).toFixed(1) + '" cy="' + sy(k, lastP.v).toFixed(1) +
+        '" r="2.4" fill="' + c + '"/>');
+    });
+
+    // A number per stat, at the end of the projection — the y axis can only be
+    // read to the nearest gridline, and a stat sitting on the floor needs its
+    // real figure somewhere.
+    var legend =
+      '<div class="gc-legend">' +
+      HIST_KEYS.map(function (k) {
+        var pts = proj[k];
+        return '<span><i style="background:' + HIST_COLOURS[k] + '"></i>' + k.toUpperCase() +
+          " <b>" + esc(fmtAxis(pts[pts.length - 1].v)) + "</b></span>";
+      }).join("") +
+      '<span class="gc-lkey">solid recorded · dashed projected</span></div>';
+
+    return {
+      svg: '<svg class="gc-chart" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Stat progression, recorded and projected">' + parts.join("") + "</svg>",
+      empty: win.length < 2,
+      points: win.length,
+      legend: legend,
+    };
+  }
+
+  // Spent vs missed, one stacked bar a day. Same drawing rules as the
+  // progression chart: zero-anchored, round gridlines, dated axis.
+  var WASTE_USED = "#5a9bd8";
+  var WASTE_LOST = "#e5484d";
+
+  function wasteChart(days) {
+    var span = Math.min(days, 21); // more bars than this is a smear on a phone
+    var today = dayKey(Date.now());
+    var byDay = {};
+    state.ledger.forEach(function (e) { byDay[e.d] = e; });
+    var rows = [];
+    for (var i = span - 1; i >= 0; i--) {
+      var d = today - i;
+      var e = byDay[d] || { used: 0, wasted: 0 };
+      rows.push({ d: d, used: e.used || 0, wasted: e.wasted || 0 });
+    }
+    var hi = 0;
+    rows.forEach(function (r) { if (r.used + r.wasted > hi) hi = r.used + r.wasted; });
+    if (hi <= 0) return { svg: "", empty: true, legend: "" };
+
+    var W = 360, H = 150, PADL = 36, PADR = 8, PADT = 12, PADB = 26;
+    var step = niceStep(hi / 4);
+    var GRID = Math.ceil(hi / step);
+    var axHi = step * GRID;
+    var plotW = W - PADL - PADR;
+    var slot = plotW / rows.length;
+    var barW = Math.max(3, Math.min(26, slot * 0.68));
+    var sy = function (v) { return PADT + (1 - v / axHi) * (H - PADT - PADB); };
+
+    var parts = [];
+    for (var g = 0; g <= GRID; g++) {
+      var gy = (PADT + (g / GRID) * (H - PADT - PADB)).toFixed(1);
+      parts.push('<line x1="' + PADL + '" y1="' + gy + '" x2="' + (W - PADR) + '" y2="' + gy + '" stroke="#2a313a"/>');
+      parts.push('<text x="' + (PADL - 5) + '" y="' + (Number(gy) + 3).toFixed(1) +
+        '" fill="#8a93a0" font-size="9" text-anchor="end">' + esc(fmtAxis(axHi - (g / GRID) * axHi)) + "</text>");
+    }
+    rows.forEach(function (r, n) {
+      var cx = PADL + slot * n + slot / 2;
+      var x = (cx - barW / 2).toFixed(1);
+      var yUsed = sy(r.used), y0 = sy(0);
+      if (r.used > 0) {
+        parts.push('<rect x="' + x + '" y="' + yUsed.toFixed(1) + '" width="' + barW.toFixed(1) +
+          '" height="' + Math.max(0, y0 - yUsed).toFixed(1) + '" fill="' + WASTE_USED + '" rx="1.5"/>');
+      }
+      if (r.wasted > 0) {
+        var yTop = sy(r.used + r.wasted);
+        parts.push('<rect x="' + x + '" y="' + yTop.toFixed(1) + '" width="' + barW.toFixed(1) +
+          '" height="' + Math.max(0, yUsed - yTop).toFixed(1) + '" fill="' + WASTE_LOST + '" rx="1.5"/>');
+      }
+    });
+    // Label the ends and the middle only; a label per bar is unreadable here.
+    [0, Math.floor(rows.length / 2), rows.length - 1].forEach(function (n, k) {
+      if (n < 0 || n >= rows.length) return;
+      if (k === 1 && rows.length < 5) return;
+      var cx = PADL + slot * n + slot / 2;
+      parts.push('<text x="' + cx.toFixed(1) + '" y="' + (H - PADB + 13) +
+        '" fill="#8a93a0" font-size="9" text-anchor="' +
+        (k === 0 ? "start" : k === 2 ? "end" : "middle") + '">' + esc(fmtDay(rows[n].d, false)) + "</text>");
+    });
+
+    var tot = ledgerWindow(span);
+    var pct = tot.used + tot.wasted > 0 ? Math.round((tot.used / (tot.used + tot.wasted)) * 100) : 0;
+    var legend =
+      '<div class="gc-legend"><span><i style="background:' + WASTE_USED + '"></i>SPENT <b>' +
+      esc(fmtAxis(tot.used)) + "</b></span>" +
+      '<span><i style="background:' + WASTE_LOST + '"></i>MISSED <b>' + esc(fmtAxis(missed(tot.wasted))) + "</b></span>" +
+      '<span class="gc-lkey">' + pct + "% of your bar used</span></div>";
+
+    return {
+      svg: '<svg class="gc-chart" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Energy spent versus missed, by day">' + parts.join("") + "</svg>",
+      empty: false,
+      legend: legend,
+      days: span
+    };
+  }
+
+  // The live one: what sitting on a full bar is costing you right now.
+  function wasteCard() {
+    var streak = capStreak();
+    var t = ledgerWindow(1);
+    var pct = t.used + t.wasted > 0 ? Math.round((t.used / (t.used + t.wasted)) * 100) : null;
+    var head = streak && streak.sec >= 1
+      ? '<div class="gcb-waste" style="margin:0 0 9px">Bar has been full for ' + fmtCd(streak.sec) +
+        " \u2014 that is <b>" + fmt(missed(streak.lost)) + "e</b> of regen you did not get.</div>"
+      : "";
+    return (
+      '<div class="gc-card"><h3>Energy used vs missed</h3>' + head +
+      '<div class="row"><span>Spent today</span><b>' + fmt(t.used) + "e</b></div>" +
+      '<div class="row"><span>Missed today</span><b class="' + (t.wasted >= 25 ? "bad" : "muted") + '">' + fmt(missed(t.wasted)) + "e</b></div>" +
+      (pct === null ? "" : '<div class="row"><span>Bar actually used</span><b class="' + (pct >= 90 ? "ok" : pct >= 70 ? "" : "bad") + '">' + pct + "%</b></div>") +
+      '<p class="muted" style="margin:8px 0 0">Missed energy is regen your bar dropped because it was already full. Counted from when the script last saw your bar, so time with Torn closed still counts.</p>' +
+      "</div>"
+    );
+  }
+
+  function histDeltaCards(days) {
+    var win = histWindow(days);
+    return HIST_KEYS.map(function (k, i) {
+      var d = null;
+      if (win.length > 1) d = win[win.length - 1].v[i] - win[0].v[i];
+      return (
+        '<div class="gc-dcard"><span style="color:' + HIST_COLOURS[k] + '">' + k.toUpperCase() + "</span>" +
+        "<b>" + (d === null ? "—" : (d >= 0 ? "+" : "") + fmt(d)) + "</b>" +
+        '<i class="muted">' + fmt(state.stats[k] || 0) + "</i></div>"
+      );
+    }).join("");
+  }
+
+  function pushLog(text) {
+    var entry = {
+      t: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      ts: Date.now(),
+      text: text,
+    };
+    state.log.unshift(entry);
+    state.log = state.log.slice(0, 80);
+    storeSet("log", state.log);
+  }
+
+  function refresh(kind) {
+    var key = resolveKey();
+    if (!key) {
+      state.status = "needkey";
+      state.statusText = HAS_PDA_KEY ? "Waiting on Torn PDA key" : "Add a Limited API key in Set";
+      renderPanel();
+      return Promise.resolve();
+    }
+    if (state.fetchInFlight) return Promise.resolve();
+    state.fetchInFlight = true;
+    var INV_TTL = 90000; // 7 requests a go — at most one round every 90s
+    var invAge = Date.now() - (state.invAt || 0);
+    var invForce = kind === "boot" || kind === "manual" || !state.lastFetch;
+    var wantInv = invForce || ((kind === "open" || kind === "stock" || kind === "train" || state.tab === "stock") && invAge > INV_TTL);
+    var sel = "bars,cooldowns,battlestats,gym,perks,timestamp";
+    return httpGet(apiUrl(sel))
+      .then(function (data) {
+        applyUserPayload(data, false);
+        if (!wantInv) return null;
+        return fetchInventoryV2().then(
+          function (rows) {
+            var tal0 = state.invTally || {};
+            var failed = Object.keys(tal0).filter(function (c) { return tal0[c] === "err"; });
+            if (failed.length) {
+              // A partial round would publish a total that silently omits whole
+              // categories — worse than showing the previous, complete numbers.
+              state.invUnavailable = "partial (" + failed.join(", ") + ") — kept last good counts";
+              state.invDiag = { at: Date.now(), present: false, rows: rows.length, matched: 0,
+                sample: [Object.keys(tal0).map(function (c) { return c + ":" + tal0[c]; }).join(" ")] };
+              state.invAt = Date.now();
+              return null;
+            }
+            var counted = countItems(rows);
+            applyCountedItems(counted);
+            var matched = 0;
+            for (var ck in counted.qty) if (counted.qty[ck]) matched++;
+            state.invUnavailable = "";
+            state.invAt = Date.now();
+            var tal = state.invTally || {};
+            var talStr = Object.keys(tal).map(function (c) { return c + ":" + tal[c]; }).join(" ");
+            state.invDiag = { at: Date.now(), present: true, rows: rows.length, matched: matched, sample: talStr ? [talStr] : [] };
+            return null;
+          },
+          function (err) {
+            // Non-fatal by design: bars, cooldowns and stats already landed.
+            state.invUnavailable = (err && err.message) || "inventory request failed";
+            state.invDiag = { at: Date.now(), present: false, rows: 0, matched: 0 };
+            // Back off rather than hammer: pretend we just fetched so the TTL
+            // holds us off, and keep whatever counts we already had.
+            state.invAt = Date.now();
+            return null;
+          }
+        );
+      })
+      .then(function () {
+        armNotifications();
+        renderPanel();
+      })
+      .catch(function (err) {
+        state.status = "error";
+        state.statusText = err && err.message ? err.message : "API failed";
+        renderPanel();
+      })
+      .then(function () {
+        state.fetchInFlight = false;
+      });
+  }
+
+  var PING_XAN = 2101;
+  var PING_ENERGY = 2102;
+  var PING_XAN_FULL = 2103;
+  var PING_TICK = 2104;
+
+  function flutterHandler() {
+    try {
+      if (window.flutter_inappwebview && typeof window.flutter_inappwebview.callHandler === "function") {
+        return window.flutter_inappwebview;
+      }
+    } catch (_) {}
+    try {
+      if (typeof unsafeWindow !== "undefined" && unsafeWindow.flutter_inappwebview) return unsafeWindow.flutter_inappwebview;
+    } catch (_) {}
+    return null;
+  }
+
+  function pdaCall(name, payload) {
+    pdaReady()
+      .then(function () {
+        var fl = flutterHandler();
+        if (!fl || typeof fl.callHandler !== "function") return;
+        return fl.callHandler(name, payload);
+      })
+      .catch(function () {});
+  }
+
+  function cancelPing(id) {
+    pdaCall("cancelNotification", { id: id });
+  }
+
+  function pingAt(id, subtitle, whenMs) {
+    if (!whenMs || whenMs <= Date.now() + 4000) return;
+    pdaCall("scheduleNotification", {
+      title: "Gym Coach",
+      subtitle: subtitle,
+      id: id,
+      timestamp: whenMs,
+      overwriteID: true,
+      launchNativeToast: false,
+      urlCallback: "https://www.torn.com/gym.php",
+    });
+  }
+
+  function armNotifications() {
+    if (state.warStack) {
+      cancelPing(PING_XAN);
+      cancelPing(PING_ENERGY);
+      cancelPing(PING_XAN_FULL);
+      cancelPing(PING_TICK);
+      return;
+    }
+    var now = Date.now();
+    var toFull = timeToFull();
+    // Same cap rule as the meter. With two points of slack here, a bar sitting
+    // at 149 scheduled no "energy full" ping at all — the last two points were
+    // treated as already arrived.
+    var fullSoon = toFull > 5 && !barFull();
+    if (fullSoon) pingAt(PING_ENERGY, "Energy full — train " + focusLabel(), now + toFull * 1000);
+    else cancelPing(PING_ENERGY);
+
+    if (state.mode === "jump") {
+      pingAt(PING_TICK, "Happy tick — jump window", now + nextTickSec() * 1000);
+    } else {
+      cancelPing(PING_TICK);
+    }
+
+    if (state.drugCd > 5) {
+      var xanAt = now + state.drugCd * 1000;
+      if (toFull > state.drugCd && toFull - state.drugCd <= WAIT_FULL_MAX) {
+        pingAt(PING_XAN, "Xan is up. Wait for a full bar, then take it.", xanAt);
+        pingAt(PING_XAN_FULL, "Bar full. Take a xan, then train " + focusLabel() + ".", now + toFull * 1000);
+      } else {
+        pingAt(PING_XAN, "Xan is up. Open gym.", xanAt);
+        cancelPing(PING_XAN_FULL);
+      }
+    } else if (state.drugCd <= 0 && state.items.xanax > 0 && fullSoon && toFull <= WAIT_FULL_MAX) {
+      cancelPing(PING_XAN);
+      pingAt(PING_XAN_FULL, "Bar full. Take a xan, then train " + focusLabel() + ".", now + toFull * 1000);
+    } else {
+      cancelPing(PING_XAN);
+      cancelPing(PING_XAN_FULL);
+    }
+  }
+
+  function css() {
+    return (
+      "bottom:calc(184px + env(safe-area-inset-bottom,0px)) !important;" +
+      "display:flex !important;visibility:visible !important;opacity:1 !important;align-items:center;justify-content:center;width:52px !important;height:52px !important;padding:0;margin:0;" +
+      "border:2px solid #f2a03d !important;border-radius:14px !important;background:#121418 !important;color:#f2a03d !important;" +
+      "font:800 12px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:.08em;" +
+      "box-shadow:0 8px 24px rgba(0,0,0,.45);-webkit-appearance:none;appearance:none;cursor:pointer;" +
+      "-webkit-tap-highlight-color:transparent;touch-action:manipulation;user-select:none;pointer-events:auto}" +
+      "#gcb-gym-dock{display:block !important;width:100%;box-sizing:border-box;margin:8px 0;min-height:48px;" +
+      "border:2px solid #f2a03d;border-radius:10px;background:#121418;color:#f2a03d;" +
+      "font:800 16px/1 -apple-system,sans-serif;letter-spacing:.08em;-webkit-appearance:none;appearance:none;" +
+      "touch-action:manipulation}" +
+      "#" + PANEL_ID + "{position:fixed;z-index:2147483647;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));top:auto;" +
+      "width:auto;max-width:calc(100vw - 16px);height:80vh;height:min(80dvh,calc(100dvh - 64px));max-height:calc(100vh - 24px);min-height:0;background:#1a1d23;color:#f2f4f7;" +
+      "display:none;flex-direction:column;font:15px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;" +
+      "border:1px solid #2ecc71;border-radius:18px;box-shadow:0 18px 50px rgba(0,0,0,.55);overflow:hidden;-webkit-overflow-scrolling:touch}" +
+      "#" + PANEL_ID + ".open{display:flex}" +
+      "#" + PANEL_ID + " *{box-sizing:border-box}" +
+      "#" + PANEL_ID + " .gc-owner{flex:0 0 auto;max-height:88px;overflow:hidden;padding:8px 12px 8px;background:#121418;border-bottom:1px solid #2e333c;min-width:0}" +
+      "#" + PANEL_ID + " .gc-ascii{margin:0;max-width:100%;color:#2ecc71;font:800 11px/1.15 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre;overflow:visible;text-align:center;letter-spacing:.04em}" +
+      "#" + PANEL_ID + " .gc-tag{margin:6px 0 0;color:#2ecc71;font:800 13px/1.2 -apple-system,sans-serif;letter-spacing:.06em;text-align:center}" +
+      "#" + PANEL_ID + " .gc-own{display:none}" +
+      "#" + PANEL_ID + " .gc-head{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #2e333c;min-width:0;cursor:grab;touch-action:none;user-select:none}" +
+      "#" + PANEL_ID + " .gc-owner{cursor:grab;touch-action:none;user-select:none}" +
+      "#" + PANEL_ID + " .gc-head>div{min-width:0;flex:1}" +
+      "#" + PANEL_ID + " h2{margin:0;font-size:16px;letter-spacing:.08em;font-weight:800}" +
+      "#" + PANEL_ID + " .sub{margin:3px 0 0;font-size:11px;color:#94a3b8}" +
+      "#" + PANEL_ID + " .live{display:inline-flex;align-items:center;gap:6px;color:#2ecc71;font-size:11px;font-weight:700}" +
+      "#" + PANEL_ID + " .dot{width:8px;height:8px;border-radius:50%;background:#2ecc71;box-shadow:0 0 0 4px rgba(46,204,113,.18)}" +
+      "#" + PANEL_ID + " .dot.off{background:#e74c3c;box-shadow:none}" +
+      "#" + PANEL_ID + " .gc-tuck{border:0;background:#23272f;color:#f2f4f7;border-radius:10px;min-height:40px;padding:0 12px;flex:0 0 auto;font:800 12px -apple-system,sans-serif;letter-spacing:.06em;text-transform:uppercase;-webkit-tap-highlight-color:transparent;touch-action:manipulation;cursor:pointer}" +
+      "#" + PANEL_ID + " .gc-body{flex:1 1 0%;height:0;min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;padding:10px 12px;padding-bottom:16px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}" +
+      "#" + PANEL_ID + " .gc-foot{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px calc(8px + env(safe-area-inset-bottom,0px));border-top:1px solid #2e333c;font-size:11px;color:#94a3b8;min-width:0}" +
+      "#" + PANEL_ID + " .gc-foot b{color:#2ecc71;font-weight:600}" +
+      "#" + PANEL_ID + " .gc-ago{font-weight:inherit;color:inherit}" +
+      "#" + PANEL_ID + " .gc-card{margin:0 0 10px;padding:12px;border-radius:12px;background:#23272f;border:1px solid #2e333c;max-width:100%;min-width:0}" +
+      "#" + PANEL_ID + " .gc-card h3{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;font-weight:700}" +
+      "#" + PANEL_ID + " .next{border:1px solid #2ecc71;background:#1a1d23;text-align:center}" +
+      "#" + PANEL_ID + " .next .move{font-size:18px;line-height:1.25;color:#2ecc71;margin:0 0 8px;font-weight:800;overflow-wrap:anywhere}" +
+      "#" + PANEL_ID + " .next p{margin:0;color:#94a3b8;font-size:14px;text-align:center}" +
+      "#" + PANEL_ID + " .steps{list-style:none;margin:12px 0 0;padding:0;text-align:left}" +
+      "#" + PANEL_ID + " .steps li{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;padding:10px 0;border-top:1px solid #2e333c}" +
+      "#" + PANEL_ID + " .steps .when{color:#2ecc71;font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;overflow-wrap:anywhere}" +
+      "#" + PANEL_ID + " .waste{margin:10px 0 0;color:#e74c3c;font-size:13px;text-align:left;line-height:1.35}" +
+      "#" + PANEL_ID + " .pick{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;max-width:100%}" +
+      "#" + PANEL_ID + " .pick .gc-btn{flex:1 1 calc(50% - 8px);min-width:0;max-width:100%;padding:0 8px;font-size:13px}" +
+      "#" + PANEL_ID + " .next.stack{border-color:#e74c3c}" +
+      "#" + PANEL_ID + " .next.stack .move{color:#e74c3c}" +
+      "#" + PANEL_ID + " .flash{margin:0 0 10px;padding:10px;border-radius:10px;background:#2ecc71;color:#fff;text-align:center;font-weight:800;letter-spacing:.12em}" +
+      "#" + PANEL_ID + " .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-width:0}" +
+      "#" + PANEL_ID + " .grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}" +
+      "#" + PANEL_ID + " .stat{min-width:0}" +
+      "#" + PANEL_ID + " .stat label{display:block;font-size:10px;color:#94a3b8;margin-bottom:2px;text-transform:uppercase;letter-spacing:.06em}" +
+      "#" + PANEL_ID + " .stat b{font-size:15px;overflow-wrap:anywhere}" +
+      "#" + PANEL_ID + " .ok{color:#2ecc71}" +
+      "#" + PANEL_ID + " .bad{color:#e74c3c}" +
+      "#" + PANEL_ID + " .warn{color:#e67e22}" +
+      "#" + PANEL_ID + " .muted{color:#94a3b8}" +
+      "#" + PANEL_ID + " .row{display:flex;justify-content:space-between;gap:8px;align-items:baseline;padding:12px 0;border-bottom:1px solid #2e333c;min-width:0}" +
+      "#" + PANEL_ID + " .row:last-child{border-bottom:0}" +
+      "#" + PANEL_ID + " .row>div,#" + PANEL_ID + " .row>span:first-child{min-width:0;overflow-wrap:anywhere}" +
+      "#" + PANEL_ID + " .chip{flex:0 0 auto;max-width:46%;text-align:right;overflow-wrap:anywhere;font-size:12px;font-weight:800;color:#2ecc71;border:0;background:transparent;padding:0;font-family:inherit;-webkit-tap-highlight-color:transparent}" +
+      "#" + PANEL_ID + " .chip.use,#" + PANEL_ID + " .chip[data-tip]{cursor:pointer}" +
+      "#" + PANEL_ID + " .chip.use{background:#2ecc71;color:#fff;border-radius:8px;min-height:36px;padding:0 12px;max-width:100%}" +
+      "#" + PANEL_ID + " .chip.bad{color:#e74c3c}" +
+      "#" + PANEL_ID + " .chip.warn{color:#e67e22}" +
+      "#" + PANEL_ID + " .chip.muted{color:#94a3b8}" +
+      "#" + PANEL_ID + " .gc-toast{position:absolute;left:12px;right:12px;bottom:calc(56px + env(safe-area-inset-bottom,0px));z-index:8;background:#23272f;border:1px solid #2ecc71;border-radius:12px;padding:10px 12px;opacity:0;pointer-events:none;transform:translateY(8px);transition:opacity .2s,transform .2s}" +
+      "#" + PANEL_ID + " .gc-toast.show{opacity:1;transform:translateY(0)}" +
+      "#" + PANEL_ID + " .gc-toast b{display:block;color:#2ecc71;font-size:13px;margin-bottom:4px}" +
+      "#" + PANEL_ID + " .gc-toast span{display:block;color:#f2f4f7;font-size:13px;line-height:1.35}" +
+      "#" + PANEL_ID + " .gc-btn{border:0;border-radius:10px;min-height:44px;padding:0 16px;background:#2ecc71;color:#fff;font-weight:800;font-size:14px;font-family:inherit;max-width:100%;-webkit-tap-highlight-color:transparent}" +
+      "#" + PANEL_ID + " .gc-btn.secondary{background:#23272f;color:#f2f4f7;border:1px solid #2e333c}" +
+      "#" + PANEL_ID + " .gc-btn{transition:transform .08s ease,filter .08s ease}" +
+      "#" + PANEL_ID + " .gc-btn:active{transform:scale(.96);filter:brightness(.88)}" +
+      "#" + PANEL_ID + " .chip:active,#" + PANEL_ID + " .gc-tuck:active{transform:scale(.96);filter:brightness(.88)}" +
+      "#" + PANEL_ID + " .chip,#" + PANEL_ID + " .gc-tuck{transition:transform .08s ease,filter .08s ease}" +
+      "#" + PANEL_ID + " .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;justify-content:center;max-width:100%}" +
+      "#" + PANEL_ID + " .actions .gc-btn{flex:1 1 120px;min-width:0}" +
+      "#" + PANEL_ID + " .toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}" +
+      "#" + PANEL_ID + " .toggle>div:first-child{min-width:0;flex:1}" +
+      "#" + PANEL_ID + " .sw{flex:0 0 52px;width:52px;height:32px;border-radius:99px;background:#2a3038;position:relative;border:1px solid #2e333c;-webkit-tap-highlight-color:transparent}" +
+      "#" + PANEL_ID + " .sw i{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#94a3b8}" +
+      "#" + PANEL_ID + " .sw.on{background:#2ecc71;border-color:transparent}" +
+      "#" + PANEL_ID + " .sw.on i{left:25px;background:#fff}" +
+      "#" + PANEL_ID + " .tabs{display:flex;flex:0 0 auto;width:auto;max-width:100%;min-width:0;gap:0;margin:8px 12px 0;background:#121418;border-radius:10px;overflow:hidden}" +
+      "#" + PANEL_ID + " .tabs button{flex:1 1 0;min-width:0;min-height:44px;border:0;background:transparent;color:#94a3b8;padding:0 2px;font:800 10px -apple-system,sans-serif;letter-spacing:.02em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;-webkit-tap-highlight-color:transparent}" +
+      "#" + PANEL_ID + " .tabs button.on{background:#2ecc71;color:#fff}" +
+      "#" + PANEL_ID + " input.gc-in{width:100%;min-height:44px;padding:10px 12px;border-radius:10px;border:1px solid #2e333c;background:#121418;color:#fff;font-size:16px}" +
+      "#" + PANEL_ID + " .timeline{list-style:none;margin:0;padding:0}" +
+      "#" + PANEL_ID + " .timeline li{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;margin:0 0 10px}" +
+      "#" + PANEL_ID + " .timeline time{color:#2ecc71;font-size:12px;font-weight:800}" +
+      "#" + PANEL_ID + " .proj{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:8px;align-items:center;margin:10px 0;min-width:0}" +
+      "#" + PANEL_ID + " .proj b{color:#2ecc71;max-width:42vw;overflow-wrap:anywhere}" +
+      "#" + PANEL_ID + " .bar{height:6px;background:#2a3038;border-radius:99px;overflow:hidden}" +
+      "#" + PANEL_ID + " .bar i{display:block;height:100%;background:#2ecc71}" +
+      "#" + PANEL_ID + " .gc-chart{width:100%;height:auto;aspect-ratio:360/176;display:block;margin:10px 0 4px;background:#12161b;border-radius:8px}"+
+      "#" + PANEL_ID + " .gc-legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin:2px 0 2px;font-size:10px;color:#8a93a0}"+
+      "#" + PANEL_ID + " .gc-legend span{display:inline-flex;align-items:center;gap:4px}"+
+      "#" + PANEL_ID + " .gc-legend i{width:9px;height:3px;border-radius:2px;display:inline-block}"+
+      "#" + PANEL_ID + " .gc-legend b{color:#e6e9ee;font-size:10px}"+
+      "#" + PANEL_ID + " .gc-lkey{opacity:.8}" +
+      "#" + PANEL_ID + " .gcb-rawp{font:400 11px/1.5 ui-monospace,Menlo,monospace;color:#6f7885;" +
+      "overflow-wrap:anywhere}" +
+      "#" + PANEL_ID + " .gcb-rawp.on{color:#3fbf7f}" +
+      "#" + PANEL_ID + " .gcb-goals{display:grid;gap:8px;margin:8px 0 4px}" +
+      "#" + PANEL_ID + " .gcb-goal{background:#161b22;border:1px solid #262e39;border-radius:10px;padding:8px 9px}" +
+      "#" + PANEL_ID + " .gcb-goal.now{border-color:#f2a03d}" +
+      "#" + PANEL_ID + " .gcb-goal.done{opacity:.6}" +
+      "#" + PANEL_ID + " .gcb-val{background:#161b22;border:1px solid #262e39;border-radius:10px;padding:8px 9px}" +
+      "#" + PANEL_ID + " .gcb-up{background:none;border:0;color:#8b98a5;font-size:11px;line-height:1;padding:2px 6px 2px 0;cursor:pointer}" +
+      "#" + PANEL_ID + " .gcb-up:hover{color:#f2a03d}" +
+      "#" + PANEL_ID + " .gcb-up.ghost{visibility:hidden}" +
+      "#" + PANEL_ID + " .gcb-wish{margin:8px 0 0;padding:8px 9px;border:1px solid #6b4a1f;border-radius:8px;background:#1d1608;color:#f2a03d;font-size:11px;line-height:1.5}" +
+      "#" + PANEL_ID + " .gcb-strip{display:flex;align-items:center;gap:8px;width:calc(100% - 24px);margin:8px 12px 0;min-height:44px;padding:8px 10px;border:1px solid #262e39;border-radius:10px;background:#161b22;color:#c9d1d9;text-align:left;font:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}" +
+      "#" + PANEL_ID + " .gcb-strip:hover{border-color:#f2a03d}" +
+      "#" + PANEL_ID + " .gcb-striplab{flex:0 0 auto;font:800 9px -apple-system,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#8b98a5}" +
+      "#" + PANEL_ID + " .gcb-striptxt{flex:1 1 auto;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+      "#" + PANEL_ID + " .gcb-stripgo{flex:0 0 auto;color:#8b98a5;font-size:16px;line-height:1}" +
+      "#" + PANEL_ID + " .gcb-gtop{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:5px}" +
+      "#" + PANEL_ID + " .gcb-gname{font:700 12.5px/1 -apple-system,sans-serif}" +
+      "#" + PANEL_ID + " .gcb-gcur{font:400 11px/1 ui-monospace,Menlo,monospace;color:#8895a5}" +
+      "#" + PANEL_ID + " .gcb-gin{width:100%;margin:0}" +
+      "#" + PANEL_ID + " .gcb-gnote{margin-top:5px;font:400 10.5px/1.4 ui-monospace,Menlo,monospace;color:#8895a5}" +
+      "#" + PANEL_ID + " .gcb-goal.now .gcb-gnote{color:#f2a03d}" +
+      "#" + PANEL_ID + " .gcb-srcs{margin:10px 0 6px}" +
+      "#" + PANEL_ID + " .gcb-src{display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid #262e39}" +
+      "#" + PANEL_ID + " .gcb-src:last-child{border-bottom:0}" +
+      "#" + PANEL_ID + " .gcb-nm{flex:1;min-width:0;font-size:13px}" +
+      "#" + PANEL_ID + " .gcb-src.on .gcb-nm{color:#fff}" +
+      "#" + PANEL_ID + " .gcb-nm i{display:block;font-style:normal;font-size:10.5px;color:#8895a5}" +
+      "#" + PANEL_ID + " .gcb-chk{flex:0 0 auto;width:26px;height:26px;border-radius:7px;border:1.5px solid #3a4351;" +
+      "background:#12161b;color:#12161b;font:800 14px/1 -apple-system,sans-serif;padding:0;" +
+      "display:flex;align-items:center;justify-content:center}" +
+      "#" + PANEL_ID + " .gcb-src.on .gcb-chk{background:#f2a03d;border-color:#f2a03d;color:#12161b}" +
+      "#" + PANEL_ID + " .gcb-grp{margin:12px 0 2px;font:800 10px/1 ui-monospace,Menlo,monospace;" +
+      "letter-spacing:.12em;text-transform:uppercase;color:#8895a5}" +
+      "#" + PANEL_ID + " .gcb-step{display:inline-flex;align-items:center;gap:2px;flex:0 0 auto}" +
+      "#" + PANEL_ID + " .gcb-step button{width:34px;height:34px;border-radius:9px;border:1px solid #262e39;" +
+      "background:#1d242e;color:#e6e9ee;font:700 16px/1 -apple-system,sans-serif;padding:0}" +
+      "#" + PANEL_ID + " .gcb-step button[disabled]{opacity:.35}" +
+      "#" + PANEL_ID + " .gcb-step b{min-width:26px;text-align:center;font:700 14px/1 ui-monospace,Menlo,monospace}" +
+      "#" + PANEL_ID + " .gc-ranges{display:flex;gap:6px;flex-wrap:wrap}" +
+      "#" + PANEL_ID + " .gc-ranges button{flex:1 1 0;min-width:0;padding:6px 0;border-radius:8px;border:1px solid #2a3038;background:#1b2027;color:#c7cdd6;font-weight:700;font-size:12px}" +
+      "#" + PANEL_ID + " .gc-ranges button.on{background:#2ecc71;border-color:#2ecc71;color:#0d1117}" +
+      "#" + PANEL_ID + " .gc-dhead{font-size:10px;margin-top:6px}" +
+      "#" + PANEL_ID + " .gc-dcards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:6px}" +
+      "#" + PANEL_ID + " .gc-dcard{background:#1b2027;border-radius:8px;padding:6px 4px;text-align:center;min-width:0}" +
+      "#" + PANEL_ID + " .gc-dcard span{display:block;font-size:10px;font-weight:800;letter-spacing:.04em}" +
+      "#" + PANEL_ID + " .gc-dcard b{display:block;font-size:12px;overflow-wrap:anywhere}" +
+      "#" + PANEL_ID + " .gc-dcard i{display:block;font-size:9px;font-style:normal;overflow-wrap:anywhere}" +
+      "#" + PANEL_ID + " .gc-cap{margin-top:8px;line-height:1.45}" +
+
+      /* ---- beta shell: verdict first, amber for "act now", green for "go" ---- */
+      "#" + PANEL_ID + "{border-color:#2c3a2e;height:92vh;height:min(92dvh,calc(100dvh - 28px))}" +
+      "#" + PANEL_ID + " .gcb-bar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;" +
+      "padding:10px 13px;background:#161b22;border-bottom:1px solid #262e39}" +
+      "#" + PANEL_ID + " .gcb-brand{display:flex;align-items:center;gap:9px;min-width:0}" +
+      "#" + PANEL_ID + " .gcb-brand b{font:800 13px/1 -apple-system,sans-serif;letter-spacing:.05em}" +
+      "#" + PANEL_ID + " .gcb-brand span{font:400 11px/1 ui-monospace,Menlo,monospace;color:#8895a5;white-space:nowrap;" +
+      "overflow:hidden;text-overflow:ellipsis}" +
+      "#" + PANEL_ID + " .gcb-dot{width:8px;height:8px;border-radius:50%;background:#3fbf7f;flex:0 0 auto;box-shadow:0 0 0 3px rgba(63,191,127,.16)}" +
+      "#" + PANEL_ID + " .gcb-dot.off{background:#e5484d;box-shadow:0 0 0 3px rgba(229,72,77,.16)}" +
+      "#" + PANEL_ID + " .gcb-icons{display:flex;gap:6px;flex:0 0 auto}" +
+      "#" + PANEL_ID + " .gcb-icon{width:30px;height:30px;border-radius:8px;border:1px solid #262e39;background:#1d242e;" +
+      "color:#8895a5;display:flex;align-items:center;justify-content:center;font-size:14px;padding:0;" +
+      "-webkit-appearance:none;appearance:none;cursor:pointer;touch-action:manipulation}" +
+      "#" + PANEL_ID + " .gcb-icon.on{background:#f2a03d;border-color:#f2a03d;color:#12161b}" +
+      "#" + PANEL_ID + " .gcb-icon:active{transform:scale(.94)}" +
+
+      "#" + PANEL_ID + " .gcb-verdict{flex:0 0 auto;padding:11px 13px 9px;" +
+      "background:radial-gradient(120% 100% at 0% 0%,rgba(242,160,61,.10),transparent 60%)}" +
+      "#" + PANEL_ID + " .gcb-verdict.go{background:radial-gradient(120% 100% at 0% 0%,rgba(63,191,127,.12),transparent 60%)}" +
+      "#" + PANEL_ID + " .gcb-tag{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;" +
+      "font:800 10px/1.6 ui-monospace,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;" +
+      "background:rgba(242,160,61,.14);color:#f2a03d;border:1px solid rgba(242,160,61,.3)}" +
+      "#" + PANEL_ID + " .gcb-verdict.go .gcb-tag{background:rgba(63,191,127,.14);color:#3fbf7f;border-color:rgba(63,191,127,.3)}" +
+      "#" + PANEL_ID + " .gcb-move{margin:7px 0 3px;font:800 19px/1.16 -apple-system,sans-serif;letter-spacing:-.01em}" +
+      "#" + PANEL_ID + " .gcb-why{margin:0;color:#8895a5;font-size:12.5px;line-height:1.4}" +
+      "#" + PANEL_ID + " .gcb-waste{margin-top:9px;padding:8px 10px;border-radius:9px;background:#241c14;color:#f2a03d;font-size:12.5px}" +
+
+      "#" + PANEL_ID + " .gcb-meters{flex:0 0 auto;padding:0 13px 9px}" +
+      "#" + PANEL_ID + " .gcb-mini{flex:0 0 auto;display:flex;align-items:center;gap:9px;width:auto;" +
+      "margin:0 13px 9px;padding:8px 10px;border:1px solid #262e39;border-radius:11px;" +
+      "background:radial-gradient(140% 100% at 0% 0%,rgba(242,160,61,.10),transparent 60%),#161b22;" +
+      "color:#e6e9ee;text-align:left;-webkit-appearance:none;appearance:none;" +
+      "touch-action:manipulation;cursor:pointer}" +
+      "#" + PANEL_ID + " .gcb-mini.go{background:radial-gradient(140% 100% at 0% 0%,rgba(63,191,127,.12),transparent 60%),#161b22}" +
+      "#" + PANEL_ID + " .gcb-mini .gcb-tag{flex:0 0 auto;padding:2px 7px;font-size:9px}" +
+      "#" + PANEL_ID + " .gcb-miniline{flex:1;min-width:0;font:600 12.5px/1.3 -apple-system,sans-serif;" +
+      "white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+      "#" + PANEL_ID + " .gcb-minie{flex:0 0 auto;font:700 12px/1 ui-monospace,Menlo,monospace;color:#8895a5}" +
+      "#" + PANEL_ID + " .gcb-mini:active{transform:scale(.99)}" +
+      "#" + PANEL_ID + " .gcb-mtop{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:5px}" +
+      "#" + PANEL_ID + " .gcb-mlab{font:800 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:#8895a5}" +
+      "#" + PANEL_ID + " .gcb-mval{font:700 13px/1 ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}" +
+      "#" + PANEL_ID + " .gcb-track{position:relative;height:9px;border-radius:99px;background:#1d242e}" +
+      "#" + PANEL_ID + " .gcb-fill{position:absolute;left:0;top:0;bottom:0;border-radius:99px;background:#5a9bd8}" +
+      "#" + PANEL_ID + " .gcb-fill.full{background:#e5484d}" +
+      "#" + PANEL_ID + " .gcb-over{position:absolute;top:0;bottom:0;background:#f2a03d;border-radius:0 99px 99px 0}" +
+      "#" + PANEL_ID + " .gcb-capmark{position:absolute;top:-3px;bottom:-3px;width:2px;background:#e8edf2;opacity:.85;border-radius:2px}" +
+      "#" + PANEL_ID + " .gcb-mval.over{color:#f2a03d}" +
+      "#" + PANEL_ID + " .gcb-tick{position:absolute;top:-2px;bottom:-2px;width:1px;background:#0e1116;opacity:.85}" +
+      "#" + PANEL_ID + " .gcb-note{display:block;margin-top:5px;font:400 10px/1.4 ui-monospace,Menlo,monospace;color:#8895a5}" +
+
+      "#" + PANEL_ID + " .gcb-rail{position:relative;height:30px;border-radius:10px;background:#161b22;border:1px solid #262e39;overflow:hidden}" +
+      "#" + PANEL_ID + " .gcb-band{position:absolute;top:5px;height:9px;border-radius:99px;opacity:.9}" +
+      "#" + PANEL_ID + " .gcb-band.b2{top:16px}" +
+      "#" + PANEL_ID + " .gcb-mark{position:absolute;top:0;bottom:0;width:2px;background:#e8edf2;opacity:.5}" +
+      "#" + PANEL_ID + " .gcb-ticks{display:flex;justify-content:space-between;margin-top:6px;font:400 9.5px/1 ui-monospace,Menlo,monospace;color:#8895a5}" +
+      "#" + PANEL_ID + " .gcb-key{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:6px;font:400 10px/1 ui-monospace,Menlo,monospace;color:#8895a5}" +
+      "#" + PANEL_ID + " .gcb-key span{display:inline-flex;align-items:center;gap:5px}" +
+      "#" + PANEL_ID + " .gcb-key i{width:9px;height:3px;border-radius:2px;display:inline-block}" +
+
+      "#" + PANEL_ID + " .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:0;"+
+      "margin:0 13px 9px;padding:3px;background:#1d242e;border:1px solid #262e39;"+
+      "border-radius:11px;flex:0 0 auto;overflow:hidden}" +
+      "#" + PANEL_ID + " .tabs button{width:100%;border:0;background:transparent;color:#8895a5;"+
+      "border-radius:8px;min-height:38px;padding:0;margin:0;font:800 11.5px/1 ui-monospace,Menlo,monospace;"+
+      "letter-spacing:.1em;text-transform:uppercase}" +
+      "#" + PANEL_ID + " .tabs button.on{background:#f2a03d;color:#12161b}" +
+      "#" + PANEL_ID + " .gc-btn{background:#f2a03d;color:#12161b}" +
+      "#" + PANEL_ID + " .gc-ranges button.on{background:#f2a03d;border-color:#f2a03d;color:#12161b}" +
+      "#" + PANEL_ID + " .gcb-own{flex:0 0 auto;padding:6px 13px;background:#0e1116;border-bottom:1px solid #262e39;" +
+      "font:400 10px/1.4 ui-monospace,Menlo,monospace;color:#5f6a78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}"
+    );
+  }
+
+  function ensureStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    var s = document.createElement("style");
+    s.id = STYLE_ID;
+    s.textContent = css();
+    document.documentElement.appendChild(s);
+  }
+
+  function ago() {
+    if (!state.lastFetch) return "not yet";
+    var s = Math.round((Date.now() - state.lastFetch) / 1000);
+    if (s < 5) return "just now";
+    return s + "s ago";
+  }
+
+  function normalizeKey(raw) {
+    return String(raw || "").replace(/[^a-zA-Z0-9]/g, "");
+  }
+
+  function trySaveKey(raw) {
+    var k = normalizeKey(raw);
+    if (k.length < 16) return false;
+    k = k.slice(0, 16);
+    storeSet("api_key", k);
+    draftKey = "";
+    keyBoxFocused = false;
+    try {
+      var el = document.getElementById("gcKey");
+      if (el) el.blur();
+    } catch (_) {}
+    refresh("boot");
+    return true;
+  }
+
+  function keyBoxBusy() {
+    try {
+      if (keyBoxFocused) return true;
+      var ae = document.activeElement;
+      if (ae && ae.id === "gcKey") return true;
+      // Any input inside the panel — the goal fields included.
+      if (ae && ae.tagName === "INPUT" && ae.closest && ae.closest("#" + PANEL_ID)) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  var lastRenderTab = null;
+
+  // A throw anywhere in the draw used to leave the panel an empty box with no
+  // explanation — the element exists and is styled, so it looks like the script
+  // is fine and simply has nothing to say. Show the failure instead.
+  function renderPanel() {
+    try {
+      renderPanelInner();
+    } catch (err) {
+      try {
+        var panel = document.getElementById(PANEL_ID);
+        if (!panel) return;
+        panel.innerHTML =
+          '<div class="gcb-bar"><div class="gcb-brand"><i class="gcb-dot off"></i>' +
+          "<b>GYM COACH</b><span>error</span></div>" +
+          '<div class="gcb-icons"><button class="gcb-icon" data-act="refresh" aria-label="Retry">\u21bb</button>' +
+          '<button class="gcb-icon" data-act="close" aria-label="Tuck away">\u2013</button></div></div>' +
+          '<div class="gcb-verdict"><span class="gcb-tag">Error</span>' +
+          '<div class="gcb-move">The panel could not draw.</div>' +
+          '<p class="gcb-why">' + esc(String((err && err.message) || err)) + "</p>" +
+          '<div class="gcb-waste" style="white-space:pre-wrap;font:400 10px/1.4 ui-monospace,Menlo,monospace">' +
+          esc(String((err && err.stack) || "").slice(0, 400)) + "</div></div>";
+      } catch (_) {}
+    }
+  }
+
+  function renderPanelInner() {
+    syncEnergyFromDom();
+    var panel = document.getElementById(PANEL_ID);
+    var pill = document.getElementById(PILL_ID);
+    if (pill) pinFab(pill);
+    if (!panel || !state.open) return;
+    if (keyBoxBusy()) return;
+
+    var bodyEl = panel.querySelector(".gc-body");
+    var keepScroll = lastRenderTab === state.tab;
+    var bodyY = keepScroll && bodyEl ? bodyEl.scrollTop : 0;
+    var keyInp = panel.querySelector("#gcKey");
+    var keyVal = keyInp ? keyInp.value : "";
+    var keyFocus = !!(keyInp && document.activeElement === keyInp);
+    var keyStart = keyInp ? keyInp.selectionStart : 0;
+    var keyEnd = keyInp ? keyInp.selectionEnd : 0;
+    lastRenderTab = state.tab;
+
+    applyGoalFocus();
+    var c = coach();
+    var e = dailyEnergy();
+    var g7 = projectDays(7, e.total, state.focus);
+    var g30 = projectDays(30, e.total, state.focus);
+    var g90 = projectDays(90, e.total, state.focus);
+    var tot = state.stats.str + state.stats.def + state.stats.spe + state.stats.dex;
+    var live = state.status === "live";
+    var xanOk = state.drugCd <= 0 && !state.warStack && state.items.xanax > 0;
+    var cans = state.items.munster + state.items.redcow + state.items.tourine + state.items.cans;
+
+    var coachHtml =
+      (state.flash ? '<div class="flash">' + state.flash + "</div>" : "") +
+      '<div class="gc-card">' + railHtml() + "</div>" +
+      wasteCard() +
+      (c.steps && c.steps.length
+        ? '<div class="gc-card"><h3>Do this</h3>' + stepsHtml(c.steps) + "</div>"
+        : "") +
+      '<div class="gc-card"><h3>Live</h3><div class="grid three">' +
+      '<div class="stat"><label>Energy' +
+      (state.energyDom ? ' <span style="opacity:.6;font-weight:400">live</span>' : ' <span style="opacity:.6;font-weight:400">api</span>') +
+      '</label><b class="' + (barFull() ? "bad" : "ok") + '">' + state.energy + " / " + state.energyMax + "</b></div>" +
+      '<div class="stat"><label>Happy</label><b>' + fmt(state.happy) + "</b></div>" +
+      '<div class="stat"><label>Drug cooldown</label><b class="' + (state.drugCd ? "muted" : "ok") + '">' + fmtCd(state.drugCd) + "</b></div>" +
+      '<div class="stat"><label>Booster</label><b>' + fmtCd(state.boosterCd) + "</b></div>" +
+      '<div class="stat"><label>Gym</label><b>' + (state.gymName || "—") + "</b></div>" +
+      '<div class="stat"><label>Focus</label><b>' + focusLabel() + "</b></div></div></div>" +
+      '<div class="gc-card"><h3>Gym perks</h3><div class="grid">' +
+      '<div class="stat"><label>Str</label><b class="ok">' + perkPct(state.perks.str) + "</b></div>" +
+      '<div class="stat"><label>Def</label><b class="ok">' + perkPct(state.perks.def) + "</b></div>" +
+      '<div class="stat"><label>Spe</label><b class="ok">' + perkPct(state.perks.spe) + "</b></div>" +
+      '<div class="stat"><label>Dex</label><b class="' + ((state.perks.dex || 1) < 1 ? "bad" : "ok") + '">' + perkPct(state.perks.dex) + "</b></div></div>" +
+      '<p class="muted" style="margin:8px 0 0">' +
+      ([
+        perkSourceLine("faction", "Faction"),
+        perkSourceLine("company", "Company"),
+        perkSourceLine("job", "Job"),
+        perkSourceLine("education", "Education"),
+        perkSourceLine("property", "Property"),
+        perkSourceLine("merit", "Merit"),
+        perkSourceLine("book", "Book"),
+        perkSourceLine("stock", "Stock"),
+        perkSourceLine("enhancer", "Enhancer"),
+        state.adultNov ? "Adult Novelties: e-dvds give +5,000 happy instead of +2,500" : "",
+        state.canMult > 1 ? "Energy drinks: +" + Math.round((state.canMult - 1) * 100) + "% from books and perks" : "",
+        caffeineOn() ? "Caffeine Consumption: energy drinks doubled" : "",
+      ]
+        .filter(Boolean)
+        .join("<br>") || "No gym perks found in what Torn sent.") +
+      "</p></div>" +
+      '<div class="gc-card toggle"><div><h3 style="margin:0">War stack</h3><div class="muted">Hold energy. Mute training and Xanax pings.</div></div>' +
+      '<div class="sw' + (state.warStack ? " on" : "") + '" id="stackSw"><i></i></div></div>';
+
+    var boostOk = boosterOpen(state.boosterCd);
+    var jumpGo = state.mode === "jump" && nextTickSec() <= 90;
+    var invD = state.invDiag;
+    // Only speak up when the counts cannot be trusted; a healthy tab is silent.
+    var invNote = invD && !invD.present && state.invUnavailable
+      ? "Counts may be behind: " + String(state.invUnavailable).slice(0, 90)
+      : "";
+    var itemsHtml =
+      '<div class="gc-card"><h3>Inventory · live</h3>' +
+      (invNote ? '<div class="muted" style="margin:-4px 0 8px">' + invNote + "</div>" : "") +
+      [
+        { key: "xanax", n: "Xanax", v: state.items.xanax, rec: xanOk ? "USE" : state.drugCd ? "WAIT " + fmtCd(state.drugCd) : "BUY", cls: xanOk ? "ok" : "warn" },
+        { key: "fhc", n: "FHC", v: state.items.fhc, rec: "DON\u2019T", cls: "bad" },
+        { key: "nandrolone", n: "Nandrolone", v: state.items.nandrolone, rec: "OPTIONAL", cls: "warn" },
+        state.mode !== "jump" ? null : { key: "edvd", n: "Erotic DVDs", v: state.items.edvd, rec: state.mode !== "jump" ? "OFF" : !state.items.edvd ? "NEED" : jumpGo && boostOk ? "USE" : "HOLD", cls: state.mode === "jump" ? "ok" : "muted" },
+        state.mode !== "jump" ? null : { key: "candy", n: "Happy candy (all types)", v: state.items.candy, rec: state.mode !== "jump" ? "OFF" : !state.items.candy ? "NEED" : jumpGo && boostOk ? "USE" : "HOLD", cls: state.mode === "jump" ? "ok" : "muted" },
+        state.mode !== "jump" ? null : { key: "ecstasy", n: "Ecstasy", v: state.items.ecstasy, rec: state.mode !== "jump" ? "OFF" : jumpGo && state.drugCd <= 0 ? "USE" : "LAST", cls: state.mode === "jump" ? "warn" : "muted" },
+        { key: "lsd", n: "LSD", v: state.items.lsd, rec: "SKIP", cls: "muted" },
+        { key: "vicodin", n: "Vicodin", v: state.items.vicodin, rec: "SKIP", cls: "muted" },
+      ]
+        .filter(Boolean)
+        .map(function (r) {
+          return '<div class="row"><div><b>' + r.n + " \u00d7" + (r.v || 0) + '</b><div class="muted">' +
+            itemFxShort(r.key) + "</div></div>" + itemChip(r) + "</div>";
+        })
+        .join("") +
+      "</div>" +
+      // Its own section: the drinks are a shortlist you pick from, not one line
+      // in a list of unrelated items.
+      (function () {
+        var list = state.drinkList || [];
+        // Total the rows actually shown. Taking it from the API count instead
+        // meant the header said 21 while the only row under it said 18.
+        var total = list.length
+          ? list.reduce(function (a, d) { return a + (d.qty || 0); }, 0)
+          : cans;
+        var head = '<div class="gc-card"><h3>Energy drinks \u00d7' + fmt(total) + "</h3>";
+        var foot = '<p class="muted" style="margin:8px 0 0">' +
+          (caffeineOn() ? "Caffeine Consumption is on \u2014 every can is doubled. " : "") +
+          (state.canMult > 1 ? "Values include your +" + Math.round((state.canMult - 1) * 100) + "% drink bonus. " : "") +
+          'Each adds 2h to the booster cooldown. Keep using while that bar is under ' +
+          (boosterCap() / 3600) + "h" + (state.boosterPerk ? " (faction perk)" : "") +
+          " \u2014 it is at " + fmtCd(state.boosterCd) + ".</p></div>";
+        if (!total) return head + '<p class="muted" style="margin:0">None in your inventory.</p></div>';
+        if (!list.length) {
+          return head + '<div class="row"><div><b>' + fmt(cans) + ' in stock</b><div class="muted">' +
+            itemFxShort("cans") + "</div></div>" + itemChip({ key: "cans", rec: boostOk ? "USE" : "HOLD", cls: boostOk ? "ok" : "muted" }) + "</div>" + foot;
+        }
+        return head + list.map(function (d) {
+          return '<div class="row"><div><b>' + esc(d.name) + " \u00d7" + fmt(d.qty) + "</b>" +
+            '<div class="muted">' + (d.e ? "+" + d.e + "e \u00b7 +2h booster" : "+2h booster") + "</div></div>" +
+            (d.id && boostOk
+              ? '<button type="button" class="chip use" data-use-id="' + d.id + '">USE</button>'
+              : '<span class="chip' + (boostOk ? "" : " wait") + '">' + (boostOk ? "\u2014" : "HOLD") + "</span>") +
+            "</div>";
+        }).join("") + foot;
+      })() +
+      (state.mode === "jump" && (state.happyList || []).length
+        ? '<div class="gc-card"><h3>Happy items on hand</h3>' +
+          state.happyList
+            .map(function (h) {
+              return (
+                '<div class="row"><div><b>' +
+                esc(h.name) +
+                " ×" +
+                h.qty +
+                '</b><div class="muted">' +
+                happyFxText(h) +
+                "</div></div>" +
+                happyItemChip(h) +
+                "</div>"
+              );
+            })
+            .join("") +
+          '<p class="muted" style="margin:8px 0 0">Jump uses every Candy-type item Torn lists, plus e-dvds. Ecstasy last. USE takes one.</p></div>'
+        : "");
+
+    var trackHtml =
+      '<div class="gc-card"><h3>Battle stats · live</h3>' +
+      '<div class="row"><span>Strength</span><b>' + fmt(state.stats.str) + "</b></div>" +
+      '<div class="row"><span>Defense</span><b>' + fmt(state.stats.def) + "</b></div>" +
+      '<div class="row"><span>Speed</span><b>' + fmt(state.stats.spe) + "</b></div>" +
+      '<div class="row"><span>Dexterity</span><b>' + fmt(state.stats.dex) + "</b></div>" +
+      '<div class="row"><span>Total</span><b class="ok">' + fmt(tot) + "</b></div></div>" +
+      '<div class="gc-card"><h3>Train log</h3>' +
+      (state.log.length
+        ? state.log
+            .slice(0, 24)
+            .map(function (l) {
+              return '<div class="row"><div><b>' + l.text + '</b><div class="muted">' + l.t + "</div></div></div>";
+            })
+            .join("")
+        : '<div class="muted">Train in the gym. Every session is stored on this phone.</div>') +
+      "</div>";
+
+    var maxP = g90 || 1;
+    var projHtml =
+      '<div class="gc-card"><h3>Projected ' +
+      focusLabel() +
+      " · " +
+      (state.mode === "jump" ? "jump" : "xan + gym") +
+      "</h3>" +
+      '<div class="muted" style="margin-bottom:8px">' +
+      state.gymName +
+      " · perks " +
+      perkPct(state.perks[state.focus] || 1) +
+      " on " +
+      focusLabel() +
+      (Object.keys(state.perkHits || {}).length ? " · perks applied" : "") +
+      "</div>" +
+      '<div class="proj"><span>7d</span><div class="bar"><i style="width:' + Math.min(100, (g7 / maxP) * 100) + '%"></i></div><b>+' + fmt(g7) + "</b></div>" +
+      '<div class="proj"><span>30d</span><div class="bar"><i style="width:' + Math.min(100, (g30 / maxP) * 100) + '%"></i></div><b>+' + fmt(g30) + "</b></div>" +
+      '<div class="proj"><span>90d</span><div class="bar"><i style="width:100%"></i></div><b>+' + fmt(g90) + "</b></div>" +
+      '<div class="muted" style="margin-top:8px">Now ' + fmt(tot) + "</div></div>";
+
+    var progRange = state.histRange || 30;
+    // Only built for the visible tab. histChart -> histProjection runs the gain
+    // model thousands of times, renderPanel fires on the poll timer, and paying
+    // that on every tab is what made scrolling stutter.
+    var chart = state.tab === "trend" ? histChart(progRange) : { svg: "", empty: true, legend: "" };
+    var progHtml = state.tab !== "trend" ? "" :
+      '<div class="gc-card"><h3>Progression</h3>' +
+      '<div class="gc-ranges">' +
+      [1, 7, 30, 90, 365].map(function (r) {
+        return '<button data-hrange="' + r + '" class="' + (progRange === r ? "on" : "") + '">' + r + "d</button>";
+      }).join("") +
+      "</div>" +
+      chart.svg +
+      (chart.legend || "") +
+      '<div class="muted gc-dhead">Recorded change over the last ' + progRange + 'd</div>' +
+      '<div class="gc-dcards">' + histDeltaCards(progRange) + "</div>" +
+      '<div class="muted gc-cap">' +
+      (chart.empty
+        ? "Solid lines start once there are two days of history. Training is recorded from now on \u2014 the dashed half already works."
+        : "Solid = " + chart.points + " day" + (chart.points === 1 ? "" : "s") + " recorded. Dashed = " + focusLabel() + " at " + fmt(dailyEnergy().total) + "e/day. The others stay flat because you are not training them.") +
+      " All four share one axis anchored at zero, so heights are comparable \u2014 a stat far below the others really is that small." +
+      "</div></div>" +
+      (function () {
+        if (state.tab !== "trend") return "";
+        var w = wasteChart(progRange);
+        if (w.empty) {
+          return '<div class="gc-card"><h3>Energy used vs missed</h3><p class="muted">Nothing logged yet. This fills in as the script watches your bar \u2014 a day is enough to see the shape.</p></div>';
+        }
+        return '<div class="gc-card"><h3>Energy used vs missed</h3>' + w.svg + w.legend +
+          '<div class="muted gc-cap">Last ' + w.days + ' days. Blue is energy you spent; red is regen your bar dropped while already full. Counted from when the script last saw your bar, so time with Torn closed still counts.</div></div>';
+      })();
+
+    // The cog used to hold both halves of this, which is why nobody found the
+    // half that matters. Goals, sources and playstyle are what you DECIDE and
+    // they move every projection in the script; a key and a perk dump are what
+    // you configure once. Only the second half stays behind an icon.
+    var planHtml =
+      goalsHtml() +
+      srcHtml() +
+      '<div class="gc-card"><h3>Playstyle</h3><div class="pick">' +
+      pickBtn("mode", "xan", "Xan + gym", state.mode !== "jump") +
+      pickBtn("mode", "jump", "Happy jump", state.mode === "jump") +
+      '</div><p class="muted" style="margin:8px 0 0">Xan + gym is your default. Happy jump uses every Candy-type item in inventory — chocolates, lollipops, bags of sweets, cupcakes, eggs, and the rest — plus e-dvds on the :00/:15/:30/:45 tick, ecstasy last.</p></div>' +
+      (hasGoals() ? "" : pickerCards()) +
+      "";
+
+    var setHtml =
+      '<div class="gc-card"><h3>API</h3>' +
+      (HAS_PDA_KEY
+        ? '<p class="ok">Torn PDA injected your Limited key. You don\u2019t need to paste one.</p>'
+        : '<p class="muted">This copy is for Torn PDA. Leave the PDA API-key placeholder in the script so the app can inject your Limited key. If it didn\u2019t, paste one below. Needed: bars, cooldowns, battlestats, gym, inventory, perks, timestamp.</p>' +
+          '<input class="gc-in" id="gcKey" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Limited API key" value="' +
+          esc(draftKey) +
+          '">' +
+          '<div class="actions"><button class="gc-btn secondary" data-act="pastekey">Paste from clipboard</button><button class="gc-btn" data-act="savekey">Save key</button></div>') +
+      '<p class="muted" style="margin:8px 0 0">Beta lane. It reads the stable script\u2019s saved key but never writes to its settings. Run one at a time \u2014 both open means both polling, and the key is capped at 100 calls a minute.</p>' +
+      '<div class="row"><span>Host</span><b>Torn PDA</b></div>' +
+      '<div class="row"><span>Source</span><b>' + keySource() + "</b></div>" +
+      '<div class="row"><span>Status</span><b class="' + (live ? "ok" : "bad") + '">' + state.statusText + "</b></div>" +
+      '<p class="muted" style="margin:8px 0 0">Pings use Torn PDA notifications and open the gym when they fire.</p>' +
+      "</div>" +
+      rawPerksHtml() +
+      '<p class="muted" style="margin:8px 12px 0">Goals, energy sources and playstyle moved to the Plan tab.</p>';
+
+    var tab = state.tab;
+    // The verdict is one line at the top and never a tab, so the question the
+    // panel exists to answer is readable before anything is tapped.
+    var TAG = { go: "Do it now", wait: "Hold", stack: "War stack" };
+    panel.innerHTML =
+      ownerBannerHtml() +
+      '<div class="gcb-bar"><div class="gcb-brand"><i class="gcb-dot' + (live ? "" : " off") + '"></i>' +
+      "<b>GYM COACH</b><span>" +
+      (live ? 'beta · <span class="gc-ago">' + ago() + "</span>" : esc(state.statusText)) +
+      "</span></div>" +
+      '<div class="gcb-icons">' +
+      '<button class="gcb-icon" data-act="refresh" aria-label="Refresh now">↻</button>' +
+      '<button class="gcb-icon' + (tab === "set" ? " on" : "") + '" data-tab="set" aria-label="Settings">⚙</button>' +
+      '<button class="gcb-icon" data-act="close" aria-label="Tuck away">–</button>' +
+      "</div></div>" +
+      // The verdict and the energy meter are what the Now tab is FOR, but on
+      // Stock and Trend they are six lines of chrome above the thing you opened
+      // the tab to look at. Off Now they collapse to one tappable line that
+      // still carries the verdict and your energy, and takes you back.
+      (tab === "now"
+        ? '<div class="gcb-verdict' + (c.kind === "go" ? " go" : "") + '">' +
+          '<span class="gcb-tag">' + (TAG[c.kind] || "Next") + "</span>" +
+          '<div class="gcb-move">' + c.move + "</div>" +
+          '<p class="gcb-why">' + c.why + "</p>" +
+          (c.waste ? '<div class="gcb-waste">' + c.waste + "</div>" : "") +
+          "</div>" +
+          '<div class="gcb-meters">' + energyMeterHtml() + "</div>" +
+          planStripHtml()
+        : '<button type="button" class="gcb-mini' + (c.kind === "go" ? " go" : "") + '" data-tab="now">' +
+          '<span class="gcb-tag">' + (TAG[c.kind] || "Next") + "</span>" +
+          '<span class="gcb-miniline">' + c.move + "</span>" +
+          '<span class="gcb-minie">' + Math.max(0, state.energy || 0) + " / " + (state.energyMax || 150) + "</span>" +
+          "</button>") +
+      '<div class="tabs">' +
+      ["now", "plan", "stock", "trend"]
+        .map(function (id) {
+          var labels = { now: "Now", plan: "Plan", stock: "Stock", trend: "Trend" };
+          return '<button data-tab="' + id + '" class="' + (tab === id ? "on" : "") + '">' + labels[id] + "</button>";
+        })
+        .join("") +
+      "</div>" +
+      '<div class="gc-body">' +
+      (tab === "set" ? setHtml : tab === "plan" ? planHtml : tab === "stock" ? itemsHtml : tab === "trend" ? unlockHtml() + progHtml + projHtml + trackHtml : coachHtml) +
+      "</div>" +
+      (state.toast && state.toast.until > Date.now()
+        ? '<div class="gc-toast show"><b>' + state.toast.title + "</b><span>" + state.toast.body + "</span></div>"
+        : '<div class="gc-toast"></div>');
+    restorePanelView(panel, keepScroll, bodyY, keyVal, keyFocus, keyStart, keyEnd);
+  }
+
+  function restorePanelView(panel, keepScroll, bodyY, keyVal, keyFocus, keyStart, keyEnd) {
+    if (!panel) return;
+    if (keepScroll) {
+      var body2 = panel.querySelector(".gc-body");
+      if (body2) body2.scrollTop = bodyY;
+    }
+    var key2 = panel.querySelector("#gcKey");
+    if (key2) {
+      key2.value = keyVal || draftKey || "";
+      if (keyFocus) {
+        key2.focus();
+        try {
+          key2.setSelectionRange(keyStart, keyEnd);
+        } catch (_) {}
+      }
+    }
+  }
+
+  function setOpen(v) {
+    state.open = v;
+    var panel = document.getElementById(PANEL_ID);
+    var pill = document.getElementById(PILL_ID);
+    if (panel) panel.classList.toggle("open", v);
+    if (pill) pinFab(pill);
+    if (v) {
+      // Both scripts pin their panel at 2147483647 — the maximum — so the beta
+      // cannot outrank the stable one by z-index, and DOM order is what decides
+      // which is visible. Re-appending on open puts the panel you just asked
+      // for in front of the other script's.
+      try {
+        var host = pageHost();
+        if (panel && host && panel.parentNode === host && host.lastElementChild !== panel) host.appendChild(panel);
+      } catch (_) {}
+      renderPanel();
+      refresh("open");
+      refreshPrices();
+    }
+  }
+
+  function pageHost() {
+    return document.body || document.documentElement;
+  }
+
+  function paintPill(pill) {
+    pinFab(pill);
+  }
+
+  function onGymPage() {
+    return /gym\.php/i.test(location.href);
+  }
+
+  function ensureUi() {
+    // The badge used to mount on every page: @match is torn.com/*, and
+    // mountFabNow never looked at the URL. It is a gym coach, so it belongs on
+    // the gym page only. The gate lives HERE rather than in mountFabNow
+    // because a MutationObserver re-calls ensureUi on every DOM change while
+    // the pill is absent — off-gym that is most of the time — so this path has
+    // to be cheap, and it has to return true or the boot retry loop spins 80
+    // times over.
+    if (!onGymPage()) {
+      var stray = document.getElementById(PILL_ID);
+      if (stray && stray.parentNode) stray.parentNode.removeChild(stray);
+      // A fixed-position panel left open would float over every other page for
+      // the same reason, so close it too. state.open is cleared with it, so
+      // returning to the gym starts tucked rather than half-open.
+      var strayPanel = document.getElementById(PANEL_ID);
+      if (strayPanel && strayPanel.classList.contains("open")) {
+        state.open = false;
+        strayPanel.classList.remove("open");
+      }
+      return true;
+    }
+    var host = pageHost();
+    if (!host) return false;
+    ensureStyles();
+    mountFabNow();
+    if (!document.getElementById(PANEL_ID)) {
+      var panel = document.createElement("aside");
+      panel.id = PANEL_ID;
+      host.appendChild(panel);
+      applySavedPos(panel, "panel_x", "panel_y");
+      bindDrag(panel, {
+        xKey: "panel_x",
+        yKey: "panel_y",
+        handle: function (t) {
+          if (!t || !t.closest) return false;
+          if (t.closest(".gc-tuck,button,input,.tabs,.gc-body,.gc-foot,.sw,.chip,.gc-btn")) return false;
+          return !!t.closest(".gc-head,.gc-owner");
+        },
+      });
+      panel.addEventListener("click", onPanelClick);
+      panel.addEventListener("change", onGoalChange);
+      bindKeyFieldGuards(panel);
+      bindKeyInputPasteShield();
+    }
+    dockInGym();
+    return true;
+  }
+
+  function dockInGym() {
+    var root = document.getElementById("gymroot");
+    if (!root) return;
+    var b = document.getElementById("gcb-gym-dock");
+    if (b && b.parentNode === root) return;
+    if (!b) {
+      b = document.createElement("button");
+      b.id = "gcb-gym-dock";
+      b.type = "button";
+      b.textContent = "GYM COACH · BETA";
+      b.setAttribute(
+        "style",
+        "display:block;width:100%;box-sizing:border-box;margin:8px 0;min-height:48px;border:2px solid #f2a03d;border-radius:10px;background:#121418;color:#f2a03d;font:800 16px/1 -apple-system,sans-serif;letter-spacing:.08em;-webkit-appearance:none;appearance:none;touch-action:manipulation;"
+      );
+      var lastDockTouch = 0;
+      function openDock(e) {
+        var now = Date.now();
+        if (e && e.type === "touchend") {
+          lastDockTouch = now;
+          if (e.preventDefault) e.preventDefault();
+        } else if (now - lastDockTouch < 700) {
+          return;
+        }
+        setOpen(true);
+      }
+      b.addEventListener("click", openDock);
+      b.addEventListener("touchend", openDock, { passive: false });
+    }
+    root.appendChild(b);
+  }
+
+  // The panel is sized in dvh, which SHRINKS when iOS opens the keyboard — so
+  // typing a key collapsed the box to 80% of the sliver above it and cut the
+  // text off. While the field is focused, take the whole available strip
+  // instead of 80% of it, and keep the input in view.
+  function fitPanelToKeyboard(on) {
+    var panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+    if (!on) {
+      panel.style.height = "";
+      panel.style.maxHeight = "";
+      return;
+    }
+    var vv = window.visualViewport;
+    var h = vv && vv.height ? vv.height : window.innerHeight;
+    var target = Math.max(240, Math.round(h - 16));
+    panel.style.height = target + "px";
+    panel.style.maxHeight = target + "px";
+    try {
+      var inp = document.getElementById("gcKey");
+      if (inp && inp.scrollIntoView) inp.scrollIntoView({ block: "center" });
+    } catch (_) {}
+  }
+
+  function bindKeyFieldGuards(panel) {
+    if (!panel || panel._gcKeyGuards) return;
+    panel._gcKeyGuards = true;
+    function isKey(el) {
+      return el && el.id === "gcKey";
+    }
+    try {
+      if (window.visualViewport && !window._gcVV) {
+        window._gcVV = true;
+        // The keyboard animates in, so the first measurement is wrong; react to
+        // the viewport settling rather than guessing a delay.
+        window.visualViewport.addEventListener("resize", function () {
+          if (keyBoxFocused) fitPanelToKeyboard(true);
+        });
+      }
+    } catch (_) {}
+    panel.addEventListener(
+      "focusin",
+      function (e) {
+        if (isKey(e.target)) {
+          keyBoxFocused = true;
+          fitPanelToKeyboard(true);
+          setTimeout(function () {
+            if (keyBoxFocused) fitPanelToKeyboard(true);
+          }, 300);
+        }
+      },
+      true
+    );
+    panel.addEventListener(
+      "focusout",
+      function (e) {
+        if (!isKey(e.target)) return;
+        draftKey = String(e.target.value || "");
+        keyBoxFocused = false;
+        fitPanelToKeyboard(false);
+      },
+      true
+    );
+    panel.addEventListener(
+      "input",
+      function (e) {
+        if (!isKey(e.target)) return;
+        draftKey = String(e.target.value || "");
+        trySaveKey(draftKey);
+      },
+      true
+    );
+    panel.addEventListener(
+      "paste",
+      function (e) {
+        if (!isKey(e.target)) return;
+        setTimeout(function () {
+          var el = document.getElementById("gcKey");
+          if (!el) return;
+          draftKey = String(el.value || "");
+          trySaveKey(draftKey);
+        }, 0);
+      },
+      true
+    );
+    panel.addEventListener(
+      "keydown",
+      function (e) {
+        if (!isKey(e.target)) return;
+        e.stopPropagation();
+        if (e.key === "Enter") {
+          e.preventDefault();
+          trySaveKey(e.target.value);
+        }
+      },
+      true
+    );
+    panel.addEventListener(
+      "pointerdown",
+      function (e) {
+        if (isKey(e.target)) e.stopPropagation();
+      },
+      true
+    );
+  }
+
+  function bindKeyInputPasteShield() {
+    if (window.__GC_PASTE_SHIELD__) return;
+    window.__GC_PASTE_SHIELD__ = true;
+    function allowInsideCoachField(e) {
+      var t = e.target;
+      if (!t) return;
+      var id = t.id || "";
+      var inCoach =
+        id === "gcKey" ||
+        (t.classList && t.classList.contains("gc-in") && t.closest && t.closest("#" + PANEL_ID));
+      if (!inCoach) return;
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+    }
+    ["paste", "copy", "cut"].forEach(function (type) {
+      document.addEventListener(type, allowInsideCoachField, true);
+    });
+  }
+
+  function applyApiKeyText(text, opts) {
+    opts = opts || {};
+    var inp = document.getElementById("gcKey");
+    var k = String(text || "")
+      .replace(/^\s+|\s+$/g, "")
+      .replace(/^["']|["']$/g, "");
+    if (!k) {
+      showToast("Clipboard empty", "Copy your Limited API key, then try again.");
+      return false;
+    }
+    if (inp) inp.value = k;
+    draftKey = k;
+    if (trySaveKey(k)) {
+      showToast(opts.savedTitle || "Key saved", opts.savedBody || "Refreshing…");
+      return true;
+    }
+    showToast("Key too short", "Pasted text doesn\u2019t look like a full API key.");
+    return false;
+  }
+
+  function pasteKeyFromClipboard() {
+    function fail(msg) {
+      showToast("Clipboard blocked", msg || "Allow clipboard access, or type the key.");
+    }
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+        navigator.clipboard
+          .readText()
+          .then(function (text) {
+            applyApiKeyText(text);
+          })
+          .catch(function () {
+            fail("Browser denied clipboard read. Allow it for torn.com.");
+          });
+        return;
+      }
+    } catch (_) {}
+    try {
+      var ta = document.createElement("textarea");
+      ta.setAttribute("readonly", "readonly");
+      ta.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;";
+      document.body.appendChild(ta);
+      ta.focus();
+      var ok = false;
+      try {
+        ok = document.execCommand("paste");
+      } catch (_) {}
+      var text = ta.value;
+      document.body.removeChild(ta);
+      if (ok && text) {
+        applyApiKeyText(text);
+        return;
+      }
+    } catch (_) {}
+    fail("This browser has no clipboard API.");
+  }
+
+  function startUi() {
+    ensureUi();
+    // Torn re-renders the gym page after load and PDA can navigate without a
+    // fresh document, so keep re-checking for ~20s rather than stopping at the
+    // first success. ensureUi is cheap and idempotent.
+    var n = 0;
+    var t = setInterval(function () {
+      n += 1;
+      ensureUi();
+      if (n > 100) clearInterval(t);
+    }, 200);
+  }
+
+  // Goal fields commit on change (blur or enter) rather than on every keystroke,
+  // so a re-render cannot land mid-word. keyBoxBusy() holds the render back
+  // while one is focused.
+  function onGoalChange(e) {
+    var el = e && e.target;
+    if (el && el.dataset && el.dataset.mcscost) {
+      var m = parseGoal(el.value);
+      if (isNaN(m)) {
+        showToast("Not a number", "Type what Torn asks for the next increment, e.g. 587m.");
+        el.value = state.mcsCost ? fmt(state.mcsCost) : "";
+        return;
+      }
+      state.mcsCost = m;
+      storeSet("mcsCost", m);
+      renderPanel();
+      return;
+    }
+    if (!el || !el.dataset || !el.dataset.goal) return;
+    var k = el.dataset.goal;
+    var n = parseGoal(el.value);
+    if (isNaN(n)) {
+      showToast("Not a number", "Try 150000000, or shorthand like 150m or 1.2b.");
+      el.value = (state.goals && state.goals[k]) ? fmt(state.goals[k]) : "";
+      return;
+    }
+    if (!state.goals) state.goals = { str: 0, def: 0, spe: 0, dex: 0 };
+    state.goals[k] = n;
+    storeSet("goals", state.goals);
+    resetPlanCaches();
+    applyGoalFocus();
+    renderPanel();
+  }
+
+  function onPanelClick(e) {
+    var t = e.target;
+    if (!t) return;
+    if (t.nodeType !== 1) t = t.parentElement;
+    if (!t || typeof t.closest !== "function") return;
+    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-preset],[data-goalstep],[data-raise],#stackSw,#novSw");
+    if (!t) return;
+    if (t.dataset.goalstep !== undefined) {
+      var gs = Number(t.dataset.goalstep);
+      state.goalStep = GOAL_STEPS.indexOf(gs) !== -1 ? gs : 0;
+      storeSet("goalStep", state.goalStep);
+      resetPlanCaches();
+      renderPanel();
+      return;
+    }
+    if (t.dataset.raise) {
+      raiseGoal(t.dataset.raise);
+      return;
+    }
+    if (t.dataset.preset) {
+      var pre = null;
+      SRC_PRESETS.forEach(function (p) { if (p.id === t.dataset.preset) pre = p; });
+      if (pre) {
+        state.src = { xan: pre.set.xan, refill: pre.set.refill, cans: pre.set.cans, fhc: pre.set.fhc };
+        storeSet("src", state.src);
+        renderPanel();
+      }
+      return;
+    }
+    if (t.dataset.tick) {
+      var tk = t.dataset.tick, trow = srcRow(tk);
+      if (!state.src) state.src = {};
+      state.src[tk] = srcCount(tk) > 0 ? 0 : (trow ? trow.def : 1);
+      storeSet("src", state.src);
+      renderPanel();
+      return;
+    }
+    if (t.dataset.src) {
+      var key = t.dataset.src;
+      var row = srcRow(key);
+      var lim = row ? row.max : 24;
+      var next = srcCount(key) + (Number(t.dataset.delta) || 0);
+      if (next < 0) next = 0;
+      if (next > lim) next = lim;
+      if (!state.src) state.src = {};
+      state.src[key] = next;
+      storeSet("src", state.src);
+      renderPanel();
+      return;
+    }
+    if (t.dataset.hrange) {
+      state.histRange = Number(t.dataset.hrange) || 30;
+      storeSet("histRange", state.histRange);
+      renderPanel();
+      return;
+    }
+    if (t.dataset.useId) {
+      useItemId(t.dataset.useId);
+      return;
+    }
+    if (t.dataset.use) {
+      useItemKey(t.dataset.use);
+      return;
+    }
+    if (t.dataset.tip) {
+      var tip = itemTip(t.dataset.tip);
+      showToast(tip[0], tip[1]);
+      return;
+    }
+    if (t.id === "stackSw") {
+      state.warStack = !state.warStack;
+      storeSet("warStack", state.warStack);
+      renderPanel();
+      armNotifications();
+      return;
+    }
+    if (t.dataset.tab) {
+      state.tab = t.dataset.tab;
+      renderPanel();
+      return;
+    }
+    if (t.dataset.mode) {
+      state.mode = t.dataset.mode;
+      storeSet("mode", state.mode);
+      renderPanel();
+      return;
+    }
+    if (t.dataset.focus2) {
+      state.focus2 = t.dataset.focus2;
+      storeSet("focus2", state.focus2);
+      renderPanel();
+      return;
+    }
+    if (t.dataset.focus) {
+      state.focus = t.dataset.focus;
+      storeSet("focus", state.focus);
+      renderPanel();
+      return;
+    }
+    if (t.dataset.act === "close") {
+      storeSet("user_tucked", true);
+      setOpen(false);
+    }
+    if (t.dataset.act === "refresh") {
+      showToast("Refreshing", "Pulling fresh numbers from Torn.", 1600);
+      refresh("manual");
+    }
+    if (t.dataset.act === "savekey") {
+      var inp = document.getElementById("gcKey");
+      var raw = (inp && inp.value) || draftKey;
+      var n = normalizeKey(raw).length;
+      if (trySaveKey(raw)) showToast("Key saved", "Loading your data now.", 2600);
+      else showToast("Not saved", n ? "That key is " + n + " characters; Torn keys are 16." : "Paste your 16-character Torn API key first.", 3200);
+    }
+    if (t.dataset.act === "pastekey") {
+      pasteKeyFromClipboard();
+      return;
+    }
+  }
+
+  function clampPos(el, x, y) {
+    var w = el.offsetWidth || 42;
+    var h = el.offsetHeight || 42;
+    var maxX = Math.max(8, window.innerWidth - w - 8);
+    var maxY = Math.max(8, window.innerHeight - h - 8);
+    return {
+      x: Math.max(8, Math.min(maxX, x)),
+      y: Math.max(8, Math.min(maxY, y)),
+    };
+  }
+
+  function placeEl(el, x, y) {
+    var p = clampPos(el, x, y);
+    el.style.left = p.x + "px";
+    el.style.top = p.y + "px";
+    el.style.right = "auto";
+    el.style.bottom = "auto";
+    return p;
+  }
+
+  function applySavedPos(el, xKey, yKey) {
+    if (el && el.id === PILL_ID) return;
+    var savedX = Number(storeGet(xKey, NaN));
+    var savedY = Number(storeGet(yKey, NaN));
+    if (isNaN(savedX) || isNaN(savedY)) return;
+    var w = el.offsetWidth || 42;
+    var h = el.offsetHeight || 42;
+    if (savedX > window.innerWidth - 16 || savedY > window.innerHeight - 100 || savedX < -w + 24 || savedY < -h + 24) return;
+    placeEl(el, savedX, savedY);
+  }
+
+  function bindDrag(el, opts) {
+    opts = opts || {};
+    var xKey = opts.xKey || "pill_x";
+    var yKey = opts.yKey || "pill_y";
+    var sx, sy, ox, oy, moving = false, pid = null, lastTap = 0;
+
+    function handleFromEvent(e) {
+      var t = e.target;
+      if (t && t.nodeType !== 1) t = t.parentElement;
+      return t;
+    }
+
+    function tap() {
+      if (!opts.onTap) return;
+      var now = Date.now();
+      if (now - lastTap < 400) return;
+      lastTap = now;
+      opts.onTap();
+    }
+
+    el.addEventListener("pointerdown", function (e) {
+      if (opts.handle && !opts.handle(handleFromEvent(e))) return;
+      if (e.button) return;
+      moving = true;
+      pid = e.pointerId;
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      var r = el.getBoundingClientRect();
+      sx = e.clientX;
+      sy = e.clientY;
+      ox = r.left;
+      oy = r.top;
+      el.style.width = r.width + "px";
+      el.style.height = r.height + "px";
+      placeEl(el, r.left, r.top);
+      el._dragged = false;
+    });
+    el.addEventListener("pointermove", function (e) {
+      if (!moving) return;
+      var dx = e.clientX - sx;
+      var dy = e.clientY - sy;
+      if (Math.abs(dx) + Math.abs(dy) > 12) el._dragged = true;
+      var p = placeEl(el, ox + dx, oy + dy);
+      if (el._dragged) {
+        storeSet(xKey, p.x);
+        storeSet(yKey, p.y);
+      }
+    });
+    function endPointer(e) {
+      if (!moving) return;
+      moving = false;
+      try {
+        if (pid != null) el.releasePointerCapture(pid);
+      } catch (_) {}
+      pid = null;
+      if (el._dragged) return;
+      if (e && e.preventDefault) e.preventDefault();
+      tap();
+    }
+    el.addEventListener("pointerup", endPointer);
+    el.addEventListener("pointercancel", function () {
+      moving = false;
+      pid = null;
+    });
+    el.addEventListener("click", function (e) {
+      if (el._dragged) {
+        el._dragged = false;
+        return;
+      }
+      if (opts.onTap) {
+        e.preventDefault();
+        tap();
+      }
+    });
+    el.addEventListener(
+      "touchend",
+      function (e) {
+        if (el._dragged) return;
+        if (!opts.onTap) return;
+        e.preventDefault();
+        tap();
+      },
+      false
+    );
+  }
+
+  function trainStatFromEl(el) {
+    if (!el || el.nodeType !== 1) return "";
+    var n = el.closest ? el.closest("button,[role='button'],input") || el : el;
+    var blob = (
+      (n.getAttribute && (n.getAttribute("aria-label") || n.getAttribute("data-stat") || n.getAttribute("title") || "")) +
+      " " +
+      String(n.textContent || "").slice(0, 80) +
+      " " +
+      (n.className || "")
+    ).toLowerCase();
+    var hits = [];
+    if (blob.indexOf("strength") !== -1) hits.push("Strength");
+    if (blob.indexOf("defense") !== -1 || blob.indexOf("defence") !== -1) hits.push("Defense");
+    if (blob.indexOf("speed") !== -1) hits.push("Speed");
+    if (blob.indexOf("dexterity") !== -1) hits.push("Dexterity");
+    return hits.length === 1 ? hits[0] : "";
+  }
+
+  function looksLikeTrain(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.closest && el.closest("#" + PANEL_ID + ",#" + PILL_ID)) return false;
+    if (trainStatFromEl(el)) return true;
+    var btn = el.closest ? el.closest("button,[role='button'],input[type='button'],input[type='submit']") : null;
+    if (!btn) return false;
+    var t = ((btn.textContent || "") + " " + (btn.className || "") + " " + (btn.getAttribute("aria-label") || "")).toLowerCase();
+    return /train|strength|defense|defence|speed|dexterity/.test(t);
+  }
+
+  // A click can only see your CURRENT balance, not what the train is about to
+  // cost — so logging state.energy as "Trained 150e" was reporting your bar,
+  // not the spend, and a click with an empty bar logged "0e". Capture the
+  // before-state on the click and write the entry once the refresh lands and
+  // the difference is measurable.
+
+  var GAIN_WAIT_MS = 50000;
+
+  function finaliseTrain(force) {
+    var t = pendingTrain;
+    if (!t) return;
+    var spent = Math.max(0, t.preE - (state.energy || 0));
+    var skill = t.skill || inferTrainSkillFromDelta(t.preStats, state.stats);
+    var k = STAT_KEY[skill];
+    var gained = k ? Math.max(0, (state.stats[k] || 0) - (t.preStats[k] || 0)) : 0;
+
+    // Torn caches battle stats for up to about thirty seconds, but energy moves
+    // the moment you train — so finalising a couple of seconds later reports a
+    // real session with no gain at all. Keep asking until the stats catch up,
+    // then give up and record the session without one rather than lose it.
+    if (gained <= 0 && !force && Date.now() - (t.at || 0) < GAIN_WAIT_MS) {
+      setTimeout(function () {
+        refresh("train").then(function () { finaliseTrain(); }, function () { finaliseTrain(); });
+      }, 9000);
+      return;
+    }
+    pendingTrain = null;
+    // A click that trained nothing — no energy, or Torn refused — should not
+    // leave a line behind. And a drop we merely OBSERVED needs the stat to have
+    // actually moved, or a stale reading becomes a phantom session.
+    if (spent <= 0 && gained <= 0) return;
+    // A SMALL observed drop could be nothing but API skew, so it needs a stat
+    // gain to corroborate it. A large one could not plausibly be anything other
+    // than a session, and discarding it because Torn was slow to update the
+    // stats loses real training.
+    if (t.observed && gained <= 0 && spent < 25) return;
+    pushLog(
+      "Trained" + (skill ? " " + skill : "") +
+        " \u00b7 " + fmt(spent) + "e spent" +
+        (gained > 0 ? " \u00b7 +" + fmt(gained) : "") +
+        " @ " + (t.gym || "gym")
+    );
+    if (state.open) renderPanel();
+  }
+
+  function startWatch() {
+    stopWatch();
+    clickHandler = function (e) {
+      if (!/gym\.php/i.test(location.href)) return;
+      var el = e.target && e.target.nodeType === 1 ? e.target : e.target && e.target.parentElement;
+      if (!el) return;
+      if (el.closest && el.closest("#" + PANEL_ID + ",#" + PILL_ID)) return;
+      if (!looksLikeTrain(el)) return;
+      var skill = trainStatFromEl(el);
+      if (Date.now() - state.lastTrain > 1200) {
+        pendingTrain = {
+          skill: skill,
+          at: Date.now(),
+          preE: state.energy,
+          preStats: {
+            str: state.stats.str, def: state.stats.def,
+            spe: state.stats.spe, dex: state.stats.dex
+          },
+          gym: state.gymName || "gym"
+        };
+        state.lastTrain = Date.now();
+        state.flash = "TRAINED";
+        if (state.open) renderPanel();
+      }
+      setTimeout(function () {
+        refresh("train");
+      }, 600);
+      setTimeout(function () {
+        refresh("train").then(function () { finaliseTrain(); }, function () { finaliseTrain(); });
+      }, 2200);
+      // refresh() is a no-op while another fetch is in flight, in which case the
+      // line above never resolves with fresh numbers. This is the backstop.
+      // Final backstop: record it even if the stats never moved.
+      setTimeout(function () { finaliseTrain(true); }, GAIN_WAIT_MS + 4000);
+    };
+    document.addEventListener("click", clickHandler, true);
+
+    var roots = [];
+    var gymRoot = document.getElementById("gymroot");
+    if (gymRoot) roots.push(gymRoot);
+    var energy = document.querySelector('[class*="energy"], #barEnergy, [class*="bar-energy"]');
+    if (energy) roots.push(energy);
+    roots.forEach(function (root) {
+      var obs = new MutationObserver(function () {
+        if (!/gym\.php/i.test(location.href)) return;
+        clearTimeout(obs._t);
+        obs._t = setTimeout(function () {
+          refresh("energy");
+        }, 500);
+      });
+      obs.observe(root, { childList: true, subtree: true, characterData: true, attributes: true });
+      observers.push(obs);
+    });
+  }
+
+  function stopWatch() {
+    observers.forEach(function (o) {
+      try {
+        o.disconnect();
+      } catch (_) {}
+    });
+    observers = [];
+    if (clickHandler) {
+      document.removeEventListener("click", clickHandler, true);
+      clickHandler = null;
+    }
+  }
+
+  function boot() {
+    try {
+      state.warStack = storeBool("warStack", false);
+      state.focus = storeGet("focus", "str") || "str";
+      state.focus2 = storeGet("focus2", "none") || "none";
+      var gv = storeGet("goals", null);
+      if (typeof gv === "string") { try { gv = JSON.parse(gv); } catch (_) { gv = null; } }
+      if (gv && typeof gv === "object") {
+        state.goals = { str: Number(gv.str) || 0, def: Number(gv.def) || 0,
+                        spe: Number(gv.spe) || 0, dex: Number(gv.dex) || 0 };
+      }
+      state.mode = storeGet("mode", "xan") || "xan";
+      state.log = storeGet("log", []) || [];
+      if (!Array.isArray(state.log)) state.log = [];
+      state.hist = storeGet("hist", []) || [];
+      // PDA's storage hands back strings, so a bad read must not take the
+      // panel down with it.
+      if (typeof state.hist === "string") { try { state.hist = JSON.parse(state.hist); } catch (_) { state.hist = []; } }
+      if (!Array.isArray(state.hist)) state.hist = [];
+      state.hist = state.hist.filter(function (e) { return e && typeof e.d === "number" && Array.isArray(e.v) && e.v.length === 4; });
+      // Trend is the centrepiece of this layout, and a fresh beta namespace
+      // means it opens blank next to a stable script holding weeks of history.
+      // Copy that history in once, through the same guards; stable is never
+      // written to, so uninstalling the beta costs nothing.
+      if (!state.hist.length) {
+        var seed = stableGet("hist", []);
+        if (typeof seed === "string") { try { seed = JSON.parse(seed); } catch (_) { seed = []; } }
+        if (Array.isArray(seed)) {
+          seed = seed.filter(function (e) { return e && typeof e.d === "number" && Array.isArray(e.v) && e.v.length === 4; });
+          if (seed.length) { state.hist = seed; storeSet("hist", seed); }
+        }
+      }
+      // Same idea for the settings that decide what the coach says, so the
+      // beta's first verdict matches the one you are used to.
+      if (storeGet("focus", "") === "") {
+        ["focus", "focus2", "mode", "warStack", "histRange"].forEach(function (k) {
+          var v = stableGet(k, undefined);
+          if (v !== undefined && v !== null && v !== "") storeSet(k, v);
+        });
+        state.warStack = storeBool("warStack", false);
+        state.focus = storeGet("focus", "str") || "str";
+        state.focus2 = storeGet("focus2", "none") || "none";
+        state.mode = storeGet("mode", "xan") || "xan";
+        }
+      state.histRange = Number(storeGet("histRange", 30)) || 30;
+      state.unlock = storeGet("unlock", null) || null;
+      if (typeof state.unlock === "string") { try { state.unlock = JSON.parse(state.unlock); } catch (_) { state.unlock = null; } }
+      if (state.unlock && typeof state.unlock.gymId !== "number") state.unlock = null;
+      state.gymsOwned = storeGet("gymsOwned", []) || [];
+      if (typeof state.gymsOwned === "string") { try { state.gymsOwned = JSON.parse(state.gymsOwned); } catch (_) { state.gymsOwned = []; } }
+      if (!Array.isArray(state.gymsOwned)) state.gymsOwned = [];
+      state.gymsOwned = state.gymsOwned.filter(function (i) { return typeof i === "number" && i >= 0 && i < GYMS.length; });
+      state.goalOrder = storeGet("goalOrder", []) || [];
+      if (typeof state.goalOrder === "string") { try { state.goalOrder = JSON.parse(state.goalOrder); } catch (_) { state.goalOrder = []; } }
+      if (!Array.isArray(state.goalOrder)) state.goalOrder = [];
+      state.goalOrder = state.goalOrder.filter(function (k) { return HIST_KEYS.indexOf(k) !== -1; });
+      var stepSaved = Number(storeGet("goalStep", GOAL_STEP_DEFAULT));
+      state.goalStep = GOAL_STEPS.indexOf(stepSaved) !== -1 ? stepSaved : GOAL_STEP_DEFAULT;
+      state.prices = storeGet("prices", {}) || {};
+      if (typeof state.prices === "string") { try { state.prices = JSON.parse(state.prices); } catch (_) { state.prices = {}; } }
+      if (!state.prices || typeof state.prices !== "object") state.prices = {};
+      state.mcsCost = Number(storeGet("mcsCost", 0)) || 0;
+      state.ledger = storeGet("ledger", []) || [];
+      if (typeof state.ledger === "string") { try { state.ledger = JSON.parse(state.ledger); } catch (_) { state.ledger = []; } }
+      if (!Array.isArray(state.ledger)) state.ledger = [];
+      state.ledger = state.ledger.filter(function (e) { return e && typeof e.d === "number"; });
+      var sv = storeGet("src", null);
+      if (typeof sv === "string") { try { sv = JSON.parse(sv); } catch (_) { sv = null; } }
+      if (sv && typeof sv === "object") {
+        // Copy whatever was saved rather than a fixed list of keys. The fixed
+        // list silently dropped any source added later — Mc Smoogle Corp was
+        // saved, restored as nothing, and showed 0 every time.
+        var next = {};
+        Object.keys(sv).forEach(function (sk) {
+          var n = Number(sv[sk]);
+          if (isFinite(n) && n > 0) next[sk] = n;
+        });
+        // A saved generic "cans" count predates the per-can tick boxes. Red Cow
+        // is the 25e middle it used to assume, so that is where it lands.
+        if (next.cans && !next.redcow) next.redcow = next.cans;
+        delete next.cans;
+        state.src = next;
+      }
+      state.boosterPerk = storeBool("boosterPerk", false);
+      var cev = storeGet("calEvents", []);
+      if (typeof cev === "string") { try { cev = JSON.parse(cev); } catch (_) { cev = []; } }
+      state.calEvents = Array.isArray(cev) ? cev : [];
+      state.calAt = Number(storeGet("calAt", 0)) || 0;
+      var idv = storeGet("invDom", null);
+      if (typeof idv === "string") { try { idv = JSON.parse(idv); } catch (_) { idv = null; } }
+      state.invDom = idv && idv.qty ? idv : null;
+      state.energySecPerE = Number(storeGet("energySecPerE", 0)) || 0;
+      state.lastSeen = storeGet("lastSeen", null) || null;
+      if (typeof state.lastSeen === "string") { try { state.lastSeen = JSON.parse(state.lastSeen); } catch (_) { state.lastSeen = null; } }
+      startUi();
+      if (/gym\.php/i.test(location.href) && !storeBool("user_tucked", false)) {
+        setOpen(true);
+      }
+      var gymTries = 0;
+      var gymWait = setInterval(function () {
+        gymTries += 1;
+        dockInGym();
+        if (document.getElementById("gcb-gym-dock") || gymTries > 80) clearInterval(gymWait);
+      }, 300);
+      try {
+        if (!window._gcbDomWatch) {
+          window._gcbDomWatch = new MutationObserver(function () {
+            if (!document.getElementById(PANEL_ID)) ensureUi();
+          });
+          window._gcbDomWatch.observe(document.documentElement, { childList: true });
+          if (document.body) window._gcbDomWatch.observe(document.body, { childList: true });
+        }
+      } catch (_) {}
+      setInterval(function () {
+        if (!document.body) return;
+        if (!document.getElementById(PANEL_ID) || !document.getElementById(STYLE_ID)) {
+          ensureUi();
+          if (state.open) renderPanel();
+        }
+        dockInGym();
+      }, 1500);
+      // The item page fills its rows in after load, so keep looking for a while.
+      if (/item\.php/i.test(location.href)) {
+        var scanTries = 0;
+        var scanTimer = setInterval(function () {
+          scanTries += 1;
+          if (scanItemPage() || scanTries > 40) clearInterval(scanTimer);
+        }, 700);
+      }
+      renderPanel();
+      refresh("boot");
+      // The gym list renders late and is the only source for which gyms you own
+      // — Torn's API returns active_gym and nothing else. Poll for it the same
+      // way the item page is polled.
+      if (/gym\.php/i.test(location.href)) {
+        var gymTries = 0;
+        var gymTimer = setInterval(function () {
+          gymTries += 1;
+          if (scanGymList() || gymTries > 40) clearInterval(gymTimer);
+        }, 700);
+      }
+      refreshCalendar();
+      startWatch();
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(function () {
+        if (document.visibilityState !== "visible") return;
+        refresh(/gym\.php/i.test(location.href) ? "gym" : "idle");
+      }, /gym\.php/i.test(location.href) ? 8000 : 20000);
+      if (cdTimer) clearInterval(cdTimer);
+      cdTimer = setInterval(function () {
+        if (state.drugCd > 0) state.drugCd -= 1;
+        if (state.boosterCd > 0) state.boosterCd -= 1;
+        syncEnergyFromDom();
+        ledgerObserve(false);
+        if (!state.open) return;
+        if (syncEnergyFromDom()) lastTickSig = "";
+        var sig = fmtCd(state.drugCd) + "|" + fmtCd(state.boosterCd) + "|" + state.tab + "|" + state.energy;
+        if (sig !== lastTickSig) {
+          lastTickSig = sig;
+          renderPanel();
+          return;
+        }
+        var panel = document.getElementById(PANEL_ID);
+        if (!panel) return;
+        var txt = ago();
+        var labels = panel.querySelectorAll(".gc-ago");
+        for (var i = 0; i < labels.length; i++) {
+          if (labels[i].textContent !== txt) labels[i].textContent = txt;
+        }
+      }, 1000);
+      // Torn navigations tear the script down; write through before that.
+      try {
+        window.addEventListener("pagehide", function () { ledgerObserve(true); });
+        window.addEventListener("beforeunload", function () { ledgerObserve(true); });
+      } catch (_) {}
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "hidden") ledgerObserve(true);
+      });
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "visible") {
+          ensureUi();
+          refresh("visible");
+        }
+      });
+    } catch (err) {
+      try {
+        console.log("[Gym Coach] boot failed", err);
+      } catch (_) {}
+      startUi();
+    }
+  }
+
+  startUi();
+  bindKeyInputPasteShield();
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+})();

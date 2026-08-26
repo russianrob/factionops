@@ -1,0 +1,52 @@
+<!doctype html><html><head><meta charset="utf-8"><title>gym.php</title></head>
+<body>
+  <div id="mainContainer">
+    <div class="content-wrapper">
+      <div class="gymroot">
+    <div class="gymlist"></div><ul class="properties-wrap"></ul></div>
+    </div>
+  </div>
+  <script>
+  // gym.php's button list, built the way Torn builds it. Defaults to every
+  // standard gym unlocked (the shape the other suites were written against);
+  // cfg.owned and cfg.pct model a player still climbing the ladder.
+  //
+  // The real page marks the gym you are working toward with inProgress___ and
+  // paints a whole-number percentage inside it. Only that one button has it.
+  (function () {
+    var cfg = {};
+    try {
+      var q = new URLSearchParams(location.search).get("cfg");
+      if (q) cfg = JSON.parse(q);
+    } catch (_) {}
+    var owned = typeof cfg.owned === "number" ? cfg.owned : 24;   // 1-based count
+    // cfg.buttons short-renders the list the way React does mid-paint, which
+    // the script has to refuse to read rather than treat as "most gyms locked".
+    var count = typeof cfg.buttons === "number" ? cfg.buttons : 32;
+    var list = document.querySelector(".gymlist");
+    for (var id = 1; id <= count; id++) {
+      var b = document.createElement("button");
+      var cls = "gymButton___h";
+      if (id > owned) cls += " locked___q";
+      if (id === cfg.gym) cls += " active___a";
+      // A gym is "in progress" only while it is the next one up the standard
+      // ladder — the specialists are stat-gated and never show a percentage.
+      var inProgress = id === owned + 1 && id <= 24 && typeof cfg.pct === "number";
+      if (inProgress) cls += " inProgress___c";
+      b.className = cls;
+      b.setAttribute("aria-label", "Gym " + (id - 1));
+      var icon = document.createElement("div");
+      icon.className = "gymIcon___D89ig gym-" + id + "___adXZv";
+      b.appendChild(icon);
+      if (inProgress) {
+        var p = document.createElement("div");
+        p.className = "percentage___xY";
+        p.textContent = cfg.pct + "%";
+        b.appendChild(p);
+      }
+      list.appendChild(b);
+    }
+  })();
+  </script>
+  <script src="/gym-coach-beta.user.js"></script>
+</body></html>

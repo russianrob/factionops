@@ -1,0 +1,1 @@
+../../server/public/scripts/gym-coach-beta.user.js
