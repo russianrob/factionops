@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.80
+// @version      5.1.87
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -68,16 +68,36 @@
     // =========================================================================
 
     // --- Torn PDA Detection ---
-    const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
-
+    // warboard-iOS 0.11.297 began exposing flutter_inappwebview so userscripts
+    // written for PDA could schedule notifications there. That is genuinely
+    // useful, but the object's PRESENCE is how everyone detects PDA -- so this
+    // read true inside warboard, took the PDA branch, and disabled SSE (which
+    // is broken in PDA's Flutter WebView but works fine in warboard). The
+    // result was a transport with no working channel: "network error".
+    //
     // --- warboard-iOS Detection ---
     // The warboard app injects its GM shim over a WKWebView message handler named
-    // gmBridge; nothing else exposes that. Needed because warboard is NOT PDA but
-    // still can't use the SSE transport — see canUseSSEStream().
+    // gmBridge; nothing else exposes that. Checked BEFORE IS_PDA because it is
+    // what rules PDA out — see below.
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
+
+    // warboard is NOT PDA, even though it now answers PDA's bridge.
+    //
+    // warboard-iOS 0.11.297 started exposing flutter_inappwebview so userscripts
+    // written for PDA could schedule notifications there. Useful — but the
+    // object's PRESENCE is how everybody detects PDA, so this read true inside
+    // warboard and took the PDA branch, which turns SSE off (canUseSSEStream
+    // returns false for PDA, where Flutter's WebView cannot hold a stream).
+    // warboard CAN hold one since 0.11.276, so the result was a transport with
+    // no working channel and a "network error" on screen.
+    //
+    // gmBridge rather than __WB_NATIVE_HOST__: the marker only exists in
+    // 0.11.297+, while the handler is in every warboard build, so this also
+    // covers anyone who has not updated.
+    const IS_PDA = typeof window.flutter_inappwebview !== 'undefined' && !IS_WARBOARD;
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.80';
+    const SCRIPT_VERSION = '5.1.87';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -13925,6 +13945,93 @@ body.wb-chain-active {
         </details>`;
     }
 
+    // One war's own 24-hour profile, drawn inside its expander. The combined
+    // chart above answers "when do they hit"; this answers "was that this war
+    // or the one before it" — a faction that pushed 03:00 in one war and 20:00
+    // in the next averages to a flat line that describes neither.
+    //
+    // Scaled to THIS war's own peak, deliberately: against the combined maximum
+    // a 485-hit war would render as a row of invisible stubs, and its shape is
+    // the whole point of showing it.
+    function warHourBars(w) {
+        const hrs = (w && w.hoursUTC) || [];
+        if (!hrs.length) return '';
+        const max = Math.max(...hrs, 1);
+        const bars = hrs.map((v, h) => {
+            const pct = Math.round(v / max * 100);
+            const on = v > 0;
+            return `<div title="${String(h).padStart(2,'0')}:00 — ${v.toLocaleString()} hits" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:26px;">
+                <div style="width:70%;height:${on ? Math.max(6, pct) : 0}%;background:${pct >= 70 ? '#d63031' : pct >= 30 ? '#e17055' : '#74b9ff'};border-radius:1px 1px 0 0;"></div>
+                <div style="font-size:6px;color:var(--wb-text-muted);margin-top:1px;line-height:1;">${h % 6 === 0 ? h : ''}</div>
+            </div>`;
+        }).join('');
+        return `<div style="display:flex;align-items:flex-end;gap:1px;margin:2px 0 4px 0;">${bars}</div>`;
+    }
+
+    // What one bar is made of, per war. An hour's total says how hard they hit
+    // then; the split says whether that is a habit across wars or one war
+    // skewing the whole profile — which the aggregate cannot show.
+    function hourTip(aw, h, total) {
+        const hh = String(h).padStart(2, '0') + ':00';
+        const wars = (aw && aw.wars) || [];
+        const parts = wars
+            .map((w) => ({ name: w.opponent || 'unknown', n: (w.hoursUTC || [])[h] || 0 }))
+            .filter((x) => x.n > 0)
+            .sort((a, b) => b.n - a.n);
+        if (!parts.length) return `${hh} — ${total.toLocaleString()} hits`;
+        // Newlines render as separate lines in a native title tooltip.
+        return `${hh} — ${total.toLocaleString()} hits\n` +
+            parts.map((x) => `  vs ${x.name}: ${x.n.toLocaleString()}`).join('\n');
+    }
+
+    // One expandable row per war, listing every chain that faction ran in it.
+    // The histogram above sums chains into hour-buckets, which cannot tell you
+    // whether a tall 20:00 bar is one long push or four short ones — this can.
+    // All of it comes from the same payload the histogram is already built from.
+    function chainBreakdown(aw) {
+        const wars = (aw && aw.wars) || [];
+        if (!wars.length) return '';
+        const hhmm = (t) => {
+            const d = new Date(t * 1000);
+            return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+        };
+        const dmy = (t) => {
+            const d = new Date(t * 1000);
+            return d.getUTCDate() + ' ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()];
+        };
+        // Idle stretches are whole days; hours only matter for a same-week turnaround.
+        const days = (sec) => {
+            const d = Math.floor(sec / 86400);
+            if (d >= 1) return d + ' day' + (d === 1 ? '' : 's');
+            const h = Math.round(sec / 3600);
+            return h + 'h';
+        };
+        const dur = (c) => {
+            if (!c.end) return '';
+            const m = Math.round((c.end - c.start) / 60);
+            return m >= 60 ? Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm' : m + 'm';
+        };
+        const rows = wars.map((w) => {
+            const lines = w.chains.map((c) => `<div style="display:flex;gap:6px;font-size:9px;line-height:1.6;">
+                    <span style="width:38px;color:var(--wb-text);font-weight:600;">${hhmm(c.start)}</span>
+                    <span style="width:56px;text-align:right;color:#e17055;">${c.hits.toLocaleString()} hits</span>
+                    <span style="width:52px;text-align:right;color:var(--wb-text-muted);">${dur(c)}</span>
+                    <span style="color:var(--wb-text-muted);">${c.respect != null ? c.respect.toLocaleString() + ' resp' : ''}</span>
+                </div>`).join('');
+            return `<details style="margin-top:4px;">
+                <summary style="font-size:9px;color:var(--wb-text-muted);cursor:pointer;list-style:none;">
+                    <b style="color:var(--wb-text);">vs ${w.opponent ? escapeHtml(w.opponent) : "unknown"}</b>
+                    · ${dmy(w.start)}${w.end > w.start ? '\u2013' + dmy(w.end) : ''} · ${w.chains.length} chain${w.chains.length === 1 ? '' : 's'} · ${w.hits.toLocaleString()} hits${w.idleBefore ? ' · <span style="color:var(--wb-text-muted);">' + days(w.idleBefore) + ' idle before</span>' : ''}
+                </summary>
+                <div style="padding:4px 0 2px 6px;">${warHourBars(w)}${lines}</div>
+            </details>`;
+        }).join('');
+        return `<div style="margin-top:6px;border-top:1px solid var(--wb-border);padding-top:4px;">
+            <div style="font-size:9px;color:var(--wb-text-muted);margin-bottom:2px;">Every chain, per war (TCT) — biggest first</div>
+            ${rows}
+        </div>`;
+    }
+
     function renderScoutReport(report) {
         const body = document.getElementById('wb-scout-body');
         if (!body) return;
@@ -14119,7 +14226,7 @@ body.wb-chain-active {
             };
             html += `<div style="margin-top:8px;">
                 <div style="font-size:11px;font-weight:600;color:var(--wb-text-muted);margin-bottom:4px;">
-                    War Effort &mdash; fighters with &ge;${(ourWe.minHits || enemyWe.minHits || 5)} hits, avg last ${Math.max(ourWe.warsUsed || 0, enemyWe.warsUsed || 0) || 3} wars
+                    War Effort &mdash; fighters with &ge;${(ourWe.minHits || enemyWe.minHits || 5)} hits, avg last ${Math.max(ourWe.warsUsed || 0, enemyWe.warsUsed || 0) || 5} wars
                     ${usedWe ? '<span style="color:#00b894"> ✓ used for win %</span>' : '<span style="opacity:0.6"> (live snapshot used instead)</span>'}
                 </div>
                 <div class="wb-scout-compare">
@@ -14172,7 +14279,7 @@ body.wb-chain-active {
                 // Label every active hour (bold) + faint 0/6/12/18 refs, so each
                 // push hour is numbered rather than just every-3rd tick.
                 const lbl = on ? `<b style="color:var(--wb-text)">${h}</b>` : (h % 6 === 0 ? h : '');
-                return `<div title="${String(h).padStart(2,'0')}:00 — ${v} hits" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:46px;">
+                return `<div title="${hourTip(aw, h, v)}" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:46px;">
                     <div style="width:70%;height:${on ? Math.max(6, pct) : 0}%;background:${pct >= 70 ? '#d63031' : pct >= 30 ? '#e17055' : '#74b9ff'};border-radius:2px 2px 0 0;"></div>
                     <div style="font-size:7px;color:var(--wb-text-muted);margin-top:1px;line-height:1;">${lbl}</div>
                 </div>`;
@@ -14180,9 +14287,10 @@ body.wb-chain-active {
             const peaks = local.map((v, h) => ({ h, v })).filter(x => x.v > 0).sort((a, b) => b.v - a.v).slice(0, 3)
                 .map(x => `${String(x.h).padStart(2,'0')}:00`).join(', ');
             html += `<div style="margin-top:8px;">
-                <div style="font-size:11px;font-weight:600;color:var(--wb-text-muted);margin-bottom:2px;">Enemy Attack Windows <span style="font-weight:400">(when they chain · ${tzName})</span></div>
+                <div style="font-size:11px;font-weight:600;color:var(--wb-text-muted);margin-bottom:2px;">Enemy Attack Windows <span style="font-weight:400">(when their hits land · ${tzName})</span></div>
                 <div style="display:flex;align-items:flex-end;gap:1px;">${bars}</div>
-                <div style="font-size:9px;color:var(--wb-text-muted);margin-top:3px;">Peak push hours: <b>${peaks}</b>. From ${aw.totalChains} chains (${aw.totalHits.toLocaleString()} hits) across their last ${aw.warsUsed} wars — coordinated pushes only, not every hit.</div>
+                <div style="font-size:9px;color:var(--wb-text-muted);margin-top:3px;">Busiest hours: <b>${peaks}</b>. From ${aw.totalChains} chains (${aw.totalHits.toLocaleString()} hits) across their last ${aw.warsUsed} wars, each chain\'s hits spread across the hours it ran — so a long chain counts everywhere it was live, not just where it started. Chained hits only \u2014 not their total attacks, and a chain counts every hit in it whether the target was in the war or not.</div>
+                ${chainBreakdown(aw)}
             </div>`;
         }
 

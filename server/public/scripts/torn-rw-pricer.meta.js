@@ -7,6 +7,8 @@
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/item*
 // @match        https://www.torn.com/bazaar*
+// @match        https://www.torn.com/displaycase.php*
+// @match        https://www.torn.com/page.php?sid=displayCase*
 // @match        https://www.torn.com/amarket*
 // @match        https://www.torn.com/trade.php*
 // @match        https://www.torn.com/page.php?sid=ItemMarket*

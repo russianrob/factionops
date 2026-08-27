@@ -10,7 +10,7 @@ const html = fs.readFileSync("harness/index.html", "utf8");
 const script = fs.readFileSync("harness/gym-coach-beta.user.js", "utf8");
 const b = await chromium.launch({ args: ["--no-sandbox"] });
 
-async function settings({ pda }) {
+async function settings({ pda, host }) {
   const ctx = await b.newContext({ viewport: { width: 393, height: 1600 } });
   const page = await ctx.newPage();
   await page.route("**/*", r => {
@@ -23,6 +23,7 @@ async function settings({ pda }) {
     xan: 85, cans: 21, happy: 4300, happyMax: 5000, gym: 24,
     stats: { str: 150422278, def: 104614286, spe: 150464114, dex: 146009 },
     ...(pda ? {} : { noPda: true }),
+    ...(host ? { host } : {}),
     mem: { gcb_v1_mode: "xan", gcb_v1_focus: "str" } };
   await page.goto("https://www.torn.com/gym.php?cfg=" + encodeURIComponent(JSON.stringify(cfg)),
     { waitUntil: "domcontentloaded" });
@@ -62,6 +63,20 @@ await t("it says plainly that pings need PDA rather than promising them", async 
 await t("under Torn PDA the PDA wording is kept", async () => {
   const r = await settings({ pda: true });
   assert.match(r, /Host \| Torn PDA/, r);
+});
+
+await t("warboard is named as itself, not as PDA or a plain browser", async () => {
+  // It answers PDA's notification protocol under its own name, so it is
+  // neither -- and calling it PDA is what broke FactionOps.
+  const r = await settings({ pda: false, host: "warboard" });
+  assert.match(r, /Host \| warboard/i, r);
+});
+
+await t("warboard is told pings DO work, unlike a plain browser", async () => {
+  const wb = await settings({ pda: false, host: "warboard" });
+  assert.ok(!/none will arrive/.test(wb), "told warboard its pings go nowhere: " + wb);
+  const browser = await settings({ pda: false });
+  assert.match(browser, /none will arrive/, browser);
 });
 
 console.log("\n" + pass + " passed, " + fail + " failed");

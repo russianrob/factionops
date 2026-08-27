@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cooldown Message Diag
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @author       RussianRob
 // @description  Temporary diagnostic — reports how Torn renders the cooldown duration in the item-use message, which shows up blank on mobile. Safe to remove once the cause is found.
 // @license      GPL-3.0-or-later

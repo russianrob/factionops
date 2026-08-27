@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.69
+// @version      3.2.72
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,8 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.72 — FIX: loaning any OC item reported "No stock" while the armoury was full (Core Drill x11, Shaped Charge x18, Zip Ties x61, all Available). mgr_fetchAllArmoryItemsAPI requested the armoury selections from /v2/faction, but every one of them (utilities/drugs/medical/boosters/temporary/armor/weapons/caches) is v1-only. Torn answers v2 with HTTP 200 and {error:{code:22,'This selection is only available in API v1'}} — so r.ok stayed true, nothing checked data.error, every data[sel] came back undefined, the cache filled with zero items, and mgr_prepareArmouryForItem bailed at `!entry` on EVERY item. Switched the call to v1 (the response shape this parser was already written for: ID/name/type/quantity/available/loaned/loaned_to). Also added an explicit data.error check that throws the real Torn message, and the loan button now shows that reason (28 chars + full text in the tooltip) instead of a misleading 'No stock' — an API failure and an empty shelf are no longer indistinguishable. The oc-nostock diagnostic added in 3.2.70/3.2.71 stays; it fires only on a failed loan and reports which branch bailed plus the API response shape.
+// v3.2.70 — Diagnostic only, no behaviour change. "No stock" on a loan attempt has three causes that render identically: (a) the /v2 armoury cache reports nothing available, (b) the page-AJAX category scan never saw the item — wrong category name, or the item sits past the hard 1000-row cap in mgr_fetchArmoryIDsForCategory, or (c) the item is present but every unit is already loaned to a member. Reported as Core Drill showing No stock while stock existed. Added an out-param to the category scan that counts rows seen for the hunted itemID, how many of those were loaned, pages walked, total rows, and whether the 1000-row cap was hit; mgr_prepareArmouryForItem now POSTs tag 'oc-nostock' to the client-log endpoint on BOTH null returns, tagged branch:'api-cache' or branch:'page-scan'. Fires only when a loan fails, so the normal path is untouched.
 // v3.1.76 — Member Projector now anchors on the member's highest STABLE OC level (avg CPR ≥ MINCPR), not just their highest completed. Previously a member who'd touched Lvl 6 at 57% avg CPR was shown as "OC Lvl 6 / 57%" with the projection targeting Lvl 7 ("Not Ready for Lvl 7") — a misleading double whammy: the displayed CPR was their unstable struggling number rather than where they're actually competent, and the projection skipped over the level they're still building. New logic: walk down from completedLevel to find the first level with CPR ≥ MINCPR, use that as the displayed anchor (currentOcLevel + currentLevelCpr); set the projection target to the level they've already attempted but not solidified (so their case becomes "OC Lvl 5 / 65% / attempting Lvl 6 at 57%" rendered as "Building for Lvl 6"). When no stable level exists yet (brand new member at Lvl 1 below MINCPR), anchor stays at completed level and projection targets that same level. Renderer surfaces an inline "attempting Lvl X at N%" tag in orange so the displayed numbers don't read as a contradiction with the projection.
 // v3.1.75 — Loan + retrieve: accept both `entry.user.userID` and `entry.user.id` shapes. Torn's late-Apr 2026 auth refactor (changelog "Optimized authentication and last action updates by improving session log logic") flipped some loaned-item entries to expose the borrower as `user.id` instead of `user.userID`. The retrieve match condition (`String(entry.user.userID) === String(userID)`) silently failed against the new shape — every retrieve from the Unused tab raised "Could not find armory item" with no context (the catch block only set "Error" on the button). Fix: cascade `entry.user.userID ?? entry.user.id` everywhere we read the borrower id, both in retrieve's match check AND in `mgr_fetchArmoryIDsForCategory`'s isUnused check (which was mis-classifying loaned-to-others items as available, risking double-loans). Also widened retrieve's category sweep from [hint, alternate-spelling-of-armor] to every loanable bucket (utilities/weapons/armor/armour/medical/boosters/drugs/clothing) since Torn's `/v2/faction` selection name doesn't always match the page-AJAX `type` field. Replaced the silent "Error" button text with the actual reason (truncated to 28 chars, full text in tooltip + console.warn), so the next time something breaks the fix is one screenshot away.
 // v3.1.70 — Banker-claim optimistic clear on vault-request Send. Hitting Send now POSTs to /api/oc/vault-request/:id/claim before opening the Controls tab. Server marks the request as claimed-by-this-banker and hides it from listRequests() for every viewer immediately, so all admins see it disappear without waiting for the 20s fundsnews poll → 15s client poll cycle (previously took ~3 manual refreshes to clear). If the matching fundsnews event arrives within the 90s claim TTL, the request is fully deleted as before. If the banker bails (closes Torn tab, never sends the money), the claim expires and the request reappears on every client's next list fetch — no orphaned requests. Two bankers clicking the same Send near-simultaneously: the second gets a 409 Conflict with "Already claimed by X" and their UI shows that message instead of removing the row.
@@ -299,7 +301,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.69';
+    const SCRIPT_VERSION = '3.2.72';
     const SERVER = 'https://tornwar.com';
 
     // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
@@ -2229,13 +2231,41 @@
     };
 
     // --- Armory Cache (reads via Torn API, actions via page AJAX) ---
+    let mgr_lastArmoryApi = null;
     const mgr_fetchAllArmoryItemsAPI = async () => {
         const key = getApiKey();
         if (!key || key === 'YOUR_API_KEY_HERE') throw new Error('API key required');
         const selections = ARMORY_API_SELECTIONS.join(',');
-        const r = await gmRequest(`https://api.torn.com/v2/faction/?selections=${selections}&key=${encodeURIComponent(key)}&comment=oc-spawn`);
+        // v1, NOT v2. Every armoury selection (utilities/drugs/medical/
+        // boosters/temporary/armor/weapons/caches) is v1-only; /v2 answers
+        // HTTP 200 with {error:{code:22,'This selection is only available in
+        // API v1'}}, so `ok` stays true, every data[sel] is undefined, the
+        // cache fills with nothing and every single item reports 'No stock'.
+        const r = await gmRequest(`https://api.torn.com/faction/?selections=${selections}&key=${encodeURIComponent(key)}&comment=oc-spawn`);
         if (!r.ok) throw new Error('Failed to load armory data');
         const data = r.data;
+        // Torn signals API failures in the BODY at HTTP 200. Without this the
+        // failure degraded into an empty cache and a bogus 'No stock' on every
+        // item — a wrong answer that looks like a real one.
+        if (data && data.error) {
+            throw new Error(`Torn API: ${data.error.error || 'error'} (code ${data.error.code})`);
+        }
+        // Diagnostic capture. Torn can answer HTTP 200 with an {error:{...}}
+        // body — one retired selection name rejects the whole multi-selection
+        // request — and nothing here ever inspected that, so the failure
+        // surfaced as an empty armoury and a bogus "No stock" on every item.
+        // Never records the key; only shapes, counts and the error code.
+        try {
+            mgr_lastArmoryApi = {
+                keys: data && typeof data === 'object' ? Object.keys(data).slice(0, 20) : typeof data,
+                err: data && data.error ? { code: data.error.code, msg: String(data.error.error || '').slice(0, 60) } : null,
+                counts: {},
+            };
+            for (const sel of ARMORY_API_SELECTIONS) {
+                const v = data ? data[sel] : undefined;
+                mgr_lastArmoryApi.counts[sel] = Array.isArray(v) ? v.length : (v === undefined ? 'absent' : typeof v);
+            }
+        } catch (_) {}
         const allItems = [];
         for (const sel of ARMORY_API_SELECTIONS) {
             const items = Array.isArray(data?.[sel]) ? data[sel] : [];
@@ -2254,11 +2284,12 @@
     };
 
     // Page AJAX: fetch armoryIDs for a specific category (only used for loan/retrieve actions)
-    const mgr_fetchArmoryIDsForCategory = async (category) => {
+    const mgr_fetchArmoryIDsForCategory = async (category, _stats) => {
         const rfcv = mgr_getRfcvToken();
         if (!rfcv) throw new Error('Missing RFCV token');
         const ids = [];
         let start = 0;
+        let _pages = 0, _rows = 0;
         while (start < 1000) {
             const body = new URLSearchParams({ step: 'armouryTabContent', type: category, start: String(start), ajax: 'true' });
             const res = await fetch(`https://www.torn.com/factions.php?rfcv=${rfcv}`, {
@@ -2272,6 +2303,7 @@
                 if (!data?.items) break;
                 const itemsArr = Array.isArray(data.items) ? data.items : Object.values(data.items);
                 if (itemsArr.length === 0) break;
+                _pages++; _rows += itemsArr.length;
                 let added = 0;
                 for (const entry of itemsArr) {
                     // Accept either user.userID OR user.id when checking
@@ -2282,6 +2314,14 @@
                     // and could be re-loaned over the existing loan.
                     const occupant = entry.user && (entry.user.userID ?? entry.user.id);
                     const isUnused = entry.user === false || entry.user === '' || entry.user === 0 || (entry.user && !occupant);
+                    // Diagnostic only: count how many rows of the item we are
+                    // hunting for actually appear, and how many of those are
+                    // already loaned out. Distinguishes "not in this category"
+                    // from "present but every unit is on loan".
+                    if (_stats && Number(entry.itemID) === _stats.watchItemID) {
+                        _stats.seen = (_stats.seen || 0) + 1;
+                        if (!isUnused) _stats.loaned = (_stats.loaned || 0) + 1;
+                    }
                     if (isUnused && entry.armoryID) {
                         ids.push({ armoryID: entry.armoryID, itemID: Number(entry.itemID) });
                         added++;
@@ -2290,8 +2330,9 @@
                 if (added === 0 && itemsArr.length < 50) break;
                 if (itemsArr.length < 50) break;
                 start += 50;
-            } catch (e) { break; }
+            } catch (e) { if (_stats) _stats.threw = String(e && e.message || e); break; }
         }
+        if (_stats) { _stats.pages = _pages; _stats.rows = _rows; _stats.hitCap = start >= 1000; _stats.unusedIds = ids.length; }
         return ids;
     };
 
@@ -2319,23 +2360,53 @@
         return (cached?.armoryCategory ? ARMORY_TAB_TO_POST_TYPE[cached.armoryCategory] : null) || 'Tool';
     };
 
+    // Fires only when a loan attempt fails, so it costs nothing in the
+    // normal path. "No stock" has three very different causes that look
+    // identical on screen: the API says nothing is available, the page
+    // scan never saw the item (wrong category, or past the 1000-row cap),
+    // or the item is there but every unit is already loaned out.
+    const mgr_reportNoStock = (payload) => {
+        try {
+            GM_xmlhttpRequest({
+                method: 'POST', url: 'https://tornwar.com/api/debug/client-log',
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ tag: 'oc-nostock', data: Object.assign({ v: SCRIPT_VERSION }, payload) }),
+                onload: function () {}, onerror: function () {},
+            });
+        } catch (_) {}
+    };
+
     const mgr_prepareArmouryForItem = async (itemID) => {
         if (!mgr_armoryCache.has(itemID)) await mgr_refreshArmoryCache(true);
         else await mgr_refreshArmoryCache(false);
         const entry = mgr_armoryCache.get(itemID);
-        if (!entry || entry.qty <= 0) return null;
+        const itemName = mgr_getItemName(itemID) || null;
+        if (!entry || entry.qty <= 0) {
+            mgr_reportNoStock({ itemID, itemName, branch: 'api-cache',
+                hasEntry: !!entry, qty: entry ? entry.qty : null,
+                cat: entry ? entry.armoryCategory : null,
+                cacheSize: mgr_armoryCache.size, api: mgr_lastArmoryApi });
+            return null;
+        }
         // Fetch armoryID from page AJAX (user-initiated action)
         const category = entry.armoryCategory || 'utilities';
         // Try both singular and alternate names for the page AJAX category
         const categoriesToTry = [category];
         if (category === 'armor') categoriesToTry.push('armour');
         let armoryID = null;
+        const _diag = [];
         for (const cat of categoriesToTry) {
-            const ids = await mgr_fetchArmoryIDsForCategory(cat);
+            const st = { watchItemID: itemID };
+            const ids = await mgr_fetchArmoryIDsForCategory(cat, st);
+            _diag.push(Object.assign({ cat }, st));
             const match = ids.find(i => i.itemID === itemID);
             if (match) { armoryID = match.armoryID; break; }
         }
-        if (!armoryID) return null;
+        if (!armoryID) {
+            mgr_reportNoStock({ itemID, itemName, branch: 'page-scan',
+                qty: entry.qty, cat: entry.armoryCategory, tried: _diag });
+            return null;
+        }
         mgr_preparedArmoryID = armoryID;
         mgr_pendingArmoryItemID = itemID;
         return mgr_preparedArmoryID;
@@ -6612,7 +6683,10 @@
                             }, 800);
                         }
                     } catch (e) {
-                        btn.textContent = '? Check'; btn.classList.add('mgr-btn-warning');
+                        const reason = String((e && e.message) || e || 'Error');
+                        btn.textContent = reason.length > 28 ? reason.slice(0, 28) + '…' : reason;
+                        btn.title = reason;
+                        btn.classList.add('mgr-btn-warning');
                         console.error('[OC Mgr] Loan error:', e);
                     } finally {
                         // Success state stays locked (paired with mgr_recentlyLoaned tracking).

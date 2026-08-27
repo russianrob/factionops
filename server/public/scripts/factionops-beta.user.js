@@ -68,7 +68,10 @@
     // =========================================================================
 
     // --- Torn PDA Detection ---
-    const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
+    // warboard answers PDA's bridge but is NOT PDA -- see factionops.user.js
+    // 5.1.87. Reading true here turns SSE off and leaves no working transport.
+    const IS_PDA = typeof window.flutter_inappwebview !== 'undefined'
+        && !(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
 
     // --- warboard-iOS Detection ---
     // The warboard app injects its GM shim over a WKWebView message handler named

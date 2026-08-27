@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.23
+// @version      0.9.24
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,19 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.24 — Finds the notification bridge under warboard's own name.
+ *
+ *         warboard-iOS answers Torn PDA's bridge protocol, and the first cut of
+ *         that exposed it as `window.flutter_inappwebview` so PDA-written
+ *         scripts would work unchanged. That object's PRESENCE is how every
+ *         userscript detects PDA, so every script inside warboard took the PDA
+ *         branch — FactionOps turned SSE off and showed "network error". It is
+ *         `window.__WB_BRIDGE__` now, and this looks for both.
+ *
+ *         Settings names the host honestly as a result: "warboard" rather than
+ *         "Torn PDA" or "Browser", since it is neither. And the pings line asks
+ *         whether a ping can actually reach you rather than whether you are in
+ *         PDA — warboard can deliver them, a plain browser still cannot.
 * 0.9.23 — "Spent attacking 6e" on a day with no attacks. A Torn attack costs
  *         exactly 25e, so 6 was never one — it is API/DOM skew on the energy
  *         reading, which used to disappear among real training and only became
@@ -1378,6 +1391,19 @@
   // Checked, not assumed: only PDA substitutes the API-key placeholder, and
   // only PDA exposes the flutter bridge. A function rather than a constant
   // because the bridge can arrive after this file runs.
+  // The host's own name, when it gives one. warboard answers PDA's protocol
+  // without being PDA, so it is neither "Torn PDA" nor a plain browser.
+  function nativeHost() {
+    try { return String(window.__WB_NATIVE_HOST__ || ""); } catch (_) { return ""; }
+  }
+
+  // Can a scheduled ping actually reach you here? True for Torn PDA and for any
+  // host answering the same bridge; false in an ordinary browser, which has no
+  // way to hold one.
+  function canPing() {
+    return isPda() || nativeHost() !== "";
+  }
+
   function isPda() {
     if (HAS_PDA_KEY) return true;
     try { if (window.flutter_inappwebview) return true; } catch (_) {}
@@ -5263,6 +5289,13 @@
 
   function flutterHandler() {
     try {
+      // warboard exposes the same protocol under its OWN name. It deliberately
+      // does NOT define flutter_inappwebview: that object's presence is how
+      // every userscript detects Torn PDA, and defining it made FactionOps
+      // disable SSE inside warboard and show "network error".
+      if (window.__WB_BRIDGE__ && typeof window.__WB_BRIDGE__.callHandler === "function") {
+        return window.__WB_BRIDGE__;
+      }
       if (window.flutter_inappwebview && typeof window.flutter_inappwebview.callHandler === "function") {
         return window.flutter_inappwebview;
       }
@@ -5894,12 +5927,13 @@
           '">' +
           '<div class="actions"><button class="gc-btn secondary" data-act="pastekey">Paste from clipboard</button><button class="gc-btn" data-act="savekey">Save key</button></div>') +
       '<p class="muted" style="margin:8px 0 0">Beta lane. It reads the stable script\u2019s saved key but never writes to its settings. Run one at a time \u2014 both open means both polling, and the key is capped at 100 calls a minute.</p>' +
-      '<div class="row"><span>Host</span><b>' + (isPda() ? "Torn PDA" : "Browser") + "</b></div>" +
+      '<div class="row"><span>Host</span><b>' +
+        (isPda() ? "Torn PDA" : nativeHost() || "Browser") + "</b></div>" +
       '<div class="row"><span>Source</span><b>' + keySource() + "</b></div>" +
       '<div class="row"><span>Status</span><b class="' + (live ? "ok" : "bad") + '">' + state.statusText + "</b></div>" +
-      '<p class="muted" style="margin:8px 0 0">' + (isPda()
-        ? "Pings use Torn PDA notifications and open the gym when they fire."
-        : "Pings need Torn PDA \u2014 they go through its notification bridge, which a browser does not have, so none will arrive here however long you wait.") +
+      '<p class="muted" style="margin:8px 0 0">' + (canPing()
+        ? "Pings are scheduled on the device and open the gym when they fire."
+        : "Pings need Torn PDA or the warboard app \u2014 they go through a native notification bridge, which a browser does not have, so none will arrive here however long you wait.") +
       "</p>" +
       "</div>" +
       ledgerEditHtml() +

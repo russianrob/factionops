@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cooldown Message Diag
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @author       RussianRob
 // @description  Temporary diagnostic — reports how Torn renders the cooldown duration in the item-use message, which shows up blank on mobile. Safe to remove once the cause is found.
 // @license      GPL-3.0-or-later
@@ -17,6 +17,11 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.1  - Find the TEXT NODE holding "cooldown of" and report its parent,
+//           instead of any element whose subtree contains the phrase — the old
+//           test bounded child COUNT, not size, so it matched the whole items
+//           list. Also drops the bulky outer HTML that was overrunning the 4kb
+//           endpoint cap and truncating the useful fields away.
 // v1.0.0  - Initial release. Captures the item-use result message the moment it
 //           appears and reports its markup, so the missing cooldown duration can
 //           be traced without spending another item to reproduce it.
@@ -66,39 +71,50 @@
 
   var reported = false;
 
-  // The message is transient and is re-rendered by Torn's React tree, so poll
-  // via MutationObserver rather than looking once at load.
+  // Walk TEXT NODES, not elements. The previous version tested every div/p/span
+  // for a subtree containing "cooldown of" and bounded it by child COUNT, which
+  // does not bound SIZE — so it matched the entire items list and reported a
+  // kilobyte of unrelated markup. The text node's parent is the smallest element
+  // that actually holds the sentence.
+  function findCooldownParent() {
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+    var n;
+    while ((n = walker.nextNode())) {
+      if (/cooldown of/i.test(n.nodeValue || "")) return n.parentElement;
+    }
+    return null;
+  }
+
   function scan() {
     if (reported) return;
-    var all = document.querySelectorAll("div, p, span");
-    for (var i = 0; i < all.length; i++) {
-      var el = all[i];
-      if (el.children.length > 12) continue;
-      var txt = el.textContent || "";
-      if (!/cooldown of/i.test(txt)) continue;
+    var el = findCooldownParent();
+    if (!el) return;
+    reported = true;
 
-      reported = true;
-      var kids = [];
-      try {
-        var ks = el.querySelectorAll("*");
-        for (var k = 0; k < ks.length && k < 12; k++) kids.push(describe(ks[k]));
-      } catch (e) {}
+    // Siblings matter: Torn's duration usually sits in an element NEXT TO the
+    // text node, not inside it.
+    var parent = el.parentElement || el;
+    var sibs = [];
+    try {
+      var ch = parent.children;
+      for (var i = 0; i < ch.length && i < 10; i++) sibs.push(describe(ch[i]));
+    } catch (e) {}
 
-      // Torn portals its tooltip bodies elsewhere in the DOM, so grab those too.
-      var portals = [];
-      try {
-        var ps = document.querySelectorAll('[role=tooltip],[class*="tooltipContent"],[class*="tooltipText"],[class*="tooltipActivator"]');
-        for (var p = 0; p < ps.length && p < 6; p++) portals.push(describe(ps[p]));
-      } catch (e) {}
+    var portals = [];
+    try {
+      var ps = document.querySelectorAll('[role=tooltip],[class*="tooltipContent"],[class*="tooltipText"],[class*="tooltipActivator"],[class*="tooltipWrap"]');
+      for (var q = 0; q < ps.length && q < 6; q++) portals.push(describe(ps[q]));
+    } catch (e) {}
 
-      post({
-        msgText: txt.trim().slice(-180),
-        msgHTML: clean(el.innerHTML).slice(-1200),
-        kids: kids,
-        portals: portals
-      });
-      return;
-    }
+    post({
+      // Just the sentence, trimmed tight — enough to confirm we found the right node.
+      text: (el.textContent || "").trim().slice(-120),
+      // The element itself, small by construction now.
+      self: describe(el),
+      // Its siblings: the likeliest home of the duration.
+      siblings: sibs,
+      portals: portals
+    });
   }
 
   scan();

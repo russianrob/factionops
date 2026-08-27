@@ -97,6 +97,15 @@
   // Stand in for Torn PDA's notification bridge so scheduling can be observed.
   // cfg.noPda leaves it absent, which is what a desktop browser looks like.
   window.__pdaCalls = [];
+  // cfg.host="warboard" stands in for warboard-iOS: its own bridge, no
+  // flutter_inappwebview, so nothing mistakes it for Torn PDA.
+  if (cfg.host === "warboard") window.__WB_NATIVE_HOST__ = "warboard";
+  if (!cfg.noPda || cfg.host === "warboard") window.__WB_BRIDGE__ = {
+    callHandler: function (name, payload) {
+      window.__pdaCalls.push({ name: name, payload: payload });
+      return Promise.resolve();
+    }
+  };
   if (!cfg.noPda) window.flutter_inappwebview = {
     callHandler: function (name, payload) {
       window.__pdaCalls.push({ name: name, payload: payload });

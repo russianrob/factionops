@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Gym Coach Beta
+// @name         Gym Coach
 // @namespace    RussianRob
-// @version      0.9.24
-// @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
+// @version      0.10.12
+// @description  Torn gym coach — training advice, item verdicts, and a progression chart. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
 // @match        https://www.torn.com/*
@@ -15,10 +15,9 @@
 // @grant        GM.setValue
 // @grant        GM.xmlHttpRequest
 // @connect      api.torn.com
-// @connect      weav3r.dev
 // @connect      www.torn.com
 // @connect      torn.com
 // @run-at       document-end
-// @downloadURL  https://tornwar.com/scripts/gym-coach-beta.user.js
-// @updateURL    https://tornwar.com/scripts/gym-coach-beta.user.js
+// @downloadURL  https://tornwar.com/scripts/gym-coach.user.js
+// @updateURL    https://tornwar.com/scripts/gym-coach.meta.js
 // ==/UserScript==
