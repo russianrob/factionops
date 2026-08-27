@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.20
+// @version      0.9.21
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,23 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.21 — "Spent today" now comes from Torn's own gym logs rather than being
+ *         inferred from the bar. Torn writes one line per session with the
+ *         exact energy, stamped to the second, so it is a record where the bar
+ *         was only ever a reconstruction — and it counts a session the script
+ *         was not running for, which the bar cannot.
+ *
+ *         Log for truth, bar for immediacy: the figure is the log total plus
+ *         whatever the bar has watched leave the gym page since, and it snaps
+ *         to the log when the next round lands. A number that only moved when
+ *         an API call landed would read as broken in the seconds after a
+ *         train. Four calls, one per stat (5300-5303), on their own 60s TTL
+ *         and forced right after a detected session — not on every 8s poll.
+ *
+ *         A failed round leaves the bar's figure standing and labels it "from
+ *         the bar", because a failed call is no news rather than zero
+ *         training. An EMPTY log is different: that is Torn saying you trained
+ *         nothing, and it is reported as nothing.
 * 0.9.20 — This is a gym coach, so energy spent attacking is not "spent" — it
  *         never reached the gym, which from here is the same kind of loss as a
  *         bar sitting full. It now has its own line instead of being counted
@@ -3501,6 +3518,78 @@
       "</div>";
   }
 
+  // --- what Torn says you trained ---------------------------------------------
+  // The bar is an inference; this is the record. Torn writes one line per
+  // session with the exact energy, so a session the script was not running for
+  // still counts, and nothing has to be reconstructed from a whole-point bar.
+  //
+  // Split across four types, one per stat. 100 entries a page, which at a heavy
+  // ~4.6 sessions a day covers about three weeks — comfortably past the
+  // fourteen the calibration window needs.
+  var TRAINLOG_IDS = [5300, 5301, 5302, 5303];
+
+  function trainLogByDay(responses) {
+    var out = {};
+    (responses || []).forEach(function (r) {
+      var rows = (r && r.log) || {};
+      for (var k in rows) {
+        var e = rows[k];
+        if (!e || !e.data) continue;
+        var used = Number(e.data.energy_used);
+        var ts = Number(e.timestamp);
+        // A line with no energy figure is not a free session — it is a line we
+        // do not understand, and counting it as zero would under-report.
+        if (!(used > 0) || !(ts > 0)) continue;
+        var d = dayKey(ts * 1000);
+        out[d] = (out[d] || 0) + used;
+      }
+    });
+    return out;
+  }
+
+  // Live figure for the Now tab. The log is the truth and the bar is the
+  // immediacy: a number that only moved when an API call landed would read as
+  // broken in the seconds right after you train. `since` is what the bar has
+  // watched leave on the gym page since the last fetch, and is cleared when the
+  // next one lands, so the figure converges on Torn's own record.
+  //
+  // null means "no answer yet" -- the caller falls back to the bar. That is a
+  // different statement from 0, which claims you trained nothing.
+  // One call per stat. Never partially applied: if any of the four fail the
+  // whole round is discarded, because a byDay built from two logs out of four
+  // would under-report and look exactly like a quiet day.
+  var TRAINLOG_TTL = 60000;
+  function fetchTrainLog(force) {
+    if (!resolveKey()) return Promise.resolve(null);
+    var tl = state.trainLog;
+    if (!force && tl && Date.now() - (tl.at || 0) < TRAINLOG_TTL) return Promise.resolve(tl);
+    if (state.trainLogInFlight) return Promise.resolve(tl);
+    state.trainLogInFlight = true;
+    return Promise.all(TRAINLOG_IDS.map(function (id) {
+      return httpGet(apiUrl("log&log=" + id));
+    })).then(function (rs) {
+      state.trainLogInFlight = false;
+      // No partial-round check: httpGet rejects on data.error, so Promise.all
+      // rejects as a whole and lands in the handler below. A byDay built from
+      // two logs out of four would under-report and look like a quiet day, and
+      // this shape makes that unreachable rather than merely guarded against.
+      state.trainLog = { byDay: trainLogByDay(rs), at: Date.now(), since: 0 };
+      storeSet("trainLog", state.trainLog);
+      resetPlanCaches();
+      return state.trainLog;
+    }, function () {
+      state.trainLogInFlight = false;
+      // Keep whatever we had. A failed round is no news, not zero training.
+      return state.trainLog || null;
+    });
+  }
+
+  function trainedToday() {
+    var tl = state.trainLog;
+    if (!tl || !tl.byDay) return null;
+    return (tl.byDay[dayKey(Date.now())] || 0) + (tl.since || 0);
+  }
+
   function ledgerBucket() {
     var d = dayKey(Date.now());
     var last = state.ledger[state.ledger.length - 1];
@@ -3565,7 +3654,12 @@
         // inflated "Spent today" and the `used` behind calibration().usage,
         // making every ETA optimistic on the days you warred hardest.
         if (d.used > 0) {
-          if (onGymPage()) b.used += d.used;
+          if (onGymPage()) {
+            b.used += d.used;
+            // Keeps the Now tab moving in the seconds before the next log
+            // round lands; cleared when it does.
+            if (state.trainLog) state.trainLog.since = (state.trainLog.since || 0) + d.used;
+          }
           else b.off = (b.off || 0) + d.used;
         }
         b.wasted += d.wasted;
@@ -4980,6 +5074,7 @@
     var streak = capStreak();
     var t = ledgerWindow(1);
     var off = t.off || 0;
+    var logged = trainedToday();
     var pct = t.used + t.wasted + off > 0
       ? Math.round((t.used / (t.used + t.wasted + off)) * 100) : null;
     // Two readings of the same full bar. Off stack it is regen you let slip. On
@@ -4995,7 +5090,10 @@
           " \u2014 that is <b>" + fmt(missed(streak.lost)) + "e</b> of regen you did not get.</div>";
     return (
       '<div class="gc-card"><h3>Energy used vs missed</h3>' + head +
-      '<div class="row"><span>Spent today</span><b>' + fmt(t.used) + "e</b></div>" +
+      // Torn's own record where we have it. The bar can only ever infer, and it
+      // cannot see a session the script was not running for.
+      '<div class="row"><span>Spent today</span><b>' + fmt(Math.round(logged === null ? t.used : logged)) +
+        "e</b>" + (logged === null ? '<span class="muted"> \u00b7 from the bar</span>' : "") + "</div>" +
       '<div class="row"><span>Missed today</span><b class="' + (t.wasted >= 25 ? "bad" : "muted") + '">' + fmt(missed(t.wasted)) + "e</b></div>" +
       (off > 0
         ? '<div class="row"><span>Spent attacking</span><b class="bad">' + fmt(Math.round(off)) + "e</b></div>"
@@ -5048,6 +5146,9 @@
     return httpGet(apiUrl(sel))
       .then(function (data) {
         applyUserPayload(data, false);
+        // Torn's own record of what was trained. Refreshed on its own TTL, and
+        // forced right after a detected session so the figure settles quickly.
+        fetchTrainLog(kind === "train" || kind === "boot");
         if (!wantInv) return null;
         return fetchInventoryV2().then(
           function (rows) {
@@ -6600,6 +6701,9 @@
       state.unlock = storeGet("unlock", null) || null;
       if (typeof state.unlock === "string") { try { state.unlock = JSON.parse(state.unlock); } catch (_) { state.unlock = null; } }
       if (state.unlock && typeof state.unlock.gymId !== "number") state.unlock = null;
+      state.trainLog = storeGet("trainLog", null) || null;
+      if (typeof state.trainLog === "string") { try { state.trainLog = JSON.parse(state.trainLog); } catch (_) { state.trainLog = null; } }
+      if (state.trainLog && !state.trainLog.byDay) state.trainLog = null;
       state.gymsOwned = storeGet("gymsOwned", []) || [];
       if (typeof state.gymsOwned === "string") { try { state.gymsOwned = JSON.parse(state.gymsOwned); } catch (_) { state.gymsOwned = []; } }
       if (!Array.isArray(state.gymsOwned)) state.gymsOwned = [];

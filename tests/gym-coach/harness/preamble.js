@@ -52,6 +52,22 @@
 
   function answer(url) {
     if (/selections=calendar/.test(url)) return { competitions: [] };
+    // Torn's gym train logs, one type per stat. cfg.trainLog is [[tsSeconds,
+    // energy], ...]; they all come back on 5300 since the script merges them.
+    var lg = /[?&]log=(\d+)/.exec(url);
+    if (lg && /selections=log/.test(url)) {
+      // An empty log is a real answer ("you trained nothing"); a FAILED call is
+      // not, and the two must lead to different figures.
+      if (cfg.trainLogFail) return { error: { code: 5, error: "Too many requests" } };
+      var rows = {};
+      if (lg[1] === "5300") {
+        (cfg.trainLog || []).forEach(function (r, i) {
+          rows["h" + i] = { log: 5300, title: "Gym train strength", timestamp: r[0],
+                            category: "Gym", data: { trains: 1, energy_used: r[1], gym: 24 } };
+        });
+      }
+      return { log: rows };
+    }
     if (/\/user\/inventory/.test(url)) {
       var m = /cat=([^&]+)/.exec(url);
       return inventory(m ? decodeURIComponent(m[1]) : "");
