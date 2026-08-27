@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.21
+// @version      0.9.22
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,21 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.22 — Settings claimed "Host: Torn PDA" in a desktop browser. The row was
+ *         a hardcoded string with no check behind it, and so were two others:
+ *         instructions to leave the PDA API-key placeholder alone, and a note
+ *         that pings use PDA notifications. Three assertions about the
+ *         platform, none of them checked.
+ *
+ *         isPda() now decides. Only Torn PDA substitutes the key placeholder
+ *         and only Torn PDA exposes the flutter bridge, so both are real
+ *         evidence; the user agent is the last resort. It is a function rather
+ *         than a constant because the bridge can arrive after this file runs.
+ *
+ *         The pings line is the one that mattered. Notifications go through
+ *         PDA's bridge, which a browser does not have, so a desktop user was
+ *         being promised something that could never arrive — and had no way to
+ *         know why it never did. It now says so outright.
 * 0.9.21 — "Spent today" now comes from Torn's own gym logs rather than being
  *         inferred from the bar. Torn writes one line per session with the
  *         exact energy, stamped to the second, so it is a record where the bar
@@ -1338,6 +1353,24 @@
     var own = String(storeGet("api_key", "") || "").trim();
     if (own) return own;
     return String(stableGet("api_key", "") || "").trim();
+  }
+
+  // Are we actually inside Torn PDA? Three PDA-specific lines in Settings used
+  // to be hardcoded strings with no check at all, so a desktop browser was told
+  // it was running under PDA, given PDA key instructions, and promised
+  // notifications it can never deliver.
+  //
+  // Checked, not assumed: only PDA substitutes the API-key placeholder, and
+  // only PDA exposes the flutter bridge. A function rather than a constant
+  // because the bridge can arrive after this file runs.
+  function isPda() {
+    if (HAS_PDA_KEY) return true;
+    try { if (window.flutter_inappwebview) return true; } catch (_) {}
+    try {
+      if (typeof unsafeWindow !== "undefined" && unsafeWindow && unsafeWindow.flutter_inappwebview) return true;
+    } catch (_) {}
+    try { return /torn ?pda/i.test((navigator && navigator.userAgent) || ""); } catch (_) {}
+    return false;
   }
 
   function keySource() {
@@ -5828,16 +5861,22 @@
       '<div class="gc-card"><h3>API</h3>' +
       (HAS_PDA_KEY
         ? '<p class="ok">Torn PDA injected your Limited key. You don\u2019t need to paste one.</p>'
-        : '<p class="muted">This copy is for Torn PDA. Leave the PDA API-key placeholder in the script so the app can inject your Limited key. If it didn\u2019t, paste one below. Needed: bars, cooldowns, battlestats, gym, inventory, perks, timestamp.</p>' +
+        : '<p class="muted">' + (isPda()
+            ? "Leave the PDA API-key placeholder in the script so the app can inject your Limited key. If it didn\u2019t, paste one below."
+            : "Paste a Limited API key below.") +
+          " Needed: bars, cooldowns, battlestats, gym, inventory, perks, timestamp.</p>" +
           '<input class="gc-in" id="gcKey" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Limited API key" value="' +
           esc(draftKey) +
           '">' +
           '<div class="actions"><button class="gc-btn secondary" data-act="pastekey">Paste from clipboard</button><button class="gc-btn" data-act="savekey">Save key</button></div>') +
       '<p class="muted" style="margin:8px 0 0">Beta lane. It reads the stable script\u2019s saved key but never writes to its settings. Run one at a time \u2014 both open means both polling, and the key is capped at 100 calls a minute.</p>' +
-      '<div class="row"><span>Host</span><b>Torn PDA</b></div>' +
+      '<div class="row"><span>Host</span><b>' + (isPda() ? "Torn PDA" : "Browser") + "</b></div>" +
       '<div class="row"><span>Source</span><b>' + keySource() + "</b></div>" +
       '<div class="row"><span>Status</span><b class="' + (live ? "ok" : "bad") + '">' + state.statusText + "</b></div>" +
-      '<p class="muted" style="margin:8px 0 0">Pings use Torn PDA notifications and open the gym when they fire.</p>' +
+      '<p class="muted" style="margin:8px 0 0">' + (isPda()
+        ? "Pings use Torn PDA notifications and open the gym when they fire."
+        : "Pings need Torn PDA \u2014 they go through its notification bridge, which a browser does not have, so none will arrive here however long you wait.") +
+      "</p>" +
       "</div>" +
       ledgerEditHtml() +
       rawPerksHtml() +

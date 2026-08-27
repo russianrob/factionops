@@ -95,8 +95,9 @@
                 xmlHttpRequest: window.GM_xmlhttpRequest };
 
   // Stand in for Torn PDA's notification bridge so scheduling can be observed.
+  // cfg.noPda leaves it absent, which is what a desktop browser looks like.
   window.__pdaCalls = [];
-  window.flutter_inappwebview = {
+  if (!cfg.noPda) window.flutter_inappwebview = {
     callHandler: function (name, payload) {
       window.__pdaCalls.push({ name: name, payload: payload });
       return Promise.resolve();
