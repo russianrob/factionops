@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.15
+// @version      0.9.16
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,24 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.16 — Reported: "I keep getting a notification that my energy is full,
+ *         train Strength. My gym plan/goal is Speed." Nothing to change at
+ *         the user's end — the notification really was naming the wrong stat.
+ *
+ *         applyGoalFocus() is what turns a goal into state.focus, and it lived
+ *         inside renderPanelInner(), BEHIND its early return on a closed panel.
+ *         Notifications are exactly the thing you want while the panel is shut
+ *         — tucked away, or on any non-gym page, where ensureUi() closes it —
+ *         so on that path the sync never ran and armNotifications() built its
+ *         text from the stored focus, which defaults to "str". Panel open, the
+ *         ping said Speed; panel tucked, the same account got Strength.
+ *
+ *         Two fixes, because there were two faults. The sync now runs inside
+ *         armNotifications(), where the text is actually built. And the derived
+ *         focus is persisted rather than only held in memory — without that,
+ *         storage kept saying "str" forever and every cold read started wrong
+ *         again. Both are pinned by mutation tests, and by an invariant test
+ *         that the ping may never name a stat the plan is not on.
 * 0.9.15 — War stack contradicted itself twice, and both cost real energy.
  *
  *         It said "Do not take a Xanax". That is backwards: a stack is built BY
@@ -2731,7 +2749,14 @@
     // The leg being trained right now, which under rotation is not the same as
     // the stat whose goal finishes first.
     var k = plan.now ? plan.now.k : plan.next ? plan.next.k : "";
-    if (k && k !== state.focus) state.focus = k;
+    if (k && k !== state.focus) {
+      state.focus = k;
+      // Persisted, not just held in memory. Without this the stored focus keeps
+      // whatever was last picked by hand — "str" for anyone who never picked —
+      // and every cold start reads that back before any render has had the
+      // chance to derive the real one.
+      storeSet("focus", k);
+    }
   }
 
   function dailyEnergy() {
@@ -4840,6 +4865,12 @@
   }
 
   function armNotifications() {
+    // Notifications are the one thing that has to be right while the panel is
+    // SHUT — tucked away, or on any non-gym page, where ensureUi() closes it.
+    // applyGoalFocus() used to run only inside renderPanelInner(), behind its
+    // early return on a closed panel, so a tucked panel armed "train Strength"
+    // against a Speed goal. Sync here, where the text is actually built.
+    applyGoalFocus();
     if (state.warStack) {
       cancelPing(PING_XAN);
       cancelPing(PING_ENERGY);

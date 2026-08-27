@@ -22,12 +22,17 @@ const plan = (stats, goals, perDayGain) => new Function("var RESULT;" + `
   var state = { goalOrder: [], goalStep: 0, stats: ${JSON.stringify(stats)}, goals: ${JSON.stringify(goals)},
                 gymName: "T", happyMax: 5000, perks: {}, hist: [], ledger: [], focus: "str" };
   function dailyEnergy(){ return { total: 100 }; }
+  // applyGoalFocus persists the focus it derives, so the sandbox needs the
+  // writer. Recorded rather than discarded -- what gets stored is now part of
+  // the behaviour, since notifications read it back with the panel shut.
+  var STORED = {};
+  function storeSet(k, v){ STORED[k] = v; }
   function gainOne(){ return ${perDayGain} / 10; }   // 10 trains a day -> ${perDayGain}/day
   ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("calibration")}
   ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")} ${grab("applyGoalFocus")}
   var p = goalPlan();
   applyGoalFocus();
-  RESULT = { plan: p, focus: state.focus, has: hasGoals() };` + "; return RESULT;")();
+  RESULT = { plan: p, focus: state.focus, has: hasGoals(), stored: STORED.focus };` + "; return RESULT;")();
 
 let pass=0,fail=0;
 const t=(n,f)=>{try{f();pass++;console.log("ok   "+n);}catch(e){fail++;console.log("FAIL "+n+" :: "+e.message);}};
