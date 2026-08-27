@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.16
+// @version      0.9.17
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,28 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.17 — Settings gets a "Missed energy" card: the days inside the
+ *         calibration window that recorded missed energy, each with a Clear.
+ *         Asked for after 0.9.15, which stopped BOOKING war-stack waste but
+ *         could do nothing about the days already recorded — those keep
+ *         dragging every ETA down until they age out of the window.
+ *
+ *         Picked by hand, because the ledger stores {day, used, wasted} and has
+ *         never recorded WHY a bar sat full, so a war-stack day cannot be told
+ *         from a lazy one after the fact.
+ *
+ *         Reversible on purpose. This is real training history, so a cleared
+ *         day keeps its original figure and offers Put back; a second clear
+ *         will not overwrite that original with the zero it just wrote. Spend
+ *         is never touched — it really did leave the bar, and it is what the
+ *         model half of the calibration is measured from. The card shows what
+ *         the usage figure would become before anything is removed, and Clear
+ *         all reaches only the days listed on screen.
+ *
+ *         The click router resolves through a closest() whitelist, so the two
+ *         new attributes had to be added to it — without that the handlers are
+ *         unreachable dead code. Caught by the browser test; every unit test
+ *         over them stayed green.
 * 0.9.16 — Reported: "I keep getting a notification that my energy is full,
  *         train Strength. My gym plan/goal is Speed." Nothing to change at
  *         the user's end — the notification really was naming the wrong stat.
@@ -3252,6 +3274,96 @@
     return out;
   }
 
+  // --- editing missed energy out of the ledger --------------------------------
+  // The ledger records {day, used, wasted} and has never recorded WHY a bar sat
+  // full, so a war-stack day cannot be told from a lazy one after the fact.
+  // That makes this a manual pick, and a destructive edit to real training
+  // history -- so a cleared day keeps its original figure under `w0` and can be
+  // put back. Only `wasted` is ever touched: spend really did leave the bar,
+  // and it is what the model half of the calibration is measured from.
+  //
+  // Scoped to the calibration window, because a day older than that feeds no
+  // ETA and clearing it would be theatre.
+  function ledgerWasteDays() {
+    var today = dayKey(Date.now());
+    var first = today - CAL_WINDOW;
+    var out = [];
+    (state.ledger || []).forEach(function (e) {
+      if (!e || typeof e.d !== "number" || e.d < first || e.d > today) return;
+      var cleared = typeof e.w0 === "number";
+      var w = cleared ? e.w0 : (e.wasted || 0);
+      if (!(w > 0)) return;
+      out.push({ d: e.d, used: e.used || 0, wasted: w, cleared: cleared });
+    });
+    return out.sort(function (a, b) { return b.d - a.d; });
+  }
+
+  function clearLedgerDay(d) {
+    var hit = null;
+    (state.ledger || []).forEach(function (e) { if (e && e.d === d) hit = e; });
+    if (!hit) return false;
+    // Only on the first clear. A second one would read the already-zeroed
+    // figure and overwrite the original with it, turning a reversible edit
+    // into a permanent one.
+    if (typeof hit.w0 !== "number") hit.w0 = hit.wasted || 0;
+    hit.wasted = 0;
+    storeSet("ledger", state.ledger);
+    resetPlanCaches();
+    return true;
+  }
+
+  function restoreLedgerDay(d) {
+    var hit = null;
+    (state.ledger || []).forEach(function (e) { if (e && e.d === d) hit = e; });
+    if (!hit || typeof hit.w0 !== "number") return false;
+    hit.wasted = hit.w0;
+    delete hit.w0;
+    storeSet("ledger", state.ledger);
+    resetPlanCaches();
+    return true;
+  }
+
+  // The Settings card for the above. Shows what each day is contributing before
+  // anything is removed, and what the usage figure would become without them --
+  // clearing history blind is how you end up trusting a number you broke.
+  function ledgerEditHtml() {
+    var rows = ledgerWasteDays();
+    if (!rows.length) return "";
+    var live = 0, used = 0, all = 0;
+    rows.forEach(function (r) {
+      used += r.used;
+      all += r.wasted;
+      if (!r.cleared) live += r.wasted;
+    });
+    var cal = calibration();
+    var pctNow = cal.used + cal.wasted > 0
+      ? Math.round((cal.used / (cal.used + cal.wasted)) * 100) : null;
+    var after = cal.used + (cal.wasted - live) > 0
+      ? Math.round((cal.used / (cal.used + (cal.wasted - live))) * 100) : 100;
+
+    return '<div class="gc-card"><h3>Missed energy</h3>' +
+      '<p class="muted" style="margin:0 0 8px">These days feed the usage figure behind every ETA. ' +
+      'Clear a day you held energy on purpose \u2014 a war stack, say. Spend is never touched, ' +
+      'and anything cleared can be put back.</p>' +
+      (pctNow === null ? "" :
+        '<div class="row"><span>Bar actually used</span><b>' + pctNow + "%" +
+        (live > 0 && after !== pctNow ? ' \u2192 ' + after + "% if you clear the " +
+          fmt(live) + "e below" : "") + "</b></div>") +
+      rows.map(function (r) {
+        return '<div class="row"><span>' + fmtDay(r.d) + " \u00b7 spent " + fmt(r.used) + "e</span>" +
+          '<b class="' + (r.cleared ? "muted" : "bad") + '">' +
+          (r.cleared ? "cleared " : "") + fmt(missed(r.wasted)) + "e</b>" +
+          '<button class="gc-btn secondary" style="margin-left:8px;padding:2px 8px" data-' +
+          (r.cleared ? "restoreday" : "clearday") + '="' + r.d + '">' +
+          (r.cleared ? "Put back" : "Clear") + "</button></div>";
+      }).join("") +
+      (live > 0
+        ? '<div class="actions"><button class="gc-btn" data-act="clearallwaste">Clear all ' +
+          fmt(live) + "e shown</button></div>"
+        : "") +
+      "</div>";
+  }
+
   function ledgerBucket() {
     var d = dayKey(Date.now());
     var last = state.ledger[state.ledger.length - 1];
@@ -5459,6 +5571,7 @@
       '<div class="row"><span>Status</span><b class="' + (live ? "ok" : "bad") + '">' + state.statusText + "</b></div>" +
       '<p class="muted" style="margin:8px 0 0">Pings use Torn PDA notifications and open the gym when they fire.</p>' +
       "</div>" +
+      ledgerEditHtml() +
       rawPerksHtml() +
       '<p class="muted" style="margin:8px 12px 0">Goals, energy sources and playstyle moved to the Plan tab.</p>';
 
@@ -5874,7 +5987,9 @@
     if (!t) return;
     if (t.nodeType !== 1) t = t.parentElement;
     if (!t || typeof t.closest !== "function") return;
-    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-preset],[data-goalstep],[data-raise],#stackSw,#novSw");
+    // Every clickable attribute has to be listed here or the handler below it is
+    // dead code -- closest() returns null and this returns before reaching it.
+    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-preset],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],#stackSw,#novSw");
     if (!t) return;
     if (t.dataset.goalstep !== undefined) {
       var gs = Number(t.dataset.goalstep);
@@ -5975,6 +6090,23 @@
     if (t.dataset.act === "refresh") {
       showToast("Refreshing", "Pulling fresh numbers from Torn.", 1600);
       refresh("manual");
+    }
+    if (t.dataset.clearday) {
+      clearLedgerDay(Number(t.dataset.clearday));
+      renderPanel();
+      return;
+    }
+    if (t.dataset.restoreday) {
+      restoreLedgerDay(Number(t.dataset.restoreday));
+      renderPanel();
+      return;
+    }
+    if (t.dataset.act === "clearallwaste") {
+      // Only what is on screen, and only what is not already cleared -- so the
+      // button can never reach further back than the list the user just read.
+      ledgerWasteDays().forEach(function (r) { if (!r.cleared) clearLedgerDay(r.d); });
+      renderPanel();
+      return;
     }
     if (t.dataset.act === "savekey") {
       var inp = document.getElementById("gcKey");
