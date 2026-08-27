@@ -39,7 +39,7 @@ const session = steps => new Function("var RESULT;" + `
   }
   ${grabVar("STAT_KEY")}
   ${grab("inferTrainSkillFromDelta")} ${grab("energyRate")} ${grab("timeToFull")} ${grab("ledgerDelta")}
-  ${grab("dayLooksStacked")} ${grab("ledgerBucket")} ${grab("ledgerObserve")} ${grab("finaliseTrain")}
+  function onGymPage(){ return true; } ${grab("dayLooksStacked")} ${grab("ledgerBucket")} ${grab("ledgerObserve")} ${grab("finaliseTrain")}
   var ledgerDirty = 0, ledgerFlushAt = 0;
   ${JSON.stringify(steps)}.forEach(function (st) {
     clock += (st.ms || 1000);

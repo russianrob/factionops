@@ -23,7 +23,7 @@ function rt(startE) {
     var _now = Date.now; Date.now = function(){ return clock; };
     ${grab("energyRate")} ${grab("timeToFull")} ${grab("ledgerDelta")} ${grab("ledgerBucket")}
     var ledgerDirty = 0, ledgerFlushAt = 0;
-    ${grab("dayLooksStacked")} ${grab("ledgerObserve")}
+    function onGymPage(){ return true; } ${grab("dayLooksStacked")} ${grab("ledgerObserve")}
     RESULT = {
       tick: function (e, advanceMs) { clock += (advanceMs || 1000); state.energy = e; ledgerObserve(false); },
       writes: function () { return writes; },

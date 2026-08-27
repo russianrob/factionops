@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.19
+// @version      0.9.20
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,25 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.20 — This is a gym coach, so energy spent attacking is not "spent" — it
+ *         never reached the gym, which from here is the same kind of loss as a
+ *         bar sitting full. It now has its own line instead of being counted
+ *         as training.
+ *
+ *         The page the drop happened on says where the energy went: only
+ *         gym.php trains, and cdTimer already polls the bar once a second on
+ *         EVERY Torn page, so the attacks were always being watched — they
+ *         were just filed wrong. No logs and no extra API calls.
+ *
+ *         It was worse than a mislabel. finaliseTrain discards a small
+ *         observed drop with no stat gain as API skew, but the threshold is
+ *         `spent < 25` and a Torn attack costs exactly 25 and grants no stats
+ *         — so every attack sailed past and was written into the train log as
+ *         a session. A training session is only opened on the gym page now.
+ *
+ *         Attacking also counts against the usage figure, alongside cap waste,
+ *         because a gym ETA built as though that energy had reached the gym is
+ *         optimistic on precisely the days you warred hardest.
 * 0.9.19 — Steadfast now decides which stat a rotation leg goes to. It is the
  *         faction branch granting gym gains PER STAT — "+ 14% defense gym
  *         gains" against "+ 10% strength" — so the same energy is worth
@@ -2248,7 +2267,7 @@
 
   function calibration() {
     var out = { ok: false, days: 0, looked: 0, model: 1, usage: 1,
-                actual: 0, predicted: 0, used: 0, wasted: 0, uDays: 0, reason: "" };
+                actual: 0, predicted: 0, used: 0, wasted: 0, off: 0, uDays: 0, reason: "" };
     var today = dayKey(Date.now());
     var first = today - CAL_WINDOW, last = today - 1;
 
@@ -2293,18 +2312,22 @@
       out.uDays += 1;
       out.used += byDay[d].used || 0;
       out.wasted += byDay[d].wasted || 0;
+      out.off += byDay[d].off || 0;
     }
 
     if (out.days < CAL_MIN_DAYS) {
       out.reason = out.days + " of " + CAL_MIN_DAYS + " days measured";
       return out;
     }
-    if (!(out.predicted > 0) || !(out.used + out.wasted > 0)) {
+    if (!(out.predicted > 0) || !(out.used + out.wasted + out.off > 0)) {
       out.reason = "not enough recorded energy yet";
       return out;
     }
     out.model = calClamp(out.actual / out.predicted, CAL_MODEL_LO, CAL_MODEL_HI);
-    out.usage = calClamp(out.used / (out.used + out.wasted), CAL_USAGE_LO, CAL_USAGE_HI);
+    // Energy spent attacking counts against you here exactly like a full bar:
+    // it is energy that did not reach the gym, and a gym ETA built as though it
+    // had is optimistic on precisely the days you warred hardest.
+    out.usage = calClamp(out.used / (out.used + out.wasted + out.off), CAL_USAGE_LO, CAL_USAGE_HI);
     out.ok = true;
     return out;
   }
@@ -3521,7 +3544,10 @@
       // nothing. The ledger sees every drop, which is why "Spent today" was
       // right while the log was empty, so drive the log from here instead. It
       // catches training started any way at all, not just a click we recognise.
-      if (d.used >= 5 && !pendingTrain) {
+      // Only the gym page trains. A 25e attack drop used to sail past the
+      // `spent < 25` skew guard in finaliseTrain -- it is exactly 25 and gains
+      // no stats -- and got written into the train log as a session.
+      if (d.used >= 5 && !pendingTrain && onGymPage()) {
         pendingTrain = {
           skill: "", observed: true, at: Date.now(), preE: prev.e, gym: state.gymName,
           preStats: prev.stats || { str: state.stats.str, def: state.stats.def,
@@ -3532,7 +3558,16 @@
       }
       if (d.used > 0 || d.wasted > 0) {
         var b = ledgerBucket();
-        b.used += d.used;
+        // Energy only reaches the gym on gym.php. Anything that leaves the bar
+        // anywhere else -- 25e an attack, and the script polls every page once
+        // a second, so it sees them -- never had a chance of becoming a stat.
+        // For a GYM coach that is a loss, not a spend: counting it as spent
+        // inflated "Spent today" and the `used` behind calibration().usage,
+        // making every ETA optimistic on the days you warred hardest.
+        if (d.used > 0) {
+          if (onGymPage()) b.used += d.used;
+          else b.off = (b.off || 0) + d.used;
+        }
         b.wasted += d.wasted;
         ledgerDirty += 1;
         // Spending is rare and irreplaceable: a whole training session credits
@@ -3601,11 +3636,11 @@
 
   function ledgerWindow(days) {
     var cut = dayKey(Date.now()) - days + 1;
-    var used = 0, wasted = 0;
+    var used = 0, wasted = 0, off = 0;
     state.ledger.forEach(function (e) {
-      if (e.d >= cut) { used += e.used || 0; wasted += e.wasted || 0; }
+      if (e.d >= cut) { used += e.used || 0; wasted += e.wasted || 0; off += e.off || 0; }
     });
-    return { used: used, wasted: wasted };
+    return { used: used, wasted: wasted, off: off };
   }
 
   // How long a "wait for a full bar first" suggestion may ask you to wait.
@@ -4944,7 +4979,9 @@
   function wasteCard() {
     var streak = capStreak();
     var t = ledgerWindow(1);
-    var pct = t.used + t.wasted > 0 ? Math.round((t.used / (t.used + t.wasted)) * 100) : null;
+    var off = t.off || 0;
+    var pct = t.used + t.wasted + off > 0
+      ? Math.round((t.used / (t.used + t.wasted + off)) * 100) : null;
     // Two readings of the same full bar. Off stack it is regen you let slip. On
     // stack the coach itself said "Leave energy alone. Don't train", so billing
     // you for obeying is the same contradiction 0.9.12 fixed in the gym advice.
@@ -4960,8 +4997,11 @@
       '<div class="gc-card"><h3>Energy used vs missed</h3>' + head +
       '<div class="row"><span>Spent today</span><b>' + fmt(t.used) + "e</b></div>" +
       '<div class="row"><span>Missed today</span><b class="' + (t.wasted >= 25 ? "bad" : "muted") + '">' + fmt(missed(t.wasted)) + "e</b></div>" +
+      (off > 0
+        ? '<div class="row"><span>Spent attacking</span><b class="bad">' + fmt(Math.round(off)) + "e</b></div>"
+        : "") +
       (pct === null ? "" : '<div class="row"><span>Bar actually used</span><b class="' + (pct >= 90 ? "ok" : pct >= 70 ? "" : "bad") + '">' + pct + "%</b></div>") +
-      '<p class="muted" style="margin:8px 0 0">Missed energy is regen your bar dropped because it was already full. Counted from when the script last saw your bar, so time with Torn closed still counts.</p>' +
+      '<p class="muted" style="margin:8px 0 0">Missed energy is regen your bar dropped because it was already full. Counted from when the script last saw your bar, so time with Torn closed still counts. Energy spent attacking is listed apart \u2014 it left the bar, but it never reached the gym, so it counts against your bar-used figure rather than toward it.</p>' +
       "</div>"
     );
   }

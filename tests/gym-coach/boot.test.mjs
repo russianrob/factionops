@@ -24,7 +24,7 @@ function makeRuntime(stored, opts) {
     var STACK_PEAK_OVER = 300;
     ${grab("energyRate")} ${grab("timeToFull")} ${grab("ledgerDelta")} ${grab("ledgerBucket")}
     var ledgerDirty = 0;
-    ${grab("dayLooksStacked")} ${grab("ledgerObserve")} ${grab("capStreak")}
+    function onGymPage(){ return true; } ${grab("dayLooksStacked")} ${grab("ledgerObserve")} ${grab("capStreak")}
     RESULT = { state: state, observe: ledgerObserve, streak: capStreak,
                setEnergy: function (e) { state.energy = e; state.energyKnown = true; } };`;
   return new Function("var RESULT;" + code + "; return RESULT;")();
