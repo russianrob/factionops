@@ -7,6 +7,7 @@ function grab(n){const i=src.indexOf("function "+n+"(");let d=0,j=src.indexOf("{
 // A runtime whose clock we control, so "one page visit" can be simulated.
 function rt(startE) {
   return new Function("var RESULT;" + `
+    var STACK_PEAK_OVER = 300;
     var writes = [], saved = {}, clock = 1000000;
     var pendingTrain = null;
     var GAIN_WAIT_MS = 50000;
@@ -22,7 +23,7 @@ function rt(startE) {
     var _now = Date.now; Date.now = function(){ return clock; };
     ${grab("energyRate")} ${grab("timeToFull")} ${grab("ledgerDelta")} ${grab("ledgerBucket")}
     var ledgerDirty = 0, ledgerFlushAt = 0;
-    ${grab("ledgerObserve")}
+    ${grab("dayLooksStacked")} ${grab("ledgerObserve")}
     RESULT = {
       tick: function (e, advanceMs) { clock += (advanceMs || 1000); state.energy = e; ledgerObserve(false); },
       writes: function () { return writes; },

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.17
+// @version      0.9.18
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,32 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.18 — Reported: "Spent today 26e, I didn't spend any energy training
+ *         today." Correct — nothing had been spent. The bar reports WHOLE
+ *         points while the absorbed-regen figure accrues smoothly, so between
+ *         two ticks nowE === prevE and `prevE + absorbed - nowE` came out a
+ *         fraction above zero and was booked as spend. Every poll, for as long
+ *         as the bar climbed, and the tick never cancelled it.
+ *
+ *         The tell was that the figure depended on how often the panel looked:
+ *         19e at 60s polls against 37e at 1s. A real spend does not care.
+ *         Invisible on a training day (26e beside 1,500e), glaring on a day
+ *         with none — and it inflated the `used` that calibration().usage is
+ *         built from, so every ETA was quietly optimistic.
+ *
+ *         Absorbed regen is now floored, for the same reason missed energy
+ *         already was: a third of a point has not arrived yet. Two old tests
+ *         asserted the fractional readings (123.33e, 50.33e); they encoded the
+ *         behaviour this bug came from, and now expect whole points.
+ *
+ *         Also: a stack is spotted from the bar itself. A day whose energy
+ *         peaked more than 300 above your own cap was holding more than one
+ *         Xanax could give it, which only happens deliberately — so cap time
+ *         stops counting for that day whether or not the war-stack switch was
+ *         ever flipped, and the Missed energy card marks those days and offers
+ *         to clear just them. The line sits above one Xanax on a full bar
+ *         (max + 250), which is the coach's own daily advice and must not read
+ *         as a stack.
 * 0.9.17 — Settings gets a "Missed energy" card: the days inside the
  *         calibration window that recorded missed energy, each with a Clear.
  *         Asked for after 0.9.15, which stopped BOOKING war-stack waste but
@@ -866,6 +892,13 @@
   var BOOSTER_CAP = 24 * H;
   // Ceiling a war stack is built up to; Xanax past it spills.
   var STACK_CAP = 1000;
+  // How far above your own cap a day has to peak before it reads as a stack
+  // rather than the ordinary Xanax loop. One Xanax on a full bar reaches
+  // max + 250 -- which is the coach's own daily advice -- and a few cans on
+  // top drift it a little further, so the line sits above both. Past it you
+  // were holding more than a single Xanax could give you, which only happens
+  // deliberately.
+  var STACK_PEAK_OVER = 300;
 
   var BOOSTER_CAP_PERK = 48 * H;
 
@@ -3268,7 +3301,15 @@
       // call it. Using out.wasted here would hand that regen back as spend the
       // moment war stack suppressed it, and a held-then-dumped bar would read
       // as more energy trained than ever left it.
-      var absorbed = Math.max(0, elapsed / secPerE - capped);
+      // FLOORED, because the bar reports whole points while this accrues
+      // smoothly. Between two ticks nowE === prevE, so an unfloored figure
+      // makes `prevE + absorbed - nowE` a small positive number and books it
+      // as spend -- every poll, for as long as the bar climbs. The tick never
+      // cancels it, so a bar doing nothing but regenerating reported 26e
+      // "spent today", and how much depended on the poll interval (19e at 60s
+      // against 37e at 1s), which is the tell that it was an artefact.
+      // Flooring costs nothing real: energy only ever moves in whole points.
+      var absorbed = Math.floor(Math.max(0, elapsed / secPerE - capped));
       out.used = Math.max(0, prevE + absorbed - nowE);
     }
     return out;
@@ -3284,6 +3325,15 @@
   //
   // Scoped to the calibration window, because a day older than that feeds no
   // ETA and clearing it would be theatre.
+  // Reads a stack off the bar itself: no logs, no API, and nothing to remember
+  // to switch on. Returns false when the day has no recorded peak -- entries
+  // written before peaks were tracked are unknown, not innocent.
+  function dayLooksStacked(e) {
+    if (!e || typeof e.peak !== "number") return false;
+    var max = state.energyMax || 150;
+    return e.peak > max + STACK_PEAK_OVER;
+  }
+
   function ledgerWasteDays() {
     var today = dayKey(Date.now());
     var first = today - CAL_WINDOW;
@@ -3293,7 +3343,8 @@
       var cleared = typeof e.w0 === "number";
       var w = cleared ? e.w0 : (e.wasted || 0);
       if (!(w > 0)) return;
-      out.push({ d: e.d, used: e.used || 0, wasted: w, cleared: cleared });
+      out.push({ d: e.d, used: e.used || 0, wasted: w, cleared: cleared,
+                 stacked: dayLooksStacked(e), known: typeof e.peak === "number" });
     });
     return out.sort(function (a, b) { return b.d - a.d; });
   }
@@ -3329,11 +3380,12 @@
   function ledgerEditHtml() {
     var rows = ledgerWasteDays();
     if (!rows.length) return "";
-    var live = 0, used = 0, all = 0;
+    var live = 0, used = 0, all = 0, stackedE = 0, stackedN = 0;
     rows.forEach(function (r) {
       used += r.used;
       all += r.wasted;
       if (!r.cleared) live += r.wasted;
+      if (r.stacked && !r.cleared) { stackedE += r.wasted; stackedN += 1; }
     });
     var cal = calibration();
     var pctNow = cal.used + cal.wasted > 0
@@ -3343,22 +3395,29 @@
 
     return '<div class="gc-card"><h3>Missed energy</h3>' +
       '<p class="muted" style="margin:0 0 8px">These days feed the usage figure behind every ETA. ' +
-      'Clear a day you held energy on purpose \u2014 a war stack, say. Spend is never touched, ' +
+      'Clear a day you held energy on purpose. A day whose bar peaked above one ' +
+      'Xanax\u2019s reach is marked as a stack for you. Spend is never touched, ' +
       'and anything cleared can be put back.</p>' +
       (pctNow === null ? "" :
         '<div class="row"><span>Bar actually used</span><b>' + pctNow + "%" +
         (live > 0 && after !== pctNow ? ' \u2192 ' + after + "% if you clear the " +
           fmt(live) + "e below" : "") + "</b></div>") +
       rows.map(function (r) {
-        return '<div class="row"><span>' + fmtDay(r.d) + " \u00b7 spent " + fmt(r.used) + "e</span>" +
+        return '<div class="row"><span>' + fmtDay(r.d) +
+          (r.stacked ? " \u00b7 held a stack" : " \u00b7 spent " + fmt(r.used) + "e") + "</span>" +
           '<b class="' + (r.cleared ? "muted" : "bad") + '">' +
           (r.cleared ? "cleared " : "") + fmt(missed(r.wasted)) + "e</b>" +
           '<button class="gc-btn secondary" style="margin-left:8px;padding:2px 8px" data-' +
           (r.cleared ? "restoreday" : "clearday") + '="' + r.d + '">' +
           (r.cleared ? "Put back" : "Clear") + "</button></div>";
       }).join("") +
+      (stackedE > 0
+        ? '<div class="actions"><button class="gc-btn" data-act="clearstacked">Clear the ' +
+          stackedN + " day" + (stackedN === 1 ? "" : "s") + " you held a stack (" +
+          fmt(stackedE) + "e)</button></div>"
+        : "") +
       (live > 0
-        ? '<div class="actions"><button class="gc-btn" data-act="clearallwaste">Clear all ' +
+        ? '<div class="actions"><button class="gc-btn secondary" data-act="clearallwaste">Clear all ' +
           fmt(live) + "e shown</button></div>"
         : "") +
       "</div>";
@@ -3386,9 +3445,21 @@
     var max = state.energyMax || 150;
     var now = Date.now();
     var prev = state.lastSeen;
+    // Record the day's high-water mark BEFORE the delta is worked out, so a bar
+    // sitting above its cap right now marks the day immediately rather than on
+    // the next poll. A bar can only get above its cap by banking, which is what
+    // makes this a measurement rather than a guess.
+    var todayBucket = ledgerBucket();
+    if (state.energy > (todayBucket.peak || 0)) {
+      todayBucket.peak = state.energy;
+      ledgerDirty += 1;
+    }
+    // Either the switch, or the bar saying so on its own. The switch only ever
+    // helped people who remembered to flip it.
+    var holding = !!state.warStack || dayLooksStacked(todayBucket);
     if (prev && typeof prev.e === "number" && prev.t && now >= prev.t) {
       var d = ledgerDelta(prev.e, prev.t, state.energy, now, max, energyRate(),
-                          prev.fullAt, !!state.warStack);
+                          prev.fullAt, holding);
       // The train log used to be driven by comparing energy between API polls —
       // but the page updates state.energy live every second, so the drop was
       // already absorbed before a payload arrived and a whole session logged
@@ -6098,6 +6169,11 @@
     }
     if (t.dataset.restoreday) {
       restoreLedgerDay(Number(t.dataset.restoreday));
+      renderPanel();
+      return;
+    }
+    if (t.dataset.act === "clearstacked") {
+      ledgerWasteDays().forEach(function (r) { if (r.stacked && !r.cleared) clearLedgerDay(r.d); });
       renderPanel();
       return;
     }

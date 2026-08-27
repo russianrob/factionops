@@ -28,10 +28,13 @@ t("only the time AFTER the bar filled counts as waste", () => {
   assert.strictEqual(Math.round(d.wasted), 20, "got " + d.wasted);
 });
 t("training is counted as spent, not wasted", () => {
-  // 150 -> 30 over ten minutes. The bar is 120 lower, but 3.33 points of regen
-  // arrived during those ten minutes, so 123.33 actually left it.
+  // 150 -> 30 over ten minutes. The bar is 120 lower, and 3 whole points of
+  // regen landed in those ten minutes (the fourth had not), so 123 left it.
+  // Floored for the same reason missed energy is: a third of a point has not
+  // arrived. Counting the fraction is what booked 26e of spend against a bar
+  // that only regenerated.
   const d = ledgerDelta(150, 0, 30, 10 * 60e3, 150, R);
-  assert.ok(Math.abs(d.used - 123.33) < 0.01, "got " + d.used);
+  assert.strictEqual(d.used, 123, "got " + d.used);
   assert.strictEqual(d.wasted, 0, "bar was emptied, so nothing overflowed");
 });
 t("a session is not shrunk by the energy that refilled behind it", () => {
@@ -115,7 +118,9 @@ t("training that empties the bar right at the end wastes nothing new", () => {
 t("a short gap with a spend and no cap time books no waste", () => {
   const d = ledgerDelta(100, 0, 50, 60e3, 150, R);
   assert.strictEqual(d.wasted, 0, "got " + d.wasted);
-  assert.ok(Math.abs(d.used - 50.33) < 0.01, "60s of regen counts too: " + d.used);
+  // 60s at 180s/point is a third of a point, which has not landed yet, so the
+  // spend is the raw drop.
+  assert.strictEqual(d.used, 50, "got " + d.used);
 });
 t("an eight-hour sleep at full bar is caught, not missed", () => {
   const d = ledgerDelta(150, 0, 150, 8 * HOUR, 150, R);
@@ -186,6 +191,56 @@ t("missed never goes negative", () => {
   assert.strictEqual(missed(-5), 0);
   assert.strictEqual(missed(undefined), 0);
 });
+// ---- a bar that only regenerates has spent nothing -------------------------
+// Reported: "Spent today 26e -- I didn't spend any energy training today."
+// The bar reports WHOLE points while absorbed accrues smoothly, so between
+// ticks nowE === prevE and `prevE + absorbed - nowE` books the fraction as
+// spend. The tick never cancels it. Invisible on a training day (26e beside
+// 1,500e), glaring on a day with no training -- and it inflates the `used`
+// that calibration().usage is built from, making every ETA optimistic.
+
+t("polling a rising bar does not invent spend", () => {
+  const secPerE = 120, max = 150, startE = 12;
+  let prevE = startE, prevT = 0, used = 0;
+  for (let sec = 5; sec <= 75 * 60; sec += 5) {
+    const nowE = Math.min(max, Math.floor(startE + sec / secPerE));  // whole points
+    const d = ledgerDelta(prevE, prevT * 1000, nowE, sec * 1000, max, secPerE);
+    used += d.used;
+    prevE = nowE; prevT = sec;
+  }
+  assert.ok(used < 1, "booked " + used.toFixed(1) + "e of spend against pure regen");
+});
+
+t("the poll interval does not change what a quiet bar reports", () => {
+  // 19e at 60s polls against 37e at 1s was the tell: a real figure would not
+  // depend on how often the panel happened to look.
+  const run = pollSec => {
+    const secPerE = 120, max = 150, startE = 12;
+    let prevE = startE, prevT = 0, used = 0;
+    for (let sec = pollSec; sec <= 75 * 60; sec += pollSec) {
+      const nowE = Math.min(max, Math.floor(startE + sec / secPerE));
+      used += ledgerDelta(prevE, prevT * 1000, nowE, sec * 1000, max, secPerE).used;
+      prevE = nowE; prevT = sec;
+    }
+    return used;
+  };
+  assert.ok(Math.abs(run(1) - run(60)) < 1,
+    "1s polls read " + run(1).toFixed(1) + "e, 60s polls " + run(60).toFixed(1) + "e");
+});
+
+t("a real spend is still counted in full", () => {
+  // 150e trained away, seen ten minutes later with five points regenerated.
+  const d = ledgerDelta(150, 0, 5, 10 * 60e3, 150, 120);
+  assert.strictEqual(Math.round(d.used), 150, "got " + d.used);
+});
+
+t("regen that landed behind a spend is still recovered", () => {
+  // The case the balance maths exists for: train the bar away, come back an
+  // hour later. The raw drop alone would lose the hour of regen.
+  const d = ledgerDelta(150, 0, 30, 60 * 60e3, 150, 120);
+  assert.ok(d.used > 140, "lost the regen behind the spend: " + d.used);
+});
+
 // ---- war stack -------------------------------------------------------------
 // While war stack is on the coach itself says "Leave energy alone. Don't
 // train." Booking every second of obeying as waste drags calibration().usage

@@ -15,9 +15,9 @@ const LEDGER = [
   // Outside the 14-day calibration window: never listed, and Clear all must not
   // reach it. Without this row a clear-all that ignores the window looks fine.
   { d: today - 40, used: 900, wasted: 700 },
-  { d: today - 4, used: 1400, wasted: 40 },
-  { d: today - 3, used: 1200, wasted: 980 },
-  { d: today - 2, used: 1180, wasted: 1120 },
+  { d: today - 4, used: 1400, wasted: 40, peak: 400 },    // one Xanax: routine
+  { d: today - 3, used: 1200, wasted: 980, peak: 650 },   // two banked: a stack
+  { d: today - 2, used: 1180, wasted: 1120, peak: 900 },  // deep stack
 ];
 
 async function open_() {
@@ -122,6 +122,27 @@ await t("Clear all only touches the days on screen", async () => {
   assert.strictEqual(r.restores, 3, "each cleared day should be restorable");
   const old = r.ledger.find(e => e.d === today - 40);
   assert.strictEqual(old.wasted, 700, "Clear all reached a day the list never showed");
+  await ctx.close();
+});
+
+await t("days the bar says were stacks are labelled as such", async () => {
+  const { page, ctx } = await open_();
+  const r = await readCard(page);
+  assert.match(r.text, /held a stack/, r.text);
+  // The 400-peak day is the ordinary Xanax loop and must read normally.
+  assert.match(r.text, /spent 1,400e/, "the routine day lost its spend label: " + r.text);
+  await ctx.close();
+});
+
+await t("the targeted button clears only the stack days", async () => {
+  const { page, ctx } = await open_();
+  await page.evaluate(() => document.querySelector('[data-act="clearstacked"]').click());
+  await page.waitForTimeout(400);
+  const r = await readCard(page);
+  const at = d => r.ledger.find(e => e.d === d);
+  assert.strictEqual(at(today - 3).wasted, 0, "stack day not cleared");
+  assert.strictEqual(at(today - 2).wasted, 0, "stack day not cleared");
+  assert.strictEqual(at(today - 4).wasted, 40, "cleared an ordinary Xanax day");
   await ctx.close();
 });
 

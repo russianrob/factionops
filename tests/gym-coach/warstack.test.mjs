@@ -10,7 +10,7 @@ const b = await chromium.launch({ args: ["--no-sandbox"] });
 
 // A bar that has been sitting full for six hours, with the ledger already
 // holding a day's worth of cap time behind it.
-async function card({ stack, energy = 150, drug = 4000, xan = 85, tab = null }) {
+async function card({ stack, energy = 150, drug = 4000, xan = 85, tab = null, seedToday = null }) {
   const ctx = await b.newContext({ viewport: { width: 393, height: 1400 } });
   const page = await ctx.newPage();
   await page.route("**/*", r => {
@@ -30,6 +30,8 @@ async function card({ stack, energy = 150, drug = 4000, xan = 85, tab = null }) 
       gcb_v1_focus: "str",
       gcb_v1_warStack: stack ? "1" : "0",
       gcb_v1_lastSeen: JSON.stringify({ e: 150, t: sixHours, capSince: sixHours, fullAt: sixHours }),
+      ...(seedToday ? { gcb_v1_ledger: JSON.stringify([
+        Object.assign({ d: Math.floor(Date.now() / 86400000), used: 0, wasted: 0 }, seedToday)]) } : {}),
     },
   };
   await page.goto("https://www.torn.com/gym.php?cfg=" + encodeURIComponent(JSON.stringify(cfg)),
@@ -45,8 +47,10 @@ async function card({ stack, energy = 150, drug = 4000, xan = 85, tab = null }) 
       .find(x => x.querySelector("h3") && /used vs missed|full bar|energy/i.test(x.querySelector("h3").textContent));
     const all = (p.innerText || "").replace(/\n+/g, " | ");
     const m = all.match(/Missed today \| ([\d,]+)e/);
+    const lg = window.GM_getValue("gcb_v1_ledger", null);
     return { card: c ? c.innerText.replace(/\n+/g, " | ") : "", all,
-             missedToday: m ? Number(m[1].replace(/,/g, "")) : null };
+             missedToday: m ? Number(m[1].replace(/,/g, "")) : null,
+             ledger: typeof lg === "string" ? JSON.parse(lg) : lg };
   });
   await ctx.close();
   return out;
@@ -148,6 +152,36 @@ await t("the Stock tab reads USE while stacking, not BUY", async () => {
   // "Xanax x85 | <effects> | USE" -- anchored on the row, not on the word,
   // because the verdict above it now mentions Xanax too.
   assert.match(r.all, /Xanax \u00d7\d+ \| [^|]*\| USE/, r.all.slice(0, 1200));
+});
+
+// ---- spotting the stack without the switch ---------------------------------
+// The switch only helps people who remember to flip it. A bar can only go above
+// its cap by banking, so the bar itself says what happened.
+
+await t("a bar peaking above one Xanax's reach is recorded", async () => {
+  // 650 on a 150 cap is two Xanax held at once.
+  const r = await card({ stack: false, energy: 650 });
+  const today = Math.floor(Date.now() / 86400000);
+  const e = (r.ledger || []).find(x => x.d === today);
+  assert.ok(e, "no bucket for today: " + JSON.stringify(r.ledger));
+  assert.ok(e.peak >= 650, "peak was not recorded: " + JSON.stringify(e));
+});
+
+await t("once the day is known to be a stack, cap time stops counting", async () => {
+  // The payoff: the bar is back AT the cap now, which is when waste accrues --
+  // but the day already peaked at 650, so it was a hold, not neglect. Switch
+  // is OFF throughout.
+  const r = await card({ stack: false, energy: 150, seedToday: { peak: 650 } });
+  assert.strictEqual(r.missedToday, 0,
+    "billed a day the bar itself says was a stack: " + r.missedToday);
+});
+
+await t("an ordinary Xanax day is still billed for sitting at the cap", async () => {
+  // 400 is one Xanax on a full bar -- the coach's own advice. Treating that as
+  // a stack would silently stop measuring waste for nearly everyone.
+  const r = await card({ stack: false, energy: 150, seedToday: { peak: 400 } });
+  assert.ok(r.missedToday > 100,
+    "stopped counting waste on an ordinary training day: " + r.missedToday);
 });
 
 console.log("\n" + pass + " passed, " + fail + " failed");

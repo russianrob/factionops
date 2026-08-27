@@ -22,6 +22,7 @@ const TODAY = 20000;   // dayKey is floor(ms/86400000); any stable integer works
 function run(ledger, body) {
   return new Function("var RESULT;" + `
     var CAL_WINDOW = 14;
+    var STACK_PEAK_OVER = 300;
     var STORED = {};
     function storeSet(k, v) { STORED[k] = v; }
     function dayKey() { return ${TODAY}; }
@@ -29,7 +30,8 @@ function run(ledger, body) {
     // them leaves every ETA showing the figures it just changed.
     var RESETS = 0;
     function resetPlanCaches() { RESETS += 1; }
-    var state = { ledger: ${JSON.stringify(ledger)} };
+    var state = { ledger: ${JSON.stringify(ledger)}, energyMax: 150 };
+    ${grab("dayLooksStacked")}
     ${grab("ledgerWasteDays")}
     ${grab("clearLedgerDay")}
     ${grab("restoreLedgerDay")}
@@ -127,6 +129,60 @@ t("the newest day is listed first", () => {
   const r = run([day(TODAY - 9, 1200, 980), day(TODAY - 2, 1200, 640), day(TODAY - 5, 1200, 310)],
     "RESULT = { rows: ledgerWasteDays() };");
   assert.deepStrictEqual(r.rows.map(x => x.d), [TODAY - 2, TODAY - 5, TODAY - 9]);
+});
+
+// ---- spotting a stack from the bar itself ----------------------------------
+// A bar can only go above its cap by banking, but that alone proves nothing:
+// one Xanax on a full bar reaches max + 250, which is the coach's own daily
+// advice. Holding TWO at once is what a stack looks like, so the line sits
+// above what a single Xanax can reach.
+
+t("a day that never went above the cap is not a stack", () => {
+  const r = run([day(TODAY - 3, 1200, 980, { peak: 150 })], "RESULT = { rows: ledgerWasteDays() };");
+  assert.strictEqual(r.rows[0].stacked, false);
+});
+
+t("one Xanax on a full bar is the daily routine, not a stack", () => {
+  // 150 cap + 250 = 400. Flagging this would mark almost every training day.
+  const r = run([day(TODAY - 3, 1200, 980, { peak: 400 })], "RESULT = { rows: ledgerWasteDays() };");
+  assert.strictEqual(r.rows[0].stacked, false, "flagged an ordinary Xanax day");
+});
+
+t("topping a Xanax day up with cans still is not a stack", () => {
+  // Cans are +6 each, so a full bar plus a Xanax plus a few cans drifts over
+  // 400 without anything being held.
+  const r = run([day(TODAY - 3, 1200, 980, { peak: 440 })], "RESULT = { rows: ledgerWasteDays() };");
+  assert.strictEqual(r.rows[0].stacked, false, "cans alone tripped the stack flag");
+});
+
+t("two Xanax banked at once is a stack", () => {
+  const r = run([day(TODAY - 3, 1200, 980, { peak: 650 })], "RESULT = { rows: ledgerWasteDays() };");
+  assert.strictEqual(r.rows[0].stacked, true, "missed an obvious stack");
+});
+
+t("a bar near the 1,000e ceiling is unmistakably a stack", () => {
+  const r = run([day(TODAY - 3, 1200, 980, { peak: 980 })], "RESULT = { rows: ledgerWasteDays() };");
+  assert.strictEqual(r.rows[0].stacked, true);
+});
+
+t("a day recorded before peaks were tracked is not guessed at", () => {
+  // Older entries have no peak. Claiming they were not stacks would be as
+  // wrong as claiming they were -- say nothing and let them be picked by hand.
+  const r = run([day(TODAY - 3, 1200, 980)], "RESULT = { rows: ledgerWasteDays() };");
+  assert.strictEqual(r.rows[0].stacked, false);
+  assert.strictEqual(r.rows[0].known, false, "should admit the peak is unknown");
+});
+
+t("the threshold follows YOUR cap, not a hardcoded 150", () => {
+  // A donator bar is bigger, so max + one Xanax is bigger too.
+  const r = new Function("var RESULT;" + `
+    var CAL_WINDOW = 14; var STACK_PEAK_OVER = 300;
+    var state = { energyMax: 400, ledger: [] };
+    ${grab("dayLooksStacked")}
+    RESULT = { at650: dayLooksStacked({ peak: 650 }), at760: dayLooksStacked({ peak: 760 }) };`
+    + "; return RESULT;")();
+  assert.strictEqual(r.at650, false, "650 is under a 400 cap plus one Xanax");
+  assert.strictEqual(r.at760, true);
 });
 
 console.log("\n" + pass + " passed, " + fail + " failed");

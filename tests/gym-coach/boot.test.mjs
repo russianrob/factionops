@@ -21,9 +21,10 @@ function makeRuntime(stored, opts) {
     function dayKey(ms){ return Math.floor(ms / DAY_MS); }
     function storeSet(k, v){ saved[k] = v; }
     var LEDGER_DAYS = 90;
+    var STACK_PEAK_OVER = 300;
     ${grab("energyRate")} ${grab("timeToFull")} ${grab("ledgerDelta")} ${grab("ledgerBucket")}
     var ledgerDirty = 0;
-    ${grab("ledgerObserve")} ${grab("capStreak")}
+    ${grab("dayLooksStacked")} ${grab("ledgerObserve")} ${grab("capStreak")}
     RESULT = { state: state, observe: ledgerObserve, streak: capStreak,
                setEnergy: function (e) { state.energy = e; state.energyKnown = true; } };`;
   return new Function("var RESULT;" + code + "; return RESULT;")();

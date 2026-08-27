@@ -8,6 +8,7 @@ function grabVar(n){const m=new RegExp("var "+n+" = (\\{[^}]*\\});").exec(src);r
 // A runtime that ticks the ledger the way the script does, then resolves the
 // pending entry — the whole path, not a reimplementation of it.
 const session = steps => new Function("var RESULT;" + `
+    var STACK_PEAK_OVER = 300;
   var logged = [], refreshes = 0, clock = 1000000;
   var DAY_MS = 86400000, LEDGER_DAYS = 90;
   var state = { energy: 0, energyKnown: true, energyMax: 150, energySecPerE: 180,
@@ -38,7 +39,7 @@ const session = steps => new Function("var RESULT;" + `
   }
   ${grabVar("STAT_KEY")}
   ${grab("inferTrainSkillFromDelta")} ${grab("energyRate")} ${grab("timeToFull")} ${grab("ledgerDelta")}
-  ${grab("ledgerBucket")} ${grab("ledgerObserve")} ${grab("finaliseTrain")}
+  ${grab("dayLooksStacked")} ${grab("ledgerBucket")} ${grab("ledgerObserve")} ${grab("finaliseTrain")}
   var ledgerDirty = 0, ledgerFlushAt = 0;
   ${JSON.stringify(steps)}.forEach(function (st) {
     clock += (st.ms || 1000);

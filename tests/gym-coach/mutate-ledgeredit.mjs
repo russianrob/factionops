@@ -38,6 +38,29 @@ const mutants = [
     "ledgerWasteDays().forEach(function (r) { if (!r.cleared) clearLedgerDay(r.d); });",
     "(state.ledger || []).forEach(function (r) { clearLedgerDay(r.d); });",
     ["ledgeredit.e2e.test.mjs"]],
+  ["the stack line drops to where one Xanax reaches",
+    "return e.peak > max + STACK_PEAK_OVER;", "return e.peak > max + 250;",
+    ["ledgeredit.test.mjs"]],
+  // NOT `if (!e) return false;` -- that is an equivalent mutant: undefined > n
+  // is false in JS anyway, so it changes no behaviour and nothing can kill it.
+  ["a day with no recorded peak is assumed to BE a stack",
+    "if (!e || typeof e.peak !== \"number\") return false;",
+    "if (!e) return false;\n    if (typeof e.peak !== \"number\") return true;",
+    ["ledgeredit.test.mjs"]],
+  ["the threshold ignores your own cap",
+    "var max = state.energyMax || 150;", "var max = 150;",
+    ["ledgeredit.test.mjs"]],
+  ["the peak is never recorded",
+    "      todayBucket.peak = state.energy;", "",
+    ["warstack.test.mjs"]],
+  ["the bar's own verdict is ignored, switch only",
+    "var holding = !!state.warStack || dayLooksStacked(todayBucket);",
+    "var holding = !!state.warStack;",
+    ["warstack.test.mjs"]],
+  ["the targeted button clears every day, not just the stacks",
+    "ledgerWasteDays().forEach(function (r) { if (r.stacked && !r.cleared) clearLedgerDay(r.d); });",
+    "ledgerWasteDays().forEach(function (r) { if (!r.cleared) clearLedgerDay(r.d); });",
+    ["ledgeredit.e2e.test.mjs"]],
 ];
 
 let killed = 0; const survived = [];
