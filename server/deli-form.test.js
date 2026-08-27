@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   matchDeliOffers, isFlavoredHam, findDeliPages, countFilled, countMatched, promoteDecision, fillSheetXml, dateRangeLabel,
+  visionCacheUsable,
 } from "./deli-form.js";
 
 // Fixture: this week's deli offers as the VISION step should return them —
@@ -401,4 +402,42 @@ test("a mirrored mozzarella does not count as a circular match", () => {
 test("no provolone at all leaves mozzarella blank", () => {
   const fills = matchDeliOffers([bb("Black Bear Swiss", 6.99)]);
   assert.equal(rowOf(fills, "Mozzarella").price, null);
+});
+
+// ── vision replay cache ─────────────────────────────────────────────────────
+// Re-reading a page is not free of consequence: the model is non-deterministic,
+// so a second read of the SAME page can return a different price and quietly
+// regress a form that was already right. That happened — a rebuild to pick up a
+// new rule re-read page 2 and moved chicken from $7.99 to $4.99, because each
+// row takes the cheapest match and the second read saw a $4.99 chicken.
+const cache = (over = {}) => ({ pages: [2, 3], pageFailures: 0, offers: [{ product: "x" }], ...over });
+
+test("a clean cache for the same pages is replayed", () => {
+  assert.equal(visionCacheUsable(cache(), [2, 3]), true);
+});
+
+test("a cache for different pages is not replayed", () => {
+  // The circular changed shape; last week's read says nothing about this one.
+  assert.equal(visionCacheUsable(cache(), [2, 4]), false);
+  assert.equal(visionCacheUsable(cache(), [2]), false);
+  assert.equal(visionCacheUsable(cache({ pages: [2] }), [2, 3]), false);
+});
+
+test("a partial read is never frozen in", () => {
+  // A page that failed should get a fresh chance next run rather than have the
+  // gap inherited forever.
+  assert.equal(visionCacheUsable(cache({ pageFailures: 1 }), [2, 3]), false);
+});
+
+test("a missing or malformed cache falls back to reading", () => {
+  assert.equal(visionCacheUsable(null, [2, 3]), false);
+  assert.equal(visionCacheUsable({}, [2, 3]), false);
+  assert.equal(visionCacheUsable(cache({ offers: "nope" }), [2, 3]), false);
+  assert.equal(visionCacheUsable(cache({ pages: null }), [2, 3]), false);
+});
+
+test("an empty read is still a real answer and is replayed", () => {
+  // Zero offers on a page is a legitimate outcome the prompt allows for; it
+  // must not be mistaken for a failure and re-rolled.
+  assert.equal(visionCacheUsable(cache({ offers: [] }), [2, 3]), true);
 });

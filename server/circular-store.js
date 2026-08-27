@@ -23,6 +23,7 @@ import {
   claudeExtractImage, extractJsonArray, jobIdForBytes } from "./circular-pipeline.js";
 import {
   findDeliPages, buildDeliVisionPrompt, matchDeliOffers, countFilled, countMatched, promoteDecision, fillSheetXml, dateRangeLabel,
+  visionCacheUsable,
 } from "./deli-form.js";
 
 const execFileP = promisify(execFile);
@@ -107,20 +108,36 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
   const pages = findDeliPages(pageTexts);
   if (!pages.length) return { state: "no-deli-pages" };
 
+  // Replay a previous read of these same pages rather than asking again.
+  //
+  // The model is non-deterministic: re-reading page 2 to pick up a new matching
+  // rule once moved chicken from $7.99 to $4.99, because each row takes the
+  // cheapest match and the second read saw a $4.99 chicken the first had not.
+  // A rebuild should reproduce what was published, so a rule change can never
+  // disturb the prices. Pass forceVision to deliberately re-read.
+  const cachePath = join(dir, "deli-vision.json");
+  let cached = null;
+  if (!opts.forceVision) {
+    try { cached = JSON.parse(readFileSync(cachePath, "utf8")); } catch { /* no cache */ }
+  }
+  const replay = visionCacheUsable(cached, pages);
+
   // The main extraction just fired ~30 Haiku calls (concurrency 4); that burst
   // saturates the token's short-window rate limit, so the vision calls 429 if
   // they follow immediately. Wait for the window to clear first. Weekly async
-  // job — the minute costs nothing. Tests pass cooldownMs:0.
+  // job — the minute costs nothing. Tests pass cooldownMs:0. A replay makes no
+  // calls at all, so it waits for nothing.
   const cooldownMs = opts.cooldownMs != null ? opts.cooldownMs : 60000;
-  if (cooldownMs) await new Promise(r => setTimeout(r, cooldownMs));
+  if (cooldownMs && !replay) await new Promise(r => setTimeout(r, cooldownMs));
 
   // One vision call PER PAGE, a single image each. A two-image request trips a
   // per-request limit (single images succeed even at 96% of the 5h budget; two
   // 429 at 4%), so never batch them. Space the calls well apart — this token's
   // window is tight enough that 4s was not enough.
-  const offersAll = [];
+  let offersAll = [];
   let pageFailures = 0;
-  for (let i = 0; i < pages.length; i++) {
+  if (replay) { offersAll = cached.offers; }
+  for (let i = 0; !replay && i < pages.length; i++) {
     const p = pages[i];
     const srcBase = join(dir, `deli-src-${p}`);
     await execFileP("pdftoppm", ["-f", String(p), "-l", String(p), "-r", "150", "-singlefile", "-png", join(dir, "circular.pdf"), srcBase]);
@@ -137,6 +154,16 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
       for (const o of extractJsonArray(await vision([img], buildDeliVisionPrompt()))) offersAll.push(o);
     } catch { pageFailures++; }
     if (i < pages.length - 1) await new Promise(r => setTimeout(r, 25000));
+  }
+
+  // Only a CLEAN read is cached. Freezing in a run where a page failed would
+  // inherit that gap on every rebuild; leaving it uncached means the next run
+  // gets a fresh attempt at it.
+  if (!replay && !pageFailures) {
+    try {
+      writeFileSync(cachePath, JSON.stringify(
+        { pages, pageFailures, readAt: new Date().toISOString(), offers: offersAll }, null, 1));
+    } catch { /* the form still publishes; only the replay is lost */ }
   }
 
   const fills = matchDeliOffers(offersAll);
@@ -176,10 +203,10 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
         matched, filled, dateRange, promotedAt: new Date().toISOString(), fills: summary,
       }, null, 1));
     } catch (e) { /* the form is published; a missing sidecar only costs the next comparison */ }
-    return { state: "ok", filled, matched, pages, dateRange, fills: summary };
+    return { state: "ok", filled, matched, pages, dateRange, fills: summary, replayed: replay };
   }
   console.warn(`[deli] not promoting: ${decision.reason}`);
-  return { state: "low-confidence", reason: decision.reason, filled, matched, pageFailures, pages, candidate: dated, fills: summary };
+  return { state: "low-confidence", reason: decision.reason, filled, matched, pageFailures, pages, candidate: dated, fills: summary, replayed: replay };
 }
 
 // The whole pipeline. Async; the route kicks this off and returns 202 without

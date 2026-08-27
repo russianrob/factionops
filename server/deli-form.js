@@ -204,6 +204,28 @@ export function findDeliPages(pageTexts) {
   return pages;
 }
 
+/// May a stored vision read be replayed instead of calling the model again?
+///
+/// Re-reading is not free of consequence. The model is non-deterministic, so a
+/// second read of the SAME page can return a different set of offers and
+/// quietly regress a form that was already correct: a rebuild to pick up a new
+/// rule re-read page 2 and moved chicken from $7.99 to $4.99, because each row
+/// takes the cheapest match and the second read saw a $4.99 chicken the first
+/// had not. Replaying makes a rebuild reproduce exactly what was published, so
+/// changing a matching rule can no longer disturb the prices.
+///
+/// Refuses a cache whose pages differ from the ones we are about to read, and
+/// one from a run where any page failed — a partial read must get a fresh
+/// chance rather than have its gap inherited forever. An EMPTY read is a
+/// legitimate answer (the prompt allows for pages with no deli items) and is
+/// replayed like any other.
+export function visionCacheUsable(cache, pages) {
+  if (!cache || !Array.isArray(cache.offers) || !Array.isArray(cache.pages)) return false;
+  if (cache.pageFailures) return false;
+  if (cache.pages.length !== pages.length) return false;
+  return cache.pages.every((p, i) => p === pages[i]);
+}
+
 // ── Vision prompt for the deli page ─────────────────────────────────────────
 
 export function buildDeliVisionPrompt() {
