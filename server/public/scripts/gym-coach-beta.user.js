@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.18
+// @version      0.9.19
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,19 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.19 — Steadfast now decides which stat a rotation leg goes to. It is the
+ *         faction branch granting gym gains PER STAT — "+ 14% defense gym
+ *         gains" against "+ 10% strength" — so the same energy is worth
+ *         measurably more in one stat than another. parsePerks already folded
+ *         it into state.perks and trainsTo already used it, so the ETAs were
+ *         always right; nothing let it choose the ORDER. Now the rotation
+ *         leads with the best bonus, ties fall back to shortest-first as
+ *         before, and raising a goal by hand still wins — that is a deliberate
+ *         act and a perk should not quietly undo it.
+ *
+ *         The Plan tab gains a "Gym gain bonus" card listing the per-stat
+ *         figures with the best marked, because a plan that silently reorders
+ *         itself reads as a bug rather than a decision.
 * 0.9.18 — Reported: "Spent today 26e, I didn't spend any energy training
  *         today." Correct — nothing had been spent. The bar reports WHOLE
  *         points while the absorbed-regen figure accrues smoothly, so between
@@ -2380,8 +2393,50 @@
       var r = trainsTo(k, state.stats[k] || 0, Number(g[k]) || 0, mf);
       solo[k] = r ? r.trains : Infinity;
     });
-    rest.sort(function (a, b) { return solo[a] - solo[b]; });
+    // Best gym-gain bonus first. Steadfast is the faction branch that grants
+    // these PER STAT -- "+ 14% defense gym gains" against "+ 10% strength" --
+    // so the same energy is worth measurably more in one stat than another.
+    // parsePerks already folded it into state.perks and trainsTo already used
+    // it, so the ETAs were right; what nothing did was let it choose WHICH
+    // stat a rotation leg goes to. Now it does.
+    //
+    // Ties fall back to shortest-first, which is what the plan did before
+    // ordering existed, so equal bonuses leave the old behaviour intact.
+    rest.sort(function (a, b) {
+      var pa = (state.perks && state.perks[a]) || 1;
+      var pb = (state.perks && state.perks[b]) || 1;
+      if (pb !== pa) return pb - pa;
+      return solo[a] - solo[b];
+    });
     return out.concat(rest);
+  }
+
+  // Why the rotation is in the order it is. Steadfast grants gym gains PER
+  // STAT, so leaving that invisible makes a reordered plan look broken.
+  function steadfastHtml() {
+    if (!hasGoals()) return "";
+    var g = state.goals || {};
+    var rows = HIST_KEYS.filter(function (k) {
+      return (Number(g[k]) || 0) > (state.stats[k] || 0);
+    }).map(function (k) {
+      return { k: k, mult: (state.perks && state.perks[k]) || 1 };
+    });
+    if (rows.length < 2) return "";
+    rows.sort(function (a, b) { return b.mult - a.mult; });
+    // Every stat on the same bonus means the perk decides nothing, and a card
+    // saying so is just noise.
+    if (rows[0].mult === rows[rows.length - 1].mult) return "";
+    var pinned = (state.goalOrder || []).length > 0;
+    return '<div class="gc-card"><h3>Gym gain bonus</h3>' +
+      rows.map(function (r, i) {
+        return '<div class="row"><span>' + STAT_LABEL[r.k] + "</span><b class=\"" +
+          (i === 0 ? "ok" : "muted") + '">' + perkPct(r.mult) +
+          (i === 0 ? " \u00b7 best" : "") + "</b></div>";
+      }).join("") +
+      '<p class="muted" style="margin:8px 0 0">Faction Steadfast grants these per stat, ' +
+      'so the same energy is worth more in ' + STAT_LABEL[rows[0].k] + '. Rotation legs ' +
+      'go to the best bonus first' +
+      (pinned ? ", except where you have raised a goal by hand." : ".") + "</p></div>";
   }
 
   function goalSegments(mf) {
@@ -5619,6 +5674,7 @@
     // you configure once. Only the second half stays behind an icon.
     var planHtml =
       goalsHtml() +
+      steadfastHtml() +
       srcHtml() +
       '<div class="gc-card"><h3>Playstyle</h3><div class="pick">' +
       pickBtn("mode", "xan", "Xan + gym", state.mode !== "jump") +

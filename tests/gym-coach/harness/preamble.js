@@ -25,7 +25,7 @@
       cooldowns: { drug: N(cfg.drug, 0), booster: N(cfg.booster, 0), medical: 0 },
       strength: STATS.str, defense: STATS.def, speed: STATS.spe, dexterity: STATS.dex,
       active_gym: N(cfg.gym, 23),
-      faction_perks: ["+ 10% energy drink effect"],
+      faction_perks: N(cfg.factionPerks, ["+ 10% energy drink effect"]),
       job_perks: N(cfg.jobPerks, []), book_perks: [], property_perks: ["+ 2% gym gains"],
       education_perks: ["+ 1% gym gains"], enhancer_perks: [], company_perks: [],
       merit_perks: [], stock_perks: N(cfg.stockPerks, ["+ 100 energy every 7 days"])

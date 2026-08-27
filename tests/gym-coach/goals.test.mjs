@@ -8,7 +8,7 @@ const parseGoal = new Function("return " + grab("parseGoal"))();
 const fmtDays = new Function("return " + grab("fmtDays"))();
 
 // A plan runtime with a simple linear gain so the arithmetic is checkable.
-const plan = (stats, goals, perDayGain) => new Function("var RESULT;" + `
+const plan = (stats, goals, perDayGain, perks, order) => new Function("var RESULT;" + `
   var HIST_KEYS = ["str","def","spe","dex"];
   var GYMS = [{ Gym: "T", Energy: 10, Str: 1, Def: 1, Spe: 1, Dex: 1 }];
   var DAY_MS = 86400000;
@@ -19,8 +19,10 @@ const plan = (stats, goals, perDayGain) => new Function("var RESULT;" + `
   var CAL_WINDOW = 14, CAL_MIN_DAYS = 7;
   var CAL_MODEL_LO = 0.5, CAL_MODEL_HI = 1.5;
   var CAL_USAGE_LO = 0.3, CAL_USAGE_HI = 1.5;
-  var state = { goalOrder: [], goalStep: 0, stats: ${JSON.stringify(stats)}, goals: ${JSON.stringify(goals)},
-                gymName: "T", happyMax: 5000, perks: {}, hist: [], ledger: [], focus: "str" };
+  var state = { goalOrder: ${JSON.stringify(order || [])}, goalStep: 0,
+                stats: ${JSON.stringify(stats)}, goals: ${JSON.stringify(goals)},
+                gymName: "T", happyMax: 5000, perks: ${JSON.stringify(perks || {})},
+                hist: [], ledger: [], focus: "str" };
   function dailyEnergy(){ return { total: 100 }; }
   // applyGoalFocus persists the focus it derives, so the sandbox needs the
   // writer. Recorded rather than discarded -- what gets stored is now part of
@@ -32,7 +34,8 @@ const plan = (stats, goals, perDayGain) => new Function("var RESULT;" + `
   ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")} ${grab("applyGoalFocus")}
   var p = goalPlan();
   applyGoalFocus();
-  RESULT = { plan: p, focus: state.focus, has: hasGoals(), stored: STORED.focus };` + "; return RESULT;")();
+  RESULT = { plan: p, focus: state.focus, has: hasGoals(), stored: STORED.focus,
+             order: orderedGoalKeys(1) };` + "; return RESULT;")();
 
 let pass=0,fail=0;
 const t=(n,f)=>{try{f();pass++;console.log("ok   "+n);}catch(e){fail++;console.log("FAIL "+n+" :: "+e.message);}};
@@ -104,5 +107,47 @@ t("durations read in human units", () => {
   assert.ok(/years/.test(fmtDays(900)));
   assert.strictEqual(fmtDays(Infinity), "not at this rate");
 });
+
+// ---- steadfast drives the rotation -----------------------------------------
+// Steadfast is the faction branch granting PER-STAT gym gains, arriving in
+// faction_perks as "+ 14% defense gym gains" -- different values per stat.
+// parsePerks already folds it into state.perks, so the ETAs always reflected
+// it; what it did not do was decide which stat a rotation leg goes to.
+
+const STATS = { str: 100e6, def: 100e6, spe: 100e6, dex: 100e6 };
+const GOALS = { str: 500e6, def: 500e6, spe: 500e6, dex: 500e6 };
+// Owner faction, Aug 2026: Def is the strongest branch.
+const PERKS = { str: 1.145, def: 1.174, spe: 1.154, dex: 1.133 };
+
+t("the rotation leads with the best gym-gain bonus", () => {
+  const r = plan(STATS, GOALS, 1e6, PERKS);
+  assert.deepStrictEqual(r.order, ["def", "spe", "str", "dex"]);
+});
+
+t("the first leg of the plan goes to that stat", () => {
+  // Ordering the key list is only useful if the segments follow it.
+  const r = plan(STATS, GOALS, 1e6, PERKS);
+  assert.strictEqual(r.plan.rows[0].k, "def", "first leg went to " + r.plan.rows[0].k);
+});
+
+t("with no bonuses at all it still falls back to shortest first", () => {
+  // Equal perks must not scramble the old behaviour into something arbitrary.
+  const r = plan({ str: 100e6, def: 400e6, spe: 100e6, dex: 100e6 }, GOALS, 1e6, {});
+  assert.strictEqual(r.order[0], "def", "def is nearest its goal and should lead");
+});
+
+t("a hand-set order still wins over the bonus", () => {
+  // Raising a goal by hand is a deliberate act; a perk must not silently
+  // undo it.
+  const r = plan(STATS, GOALS, 1e6, PERKS, ["dex"]);
+  assert.strictEqual(r.order[0], "dex", "the pinned stat was overridden by the perk");
+  assert.deepStrictEqual(r.order.slice(1), ["def", "spe", "str"]);
+});
+
+t("a stat with no goal is left out however good its bonus is", () => {
+  const r = plan(STATS, { str: 0, def: 0, spe: 500e6, dex: 0 }, 1e6, PERKS);
+  assert.deepStrictEqual(r.order, ["spe"]);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail?1:0);
+process.exit(fail ? 1 : 0);
