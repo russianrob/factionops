@@ -64,7 +64,18 @@ export const DELI_ROWS = [
   // Cheddar" wrongly filled American.
   { row: 11, item: "American",     match: t => /american/.test(t) && !/cheddar/.test(t) && !/\bham\b|turkey|chicken/.test(t) },
   { row: 12, item: "Provolone",    match: t => /provolone/.test(t) },
-  { row: 13, item: "Mozzarella",   match: t => /mozzarella/.test(t) },
+  // Black Bear prices its mozzarella the same as its provolone, so a week that
+  // names one and not the other still fills both. A MIRROR, not a standing
+  // default: the figure follows whatever the provolone went on sale at, so it
+  // cannot go stale the way a hardcoded price would. Only Black Bear — nothing
+  // says the other makers price their two cheeses alike.
+  { row: 13, item: "Mozzarella",   match: t => /mozzarella/.test(t),
+    mirror: (byRow) => {
+      const prov = byRow.get(12);
+      if (!prov || prov.price == null || prov.fromDefault) return null;
+      return /black bear/i.test(prov.brand || "")
+        ? { brand: prov.brand, price: prov.price } : null;
+    } },
   { row: 14, item: "Muenster",     match: t => /muenster|munster/.test(t) },
   { row: 15, item: "Swiss",        match: t => /swiss/.test(t) },
   // Cheddar cell includes the sharpness variety (e.g. "Bowl & Basket Ultra Sharp")
@@ -95,7 +106,7 @@ const excluded = (o) => EXCLUDE_BRANDS.some(b => (String(o.brand || "") + " " + 
 // blank.
 export function matchDeliOffers(offers) {
   const usable = offers.filter(o => isPerLb(o) && num(o) != null && !excluded(o));
-  return DELI_ROWS.map(({ row, item, match, label, def }) => {
+  const fills = DELI_ROWS.map(({ row, item, match, label, def }) => {
     const t = (o) => `${o.product || ""} ${o.description || ""}`.toLowerCase();
     const cands = usable.filter(o => match(t(o))).sort((a, b) => num(a) - num(b));
     // No deal this week: use the row's standing default (e.g. Pepperoni →
@@ -115,6 +126,23 @@ export function matchDeliOffers(offers) {
     const brand = label ? label(best) : ((best.brand || "").trim() || null);
     return { row, item, brand, price: num(best), product: best.product };
   });
+
+  // Second pass: rows that MIRROR another row. Runs after every direct match so
+  // a real deal always wins, and only fills a cell the first pass left blank.
+  //
+  // Marked fromDefault, so countMatched still counts only what the circular
+  // itself supplied — the provolone here, not the mozzarella inferred from it.
+  // Otherwise a half-broken vision read could clear the overwrite guard on
+  // inferred cells and clobber the form the user has approved.
+  const byRow = new Map(fills.map(f => [f.row, f]));
+  for (const { row, mirror } of DELI_ROWS) {
+    if (!mirror) continue;
+    const f = byRow.get(row);
+    if (!f || f.price != null) continue;
+    const got = mirror(byRow);
+    if (got) { f.brand = got.brand; f.price = got.price; f.fromDefault = true; }
+  }
+  return fills;
 }
 
 export function countFilled(fills) { return fills.filter(f => f.price != null).length; }

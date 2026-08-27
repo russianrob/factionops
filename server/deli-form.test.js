@@ -350,3 +350,55 @@ test("turkey bacon is still kept out of the Turkey row", () => {
   const offers = [{ product: "Turkey Bacon", brand: "Bowl & Basket", priceText: "$4.99 lb", pricePerLb: 4.99, unit: "lb", description: "Store Sliced" }];
   assert.equal(matchDeliOffers(offers).find(f => f.item === "Turkey").price, null);
 });
+
+// Black Bear prices its mozzarella the same as its provolone, so a week whose
+// deli page names the provolone but not the mozzarella still fills both. This
+// is a MIRROR, not a standing default: the price follows whatever the provolone
+// went on sale at that week rather than a fixed figure.
+const bb = (product, price) => ({
+  product, brand: "Black Bear", priceText: `$${price} lb`, pricePerLb: price,
+  unit: "lb", description: "Store Sliced",
+});
+const rowOf = (fills, item) => fills.find(f => f.item === item);
+
+test("mozzarella mirrors Black Bear provolone when the circular omits it", () => {
+  const fills = matchDeliOffers([bb("Black Bear Provolone", 5.99)]);
+  const moz = rowOf(fills, "Mozzarella");
+  assert.equal(moz.price, 5.99);
+  assert.equal(moz.brand, "Black Bear");
+});
+
+test("the mirrored price follows the provolone, not a fixed figure", () => {
+  const fills = matchDeliOffers([bb("Black Bear Provolone", 7.49)]);
+  assert.equal(rowOf(fills, "Mozzarella").price, 7.49);
+});
+
+test("a real mozzarella deal beats the mirror", () => {
+  // The circular is always the better source when it actually says something.
+  const fills = matchDeliOffers([bb("Black Bear Provolone", 5.99),
+                                 bb("Black Bear Fresh Mozzarella", 4.99)]);
+  assert.equal(rowOf(fills, "Mozzarella").price, 4.99);
+});
+
+test("another brand's provolone does not set the mozzarella", () => {
+  // The rule is specific to Black Bear pricing its two cheeses alike; nothing
+  // says Bowl & Basket does.
+  const fills = matchDeliOffers([
+    { product: "Bowl & Basket Provolone", brand: "Bowl & Basket", priceText: "$4.99 lb",
+      pricePerLb: 4.99, unit: "lb", description: "Store Sliced" }]);
+  assert.equal(rowOf(fills, "Mozzarella").price, null);
+});
+
+test("a mirrored mozzarella does not count as a circular match", () => {
+  // countMatched drives the overwrite guard. The circular supplied the
+  // PROVOLONE; the mozzarella is inferred, so it must not help a weak read
+  // clear the bar and clobber the approved form.
+  const fills = matchDeliOffers([bb("Black Bear Provolone", 5.99)]);
+  assert.equal(rowOf(fills, "Mozzarella").fromDefault, true);
+  assert.equal(countMatched(fills), 1);
+});
+
+test("no provolone at all leaves mozzarella blank", () => {
+  const fills = matchDeliOffers([bb("Black Bear Swiss", 6.99)]);
+  assert.equal(rowOf(fills, "Mozzarella").price, null);
+});
