@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.72
+// @version      3.2.73
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -301,14 +301,23 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.72';
+    const SCRIPT_VERSION = '3.2.73';
     const SERVER = 'https://tornwar.com';
 
-    // Torn PDA (Flutter InAppWebView) doesn't support Web Push. Instead
-    // of polling, we direct users to open tornwar.com/push/setup in
-    // Safari / Chrome and Add-to-Home-Screen it as a PWA — iOS and
-    // Android both deliver Web Push to home-screen PWAs.
-    const IS_PDA = typeof window.flutter_inappwebview !== 'undefined';
+    // Web Push needs a real browser or a home-screen PWA. Apple exposes the
+    // Push API to Safari and to Home Screen web apps only, never to an embedded
+    // web view, so neither Torn PDA nor warboard-iOS can receive one — the fix
+    // for both is the same: open tornwar.com in Safari / Chrome and
+    // Add-to-Home-Screen it.
+    //
+    // FEATURE-DETECTED rather than host-sniffed. This used to be
+    // `typeof window.flutter_inappwebview !== 'undefined'`, which warboard-iOS
+    // began matching in 0.11.297 when it started answering PDA's notification
+    // bridge — so the notice named the wrong app, and would have gone on
+    // naming the wrong one for every future host. Asking whether Push exists
+    // answers the actual question and cannot drift.
+    const NO_WEB_PUSH = !('PushManager' in window) || !('serviceWorker' in navigator);
+    const IS_PDA = NO_WEB_PUSH;
 
     // ═══════════════════════════════════════════════════════════════════════
     //  OC METRICS  — constants, state, and core logic (ported from Canixe's script)
@@ -3787,7 +3796,7 @@
         if (IS_PDA) {
             if (msgEl) {
                 msgEl.style.color = '#fbbf24';
-                msgEl.innerHTML = 'PDA can\'t receive Web Push. Open <b>tornwar.com/notifications</b> in Safari / Chrome → Share → Add to Home Screen → open from home screen to enable.';
+                msgEl.innerHTML = 'This app can\'t receive Web Push \u2014 iOS only allows it in Safari or a home-screen web app, not inside an embedded browser. Open <b>tornwar.com/notifications</b> in Safari / Chrome → Share → Add to Home Screen → open from home screen to enable.';
             }
             return;
         }

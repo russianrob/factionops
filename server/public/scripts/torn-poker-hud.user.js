@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Poker HUD - Player Profiler & Coach
 // @namespace    https://torn.com/
-// @version      5.18
+// @version      5.19
 // @description  Automatic poker player profiling and in-game coaching. Tracks VPIP, PFR, AFq, WTSD and more. Badges on every seat, exploit hints for opponents, improvement path for yourself.
 // @author       HopesG
 // @license      MIT
@@ -11601,8 +11601,19 @@
     const PDA_INJECTED_KEY = '###PDA-APIKEY###';
     const HAS_PDA_KEY = PDA_INJECTED_KEY !== _PDA_SENTINEL;
 
-    // Detect TornPDA: key was substituted OR Flutter webview bridge is present
-    function isPDA() { return HAS_PDA_KEY || typeof window.flutter_inappwebview !== 'undefined'; }
+    // Detect TornPDA: key was substituted OR the Flutter bridge is present.
+    //
+    // warboard-iOS is excluded explicitly. It began answering PDA's
+    // notification bridge in 0.11.297, so the bridge check started matching
+    // there -- and this gates whether the API-key field is shown at all, on the
+    // assumption that PDA has injected one. warboard does NOT substitute the
+    // placeholder, so the field vanished and the HUD was left with no key and
+    // no way to enter one. gmBridge is present in every warboard build, so this
+    // also covers anyone who has not updated the app.
+    const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
+    function isPDA() {
+        return HAS_PDA_KEY || (typeof window.flutter_inappwebview !== 'undefined' && !IS_WARBOARD);
+    }
 
     // HTTP wrapper: GM_xmlhttpRequest when available (bypasses CSP/CORS, handles TornPDA too).
     // String-response guard covers TornPDA's unreliable responseType:'json'.
