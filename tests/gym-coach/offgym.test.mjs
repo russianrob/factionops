@@ -23,6 +23,7 @@ function observe({ prevE, nowE, secs = 60, onGym, max = 150, rate = 120 }) {
   return new Function("var RESULT;" + `
     var DAY_MS = 86400000, LEDGER_DAYS = 90, CAL_WINDOW = 14, STACK_PEAK_OVER = 300;
     var GAIN_WAIT_MS = 30000;
+    ${/var ATTACK_ENERGY = \d+;/.exec(src)[0]}   // from the source, never a copy
     var saved = {}, ledgerDirty = 0, pendingTrain = null;
     function dayKey(ms){ return Math.floor(ms / DAY_MS); }
     function storeSet(k, v){ saved[k] = v; }
@@ -48,6 +49,32 @@ t("training on the gym page is spent, as before", () => {
   const r = observe({ prevE: 150, nowE: 0, secs: 60, onGym: true });
   assert.strictEqual(r.used, 150, "got " + JSON.stringify(r));
   assert.strictEqual(r.off, 0);
+});
+
+// Reported: "Spent attacking 6e" on a day with no attacks. A Torn attack costs
+// exactly 25e, so 6 cannot be one -- it is API/DOM skew, which used to vanish
+// among real training and only became visible once off-gym spend had its own
+// line. Counting whole attacks discards the remainder as well as the noise.
+
+t("a drop too small to be an attack is not one", () => {
+  const r = observe({ prevE: 141, nowE: 135, secs: 60, onGym: false });
+  assert.strictEqual(r.off, 0, "booked 6e of skew as attacking: " + JSON.stringify(r));
+});
+
+t("one attack is exactly one attack", () => {
+  const r = observe({ prevE: 150, nowE: 125, secs: 60, onGym: false });
+  assert.strictEqual(r.off, 25, JSON.stringify(r));
+});
+
+t("skew riding along with a real attack is trimmed off", () => {
+  // 25 for the attack plus 6 of drift reads as one attack, not 31e.
+  const r = observe({ prevE: 150, nowE: 119, secs: 60, onGym: false });
+  assert.strictEqual(r.off, 25, JSON.stringify(r));
+});
+
+t("several attacks between polls all count", () => {
+  const r = observe({ prevE: 150, nowE: 75, secs: 300, onGym: false });
+  assert.strictEqual(r.off, 75, JSON.stringify(r));
 });
 
 t("an attack away from the gym is not counted as spent", () => {
@@ -78,7 +105,7 @@ t("training on the gym page still opens one", () => {
 
 t("a chain of attacks accumulates", () => {
   const r = observe({ prevE: 150, nowE: 25, secs: 300, onGym: false });
-  assert.ok(r.off >= 125, "got " + JSON.stringify(r));
+  assert.strictEqual(r.off, 125, JSON.stringify(r));
   assert.strictEqual(r.used, 0);
 });
 

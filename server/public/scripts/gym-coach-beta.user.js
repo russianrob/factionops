@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.22
+// @version      0.9.23
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,17 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.23 — "Spent attacking 6e" on a day with no attacks. A Torn attack costs
+ *         exactly 25e, so 6 was never one — it is API/DOM skew on the energy
+ *         reading, which used to disappear among real training and only became
+ *         visible once off-gym spend had its own line in 0.9.20. The line was
+ *         new; the leak was not.
+ *
+ *         Off-gym spend is counted in WHOLE ATTACKS now: floor(drop / 25) × 25.
+ *         Anything under one attack is discarded, and so is the remainder
+ *         riding along with a real one, so 31e reads as a single attack rather
+ *         than 31. That also removes the need to ask Torn: the flat 25e cost is
+ *         what makes an off-gym drop identifiable without an API call at all.
 * 0.9.22 — Settings claimed "Host: Torn PDA" in a desktop browser. The row was
  *         a hardcoded string with no check behind it, and so were two others:
  *         instructions to leave the PDA API-key placeholder alone, and a note
@@ -955,6 +966,10 @@
   var M = 60;
   var BOOSTER_CAP = 24 * H;
   // Ceiling a war stack is built up to; Xanax past it spills.
+  // What one attack takes off the bar. Torn charges this flat, which is what
+  // makes an off-gym drop identifiable without asking the API anything.
+  var ATTACK_ENERGY = 25;
+
   var STACK_CAP = 1000;
   // How far above your own cap a day has to peak before it reads as a stack
   // rather than the ordinary Xanax loop. One Xanax on a full bar reaches
@@ -3693,7 +3708,16 @@
             // round lands; cleared when it does.
             if (state.trainLog) state.trainLog.since = (state.trainLog.since || 0) + d.used;
           }
-          else b.off = (b.off || 0) + d.used;
+          // Counted in WHOLE ATTACKS. A Torn attack costs exactly 25e, so a
+          // smaller off-gym drop cannot be one -- it is API/DOM skew, and the
+          // remainder riding along with a real attack is the same noise. This
+          // used to disappear among real training; once off-gym spend had its
+          // own line it showed up as "Spent attacking 6e" on a day with no
+          // attacks. Whole attacks discard both.
+          else {
+            var hits = Math.floor(d.used / ATTACK_ENERGY);
+            if (hits > 0) b.off = (b.off || 0) + hits * ATTACK_ENERGY;
+          }
         }
         b.wasted += d.wasted;
         ledgerDirty += 1;
