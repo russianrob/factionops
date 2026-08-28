@@ -482,11 +482,24 @@ test("parseTravelState: unknown country -> null", () => {
   assert.strictEqual(mod.parseTravelState(abroad), null);
 });
 
+// `listPresent` models the destination list three ways, because since 0.9.11
+// (21941ef) getTravelState defers to the agency panels only when the list is
+// VISIBLE, not merely present:
+//   false    — absent from the DOM (iOS TornPDA unmounts it while flying)
+//   true     — present AND visible (standing at the agency)
+//   "hidden" — present but zero-sized (Android TornPDA keeps it mounted while
+//              flying; treating that as "present" suppressed the in-flight
+//              table, which is the bug 0.9.11 fixed)
 function withTravelDoc(listPresent, fn) {
   const prev = globalThis.document;
+  const visible = { offsetWidth: 120, offsetHeight: 40, getClientRects: () => [{}] };
+  const hidden = { offsetWidth: 0, offsetHeight: 0, getClientRects: () => [] };
   globalThis.document = {
     querySelector: function (sel) {
-      if (sel.indexOf("country___") !== -1) return listPresent ? {} : null;
+      if (sel.indexOf("country___") !== -1 || sel.indexOf("destinationList___") !== -1) {
+        if (listPresent === "hidden") return hidden;
+        return listPresent ? visible : null;
+      }
       return null;
     }
   };
@@ -555,14 +568,14 @@ test("getTravelState: caches within TRAVEL_TTL, refetches after", async () => {
   assert.strictEqual(calls, 2);
 });
 
-test("getTravelState: API error -> null quietly (no throw)", async () => {
+test("getTravelState: API error -> a surfaced apierror state, not a silent null", async () => {
   const store = { tfs_key: JSON.stringify("KEY") };
   globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
   globalThis.GM_setValue = (k, v) => { store[k] = v; };
   mod.__setClock(() => 1000);
   mod.__setFetch(async () => ({ error: { error: "Incorrect key" } }));
   const out = await withTravelDoc(false, () => mod.getTravelState());
-  assert.strictEqual(out, null);
+  assert.deepStrictEqual(out, { mode: "apierror", code: undefined, msg: "Incorrect key" });
 });
 
 test("getTravelState: network failure -> null quietly", async () => {
@@ -575,7 +588,7 @@ test("getTravelState: network failure -> null quietly", async () => {
   assert.strictEqual(out, null);
 });
 
-test("getTravelState: API error -> preserves last cached-good state and refreshes its TTL", async () => {
+test("getTravelState: an API error replaces the state but still refreshes the TTL", async () => {
   const store = { tfs_key: JSON.stringify("KEY") };
   globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
   globalThis.GM_setValue = (k, v) => { store[k] = v; };
@@ -587,14 +600,23 @@ test("getTravelState: API error -> preserves last cached-good state and refreshe
   assert.strictEqual(calls, 1);
   // TTL elapses, next poll errors -> keep last good, don't return null
   clock += 31;
-  mod.__setFetch(async () => { calls++; return { error: { error: "Incorrect key" } }; });
+  // Code 16 is the case 0.9.16 was written for: an Android device holding a
+  // key too low-access for the travel selection. Using a real code also keeps
+  // the shape stable across the GM-storage round trip below — JSON drops an
+  // `undefined` field, so a codeless error comes back without the key at all.
+  mod.__setFetch(async () => { calls++; return { error: { code: 16, error: "Access level of this key is not high enough" } }; });
   const out = await withTravelDoc(false, () => mod.getTravelState());
-  assert.deepStrictEqual(out, first);
+  // Since 0.9.16 the error REPLACES the last good state rather than hiding
+  // behind it — the point is that the user sees why the panel is empty.
+  const errState = { mode: "apierror", code: 16, msg: "Access level of this key is not high enough" };
+  assert.deepStrictEqual(out, errState);
   assert.strictEqual(calls, 2);
-  // TTL was refreshed on the error path -> next poll serves cache, does NOT spam
+  // The anti-spam guarantee is unchanged and is the part worth pinning: the
+  // error is cached with a FRESH timestamp, so the next poll inside the TTL
+  // serves it without hitting the API again.
   const cached = await withTravelDoc(false, () => mod.getTravelState());
-  assert.deepStrictEqual(cached, first);
-  assert.strictEqual(calls, 2);
+  assert.deepStrictEqual(cached, errState);
+  assert.strictEqual(calls, 2, "an error must not put the poller into a retry loop");
 });
 
 test("getTravelState: network failure -> preserves last cached-good state and refreshes its TTL", async () => {
@@ -616,14 +638,14 @@ test("getTravelState: network failure -> preserves last cached-good state and re
   assert.strictEqual(calls, 2);
 });
 
-test("getTravelState: error with no prior cache still returns null quietly", async () => {
+test("getTravelState: an error with no prior cache still surfaces, not throws", async () => {
   const store = { tfs_key: JSON.stringify("KEY") };
   globalThis.GM_getValue = (k, d) => (k in store ? store[k] : d);
   globalThis.GM_setValue = (k, v) => { store[k] = v; };
   mod.__setClock(() => 1000);
   mod.__setFetch(async () => ({ error: { error: "Incorrect key" } }));
   const out = await withTravelDoc(false, () => mod.getTravelState());
-  assert.strictEqual(out, null);
+  assert.deepStrictEqual(out, { mode: "apierror", code: undefined, msg: "Incorrect key" });
 });
 
 test("getTravelState: destinationList present -> skip fetch, null", async () => {
@@ -636,7 +658,10 @@ test("getTravelState: destinationList present -> skip fetch, null", async () => 
   const prev = globalThis.document;
   globalThis.document = {
     querySelector: function (sel) {
-      if (sel.indexOf("destinationList___") !== -1) return {};
+      // Sized, because the guard checks visibility rather than presence.
+      if (sel.indexOf("destinationList___") !== -1) {
+        return { offsetWidth: 200, offsetHeight: 60, getClientRects: () => [{}] };
+      }
       return null;
     }
   };
@@ -736,14 +761,21 @@ test("tfsStoreRowImgId extracts the item id from the store image", () => {
   assert.strictEqual(mod.tfsStoreRowImgId(row), "229");
 });
 
-test("hazard display: fresh wait shows 50%/90% horizons", () => {
+// 0.9.33 (d8af9dc) swapped the 90% horizon for a 10% "earliest" one and leads
+// with it: on an item that sells out in seconds, the useful number is the first
+// moment it COULD be back, not the point you are probably already too late for.
+test("hazard display: fresh wait leads with the earliest plausible restock", () => {
   const m = mod;
   const qs = [2400, 3000, 3600, 4200, 4800, 5400, 6000, 6600, 7200, 7800, 8400];
   const entry = { interval: 5400, intLo: 3600, intHi: 7200, qs, last: 1000, n: 10, rel: "med" };
   const out = m.modelEstimate(entry, (1000 + 600) * 1000); // 10 min after restock
-  assert.match(out, /^50%: ~/);
-  assert.match(out, /90%: ~/);
+  assert.match(out, /^earliest ~/);
+  assert.match(out, /· 50%: ~/);
   assert.match(out, /\(med\)$/);
+  // Two DIFFERENT horizons, not the same figure printed twice — a range that
+  // collapsed would make the "earliest" label a lie.
+  const [earliest, fifty] = out.match(/~([^·(]+)/g).map(x => x.trim());
+  assert.notStrictEqual(earliest, fifty);
 });
 
 test("hazard display: deep overdue reads 'any poll now'", () => {
@@ -764,11 +796,19 @@ test("cdf/invCdf round-trip and monotonicity", () => {
   assert.ok(Math.abs(m.invCdf(qs, m.cdfAt(qs, 640)) - 640) < 15);
 });
 
-test("high-reliability entries keep the crisp point countdown", () => {
+// This asserted the DEFECT 0.9.33 fixed. The hazard branches were gated on
+// `rel !== "high"`, so the best-measured items fell through to a bare
+// `interval - elapsed` point estimate — which put Japan Xanax 20 minutes late,
+// and late is the same as never on something that sells out in seconds.
+// Reliability describes how well the SHAPE of the distribution is known, not
+// that it has no width, so a high-reliability entry gets the range too.
+test("high-reliability entries get the hazard range, not a bare point estimate", () => {
   const m = mod;
   const entry = { interval: 5400, qs: [5000,5100,5200,5300,5400,5400,5500,5600,5700,5800,5900], last: 1000, rel: "high" };
   const out = m.modelEstimate(entry, (1000 + 600) * 1000);
-  assert.match(out, /^~every /);
+  assert.match(out, /^earliest ~/);
+  assert.match(out, /\(high\)$/);
+  assert.ok(!/^~every /.test(out), "a point estimate here is what made the countdown late");
 });
 
 // ── tfsLegacyStockFromTexts (0.9.32) ────────────────────────────────────────

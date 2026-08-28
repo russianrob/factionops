@@ -10,6 +10,11 @@ import { join } from 'node:path';
 // it at a throwaway temp dir BEFORE importing (dynamic import for ordering).
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'wh-xanax-test-'));
 const { ingestWar, getWar, aggregateByMember, backfillXanaxForWar } = await import('./war-history.js');
+// These tests are about FREEZING and PRESERVING the accountability numbers, not
+// about the arithmetic that produces them — that is pinned in
+// xanax-model.test.js. Asserting against the model means a deliberate change to
+// it (as on 2026-08-14) cannot leave a stale literal here saying 50.
+const xanaxModel = await import('./xanax-model.js');
 
 function mkResult(members, over = {}) {
   return {
@@ -35,7 +40,8 @@ test('ingestWar freezes per-member xanax accountability from war.xanaxStats', ()
 
   const winter = stored.members.find(m => m.playerId === '111');
   assert.strictEqual(winter.xanaxTaken, 6);
-  assert.strictEqual(winter.xanaxDeficit, 50); // 6*10 - 10
+  assert.strictEqual(winter.xanaxDeficit, xanaxModel.deficit(6, 10));
+  assert.ok(winter.xanaxDeficit > 0, 'a 6-vial 10-attack member is short');
   assert.strictEqual(winter.xanaxFlagged, true);
 
   const clean = stored.members.find(m => m.playerId === '222');
@@ -85,7 +91,8 @@ test('re-ingest without fresh xanax preserves previously stored/backfilled xanax
   ingestWar(factionId, { warEndedAt: 1783000000000, realWarId: 90007, enemyFactionId: 561 }, result);
   const m = getWar(factionId, key).members[0];
   assert.strictEqual(m.xanaxTaken, 6, 'per-member xanax preserved across re-ingest');
-  assert.strictEqual(m.xanaxDeficit, 50);
+  assert.strictEqual(m.xanaxDeficit, xanaxModel.deficit(6, 10),
+    'the deficit is recomputed from the preserved xanax, not zeroed');
   assert.strictEqual(getWar(factionId, key).xanaxStats.taken['111'], 6, 'war-level map preserved');
 });
 
@@ -108,7 +115,8 @@ test('backfillXanaxForWar patches an already-stored war with re-fetched xanax', 
   const stored = getWar(factionId, key);
   const winter = stored.members.find(m => m.playerId === '111');
   assert.strictEqual(winter.xanaxTaken, 6);
-  assert.strictEqual(winter.xanaxDeficit, 50);   // 6*10 - 10
+  assert.strictEqual(winter.xanaxDeficit, xanaxModel.deficit(6, 10),
+    'backfill recomputes the deficit from the re-fetched xanax');
   assert.strictEqual(winter.xanaxFlagged, true);
   assert.strictEqual(stored.members.find(m => m.playerId === '222').xanaxTaken, 0);
   assert.strictEqual(stored.xanaxStats.taken['333'], 3);   // no-show retained at war level
@@ -117,7 +125,7 @@ test('backfillXanaxForWar patches an already-stored war with re-fetched xanax', 
 
 test('aggregateByMember rolls up xanaxTaken and counts flagged wars', () => {
   const factionId = '999000003';
-  // War A: took 6, only 10 attacks -> flagged (deficit 50)
+  // War A: took 6, only 10 attacks -> flagged
   ingestWar(factionId,
     { warEndedAt: 1783000000000, realWarId: 90003, enemyFactionId: 557, xanaxStats: { taken: { '111': 6 } } },
     mkResult([{ playerId: '111', name: 'Winter', level: 50, attackCount: 8, totalAttacks: 10 }], { warId: 90003, enemyFactionId: 557 }));
