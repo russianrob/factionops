@@ -42,7 +42,6 @@ export const NOTIFICATION_TYPES = {
   bonus_imminent:  { label: "Bonus Milestones",      description: "When a bonus hit is 1–2 attacks away",              default: true  },
   call_stolen:     { label: "Call Contested",        description: "When someone else views a target you called",       default: true  },
   war_target:      { label: "War Target Reached",    description: "When faction hits the custom war target",           default: true  },
-  enemy_attacking: { label: "Enemy Attacking",        description: "When an enemy is caught mid-attack by the poller",  default: false },
   enemy_surge:     { label: "Enemy Online Surge",     description: "When the enemy faction's online count jumps sharply (rallying)", default: false },
   stakeout_alert:  { label: "Stakeout Alerts",        description: "A watched player/faction hit a trigger (online, out of hospital, landed, revivable…)", default: true },
   torn_event: {
@@ -605,35 +604,6 @@ export async function notifyWarTargetReached(warPlayers, warId, targetValue, cur
   );
 }
 
-/**
- * Notify faction members that an enemy has been caught mid-attack
- * (via the per-enemy profile round-robin poller). Respects each
- * subscriber's enemy_attacking preference; defaults to OFF so only
- * users who explicitly opt in get pinged.
- */
-export async function notifyEnemyAttacking(playerIds, warId, targetName, targetId) {
-  const subscribed = playerIds
-    .filter((id) => isSubscribed(id))
-    .filter((id) => isTypeEnabled(id, "enemy_attacking"));
-  if (subscribed.length === 0) return;
-  await sendToPlayers(
-    subscribed,
-    {
-      title: `⚠️ Enemy Attacking`,
-      body: `${targetName} is mid-swing`,
-      tag: `enemy_attacking_${targetId}`, // collapse duplicates on same target
-      icon: "/icon-192.png",
-      data: {
-        type: "enemy_attacking",
-        warId,
-        targetId,
-        url: `https://www.torn.com/page.php?sid=attack&user2ID=${targetId}`,
-      },
-    },
-    null,
-    { urgency: "normal", TTL: 120 },
-  );
-}
 
 /**
  * Notify faction members that someone needs assist on an attack, or

@@ -730,24 +730,18 @@ function startEnemyProfileMonitor(io, warId) {
         activity: String(data.last_action?.status || "offline").toLowerCase(),
       };
 
-      // Detect transition into Attacking state. Fires push notifications
-      // to faction members who've opted in (enemy_attacking pref, default
-      // off). Server-side dedup: only push when wasAttacking → isAttacking,
-      // so a chain-hitter doesn't generate back-to-back pushes per hit.
+      // Detect transition into Attacking state.
+      //
+      // The push that used to fire here was removed 2026-08-28 — nobody used
+      // it, and at the 2.5s sweep it would fire twelve times more often than it
+      // did when it was written. `lastAttackAt` STAYS: target_called reads it,
+      // and it has to be server-stamped (a client-supplied value there would be
+      // the unfocused-scrape problem all over again).
       const wasAttacking = existing.status === "attacking";
       if (state_str === "attacking") {
         updated.lastAttackAt = Math.floor(nowSec);
         if (!wasAttacking) {
           console.log(`[enemy-profile] ${targetId} (${updated.name || '?'}) is attacking`);
-          try {
-            const warPlayers = store.getPlayerIdsForFaction(curWar.factionId);
-            push.notifyEnemyAttacking(
-              warPlayers,
-              warId,
-              updated.name || `Player [${targetId}]`,
-              targetId,
-            );
-          } catch (e) { /* push is best-effort */ }
         }
       }
 
