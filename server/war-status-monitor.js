@@ -716,7 +716,7 @@ function startEnemyProfileMonitor(io, warId) {
     enemyProfileTimeouts.set(warId, tid);
   };
 
-  async function fetchAndApply(targetId, apiKey) {
+  async function fetchAndApply(targetId, apiKey, batch) {
     try {
       const data = await fetchUserProfile(targetId, apiKey);
       // Re-look up the war fresh in case state changed during the
@@ -757,8 +757,13 @@ function startEnemyProfileMonitor(io, warId) {
       }
 
       curWar.enemyStatuses[targetId] = updated;
-      io.to(`war_${warId}`).emit("status_update", { [targetId]: updated });
-      broadcastSSE(warId, { enemyStatuses: { [targetId]: updated } });
+      // Collected, NOT broadcast here. This runs once per enemy and the tick
+      // fetches 20 in parallel, so broadcasting from inside it sent 20 separate
+      // SSE frames per tick — 8 a second at the 2.5s cadence, each one a merge
+      // and a DOM update on every connected phone. One frame per tick instead:
+      // same data, same freshness, a twentieth of the wake-ups. The
+      // enemy-attacks poller above has always batched this way.
+      if (batch) batch[targetId] = updated;
     } catch (err) {
       const msg = err.message || "";
       // 5xx are transient Torn-side gateway outages, not per-enemy actionable —
@@ -811,17 +816,24 @@ function startEnemyProfileMonitor(io, warId) {
     );
 
     const startCursor = (enemyProfileCursors.get(warId) || 0);
+    const batch = {};
     const requests = [];
     for (let i = 0; i < concurrency; i++) {
       const c = startCursor + i;
       const targetId = ids[c % ids.length];
       const apiKey = store.getPollingKey(war.factionId, "enemy-profile", c);
       if (!apiKey) continue;
-      requests.push(fetchAndApply(targetId, apiKey));
+      requests.push(fetchAndApply(targetId, apiKey, batch));
     }
     enemyProfileCursors.set(warId, startCursor + concurrency);
 
     try { await Promise.all(requests); } catch (_) { /* each handles its own */ }
+
+    // One frame for the whole tick.
+    if (Object.keys(batch).length > 0) {
+      io.to(`war_${warId}`).emit("status_update", batch);
+      broadcastSSE(warId, { enemyStatuses: batch });
+    }
 
     scheduleNext(nextEnemyProfile(war));
   };
