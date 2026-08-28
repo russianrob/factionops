@@ -228,6 +228,17 @@ export function startWarStatusMonitor(io, warId) {
           recordSample(war.factionId, ourOnline + ourIdle, ourTotal);
           // Store on war for poll response
           war.ourFactionOnline = { online: ourOnline, idle: ourIdle, total: ourTotal };
+          // The IDS, not just the counts.
+          //
+          // The client decides "is this one of ours" from memberBars, which
+          // only ever holds teammates who RUN FactionOps and self-report bars
+          // — so a teammate who does not is never recognised as ours, and if
+          // their id reaches state.statuses by any route they render as a
+          // target. That is how Wintermoore and woziwu ended up in the overlay.
+          //
+          // This roster is Torn's own and the fetch already happens for the
+          // online counts, so it costs no extra call.
+          war.ourMemberIds = Object.keys(ourMembers).map(String);
           // Overdose accountability: same roster carries each member's hospital
           // status; edge-count anyone newly in an "overdosing on Xanax" state.
           import("./od-tracker.js").then(m => m.recordRoster(warId, ourMembers)).catch(() => {});

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.87
+// @version      5.1.88
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -97,7 +97,7 @@
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined' && !IS_WARBOARD;
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.87';
+    const SCRIPT_VERSION = '5.1.88';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -5883,6 +5883,23 @@ body.wb-chain-active {
         // ── Our faction online counts ──
         if (data.ourFactionOnline) {
             state.ourFactionOnline = data.ourFactionOnline;
+        }
+
+        // ── Our faction ROSTER — the authoritative answer to "is this ours" ──
+        //
+        // isOwnFactionMember used to know only teammates who RUN FactionOps
+        // (memberBars is self-reported) plus whatever the war page happened to
+        // expose. A teammate who runs neither was invisible as ours, so if
+        // their id reached state.statuses by any route it rendered as a target
+        // and no purge could remove it — the overlay showed Wintermoore and
+        // woziwu, who are on our side.
+        //
+        // This list is Torn's own faction roster, relayed by the server from a
+        // fetch it already makes for the online counts. Purge immediately so
+        // anyone already showing goes on this delivery, not the next one.
+        if (Array.isArray(data.ourMemberIds) && data.ourMemberIds.length) {
+            noteOwnMemberIds(data.ourMemberIds);
+            purgeNonEnemyStatuses();
         }
 
         // (enemyFactionId, including change detection, is handled near the

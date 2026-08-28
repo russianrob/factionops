@@ -247,6 +247,7 @@ function broadcastWarUpdate(warId) {
     onlinePlayers: store.getOnlinePlayersForWar(warId),
     viewers: store.getViewersForWar(warId),
     ourFactionOnline: war.ourFactionOnline || null,
+    ourMemberIds: war.ourMemberIds || null,
     factionKeyStored: !!store.getFactionApiKey(war.factionId),
     warTarget: war.warTarget || null,
     warScores: war.warScores || null,
@@ -2332,6 +2333,7 @@ router.get("/api/stream", (req, res, next) => {
     onlinePlayers: store.getOnlinePlayersForWar(warId),
     viewers: store.getViewersForWar(warId),
     ourFactionOnline: war.ourFactionOnline || null,
+    ourMemberIds: war.ourMemberIds || null,
     factionKeyStored: !!store.getFactionApiKey(factionId),
     warTarget: war.warTarget || null,
     warScores: war.warScores || null,
@@ -2537,6 +2539,7 @@ router.get("/api/poll", (req, res, next) => {
     onlinePlayers: store.getOnlinePlayersForWar(warId),
     viewers: store.getViewersForWar(warId),
     ourFactionOnline: war.ourFactionOnline || null,
+    ourMemberIds: war.ourMemberIds || null,
     factionKeyStored: !!store.getFactionApiKey(factionId),
     warTarget: war.warTarget || null,
     warScores: war.warScores || null,
@@ -2580,6 +2583,7 @@ function _lpWarSections(war, warId, factionId) {
     strategy: war.strategy || null,
     enemyActivityByHour: war.enemyActivityByHour || null,
     ourFactionOnline: war.ourFactionOnline || null,
+    ourMemberIds: war.ourMemberIds || null,
     enemyFactionId: war.enemyFactionId || null,
     enemyFactionName: war.enemyFactionName || null,
     onlinePlayers: store.getOnlinePlayersForWar(warId),
@@ -4738,8 +4742,12 @@ async function handleWarReport(req, res) {
 
   // Cache hit — skip Torn entirely. Cache hits aren't subject to the
   // cooldown rate-limit (no API budget consumed).
+  // `?refresh=1` skips the CACHE only — never the cooldown below, which is what
+  // actually protects the API budget. Without this a "re-scan" button can only
+  // ever redraw the same cached copy, which is worse than having no button.
+  const forceFresh = req.query.refresh === "1";
   const cached = _scoutReportCache.get(warId);
-  if (cached && (Date.now() - cached.ts) < SCOUT_REPORT_TTL_MS) {
+  if (!forceFresh && cached && (Date.now() - cached.ts) < SCOUT_REPORT_TTL_MS) {
     console.log(`[scout] Cache hit for war ${warId} (estimates: ${cached.estimateCount})`);
     return res.json({ report: cached.report, cached: true });
   }
