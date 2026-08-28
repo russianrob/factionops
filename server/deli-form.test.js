@@ -441,3 +441,63 @@ test("an empty read is still a real answer and is replayed", () => {
   // must not be mistaken for a failure and re-rolled.
   assert.equal(visionCacheUsable(cache({ offers: [] }), [2, 3]), true);
 });
+
+// ── diff before promoting ───────────────────────────────────────────────────
+// The overwrite guard counts matches, not values. Chicken went $7.99 -> $4.99
+// with the count unchanged at 10, so nothing objected and a correct form was
+// republished wrong. A re-read of a week already published must not silently
+// move a price that was there.
+const prev = (fills, over = {}) => ({ validFrom: "2026-08-30", matched: 10, fills, ...over });
+const F = (item, price, brand = "Black Bear") => ({ item, brand, price });
+const BASE = [F("Chicken", 7.99), F("Provolone", 5.99), F("Mozzarella", null, null)];
+const decide = (fills, previous, over = {}) => promoteDecision({
+  matched: 10, minMatched: 7, validFrom: "2026-08-30", previous, fills, ...over,
+});
+
+test("a re-read that moves a published price is refused", () => {
+  const d = decide([F("Chicken", 4.99), F("Provolone", 5.99), F("Mozzarella", null, null)], prev(BASE));
+  assert.equal(d.promote, false);
+  assert.match(d.reason, /Chicken/);
+  assert.match(d.reason, /7\.99/);
+  assert.match(d.reason, /4\.99/);
+});
+
+test("filling a row that was blank is allowed", () => {
+  // Strictly more information about the same week -- exactly what the
+  // mozzarella mirror does.
+  const d = decide([F("Chicken", 7.99), F("Provolone", 5.99), F("Mozzarella", 5.99)], prev(BASE));
+  assert.equal(d.promote, true);
+});
+
+test("blanking a row that had a price is refused", () => {
+  const d = decide([F("Chicken", null, null), F("Provolone", 5.99), F("Mozzarella", null, null)], prev(BASE));
+  assert.equal(d.promote, false);
+  assert.match(d.reason, /Chicken/);
+});
+
+test("an identical re-read promotes", () => {
+  assert.equal(decide(BASE, prev(BASE)).promote, true);
+});
+
+test("a DIFFERENT week may change every price", () => {
+  // A new circular is new prices; there is nothing to protect.
+  const d = decide([F("Chicken", 4.99)], prev(BASE, { validFrom: "2026-08-23" }));
+  assert.equal(d.promote, true);
+});
+
+test("with no previous form there is nothing to diff", () => {
+  assert.equal(decide(BASE, null).promote, true);
+});
+
+test("the match-count guard still applies before the diff", () => {
+  // A weak read is refused for being weak, not for what it changed.
+  const d = decide([F("Chicken", 4.99)], prev(BASE), { matched: 3 });
+  assert.equal(d.promote, false);
+  assert.match(d.reason, /circular matches/);
+});
+
+test("an explicit override lets a correction through", () => {
+  // The first read is not always the right one; there has to be a way to fix it.
+  const d = decide([F("Chicken", 4.99)], prev(BASE), { allowPriceChanges: true });
+  assert.equal(d.promote, true);
+});

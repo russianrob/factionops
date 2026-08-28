@@ -193,7 +193,8 @@ export async function generateDeliForm(dir, pageTexts, range, opts = {}) {
 
   const decision = promoteDecision({
     matched, pageFailures, minMatched: DELI_MIN_MATCHED,
-    validFrom: range.validFrom, previous,
+    validFrom: range.validFrom, previous, fills: summary,
+    allowPriceChanges: !!opts.allowPriceChanges,
   });
   if (decision.promote) {
     copyFileSync(dated, formLatest);

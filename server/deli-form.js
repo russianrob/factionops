@@ -165,7 +165,7 @@ export function countFilled(fills) { return fills.filter(f => f.price != null).l
 /// would freeze the form permanently at the high-water mark of a busy week.
 /// Equal counts promote, so re-running after a rule change (adding a standing
 /// default, say) is never blocked.
-export function promoteDecision({ matched, pageFailures = 0, minMatched, validFrom, previous } = {}) {
+export function promoteDecision({ matched, pageFailures = 0, minMatched, validFrom, previous, fills, allowPriceChanges = false } = {}) {
   if (pageFailures > 0) {
     return { promote: false, reason: `${pageFailures} page(s) failed the vision read` };
   }
@@ -175,6 +175,31 @@ export function promoteDecision({ matched, pageFailures = 0, minMatched, validFr
   if (previous && validFrom && previous.validFrom === validFrom && matched < previous.matched) {
     return { promote: false,
       reason: `fewer matches than the form already published for ${validFrom} (${matched} < ${previous.matched}) — refusing to regress it` };
+  }
+  // Same week, and a price that was already published has MOVED.
+  //
+  // The count guard above cannot see this: chicken went $7.99 -> $4.99 with the
+  // match count unchanged at 10, so a correct form was republished wrong. The
+  // model is non-deterministic, so a second read of the same page is not
+  // automatically the better one — hold it and say what differs rather than
+  // overwrite silently.
+  //
+  // Gaining a price on a row that was blank is always allowed: that is strictly
+  // more information about the same week, and it is what the mozzarella mirror
+  // does. Only a CHANGE or a LOSS is refused.
+  if (!allowPriceChanges && previous && validFrom && previous.validFrom === validFrom
+      && Array.isArray(fills) && Array.isArray(previous.fills)) {
+    const was = new Map(previous.fills.map(f => [f.item, f]));
+    const moved = [];
+    for (const f of fills) {
+      const before = was.get(f.item);
+      if (!before || before.price == null) continue;   // new information is welcome
+      if (f.price !== before.price) moved.push(`${f.item} ${before.price} → ${f.price == null ? "blank" : f.price}`);
+    }
+    if (moved.length) {
+      return { promote: false, moved,
+        reason: `would change ${moved.length} price(s) already published for ${validFrom}: ${moved.join(", ")} — holding the published form` };
+    }
   }
   return { promote: true, reason: "ok" };
 }
