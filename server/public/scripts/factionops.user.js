@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.89
+// @version      5.1.90
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -97,7 +97,7 @@
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined' && !IS_WARBOARD;
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.89';
+    const SCRIPT_VERSION = '5.1.90';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -6763,7 +6763,15 @@ body.wb-chain-active {
             // took, not what it supports. Give it up to ~1s, checking often,
             // and fall through to the Enter path only when the button really
             // never enables.
-            const SEND_WAIT_MS = 1000, SEND_POLL_MS = 50;
+            // 2.5s, not 1s. The first real measurement from a PDA phone came
+            // back at waitedMs:452 — React took nearly half a second to flush
+            // the disabled -> enabled flip — and that was ONE sample on one
+            // device, unloaded. A busier phone mid-chain will be slower, and a
+            // budget the observed value already eats half of is not a budget.
+            // Overshooting costs nothing: the poll exits the moment the button
+            // enables, so a fast device still sends immediately and only a
+            // genuine failure waits the full time before reporting.
+            const SEND_WAIT_MS = 2500, SEND_POLL_MS = 50;
             const sendStartedAt = Date.now();
             const sendDeadline = sendStartedAt + SEND_WAIT_MS;
             const awaitSendable = () => {
