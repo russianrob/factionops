@@ -994,14 +994,17 @@ export function getPollInterval(factionId, purpose) {
     "war-status":    { min: 15_000, max: 30_000 }, // Torn cache ~30s
     "attacks-feed":  { min: 15_000, max: 60_000 }, // our faction's attacks feed
     "enemy-attacks": { min: 10_000, max: 30_000 }, // (unused — Torn blocks other factions' attacks)
-    // Per-enemy profile round-robin. Slowed to a flat 30s (2026-08-11): the
-    // basic war-status roster poll already refreshes every enemy every ~30s in
-    // ONE call, so a faster per-enemy sweep mostly duplicated it while dominating
-    // API usage. At 30s the sweep's remaining unique job is the per-enemy
-    // "attacking" push detection; hospital timers + online status ride the basic
-    // poll and tick down client-side between polls. Flat min=max so a bigger key
-    // pool doesn't speed it back up.
-    "enemy-profile": { min: 30_000, max: 30_000 },
+    // Per-enemy profile round-robin. Pinned to a flat 30s on 2026-08-11 because
+    // it was the monitor's heaviest API consumer and a single-key faction could
+    // not afford it. Unpinned 2026-08-28: the pool is 36 keys (3,600 calls/min),
+    // where the sweep costs 480/min — 13% — and refreshes a 100-enemy roster
+    // every ~13s instead of every ~150s.
+    //
+    // Scales with the pool like every other purpose rather than going back to a
+    // flat 2.5s, so a small faction is still protected: one key stays at 30s,
+    // six lands at 5s, and twelve or more get the floor. The floor exists
+    // because Torn caches profiles — polling faster buys duplicates.
+    "enemy-profile": { min: 2_500, max: 30_000 },
   };
   const c = config[purpose] || config["war-status"];
   // Divide the conservative max by pool size, floor at min.
