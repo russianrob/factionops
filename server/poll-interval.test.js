@@ -17,23 +17,23 @@ function poolOf(n) {
   }
 }
 
-// The per-enemy profile sweep was pinned to a flat 30s on 2026-08-11 because it
-// was the monitor's heaviest API consumer. The pool has since grown to 36 keys
-// (3,600 calls/min), so the budget objection is gone — but a SMALL pool must
-// still be protected, which is what dividing by pool size gives.
-test("enemy-profile speeds up as the pool grows, and floors at 2.5s", () => {
+// The per-enemy profile sweep is pinned FLAT: min == max, so a bigger key pool
+// cannot speed it back up.
+//
+// It was unpinned to 2.5s on 2026-08-28 on the arithmetic that 480 calls/min
+// against a 3,600/min pool ceiling was 13% headroom, and re-pinned hours later
+// when the owner hit Torn's rate limit. Torn limits per KEY per minute, several
+// other pollers draw on the same keys, and quarantined keys shrink the
+// rotation — so the per-faction average badly understated the real load.
+//
+// This test exists to make an unpinning deliberate rather than incidental.
+test("enemy-profile stays flat however large the pool grows", () => {
   poolOf(1);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000, "one key: unchanged from before");
-  poolOf(6);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 5_000, "six keys: 30s/6");
+  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000);
   poolOf(36);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 2_500, "a full pool floors at 2.5s");
-});
-
-test("the floor holds however large the pool gets", () => {
+  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000, "a big pool must NOT speed it up");
   poolOf(200);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 2_500,
-    "never faster than 2.5s — Torn caches profiles and the extra calls buy nothing");
+  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000);
 });
 
 test("the other purposes keep their own floors", () => {

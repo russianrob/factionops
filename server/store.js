@@ -994,17 +994,24 @@ export function getPollInterval(factionId, purpose) {
     "war-status":    { min: 15_000, max: 30_000 }, // Torn cache ~30s
     "attacks-feed":  { min: 15_000, max: 60_000 }, // our faction's attacks feed
     "enemy-attacks": { min: 10_000, max: 30_000 }, // (unused — Torn blocks other factions' attacks)
-    // Per-enemy profile round-robin. Pinned to a flat 30s on 2026-08-11 because
-    // it was the monitor's heaviest API consumer and a single-key faction could
-    // not afford it. Unpinned 2026-08-28: the pool is 36 keys (3,600 calls/min),
-    // where the sweep costs 480/min — 13% — and refreshes a 100-enemy roster
-    // every ~13s instead of every ~150s.
+    // Per-enemy profile round-robin. Flat 30s, min == max so a bigger key pool
+    // cannot speed it back up.
     //
-    // Scales with the pool like every other purpose rather than going back to a
-    // flat 2.5s, so a small faction is still protected: one key stays at 30s,
-    // six lands at 5s, and twelve or more get the floor. The floor exists
-    // because Torn caches profiles — polling faster buys duplicates.
-    "enemy-profile": { min: 2_500, max: 30_000 },
+    // Pinned 2026-08-11, unpinned to 2.5s on 2026-08-28, RE-PINNED the same day
+    // after the owner hit Torn's rate limit. The arithmetic said 480 calls/min
+    // against a 3,600/min pool ceiling — 13% — and that was wrong in practice:
+    // the pool's keys are not 36 independent 100/min budgets for this poller.
+    // Chain, war-status, attacks-feed, WarScanner and xanax-subs draw on the
+    // same keys, quarantined keys shrink the rotation, and Torn's limit is per
+    // KEY per minute rather than per faction, so the rotation concentrates far
+    // more than the average suggested.
+    //
+    // Do not unpin again on a headroom calculation alone. Measure real per-key
+    // call rates first (see /api/debug/key-usage-local) — the basic war-status
+    // roster poll already refreshes every enemy every ~30s in ONE call, and
+    // hospital timers tick down client-side between polls, so the sweep buys
+    // much less than its cost suggests.
+    "enemy-profile": { min: 30_000, max: 30_000 },
   };
   const c = config[purpose] || config["war-status"];
   // Divide the conservative max by pool size, floor at min.
