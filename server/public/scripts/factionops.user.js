@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.88
+// @version      5.1.89
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -97,7 +97,7 @@
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined' && !IS_WARBOARD;
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.88';
+    const SCRIPT_VERSION = '5.1.89';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -6751,10 +6751,37 @@ body.wb-chain-active {
                 return;
             }
             // React may not flush the disabled -> enabled flip inside dispatch,
-            // so the go/no-go check happens one macrotask later. setTimeout and
-            // NOT rAF: rAF does not run in a hidden tab, which would park the
-            // send and fire a stale war call minutes later.
-            setTimeout(() => {
+            // so the go/no-go check happens after it. setTimeout and NOT rAF:
+            // rAF does not run in a hidden tab, which would park the send and
+            // fire a stale war call minutes later.
+            //
+            // POLLED, not a single macrotask. One tick is enough on desktop and
+            // usually is not on a phone: every PDA failure in the diag reported
+            // enabledAfterInput:false — React simply had not re-rendered yet —
+            // while the one PDA success reported true. Desktop sent cleanly in
+            // the same conditions, so the difference was how long the device
+            // took, not what it supports. Give it up to ~1s, checking often,
+            // and fall through to the Enter path only when the button really
+            // never enables.
+            const SEND_WAIT_MS = 1000, SEND_POLL_MS = 50;
+            const sendStartedAt = Date.now();
+            const sendDeadline = sendStartedAt + SEND_WAIT_MS;
+            const awaitSendable = () => {
+                // Still disabled and time left: look again rather than give up.
+                try {
+                    const b = factionChatBox();
+                    const t = b && b.querySelector('textarea[class*="textarea___"]');
+                    const r = t && (t.parentElement || b);
+                    const sb = r && (r.querySelector('button[class*="iconWrapper___"]')
+                        || b.querySelector('button[class*="iconWrapper___"]'));
+                    if (sb && sb.disabled && Date.now() < sendDeadline) {
+                        setTimeout(awaitSendable, SEND_POLL_MS);
+                        return;
+                    }
+                } catch (_) { /* fall through to the real check */ }
+                finish();
+            };
+            const finish = () => {
                 let clickedSend = false, enterFallback = false, reason = 'ok', enabled = false;
                 try {
                     // Re-resolve BOTH nodes. React can remount the input row; a
@@ -6827,7 +6854,8 @@ body.wb-chain-active {
                     const done = (r) => {
                         _callChatBusy = false;
                         reportCallChatDiag({ reason: r, wasOpen: wasOpen2, nativeSetter,
-                            enabledAfterInput: enabled, clickedSend, enterFallback });
+                            enabledAfterInput: enabled, clickedSend, enterFallback,
+                            waitedMs: Date.now() - sendStartedAt });
                     };
                     if (!clickedSend && !enterFallback) { clearBox(liveTa); done(reason); return; }
                     // Torn empties the textarea when a message actually goes
@@ -6857,8 +6885,10 @@ body.wb-chain-active {
                 } catch (_) { reason = 'send-threw'; }
                 _callChatBusy = false;
                 reportCallChatDiag({ reason, wasOpen: wasOpen2, nativeSetter,
-                    enabledAfterInput: enabled, clickedSend, enterFallback });
-            }, 0);
+                    enabledAfterInput: enabled, clickedSend, enterFallback,
+                    waitedMs: Date.now() - sendStartedAt });
+            };
+            awaitSendable();
         }
 
         attempt();
