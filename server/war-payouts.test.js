@@ -18,18 +18,21 @@ import { classify, tallyAttacks } from "./war-payouts.js";
 
 const OUR = "42055", ENEMY = "14820", ME = "137558";
 
-// The exact payout window for war_42055: war.warStart → war.warEndedAt.
-const FROM = 1787922000, TO = Math.floor(1788019369748 / 1000);
-const LEDGER = "data/attack-ledger/war_war_42055.json";
+// A FROZEN copy of the payout window, not the live ledger. The ledger is
+// still being appended to, and a row backfilled into this window would
+// change the expected counts and block every future deploy on a "failure"
+// that is really just background data growth.
+const FIX = JSON.parse(fs.readFileSync(
+  new URL("./test-fixtures/war-42055-payout-window.json", import.meta.url), "utf8"));
 
-// Ledger rows are the v2-ish shape; the payout path consumes the v1 shape
-// normalizeV2Attack produces.
+// Fixture rows are the v2-ish shape the ledger stores; the payout path
+// consumes the v1 shape normalizeV2Attack produces.
 const toV1 = a => ({
   attacker_id: a.attackerId, attacker_name: a.attackerName,
   attacker_faction: a.attackerFactionId, defender_faction: a.defenderFactionId,
   result: a.result, respect_gain: a.respectGain,
   // Every respect-earning row in this window was a ranked-war attack: the
-  // cached breakdown for war_42055 has no non_war bucket at all.
+  // cached breakdown for war_42055 had no non_war bucket at all.
   ranked_war: 1,
   modifiers: {
     fair_fight: a.modifiers.fairFight, war: a.modifiers.war,
@@ -39,12 +42,7 @@ const toV1 = a => ({
   },
 });
 
-function myRows() {
-  const j = JSON.parse(fs.readFileSync(LEDGER, "utf8"));
-  return Object.values(j.attacks)
-    .filter(a => String(a.attackerId) === ME && a.started >= FROM && a.started <= TO)
-    .map(toV1);
-}
+const myRows = () => FIX.window.map(toV1);
 
 const tally = (rows, settings = {}, mode = "dynamic") =>
   tallyAttacks(rows, { ourFid: OUR, enemyFactionId: ENEMY, mode, settings })[ME];
@@ -140,11 +138,7 @@ test("a hit on an unrelated faction is a chain hit, not a war hit", () => {
   // The enemy gate is what separates war hits from chain hits, and the
   // whole war-42055 payout window happens to be enemy-only — so without
   // this the gate could be deleted and every test would still pass.
-  const j = JSON.parse(fs.readFileSync(LEDGER, "utf8"));
-  const chain = Object.values(j.attacks)
-    .filter(a => String(a.attackerId) === ME && a.defenderFactionId !== ENEMY
-                 && a.respectGain > 0 && a.modifiers.overseas <= 1)
-    .map(toV1)[0];
-  assert.ok(chain, "fixture must contain a hit on an unrelated faction");
+  const chain = toV1(FIX.chainHitSample);
+  assert.notStrictEqual(chain.defender_faction, ENEMY);
   assert.strictEqual(classify(chain, ENEMY), "chain_hit");
 });
