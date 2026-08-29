@@ -103,20 +103,32 @@ const WEIGHTS = {
  *   war             — 1 (chained but counted) or 2 (ranked-war hit)
  *   retaliation     — >1 if this hit is a retal of an incoming attack
  *   overseas        — >1 if attacker was abroad
- *   group_attack    — assist multiplier (>1 = was an assist)
+ *   group_attack    — >1 if several attackers hit the target at once
  * The ranked_war field at the top level (already filtered upstream) is
  * 1 for any attack tracked under the ranked-war system. We further
  * narrow "war_hit" to attacks against the actual enemy faction; chain
  * hits against unrelated targets get the chain_hit / os_chain bucket.
  */
-function classify(atk, enemyFactionId) {
+export function classify(atk, enemyFactionId) {
   const m = atk.modifiers || {};
-  // Some Torn deployments expose `assist` directly; others use
-  // group_attack > 1. Belt + suspenders.
-  const isAssist =
-    atk.assist === 1 || atk.assist === true ||
-    (m.group_attack && Number(m.group_attack) > 1);
-  if (isAssist) return "assist";
+  // An assist is a RESULT, not a modifier: someone else landed the
+  // finishing blow, so Torn awards the respect to them and none to you.
+  //
+  // This used to test `group_attack > 1` instead. That is a different
+  // mechanic entirely — several attackers hitting one target at once —
+  // and it is a full hit that earns full respect. The two never coincide:
+  // across all 1084 rows of data/attack-ledger/war_war_42055.json, ZERO
+  // carried both, every group>1 row earned respect and every Assist row
+  // earned none. Reading one as the other devalued 13 real war hits to
+  // assist weight and hid 23 real assists (reported as "13 assists" when
+  // Torn's war report said 24).
+  //
+  // `group_attack` remains a KEPT bonus in the fair_score maths — the
+  // coordination effort it was always meant to credit.
+  //
+  // The old `atk.assist` probe is gone with it: v2 has no such field and
+  // neither did v1, so it was never anything but dead weight.
+  if (String(atk.result || "") === "Assist") return "assist";
 
   const isOverseas = m.overseas && Number(m.overseas) > 1;
   const defFid = String(atk.defender_faction || "");
@@ -234,6 +246,188 @@ export function invalidateCache(warId) {
   persistDiskCache();
 }
 
+/**
+ * Tally every attack in the war window into per-attacker scores and
+ * category breakdowns.
+ *
+ * Pure by construction — no store, no network, no clock. That is what
+ * makes the payout maths testable: a test can replay real rows from
+ * data/attack-ledger/ through it and assert on the breakdown directly.
+ *
+ * @param {object[]} attacks  v1-shaped attack rows (see normalizeV2Attack)
+ * @returns {Record<string, object>} playerId → tally
+ */
+export function tallyAttacks(attacks, { ourFid, enemyFactionId, mode, settings = {} }) {
+  const byAttacker = {}; // playerId → { name, computedScore, breakdown, attackCount, fairScoreSum, ffSum, ffSamples, totalAttacks }
+
+  for (const atk of attacks) {
+    if (String(atk.attacker_faction || "") !== ourFid) continue;
+    const aid = String(atk.attacker_id || "");
+    if (!aid || aid === "0") continue; // stealth = 0; skip
+
+    // v5.0.72: ensure entry exists FIRST so failed attacks get
+    // counted in totalAttacks + breakdown.failed even though they
+    // earn no respect and don't add to score.
+    if (!byAttacker[aid]) {
+      byAttacker[aid] = {
+        playerId: aid,
+        name: String(atk.attacker_name || `Player ${aid}`),
+        computedScore: 0,
+        fairScoreSum: 0,
+        ffSum: 0,
+        ffSamples: 0,
+        ffMax: 0,
+        breakdown: {},
+        attackCount: 0,    // successful war hits (drives the score)
+        totalAttacks: 0,   // every attack attempted (war + non-war + failed)
+      };
+    }
+    byAttacker[aid].totalAttacks += 1;
+
+    // Assists earn ZERO respect, so they cannot travel the respect-driven
+    // path below: the `respectGain <= 0` gate would drop them outright —
+    // that is exactly how 23 real assists went missing from this war — and
+    // the fair_score maths has no respect to scale. They are real war
+    // contributions, so they are counted and weighted here, ahead of both
+    // that gate and the ranked_war gate.
+    if (String(atk.result || '') === 'Assist') {
+      const ASSIST_WEIGHT = Number.isFinite(settings.assistWeight)
+        ? Math.max(0, Number(settings.assistWeight))
+        : 0.3;
+      // Static mode pays a flat weight per assist. Dynamic mode scales by
+      // fair_score, which is necessarily 0 here — so assistWeight is inert
+      // in dynamic mode. Left that way deliberately: what a respect-scaled
+      // mode ought to pay for a zero-respect hit is a payout-policy call
+      // for the admin, not something to change while fixing a miscount.
+      if (mode === 'static') byAttacker[aid].fairScoreSum += ASSIST_WEIGHT;
+      byAttacker[aid].computedScore += weight(mode, 'assist',
+        Number((atk.modifiers || {}).fair_fight) || 0);
+      byAttacker[aid].breakdown.assist = (byAttacker[aid].breakdown.assist || 0) + 1;
+      byAttacker[aid].attackCount += 1;
+      continue;
+    }
+
+    // 2026-05-17: loss attacks ONLY (Lost, Stalemate, Escape,
+    // Interrupted, Timeout) bucket into breakdown.failed.
+    //
+    // Previous gate was `respect_gain <= 0` — too broad. That caught
+    // legitimate WINS that happen to earn no respect, most notably
+    // Assists (the killer gets the respect, not the assister) and
+    // hits on already-injured / stat-locked / pre-mugged targets.
+    // User report: 'N4 failes 6 times but he only lost once' — the
+    // other 5 were assists / zero-respect wins.
+    //
+    // SUCCESS_RESULTS for reference (mirror of war-status-monitor.js):
+    //   Attacked, Hospitalized, Mugged, Looted, Special, Assist
+    //
+    // 2026-05-23: narrowed to TRUE losses only — user direction.
+    // Stalemate / Escape / Interrupted / Timeout are inconvenient
+    // but not the attacker's fault in the same way as actually
+    // losing the fight. They no longer contribute to the breakdown
+    // "losses" bucket or earn failedWeight credit.
+    const LOSS_RESULTS = new Set(['Lost']);
+    const respectGain = Number(atk.respect_gain) || 0;
+    if (respectGain <= 0) {
+      const result = String(atk.result || '');
+      if (LOSS_RESULTS.has(result)) {
+        byAttacker[aid].breakdown.failed = (byAttacker[aid].breakdown.failed || 0) + 1;
+        const FAILED_WEIGHT = Number.isFinite(settings.failedWeight)
+          ? Math.max(0, Number(settings.failedWeight))
+          : 0;
+        if (FAILED_WEIGHT > 0) byAttacker[aid].fairScoreSum += FAILED_WEIGHT;
+      }
+      // Either way, no respect to score from this attack — continue.
+      continue;
+    }
+
+    // v5.0.58: non-war attacks DO contribute to score, but at a
+    // reduced 'assist-level' weight per user policy ('non war hits
+    // should get paid same as assists').
+    // v5.0.64: weighting now varies by mode:
+    //   dynamic — respect_gain × 0.3 ÷ chain ÷ warlord (FF-aware,
+    //             scales with how tough the target was)
+    //   static  — flat 0.3 per non-war attack (every non-war hit
+    //             counts the same — matches the egalitarian static
+    //             policy where war hits are also flat 1.0)
+    if (atk.ranked_war !== 1) {
+      // v5.0.68: non-war weight is overridable per-war via the gear
+      // panel. Default 0.3 matches the typical assist:full-hit ratio.
+      const NON_WAR_WEIGHT = Number.isFinite(settings.nonWarWeight)
+        ? Math.max(0, Number(settings.nonWarWeight))
+        : 0.3;
+      let nwScore;
+      if (mode === 'static') {
+        nwScore = NON_WAR_WEIGHT;
+      } else {
+        const m2 = atk.modifiers || {};
+        const chainMod2 = Number(m2.chain_bonus) || 1;
+        const warlordMod2 = Number(m2.warlord_bonus) || 1;
+        nwScore = (respectGain * NON_WAR_WEIGHT) / (chainMod2 * warlordMod2);
+      }
+      byAttacker[aid].fairScoreSum += nwScore;
+      byAttacker[aid].breakdown.non_war = (byAttacker[aid].breakdown.non_war || 0) + 1;
+      // Non-war attacks don't bump attackCount (war-only) — only fair_score
+      // and the non_war breakdown counter. attackCount stays the war-attack
+      // count so the 'War / Total' ratio in the popover still works.
+      continue;
+    }
+
+    // v5.0.44: 'fair payout score' — strip the bonuses the user
+    // doesn't want counted toward payouts. Per user direction:
+    //   - chain_bonus (varies by chain timing, not effort)
+    //   - war (×2 ranked-war respect tier — circumstantial)
+    //   - warlord_bonus (warlord/load extra respect)
+    // What stays: fair_fight (skill-of-fight), retaliation (you went
+    // out of your way to retal), group_attack (coordination effort),
+    // overseas (effort/inconvenience).
+    const m = atk.modifiers || {};
+    const warMod = Number(m.war) || 1;
+    const chainMod = Number(m.chain_bonus) || 1;
+    const warlordMod = Number(m.warlord_bonus) || 1;
+    // fair_score is what respect WOULD have been without the excluded
+    // bonuses — divide them out of the final respect_gain.
+    const fairScore = respectGain / (warMod * chainMod * warlordMod);
+
+    const ff = Number(m.fair_fight ?? m.fairFight) || 0;
+    const cat = classify(atk, enemyFactionId);
+    const w = weight(mode, cat, ff);
+
+    // (member entry already created above; keep populating)
+    byAttacker[aid].computedScore += w;
+    // v5.0.64: scoring per mode for ranked-war attacks:
+    //   dynamic — fair_score (respect_gain ÷ war ÷ chain ÷ warlord),
+    //             FF-aware via Torn's respect formula
+    //   static  — 1.0 per successful war hit, 0.3 per assist
+    //             (every direct hit pays equally regardless of FF or
+    //             defender level — egalitarian payout policy)
+    // v5.0.68/70: assist weight is overridable per-war via the gear
+    // panel. Default 0.3 for BOTH modes per user request — matches
+    // the typical assist:full-hit respect ratio Torn applies, and
+    // means a group hit pays ~30% of a solo war hit regardless of
+    // mode. Setting >0.3 boosts assists; <0.3 penalizes them more.
+    const ASSIST_WEIGHT = Number.isFinite(settings.assistWeight)
+      ? Math.max(0, Number(settings.assistWeight))
+      : 0.3;
+    if (mode === 'static') {
+      byAttacker[aid].fairScoreSum += (cat === 'assist') ? ASSIST_WEIGHT : 1.0;
+    } else {
+      // FF Mode: assist contributes (fair_score × ASSIST_WEIGHT). With
+      // default 0.3 this scales the assist's natural respect down to
+      // ~30% — same effective rate as Termed Mode.
+      byAttacker[aid].fairScoreSum += (cat === 'assist') ? (fairScore * ASSIST_WEIGHT) : fairScore;
+    }
+    if (ff > 0) {
+      byAttacker[aid].ffSum += ff;
+      byAttacker[aid].ffSamples += 1;
+      if (ff > byAttacker[aid].ffMax) byAttacker[aid].ffMax = ff;
+    }
+    byAttacker[aid].breakdown[cat] = (byAttacker[aid].breakdown[cat] || 0) + 1;
+    byAttacker[aid].attackCount += 1;
+  }
+
+  return byAttacker;
+}
+
 export async function computePayouts(warId, options = {}) {
   loadDiskCache(); // lazy: first call hydrates persisted ended-war results
   const mode = options.mode === "static" ? "static" : "dynamic";
@@ -331,149 +525,12 @@ export async function computePayouts(warId, options = {}) {
   }
 
   const ourFid = String(war.factionId);
-  const byAttacker = {}; // playerId → { name, computedScore, breakdown, attackCount, fairScoreSum, ffSum, ffSamples, totalAttacks }
-
-  for (const atk of attacks) {
-    if (String(atk.attacker_faction || "") !== ourFid) continue;
-    const aid = String(atk.attacker_id || "");
-    if (!aid || aid === "0") continue; // stealth = 0; skip
-
-    // v5.0.72: ensure entry exists FIRST so failed attacks get
-    // counted in totalAttacks + breakdown.failed even though they
-    // earn no respect and don't add to score.
-    if (!byAttacker[aid]) {
-      byAttacker[aid] = {
-        playerId: aid,
-        name: String(atk.attacker_name || `Player ${aid}`),
-        computedScore: 0,
-        fairScoreSum: 0,
-        ffSum: 0,
-        ffSamples: 0,
-        ffMax: 0,
-        breakdown: {},
-        attackCount: 0,    // successful war hits (drives the score)
-        totalAttacks: 0,   // every attack attempted (war + non-war + failed)
-      };
-    }
-    byAttacker[aid].totalAttacks += 1;
-
-    // 2026-05-17: loss attacks ONLY (Lost, Stalemate, Escape,
-    // Interrupted, Timeout) bucket into breakdown.failed.
-    //
-    // Previous gate was `respect_gain <= 0` — too broad. That caught
-    // legitimate WINS that happen to earn no respect, most notably
-    // Assists (the killer gets the respect, not the assister) and
-    // hits on already-injured / stat-locked / pre-mugged targets.
-    // User report: 'N4 failes 6 times but he only lost once' — the
-    // other 5 were assists / zero-respect wins.
-    //
-    // SUCCESS_RESULTS for reference (mirror of war-status-monitor.js):
-    //   Attacked, Hospitalized, Mugged, Looted, Special, Assist
-    //
-    // 2026-05-23: narrowed to TRUE losses only — user direction.
-    // Stalemate / Escape / Interrupted / Timeout are inconvenient
-    // but not the attacker's fault in the same way as actually
-    // losing the fight. They no longer contribute to the breakdown
-    // "losses" bucket or earn failedWeight credit.
-    const LOSS_RESULTS = new Set(['Lost']);
-    const respectGain = Number(atk.respect_gain) || 0;
-    if (respectGain <= 0) {
-      const result = String(atk.result || '');
-      if (LOSS_RESULTS.has(result)) {
-        byAttacker[aid].breakdown.failed = (byAttacker[aid].breakdown.failed || 0) + 1;
-        const FAILED_WEIGHT = Number.isFinite(settings.failedWeight)
-          ? Math.max(0, Number(settings.failedWeight))
-          : 0;
-        if (FAILED_WEIGHT > 0) byAttacker[aid].fairScoreSum += FAILED_WEIGHT;
-      }
-      // Either way, no respect to score from this attack — continue.
-      continue;
-    }
-
-    // v5.0.58: non-war attacks DO contribute to score, but at a
-    // reduced 'assist-level' weight per user policy ('non war hits
-    // should get paid same as assists').
-    // v5.0.64: weighting now varies by mode:
-    //   dynamic — respect_gain × 0.3 ÷ chain ÷ warlord (FF-aware,
-    //             scales with how tough the target was)
-    //   static  — flat 0.3 per non-war attack (every non-war hit
-    //             counts the same — matches the egalitarian static
-    //             policy where war hits are also flat 1.0)
-    if (atk.ranked_war !== 1) {
-      // v5.0.68: non-war weight is overridable per-war via the gear
-      // panel. Default 0.3 matches the typical assist:full-hit ratio.
-      const NON_WAR_WEIGHT = Number.isFinite(settings.nonWarWeight)
-        ? Math.max(0, Number(settings.nonWarWeight))
-        : 0.3;
-      let nwScore;
-      if (mode === 'static') {
-        nwScore = NON_WAR_WEIGHT;
-      } else {
-        const m2 = atk.modifiers || {};
-        const chainMod2 = Number(m2.chain_bonus) || 1;
-        const warlordMod2 = Number(m2.warlord_bonus) || 1;
-        nwScore = (respectGain * NON_WAR_WEIGHT) / (chainMod2 * warlordMod2);
-      }
-      byAttacker[aid].fairScoreSum += nwScore;
-      byAttacker[aid].breakdown.non_war = (byAttacker[aid].breakdown.non_war || 0) + 1;
-      // Non-war attacks don't bump attackCount (war-only) — only fair_score
-      // and the non_war breakdown counter. attackCount stays the war-attack
-      // count so the 'War / Total' ratio in the popover still works.
-      continue;
-    }
-
-    // v5.0.44: 'fair payout score' — strip the bonuses the user
-    // doesn't want counted toward payouts. Per user direction:
-    //   - chain_bonus (varies by chain timing, not effort)
-    //   - war (×2 ranked-war respect tier — circumstantial)
-    //   - warlord_bonus (warlord/load extra respect)
-    // What stays: fair_fight (skill-of-fight), retaliation (you went
-    // out of your way to retal), group_attack (coordination effort),
-    // overseas (effort/inconvenience).
-    const m = atk.modifiers || {};
-    const warMod = Number(m.war) || 1;
-    const chainMod = Number(m.chain_bonus) || 1;
-    const warlordMod = Number(m.warlord_bonus) || 1;
-    // fair_score is what respect WOULD have been without the excluded
-    // bonuses — divide them out of the final respect_gain.
-    const fairScore = respectGain / (warMod * chainMod * warlordMod);
-
-    const ff = Number(m.fair_fight ?? m.fairFight) || 0;
-    const cat = classify(atk, war.enemyFactionId);
-    const w = weight(mode, cat, ff);
-
-    // (member entry already created above; keep populating)
-    byAttacker[aid].computedScore += w;
-    // v5.0.64: scoring per mode for ranked-war attacks:
-    //   dynamic — fair_score (respect_gain ÷ war ÷ chain ÷ warlord),
-    //             FF-aware via Torn's respect formula
-    //   static  — 1.0 per successful war hit, 0.3 per assist
-    //             (every direct hit pays equally regardless of FF or
-    //             defender level — egalitarian payout policy)
-    // v5.0.68/70: assist weight is overridable per-war via the gear
-    // panel. Default 0.3 for BOTH modes per user request — matches
-    // the typical assist:full-hit respect ratio Torn applies, and
-    // means a group hit pays ~30% of a solo war hit regardless of
-    // mode. Setting >0.3 boosts assists; <0.3 penalizes them more.
-    const ASSIST_WEIGHT = Number.isFinite(settings.assistWeight)
-      ? Math.max(0, Number(settings.assistWeight))
-      : 0.3;
-    if (mode === 'static') {
-      byAttacker[aid].fairScoreSum += (cat === 'assist') ? ASSIST_WEIGHT : 1.0;
-    } else {
-      // FF Mode: assist contributes (fair_score × ASSIST_WEIGHT). With
-      // default 0.3 this scales the assist's natural respect down to
-      // ~30% — same effective rate as Termed Mode.
-      byAttacker[aid].fairScoreSum += (cat === 'assist') ? (fairScore * ASSIST_WEIGHT) : fairScore;
-    }
-    if (ff > 0) {
-      byAttacker[aid].ffSum += ff;
-      byAttacker[aid].ffSamples += 1;
-      if (ff > byAttacker[aid].ffMax) byAttacker[aid].ffMax = ff;
-    }
-    byAttacker[aid].breakdown[cat] = (byAttacker[aid].breakdown[cat] || 0) + 1;
-    byAttacker[aid].attackCount += 1;
-  }
+  const byAttacker = tallyAttacks(attacks, {
+    ourFid,
+    enemyFactionId: war.enemyFactionId,
+    mode,
+    settings,
+  });
 
   // ── Pull Torn's official report for cross-reference ──────────────────
   // We use this as a SECONDARY display ('Torn score' column) so admins

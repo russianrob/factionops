@@ -436,12 +436,12 @@ function mapV2AttackToV1(row) {
 
     // The modifier KEY NAMES diverge between versions and this is not
     // cosmetic — war-payouts.js reads the v1 names directly:
-    //   v2 `group`   → v1 `group_attack`   (classify() assist detection)
+    //   v2 `group`   → v1 `group_attack`   (kept as a fair_score bonus)
     //   v2 `chain`   → v1 `chain_bonus`    (divided out of fair_score)
     //   v2 `warlord` → v1 `warlord_bonus`  (divided out of fair_score)
     // Passing v2's object through verbatim would leave those three
-    // undefined: assists would stop being detected at all, and
-    // `Number(m.chain_bonus) || 1` would silently fall back to 1, so
+    // undefined, and `Number(m.chain_bonus) || 1` would silently fall
+    // back to 1, so
     // every chained hit's fair_score would be inflated by the chain
     // multiplier. Both are money errors, so rename explicitly.
     //
@@ -462,10 +462,12 @@ function mapV2AttackToV1(row) {
     // reads them: v2's `id` (used only as our dedupe key, kept out of
     // the returned row so the shape stays exactly v1's), `level` on each
     // participant, `is_territory_war`, `territory_war_id` and
-    // `finishing_hit_effects`. Conversely there is no v2 source for a v1
-    // `assist` field — but v1 has no such field either (war-payouts
-    // probes `atk.assist` only as belt-and-braces for other feeds), so
-    // nothing regresses.
+    // `finishing_hit_effects`. There is likewise no v2 source for a v1
+    // `assist` field, and v1 had none either — an assist is reported in
+    // `result`, which IS emitted above. war-payouts.js used to probe a
+    // non-existent `atk.assist` and fall back to `group_attack > 1`,
+    // which is a different mechanic; it now reads `result === "Assist"`,
+    // the same signal TornTools uses.
   };
 }
 
@@ -742,7 +744,7 @@ const ENERGY_PER_ATTACK = 25; // Torn: every attack costs 25 energy
 
 export async function fetchFactionWarEffort(factionId, apiKey, opts = {}) {
   const minHits = opts.minHits != null ? opts.minHits : 5; // a "real" participant
-  const warCount = opts.warCount != null ? opts.warCount : 3; // average this many recent wars
+  const warCount = opts.warCount != null ? opts.warCount : 5; // average this many recent wars
   const fid = String(factionId);
 
   const cached = _warEffortCache.get(fid);
@@ -828,8 +830,41 @@ export async function fetchFactionWarEffort(factionId, apiKey, opts = {}) {
 // 24-slot UTC histogram of chained hits; the client converts to local time.
 const _chainActivityCache = new Map(); // factionId -> { ts, value }
 
+// Share one chain's hits across the UTC hours it actually ran.
+//
+// Bucketing a whole chain into the hour it STARTED is what the histogram used
+// to do, and it is badly wrong for exactly the chains that matter: a 2,617-hit
+// chain that ran 37h59m put every one of those hits in the 20:00 bucket, so the
+// chart reported a huge 20:00 spike for a faction that in fact chains round the
+// clock. It was measuring when chains BEGIN, not when you get hit.
+//
+// Proportional by time, which assumes an even hit rate. Real chains ramp and
+// stall, so this is an approximation — but "spread across the 38 hours it ran"
+// is far closer than "all of it in the first minute", and another faction's
+// per-attack log is not readable, so this is the best source available.
+export function spreadChainHits(startSec, endSec, hits, hoursUTC) {
+  if (!(hits > 0)) return;
+  const total = endSec - startSec;
+  // No usable end (the field is undocumented on this endpoint): fall back to
+  // the old start-hour bucket rather than dropping the chain entirely.
+  if (!Number.isFinite(total) || total <= 0) {
+    hoursUTC[new Date(startSec * 1000).getUTCHours()] += hits;
+    return;
+  }
+  let t = startSec;
+  // 24h of hour-boundaries is 25 slices; the bound is a runaway guard for a
+  // corrupt timestamp, not an expected path.
+  for (let guard = 0; t < endSec && guard < 2000; guard++) {
+    const d = new Date(t * 1000);
+    const secIntoHour = d.getUTCMinutes() * 60 + d.getUTCSeconds();
+    const sliceEnd = Math.min(endSec, t + (3600 - secIntoHour));
+    hoursUTC[d.getUTCHours()] += hits * ((sliceEnd - t) / total);
+    t = sliceEnd;
+  }
+}
+
 export async function fetchFactionChainActivity(factionId, apiKey, opts = {}) {
-  const warCount = opts.warCount != null ? opts.warCount : 3;
+  const warCount = opts.warCount != null ? opts.warCount : 5;
   const fid = String(factionId);
 
   const cached = _chainActivityCache.get(fid);
@@ -847,9 +882,21 @@ export async function fetchFactionChainActivity(factionId, apiKey, opts = {}) {
 
   const hoursUTC = new Array(24).fill(0);
   let totalChains = 0, totalHits = 0, warsUsed = 0;
+  // Per-war chain detail. The histogram sums these into 24 buckets and throws
+  // the rest away, which makes it unreadable: eleven chains collapse into eight
+  // hour-buckets of which three are tall enough to see, so "peak 20:00" could
+  // be one long push or four short ones and the chart cannot say which. Keeping
+  // the list costs nothing — every field is already in the payload being
+  // paginated for the histogram.
+  const wars = [];
   for (const w of finished) {
     let warHits = 0;
     const seen = new Set();
+    const warChains = [];
+    // Per-war copy of the same histogram, so a bar can say WHICH war its hits
+    // came from rather than only how many there were in total.
+    const warHours = new Array(24).fill(0);
+    const opp = (w.factions || []).find((f) => String(f.id) !== fid);
     let to = w.end;
     // Chains are immutable; paginate back through the war window (100/page).
     for (let i = 0; i < 15; i++) {
@@ -862,11 +909,21 @@ export async function fetchFactionChainActivity(factionId, apiKey, opts = {}) {
       for (const ch of chains) {
         if (ch.start >= w.start && ch.start <= w.end && !seen.has(ch.id)) {
           seen.add(ch.id);
-          const h = new Date(ch.start * 1000).getUTCHours(); // bucket by chain start hour (UTC)
-          hoursUTC[h] += (ch.chain || 0);
+          const chEnd = Number.isFinite(ch.end) && ch.end > ch.start ? ch.end : null;
+          spreadChainHits(ch.start, chEnd, ch.chain || 0, hoursUTC);
+          spreadChainHits(ch.start, chEnd, ch.chain || 0, warHours);
           totalHits += (ch.chain || 0);
           warHits += (ch.chain || 0);
           totalChains += 1;
+          // `end` is not documented on this endpoint and nothing else in the
+          // codebase reads it, so it is carried through only when present and
+          // the duration is simply omitted when it is not.
+          warChains.push({
+            start: ch.start,
+            end: Number.isFinite(ch.end) && ch.end > ch.start ? ch.end : null,
+            hits: ch.chain || 0,
+            respect: Number.isFinite(ch.respect) ? Math.round(ch.respect) : null,
+          });
         }
       }
       const minStart = Math.min(...chains.map((c) => c.start));
@@ -874,11 +931,33 @@ export async function fetchFactionChainActivity(factionId, apiKey, opts = {}) {
       to = minStart - 1;
     }
     if (warHits > 0) warsUsed += 1;
+    if (warChains.length) {
+      warChains.sort((a, b) => b.hits - a.hits);   // biggest push first
+      wars.push({
+        start: w.start,
+        end: w.end,
+        opponent: (opp && opp.name) || null,
+        hits: warHits,
+        hoursUTC: warHours.map((v) => Math.round(v)),
+        chains: warChains,
+      });
+    }
   }
 
+  // Quiet time between wars: from the previous war ENDING to this one starting.
+  // Start-to-start reads as a two-week gap for a war that ran nine days, which
+  // is the opposite of idle.
+  for (let i = 0; i < wars.length - 1; i++) {
+    const prevEnd = wars[i + 1].end;
+    if (prevEnd > 0 && wars[i].start > prevEnd) wars[i].idleBefore = wars[i].start - prevEnd;
+  }
+
+  // Fractional after the spread — round once, here, so the client never has to.
+  for (let i = 0; i < 24; i++) hoursUTC[i] = Math.round(hoursUTC[i]);
+
   const value = totalHits > 0
-    ? { hoursUTC, totalChains, totalHits, warsUsed, source: 'chains' }
-    : { hoursUTC, totalChains: 0, totalHits: 0, warsUsed, source: 'none' };
+    ? { hoursUTC, totalChains, totalHits, warsUsed, wars, source: 'chains' }
+    : { hoursUTC, totalChains: 0, totalHits: 0, warsUsed, wars: [], source: 'none' };
   _chainActivityCache.set(fid, { ts: Date.now(), value });
   return value;
 }
