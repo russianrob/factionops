@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.24
+// @version      0.9.25
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,32 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.25 — Says something when the bar is sitting full, wherever you are.
+ *
+ *         Reported: "I have lost a lot of energy getting distracted by chat or
+ *         reading a guide in the forums, not realizing I never trained." The
+ *         coach had the data the whole time -- the poller runs on every Torn
+ *         page -- but ensureUi strips the panel everywhere except the gym, so
+ *         there was nothing anywhere to notice.
+ *
+ *         A banner now appears on any Torn page once the bar has been at the
+ *         cap for ten minutes. "Got it" is a snooze rather than a dismissal:
+ *         it buys ten quiet minutes and comes back, and only energy actually
+ *         leaving the bar ends it. The clock is persisted, because it is
+ *         measured across page loads and a fresh tab would otherwise restart
+ *         it and never reach ten minutes.
+ *
+ *         Quiet during a war stack, where holding the bar is the plan the
+ *         coach itself gave you, and quiet above the cap, where Torn pauses
+ *         regen so nothing is bleeding. It drops below FactionOps' own top
+ *         bar rather than fighting it for the spot.
+ *
+ *         Also: the daily point refill is now offered in DO THIS, but only
+ *         when the bar is low enough for it to be worth spending -- a refill
+ *         sets you to max, so suggesting one at 125/150 buys 25e and burns
+ *         the day. Read from its own request, so a key that cannot see the
+ *         flag leaves the reminder quiet instead of taking the panel down.
+ *
 * 0.9.24 — Finds the notification bridge under warboard's own name.
  *
  *         warboard-iOS answers Torn PDA's bridge protocol, and the first cut of
@@ -811,7 +837,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.12";
+  var GC_VERSION = "0.9.25";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -992,6 +1018,17 @@
   // deliberately.
   var STACK_PEAK_OVER = 300;
 
+  // How long the bar may sit at the cap before the banner interrupts you, and
+  // how much quiet "Got it" buys. Ten minutes is roughly a forum thread, and
+  // at the cap it is 200-odd energy already gone.
+  var FULLBAR_NAG_MS = 600000;
+  var FULLBAR_SNOOZE_MS = 600000;
+
+  // A point refill sets the bar to MAX, so its value is the room you have
+  // free. Suggesting one at 125/150 buys 25e and burns the day's refill, so
+  // the reminder waits until most of a bar is actually going spare.
+  var REFILL_WORTH_PCT = 0.25;
+
   var BOOSTER_CAP_PERK = 48 * H;
 
   // The faction perk lifts the booster ceiling from 24h to 48h, and the script
@@ -1053,6 +1090,13 @@
     tab: "now",
     open: false,
     warStack: false,
+    // When the bar first reached the cap, and when you last acknowledged the
+    // banner. Both are restored from storage at boot -- a fresh page load
+    // would otherwise start the clock over on every navigation.
+    fullSince: 0,
+    fullAckAt: 0,
+    // null until the refills selection answers: unknown is NOT "unused".
+    refillUsed: null,
     focus: "str",
     focus2: "none",
     goals: { str: 0, def: 0, spe: 0, dex: 0 },
@@ -1747,6 +1791,40 @@
       "&comment=" +
       encodeURIComponent(COMMENT)
     );
+  }
+
+  // Whether today's point refill is still unspent.
+  //
+  // Deliberately its OWN request rather than another selection on the main
+  // one. Torn fails a multi-selection call as a whole when the key cannot
+  // reach one of them, so appending `refills` to the call that carries bars
+  // and cooldowns would trade a working coach for a reminder. Kept apart, a
+  // key without the access simply leaves refillUsed null and the reminder
+  // stays quiet.
+  // Reads BOTH spellings on purpose. v1 answers `energy_refill_used`; v2's
+  // published schema renames the whole block to `energy` / `nerve` / `token` /
+  // `special_count`, which lines up field-for-field and type-for-type with v1's
+  // `*_refill_used` / `special_refills_available` -- so `energy` carries the
+  // same "already used" sense. Accepting either means a v2 move cannot quietly
+  // turn this into a reminder that never fires.
+  //
+  // Anything else is null, NOT false: "I could not tell" must never be read as
+  // "you still have it".
+  function readRefillUsed(d) {
+    var r = d && d.refills;
+    if (!r) return null;
+    if (typeof r.energy_refill_used === "boolean") return r.energy_refill_used;
+    if (typeof r.energy === "boolean") return r.energy;
+    return null;
+  }
+
+  var REFILL_TTL = 600000; // it changes at most once a day
+  function fetchRefills(force) {
+    if (!force && Date.now() - (state.refillAt || 0) < REFILL_TTL) return;
+    state.refillAt = Date.now();
+    httpGet(apiUrl("refills"))
+      .then(function (d) { state.refillUsed = readRefillUsed(d); })
+      .catch(function () { state.refillUsed = null; });
   }
 
   var INV_PAGE = 250; // spec maximum; the default of 20 would silently truncate
@@ -4109,6 +4187,73 @@
     };
   }
 
+  // --- the bar sitting full -------------------------------------------------
+  // A gym coach that only speaks on the gym page cannot catch the one mistake
+  // that costs the most: wandering off with a full bar. The poller already runs
+  // on every Torn page, so the data is here -- what was missing was anywhere to
+  // say it.
+
+  // Remember when the bar first reached the cap, and forget it the moment
+  // energy leaves. Persisted, because every page load builds this state from
+  // scratch: keeping the timestamp only in memory would restart the clock on
+  // each navigation and it would never survive to ten minutes.
+  function trackFullBar(now) {
+    if (state.energyKnown && state.energy >= state.energyMax) {
+      if (!state.fullSince) {
+        state.fullSince = now;
+        storeSet("fullsince", now);
+      }
+      return;
+    }
+    // Energy left the bar -- you trained, or spent it somewhere. Clear the
+    // acknowledgement along with the clock, or a stale "Got it" from this bar
+    // would silence the NEXT one for its first ten minutes.
+    if (state.fullSince || state.fullAckAt) {
+      state.fullSince = 0;
+      state.fullAckAt = 0;
+      storeSet("fullsince", 0);
+      storeSet("fullack", 0);
+    }
+  }
+
+  // Should the banner be up? Pure, so the timing rules can be tested without
+  // a browser. Returns { minutes } or null.
+  function fullBarNag(now, energy, max, fullSince, ackAt, stacking) {
+    // Holding the bar is the entire point of a war stack, so nagging about it
+    // would be telling you off for following the plan the coach gave you.
+    if (stacking) return null;
+    // Above the cap Torn pauses regen, so nothing is bleeding up there and
+    // there is nothing to interrupt anyone about. The cap itself is the only
+    // state that actually wastes energy.
+    if (!max || energy < max || energy > max) return null;
+    if (!fullSince) return null;
+    var fullFor = now - fullSince;
+    if (fullFor < FULLBAR_NAG_MS) return null;
+    // "Got it" is a snooze, not a silence: acknowledging buys quiet, and the
+    // banner comes back while the bar is still full. Only training ends it.
+    if (ackAt && now - ackAt < FULLBAR_SNOOZE_MS) return null;
+    return { minutes: Math.floor(fullFor / 60000) };
+  }
+
+  // One step for the verdict when today's point refill is still unspent and
+  // there is enough room in the bar for it to be worth spending.
+  function refillStep() {
+    // null means the key could not read the flag. A reminder built on a guess
+    // is worse than none: it would fire every day whether or not you had
+    // already used it.
+    if (state.refillUsed !== false) return null;
+    var max = state.energyMax || 0;
+    if (!max) return null;
+    var room = max - state.energy;
+    if (room < max * (1 - REFILL_WORTH_PCT)) return null;
+    return {
+      t: "REFILL",
+      text: "Your daily point refill is still unused, and the bar is down " +
+        fmt(room) + "e. Refilling now takes you straight back to " + fmt(max) + "."
+    };
+  }
+
+
   // --- how far off the next gym is ------------------------------------------
   // Torn already tracks this and paints it: the gym you are working toward
   // carries inProgress___ and a whole-number percentage. That percentage is the
@@ -4479,6 +4624,7 @@
           fmtCd(toFull) +
           "). Your drug cooldown reaches 0 first. Don\u2019t train this bar away unless you\u2019re about to overflow.",
         steps: [
+          refillStep(),
           canStep(fmtCd(toFull)) ||
             { t: "NOW", text: "Nothing. Bar isn\u2019t full. Xan isn\u2019t ready." },
           {
@@ -4503,6 +4649,7 @@
         " left on its cooldown. Fill the bar, spend it, do not let it overflow. Xanax after that.",
       steps: [
         gymStep(state.focus),
+        refillStep(),
         canStep(fmtCd(toFull)) || {
           t: "NOW",
           text: "Let energy fill. " + state.energy + "/" + state.energyMax + " · " + fmtCd(toFull) + " left.",
@@ -5232,6 +5379,7 @@
         // Torn's own record of what was trained. Refreshed on its own TTL, and
         // forced right after a detected session so the figure settles quickly.
         fetchTrainLog(kind === "train" || kind === "boot");
+        fetchRefills(kind === "boot" || kind === "manual");
         if (!wantInv) return null;
         return fetchInventoryV2().then(
           function (rows) {
@@ -6041,6 +6189,61 @@
     return /gym\.php/i.test(location.href);
   }
 
+  var NAG_ID = "gcb-fullbar-nag";
+
+  // The banner lives OUTSIDE ensureUi's gym-page gate on purpose. That gate
+  // exists because a gym coach's panel has no business floating over the item
+  // market -- but this is the one thing that does, because being somewhere
+  // else is precisely the mistake it is catching.
+  function renderNag() {
+    var live = fullBarNag(Date.now(), state.energy, state.energyMax,
+                          state.fullSince, state.fullAckAt, state.warStack);
+    var el = document.getElementById(NAG_ID);
+    if (!live) {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+      return;
+    }
+    if (!document.body) return;
+    if (!el) {
+      el = document.createElement("div");
+      el.id = NAG_ID;
+      // FactionOps parks its own fixed bar at the top centre (10px, or 52px
+      // when its chain bar is up) at z-index 1000001. Two scripts that both
+      // claim that spot look like one broken one, so drop below whatever it
+      // has mounted rather than stacking on top of it.
+      var fo = document.getElementById("fo-call-toast-container") ||
+               document.querySelector('[id^="fo-chain"]');
+      el.style.cssText =
+        "position:fixed;top:" + (fo ? "96px" : "12px") + ";left:50%;" +
+        "transform:translateX(-50%);z-index:2147483646;" +
+        "background:#b3261e;color:#fff;font-family:Arial,sans-serif;" +
+        "font-size:13px;line-height:1.35;padding:10px 14px;border-radius:8px;" +
+        "box-shadow:0 4px 14px rgba(0,0,0,.45);max-width:92vw;text-align:center;";
+      document.body.appendChild(el);
+    }
+    var mins = live.minutes;
+    el.innerHTML =
+      '<div style="font-weight:700;letter-spacing:.4px">BAR FULL ' + mins +
+      " MINUTE" + (mins === 1 ? "" : "S") + "</div>" +
+      '<div style="opacity:.9;margin-top:2px">' + fmt(state.energy) + "/" +
+      fmt(state.energyMax) + " \u00b7 " + focusLabel() + " at " +
+      (state.gymName || "your gym") + "</div>" +
+      '<button type="button" id="' + NAG_ID + '-ok" style="margin-top:8px;' +
+      "background:#fff;color:#b3261e;border:0;border-radius:5px;padding:5px 16px;" +
+      'font-weight:700;font-size:12px;cursor:pointer">Got it</button>';
+    var btn = document.getElementById(NAG_ID + "-ok");
+    if (btn && !btn.__gcbBound) {
+      btn.__gcbBound = 1;
+      btn.addEventListener("click", function () {
+        // A snooze, not a dismissal. The clock keeps running and the banner
+        // returns in another ten minutes -- only training clears it for good.
+        state.fullAckAt = Date.now();
+        storeSet("fullack", state.fullAckAt);
+        renderNag();
+      });
+    }
+  }
+
   function ensureUi() {
     // The badge used to mount on every page: @match is torn.com/*, and
     // mountFabNow never looked at the URL. It is a gym coach, so it belongs on
@@ -6753,6 +6956,10 @@
   function boot() {
     try {
       state.warStack = storeBool("warStack", false);
+      // Restored, not reset: the ten-minute clock is measured across page
+      // loads, so a fresh tab has to pick up where the last one left off.
+      state.fullSince = Number(storeGet("fullsince", 0)) || 0;
+      state.fullAckAt = Number(storeGet("fullack", 0)) || 0;
       state.focus = storeGet("focus", "str") || "str";
       state.focus2 = storeGet("focus2", "none") || "none";
       var gv = storeGet("goals", null);
@@ -6907,6 +7114,13 @@
         if (state.boosterCd > 0) state.boosterCd -= 1;
         syncEnergyFromDom();
         ledgerObserve(false);
+        // Every Torn page, not just the gym. PDA is exempted from the
+        // visibility check because it reports hidden:true while plainly in
+        // front of you, and a banner you never see is worse than none.
+        if (isPda() || document.visibilityState === "visible") {
+          trackFullBar(Date.now());
+          try { renderNag(); } catch (_) {}
+        }
         if (!state.open) return;
         if (syncEnergyFromDom()) lastTickSig = "";
         var sig = fmtCd(state.drugCd) + "|" + fmtCd(state.boosterCd) + "|" + state.tab + "|" + state.energy;
