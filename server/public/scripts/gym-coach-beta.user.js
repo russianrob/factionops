@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.25
+// @version      0.9.26
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,30 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.26 — Tells you when the weekly Mc Smoogle energy is waiting.
+ *
+ *         The plan has budgeted this for a while and DO THIS never mentioned
+ *         it. Torn does expose it: /v2/user/stocks gives every holding a
+ *         `bonus` object, and `available` is exactly the readiness flag.
+ *
+ *         The stock id is pinned to 29 rather than discovered, and that is the
+ *         careful choice, not the lazy one. Matching the benefit description
+ *         looks tidier until you read the catalogue: MUN (24) says
+ *         "1x Six-Pack of Energy Drink" and MCS (29) says "100 energy", so
+ *         anything grepping for "energy" matches both and would report a
+ *         crate of cans as your energy claim. A pinned id can only fail
+ *         silent. Keyed on the id alone for the same reason -- the account
+ *         this was probed on also held IIL with a claim ready, and any looser
+ *         test would have called that Mc Smoogle every time it came due.
+ *
+ *         Not gated on having room, unlike the point refill: Torn banks energy
+ *         above the cap rather than discarding it, the way a xanax does, so
+ *         claiming on a full bar loses nothing -- and a full bar is exactly
+ *         when you are most likely to be reading it.
+ *
+ *         Its own request, because /user/stocks needs a limited key and Torn
+ *         fails a combined call as a whole.
+ *
 * 0.9.25 — Says something when the bar is sitting full, wherever you are.
  *
  *         Reported: "I have lost a lot of energy getting distracted by chat or
@@ -837,7 +861,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.25";
+  var GC_VERSION = "0.9.26";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -1029,6 +1053,17 @@
   // the reminder waits until most of a bar is actually going spare.
   var REFILL_WORTH_PCT = 0.25;
 
+  // Mc Smoogle Corp, probed live 2026-08-30: stock id 29, benefit "100 energy",
+  // 350,000 shares an increment, claimable every 7 days.
+  //
+  // The id is pinned rather than discovered. Discovery would mean matching the
+  // benefit description, and that is genuinely ambiguous: MUN (24) reads
+  // "1x Six-Pack of Energy Drink", which also says energy but pays an ITEM.
+  // Picking the wrong one would report someone else's stock as your energy.
+  // A pinned id can only ever fail silent, which is the safe direction.
+  var MCS_STOCK_ID = 29;
+  var MCS_ENERGY = 100;
+
   var BOOSTER_CAP_PERK = 48 * H;
 
   // The faction perk lifts the booster ceiling from 24h to 48h, and the script
@@ -1097,6 +1132,8 @@
     fullAckAt: 0,
     // null until the refills selection answers: unknown is NOT "unused".
     refillUsed: null,
+    // null until /user/stocks answers; { available, increment } after.
+    mcs: null,
     focus: "str",
     focus2: "none",
     goals: { str: 0, def: 0, spe: 0, dex: 0 },
@@ -1801,6 +1838,59 @@
   // and cooldowns would trade a working coach for a reminder. Kept apart, a
   // key without the access simply leaves refillUsed null and the reminder
   // stays quiet.
+  // Mc Smoogle's weekly claim, out of /v2/user/stocks.
+  //
+  // Keyed on the stock id and nothing else. The probed account also held IIL
+  // with available:true, so anything looser -- "some holding is ready", or the
+  // first entry with a 7-day frequency -- would have announced Mc Smoogle
+  // energy every time an unrelated stock came due.
+  //
+  // null means unreadable (no holding, wrong key level, error payload) and is
+  // deliberately distinct from { available: false }, which means "held, not
+  // ready yet".
+  function readMcsBonus(d) {
+    var list = d && d.stocks;
+    if (!list) return null;
+    var rows = Array.isArray(list) ? list : Object.keys(list).map(function (k) { return list[k]; });
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i].id) !== String(MCS_STOCK_ID)) continue;
+      var b = rows[i].bonus || {};
+      if (typeof b.available !== "boolean") return null;
+      return { available: b.available, increment: Number(b.increment) || 1 };
+    }
+    return null;
+  }
+
+  // One step for the verdict when the weekly energy is sitting there unclaimed.
+  //
+  // Unlike the point refill this is NOT gated on having room. Torn banks energy
+  // above the cap rather than discarding it -- that is exactly what a xanax
+  // does -- so claiming at a full bar loses nothing, and a full bar is the
+  // moment you are most likely to be reading this.
+  function mcsStep() {
+    var m = state.mcs;
+    if (!m || m.available !== true) return null;
+    var e = MCS_ENERGY * (m.increment || 1);
+    return {
+      t: "MC SMOOGLE",
+      text: "Your weekly Mc Smoogle energy is waiting \u2014 claim it on the stock " +
+        "market for +" + fmt(e) + "e. Next week's does not start counting until " +
+        "you take this one."
+    };
+  }
+
+  var STOCKS_TTL = 1800000; // a weekly benefit; half an hour is plenty
+  function fetchStocks(force) {
+    if (!force && Date.now() - (state.stocksAt || 0) < STOCKS_TTL) return;
+    state.stocksAt = Date.now();
+    // Its own request, like the refills one: /user/stocks needs a LIMITED key,
+    // and Torn fails a combined multi-selection call as a whole.
+    httpGet("https://api.torn.com/v2/user/stocks?key=" +
+            encodeURIComponent(resolveKey()) + "&comment=" + encodeURIComponent(COMMENT))
+      .then(function (d) { state.mcs = readMcsBonus(d); })
+      .catch(function () { state.mcs = null; });
+  }
+
   // Reads BOTH spellings on purpose. v1 answers `energy_refill_used`; v2's
   // published schema renames the whole block to `energy` / `nerve` / `token` /
   // `special_count`, which lines up field-for-field and type-for-type with v1's
@@ -4625,6 +4715,7 @@
           "). Your drug cooldown reaches 0 first. Don\u2019t train this bar away unless you\u2019re about to overflow.",
         steps: [
           refillStep(),
+          mcsStep(),
           canStep(fmtCd(toFull)) ||
             { t: "NOW", text: "Nothing. Bar isn\u2019t full. Xan isn\u2019t ready." },
           {
@@ -4650,6 +4741,7 @@
       steps: [
         gymStep(state.focus),
         refillStep(),
+        mcsStep(),
         canStep(fmtCd(toFull)) || {
           t: "NOW",
           text: "Let energy fill. " + state.energy + "/" + state.energyMax + " · " + fmtCd(toFull) + " left.",
@@ -5380,6 +5472,7 @@
         // forced right after a detected session so the figure settles quickly.
         fetchTrainLog(kind === "train" || kind === "boot");
         fetchRefills(kind === "boot" || kind === "manual");
+        fetchStocks(kind === "boot" || kind === "manual");
         if (!wantInv) return null;
         return fetchInventoryV2().then(
           function (rows) {

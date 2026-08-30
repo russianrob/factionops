@@ -23,7 +23,7 @@ function grab(n) {
 }
 // Pulled from the source, never restated here: a sandbox that DEFINES the
 // constant shadows production and every mutation of it survives.
-const consts = ["FULLBAR_NAG_MS", "FULLBAR_SNOOZE_MS", "REFILL_WORTH_PCT"]
+const consts = ["FULLBAR_NAG_MS", "FULLBAR_SNOOZE_MS", "REFILL_WORTH_PCT", "MCS_STOCK_ID", "MCS_ENERGY"]
   .map(n => {
     const m = new RegExp("var " + n + " = [^;]+;").exec(src);
     assert.ok(m, "constant " + n + " is not defined in the script");
@@ -186,6 +186,86 @@ t("an error payload reads unknown, never 'still available'", () => {
   assert.strictEqual(parseRefill({ error: { code: 2, error: "Incorrect key" } }), null);
   assert.strictEqual(parseRefill({}), null);
   assert.strictEqual(parseRefill({ refills: {} }), null);
+});
+
+// --- Mc Smoogle: the weekly 100 energy ------------------------------------
+// Probed live on 2026-08-30: MCS is stock id 29, "100 energy", 350,000 shares
+// an increment. Crucially TWO stocks match /energy/i -- MUN (24) pays
+// "1x Six-Pack of Energy Drink", which is an ITEM, not energy. Anything that
+// picks the stock by description has to tell those apart.
+function parseMcs(payload) {
+  return new Function("var R;" + consts + `
+    ${grab("readMcsBonus")}
+    R = readMcsBonus(${JSON.stringify(payload)});
+  ` + "return R;")();
+}
+function mcs(bonus) {
+  return new Function("var R;" + consts + `
+    function fmt(n) { return String(n); }
+    var state = { mcs: ${JSON.stringify(bonus)} };
+    ${grab("mcsStep")}
+    R = mcsStep();
+  ` + "return R;")();
+}
+
+t("the real holdings payload is read", () => {
+  // Exactly what the probe returned.
+  const r = parseMcs({ stocks: [
+    { id: 14, shares: 1000000, bonus: { available: true, increment: 1, progress: 7, frequency: 7 } },
+    { id: 29, shares: 350000, bonus: { available: true, increment: 1, progress: 7, frequency: 7 } },
+  ]});
+  assert.deepStrictEqual(r, { available: true, increment: 1 });
+});
+
+t("another stock being ready is not Mc Smoogle being ready", () => {
+  // IIL was also available:true on the probed account. Keying on anything but
+  // the stock id would have claimed MCS was ready whenever IIL was.
+  const r = parseMcs({ stocks: [
+    { id: 14, shares: 1000000, bonus: { available: true, increment: 1, progress: 7, frequency: 7 } },
+  ]});
+  assert.strictEqual(r, null);
+});
+
+t("a holding that is not yet ready reads as not ready", () => {
+  const r = parseMcs({ stocks: [
+    { id: 29, shares: 350000, bonus: { available: false, increment: 1, progress: 3, frequency: 7 } },
+  ]});
+  assert.deepStrictEqual(r, { available: false, increment: 1 });
+});
+
+t("an error payload reads unknown, not ready", () => {
+  assert.strictEqual(parseMcs({ error: { code: 16, error: "Access level" } }), null);
+  assert.strictEqual(parseMcs({}), null);
+});
+
+t("a holding with no readable available flag reads unknown, not ready", () => {
+  // Distinct from "held but not ready": if Torn ever stops sending the flag,
+  // the answer must be null rather than an object whose `available` is
+  // undefined, which any later reader would have to remember to re-check.
+  assert.strictEqual(parseMcs({ stocks: [
+    { id: 29, shares: 350000, bonus: { increment: 1, progress: 7, frequency: 7 } },
+  ]}), null);
+  assert.strictEqual(parseMcs({ stocks: [
+    { id: 29, shares: 350000, bonus: { available: "yes", increment: 1 } },
+  ]}), null);
+  assert.strictEqual(parseMcs({ stocks: [{ id: 29, shares: 350000 }] }), null);
+});
+
+t("a waiting claim is offered, sized by increments held", () => {
+  const r = mcs({ available: true, increment: 1 });
+  assert.ok(r, "expected a step");
+  assert.match(r.text, /100e/);
+  assert.match(r.text, /Mc Smoogle/i);
+  // two increments is two hundred energy, not one
+  assert.match(mcs({ available: true, increment: 2 }).text, /200e/);
+});
+
+t("nothing is said when the claim is not ready", () => {
+  assert.strictEqual(mcs({ available: false, increment: 1 }), null);
+});
+
+t("nothing is said when it could not be read", () => {
+  assert.strictEqual(mcs(null), null);
 });
 
 console.log("\n" + pass + " passed, " + fail + " failed");
