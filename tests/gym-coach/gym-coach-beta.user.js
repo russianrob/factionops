@@ -3960,6 +3960,54 @@
     return (tl.byDay[dayKey(Date.now())] || 0) + (tl.since || 0);
   }
 
+  // How much regen a window actually threw away, reconstructed from WHEN the
+  // spending happened rather than guessed from the two ends of the window.
+  //
+  // The guess is what breaks across two devices. Asking "was the bar full when
+  // I last looked, and is it full now?" bills the whole gap between -- so a PC
+  // that was closed for six hours bills six hours at the cap, even though the
+  // PDA emptied the bar twice inside them. Both devices do it and neither can
+  // know the other exists.
+  //
+  // Given the spend timeline this needs no guessing: walk the window, let the
+  // bar climb at the known rate, apply each event when it happened, and total
+  // only the time the bar was genuinely sitting at the cap. Both devices read
+  // the same timeline, so both reach the same number.
+  //
+  // `events` are { t: ms, delta: energy } -- negative for a spend, positive for
+  // a xanax, can or refill. Returns { wasted, atCapSec } or null if the inputs
+  // cannot describe a window.
+  function simulateWaste(startE, startT, endT, max, secPerE, events) {
+    if (!(secPerE > 0) || !(max > 0) || !(endT > startT)) return null;
+    var e = Number(startE) || 0, t = startT, atCap = 0;
+    var evs = (events || [])
+      .filter(function (v) { return v && typeof v.t === "number" && v.t > startT && v.t <= endT; })
+      .sort(function (a, b) { return a.t - b.t; });
+
+    function advance(to) {
+      var dt = (to - t) / 1000;
+      t = to;
+      if (dt <= 0) return;
+      // ABOVE the cap Torn pauses regen, so nothing accrues and nothing is
+      // lost -- that energy was banked on purpose. Only sitting exactly AT the
+      // cap throws regen away.
+      if (e > max) return;
+      if (e >= max) { atCap += dt; return; }
+      var need = (max - e) * secPerE;   // seconds left to fill
+      if (dt <= need) { e += dt / secPerE; return; }
+      e = max;
+      atCap += dt - need;
+    }
+
+    for (var i = 0; i < evs.length; i++) {
+      advance(evs[i].t);
+      e += Number(evs[i].delta) || 0;
+      if (e < 0) e = 0;   // the bar cannot go below empty
+    }
+    advance(endT);
+    return { wasted: atCap / secPerE, atCapSec: atCap };
+  }
+
   // Energy spent attacking, straight from Torn's attack log.
   //
   // The bar-derived figure this replaces could not survive two devices. Each
