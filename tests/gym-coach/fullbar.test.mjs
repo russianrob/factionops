@@ -32,23 +32,24 @@ const consts = ["FULLBAR_NAG_MS", "FULLBAR_SNOOZE_MS", "REFILL_WORTH_PCT", "MCS_
 
 const MIN = 60000;
 
-function nag({ now = 10 * MIN, energy = 150, max = 150, fullSince = 0, ackAt = 0, stacking = false }) {
+// The banner reads the SAME clock the panel prints ("Bar has been full for
+// 19m"), so the two can never disagree. streakSec is capStreak().sec.
+function nag({ now = 10 * MIN, energy = 150, max = 150, streakSec = null, ackAt = 0, stacking = false }) {
   return new Function("var R;" + consts + `
     ${grab("fullBarNag")}
-    R = fullBarNag(${now}, ${energy}, ${max}, ${fullSince}, ${ackAt}, ${stacking});
+    R = fullBarNag(${now}, ${JSON.stringify(streakSec)}, ${ackAt}, ${stacking}, ${energy}, ${max});
   ` + "return R;")();
 }
 
 // prev state -> one poll at `now`, returns what got persisted
-function track({ now, energy, max = 150, fullSince = 0, ackAt = 0 }) {
+function track({ energy, max = 150, ackAt = 0 }) {
   return new Function("var R;" + consts + `
     var saved = {};
     function storeSet(k, v) { saved[k] = v; }
-    var state = { energy: ${energy}, energyMax: ${max}, energyKnown: true,
-                  fullSince: ${fullSince}, fullAckAt: ${ackAt} };
+    var state = { energy: ${energy}, energyMax: ${max}, energyKnown: true, fullAckAt: ${ackAt} };
     ${grab("trackFullBar")}
-    trackFullBar(${now});
-    R = { fullSince: state.fullSince, ackAt: state.fullAckAt, saved: saved };
+    trackFullBar();
+    R = { ackAt: state.fullAckAt, saved: saved };
   ` + "return R;")();
 }
 
@@ -61,78 +62,94 @@ function refill({ used = false, energy = 10, max = 150 }) {
   ` + "return R;")();
 }
 
+// Calls fullBarNag with a literal argument, bypassing the helper's default --
+// `nag({ streakSec: undefined })` silently becomes null and can never reach
+// the type guard, which is how a dead guard passed for a round of mutation.
+function nagRaw(expr) {
+  return new Function("var R;" + consts + `
+    ${grab("fullBarNag")}
+    R = fullBarNag(600000, ${expr}, 0, false, 150, 150);
+  ` + "return R;")();
+}
+
 let pass = 0, fail = 0;
 const t = (n, f) => { try { f(); pass++; console.log("ok   " + n); } catch (e) { fail++; console.log("FAIL " + n + " :: " + e.message); } };
 
 // --- when the banner is up -------------------------------------------------
 
 t("a bar below the cap is not nagged", () => {
-  assert.strictEqual(nag({ energy: 149, fullSince: 1 }), null);
+  // capStreak() returns null below the cap, which is the only signal needed.
+  assert.strictEqual(nag({ energy: 149, streakSec: null }), null);
 });
 
 t("nine minutes at the cap is not yet worth interrupting for", () => {
-  assert.strictEqual(nag({ now: 20 * MIN, fullSince: 20 * MIN - 9 * MIN }), null);
+  assert.strictEqual(nag({ streakSec: 9 * 60 }), null);
 });
 
 t("ten minutes at the cap raises the banner", () => {
-  const r = nag({ now: 20 * MIN, fullSince: 10 * MIN });
+  const r = nag({ streakSec: 10 * 60 });
   assert.ok(r, "expected a banner at ten minutes");
   assert.strictEqual(r.minutes, 10);
 });
 
+t("the banner agrees with the figure the panel prints", () => {
+  // The panel said "Bar has been full for 19m" while the banner showed
+  // nothing, because the banner used to keep its OWN clock -- one that
+  // restarted whenever the app was reopened. Same source now, so the two
+  // cannot drift apart again.
+  assert.strictEqual(nag({ streakSec: 19 * 60 }).minutes, 19);
+});
+
 t("the banner counts the real elapsed time, not just the threshold", () => {
-  assert.strictEqual(nag({ now: 45 * MIN, fullSince: 20 * MIN }).minutes, 25);
+  assert.strictEqual(nag({ streakSec: 25 * 60 }).minutes, 25);
 });
 
 // --- when it must stay quiet ----------------------------------------------
 
 t("war stacking is not nagged -- holding the bar IS the plan", () => {
-  assert.strictEqual(nag({ now: 60 * MIN, fullSince: 0 + 1, stacking: true }), null);
+  assert.strictEqual(nag({ streakSec: 60 * 60, stacking: true }), null);
 });
 
 t("above the cap is not nagged -- regen is paused, nothing is bleeding", () => {
   // A xanax puts you 250 over. Torn stops regen up there, so no energy is
   // being lost and there is nothing to interrupt anyone about.
-  assert.strictEqual(nag({ now: 60 * MIN, energy: 400, fullSince: 1 }), null);
+  assert.strictEqual(nag({ streakSec: 60 * 60, energy: 400 }), null);
 });
 
-t("a bar never seen full is not nagged", () => {
-  assert.strictEqual(nag({ now: 60 * MIN, fullSince: 0 }), null);
+t("a bar the clock knows nothing about is not nagged", () => {
+  assert.strictEqual(nag({ streakSec: null }), null);
+  // Not the same case as null: a non-numeric streak multiplies to NaN, every
+  // comparison against it is false, and the banner would sail past the
+  // threshold to render "Bar full NaNm".
+  assert.strictEqual(nagRaw("undefined"), null);
+  assert.strictEqual(nagRaw("NaN"), null);
 });
 
 // --- acknowledging ---------------------------------------------------------
 
-t("Got it buys ten quiet minutes", () => {
-  assert.strictEqual(nag({ now: 60 * MIN, fullSince: 10 * MIN, ackAt: 58 * MIN }), null);
+t("Got it buys two quiet minutes", () => {
+  assert.strictEqual(nag({ now: 60 * MIN, streakSec: 50 * 60, ackAt: 59 * MIN }), null);
 });
 
-t("Got it is a snooze, not a silence -- it returns after ten", () => {
-  const r = nag({ now: 60 * MIN, fullSince: 10 * MIN, ackAt: 49 * MIN });
-  assert.ok(r, "expected the banner back eleven minutes after acknowledging");
+t("Got it is a snooze, not a silence -- it is back two minutes later", () => {
+  const r = nag({ now: 60 * MIN, streakSec: 50 * 60, ackAt: 57 * MIN });
+  assert.ok(r, "expected the banner back three minutes after acknowledging");
   assert.strictEqual(r.minutes, 50);
 });
 
 // --- the clock across page loads ------------------------------------------
 
-t("first sight at the cap starts the clock and persists it", () => {
-  const r = track({ now: 5 * MIN, energy: 150 });
-  assert.strictEqual(r.fullSince, 5 * MIN);
-  assert.strictEqual(r.saved.fullsince, 5 * MIN, "must persist or navigation restarts it");
+t("a full bar leaves the acknowledgement alone", () => {
+  const r = track({ energy: 150, ackAt: 25 * MIN });
+  assert.strictEqual(r.ackAt, 25 * MIN);
 });
 
-t("a later poll while still full does NOT restart the clock", () => {
-  // The whole feature dies here if this regresses: every page load would reset
-  // the timer and it would never reach ten minutes.
-  const r = track({ now: 30 * MIN, energy: 150, fullSince: 5 * MIN });
-  assert.strictEqual(r.fullSince, 5 * MIN);
-});
-
-t("training clears the clock AND the acknowledgement", () => {
-  // Energy leaving the bar is the only thing that genuinely ends the nag.
-  const r = track({ now: 30 * MIN, energy: 20, fullSince: 5 * MIN, ackAt: 25 * MIN });
-  assert.strictEqual(r.fullSince, 0);
-  assert.strictEqual(r.ackAt, 0, "a stale ack would suppress the next full bar");
-  assert.strictEqual(r.saved.fullsince, 0);
+t("training clears the acknowledgement", () => {
+  // Energy leaving the bar is the only thing that genuinely ends the nag. A
+  // stale Got it would otherwise silence the NEXT full bar for ten minutes.
+  const r = track({ energy: 20, ackAt: 25 * MIN });
+  assert.strictEqual(r.ackAt, 0);
+  assert.strictEqual(r.saved.fullack, 0);
 });
 
 // --- the refill reminder ---------------------------------------------------

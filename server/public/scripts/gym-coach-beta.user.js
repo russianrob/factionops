@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.26
+// @version      0.9.27
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,33 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.27 — The full-bar banner reads the clock the panel already prints.
+ *
+ *         Reported: it took far too long to appear, and on a freshly opened
+ *         app it did not appear at all -- while the panel four inches away
+ *         said "Bar has been full for 19m".
+ *
+ *         Both were the same mistake. The banner kept its OWN clock, started
+ *         the first time a live tick happened to SEE a full bar, so reopening
+ *         the app reset it to zero and cost another ten minutes. capStreak()
+ *         has been there the whole time and is strictly better: it works from
+ *         the moment the bar was predicted to fill, so a bar that filled while
+ *         the app was closed counts from when it actually filled. Two clocks
+ *         for one fact was the bug; there is one now, and a test pins the
+ *         banner and the panel to the same number.
+ *
+ *         "Got it" now buys two minutes rather than ten. By the time you are
+ *         dismissing it you have been told, so a short leash is worth more
+ *         than a long silence.
+ *
+ *         Slimmer, too: one line at 33px instead of a three-row block that
+ *         sat on top of Torn's nav and news ticker.
+ *
+ *         Mc Smoogle is offered on a FULL bar as well. It was only wired into
+ *         the waiting-for-energy verdicts, which is exactly where you are not
+ *         standing when the bar is full -- and since Torn banks energy above
+ *         the cap, a full bar is a fine moment to claim it.
+ *
 * 0.9.26 — Tells you when the weekly Mc Smoogle energy is waiting.
  *
  *         The plan has budgeted this for a while and DO THIS never mentioned
@@ -861,7 +888,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.26";
+  var GC_VERSION = "0.9.27";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -1042,11 +1069,15 @@
   // deliberately.
   var STACK_PEAK_OVER = 300;
 
-  // How long the bar may sit at the cap before the banner interrupts you, and
-  // how much quiet "Got it" buys. Ten minutes is roughly a forum thread, and
-  // at the cap it is 200-odd energy already gone.
+  // How long the bar may sit at the cap before the banner first interrupts
+  // you: ten minutes is roughly a forum thread, and at the cap that is
+  // 200-odd energy already gone.
   var FULLBAR_NAG_MS = 600000;
-  var FULLBAR_SNOOZE_MS = 600000;
+  // What "Got it" buys. Deliberately much shorter than the first wait -- by
+  // the time you are dismissing it you have already been told, so the useful
+  // behaviour is a short leash rather than a long silence. Set by the user,
+  // who wanted it back every two minutes until the bar is actually spent.
+  var FULLBAR_SNOOZE_MS = 120000;
 
   // A point refill sets the bar to MAX, so its value is the room you have
   // free. Suggesting one at 125/150 buys 25e and burns the day's refill, so
@@ -1125,10 +1156,8 @@
     tab: "now",
     open: false,
     warStack: false,
-    // When the bar first reached the cap, and when you last acknowledged the
-    // banner. Both are restored from storage at boot -- a fresh page load
-    // would otherwise start the clock over on every navigation.
-    fullSince: 0,
+    // When you last acknowledged the full-bar banner. The clock itself comes
+    // from capStreak(), which the panel already prints.
     fullAckAt: 0,
     // null until the refills selection answers: unknown is NOT "unused".
     refillUsed: null,
@@ -4283,46 +4312,44 @@
   // on every Torn page, so the data is here -- what was missing was anywhere to
   // say it.
 
-  // Remember when the bar first reached the cap, and forget it the moment
-  // energy leaves. Persisted, because every page load builds this state from
-  // scratch: keeping the timestamp only in memory would restart the clock on
-  // each navigation and it would never survive to ten minutes.
-  function trackFullBar(now) {
-    if (state.energyKnown && state.energy >= state.energyMax) {
-      if (!state.fullSince) {
-        state.fullSince = now;
-        storeSet("fullsince", now);
-      }
-      return;
-    }
-    // Energy left the bar -- you trained, or spent it somewhere. Clear the
-    // acknowledgement along with the clock, or a stale "Got it" from this bar
-    // would silence the NEXT one for its first ten minutes.
-    if (state.fullSince || state.fullAckAt) {
-      state.fullSince = 0;
+  // capStreak() owns the clock; this owns only the acknowledgement. It is
+  // cleared the moment energy leaves the bar, or a "Got it" from this bar
+  // would silence the first ten minutes of the NEXT one.
+  function trackFullBar() {
+    if (state.energyKnown && state.energy >= state.energyMax) return;
+    if (state.fullAckAt) {
       state.fullAckAt = 0;
-      storeSet("fullsince", 0);
       storeSet("fullack", 0);
     }
   }
 
   // Should the banner be up? Pure, so the timing rules can be tested without
-  // a browser. Returns { minutes } or null.
-  function fullBarNag(now, energy, max, fullSince, ackAt, stacking) {
+  // a browser. `streakSec` is capStreak().sec. Returns { minutes } or null.
+  //
+  // It reads capStreak() rather than keeping its own clock, and that is the
+  // whole point. The first cut tracked a separate `fullSince` set the first
+  // time a live tick SAW a full bar -- so reopening the app restarted it, and
+  // the panel could say "Bar has been full for 19m" while the banner, five
+  // pixels away, believed the bar had just filled and stayed silent. capStreak
+  // already handles the cases that clock could not: a bar that filled while
+  // the app was closed (it uses the predicted fill time), and an upgrade from
+  // a build that never recorded the moment at all.
+  function fullBarNag(now, streakSec, ackAt, stacking, energy, max) {
     // Holding the bar is the entire point of a war stack, so nagging about it
     // would be telling you off for following the plan the coach gave you.
     if (stacking) return null;
-    // Above the cap Torn pauses regen, so nothing is bleeding up there and
-    // there is nothing to interrupt anyone about. The cap itself is the only
-    // state that actually wastes energy.
-    if (!max || energy < max || energy > max) return null;
-    if (!fullSince) return null;
-    var fullFor = now - fullSince;
-    if (fullFor < FULLBAR_NAG_MS) return null;
+    // Above the cap Torn pauses regen, so nothing is bleeding up there.
+    if (max && energy > max) return null;
+    // null is capStreak saying the bar is not at the cap, or that it has no
+    // honest answer yet. isFinite as well as the type check, because
+    // `typeof NaN` is "number" and NaN loses every comparison below -- it
+    // would sail past the threshold and render "Bar full NaNm".
+    if (typeof streakSec !== "number" || !isFinite(streakSec)) return null;
+    if (streakSec * 1000 < FULLBAR_NAG_MS) return null;
     // "Got it" is a snooze, not a silence: acknowledging buys quiet, and the
     // banner comes back while the bar is still full. Only training ends it.
     if (ackAt && now - ackAt < FULLBAR_SNOOZE_MS) return null;
-    return { minutes: Math.floor(fullFor / 60000) };
+    return { minutes: Math.floor(streakSec / 60) };
   }
 
   // One step for the verdict when today's point refill is still unspent and
@@ -4690,6 +4717,7 @@
         why: "Xan is on cooldown " + fmtCd(state.drugCd) + ". Overflowing energy is stats you never get back.",
         steps: [
           gymStep(state.focus),
+          mcsStep(),
           { t: "NOW", text: "Train " + state.energy + "e into " + focus + " at " + gym + "." },
           { t: "WAIT", text: "Drug cooldown: " + fmtCd(state.drugCd) + ". Let the bar fill again while it ticks." },
           {
@@ -6289,8 +6317,9 @@
   // market -- but this is the one thing that does, because being somewhere
   // else is precisely the mistake it is catching.
   function renderNag() {
-    var live = fullBarNag(Date.now(), state.energy, state.energyMax,
-                          state.fullSince, state.fullAckAt, state.warStack);
+    var st = capStreak();
+    var live = fullBarNag(Date.now(), st ? st.sec : null, state.fullAckAt,
+                          state.warStack, state.energy, state.energyMax);
     var el = document.getElementById(NAG_ID);
     if (!live) {
       if (el && el.parentNode) el.parentNode.removeChild(el);
@@ -6307,23 +6336,27 @@
       var fo = document.getElementById("fo-call-toast-container") ||
                document.querySelector('[id^="fo-chain"]');
       el.style.cssText =
-        "position:fixed;top:" + (fo ? "96px" : "12px") + ";left:50%;" +
+        "position:fixed;top:" + (fo ? "96px" : "10px") + ";left:50%;" +
         "transform:translateX(-50%);z-index:2147483646;" +
-        "background:#b3261e;color:#fff;font-family:Arial,sans-serif;" +
-        "font-size:13px;line-height:1.35;padding:10px 14px;border-radius:8px;" +
-        "box-shadow:0 4px 14px rgba(0,0,0,.45);max-width:92vw;text-align:center;";
+        "display:flex;align-items:center;gap:10px;" +
+        "background:#b3261e;color:#fff;font:600 12px/1.3 Arial,sans-serif;" +
+        "padding:7px 8px 7px 13px;border-radius:7px;white-space:nowrap;" +
+        "box-shadow:0 3px 12px rgba(0,0,0,.4);max-width:94vw;";
       document.body.appendChild(el);
     }
     var mins = live.minutes;
+    // One line, sized like a toast rather than a dialog. The first cut was a
+    // three-row block that sat on top of Torn's nav and news ticker -- loud
+    // enough, but it buried the page it was trying to send you back to. The
+    // gym name is dropped for width; the panel already carries it, and this
+    // only has to be noticed, not read twice.
     el.innerHTML =
-      '<div style="font-weight:700;letter-spacing:.4px">BAR FULL ' + mins +
-      " MINUTE" + (mins === 1 ? "" : "S") + "</div>" +
-      '<div style="opacity:.9;margin-top:2px">' + fmt(state.energy) + "/" +
-      fmt(state.energyMax) + " \u00b7 " + focusLabel() + " at " +
-      (state.gymName || "your gym") + "</div>" +
-      '<button type="button" id="' + NAG_ID + '-ok" style="margin-top:8px;' +
-      "background:#fff;color:#b3261e;border:0;border-radius:5px;padding:5px 16px;" +
-      'font-weight:700;font-size:12px;cursor:pointer">Got it</button>';
+      '<span style="overflow:hidden;text-overflow:ellipsis">Bar full ' + mins + "m" +
+      '<span style="opacity:.75;font-weight:400"> \u00b7 ' + fmt(state.energy) + "/" +
+      fmt(state.energyMax) + " \u00b7 train " + focusLabel() + "</span></span>" +
+      '<button type="button" id="' + NAG_ID + '-ok" style="flex:none;' +
+      "background:rgba(255,255,255,.92);color:#b3261e;border:0;border-radius:5px;" +
+      'padding:4px 10px;font:700 11px/1 Arial,sans-serif;cursor:pointer">Got it</button>';
     var btn = document.getElementById(NAG_ID + "-ok");
     if (btn && !btn.__gcbBound) {
       btn.__gcbBound = 1;
@@ -7049,9 +7082,8 @@
   function boot() {
     try {
       state.warStack = storeBool("warStack", false);
-      // Restored, not reset: the ten-minute clock is measured across page
-      // loads, so a fresh tab has to pick up where the last one left off.
-      state.fullSince = Number(storeGet("fullsince", 0)) || 0;
+      // Only the acknowledgement is restored; capStreak() reconstructs the
+      // clock itself from the readings it already keeps.
       state.fullAckAt = Number(storeGet("fullack", 0)) || 0;
       state.focus = storeGet("focus", "str") || "str";
       state.focus2 = storeGet("focus2", "none") || "none";
@@ -7211,7 +7243,7 @@
         // visibility check because it reports hidden:true while plainly in
         // front of you, and a banner you never see is worse than none.
         if (isPda() || document.visibilityState === "visible") {
-          trackFullBar(Date.now());
+          trackFullBar();
           try { renderNag(); } catch (_) {}
         }
         if (!state.open) return;

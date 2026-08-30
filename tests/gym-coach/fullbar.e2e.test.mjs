@@ -20,7 +20,13 @@ async function page({ url = "https://www.torn.com/forums.php", energy = 150, max
     return r.fulfill({ status: 204, body: "" });
   });
   const mem = { gcb_v1_mode: "xan", gcb_v1_focus: "str" };
-  if (fullSince !== null) mem.gcb_v1_fullsince = Date.now() - fullSince;
+  // capStreak() owns the clock, and reconstructs it from the last stored
+  // reading -- so THAT is what a test seeds, not a banner-private timestamp.
+  // Seeding the banner's own key was how a broken clock passed for a week.
+  if (fullSince !== null) {
+    mem.gcb_v1_lastSeen = { e: energy, t: Date.now() - fullSince,
+                            capSince: Date.now() - fullSince, fullAt: Date.now() - fullSince };
+  }
   if (ack !== null) mem.gcb_v1_fullack = Date.now() - ack;
   if (warStack) mem.gcb_v1_warStack = true;
   const cfg = { energy, energyMax: max, fulltime: 0, drug: 4000, booster: 60000,
@@ -43,7 +49,7 @@ await t("the banner mounts on a NON-gym page", async () => {
   const { p, ctx } = await page({ fullSince: 12 * MIN });
   const txt = await nagText(p);
   assert.ok(txt, "no banner on forums.php");
-  assert.match(txt, /BAR FULL 12 MINUTES/);
+  assert.match(txt, /Bar full 12m/);
   // and the panel itself is still correctly absent
   assert.strictEqual(await p.evaluate(() => !!document.getElementById("gcb-pill")), false,
     "the pill should still be stripped off-gym");
@@ -66,12 +72,12 @@ await t("Got it takes it down", async () => {
 });
 
 await t("the acknowledgement survives a page change, then wears off", async () => {
-  // Acknowledged 2 minutes ago -- still quiet on a different page.
-  const a = await page({ url: "https://www.torn.com/item.php", fullSince: 30 * MIN, ack: 2 * MIN });
+  // Acknowledged 1 minute ago -- still quiet on a different page.
+  const a = await page({ url: "https://www.torn.com/item.php", fullSince: 30 * MIN, ack: 1 * MIN });
   assert.strictEqual(await nagText(a.p), null, "a fresh page ignored the acknowledgement");
   await a.ctx.close();
-  // Acknowledged 11 minutes ago -- back, because Got it is a snooze.
-  const c = await page({ url: "https://www.torn.com/item.php", fullSince: 30 * MIN, ack: 11 * MIN });
+  // Acknowledged 3 minutes ago -- back, because Got it is a two-minute snooze.
+  const c = await page({ url: "https://www.torn.com/item.php", fullSince: 30 * MIN, ack: 3 * MIN });
   assert.ok(await nagText(c.p), "the snooze never wore off");
   await c.ctx.close();
 });
@@ -90,17 +96,29 @@ await t("the gym page gets it too -- you can be distracted there as well", async
 
 // The tests above all SEED the clock. None of them proved the clock ever
 // starts on its own -- which is the whole path a real user walks.
-await t("a live poll starts the clock and persists it, with nothing seeded", async () => {
-  const { p, ctx } = await page({ energy: 150, max: 150 });   // no fullSince
-  const v = await p.evaluate(() => window.GM_getValue("gcb_v1_fullsince", 0));
-  assert.ok(Number(v) > 0, "the clock never started: gcb_v1_fullsince = " + JSON.stringify(v));
-  assert.strictEqual(await nagText(p), null, "10 minutes have not passed yet");
+await t("the banner shows the same elapsed time the panel prints", async () => {
+  // The bug this replaced: the panel said "Bar has been full for 19m" while
+  // the banner, reading its own clock, believed the bar had just filled.
+  const { p, ctx } = await page({ url: "https://www.torn.com/gym.php", fullSince: 19 * MIN });
+  const txt = await nagText(p);
+  assert.ok(txt, "no banner at 19 minutes");
+  assert.match(txt, /Bar full 19m/);
+  const panel = await p.evaluate(() => {
+    const el = document.getElementById("gcb-panel");
+    return el ? el.innerText : "";
+  });
+  const m = /Bar has been full for (\d+)m/.exec(panel);
+  if (m) assert.strictEqual(Number(m[1]), 19, "panel and banner disagree: panel says " + m[1]);
   await ctx.close();
 });
 
-await t("a bar that is not full does not start the clock", async () => {
-  const { p, ctx } = await page({ energy: 120, max: 150 });
-  assert.strictEqual(Number(await p.evaluate(() => window.GM_getValue("gcb_v1_fullsince", 0))), 0);
+await t("a bar that was full before the app was even opened is nagged", async () => {
+  // capStreak's whole advantage: it uses the predicted fill time, so a bar
+  // that filled while the app was closed counts from when it actually filled.
+  // The old clock started from the first tick that happened to see it, which
+  // is exactly why nothing appeared on a freshly reopened PDA.
+  const { p, ctx } = await page({ fullSince: 40 * MIN });
+  assert.match(await nagText(p) || "", /Bar full 40m/);
   await ctx.close();
 });
 
