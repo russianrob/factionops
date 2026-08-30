@@ -1,14 +1,16 @@
 // ==UserScript==
 // @name         Gym Ledger Probe
 // @namespace    RussianRob
-// @version      1.0.0
-// @description  One-shot diagnostic: dumps Gym Coach's own energy ledger so an impossible "Missed today" or a "Spent attacking" figure that is not a whole number of attacks can be traced to the entry that produced it. Reads local storage only, no network at all.
+// @version      1.1.0
+// @description  One-shot diagnostic: dumps Gym Coach's own energy ledger so an impossible "Missed today" or a "Spent attacking" figure can be traced to the entry that produced it, and reports which API endpoints your key can actually reach.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/gym.php*
 // @match        https://www.torn.com/page.php?sid=gym*
 // @grant        GM_getValue
 // @grant        GM_setClipboard
+// @grant        GM_xmlhttpRequest
+// @connect      api.torn.com
 // @run-at       document-end
 // @downloadURL  https://tornwar.com/scripts/torn-gym-ledger-probe.user.js
 // @updateURL    https://tornwar.com/scripts/torn-gym-ledger-probe.user.js
@@ -16,6 +18,20 @@
 
 /*
  * CHANGELOG
+ * 1.1.0 — Also reports what the saved key can REACH.
+ *
+ *         Rebuilding these figures from the API only works if the API answers.
+ *         /user/log is documented as needing FULL access while attacks needs
+ *         LIMITED and bars needs MINIMAL -- but the script asks v1 for the gym
+ *         log, and v1 and v2 do not always agree on access level. Guessing
+ *         either way designs the wrong thing, so this asks each endpoint and
+ *         reports what came back.
+ *
+ *         This makes the probe talk to the API, which 1.0.0 deliberately did
+ *         not. The key is read from Gym Coach's own storage, never printed
+ *         (last four characters and length only), and nothing is sent anywhere
+ *         except api.torn.com.
+ *
  * 1.0.0 — First cut. Two figures on the Now tab cannot be what they say.
  *
  *         "Missed today 3,462e": missed regen is bounded by how much energy a
@@ -40,7 +56,7 @@
 (function () {
   "use strict";
 
-  var SCRIPT_VERSION = "1.0.0";
+  var SCRIPT_VERSION = "1.1.0";
   var NS = "gcb_v1";          // the beta's namespace
   var STABLE_NS = "gc_v1";    // the stable script, for comparison
   var ATTACK_ENERGY = 25;
@@ -63,6 +79,66 @@
   var DAY = 86400000;
   function dayKey(ms) { return Math.floor(ms / DAY); }
   function iso(d) { return new Date(d * DAY).toISOString().slice(0, 10); }
+
+  // Reuses whatever Gym Coach already stored. Never printed: the report shows
+  // the last four characters and the length, enough to tell WHICH key answered
+  // without the report carrying the key itself.
+  function savedKey() {
+    var names = ["gcb_v1_api_key", "gc_v1_api_key"];
+    for (var i = 0; i < names.length; i++) {
+      var v = read2(names[i]);
+      if (v && typeof v === "string" && v.indexOf("###") === -1 && v.trim().length > 8) return v.trim();
+    }
+    return "";
+  }
+  function read2(k) {
+    var v;
+    try { if (typeof GM_getValue === "function") v = GM_getValue(k, undefined); } catch (e) {}
+    if (v === undefined || v === null) { try { v = localStorage.getItem(k); } catch (e) {} }
+    return v == null ? null : v;
+  }
+
+  // Each endpoint the API-driven rewrite would depend on, with the access
+  // level Torn documents for it. What matters is not the documentation but
+  // what THIS key gets back.
+  var PROBES = [
+    ["gym log (v1 selections=log)", "https://api.torn.com/user/?selections=log&log=5300&", "documented FULL for v2 /user/log"],
+    ["attacks (v2)",               "https://api.torn.com/v2/user/attacks?limit=1&",        "documented LIMITED"],
+    ["bars (v2)",                  "https://api.torn.com/v2/user/bars?",                   "documented MINIMAL"],
+    ["refills (v1)",               "https://api.torn.com/user/?selections=refills&",       "documented MINIMAL"],
+    ["personalstats (v2)",         "https://api.torn.com/v2/user/personalstats?cat=all&",  "documented PUBLIC"]
+  ];
+
+  function probeAccess(key, done) {
+    var i = 0;
+    (function next() {
+      if (i >= PROBES.length) return done();
+      var row = PROBES[i++];
+      var url = row[1] + "key=" + encodeURIComponent(key) + "&comment=gym-ledger-probe";
+      function handle(text) {
+        var d = null;
+        try { d = JSON.parse(text); } catch (e) {}
+        if (!d) add("  " + row[0], "UNREADABLE answer (" + row[2] + ")");
+        else if (d.error) add("  " + row[0], "DENIED -- code " + d.error.code + ": " + d.error.error + "  (" + row[2] + ")");
+        else {
+          // A 200 with an empty body is not the same as access: say what came back.
+          var keys = Object.keys(d).slice(0, 4).join(",");
+          add("  " + row[0], "OK -- returned {" + keys + "}  (" + row[2] + ")");
+        }
+        next();
+      }
+      try {
+        if (typeof GM_xmlhttpRequest === "function") {
+          GM_xmlhttpRequest({ method: "GET", url: url,
+            onload: function (r) { handle(r.responseText || r.response || ""); },
+            onerror: function () { add("  " + row[0], "NETWORK ERROR"); next(); } });
+          return;
+        }
+      } catch (e) {}
+      fetch(url).then(function (r) { return r.text(); }).then(handle)
+        .catch(function () { add("  " + row[0], "NETWORK ERROR"); next(); });
+    })();
+  }
 
   function run() {
     var today = dayKey(Date.now());
@@ -141,7 +217,11 @@
     add("STABLE SCRIPT", Array.isArray(stable)
       ? stable.length + " entries in its own ledger (separate namespace; the beta never reads it)"
       : "no ledger stored");
-    show();
+
+    var key = savedKey();
+    if (!key) { add("KEY ACCESS", "no saved Gym Coach key on this device -- skipped"); return show(); }
+    add("KEY ACCESS", "using saved key ..." + key.slice(-4) + " (" + key.length + " chars)");
+    probeAccess(key, show);
   }
 
   function show() {
