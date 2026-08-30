@@ -24,6 +24,9 @@ function observe({ prevE, nowE, secs = 60, onGym, max = 150, rate = 120 }) {
     var DAY_MS = 86400000, LEDGER_DAYS = 90, CAL_WINDOW = 14, STACK_PEAK_OVER = 300;
     var GAIN_WAIT_MS = 30000;
     ${/var ATTACK_ENERGY = \d+;/.exec(src)[0]}   // from the source, never a copy
+    ${/var GAP_MS = \d+;/.exec(src)[0]}          // ditto: defining it here would
+                                                  // shadow production and let any
+                                                  // mutation of it survive
     var saved = {}, ledgerDirty = 0, pendingTrain = null;
     function dayKey(ms){ return Math.floor(ms / DAY_MS); }
     function storeSet(k, v){ saved[k] = v; }
@@ -34,8 +37,12 @@ function observe({ prevE, nowE, secs = 60, onGym, max = 150, rate = 120 }) {
     function fmt(n){ return String(n); }
     var state = { energyMax: ${max}, energy: ${nowE}, energyKnown: true, ledger: [],
                   stats: { str:0, def:0, spe:0, dex:0 }, warStack: false,
+                  // The gap path needs these; the gym log is assumed readable
+                  // so these fixtures exercise reconstruction, not the decline.
+                  logReadable: true, trainLog: { events: [] }, attackEvents: [],
                   lastSeen: { e: ${prevE}, t: Date.now() - ${secs} * 1000 } };
-    ${grab("timeToFull")} ${grab("ledgerDelta")} ${grab("ledgerBucket")} ${grab("dayLooksStacked")} ${grab("ledgerObserve")}
+    ${grab("timeToFull")} ${grab("ledgerDelta")} ${grab("ledgerBucket")} ${grab("dayLooksStacked")}
+    ${grab("simulateWaste")} ${grab("gapWaste")} ${grab("ledgerObserve")}
     ledgerObserve(true);
     var b = state.ledger[state.ledger.length - 1] || {};
     RESULT = { used: Math.round(b.used || 0), wasted: Math.round(b.wasted || 0),

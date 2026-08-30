@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.29
+// @version      0.9.30
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,32 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.30 — Missed energy stops guessing about time the script did not watch.
+ *
+ *         Time the script DID watch was always right: the ledger ticks every
+ *         second and sees every drop. Only the gaps were guessed, and the
+ *         guess was "the bar must have sat at the cap the whole time". On one
+ *         device that is fair. On two it is simply false -- the PC bills six
+ *         quiet hours at the cap while the PDA emptied the bar twice inside
+ *         them, and neither can know the other exists.
+ *
+ *         A gap is now reconstructed instead: walk it, let the bar climb at
+ *         the known rate, apply each training session and attack at its own
+ *         timestamp, and count only the time the bar genuinely sat full. Both
+ *         devices read the same API, so both reach the same number -- which is
+ *         the property the old model could never have.
+ *
+ *         The gym log needs a FULL key. On a Limited key the timeline is
+ *         missing every training session, so simulating anyway would show the
+ *         bar full straight through them: a confident wrong figure. Those gaps
+ *         are declined instead -- booked as nothing, and the day marked
+ *         "observed only" so the figure admits what it is. Under-reporting is
+ *         recoverable; inventing is not.
+ *
+ *         Declining is only ever about gaps. A Limited key keeps its ordinary
+ *         per-second accounting for time it was actually watching, because
+ *         watching a bar needs no log.
+ *
 * 0.9.29 — Energy spent attacking comes from Torn's attack log, not the bar.
  *
  *         Reported by a faction member running the coach on PC and PDA at the
@@ -943,7 +969,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.29";
+  var GC_VERSION = "0.9.30";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -1221,7 +1247,12 @@
     // null until the attack log answers; { n, energy } after. Distinct from
     // { n: 0 }, which is a real "you have not attacked today".
     attacks: null,
+    attackEvents: null,
     playerId: null,
+    // Whether the gym log answers this key. Full only -- on a Limited key an
+    // unobserved gap cannot be reconstructed, and is left uncounted rather
+    // than guessed.
+    logReadable: null,
     focus: "str",
     focus2: "none",
     goals: { str: 0, def: 0, spe: 0, dex: 0 },
@@ -1999,6 +2030,7 @@
     page(0)
       .then(function (all) {
         state.attacks = readAttacksToday({ attacks: all }, state.playerId || null, dayStart);
+        state.attackEvents = attackEvents({ attacks: all }, state.playerId || null);
       })
       .catch(function () { state.attacks = null; });
   }
@@ -3898,6 +3930,47 @@
   // fourteen the calibration window needs.
   var TRAINLOG_IDS = [5300, 5301, 5302, 5303];
 
+  // The same log trainLogByDay reads, kept as individual events instead of a
+  // daily total. A gap does not need to know how much was trained today; it
+  // needs to know WHEN the bar was emptied, so it can tell an hour at the cap
+  // from an hour spent refilling.
+  function trainLogEvents(responses) {
+    var out = [];
+    (responses || []).forEach(function (r) {
+      var rows = (r && r.log) || {};
+      for (var k in rows) {
+        var e = rows[k];
+        if (!e || !e.data) continue;
+        var used = Number(e.data.energy_used);
+        var ts = Number(e.timestamp);
+        // Same rule as the daily total: a line with no energy figure is not a
+        // free session, it is a line we cannot read.
+        if (!(used > 0) || !(ts > 0)) continue;
+        out.push({ t: ts * 1000, delta: -used });
+      }
+    });
+    return out.sort(function (a, b) { return a.t - b.t; });
+  }
+
+  // Attacks as events rather than a count, for the same reason.
+  function attackEvents(d, meId) {
+    if (!d || !Array.isArray(d.attacks)) return [];
+    var seen = {}, out = [];
+    for (var i = 0; i < d.attacks.length; i++) {
+      var a = d.attacks[i] || {};
+      var ts = Number(a.started || a.ended) || 0;
+      if (!ts) continue;
+      var atk = a.attacker && a.attacker.id != null ? String(a.attacker.id) : null;
+      var def = a.defender && a.defender.id != null ? String(a.defender.id) : null;
+      if (meId != null && (atk !== null ? atk !== String(meId) : def === String(meId))) continue;
+      var key = a.id != null ? String(a.id) : "t" + ts + ":" + def;
+      if (seen[key]) continue;
+      seen[key] = 1;
+      out.push({ t: ts * 1000, delta: -ATTACK_ENERGY });
+    }
+    return out.sort(function (a, b) { return a.t - b.t; });
+  }
+
   function trainLogByDay(responses) {
     var out = {};
     (responses || []).forEach(function (r) {
@@ -3943,13 +4016,24 @@
       // rejects as a whole and lands in the handler below. A byDay built from
       // two logs out of four would under-report and look like a quiet day, and
       // this shape makes that unreachable rather than merely guarded against.
-      state.trainLog = { byDay: trainLogByDay(rs), at: Date.now(), since: 0 };
+      // events as well as the daily total: a gap needs to know WHEN the bar was
+      // emptied, which the total cannot say. Trimmed to the last three days --
+      // a gap is clamped to 48h, so nothing older can ever be inside one.
+      var cut = Date.now() - 3 * 86400000;
+      state.trainLog = { byDay: trainLogByDay(rs), at: Date.now(), since: 0,
+                         events: trainLogEvents(rs).filter(function (e) { return e.t >= cut; }) };
+      state.logReadable = true;
       storeSet("trainLog", state.trainLog);
       resetPlanCaches();
       return state.trainLog;
     }, function () {
       state.trainLogInFlight = false;
-      // Keep whatever we had. A failed round is no news, not zero training.
+      // A Limited key cannot read the gym log at all (selection `log` is Full
+      // only), so this is the normal state for most people rather than a
+      // blip -- and it is the difference between reconstructing a gap and
+      // having to decline to. Keep whatever we had: a failed round is no news,
+      // not zero training.
+      state.logReadable = false;
       return state.trainLog || null;
     });
   }
@@ -3958,6 +4042,54 @@
     var tl = state.trainLog;
     if (!tl || !tl.byDay) return null;
     return (tl.byDay[dayKey(Date.now())] || 0) + (tl.since || 0);
+  }
+
+  // How much regen a window actually threw away, reconstructed from WHEN the
+  // spending happened rather than guessed from the two ends of the window.
+  //
+  // The guess is what breaks across two devices. Asking "was the bar full when
+  // I last looked, and is it full now?" bills the whole gap between -- so a PC
+  // that was closed for six hours bills six hours at the cap, even though the
+  // PDA emptied the bar twice inside them. Both devices do it and neither can
+  // know the other exists.
+  //
+  // Given the spend timeline this needs no guessing: walk the window, let the
+  // bar climb at the known rate, apply each event when it happened, and total
+  // only the time the bar was genuinely sitting at the cap. Both devices read
+  // the same timeline, so both reach the same number.
+  //
+  // `events` are { t: ms, delta: energy } -- negative for a spend, positive for
+  // a xanax, can or refill. Returns { wasted, atCapSec } or null if the inputs
+  // cannot describe a window.
+  function simulateWaste(startE, startT, endT, max, secPerE, events) {
+    if (!(secPerE > 0) || !(max > 0) || !(endT > startT)) return null;
+    var e = Number(startE) || 0, t = startT, atCap = 0;
+    var evs = (events || [])
+      .filter(function (v) { return v && typeof v.t === "number" && v.t > startT && v.t <= endT; })
+      .sort(function (a, b) { return a.t - b.t; });
+
+    function advance(to) {
+      var dt = (to - t) / 1000;
+      t = to;
+      if (dt <= 0) return;
+      // ABOVE the cap Torn pauses regen, so nothing accrues and nothing is
+      // lost -- that energy was banked on purpose. Only sitting exactly AT the
+      // cap throws regen away.
+      if (e > max) return;
+      if (e >= max) { atCap += dt; return; }
+      var need = (max - e) * secPerE;   // seconds left to fill
+      if (dt <= need) { e += dt / secPerE; return; }
+      e = max;
+      atCap += dt - need;
+    }
+
+    for (var i = 0; i < evs.length; i++) {
+      advance(evs[i].t);
+      e += Number(evs[i].delta) || 0;
+      if (e < 0) e = 0;   // the bar cannot go below empty
+    }
+    advance(endT);
+    return { wasted: atCap / secPerE, atCapSec: atCap };
   }
 
   // Energy spent attacking, straight from Torn's attack log.
@@ -4012,6 +4144,29 @@
     return last;
   }
 
+  // Longer than this and the script was not running: a normal tick is one
+  // second and the slowest poll is twenty, so two minutes means nobody was
+  // watching. Observed time is already accurate and is left alone.
+  var GAP_MS = 120000;
+
+  // What an unwatched gap actually cost, reconstructed from the API timeline.
+  //
+  // Returns the wasted energy, or NULL meaning "cannot say" -- which is not
+  // zero and must never be booked as such. On a Limited key the gym log is
+  // unreadable, so the timeline is missing every training session in the gap;
+  // simulating anyway would show the bar sitting at the cap straight through
+  // them and report a confident, wrong figure. Declining under-reports, which
+  // is recoverable in a way that inventing is not.
+  function gapWaste(prevE, prevT, now, max, secPerE, stacking) {
+    // Suppression does not need the log, so this is answerable either way.
+    if (stacking) return 0;
+    if (state.logReadable !== true) return null;
+    var evs = ((state.trainLog && state.trainLog.events) || [])
+      .concat(state.attackEvents || []);
+    var sim = simulateWaste(prevE, prevT, now, max, secPerE, evs);
+    return sim ? sim.wasted : null;
+  }
+
   var ledgerDirty = 0;
   var ledgerFlushAt = 0;
   function ledgerObserve(force) {
@@ -4038,6 +4193,19 @@
     if (prev && typeof prev.e === "number" && prev.t && now >= prev.t) {
       var d = ledgerDelta(prev.e, prev.t, state.energy, now, max, energyRate(),
                           prev.fullAt, holding);
+      // Observed time is already right -- the ledger ticks every second and
+      // sees every drop. Only a GAP was ever guessed, and the guess ("it must
+      // have sat at the cap") is what two devices cannot both be right about.
+      if (now - prev.t > GAP_MS) {
+        var g = gapWaste(prev.e, prev.t, now, max, energyRate(), holding);
+        // null is "cannot reconstruct", not "nothing was wasted". Booking
+        // nothing under-reports; booking the old guess invents.
+        d.wasted = g === null ? 0 : g;
+        if (g === null) {
+          todayBucket.partial = 1;
+          ledgerDirty += 1;
+        }
+      }
       // The train log used to be driven by comparing energy between API polls —
       // but the page updates state.energy live every second, so the drop was
       // already absorbed before a payload arrived and a whole session logged
@@ -4150,11 +4318,14 @@
 
   function ledgerWindow(days) {
     var cut = dayKey(Date.now()) - days + 1;
-    var used = 0, wasted = 0, off = 0;
+    var used = 0, wasted = 0, off = 0, partial = 0;
     state.ledger.forEach(function (e) {
-      if (e.d >= cut) { used += e.used || 0; wasted += e.wasted || 0; off += e.off || 0; }
+      if (e.d >= cut) {
+        used += e.used || 0; wasted += e.wasted || 0; off += e.off || 0;
+        if (e.partial) partial = 1;
+      }
     });
-    return { used: used, wasted: wasted, off: off };
+    return { used: used, wasted: wasted, off: off, partial: partial };
   }
 
   // How long a "wait for a full bar first" suggestion may ask you to wait.
@@ -5589,7 +5760,10 @@
       // cannot see a session the script was not running for.
       '<div class="row"><span>Spent today</span><b>' + fmt(Math.round(logged === null ? t.used : logged)) +
         "e</b>" + (logged === null ? '<span class="muted"> \u00b7 from the bar</span>' : "") + "</div>" +
-      '<div class="row"><span>Missed today</span><b class="' + (t.wasted >= 25 ? "bad" : "muted") + '">' + fmt(missed(t.wasted)) + "e</b></div>" +
+      '<div class="row"><span>Missed today</span><b class="' + (t.wasted >= 25 ? "bad" : "muted") + '">' + fmt(missed(t.wasted)) + "e</b>" +
+        // A figure that is knowingly short says so. The alternative was the
+        // old guess, which filled the gap with a number rather than a caveat.
+        (t.partial ? '<span class="muted"> \u00b7 observed only</span>' : "") + "</div>" +
       (off > 0
         ? '<div class="row"><span>Spent attacking</span><b class="bad">' + fmt(Math.round(off)) + "e</b>" +
           (apiOff

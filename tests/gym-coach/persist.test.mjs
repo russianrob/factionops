@@ -16,6 +16,10 @@ function rt(startE) {
     function pushLog(){}
     function fmt(n){ return String(n); }
     var state = { energy: ${startE}, energyKnown: true, energyMax: 150,
+                  // ledgerObserve's gap path needs these. logReadable true so
+                  // these fixtures exercise reconstruction; the Limited-key
+                  // decline has its own suite in gapwaste.test.mjs.
+                  logReadable: true, trainLog: { events: [] }, attackEvents: [],
                   energySecPerE: 180, ledger: [], stats: { str:0, def:0, spe:0, dex:0 }, lastSeen: null };
     var DAY_MS = 86400000, LEDGER_DAYS = 90;
     function dayKey(ms){ return Math.floor(ms / DAY_MS); }
@@ -23,6 +27,7 @@ function rt(startE) {
     var _now = Date.now; Date.now = function(){ return clock; };
     ${grab("energyRate")} ${grab("timeToFull")} ${grab("ledgerDelta")} ${grab("ledgerBucket")}
     var ledgerDirty = 0, ledgerFlushAt = 0;
+    ${/var GAP_MS = \d+;/.exec(src)[0]} ${grab("simulateWaste")} ${grab("gapWaste")}
     function onGymPage(){ return true; } ${grab("dayLooksStacked")} ${grab("ledgerObserve")}
     RESULT = {
       tick: function (e, advanceMs) { clock += (advanceMs || 1000); state.energy = e; ledgerObserve(false); },

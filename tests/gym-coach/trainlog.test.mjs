@@ -12,6 +12,10 @@ const session = steps => new Function("var RESULT;" + `
   var logged = [], refreshes = 0, clock = 1000000;
   var DAY_MS = 86400000, LEDGER_DAYS = 90;
   var state = { energy: 0, energyKnown: true, energyMax: 150, energySecPerE: 180,
+                  // ledgerObserve's gap path needs these. logReadable true so
+                  // these fixtures exercise reconstruction; the Limited-key
+                  // decline has its own suite in gapwaste.test.mjs.
+                  logReadable: true, trainLog: { events: [] }, attackEvents: [],
                 ledger: [], lastSeen: null, lastTrain: 0, open: false,
                 gymName: "George's", stats: { str: 0, def: 0, spe: 0, dex: 0 } };
   var pendingTrain = null;
@@ -39,7 +43,8 @@ const session = steps => new Function("var RESULT;" + `
   }
   ${grabVar("STAT_KEY")}
   ${grab("inferTrainSkillFromDelta")} ${grab("energyRate")} ${grab("timeToFull")} ${grab("ledgerDelta")}
-  function onGymPage(){ return true; } ${grab("dayLooksStacked")} ${grab("ledgerBucket")} ${grab("ledgerObserve")} ${grab("finaliseTrain")}
+  ${/var GAP_MS = \d+;/.exec(src)[0]} ${grab("simulateWaste")} ${grab("gapWaste")}
+    function onGymPage(){ return true; } ${grab("dayLooksStacked")} ${grab("ledgerBucket")} ${grab("ledgerObserve")} ${grab("finaliseTrain")}
   var ledgerDirty = 0, ledgerFlushAt = 0;
   ${JSON.stringify(steps)}.forEach(function (st) {
     clock += (st.ms || 1000);
