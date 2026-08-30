@@ -29,6 +29,7 @@
       happy: { current: N(cfg.happy, 4300), maximum: N(cfg.happyMax, 5000) },
       cooldowns: { drug: N(cfg.drug, 0), booster: N(cfg.booster, 0), medical: 0 },
       strength: STATS.str, defense: STATS.def, speed: STATS.spe, dexterity: STATS.dex,
+      player_id: N(cfg.playerId, 2598755),
       active_gym: N(cfg.gym, 23),
       faction_perks: N(cfg.factionPerks, ["+ 10% energy drink effect"]),
       job_perks: N(cfg.jobPerks, []), book_perks: [], property_perks: ["+ 2% gym gains"],
@@ -88,6 +89,26 @@
       if (cfg.refillUsedAfterMs && Date.now() - BOOTED > cfg.refillUsedAfterMs) used = true;
       return { refills: { energy_refill_used: used, nerve_refill_used: false,
                           token_refill_used: false, special_refills_available: 0 } };
+    }
+    if (/v2\/user\/attacks/.test(url)) {
+      if (cfg.attacksErr) return { error: { code: 16, error: "Access level of this key is not high enough" } };
+      // cfg.attacks is a count; rows are stamped a few hours into the UTC day
+      // so the script's own day filter has something real to reject.
+      var dayStart = Math.floor(Math.floor(Date.now() / 86400000) * 86400000 / 1000);
+      var rows = [];
+      for (var ai = 0; ai < N(cfg.attacks, 0); ai++) {
+        rows.push({ id: 1000 + ai, started: dayStart + 3600 + ai, ended: dayStart + 3604 + ai,
+                    attacker: { id: 2598755 }, defender: { id: 900000 + ai } });
+      }
+      // Rows from BEFORE today, returned regardless of the `from` the script
+      // asked for. Torn is not expected to do this -- the point is that the
+      // day window has to be enforced where the counting happens, not merely
+      // requested, or a widened window silently swallows yesterday.
+      for (var bi = 0; bi < N(cfg.attacksOld, 0); bi++) {
+        rows.push({ id: 5000 + bi, started: dayStart - 7200 - bi, ended: dayStart - 7196 - bi,
+                    attacker: { id: 2598755 }, defender: { id: 800000 + bi } });
+      }
+      return { attacks: rows };
     }
     if (/v2\/user\/stocks/.test(url)) {
       return { stocks: cfg.mcsReady === undefined ? [] : [

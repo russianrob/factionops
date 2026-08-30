@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.28
+// @version      0.9.29
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,37 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.29 — Energy spent attacking comes from Torn's attack log, not the bar.
+ *
+ *         Reported by a faction member running the coach on PC and PDA at the
+ *         same time: both devices showed impossible figures. The cause is not
+ *         arithmetic, it is the model. Each device only ever saw its OWN bar
+ *         readings, so one that had been closed a while assumed the bar sat at
+ *         the cap for the whole gap and booked the catch-up -- including the
+ *         hours the other device was training and attacking. Both did it,
+ *         neither could know the other existed.
+ *
+ *         The attack log has no such problem: both devices ask Torn the same
+ *         question and get the same answer. /v2/user/attacks needs only a
+ *         LIMITED key, takes a `from`, and returns rows with timestamps, so
+ *         today's hits can be counted exactly instead of inferred from drops.
+ *
+ *         Zero attacks is now a REAL answer rather than a reason to fall back
+ *         to the bar; only an unreadable one falls back, and says so. The line
+ *         carries the hit count, so a figure that disagrees with what you did
+ *         can be checked at a glance.
+ *
+ *         The day window is enforced where the counting happens, not only in
+ *         the request -- requesting it alone means any change to that
+ *         parameter silently swallows the previous day. Paging walks `to` back
+ *         through the day because v2's next-link is unreliable, and stops at
+ *         six pages: past 600 hits in a day the figure is academic and the
+ *         requests are not.
+ *
+ *         `basic` joins the main selection list for player_id, which is what
+ *         lets the log tell your hits from hits on you. It is PUBLIC access,
+ *         so it cannot fail a call the rest of which already works.
+ *
 * 0.9.28 — An unused refill says so next to the Gym title, not just in the
  *         panel.
  *
@@ -912,7 +943,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.28";
+  var GC_VERSION = "0.9.29";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -1187,6 +1218,10 @@
     refillUsed: null,
     // null until /user/stocks answers; { available, increment } after.
     mcs: null,
+    // null until the attack log answers; { n, energy } after. Distinct from
+    // { n: 0 }, which is a real "you have not attacked today".
+    attacks: null,
+    playerId: null,
     focus: "str",
     focus2: "none",
     goals: { str: 0, def: 0, spe: 0, dex: 0 },
@@ -1930,6 +1965,42 @@
         "market for +" + fmt(e) + "e. Next week's does not start counting until " +
         "you take this one."
     };
+  }
+
+  var ATTACKS_TTL = 120000;
+  function fetchAttacksToday(force) {
+    if (!force && Date.now() - (state.attacksAt || 0) < ATTACKS_TTL) return;
+    state.attacksAt = Date.now();
+    // The ledger's day is a UTC day, so this one has to be too, or the two
+    // halves of the same card would disagree about when "today" started.
+    var dayStart = Math.floor(dayKey(Date.now()) * 86400000 / 1000);
+    var rows = [], pages = 0;
+    // v2 caps a page at 100 and its next-link is unreliable, so page by
+    // timestamp: walk `to` back to the oldest row seen and ask again.
+    function page(to) {
+      var url = "https://api.torn.com/v2/user/attacks?filters=outgoing&sort=DESC&limit=100" +
+        "&from=" + dayStart + (to ? "&to=" + to : "") +
+        "&key=" + encodeURIComponent(resolveKey()) + "&comment=" + encodeURIComponent(COMMENT);
+      return httpGet(url).then(function (d) {
+        if (!d || !Array.isArray(d.attacks)) throw new Error("no attacks array");
+        rows = rows.concat(d.attacks);
+        pages += 1;
+        // A full page means there may be more. Six pages is 600 attacks in a
+        // day, past which the figure is academic and the requests are not.
+        if (d.attacks.length < 100 || pages >= 6) return rows;
+        var oldest = d.attacks.reduce(function (m, a) {
+          var t = Number(a.started || a.ended) || 0;
+          return m === 0 || (t && t < m) ? t : m;
+        }, 0);
+        if (!oldest || oldest <= dayStart) return rows;
+        return page(oldest - 1);
+      });
+    }
+    page(0)
+      .then(function (all) {
+        state.attacks = readAttacksToday({ attacks: all }, state.playerId || null, dayStart);
+      })
+      .catch(function () { state.attacks = null; });
   }
 
   var STOCKS_TTL = 1800000; // a weekly benefit; half an hour is plenty
@@ -3889,6 +3960,47 @@
     return (tl.byDay[dayKey(Date.now())] || 0) + (tl.since || 0);
   }
 
+  // Energy spent attacking, straight from Torn's attack log.
+  //
+  // The bar-derived figure this replaces could not survive two devices. Each
+  // one only saw its own readings, so a device that had been closed a while
+  // assumed the bar sat at the cap throughout and booked the catch-up --
+  // including the hours the OTHER device was training and attacking. Both
+  // devices did it, neither could know the other existed, and the totals came
+  // out impossible. Torn's log has no such problem: both devices ask the same
+  // question and get the same answer.
+  //
+  // Returns { n, energy } or null. null means "could not tell" and is
+  // deliberately distinct from { n: 0 }, which means "you have not attacked
+  // today" -- a real answer that must not be replaced by a bar guess.
+  function readAttacksToday(d, meId, dayStartSec) {
+    if (!d || !Array.isArray(d.attacks)) return null;
+    var seen = {}, n = 0;
+    for (var i = 0; i < d.attacks.length; i++) {
+      var a = d.attacks[i] || {};
+      var ts = Number(a.started || a.ended) || 0;
+      if (ts < dayStartSec) continue;
+      // Incoming attacks cost you nothing; counting them would invent spend.
+      // A stealth attack hides the attacker entirely, so an absent attacker on
+      // a row that is not against you is still yours -- dropping those would
+      // under-count exactly the hits a war player makes most of.
+      var atk = a.attacker && a.attacker.id != null ? String(a.attacker.id) : null;
+      var def = a.defender && a.defender.id != null ? String(a.defender.id) : null;
+      // The request asks for filters=outgoing, so every row is already yours.
+      // This is the belt to that pair of braces -- and it only applies when
+      // the id is actually known, because dropping every row while waiting for
+      // it would report 0e on a day full of attacks.
+      if (meId != null && (atk !== null ? atk !== String(meId) : def === String(meId))) continue;
+      // Pagination overlaps at the boundary, so the id is what keeps a row
+      // from being counted twice.
+      var key = a.id != null ? String(a.id) : "t" + ts + ":" + def;
+      if (seen[key]) continue;
+      seen[key] = 1;
+      n += 1;
+    }
+    return { n: n, energy: n * ATTACK_ENERGY };
+  }
+
   function ledgerBucket() {
     var d = dayKey(Date.now());
     var last = state.ledger[state.ledger.length - 1];
@@ -5451,7 +5563,12 @@
   function wasteCard() {
     var streak = capStreak();
     var t = ledgerWindow(1);
-    var off = t.off || 0;
+    // Torn's log where it answers, the bar only as a fallback. The bar figure
+    // cannot survive two devices: each sees only its own readings, so one that
+    // has been closed a while books the gap as though the bar sat full through
+    // it -- including the hours the other device was spending.
+    var apiOff = state.attacks && typeof state.attacks.energy === "number";
+    var off = apiOff ? state.attacks.energy : (t.off || 0);
     var logged = trainedToday();
     var pct = t.used + t.wasted + off > 0
       ? Math.round((t.used / (t.used + t.wasted + off)) * 100) : null;
@@ -5474,7 +5591,10 @@
         "e</b>" + (logged === null ? '<span class="muted"> \u00b7 from the bar</span>' : "") + "</div>" +
       '<div class="row"><span>Missed today</span><b class="' + (t.wasted >= 25 ? "bad" : "muted") + '">' + fmt(missed(t.wasted)) + "e</b></div>" +
       (off > 0
-        ? '<div class="row"><span>Spent attacking</span><b class="bad">' + fmt(Math.round(off)) + "e</b></div>"
+        ? '<div class="row"><span>Spent attacking</span><b class="bad">' + fmt(Math.round(off)) + "e</b>" +
+          (apiOff
+            ? '<span class="muted"> \u00b7 ' + state.attacks.n + " hit" + (state.attacks.n === 1 ? "" : "s") + "</span>"
+            : '<span class="muted"> \u00b7 from the bar</span>') + "</div>"
         : "") +
       (pct === null ? "" : '<div class="row"><span>Bar actually used</span><b class="' + (pct >= 90 ? "ok" : pct >= 70 ? "" : "bad") + '">' + pct + "%</b></div>") +
       '<p class="muted" style="margin:8px 0 0">Missed energy is regen your bar dropped because it was already full. Counted from when the script last saw your bar, so time with Torn closed still counts. Energy spent attacking is listed apart \u2014 it left the bar, but it never reached the gym, so it counts against your bar-used figure rather than toward it.</p>' +
@@ -5520,15 +5640,20 @@
     var invAge = Date.now() - (state.invAt || 0);
     var invForce = kind === "boot" || kind === "manual" || !state.lastFetch;
     var wantInv = invForce || ((kind === "open" || kind === "stock" || kind === "train" || state.tab === "stock") && invAge > INV_TTL);
-    var sel = "bars,cooldowns,battlestats,gym,perks,timestamp";
+    // `basic` is PUBLIC access, so appending it cannot fail a call the rest of
+    // which already works -- and it carries player_id, which is what lets the
+    // attack log tell your hits from hits on you.
+    var sel = "bars,cooldowns,battlestats,gym,perks,timestamp,basic";
     return httpGet(apiUrl(sel))
       .then(function (data) {
         applyUserPayload(data, false);
+        if (data && data.player_id != null) state.playerId = String(data.player_id);
         // Torn's own record of what was trained. Refreshed on its own TTL, and
         // forced right after a detected session so the figure settles quickly.
         fetchTrainLog(kind === "train" || kind === "boot");
         fetchRefills(kind === "boot" || kind === "manual");
         fetchStocks(kind === "boot" || kind === "manual");
+        fetchAttacksToday(kind === "boot" || kind === "manual" || kind === "train");
         if (!wantInv) return null;
         return fetchInventoryV2().then(
           function (rows) {
