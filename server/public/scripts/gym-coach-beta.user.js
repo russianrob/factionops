@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.31
+// @version      0.9.32
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,29 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.32 — The key box requires a Full key and refuses anything less.
+ *
+ *         Owner's decision. The gym training log is Full-only, and without it
+ *         "Spent today" falls back to the bar and an unwatched gap cannot be
+ *         reconstructed at all -- so a Limited key can never give a figure two
+ *         devices agree on. The key is checked BEFORE it is stored, so a
+ *         refused one never becomes the saved one, and the refusal says which
+ *         level it was and where to make a Full one.
+ *
+ *         One deliberate exception: if the CHECK cannot run, the key is saved
+ *         anyway. Torn caps a key at 100 calls a minute and the coach is
+ *         already polling, so a check can fail for reasons that have nothing
+ *         to do with the key -- refusing then would turn a busy moment into a
+ *         lockout on a perfectly good key. It saves, and says the level could
+ *         not be confirmed rather than claiming it was.
+ *
+ *         An invalid key is refused rather than waved through: Torn's code 2
+ *         is a definite answer, not an inconclusive one, so it does not get
+ *         the benefit of the doubt that a failed check does. httpGet rejects
+ *         with the code on the Error and no payload, so the save path rebuilds
+ *         the shape -- without that an unrecognised key scored "unknown" and
+ *         was stored.
+ *
 * 0.9.31 — A key you type in now beats the one Torn PDA injected.
  *
  *         The order was the other way round, which made a deliberately entered
@@ -990,7 +1013,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.31";
+  var GC_VERSION = "0.9.32";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -6273,6 +6296,24 @@
     return String(raw || "").replace(/[^a-zA-Z0-9]/g, "");
   }
 
+  // Whether a pasted key may be saved. Owner's decision: Gym Coach requires a
+  // Full key, because the gym training log is Full-only and without it two
+  // devices cannot be reconciled.
+  //
+  // "unknown" ACCEPTS on purpose. Torn caps a key at 100 calls a minute and the
+  // coach is already polling, so a check can fail for reasons that have nothing
+  // to do with the key. Refusing then would turn a busy moment into a lockout
+  // and leave someone unable to save a perfectly good key -- the same mistake
+  // that made the probe report a rate limit as an access denial.
+  function keySaveVerdict(d) {
+    // Code 2 is Torn saying the key is not real. That is a definite answer, so
+    // it does not get the benefit of the doubt that a failed check does.
+    if (d && d.error && d.error.code === 2) return "invalid";
+    var lvl = readKeyLevel(d);
+    if (!lvl) return "unknown";
+    return lvl.full ? "full" : "limited";
+  }
+
   var KEYLEVEL_TTL = 3600000; // it only changes when you make a new key
   function fetchKeyLevel(force) {
     var key = resolveKey();
@@ -6291,6 +6332,41 @@
     var k = normalizeKey(raw);
     if (k.length < 16) return false;
     k = k.slice(0, 16);
+    // Checked BEFORE storing, so a refused key never becomes the saved one.
+    httpGet("https://api.torn.com/v2/key/info?key=" + encodeURIComponent(k) +
+            "&comment=" + encodeURIComponent(COMMENT))
+      // httpGet REJECTS on an API error, carrying the code on the Error but not
+      // the payload -- so rebuild the shape the verdict reads. Without this an
+      // invalid key came back as null, scored "unknown", and was saved.
+      .then(function (d) { return d; },
+            function (e) { return e && e.code ? { error: { code: e.code, error: e.message } } : null; })
+      .then(function (d) {
+        var v = keySaveVerdict(d);
+        if (v === "limited") {
+          var lvl = readKeyLevel(d);
+          showToast("That key is " + ((lvl && lvl.type) || "not Full") + " \u2014 not saved",
+            "Gym Coach needs a Full key: the gym training log is Full-only. Make one at " +
+            "Settings \u2192 API Keys on torn.com and paste that instead.", 7000);
+          return;
+        }
+        if (v === "invalid") {
+          showToast("Torn does not recognise that key", "Check it for a missing or extra character.", 5000);
+          return;
+        }
+        commitKey(k);
+        if (v === "unknown") {
+          // Saved, but say so: the check did not run, so this is not a claim
+          // that the key is Full.
+          showToast("Key saved", "Could not verify its access level just now \u2014 the API was busy. " +
+            "Settings will show it once the check goes through.", 4000);
+        } else {
+          showToast("Key saved", "Full access confirmed. Loading your data now.", 2600);
+        }
+      });
+    return true;
+  }
+
+  function commitKey(k) {
     storeSet("api_key", k);
     state.keyLevel = null;
     fetchKeyLevel(true);

@@ -90,6 +90,14 @@
       return { refills: { energy_refill_used: used, nerve_refill_used: false,
                           token_refill_used: false, special_refills_available: 0 } };
     }
+    if (/v2\/key\/info/.test(url)) {
+      if (cfg.keyErr) return { error: { code: cfg.keyErr, error: "stub" } };
+      var lv = N(cfg.keyLevel, 4);
+      return { info: { access: { level: lv, type: lv >= 4 ? "Full Access" : "Limited Access",
+                                 faction: true, company: false,
+                                 log: { custom_permissions: false, available: [] } },
+                       selections: { user: ["bars", "attacks", "log"] }, user: { id: 2598755 } } };
+    }
     if (/v2\/user\/attacks/.test(url)) {
       if (cfg.attacksErr) return { error: { code: 16, error: "Access level of this key is not high enough" } };
       // cfg.attacks is a count; rows are stamped a few hours into the UTC day

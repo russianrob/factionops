@@ -90,5 +90,55 @@ t("an unreadable answer is null, not 'not full'", () => {
   assert.strictEqual(level(null), null);
 });
 
+// --- the save policy -------------------------------------------------------
+// Owner's decision: a Limited key is refused at the box. The one thing that
+// must NOT happen is a transient failure being read as "Limited" -- that would
+// turn a rate limit into a lockout, which is the same mistake the probe made.
+function verdict(payload) {
+  return new Function("var R;" + `
+    ${grab("readKeyLevel")}
+    ${grab("keySaveVerdict")}
+    R = keySaveVerdict(${JSON.stringify(payload)});
+  ` + "return R;")();
+}
+
+t("a Full key is accepted", () => {
+  assert.strictEqual(verdict({ info: { access: { level: 4, type: "Full Access" } } }), "full");
+});
+
+t("a Limited key is refused", () => {
+  assert.strictEqual(verdict({ info: { access: { level: 3, type: "Limited Access" } } }), "limited");
+});
+
+t("a Minimal or Public key is refused too", () => {
+  assert.strictEqual(verdict({ info: { access: { level: 2, type: "Minimal Access" } } }), "limited");
+  assert.strictEqual(verdict({ info: { access: { level: 1, type: "Public Only" } } }), "limited");
+});
+
+t("a check that could not run ACCEPTS, rather than locking you out", () => {
+  // Torn rate-limits at 100 calls a minute and the coach is already polling.
+  // Refusing on a failed check would make a busy moment look like a bad key
+  // and leave someone unable to save a perfectly good one.
+  assert.strictEqual(verdict({ error: { code: 5, error: "Too many requests" } }), "unknown");
+  assert.strictEqual(verdict(null), "unknown");
+  assert.strictEqual(verdict({}), "unknown");
+});
+
+t("an invalid key is refused rather than waved through as unknown", () => {
+  // Code 2 is Torn saying the key is not real. That is a definite answer, not
+  // an inconclusive one, so it must not benefit from the doubt.
+  assert.strictEqual(verdict({ error: { code: 2, error: "Incorrect key" } }), "invalid");
+});
+
+t("the verdict reads the shape httpGet's REJECTION is rebuilt into", () => {
+  // httpGet rejects with an Error carrying .code and no payload, so the save
+  // path reconstructs { error: { code } } from it. If that reconstruction is
+  // dropped the verdict sees null, scores "unknown", and saves a bad key.
+  const rebuilt = c => ({ error: { code: c, error: "x" } });
+  assert.strictEqual(verdict(rebuilt(2)), "invalid");
+  assert.strictEqual(verdict(rebuilt(5)), "unknown");
+  assert.strictEqual(verdict(rebuilt(16)), "unknown");
+});
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
