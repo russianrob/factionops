@@ -88,6 +88,33 @@ await t("the gym page gets it too -- you can be distracted there as well", async
   await ctx.close();
 });
 
+// The tests above all SEED the clock. None of them proved the clock ever
+// starts on its own -- which is the whole path a real user walks.
+await t("a live poll starts the clock and persists it, with nothing seeded", async () => {
+  const { p, ctx } = await page({ energy: 150, max: 150 });   // no fullSince
+  const v = await p.evaluate(() => window.GM_getValue("gcb_v1_fullsince", 0));
+  assert.ok(Number(v) > 0, "the clock never started: gcb_v1_fullsince = " + JSON.stringify(v));
+  assert.strictEqual(await nagText(p), null, "10 minutes have not passed yet");
+  await ctx.close();
+});
+
+await t("a bar that is not full does not start the clock", async () => {
+  const { p, ctx } = await page({ energy: 120, max: 150 });
+  assert.strictEqual(Number(await p.evaluate(() => window.GM_getValue("gcb_v1_fullsince", 0))), 0);
+  await ctx.close();
+});
+
+await t("the banner arrives on its own as the clock crosses ten minutes", async () => {
+  // Nine minutes fifty seconds in, so the threshold is crossed while the page
+  // is open. Proves the per-second timer re-renders rather than only painting
+  // once at load.
+  const { p, ctx } = await page({ fullSince: 9 * MIN + 50000 });
+  assert.strictEqual(await nagText(p), null, "too early -- it should not be up yet");
+  await p.waitForTimeout(12000);
+  assert.ok(await nagText(p), "the banner never appeared as the clock crossed");
+  await ctx.close();
+});
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 await b.close();
 process.exit(fail ? 1 : 0);
