@@ -14,6 +14,11 @@ const ME = { str: 647295613, def: 101935420, spe: 259461019, dex: 706534966 };
 async function panel({ shares = null, shareTotal = 0, goals = null }) {
   const ctx = await b.newContext({ viewport: { width: 393, height: 1600 } });
   const p = await ctx.newPage();
+  // renderPanel catches its own throws and paints an error box, so a broken
+  // render can leave every assertion about STATE passing while nothing draws.
+  // That is exactly how deleting STAT_LABEL went unnoticed by the unit tests.
+  const errors = [];
+  p.on("pageerror", e => errors.push(e.message));
   await p.route("**/*", r => {
     const u = r.request().url();
     if (u.includes("gym-coach-beta.user.js")) return r.fulfill({ contentType: "application/javascript", body: script });
@@ -38,7 +43,7 @@ async function panel({ shares = null, shareTotal = 0, goals = null }) {
   const focus = await p.evaluate(() => window.GM_getValue("gcb_v1_focus", null));
   await p.evaluate(() => { const t = document.querySelector('[data-tab="plan"]'); if (t) t.click(); });
   await p.waitForTimeout(700);
-  return { p, ctx, focus };
+  return { p, ctx, focus, errors };
 }
 const card = p => p.evaluate(() => {
   const c = [...document.querySelectorAll(".gc-card")]
@@ -48,6 +53,15 @@ const card = p => p.evaluate(() => {
 
 let pass = 0, fail = 0;
 const t = async (n, f) => { try { await f(); pass++; console.log("ok   " + n); } catch (e) { fail++; console.log("FAIL " + n + " :: " + e.message); } };
+
+await t("the panel renders with no thrown error at all", async () => {
+  // A guard for a whole class of bug rather than one case: an edit that
+  // removes a symbol the panel needs still passes `node --check` and still
+  // passes every sandboxed unit test, because the sandbox supplies its own.
+  const { ctx, errors } = await panel({ shares: { dex: 20, str: 50, spe: 30, def: 0 } });
+  assert.deepStrictEqual(errors, [], "the page threw: " + errors.join(" | "));
+  await ctx.close();
+});
 
 await t("the card is on the Plan tab and asks for shares", async () => {
   const { p, ctx } = await panel({});
@@ -60,8 +74,8 @@ await t("the card is on the Plan tab and asks for shares", async () => {
 await t("it shows your real shares against the ones you want", async () => {
   const { p, ctx } = await panel({ shares: { dex: 40, str: 30, spe: 20, def: 10 } });
   const txt = await card(p);
-  assert.match(txt, /Speed · want 20% \| 15\.1% · 4\.9 under/, txt);
-  assert.match(txt, /Strength · want 30% \| 37\.7% · 7\.7 over/, txt);
+  assert.match(txt, /Speed · want 20%[^|]*\| 15\.1% · 4\.9 under/, txt);
+  assert.match(txt, /Strength · want 30%[^|]*\| 37\.7% · 7\.7 over/, txt);
   await ctx.close();
 });
 
@@ -107,7 +121,19 @@ await t("typing a share is kept as typed, not rewritten under the cursor", async
 await t("a zero share is reported as never trained, not as a deficit", async () => {
   const { p, ctx } = await panel({ shares: { dex: 50, str: 50, spe: 0, def: 0 } });
   const txt = await card(p);
-  assert.match(txt, /Defense · want 0% \| 5\.9% · not trained/, txt);
+  assert.match(txt, /Defense · want 0%[^|]*\| 5\.9% · not trained/, txt);
+  await ctx.close();
+});
+
+await t("the row the coach will train is marked next", async () => {
+  // Rows are ordered by deficit but the pick is decided by the gym bonus, so
+  // without a marker the top row reads as next and contradicts the verdict.
+  const { p, ctx, focus } = await panel({ shares: { dex: 20, str: 50, spe: 30, def: 0 } });
+  const txt = await card(p);
+  const marked = /(\w+) · want \d+%[^|]*· next/.exec(txt);
+  assert.ok(marked, "nothing is marked next: " + txt);
+  assert.strictEqual(marked[1].slice(0, 3).toLowerCase(), focus.slice(0, 3),
+    "the marked row is not the stat the coach is training (" + focus + ")");
   await ctx.close();
 });
 

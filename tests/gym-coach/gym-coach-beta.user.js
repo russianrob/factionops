@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.34
+// @version      0.9.35
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,30 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.35 — On a percentage build, the gym bonus picks between the stats that
+ *         are under -- it no longer loses to a slightly bigger gap.
+ *
+ *         Reported on Str 50 / Spe 30 / Dex 20 / Def 0: Speed was 14.9 points
+ *         under and Strength 12.1, so 0.9.34 sent every session to Speed at
+ *         +10% while Strength sat at +13%. Both were under and both had to be
+ *         trained anyway, so taking the worse multiplier first is simply less
+ *         stat for the same energy -- and maintain mode has no deadline, so
+ *         the ORDER costs nothing while the multiplier costs 3% of every
+ *         session.
+ *
+ *         Being under your share is now what makes a stat a candidate, and the
+ *         bonus chooses among the candidates. It still converges: train the
+ *         high-bonus stat and its share climbs until it is no longer under,
+ *         at which point it drops out and the next takes over. The shape is
+ *         held by the filter, not by the ranking. A stat that is OVER never
+ *         wins however good its bonus.
+ *
+ *         The card marks which row is actually next, because rows are ordered
+ *         by deficit and the deepest deficit is no longer the pick -- without
+ *         the marker the top row reads as next and contradicts the verdict.
+ *         The bonus is shown per row only when the four differ, since four
+ *         identical numbers decide nothing.
+ *
 * 0.9.34 — Set a build as percentages instead of four fixed numbers.
  *
  *         Asked for by someone running a custom Euphoria build: a fixed goal
@@ -1062,7 +1086,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.34";
+  var GC_VERSION = "0.9.35";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -3476,28 +3500,42 @@
     }).sort(function (a, b) { return b.delta - a.delta; });
   }
 
-  // Which stat the next leg goes to: the biggest deficit.
+  // Which stat the next leg goes to.
   //
-  // Deficit beats Steadfast, because holding the shape is the whole point of
-  // asking for a build. Steadfast only breaks a tie, where the same energy is
-  // genuinely worth more in one stat than another.
+  // Being UNDER your share makes a stat a candidate; among the candidates the
+  // best gym bonus wins. Not the other way round, and the reported case is
+  // why: on Str 50 / Spe 30 / Dex 20 / Def 0, Speed was 14.9 points under and
+  // Strength 12.1, so ranking by deficit sent every session to Speed at +10%
+  // while Strength sat at +13%. Both were under and both had to be trained
+  // eventually, so taking the worse multiplier first is simply less stat for
+  // the same energy -- and maintain mode has no deadline, so the ORDER costs
+  // nothing while the multiplier costs 3% of every session.
+  //
+  // It still converges: train the high-bonus stat and its share climbs until
+  // it is no longer under, at which point it drops out of the running and the
+  // next one takes over. The shape is held by the FILTER, not by the ranking.
+  //
+  // A stat that is OVER never wins however good its bonus -- training it moves
+  // the build away from its shape, which is the one thing the shape is for.
   function shareNextStat(shares, stats, perks) {
     if (!shares) return "";
     // A zero share is excluded outright: you asked for none of it, so however
     // much of it you have is not a deficit.
-    //
-    // As it happens the arithmetic already prevents this. Wants sum to 100 and
-    // haves sum to 100, so if a zero-want stat holds anything at all then the
-    // wanted stats hold less than 100 between them and at least one of them is
-    // under -- a zero-want stat can never be the maximum. Kept because the
-    // intent should not depend on noticing that, but do not mistake it for
-    // load-bearing: a mutation that removes it changes no outcome.
     var rows = shareState(shares, stats).filter(function (r) { return r.want > 0; });
     if (!rows.length) return "";
-    var best = rows[0];
     var p = perks || {};
-    rows.forEach(function (r) {
-      if (Math.abs(r.delta - best.delta) < 1e-9 && (p[r.k] || 1) > (p[best.k] || 1)) best = r;
+    var under = rows.filter(function (r) { return r.delta > 0; });
+    if (!under.length) {
+      // Nothing is under, so there is nothing for the bonus to rank between:
+      // the stat closest to needing training is next. shareState is already
+      // sorted by deficit, so that is the head.
+      return rows[0].k;
+    }
+    var best = under[0];
+    under.forEach(function (r) {
+      // Deficit already ordered `under`, so a strict ">" keeps the bigger gap
+      // when two stats share a bonus.
+      if ((p[r.k] || 1) > (p[best.k] || 1)) best = r;
     });
     return best.k;
   }
@@ -3630,11 +3668,26 @@
         esc(raw[k] ? String(raw[k]) : "") + '"></div>';
     }).join("");
 
+    // Which one is actually next. The rows are ordered by deficit, but the
+    // deepest deficit is NOT the pick -- the gym bonus decides among the stats
+    // that are under -- so without this the top row reads as "next" and
+    // quietly contradicts the verdict.
+    var nextK = state.shares ? shareNextStat(state.shares, state.stats, state.perks) : "";
+    // Only worth showing when the bonuses actually differ. Every stat on the
+    // same multiplier means Steadfast decides nothing, and printing "+3%" four
+    // times is noise -- the same reasoning the Gym gain bonus card already
+    // applies before it draws itself at all.
+    var pk = state.perks || {};
+    var mults = HIST_KEYS.map(function (k) { return pk[k] || 1; });
+    var showBonus = Math.max.apply(null, mults) !== Math.min.apply(null, mults);
     var table = rows.length
       ? rows.map(function (r) {
           var over = r.delta < -0.005;
+          var bonus = (state.perks && state.perks[r.k]) || 1;
           return '<div class="row"><span>' + STAT_LABEL[r.k] +
-            '<span class="muted"> \u00b7 want ' + r.want.toFixed(0) + "%</span></span>" +
+            '<span class="muted"> \u00b7 want ' + r.want.toFixed(0) + "%" +
+            (showBonus ? " \u00b7 " + perkPct(bonus) : "") + "</span>" +
+            (r.k === nextK ? '<b class="ok"> \u00b7 next</b>' : "") + "</span>" +
             '<b class="' + (r.want <= 0 ? "muted" : over ? "" : "bad") + '">' +
             r.have.toFixed(1) + "%" +
             (r.want <= 0 ? " \u00b7 not trained"
@@ -3652,7 +3705,7 @@
       (rows.length ? '<div style="height:8px"></div>' + table : table) +
       '<p class="muted" style="margin:8px 0 0">' +
       (maintaining
-        ? "Maintain mode: no end date, and each session goes to whichever stat is furthest under its share. A stat that is OVER cannot be trained down \u2014 it comes back on build as the others grow."
+        ? "Maintain mode: no end date. Being under your share puts a stat in the running; among those the best Steadfast bonus goes first, since the same energy is worth more there and both have to be trained anyway. A stat that is OVER cannot be trained down \u2014 it comes back on build as the others grow."
         : state.shares
           ? "Shares of a " + fmt(state.shareTotal) + " total become the four goals below, so the dates and the rest of the plan work exactly as they do for typed goals."
           : "Set a total as well and these become dated goals. Leave it blank and the coach just holds you on build as you grow.") +

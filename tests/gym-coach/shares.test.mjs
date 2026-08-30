@@ -113,31 +113,50 @@ t("a stat that is over its share is reported over, not as a tiny goal", () => {
 
 // --- which stat to train next ---------------------------------------------
 
-t("the next leg goes to the biggest deficit", () => {
-  assert.strictEqual(call("shareNextStat", { str: 30, def: 10, spe: 20, dex: 40 }, ME, {}), "spe");
+t("among stats that are under, the best gym bonus wins", () => {
+  // Reported: Str 50 / Spe 30 / Dex 20 / Def 0 on the real account. Speed was
+  // 14.9 under and Strength 12.1, so the old rule sent every session to Speed
+  // at +10% while Strength sat at +13%. Both were under and both had to be
+  // trained eventually, so taking the worse multiplier first is simply less
+  // stat for the same energy -- and maintain mode has no deadline, so the
+  // ORDER costs nothing while the multiplier costs plenty.
+  const build = { str: 50, spe: 30, dex: 20, def: 0 };
+  const perks = { str: 1.13, def: 1.10, spe: 1.10, dex: 1.13 };
+  assert.strictEqual(call("shareNextStat", build, ME, perks), "str");
+});
+
+t("deficit breaks a tie between equal bonuses", () => {
+  const build = { str: 50, spe: 30, dex: 20, def: 0 };
+  assert.strictEqual(call("shareNextStat", build, ME, { str: 1.1, spe: 1.1, dex: 1.1, def: 1.1 }), "spe");
+});
+
+t("a better bonus on a stat that is already OVER does not win", () => {
+  // Dexterity is 21 points over here and has the best multiplier. Training it
+  // would take the build further from its shape, which is the one thing the
+  // shape exists to prevent -- the bonus ranks candidates, it does not choose
+  // them.
+  const build = { str: 50, spe: 30, dex: 20, def: 0 };
+  const k = call("shareNextStat", build, ME, { dex: 1.5, str: 1.13, spe: 1.10, def: 1.10 });
+  assert.notStrictEqual(k, "dex");
+  assert.strictEqual(k, "str");
+});
+
+t("a zero-share stat never wins, however good its bonus", () => {
+  const build = { str: 50, spe: 30, dex: 20, def: 0 };
+  assert.notStrictEqual(call("shareNextStat", build, ME, { def: 9, str: 1.13, spe: 1.1, dex: 1.13 }), "def");
+});
+
+t("when everything is at or over its share, the least-over stat is next", () => {
+  // Nothing is under, so there are no candidates for the bonus to rank and
+  // the closest to needing training wins.
+  const on = { str: 500, def: 0, spe: 300, dex: 200 };
+  const build = { str: 50, spe: 30, dex: 20, def: 0 };
+  const k = call("shareNextStat", build, on, {});
+  assert.ok(["str", "spe", "dex"].indexOf(k) !== -1, "got " + k);
 });
 
 t("a zero-share stat is never chosen, however far under it looks", () => {
-  // want 0 and have 5.94% is a 5.94-point "deficit" by arithmetic. It is not
-  // one: you asked for none of it.
   assert.strictEqual(call("shareNextStat", { str: 0, def: 0, spe: 50, dex: 50 }, ME, {}), "spe");
-});
-
-t("Steadfast breaks a tie, and only a tie", () => {
-  // Equal deficits: the better gym bonus wins, because the same energy is
-  // worth more there.
-  const even = { str: 25, def: 25, spe: 25, dex: 25 };
-  const flat = { str: 100000, def: 100000, spe: 100000, dex: 100000 };
-  assert.strictEqual(call("shareNextStat", even, flat, { def: 1.2, str: 1.1, spe: 1, dex: 1 }), "def");
-  // ...but a real deficit beats a better bonus: holding the shape is the point.
-  assert.strictEqual(call("shareNextStat", { str: 10, def: 70, spe: 10, dex: 10 }, flat,
-    { str: 9, def: 1, spe: 1, dex: 1 }), "def");
-});
-
-t("being exactly on build still picks something, rather than nothing", () => {
-  const on = { str: 250, def: 250, spe: 250, dex: 250 };
-  const k = call("shareNextStat", { str: 25, def: 25, spe: 25, dex: 25 }, on, {});
-  assert.ok(["str", "def", "spe", "dex"].indexOf(k) !== -1, "got " + k);
 });
 
 t("no shares set means no opinion", () => {
