@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Ledger Probe
 // @namespace    RussianRob
-// @version      1.1.0
+// @version      1.2.0
 // @description  One-shot diagnostic: dumps Gym Coach's own energy ledger so an impossible "Missed today" or a "Spent attacking" figure can be traced to the entry that produced it, and reports which API endpoints your key can actually reach.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,6 +18,22 @@
 
 /*
  * CHANGELOG
+ * 1.2.0 — Asks /key/info once instead of poking five endpoints.
+ *
+ *         1.1.0 fired five requests back to back and every one came back
+ *         "code 5: Too many requests" -- which it printed as DENIED. That is
+ *         a rate limit, not an access decision, and reading it as one would
+ *         have concluded a Limited key could not reach anything at all. Gym
+ *         Coach itself polls hard on gym.php (bars every 8s, seven inventory
+ *         calls, the train log), so five more requests tipped the key's
+ *         100-a-minute budget over and the probe measured its own noise.
+ *
+ *         /key/info is available to ANY key and answers the whole question in
+ *         one request: the access level, every selection the key may use, and
+ *         the exact log ids it may read -- so whether log 5300 (gym training)
+ *         is reachable is a fact rather than an inference from a failed call.
+ *         Rate limits are now named as rate limits and retried.
+ *
  * 1.1.0 — Also reports what the saved key can REACH.
  *
  *         Rebuilding these figures from the API only works if the API answers.
@@ -56,7 +72,7 @@
 (function () {
   "use strict";
 
-  var SCRIPT_VERSION = "1.1.0";
+  var SCRIPT_VERSION = "1.2.0";
   var NS = "gcb_v1";          // the beta's namespace
   var STABLE_NS = "gc_v1";    // the stable script, for comparison
   var ATTACK_ENERGY = 25;
@@ -98,46 +114,76 @@
     return v == null ? null : v;
   }
 
-  // Each endpoint the API-driven rewrite would depend on, with the access
-  // level Torn documents for it. What matters is not the documentation but
-  // what THIS key gets back.
-  var PROBES = [
-    ["gym log (v1 selections=log)", "https://api.torn.com/user/?selections=log&log=5300&", "documented FULL for v2 /user/log"],
-    ["attacks (v2)",               "https://api.torn.com/v2/user/attacks?limit=1&",        "documented LIMITED"],
-    ["bars (v2)",                  "https://api.torn.com/v2/user/bars?",                   "documented MINIMAL"],
-    ["refills (v1)",               "https://api.torn.com/user/?selections=refills&",       "documented MINIMAL"],
-    ["personalstats (v2)",         "https://api.torn.com/v2/user/personalstats?cat=all&",  "documented PUBLIC"]
+  // One request, and it is available to ANY key: /key/info reports the access
+  // level, every selection the key may use, and the exact log ids it may read.
+  // 1.1.0 inferred all this from five failing calls and got it wrong, because
+  // the failures were rate limits rather than refusals.
+  var NEEDED = [
+    ["log", "gym training log -- energy trained, and the spend timeline the waste rebuild needs"],
+    ["attacks", "attacks made -- energy spent attacking"],
+    ["bars", "current energy"],
+    ["refills", "whether today's point refill is spent"],
+    ["personalstats", "fallback counters"]
   ];
+  var GYM_LOG_IDS = [5300, 5301, 5302, 5303]; // strength, defense, speed, dexterity
 
   function probeAccess(key, done) {
-    var i = 0;
-    (function next() {
-      if (i >= PROBES.length) return done();
-      var row = PROBES[i++];
-      var url = row[1] + "key=" + encodeURIComponent(key) + "&comment=gym-ledger-probe";
+    var url = "https://api.torn.com/v2/key/info?key=" + encodeURIComponent(key) +
+              "&comment=gym-ledger-probe";
+    var tries = 0;
+    function attempt() {
+      tries++;
       function handle(text) {
         var d = null;
         try { d = JSON.parse(text); } catch (e) {}
-        if (!d) add("  " + row[0], "UNREADABLE answer (" + row[2] + ")");
-        else if (d.error) add("  " + row[0], "DENIED -- code " + d.error.code + ": " + d.error.error + "  (" + row[2] + ")");
-        else {
-          // A 200 with an empty body is not the same as access: say what came back.
-          var keys = Object.keys(d).slice(0, 4).join(",");
-          add("  " + row[0], "OK -- returned {" + keys + "}  (" + row[2] + ")");
+        if (d && d.error && d.error.code === 5 && tries < 3) {
+          // Gym Coach is polling the same key. Wait and ask again rather than
+          // reporting its own noise as an access decision.
+          add("  (rate limited, retrying in 5s)", "attempt " + tries);
+          return setTimeout(attempt, 5000);
         }
-        next();
+        if (!d) { add("  key/info", "UNREADABLE answer"); return done(); }
+        if (d.error) {
+          add("  key/info", (d.error.code === 5 ? "RATE LIMITED" : "FAILED") +
+            " -- code " + d.error.code + ": " + d.error.error +
+            (d.error.code === 5 ? "  (this says nothing about access; close the Gym Coach panel and retry)" : ""));
+          return done();
+        }
+        var info = d.info || {};
+        var acc = info.access || {};
+        add("  access", "level " + acc.level + " / " + acc.type +
+          " | faction=" + acc.faction + " company=" + acc.company);
+        var us = (info.selections && info.selections.user) || [];
+        NEEDED.forEach(function (row) {
+          add("  selection " + row[0], (us.indexOf(row[0]) !== -1 ? "ALLOWED" : "NOT ALLOWED") + " -- " + row[1]);
+        });
+        // The selection being allowed is not the same as the individual log
+        // being readable: log access is enumerated id by id.
+        var avail = (acc.log && acc.log.available) || [];
+        var ids = {};
+        avail.forEach(function (c) { (c.log_ids || []).forEach(function (n) { ids[n] = 1; }); });
+        var have = GYM_LOG_IDS.filter(function (n) { return ids[n]; });
+        add("  gym log ids", have.length === GYM_LOG_IDS.length
+          ? "ALL FOUR readable (" + GYM_LOG_IDS.join(",") + ") -- trained energy and the spend timeline are available"
+          : have.length
+            ? "PARTIAL: " + have.join(",") + " of " + GYM_LOG_IDS.join(",") + " -- some stats would be invisible"
+            : "NONE of " + GYM_LOG_IDS.join(",") + " readable -- the waste rebuild would have to run attacks-only");
+        add("  log permissions", "custom=" + (acc.log && acc.log.custom_permissions) +
+          " | " + Object.keys(ids).length + " log ids readable in total");
+        done();
       }
       try {
         if (typeof GM_xmlhttpRequest === "function") {
           GM_xmlhttpRequest({ method: "GET", url: url,
             onload: function (r) { handle(r.responseText || r.response || ""); },
-            onerror: function () { add("  " + row[0], "NETWORK ERROR"); next(); } });
+            onerror: function () { add("  key/info", "NETWORK ERROR"); done(); } });
           return;
         }
       } catch (e) {}
       fetch(url).then(function (r) { return r.text(); }).then(handle)
-        .catch(function () { add("  " + row[0], "NETWORK ERROR"); next(); });
-    })();
+        .catch(function () { add("  key/info", "NETWORK ERROR"); done(); });
+    }
+    attempt();
   }
 
   function run() {

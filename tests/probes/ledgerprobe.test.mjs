@@ -25,7 +25,7 @@ async function run(mem, api = {}) {
   }, mem);
   await p.addInitScript({ content: script });
   await p.goto("https://www.torn.com/gym.php", { waitUntil: "domcontentloaded" });
-  await p.waitForTimeout(1500);
+  await p.waitForTimeout(13000);
   const txt = await p.evaluate(() => (document.querySelector("pre") || {}).textContent || "");
   await ctx.close();
   return txt;
@@ -77,20 +77,59 @@ await t("says so plainly when there is no ledger at all", async () => {
 // --- what the key can actually reach ------------------------------------
 const withKey = { gcb_v1_ledger: [{ d: today, used: 10, wasted: 2 }], gcb_v1_api_key: "abcdefghij123456" };
 
-await t("reports which endpoints the key is refused on, with the code", async () => {
-  const txt = await run(withKey, { "selections=log": { error: { code: 16, error: "Access level of this key is not high enough" } } });
-  assert.match(txt, /gym log \(v1 selections=log\) :: DENIED -- code 16/);
+const KEYINFO = {
+  info: {
+    access: { level: 3, type: "Limited", faction: false, company: false,
+              log: { custom_permissions: false, available: [{ category_id: 1, log_ids: [5300, 5301, 5302, 5303, 8842] }] } },
+    selections: { user: ["bars", "attacks", "log", "refills", "personalstats", "gym"] },
+    user: { id: 137558 }
+  }
+};
+
+await t("reports the access level and every selection the rewrite needs", async () => {
+  const txt = await run(withKey, { "key/info": KEYINFO });
+  assert.match(txt, /access :: level 3 \/ Limited/);
+  assert.match(txt, /selection log :: ALLOWED/);
+  assert.match(txt, /selection attacks :: ALLOWED/);
 });
 
-await t("reports the ones it can reach, and what came back", async () => {
-  const txt = await run(withKey, {
-    "selections=log": { log: {} },
-    "v2/user/attacks": { attacks: [] },
-    "v2/user/bars": { bars: {} },
-  });
-  assert.match(txt, /gym log \(v1 selections=log\) :: OK -- returned \{log\}/);
-  assert.match(txt, /attacks \(v2\) :: OK -- returned \{attacks\}/);
-  assert.match(txt, /bars \(v2\) :: OK -- returned \{bars\}/);
+await t("says which gym log ids are actually readable, not just that log is allowed", async () => {
+  // A key can hold the `log` selection and still be denied individual logs,
+  // so "log: ALLOWED" alone would not answer the question that matters.
+  const txt = await run(withKey, { "key/info": KEYINFO });
+  assert.match(txt, /gym log ids :: ALL FOUR readable/);
+});
+
+await t("a key allowed `log` but denied the gym ids is reported as attacks-only", async () => {
+  const k = JSON.parse(JSON.stringify(KEYINFO));
+  k.info.access.log.available = [{ category_id: 1, log_ids: [8842] }];
+  const txt = await run(withKey, { "key/info": k });
+  assert.match(txt, /gym log ids :: NONE of 5300,5301,5302,5303 readable/);
+  assert.match(txt, /attacks-only/);
+});
+
+await t("a partial set of gym logs is called out rather than rounded up", async () => {
+  const k = JSON.parse(JSON.stringify(KEYINFO));
+  k.info.access.log.available = [{ category_id: 1, log_ids: [5300, 5301] }];
+  const txt = await run(withKey, { "key/info": k });
+  assert.match(txt, /gym log ids :: PARTIAL: 5300,5301 of/);
+});
+
+await t("a missing selection is named, not silently omitted", async () => {
+  const k = JSON.parse(JSON.stringify(KEYINFO));
+  k.info.selections.user = ["bars", "personalstats"];
+  const txt = await run(withKey, { "key/info": k });
+  assert.match(txt, /selection attacks :: NOT ALLOWED/);
+  assert.match(txt, /selection log :: NOT ALLOWED/);
+});
+
+await t("a rate limit is called a rate limit, NOT an access denial", async () => {
+  // 1.1.0 printed code 5 as DENIED, which read as "this key cannot reach
+  // anything" when it only meant the script was already busy on the key.
+  const txt = await run(withKey, { "key/info": { error: { code: 5, error: "Too many requests" } } });
+  assert.match(txt, /RATE LIMITED -- code 5/);
+  assert.match(txt, /says nothing about access/);
+  assert.ok(!/DENIED/.test(txt), "still calling a rate limit a denial: " + txt);
 });
 
 await t("the key never reaches the report", async () => {
