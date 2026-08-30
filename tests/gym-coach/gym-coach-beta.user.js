@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.33
+// @version      0.9.34
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,32 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.34 — Set a build as percentages instead of four fixed numbers.
+ *
+ *         Asked for by someone running a custom Euphoria build: a fixed goal
+ *         says nothing about SHAPE. "Strength 1b" has to be retyped every time
+ *         it lands and says nothing about the other three, so anyone following
+ *         a published build redoes the arithmetic by hand forever.
+ *
+ *         Percentages of your total, which is how builds are actually quoted
+ *         and already what torn-gym-stat-percentages paints on gym.php. Any
+ *         scale works: 40/30/20/10 and 4/3/2/1 are the same build, and what
+ *         you typed stays in the box rather than being rewritten under your
+ *         cursor. A share of 0 means never train that stat, which several
+ *         published builds want for Defense.
+ *
+ *         Two modes off one input. With a total stat goal the shares become
+ *         the four targets the planner already reads, so dates, increments,
+ *         Steadfast ordering and "Worth it?" pricing all work untouched. Leave
+ *         the total blank for maintain mode: no end date, and each session
+ *         goes to whichever stat is furthest under its share.
+ *
+ *         Deficit beats Steadfast, which only breaks ties -- holding the shape
+ *         is the point of asking for a build. And a stat that is OVER is
+ *         reported as over rather than quietly retargeted: you cannot train a
+ *         stat down, so it comes back on build only as the others grow. Fixed
+ *         goals hid that entirely.
+ *
 * 0.9.33 — The API poll drops from eight seconds to a minute.
  *
  *         Eight seconds is 7.5 calls a minute of a key capped at 100, spent
@@ -1036,7 +1062,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.33";
+  var GC_VERSION = "0.9.34";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -1326,6 +1352,14 @@
     focus: "str",
     focus2: "none",
     goals: { str: 0, def: 0, spe: 0, dex: 0 },
+    // A percentage build. Null unless you have set one. With shareTotal it
+    // derives `goals` and the existing planner does the rest; without, it is
+    // maintain mode and has no endpoint by design.
+    shares: null,
+    // What was actually typed, so the boxes keep 4:3:2:1 instead of being
+    // rewritten to 40/30/20/10 under the cursor.
+    sharesRaw: null,
+    shareTotal: 0,
     mode: "xan",
     adultNov: false,
     status: "boot",
@@ -3387,10 +3421,110 @@
     return !!(g.str || g.def || g.spe || g.dex);
   }
 
+  // --- percentage builds ----------------------------------------------------
+  // A fixed goal says nothing about SHAPE. "Strength 1b" has to be retyped
+  // every time it lands and says nothing about the other three, so anyone
+  // following a published build re-does the arithmetic by hand forever.
+  // Shares are how builds are actually quoted -- and they are already on
+  // screen, since torn-gym-stat-percentages draws these very numbers on
+  // gym.php.
+
+  // What was typed, as percentages of the total.
+  //
+  // Normalised rather than validated, so 4:3:2:1 and 40/30/20/10 mean the same
+  // build and nobody has to do the division. A zero survives it and means
+  // NEVER TRAIN THIS -- plenty of builds ignore Defense outright, and that is
+  // not the same as a goal of zero.
+  function normalizeShares(raw) {
+    if (!raw) return null;
+    var out = {}, sum = 0;
+    HIST_KEYS.forEach(function (k) {
+      var v = Number(raw[k]);
+      // Anything unreadable or negative is zero, not a value that poisons the
+      // sum and silently rescales every other stat.
+      out[k] = isFinite(v) && v > 0 ? v : 0;
+      sum += out[k];
+    });
+    if (sum <= 0) return null;
+    HIST_KEYS.forEach(function (k) { out[k] = out[k] / sum * 100; });
+    return out;
+  }
+
+  // Shares plus a total goal become the four absolute targets the existing
+  // planner already reads, so segments, ETAs, Steadfast ordering and the
+  // "Worth it?" pricing all keep working untouched.
+  //
+  // No total is not a total of zero: it is maintain mode, which has no
+  // endpoint by design.
+  function shareTargets(shares, totalGoal) {
+    var tot = Number(totalGoal) || 0;
+    if (!shares || tot <= 0) return null;
+    var out = {};
+    HIST_KEYS.forEach(function (k) { out[k] = Math.round(tot * (shares[k] || 0) / 100); });
+    return out;
+  }
+
+  // Where you actually are against the build, worst deficit first.
+  function shareState(shares, stats) {
+    if (!shares) return [];
+    var st = stats || {};
+    var tot = 0;
+    HIST_KEYS.forEach(function (k) { tot += Number(st[k]) || 0; });
+    return HIST_KEYS.map(function (k) {
+      var have = tot > 0 ? (Number(st[k]) || 0) / tot * 100 : 0;
+      return { k: k, want: shares[k] || 0, have: have, delta: (shares[k] || 0) - have };
+    }).sort(function (a, b) { return b.delta - a.delta; });
+  }
+
+  // Which stat the next leg goes to: the biggest deficit.
+  //
+  // Deficit beats Steadfast, because holding the shape is the whole point of
+  // asking for a build. Steadfast only breaks a tie, where the same energy is
+  // genuinely worth more in one stat than another.
+  function shareNextStat(shares, stats, perks) {
+    if (!shares) return "";
+    // A zero share is excluded outright: you asked for none of it, so however
+    // much of it you have is not a deficit.
+    //
+    // As it happens the arithmetic already prevents this. Wants sum to 100 and
+    // haves sum to 100, so if a zero-want stat holds anything at all then the
+    // wanted stats hold less than 100 between them and at least one of them is
+    // under -- a zero-want stat can never be the maximum. Kept because the
+    // intent should not depend on noticing that, but do not mistake it for
+    // load-bearing: a mutation that removes it changes no outcome.
+    var rows = shareState(shares, stats).filter(function (r) { return r.want > 0; });
+    if (!rows.length) return "";
+    var best = rows[0];
+    var p = perks || {};
+    rows.forEach(function (r) {
+      if (Math.abs(r.delta - best.delta) < 1e-9 && (p[r.k] || 1) > (p[best.k] || 1)) best = r;
+    });
+    return best.k;
+  }
+
   // Goals drive the focus. Everything downstream — the verdict, the steps, the
   // projection — already keys off state.focus, so this is the only wiring the
   // rest of the script needs.
   function applyGoalFocus() {
+    // A percentage build fills the same four numbers a typed goal does, so
+    // everything downstream -- segments, ETAs, Steadfast ordering, the
+    // "Worth it?" pricing -- runs unchanged on top of it.
+    if (state.shares) {
+      var derived = shareTargets(state.shares, state.shareTotal);
+      if (derived) {
+        state.goals = derived;
+      } else {
+        // Maintain mode: no endpoint, so there are no targets to plan toward.
+        // The leg goes to whichever stat is furthest below its share, which is
+        // the point of asking for a build rather than a number.
+        var sk = shareNextStat(state.shares, state.stats, state.perks);
+        if (sk && sk !== state.focus) {
+          state.focus = sk;
+          storeSet("focus", sk);
+        }
+        return;
+      }
+    }
     if (!hasGoals()) return;
     var plan = goalPlan();
     // The leg being trained right now, which under rotation is not the same as
@@ -3477,6 +3611,52 @@
   function stepLabel(v) {
     if (!v) return "Off";
     return v >= 1e9 ? v / 1e9 + "b" : Math.round(v / 1e6) + "m";
+  }
+
+  // The build, as shares of your total.
+  //
+  // Deliberately the same numbers torn-gym-stat-percentages already paints on
+  // gym.php, because that is the vocabulary people quote builds in and the one
+  // already on screen.
+  function sharesHtml() {
+    var raw = state.sharesRaw || {};
+    var rows = state.shares ? shareState(state.shares, state.stats) : [];
+    var maintaining = state.shares && !shareTargets(state.shares, state.shareTotal);
+
+    var inputs = HIST_KEYS.map(function (k) {
+      return '<div class="row"><span>' + STAT_LABEL[k] + "</span>" +
+        '<input class="gc-in gcb-gin" data-share="' + k + '" type="text" inputmode="decimal" ' +
+        'style="width:72px;text-align:right" placeholder="0" value="' +
+        esc(raw[k] ? String(raw[k]) : "") + '"></div>';
+    }).join("");
+
+    var table = rows.length
+      ? rows.map(function (r) {
+          var over = r.delta < -0.005;
+          return '<div class="row"><span>' + STAT_LABEL[r.k] +
+            '<span class="muted"> \u00b7 want ' + r.want.toFixed(0) + "%</span></span>" +
+            '<b class="' + (r.want <= 0 ? "muted" : over ? "" : "bad") + '">' +
+            r.have.toFixed(1) + "%" +
+            (r.want <= 0 ? " \u00b7 not trained"
+              : over ? " \u00b7 " + Math.abs(r.delta).toFixed(1) + " over"
+              : " \u00b7 " + r.delta.toFixed(1) + " under") + "</b></div>";
+        }).join("")
+      : '<p class="muted">Enter a share for each stat. Any scale works \u2014 40/30/20/10 and 4/3/2/1 are the same build. Leave one at 0 to never train it.</p>';
+
+    return '<div class="gc-card"><h3>Build by percentage</h3>' +
+      inputs +
+      '<div class="row"><span>Total stat goal<span class="muted"> \u00b7 optional</span></span>' +
+        '<input class="gc-in gcb-gin" data-sharetotal="1" type="text" inputmode="decimal" ' +
+        'style="width:110px;text-align:right" placeholder="maintain" value="' +
+        esc(state.shareTotal ? fmt(state.shareTotal) : "") + '"></div>' +
+      (rows.length ? '<div style="height:8px"></div>' + table : table) +
+      '<p class="muted" style="margin:8px 0 0">' +
+      (maintaining
+        ? "Maintain mode: no end date, and each session goes to whichever stat is furthest under its share. A stat that is OVER cannot be trained down \u2014 it comes back on build as the others grow."
+        : state.shares
+          ? "Shares of a " + fmt(state.shareTotal) + " total become the four goals below, so the dates and the rest of the plan work exactly as they do for typed goals."
+          : "Set a total as well and these become dated goals. Leave it blank and the coach just holds you on build as you grow.") +
+      "</p></div>";
   }
 
   function goalsHtml() {
@@ -6675,6 +6855,7 @@
     // they move every projection in the script; a key and a perk dump are what
     // you configure once. Only the second half stays behind an icon.
     var planHtml =
+      sharesHtml() +
       goalsHtml() +
       steadfastHtml() +
       srcHtml() +
@@ -7239,6 +7420,34 @@
       renderPanel();
       return;
     }
+    if (el && el.dataset && el.dataset.share !== undefined) {
+      var sk = el.dataset.share;
+      var sv = Number(String(el.value).replace(/[^0-9.]/g, ""));
+      if (!isFinite(sv) || sv < 0) sv = 0;
+      var raw = {};
+      HIST_KEYS.forEach(function (kk) {
+        raw[kk] = kk === sk ? sv : ((state.sharesRaw && state.sharesRaw[kk]) || 0);
+      });
+      // The raw entry is kept as typed so 4:3:2:1 stays 4:3:2:1 in the boxes.
+      // Only the derived copy is normalised -- rewriting what someone typed
+      // into 40/30/20/10 under their cursor is its own kind of wrong.
+      state.sharesRaw = raw;
+      state.shares = normalizeShares(raw);
+      storeSet("shares", raw);
+      resetPlanCaches();
+      applyGoalFocus();
+      renderPanel();
+      return;
+    }
+    if (el && el.dataset && el.dataset.sharetotal !== undefined) {
+      var tv = parseGoal(el.value);
+      state.shareTotal = isNaN(tv) || tv < 0 ? 0 : tv;
+      storeSet("shareTotal", state.shareTotal);
+      resetPlanCaches();
+      applyGoalFocus();
+      renderPanel();
+      return;
+    }
     if (!el || !el.dataset || !el.dataset.goal) return;
     var k = el.dataset.goal;
     var n = parseGoal(el.value);
@@ -7672,6 +7881,11 @@
         state.goals = { str: Number(gv.str) || 0, def: Number(gv.def) || 0,
                         spe: Number(gv.spe) || 0, dex: Number(gv.dex) || 0 };
       }
+      var sh = storeGet("shares", null);
+      if (typeof sh === "string") { try { sh = JSON.parse(sh); } catch (_) { sh = null; } }
+      state.sharesRaw = (sh && typeof sh === "object") ? sh : null;
+      state.shares = normalizeShares(sh);
+      state.shareTotal = Number(storeGet("shareTotal", 0)) || 0;
       state.mode = storeGet("mode", "xan") || "xan";
       state.log = storeGet("log", []) || [];
       if (!Array.isArray(state.log)) state.log = [];
