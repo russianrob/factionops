@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.32
+// @version      0.9.33
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,29 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.33 — The API poll drops from eight seconds to a minute.
+ *
+ *         Eight seconds is 7.5 calls a minute of a key capped at 100, spent
+ *         re-reading cooldowns and perks that do not move that fast. It is
+ *         also why there was no headroom left: running the ledger probe
+ *         alongside it had Torn answering "code 5: Too many requests" to
+ *         everything, which read as an access denial and nearly sent a whole
+ *         feature down the wrong path.
+ *
+ *         Nothing on screen slows down. The bar is read from the page DOM once
+ *         a second and the cooldowns tick down locally between polls, so the
+ *         API round was never what made the panel feel live -- it carries
+ *         cooldowns, perks, stats and gym, none of which change in eight
+ *         seconds.
+ *
+ *         Off-gym goes the same way. It was 20s, which had every other Torn
+ *         page polling three times harder than the gym itself.
+ *
+ *         Steady-state worst case is now about 10 calls a minute against the
+ *         cap, counting the inventory walk, the four stat logs, refills,
+ *         stocks, attacks and the key check. A test does that arithmetic from
+ *         the constants rather than trusting this paragraph.
+ *
 * 0.9.32 — The key box requires a Full key and refuses anything less.
  *
  *         Owner's decision. The gym training log is Full-only, and without it
@@ -1013,7 +1036,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.32";
+  var GC_VERSION = "0.9.33";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -6314,6 +6337,16 @@
     return lvl.full ? "full" : "limited";
   }
 
+  // How often the API is asked for bars/cooldowns/perks. It used to be eight
+  // seconds on the gym page, which is 7.5 calls a minute of a 100-a-minute key
+  // spent re-reading things that do not move that fast -- and it is what left
+  // no headroom when anything else asked a question. The bar is read from the
+  // page DOM once a second regardless, so nothing on screen got slower.
+  var POLL_GYM_MS = 60000;
+  // Off-gym was 20s, which made every other Torn page poll three times harder
+  // than the gym itself. Same rate now.
+  var POLL_OFF_MS = 60000;
+
   var KEYLEVEL_TTL = 3600000; // it only changes when you make a new key
   function fetchKeyLevel(force) {
     var key = resolveKey();
@@ -7778,7 +7811,7 @@
       pollTimer = setInterval(function () {
         if (document.visibilityState !== "visible") return;
         refresh(/gym\.php/i.test(location.href) ? "gym" : "idle");
-      }, /gym\.php/i.test(location.href) ? 8000 : 20000);
+      }, /gym\.php/i.test(location.href) ? POLL_GYM_MS : POLL_OFF_MS);
       if (cdTimer) clearInterval(cdTimer);
       cdTimer = setInterval(function () {
         if (state.drugCd > 0) state.drugCd -= 1;

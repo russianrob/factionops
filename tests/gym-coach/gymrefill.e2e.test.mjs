@@ -122,12 +122,19 @@ await t("it links to the points page, where the refill actually lives", async ()
 
 await t("it comes down again once the bar no longer wants a refill", async () => {
   // Never going up and coming back down are different code paths, and only
-  // this exercises the second. Driven by the bar filling rather than the
-  // refill being spent, because that re-reads on the 8s poll instead of the
-  // three-minute refill TTL.
-  const { p, ctx } = await page({ energy: 0, energyAfterMs: 1000, energyAfter: 150 });
+  // this exercises the second.
+  //
+  // The refresh button is clicked rather than waiting on the poll: the poll is
+  // a minute now, and on the real gym page the bar is read from the DOM every
+  // second anyway, so waiting on the API here would be testing the harness's
+  // limitation rather than the strip's behaviour.
+  const { p, ctx } = await page({ energy: 0, energyAfterMs: 500, energyAfter: 150 });
   assert.ok(await strip(p), "precondition: the strip was up");
-  await p.waitForTimeout(14000);
+  await p.evaluate(() => {
+    const b = document.querySelector('[data-act="refresh"]');
+    if (b) b.click();
+  });
+  await p.waitForTimeout(2500);
   assert.strictEqual(await strip(p), null, "still up on a full bar");
   await ctx.close();
 });
