@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.30
+// @version      0.9.31
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,27 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.31 — A key you type in now beats the one Torn PDA injected.
+ *
+ *         The order was the other way round, which made a deliberately entered
+ *         key unreachable on a phone. PDA substitutes its own key at install,
+ *         that key is usually Limited, and the gym log is Full-only -- so
+ *         pasting a Full key into Settings did nothing at all, and missed
+ *         energy stayed "observed only" with no way to improve it. Injection
+ *         is a default; typing one is intent, and intent wins. A PDA user who
+ *         has never entered a key is unaffected.
+ *
+ *         Settings now says what the key in use can actually do, read from
+ *         /v2/key/info -- which answers ANY key, so the check can never be the
+ *         thing that fails and mislabel a good one. "Could not tell" is kept
+ *         distinct from "not Full", because a rate-limited check must not nag
+ *         someone whose key is fine.
+ *
+ *         The copy asked for a Limited key throughout, which is no longer the
+ *         right advice: a Full key is what the training log needs. It says so,
+ *         and says plainly what still works without one -- attacks, refills,
+ *         cans, plans and notifications all do.
+ *
 * 0.9.30 — Missed energy stops guessing about time the script did not watch.
  *
  *         Time the script DID watch was always right: the ledger ticks every
@@ -969,7 +990,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.30";
+  var GC_VERSION = "0.9.31";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -1253,6 +1274,9 @@
     // unobserved gap cannot be reconstructed, and is left uncounted rather
     // than guessed.
     logReadable: null,
+    // { level, type, full } once /key/info answers; null while unknown, which
+    // is NOT the same as "not full".
+    keyLevel: null,
     focus: "str",
     focus2: "none",
     goals: { str: 0, def: 0, spe: 0, dex: 0 },
@@ -1575,12 +1599,37 @@
     return !!def;
   }
 
+  // A key you TYPED wins over the one Torn PDA substituted at install.
+  //
+  // The order used to be the other way round, which made a deliberately
+  // entered key unreachable on a phone: PDA injects its own key, that key is
+  // usually Limited, and the gym log is Full-only -- so pasting a Full key
+  // into Settings silently did nothing and missed energy stayed
+  // "observed only" with no way to improve it. Injection is an install-time
+  // default; typing one is an act of intent, and intent should win.
+  //
+  // A PDA user who has never entered a key is unaffected: `own` is empty and
+  // the injected key is still what comes back.
   function resolveKey() {
-    var injected = String(PDA_INJECTED_KEY || "").trim();
-    if (injected && injected.indexOf("###") === -1 && injected.length > 8) return injected;
     var own = String(storeGet("api_key", "") || "").trim();
     if (own) return own;
+    var injected = String(PDA_INJECTED_KEY || "").trim();
+    if (injected && injected.indexOf("###") === -1 && injected.length > 8) return injected;
     return String(stableGet("api_key", "") || "").trim();
+  }
+
+  // Torn's own word on what a key may do. Reads /v2/key/info, which is
+  // available to ANY key -- including the Public ones, so the check itself can
+  // never be the thing that fails.
+  //
+  // null means "could not tell", deliberately distinct from "not full": a
+  // rate-limited check must not nag someone whose key is perfectly good.
+  function readKeyLevel(d) {
+    var a = d && d.info && d.info.access;
+    if (!a || typeof a.level !== "number") return null;
+    // The numeric level decides it. The type string is shown to you because it
+    // is what Torn's own key page calls it, but it is wording and could change.
+    return { level: a.level, type: String(a.type || ""), full: a.level >= 4 };
   }
 
   // Are we actually inside Torn PDA? Three PDA-specific lines in Settings used
@@ -5828,6 +5877,7 @@
         fetchRefills(kind === "boot" || kind === "manual");
         fetchStocks(kind === "boot" || kind === "manual");
         fetchAttacksToday(kind === "boot" || kind === "manual" || kind === "train");
+        fetchKeyLevel(kind === "boot" || kind === "manual");
         if (!wantInv) return null;
         return fetchInventoryV2().then(
           function (rows) {
@@ -6223,11 +6273,27 @@
     return String(raw || "").replace(/[^a-zA-Z0-9]/g, "");
   }
 
+  var KEYLEVEL_TTL = 3600000; // it only changes when you make a new key
+  function fetchKeyLevel(force) {
+    var key = resolveKey();
+    if (!key) { state.keyLevel = null; return; }
+    if (!force && Date.now() - (state.keyLevelAt || 0) < KEYLEVEL_TTL) return;
+    state.keyLevelAt = Date.now();
+    // /v2/key/info answers ANY key, Public included, so the check itself can
+    // never be the thing that fails and mislabels a good key.
+    httpGet("https://api.torn.com/v2/key/info?key=" + encodeURIComponent(key) +
+            "&comment=" + encodeURIComponent(COMMENT))
+      .then(function (d) { state.keyLevel = readKeyLevel(d); })
+      .catch(function () { state.keyLevel = null; });
+  }
+
   function trySaveKey(raw) {
     var k = normalizeKey(raw);
     if (k.length < 16) return false;
     k = k.slice(0, 16);
     storeSet("api_key", k);
+    state.keyLevel = null;
+    fetchKeyLevel(true);
     draftKey = "";
     keyBoxFocused = false;
     try {
@@ -6512,16 +6578,27 @@
 
     var setHtml =
       '<div class="gc-card"><h3>API</h3>' +
+      // A key you paste now WINS over PDA's injected one, so this box is worth
+      // offering even on PDA -- it used to be the one place a Full key could
+      // not reach.
+      '<p class="muted">A <b>Full</b> key is recommended: the gym training log is Full-only, ' +
+        "and without it \u201cSpent today\u201d falls back to the bar and missed energy for " +
+        "time the script was closed reads \u201cobserved only\u201d. Everything else \u2014 " +
+        "attacks, refills, cans, plans, notifications \u2014 works on a Limited key.</p>" +
       (HAS_PDA_KEY
-        ? '<p class="ok">Torn PDA injected your Limited key. You don\u2019t need to paste one.</p>'
-        : '<p class="muted">' + (isPda()
-            ? "Leave the PDA API-key placeholder in the script so the app can inject your Limited key. If it didn\u2019t, paste one below."
-            : "Paste a Limited API key below.") +
-          " Needed: bars, cooldowns, battlestats, gym, inventory, perks, timestamp.</p>" +
-          '<input class="gc-in" id="gcKey" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Limited API key" value="' +
+        ? '<p class="ok">Torn PDA injected its key. Paste your own below to override it \u2014 PDA\u2019s is usually Limited.</p>'
+        : "") +
+          '<input class="gc-in" id="gcKey" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Full API key" value="' +
           esc(draftKey) +
           '">' +
-          '<div class="actions"><button class="gc-btn secondary" data-act="pastekey">Paste from clipboard</button><button class="gc-btn" data-act="savekey">Save key</button></div>') +
+          '<div class="actions"><button class="gc-btn secondary" data-act="pastekey">Paste from clipboard</button><button class="gc-btn" data-act="savekey">Save key</button></div>' +
+      // Torn's own word on the key in use, so a wrong one shows up here rather
+      // than being inferred from a figure looking odd three tabs away.
+      (state.keyLevel
+        ? '<div class="row"><span>Key access</span><b class="' + (state.keyLevel.full ? "ok" : "bad") + '">' +
+          esc(state.keyLevel.type || ("level " + state.keyLevel.level)) +
+          (state.keyLevel.full ? "" : " \u00b7 gym log unavailable") + "</b></div>"
+        : "") +
       '<p class="muted" style="margin:8px 0 0">Beta lane. It reads the stable script\u2019s saved key but never writes to its settings. Run one at a time \u2014 both open means both polling, and the key is capped at 100 calls a minute.</p>' +
       '<div class="row"><span>Host</span><b>' +
         (isPda() ? "Torn PDA" : nativeHost() || "Browser") + "</b></div>" +
