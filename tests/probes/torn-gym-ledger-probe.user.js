@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Ledger Probe
 // @namespace    RussianRob
-// @version      1.2.0
+// @version      1.4.0
 // @description  One-shot diagnostic: dumps Gym Coach's own energy ledger so an impossible "Missed today" or a "Spent attacking" figure can be traced to the entry that produced it, and reports which API endpoints your key can actually reach.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,6 +18,33 @@
 
 /*
  * CHANGELOG
+ * 1.4.0 — Reports WHICH key it used, and resolves it the way the coach does.
+ *
+ *         Asked, correctly: is this even the key Gym Coach uses? 1.3.0 read
+ *         the beta's stored key and fell back to the stable script's, but the
+ *         coach tries a third source FIRST -- the key Torn PDA substitutes at
+ *         install time. So on a phone the coach can be using a completely
+ *         different key from the one this probe measured on a desktop, and an
+ *         access answer about the wrong key is worse than none.
+ *
+ *         Same order as the coach now, and the report names the source. Run it
+ *         on both devices: if the answers differ, that is the finding.
+ *
+ * 1.3.0 — An empty log allowlist means UNRESTRICTED, not blocked.
+ *
+ *         1.2.0 read `access.log.available` as the list of logs a key may
+ *         read, so an empty array printed "NONE readable" and concluded the
+ *         waste rebuild would have to run attacks-only. Backwards: `available`
+ *         enumerates a CUSTOM allowlist, and the schema says
+ *         `custom_permissions` "shows if key has custom log permissions
+ *         enabled". False means no custom restrictions -- the default for the
+ *         access level, which for a Full key is every log. The array is empty
+ *         because there is nothing custom to list.
+ *
+ *         Rather than swap one inference for another, it now ASKS: one call to
+ *         the gym log itself, reporting whether rows came back. Two requests
+ *         in total, and the answer is evidence instead of a reading of a flag.
+ *
  * 1.2.0 — Asks /key/info once instead of poking five endpoints.
  *
  *         1.1.0 fired five requests back to back and every one came back
@@ -72,7 +99,7 @@
 (function () {
   "use strict";
 
-  var SCRIPT_VERSION = "1.2.0";
+  var SCRIPT_VERSION = "1.4.0";
   var NS = "gcb_v1";          // the beta's namespace
   var STABLE_NS = "gc_v1";    // the stable script, for comparison
   var ATTACK_ENERGY = 25;
@@ -99,13 +126,26 @@
   // Reuses whatever Gym Coach already stored. Never printed: the report shows
   // the last four characters and the length, enough to tell WHICH key answered
   // without the report carrying the key itself.
+  // Torn PDA rewrites this literal at install time. It must appear exactly
+  // once in the file: a second copy anywhere, comments included, lets the
+  // substitution corrupt the source so the script stops parsing under PDA and
+  // nowhere else.
+  var PDA_INJECTED_KEY = "###PDA-APIKEY###";
+
+  // The coach's own resolution order, deliberately: PDA's injected key first,
+  // then the beta's stored one, then the stable script's. Measuring a key the
+  // coach would not have used answers a question nobody asked.
   function savedKey() {
-    var names = ["gcb_v1_api_key", "gc_v1_api_key"];
-    for (var i = 0; i < names.length; i++) {
-      var v = read2(names[i]);
-      if (v && typeof v === "string" && v.indexOf("###") === -1 && v.trim().length > 8) return v.trim();
+    var inj = String(PDA_INJECTED_KEY || "").trim();
+    if (inj && inj.indexOf("#") === -1 && inj.length > 8) return { key: inj, from: "Torn PDA (injected at install)" };
+    var slots = [["gcb_v1_api_key", "Gym Coach BETA settings"], ["gc_v1_api_key", "Gym Coach STABLE settings"]];
+    for (var i = 0; i < slots.length; i++) {
+      var v = read2(slots[i][0]);
+      if (v && typeof v === "string" && v.indexOf("#") === -1 && v.trim().length > 8) {
+        return { key: v.trim(), from: slots[i][1] + " (" + slots[i][0] + ")" };
+      }
     }
-    return "";
+    return null;
   }
   function read2(k) {
     var v;
@@ -126,6 +166,39 @@
     ["personalstats", "fallback counters"]
   ];
   var GYM_LOG_IDS = [5300, 5301, 5302, 5303]; // strength, defense, speed, dexterity
+
+  // One call to the log the rebuild actually depends on. An empty log is a
+  // valid answer ("you have not trained recently"), so what is reported is
+  // whether the CALL was accepted, kept separate from whether it had rows.
+  function askGymLog(key, done) {
+    var url = "https://api.torn.com/user/?selections=log&log=5300&key=" +
+              encodeURIComponent(key) + "&comment=gym-ledger-probe";
+    function handle(text) {
+      var d = null;
+      try { d = JSON.parse(text); } catch (e) {}
+      if (!d) add("  gym log (live call)", "UNREADABLE answer");
+      else if (d.error) {
+        add("  gym log (live call)", (d.error.code === 5 ? "RATE LIMITED" : "REFUSED") +
+          " -- code " + d.error.code + ": " + d.error.error);
+      } else {
+        var n = d.log && typeof d.log === "object" ? Object.keys(d.log).length : 0;
+        add("  gym log (live call)", "ACCEPTED -- " + n + " strength-training entries returned" +
+          (n ? " (trained energy and the spend timeline are available)"
+             : " (call works; you simply have no recent strength trains on record)"));
+      }
+      done();
+    }
+    try {
+      if (typeof GM_xmlhttpRequest === "function") {
+        GM_xmlhttpRequest({ method: "GET", url: url,
+          onload: function (r) { handle(r.responseText || r.response || ""); },
+          onerror: function () { add("  gym log (live call)", "NETWORK ERROR"); done(); } });
+        return;
+      }
+    } catch (e) {}
+    fetch(url).then(function (r) { return r.text(); }).then(handle)
+      .catch(function () { add("  gym log (live call)", "NETWORK ERROR"); done(); });
+  }
 
   function probeAccess(key, done) {
     var url = "https://api.torn.com/v2/key/info?key=" + encodeURIComponent(key) +
@@ -157,19 +230,27 @@
         NEEDED.forEach(function (row) {
           add("  selection " + row[0], (us.indexOf(row[0]) !== -1 ? "ALLOWED" : "NOT ALLOWED") + " -- " + row[1]);
         });
-        // The selection being allowed is not the same as the individual log
-        // being readable: log access is enumerated id by id.
+        // `available` is a CUSTOM allowlist, not the list of readable logs.
+        // custom_permissions false means no custom restrictions at all, so the
+        // key gets its access level's default -- for a Full key, everything.
+        // Reading the empty array as "nothing readable" is what 1.2.0 got
+        // wrong, and it is the difference between a full rebuild and a
+        // needless attacks-only fallback.
+        var custom = !!(acc.log && acc.log.custom_permissions);
         var avail = (acc.log && acc.log.available) || [];
         var ids = {};
         avail.forEach(function (c) { (c.log_ids || []).forEach(function (n) { ids[n] = 1; }); });
-        var have = GYM_LOG_IDS.filter(function (n) { return ids[n]; });
-        add("  gym log ids", have.length === GYM_LOG_IDS.length
-          ? "ALL FOUR readable (" + GYM_LOG_IDS.join(",") + ") -- trained energy and the spend timeline are available"
-          : have.length
-            ? "PARTIAL: " + have.join(",") + " of " + GYM_LOG_IDS.join(",") + " -- some stats would be invisible"
-            : "NONE of " + GYM_LOG_IDS.join(",") + " readable -- the waste rebuild would have to run attacks-only");
-        add("  log permissions", "custom=" + (acc.log && acc.log.custom_permissions) +
-          " | " + Object.keys(ids).length + " log ids readable in total");
+        if (!custom) {
+          add("  log permissions", "no custom restrictions -- the key gets its access level's default set");
+        } else {
+          var have = GYM_LOG_IDS.filter(function (n) { return ids[n]; });
+          add("  log permissions", "CUSTOM allowlist of " + Object.keys(ids).length + " ids | gym logs: " +
+            (have.length === GYM_LOG_IDS.length ? "all four allowed"
+              : have.length ? "PARTIAL (" + have.join(",") + ")" : "NONE allowed"));
+        }
+        // Flags describe intent; a request describes reality. Ask.
+        askGymLog(key, done);
+        return;
         done();
       }
       try {
@@ -264,10 +345,11 @@
       ? stable.length + " entries in its own ledger (separate namespace; the beta never reads it)"
       : "no ledger stored");
 
-    var key = savedKey();
-    if (!key) { add("KEY ACCESS", "no saved Gym Coach key on this device -- skipped"); return show(); }
-    add("KEY ACCESS", "using saved key ..." + key.slice(-4) + " (" + key.length + " chars)");
-    probeAccess(key, show);
+    var k = savedKey();
+    if (!k) { add("KEY ACCESS", "no saved Gym Coach key on this device -- skipped"); return show(); }
+    add("KEY ACCESS", "..." + k.key.slice(-4) + " (" + k.key.length + " chars)  FROM: " + k.from);
+    add("  note", "this is the key the coach itself would use here; on another device it may resolve to a different one");
+    probeAccess(k.key, show);
   }
 
   function show() {

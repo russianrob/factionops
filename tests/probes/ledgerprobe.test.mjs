@@ -93,26 +93,47 @@ await t("reports the access level and every selection the rewrite needs", async 
   assert.match(txt, /selection attacks :: ALLOWED/);
 });
 
-await t("says which gym log ids are actually readable, not just that log is allowed", async () => {
-  // A key can hold the `log` selection and still be denied individual logs,
-  // so "log: ALLOWED" alone would not answer the question that matters.
-  const txt = await run(withKey, { "key/info": KEYINFO });
-  assert.match(txt, /gym log ids :: ALL FOUR readable/);
+await t("an empty allowlist with custom_permissions false is not read as blocked", async () => {
+  // The bug this replaced: `available` is a CUSTOM allowlist, so an empty
+  // array on a key with no custom permissions means "the default set", which
+  // for a Full key is every log. 1.2.0 called that "NONE readable" and would
+  // have sent the rebuild down an attacks-only path for no reason.
+  const k = JSON.parse(JSON.stringify(KEYINFO));
+  k.info.access.log = { custom_permissions: false, available: [] };
+  const txt = await run(withKey, { "key/info": k, "selections=log": { log: { a: {}, b: {} } } });
+  assert.match(txt, /log permissions :: no custom restrictions/);
+  assert.ok(!/NONE allowed/.test(txt), "still reading an empty allowlist as blocked: " + txt);
 });
 
-await t("a key allowed `log` but denied the gym ids is reported as attacks-only", async () => {
+await t("a real custom allowlist IS honoured", async () => {
   const k = JSON.parse(JSON.stringify(KEYINFO));
-  k.info.access.log.available = [{ category_id: 1, log_ids: [8842] }];
-  const txt = await run(withKey, { "key/info": k });
-  assert.match(txt, /gym log ids :: NONE of 5300,5301,5302,5303 readable/);
-  assert.match(txt, /attacks-only/);
+  k.info.access.log = { custom_permissions: true, available: [{ category_id: 1, log_ids: [8842] }] };
+  const txt = await run(withKey, { "key/info": k, "selections=log": { log: {} } });
+  assert.match(txt, /CUSTOM allowlist of 1 ids \| gym logs: NONE allowed/);
 });
 
-await t("a partial set of gym logs is called out rather than rounded up", async () => {
+await t("a partial custom allowlist is called out rather than rounded up", async () => {
   const k = JSON.parse(JSON.stringify(KEYINFO));
-  k.info.access.log.available = [{ category_id: 1, log_ids: [5300, 5301] }];
-  const txt = await run(withKey, { "key/info": k });
-  assert.match(txt, /gym log ids :: PARTIAL: 5300,5301 of/);
+  k.info.access.log = { custom_permissions: true, available: [{ category_id: 1, log_ids: [5300, 5301] }] };
+  const txt = await run(withKey, { "key/info": k, "selections=log": { log: {} } });
+  assert.match(txt, /PARTIAL \(5300,5301\)/);
+});
+
+await t("it ASKS the gym log rather than inferring from flags", async () => {
+  const txt = await run(withKey, { "key/info": KEYINFO, "selections=log": { log: { a: {}, b: {}, c: {} } } });
+  assert.match(txt, /gym log \(live call\) :: ACCEPTED -- 3 strength-training entries/);
+});
+
+await t("an empty log is 'the call works', not 'the call failed'", async () => {
+  const txt = await run(withKey, { "key/info": KEYINFO, "selections=log": { log: {} } });
+  assert.match(txt, /ACCEPTED -- 0 strength-training entries/);
+  assert.match(txt, /call works/);
+});
+
+await t("a genuinely refused log call is reported as refused", async () => {
+  const txt = await run(withKey, { "key/info": KEYINFO,
+    "selections=log": { error: { code: 16, error: "Access level of this key is not high enough" } } });
+  assert.match(txt, /gym log \(live call\) :: REFUSED -- code 16/);
 });
 
 await t("a missing selection is named, not silently omitted", async () => {
@@ -133,9 +154,23 @@ await t("a rate limit is called a rate limit, NOT an access denial", async () =>
 });
 
 await t("the key never reaches the report", async () => {
-  const txt = await run({ ...withKey, gcb_v1_api_key: "SUPERSECRETKEY99" }, {});
+  const txt = await run({ ...withKey, gcb_v1_api_key: "SUPERSECRETKEY99" }, { "key/info": KEYINFO, "selections=log": { log: {} } });
   assert.ok(!txt.includes("SUPERSECRETKEY99"), "the report carries the key");
-  assert.match(txt, /using saved key \.\.\.EY99 \(16 chars\)/);
+  assert.match(txt, /\.\.\.EY99 \(16 chars\)/);
+});
+
+await t("it names WHICH key it used, so a wrong one is visible", async () => {
+  // The coach can resolve a different key on a different device. An access
+  // answer about the wrong key is worse than no answer.
+  const txt = await run({ ...withKey, gcb_v1_api_key: "betakey123456789" },
+    { "key/info": KEYINFO, "selections=log": { log: {} } });
+  assert.match(txt, /FROM: Gym Coach BETA settings \(gcb_v1_api_key\)/);
+});
+
+await t("it falls back to the stable script's key and says so", async () => {
+  const txt = await run({ gcb_v1_ledger: [{ d: today, used: 1, wasted: 1 }], gc_v1_api_key: "stablekey1234567" },
+    { "key/info": KEYINFO, "selections=log": { log: {} } });
+  assert.match(txt, /FROM: Gym Coach STABLE settings \(gc_v1_api_key\)/);
 });
 
 await t("a PDA key placeholder is not mistaken for a key", async () => {
