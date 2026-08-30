@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.27
+// @version      0.9.28
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,30 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.28 — An unused refill says so next to the Gym title, not just in the
+ *         panel.
+ *
+ *         DO THIS already carried the line, but the panel is tucked behind a
+ *         pill and the moment that matters is arriving at gym.php on an empty
+ *         bar with the day's refill unspent -- when you are looking at the
+ *         gym, not at the coach.
+ *
+ *         Anchored on h4#skip-to-content, whose id is unhashed and stable
+ *         where every generated class around it is not. That title row is
+ *         float-based rather than flex, so the strip floats left to share the
+ *         line instead of dropping beneath it; the harness gained those two
+ *         CSS rules, because without them a "same line" test passes against a
+ *         layout Torn does not have. Losing the anchor costs the strip its
+ *         position and never its existence -- it falls back to floating.
+ *
+ *         It is a link to points.php, since the useful thing to do about an
+ *         unused refill is go and spend it, and it wears .gc-btn's green,
+ *         weight and corner so it reads as part of the coach.
+ *
+ *         The refill flag is re-read every three minutes rather than every
+ *         ten. Ten was defensible on request count, but it also decided how
+ *         long the strip kept advertising a refill you had already spent.
+ *
 * 0.9.27 — The full-bar banner reads the clock the panel already prints.
  *
  *         Reported: it took far too long to appear, and on a freshly opened
@@ -888,7 +912,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.27";
+  var GC_VERSION = "0.9.28";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -1937,7 +1961,11 @@
     return null;
   }
 
-  var REFILL_TTL = 600000; // it changes at most once a day
+  // Three minutes, not ten. It only changes once a day, so ten was defensible
+  // on request count -- but it also decides how long the gym-page strip keeps
+  // telling you to spend a refill you have already spent, and being wrong in
+  // that direction is worse than one request every three minutes.
+  var REFILL_TTL = 180000;
   function fetchRefills(force) {
     if (!force && Date.now() - (state.refillAt || 0) < REFILL_TTL) return;
     state.refillAt = Date.now();
@@ -6310,6 +6338,72 @@
     return /gym\.php/i.test(location.href);
   }
 
+  var REFILL_STRIP_ID = "gcb-refill-strip";
+
+  // The same sentence DO THIS carries, put where you are actually standing.
+  //
+  // The panel says it too, but the panel is tucked behind a pill, and the
+  // moment that matters is arriving at gym.php on an empty bar with the day's
+  // refill still unspent -- which is exactly when you are looking at the gym
+  // and not at the coach.
+  //
+  // Inline rather than floating, anchored above the stat tiles. Torn renames
+  // its generated classes, so losing the anchor costs the strip its POSITION,
+  // never its existence: it falls back to the same fixed spot the full-bar
+  // banner uses.
+  function renderRefillStrip() {
+    if (!onGymPage()) {
+      var off = document.getElementById(REFILL_STRIP_ID);
+      if (off && off.parentNode) off.parentNode.removeChild(off);
+      return;
+    }
+    var step = refillStep();
+    var el = document.getElementById(REFILL_STRIP_ID);
+    if (!step) {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+      return;
+    }
+    if (!document.body) return;
+    // h4#skip-to-content is the page title ("Gym"). That id is unhashed and
+    // stable where every generated class around it is not, so the anchor is
+    // the heading rather than its container. The title row is float-based
+    // rather than flex, so float:left is what keeps the strip on that line
+    // instead of dropping it underneath.
+    var head = document.querySelector("h4#skip-to-content");
+    if (!el) {
+      // An anchor, not a div: the useful thing to do about an unused refill is
+      // go and spend it, and points.php is where that lives. A link the user
+      // taps is fine where a programmatic click would not be.
+      el = document.createElement("a");
+      el.id = REFILL_STRIP_ID;
+      el.href = "https://www.torn.com/points.php";
+      el.title = "Open the Points page to use your energy refill";
+      if (head) head.insertAdjacentElement("afterend", el);
+      else document.body.appendChild(el);
+    } else if (head && el.previousElementSibling !== head) {
+      // React repaints the gym page and can move or drop what it finds there;
+      // the id lookup above is what keeps that from becoming a second strip
+      // rather than a moved one.
+      head.insertAdjacentElement("afterend", el);
+    }
+    var inline = !!head;
+    // The coach's own button, shrunk to share a line with the page title:
+    // same green, same weight, same corner as .gc-btn, minus the 44px height
+    // that makes sense for a thumb target and not for a heading row.
+    el.style.cssText =
+      (inline ? "float:left;margin:1px 0 0 12px;" :
+        "position:fixed;top:52px;left:50%;transform:translateX(-50%);z-index:2147483645;max-width:94vw;") +
+      "display:inline-flex;align-items:center;gap:6px;" +
+      "background:#2ecc71;color:#fff;border-radius:10px;border:0;" +
+      "font:800 12px/1 Arial,sans-serif;padding:7px 12px;" +
+      "text-decoration:none;white-space:nowrap;cursor:pointer;" +
+      "-webkit-tap-highlight-color:transparent;";
+    // Short, because it is sharing a line with the page title.
+    el.innerHTML =
+      '<span style="flex:none">\u26a1</span><span>Refill available \u00b7 ' +
+      fmt(state.energy) + "/" + fmt(state.energyMax) + "</span>";
+  }
+
   var NAG_ID = "gcb-fullbar-nag";
 
   // The banner lives OUTSIDE ensureUi's gym-page gate on purpose. That gate
@@ -7245,6 +7339,7 @@
         if (isPda() || document.visibilityState === "visible") {
           trackFullBar();
           try { renderNag(); } catch (_) {}
+          try { renderRefillStrip(); } catch (_) {}
         }
         if (!state.open) return;
         if (syncEnergyFromDom()) lastTickSig = "";

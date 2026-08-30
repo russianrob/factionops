@@ -14,13 +14,18 @@
     document.head.appendChild(s); return s;
   };
 
+  var BOOTED = Date.now();
   var N = function (v, d) { return v === undefined ? d : v; };
   var STATS = cfg.stats || { str: 614000000, def: 12000000, spe: 9000000, dex: 8000000 };
 
   function userPayload() {
     var max = N(cfg.energyMax, 150);
     return {
-      energy: { current: N(cfg.energy, 100), maximum: max, fulltime: N(cfg.fulltime, 600) },
+      // cfg.energyAfterMs raises the bar part-way through the session, so a
+      // test can watch something come DOWN rather than only never go up.
+      energy: { current: (cfg.energyAfterMs && Date.now() - BOOTED > cfg.energyAfterMs)
+                  ? N(cfg.energyAfter, max) : N(cfg.energy, 100),
+                maximum: max, fulltime: N(cfg.fulltime, 600) },
       happy: { current: N(cfg.happy, 4300), maximum: N(cfg.happyMax, 5000) },
       cooldowns: { drug: N(cfg.drug, 0), booster: N(cfg.booster, 0), medical: 0 },
       strength: STATS.str, defense: STATS.def, speed: STATS.spe, dexterity: STATS.dex,
@@ -71,6 +76,23 @@
     if (/\/user\/inventory/.test(url)) {
       var m = /cat=([^&]+)/.exec(url);
       return inventory(m ? decodeURIComponent(m[1]) : "");
+    }
+    // Its own endpoint, the way the script calls it: a key that cannot read
+    // refills must leave the reminder quiet rather than take the panel down.
+    if (/selections=refills/.test(url)) {
+      if (cfg.refillErr) return { error: { code: 16, error: "Access level of this key is not high enough" } };
+      // cfg.refillUsedAfterMs flips the answer part-way through the session,
+      // which is the only way to exercise the strip being taken DOWN rather
+      // than merely never going up.
+      var used = !!cfg.refillUsed;
+      if (cfg.refillUsedAfterMs && Date.now() - BOOTED > cfg.refillUsedAfterMs) used = true;
+      return { refills: { energy_refill_used: used, nerve_refill_used: false,
+                          token_refill_used: false, special_refills_available: 0 } };
+    }
+    if (/v2\/user\/stocks/.test(url)) {
+      return { stocks: cfg.mcsReady === undefined ? [] : [
+        { id: 29, shares: 350000, transactions: [],
+          bonus: { available: !!cfg.mcsReady, increment: 1, progress: 7, frequency: 7 } }] };
     }
     if (/api\.torn\.com\/user/.test(url)) return userPayload();
     if (/weav3r\.dev/.test(url)) {

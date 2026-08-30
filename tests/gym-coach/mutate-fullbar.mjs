@@ -7,7 +7,7 @@ const original = fs.readFileSync(FILE, "utf8");
 // Restored from this snapshot at the end — do NOT edit the source while this
 // is running.
 const build = () => execSync("./build-harness.sh");
-const U = "fullbar.test.mjs", E = "fullbar.e2e.test.mjs";
+const U = "fullbar.test.mjs", E = "fullbar.e2e.test.mjs", G = "gymrefill.e2e.test.mjs";
 
 const mutants = [
   ["the ten-minute wait becomes one minute",
@@ -40,8 +40,8 @@ const mutants = [
     "          trackFullBar();\n          try { renderNag(); } catch (_) {}",
     "          if (onGymPage()) { trackFullBar(); try { renderNag(); } catch (_) {} }", [E]],
   ["the banner is never taken down again",
-    "      if (el && el.parentNode) el.parentNode.removeChild(el);\n      return;",
-    "      return;", [E]],
+    "    if (!live) {\n      if (el && el.parentNode) el.parentNode.removeChild(el);",
+    "    if (!live) {\n      if (false) el.parentNode.removeChild(el);", [E]],
   // --- refill reminder ---
   ["an unknown refill flag is treated as unused",
     "if (state.refillUsed !== false) return null;",
@@ -69,14 +69,37 @@ const mutants = [
     "var MCS_ENERGY = 100;", "var MCS_ENERGY = 150;", [U]],
   ["an unreadable bonus is treated as ready",
     'if (typeof b.available !== "boolean") return null;', "", [U]],
+  // --- the gym-page refill strip ---
+  ["the strip is shown on every page, not just the gym",
+    "    if (!onGymPage()) {\n      var off = document.getElementById(REFILL_STRIP_ID);",
+    "    if (false) {\n      var off = document.getElementById(REFILL_STRIP_ID);", [G]],
+  ["the strip ignores whether the refill is worth using",
+    "    var step = refillStep();", "    var step = { t: 1, text: 1 };", [G]],
+  ["the strip stops linking to the points page",
+    'el.href = "https://www.torn.com/points.php";', 'el.href = "#";', [G]],
+  ["the strip is never taken down once shown",
+    "    if (!step) {\n      if (el && el.parentNode) el.parentNode.removeChild(el);",
+    "    if (!step) {\n      if (false) el.parentNode.removeChild(el);", [G]],
+  ["losing the anchor loses the strip entirely",
+    "      else document.body.appendChild(el);", "      else return;", [G]],
+  ["the strip lands before the title instead of beside it",
+    'head.insertAdjacentElement("afterend", el);',
+    'head.insertAdjacentElement("beforebegin", el);', [G], true],
+  ["the float is dropped, so it falls below the title",
+    '(inline ? "float:left;margin:1px 0 0 12px;" :', '(inline ? "margin:1px 0 0 12px;" :', [G]],
+  ["a repaint that moves the strip is not corrected",
+    "    } else if (head && el.previousElementSibling !== head) {", "    } else if (false) {", [G]],
   ["the worth-it threshold is loosened to any room at all",
     "var REFILL_WORTH_PCT = 0.25;", "var REFILL_WORTH_PCT = 0.99;", [U]],
 ];
 
 let killed = 0; const survived = [];
-for (const [name, from, to, suites] of mutants) {
+for (const [name, from, to, suites, all] of mutants) {
   if (!original.includes(from)) { console.log("SKIP (no match) " + name); survived.push(name + " [NO MATCH]"); continue; }
-  fs.writeFileSync(FILE, original.replace(from, to));
+  // `all` mutates EVERY occurrence. Without it a mutant on the creation path
+  // is silently repaired by the identical re-insert path a tick later, and
+  // survives for a reason that has nothing to do with test coverage.
+  fs.writeFileSync(FILE, all ? original.split(from).join(to) : original.replace(from, to));
   build();
   let anyRed = false;
   for (const s of suites) {

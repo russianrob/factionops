@@ -1,8 +1,18 @@
-<!doctype html><html><head><meta charset="utf-8"><title>gym.php</title></head>
+<!doctype html><html><head><meta charset="utf-8"><title>gym.php</title>
+<!-- Torn's title row is FLOAT-based, not flex. Without these two rules the
+     heading is a full-width block, a floated strip drops underneath it, and a
+     test asserting "same line" fails against a layout Torn does not have. -->
+<style>.left{float:left}.clear{clear:both}h4{margin:0;font:700 16px Arial,sans-serif}
+body{margin:0;font-family:Arial,sans-serif}</style></head>
 <body>
   <div id="mainContainer">
     <div class="content-wrapper">
-      <div class="gymroot">
+      <div class="content-title m-bottom10">
+        <h4 id="skip-to-content" class="left">Gym</h4>
+        <div class="links-top-wrap"></div>
+        <div class="clear"></div>
+      </div>
+      <div class="gymroot" id="gymroot">
     <div class="gymlist"></div><ul class="properties-wrap"></ul></div>
     </div>
   </div>
