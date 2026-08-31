@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.36
+// @version      0.9.37
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,29 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.37 — A percentage build no longer trains a stat that is OVER its share.
+ *
+ *         Reported: "why is it telling me to train dex if my ratio is over?"
+ *         Correct question, and there were two faults behind it.
+ *
+ *         The increment ladder caps every stat at the same ABSOLUTE rung,
+ *         which walks them toward equal VALUES. For four typed goals that is
+ *         exactly right -- it is what "stats rise together" means. For a
+ *         50/30/20 build it is the wrong shape to climb: it pulls the account
+ *         toward 33/33/33 and only bends back at the very end, which is how
+ *         Dexterity got scheduled while sitting 21 points over. Each rung is
+ *         now scaled by the stat's own share, so every stat climbs to its own
+ *         fraction, they arrive together, and an over-share stat simply has no
+ *         room at its rung and waits.
+ *
+ *         And the card marked "next" from the share picker even when a total
+ *         goal meant the PLANNER was choosing the leg -- so it could say
+ *         "Strength next" while the verdict trained Speed. The marker follows
+ *         the planner now; only maintain mode, which has no planner, asks the
+ *         share picker directly.
+ *
+ *         Without a build nothing changes: flat rungs, lowest stat first.
+ *
 * 0.9.36 — The verdict can be folded to one line on the Now tab.
  *
  *         Requested: have that top section minimised, with the option to
@@ -1103,7 +1126,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.36";
+  var GC_VERSION = "0.9.37";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -3016,10 +3039,35 @@
     //
     // Ties fall back to shortest-first, which is what the plan did before
     // ordering existed, so equal bonuses leave the old behaviour intact.
+    var perk = function (k) { return (state.perks && state.perks[k]) || 1; };
+    if (state.shares) {
+      // On a percentage build the rotation follows the BUILD, not the nearest
+      // finish line. Ordering by shortest-first schedules whichever stat is
+      // closest to its target, which on a real account meant Dexterity going
+      // first while sitting 21 points OVER its share -- the ratio got worse
+      // for months and only came right at the very end. Reported as "why is it
+      // telling me to train dex if my ratio is over?", which is the correct
+      // question.
+      //
+      // Same priority maintain mode uses, so both modes answer alike: stats
+      // that are UNDER lead, best gym bonus first among them; the ones already
+      // over follow, least-over first, since they still have a target to reach.
+      var st = {};
+      shareState(state.shares, state.stats).forEach(function (r) { st[r.k] = r; });
+      rest.sort(function (a, b) {
+        var da = st[a] ? st[a].delta : 0, db = st[b] ? st[b].delta : 0;
+        var ua = da > 0, ub = db > 0;
+        if (ua !== ub) return ua ? -1 : 1;
+        if (ua) {
+          if (perk(b) !== perk(a)) return perk(b) - perk(a);
+          return db - da;
+        }
+        return db - da;
+      });
+      return out.concat(rest);
+    }
     rest.sort(function (a, b) {
-      var pa = (state.perks && state.perks[a]) || 1;
-      var pb = (state.perks && state.perks[b]) || 1;
-      if (pb !== pa) return pb - pa;
+      if (perk(b) !== perk(a)) return perk(b) - perk(a);
       return solo[a] - solo[b];
     });
     return out.concat(rest);
@@ -3053,6 +3101,28 @@
       (pinned ? ", except where you have raised a goal by hand." : ".") + "</p></div>";
   }
 
+  // How high a stat may climb at rung L.
+  //
+  // Without a build every stat shares the same rung, which walks them toward
+  // equal VALUES: the ladder trains whichever stat is numerically smallest,
+  // and that is exactly what "stats rise together" should mean for four typed
+  // goals.
+  //
+  // With a percentage build it is the wrong shape to climb. Equal rungs pull a
+  // 50/30/20 account toward 33/33/33 and only bend back to the build at the
+  // very end -- which is how Dexterity, 21 points OVER its share, got
+  // scheduled ahead of Strength and Speed. Reported as "why is it telling me
+  // to train dex if my ratio is over?".
+  //
+  // Scaling each rung by the stat's share fixes the shape rather than patching
+  // the symptom: every stat climbs to its OWN fraction of the rung, so they
+  // arrive at their targets together and the ratio holds the whole way up. An
+  // over-share stat simply has no room at its rung and waits.
+  function shareCap(k, L, target, shares, maxShare) {
+    if (!shares || !(maxShare > 0)) return Math.min(L, target);
+    return Math.min(L * (shares[k] || 0) / maxShare, target);
+  }
+
   function goalSegments(mf) {
     var keys = orderedGoalKeys(mf);
     if (!keys.length) return [];
@@ -3064,10 +3134,13 @@
     });
     var step = Number(state.goalStep) || 0;
     var levels = goalLevels(step, targets);
+    var shares = state.shares || null;
+    var maxShare = 0;
+    if (shares) HIST_KEYS.forEach(function (k) { if (shares[k] > maxShare) maxShare = shares[k]; });
     var segs = [], at = 0;
     levels.forEach(function (L) {
       keys.forEach(function (k) {
-        var cap = Math.min(L, targets[k]);
+        var cap = shareCap(k, L, targets[k], shares, maxShare);
         if (cur[k] >= cap) return;
         var r = trainsTo(k, cur[k], cap, mf);
         if (!r || !r.trains) return;
@@ -3139,9 +3212,20 @@
     var eff = cal.ok ? e * cal.usage : e;
     var st = state.stats || {};
     var g = state.goals || {};
+    // Perks and shares BELONG in this key. Both decide the rotation order, and
+    // both arrive after the first render -- perks from the API, shares from
+    // storage -- so a key without them froze whichever plan happened to be
+    // computed first and never recomputed it. That is what made the card say
+    // "Strength next" while the verdict trained Speed: the card asked the live
+    // share picker and the verdict read a plan cached before the Steadfast
+    // bonuses existed.
+    var pk = state.perks || {};
+    var sh = state.shares || {};
     var key = [e, state.gymName, state.happyMax, st.str, st.def, st.spe, st.dex,
                g.str, g.def, g.spe, g.dex, state.goalStep,
                (state.goalOrder || []).join(","),
+               pk.str, pk.def, pk.spe, pk.dex,
+               sh.str, sh.def, sh.spe, sh.dex, state.shareTotal,
                cal.ok ? cal.model.toFixed(4) + "/" + cal.usage.toFixed(4) : "raw"].join("|");
     if (goalCache.key === key && goalCache.val) return goalCache.val;
 
@@ -3691,7 +3775,13 @@
     // deepest deficit is NOT the pick -- the gym bonus decides among the stats
     // that are under -- so without this the top row reads as "next" and
     // quietly contradicts the verdict.
-    var nextK = state.shares ? shareNextStat(state.shares, state.stats, state.perks) : "";
+    // With a total goal the PLANNER decides the leg, so the marker follows
+    // state.focus -- otherwise the card can say "Strength next" while the
+    // verdict trains Speed, which is exactly what it did. Only maintain mode,
+    // where there is no planner, asks the share picker directly.
+    var nextK = !state.shares ? ""
+      : shareTargets(state.shares, state.shareTotal) ? (state.focus || "")
+      : shareNextStat(state.shares, state.stats, state.perks);
     // Only worth showing when the bonuses actually differ. Every stat on the
     // same multiplier means Steadfast decides nothing, and printing "+3%" four
     // times is noise -- the same reasoning the Gym gain bonus card already

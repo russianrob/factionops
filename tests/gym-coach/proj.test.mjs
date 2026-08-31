@@ -23,7 +23,7 @@ const project = (focus, goals, days) => new Function("var RESULT;" + `
   function gainOne(){ return 100; }                  // 10 trains x 100 = 1000/day
   function projectDays(d){ return d * 1000; }
   ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("calibration")}
-  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")} ${grab("histProjection")}
+  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")} ${grab("histProjection")}
   RESULT = histProjection(${days});` + "; return RESULT;")();
 
 let pass=0,fail=0;

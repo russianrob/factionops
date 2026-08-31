@@ -163,5 +163,112 @@ t("no shares set means no opinion", () => {
   assert.strictEqual(call("shareNextStat", null, ME, {}), "");
 });
 
+// --- the goal rotation, when a total goal is also set ---------------------
+// With a total, the shares become four absolute targets and the EXISTING
+// planner drives. Left alone it orders by gym bonus then shortest-first, which
+// on this account schedules Dexterity early -- it is nearest its target -- even
+// though Dexterity is 21 points OVER its share. The build only comes right at
+// the very end, and until then the ratio gets worse.
+function order(shares, stats, goals, perks) {
+  return new Function("var R;" + HIST + `
+    ${grab("shareState")}
+    var state = { shares: ${JSON.stringify(shares)}, stats: ${JSON.stringify(stats)},
+                  goals: ${JSON.stringify(goals)}, perks: ${JSON.stringify(perks)}, goalOrder: [] };
+    function trainsTo(k, from, to) { return { trains: Math.max(0, to - from) }; }
+    ${grab("orderedGoalKeys")}
+    R = orderedGoalKeys(1);
+  ` + "return R;")();
+}
+const BUILD = { str: 50, spe: 30, dex: 20, def: 0 };
+const PERK = { str: 1.176, dex: 1.176, spe: 1.145, def: 1.145 };
+// 50/30/20/0 of 5b
+const TARGETS = { str: 2.5e9, spe: 1.5e9, dex: 1e9, def: 0 };
+
+t("an over-share stat is not scheduled ahead of an under-share one", () => {
+  // Reported: "why is it telling me to train dex if my ratio is over?"
+  const o = order(BUILD, ME, TARGETS, PERK);
+  assert.ok(o.indexOf("dex") > o.indexOf("str"), "Dexterity is scheduled before Strength: " + o);
+  assert.ok(o.indexOf("dex") > o.indexOf("spe"), "Dexterity is scheduled before Speed: " + o);
+});
+
+t("among the under-share stats the better gym bonus still leads", () => {
+  const o = order(BUILD, ME, TARGETS, PERK);
+  assert.strictEqual(o[0], "str", "expected Strength first (+17.6%, 12.1 under), got " + o);
+});
+
+t("a finished goal is not in the rotation at all", () => {
+  // Defense wants 0%, so its derived target is 0 and it is already past it.
+  assert.strictEqual(order(BUILD, ME, TARGETS, PERK).indexOf("def"), -1);
+});
+
+t("without a build the old shortest-first ordering is untouched", () => {
+  // No shares set: nothing about the existing plan should change.
+  const o = order(null, ME, { str: 7e8, spe: 1e9, dex: 8e8, def: 0 },
+                  { str: 1, spe: 1, dex: 1, def: 1 });
+  assert.deepStrictEqual(o, ["str", "dex", "spe"], "got " + o);
+});
+
+// --- the increment ladder on a percentage build ---------------------------
+// The ladder caps every stat at the same ABSOLUTE rung, which drives them
+// toward equal values rather than toward a ratio: it trains whichever stat is
+// numerically smallest, however far OVER its share that stat may be. On a
+// 50/30/20 build that is simply the wrong shape to be climbing.
+function segs(shares, stats, goals, step) {
+  return new Function("var R;" + HIST + `
+    ${grab("shareState")}
+    var state = { shares: ${JSON.stringify(shares)}, stats: ${JSON.stringify(stats)},
+                  goals: ${JSON.stringify(goals)}, perks: {}, goalOrder: [],
+                  goalStep: ${step} };
+    function trainsTo(k, from, to) { return to > from ? { trains: Math.ceil((to - from) / 1e6), end: to } : null; }
+    ${grab("orderedGoalKeys")} ${grab("goalLevels")} ${grab("shareCap")} ${grab("goalSegments")}
+    R = goalSegments(1).slice(0, 8).map(function (x) { return x.k; });
+  ` + "return R;")();
+}
+
+t("an over-share stat is not scheduled while an under-share one is waiting", () => {
+  // Dexterity is 21 points over. Under the flat ladder it gets trained as soon
+  // as the rung passes 707m, long before the build is anywhere near shape.
+  const o = segs(BUILD, ME, TARGETS, 50e6);
+  assert.strictEqual(o.indexOf("dex"), -1,
+    "Dexterity is scheduled in the first legs despite being over share: " + o);
+});
+
+t("the rungs are scaled by share, so the ratio holds all the way up", () => {
+  // Each stat climbs to its OWN share of the rung, so they arrive together
+  // rather than being levelled to the same number first.
+  const o = segs(BUILD, ME, TARGETS, 50e6);
+  assert.ok(o.indexOf("str") !== -1 && o.indexOf("spe") !== -1, "got " + o);
+});
+
+t("a stat still stops at its own target, even when goals are not proportional", () => {
+  // Shares can be set alongside typed goals that do NOT match them -- maintain
+  // mode leaves `goals` as whatever was typed. The rung is then scaled by a
+  // share that has nothing to do with the target, so the target cap is the only
+  // thing stopping a big-share stat being scheduled past its goal.
+  const typed = { str: 3e8, spe: 2e9, dex: 2e9, def: 0 };
+  const o = segs(BUILD, { str: 2.9e8, spe: 3e8, dex: 3e8, def: 1e8 }, typed, 50e6);
+  const strLegs = o.filter(k => k === "str").length;
+  assert.ok(strLegs <= 1, "Strength scheduled past its 300m goal: " + o);
+});
+
+t("a stat still stops at its own target", () => {
+  // The rung is scaled by share, but the target is still the ceiling --
+  // without that a 50%-share stat would be scheduled past its goal.
+  const near = { str: 2.49e9, spe: 1.49e9, dex: 0.99e9, def: 1e8 };
+  const o = segs(BUILD, near, TARGETS, 50e6);
+  // Every leg that remains is a real one; nothing is scheduled for a stat that
+  // has already reached its target.
+  const done = segs(BUILD, { str: 2.5e9, spe: 1.5e9, dex: 1e9, def: 1e8 }, TARGETS, 50e6);
+  assert.deepStrictEqual(done, [], "legs scheduled past the targets: " + done);
+  assert.ok(o.length > 0 && o.length <= 8, "got " + o);
+});
+
+t("without a build the ladder is untouched", () => {
+  // Flat rungs, lowest stat first -- the behaviour every typed goal relies on.
+  const o = segs(null, { str: 6e8, spe: 2e8, dex: 7e8, def: 1e8 },
+                 { str: 1e9, spe: 1e9, dex: 1e9, def: 0 }, 50e6);
+  assert.strictEqual(o[0], "spe", "the lowest stat should still lead: " + o);
+});
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

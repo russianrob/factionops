@@ -31,7 +31,7 @@ const plan = (stats, goals, perDayGain, perks, order) => new Function("var RESUL
   function storeSet(k, v){ STORED[k] = v; }
   function gainOne(){ return ${perDayGain} / 10; }   // 10 trains a day -> ${perDayGain}/day
   ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("calibration")}
-  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")} ${grab("applyGoalFocus")}
+  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")} ${grab("applyGoalFocus")}
   var p = goalPlan();
   applyGoalFocus();
   RESULT = { plan: p, focus: state.focus, has: hasGoals(), stored: STORED.focus,

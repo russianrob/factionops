@@ -11,7 +11,7 @@ const script = fs.readFileSync("harness/gym-coach-beta.user.js", "utf8");
 const b = await chromium.launch({ args: ["--no-sandbox"] });
 const ME = { str: 647295613, def: 101935420, spe: 259461019, dex: 706534966 };
 
-async function panel({ shares = null, shareTotal = 0, goals = null }) {
+async function panel({ shares = null, shareTotal = 0, goals = null, perks = null }) {
   const ctx = await b.newContext({ viewport: { width: 393, height: 1600 } });
   const p = await ctx.newPage();
   // renderPanel catches its own throws and paints an error box, so a broken
@@ -31,7 +31,7 @@ async function panel({ shares = null, shareTotal = 0, goals = null }) {
   if (goals) mem.gcb_v1_goals = JSON.stringify(goals);
   const cfg = { energy: 100, energyMax: 150, fulltime: 1500, drug: 0, booster: 0,
     xan: 85, cans: 21, happy: 4300, happyMax: 5000, gym: 24, noPda: true,
-    stats: ME, mem };
+    stats: ME, mem, factionPerks: perks || undefined };
   await p.goto("https://www.torn.com/gym.php?cfg=" + encodeURIComponent(JSON.stringify(cfg)), { waitUntil: "domcontentloaded" });
   await p.waitForTimeout(2200);
   await p.evaluate(() => { const x = document.getElementById("gcb-pill"); if (x) x.click(); });
@@ -102,6 +102,26 @@ await t("a total goal turns the shares into real dated goals", async () => {
     "def=300,000,000", "dex=1,200,000,000", "spe=600,000,000", "str=900,000,000",
   ], "40/30/20/10 of 3b did not reach the goal boxes");
   assert.ok(!/Maintain mode/.test(await card(p)), "still calling it maintain mode with a total set");
+  await ctx.close();
+});
+
+await t("with a total goal, the card and the coach never disagree", async () => {
+  // The reported bug: the card said "Strength next" while the verdict trained
+  // something else, because the card asked the share picker directly while the
+  // verdict came from the planner. Whatever the planner decides IS the answer.
+  // Differing Steadfast bonuses, or the two rules would agree by accident and
+  // the test would pass while proving nothing: the share picker ranks by bonus
+  // among the under stats, the planner climbs a share-scaled ladder.
+  const { p, ctx, focus } = await panel({ shares: { str: 50, spe: 30, dex: 20, def: 0 },
+                                          shareTotal: 5000000000,
+                                          perks: ["+ 13% strength gym gains", "+ 13% dexterity gym gains",
+                                                  "+ 10% speed gym gains", "+ 10% defense gym gains"] });
+  const txt = await card(p);
+  const marked = /(\w+) · want \d+%[^|]*· next/.exec(txt);
+  assert.ok(marked, "nothing marked next: " + txt);
+  const map = { Strength: "str", Defense: "def", Speed: "spe", Dexterity: "dex" };
+  assert.strictEqual(map[marked[1]], focus,
+    "card says " + marked[1] + " but the coach is training " + focus);
   await ctx.close();
 });
 

@@ -7,6 +7,11 @@ function konst(n){const m=src.match(new RegExp("\\b"+n+"\\s*=\\s*([^;]+);"));
   if(!m) throw new Error("missing "+n); return "var "+n+" = "+m[1].trim()+";";}
 
 const FNS = ["gymFor","dotsFor","trainsTo","trainsPerDay","goalLevels","orderedGoalKeys",
+             // shareCap and shareState are grabbed from source, not stubbed: a
+             // local copy would shadow production and let a mutation of the
+             // real one survive. With no build set they take the flat-rung
+             // path, which is what these schedules are about.
+             "shareCap","shareState","shareTargets","shareNextStat",
              "goalSegments","goalPlan","scheduleDays","hasGoals","applyGoalFocus"];
 
 // `gain` is per train; a linear one keeps the arithmetic checkable by hand.

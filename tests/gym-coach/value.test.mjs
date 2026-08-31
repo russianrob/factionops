@@ -100,7 +100,7 @@ const rank = (prices, opts = {}) => { const canRows = opts.rows || DEFAULT_SRC_R
   ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("calibration")}
   ${grab("canIdFor")} ${grab("srcItemId")} ${grab("priceOf")} ${grab("priceStale")}
   ${grab("valueCandidates")} ${grab("valuePlan")}
-  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")}
+  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")}
   RESULT = { plan: valuePlan(), cands: valueCandidates() };` + "; return RESULT;")(); };
 
 const VALUE_STEPS_TEST = JSON.parse(/VALUE_STEPS = (\[[^\]]*\])/.exec(src)[1]);
@@ -242,7 +242,7 @@ t("added energy is discounted the same way the baseline is", () => {
     ${grab("canIdFor")} ${grab("srcItemId")} ${grab("priceOf")} ${grab("priceStale")}
     ${grab("valueCandidates")} ${grab("valuePlan")}
     ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")}
-    ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("goalSegments")}
+    ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("shareCap")} ${grab("goalSegments")}
     ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")}
     var pl = goalPlan();
     RESULT = { cal: calibration(), plan: valuePlan(), energy: pl.energy,

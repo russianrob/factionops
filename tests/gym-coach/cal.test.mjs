@@ -35,7 +35,7 @@ const run = (hist, ledger, opts = {}) => new Function("var RESULT;" + `
   function dailyEnergy(){ return { total: ${opts.plan === undefined ? 100 : opts.plan} }; }
   function gainOne(){ return 1000; }
   ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("calibration")}
-  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")}
+  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")}
   RESULT = { cal: calibration(), plan: goalPlan() };` + "; return RESULT;")();
 
 // A clean run of single-stat days: str climbs by `gain` each day on `energy`.
