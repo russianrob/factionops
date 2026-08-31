@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Ledger Probe
 // @namespace    RussianRob
-// @version      1.5.0
+// @version      1.6.0
 // @description  One-shot diagnostic: dumps Gym Coach's own energy ledger so an impossible "Missed today" or a "Spent attacking" figure can be traced to the entry that produced it, and reports which API endpoints your key can actually reach.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,6 +18,22 @@
 
 /*
  * CHANGELOG
+ * 1.6.0 — A refused log is no longer reported as an empty one.
+ *
+ *         1.5.0 returned whatever rows it had on any error, so a rate-limited
+ *         key printed "no requests returned" -- indistinguishable from a key
+ *         that had genuinely made no calls. It wasted the run: the key was so
+ *         saturated that even /key/info could not get through, which IS the
+ *         answer, and the probe reported silence instead.
+ *
+ *         Same conflation as 1.1.0 calling a code 5 a DENIAL. Errors are now
+ *         named, and the log retries with backoff.
+ *
+ *         Worth knowing when reading it: /key/log is HISTORICAL. Turning the
+ *         other scripts off does not erase what they did -- it just frees up
+ *         the budget for the probe to ask. On a saturated key that is the only
+ *         way to get an answer at all.
+ *
  * 1.5.0 — Reads the key's OWN request log and names what is exhausting it.
  *
  *         "Too many requests" says a key is over Torn's 100-a-minute limit but
@@ -115,7 +131,7 @@
 (function () {
   "use strict";
 
-  var SCRIPT_VERSION = "1.5.0";
+  var SCRIPT_VERSION = "1.6.0";
   var NS = "gcb_v1";          // the beta's namespace
   var STABLE_NS = "gc_v1";    // the stable script, for comparison
   var ATTACK_ENERGY = 25;
@@ -266,40 +282,68 @@
     return out;
   }
 
+  // Why a log request came back with nothing. null means it really was empty.
+  function keyLogFailure(d) {
+    if (!d) return "UNREADABLE answer";
+    if (d.error) {
+      return (d.error.code === 5 ? "RATE LIMITED" : "REFUSED") +
+        " -- code " + d.error.code + ": " + d.error.error;
+    }
+    if (!Array.isArray(d.log)) return "UNREADABLE answer (no log array)";
+    return null;
+  }
+
   // Up to 250 rows, 100 at a time.
   function fetchKeyLog(key, done) {
-    var rows = [], page = 0;
+    var rows = [], page = 0, tries = 0;
     function next() {
-      if (page >= 3) return done(rows);
+      if (page >= 3) return done(rows, null);
       var url = "https://api.torn.com/v2/key/log?limit=100&offset=" + (page * 100) +
                 "&key=" + encodeURIComponent(key) + "&comment=gym-ledger-probe";
       page++;
       function handle(text) {
         var d = null;
         try { d = JSON.parse(text); } catch (e) {}
-        if (!d || d.error || !Array.isArray(d.log)) return done(rows);
+        var why = keyLogFailure(d);
+        if (why) {
+          // Retry a rate limit rather than reporting it as an empty log -- but
+          // only a few times, and say so if it never gets through.
+          if (d && d.error && d.error.code === 5 && tries < 4) {
+            tries++;
+            add("  (key log rate limited, retrying in 6s)", "attempt " + tries);
+            return setTimeout(function () { page--; next(); }, 6000);
+          }
+          return done(rows, why);
+        }
         rows = rows.concat(d.log);
-        if (d.log.length < 100) return done(rows);
+        if (d.log.length < 100) return done(rows, null);
         next();
       }
       try {
         if (typeof GM_xmlhttpRequest === "function") {
           GM_xmlhttpRequest({ method: "GET", url: url,
             onload: function (r) { handle(r.responseText || r.response || ""); },
-            onerror: function () { done(rows); } });
+            onerror: function () { done(rows, "NETWORK ERROR"); } });
           return;
         }
       } catch (e) {}
       fetch(url).then(function (r) { return r.text(); }).then(handle)
-        .catch(function () { done(rows); });
+        .catch(function () { done(rows, "NETWORK ERROR"); });
     }
     next();
   }
 
   function reportKeyLog(key, done) {
-    fetchKeyLog(key, function (rows) {
+    fetchKeyLog(key, function (rows, why) {
       var s = summariseKeyLog(rows);
-      if (!s.calls) { add("KEY LOG", "no requests returned"); return done(); }
+      if (!s.calls) {
+        add("KEY LOG", why
+          ? why + "  <-- the key is too busy to answer, which is itself the finding. " +
+            "Disable Gym Coach (and any other script on this key), reload, and run again: " +
+            "/key/log is HISTORICAL, so turning them off does not erase what they did."
+          : "the key has genuinely made no recent requests");
+        return done();
+      }
       add("KEY LOG", s.calls + " requests over " + s.spanMin.toFixed(1) + " min  |  " +
         "average " + s.avgPerMin + "/min  |  BUSIEST MINUTE " + s.peakPerMin + "/100" +
         (s.overCap ? "   <-- AT OR OVER THE CAP" : ""));

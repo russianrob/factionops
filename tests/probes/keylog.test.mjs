@@ -85,5 +85,34 @@ t("an empty log is an answer, not a crash", () => {
   assert.strictEqual(r.overCap, false);
 });
 
+// A refusal is not an empty log. Reporting "no requests returned" for a rate
+// limit is the same conflation that made 1.1.0 print DENIED for a code 5, and
+// it wasted a run: the key was saturated, which is itself the answer, and the
+// probe said nothing had happened.
+function describe(payload) {
+  return new Function("var R;" + `
+    ${grab("keyLogFailure")}
+    R = keyLogFailure(${JSON.stringify(payload)});
+  ` + "return R;")();
+}
+
+t("a rate limit is reported as a rate limit", () => {
+  const r = describe({ error: { code: 5, error: "Too many requests" } });
+  assert.match(r, /RATE LIMITED/);
+  assert.match(r, /code 5/);
+});
+
+t("a refusal is reported as a refusal", () => {
+  assert.match(describe({ error: { code: 16, error: "Access level" } }), /REFUSED -- code 16/);
+});
+
+t("an unparseable answer is not mistaken for an empty log", () => {
+  assert.match(describe(null), /UNREADABLE/);
+});
+
+t("a genuinely empty log is the one case that IS empty", () => {
+  assert.strictEqual(describe({ log: [] }), null);
+});
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
