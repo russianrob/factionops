@@ -42,6 +42,15 @@ t("the whole poll budget leaves real headroom under Torn's 100/min", () => {
   assert.ok(total < 30, "budget is " + total.toFixed(1) + "/min, too close to the cap");
 });
 
+t("the train log is not asked more often than the main poll", () => {
+  // Four endpoints a round, so this is the single biggest repeat cost after
+  // the inventory walk. The live `since` figure carries a session until the
+  // log catches up, so there is nothing to gain by asking faster -- and asking
+  // faster is what left no headroom when a session needed a round to land.
+  assert.ok(num("TRAINLOG_TTL") >= 2 * num("POLL_GYM_MS"),
+    "TRAINLOG_TTL is " + num("TRAINLOG_TTL") + "ms against a " + num("POLL_GYM_MS") + "ms poll");
+});
+
 t("the one-second timer stays one second -- it costs no API at all", () => {
   // It reads the bar from the DOM and ticks cooldowns down locally. Slowing it
   // would make the panel laggy for no saving whatsoever.

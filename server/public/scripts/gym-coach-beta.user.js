@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.38
+// @version      0.9.39
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,31 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.39 — A training session no longer falls down the gap while Torn's log
+ *         catches up.
+ *
+ *         Reported: 400e trained at 09:51 PM, and "Spent today" still read 0e
+ *         three quarters of an hour later -- with the Train Log card showing
+ *         the session plainly the whole time, which is what proved the script
+ *         had seen it.
+ *
+ *         `since` is the live figure carrying a session from the moment the
+ *         bar drops on the gym page to the moment Torn's log admits it
+ *         happened. Every successful fetch cleared it outright, assuming the
+ *         round it just did includes the session. Torn's log lags, so that
+ *         assumption is wrong about once per session -- and the header said
+ *         "Too many requests", so the rounds that would have corrected it
+ *         never arrived. The figure was gone for good.
+ *
+ *         It now compares instead of assuming: whatever the fresh log has
+ *         caught up with is dropped, whatever it has not is kept. Self
+ *         correcting in both directions, including a log that knows MORE than
+ *         this device does because you trained on another one.
+ *
+ *         The log is also asked every two minutes rather than every one. It is
+ *         four endpoints a round, the live figure now covers the wait, and
+ *         rate limits are precisely what made the lost session permanent.
+ *
 * 0.9.38 — The verdict now starts folded.
  *
  *         0.9.36 shipped the fold switched off, on the grounds that a stored
@@ -1139,7 +1164,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.38";
+  var GC_VERSION = "0.9.39";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4452,7 +4477,32 @@
   // One call per stat. Never partially applied: if any of the four fail the
   // whole round is discarded, because a byDay built from two logs out of four
   // would under-report and look exactly like a quiet day.
-  var TRAINLOG_TTL = 60000;
+  // How much of what we already knew the fresh log has NOT yet accounted for.
+  //
+  // `since` carries a session from the moment the bar drops on the gym page to
+  // the moment Torn's log admits it happened. Clearing it outright on every
+  // successful fetch assumes the fetch that just returned includes the
+  // session -- and when Torn's log lags by even one round, that assumption
+  // throws the session away. Reported as 400e trained at 09:51 PM still
+  // reading "Spent today 0e" three quarters of an hour later, with the local
+  // Train Log card showing it plainly the whole time. Later rounds were
+  // failing on "Too many requests", so nothing ever put it back.
+  //
+  // Comparing instead of assuming is self-correcting in both directions: what
+  // the log has caught up with is dropped, what it has not is kept, and a log
+  // that knows MORE than we do (training on another device) simply leaves
+  // nothing to carry.
+  function carriedSince(prev, freshByDay, dayK) {
+    if (!prev) return 0;
+    var known = ((prev.byDay && prev.byDay[dayK]) || 0) + (prev.since || 0);
+    var fresh = (freshByDay && freshByDay[dayK]) || 0;
+    return Math.max(0, known - fresh);
+  }
+
+  // Two minutes, not one. The live `since` figure now covers the wait, so
+  // asking four log endpoints every 60s bought nothing but rate-limit
+  // pressure -- and rate limits are what made the lost session permanent.
+  var TRAINLOG_TTL = 120000;
   function fetchTrainLog(force) {
     if (!resolveKey()) return Promise.resolve(null);
     var tl = state.trainLog;
@@ -4471,7 +4521,9 @@
       // emptied, which the total cannot say. Trimmed to the last three days --
       // a gap is clamped to 48h, so nothing older can ever be inside one.
       var cut = Date.now() - 3 * 86400000;
-      state.trainLog = { byDay: trainLogByDay(rs), at: Date.now(), since: 0,
+      var fresh = trainLogByDay(rs);
+      state.trainLog = { byDay: fresh, at: Date.now(),
+                         since: carriedSince(state.trainLog, fresh, dayKey(Date.now())),
                          events: trainLogEvents(rs).filter(function (e) { return e.t >= cut; }) };
       state.logReadable = true;
       storeSet("trainLog", state.trainLog);
