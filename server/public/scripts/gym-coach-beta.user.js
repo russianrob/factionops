@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.35
+// @version      0.9.36
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,23 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.36 — The verdict can be folded to one line on the Now tab.
+ *
+ *         Requested: have that top section minimised, with the option to
+ *         expand it by clicking. Off the Now tab the verdict already collapses
+ *         to a single tappable line, so this makes that same compact form
+ *         available ON Now -- the tabs and the cards start higher up the
+ *         screen without losing the answer, and the line still carries both
+ *         the verdict and your energy.
+ *
+ *         Tap the tag to fold, tap the folded bar to open it again, and the
+ *         choice is remembered. Folded on Now the bar EXPANDS rather than
+ *         navigating, since you are already on the tab it would take you to;
+ *         off Now it still returns you to Now exactly as before.
+ *
+ *         Off by default. A stored preference is one thing; silently
+ *         reshaping the panel of everyone who never asked is another.
+ *
 * 0.9.35 — On a percentage build, the gym bonus picks between the stats that
  *         are under -- it no longer loses to a slightly bigger gap.
  *
@@ -1086,7 +1103,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.35";
+  var GC_VERSION = "0.9.36";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -1379,6 +1396,8 @@
     // A percentage build. Null unless you have set one. With shareTotal it
     // derives `goals` and the existing planner does the rest; without, it is
     // maintain mode and has no endpoint by design.
+    // Verdict folded to one line on the Now tab. Off by default.
+    verdictFold: false,
     shares: null,
     // What was actually typed, so the boxes keep 4:3:2:1 instead of being
     // rewritten to 40/30/20/10 under the cursor.
@@ -6975,15 +6994,30 @@
       // Stock and Trend they are six lines of chrome above the thing you opened
       // the tab to look at. Off Now they collapse to one tappable line that
       // still carries the verdict and your energy, and takes you back.
-      (tab === "now"
+      // On Now the verdict can be folded to the SAME one-line form the other
+      // tabs already use, so the tabs and the cards start higher up the screen
+      // without losing the answer. Asked for; kept off by default, because a
+      // stored preference is one thing and silently reshaping every existing
+      // user's panel is another.
+      (tab === "now" && !state.verdictFold
         ? '<div class="gcb-verdict' + (c.kind === "go" ? " go" : "") + '">' +
-          '<span class="gcb-tag">' + (TAG[c.kind] || "Next") + "</span>" +
+          '<button type="button" class="gcb-tag" data-act="verdict" ' +
+            'aria-label="Minimise the verdict" style="border:0;cursor:pointer">' +
+            (TAG[c.kind] || "Next") + " \u25b4</button>" +
           '<div class="gcb-move">' + c.move + "</div>" +
           '<p class="gcb-why">' + c.why + "</p>" +
           (c.waste ? '<div class="gcb-waste">' + c.waste + "</div>" : "") +
           "</div>" +
           '<div class="gcb-meters">' + energyMeterHtml() + "</div>" +
           planStripHtml()
+        : tab === "now"
+        // Folded, on Now: the same compact bar, but it expands rather than
+        // navigating -- you are already on the tab it would take you to.
+        ? '<button type="button" class="gcb-mini' + (c.kind === "go" ? " go" : "") + '" data-act="verdict">' +
+          '<span class="gcb-tag">' + (TAG[c.kind] || "Next") + " \u25be</span>" +
+          '<span class="gcb-miniline">' + c.move + "</span>" +
+          '<span class="gcb-minie">' + Math.max(0, state.energy || 0) + " / " + (state.energyMax || 150) + "</span>" +
+          "</button>"
         : '<button type="button" class="gcb-mini' + (c.kind === "go" ? " go" : "") + '" data-tab="now">' +
           '<span class="gcb-tag">' + (TAG[c.kind] || "Next") + "</span>" +
           '<span class="gcb-miniline">' + c.move + "</span>" +
@@ -7622,6 +7656,12 @@
       storeSet("user_tucked", true);
       setOpen(false);
     }
+    if (t.dataset.act === "verdict") {
+      state.verdictFold = !state.verdictFold;
+      storeSet("verdictFold", state.verdictFold ? 1 : 0);
+      renderPanel();
+      return;
+    }
     if (t.dataset.act === "refresh") {
       showToast("Refreshing", "Pulling fresh numbers from Torn.", 1600);
       refresh("manual");
@@ -7934,6 +7974,7 @@
         state.goals = { str: Number(gv.str) || 0, def: Number(gv.def) || 0,
                         spe: Number(gv.spe) || 0, dex: Number(gv.dex) || 0 };
       }
+      state.verdictFold = storeBool("verdictFold", false);
       var sh = storeGet("shares", null);
       if (typeof sh === "string") { try { sh = JSON.parse(sh); } catch (_) { sh = null; } }
       state.sharesRaw = (sh && typeof sh === "object") ? sh : null;
