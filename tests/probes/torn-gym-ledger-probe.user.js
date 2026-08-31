@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Ledger Probe
 // @namespace    RussianRob
-// @version      1.4.0
+// @version      1.5.0
 // @description  One-shot diagnostic: dumps Gym Coach's own energy ledger so an impossible "Missed today" or a "Spent attacking" figure can be traced to the entry that produced it, and reports which API endpoints your key can actually reach.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,6 +18,22 @@
 
 /*
  * CHANGELOG
+ * 1.5.0 — Reads the key's OWN request log and names what is exhausting it.
+ *
+ *         "Too many requests" says a key is over Torn's 100-a-minute limit but
+ *         not who spent it. /key/log answers that directly: up to 250 recent
+ *         requests, each with the `comment` the calling script stamped, so the
+ *         caller identifies itself.
+ *
+ *         Reported per rolling minute rather than as an average, because the
+ *         limit is a rolling minute. A script that idles and then bursts
+ *         averages almost nothing while rate-limiting you solidly for the
+ *         minute it fires -- an average would call that healthy.
+ *
+ *         Run on THIS device deliberately, resolving the key the way the coach
+ *         does, because the coach resolves a different key on a phone than in
+ *         a browser and profiling the wrong one answers nothing.
+ *
  * 1.4.0 — Reports WHICH key it used, and resolves it the way the coach does.
  *
  *         Asked, correctly: is this even the key Gym Coach uses? 1.3.0 read
@@ -99,7 +115,7 @@
 (function () {
   "use strict";
 
-  var SCRIPT_VERSION = "1.4.0";
+  var SCRIPT_VERSION = "1.5.0";
   var NS = "gcb_v1";          // the beta's namespace
   var STABLE_NS = "gc_v1";    // the stable script, for comparison
   var ATTACK_ENERGY = 25;
@@ -198,6 +214,102 @@
     } catch (e) {}
     fetch(url).then(function (r) { return r.text(); }).then(handle)
       .catch(function () { add("  gym log (live call)", "NETWORK ERROR"); done(); });
+  }
+
+  // What a key's own request log says about who is spending it.
+  //
+  // Torn's limit is 100 calls in any ROLLING minute, so the average is the
+  // wrong statistic: 120 calls in one minute and nothing for the next hour
+  // averages two a minute and reads as healthy, having rate-limited you for
+  // the minute it happened. The peak window is the number that matters, and
+  // the comments say who was in it.
+  function summariseKeyLog(rows) {
+    var list = (rows || []).filter(function (r) { return r && r.timestamp; })
+      .sort(function (a, b) { return a.timestamp - b.timestamp; });
+    var out = { calls: list.length, byComment: [], peakPerMin: 0, peakByComment: [],
+                avgPerMin: 0, spanMin: 0, overCap: false, from: 0, to: 0 };
+    if (!list.length) return out;
+    out.from = list[0].timestamp;
+    out.to = list[list.length - 1].timestamp;
+    out.spanMin = Math.max(1 / 60, (out.to - out.from) / 60);
+    out.avgPerMin = Math.round((list.length / out.spanMin) * 10) / 10;
+
+    var by = {};
+    list.forEach(function (r) {
+      // An unstamped call still counts against the cap, and not knowing whose
+      // it is makes it more worth surfacing, not less.
+      var c = r.comment ? String(r.comment) : "(no comment)";
+      if (!by[c]) by[c] = { comment: c, calls: 0, sels: {} };
+      by[c].calls += 1;
+      if (r.selections) by[c].sels[String(r.selections)] = 1;
+    });
+    out.byComment = Object.keys(by).map(function (k) {
+      return { comment: k, calls: by[k].calls, selections: Object.keys(by[k].sels).join(",") };
+    }).sort(function (a, b) { return b.calls - a.calls; });
+
+    // Widest 60-second window, walked over the actual timestamps.
+    var best = 0, bestAt = 0;
+    for (var i = 0; i < list.length; i++) {
+      var n = 0;
+      for (var j = i; j < list.length && list[j].timestamp - list[i].timestamp < 60; j++) n++;
+      if (n > best) { best = n; bestAt = i; }
+    }
+    out.peakPerMin = best;
+    out.overCap = best >= 100;
+    var pk = {};
+    for (var m = bestAt; m < list.length && list[m].timestamp - list[bestAt].timestamp < 60; m++) {
+      var c2 = list[m].comment ? String(list[m].comment) : "(no comment)";
+      pk[c2] = (pk[c2] || 0) + 1;
+    }
+    out.peakByComment = Object.keys(pk).map(function (k) { return { comment: k, calls: pk[k] }; })
+      .sort(function (a, b) { return b.calls - a.calls; });
+    return out;
+  }
+
+  // Up to 250 rows, 100 at a time.
+  function fetchKeyLog(key, done) {
+    var rows = [], page = 0;
+    function next() {
+      if (page >= 3) return done(rows);
+      var url = "https://api.torn.com/v2/key/log?limit=100&offset=" + (page * 100) +
+                "&key=" + encodeURIComponent(key) + "&comment=gym-ledger-probe";
+      page++;
+      function handle(text) {
+        var d = null;
+        try { d = JSON.parse(text); } catch (e) {}
+        if (!d || d.error || !Array.isArray(d.log)) return done(rows);
+        rows = rows.concat(d.log);
+        if (d.log.length < 100) return done(rows);
+        next();
+      }
+      try {
+        if (typeof GM_xmlhttpRequest === "function") {
+          GM_xmlhttpRequest({ method: "GET", url: url,
+            onload: function (r) { handle(r.responseText || r.response || ""); },
+            onerror: function () { done(rows); } });
+          return;
+        }
+      } catch (e) {}
+      fetch(url).then(function (r) { return r.text(); }).then(handle)
+        .catch(function () { done(rows); });
+    }
+    next();
+  }
+
+  function reportKeyLog(key, done) {
+    fetchKeyLog(key, function (rows) {
+      var s = summariseKeyLog(rows);
+      if (!s.calls) { add("KEY LOG", "no requests returned"); return done(); }
+      add("KEY LOG", s.calls + " requests over " + s.spanMin.toFixed(1) + " min  |  " +
+        "average " + s.avgPerMin + "/min  |  BUSIEST MINUTE " + s.peakPerMin + "/100" +
+        (s.overCap ? "   <-- AT OR OVER THE CAP" : ""));
+      add("  busiest minute was", s.peakByComment.map(function (c) {
+        return c.comment + " x" + c.calls; }).join(", "));
+      s.byComment.forEach(function (c) {
+        add("  " + c.comment, c.calls + " calls  (" + c.selections.slice(0, 70) + ")");
+      });
+      done();
+    });
   }
 
   function probeAccess(key, done) {
@@ -349,7 +461,7 @@
     if (!k) { add("KEY ACCESS", "no saved Gym Coach key on this device -- skipped"); return show(); }
     add("KEY ACCESS", "..." + k.key.slice(-4) + " (" + k.key.length + " chars)  FROM: " + k.from);
     add("  note", "this is the key the coach itself would use here; on another device it may resolve to a different one");
-    probeAccess(k.key, show);
+    probeAccess(k.key, function () { reportKeyLog(k.key, show); });
   }
 
   function show() {
