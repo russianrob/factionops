@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.40
+// @version      0.9.41
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,28 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.41 — Training no longer empties your API budget.
+ *
+ *         Measured on a live account: 103 requests in 183 seconds, 88 of them
+ *         inside one rolling minute, and 77 of those the gym log firing at
+ *         0-1ms spacing. Torn allows 100 a minute per key, so an ordinary
+ *         training session was enough to rate-limit everything -- which is
+ *         what the red "Too many requests" in the header was, and what made a
+ *         lost session permanent two versions ago.
+ *
+ *         Two faults, both mine. refresh("train") passed FORCE to the log
+ *         fetch, and the gym-page click handler fires refresh("train") twice
+ *         per press -- so every click bypassed the TTL and asked all four log
+ *         endpoints again. Eight calls a click. The live `since` figure added
+ *         in 0.9.39 already keeps "Spent today" moving without asking Torn at
+ *         all, which is what makes forcing unnecessary rather than merely
+ *         expensive.
+ *
+ *         And a failed round stamped no time, so `at` stayed old and every
+ *         later call started a fresh round of four -- on a key that was
+ *         failing BECAUSE it was rate limited. The limit fed itself. The
+ *         attempt is stamped now, so failures back off like anything else.
+ *
 * 0.9.40 — A full bar the script never watched fill is now dated, instead of
  *         being passed over in silence.
  *
@@ -1188,7 +1210,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.40";
+  var GC_VERSION = "0.9.41";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4530,9 +4552,16 @@
   function fetchTrainLog(force) {
     if (!resolveKey()) return Promise.resolve(null);
     var tl = state.trainLog;
-    if (!force && tl && Date.now() - (tl.at || 0) < TRAINLOG_TTL) return Promise.resolve(tl);
+    // The last ATTEMPT, not the last success. A failed round used to stamp
+    // nothing, so `at` stayed old and every later call started a fresh round
+    // of four -- on a key that was failing because it was already rate
+    // limited. The limit fed itself. Measured at 77 log calls in one minute at
+    // 0-1ms spacing.
+    var last = Math.max((tl && tl.at) || 0, state.trainLogTriedAt || 0);
+    if (!force && Date.now() - last < TRAINLOG_TTL) return Promise.resolve(tl);
     if (state.trainLogInFlight) return Promise.resolve(tl);
     state.trainLogInFlight = true;
+    state.trainLogTriedAt = Date.now();
     return Promise.all(TRAINLOG_IDS.map(function (id) {
       return httpGet(apiUrl("log&log=" + id));
     })).then(function (rs) {
@@ -6388,7 +6417,12 @@
         if (data && data.player_id != null) state.playerId = String(data.player_id);
         // Torn's own record of what was trained. Refreshed on its own TTL, and
         // forced right after a detected session so the figure settles quickly.
-        fetchTrainLog(kind === "train" || kind === "boot");
+        // NOT on "train". The gym-page click handler fires refresh("train")
+        // twice per press, so forcing here cost eight log calls per click and
+        // was most of a 100-a-minute budget during an ordinary session. The
+        // live `since` figure already keeps "Spent today" moving without
+        // asking Torn at all, which is what makes this safe to drop.
+        fetchTrainLog(kind === "boot" || kind === "manual");
         fetchRefills(kind === "boot" || kind === "manual");
         fetchStocks(kind === "boot" || kind === "manual");
         fetchAttacksToday(kind === "boot" || kind === "manual" || kind === "train");
