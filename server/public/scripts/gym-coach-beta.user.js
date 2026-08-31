@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.39
+// @version      0.9.40
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,30 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.40 — A full bar the script never watched fill is now dated, instead of
+ *         being passed over in silence.
+ *
+ *         Reported twice: 150/150 on opening the app, no banner. The threshold
+ *         was not the problem -- the CLOCK never started. The banner counts
+ *         from the moment the bar filled, and that moment is only known if the
+ *         app was open while it was climbing. Close it on a low bar overnight
+ *         and there was no armed prediction, so the coach had no idea how long
+ *         the bar had been sitting and said nothing. That was the right call
+ *         when the ledger was all it had.
+ *
+ *         It is not all it has now. The train log and the attack log both
+ *         carry timestamps, so the last time energy LEFT the bar is known, and
+ *         the bar cannot have filled before it refilled from there. A session
+ *         at 09:51 PM on a 150 bar dates the fill to five hours later, which
+ *         is a banner rather than a shrug.
+ *
+ *         The estimate assumes that spend emptied the bar -- the same reading
+ *         ledgerDelta already takes, and deliberately the generous one: spend
+ *         less and the bar filled sooner, so the estimate can only ever date
+ *         the fill LATER than reality and under-report the streak. It is used
+ *         only where it reaches further back than what was actually observed,
+ *         and never shortens a streak already known.
+ *
 * 0.9.39 — A training session no longer falls down the gap while Torn's log
  *         catches up.
  *
@@ -1164,7 +1188,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.39";
+  var GC_VERSION = "0.9.40";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4791,6 +4815,36 @@
   }
 
   // How long the bar has been full right now, and what that has cost.
+  // When a bar the script never watched must have filled.
+  //
+  // The armed prediction is the good answer, but it only exists if the app was
+  // open while the bar was climbing. Close it on a low bar overnight and there
+  // is nothing -- which is why opening to a full bar showed no banner at all,
+  // reported twice.
+  //
+  // The spend timeline answers it instead: the bar cannot have filled before
+  // it refilled from the last time energy left it. Assuming that spend emptied
+  // the bar is deliberately the most generous reading, exactly as ledgerDelta
+  // does for the same reason -- spend less and it filled sooner, so this is a
+  // floor on the streak rather than an invention.
+  //
+  // Returns 0 when the bar cannot have refilled yet, or when there is no
+  // timeline to read: silence is still better than a guess.
+  function fillFromLastSpend(events, max, secPerE, now) {
+    if (!events || !events.length || !(max > 0) || !(secPerE > 0)) return 0;
+    var last = 0;
+    for (var i = 0; i < events.length; i++) {
+      var e = events[i];
+      // Gains do not date a full bar: a xanax says nothing about when the bar
+      // last reached the cap on its own.
+      if (!e || !(e.delta < 0) || !(e.t > 0)) continue;
+      if (e.t > last) last = e.t;
+    }
+    if (!last) return 0;
+    var filled = last + max * secPerE * 1000;
+    return filled <= now ? filled : 0;
+  }
+
   function capStreak() {
     var max = state.energyMax || 150;
     if (!state.energyKnown || state.energy < max) return null;
@@ -4805,6 +4859,13 @@
     if (prev && prev.fullAt && prev.fullAt <= Date.now() && (!since || prev.fullAt < since)) {
       since = prev.fullAt;
     }
+    // Nothing observed and nothing predicted: date it from the last spend the
+    // API knows about. Only ever used to reach FURTHER back than what we have,
+    // so a real observation is never overridden by an estimate.
+    var est = fillFromLastSpend(
+      ((state.trainLog && state.trainLog.events) || []).concat(state.attackEvents || []),
+      max, energyRate(), Date.now());
+    if (est && (!since || est < since)) since = est;
     if (!since) return null;
     var sec = Math.max(0, (Date.now() - since) / 1000);
     return { sec: sec, lost: sec / energyRate() };

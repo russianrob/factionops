@@ -29,7 +29,7 @@ function makeRuntime(stored, opts) {
     ${grab("energyRate")} ${grab("timeToFull")} ${grab("ledgerDelta")} ${grab("ledgerBucket")}
     var ledgerDirty = 0;
     ${/var GAP_MS = \d+;/.exec(src)[0]} ${grab("simulateWaste")} ${grab("gapWaste")}
-    function onGymPage(){ return true; } ${grab("dayLooksStacked")} ${grab("ledgerObserve")} ${grab("capStreak")}
+    function onGymPage(){ return true; } ${grab("dayLooksStacked")} ${grab("ledgerObserve")} ${grab("fillFromLastSpend")} ${grab("capStreak")}
     RESULT = { state: state, observe: ledgerObserve, streak: capStreak,
                setEnergy: function (e) { state.energy = e; state.energyKnown = true; } };`;
   return new Function("var RESULT;" + code + "; return RESULT;")();
