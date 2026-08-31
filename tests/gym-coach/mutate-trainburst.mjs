@@ -18,6 +18,13 @@ const mutants = [
     "        fetchTrainLog(false);", [U]],
   ["the in-flight guard is dropped, so rounds overlap",
     "    if (state.trainLogInFlight) return Promise.resolve(tl);\n", "", [U]],
+  ["a refused key is asked forever, burning budget to be told no",
+    "    if (state.logReadable === false) return Promise.resolve(state.trainLog || null);\n", "", [U]],
+  ["a rate limit disables the log permanently, killing it for a good key",
+    "      if (err && err.code === 16) state.logReadable = false;",
+    "      state.logReadable = false;", [U]],
+  ["a refusal is not remembered, so nothing is learned from it",
+    "      if (err && err.code === 16) state.logReadable = false;", "", [U]],
   ["the TTL is ignored entirely",
     "    if (!force && Date.now() - last < TRAINLOG_TTL) return Promise.resolve(tl);\n", "", [U, M]],
 ];

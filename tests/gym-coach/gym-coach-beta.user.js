@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.41
+// @version      0.9.42
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,21 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.42 — Stop asking a Limited key for the gym log it can never have.
+ *
+ *         The key log made it plain: on a Limited key, selection `log` is
+ *         refused every single time, four calls a round, forever. A REFUSED
+ *         call still counts against Torn's 100 a minute, so the script was
+ *         spending roughly 2/min purely to be told no.
+ *
+ *         Code 16 is Torn stating a fact about the key, so it is remembered
+ *         and the asking stops. Anything else is not: a rate limit means the
+ *         key CAN read the log and was merely busy, and writing the feature
+ *         off over a transient error is how it quietly dies for someone whose
+ *         key is fine. That distinction is the one this session got wrong
+ *         three times in the probe before it was pinned, so it is pinned here
+ *         too, by a test and by a mutant in each direction.
+ *
 * 0.9.41 — Training no longer empties your API budget.
  *
  *         Measured on a live account: 103 requests in 183 seconds, 88 of them
@@ -1210,7 +1225,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.41";
+  var GC_VERSION = "0.9.42";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4551,6 +4566,15 @@
   var TRAINLOG_TTL = 120000;
   function fetchTrainLog(force) {
     if (!resolveKey()) return Promise.resolve(null);
+    // A Limited key cannot read the gym log at all -- selection `log` is
+    // Full-only -- and a REFUSED call still counts against the 100-a-minute
+    // cap. Asking on a loop spends budget to be told "no": measured at 2/min
+    // doing nothing else. Once Torn has said the access is not there, stop.
+    //
+    // Only for a refusal. A rate limit means the key CAN read it and was
+    // merely busy, and writing the feature off over a transient error is how
+    // it quietly dies for someone whose key is fine.
+    if (state.logReadable === false) return Promise.resolve(state.trainLog || null);
     var tl = state.trainLog;
     // The last ATTEMPT, not the last success. A failed round used to stamp
     // nothing, so `at` stayed old and every later call started a fresh round
@@ -4582,14 +4606,15 @@
       storeSet("trainLog", state.trainLog);
       resetPlanCaches();
       return state.trainLog;
-    }, function () {
+    }, function (err) {
       state.trainLogInFlight = false;
-      // A Limited key cannot read the gym log at all (selection `log` is Full
-      // only), so this is the normal state for most people rather than a
-      // blip -- and it is the difference between reconstructing a gap and
-      // having to decline to. Keep whatever we had: a failed round is no news,
-      // not zero training.
-      state.logReadable = false;
+      // Code 16 is Torn saying this key may not read the log -- a fact about
+      // the key, so remember it and stop asking. Anything else (a rate limit,
+      // a network blip) says nothing about access and must not disable the
+      // feature: `logReadable` stays null so the next round tries again.
+      if (err && err.code === 16) state.logReadable = false;
+      // Keep whatever we had either way: a failed round is no news, not zero
+      // training.
       return state.trainLog || null;
     });
   }

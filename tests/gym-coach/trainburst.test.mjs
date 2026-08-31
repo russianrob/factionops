@@ -22,7 +22,7 @@ function grab(n) {
   }
 }
 // Drives fetchTrainLog repeatedly and counts how many HTTP calls result.
-function calls({ n, force, fail, concurrent = false }) {
+function calls({ n, force, fail, concurrent = false, code = 5, logReadable = null }) {
   return new Function("var R;" + `
     var TRAINLOG_IDS = [5300, 5301, 5302, 5303];
     ${/var TRAINLOG_TTL = \d+;/.exec(src)[0]}
@@ -32,9 +32,9 @@ function calls({ n, force, fail, concurrent = false }) {
     function resolveKey() { return "k"; }
     function apiUrl() { return "u"; }
     function resetPlanCaches() {}
-    function httpGet() { hits++; return ${fail ? "Promise.reject(new Error('rate limited'))" : "Promise.resolve({ log: {} })"}; }
+    function httpGet() { hits++; if (${JSON.stringify(!!0)}) {} return ${fail ? "Promise.reject(Object.assign(new Error('nope'), { code: " + code + " }))" : "Promise.resolve({ log: {} })"}; }
     var CONCURRENT = ${JSON.stringify(concurrent)};
-    var state = { trainLog: null, trainLogInFlight: false };
+    var state = { trainLog: null, trainLogInFlight: false, logReadable: ${JSON.stringify(logReadable)} };
     ${grab("trainLogByDay")} ${grab("trainLogEvents")} ${grab("carriedSince")} ${grab("fetchTrainLog")}
     var all = [];
     if (CONCURRENT) {
@@ -91,6 +91,33 @@ t("training is no longer one of the things that forces a refetch", () => {
   assert.ok(!/train/.test(m[1]), 'refresh still forces the log on "train": ' + m[1]);
   assert.match(m[1], /boot/, "boot should still force it: " + m[1]);
 });
+
+await (async () => {
+  // A Limited key cannot read the gym log at all: selection `log` is Full-only.
+  // Asking anyway is four refusals a round, and a REFUSED call still counts
+  // against the 100-a-minute cap -- so the script was spending budget to be
+  // told "no" on a loop. Measured at 2/min doing nothing else.
+  const refused = await calls({ n: 6, force: true, fail: true, code: 16 });
+  t("a key that cannot read the log is asked once, not forever", () => {
+    assert.strictEqual(refused, 4, "got " + refused + " calls -- still asking after a refusal");
+  });
+
+  const limited = await calls({ n: 6, force: true, fail: true, code: 5 });
+  t("a RATE LIMIT is not treated as a refusal -- that one is temporary", () => {
+    // The contrast with the case above, and the whole point of distinguishing
+    // them. Six FORCED rounds after a code 5 all still fire (6 x 4 = 24),
+    // because the key can read the log and was merely busy. The refusal case
+    // stops dead at 4. Writing a feature off over a transient error is how it
+    // quietly dies for someone whose key is fine -- which is the mistake this
+    // probe made three times before it was pinned.
+    assert.strictEqual(limited, 24, "got " + limited + " -- a rate limit disabled the log");
+  });
+
+  const known = await calls({ n: 3, force: true, fail: false, logReadable: false });
+  t("a key already known to be refused is not asked again at all", () => {
+    assert.strictEqual(known, 0, "asked " + known + " times for something the key cannot have");
+  });
+})();
 
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
