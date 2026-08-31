@@ -71,8 +71,9 @@ t("nonsense inputs do not produce a timestamp", () => {
 });
 
 // --- capStreak actually using it ------------------------------------------
-const streak = (lastSeen, events) => new Function("var R;" + `
+const streak = (lastSeen, events, logReadable = true) => new Function("var R;" + `
   var state = { energy: 150, energyMax: 150, energyKnown: true,
+                logReadable: ${JSON.stringify(logReadable)},
                 lastSeen: ${JSON.stringify(lastSeen)},
                 trainLog: { events: ${JSON.stringify(events)} }, attackEvents: [] };
   function energyRate() { return 120; }
@@ -105,6 +106,35 @@ t("but it never SHORTENS a streak already known", () => {
   const r = streak({ e: 150, t: N - 9 * H, capSince: N - 9 * H, fullAt: 0 },
                    [{ t: N - 6 * H, delta: -400 }]);
   assert.strictEqual(r, 9, "a later estimate overrode a longer observed streak");
+});
+
+t("an INCOMPLETE timeline is not used to date the bar", () => {
+  // 0.9.40 shipped this wrong and it put a false number on screen. The floor
+  // argument -- the estimate can only date the fill LATER than reality --
+  // holds only if every spend is visible. On a Limited key the gym log is
+  // refused, so training is invisible and only attacks remain: an attack nine
+  // hours ago dates the bar to four hours full when the user emptied it by
+  // training one hour ago. Reported as "Bar full 240m", which was fiction.
+  const withLog = streak({ e: 40, t: N - 9 * H, capSince: 0, fullAt: 0 },
+                         [{ t: N - 9 * H, delta: -400 }], true);
+  assert.strictEqual(withLog, 4, "a complete timeline should still date it");
+  const withoutLog = streak({ e: 40, t: N - 9 * H, capSince: 0, fullAt: 0 },
+                            [{ t: N - 9 * H, delta: -400 }], false);
+  assert.strictEqual(withoutLog, null,
+    "dated the bar from a timeline that cannot see training: got " + withoutLog);
+});
+
+t("an unknown log state is not treated as a complete timeline either", () => {
+  // null means the log has not answered yet. Guessing before it does is how a
+  // wrong number reaches the screen in the first second of a page load.
+  assert.strictEqual(streak({ e: 40, t: N - 9 * H, capSince: 0, fullAt: 0 },
+                            [{ t: N - 9 * H, delta: -400 }], null), null);
+});
+
+t("an OBSERVED streak still works without the log", () => {
+  // The estimate is what needs a complete timeline. Watching the bar yourself
+  // does not, so a Limited key keeps everything it had before 0.9.40.
+  assert.strictEqual(streak({ e: 150, t: N - 6 * H, capSince: N - 6 * H, fullAt: 0 }, [], false), 6);
 });
 
 console.log("\n" + pass + " passed, " + fail + " failed");

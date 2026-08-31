@@ -22,6 +22,10 @@ const mutants = [
   ["a missing rate divides the estimate into nonsense",
     "    if (!events || !events.length || !(max > 0) || !(secPerE > 0)) return 0;",
     "    if (!events || !events.length) return 0;", [U]],
+  ["the estimate is used on an INCOMPLETE timeline again",
+    "    if (state.logReadable === true) {", "    if (true) {", [U]],
+  ["an unanswered log counts as a complete timeline",
+    "    if (state.logReadable === true) {", "    if (state.logReadable !== false) {", [U]],
   ["the estimate leaks into a bar that is not even full",
     "    if (!state.energyKnown || state.energy < max) return null;", "    if (false) return null;", [B, F]],
 ];

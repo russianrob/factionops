@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.42
+// @version      0.9.43
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,25 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.43 — The full-bar estimate is only used when the timeline is complete.
+ *
+ *         Reported: "Bar full 240m" when it had not been. 0.9.40 dates a bar
+ *         nobody watched fill from the last spend the API knows about, and
+ *         argued that was a floor -- assuming the spend emptied the bar can
+ *         only date the fill LATER than reality, so it under-reports.
+ *
+ *         That argument holds only if every spend is VISIBLE. On a Limited key
+ *         the gym log is refused, so training is invisible and the last attack
+ *         becomes the last known spend: an attack nine hours ago dates the bar
+ *         to four hours full when it was emptied by training one hour ago. An
+ *         incomplete timeline is not a floor, it is a fiction, and it put a
+ *         number on screen that was simply untrue.
+ *
+ *         The estimate now runs only where the gym log answers. Everything
+ *         observed directly is untouched, so a Limited key keeps exactly what
+ *         it had before 0.9.40 -- silence about a bar it never watched fill,
+ *         which was the honest answer for that key all along.
+ *
 * 0.9.42 — Stop asking a Limited key for the gym log it can never have.
  *
  *         The key log made it plain: on a Limited key, selection `log` is
@@ -1225,7 +1244,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.42";
+  var GC_VERSION = "0.9.43";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4916,10 +4935,21 @@
     // Nothing observed and nothing predicted: date it from the last spend the
     // API knows about. Only ever used to reach FURTHER back than what we have,
     // so a real observation is never overridden by an estimate.
-    var est = fillFromLastSpend(
-      ((state.trainLog && state.trainLog.events) || []).concat(state.attackEvents || []),
-      max, energyRate(), Date.now());
-    if (est && (!since || est < since)) since = est;
+    //
+    // ONLY with a complete timeline. The floor argument -- that assuming the
+    // spend emptied the bar can only date the fill LATER than reality -- holds
+    // only if every spend is visible. On a Limited key the gym log is refused,
+    // training is invisible, and the last ATTACK becomes the last known spend:
+    // an attack nine hours ago dates the bar to four hours full when it was
+    // emptied by training one hour ago. 0.9.40 shipped exactly that and put
+    // "Bar full 240m" on screen. An incomplete timeline is not a floor, it is
+    // a fiction, so it is not used at all.
+    if (state.logReadable === true) {
+      var est = fillFromLastSpend(
+        ((state.trainLog && state.trainLog.events) || []).concat(state.attackEvents || []),
+        max, energyRate(), Date.now());
+      if (est && (!since || est < since)) since = est;
+    }
     if (!since) return null;
     var sec = Math.max(0, (Date.now() - since) / 1000);
     return { sec: sec, lost: sec / energyRate() };
