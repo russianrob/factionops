@@ -10,15 +10,18 @@ const mutants = [
   // The state literal is NOT where the default lives -- boot overwrites it
   // from storage on every load, so mutating it is equivalent. The storeBool
   // fallback is the real decision.
-  ["it starts folded for everyone, reshaping panels nobody asked to change",
-    '      state.verdictFold = storeBool("verdictFold", false);',
-    '      state.verdictFold = storeBool("verdictFold", true);', [E]],
+  ["it starts expanded again, losing the compact default",
+    '      state.verdictFold = storeBool("verdictFold", true);',
+    '      state.verdictFold = storeBool("verdictFold", false);', [E]],
+  ["the default overrides a stored choice, re-folding a panel someone opened",
+    '      state.verdictFold = storeBool("verdictFold", true);',
+    "      state.verdictFold = true;", [E]],
   ["the toggle does nothing",
     "      state.verdictFold = !state.verdictFold;", "      state.verdictFold = state.verdictFold;", [E]],
   ["the choice is not persisted, so it resets on every load",
     '      storeSet("verdictFold", state.verdictFold ? 1 : 0);\n', "", [E]],
-  ["it is not restored at boot",
-    '      state.verdictFold = storeBool("verdictFold", false);\n', "", [E]],
+  ["it is not restored at boot, so a stored choice is ignored",
+    '      state.verdictFold = storeBool("verdictFold", true);\n', "", [E]],
   ["the folded bar navigates instead of expanding, so Now can never unfold",
     '? \'<button type="button" class="gcb-mini\' + (c.kind === "go" ? " go" : "") + \'" data-act="verdict">\'',
     '? \'<button type="button" class="gcb-mini\' + (c.kind === "go" ? " go" : "") + \'" data-tab="now">\'', [E]],

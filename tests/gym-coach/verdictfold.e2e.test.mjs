@@ -45,13 +45,24 @@ const shape = p => p.evaluate(() => ({
 let pass = 0, fail = 0;
 const t = async (n, f) => { try { await f(); pass++; console.log("ok   " + n); } catch (e) { fail++; console.log("FAIL " + n + " :: " + e.message); } };
 
-await t("nothing changes for anyone who has not asked for it", async () => {
-  // Default stays expanded: a stored preference is one thing, silently
-  // reshaping every existing user's panel is another.
+await t("it starts folded, so the panel opens compact", async () => {
+  // Owner's call, made after seeing it in use. 0.9.36 shipped it off by
+  // default to avoid reshaping anyone's panel unasked; now it is the default
+  // and the expanded view is one tap away.
   const { p, ctx, errors } = await open_();
   const s = await shape(p);
   assert.deepStrictEqual(errors, [], errors.join(" | "));
-  assert.strictEqual(s.full, true, "the verdict should start expanded");
+  assert.strictEqual(s.mini, true, "the verdict should start folded");
+  assert.strictEqual(s.full, false);
+  await ctx.close();
+});
+
+await t("someone who has already expanded it keeps it expanded", async () => {
+  // A stored choice still wins over the default, so changing the default does
+  // not reach across and re-fold a panel someone deliberately opened.
+  const { p, ctx } = await open_({ folded: 0 });
+  const s = await shape(p);
+  assert.strictEqual(s.full, true, "a stored 'expanded' was overridden by the new default");
   assert.strictEqual(s.mini, false);
   await ctx.close();
 });
@@ -86,7 +97,7 @@ await t("clicking the compact line expands it", async () => {
 });
 
 await t("and clicking the tag folds it away again", async () => {
-  const { p, ctx } = await open_();
+  const { p, ctx } = await open_({ folded: 0 });
   await p.click('#gcb-panel .gcb-verdict [data-act="verdict"]');
   await p.waitForTimeout(500);
   assert.strictEqual((await shape(p)).mini, true, "it did not fold");
@@ -94,7 +105,7 @@ await t("and clicking the tag folds it away again", async () => {
 });
 
 await t("the choice is remembered", async () => {
-  const { p, ctx } = await open_();
+  const { p, ctx } = await open_({ folded: 0 });
   await p.click('#gcb-panel .gcb-verdict [data-act="verdict"]');
   await p.waitForTimeout(500);
   const stored = await p.evaluate(() => window.GM_getValue("gcb_v1_verdictFold", null));
@@ -105,7 +116,7 @@ await t("the choice is remembered", async () => {
 await t("off Now it is still the plain tappable line that takes you back", async () => {
   // The existing behaviour, which this must not disturb: on another tab the
   // compact bar returns you to Now rather than toggling anything.
-  const { p, ctx } = await open_();
+  const { p, ctx } = await open_({ folded: 0 });
   await p.evaluate(() => { const x = document.querySelector('[data-tab="plan"]'); if (x) x.click(); });
   await p.waitForTimeout(500);
   const act = await p.evaluate(() => {

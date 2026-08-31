@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.37
+// @version      0.9.38
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,19 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.38 — The verdict now starts folded.
+ *
+ *         0.9.36 shipped the fold switched off, on the grounds that a stored
+ *         preference is one thing and reshaping everyone's panel unasked is
+ *         another. Asked for as the default after using it, so it is the
+ *         default: the panel opens compact and the full verdict is one tap on
+ *         the bar.
+ *
+ *         A stored choice still wins. Anyone who has deliberately expanded it
+ *         keeps it expanded -- the default only decides for panels that have
+ *         never been told either way, and a test pins that so the change
+ *         cannot reach across and re-fold a panel someone opened on purpose.
+ *
 * 0.9.37 — A percentage build no longer trains a stat that is OVER its share.
  *
  *         Reported: "why is it telling me to train dex if my ratio is over?"
@@ -1126,7 +1139,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.37";
+  var GC_VERSION = "0.9.38";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -1419,8 +1432,9 @@
     // A percentage build. Null unless you have set one. With shareTotal it
     // derives `goals` and the existing planner does the rest; without, it is
     // maintain mode and has no endpoint by design.
-    // Verdict folded to one line on the Now tab. Off by default.
-    verdictFold: false,
+    // Verdict folded to one line on the Now tab. Boot overwrites this from
+    // storage, so the real default lives in that storeBool call, not here.
+    verdictFold: true,
     shares: null,
     // What was actually typed, so the boxes keep 4:3:2:1 instead of being
     // rewritten to 40/30/20/10 under the cursor.
@@ -8064,7 +8078,10 @@
         state.goals = { str: Number(gv.str) || 0, def: Number(gv.def) || 0,
                         spe: Number(gv.spe) || 0, dex: Number(gv.dex) || 0 };
       }
-      state.verdictFold = storeBool("verdictFold", false);
+      // Folded by default. A stored choice still wins, so anyone who has
+      // deliberately expanded it keeps it expanded -- the default only decides
+      // for panels that have never been told either way.
+      state.verdictFold = storeBool("verdictFold", true);
       var sh = storeGet("shares", null);
       if (typeof sh === "string") { try { sh = JSON.parse(sh); } catch (_) { sh = null; } }
       state.sharesRaw = (sh && typeof sh === "object") ? sh : null;

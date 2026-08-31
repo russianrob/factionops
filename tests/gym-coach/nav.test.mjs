@@ -14,7 +14,8 @@ async function load(goals) {
   const cfg = { energy:45, energyMax:150, fulltime:3150, drug:0, booster:60000, xan:85,
     cans:21, happy:4300, happyMax:5000, gym:24,
     stats:{ str:150422278, def:104614286, spe:150464114, dex:146009 },
-    mem: Object.assign({ gcb_v1_mode:"xan", gcb_v1_goalStep: 5e7 },
+    // The verdict is folded by default now, and these assertions are about what the EXPANDED view says -- the move text, the plan strip, the energy meter. Pin it open rather than testing the fold by accident.
+    mem: Object.assign({ gcb_v1_mode:"xan", gcb_v1_goalStep: 5e7, gcb_v1_verdictFold: 0 },
                        goals ? { gcb_v1_goals: goals } : {}) };
   await page.goto("https://www.torn.com/gym.php?cfg=" + encodeURIComponent(JSON.stringify(cfg)),
                   { waitUntil:"domcontentloaded" });

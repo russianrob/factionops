@@ -15,7 +15,8 @@ await page.route("**/*", r => { const u=r.request().url();
 async function at(energy, max = 150) {
   const cfg = { energy, energyMax: max, fulltime: Math.max(0, (max - energy) * 30),
                 drug: 3840, booster: 60000, xan: 85, cans: 21, happy: 4300,
-                mem: { gcb_v1_mode: "xan" } };
+                // The verdict is folded by default now, and these assertions are about what the EXPANDED view says -- the move text, the plan strip, the energy meter. Pin it open rather than testing the fold by accident.
+                mem: { gcb_v1_mode: "xan", gcb_v1_verdictFold: 0 } };
   await page.goto("https://www.torn.com/gym.php?cfg=" + encodeURIComponent(JSON.stringify(cfg)),
                   { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(350);
