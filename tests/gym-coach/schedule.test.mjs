@@ -12,6 +12,11 @@ const FNS = ["gymFor","dotsFor","trainsTo","trainsPerDay","goalLevels","orderedG
              // real one survive. With no build set they take the flat-rung
              // path, which is what these schedules are about.
              "shareCap","shareState","shareTargets","shareNextStat",
+             // Book helpers grabbed from source, never stubbed: a local copy
+             // would shadow production and let a mutation of the real one
+             // survive. With no book ticked they contribute nothing, which is
+             // what these schedules are about.
+             "bookAward","bookPending","pendingBookAward",
              "goalSegments","goalPlan","scheduleDays","hasGoals","applyGoalFocus"];
 
 // `gain` is per train; a linear one keeps the arithmetic checkable by hand.
@@ -24,8 +29,11 @@ function run(opts) {
     var HIST_KEYS = ["str","def","spe","dex"];
     var GYMS = [{ Gym: "T", Energy: ${gymEnergy}, Str: 1, Def: 1, Spe: 1, Dex: 1 }];
     ${konst("GOAL_STEPS")} ${konst("GOAL_MAX_TRAINS")}
+    ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/,
+       /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/]
+       .map(re => re.exec(src)[0]).join("\n")}
     var goalCache = { key: "", val: null };
-    var state = {
+    var state = { books: {},
       stats: ${JSON.stringify(stats)}, goals: ${JSON.stringify(goals)},
       goalOrder: ${JSON.stringify(order)}, goalStep: ${step},
       gymName: "T", happyMax: 5000, perks: {}, focus: "str"

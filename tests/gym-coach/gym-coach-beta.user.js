@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.43
+// @version      0.9.44
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -28,6 +28,33 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.44 — Stat books count toward the plan.
+ *
+ *         Four books each award +5% of a stat, capped at 10,000,000, after 31
+ *         days of reading:
+ *
+ *           Strength   Brawn Over Brains
+ *           Defense    Keeping Your Face Handsome
+ *           Speed      Time Is In The Mind
+ *           Dexterity  A Job For Your Hands
+ *
+ *         They are not perks. Nothing reaches book_perks and no multiplier
+ *         changes, so parsePerks can never see them -- which is why the coach
+ *         forecast months ahead while ignoring a known, dated gain already in
+ *         the post. A new card on Plan: tap the book you are reading and every
+ *         date below accounts for it, with the countdown on screen so the
+ *         assumption is visible rather than buried in an ETA.
+ *
+ *         It stops counting the moment the book lands, because by then the
+ *         stat itself carries the award and counting it again would take it
+ *         twice.
+ *
+ *         Every name checked against the wiki one at a time, because two of
+ *         them are traps: "Get Hard Or Go Home" reads like the Defense book
+ *         and is actually +20% gym gains for 31 days, and "Weaseling Out Of
+ *         Trouble" is a passive Dexterity bonus rather than an award. Guessing
+ *         from the names would have wired up the wrong book twice.
+ *
 * 0.9.43 — The full-bar estimate is only used when the timeline is complete.
  *
  *         Reported: "Bar full 240m" when it had not been. 0.9.40 dates a bar
@@ -1244,7 +1271,7 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.43";
+  var GC_VERSION = "0.9.44";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -1537,6 +1564,8 @@
     // A percentage build. Null unless you have set one. With shareTotal it
     // derives `goals` and the existing planner does the rest; without, it is
     // maintain mode and has no endpoint by design.
+    // When each stat book was started, keyed by stat. 0 = not reading.
+    books: { str: 0, def: 0, spe: 0, dex: 0 },
     // Verdict folded to one line on the Now tab. Boot overwrites this from
     // storage, so the real default lives in that storeBool call, not here.
     verdictFold: true,
@@ -3242,6 +3271,13 @@
     return Math.min(L * (shares[k] || 0) / maxShare, target);
   }
 
+  // What a book still being read will add to a stat. Zero once it lands,
+  // because by then the stat itself carries it.
+  function pendingBookAward(k) {
+    var p = bookPending(k, (state.books || {})[k], Date.now());
+    return p ? bookAward(k, state.stats) : 0;
+  }
+
   function goalSegments(mf) {
     var keys = orderedGoalKeys(mf);
     if (!keys.length) return [];
@@ -3249,7 +3285,11 @@
     var targets = {}, cur = {};
     keys.forEach(function (k) {
       targets[k] = Number(g[k]) || 0;
-      cur[k] = state.stats[k] || 0;
+      // A book still being read is a known gain with a date on it. Books take
+      // 31 days and these plans run months, so counting it is the honest
+      // reading -- and the Plan card shows the countdown, so the assumption is
+      // on screen rather than buried inside an ETA.
+      cur[k] = (state.stats[k] || 0) + pendingBookAward(k);
     });
     var step = Number(state.goalStep) || 0;
     var levels = goalLevels(step, targets);
@@ -3340,10 +3380,14 @@
     // bonuses existed.
     var pk = state.perks || {};
     var sh = state.shares || {};
+    var bkk = state.books || {};
     var key = [e, state.gymName, state.happyMax, st.str, st.def, st.spe, st.dex,
                g.str, g.def, g.spe, g.dex, state.goalStep,
                (state.goalOrder || []).join(","),
                pk.str, pk.def, pk.spe, pk.dex,
+               // Ticking a book changes every ETA, so it belongs in the key --
+               // the same omission that froze a stale plan for perks.
+               bkk.str, bkk.def, bkk.spe, bkk.dex,
                sh.str, sh.def, sh.spe, sh.dex, state.shareTotal,
                cal.ok ? cal.model.toFixed(4) + "/" + cal.usage.toFixed(4) : "raw"].join("|");
     if (goalCache.key === key && goalCache.val) return goalCache.val;
@@ -3878,6 +3922,32 @@
   // Deliberately the same numbers torn-gym-stat-percentages already paints on
   // gym.php, because that is the vocabulary people quote builds in and the one
   // already on screen.
+  // The four stat books, and what finishing one is worth.
+  function booksHtml() {
+    var now = Date.now();
+    var rows = HIST_KEYS.map(function (k) {
+      var p = bookPending(k, (state.books || {})[k], now);
+      var award = bookAward(k, state.stats);
+      var on = !!p;
+      return '<div class="row"><span>' + STAT_LABEL[k] +
+        '<span class="muted"> \u00b7 ' + esc(STAT_BOOKS[k].name) + "</span></span>" +
+        '<button type="button" class="gc-btn secondary" data-book="' + k + '" ' +
+        'style="width:auto;min-height:0;padding:5px 11px;font-size:12px' +
+        (on ? ";background:#2ecc71;color:#08131c" : "") + '">' +
+        (p ? p.daysLeft + "d left \u00b7 +" + fmt(award) : "reading?") + "</button></div>";
+    }).join("");
+    var counted = HIST_KEYS.filter(function (k) { return pendingBookAward(k) > 0; });
+    return '<div class="gc-card"><h3>Stat books</h3>' + rows +
+      '<p class="muted" style="margin:8px 0 0">Each awards +' + Math.round(BOOK_PCT * 100) +
+      "% of the stat, capped at " + fmt(BOOK_CAP) + ", after " + BOOK_DAYS +
+      " days. Tap when you start reading one and the plan below counts it \u2014 " +
+      "it is a known gain with a date, and the dates were being drawn as if it " +
+      "were not coming. It stops counting the moment it lands, because by then " +
+      "the stat itself carries it." +
+      (counted.length ? " Counting: " + counted.map(function (k) { return STAT_LABEL[k]; }).join(", ") + "." : "") +
+      "</p></div>";
+  }
+
   function sharesHtml() {
     var raw = state.sharesRaw || {};
     var rows = state.shares ? shareState(state.shares, state.stats) : [];
@@ -6057,6 +6127,55 @@
   // Inline SVG on purpose: no library (Torn's CSP blocks external script) and
   // no canvas (retina scaling plus PDA's webview is more trouble than paths).
   var HIST_KEYS = ["str", "def", "spe", "dex"];
+
+  // The four stat books. Each awards +5% of the stat, capped at 10,000,000,
+  // after 31 days of reading.
+  //
+  // NOT perks: nothing appears in book_perks and no multiplier changes, so
+  // parsePerks can never see them. That is why the coach could forecast months
+  // ahead while ignoring a known, dated gain already in the post.
+  //
+  // Names verified against the wiki one at a time rather than inferred, and
+  // two of them would have been got wrong by guessing: "Get Hard Or Go Home"
+  // sounds like the Defense book but is +20% gym gains for 31 days, and
+  // "Weaseling Out Of Trouble" is a passive Dexterity bonus, not an award.
+  var STAT_BOOKS = {
+    str: { name: "Brawn Over Brains" },
+    def: { name: "Keeping Your Face Handsome" },
+    spe: { name: "Time Is In The Mind" },
+    dex: { name: "A Job For Your Hands" }
+  };
+  var BOOK_PCT = 0.05;
+  var BOOK_CAP = 10000000;
+  var BOOK_DAYS = 31;
+
+  // What finishing the book is worth. The cap binds for anyone past 200m in a
+  // stat, which is most people who care about a projection at all.
+  function bookAward(k, stats) {
+    if (!STAT_BOOKS[k]) return 0;
+    var cur = Number((stats || {})[k]) || 0;
+    if (cur <= 0) return 0;
+    return Math.min(Math.round(cur * BOOK_PCT), BOOK_CAP);
+  }
+
+  // A book still being read, or null.
+  //
+  // Null once it completes, deliberately: the award lands in battlestats the
+  // moment it finishes, so continuing to treat it as pending would count it
+  // twice -- once in the stat and once again in the plan.
+  function bookPending(k, startedAt, now) {
+    if (!STAT_BOOKS[k]) return null;
+    var start = Number(startedAt) || 0;
+    // Belt to the braces below rather than load-bearing: an unset start dates
+    // the finish to 1970, which the `now >= finishesAt` check already rejects.
+    // Kept because the intent should not depend on noticing that.
+    if (!start) return null;
+    var finishesAt = start + BOOK_DAYS * 86400000;
+    if (now >= finishesAt) return null;
+    return { k: k, name: STAT_BOOKS[k].name, finishesAt: finishesAt,
+             daysLeft: Math.ceil((finishesAt - now) / 86400000) };
+  }
+
   var HIST_COLOURS = { str: "#e8a33d", def: "#3d9ae8", spe: "#e85f8a", dex: "#2ecc71" };
 
   function histWindow(days) {
@@ -7233,6 +7352,7 @@
     // they move every projection in the script; a key and a perk dump are what
     // you configure once. Only the second half stays behind an icon.
     var planHtml =
+      booksHtml() +
       sharesHtml() +
       goalsHtml() +
       steadfastHtml() +
@@ -7864,7 +7984,7 @@
     if (!t || typeof t.closest !== "function") return;
     // Every clickable attribute has to be listed here or the handler below it is
     // dead code -- closest() returns null and this returns before reaching it.
-    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-preset],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],#stackSw,#novSw");
+    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-preset],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],#stackSw,#novSw");
     if (!t) return;
     if (t.dataset.goalstep !== undefined) {
       var gs = Number(t.dataset.goalstep);
@@ -7961,6 +8081,19 @@
     if (t.dataset.act === "close") {
       storeSet("user_tucked", true);
       setOpen(false);
+    }
+    if (t.dataset.book !== undefined) {
+      var bkey = t.dataset.book;
+      if (!STAT_BOOKS[bkey]) return;
+      // Tapping toggles. Starting stamps now, which is what the 31-day
+      // countdown is measured from; stopping clears it outright.
+      var reading = !!bookPending(bkey, (state.books || {})[bkey], Date.now());
+      state.books[bkey] = reading ? 0 : Date.now();
+      storeSet("books", state.books);
+      resetPlanCaches();
+      applyGoalFocus();
+      renderPanel();
+      return;
     }
     if (t.dataset.act === "verdict") {
       state.verdictFold = !state.verdictFold;
@@ -8283,6 +8416,11 @@
       // Folded by default. A stored choice still wins, so anyone who has
       // deliberately expanded it keeps it expanded -- the default only decides
       // for panels that have never been told either way.
+      var bk = storeGet("books", null);
+      if (typeof bk === "string") { try { bk = JSON.parse(bk); } catch (_) { bk = null; } }
+      if (bk && typeof bk === "object") {
+        HIST_KEYS.forEach(function (k) { state.books[k] = Number(bk[k]) || 0; });
+      }
       state.verdictFold = storeBool("verdictFold", true);
       var sh = storeGet("shares", null);
       if (typeof sh === "string") { try { sh = JSON.parse(sh); } catch (_) { sh = null; } }

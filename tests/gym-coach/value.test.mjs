@@ -86,7 +86,8 @@ const rank = (prices, opts = {}) => { const canRows = opts.rows || DEFAULT_SRC_R
     canRows.filter(r => r.grp === "cans")
            .map((r, i) => ({ k: r.k, ids: [r.id || 900 + i], label: r.label, e: r.e }))
            .concat([{ k: "mcs", ids: [7777], label: "Mc Smoogle Corp", e: 100 / 7 }]))}
-  var state = { goalOrder: [], goalStep: 0,
+      ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
+    var state = { books: {}, goalOrder: [], goalStep: 0,
     hist: [], ledger: [], prices: ${JSON.stringify(prices)}, mcsCost: 0,
     gymName: "T", happyMax: 5000, perks: {}, focus: "str", energyMax: 150,
     stats: { str: 1000000, def: 0, spe: 0, dex: 0 },
@@ -100,7 +101,8 @@ const rank = (prices, opts = {}) => { const canRows = opts.rows || DEFAULT_SRC_R
   ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("calibration")}
   ${grab("canIdFor")} ${grab("srcItemId")} ${grab("priceOf")} ${grab("priceStale")}
   ${grab("valueCandidates")} ${grab("valuePlan")}
-  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")}
+  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
+    ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")}
   RESULT = { plan: valuePlan(), cands: valueCandidates() };` + "; return RESULT;")(); };
 
 const VALUE_STEPS_TEST = JSON.parse(/VALUE_STEPS = (\[[^\]]*\])/.exec(src)[1]);
@@ -228,7 +230,7 @@ t("added energy is discounted the same way the baseline is", () => {
     var VALUE_STEPS = [1,2,3,5,10,15,20,24];
     var VALUE_STEP_MAX_DAYS = 400;
     var MCS_MAX_EXTRA = 4;
-    var state = { hist: ${JSON.stringify(hist)}, ledger: ${JSON.stringify(ledger)},
+    var state = { books: {}, hist: ${JSON.stringify(hist)}, ledger: ${JSON.stringify(ledger)},
                   prices: {}, mcsCost: 0, goalOrder: [], goalStep: 0,
                   gymName: "T", happyMax: 5000, perks: {}, energyMax: 150,
                   stats: { str: ${str}, def: 0, spe: 0, dex: 0 },
@@ -242,7 +244,8 @@ t("added energy is discounted the same way the baseline is", () => {
     ${grab("canIdFor")} ${grab("srcItemId")} ${grab("priceOf")} ${grab("priceStale")}
     ${grab("valueCandidates")} ${grab("valuePlan")}
     ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")}
-    ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("shareCap")} ${grab("goalSegments")}
+    ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
+    ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")} ${grab("shareCap")} ${grab("goalSegments")}
     ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")}
     var pl = goalPlan();
     RESULT = { cal: calibration(), plan: valuePlan(), energy: pl.energy,
@@ -256,7 +259,7 @@ t("added energy is discounted the same way the baseline is", () => {
 });
 
 t("a price older than the cache window is refetched, a fresh one is not", () => {
-  const f = new Function("var state = { prices: { '530': { p: 1, at: 1e12 - 1000 }, " +
+  const f = new Function("var state = { books: {}, prices: { '530': { p: 1, at: 1e12 - 1000 }, " +
     "'533': { p: 1, at: 1e12 - 7 * 3600 * 1000 } } };" +
     "var Date = { now: function(){ return 1e12; } };" +
     consts(["PRICE_TTL"]) + " return " + grab("priceStale"))();

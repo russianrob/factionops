@@ -19,7 +19,8 @@ const plan = (stats, goals, perDayGain, perks, order) => new Function("var RESUL
   var CAL_WINDOW = 14, CAL_MIN_DAYS = 7;
   var CAL_MODEL_LO = 0.5, CAL_MODEL_HI = 1.5;
   var CAL_USAGE_LO = 0.3, CAL_USAGE_HI = 1.5;
-  var state = { goalOrder: ${JSON.stringify(order || [])}, goalStep: 0,
+      ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
+    var state = { books: {}, goalOrder: ${JSON.stringify(order || [])}, goalStep: 0,
                 stats: ${JSON.stringify(stats)}, goals: ${JSON.stringify(goals)},
                 gymName: "T", happyMax: 5000, perks: ${JSON.stringify(perks || {})},
                 hist: [], ledger: [], focus: "str" };
@@ -31,7 +32,7 @@ const plan = (stats, goals, perDayGain, perks, order) => new Function("var RESUL
   function storeSet(k, v){ STORED[k] = v; }
   function gainOne(){ return ${perDayGain} / 10; }   // 10 trains a day -> ${perDayGain}/day
   ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("calibration")}
-  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")} ${grab("applyGoalFocus")}
+  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")} ${grab("applyGoalFocus")}
   var p = goalPlan();
   applyGoalFocus();
   RESULT = { plan: p, focus: state.focus, has: hasGoals(), stored: STORED.focus,

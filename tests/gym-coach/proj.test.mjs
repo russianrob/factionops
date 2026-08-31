@@ -16,14 +16,15 @@ const project = (focus, goals, days) => new Function("var RESULT;" + `
   var histProjCache = {}, goalCache = { key: "", val: null };
   var GOAL_STEPS = [0, 5e7, 1e8, 2.5e8, 5e8];
   var GOAL_MAX_TRAINS = 4e6;
-  var state = { goalOrder: [], goalStep: 0, focus: ${JSON.stringify(focus)}, gymName: "T", happyMax: 5000, perks: {}, hist: [], ledger: [],
+      ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
+    var state = { books: {}, goalOrder: [], goalStep: 0, focus: ${JSON.stringify(focus)}, gymName: "T", happyMax: 5000, perks: {}, hist: [], ledger: [],
                 goals: ${JSON.stringify(goals)},
                 stats: { str: 10000, def: 20000, spe: 30000, dex: 40000 } };
   function dailyEnergy(){ return { total: 100 }; }
   function gainOne(){ return 100; }                  // 10 trains x 100 = 1000/day
   function projectDays(d){ return d * 1000; }
   ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("calibration")}
-  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")} ${grab("histProjection")}
+  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")} ${grab("histProjection")}
   RESULT = histProjection(${days});` + "; return RESULT;")();
 
 let pass=0,fail=0;
