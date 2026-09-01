@@ -540,18 +540,26 @@ t("the board still ranks on gym energy, not on the two combined", () => {
 
 const yearAgo = (now) => call(["yearStartMs"], `yearStartMs(${now})`);
 
-t("the window is a year back from now, to the day", () => {
-  const NOW = Date.UTC(2026, 8, 2, 12, 0, 0);
-  assert.strictEqual(yearAgo(NOW), Date.UTC(2025, 8, 2, 12, 0, 0));
+t("the window starts on 1 January of the current year", () => {
+  // The calendar year, not a rolling twelve months: "who has taken the most
+  // this year" is a question with a fixed start date that everybody shares.
+  assert.strictEqual(yearAgo(Date.UTC(2026, 8, 2, 12, 0, 0)), Date.UTC(2026, 0, 1));
+  assert.strictEqual(yearAgo(Date.UTC(2026, 0, 1, 0, 0, 1)), Date.UTC(2026, 0, 1));
 });
 
-t("it handles a leap year without drifting a day", () => {
-  // 2024 was a leap year; naive 365-day arithmetic lands on the 1st.
-  const NOW = Date.UTC(2025, 1, 28, 0, 0, 0);
-  const d = new Date(yearAgo(NOW));
-  assert.strictEqual(d.getUTCFullYear(), 2024);
-  assert.strictEqual(d.getUTCMonth(), 1);
-  assert.strictEqual(d.getUTCDate(), 28);
+t("it is midnight TCT on the 1st, not local midnight", () => {
+  // Torn's day is TCT = UTC. A local getter would start the year hours out and
+  // the board would disagree with Torn's own counters at the boundary.
+  const d = new Date(yearAgo(Date.UTC(2026, 5, 15)));
+  assert.strictEqual(d.getUTCMonth(), 0);
+  assert.strictEqual(d.getUTCDate(), 1);
+  assert.strictEqual(d.getUTCHours(), 0);
+  assert.strictEqual(d.getUTCMinutes(), 0);
+});
+
+t("a new calendar year moves the window, so the board resets on 1 January", () => {
+  assert.notStrictEqual(yearAgo(Date.UTC(2027, 0, 1)), yearAgo(Date.UTC(2026, 11, 31)));
+  assert.strictEqual(yearAgo(Date.UTC(2027, 0, 1)), Date.UTC(2027, 0, 1));
 });
 
 const xan = (rows) => call(["xanBuild"], `xanBuild(${JSON.stringify(rows)})`);

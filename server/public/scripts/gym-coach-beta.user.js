@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.64
+// @version      0.9.65
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,16 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.65 - The xanax board counts from 1 January, not a rolling year.
+ *
+ *         A rolling twelve months quietly gives every member a different start
+ *         date -- whoever the board is refreshed for. "Who has taken the most
+ *         this year" is a question with one start date that the whole faction
+ *         shares, so it starts at midnight TCT on 1 January and resets there.
+ *
+ *         The column is headed with the year itself rather than "Year", since
+ *         the answer to "which year" should not need a footnote.
+ *
 * 0.9.64 - Gym energy vs attack energy, and a year of xanax.
  *
  *         The board now separates what reached the gym from what never did.
@@ -7907,14 +7917,16 @@
 
   // ---- the natural-regen column -------------------------------------------
 
-  // A year back from now, to the day.
+  // Midnight TCT on 1 January of the current year.
   //
-  // Calendar arithmetic, not 365 days: 2024 was a leap year and the naive
-  // version lands a day early for anyone asking in early 2025.
+  // The calendar year, not a rolling twelve months: "who has taken the most
+  // this year" is a question with one start date that everybody in the faction
+  // shares, and a rolling window quietly gives each member a different one.
+  //
+  // getUTC*, because Torn's day is TCT. A local getter starts the year hours
+  // out and the board disagrees with Torn's own counters at the boundary.
   function yearStartMs(now) {
-    var d = new Date(Number(now) || Date.now());
-    d.setUTCFullYear(d.getUTCFullYear() - 1);
-    return d.getTime();
+    return Date.UTC(new Date(Number(now) || Date.now()).getUTCFullYear(), 0, 1);
   }
 
   // The year's xanax board, from two readings of a lifetime counter.
@@ -8036,19 +8048,19 @@
 
   function xanHtml() {
     var rows = xanBuild(state.xanRows);
-    var head = '<div class="gc-card"><h3>Xanax \u00b7 last 12 months</h3>';
+    var head = '<div class="gc-card"><h3>Xanax \u00b7 since 1 Jan</h3>';
     if (state.xanBusy) {
       return head + '<p class="muted" style="margin:0">Reading \u2014 ' + state.xanDone + " of " + state.xanTotal + "\u2026</p></div>";
     }
     if (!rows.length) {
       return head +
-        '<p class="muted" style="margin:0 0 8px">Who has taken the most in the last year, from Torn\u2019s own personal stats \u2014 exact, not estimated. Two requests per member, so it is a button rather than automatic.</p>' +
+        '<p class="muted" style="margin:0 0 8px">Who has taken the most since 1 January, from Torn\u2019s own personal stats \u2014 exact, not estimated. Two requests per member, so it is a button rather than automatic.</p>' +
         (state.xanError ? '<p class="bad" style="margin:0 0 8px">' + esc(state.xanError) + "</p>" : "") +
         '<button type="button" class="gcb-btn" data-board="xan">Work it out (top ' + XAN_TOP + ")</button></div>";
     }
     return head +
       '<div class="gcb-brow head"><span class="gcb-brank">#</span><span class="gcb-bname">Member</span>' +
-      '<span class="gcb-benergy">Year</span><span class="gcb-bnat">Ever</span></div>' +
+      '<span class="gcb-benergy">' + new Date().getUTCFullYear() + '</span><span class="gcb-bnat">Ever</span></div>' +
       rows.map(function (r) {
         return '<div class="gcb-brow' + (String(r.id) === String(state.playerId) ? " me" : "") + '">' +
           '<span class="gcb-brank">' + r.rank + "</span>" +
@@ -8057,7 +8069,7 @@
           '<span class="gcb-bnat muted">' + fmt(r.total) + "</span></div>";
       }).join("") +
       (state.xanError ? '<p class="bad" style="margin:8px 0 0">' + esc(state.xanError) + "</p>" : "") +
-      '<p class="muted" style="margin:8px 0 0;font-size:11px">Year is the last 12 months to the day; Ever is the lifetime total Torn holds. Ranked on the year, because the lifetime figure mostly measures how long someone has played.</p>' +
+      '<p class="muted" style="margin:8px 0 0;font-size:11px">Counted from 1 January 00:00 TCT; Ever is the lifetime total Torn holds. Ranked on this year, because the lifetime figure mostly measures how long someone has played \u2014 and it resets on 1 January.</p>' +
       '<button type="button" class="gcb-btn" data-board="xan" style="margin-top:9px">Refresh</button></div>';
   }
 
