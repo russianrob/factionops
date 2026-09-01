@@ -8,6 +8,15 @@
 import fs from "fs";
 import assert from "assert";
 const src = fs.readFileSync("gym-coach-beta.user.js", "utf8");
+// gymFor() reads the real gym table, and a train's cost is what decides whether
+// an observed drop was training at all. Pulled from source, never restated: a
+// sandbox that defines its own costs would shadow production and let every
+// mutation of the real ones survive.
+const GYMS_SRC = (() => {
+  const m = /  var GYMS = \[[\s\S]*?\n  \];/.exec(src);
+  if (!m) throw new Error("GYMS table not found in the script");
+  return m[0];
+})();
 function grab(n) {
   const i = src.indexOf("function " + n + "(");
   assert.ok(i !== -1, "function " + n + "() is not defined in the script");
@@ -42,7 +51,7 @@ function observe({ prevE, nowE, secs = 60, onGym, max = 150, rate = 120 }) {
                   logReadable: true, trainLog: { events: [] }, attackEvents: [],
                   lastSeen: { e: ${prevE}, t: Date.now() - ${secs} * 1000 } };
     ${grab("timeToFull")} ${grab("ledgerDelta")} ${grab("ledgerBucket")} ${grab("dayLooksStacked")}
-    ${grab("simulateWaste")} ${grab("gapWaste")} ${grab("ledgerObserve")}
+    ${GYMS_SRC} ${grab("gymSpend")} ${grab("noteGymSpend")} ${grab("gymFor")} ${grab("perTrainEnergy")} ${grab("simulateWaste")} ${grab("gapWaste")} ${grab("ledgerObserve")}
     ledgerObserve(true);
     var b = state.ledger[state.ledger.length - 1] || {};
     RESULT = { used: Math.round(b.used || 0), wasted: Math.round(b.wasted || 0),

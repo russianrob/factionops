@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.48
+// @version      0.9.49
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,31 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.49 — "Spent today" crept upward on a page that was only being reloaded.
+ *
+ *         Reported: 340 energy actually trained, the card reading 367 and
+ *         ticking up by one without a train. The tell was in the number itself
+ *         -- that gym costs 10 energy a train, and no multiple of 10 ends in a
+ *         7, so 367 could not be a gym total at all.
+ *
+ *         Two defects, and the second is why it never corrected itself.
+ *
+ *         On gym.php every observed bar drop was booked as training. Off gym.php
+ *         the same code already discards anything that is not a whole 25-energy
+ *         attack, with a comment explaining that the remainder is API/DOM skew
+ *         -- but on the gym page there was no such guard, so a point or two of
+ *         disagreement between the API bar and the DOM bar became a point or
+ *         two of training, on every reload. Now counted in whole trains, at the
+ *         cost the gym actually charges.
+ *
+ *         And the local count was carried against Torn's log FOREVER. The carry
+ *         exists so a train from four seconds ago still shows while the log is
+ *         two minutes stale, but it could not tell "the log is behind" from
+ *         "the local count is wrong", and it resolved every disagreement in
+ *         favour of the local one. So each point of skew survived every log
+ *         round and accumulated all day. The log is the authority now: an
+ *         excess it has not confirmed within seven minutes is dropped.
+ *
 * 0.9.48 — Board hardening, after an adversarial read of the whole feature.
  *
  *         Twelve findings, all real, none of them cosmetic:
@@ -4805,11 +4830,77 @@
   // the log has caught up with is dropped, what it has not is kept, and a log
   // that knows MORE than we do (training on another device) simply leaves
   // nothing to carry.
-  function carriedSince(prev, freshByDay, dayK) {
+  // How much of an observed bar drop on gym.php was actually training.
+  //
+  // Counted in WHOLE TRAINS, exactly as off-gym spend is counted in whole
+  // attacks, and for exactly the same reason. A train costs a known fixed
+  // amount, so a drop that is not a multiple of it did not come out of the gym
+  // -- it is skew between the API bar and the DOM bar. That skew was being
+  // booked as training, and then carried, so "Spent today" crept upward on a
+  // page that was only being reloaded. Reported as 367e against 340e actually
+  // trained, on a gym that costs 10 a train: no gym total ends in a 7.
+  //
+  // An unknown gym cost falls back to counting the whole drop. Over-counting
+  // is a wrong number; counting nothing would silently stop recording training
+  // altogether for anyone whose gym the script has not identified yet.
+  function gymSpend(used, perTrain) {
+    var u = Number(used) || 0;
+    if (u <= 0) return 0;
+    var per = Number(perTrain) || 0;
+    if (per <= 0) return u;
+    return Math.floor(u / per) * per;
+  }
+
+  // Records a locally-observed train against the log's running count.
+  //
+  // Both fields together, always. A `since` written without a `sinceAt` can
+  // never expire, which is precisely the behaviour being fixed -- so the two
+  // writes live in one place rather than at a call site where one of them can
+  // quietly go missing.
+  function noteGymSpend(tl, trained, now) {
+    if (!tl || !(Number(trained) > 0)) return tl;
+    tl.since = (tl.since || 0) + Number(trained);
+    tl.sinceAt = Number(now) || 0;
+    return tl;
+  }
+
+  // What one train costs at the gym you are actually in, or 0 when that is not
+  // known yet.
+  //
+  // Deliberately NOT gymFor(), which falls back to the last row of the table --
+  // the most expensive gym in the game. Using 25 as the filter width for
+  // somebody whose gym has not been identified would silently discard up to 24
+  // energy of real training per observation. An unknown cost has to mean "do
+  // not filter", not "assume the widest one".
+  function perTrainEnergy() {
+    var g = GYMS.filter(function (x) { return x.Gym === state.gymName; })[0];
+    return g ? Number(g.Energy) || 0 : 0;
+  }
+
+  // How long a locally-counted train is carried before Torn's log overrules it.
+  //
+  // Two full log rounds and then some. Shorter than the fetch interval and the
+  // figure would dip between rounds on every device, which is worse than the
+  // drift being fixed.
+  var SINCE_GRACE_MS = 420000;
+
+  function carriedSince(prev, freshByDay, dayK, now) {
     if (!prev) return 0;
     var known = ((prev.byDay && prev.byDay[dayK]) || 0) + (prev.since || 0);
     var fresh = (freshByDay && freshByDay[dayK]) || 0;
-    return Math.max(0, known - fresh);
+    var excess = Math.max(0, known - fresh);
+    if (!excess) return 0;
+    // The log is the authority. An excess only ever means "Torn has not caught
+    // up with a train from a few seconds ago", so it is carried for one grace
+    // window and then dropped. Carrying it indefinitely is what let a single
+    // point of skew survive every log round and accumulate all day: the local
+    // count stayed above the log, so the difference was preserved forever as
+    // though the log were permanently behind.
+    var at = Number(prev.sinceAt) || 0;
+    // An unstamped counter predates this and is trusted once, so a device
+    // upgrading mid-session does not lose a train it really did do.
+    if (at && (Number(now) || 0) - at > SINCE_GRACE_MS) return 0;
+    return excess;
   }
 
   // Two minutes, not one. The live `since` figure now covers the wait, so
@@ -4852,7 +4943,7 @@
       var cut = Date.now() - 3 * 86400000;
       var fresh = trainLogByDay(rs);
       state.trainLog = { byDay: fresh, at: Date.now(),
-                         since: carriedSince(state.trainLog, fresh, dayKey(Date.now())),
+                         since: carriedSince(state.trainLog, fresh, dayKey(Date.now()), Date.now()),
                          events: trainLogEvents(rs).filter(function (e) { return e.t >= cut; }) };
       state.logReadable = true;
       storeSet("trainLog", state.trainLog);
@@ -5067,10 +5158,16 @@
         // making every ETA optimistic on the days you warred hardest.
         if (d.used > 0) {
           if (onGymPage()) {
-            b.used += d.used;
-            // Keeps the Now tab moving in the seconds before the next log
-            // round lands; cleared when it does.
-            if (state.trainLog) state.trainLog.since = (state.trainLog.since || 0) + d.used;
+            // Whole trains only. See gymSpend: on gym.php every bar wobble used
+            // to be booked as training, including the point or two of API/DOM
+            // skew that a page reload produces.
+            var trained = gymSpend(d.used, perTrainEnergy());
+            if (trained > 0) {
+              b.used += trained;
+              // Keeps the Now tab moving in the seconds before the next log
+              // round lands; overruled by the log once it catches up.
+              noteGymSpend(state.trainLog, trained, Date.now());
+            }
           }
           // Counted in WHOLE ATTACKS. A Torn attack costs exactly 25e, so a
           // smaller off-gym drop cannot be one -- it is API/DOM skew, and the
@@ -6433,6 +6530,25 @@
     return map;
   }
 
+  // A copy of the baseline that anchoring can be tried against without
+  // committing to it.
+  //
+  // DEEP, and that is the whole point. Copying the per-stat maps by reference
+  // left boardSnap writing straight into the live baseline: the draft protected
+  // the SAVED copy and nothing else, so a round that died half-way still left
+  // the in-memory anchors half-moved and the next successful round measured the
+  // week against them. The bug outlived a browser test that only checked what
+  // reached storage.
+  function boardDraft(base) {
+    var out = { week: base ? base.week : null, at: (base && base.at) || 0, stats: {} };
+    var src = (base && base.stats) || {}, k, q;
+    for (k in src) {
+      out.stats[k] = {};
+      for (q in src[k]) out.stats[k][q] = src[k][q];
+    }
+    return out;
+  }
+
   function boardDeltas(base, stat, rows) {
     var map = boardSnap(base, stat, rows), out = {};
     for (var i = 0; i < rows.length; i++) {
@@ -6710,9 +6826,7 @@
     // half-way anchors energy at Monday and trains at whenever the next attempt
     // succeeded -- and a split normalised across differently-anchored stats
     // looks perfectly plausible while being wrong for the rest of the week.
-    var draft = { week: base.week, at: base.at, stats: {} };
-    var k;
-    for (k in (base.stats || {})) draft.stats[k] = base.stats[k];
+    var draft = boardDraft(base);
     var pending = {}, got = 0;
 
     function step(i) {

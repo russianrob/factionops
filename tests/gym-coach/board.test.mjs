@@ -135,6 +135,40 @@ t("each stat keeps its own baseline", () => {
   assert.strictEqual(base.stats.gymstrength["1"], 700);
 });
 
+t("a draft does not alias the baseline it was copied from", () => {
+  // The whole atomic-anchoring claim rests on this. A shallow copy shares the
+  // per-stat maps, so boardSnap anchors into the LIVE baseline and a round that
+  // dies half-way still half-moves it -- while a test that only inspects
+  // storage sees nothing wrong, which is exactly what happened.
+  const out = new Function("var R;" + env("boardDraft", "boardSnap", "boardDeltas") + `
+    var base = { week: 1, at: 5, stats: { gymenergy: { 1: 100 }, gymtrains: { 1: 9 } } };
+    var d = boardDraft(base);
+    boardDeltas(d, "gymenergy", [{ id: 1, username: "a", value: 40 }]);   // forces a re-anchor
+    boardDeltas(d, "gymspeed",  [{ id: 7, username: "b", value: 12 }]);   // a brand-new stat
+    R = { base: base, draft: d };
+    return R;`)();
+  assert.strictEqual(out.base.stats.gymenergy["1"], 100, "the live baseline was re-anchored by a draft");
+  assert.strictEqual(out.draft.stats.gymenergy["1"], 40, "the draft did not record the re-anchor");
+  assert.strictEqual(out.base.stats.gymspeed, undefined, "a draft added a stat to the live baseline");
+});
+
+t("a draft carries the week's existing anchors, so the week keeps counting", () => {
+  // The other half. A draft that starts empty is perfectly atomic and
+  // perfectly useless: every member re-anchors at their current value and the
+  // whole faction reads zero, for ever.
+  const out = new Function("var R;" + env("boardDraft", "boardSnap", "boardDeltas") + `
+    var base = { week: 1, at: 5, stats: { gymenergy: { 1: 100 } } };
+    R = boardDeltas(boardDraft(base), "gymenergy", [{ id: 1, username: "a", value: 150 }]);
+    return R;`)();
+  assert.strictEqual(out["1"].delta, 50, "the draft lost the baseline it was copied from");
+});
+
+t("a draft of nothing is still a usable draft", () => {
+  const d = call(["boardDraft"], "boardDraft(null)");
+  assert.deepStrictEqual(d.stats, {});
+  assert.strictEqual(d.week, null);
+});
+
 // ---- the week rolling over ------------------------------------------------
 
 const roll = (board, now) => call(["dayKey", "weekKey", "weekStartMs", "boardRoll"],

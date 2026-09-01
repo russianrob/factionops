@@ -385,6 +385,17 @@ await t("a round that dies part-way anchors nothing, rather than anchoring half 
   const saved = await page.evaluate(() => localStorage.getItem("gcb_v1_board"));
   assert.ok(!saved || !JSON.parse(saved).stats || !Object.keys(JSON.parse(saved).stats).length,
     "a half-read round persisted its anchors: " + saved);
+  // Storage is only half the claim, and checking it alone gave false
+  // confidence: the in-memory baseline was still being anchored through a
+  // shallow copy, so the NEXT successful round measured against half-moved
+  // anchors. The observable consequence is that a clean round after a failed
+  // one must still read every member as zero -- not as the energy they spent
+  // between the two attempts.
+  await load({ contributors: CONTRIB });
+  await openBoard();
+  const r = await rows();
+  r.forEach(x => assert.strictEqual(x.energy, "0e",
+    "a failed round anchored in memory after all: " + JSON.stringify(r)));
 });
 
 await t("a half-read board says so instead of looking complete", async () => {

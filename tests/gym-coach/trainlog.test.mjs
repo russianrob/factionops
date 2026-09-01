@@ -1,6 +1,15 @@
 import fs from "fs";
 import assert from "assert";
 const src = fs.readFileSync("gym-coach-beta.user.js", "utf8");
+// gymFor() reads the real gym table, and a train's cost is what decides whether
+// an observed drop was training at all. Pulled from source, never restated: a
+// sandbox that defines its own costs would shadow production and let every
+// mutation of the real ones survive.
+const GYMS_SRC = (() => {
+  const m = /  var GYMS = \[[\s\S]*?\n  \];/.exec(src);
+  if (!m) throw new Error("GYMS table not found in the script");
+  return m[0];
+})();
 function grab(n){const i=src.indexOf("function "+n+"(");let d=0,j=src.indexOf("{",i);
   for(let k=j;k<src.length;k++){if(src[k]==="{")d++;else if(src[k]==="}"){d--;if(!d)return src.slice(i,k+1);}}}
 function grabVar(n){const m=new RegExp("var "+n+" = (\\{[^}]*\\});").exec(src);return "var "+n+" = "+m[1]+";";}
@@ -44,7 +53,7 @@ const session = steps => new Function("var RESULT;" + `
   ${grabVar("STAT_KEY")}
   ${grab("inferTrainSkillFromDelta")} ${grab("energyRate")} ${grab("timeToFull")} ${grab("ledgerDelta")}
   ${/var GAP_MS = \d+;/.exec(src)[0]} ${grab("simulateWaste")} ${grab("gapWaste")}
-    function onGymPage(){ return true; } ${grab("dayLooksStacked")} ${grab("ledgerBucket")} ${grab("ledgerObserve")} ${grab("finaliseTrain")}
+    ${GYMS_SRC} ${grab("gymSpend")} ${grab("noteGymSpend")} ${grab("gymFor")} ${grab("perTrainEnergy")} function onGymPage(){ return true; } ${grab("dayLooksStacked")} ${grab("ledgerBucket")} ${grab("ledgerObserve")} ${grab("finaliseTrain")}
   var ledgerDirty = 0, ledgerFlushAt = 0;
   ${JSON.stringify(steps)}.forEach(function (st) {
     clock += (st.ms || 1000);
