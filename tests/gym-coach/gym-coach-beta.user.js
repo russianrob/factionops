@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.58
+// @version      0.9.59
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,22 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.59 - A book the page told us about is not a toggle.
+ *
+ *         Reported: tapping the green pill reset the countdown to 31 days. It
+ *         did. The pill was the same toggle every other row uses, so a tap
+ *         turned the book off, the detector re-added it on the next paint dated
+ *         from now, and a countdown that had just been read exactly out of the
+ *         item log threw that away.
+ *
+ *         The only thing a tap can do to a page-detected book is make it worse,
+ *         so there is nothing to tap: it renders as a chip. Books the page has
+ *         NOT told us about stay tappable, which is the entire point of them.
+ *
+ *         Also counts down in days AND hours, the way Torn's own icon does.
+ *         Rounding 29d 16h up to "30d left" reads as disagreeing with the game
+ *         about something you can see both of at once.
+ *
 * 0.9.58 - Match the book catalogue on the name, not on its punctuation.
  *
  *         0.9.57's diagnostic paid for itself immediately: "catalogue had 44
@@ -4429,16 +4445,33 @@
       var exact = (state.booksExact || {})[k];
       // Hours once it is close. "1d left" for something finishing this evening
       // is the least useful way to say it.
+      // Days AND hours, the way Torn's own icon puts it. Rounding 29d16h up to
+      // "30d left" reads as disagreeing with the game over something both are
+      // looking at.
+      var ms = p ? p.finishesAt - now : 0;
       var left = !p ? "" :
-        p.finishesAt - now < 172800000
-          ? Math.max(1, Math.round((p.finishesAt - now) / 3600000)) + "h left"
-          : p.daysLeft + "d left";
+        ms < 172800000
+          ? Math.max(1, Math.round(ms / 3600000)) + "h left"
+          : Math.floor(ms / 86400000) + "d " + Math.floor((ms % 86400000) / 3600000) + "h left";
+      // A book the PAGE told us about is not a toggle.
+      //
+      // Tapping it turned it off, the detector re-added it on the next paint
+      // dated from now, and a countdown that had just been read exactly out of
+      // the item log jumped back to 31 days. The only thing a tap can do to a
+      // page-detected book is make it worse, so there is nothing to tap: it
+      // renders as a chip. Books the page has NOT told us about stay tappable,
+      // which is the whole point of them.
+      var owned = p && ((state.booksAuto || {})[k] || exact);
       return '<div class="row"><span>' + STAT_LABEL[k] +
         '<span class="muted"> \u00b7 ' + esc(STAT_BOOKS[k].name) + "</span></span>" +
-        '<button type="button" class="gc-btn secondary" data-book="' + k + '" ' +
-        'style="width:auto;min-height:0;padding:5px 11px;font-size:12px' +
-        (p ? ";background:#2ecc71;color:#08131c" : "") + '">' +
-        (p ? left + " \u00b7 +" + fmt(award) : "reading?") + "</button>" +
+        (owned
+          ? '<span class="gc-btn secondary" style="width:auto;min-height:0;padding:5px 11px;' +
+            'font-size:12px;background:#2ecc71;color:#08131c;cursor:default">' +
+            left + " \u00b7 +" + fmt(award) + "</span>"
+          : '<button type="button" class="gc-btn secondary" data-book="' + k + '" ' +
+            'style="width:auto;min-height:0;padding:5px 11px;font-size:12px' +
+            (p ? ";background:#2ecc71;color:#08131c" : "") + '">' +
+            (p ? left + " \u00b7 +" + fmt(award) : "reading?") + "</button>") +
         (p && !exact && (state.booksAuto || {})[k]
           ? '<span class="muted" style="flex:1 1 100%;font-size:11px">spotted on the page, but Torn does not say when you started \u2014 counted from when this device first saw it, so this is the LATEST it can finish</span>'
           : p && exact

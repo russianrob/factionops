@@ -142,27 +142,55 @@ await t("a hand-set date survives even when the detector is tracking that stat",
   assert.strictEqual((await books()).spe, WAS, "a date the detector does not own was cleared anyway");
 });
 
-await t("tapping on a page without the strip takes the date back from the detector", async () => {
-  // Otherwise the next strip without the book would clear what you just set.
-  //
-  // Deliberately on a page with NO strip. Where the strip DOES show the book,
-  // the page wins and the detector re-claims it immediately -- which is right:
-  // Torn saying you are reading it beats a tap saying you are not.
-  await load({
-    strip: null,
-    seed: { gcb_v1_books: JSON.stringify({ str: 0, def: 0, spe: Date.now() - 86400000, dex: 0 }),
-            gcb_v1_booksAuto: JSON.stringify({ spe: true }) }
+await t("a page-detected book has no toggle to tap", async () => {
+  // Tapping it turned the book off, the detector re-added it dated from now,
+  // and an exact countdown reset to 31 days. There is nothing to tap now.
+  await load({ strip: [READING], cfg: { keyLevel: 4,
+    bookItems: [[745, "Time Is In The Mind"]], bookLogRows: [[Math.floor((Date.now() - 30 * 86400000) / 1000), 745]] } });
+  await page.waitForTimeout(3500);
+  await page.evaluate(() => document.querySelector('[data-tab="plan"]').click());
+  await page.waitForTimeout(600);
+  const live = await page.evaluate(() => !!document.querySelector('[data-book="spe"]'));
+  assert.strictEqual(live, false, "the detected book is still a toggle, so it can still be reset");
+  // and the others must remain tappable, or a book Torn cannot show is unrecordable
+  const others = await page.evaluate(() =>
+    ["str", "def", "dex"].filter(k => !!document.querySelector('[data-book="' + k + '"]')).length);
+  assert.strictEqual(others, 3, "the books you are not reading should still be tappable");
+});
+
+await t("the countdown is stated in days and hours, as Torn states it", async () => {
+  const THIRTY = Math.floor((Date.now() - 5 * 86400000) / 1000);
+  await load({ strip: [READING], cfg: { keyLevel: 4,
+    bookItems: [[745, "Time Is In The Mind"]], bookLogRows: [[THIRTY, 745]] } });
+  await page.waitForTimeout(3500);
+  await page.evaluate(() => document.querySelector('[data-tab="plan"]').click());
+  await page.waitForTimeout(600);
+  const txt = await page.evaluate(() => {
+    const c = [...document.querySelectorAll("#gcb-panel .gc-card")].filter(x => /stat books/i.test(x.textContent))[0];
+    return c ? c.innerText.replace(/\s+/g, " ") : "";
   });
-  assert.strictEqual((await auto()).spe, true, "setup: it should start as the detector's");
+  assert.match(txt, /\dd \d+h left/, "should read like Torn's own icon: " + txt.slice(0, 160));
+});
+
+await t("tapping a book the page has NOT named takes it from the detector", async () => {
+  // A leftover auto flag from a book that has since finished: the flag is set
+  // but no date is, so the row is still tappable. Tapping has to clear the flag,
+  // or the next strip without a book would wipe the date you just entered.
+  await load({
+    strip: ["Donator: yes"],
+    seed: { gcb_v1_books: JSON.stringify({ str: 0, def: 0, spe: 0, dex: 0 }),
+            gcb_v1_booksAuto: JSON.stringify({ str: true }) }
+  });
   await page.evaluate(() => document.querySelector('[data-tab="plan"]').click());
   await page.waitForTimeout(500);
   await page.evaluate(() => {
-    const b = document.querySelector('[data-book="spe"]');
-    if (!b) throw new Error("no book button on the Plan tab");
+    const b = document.querySelector('[data-book="str"]');
+    if (!b) throw new Error("no Strength button on the Plan tab");
     b.click();
   });
   await page.waitForTimeout(600);
-  assert.strictEqual((await auto()).spe, false, "the detector still owns a date you just set by hand");
+  assert.ok((await books()).str > 0, "the tap should have set a date");
+  assert.strictEqual((await auto()).str, false, "the detector still owns a date you just set by hand");
 });
 
 await t("the start date comes from the item log, matched by ITEM ID", async () => {
