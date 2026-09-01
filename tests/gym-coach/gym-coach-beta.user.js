@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.44
+// @version      0.9.45
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -11,6 +11,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
+// @grant        GM_setClipboard
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @grant        GM.xmlHttpRequest
@@ -28,6 +29,47 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.45 — A faction gym board, with no server behind it.
+ *
+ *         Asked for: a leaderboard or hall of fame per faction -- who used the
+ *         most natural regen this week -- without standing a backend up for it.
+ *
+ *         /v2/faction/contributors turns out to hand ONE caller every member's
+ *         cumulative gym numbers, from a Limited key with faction API access.
+ *         Nobody else installs anything, hands over a key or opts in, and no
+ *         backend ever holds faction data. Energy spent and all four stat
+ *         gains are in the same enum, so the board carries battle stats beside
+ *         the energy rather than only the energy.
+ *
+ *         What that endpoint does not have is history -- its `timestamp` is a
+ *         cache-buster, not a query -- so a WEEKLY figure is a delta against a
+ *         baseline frozen at Monday 00:00 TCT. That baseline lives on this
+ *         device, and the board still agrees across devices, because the
+ *         numbers being subtracted are the FACTION's rather than this one's.
+ *         Two clients anchored at the same Monday compute the same board
+ *         without ever talking to each other. The shared clock is the sync.
+ *
+ *         The natural-regen column needs no baseline at all.
+ *         /user/<id>/personalstats answers refills, xanax and energy drinks on
+ *         a PUBLIC key -- the same figures Torn prints on a profile -- and with
+ *         a timestamp answers them HISTORICALLY, so Monday's counts are simply
+ *         asked for. A past week's answer never changes, so it is fetched once
+ *         and kept. Natural energy is what is left after a refill, a pill and
+ *         a can are taken out of the week.
+ *
+ *         Contributors takes one stat per call, so the board is five requests.
+ *         They go out one at a time behind a gap, only when the tab is opened,
+ *         behind a five-minute TTL -- never on the poll tick. The natural
+ *         column is one more request per member and is a button, not automatic.
+ *
+ *         Copy for chat gives you the top twelve as plain text to paste into
+ *         faction chat; Copy for Discord gives the same board fenced, where
+ *         monospace columns survive. Nothing is uploaded -- the card is built
+ *         on the device and goes to the clipboard.
+ *
+ *         A key whose faction position does not grant faction API access gets
+ *         Torn's own refusal and what actually fixes it, rather than a spinner.
+ *
 * 0.9.44 — Stat books count toward the plan.
  *
  *         Four books each award +5% of a stat, capped at 10,000,000, after 31
@@ -1549,6 +1591,23 @@
     // null until the attack log answers; { n, energy } after. Distinct from
     // { n: 0 }, which is a real "you have not attacked today".
     attacks: null,
+    // The faction board. `board` is the weekly baseline plus the archived
+    // weeks; `boardBy` is this run's per-stat deltas, which are cheap to
+    // recompute and deliberately not persisted. natBase caches each member's
+    // consumable counts AS OF the week start -- a historical answer that never
+    // changes, so it is kept rather than re-fetched.
+    board: { week: null, at: 0, stats: {}, rows: [], hist: [] },
+    boardBy: {},
+    boardFaction: "",
+    boardAt: 0,
+    boardError: null,
+    boardBusy: false,
+    natUse: {},
+    natBase: {},
+    natBusy: false,
+    natDone: 0,
+    natTotal: 0,
+    natError: null,
     attackEvents: null,
     playerId: null,
     // Whether the gym log answers this key. Full only -- on a Limited key an
@@ -6176,6 +6235,621 @@
              daysLeft: Math.ceil((finishesAt - now) / 86400000) };
   }
 
+
+  // ---- Faction gym board ---------------------------------------------------
+  //
+  // A leaderboard with no server behind it.
+  //
+  // /v2/faction/contributors hands ONE caller every member's cumulative gym
+  // numbers -- energy spent and stat points gained -- from a Limited key with
+  // faction API access. Nobody else installs anything, hands over a key, or
+  // opts in, and no backend ever holds faction data.
+  //
+  // What the endpoint does NOT have is history. Its `timestamp` parameter is a
+  // cache-buster, not a query, so a WEEKLY figure has to be a delta against a
+  // baseline frozen at the week boundary. That baseline lives on this device
+  // -- but the board still agrees across devices, because the numbers being
+  // subtracted are the FACTION's and not this device's. Two clients that
+  // anchored at the same Monday compute the same board without ever talking to
+  // each other. The shared clock is the sync.
+  var BOARD_STATS = ["gymenergy", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];
+  var BOARD_LABEL = {
+    gymenergy: "Energy",
+    gymstrength: "Strength",
+    gymdefense: "Defense",
+    gymspeed: "Speed",
+    gymdexterity: "Dexterity"
+  };
+  // Five stats is five requests -- contributors takes one stat per call --
+  // which is why this sits behind a long TTL and a tab you have to open,
+  // rather than on the poll tick.
+  var BOARD_TTL = 300000;
+  var BOARD_WEEKS = 8;         // past weeks kept, for the hall of fame
+  var BOARD_NATURAL_TOP = 12;  // how far down the natural column is worked out
+  var BOARD_CARD_ROWS = 12;    // rows a pasted card carries
+  // Energy each assist is worth, for the natural-regen column. The owner's own
+  // row uses their real bar maximum and can strength; everyone else's is an
+  // estimate, and the card says so.
+  var XAN_ENERGY = 250;
+  var REFILL_ENERGY = 150;
+  var CAN_ENERGY = 25;
+  // Monday 00:00 TCT. Epoch day 0 was a Thursday, so day 4 was the first
+  // Monday and the week index counts from there. TCT is UTC, so this is
+  // computed from dayKey and never from a local-time getter -- a local reading
+  // starts the week hours late and the two halves of a board disagree.
+  var WEEK_EPOCH_DAY = 4;
+
+  function weekKey(ms) {
+    return Math.floor((dayKey(ms) - WEEK_EPOCH_DAY) / 7);
+  }
+
+  function weekStartMs(wk) {
+    return (wk * 7 + WEEK_EPOCH_DAY) * DAY_MS;
+  }
+
+  // A device that was closed on Monday -- or installed on a Thursday -- anchors
+  // its baseline mid-week, and the board then covers less than it says. Ten
+  // minutes of slack for the first poll after the boundary; past that, the
+  // window is stated rather than claimed.
+  var BOARD_PARTIAL_MS = 600000;
+  function boardSince(board) {
+    if (!board || board.week == null) return null;
+    var start = weekStartMs(board.week);
+    var at = Number(board.at) || start;
+    return { at: at, start: start, partial: at - start > BOARD_PARTIAL_MS };
+  }
+
+  // getUTC*, because the week boundary is TCT.
+  function boardSinceLabel(ms) {
+    var d = new Date(ms);
+    var DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    function pad(n) { return (n < 10 ? "0" : "") + n; }
+    return DAYS[d.getUTCDay()] + " " + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()) + " TCT";
+  }
+
+  // Freeze the first reading of the week, and hand back the map that deltas
+  // measure against. Mutates the baseline on purpose: anchoring is a side
+  // effect that must survive the render that triggered it.
+  function boardSnap(base, stat, rows) {
+    if (!base.stats) base.stats = {};
+    var map = base.stats[stat] || (base.stats[stat] = {});
+    for (var i = 0; i < rows.length; i++) {
+      var id = String(rows[i].id), v = Number(rows[i].value) || 0;
+      // Never seen before -- the board's first run, or a member who joined
+      // mid-week. Anchor them here so their week counts from when the board
+      // first saw them, rather than ranking a lifetime total as a week's work.
+      if (!(id in map)) map[id] = v;
+      // The counter went DOWN. `gymenergy` is titled a CHALLENGE contributor,
+      // so a completed challenge may reset it, and leaving and rejoining
+      // certainly does. Re-anchor: a negative leaderboard entry is never the
+      // right answer, and a stuck baseline would suppress the rest of the week.
+      else if (v < map[id]) map[id] = v;
+    }
+    return map;
+  }
+
+  function boardDeltas(base, stat, rows) {
+    var map = boardSnap(base, stat, rows), out = {};
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i], id = String(r.id), v = Number(r.value) || 0;
+      out[id] = { id: r.id, name: r.username, value: v, delta: v - (map[id] || 0) };
+    }
+    return out;
+  }
+
+  // Roll the baseline when the week turns over, keeping the week that just
+  // ended so there is something to look back at. Returns the board rather than
+  // mutating it, so the caller decides when to persist.
+  function boardRoll(board, now) {
+    var wk = weekKey(now);
+    var hist = (board && board.hist) || [];
+    if (board && board.week === wk) return { base: board, hist: hist, rolled: false };
+    if (board && board.stats && Object.keys(board.stats).length) {
+      hist = hist.concat([{ week: board.week, at: board.at || weekStartMs(board.week),
+                            endAt: weekStartMs(board.week + 1), rows: board.rows || [] }]);
+      // Bounded, or eight months of dead baselines end up in storage.
+      if (hist.length > BOARD_WEEKS) hist = hist.slice(hist.length - BOARD_WEEKS);
+    }
+    return { base: { week: wk, at: now, stats: {}, hist: hist }, hist: hist, rolled: true };
+  }
+
+  // Energy that did not come out of a pill, a can or a refill.
+  //
+  // The three consumable counts are HISTORICAL -- /user/<id>/personalstats
+  // answers them as of the week boundary on a public key -- so this half needs
+  // no stored baseline of its own and cannot drift between devices.
+  function naturalEnergy(dEnergy, use, own) {
+    var u = use || {};
+    var refillE = (own && own.energyMax) || REFILL_ENERGY;
+    var canE = (own && own.canEnergy) || CAN_ENERGY;
+    var assisted = XAN_ENERGY * (Number(u.xantaken) || 0) +
+                   refillE * (Number(u.refills) || 0) +
+                   canE * (Number(u.energydrinkused) || 0);
+    return Math.max(0, (Number(dEnergy) || 0) - assisted);
+  }
+
+  // Fold the five per-stat delta maps into one row per member, ranked on the
+  // energy they spent. `used` carries consumable deltas keyed by member id for
+  // however far down the board they were worked out; `own` is the owner's real
+  // bar and can, used for their row only.
+  function boardBuild(byStat, used, own) {
+    var energy = (byStat && byStat.gymenergy) || {};
+    var ids = {}, k;
+    for (k in energy) ids[k] = true;
+    var rows = Object.keys(ids).map(function (id) {
+      var e = energy[id] || {};
+      function d(stat) {
+        var m = (byStat && byStat[stat]) || {};
+        return (m[id] && m[id].delta) || 0;
+      }
+      var use = used && used[id];
+      return {
+        id: e.id, name: e.name, energy: e.delta || 0,
+        // null, NOT zero: "not worked out yet" and "every point of it was
+        // bought" are different claims about a person.
+        natural: use ? naturalEnergy(e.delta || 0, use, own && String(own.id) === String(e.id) ? own : null) : null,
+        str: d("gymstrength"), def: d("gymdefense"),
+        spe: d("gymspeed"), dex: d("gymdexterity")
+      };
+    });
+    rows.sort(function (a, b) { return b.energy - a.energy || String(a.name).localeCompare(String(b.name)); });
+    rows.forEach(function (r, i) { r.rank = i + 1; });
+    return rows;
+  }
+
+  // Compact stat gains: a leaderboard line has no room for 1,200,000.
+  function boardShort(n) {
+    var v = Number(n) || 0;
+    if (v >= 1000000) return ROUND(v / 1000000, v >= 10000000 ? 0 : 1) + "m";
+    if (v >= 1000) return ROUND(v / 1000, v >= 10000 ? 0 : 1) + "k";
+    return String(v);
+  }
+
+  function boardGains(r) {
+    var out = [];
+    [["str", r.str], ["def", r.def], ["spe", r.spe], ["dex", r.dex]].forEach(function (p) {
+      if (p[1] > 0) out.push("+" + boardShort(p[1]) + " " + p[0]);
+    });
+    return out.join(" ");
+  }
+
+  function boardWeekLabel(ms) {
+    var d = new Date(ms);
+    // getUTC*, because the week boundary is TCT. Local getters read the label
+    // a day early west of Greenwich and the card disagrees with the board.
+    var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return MON[d.getUTCMonth()] + " " + d.getUTCDate();
+  }
+
+  // The pasteable card.
+  //
+  // "chat" is for Torn's faction chat, which renders in a proportional font --
+  // so nothing here relies on column alignment, and backticks are left out
+  // because Torn shows them literally. "discord" is the same board fenced as
+  // monospace, where alignment does survive.
+  function boardCardText(rows, opts) {
+    var o = opts || {};
+    var head = "Gym week of " + boardWeekLabel(o.week) + " — " + (o.faction || "faction") +
+      // A card that anchored mid-week has to say so, or it lands in chat as a
+      // full week's standings when it is not one.
+      (o.since && o.since.partial ? " (counting from " + boardSinceLabel(o.since.at) + ")" : "");
+    var shown = rows.slice(0, BOARD_CARD_ROWS);
+    var more = rows.length - shown.length;
+    var lines;
+    if (o.fmt === "discord") {
+      var w = 0;
+      shown.forEach(function (r) { w = Math.max(w, String(r.name).length); });
+      lines = shown.map(function (r) {
+        var name = String(r.name);
+        while (name.length < w) name += " ";
+        var nat = r.natural === null ? "" :
+          "  " + Math.round((r.natural / Math.max(1, r.energy)) * 100) + "% nat";
+        var gains = boardGains(r);
+        return String(r.rank).padStart(2) + ". " + name + "  " +
+               String(fmt(r.energy)).padStart(9) + "e" + nat + (gains ? "  " + gains : "");
+      });
+      return "```\n" + head + "\n" + lines.join("\n") +
+             (more > 0 ? "\n+ " + more + " more" : "") + "\n```";
+    }
+    lines = shown.map(function (r) {
+      var nat = r.natural === null ? "" :
+        " (" + Math.round((r.natural / Math.max(1, r.energy)) * 100) + "% natural)";
+      var gains = boardGains(r);
+      return r.rank + ". " + r.name + " — " + fmt(r.energy) + "e" + nat + (gains ? " — " + gains : "");
+    });
+    return head + "\n" + lines.join("\n") + (more > 0 ? "\n+ " + more + " more" : "");
+  }
+
+
+  // ---- reading the faction -------------------------------------------------
+
+  function boardUrl(stat) {
+    return "https://api.torn.com/v2/faction/contributors?stat=" + encodeURIComponent(stat) +
+      "&cat=current&key=" + encodeURIComponent(resolveKey()) +
+      "&comment=" + encodeURIComponent(COMMENT);
+  }
+
+  // Rows out of a contributors payload, tolerating the object-keyed shape as
+  // well as the documented array.
+  function boardRowsOf(d) {
+    var c = d && d.contributors;
+    if (!c) return null;
+    var rows = Array.isArray(c) ? c : Object.keys(c).map(function (k) {
+      var v = c[k]; return { id: v.id != null ? v.id : k, username: v.username, value: v.value, in_faction: v.in_faction };
+    });
+    // cat=current should already do this, but a board that quietly lists people
+    // who left is worse than one that asks for them twice.
+    return rows.filter(function (r) { return r.in_faction !== false; });
+  }
+
+  var BOARD_NAME_TTL = 86400000;
+  function fetchFactionName(force) {
+    if (!force && Date.now() - (state.boardNameAt || 0) < BOARD_NAME_TTL && state.boardFaction) return;
+    state.boardNameAt = Date.now();
+    httpGet("https://api.torn.com/v2/faction/basic?key=" + encodeURIComponent(resolveKey()) +
+            "&comment=" + encodeURIComponent(COMMENT))
+      .then(function (d) {
+        var b = (d && (d.basic || d)) || {};
+        if (b.name) { state.boardFaction = b.name; storeSet("boardFaction", b.name); }
+      })
+      .catch(function () { /* the board's own error line already covers this */ });
+  }
+
+  // Five stats is five requests -- contributors takes one stat per call -- so
+  // they go out one at a time behind a gap, never as a burst. The whole thing
+  // sits behind a five-minute TTL and a tab you have to open, because this
+  // shares a hundred-calls-a-minute budget with everything else the coach does.
+  var BOARD_GAP_MS = 700;
+  function fetchBoard(force) {
+    if (state.boardBusy) return;
+    var last = Math.max(state.boardAt || 0, state.boardTriedAt || 0);
+    if (!force && Date.now() - last < BOARD_TTL) return;
+    if (!resolveKey()) return;
+    state.boardBusy = true;
+    state.boardTriedAt = Date.now();
+    state.boardError = null;
+    fetchFactionName(false);
+
+    var now = Date.now();
+    var rolled = boardRoll(state.board, now);
+    if (rolled.rolled) {
+      state.board = rolled.base;
+      // Deltas and consumable counts belong to the week they were measured in.
+      // Left standing across a rollover they would be read against the NEW
+      // baseline -- and if the fetch below then failed, last week's board would
+      // sit there labelled as this week's.
+      state.boardBy = {};
+      state.natUse = {};
+    }
+    var base = state.board;
+    var got = 0;
+
+    function step(i) {
+      if (i >= BOARD_STATS.length) return Promise.resolve();
+      var stat = BOARD_STATS[i];
+      return httpGet(boardUrl(stat))
+        .then(function (d) {
+          var rows = boardRowsOf(d);
+          if (!rows) throw new Error("no contributors array");
+          state.boardBy[stat] = boardDeltas(base, stat, rows);
+          got += 1;
+        })
+        .catch(function (e) {
+          // Torn refuses the whole call when the key lacks faction API access.
+          // Recorded verbatim and shown as-is: a made-up explanation of
+          // somebody else's permissions is worse than Torn's own words.
+          state.boardError = { msg: e.message || "unreadable", code: e.code || null };
+          throw e;
+        })
+        .then(function () {
+          return new Promise(function (r) { setTimeout(r, BOARD_GAP_MS); });
+        })
+        .then(function () { return step(i + 1); });
+    }
+
+    step(0)
+      .then(function () {
+        state.boardAt = Date.now();
+        state.board.rows = boardCurrent();
+        saveBoard();
+      })
+      .catch(function () { if (got) state.boardAt = Date.now(); })
+      .then(function () {
+        state.boardBusy = false;
+        if (state.tab === "board") renderPanel();
+      });
+  }
+
+  // ---- the natural-regen column -------------------------------------------
+
+  // Consumable counts for one member as of a moment.
+  //
+  // /user/<id>/personalstats answers these on a PUBLIC key -- they are the same
+  // figures Torn prints on a profile -- and, with a timestamp, answers them
+  // HISTORICALLY. So the week-start side needs no stored baseline of its own,
+  // cannot drift between devices, and once fetched can be cached forever: a
+  // past week's answer never changes.
+  var PS_STATS = "refills,xantaken,energydrinkused";
+  function psUrl(id, atSec) {
+    return "https://api.torn.com/v2/user/" + encodeURIComponent(id) + "/personalstats?stat=" + PS_STATS +
+      (atSec ? "&timestamp=" + atSec : "") +
+      "&key=" + encodeURIComponent(resolveKey()) + "&comment=" + encodeURIComponent(COMMENT);
+  }
+
+  // Historic form is an array of { name, value }; the live form is a flat
+  // object. Reading both means a shape change cannot silently zero the column.
+  function readPs(d) {
+    var p = d && d.personalstats;
+    if (!p) return null;
+    var out = {};
+    if (Array.isArray(p)) {
+      p.forEach(function (row) { if (row && row.name) out[row.name] = Number(row.value) || 0; });
+    } else {
+      ["refills", "xantaken", "energydrinkused"].forEach(function (k) {
+        if (p[k] != null) out[k] = Number(p[k]) || 0;
+      });
+      // The nested v2 spellings, in case `stat=` is ignored and a full payload
+      // comes back instead.
+      if (p.other && p.other.refills && p.other.refills.energy != null) out.refills = Number(p.other.refills.energy) || 0;
+      if (p.drugs && p.drugs.xanax != null) out.xantaken = Number(p.drugs.xanax) || 0;
+      if (p.items && p.items.used && p.items.used.energy_drinks != null) out.energydrinkused = Number(p.items.used.energy_drinks) || 0;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  function psDelta(now, then) {
+    if (!now || !then) return null;
+    return {
+      refills: Math.max(0, (now.refills || 0) - (then.refills || 0)),
+      xantaken: Math.max(0, (now.xantaken || 0) - (then.xantaken || 0)),
+      energydrinkused: Math.max(0, (now.energydrinkused || 0) - (then.energydrinkused || 0))
+    };
+  }
+
+  // Worked out on request, never on the poll tick: this is one call per member
+  // for the live side plus one for the week start, and the week-start half is
+  // only ever paid once.
+  function fetchBoardNatural() {
+    if (state.boardBusy || state.natBusy) return;
+    var rows = boardCurrent();
+    if (!rows.length) return;
+    var wk = state.board && state.board.week;
+    // No week yet means the board has never been read, and weekStartMs(null)
+    // is NaN -- which would go out on the wire as timestamp=NaN.
+    if (wk == null) return;
+    var startSec = Math.floor(weekStartMs(wk) / 1000);
+    var picked = rows.slice(0, BOARD_NATURAL_TOP);
+    state.natBusy = true;
+    state.natDone = 0;
+    state.natTotal = picked.length;
+    state.natError = null;
+    if (!state.natBase[wk]) state.natBase[wk] = {};
+
+    function one(i) {
+      if (i >= picked.length) return Promise.resolve();
+      var id = String(picked[i].id);
+      var haveBase = state.natBase[wk][id];
+      // Thunks, not promises. httpGet fires the instant it is called, so an
+      // array of already-started requests would put both of a member's calls
+      // on the wire together and the gap below would only space the HANDLING.
+      // The rate limit counts requests, not callbacks.
+      var jobs = [function () { return httpGet(psUrl(id, 0)).then(readPs); }];
+      // The week-start reading never changes, so it is fetched once and kept.
+      if (!haveBase) jobs.push(function () { return httpGet(psUrl(id, startSec)).then(readPs); });
+      return jobs.reduce(function (p, job) {
+        return p.then(function (acc) {
+          return job().then(function (v) { acc.push(v); return acc; })
+            .then(function (a) { return new Promise(function (r) { setTimeout(function () { r(a); }, BOARD_GAP_MS); }); });
+        });
+      }, Promise.resolve([]))
+        .then(function (res) {
+          var live = res[0];
+          if (!haveBase && res[1]) { state.natBase[wk][id] = res[1]; haveBase = res[1]; }
+          var d = psDelta(live, haveBase);
+          if (d) state.natUse[id] = d;
+        })
+        .catch(function (e) { state.natError = e.message || "unreadable"; })
+        .then(function () {
+          state.natDone = i + 1;
+          if (state.tab === "board") renderPanel();
+          return one(i + 1);
+        });
+    }
+
+    one(0).then(function () {
+      state.natBusy = false;
+      state.natAt = Date.now();
+      saveBoard();
+      if (state.tab === "board") renderPanel();
+    });
+  }
+
+  function saveBoard() {
+    try {
+      storeSet("board", { week: state.board.week, at: state.board.at, stats: state.board.stats,
+                          rows: state.board.rows || [], hist: state.board.hist || [] });
+      // Pruned to the same window as the baselines, so a cache that is only
+      // ever added to cannot outgrow storage.
+      var keep = {}, wks = Object.keys(state.natBase).sort(function (a, b) { return a - b; });
+      wks.slice(-BOARD_WEEKS).forEach(function (w) { keep[w] = state.natBase[w]; });
+      state.natBase = keep;
+      storeSet("natBase", keep);
+    } catch (_) {}
+  }
+
+  // The board as it stands right now, from whatever has been fetched.
+  function boardCurrent() {
+    // Only the energy maximum, because the coach really does know that one.
+    // Which can somebody drank on a given day is not knowable for anyone --
+    // including the owner -- so that coefficient stays the shared estimate.
+    var own = state.playerId
+      ? { id: state.playerId, energyMax: state.energyMax || REFILL_ENERGY }
+      : null;
+    var use = Object.keys(state.natUse).length ? state.natUse : null;
+    return boardBuild(state.boardBy, use, own);
+  }
+
+  // ---- the Board tab -------------------------------------------------------
+
+  function boardNatPct(r) {
+    if (r.natural === null || r.energy <= 0) return null;
+    return Math.round((r.natural / r.energy) * 100);
+  }
+
+  function boardLine(r, meId) {
+    var pct = boardNatPct(r);
+    var gains = boardGains(r);
+    return '<div class="gcb-brow' + (String(r.id) === String(meId) ? " me" : "") + '">' +
+      '<span class="gcb-brank">' + r.rank + "</span>" +
+      '<span class="gcb-bname">' + esc(String(r.name || r.id)) + "</span>" +
+      '<span class="gcb-benergy">' + fmt(r.energy) + "e</span>" +
+      (pct === null ? '<span class="gcb-bnat muted">—</span>'
+                    : '<span class="gcb-bnat ' + (pct >= 80 ? "ok" : pct >= 50 ? "" : "bad") + '">' + pct + "%</span>") +
+      '<span class="gcb-bgain muted">' + esc(gains || "—") + "</span>" +
+      "</div>";
+  }
+
+  function boardHtml() {
+    var rows = boardCurrent();
+    var wk = state.board && state.board.week;
+    var startMs = wk == null ? Date.now() : weekStartMs(wk);
+    var since = boardSince(state.board);
+    var meId = state.playerId;
+
+    // A key that cannot read the faction gets Torn's own refusal and the one
+    // thing that actually fixes it, rather than a spinner that never resolves.
+    if (state.boardError && !rows.length) {
+      return '<div class="gc-card"><h3>Faction board</h3>' +
+        '<p class="bad" style="margin:0 0 6px">Torn refused the request: ' + esc(state.boardError.msg) +
+        (state.boardError.code ? " (code " + esc(String(state.boardError.code)) + ")" : "") + "</p>" +
+        '<p class="muted" style="margin:0">The board reads <b>faction contributors</b>, which needs an API key with <b>faction API access</b>. That is granted by your faction position, not by the key level — an officer can turn it on for your position, and no other member has to install or share anything.</p>' +
+        '<button type="button" class="gcb-btn" data-board="refresh" style="margin-top:9px">Try again</button></div>';
+    }
+
+    if (!rows.length) {
+      return '<div class="gc-card"><h3>Faction board</h3>' +
+        '<p class="muted" style="margin:0">' + (state.boardBusy ? "Reading the faction…" : "Nothing read yet.") + "</p>" +
+        (state.boardBusy ? "" : '<button type="button" class="gcb-btn" data-board="refresh" style="margin-top:9px">Load the board</button>') +
+        "</div>";
+    }
+
+    var fresh = rows.length && state.boardAt;
+    var natKnown = rows.filter(function (r) { return r.natural !== null; }).length;
+
+    var head =
+      '<div class="gc-card"><h3>Faction board · week of ' + esc(boardWeekLabel(startMs)) + "</h3>" +
+      '<p class="muted" style="margin:0 0 9px">' +
+      esc(state.boardFaction || "Your faction") + " — energy spent in the gym " +
+      (since && since.partial
+        ? "since this device first read the faction, <b>" + esc(boardSinceLabel(since.at)) + "</b>"
+        : "since <b>Monday 00:00 TCT</b>") +
+      ", and the stat points it bought. " +
+      'Read from Torn\u2019s own faction contributors, so it is the same board on every device and nothing is stored anywhere but here.</p>' +
+      '<div class="gcb-brow head"><span class="gcb-brank">#</span><span class="gcb-bname">Member</span>' +
+      '<span class="gcb-benergy">Energy</span><span class="gcb-bnat">Nat</span><span class="gcb-bgain">Gained</span></div>' +
+      rows.map(function (r) { return boardLine(r, meId); }).join("") +
+      '<div class="gcb-brow foot"><span class="muted" style="grid-column:1/-1">' +
+      (fresh ? "Read " + Math.max(0, Math.round((Date.now() - state.boardAt) / 1000)) + "s ago" : "Not read yet") +
+      (state.boardBusy ? " · reading…" : "") + "</span></div>" +
+      "</div>";
+
+    var natCard =
+      '<div class="gc-card"><h3>Natural regen</h3>' +
+      (state.natBusy
+        ? '<p class="muted" style="margin:0">Working it out — ' + state.natDone + " of " + state.natTotal + "…</p>"
+        : natKnown
+        ? '<p class="muted" style="margin:0 0 8px">Worked out for the top ' + natKnown + '. The <b>Nat</b> column is the share of the week\u2019s energy that did not come from a refill, a xanax or a can — the part you earned by just being there.</p>'
+        : '<p class="muted" style="margin:0 0 8px">The <b>Nat</b> column ranks who used the most energy they simply regenerated, rather than bought. Torn answers each member\u2019s refill, xanax and can counts — including what they were at Monday 00:00 — so this needs no stored history, but it is one request per member.</p>') +
+      (state.natError ? '<p class="bad" style="margin:0 0 8px">' + esc(state.natError) + "</p>" : "") +
+      (state.natBusy ? "" :
+        '<button type="button" class="gcb-btn" data-board="natural">' +
+        (natKnown ? "Refresh natural (top " + BOARD_NATURAL_TOP + ")" : "Work out natural (top " + BOARD_NATURAL_TOP + ")") +
+        "</button>") +
+      (natKnown ? '<p class="muted" style="margin:8px 0 0">A refill is counted as ' + REFILL_ENERGY + 'e and a can as ' + CAN_ENERGY +
+        'e for everyone but you — Torn does not publish another player\u2019s bar size or which can they drank. Your own row uses your real bar.</p>' : "") +
+      "</div>";
+
+    var shareCard =
+      '<div class="gc-card"><h3>Share it</h3>' +
+      '<p class="muted" style="margin:0 0 9px">Copies the top ' + BOARD_CARD_ROWS + ' as text you can paste straight into faction chat. Nothing is uploaded — the card is built here and goes to your clipboard.</p>' +
+      '<div class="gcb-brow btns">' +
+      '<button type="button" class="gcb-btn" data-board="copy-chat">Copy for chat</button>' +
+      '<button type="button" class="gcb-btn" data-board="copy-discord">Copy for Discord</button>' +
+      '<button type="button" class="gcb-btn ghost" data-board="refresh">Refresh</button>' +
+      "</div>" +
+      '<pre class="gcb-card-preview">' + esc(boardCardText(rows, {
+        faction: state.boardFaction, week: startMs, fmt: "chat", since: since
+      })) + "</pre></div>";
+
+    var hist = (state.board && state.board.hist) || [];
+    var hofCard = !hist.length ? "" :
+      '<div class="gc-card"><h3>Past weeks</h3>' +
+      hist.slice().reverse().map(function (h) {
+        var top = (h.rows || [])[0];
+        return '<div class="row"><span>week of ' + esc(boardWeekLabel(h.at)) + "</span><b>" +
+          (top ? esc(String(top.name)) + " · " + fmt(top.energy) + "e" : "—") + "</b></div>";
+      }).join("") + "</div>";
+
+    return head + natCard + shareCard + hofCard;
+  }
+
+
+  // Every write here is SYNCHRONOUS inside the tap. Torn PDA only grants the
+  // clipboard for the duration of the gesture, so anything awaited first --
+  // even a resolved promise -- lands after the permission has lapsed and the
+  // copy silently does nothing.
+  function copyText(text) {
+    try {
+      if (typeof GM_setClipboard === "function") { GM_setClipboard(text); return true; }
+    } catch (_) {}
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (_) {}
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;left:-9999px;top:0";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand("copy");
+      ta.remove();
+      return !!ok;
+    } catch (_) {}
+    return false;
+  }
+
+  function onBoardClick(what) {
+    if (what === "refresh") {
+      fetchBoard(true);
+      renderPanel();
+      return;
+    }
+    if (what === "natural") {
+      fetchBoardNatural();
+      renderPanel();
+      return;
+    }
+    if (what === "copy-chat" || what === "copy-discord") {
+      var rows = boardCurrent();
+      if (!rows.length) { showToast("Nothing to share", "Load the board first."); return; }
+      var wk = state.board && state.board.week;
+      var text = boardCardText(rows, {
+        faction: state.boardFaction,
+        week: wk == null ? Date.now() : weekStartMs(wk),
+        fmt: what === "copy-discord" ? "discord" : "chat",
+        since: boardSince(state.board)
+      });
+      var ok = copyText(text);
+      showToast(ok ? "Copied" : "Copy blocked",
+                ok ? "Paste it into " + (what === "copy-discord" ? "Discord." : "faction chat.")
+                   : "Select the card below and copy it by hand.");
+      return;
+    }
+  }
+
   var HIST_COLOURS = { str: "#e8a33d", def: "#3d9ae8", spe: "#e85f8a", dex: "#2ecc71" };
 
   function histWindow(days) {
@@ -6786,6 +7460,24 @@
       "#" + PANEL_ID + " .gc-ago{font-weight:inherit;color:inherit}" +
       "#" + PANEL_ID + " .gc-card{margin:0 0 10px;padding:12px;border-radius:12px;background:#23272f;border:1px solid #2e333c;max-width:100%;min-width:0}" +
       "#" + PANEL_ID + " .gc-card h3{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;font-weight:700}" +
+      // Faction board. A five-column grid rather than a table so the name can
+      // shrink and the numbers cannot -- a long username must not push the
+      // energy figure off a phone.
+      "#" + PANEL_ID + " .gcb-brow{display:grid;grid-template-columns:20px minmax(0,1fr) auto 34px;grid-template-areas:'r n e p' '. g g g';gap:2px 8px;align-items:baseline;padding:7px 0;border-top:1px solid #2e333c;font-size:13px}" +
+      "#" + PANEL_ID + " .gcb-brow:first-of-type{border-top:0}" +
+      "#" + PANEL_ID + " .gcb-brow.head{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#94a3b8;font-weight:700;border-top:0}" +
+      "#" + PANEL_ID + " .gcb-brow.head .gcb-bgain{display:none}" +
+      "#" + PANEL_ID + " .gcb-brow.foot{border-top:1px solid #2e333c;font-size:11px}" +
+      "#" + PANEL_ID + " .gcb-brow.btns{display:flex;flex-wrap:wrap;gap:8px;border:0;padding:0}" +
+      "#" + PANEL_ID + " .gcb-brow.me{background:#1d232b;border-radius:8px;padding-left:6px;padding-right:6px;margin:0 -6px}" +
+      "#" + PANEL_ID + " .gcb-brank{grid-area:r;color:#94a3b8;font-size:11px;font-weight:700}" +
+      "#" + PANEL_ID + " .gcb-bname{grid-area:n;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}" +
+      "#" + PANEL_ID + " .gcb-benergy{grid-area:e;font-weight:800;font-variant-numeric:tabular-nums}" +
+      "#" + PANEL_ID + " .gcb-bnat{grid-area:p;text-align:right;font-variant-numeric:tabular-nums;font-size:12px}" +
+      "#" + PANEL_ID + " .gcb-bgain{grid-area:g;font-size:11px;overflow-wrap:anywhere}" +
+      "#" + PANEL_ID + " .gcb-btn{border:1px solid #2e333c;background:#1a1d23;color:#e6edf3;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;cursor:pointer;-webkit-appearance:none;appearance:none}" +
+      "#" + PANEL_ID + " .gcb-btn.ghost{color:#94a3b8;font-weight:600}" +
+      "#" + PANEL_ID + " .gcb-card-preview{margin:10px 0 0;padding:10px;border-radius:9px;background:#1a1d23;border:1px solid #2e333c;color:#94a3b8;font:11px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:190px;overflow:auto;user-select:text}" +
       "#" + PANEL_ID + " .next{border:1px solid #2ecc71;background:#1a1d23;text-align:center}" +
       "#" + PANEL_ID + " .next .move{font-size:18px;line-height:1.25;color:#2ecc71;margin:0 0 8px;font-weight:800;overflow-wrap:anywhere}" +
       "#" + PANEL_ID + " .next p{margin:0;color:#94a3b8;font-size:14px;text-align:center}" +
@@ -6963,12 +7655,15 @@
       "#" + PANEL_ID + " .gcb-key span{display:inline-flex;align-items:center;gap:5px}" +
       "#" + PANEL_ID + " .gcb-key i{width:9px;height:3px;border-radius:2px;display:inline-block}" +
 
-      "#" + PANEL_ID + " .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:0;"+
+      // grid-auto-flow rather than a hardcoded repeat(N): a fixed column count
+      // wraps the whole bar onto two rows the moment a tab is added, which is
+      // exactly what adding Board did.
+      "#" + PANEL_ID + " .tabs{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:0;"+
       "margin:0 13px 9px;padding:3px;background:#1d242e;border:1px solid #262e39;"+
       "border-radius:11px;flex:0 0 auto;overflow:hidden}" +
       "#" + PANEL_ID + " .tabs button{width:100%;border:0;background:transparent;color:#8895a5;"+
-      "border-radius:8px;min-height:38px;padding:0;margin:0;font:800 11.5px/1 ui-monospace,Menlo,monospace;"+
-      "letter-spacing:.1em;text-transform:uppercase}" +
+      "border-radius:8px;min-height:38px;padding:0 1px;margin:0;font:800 11px/1 ui-monospace,Menlo,monospace;"+
+      "letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
       "#" + PANEL_ID + " .tabs button.on{background:#f2a03d;color:#12161b}" +
       "#" + PANEL_ID + " .gc-btn{background:#f2a03d;color:#12161b}" +
       "#" + PANEL_ID + " .gc-ranges button.on{background:#f2a03d;border-color:#f2a03d;color:#12161b}" +
@@ -7450,15 +8145,15 @@
           '<span class="gcb-minie">' + Math.max(0, state.energy || 0) + " / " + (state.energyMax || 150) + "</span>" +
           "</button>") +
       '<div class="tabs">' +
-      ["now", "plan", "stock", "trend"]
+      ["now", "plan", "stock", "trend", "board"]
         .map(function (id) {
-          var labels = { now: "Now", plan: "Plan", stock: "Stock", trend: "Trend" };
+          var labels = { now: "Now", plan: "Plan", stock: "Stock", trend: "Trend", board: "Board" };
           return '<button data-tab="' + id + '" class="' + (tab === id ? "on" : "") + '">' + labels[id] + "</button>";
         })
         .join("") +
       "</div>" +
       '<div class="gc-body">' +
-      (tab === "set" ? setHtml : tab === "plan" ? planHtml : tab === "stock" ? itemsHtml : tab === "trend" ? unlockHtml() + progHtml + projHtml + trackHtml : coachHtml) +
+      (tab === "set" ? setHtml : tab === "plan" ? planHtml : tab === "stock" ? itemsHtml : tab === "board" ? boardHtml() : tab === "trend" ? unlockHtml() + progHtml + projHtml + trackHtml : coachHtml) +
       "</div>" +
       (state.toast && state.toast.until > Date.now()
         ? '<div class="gc-toast show"><b>' + state.toast.title + "</b><span>" + state.toast.body + "</span></div>"
@@ -7984,8 +8679,12 @@
     if (!t || typeof t.closest !== "function") return;
     // Every clickable attribute has to be listed here or the handler below it is
     // dead code -- closest() returns null and this returns before reaching it.
-    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-preset],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],#stackSw,#novSw");
+    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-preset],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],[data-board],#stackSw,#novSw");
     if (!t) return;
+    if (t.dataset.board) {
+      onBoardClick(t.dataset.board);
+      return;
+    }
     if (t.dataset.goalstep !== undefined) {
       var gs = Number(t.dataset.goalstep);
       state.goalStep = GOAL_STEPS.indexOf(gs) !== -1 ? gs : 0;
@@ -8057,6 +8756,9 @@
     }
     if (t.dataset.tab) {
       state.tab = t.dataset.tab;
+      // The board is five requests, so it loads when you open the tab and
+      // never on the poll tick. fetchBoard's own TTL keeps re-opening cheap.
+      if (state.tab === "board") fetchBoard(false);
       renderPanel();
       return;
     }
@@ -8461,6 +9163,20 @@
         state.mode = storeGet("mode", "xan") || "xan";
         }
       state.histRange = Number(storeGet("histRange", 30)) || 30;
+      // The faction board. PDA hands storage back as strings, so every read
+      // goes through the same parse-or-drop guard the rest of boot uses -- a
+      // corrupt baseline must cost the board, not the panel.
+      var bd = storeGet("board", null);
+      if (typeof bd === "string") { try { bd = JSON.parse(bd); } catch (_) { bd = null; } }
+      if (bd && typeof bd === "object" && bd.stats && typeof bd.stats === "object") {
+        state.board = { week: Number(bd.week), at: Number(bd.at) || 0, stats: bd.stats,
+                        rows: Array.isArray(bd.rows) ? bd.rows : [],
+                        hist: Array.isArray(bd.hist) ? bd.hist : [] };
+      }
+      var nb = storeGet("natBase", null);
+      if (typeof nb === "string") { try { nb = JSON.parse(nb); } catch (_) { nb = null; } }
+      if (nb && typeof nb === "object") state.natBase = nb;
+      state.boardFaction = String(storeGet("boardFaction", "") || "");
       state.unlock = storeGet("unlock", null) || null;
       if (typeof state.unlock === "string") { try { state.unlock = JSON.parse(state.unlock); } catch (_) { state.unlock = null; } }
       if (state.unlock && typeof state.unlock.gymId !== "number") state.unlock = null;

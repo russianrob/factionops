@@ -1,6 +1,9 @@
 /* Test harness only. Stubs the GM_* surface and the Torn API so the panel can
    be rendered head-first against arbitrary states. Never shipped. */
 (function () {
+  // Every URL the script asks for, so a suite can assert on request COUNT --
+  // the rate limit is a real constraint and "does it render" cannot see it.
+  window.__urls = [];
   var cfg = {};
   try {
     var q = new URLSearchParams(location.search).get("cfg");
@@ -57,7 +60,38 @@
   }
 
   function answer(url) {
+    window.__urls.push(url);
     if (/selections=calendar/.test(url)) return { competitions: [] };
+    // ---- faction board ----
+    if (/v2\/faction\/basic/.test(url)) {
+      if (cfg.factionDenied) return { error: { code: 7, error: "Incorrect ID-entity relation value" } };
+      return { basic: { id: 42055, name: cfg.factionName || "Dead Fragment", members: 3 } };
+    }
+    if (/v2\/faction\/contributors/.test(url)) {
+      // A key without faction API access is refused for the WHOLE call, which
+      // is the case the board's error path exists for.
+      if (cfg.boardDenied) return { error: { code: 7, error: "Incorrect ID-entity relation value" } };
+      var st = (/[?&]stat=([a-z]+)/.exec(url) || [])[1] || "";
+      var tbl = cfg.contributors || {};
+      return { contributors: (tbl[st] || []).map(function (r) {
+        return { id: r[0], username: r[1], value: r[2], in_faction: r[3] !== false };
+      }) };
+    }
+    if (/\/personalstats/.test(url)) {
+      var uid = (/user\/(\d+)\/personalstats/.exec(url) || [])[1] || "0";
+      var ts = (/[?&]timestamp=(\d+)/.exec(url) || [])[1];
+      var who = (cfg.ps || {})[uid];
+      if (!who) return { error: { code: 6, error: "Incorrect ID" } };
+      // Torn answers the HISTORIC form as an array of {name,value} and the live
+      // form as a flat object. Both shapes are served here on purpose -- the
+      // script has to read either or the natural column silently zeroes.
+      var pick = ts ? (who.then || {}) : (who.now || {});
+      if (ts) {
+        return { personalstats: Object.keys(pick).map(function (k) {
+          return { name: k, value: pick[k], timestamp: Number(ts) }; }) };
+      }
+      return { personalstats: pick };
+    }
     // Torn's gym train logs, one type per stat. cfg.trainLog is [[tsSeconds,
     // energy], ...]; they all come back on 5300 since the script merges them.
     var lg = /[?&]log=(\d+)/.exec(url);

@@ -35,10 +35,10 @@ const t=async(n,f)=>{try{await f();pass++;console.log("ok   "+n);}catch(e){fail+
 
 await t("Plan is a tab you can see, not an icon you have to know about", async () => {
   await load({ str:1e9, def:1e9, spe:1e9 });
-  assert.deepStrictEqual(await tabLabels(), ["Now","Plan","Stock","Trend"]);
+  assert.deepStrictEqual(await tabLabels(), ["Now","Plan","Stock","Trend","Board"]);
 });
 
-await t("all four tabs sit on one row at phone width", async () => {
+await t("every tab sits on one row at phone width, unclipped", async () => {
   await load({ str:1e9 });
   const r = await page.evaluate(() => {
     const tabs = document.querySelector("#gcb-panel .tabs");
