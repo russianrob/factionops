@@ -10,6 +10,15 @@ const build = () => execSync("./build-harness.sh");
 const U = "fullbar.test.mjs", E = "fullbar.e2e.test.mjs", G = "gymrefill.e2e.test.mjs";
 
 const mutants = [
+  ["an estimate is allowed to reach back past a bar seen below the cap",
+    "    if (since && prev && prev.belowAt && since < prev.belowAt) since = prev.belowAt;", "", ["boot.test.mjs"]],
+  ["the clamp is applied the wrong way, throwing away a genuine long streak",
+    "    if (since && prev && prev.belowAt && since < prev.belowAt) since = prev.belowAt;",
+    "    if (since && prev && prev.belowAt) since = prev.belowAt;", ["boot.test.mjs"]],
+  ["the moment the bar was last seen below the cap is never recorded",
+    "      belowAt = now;", "", ["boot.test.mjs"]],
+  ["belowAt is not carried across full readings, so it is lost on the first one",
+    "    var belowAt = (state.lastSeen && state.lastSeen.belowAt) || 0;", "    var belowAt = 0;", ["boot.test.mjs"]],
   ["the ten-minute wait becomes one minute",
     "var FULLBAR_NAG_MS = 600000;", "var FULLBAR_NAG_MS = 60000;", [U, E]],
   ["Got it silences instead of snoozing",

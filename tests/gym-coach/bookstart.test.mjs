@@ -19,7 +19,8 @@ function grab(n) {
     else if (src[k] === "}") { d--; if (!d) return src.slice(i, k + 1); }
   }
 }
-const CONST = [/var BOOK_USE_LOG = [^;]+;/, /var BOOK_DAYS = [^;]+;/]
+const CONST = [/var BOOK_USE_LOG = [^;]+;/, /var BOOK_DAYS = [^;]+;/,
+  /var BOOK_LOG_TTL = [^;]+;/, /var BOOK_RETRY_MS = [^;]+;/, /var BOOK_MAX_TRIES = [^;]+;/]
   .map(re => { const m = re.exec(src); assert.ok(m, "missing " + re); return m[0]; }).join("\n");
 const call = (fns, expr) =>
   new Function("var R;" + CONST + "\n" + fns.map(grab).join("\n") + "\nR = (" + expr + "); return R;")();
@@ -104,6 +105,36 @@ t("the log id asked for is Torn's own 'Item use book'", () => {
   // Pinned as a literal: every other test here would agree with itself whatever
   // this were set to, and a wrong id returns an empty log rather than an error.
   assert.strictEqual(call([], "BOOK_USE_LOG"), 2050);
+});
+
+// ---- how soon to try again when the lookup fails ---------------------------
+
+const wait = (tries) => call(["bookStartWait"], `bookStartWait(${tries})`);
+
+t("a failed lookup is retried soon, not in six hours", () => {
+  // The bug this replaces: the clock was stamped BEFORE the request and
+  // success is gated elsewhere, so the long TTL only ever applied to failures.
+  // One rate-limited call locked the book lookup out for six hours.
+  const soon = wait(0);
+  assert.ok(soon <= 300000, "first retry should be within five minutes, got " + soon + "ms");
+  assert.strictEqual(wait(1), soon);
+});
+
+t("but it gives up retrying rather than polling forever", () => {
+  // A book with no log row at all -- started before Torn logged it, or never
+  // logged -- fails every single time. Retrying that on a short timer for ever
+  // is exactly the rate-limit pressure the TTL exists to prevent.
+  const max = call([], "BOOK_MAX_TRIES");
+  assert.ok(max >= 2 && max <= 6, "implausible retry count: " + max);
+  assert.strictEqual(wait(max), call([], "BOOK_LOG_TTL"), "it should fall back to the long wait");
+  assert.strictEqual(wait(max + 10), call([], "BOOK_LOG_TTL"));
+});
+
+t("the long wait really is long, and the short one really is short", () => {
+  // Asserted as literals: every test above derives from these, so a short wait
+  // of six hours would agree with itself and still be the bug.
+  assert.ok(call([], "BOOK_LOG_TTL") >= 3600000, "the give-up wait should be an hour or more");
+  assert.ok(call([], "BOOK_RETRY_MS") <= 300000, "the retry wait should be minutes, not hours");
 });
 
 console.log("\n" + pass + " passed, " + fail + " failed");

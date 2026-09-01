@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.53
+// @version      0.9.55
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,52 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.55 - "Bar full 91m" on a bar that filled four minutes ago.
+ *
+ *         Reported with the bar reading 148/150 barely four minutes before the
+ *         banner claimed ninety-one.
+ *
+ *         capSince was right: the moment the bar flipped to full was recorded
+ *         correctly. What overrode it was the estimate. fillFromLastSpend dates
+ *         a fill from the last spend Torn knows about, and the rule around it
+ *         says it is "only ever used to reach FURTHER back than what we have,
+ *         so a real observation is never overridden by an estimate" -- but
+ *         reaching further back IS overriding, when what it reaches past is a
+ *         direct sighting. A spend hours ago put the fill hours ago, and the
+ *         148/150 reading in between was not consulted at all.
+ *
+ *         A bar cannot have been full before the last moment it was seen NOT
+ *         full, so that moment is now recorded and the estimate is clamped to
+ *         it. This does not touch the case the estimate exists for: a bar that
+ *         filled while the app was closed was last seen below the cap BEFORE it
+ *         filled, so the clamp is older than the estimate and changes nothing.
+ *         Both directions are pinned, because a clamp applied unconditionally
+ *         would throw away exactly the long streak this is meant to preserve.
+ *
+ *         Same family as the 0.9.43 fix, one layer further in. That one stopped
+ *         the estimate being used on an incomplete timeline; this one stops it
+ *         being used against a complete observation.
+ *
+* 0.9.54 - Say what the item-log lookup actually found.
+ *
+ *         0.9.53 asks Torn's log 2050 for when a book was started, and the card
+ *         still read "Torn does not say when you started" -- which could mean
+ *         the call never ran, ran and matched nothing, or was refused. Three
+ *         very different problems behind one sentence.
+ *
+ *         It now prints which, in Torn's own terms: how many rows came back and
+ *         that none named the book, or the error verbatim, or the date it
+ *         found. That payload has never actually been seen -- the probe ran out
+ *         of rate limit before reaching 2050 -- and guessing at an unseen shape
+ *         is what cost two rounds on the aria-label.
+ *
+ *         Also fixes the retry window. The clock was stamped before the request
+ *         and success is gated elsewhere, so the six-hour wait only ever applied
+ *         to FAILURES: one rate-limited call locked the countdown out for six
+ *         hours. Now a minute, three times, then the long wait -- because a book
+ *         with no log row at all fails every time, and polling that for ever is
+ *         the pressure the wait exists to prevent.
+ *
 * 0.9.53 - The book countdown is the real one, and the card shows one book.
  *
  *         0.9.52 found the book and then guessed its age. Reported as "31d
@@ -1890,6 +1936,9 @@
     booksExact: {},
     bookStartAt: 0,
     bookStartBusy: false,
+    bookStartTries: 0,
+    // What the item-log lookup said last time, verbatim.
+    bookLogDiag: "",
     bookSeen: "",
     // What the status-icon strip said last time it was read, verbatim.
     bookDiag: "",
@@ -4345,6 +4394,7 @@
     // different failures and the wording is what tells them apart.
     var diag = '<p class="muted" style="margin:8px 0 0;font-size:11px;overflow-wrap:anywhere">' +
       (state.bookDiag ? esc(state.bookDiag) : "no status-icon strip on this page, so nothing was read") +
+      (state.bookLogDiag ? "<br>" + esc(state.bookLogDiag) : "") +
       "</p>";
     var counted = HIST_KEYS.filter(function (k) { return pendingBookAward(k) > 0; });
     return '<div class="gc-card"><h3>Stat books</h3>' + rows + diag +
@@ -5522,14 +5572,19 @@
     // is the moment it filled, which is the only way to know how long a bar has
     // been sitting full while the app was closed.
     var fullAt = state.lastSeen && state.lastSeen.fullAt;
+    // The last moment the bar was SEEN below the cap. Carried forward across
+    // full readings, because it is the one thing that can contradict an
+    // estimate -- see capStreak.
+    var belowAt = (state.lastSeen && state.lastSeen.belowAt) || 0;
     if (state.energy >= max) {
       if (!capSince) capSince = fullAt && fullAt <= now ? fullAt : now;
     } else {
       capSince = 0;
       fullAt = now + timeToFull() * 1000;
+      belowAt = now;
     }
     state.lastSeen = {
-      e: state.energy, t: now, capSince: capSince, fullAt: fullAt,
+      e: state.energy, t: now, capSince: capSince, fullAt: fullAt, belowAt: belowAt,
       // Kept so an observed drop can be checked against a real stat gain later.
       stats: { str: state.stats.str, def: state.stats.def, spe: state.stats.spe, dex: state.stats.dex }
     };
@@ -5607,6 +5662,19 @@
         max, energyRate(), Date.now());
       if (est && (!since || est < since)) since = est;
     }
+    // A bar cannot have been full before the last moment it was seen NOT full.
+    //
+    // The estimate is documented as only ever reaching further back than what
+    // is known, on the argument that a real observation is never overridden --
+    // but reaching further back IS overriding when what it reaches past is a
+    // direct sighting. Reported as "Bar full 91m" on a bar that had read
+    // 148/150 four minutes earlier: capSince was set correctly the moment it
+    // flipped, and the estimate then dated the fill from a spend hours before.
+    //
+    // This does not touch the case the estimate exists for. A bar that filled
+    // while the app was closed was last seen below the cap BEFORE it filled, so
+    // the clamp is older than the estimate and changes nothing.
+    if (since && prev && prev.belowAt && since < prev.belowAt) since = prev.belowAt;
     if (!since) return null;
     var sec = Math.max(0, (Date.now() - since) / 1000);
     return { sec: sec, lost: sec / energyRate() };
@@ -6857,7 +6925,21 @@
   // key), not guessed: 2050 is the row written when you START a book, and 2051
   // through 2055 are the finishes.
   var BOOK_USE_LOG = 2050;
-  var BOOK_LOG_TTL = 21600000;   // the start date does not move while you read
+  var BOOK_LOG_TTL = 21600000;   // give up for this long once it is clearly not there
+  var BOOK_RETRY_MS = 60000;     // but a failed call is retried within the minute
+  var BOOK_MAX_TRIES = 3;
+
+  // How long to wait before asking again after a lookup that did not answer.
+  //
+  // Success never comes back here -- booksExact short-circuits the call
+  // entirely -- so this window only ever applies to FAILURES. It was six hours,
+  // which meant one rate-limited call locked the countdown out for six hours.
+  // Short retries a few times, then give up until the long window, because a
+  // book with no log row at all fails every time and polling that for ever is
+  // exactly the rate-limit pressure the wait exists to prevent.
+  function bookStartWait(tries) {
+    return (Number(tries) || 0) >= BOOK_MAX_TRIES ? BOOK_LOG_TTL : BOOK_RETRY_MS;
+  }
 
   // When the book you are on was actually started.
   //
@@ -6897,15 +6979,28 @@
   // so a Limited key keeps the sighting date and the caveat that goes with it.
   function fetchBookStart(k, name) {
     if (!k || !name) return;
-    if (state.logReadable === false) return;
-    if (!resolveKey()) return;
-    if (state.bookStartAt && Date.now() - state.bookStartAt < BOOK_LOG_TTL) return;
+    if (!resolveKey()) { state.bookLogDiag = "item log: no API key saved"; return; }
+    if (state.logReadable === false) {
+      state.bookLogDiag = "item log: needs a FULL access key (this one cannot read logs)";
+      return;
+    }
+    if (state.bookStartAt && Date.now() - state.bookStartAt < bookStartWait(state.bookStartTries)) return;
     if (state.bookStartBusy) return;
     state.bookStartBusy = true;
     state.bookStartAt = Date.now();
+    state.bookStartTries = (state.bookStartTries || 0) + 1;
+    state.bookLogDiag = "item log: asking Torn\u2026";
     httpGet(apiUrl("log&log=" + BOOK_USE_LOG))
       .then(function (d) {
         var when = bookStartFromLog([d], name);
+        // Say what came back either way. Guessing at a payload shape is what
+        // cost two rounds on the aria-label, and this one has never been seen.
+        var rows = (d && d.log) || {};
+        var n = 0, kk;
+        for (kk in rows) n += 1;
+        state.bookLogDiag = when > 0
+          ? "item log: started " + new Date(when).toISOString().slice(0, 10)
+          : "item log: " + n + " rows in log " + BOOK_USE_LOG + ", none naming \"" + name + "\"";
         if (when > 0 && when !== state.books[k]) {
           state.books[k] = when;
           if (!state.booksExact) state.booksExact = {};
@@ -6916,8 +7011,12 @@
           renderPanel();
         }
       })
-      .catch(function () { /* the sighting date and its caveat still stand */ })
-      .then(function () { state.bookStartBusy = false; });
+      .catch(function (e) {
+        // The sighting date and its caveat still stand; say why it is standing.
+        state.bookLogDiag = "item log: unreadable \u2014 " + ((e && e.message) || "no answer") +
+          (e && e.code ? " (code " + e.code + ")" : "");
+      })
+      .then(function () { state.bookStartBusy = false; renderPanel(); });
   }
 
   function bookAward(k, stats) {

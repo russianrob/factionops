@@ -44,6 +44,28 @@ function makeRuntime(stored, opts) {
   return new Function("var RESULT;" + code + "; return RESULT;")();
 }
 
+// A bar that was SEEN not full a moment ago cannot have been full for hours.
+//
+// Reported: "Bar full 91m" on a bar that had read 148/150 four minutes earlier.
+// capSince was set correctly when the bar flipped, and then fillFromLastSpend
+// reached back past it to the last logged spend and won -- an estimate
+// overriding a direct observation, which is the one thing it is documented not
+// to do.
+function streakAfterFill(spendMinsAgo, sawBelowMinsAgo) {
+  const NOW = Date.now(), MIN = 60000;
+  // The stored reading is the one that saw the bar BELOW the cap.
+  const r = makeRuntime(
+    { e: 148, t: NOW - sawBelowMinsAgo * MIN, capSince: 0,
+      fullAt: NOW - (sawBelowMinsAgo - 1) * MIN, belowAt: NOW - sawBelowMinsAgo * MIN },
+    { max: 150, rate: 150 });
+  // a spend long before that, which is what the estimate would date the fill from
+  r.state.trainLog = { events: [{ t: NOW - spendMinsAgo * MIN, delta: -150 }] };
+  r.setEnergy(150);
+  r.observe(true);
+  const st = r.streak();
+  return st ? st.sec / 60 : null;
+}
+
 let pass=0,fail=0;
 const t=(n,f)=>{try{f();pass++;console.log("ok   "+n);}catch(e){fail++;console.log("FAIL "+n+" :: "+e.message);}};
 const HOUR=3600e3, now=Date.now();
@@ -90,6 +112,50 @@ t("a bar that is not full has no streak", () => {
   r.setEnergy(40);
   assert.strictEqual(r.streak(), null);
 });
+t("a bar seen below the cap minutes ago is not reported as full for hours", () => {
+  // The spend was 400 minutes ago, so the estimate would put the fill at about
+  // 90 minutes back. But the bar was observed at 148 only 4 minutes ago, so it
+  // cannot have been full before then.
+  const mins = streakAfterFill(400, 4);
+  assert.ok(mins !== null, "the bar is full, so there should be a streak");
+  assert.ok(mins <= 5, "estimate overrode a direct observation: reported " + Math.round(mins) + "m full");
+});
+
+t("the moment the bar drops below the cap is recorded as it happens", () => {
+  // Not handed in by the fixture: observed live, below then full, which is the
+  // only way the clamp can work for a session that started with a full bar's
+  // worth of history behind it.
+  const NOW = Date.now(), MIN = 60000;
+  const r = makeRuntime({}, { max: 150, rate: 150 });
+  r.state.trainLog = { events: [{ t: NOW - 400 * MIN, delta: -150 }] };
+  r.setEnergy(148);
+  r.observe(true);                       // seen BELOW the cap, now
+  assert.ok(r.state.lastSeen.belowAt > 0, "nothing recorded the sighting below the cap");
+  r.setEnergy(150);
+  r.observe(true);                       // and now full
+  const st = r.streak();
+  const mins = st ? st.sec / 60 : 0;
+  assert.ok(mins <= 2, "a bar seen below the cap seconds ago reported " + Math.round(mins) + "m full");
+});
+
+t("but a bar that really did fill while the app was closed still says so", () => {
+  // Nothing observed for three hours, and the last thing seen was a full bar's
+  // predicted fill time. The estimate is exactly what this case needs, and
+  // clamping must not throw it away.
+  const NOW = Date.now(), MIN = 60000;
+  const r = makeRuntime(
+    { e: 150, t: NOW - 180 * MIN, capSince: NOW - 180 * MIN,
+      fullAt: NOW - 180 * MIN, belowAt: NOW - 400 * MIN },
+    { max: 150, rate: 150 });
+  r.setEnergy(150);
+  r.observe(true);
+  const st = r.streak();
+  const mins = st ? st.sec / 60 : null;
+  assert.ok(mins !== null, "there should be a streak");
+  assert.ok(mins > 170 && mins < 200,
+    "the streak should be about 180m, from when it actually filled; got " + Math.round(mins) + "m");
+});
+
 t("spending after waking is counted, and the streak clears", () => {
   const r = makeRuntime({ e: 150, t: now - 8*HOUR, capSince: now - 8*HOUR });
   r.observe(false); r.setEnergy(150); r.observe(true);
