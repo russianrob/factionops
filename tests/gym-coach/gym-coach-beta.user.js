@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.63
+// @version      0.9.64
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,31 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.64 - Gym energy vs attack energy, and a year of xanax.
+ *
+ *         The board now separates what reached the gym from what never did.
+ *         Gym is Torn\u2019s gymenergy counter; Attack is DERIVED, at 25 an
+ *         attack, because Torn has no attack-energy counter at all --
+ *         FactionStatEnum carries attack counts and nothing else. The count is
+ *         printed beside it so the multiplication can be checked rather than
+ *         trusted. Wins and losses both, since losing one still spent the
+ *         energy; counting only wins would flatter whoever picks easy targets.
+ *
+ *         The board still ranks on gym energy. It is a gym board, and somebody
+ *         who spent the week attacking should not top it.
+ *
+ *         And a xanax board for the last twelve months. xantaken is in
+ *         personalstats, which is public for another player and answers
+ *         historically, so a year is an exact subtraction rather than an
+ *         estimate -- the same two calls the regen column makes, a year apart
+ *         instead of a week. Ranked on the year rather than the lifetime
+ *         counter, because that one mostly measures how long somebody has
+ *         played. The year-ago half is history and cannot change, so it is
+ *         fetched once and kept.
+ *
+ *         A year back is calendar arithmetic, not 365 days: 2024 was a leap
+ *         year and the naive version lands a day early.
+ *
 * 0.9.63 - Show the working behind the Regen column, and name it properly.
  *
  *         "Nat" meant natural regen and nobody could be expected to know that.
@@ -2076,19 +2101,17 @@
     boardAt: 0,
     boardError: null,
     boardBusy: false,
-    natUse: {},
-    natBase: {},
-    natBusy: false,
-    // The live and week-start consumable counts behind each natural figure.
-    natRaw: {},
+    // The year's xanax board. `then` is history and never changes once read.
+    xanRows: {},
+    xanAt: 0,
+    xanBusy: false,
+    xanDone: 0,
+    xanTotal: 0,
+    xanError: null,
     // How many stats made it through when a round died part-way, and how many
     // members the natural pass could not read. Both are zero on a clean run and
     // are what stops a half-read board from looking like a whole one.
     boardPartial: 0,
-    natMissed: 0,
-    natDone: 0,
-    natTotal: 0,
-    natError: null,
     attackEvents: null,
     playerId: null,
     // Whether the gym log answers this key. Full only -- on a Limited key an
@@ -7424,9 +7447,12 @@
   // a gym cost. A count that cannot be reconciled or verified is worse than no
   // count, so what the energy went INTO is shown instead of how many times.
   // Also one request cheaper.
-  var BOARD_STATS = ["gymenergy", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];
+  var BOARD_STATS = ["gymenergy", "gymstrength", "gymdefense", "gymspeed", "gymdexterity",
+                     "attackswon", "attackslost"];
   var BOARD_LABEL = {
-    gymenergy: "Energy",
+    gymenergy: "Gym",
+    attackswon: "Attacks won",
+    attackslost: "Attacks lost",
     gymstrength: "Strength",
     gymdefense: "Defense",
     gymspeed: "Speed",
@@ -7437,14 +7463,10 @@
   // rather than on the poll tick.
   var BOARD_TTL = 300000;
   var BOARD_WEEKS = 8;         // past weeks kept, for the hall of fame
-  var BOARD_NATURAL_TOP = 12;  // how far down the natural column is worked out
   var BOARD_CARD_ROWS = 12;    // rows a pasted card carries
   // Energy each assist is worth, for the natural-regen column. The owner's own
   // row uses their real bar maximum and can strength; everyone else's is an
   // estimate, and the card says so.
-  var XAN_ENERGY = 250;
-  var REFILL_ENERGY = 150;
-  var CAN_ENERGY = 25;
   // Monday 00:00 TCT. Epoch day 0 was a Thursday, so day 4 was the first
   // Monday and the week index counts from there. TCT is UTC, so this is
   // computed from dayKey and never from a local-time getter -- a local reading
@@ -7591,21 +7613,12 @@
   // The three consumable counts are HISTORICAL -- /user/<id>/personalstats
   // answers them as of the week boundary on a public key -- so this half needs
   // no stored baseline of its own and cannot drift between devices.
-  function naturalEnergy(dEnergy, use, own) {
-    var u = use || {};
-    var refillE = (own && own.energyMax) || REFILL_ENERGY;
-    var canE = (own && own.canEnergy) || CAN_ENERGY;
-    var assisted = XAN_ENERGY * (Number(u.xantaken) || 0) +
-                   refillE * (Number(u.refills) || 0) +
-                   canE * (Number(u.energydrinkused) || 0);
-    return Math.max(0, (Number(dEnergy) || 0) - assisted);
-  }
 
   // Fold the five per-stat delta maps into one row per member, ranked on the
   // energy they spent. `used` carries consumable deltas keyed by member id for
   // however far down the board they were worked out; `own` is the owner's real
   // bar and can, used for their row only.
-  function boardBuild(byStat, used, own) {
+  function boardBuild(byStat) {
     var energy = (byStat && byStat.gymenergy) || {};
     var ids = {}, k;
     for (k in energy) ids[k] = true;
@@ -7615,12 +7628,14 @@
         var m = (byStat && byStat[stat]) || {};
         return (m[id] && m[id].delta) || 0;
       }
-      var use = used && used[id];
+      var atkN = Math.max(0, d("attackswon")) + Math.max(0, d("attackslost"));
       return {
         id: e.id, name: e.name, energy: e.delta || 0,
-        // null, NOT zero: "not worked out yet" and "every point of it was
-        // bought" are different claims about a person.
-        natural: use ? naturalEnergy(e.delta || 0, use, own && String(own.id) === String(e.id) ? own : null) : null,
+        // Kept apart from gym energy on purpose. One is what reached the gym,
+        // the other is what never did, and adding them hides the difference
+        // this column exists to show.
+        attacks: atkN,
+        attackEnergy: boardAttackEnergy(d("attackswon"), d("attackslost")),
         str: d("gymstrength"), def: d("gymdefense"),
         spe: d("gymspeed"), dex: d("gymdexterity")
       };
@@ -7695,30 +7710,22 @@
       lines = shown.map(function (r) {
         var name = String(r.name);
         while (name.length < w) name += " ";
-        // Fixed width, including when it is absent. "100% nat" is a
-        // character wider than "37% nat", and an unknown one is blank -- so a
-        // ragged cell here is what knocks the split column out of line, in the
-        // one format whose whole reason for existing is that it lines up.
-        // Through the same guard the table uses. Math.max(1, energy) turns a
-        // zero-energy member into 0/1 = "0% nat", which reads as "every point
-        // they trained was bought" about somebody who trained nothing -- and it
-        // went into faction chat while the table beside it said nothing at all.
-        var np = boardNatPct(r);
-        var nat = pad(np === null ? "" : np + "% nat", 8, true);
+        // Gym energy and attack energy, kept apart on the card exactly as they
+        // are on the board -- the whole point is the difference between them.
         var split = boardSplit(r);
         return pad(String(r.rank), 2, true) + ". " + name + "  " +
-               pad(String(fmt(r.energy)) + "e", 10, true) + "  " +
-               nat +
+               pad(String(fmt(r.energy)) + "e gym", 13, true) + "  " +
+               pad(r.attackEnergy > 0 ? fmt(r.attackEnergy) + "e atk" : "", 12, true) +
                (split ? "  " + split : "");
       });
       return "```\n" + head + "\n" + lines.join("\n") +
              (more > 0 ? "\n+ " + more + " more" : "") + "\n```";
     }
     lines = shown.map(function (r) {
-      var np = boardNatPct(r);
-      var nat = np === null ? "" : " (" + np + "% natural)";
       var split = boardSplit(r);
-      return r.rank + ". " + r.name + " — " + fmt(r.energy) + "e" + nat + (split ? " \u2014 " + split : "");
+      var atk = r.attackEnergy > 0 ? " / " + fmt(r.attackEnergy) + "e attacking" : "";
+      return r.rank + ". " + r.name + " \u2014 " + fmt(r.energy) + "e gym" + atk +
+        (split ? " \u2014 " + split : "");
     });
     return head + "\n" + lines.join("\n") + (more > 0 ? "\n+ " + more + " more" : "");
   }
@@ -7794,11 +7801,11 @@
   var BOARD_FORCE_MS = 15000;
 
   function fetchBoard(force) {
-    // natBusy as well as boardBusy. The natural pass is up to 24 requests and
-    // the Refresh button sits in a card that stays on screen throughout it, so
-    // without this the two chains interleave and the 700ms spacing that exists
-    // to protect the rate limit ends up spacing two streams instead of one.
-    if (state.boardBusy || state.natBusy) return;
+    // xanBusy as well as boardBusy: the year's xanax pass is up to 40 requests
+    // and the Refresh button sits in a card that stays on screen throughout it,
+    // so without this the two chains interleave and the 700ms spacing that
+    // exists to protect the rate limit ends up spacing two streams, not one.
+    if (state.boardBusy || state.xanBusy) return;
     var last = Math.max(state.boardAt || 0, state.boardTriedAt || 0);
     if (!force && Date.now() - last < BOARD_TTL) return;
     if (force && Date.now() - (state.boardTriedAt || 0) < BOARD_FORCE_MS) return;
@@ -7876,8 +7883,7 @@
           // Deltas and consumable counts belong to the week they were measured
           // in. Left standing across a rollover they would be read against the
           // NEW baseline.
-          state.natUse = {};
-        }
+                  }
         state.board.stats = draft.stats;
         state.board.statsAt = draft.statsAt;
         state.board.week = draft.week;
@@ -7901,6 +7907,40 @@
 
   // ---- the natural-regen column -------------------------------------------
 
+  // A year back from now, to the day.
+  //
+  // Calendar arithmetic, not 365 days: 2024 was a leap year and the naive
+  // version lands a day early for anyone asking in early 2025.
+  function yearStartMs(now) {
+    var d = new Date(Number(now) || Date.now());
+    d.setUTCFullYear(d.getUTCFullYear() - 1);
+    return d.getTime();
+  }
+
+  // The year's xanax board, from two readings of a lifetime counter.
+  //
+  // xantaken is in personalstats, which is PUBLIC for another player and
+  // answers historically given a timestamp -- so this is an exact subtraction
+  // rather than an estimate. Ranking on the raw counter instead would put
+  // whoever has taken the most EVER on top, which is a different question.
+  function xanBuild(rows) {
+    var out = [], id;
+    for (id in (rows || {})) {
+      var r = rows[id];
+      // A missing baseline means "not fetched", which is a different claim
+      // from "took none" -- and would rank them alongside somebody clean.
+      if (!r || r.then == null) continue;
+      out.push({
+        id: r.id, name: r.name,
+        taken: Math.max(0, (Number(r.now) || 0) - (Number(r.then) || 0)),
+        total: Number(r.now) || 0
+      });
+    }
+    out.sort(function (a, b) { return b.taken - a.taken || String(a.name).localeCompare(String(b.name)); });
+    out.forEach(function (r, i) { r.rank = i + 1; });
+    return out;
+  }
+
   // Consumable counts for one member as of a moment.
   //
   // /user/<id>/personalstats answers these on a PUBLIC key -- they are the same
@@ -7908,91 +7948,46 @@
   // HISTORICALLY. So the week-start side needs no stored baseline of its own,
   // cannot drift between devices, and once fetched can be cached forever: a
   // past week's answer never changes.
-  var PS_STATS = "refills,xantaken,energydrinkused";
-  function psUrl(id, atSec) {
-    return "https://api.torn.com/v2/user/" + encodeURIComponent(id) + "/personalstats?stat=" + PS_STATS +
-      (atSec ? "&timestamp=" + atSec : "") +
-      "&key=" + encodeURIComponent(resolveKey()) + "&comment=" + encodeURIComponent(COMMENT);
-  }
 
   // Historic form is an array of { name, value }; the live form is a flat
   // object. Reading both means a shape change cannot silently zero the column.
-  function readPs(d) {
-    var p = d && d.personalstats;
-    if (!p) return null;
-    var out = {};
-    if (Array.isArray(p)) {
-      p.forEach(function (row) { if (row && row.name) out[row.name] = Number(row.value) || 0; });
-    } else {
-      ["refills", "xantaken", "energydrinkused"].forEach(function (k) {
-        if (p[k] != null) out[k] = Number(p[k]) || 0;
-      });
-      // The nested v2 spellings, in case `stat=` is ignored and a full payload
-      // comes back instead.
-      if (p.other && p.other.refills && p.other.refills.energy != null) out.refills = Number(p.other.refills.energy) || 0;
-      if (p.drugs && p.drugs.xanax != null) out.xantaken = Number(p.drugs.xanax) || 0;
-      if (p.items && p.items.used && p.items.used.energy_drinks != null) out.energydrinkused = Number(p.items.used.energy_drinks) || 0;
-    }
-    return Object.keys(out).length ? out : null;
-  }
 
-  function psDelta(now, then) {
-    if (!now || !then) return null;
-    return {
-      refills: Math.max(0, (now.refills || 0) - (then.refills || 0)),
-      xantaken: Math.max(0, (now.xantaken || 0) - (then.xantaken || 0)),
-      energydrinkused: Math.max(0, (now.energydrinkused || 0) - (then.energydrinkused || 0))
-    };
-  }
 
   // Worked out on request, never on the poll tick: this is one call per member
   // for the live side plus one for the week start, and the week-start half is
   // only ever paid once.
-  // The pass is up to 24 requests. natBusy only blocks it DURING a pass, so
-  // without a cooldown a finger on "Refresh natural" sustains ~85 requests a
-  // minute from this feature alone, against a budget of 100 that a refused call
-  // still spends.
-  var NAT_TTL = 120000;
-  function fetchBoardNatural(force) {
-    if (state.boardBusy || state.natBusy) return;
-    if (!force && Date.now() - (state.natAt || 0) < NAT_TTL) return;
-    // fetchBoard checks this and this one did not: with a cleared key but a
-    // populated board still in memory, the button fired twelve calls that Torn
-    // was guaranteed to refuse.
+
+  // A year of xanax, one member at a time.
+  //
+  // Two calls each -- now, and a year ago -- on a PUBLIC key, spaced like every
+  // other fan-out here. The year-ago half never changes once fetched, so it is
+  // kept for good; only the live half is ever asked again.
+  var XAN_TOP = 20;
+  var XAN_TTL = 3600000;
+  function fetchXanYear(force) {
+    if (state.xanBusy || state.boardBusy) return;
+    if (!force && Date.now() - (state.xanAt || 0) < XAN_TTL) return;
     if (!resolveKey()) return;
     var rows = boardCurrent();
     if (!rows.length) return;
-    var wk = state.board && state.board.week;
-    // No week yet means the board has never been read, and weekStartMs(null)
-    // is NaN -- which would go out on the wire as timestamp=NaN.
-    if (wk == null) return;
-    var startSec = Math.floor(weekStartMs(wk) / 1000);
-    var picked = rows.slice(0, BOARD_NATURAL_TOP);
-    state.natBusy = true;
-    // Cleared, not merged. boardBuild applies a natUse entry to ANY id that has
-    // one, but a pass only refreshes the twelve currently on top -- so somebody
-    // who dropped out of the top twelve kept a frozen numerator over a growing
-    // denominator, and their Nat % drifted down as though they had started
-    // buying energy.
-    state.natUse = {};
-    state.natDone = 0;
-    state.natTotal = picked.length;
-    state.natError = null;
-    state.natMissed = 0;
-    if (!state.natBase[wk]) state.natBase[wk] = {};
-    state.natRaw = {};
+    var picked = rows.slice(0, XAN_TOP);
+    var thenSec = Math.floor(yearStartMs(Date.now()) / 1000);
+    state.xanBusy = true;
+    state.xanAt = Date.now();
+    state.xanDone = 0;
+    state.xanTotal = picked.length;
+    state.xanError = null;
 
     function one(i) {
       if (i >= picked.length) return Promise.resolve();
-      var id = String(picked[i].id);
-      var haveBase = state.natBase[wk][id];
-      // Thunks, not promises. httpGet fires the instant it is called, so an
-      // array of already-started requests would put both of a member's calls
-      // on the wire together and the gap below would only space the HANDLING.
-      // The rate limit counts requests, not callbacks.
-      var jobs = [function () { return boardGet(psUrl(id, 0)).then(readPs); }];
-      // The week-start reading never changes, so it is fetched once and kept.
-      if (!haveBase) jobs.push(function () { return boardGet(psUrl(id, startSec)).then(readPs); });
+      var m = picked[i], id = String(m.id);
+      if (!state.xanRows[id]) state.xanRows[id] = { id: m.id, name: m.name, now: null, then: null };
+      state.xanRows[id].name = m.name;
+      var jobs = [function () { return boardGet(xanUrl(id, 0)).then(readXan); }];
+      // The year-ago figure is history and cannot change, so it is paid once.
+      if (state.xanRows[id].then == null) {
+        jobs.push(function () { return boardGet(xanUrl(id, thenSec)).then(readXan); });
+      }
       return jobs.reduce(function (p, job) {
         return p.then(function (acc) {
           return job().then(function (v) { acc.push(v); return acc; })
@@ -8000,36 +7995,70 @@
         });
       }, Promise.resolve([]))
         .then(function (res) {
-          var live = res[0];
-          if (!haveBase && res[1]) { state.natBase[wk][id] = res[1]; haveBase = res[1]; }
-          var d = psDelta(live, haveBase);
-          if (d) state.natUse[id] = d;
-          // Both ends of the subtraction, kept for the diagnostic. Every row
-          // reading 100% natural means every delta came out zero, and the only
-          // way to tell a broken subtraction from an API that ignored the
-          // timestamp is to see the two numbers that went into it.
-          if (live && haveBase) state.natRaw[id] = { now: live, then: haveBase };
-          // readPs returns null for a reshaped or empty payload and nothing
-          // throws, so without this the pass reported "12 of 12" with holes in
-          // it and every hole rendered as an em dash indistinguishable from
-          // "not asked for".
-          else state.natMissed = (state.natMissed || 0) + 1;
+          if (res[0] != null) state.xanRows[id].now = res[0];
+          if (res.length > 1 && res[1] != null) state.xanRows[id].then = res[1];
         })
-        .catch(function (e) { state.natError = e.message || "unreadable"; })
+        .catch(function (e) { state.xanError = (e && e.message) || "unreadable"; })
         .then(function () {
-          state.natDone = i + 1;
+          state.xanDone = i + 1;
           if (state.tab === "board") renderPanel();
           return one(i + 1);
         });
     }
-
     one(0).then(function () {
-      state.natBusy = false;
-      state.natAt = Date.now();
-      state.natTotal = picked.length;
-      saveBoard();
+      state.xanBusy = false;
+      storeSet("xanRows", state.xanRows);
       if (state.tab === "board") renderPanel();
     });
+  }
+
+  function xanUrl(id, atSec) {
+    return "https://api.torn.com/v2/user/" + encodeURIComponent(id) + "/personalstats?stat=xantaken" +
+      (atSec ? "&timestamp=" + atSec : "") +
+      "&key=" + encodeURIComponent(resolveKey()) + "&comment=" + encodeURIComponent(COMMENT);
+  }
+
+  // Historic form is an array of { name, value }; the live form is a flat
+  // object. null means unreadable, which is not the same as zero.
+  function readXan(d) {
+    var p = d && d.personalstats;
+    if (!p) return null;
+    if (Array.isArray(p)) {
+      for (var i = 0; i < p.length; i++) {
+        if (p[i] && p[i].name === "xantaken") return Number(p[i].value) || 0;
+      }
+      return null;
+    }
+    if (p.xantaken != null) return Number(p.xantaken) || 0;
+    if (p.drugs && p.drugs.xanax != null) return Number(p.drugs.xanax) || 0;
+    return null;
+  }
+
+  function xanHtml() {
+    var rows = xanBuild(state.xanRows);
+    var head = '<div class="gc-card"><h3>Xanax \u00b7 last 12 months</h3>';
+    if (state.xanBusy) {
+      return head + '<p class="muted" style="margin:0">Reading \u2014 ' + state.xanDone + " of " + state.xanTotal + "\u2026</p></div>";
+    }
+    if (!rows.length) {
+      return head +
+        '<p class="muted" style="margin:0 0 8px">Who has taken the most in the last year, from Torn\u2019s own personal stats \u2014 exact, not estimated. Two requests per member, so it is a button rather than automatic.</p>' +
+        (state.xanError ? '<p class="bad" style="margin:0 0 8px">' + esc(state.xanError) + "</p>" : "") +
+        '<button type="button" class="gcb-btn" data-board="xan">Work it out (top ' + XAN_TOP + ")</button></div>";
+    }
+    return head +
+      '<div class="gcb-brow head"><span class="gcb-brank">#</span><span class="gcb-bname">Member</span>' +
+      '<span class="gcb-benergy">Year</span><span class="gcb-bnat">Ever</span></div>' +
+      rows.map(function (r) {
+        return '<div class="gcb-brow' + (String(r.id) === String(state.playerId) ? " me" : "") + '">' +
+          '<span class="gcb-brank">' + r.rank + "</span>" +
+          '<span class="gcb-bname">' + esc(String(r.name || r.id)) + "</span>" +
+          '<span class="gcb-benergy">' + fmt(r.taken) + "</span>" +
+          '<span class="gcb-bnat muted">' + fmt(r.total) + "</span></div>";
+      }).join("") +
+      (state.xanError ? '<p class="bad" style="margin:8px 0 0">' + esc(state.xanError) + "</p>" : "") +
+      '<p class="muted" style="margin:8px 0 0;font-size:11px">Year is the last 12 months to the day; Ever is the lifetime total Torn holds. Ranked on the year, because the lifetime figure mostly measures how long someone has played.</p>' +
+      '<button type="button" class="gcb-btn" data-board="xan" style="margin-top:9px">Refresh</button></div>';
   }
 
   function saveBoard() {
@@ -8047,15 +8076,9 @@
   }
 
   // The board as it stands right now, from whatever has been fetched.
+  // The board as it stands right now, from whatever has been fetched.
   function boardCurrent() {
-    // Only the energy maximum, because the coach really does know that one.
-    // Which can somebody drank on a given day is not knowable for anyone --
-    // including the owner -- so that coefficient stays the shared estimate.
-    var own = state.playerId
-      ? { id: state.playerId, energyMax: state.energyMax || REFILL_ENERGY }
-      : null;
-    var use = Object.keys(state.natUse).length ? state.natUse : null;
-    return boardBuild(state.boardBy, use, own);
+    return boardBuild(state.boardBy);
   }
 
   // ---- the Board tab -------------------------------------------------------
@@ -8103,24 +8126,40 @@
     return { energy: energy, sum: sum, parts: parts, ok: sum === energy };
   }
 
-  function boardNatPct(r) {
-    if (r.natural === null || r.energy <= 0) return null;
-    return Math.round((r.natural / r.energy) * 100);
+  // Energy that went into attacking rather than into the gym.
+  //
+  // DERIVED, not measured. Torn has no attack-energy counter -- FactionStatEnum
+  // carries attack COUNTS and nothing else -- so this is the attacks made times
+  // what one costs. The count is shown beside it on the row so it can be
+  // checked rather than taken on trust.
+  //
+  // Wins and losses both, because losing one still spent the energy: counting
+  // only wins would flatter whoever picks the easiest targets.
+  function boardAttackEnergy(won, lost) {
+    var n = Math.max(0, Number(won) || 0) + Math.max(0, Number(lost) || 0);
+    return n * ATTACK_ENERGY;
   }
 
+
   function boardLine(r, meId) {
-    var pct = boardNatPct(r);
     var split = boardSplit(r);
     // Trains lead the second line rather than taking a column of their own:
     // five columns do not fit a phone, and the tab bar wrapping onto two rows
     // when Board was added is the same mistake one element further in.
-    var sub = esc(split || "");
+    // The attack COUNT beside the derived energy, because the energy is a
+    // multiplication and the count is the thing Torn actually reported.
+    var sub = (r.attacks > 0 ? '<b>' + fmt(r.attacks) + "</b> attack" + (r.attacks === 1 ? "" : "s") +
+                (split ? " \u00b7 " : "") : "") + esc(split || "");
     return '<div class="gcb-brow' + (String(r.id) === String(meId) ? " me" : "") + '">' +
       '<span class="gcb-brank">' + r.rank + "</span>" +
       '<span class="gcb-bname">' + esc(String(r.name || r.id)) + "</span>" +
       '<span class="gcb-benergy">' + fmt(r.energy) + "e</span>" +
-      (pct === null ? '<span class="gcb-bnat muted" title="Not worked out yet">—</span>'
-                    : '<span class="gcb-bnat ' + (pct >= 80 ? "ok" : pct >= 50 ? "" : "bad") + '">' + pct + "%</span>") +
+      // Attack energy sits where the regen share used to. It is always known --
+      // it comes from the same round as the gym figure -- so there is no
+      // "not worked out yet" state for it.
+      '<span class="gcb-bnat ' + (r.attackEnergy > 0 ? "bad" : "muted") + '" title="' +
+        r.attacks + ' attack' + (r.attacks === 1 ? "" : "s") + ' at ' + ATTACK_ENERGY + 'e each">' +
+        (r.attackEnergy > 0 ? fmt(r.attackEnergy) + "e" : "\u2014") + "</span>" +
       '<span class="gcb-bgain muted">' + (sub || "—") + "</span>" +
       "</div>";
   }
@@ -8192,17 +8231,8 @@
           '<button type="button" class="gcb-btn" data-board="reanchor">Re-anchor</button>' +
           "</div>"
         : "") +
-      // The button that fills the Nat column used to live BELOW the whole
-      // table. On a twenty-member faction that is a long scroll away from the
-      // column of dashes it explains, and the first question asked about this
-      // screen was "why nat empty". The prompt belongs next to the column.
-      (natKnown || state.natBusy || state.boardBusy ? "" :
-        '<div class="gcb-natprompt">' +
-        '<span class="muted">The <b>Regen</b> column is empty until it is worked out \u2014 it is a request per member, so it is not automatic.</span>' +
-        '<button type="button" class="gcb-btn" data-board="natural">Fill it in (top ' + BOARD_NATURAL_TOP + ')</button>' +
-        "</div>") +
       '<div class="gcb-brow head"><span class="gcb-brank">#</span><span class="gcb-bname">Member</span>' +
-      '<span class="gcb-benergy">Energy</span><span class="gcb-bnat">Regen</span><span class="gcb-bgain">Trained</span></div>' +
+      '<span class="gcb-benergy">Gym</span><span class="gcb-bnat">Attack</span><span class="gcb-bgain">Trained</span></div>' +
       rows.map(function (r) { return boardLine(r, meId); }).join("") +
       // Your own row in Torn's raw terms. Every number above is a subtraction,
       // and when one of them is disputed the only useful thing the board can do
@@ -8241,50 +8271,7 @@
         : "") +
       "</div>";
 
-    var natCard =
-      '<div class="gc-card"><h3>Natural regen</h3>' +
-      (state.natBusy
-        ? '<p class="muted" style="margin:0">Working it out — ' + state.natDone + " of " + state.natTotal + "…</p>"
-        : natKnown
-        ? '<p class="muted" style="margin:0 0 8px">Worked out for the top ' + natKnown + '. The <b>Nat</b> column is the share of the week\u2019s energy that did not come from a refill, a xanax or a can — the part you earned by just being there.</p>'
-        : '<p class="muted" style="margin:0 0 8px">The <b>Nat</b> column ranks who used the most energy they simply regenerated, rather than bought. Torn answers each member\u2019s refill, xanax and can counts — including what they were at Monday 00:00 — so this needs no stored history, but it is one request per member.</p>') +
-      (state.natError ? '<p class="bad" style="margin:0 0 8px">' + esc(state.natError) + "</p>" : "") +
-      // What the two calls actually returned, for your own row. A column of
-      // 100% means every delta was zero, and only the raw pair can say whether
-      // that is because nobody bought anything or because Torn handed back the
-      // same numbers twice.
-      (function () {
-        var raw = state.playerId && state.natRaw[String(state.playerId)];
-        if (!raw) return "";
-        function flat(r) {
-          return ["refills", "xantaken", "energydrinkused"].every(function (k) {
-            return (r.now[k] || 0) === (r.then[k] || 0);
-          });
-        }
-        var ids = Object.keys(state.natRaw);
-        var moved = 0;
-        ids.forEach(function (id) { if (!flat(state.natRaw[id])) moved += 1; });
-        // Three is the smallest sample worth concluding from: one or two people
-        // buying nothing in a week is ordinary, a whole faction is not.
-        var same = ids.length >= 3 && moved === 0;
-        return '<p class="' + (same ? "bad" : "muted") + '" style="margin:0 0 8px;font-size:11px">' +
-          "your counts, week start \u2192 now: refills " + (raw.then.refills || 0) + "\u2192" + (raw.now.refills || 0) +
-          " \u00b7 xanax " + (raw.then.xantaken || 0) + "\u2192" + (raw.now.xantaken || 0) +
-          " \u00b7 cans " + (raw.then.energydrinkused || 0) + "\u2192" + (raw.now.energydrinkused || 0) +
-          (same ? " \u2014 identical, so Torn returned the same figures for both calls and every Regen% here is meaningless" : "") +
-          "</p>";
-      })() +
-      (!state.natBusy && state.natMissed
-        ? '<p class="bad" style="margin:0 0 8px">' + state.natMissed + " member" + (state.natMissed === 1 ? "" : "s") +
-          " could not be read, so their Nat is still blank rather than zero.</p>"
-        : "") +
-      (state.natBusy ? "" :
-        '<button type="button" class="gcb-btn" data-board="natural">' +
-        (natKnown ? "Refresh natural (top " + BOARD_NATURAL_TOP + ")" : "Work out natural (top " + BOARD_NATURAL_TOP + ")") +
-        "</button>") +
-      (natKnown ? '<p class="muted" style="margin:8px 0 0">A refill is counted as ' + REFILL_ENERGY + 'e and a can as ' + CAN_ENERGY +
-        'e for everyone but you — Torn does not publish another player\u2019s bar size or which can they drank. Your own row uses your real bar.</p>' : "") +
-      "</div>";
+
 
     var shareCard =
       '<div class="gc-card"><h3>Share it</h3>' +
@@ -8292,7 +8279,7 @@
       '<div class="gcb-brow btns">' +
       '<button type="button" class="gcb-btn" data-board="copy-chat">Copy for chat</button>' +
       '<button type="button" class="gcb-btn" data-board="copy-discord">Copy for Discord</button>' +
-      (state.natBusy || state.boardBusy ? ""
+      (state.xanBusy || state.boardBusy ? ""
         : '<button type="button" class="gcb-btn ghost" data-board="refresh">Refresh</button>') +
       "</div>" +
       '<pre class="gcb-card-preview">' + esc(boardCardText(rows, {
@@ -8308,7 +8295,7 @@
           (top ? esc(String(top.name)) + " · " + fmt(top.energy) + "e" : "—") + "</b></div>";
       }).join("") + "</div>";
 
-    return head + natCard + shareCard + hofCard;
+    return head + xanHtml() + shareCard + hofCard;
   }
 
 
@@ -8362,8 +8349,7 @@
       state.board.statsAt = {};
       state.board.at = Date.now();
       state.boardBy = {};
-      state.natUse = {};
-      state.boardAt = 0;
+            state.boardAt = 0;
       state.boardTriedAt = 0;
       saveBoard();
       showToast("Re-anchored", "Counting again from now, all stats together.");
@@ -8376,16 +8362,9 @@
       renderPanel();
       return;
     }
-    if (what === "natural") {
-      // fetchBoardNatural refuses while the board itself is still coming in,
-      // because it works from the rows. Refusing in silence looks like a dead
-      // button, which is worse than waiting.
-      if (state.boardBusy) {
-        showToast("Still reading", "The board is loading. Try again in a moment.");
-        renderPanel();
-        return;
-      }
-      fetchBoardNatural();
+    if (what === "xan") {
+      if (state.boardBusy) { showToast("Still reading", "The board is loading. Try again in a moment."); renderPanel(); return; }
+      fetchXanYear(true);
       renderPanel();
       return;
     }
@@ -10695,6 +10674,9 @@
       var bx = storeGet("booksExact", null);
       if (typeof bx === "string") { try { bx = JSON.parse(bx); } catch (_) { bx = null; } }
       state.booksExact = (bx && typeof bx === "object") ? bx : {};
+      var xr = storeGet("xanRows", null);
+      if (typeof xr === "string") { try { xr = JSON.parse(xr); } catch (_) { xr = null; } }
+      state.xanRows = (xr && typeof xr === "object") ? xr : {};
       var bi = storeGet("bookIds", null);
       if (typeof bi === "string") { try { bi = JSON.parse(bi); } catch (_) { bi = null; } }
       state.bookIds = (bi && typeof bi === "object") ? bi : {};

@@ -80,21 +80,25 @@ async function load(extra) {
 }
 const openBoard = async () => {
   await page.evaluate(() => document.querySelector('[data-tab="board"]').click());
-  await page.waitForTimeout(5200); // five sequential requests behind a 700ms gap
+  await page.waitForTimeout(7000); // seven sequential requests behind a 700ms gap
 };
 const boardText = () => page.evaluate(() => {
   const el = document.querySelector("#gcb-panel .gc-body");
   return el ? el.innerText.replace(/\s+/g, " ").trim() : "";
 });
-const rows = () => page.evaluate(() =>
-  [...document.querySelectorAll("#gcb-panel .gcb-brow:not(.head):not(.foot):not(.btns)")].map(r => ({
+const rows = () => page.evaluate(() => {
+  const card = [...document.querySelectorAll("#gcb-panel .gc-card")]
+    .filter(c => /faction board/i.test(c.querySelector("h3")?.textContent || ""))[0];
+  if (!card) return [];
+  return [...card.querySelectorAll(".gcb-brow:not(.head):not(.foot):not(.btns)")].map(r => ({
     rank: r.querySelector(".gcb-brank")?.textContent,
     name: r.querySelector(".gcb-bname")?.textContent,
     energy: r.querySelector(".gcb-benergy")?.textContent,
     nat: r.querySelector(".gcb-bnat")?.textContent,
     gain: r.querySelector(".gcb-bgain")?.textContent,
     me: r.classList.contains("me")
-  })));
+  }));
+});
 const countUrls = (re) => page.evaluate(r => window.__urls.filter(u => new RegExp(r).test(u)).length, re.source);
 
 let pass = 0, fail = 0;
@@ -124,13 +128,13 @@ await t("nothing is requested until the Board tab specifically is opened", async
     await page.waitForTimeout(250);
   }
   assert.strictEqual(await countUrls(/faction\/contributors/), 0,
-    "browsing the other tabs cost five faction requests each");
+    "browsing the other tabs cost seven faction requests each");
 });
 
 await t("one request per stat, and no more", async () => {
   await load({ contributors: CONTRIB });
   await openBoard();
-  assert.strictEqual(await countUrls(/faction\/contributors/), 5, "expected exactly five, one per stat");
+  assert.strictEqual(await countUrls(/faction\/contributors/), 7, "expected exactly seven, one per stat");
 });
 
 await t("re-opening the tab inside the TTL does not ask again", async () => {
@@ -183,29 +187,7 @@ await t("the row says which stats the energy went into, never a stat gain", asyn
 });
 
 
-await t("the empty Nat column comes with the button that fills it, next to the column", async () => {
-  // "why nat empty" was the first question asked about this screen, because
-  // the control sat below the whole table.
-  await load({ contributors: CONTRIB });
-  await openBoard();
-  const btns = await page.evaluate(() =>
-    [...document.querySelectorAll('#gcb-panel [data-board="natural"]')].map(b => {
-      const head = document.querySelector("#gcb-panel .gcb-brow.head");
-      return b.getBoundingClientRect().top < head.getBoundingClientRect().top;
-    }));
-  assert.ok(btns.some(Boolean), "no way to fill Nat above the table it belongs to");
-});
 
-await t("and that prompt goes away once the column is filled", async () => {
-  await load({ contributors: CONTRIB, ps: PS });
-  await openBoard();
-  await load({ contributors: LATER, ps: PS });
-  await openBoard();
-  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
-  await page.waitForTimeout(9000);
-  const prompt = await page.evaluate(() => !!document.querySelector("#gcb-panel .gcb-natprompt"));
-  assert.strictEqual(prompt, false, "the prompt outstayed its purpose");
-});
 
 await t("your own row is marked, so you can find yourself on it", async () => {
   await load({ contributors: CONTRIB });
@@ -216,81 +198,10 @@ await t("your own row is marked, so you can find yourself on it", async () => {
   assert.strictEqual((await rows()).find(x => x.me).name, "rcexyz");
 });
 
-await t("the natural column is worked out only when asked for", async () => {
-  await load({ contributors: CONTRIB, ps: PS });
-  await openBoard();
-  await load({ contributors: LATER, ps: PS });
-  await openBoard();
-  assert.strictEqual(await countUrls(/personalstats/), 0, "personalstats went out unasked");
-  (await rows()).forEach(x => assert.strictEqual(x.nat, "—", "an unasked regen column must be blank, not 0%"));
-});
 
-await t("asking for it ranks who trained on regen rather than on pills", async () => {
-  await load({ contributors: CONTRIB, ps: PS });
-  await openBoard();
-  await load({ contributors: LATER, ps: PS });
-  await openBoard();
-  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
-  await page.waitForTimeout(9000);
-  const r = await rows();
-  // quiet's entire 10,000 came from 40 xanax at 250 each.
-  assert.strictEqual(r.find(x => x.name === "quiet").nat, "0%", JSON.stringify(r));
-  // rcexyz bought nothing: a full week of pure regen.
-  assert.strictEqual(r.find(x => x.name === "rcexyz").nat, "100%", JSON.stringify(r));
-  // grinder trained most but bought 7 refills, 100 xanax and 20 cans.
-  const g = parseInt(r.find(x => x.name === "grinder").nat, 10);
-  assert.ok(g > 0 && g < 60, "grinder's natural share should be partial, got " + g + "%");
-});
 
-await t("identical week-start and live counts are called out, not shown as 100%", async () => {
-  // Reported: every row reading 100% regen, which is impossible. Both ends of
-  // the subtraction are printed so the two explanations -- nobody bought
-  // anything, or Torn returned the same figures twice -- can be told apart.
-  const FLAT = {
-    [ME]: { then: { refills: 10, xantaken: 100, energydrinkused: 5 },
-            now:  { refills: 10, xantaken: 100, energydrinkused: 5 } },
-    77: { then: { refills: 0, xantaken: 0, energydrinkused: 0 },
-          now:  { refills: 0, xantaken: 0, energydrinkused: 0 } },
-    88: { then: { refills: 0, xantaken: 0, energydrinkused: 0 },
-          now:  { refills: 0, xantaken: 0, energydrinkused: 0 } }
-  };
-  await load({ contributors: CONTRIB, ps: FLAT, fresh: true });
-  await openBoard();
-  await load({ contributors: LATER, ps: FLAT });
-  await openBoard();
-  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
-  await page.waitForTimeout(9000);
-  const txt = await boardText();
-  assert.match(txt, /week start → now/i, "the raw counts should be printed: " + txt.slice(-400));
-  assert.match(txt, /identical/i, "an all-zero delta must be called out: " + txt.slice(-400));
-});
 
-await t("counts that DID move are reported without the warning", async () => {
-  await load({ contributors: CONTRIB, ps: PS, fresh: true });
-  await openBoard();
-  await load({ contributors: LATER, ps: PS });
-  await openBoard();
-  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
-  await page.waitForTimeout(9000);
-  const txt = await boardText();
-  assert.match(txt, /week start → now/i, "the raw counts should still be shown");
-  assert.ok(!/identical/i.test(txt),
-    "one member buying nothing is ordinary and must not trip the warning: " + txt.slice(-400));
-});
 
-await t("the week-start half is fetched once and then remembered", async () => {
-  await load({ contributors: CONTRIB, ps: PS });
-  await openBoard();
-  await load({ contributors: LATER, ps: PS });
-  await openBoard();
-  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
-  await page.waitForTimeout(9000);
-  const withBaseline = await countUrls(/personalstats.*timestamp/);
-  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
-  await page.waitForTimeout(6000);
-  assert.strictEqual(await countUrls(/personalstats.*timestamp/), withBaseline,
-    "a past week's answer never changes, so it must not be re-fetched");
-});
 
 await t("a refused request does not turn into a retry loop", async () => {
   // The failure path has to stamp the clock too. When only success stamps it,
@@ -310,85 +221,56 @@ await t("a refused request does not turn into a retry loop", async () => {
     "a refused board re-requested on every re-open");
 });
 
-await t("a member's two requests are SPACED, not fired as a burst", async () => {
-  // The 700ms gap exists to hold the request rate under Torn's 100 a minute,
-  // and a refused call still spends that budget. Counting requests cannot see
-  // whether they were spaced -- only their timing can, which is why the harness
-  // records when each one went out.
-  await load({ contributors: CONTRIB, ps: PS, fresh: true });
+
+
+
+await t("the year's xanax board is a button, not something that just happens", async () => {
+  await load({ contributors: CONTRIB, fresh: true });
   await openBoard();
-  await load({ contributors: LATER, ps: PS });
-  await openBoard();
-  await page.evaluate(() => { window.__reqAt.length = 0; });
-  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
-  await page.waitForTimeout(9000);
-  const gaps = await page.evaluate(() => {
-    const ps = window.__reqAt.filter(r => /personalstats/.test(r.url)).map(r => r.t).sort((a, b) => a - b);
-    return ps.slice(1).map((t, i) => t - ps[i]);
-  });
-  assert.ok(gaps.length >= 3, "expected several personalstats requests, saw " + (gaps.length + 1));
-  // Allow slack for the event loop, but a burst is two requests in the same
-  // handful of milliseconds and nothing here should look like that.
-  const burst = gaps.filter(g => g < 300);
-  assert.deepStrictEqual(burst, [], "requests went out as a burst: gaps were " + JSON.stringify(gaps));
+  assert.strictEqual(await countUrls(/stat=xantaken/), 0, "xanax went out unasked");
+  assert.ok(await page.$('[data-board="xan"]'), "no way to ask for it");
 });
 
-await t("a board refresh cannot start while the natural pass is running", async () => {
-  // The Refresh button is hidden during the pass, but the tab-open path calls
-  // fetchBoard too -- so switching away and back mid-pass would start a second
-  // chain, and the 700ms spacing would then be spacing two streams instead of
-  // one. The guard is in fetchBoard, and only this reaches it.
-  await load({ contributors: CONTRIB, ps: PS, fresh: true });
+await t("it ranks on the year, not on the lifetime counter", async () => {
+  // quiet has taken far more xanax EVER and fewer this year. Ranking on the
+  // raw counter would put them top, which answers a different question.
+  const XAN = {
+    [ME]: { now: 900, then: 400 },     // 500 this year
+    77:   { now: 5000, then: 4900 },   // 100 this year, most ever
+    88:   { now: 700, then: 500 }      // 200 this year
+  };
+  await load({ contributors: CONTRIB, xan: XAN, fresh: true });
   await openBoard();
-  await load({ contributors: LATER, ps: PS });
-  await openBoard();
-  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
-  await page.waitForTimeout(1200);
-  const before = await countUrls(/faction\/contributors/);
-  for (let i = 0; i < 3; i++) {
-    await page.evaluate(() => document.querySelector('[data-tab="now"]').click());
-    await page.waitForTimeout(150);
-    await page.evaluate(() => document.querySelector('[data-tab="board"]').click());
-    await page.waitForTimeout(300);
-  }
-  assert.strictEqual(await countUrls(/faction\/contributors/), before,
-    "a second board round started while the natural pass was still going");
+  await page.evaluate(() => document.querySelector('[data-board="xan"]').click());
+  await page.waitForTimeout(12000);
+  const rows = await page.evaluate(() => {
+    const c = [...document.querySelectorAll("#gcb-panel .gc-card")].filter(x => /xanax/i.test(x.textContent))[0];
+    if (!c) return null;
+    return [...c.querySelectorAll(".gcb-brow:not(.head)")].map(r => ({
+      name: r.querySelector(".gcb-bname")?.textContent,
+      year: r.querySelector(".gcb-benergy")?.textContent,
+      ever: r.querySelector(".gcb-bnat")?.textContent
+    }));
+  });
+  assert.ok(rows && rows.length >= 3, "no xanax rows rendered: " + JSON.stringify(rows));
+  assert.strictEqual(rows[0].name, "rcexyz", "should rank on the year: " + JSON.stringify(rows));
+  assert.strictEqual(rows[0].year, "500");
+  assert.strictEqual(rows[0].ever, "900");
+  assert.strictEqual(rows[2].name, "quiet", "most ever, least this year, so last: " + JSON.stringify(rows));
 });
 
-await t("the natural button does not silently no-op while the board is loading", async () => {
-  // Once a natural figure exists the button reads "Refresh natural" and stays
-  // on screen through a board load. Without the guard it does nothing at all,
-  // which is indistinguishable from a broken button.
-  await load({ contributors: CONTRIB, ps: PS, fresh: true });
+await t("the year-ago half is fetched once and then kept", async () => {
+  const XAN = { [ME]: { now: 900, then: 400 }, 77: { now: 5000, then: 4900 }, 88: { now: 700, then: 500 } };
+  await load({ contributors: CONTRIB, xan: XAN, fresh: true });
   await openBoard();
-  await load({ contributors: LATER, ps: PS });
-  await openBoard();
-  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
+  await page.evaluate(() => document.querySelector('[data-board="xan"]').click());
+  await page.waitForTimeout(12000);
+  const withBase = await countUrls(/stat=xantaken.*timestamp/);
+  assert.ok(withBase >= 3, "expected a year-ago call per member, saw " + withBase);
+  await page.evaluate(() => document.querySelector('[data-board="xan"]').click());
   await page.waitForTimeout(9000);
-  // Wait out the forced-refresh cooldown, or the click below is refused and the
-  // board never goes busy at all.
-  await page.waitForTimeout(16000);
-  await page.evaluate(() => document.querySelector('[data-board="refresh"]').click());
-  await page.waitForTimeout(300);
-  const busy = await page.evaluate(() => /reading/i.test(document.querySelector("#gcb-panel .gc-body").innerText));
-  assert.ok(busy, "setup: the board should be mid-round when the button is pressed");
-  await page.evaluate(() => { window.__urls.length = 0; });
-  const clicked = await page.evaluate(() => {
-    const b = document.querySelector('[data-board="natural"]');
-    if (!b) return false;
-    b.click();
-    return true;
-  });
-  assert.ok(clicked, "the natural button vanished mid-load, so nothing can be asserted");
-  await page.waitForTimeout(800);
-  assert.strictEqual(await countUrls(/personalstats/), 0,
-    "the natural pass started on top of a board round");
-  const toast = await page.evaluate(() => {
-    const el = document.querySelector("#gcb-panel .gc-toast");
-    return el ? el.innerText.replace(/\s+/g, " ").trim() : "";
-  });
-  assert.ok(/still reading/i.test(toast) || /loading/i.test(toast),
-    "pressing it mid-load said nothing at all; toast was " + JSON.stringify(toast));
+  assert.strictEqual(await countUrls(/stat=xantaken.*timestamp/), withBase,
+    "a year-ago figure is history and cannot change, so it must not be re-fetched");
 });
 
 await t("the copy buttons reach a handler and put the card on the clipboard", async () => {
@@ -530,7 +412,7 @@ await t("and pressing through anyway really does try", async () => {
 await t("a key that HAS faction access is not obstructed", async () => {
   await load({ contributors: CONTRIB, keyFaction: true, fresh: true });
   await openBoard();
-  assert.strictEqual(await countUrls(/faction\/contributors/), 5);
+  assert.strictEqual(await countUrls(/faction\/contributors/), 7);
 });
 
 await t("a transient error is not blamed on faction permissions", async () => {
@@ -543,32 +425,7 @@ await t("a transient error is not blamed on faction permissions", async () => {
   assert.match(txt, /Too many requests/);
 });
 
-await t("the natural pass cannot be re-run on a hair trigger", async () => {
-  await load({ contributors: CONTRIB, ps: PS });
-  await openBoard();
-  await load({ contributors: LATER, ps: PS });
-  await openBoard();
-  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
-  await page.waitForTimeout(9000);
-  const after = await countUrls(/personalstats/);
-  await page.evaluate(() => { const b = document.querySelector('[data-board="natural"]'); if (b) b.click(); });
-  await page.waitForTimeout(2500);
-  assert.strictEqual(await countUrls(/personalstats/), after,
-    "a second press inside the cooldown spent another twelve requests");
-});
 
-await t("Refresh is not offered while the natural pass is running", async () => {
-  // Both chains at once means the 700ms spacing that protects the rate limit
-  // ends up spacing two streams instead of one.
-  await load({ contributors: CONTRIB, ps: PS });
-  await openBoard();
-  await load({ contributors: LATER, ps: PS });
-  await openBoard();
-  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
-  await page.waitForTimeout(1500);
-  assert.strictEqual(await page.$('[data-board="refresh"]'), null,
-    "Refresh stayed live during the natural pass");
-});
 
 await t("a corrupt stored board is rejected outright, not partly believed", async () => {
   // The week is unusable, but the anchors alongside it look perfectly fine --

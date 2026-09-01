@@ -31,8 +31,8 @@ function grab(n) {
 const CONST = [
   /var DAY_MS = [^;]+;/, /var WEEK_EPOCH_DAY = [^;]+;/,
   /var BOARD_STATS = \[[^\]]*\];/, /var BOARD_WEEKS = [^;]+;/, /var BOARD_CARD_ROWS = [^;]+;/,
-  /var BOARD_GAP_MS = [^;]+;/, /var BOARD_SKEW_MS = [^;]+;/, /var BOARD_SPLIT_STATS = \[[^\]]*\];/,
-  /var BOARD_PARTIAL_MS = [^;]+;/, /var XAN_ENERGY = [^;]+;/, /var REFILL_ENERGY = [^;]+;/, /var CAN_ENERGY = [^;]+;/,
+  /var ATTACK_ENERGY = [^;]+;/, /var BOARD_GAP_MS = [^;]+;/, /var BOARD_SKEW_MS = [^;]+;/, /var BOARD_SPLIT_STATS = \[[^\]]*\];/,
+  /var BOARD_PARTIAL_MS = [^;]+;/,
   /var BOARD_LABEL = \{[\s\S]*?\n  \};/,
 ].map(re => { const m = re.exec(src); assert.ok(m, "missing " + re); return m[0]; }).join("\n");
 
@@ -303,49 +303,6 @@ t("staying inside the same week leaves the baseline alone", () => {
   assert.strictEqual(b.rolled, false);
 });
 
-// ---- natural regen --------------------------------------------------------
-
-const natural = (dE, use, own) => call(["naturalEnergy"],
-  `naturalEnergy(${dE}, ${JSON.stringify(use)}, ${own === undefined ? "null" : JSON.stringify(own)})`);
-
-t("the assist energies are Torn's real numbers", () => {
-  // Asserted as literals ON PURPOSE. Every other test here derives its
-  // expectation from these constants, so a wrong constant agrees with itself
-  // and the whole natural column would be quietly wrong.
-  assert.strictEqual(call([], "XAN_ENERGY"), 250, "a xanax is 250 energy");
-  assert.strictEqual(call([], "REFILL_ENERGY"), 150, "a refill fills a donator's 150 bar");
-  assert.strictEqual(call([], "CAN_ENERGY"), 25, "a can of Munster is 25 energy");
-});
-
-t("energy that came out of a pill, a can or a refill is not natural", () => {
-  const XAN = call([], "XAN_ENERGY"), REF = call([], "REFILL_ENERGY"), CAN = call([], "CAN_ENERGY");
-  assert.strictEqual(natural(10000, { xantaken: 4, refills: 2, energydrinkused: 6 }),
-    10000 - 4 * XAN - 2 * REF - 6 * CAN);
-});
-
-t("a week of pure regen is 100% natural", () => {
-  assert.strictEqual(natural(3360, { xantaken: 0, refills: 0, energydrinkused: 0 }), 3360);
-});
-
-t("more assists than energy trained floors at zero, never negative", () => {
-  assert.strictEqual(natural(100, { xantaken: 40, refills: 0, energydrinkused: 0 }), 0);
-});
-
-t("your OWN row uses your real bar and can strength, not the estimate", () => {
-  // The coach already knows the owner's energy maximum and which can they
-  // drink. Using the stranger-estimate for the one member it has real numbers
-  // for would be a worse answer than it can give.
-  const REF = call([], "REFILL_ENERGY");
-  const withReal = natural(10000, { refills: 2 }, { energyMax: 100, canEnergy: 30 });
-  assert.strictEqual(withReal, 10000 - 2 * 100);
-  assert.notStrictEqual(100, REF, "fixture must differ from the default or this asserts nothing");
-});
-
-t("a missing consumable count is treated as zero, not as NaN", () => {
-  assert.strictEqual(natural(5000, {}), 5000);
-  assert.strictEqual(natural(5000, { xantaken: null, refills: undefined }), 5000);
-});
-
 t("the week label is the TCT date, not the reader's local one", () => {
   // Monday 00:00 UTC is Sunday 19:00 in New York. A local getter labels this
   // week with YESTERDAY's date, and the card then disagrees with the board it
@@ -357,7 +314,7 @@ t("the week label is the TCT date, not the reader's local one", () => {
 
 // ---- assembling the board -------------------------------------------------
 
-const build = (args) => call(["naturalEnergy", "boardBuild"], `boardBuild(${args})`);
+const build = (args) => call(["boardAttackEnergy", "boardBuild"], `boardBuild(${args})`);
 
 t("the board ranks on energy trained and carries the per-stat split beside it", () => {
   // gymstrength and friends are ENERGY SPENT on that stat, not points gained,
@@ -419,19 +376,7 @@ t("a member who trained nothing all week is still listed, at the bottom", () => 
   assert.strictEqual(rows[1].name, "a");
 });
 
-t("natural energy lands on the row when the consumable counts are known", () => {
-  const rows = build(JSON.stringify({
-    gymenergy: { 1: { id: 1, name: "a", delta: 10000 } }
-  }) + ", " + JSON.stringify({ 1: { xantaken: 4, refills: 0, energydrinkused: 0 } }) + ", null");
-  assert.strictEqual(rows[0].natural, 10000 - 4 * call([], "XAN_ENERGY"));
-});
 
-t("and is null -- not zero -- when they are not", () => {
-  // null means "not worked out yet"; 0 would mean "every point of it was
-  // bought", which is a completely different claim about a person.
-  const rows = build(JSON.stringify({ gymenergy: { 1: { id: 1, name: "a", delta: 10000 } } }) + ", null, null");
-  assert.strictEqual(rows[0].natural, null);
-});
 
 // ---- how much of the week the board actually covers ------------------------
 
@@ -521,13 +466,140 @@ t("a member absent from a stat counts as zero for that stat, not as missing", ()
   assert.strictEqual(out.ok, true);
 });
 
+// ---- energy that went into attacking rather than the gym -------------------
+//
+// Torn has no attack-energy counter. FactionStatEnum carries attack COUNTS --
+// attackswon, attackslost and the rest -- so the energy is derived at 25 an
+// attack, which is what one costs. Derived, and labelled as derived: the count
+// is shown beside it so it can be checked rather than trusted.
+
+const atk = (won, lost) => call(["boardAttackEnergy"], `boardAttackEnergy(${won}, ${lost})`);
+
+t("attack energy is the attacks made, at what an attack costs", () => {
+  const AE = call([], "ATTACK_ENERGY");
+  assert.strictEqual(atk(10, 4), { n: 14, energy: 14 * AE }.energy);
+  assert.strictEqual(AE, 25, "a Torn attack costs 25 energy");
+});
+
+t("wins and losses are both attacks you paid for", () => {
+  // Losing one still spent the energy. Counting only wins would flatter
+  // whoever picks the easiest targets.
+  assert.ok(atk(10, 10) > atk(10, 0));
+});
+
+t("no attacks is no energy, not a missing figure", () => {
+  assert.strictEqual(atk(0, 0), 0);
+  assert.strictEqual(atk(null, undefined), 0);
+});
+
+t("a negative count cannot credit energy back", () => {
+  assert.strictEqual(atk(-5, 0), 0);
+});
+
+// ---- the board carries both, separately ------------------------------------
+
+t("gym energy and attack energy are kept apart", () => {
+  // The whole point: one number is what reached the gym, the other is what
+  // never did. Summing them would hide exactly the thing being asked.
+  const rows = call(["boardAttackEnergy", "boardBuild"], `boardBuild(${JSON.stringify({
+    gymenergy: { 1: { id: 1, name: "a", delta: 1000 } },
+    attackswon: { 1: { id: 1, name: "a", delta: 8 } },
+    attackslost: { 1: { id: 1, name: "a", delta: 2 } }
+  })}, null, null)`);
+  assert.strictEqual(rows[0].energy, 1000);
+  assert.strictEqual(rows[0].attacks, 10);
+  assert.strictEqual(rows[0].attackEnergy, 250);
+});
+
+t("a member who only attacked still appears, with no gym energy", () => {
+  const rows = call(["boardAttackEnergy", "boardBuild"], `boardBuild(${JSON.stringify({
+    gymenergy: { 1: { id: 1, name: "a", delta: 0 } },
+    attackswon: { 1: { id: 1, name: "a", delta: 40 } },
+    attackslost: {}
+  })}, null, null)`);
+  assert.strictEqual(rows[0].energy, 0);
+  assert.strictEqual(rows[0].attackEnergy, 1000);
+});
+
+t("the board still ranks on gym energy, not on the two combined", () => {
+  // It is a gym board. Somebody who spent the week attacking should not top it.
+  const rows = call(["boardAttackEnergy", "boardBuild"], `boardBuild(${JSON.stringify({
+    gymenergy: { 1: { id: 1, name: "trainer", delta: 500 }, 2: { id: 2, name: "fighter", delta: 100 } },
+    attackswon: { 2: { id: 2, name: "fighter", delta: 200 } },
+    attackslost: {}
+  })}, null, null)`);
+  assert.strictEqual(rows[0].name, "trainer");
+});
+
+// ---- a year of xanax -------------------------------------------------------
+//
+// xantaken is in personalstats, which is PUBLIC for another player and answers
+// historically with a timestamp -- so a year's total is an exact subtraction,
+// not an estimate. Same two calls the regen column makes, a year apart instead
+// of a week.
+
+const yearAgo = (now) => call(["yearStartMs"], `yearStartMs(${now})`);
+
+t("the window is a year back from now, to the day", () => {
+  const NOW = Date.UTC(2026, 8, 2, 12, 0, 0);
+  assert.strictEqual(yearAgo(NOW), Date.UTC(2025, 8, 2, 12, 0, 0));
+});
+
+t("it handles a leap year without drifting a day", () => {
+  // 2024 was a leap year; naive 365-day arithmetic lands on the 1st.
+  const NOW = Date.UTC(2025, 1, 28, 0, 0, 0);
+  const d = new Date(yearAgo(NOW));
+  assert.strictEqual(d.getUTCFullYear(), 2024);
+  assert.strictEqual(d.getUTCMonth(), 1);
+  assert.strictEqual(d.getUTCDate(), 28);
+});
+
+const xan = (rows) => call(["xanBuild"], `xanBuild(${JSON.stringify(rows)})`);
+
+t("members are ranked by how many they have taken in the window", () => {
+  const out = xan({ 1: { id: 1, name: "a", now: 900, then: 400 },
+                    2: { id: 2, name: "b", now: 1200, then: 1000 } });
+  assert.strictEqual(out[0].name, "a");
+  assert.strictEqual(out[0].taken, 500);
+  assert.strictEqual(out[1].taken, 200);
+});
+
+t("a lifetime total is not a year's total", () => {
+  // The whole point of the subtraction: b has taken more xanax ever and fewer
+  // this year, and ranking on the raw counter would have it top the board.
+  const out = xan({ 1: { id: 1, name: "a", now: 900, then: 400 },
+                    2: { id: 2, name: "b", now: 5000, then: 4900 } });
+  assert.strictEqual(out[0].name, "a");
+});
+
+t("a counter that went backwards is zero, not a negative", () => {
+  const out = xan({ 1: { id: 1, name: "a", now: 100, then: 400 } });
+  assert.strictEqual(out[0].taken, 0);
+});
+
+t("somebody with no baseline yet is left out rather than counted as zero", () => {
+  // Absent means "not fetched", which is a different claim from "took none".
+  const out = xan({ 1: { id: 1, name: "a", now: 900, then: null },
+                    2: { id: 2, name: "b", now: 300, then: 100 } });
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].name, "b");
+});
+
+t("a member who took none in the year is still listed", () => {
+  // Zero is a real answer here and worth seeing -- it is the opposite end of
+  // the same question.
+  const out = xan({ 1: { id: 1, name: "a", now: 400, then: 400 } });
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].taken, 0);
+});
+
 // ---- the shareable card ---------------------------------------------------
 
 const CARD = [
   { rank: 1, id: 1, name: "rcexyz", energy: 48300, natural: 41000, str: 36225, def: 12075, spe: 0, dex: 0 },
   { rank: 2, id: 2, name: "quiet", energy: 900, natural: null, str: 0, def: 900, spe: 0, dex: 0 }
 ];
-const card = (fmt) => call(["fmt", "ROUND", "boardSplit", "boardNatPct", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+const card = (fmt) => call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
   `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "Dead Fragment", week: MON, fmt: fmt })})`);
 
 t("the card names the faction and the week it covers", () => {
@@ -550,12 +622,6 @@ t("the card carries the battle stats trained, not only the energy total", () => 
   assert.ok(/all def/.test(s), "a single-stat week should read as 'all def': " + s);
 });
 
-t("a natural figure nobody worked out is left off that row rather than shown as zero", () => {
-  const s = card("chat");
-  const quietLine = s.split("\n").filter(l => l.includes("quiet"))[0];
-  assert.ok(quietLine, "quiet is missing entirely");
-  assert.ok(!/0%/.test(quietLine), "an unknown natural share was rendered as 0%: " + quietLine);
-});
 
 t("the Discord card is fenced so the columns survive the paste", () => {
   const s = card("discord");
@@ -570,14 +636,14 @@ t("the chat card is NOT fenced -- Torn chat renders backticks literally", () => 
 t("a card that anchored mid-week says so on its face", () => {
   // Otherwise it lands in faction chat as a full week's standings when it is
   // three days of them.
-  const s = call(["fmt", "ROUND", "boardSplit", "boardNatPct", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+  const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
     `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat", since: { at: MON + 3 * DAY, start: MON, partial: true } })})`);
   assert.match(s, /counting from/, s.split("\n")[0]);
   assert.match(s.split("\n")[0], /Thu/, "the anchor day should be stated: " + s.split("\n")[0]);
 });
 
 t("and a card that really did start on Monday says nothing extra", () => {
-  const s = call(["fmt", "ROUND", "boardSplit", "boardNatPct", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+  const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
     `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat", since: { at: MON, start: MON, partial: false } })})`);
   assert.ok(!/counting from/.test(s), s.split("\n")[0]);
 });
@@ -585,7 +651,7 @@ t("and a card that really did start on Monday says nothing extra", () => {
 t("the card never runs away with a 100-member faction", () => {
   const many = [];
   for (let i = 1; i <= 100; i++) many.push({ rank: i, id: i, name: "m" + i, energy: 1000 - i, natural: null, str: 1000 - i, def: 0, spe: 0, dex: 0 });
-  const s = call(["fmt", "ROUND", "boardSplit", "boardNatPct", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+  const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
     `boardCardText(${JSON.stringify(many)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat" })})`);
   assert.ok(s.split("\n").length <= 20, "a chat message cannot be 100 lines: " + s.split("\n").length);
   assert.ok(s.includes("m1"), "the top of the board must survive the trim");
