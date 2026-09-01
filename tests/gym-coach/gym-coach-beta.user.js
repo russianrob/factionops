@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.55
+// @version      0.9.56
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,31 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.56 - The item log names a book by ID, so match it by ID.
+ *
+ *         The diagnostic added in 0.9.54 did its job on the first try. Log 2050
+ *         reads:
+ *
+ *           data {"item":745,"faction":0}
+ *
+ *         An item id. The lookup searched the row for the book's NAME, which
+ *         can never match, so it found nothing every time -- and said so
+ *         honestly instead of quietly dating the book from the sighting.
+ *
+ *         Now matched on the id, read from the `data.item` FIELD rather than
+ *         from the serialised row: "faction":745 and a colour code of "745"
+ *         would both satisfy a blind string search of the JSON, and one of
+ *         those is in every single row.
+ *
+ *         The ids come from /v2/torn/items?cat=Book, which answers a public key
+ *         and never changes, so it is asked once and kept. Resolved rather than
+ *         hardcoded, because only one of the four has ever been seen -- 745,
+ *         "Time Is In The Mind" -- and a guessed id fails exactly the way this
+ *         bug did: no match, no start, back to the sighting.
+ *
+ *         The name match stays as a fallback for the window before the
+ *         catalogue answers.
+ *
 * 0.9.55 - "Bar full 91m" on a bar that filled four minutes ago.
  *
  *         Reported with the bar reading 148/150 barely four minutes before the
@@ -1937,6 +1962,10 @@
     bookStartAt: 0,
     bookStartBusy: false,
     bookStartTries: 0,
+    // Torn's item id for each stat book, resolved from the item catalogue.
+    bookIds: {},
+    bookIdsAt: 0,
+    bookIdsBusy: false,
     // What the item-log lookup said last time, verbatim.
     bookLogDiag: "",
     bookSeen: "",
@@ -6902,7 +6931,12 @@
         changed = true;
       }
       // The page cannot say when you started, and the log can. Asked once.
-      if (!(state.booksExact || {})[r.k]) fetchBookStart(r.k, r.name);
+      if (!(state.booksExact || {})[r.k]) {
+        // The ids first: without one the log lookup has only the name to go on,
+        // and the log does not carry names.
+        fetchBookIds();
+        fetchBookStart(r.k, r.name);
+      }
     } else {
       // The strip is here and no stat book is on it -- including the case where
       // some OTHER book is, since only one can be read at a time. Anything this
@@ -6953,9 +6987,10 @@
   // before it could read one, and a wrong key would return no start at all --
   // silently falling back to dating from now, which is the exact bug being
   // fixed. Searching the row cannot fail that way.
-  function bookStartFromLog(responses, name) {
+  function bookStartFromLog(responses, name, itemId) {
     var want = String(name || "").toLowerCase();
-    if (!want) return 0;
+    var wantId = Number(itemId) || 0;
+    if (!want && !wantId) return 0;
     var best = 0;
     (responses || []).forEach(function (r) {
       var rows = (r && r.log) || {};
@@ -6964,15 +6999,72 @@
         if (!e) continue;
         var ts = Number(e.timestamp);
         if (!(ts > 0)) continue;
-        var blob = "";
-        try { blob = JSON.stringify(e).toLowerCase(); } catch (_) { continue; }
-        if (blob.indexOf(want) === -1) continue;
+        var hit = false;
+        // The row identifies the book by ITEM ID, not by name:
+        //   data {"item":745,"faction":0}
+        // Searching the row for the name can never match, which is why the
+        // first version of this found nothing. The FIELD is read rather than
+        // the serialised row, because "faction":745 and a colour code of "745"
+        // would both satisfy a blind string search.
+        if (wantId) hit = Number((e.data || {}).item) === wantId;
+        if (!hit && want) {
+          // Until the item catalogue answers there is no id to match on, so a
+          // row that happens to carry the name is better than nothing.
+          var blob = "";
+          try { blob = JSON.stringify(e).toLowerCase(); } catch (_) { continue; }
+          hit = blob.indexOf(want) !== -1;
+        }
+        if (!hit) continue;
         // The most recent reading of that book: you can read one more than once
         // over a career, and the countdown is for the one you are on.
         if (ts > best) best = ts;
       }
     });
     return best * 1000;
+  }
+
+  // The four stat books, as Torn's own item ids.
+  //
+  // /v2/torn/items?cat=Book answers a PUBLIC key and the ids never change, so
+  // this is asked once and kept. Resolved rather than hardcoded: only one of
+  // the four ids has ever been seen (745, "Time Is In The Mind"), and guessing
+  // the other three would fail silently -- no match, no start, back to dating
+  // from the sighting.
+  function readBookIds(d) {
+    var list = d && d.items;
+    if (!list) return {};
+    var rows = Array.isArray(list) ? list : Object.keys(list).map(function (k) { return list[k]; });
+    var out = {}, byName = {}, k;
+    for (k in STAT_BOOKS) byName[STAT_BOOKS[k].name.toLowerCase()] = k;
+    rows.forEach(function (it) {
+      if (!it || !it.name || !(Number(it.id) > 0)) return;
+      var key = byName[String(it.name).toLowerCase()];
+      if (key) out[key] = Number(it.id);
+    });
+    return out;
+  }
+
+  var BOOK_IDS_TTL = 604800000;   // item ids do not change
+  function fetchBookIds() {
+    if (state.bookIdsAt && Date.now() - state.bookIdsAt < BOOK_IDS_TTL) return;
+    if (state.bookIdsBusy || !resolveKey()) return;
+    state.bookIdsBusy = true;
+    state.bookIdsAt = Date.now();
+    httpGet("https://api.torn.com/v2/torn/items?cat=Book&key=" +
+            encodeURIComponent(resolveKey()) + "&comment=" + encodeURIComponent(COMMENT))
+      .then(function (d) {
+        var m = readBookIds(d);
+        if (Object.keys(m).length) {
+          state.bookIds = m;
+          storeSet("bookIds", m);
+          // The id is the thing the log lookup was missing, so let it try again
+          // now rather than waiting out its retry window.
+          state.bookStartAt = 0;
+          state.bookStartTries = 0;
+        }
+      })
+      .catch(function () { /* the name fallback still stands */ })
+      .then(function () { state.bookIdsBusy = false; });
   }
 
   // Asked once per book sighting, never on the poll tick. The log is Full-only,
@@ -6992,15 +7084,17 @@
     state.bookLogDiag = "item log: asking Torn\u2026";
     httpGet(apiUrl("log&log=" + BOOK_USE_LOG))
       .then(function (d) {
-        var when = bookStartFromLog([d], name);
+        var when = bookStartFromLog([d], name, (state.bookIds || {})[k]);
         // Say what came back either way. Guessing at a payload shape is what
         // cost two rounds on the aria-label, and this one has never been seen.
         var rows = (d && d.log) || {};
         var n = 0, kk;
         for (kk in rows) n += 1;
+        var wantId = (state.bookIds || {})[k] || 0;
         state.bookLogDiag = when > 0
-          ? "item log: started " + new Date(when).toISOString().slice(0, 10)
-          : "item log: " + n + " rows in log " + BOOK_USE_LOG + ", none naming \"" + name + "\"";
+          ? "item log: started " + new Date(when).toISOString().slice(0, 16).replace("T", " ")
+          : "item log: " + n + " rows in log " + BOOK_USE_LOG + ", none for item " +
+            (wantId ? wantId : "(id not resolved yet)");
         if (when > 0 && when !== state.books[k]) {
           state.books[k] = when;
           if (!state.booksExact) state.booksExact = {};
@@ -10181,6 +10275,9 @@
       var bx = storeGet("booksExact", null);
       if (typeof bx === "string") { try { bx = JSON.parse(bx); } catch (_) { bx = null; } }
       state.booksExact = (bx && typeof bx === "object") ? bx : {};
+      var bi = storeGet("bookIds", null);
+      if (typeof bi === "string") { try { bi = JSON.parse(bi); } catch (_) { bi = null; } }
+      state.bookIds = (bi && typeof bi === "object") ? bi : {};
       state.verdictFold = storeBool("verdictFold", true);
       var sh = storeGet("shares", null);
       if (typeof sh === "string") { try { sh = JSON.parse(sh); } catch (_) { sh = null; } }

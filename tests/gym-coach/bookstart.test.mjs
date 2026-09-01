@@ -20,7 +20,8 @@ function grab(n) {
   }
 }
 const CONST = [/var BOOK_USE_LOG = [^;]+;/, /var BOOK_DAYS = [^;]+;/,
-  /var BOOK_LOG_TTL = [^;]+;/, /var BOOK_RETRY_MS = [^;]+;/, /var BOOK_MAX_TRIES = [^;]+;/]
+  /var BOOK_LOG_TTL = [^;]+;/, /var BOOK_RETRY_MS = [^;]+;/, /var BOOK_MAX_TRIES = [^;]+;/,
+  /var STAT_BOOKS = \{[\s\S]*?\n  \};/]
   .map(re => { const m = re.exec(src); assert.ok(m, "missing " + re); return m[0]; }).join("\n");
 const call = (fns, expr) =>
   new Function("var R;" + CONST + "\n" + fns.map(grab).join("\n") + "\nR = (" + expr + "); return R;")();
@@ -105,6 +106,92 @@ t("the log id asked for is Torn's own 'Item use book'", () => {
   // Pinned as a literal: every other test here would agree with itself whatever
   // this were set to, and a wrong id returns an empty log rather than an error.
   assert.strictEqual(call([], "BOOK_USE_LOG"), 2050);
+});
+
+// ---- the log names the book by ITEM ID, not by name ------------------------
+//
+// The row is data:{"item":745,"faction":0} -- an id. Searching it for the
+// book's NAME can never match, which is exactly why 0.9.53's lookup found
+// nothing and reported it honestly. Confirmed live: item 745 is "Time Is In
+// The Mind", started 09:15:50 on 31/08/26.
+
+const startId = (responses, name, id) =>
+  call(["bookStartFromLog"], `bookStartFromLog(${JSON.stringify(responses)}, ${JSON.stringify(name)}, ${id === undefined ? "0" : id})`);
+
+t("a row carrying only an item id is matched by that id", () => {
+  const out = startId([resp([
+    { timestamp: NOW - 30 * DAY, title: "Item use book", data: { item: 745, faction: 0 } }
+  ])], "Time Is In The Mind", 745);
+  assert.strictEqual(out, (NOW - 30 * DAY) * 1000);
+});
+
+t("a different book's id is not a match", () => {
+  const out = startId([resp([
+    { timestamp: NOW - 2 * DAY, data: { item: 779, faction: 0 } },
+    { timestamp: NOW - 30 * DAY, data: { item: 745, faction: 0 } }
+  ])], "Time Is In The Mind", 745);
+  assert.strictEqual(out, (NOW - 30 * DAY) * 1000);
+});
+
+t("an id that appears as a bare number elsewhere in the row is not a match", () => {
+  // The naive fix -- searching the row's JSON for the id as a string -- would
+  // match "faction":745 or a colour code just as happily. The field is read.
+  const out = startId([resp([
+    { timestamp: NOW - DAY, data: { item: 779, faction: 745 }, params: { color: "745" } }
+  ])], "Time Is In The Mind", 745);
+  assert.strictEqual(out, 0);
+});
+
+t("with no id known, the name is still tried", () => {
+  // Until the item catalogue answers, a row that happens to name the book is
+  // better than nothing.
+  const out = startId([resp([
+    { timestamp: NOW - 4 * DAY, data: { item: "Time Is In The Mind" } }
+  ])], "Time Is In The Mind", 0);
+  assert.strictEqual(out, (NOW - 4 * DAY) * 1000);
+});
+
+t("the most recent reading still wins when matching by id", () => {
+  const out = startId([resp([
+    { timestamp: NOW - 400 * DAY, data: { item: 745 } },
+    { timestamp: NOW - 31 * DAY, data: { item: 745 } },
+    { timestamp: NOW - 90 * DAY, data: { item: 745 } }
+  ])], "Time Is In The Mind", 745);
+  assert.strictEqual(out, (NOW - 31 * DAY) * 1000);
+});
+
+// ---- resolving the four book names to item ids -----------------------------
+
+const ids = (payload) => call(["readBookIds"], `readBookIds(${JSON.stringify(payload)})`);
+
+t("the four stat books are picked out of Torn's item catalogue", () => {
+  const out = ids({ items: [
+    { id: 745, name: "Time Is In The Mind" },
+    { id: 700, name: "Brawn Over Brains" },
+    { id: 701, name: "Keeping Your Face Handsome" },
+    { id: 702, name: "A Job For Your Hands" },
+    { id: 999, name: "Get Hard Or Go Home" }
+  ] });
+  assert.deepStrictEqual(out, { spe: 745, str: 700, def: 701, dex: 702 });
+});
+
+t("books Torn lists that are not one of the four are ignored", () => {
+  const out = ids({ items: [{ id: 999, name: "Get Hard Or Go Home" }] });
+  assert.deepStrictEqual(out, {});
+});
+
+t("the catalogue is matched case-insensitively", () => {
+  assert.deepStrictEqual(ids({ items: [{ id: 745, name: "TIME IS IN THE MIND" }] }), { spe: 745 });
+});
+
+t("an object-keyed catalogue is read too, not only an array", () => {
+  assert.deepStrictEqual(ids({ items: { "745": { id: 745, name: "Time Is In The Mind" } } }), { spe: 745 });
+});
+
+t("an unreadable catalogue is an empty map, not a crash", () => {
+  assert.deepStrictEqual(ids(null), {});
+  assert.deepStrictEqual(ids({}), {});
+  assert.deepStrictEqual(ids({ items: [{ id: 1 }] }), {});
 });
 
 // ---- how soon to try again when the lookup fails ---------------------------

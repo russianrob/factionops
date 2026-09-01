@@ -147,6 +147,12 @@
       return { refills: { energy_refill_used: used, nerve_refill_used: false,
                           token_refill_used: false, special_refills_available: 0 } };
     }
+    if (/v2\/torn\/items/.test(url)) {
+      if (cfg.bookItemsErr) return { error: { code: 5, error: "Too many requests" } };
+      return { items: (cfg.bookItems || []).map(function (r) {
+        return { id: r[0], name: r[1], type: "Book" };
+      }) };
+    }
     if (/v2\/key\/info/.test(url)) {
       if (cfg.keyErr) return { error: { code: cfg.keyErr, error: "stub" } };
       var lv = N(cfg.keyLevel, 4);

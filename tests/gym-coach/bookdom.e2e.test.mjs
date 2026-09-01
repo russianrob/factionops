@@ -165,12 +165,15 @@ await t("tapping on a page without the strip takes the date back from the detect
   assert.strictEqual((await auto()).spe, false, "the detector still owns a date you just set by hand");
 });
 
-await t("the start date comes from the item log, not from when the page was first seen", async () => {
+await t("the start date comes from the item log, matched by ITEM ID", async () => {
   // The reported problem: "31d left" shown to someone with about 28 hours left,
   // because the sighting was thirty days into the book.
   const THIRTY = Math.floor((Date.now() - 30 * 86400000) / 1000);
-  await load({ strip: [READING], cfg: { keyLevel: 4, bookLogRows: [[THIRTY, "Time Is In The Mind"]] } });
-  await page.waitForTimeout(2500);
+  await load({ strip: [READING], cfg: { keyLevel: 4,
+    bookItems: [[745, "Time Is In The Mind"], [700, "Brawn Over Brains"]],
+    // As Torn actually sends it: an item ID, with no name anywhere in the row.
+    bookLogRows: [[THIRTY, 745], [THIRTY - 86400, 700]] } });
+  await page.waitForTimeout(3500);
   const bk = await books();
   const drift = Math.abs(bk.spe - THIRTY * 1000);
   assert.ok(drift < 5000, "the book was dated from the sighting, not from the log: off by " + drift + "ms");
@@ -182,8 +185,10 @@ await t("the start date comes from the item log, not from when the page was firs
 
 await t("and the panel then counts down in hours, not a rounded-up day", async () => {
   const THIRTY = Math.floor((Date.now() - 30 * 86400000) / 1000);
-  await load({ strip: [READING], cfg: { keyLevel: 4, bookLogRows: [[THIRTY, "Time Is In The Mind"]] } });
-  await page.waitForTimeout(2500);
+  await load({ strip: [READING], cfg: { keyLevel: 4,
+    bookItems: [[745, "Time Is In The Mind"]],
+    bookLogRows: [[THIRTY, 745]] } });
+  await page.waitForTimeout(3500);
   await page.evaluate(() => document.querySelector('[data-tab="plan"]').click());
   await page.waitForTimeout(600);
   const txt = await page.evaluate(() => {
