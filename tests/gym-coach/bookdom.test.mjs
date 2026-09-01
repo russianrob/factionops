@@ -180,5 +180,64 @@ t("surrounding whitespace does not defeat the name match", () => {
   assert.strictEqual(read(["  Reading Book:   Brawn Over Brains   — x  "]).k, "str");
 });
 
+
+// ---- only one book at a time ----------------------------------------------
+//
+// Torn's status strip carries ONE "Reading Book" entry because you can only
+// read one. Reported with Strength showing "31d left" alongside Speed, from a
+// stray tap that nothing ever cleared.
+
+const sync = (labels, books, auto) => new Function("var R;" + BOOKS_SRC + `
+  var HIST_KEYS = ["str","def","spe","dex"];
+  var root = {
+    querySelectorAll: function (sel) {
+      if (/status-icons/.test(sel) && !/aria-label/.test(sel)) return [{}];
+      if (!/status-icons/.test(sel)) return [];
+      return ${JSON.stringify(labels)}.map(function (l) {
+        return { getAttribute: function (a) { return a === "aria-label" ? l : null; } };
+      });
+    }
+  };
+  var document = root;
+  var stored = {};
+  function storeSet(k, v) { stored[k] = v; }
+  function resetPlanCaches() {}
+  function fetchBookIds() {}
+  function fetchBookStart() {}
+  var state = { books: ${JSON.stringify(books)}, booksAuto: ${JSON.stringify(auto || {})},
+                booksExact: {}, bookSeen: "", bookDiag: "" };
+  ${grab("readBookFromDom")}
+  ${grab("syncBookFromDom")}
+  syncBookFromDom();
+  R = { books: state.books, auto: state.booksAuto };
+  return R;`)();
+
+t("a book on the strip clears any OTHER book marked as being read", () => {
+  // You cannot read two at once, and the page names the one. Anything else
+  // recorded against another stat is stale whatever set it.
+  const out = sync([REAL], { str: 1000, def: 0, spe: 0, dex: 0 }, { str: true });
+  assert.strictEqual(out.books.str, 0, "Strength stayed live while Speed was on the page");
+  assert.ok(out.books.spe > 0, "and the book actually being read should be set");
+});
+
+t("it clears a hand-tapped one too, because the page is the authority", () => {
+  // No booksAuto entry: a date tapped in by hand. The page still wins -- it is
+  // saying, right now, that a different book is the one being read.
+  const out = sync([REAL], { str: 1000, def: 0, spe: 0, dex: 0 }, {});
+  assert.strictEqual(out.books.str, 0);
+});
+
+t("but it leaves the book it just recognised alone", () => {
+  const WAS = 12345;
+  const out = sync([REAL], { str: 0, def: 0, spe: WAS, dex: 0 }, { spe: true });
+  assert.strictEqual(out.books.spe, WAS, "the live book's own date was reset");
+});
+
+t("a strip with no book still only clears what this device set itself", () => {
+  const out = sync(["Donator: yes"], { str: 1000, def: 2000, spe: 0, dex: 0 }, { str: true });
+  assert.strictEqual(out.books.str, 0, "an auto-set book survived a strip with no book on it");
+  assert.strictEqual(out.books.def, 2000, "a hand-set book was cleared by a strip that named nothing");
+});
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

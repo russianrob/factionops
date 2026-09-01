@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.56
+// @version      0.9.57
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,30 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.57 - One book at a time, and the id lookup stops failing in silence.
+ *
+ *         Reported with Strength showing "31d left" beside Speed. Torn's strip
+ *         carries ONE "Reading Book" entry because you can only read one, so a
+ *         date against any other stat is stale whatever set it -- here a stray
+ *         tap that nothing ever cleared. A book recognised on the page now
+ *         clears every other one, including a hand-tapped date: the page is
+ *         saying, right now, which book is being read, and that beats a tap.
+ *
+ *         And the card still read "(id not resolved yet)", because the item
+ *         catalogue lookup had failed and said nothing about it. Two faults,
+ *         both of them mine, and both already fixed once elsewhere in this same
+ *         feature:
+ *
+ *         Its retry window was stamped BEFORE the request and set to a week --
+ *         so one refused call killed the countdown for seven days. There is no
+ *         success TTL to speak of, since ids never change and are kept once
+ *         known, so that window only ever applied to failures. Now a minute,
+ *         four times, then back off.
+ *
+ *         And its failure path was an empty catch. It now reports what came
+ *         back -- the ids it resolved, or that the catalogue held N books and
+ *         none of the four matched, or the error verbatim.
+ *
 * 0.9.56 - The item log names a book by ID, so match it by ID.
  *
  *         The diagnostic added in 0.9.54 did its job on the first try. Log 2050
@@ -1965,7 +1989,9 @@
     // Torn's item id for each stat book, resolved from the item catalogue.
     bookIds: {},
     bookIdsAt: 0,
+    bookIdsTries: 0,
     bookIdsBusy: false,
+    bookIdsDiag: "",
     // What the item-log lookup said last time, verbatim.
     bookLogDiag: "",
     bookSeen: "",
@@ -4424,6 +4450,7 @@
     var diag = '<p class="muted" style="margin:8px 0 0;font-size:11px;overflow-wrap:anywhere">' +
       (state.bookDiag ? esc(state.bookDiag) : "no status-icon strip on this page, so nothing was read") +
       (state.bookLogDiag ? "<br>" + esc(state.bookLogDiag) : "") +
+      (state.bookIdsDiag ? "<br>" + esc(state.bookIdsDiag) : "") +
       "</p>";
     var counted = HIST_KEYS.filter(function (k) { return pendingBookAward(k) > 0; });
     return '<div class="gc-card"><h3>Stat books</h3>' + rows + diag +
@@ -6922,6 +6949,19 @@
       : "strip found (" + r.icons + " icons), no book on it";
     if (r.found && r.k) {
       state.bookSeen = r.name;
+      // Torn's strip carries ONE "Reading Book" entry, because you can only read
+      // one. So a date recorded against any OTHER stat is stale whatever set it
+      // -- reported with Strength showing "31d left" beside Speed, from a stray
+      // tap that nothing ever cleared. This clears a hand-set date too: the page
+      // is saying, right now, which book is actually being read, and that beats
+      // a tap from an hour ago.
+      HIST_KEYS.forEach(function (other) {
+        if (other === r.k || !state.books[other]) return;
+        state.books[other] = 0;
+        auto[other] = false;
+        if (state.booksExact) state.booksExact[other] = false;
+        changed = true;
+      });
       // Never overwrite a date already on record. One you tapped in is better
       // information than this is, and an auto date already set is EARLIER than
       // now, which is the better floor of the two.
@@ -7044,16 +7084,31 @@
     return out;
   }
 
-  var BOOK_IDS_TTL = 604800000;   // item ids do not change
+  // No success TTL at all: once the ids are resolved they are kept for good,
+  // so the only wait that matters is the one after a FAILURE. It used to be a
+  // week, stamped before the request -- one refused call and the countdown was
+  // dead for seven days. Same mistake as the log lookup's six hours, made twice
+  // in one feature.
+  var BOOK_IDS_RETRY_MS = 60000;
+  var BOOK_IDS_MAX_TRIES = 4;
   function fetchBookIds() {
-    if (state.bookIdsAt && Date.now() - state.bookIdsAt < BOOK_IDS_TTL) return;
     if (state.bookIdsBusy || !resolveKey()) return;
+    // Already known. Ids do not change, so this is the end of it.
+    if (state.bookIds && Object.keys(state.bookIds).length) return;
+    var tries = state.bookIdsTries || 0;
+    var wait = tries >= BOOK_IDS_MAX_TRIES ? BOOK_LOG_TTL : BOOK_IDS_RETRY_MS;
+    if (state.bookIdsAt && Date.now() - state.bookIdsAt < wait) return;
     state.bookIdsBusy = true;
     state.bookIdsAt = Date.now();
+    state.bookIdsTries = tries + 1;
     httpGet("https://api.torn.com/v2/torn/items?cat=Book&key=" +
             encodeURIComponent(resolveKey()) + "&comment=" + encodeURIComponent(COMMENT))
       .then(function (d) {
         var m = readBookIds(d);
+        var n = ((d && d.items) || []).length;
+        state.bookIdsDiag = Object.keys(m).length
+          ? "book ids: " + JSON.stringify(m)
+          : "book ids: catalogue had " + n + " books, none of the four matched";
         if (Object.keys(m).length) {
           state.bookIds = m;
           storeSet("bookIds", m);
@@ -7063,7 +7118,12 @@
           state.bookStartTries = 0;
         }
       })
-      .catch(function () { /* the name fallback still stands */ })
+      .catch(function (e) {
+        // Silent before, which is how it managed to fail all afternoon while
+        // the card said only "(id not resolved yet)".
+        state.bookIdsDiag = "book ids: " + ((e && e.message) || "no answer") +
+          (e && e.code ? " (code " + e.code + ")" : "");
+      })
       .then(function () { state.bookIdsBusy = false; });
   }
 
