@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.46
+// @version      0.9.47
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,23 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.47 — Trains on the board, beside the energy.
+ *
+ *         Asked for: see trains, not only energy. gymtrains is in the same
+ *         enum, so it is one more request and it lands on the second line of
+ *         each row -- "1,932 trains - str 60% - def 40%" -- rather than taking
+ *         a fifth column, because five columns do not fit a phone and the tab
+ *         bar wrapping when Board was added was the same mistake one element
+ *         earlier.
+ *
+ *         Read as its own counter and never divided out of the energy. Energy
+ *         per train runs from 5 in a starter gym to 25 in a specialist one, so
+ *         a derived count would be fiction dressed up as a measurement -- and
+ *         reading the two side by side is exactly what tells you which gym
+ *         somebody is actually using.
+ *
+ *         Both cards carry it too.
+ *
 * 0.9.46 — The board's stat column was energy, not gains.
  *
  *         Reported within the hour: "i used 340 but why does it say 340 str?"
@@ -6276,9 +6293,10 @@
   // subtracted are the FACTION's and not this device's. Two clients that
   // anchored at the same Monday compute the same board without ever talking to
   // each other. The shared clock is the sync.
-  var BOARD_STATS = ["gymenergy", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];
+  var BOARD_STATS = ["gymenergy", "gymtrains", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];
   var BOARD_LABEL = {
     gymenergy: "Energy",
+    gymtrains: "Trains",
     gymstrength: "Strength",
     gymdefense: "Defense",
     gymspeed: "Speed",
@@ -6409,6 +6427,10 @@
       var use = used && used[id];
       return {
         id: e.id, name: e.name, energy: e.delta || 0,
+        // Its own counter, never energy divided by anything: energy per train
+        // runs from 5 in a starter gym to 25 in a specialist one, so a derived
+        // figure would be fiction dressed up as a count.
+        trains: d("gymtrains"),
         // null, NOT zero: "not worked out yet" and "every point of it was
         // bought" are different claims about a person.
         natural: use ? naturalEnergy(e.delta || 0, use, own && String(own.id) === String(e.id) ? own : null) : null,
@@ -6494,7 +6516,8 @@
           Math.round((r.natural / Math.max(1, r.energy)) * 100) + "% nat", 8, true);
         var split = boardSplit(r);
         return pad(String(r.rank), 2, true) + ". " + name + "  " +
-               pad(String(fmt(r.energy)) + "e", 10, true) + "  " + nat +
+               pad(String(fmt(r.energy)) + "e", 10, true) + "  " +
+               pad(r.trains > 0 ? fmt(r.trains) + "t" : "", 8, true) + "  " + nat +
                (split ? "  " + split : "");
       });
       return "```\n" + head + "\n" + lines.join("\n") +
@@ -6504,7 +6527,8 @@
       var nat = r.natural === null ? "" :
         " (" + Math.round((r.natural / Math.max(1, r.energy)) * 100) + "% natural)";
       var split = boardSplit(r);
-      return r.rank + ". " + r.name + " — " + fmt(r.energy) + "e" + nat + (split ? " — " + split : "");
+      var trains = r.trains > 0 ? " / " + fmt(r.trains) + " train" + (r.trains === 1 ? "" : "s") : "";
+      return r.rank + ". " + r.name + " — " + fmt(r.energy) + "e" + trains + nat + (split ? " — " + split : "");
     });
     return head + "\n" + lines.join("\n") + (more > 0 ? "\n+ " + more + " more" : "");
   }
@@ -6582,6 +6606,10 @@
           if (!rows) throw new Error("no contributors array");
           state.boardBy[stat] = boardDeltas(base, stat, rows);
           got += 1;
+          // Paint as each stat lands. gymenergy comes first, so names and the
+          // ranking appear at once and the rest fills in, rather than the tab
+          // sitting empty for five seconds and looking stuck.
+          if (state.tab === "board") renderPanel();
         })
         .catch(function (e) {
           // Torn refuses the whole call when the key lacks faction API access.
@@ -6748,13 +6776,18 @@
   function boardLine(r, meId) {
     var pct = boardNatPct(r);
     var split = boardSplit(r);
+    // Trains lead the second line rather than taking a column of their own:
+    // five columns do not fit a phone, and the tab bar wrapping onto two rows
+    // when Board was added is the same mistake one element further in.
+    var sub = (r.trains > 0 ? '<b>' + fmt(r.trains) + "</b> train" + (r.trains === 1 ? "" : "s") : "") +
+      (r.trains > 0 && split ? " \u00b7 " : "") + esc(split || "");
     return '<div class="gcb-brow' + (String(r.id) === String(meId) ? " me" : "") + '">' +
       '<span class="gcb-brank">' + r.rank + "</span>" +
       '<span class="gcb-bname">' + esc(String(r.name || r.id)) + "</span>" +
       '<span class="gcb-benergy">' + fmt(r.energy) + "e</span>" +
-      (pct === null ? '<span class="gcb-bnat muted">—</span>'
+      (pct === null ? '<span class="gcb-bnat muted" title="Not worked out yet">—</span>'
                     : '<span class="gcb-bnat ' + (pct >= 80 ? "ok" : pct >= 50 ? "" : "bad") + '">' + pct + "%</span>") +
-      '<span class="gcb-bgain muted">' + esc(split || "—") + "</span>" +
+      '<span class="gcb-bgain muted">' + (sub || "—") + "</span>" +
       "</div>";
   }
 
@@ -6764,6 +6797,7 @@
     var startMs = wk == null ? Date.now() : weekStartMs(wk);
     var since = boardSince(state.board);
     var meId = state.playerId;
+    var natKnown = rows.filter(function (r) { return r.natural !== null; }).length;
 
     // A key that cannot read the faction gets Torn's own refusal and the one
     // thing that actually fixes it, rather than a spinner that never resolves.
@@ -6783,7 +6817,6 @@
     }
 
     var fresh = rows.length && state.boardAt;
-    var natKnown = rows.filter(function (r) { return r.natural !== null; }).length;
 
     var head =
       '<div class="gc-card"><h3>Faction board · week of ' + esc(boardWeekLabel(startMs)) + "</h3>" +
@@ -6792,10 +6825,19 @@
       (since && since.partial
         ? "since this device first read the faction, <b>" + esc(boardSinceLabel(since.at)) + "</b>"
         : "since <b>Monday 00:00 TCT</b>") +
-      ", and which stats it went into. " +
+      ", how many trains that was, and which stats it went into. " +
       'Read from Torn\u2019s own faction contributors, so it is the same board on every device and nothing is stored anywhere but here.</p>' +
+      // The button that fills the Nat column used to live BELOW the whole
+      // table. On a twenty-member faction that is a long scroll away from the
+      // column of dashes it explains, and the first question asked about this
+      // screen was "why nat empty". The prompt belongs next to the column.
+      (natKnown || state.natBusy || state.boardBusy ? "" :
+        '<div class="gcb-natprompt">' +
+        '<span class="muted">The <b>Nat</b> column is empty until it is worked out \u2014 it is a request per member, so it is not automatic.</span>' +
+        '<button type="button" class="gcb-btn" data-board="natural">Fill it in (top ' + BOARD_NATURAL_TOP + ')</button>' +
+        "</div>") +
       '<div class="gcb-brow head"><span class="gcb-brank">#</span><span class="gcb-bname">Member</span>' +
-      '<span class="gcb-benergy">Energy</span><span class="gcb-bnat">Nat</span><span class="gcb-bgain">Trained</span></div>' +
+      '<span class="gcb-benergy">Energy</span><span class="gcb-bnat">Nat</span><span class="gcb-bgain">Trains · split</span></div>' +
       rows.map(function (r) { return boardLine(r, meId); }).join("") +
       '<div class="gcb-brow foot"><span class="muted" style="grid-column:1/-1">' +
       (fresh ? "Read " + Math.max(0, Math.round((Date.now() - state.boardAt) / 1000)) + "s ago" : "Not read yet") +
@@ -6877,6 +6919,10 @@
       return;
     }
     if (what === "natural") {
+      // fetchBoardNatural refuses while the board itself is still coming in,
+      // because it works from the rows. Refusing in silence looks like a dead
+      // button, which is worse than waiting.
+      if (state.boardBusy) { showToast("Still reading", "The board is loading. Try again in a moment."); return; }
       fetchBoardNatural();
       renderPanel();
       return;
@@ -7524,6 +7570,8 @@
       "#" + PANEL_ID + " .gcb-benergy{grid-area:e;font-weight:800;font-variant-numeric:tabular-nums}" +
       "#" + PANEL_ID + " .gcb-bnat{grid-area:p;text-align:right;font-variant-numeric:tabular-nums;font-size:12px}" +
       "#" + PANEL_ID + " .gcb-bgain{grid-area:g;font-size:11px;overflow-wrap:anywhere}" +
+      "#" + PANEL_ID + " .gcb-natprompt{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin:0 0 4px;padding:9px 10px;border-radius:9px;background:#1a1d23;border:1px solid #2e333c;font-size:12px;line-height:1.4}" +
+      "#" + PANEL_ID + " .gcb-natprompt span{flex:1 1 150px;min-width:0}" +
       "#" + PANEL_ID + " .gcb-btn{border:1px solid #2e333c;background:#1a1d23;color:#e6edf3;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;cursor:pointer;-webkit-appearance:none;appearance:none}" +
       "#" + PANEL_ID + " .gcb-btn.ghost{color:#94a3b8;font-weight:600}" +
       "#" + PANEL_ID + " .gcb-card-preview{margin:10px 0 0;padding:10px;border-radius:9px;background:#1a1d23;border:1px solid #2e333c;color:#94a3b8;font:11px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:190px;overflow:auto;user-select:text}" +

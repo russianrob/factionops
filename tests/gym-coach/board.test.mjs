@@ -238,10 +238,13 @@ t("the board ranks on energy trained and carries the per-stat split beside it", 
   // the wrong model to whoever reads them next.
   const rows = build(JSON.stringify({
     gymenergy: { 1: { id: 1, name: "rcexyz", delta: 48300 }, 2: { id: 2, name: "quiet", delta: 900 } },
+    gymtrains: { 1: { id: 1, name: "rcexyz", delta: 1932 }, 2: { id: 2, name: "quiet", delta: 90 } },
     gymstrength: { 1: { id: 1, name: "rcexyz", delta: 48300 } },
     gymdefense: { 2: { id: 2, name: "quiet", delta: 900 } }
   }) + ", null, null");
   assert.strictEqual(rows.length, 2);
+  assert.strictEqual(rows[0].trains, 1932, "trains is its own counter, not derived from energy");
+  assert.strictEqual(rows[1].trains, 90);
   assert.strictEqual(rows[0].name, "rcexyz");
   assert.strictEqual(rows[0].energy, 48300);
   assert.strictEqual(rows[0].str, 48300);
@@ -279,6 +282,30 @@ t("a stat that rounds to nothing is left off rather than shown as 0%", () => {
 
 t("a member who trained nothing has no split at all", () => {
   assert.strictEqual(split({ str: 0, def: 0, spe: 0, dex: 0 }), "");
+});
+
+t("trains come from gymtrains and are never inferred from the energy", () => {
+  // Energy per train varies by gym -- 5e in a starter gym, 25e in a specialist
+  // one -- so a train count divided out of energy would be fiction. It is its
+  // own counter and it has to be read as one.
+  const rows = build(JSON.stringify({
+    gymenergy: { 1: { id: 1, name: "a", delta: 10000 } },
+    gymtrains: { 1: { id: 1, name: "a", delta: 400 } }
+  }) + ", null, null");
+  assert.strictEqual(rows[0].trains, 400);
+});
+
+t("a member with energy but no train count reads as zero, not undefined", () => {
+  const rows = build(JSON.stringify({
+    gymenergy: { 1: { id: 1, name: "a", delta: 10000 } }
+  }) + ", null, null");
+  assert.strictEqual(rows[0].trains, 0);
+});
+
+t("trains never enter the per-stat split", () => {
+  // gymtrains is a count of sessions; the split is shares of ENERGY. Folding
+  // one into the other would put a fifth slice in a pie of four.
+  assert.strictEqual(split({ str: 600, def: 400, spe: 0, dex: 0, trains: 999 }), "str 60% \u00b7 def 40%");
 });
 
 t("a member who trained nothing all week is still listed, at the bottom", () => {
@@ -327,8 +354,8 @@ t("a board that has never been read has no window to report", () => {
 // ---- the shareable card ---------------------------------------------------
 
 const CARD = [
-  { rank: 1, id: 1, name: "rcexyz", energy: 48300, natural: 41000, str: 36225, def: 12075, spe: 0, dex: 0 },
-  { rank: 2, id: 2, name: "quiet", energy: 900, natural: null, str: 0, def: 900, spe: 0, dex: 0 }
+  { rank: 1, id: 1, name: "rcexyz", energy: 48300, trains: 1932, natural: 41000, str: 36225, def: 12075, spe: 0, dex: 0 },
+  { rank: 2, id: 2, name: "quiet", energy: 900, trains: 90, natural: null, str: 0, def: 900, spe: 0, dex: 0 }
 ];
 const card = (fmt) => call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
   `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "Dead Fragment", week: MON, fmt: fmt })})`);
@@ -343,6 +370,16 @@ t("the card lists members in rank order with their energy", () => {
   const s = card("chat");
   assert.ok(s.indexOf("rcexyz") < s.indexOf("quiet"), "rank order");
   assert.ok(s.includes("48,300"), "thousands separators: " + s);
+});
+
+t("the card carries the train count as well as the energy", () => {
+  const s = card("chat");
+  assert.ok(/1,932/.test(s), "the train count is missing from the card: " + s);
+  assert.ok(/train/i.test(s), "the train count needs a label or it is just a number: " + s);
+});
+
+t("the Discord card carries it too", () => {
+  assert.ok(/1,932/.test(card("discord")), card("discord"));
 });
 
 t("the card carries the battle stats trained, not only the energy total", () => {
@@ -385,7 +422,7 @@ t("and a card that really did start on Monday says nothing extra", () => {
 
 t("the card never runs away with a 100-member faction", () => {
   const many = [];
-  for (let i = 1; i <= 100; i++) many.push({ rank: i, id: i, name: "m" + i, energy: 1000 - i, natural: null, str: 1000 - i, def: 0, spe: 0, dex: 0 });
+  for (let i = 1; i <= 100; i++) many.push({ rank: i, id: i, name: "m" + i, energy: 1000 - i, trains: 40, natural: null, str: 1000 - i, def: 0, spe: 0, dex: 0 });
   const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
     `boardCardText(${JSON.stringify(many)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat" })})`);
   assert.ok(s.split("\n").length <= 20, "a chat message cannot be 100 lines: " + s.split("\n").length);

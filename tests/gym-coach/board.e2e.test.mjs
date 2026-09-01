@@ -37,7 +37,8 @@ const CONTRIB = {
   gymstrength:  [[ME, "rcexyz", 4000000], [77, "quiet", 10000000], [88, "grinder", 6000000]],
   gymdefense:   [[ME, "rcexyz", 1000000], [77, "quiet", 80000000], [88, "grinder", 6000000]],
   gymspeed:     [[ME, "rcexyz", 0], [77, "quiet", 0], [88, "grinder", 0]],
-  gymdexterity: [[ME, "rcexyz", 0], [77, "quiet", 0], [88, "grinder", 0]]
+  gymdexterity: [[ME, "rcexyz", 0], [77, "quiet", 0], [88, "grinder", 0]],
+  gymtrains:    [[ME, "rcexyz", 500000], [77, "quiet", 9000000], [88, "grinder", 1200000]]
 };
 // Same members, moved on. grinder trained hardest; rcexyz trained less but
 // bought none of it; quiet's whole week came out of xanax.
@@ -48,7 +49,10 @@ const LATER = {
   gymstrength:  [[ME, "rcexyz", 4003360], [77, "quiet", 10000000], [88, "grinder", 6030000]],
   gymdefense:   [[ME, "rcexyz", 1000000], [77, "quiet", 80010000], [88, "grinder", 6020000]],
   gymspeed:     [[ME, "rcexyz", 0], [77, "quiet", 0], [88, "grinder", 0]],
-  gymdexterity: [[ME, "rcexyz", 0], [77, "quiet", 0], [88, "grinder", 0]]
+  gymdexterity: [[ME, "rcexyz", 0], [77, "quiet", 0], [88, "grinder", 0]],
+  // 3,360e over 336 trains for rcexyz -- 10e a train, which is what a real gym
+  // costs and what makes the two numbers worth reading together.
+  gymtrains:    [[ME, "rcexyz", 500336], [77, "quiet", 9001000], [88, "grinder", 1205000]]
 };
 const PS = {
   // rcexyz bought nothing all week.
@@ -76,7 +80,7 @@ async function load(extra) {
 }
 const openBoard = async () => {
   await page.evaluate(() => document.querySelector('[data-tab="board"]').click());
-  await page.waitForTimeout(4200); // five sequential requests behind a 700ms gap
+  await page.waitForTimeout(6000); // six sequential requests behind a 700ms gap
 };
 const boardText = () => page.evaluate(() => {
   const el = document.querySelector("#gcb-panel .gc-body");
@@ -120,13 +124,13 @@ await t("nothing is requested until the Board tab specifically is opened", async
     await page.waitForTimeout(250);
   }
   assert.strictEqual(await countUrls(/faction\/contributors/), 0,
-    "browsing the other tabs cost five faction requests each");
+    "browsing the other tabs cost six faction requests each");
 });
 
 await t("one request per stat, and no more", async () => {
   await load({ contributors: CONTRIB });
   await openBoard();
-  assert.strictEqual(await countUrls(/faction\/contributors/), 5, "expected exactly five, one per stat");
+  assert.strictEqual(await countUrls(/faction\/contributors/), 6, "expected exactly six, one per stat");
 });
 
 await t("re-opening the tab inside the TTL does not ask again", async () => {
@@ -168,13 +172,51 @@ await t("the row says which stats the energy went into, never a stat gain", asyn
   await load({ contributors: LATER });
   await openBoard();
   const r = await rows();
+  const splitOf = n => r.find(x => x.name === n).gain.split(" \u00b7 ").filter(p => !/train/.test(p)).join(" \u00b7 ");
   // grinder: 30,000 of 50,000 into strength, 20,000 into defense.
-  assert.strictEqual(r.find(x => x.name === "grinder").gain, "str 60% \u00b7 def 40%");
+  assert.strictEqual(splitOf("grinder"), "str 60% \u00b7 def 40%");
   // rcexyz put all 3,360 into strength.
-  assert.strictEqual(r.find(x => x.name === "rcexyz").gain, "all str");
-  assert.strictEqual(r.find(x => x.name === "quiet").gain, "all def");
+  assert.strictEqual(splitOf("rcexyz"), "all str");
+  assert.strictEqual(splitOf("quiet"), "all def");
   // The 0.9.45 bug in one assertion: energy printed as though it were points.
   r.forEach(x => assert.ok(!/^\+/.test(x.gain), "a signed number reads as a stat gain: " + x.gain));
+});
+
+await t("the train count is on the row, read from gymtrains", async () => {
+  await load({ contributors: CONTRIB });
+  await openBoard();
+  await load({ contributors: LATER });
+  await openBoard();
+  const r = await rows();
+  // rcexyz: 3,360 energy over 336 trains.
+  assert.match(r.find(x => x.name === "rcexyz").gain, /336 trains/, JSON.stringify(r));
+  assert.match(r.find(x => x.name === "grinder").gain, /5,000 trains/);
+  // And it does not replace the split -- both live on that line.
+  assert.match(r.find(x => x.name === "grinder").gain, /str 60%/);
+});
+
+await t("the empty Nat column comes with the button that fills it, next to the column", async () => {
+  // "why nat empty" was the first question asked about this screen, because
+  // the control sat below the whole table.
+  await load({ contributors: CONTRIB });
+  await openBoard();
+  const btns = await page.evaluate(() =>
+    [...document.querySelectorAll('#gcb-panel [data-board="natural"]')].map(b => {
+      const head = document.querySelector("#gcb-panel .gcb-brow.head");
+      return b.getBoundingClientRect().top < head.getBoundingClientRect().top;
+    }));
+  assert.ok(btns.some(Boolean), "no way to fill Nat above the table it belongs to");
+});
+
+await t("and that prompt goes away once the column is filled", async () => {
+  await load({ contributors: CONTRIB, ps: PS });
+  await openBoard();
+  await load({ contributors: LATER, ps: PS });
+  await openBoard();
+  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
+  await page.waitForTimeout(9000);
+  const prompt = await page.evaluate(() => !!document.querySelector("#gcb-panel .gcb-natprompt"));
+  assert.strictEqual(prompt, false, "the prompt outstayed its purpose");
 });
 
 await t("your own row is marked, so you can find yourself on it", async () => {

@@ -7,6 +7,14 @@ const original = fs.readFileSync(FILE, "utf8");
 const build = () => execSync("./build-harness.sh");
 const E = "board.e2e.test.mjs";
 const mutants = [
+  ["gymtrains is not requested at all, so the train count is always zero",
+    '  var BOARD_STATS = ["gymenergy", "gymtrains", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];',
+    '  var BOARD_STATS = ["gymenergy", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];', [E]],
+  ["the natural button stays live while the board is still loading, and silently does nothing",
+    '      if (state.boardBusy) { showToast("Still reading", "The board is loading. Try again in a moment."); return; }',
+    "", [E]],
+  ["the Nat prompt is not offered beside the column it fills",
+    '      (natKnown || state.natBusy || state.boardBusy ? "" :', '      (true ? "" :', [E]],
   ["data-board is left off the click router, so every button on the tab is dead",
     "[data-book],[data-board],#stackSw", "[data-book],#stackSw", [E]],
   ["the board loads on the poll tick instead of on tab open",
