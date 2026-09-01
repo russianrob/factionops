@@ -23,10 +23,11 @@ const run = (hist, ledger, opts = {}) => new Function("var RESULT;" + `
   var goalCache = { key: "", val: null };
   var GOAL_STEPS = [0, 5e7, 1e8, 2.5e8, 5e8];
   var GOAL_MAX_TRAINS = 4e6;
-  ${consts(["CAL_WINDOW","CAL_MIN_DAYS","CAL_MODEL_LO","CAL_MODEL_HI","CAL_USAGE_LO","CAL_USAGE_HI"])}
+  ${consts(["CAL_WINDOW","CAL_MIN_DAYS","CAL_MODEL_LO","CAL_MODEL_HI","CAL_USAGE_LO","CAL_USAGE_HI","MIXED_SLACK"])}
       ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
     var state = { books: {}, goalOrder: [], goalStep: 0,
     hist: ${JSON.stringify(hist)}, ledger: ${JSON.stringify(ledger)},
+    trainLog: ${JSON.stringify(opts.trainLog || null)},
     gymName: "T", happyMax: 5000, perks: {}, focus: "str",
     stats: ${JSON.stringify(opts.stats || { str: 1000, def: 0, spe: 0, dex: 0 })},
     goals: ${JSON.stringify(opts.goals || {})}
@@ -35,7 +36,7 @@ const run = (hist, ledger, opts = {}) => new Function("var RESULT;" + `
   var Date = { now: Date_now };
   function dailyEnergy(){ return { total: ${opts.plan === undefined ? 100 : opts.plan} }; }
   function gainOne(){ return 1000; }
-  ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("calibration")}
+  ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("mixedDayEnergy")} ${grab("calibration")}
   ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")}
   RESULT = { cal: calibration(), plan: goalPlan() };` + "; return RESULT;")();
 
@@ -141,14 +142,91 @@ t("a partly-measured history stays out of the way instead of guessing", () => {
   assert.match(r.cal.reason, /4 of 7/);
 });
 
-t("days where two stats moved are skipped: the energy split is unrecorded", () => {
+// Two stats moving on one day used to be discarded outright. It still is when
+// nothing recorded the split -- but Torn's gym log does record it, and the
+// script already fetches it once per stat, so a day it covers is now measured.
+const mixDay = (hist) => {
+  // Defense needs a non-zero base on every day: predictDay cannot forecast a
+  // gain from a stat of zero and returns 0, which would make this fixture test
+  // the wrong thing entirely.
+  hist.forEach(h => { h.v[1] += 100000; });
+  const i = hist.findIndex(h => h.d === TODAY - 3);
+  for (let j = i; j < hist.length; j++) hist[j].v[1] += 500;   // def also moves that day
+  return hist;
+};
+
+t("a mixed day is skipped when nothing recorded the split", () => {
+  // The fallback, and what every Limited key still does: the gym log is
+  // Full-only, so those devices have no per-stat breakdown at all.
   const s = series(14, 10000, 100);
-  // day TODAY-3 also gains def -> that day is unusable
-  const i = s.hist.findIndex(h => h.d === TODAY - 3);
-  for (let j = i; j < s.hist.length; j++) s.hist[j].v[1] += 500;
-  const r = run(s.hist, s.ledger);
+  const r = run(mixDay(s.hist), s.ledger);
   assert.strictEqual(r.cal.days, 13);
   assert.strictEqual(r.cal.looked, 14);
+  assert.strictEqual(r.cal.mixedDays, 0);
+});
+
+t("a mixed day IS measured when the log says how the energy split", () => {
+  // The reported complaint: 1 of 7 after a week of alternating two stats.
+  const s = series(14, 10000, 100);
+  const r = run(mixDay(s.hist), s.ledger, {
+    trainLog: { byDayStat: { [TODAY - 3]: { str: 80, def: 20 } } }
+  });
+  assert.strictEqual(r.cal.days, 14, "the mixed day should now count");
+  assert.strictEqual(r.cal.mixedDays, 1, "and should be reported as one that needed the split");
+});
+
+t("a mixed day's model reflects BOTH stats, not just one of them", () => {
+  // days and mixedDays both stay right if only one stat is counted, so the
+  // ratio is the only thing that can catch it.
+  const s = series(14, 10000, 100);
+  const r = run(mixDay(s.hist), s.ledger, {
+    trainLog: { byDayStat: { [TODAY - 3]: { str: 80, def: 20 } } }
+  });
+  // 13 single-stat days at 10,000 actual, plus a mixed day of 10,000 + 500.
+  assert.strictEqual(r.cal.actual, 13 * 10000 + 10000 + 500,
+    "the mixed day's gains were not both counted");
+  // predicted for the mixed day is 8 trains of str + 2 of def, at 1000 each.
+  assert.strictEqual(r.cal.predicted, 13 * 10000 + 8000 + 2000,
+    "the mixed day's predictions were not both counted");
+});
+
+t("a split whose parts are plausible but whose total is not is still skipped", () => {
+  const s = series(14, 10000, 100);
+  const r = run(mixDay(s.hist), s.ledger, {
+    trainLog: { byDayStat: { [TODAY - 3]: { str: 500, def: 500 } } }   // 1000 against a 100 day
+  });
+  assert.strictEqual(r.cal.days, 13, "a split that does not match the day was used anyway");
+});
+
+t("a moved stat whose gain cannot be predicted disqualifies the whole day", () => {
+  // Defense starting at zero: predictDay cannot forecast from it and returns 0.
+  // Counting the day on the strength half alone would compare a full day's
+  // actual gain against a partial prediction and skew the model.
+  const s = series(14, 10000, 100);
+  const i = s.hist.findIndex(h => h.d === TODAY - 3);
+  for (let j = i; j < s.hist.length; j++) s.hist[j].v[1] += 500;   // def moves, from 0
+  const r = run(s.hist, s.ledger, {
+    trainLog: { byDayStat: { [TODAY - 3]: { str: 80, def: 20 } } }
+  });
+  assert.strictEqual(r.cal.days, 13);
+  assert.strictEqual(r.cal.mixedDays, 0);
+});
+
+t("a split that does not add up to the day's energy is still skipped", () => {
+  const s = series(14, 10000, 100);
+  const r = run(mixDay(s.hist), s.ledger, {
+    trainLog: { byDayStat: { [TODAY - 3]: { str: 5, def: 3 } } }   // nothing like 100
+  });
+  assert.strictEqual(r.cal.days, 13, "two records that disagree are not a measurement");
+  assert.strictEqual(r.cal.mixedDays, 0);
+});
+
+t("a split that misses a stat that moved is still skipped", () => {
+  const s = series(14, 10000, 100);
+  const r = run(mixDay(s.hist), s.ledger, {
+    trainLog: { byDayStat: { [TODAY - 3]: { str: 100 } } }   // def moved, nothing logged
+  });
+  assert.strictEqual(r.cal.days, 13);
 });
 
 t("a gap in the history is skipped rather than charged to one day", () => {

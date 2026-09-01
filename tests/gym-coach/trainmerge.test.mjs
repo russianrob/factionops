@@ -23,9 +23,10 @@ function grab(n) {
 }
 const DAY = 86400000, today = Math.floor(Date.now() / DAY);
 // carriedSince(prev, freshByDay, dayK) -> the part the log has not caught up with
-const carried = (prev, fresh) => new Function("var R;" + `
+const carried = (prev, fresh, now) => new Function("var R;" + `
+  ${/var SINCE_GRACE_MS = \d+;/.exec(src)[0]}
   ${grab("carriedSince")}
-  R = carriedSince(${JSON.stringify(prev)}, ${JSON.stringify(fresh)}, ${today});
+  R = carriedSince(${JSON.stringify(prev)}, ${JSON.stringify(fresh)}, ${today}, ${now === undefined ? "Date.now()" : now});
 ` + "return R;")();
 
 let pass = 0, fail = 0;
@@ -79,10 +80,11 @@ t("yesterday's totals never leak into today's pending figure", () => {
 // directly rather than through a browser: a bar drop is not confirmed as a
 // session until GAIN_WAIT_MS has passed, which is 30 seconds and far too slow
 // to drive from a page test.
-function afterFetch(prevSince, freshRows) {
+function afterFetch(prevSince, freshRows, prevSinceAt) {
   return new Function("var R;" + `
     var TRAINLOG_IDS = [5300];
     ${/var TRAINLOG_TTL = \d+;/.exec(src)[0]}
+    ${/var SINCE_GRACE_MS = \d+;/.exec(src)[0]}
     var saved = {};
     function storeSet(k, v) { saved[k] = v; }
     function dayKey(ms) { return Math.floor(ms / 86400000); }
@@ -90,10 +92,11 @@ function afterFetch(prevSince, freshRows) {
     function apiUrl() { return "u"; }
     function resetPlanCaches() {}
     function httpGet() { return Promise.resolve(${JSON.stringify(freshRows)}); }
-    var state = { trainLog: { byDay: {}, since: ${prevSince}, at: 0 }, trainLogInFlight: false };
-    ${grab("trainLogByDay")} ${grab("trainLogEvents")} ${grab("carriedSince")} ${grab("fetchTrainLog")}
+    var state = { trainLog: { byDay: {}, since: ${prevSince}, sinceAt: ${prevSinceAt || 0}, at: 0 }, trainLogInFlight: false };
+    ${grab("trainLogByDay")} ${grab("trainLogEvents")} ${grab("trainStatFromLogRow")} ${grab("trainLogByDayStat")} ${grab("carriedSince")} ${grab("fetchTrainLog")}
     R = fetchTrainLog(true).then(function () {
-      return { since: state.trainLog.since, byDay: state.trainLog.byDay[dayKey(Date.now())] || 0 };
+      return { since: state.trainLog.since, sinceAt: state.trainLog.sinceAt,
+               byDay: state.trainLog.byDay[dayKey(Date.now())] || 0 };
     });
   ` + "return R;")();
 }
@@ -101,9 +104,21 @@ function afterFetch(prevSince, freshRows) {
 const rows = e => ({ log: e ? { a: { timestamp: Math.floor(Date.now() / 1000), data: { energy_used: e } } } : {} });
 
 await (async () => {
-  const stale = await afterFetch(400, rows(0));
+  // Recent on purpose: a stamp older than the grace window expires, which is
+  // the 0.9.49 behaviour and would make this test assert the wrong thing.
+  const RECENT = Date.now() - 5000;
+  const stale = await afterFetch(400, rows(0), RECENT);
   t("fetchTrainLog keeps a session the log has not caught up with", () => {
     assert.strictEqual(stale.since, 400, "the pending session was cleared by an empty round");
+  });
+  t("and carries the stamp that says WHEN, so the carry can still expire", () => {
+    // fetchTrainLog replaces state.trainLog with a fresh object literal. Leaving
+    // sinceAt out of it discarded the stamp on every successful round, so
+    // carriedSince's expiry -- the whole of 0.9.49's drift fix -- could never
+    // fire after round one. The helpers were 18/18 green throughout, because
+    // they were only ever exercised in isolation from the round that rebuilds
+    // the object they live on.
+    assert.strictEqual(stale.sinceAt, RECENT, "the sinceAt stamp was dropped by the log round");
   });
   const caught = await afterFetch(400, rows(400));
   t("fetchTrainLog clears it once the log catches up", () => {

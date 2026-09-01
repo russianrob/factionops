@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.49
+// @version      0.9.51
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,7 +29,87 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
-* 0.9.49 — "Spent today" crept upward on a page that was only being reloaded.
+* 0.9.51 - The coach works out which stat book you are reading.
+ *
+ *         Asked for after 0.9.44 shipped it as a manual tap. The tap stays --
+ *         it is still the way to correct a date -- but it is no longer the only
+ *         way the coach can know.
+ *
+ *         Nothing about a stat book reaches the perks payload. Confirmed live
+ *         rather than assumed this time: perks.book came back an EMPTY ARRAY
+ *         while a book was actively being read, because the four stat books
+ *         award a one-off stat gain rather than an active multiplier, so
+ *         parsePerks structurally cannot see them.
+ *
+ *         The status-icon strip under the Life bar does carry it -- and carries
+ *         it ONLY in aria-label. Not title, not src, not text. Three separate
+ *         scans of that area came back empty before anyone read the attribute,
+ *         which is the same lesson as the Torn DOM keeps teaching: literal
+ *         classes first, aria-label second, text last.
+ *
+ *         Detection gives WHICH book and never when it started, so a newly seen
+ *         book is dated from the first moment this device saw it. That is a
+ *         floor, not the real start, and the card says so instead of presenting
+ *         the estimate as a fact -- a book noticed on day 20 of 31 would
+ *         otherwise promise its award eleven days late.
+ *
+ *         Three answers, and the difference between the last two is the whole
+ *         design: a book is being read / the strip is here and carries no book /
+ *         there is no strip on this page. Only the middle one clears anything,
+ *         and it only ever clears a date this device set ITSELF. A date you
+ *         tapped in is never touched, because you know when you started it and
+ *         this does not. Plenty of Torn pages have no sidebar, and treating
+ *         that as "no book" would clear the countdown on every one of them.
+ *
+ *         Where the strip does show the book, the page wins: tapping it off
+ *         gets overruled on the next paint, because Torn saying you are reading
+ *         it beats a tap saying you are not.
+ *
+ *         Also fixes a real bug in 0.9.49, found while chasing something else.
+ *         fetchTrainLog rebuilds state.trainLog as a fresh object literal, and
+ *         sinceAt was not in it -- so the stamp was discarded on every
+ *         successful round, and carriedSince's expiry could never fire after
+ *         the first one. That is the entire drift fix 0.9.49 shipped, silently
+ *         disabled by the round that was meant to feed it. Its own comment
+ *         warned about exactly this: "a since without a sinceAt can never
+ *         expire". The unit tests were 18/18 green throughout, because they
+ *         exercised the two halves in isolation and never drove the round that
+ *         rebuilds the object they live on. There is now a test that does.
+ *
+* 0.9.50 - Calibration counts days where you trained more than one stat.
+ *
+ *         Reported by someone sitting at 1 of 7 after a week of alternating
+ *         defense and speed, which is a perfectly ordinary way to train.
+ *
+ *         The rule was: exactly one stat may move that day, or the day is
+ *         discarded -- "the day's energy was split in a ratio nothing
+ *         recorded". The reasoning was right and the premise was wrong.
+ *         Something did record it. The gym log is fetched once PER STAT, so
+ *         the per-stat energy was already in hand on every round;
+ *         trainLogByDay was summing it and throwing the stat away.
+ *
+ *         So a mixed day is now measured: each stat's own energy against each
+ *         stat's own gain. For anyone who rotates stats that roughly halves
+ *         the time to a working correction.
+ *
+ *         It can only ever turn a discarded day into a measured one, never a
+ *         measured day into a wrong one. The split is refused unless the log
+ *         accounts for exactly the stats that moved and for the energy the
+ *         ledger recorded -- and any stat whose gain cannot be forecast at all
+ *         disqualifies the whole day rather than being quietly left out of a
+ *         total it should be in. Every one of those falls back to the old
+ *         one-stat rule.
+ *
+ *         Which stat a log row is about is read from Torn's own wording for
+ *         that row, never from the order the four ids were requested in. The
+ *         browser test deliberately serves the wrong title under each id, so
+ *         anything keying off request order fails there rather than in the
+ *         wild.
+ *
+ *         Limited keys keep the one-stat rule, because the gym log is
+ *         Full-only, and the card now says which of the two applies to you.
+ *
+* 0.9.49 - "Spent today" crept upward on a page that was only being reloaded.
  *
  *         Reported: 340 energy actually trained, the card reading 367 and
  *         ticking up by one without a train. The tell was in the number itself
@@ -1744,6 +1824,10 @@
     // maintain mode and has no endpoint by design.
     // When each stat book was started, keyed by stat. 0 = not reading.
     books: { str: 0, def: 0, spe: 0, dex: 0 },
+    // Which book dates this device worked out for itself, rather than being
+    // told. Only these are ever cleared automatically.
+    booksAuto: {},
+    bookSeen: "",
     // Verdict folded to one line on the Now tab. Boot overwrites this from
     // storage, so the real default lives in that storeBool call, not here.
     verdictFold: true,
@@ -3217,7 +3301,11 @@
 
   function calibration() {
     var out = { ok: false, days: 0, looked: 0, model: 1, usage: 1,
-                actual: 0, predicted: 0, used: 0, wasted: 0, off: 0, uDays: 0, reason: "" };
+                actual: 0, predicted: 0, used: 0, wasted: 0, off: 0, uDays: 0,
+                // How many of the measured days needed the log's per-stat
+                // split. Shown, because a day measured that way rests on one
+                // more record than a single-stat day does.
+                mixedDays: 0, reason: "" };
     var today = dayKey(Date.now());
     var first = today - CAL_WINDOW, last = today - 1;
 
@@ -3225,6 +3313,10 @@
     (state.ledger || []).forEach(function (e) {
       if (e && typeof e.d === "number") byDay[e.d] = e;
     });
+    // Per-stat energy, where the gym log could supply it. Empty on a Limited
+    // key -- the log is Full-only -- and every day then falls back to the
+    // one-stat rule, which is what those keys already do.
+    var byStat = (state.trainLog && state.trainLog.byDayStat) || {};
     var vAt = {};
     (state.hist || []).forEach(function (h) {
       if (h && typeof h.d === "number" && h.v) vAt[h.d] = h.v;
@@ -3241,16 +3333,46 @@
         var g = (cur[IDX[k]] || 0) - (prev[IDX[k]] || 0);
         if (g > 0) moved.push({ k: k, g: g, from: prev[IDX[k]] || 0 });
       }
-      // Two stats moving means the day's energy was split in a ratio nothing
-      // recorded. Guessing it would be inventing the measurement, so skip.
-      if (moved.length !== 1) continue;
+      if (!moved.length) continue;
       var e = byDay[d] && byDay[d].used;
       if (!(e > 0)) continue;
-      var p = predictDay(moved[0].from, e, moved[0].k, state.gymName);
-      if (!(p > 0)) continue;
-      out.actual += moved[0].g;
-      out.predicted += p;
+
+      // One stat moved: the day's whole energy bought that one gain, and no
+      // split is needed.
+      if (moved.length === 1) {
+        var p1 = predictDay(moved[0].from, e, moved[0].k, state.gymName);
+        if (!(p1 > 0)) continue;
+        out.actual += moved[0].g;
+        out.predicted += p1;
+        out.days += 1;
+        continue;
+      }
+
+      // More than one stat moved. This used to be discarded outright -- "the
+      // day's energy was split in a ratio nothing recorded" -- which cost a day
+      // to anyone who alternates stats, and left people at 1 of 7 after a full
+      // week of perfectly normal training.
+      //
+      // Something did record the ratio. Torn's gym log is fetched once per
+      // stat, so the per-stat energy is already in hand; it was only ever being
+      // summed away. mixedDayEnergy hands it back when it is safe to use, and
+      // null when anything about it fails to add up -- in which case the day is
+      // skipped exactly as before. This can only ever turn a discarded day into
+      // a measured one, never a measured day into a wrong one.
+      var split = mixedDayEnergy(byStat[d], moved.map(function (m) { return m.k; }), e);
+      if (!split) continue;
+      var pSum = 0, gSum = 0, bad = false;
+      moved.forEach(function (m) {
+        var pm = predictDay(m.from, split[m.k], m.k, state.gymName);
+        if (!(pm > 0)) { bad = true; return; }
+        pSum += pm;
+        gSum += m.g;
+      });
+      if (bad || !(pSum > 0)) continue;
+      out.actual += gSum;
+      out.predicted += pSum;
       out.days += 1;
+      out.mixedDays += 1;
     }
 
     // Usage spans every complete day the ledger actually covers — not just the
@@ -4122,7 +4244,10 @@
         '<button type="button" class="gc-btn secondary" data-book="' + k + '" ' +
         'style="width:auto;min-height:0;padding:5px 11px;font-size:12px' +
         (on ? ";background:#2ecc71;color:#08131c" : "") + '">' +
-        (p ? p.daysLeft + "d left \u00b7 +" + fmt(award) : "reading?") + "</button></div>";
+        (p ? p.daysLeft + "d left \u00b7 +" + fmt(award) : "reading?") + "</button>" +
+        ((state.booksAuto || {})[k] && p
+          ? '<span class="muted" style="flex:1 1 100%;font-size:11px">detected on the page \u2014 counted from when this device first saw it, so the finish date is the latest it can be</span>'
+          : "") + "</div>";
     }).join("");
     var counted = HIST_KEYS.filter(function (k) { return pendingBookAward(k) > 0; });
     return '<div class="gc-card"><h3>Stat books</h3>' + rows +
@@ -4392,11 +4517,22 @@
       return (
         '<div class="gc-card"><h3>Calibration</h3>' +
         '<p class="muted" style="margin:0">Still learning \u2014 ' + esc(cal.reason) +
-        ". Once a week of single-stat training is on record, projections are corrected " +
-        "against what you actually gained and actually spent. Until then they use the raw model." +
+        ". Once a week is on record, projections are corrected against what you actually " +
+        "gained and actually spent. Until then they use the raw model." +
+        (state.logReadable === false
+          ? " A day only counts if <b>one stat</b> moved: splitting the day's energy between two " +
+            "needs the gym log, which a Limited key cannot read."
+          : " A day where you trained two stats counts too \u2014 the gym log records how the " +
+            "energy split, so it does not have to be guessed.") +
         "</p></div>"
       );
     }
+    // Named, because a day measured through the log's split rests on one more
+    // record than a single-stat day does, and that is worth being able to see.
+    var mixedNote = cal.mixedDays > 0
+      ? '<p class="muted" style="margin:8px 0 0">' + cal.mixedDays + " of those day" +
+        (cal.mixedDays === 1 ? " was" : "s were") + " split across more than one stat, measured from the gym log.</p>"
+      : "";
     var perDay = cal.days > 0 ? cal.actual / cal.days : 0;
     var predDay = cal.days > 0 ? cal.predicted / cal.days : 0;
     var usePct = Math.round(cal.usage * 100);
@@ -4409,6 +4545,7 @@
         calModelWords(cal.model) + "</b></div>" +
       '<div class="row"><span>You gained</span><b>' + fmt(Math.round(perDay)) + " a day</b></div>" +
       '<div class="row"><span>It predicted</span><b>' + fmt(Math.round(predDay)) + " a day</b></div>" +
+      mixedNote +
       '<div class="row" style="margin-top:6px"><span>Energy used</span><b class="' + (usePct >= 90 ? "ok" : "warn") + '">' +
         usePct + "% of what you had</b></div>" +
       '<div class="row"><span>Reached the gym</span><b>' + fmt(Math.round(spentDay)) + "e a day</b></div>" +
@@ -4785,6 +4922,87 @@
     return out.sort(function (a, b) { return a.t - b.t; });
   }
 
+  // Which stat a gym-log row is about.
+  //
+  // Read from Torn's own words for that row rather than from the order the four
+  // log ids were requested in. The script has never needed an id-to-stat table
+  // and inventing one would be an assumption sitting under a measurement; the
+  // title is self-describing and Torn writes it.
+  //
+  // null when the wording does not resolve -- never a guess. A wrong stat is
+  // worse than no stat: it would attribute a day's energy to something that
+  // never moved and calibrate the model against fiction. Null simply leaves the
+  // day to the one-stat rule, which is the behaviour that already exists.
+  function trainStatFromLogRow(e) {
+    var t = String((e && e.title) || "").toLowerCase();
+    if (t.indexOf("strength") !== -1) return "str";
+    // Torn has used both spellings over the years and neither costs anything.
+    if (t.indexOf("defense") !== -1 || t.indexOf("defence") !== -1) return "def";
+    if (t.indexOf("speed") !== -1) return "spe";
+    if (t.indexOf("dexterity") !== -1) return "dex";
+    return null;
+  }
+
+  // Energy per stat per day, out of the same four responses trainLogByDay
+  // already receives.
+  //
+  // The log is fetched once PER STAT, so this costs no extra request -- the
+  // breakdown was there all along and was being summed away. It is what lets a
+  // day with two stats on it be calibrated instead of discarded.
+  function trainLogByDayStat(responses) {
+    var out = {};
+    (responses || []).forEach(function (r) {
+      var rows = (r && r.log) || {};
+      for (var k in rows) {
+        var e = rows[k];
+        if (!e || !e.data) continue;
+        var used = Number(e.data.energy_used);
+        var ts = Number(e.timestamp);
+        if (!(used > 0) || !(ts > 0)) continue;
+        var stat = trainStatFromLogRow(e);
+        // Unreadable wording leaves the row out entirely rather than filing it
+        // under a guess -- see trainStatFromLogRow.
+        if (!stat) continue;
+        var d = dayKey(ts * 1000);
+        if (!out[d]) out[d] = {};
+        out[d][stat] = (out[d][stat] || 0) + used;
+      }
+    });
+    return out;
+  }
+
+  // How far apart the log and the ledger may be about one day before the day
+  // stops being evidence. They round differently and the bar is sampled, so
+  // demanding an exact match would throw away almost every real day.
+  var MIXED_SLACK = 25;
+
+  // The per-stat energy for a day, but only when it is safe to calibrate from.
+  //
+  // Returns null -- meaning "leave this day to the one-stat rule" -- unless the
+  // log accounts for exactly the stats that moved and roughly the energy the
+  // ledger recorded. Every one of those conditions is a way the split could be
+  // wrong, and a wrong split is a worse answer than no answer: it would teach
+  // the model a correction built on invented numbers.
+  function mixedDayEnergy(split, moved, used) {
+    if (!split || !moved || !moved.length) return null;
+    var keys = Object.keys(split);
+    if (!keys.length) return null;
+    var total = 0, i;
+    for (i = 0; i < keys.length; i++) {
+      // Energy against a stat that did not move: the gain it bought was under a
+      // whole point, and the energy behind it cannot be separated from the rest.
+      if (moved.indexOf(keys[i]) === -1) return null;
+      total += split[keys[i]];
+    }
+    // A stat that moved with nothing logged against it gained from somewhere
+    // the log cannot see, so any split would be invented.
+    for (i = 0; i < moved.length; i++) {
+      if (!(split[moved[i]] > 0)) return null;
+    }
+    if (Math.abs(total - (Number(used) || 0)) > MIXED_SLACK) return null;
+    return split;
+  }
+
   function trainLogByDay(responses) {
     var out = {};
     (responses || []).forEach(function (r) {
@@ -4944,6 +5162,18 @@
       var fresh = trainLogByDay(rs);
       state.trainLog = { byDay: fresh, at: Date.now(),
                          since: carriedSince(state.trainLog, fresh, dayKey(Date.now()), Date.now()),
+                         // Carried, not dropped. This literal replaces the whole
+                         // object, so leaving sinceAt out discarded the stamp on
+                         // every successful round -- and carriedSince's expiry
+                         // reads that stamp, so after round one it could never
+                         // fire. 0.9.49 shipped the expiry and this quietly
+                         // disabled it: exactly the "a since without a sinceAt
+                         // can never expire" case its own comment warns about.
+                         sinceAt: (state.trainLog && state.trainLog.sinceAt) || 0,
+                         // Same four responses, kept split by stat instead of
+                         // summed away. Costs no extra request and is what lets
+                         // a day with two stats on it be calibrated at all.
+                         byDayStat: trainLogByDayStat(rs),
                          events: trainLogEvents(rs).filter(function (e) { return e.t >= cut; }) };
       state.logReadable = true;
       storeSet("trainLog", state.trainLog);
@@ -6411,6 +6641,99 @@
 
   // What finishing the book is worth. The cap binds for anyone past 200m in a
   // stat, which is most people who care about a projection at all.
+  // Which stat book you are reading, off the page.
+  //
+  // Nothing about a stat book reaches the perks payload -- confirmed live, with
+  // an empty perks.book array while one was actively being read -- because the
+  // four award a one-off stat gain rather than an active multiplier, so
+  // parsePerks structurally cannot see them. That is why 0.9.44 made this a tap.
+  //
+  // The status-icon strip under the Life bar does carry it, and carries it ONLY
+  // in aria-label: not title, not src, not text. Three separate scans of that
+  // area came back empty for exactly that reason before anyone read the
+  // attribute.
+  //
+  // Class hashes are build-volatile, so every selector here is a prefix match.
+  // The icon's own numeric class (icon68 at time of writing) is NOT trusted --
+  // those numbers shift, and the label prefix is the thing that means something.
+  //
+  // Three distinct answers, and the difference between the last two is the
+  // whole point:
+  //   { found: true, name, k }  a book is being read; k is null if it is not
+  //                             one of the four stat books
+  //   { found: false }          the strip is on this page and carries no book
+  //   null                      no strip here at all -- which is NOT the same
+  //                             as "no book", and must never clear a stored one
+  var BOOK_LABEL_RE = /^\s*reading\s+book\s*:\s*/i;
+  // Whatever dash Torn separates the name from the effect with today.
+  var BOOK_DASH_RE = /\s[\u2014\u2013-]\s/;
+  function readBookFromDom(root) {
+    var doc = root || (typeof document !== "undefined" ? document : null);
+    if (!doc || typeof doc.querySelectorAll !== "function") return null;
+    var strip;
+    try { strip = doc.querySelectorAll('ul[class*="status-icons"]'); } catch (_) { return null; }
+    if (!strip || !strip.length) return null;
+    var nodes;
+    try { nodes = doc.querySelectorAll('ul[class*="status-icons"] a[aria-label]'); } catch (_) { return null; }
+    for (var i = 0; i < (nodes ? nodes.length : 0); i++) {
+      var n = nodes[i];
+      var label = n && typeof n.getAttribute === "function" ? n.getAttribute("aria-label") : null;
+      if (!label || !BOOK_LABEL_RE.test(label)) continue;
+      var name = String(label).replace(BOOK_LABEL_RE, "").split(BOOK_DASH_RE)[0].trim();
+      if (!name) continue;
+      var k = null, key;
+      for (key in STAT_BOOKS) {
+        if (STAT_BOOKS[key].name.toLowerCase() === name.toLowerCase()) { k = key; break; }
+      }
+      return { found: true, name: name, k: k };
+    }
+    return { found: false };
+  }
+
+  // Fold what the page says into the book state.
+  //
+  // Detection gives WHICH book and never when it started, so a newly seen book
+  // is dated from the first moment this device saw it. That is a FLOOR, not the
+  // real start: a book noticed on day 20 of 31 forecasts its award eleven days
+  // late. The card says so rather than presenting the estimate as a fact, and
+  // tapping the button still sets the date by hand.
+  function syncBookFromDom() {
+    var r = readBookFromDom(null);
+    // null means the strip is not on this page. That says nothing at all, and
+    // must never be read as "no book" -- it would clear a live countdown every
+    // time you opened a page without the sidebar.
+    if (!r) return false;
+    if (!state.booksAuto) state.booksAuto = {};
+    var auto = state.booksAuto, changed = false, k;
+
+    if (r.found && r.k) {
+      state.bookSeen = r.name;
+      // Never overwrite a date already on record. One you tapped in is better
+      // information than this is, and an auto date already set is EARLIER than
+      // now, which is the better floor of the two.
+      if (!state.books[r.k]) {
+        state.books[r.k] = Date.now();
+        auto[r.k] = true;
+        changed = true;
+      }
+    } else {
+      // The strip is here and no stat book is on it -- including the case where
+      // some OTHER book is, since only one can be read at a time. Anything this
+      // device set itself is finished or was wrong, so it goes. Anything you
+      // tapped in is left alone: you know when you started it and this does not.
+      state.bookSeen = r.found ? r.name : "";
+      for (k in auto) {
+        if (auto[k] && state.books[k]) { state.books[k] = 0; auto[k] = false; changed = true; }
+      }
+    }
+    if (changed) {
+      storeSet("books", state.books);
+      storeSet("booksAuto", auto);
+      resetPlanCaches();
+    }
+    return changed;
+  }
+
   function bookAward(k, stats) {
     if (!STAT_BOOKS[k]) return 0;
     var cur = Number((stats || {})[k]) || 0;
@@ -8261,6 +8584,9 @@
 
   function renderPanelInner() {
     syncEnergyFromDom();
+    // The strip is on the same page the panel is drawn over, so this costs one
+    // querySelectorAll per paint and needs no request at all.
+    syncBookFromDom();
     var panel = document.getElementById(PANEL_ID);
     var pill = document.getElementById(PILL_ID);
     if (pill) pinFab(pill);
@@ -9228,6 +9554,9 @@
       // countdown is measured from; stopping clears it outright.
       var reading = !!bookPending(bkey, (state.books || {})[bkey], Date.now());
       state.books[bkey] = reading ? 0 : Date.now();
+      // Tapping makes the date yours, so the auto-detector stops managing it --
+      // otherwise a strip without the book would clear what you just set.
+      if (state.booksAuto) { state.booksAuto[bkey] = false; storeSet("booksAuto", state.booksAuto); }
       storeSet("books", state.books);
       resetPlanCaches();
       applyGoalFocus();
@@ -9560,6 +9889,9 @@
       if (bk && typeof bk === "object") {
         HIST_KEYS.forEach(function (k) { state.books[k] = Number(bk[k]) || 0; });
       }
+      var ba = storeGet("booksAuto", null);
+      if (typeof ba === "string") { try { ba = JSON.parse(ba); } catch (_) { ba = null; } }
+      state.booksAuto = (ba && typeof ba === "object") ? ba : {};
       state.verdictFold = storeBool("verdictFold", true);
       var sh = storeGet("shares", null);
       if (typeof sh === "string") { try { sh = JSON.parse(sh); } catch (_) { sh = null; } }
@@ -9575,6 +9907,10 @@
       if (typeof state.hist === "string") { try { state.hist = JSON.parse(state.hist); } catch (_) { state.hist = []; } }
       if (!Array.isArray(state.hist)) state.hist = [];
       state.hist = state.hist.filter(function (e) { return e && typeof e.d === "number" && Array.isArray(e.v) && e.v.length === 4; });
+      // A stored train log written before byDayStat existed has none, and an
+      // absent map simply leaves every day to the one-stat rule until the next
+      // log round fills it in.
+      if (state.trainLog && typeof state.trainLog.byDayStat !== "object") state.trainLog.byDayStat = {};
       // Trend is the centrepiece of this layout, and a fresh beta namespace
       // means it opens blank next to a stable script holding weeks of history.
       // Copy that history in once, through the same guards; stable is never

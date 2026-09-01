@@ -111,6 +111,16 @@
                             category: "Gym", data: { trains: 1, energy_used: r[1], gym: 24 } };
         });
       }
+      // cfg.trainLogRows is [logId, title, tsSeconds, energy] tuples, so a test
+      // controls exactly which TITLE comes back under which id. Deliberately
+      // able to scramble them: the script reads the stat from Torn's wording
+      // for the row, and anything that secretly keyed off request order would
+      // pass every same-order fixture and be wrong on the real thing.
+      (cfg.trainLogRows || []).forEach(function (r, i) {
+        if (String(r[0]) !== lg[1]) return;
+        rows["r" + i] = { log: r[0], title: r[1], timestamp: r[2],
+                          category: "Gym", data: { trains: 1, energy_used: r[3], gym: 24 } };
+      });
       return { log: rows };
     }
     if (/\/user\/inventory/.test(url)) {

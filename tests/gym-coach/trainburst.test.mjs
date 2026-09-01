@@ -35,7 +35,7 @@ function calls({ n, force, fail, concurrent = false, code = 5, logReadable = nul
     function httpGet() { hits++; if (${JSON.stringify(!!0)}) {} return ${fail ? "Promise.reject(Object.assign(new Error('nope'), { code: " + code + " }))" : "Promise.resolve({ log: {} })"}; }
     var CONCURRENT = ${JSON.stringify(concurrent)};
     var state = { trainLog: null, trainLogInFlight: false, logReadable: ${JSON.stringify(logReadable)} };
-    ${grab("trainLogByDay")} ${grab("trainLogEvents")} ${grab("carriedSince")} ${grab("fetchTrainLog")}
+    ${grab("trainLogByDay")} ${grab("trainLogEvents")} ${grab("trainStatFromLogRow")} ${grab("trainLogByDayStat")} ${grab("carriedSince")} ${grab("fetchTrainLog")}
     var all = [];
     if (CONCURRENT) {
       // Fired together, the way a burst of clicks and a poll actually collide.
