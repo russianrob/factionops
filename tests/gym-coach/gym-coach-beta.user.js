@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.45
+// @version      0.9.46
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,30 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.46 — The board's stat column was energy, not gains.
+ *
+ *         Reported within the hour: "i used 340 but why does it say 340 str?"
+ *         -- and that is exactly what it was. gymstrength, gymdefense,
+ *         gymspeed and gymdexterity are ENERGY SPENT on that stat, not points
+ *         gained; gymenergy is simply their sum. 0.9.45 rendered the number as
+ *         "+340 str", which reads as 340 strength points and is off by six
+ *         orders of magnitude for anyone with real stats.
+ *
+ *         Torn does not document this and the endpoint's own summary calls
+ *         them challenge contributions, so it was flagged as unverified when
+ *         the board shipped. One glance at a real faction settled it, which is
+ *         why it was flagged rather than assumed.
+ *
+ *         Now the column is a SPLIT -- "all str", or "str 60% - def 40%" --
+ *         which cannot be misread as a stat gain and is the more useful figure
+ *         anyway, since the energy column already carries the total. Header
+ *         renamed from Gained to Trained. The card says the same thing.
+ *
+ *         Also: the Discord card's columns did not line up, because "100% nat"
+ *         is wider than "37% nat" and an unknown one is blank. Every cell is
+ *         padded to a fixed width now, in the one format whose entire reason
+ *         for existing is that it lines up.
+ *
 * 0.9.45 — A faction gym board, with no server behind it.
  *
  *         Asked for: a leaderboard or hall of fame per faction -- who used the
@@ -6397,20 +6421,32 @@
     return rows;
   }
 
-  // Compact stat gains: a leaderboard line has no room for 1,200,000.
-  function boardShort(n) {
-    var v = Number(n) || 0;
-    if (v >= 1000000) return ROUND(v / 1000000, v >= 10000000 ? 0 : 1) + "m";
-    if (v >= 1000) return ROUND(v / 1000, v >= 10000 ? 0 : 1) + "k";
-    return String(v);
-  }
-
-  function boardGains(r) {
-    var out = [];
-    [["str", r.str], ["def", r.def], ["spe", r.spe], ["dex", r.dex]].forEach(function (p) {
-      if (p[1] > 0) out.push("+" + boardShort(p[1]) + " " + p[0]);
-    });
-    return out.join(" ");
+  // What somebody trained, as shares of their week.
+  //
+  // gymstrength and its three siblings are ENERGY SPENT on that stat -- NOT
+  // points gained. gymenergy is simply their sum. Confirmed live 2026-09-01: a
+  // 340-energy strength session came back as gymenergy 340 and gymstrength 340
+  // together. 0.9.45 rendered that as "+340 str", which reads as 340 strength
+  // points and is off by six orders of magnitude for anyone with real stats.
+  //
+  // So this reports the split and never a bare number: a percentage cannot be
+  // mistaken for a stat gain, and it is the more useful figure anyway -- what
+  // the energy column already gives you is the total.
+  function boardSplit(r) {
+    var parts = [["str", r.str], ["def", r.def], ["spe", r.spe], ["dex", r.dex]]
+      .filter(function (p) { return (Number(p[1]) || 0) > 0; })
+      .sort(function (a, b) { return b[1] - a[1]; });
+    if (!parts.length) return "";
+    var total = parts.reduce(function (n, p) { return n + p[1]; }, 0);
+    // Against the sum of the four rather than against the energy column, so
+    // the shares always add to a hundred even if the two ever disagree.
+    var shown = parts.map(function (p) {
+      return { k: p[0], pct: Math.round((p[1] / total) * 100) };
+    }).filter(function (p) { return p.pct >= 1; });
+    // One stat carrying the whole week does not need a "100%" beside it, and a
+    // rounding crumb from a second stat is noise rather than information.
+    if (shown.length <= 1) return "all " + parts[0][0];
+    return shown.map(function (p) { return p.k + " " + p.pct + "%"; }).join(" \u00b7 ");
   }
 
   function boardWeekLabel(ms) {
@@ -6436,17 +6472,30 @@
     var shown = rows.slice(0, BOARD_CARD_ROWS);
     var more = rows.length - shown.length;
     var lines;
+    // padStart is ES2017 and the rest of this script is written for whatever
+    // webview Torn PDA is running this week; a four-line helper is cheaper
+    // than finding out.
+    function pad(t, n, left) {
+      var out = String(t);
+      while (out.length < n) out = left ? " " + out : out + " ";
+      return out;
+    }
     if (o.fmt === "discord") {
       var w = 0;
       shown.forEach(function (r) { w = Math.max(w, String(r.name).length); });
       lines = shown.map(function (r) {
         var name = String(r.name);
         while (name.length < w) name += " ";
-        var nat = r.natural === null ? "" :
-          "  " + Math.round((r.natural / Math.max(1, r.energy)) * 100) + "% nat";
-        var gains = boardGains(r);
-        return String(r.rank).padStart(2) + ". " + name + "  " +
-               String(fmt(r.energy)).padStart(9) + "e" + nat + (gains ? "  " + gains : "");
+        // Fixed width, including when it is absent. "100% nat" is a
+        // character wider than "37% nat", and an unknown one is blank -- so a
+        // ragged cell here is what knocks the split column out of line, in the
+        // one format whose whole reason for existing is that it lines up.
+        var nat = pad(r.natural === null ? "" :
+          Math.round((r.natural / Math.max(1, r.energy)) * 100) + "% nat", 8, true);
+        var split = boardSplit(r);
+        return pad(String(r.rank), 2, true) + ". " + name + "  " +
+               pad(String(fmt(r.energy)) + "e", 10, true) + "  " + nat +
+               (split ? "  " + split : "");
       });
       return "```\n" + head + "\n" + lines.join("\n") +
              (more > 0 ? "\n+ " + more + " more" : "") + "\n```";
@@ -6454,8 +6503,8 @@
     lines = shown.map(function (r) {
       var nat = r.natural === null ? "" :
         " (" + Math.round((r.natural / Math.max(1, r.energy)) * 100) + "% natural)";
-      var gains = boardGains(r);
-      return r.rank + ". " + r.name + " — " + fmt(r.energy) + "e" + nat + (gains ? " — " + gains : "");
+      var split = boardSplit(r);
+      return r.rank + ". " + r.name + " — " + fmt(r.energy) + "e" + nat + (split ? " — " + split : "");
     });
     return head + "\n" + lines.join("\n") + (more > 0 ? "\n+ " + more + " more" : "");
   }
@@ -6698,14 +6747,14 @@
 
   function boardLine(r, meId) {
     var pct = boardNatPct(r);
-    var gains = boardGains(r);
+    var split = boardSplit(r);
     return '<div class="gcb-brow' + (String(r.id) === String(meId) ? " me" : "") + '">' +
       '<span class="gcb-brank">' + r.rank + "</span>" +
       '<span class="gcb-bname">' + esc(String(r.name || r.id)) + "</span>" +
       '<span class="gcb-benergy">' + fmt(r.energy) + "e</span>" +
       (pct === null ? '<span class="gcb-bnat muted">—</span>'
                     : '<span class="gcb-bnat ' + (pct >= 80 ? "ok" : pct >= 50 ? "" : "bad") + '">' + pct + "%</span>") +
-      '<span class="gcb-bgain muted">' + esc(gains || "—") + "</span>" +
+      '<span class="gcb-bgain muted">' + esc(split || "—") + "</span>" +
       "</div>";
   }
 
@@ -6743,10 +6792,10 @@
       (since && since.partial
         ? "since this device first read the faction, <b>" + esc(boardSinceLabel(since.at)) + "</b>"
         : "since <b>Monday 00:00 TCT</b>") +
-      ", and the stat points it bought. " +
+      ", and which stats it went into. " +
       'Read from Torn\u2019s own faction contributors, so it is the same board on every device and nothing is stored anywhere but here.</p>' +
       '<div class="gcb-brow head"><span class="gcb-brank">#</span><span class="gcb-bname">Member</span>' +
-      '<span class="gcb-benergy">Energy</span><span class="gcb-bnat">Nat</span><span class="gcb-bgain">Gained</span></div>' +
+      '<span class="gcb-benergy">Energy</span><span class="gcb-bnat">Nat</span><span class="gcb-bgain">Trained</span></div>' +
       rows.map(function (r) { return boardLine(r, meId); }).join("") +
       '<div class="gcb-brow foot"><span class="muted" style="grid-column:1/-1">' +
       (fresh ? "Read " + Math.max(0, Math.round((Date.now() - state.boardAt) / 1000)) + "s ago" : "Not read yet") +

@@ -232,18 +232,53 @@ t("the week label is the TCT date, not the reader's local one", () => {
 
 const build = (args) => call(["naturalEnergy", "boardBuild"], `boardBuild(${args})`);
 
-t("the board ranks on energy trained and carries the stat gains beside it", () => {
+t("the board ranks on energy trained and carries the per-stat split beside it", () => {
+  // gymstrength and friends are ENERGY SPENT on that stat, not points gained,
+  // so they sum to gymenergy. Fixtures are consistent with that or they teach
+  // the wrong model to whoever reads them next.
   const rows = build(JSON.stringify({
     gymenergy: { 1: { id: 1, name: "rcexyz", delta: 48300 }, 2: { id: 2, name: "quiet", delta: 900 } },
-    gymstrength: { 1: { id: 1, name: "rcexyz", delta: 1200000 } },
-    gymdefense: { 2: { id: 2, name: "quiet", delta: 40000 } }
+    gymstrength: { 1: { id: 1, name: "rcexyz", delta: 48300 } },
+    gymdefense: { 2: { id: 2, name: "quiet", delta: 900 } }
   }) + ", null, null");
   assert.strictEqual(rows.length, 2);
   assert.strictEqual(rows[0].name, "rcexyz");
   assert.strictEqual(rows[0].energy, 48300);
-  assert.strictEqual(rows[0].str, 1200000);
+  assert.strictEqual(rows[0].str, 48300);
   assert.strictEqual(rows[0].def, 0, "a stat with no entry is zero, not undefined");
-  assert.strictEqual(rows[1].def, 40000);
+  assert.strictEqual(rows[1].def, 900);
+});
+
+// ---- what somebody trained ------------------------------------------------
+
+const split = (r) => call(["boardSplit"], `boardSplit(${JSON.stringify(r)})`);
+
+t("a week spent entirely on one stat says so, without a meaningless percentage", () => {
+  assert.strictEqual(split({ str: 340, def: 0, spe: 0, dex: 0 }), "all str");
+});
+
+t("a mixed week is broken down as shares of the energy", () => {
+  assert.strictEqual(split({ str: 600, def: 400, spe: 0, dex: 0 }), "str 60% \u00b7 def 40%");
+});
+
+t("the split is ordered by how much went into each, not by stat name", () => {
+  assert.strictEqual(split({ str: 100, def: 900, spe: 0, dex: 0 }), "def 90% \u00b7 str 10%");
+});
+
+t("the split is NEVER read as points gained", () => {
+  // The bug this replaces: 340 energy rendered as "+340 str", which reads as
+  // 340 strength points. Nothing here may print a bare signed number.
+  const s = split({ str: 600, def: 400, spe: 0, dex: 0 });
+  assert.ok(!/\+/.test(s), "a leading + reads as a stat gain: " + s);
+  assert.ok(!/\b600\b|\b400\b/.test(s), "raw energy printed as though it were a gain: " + s);
+});
+
+t("a stat that rounds to nothing is left off rather than shown as 0%", () => {
+  assert.strictEqual(split({ str: 10000, def: 1, spe: 0, dex: 0 }), "all str");
+});
+
+t("a member who trained nothing has no split at all", () => {
+  assert.strictEqual(split({ str: 0, def: 0, spe: 0, dex: 0 }), "");
 });
 
 t("a member who trained nothing all week is still listed, at the bottom", () => {
@@ -292,10 +327,10 @@ t("a board that has never been read has no window to report", () => {
 // ---- the shareable card ---------------------------------------------------
 
 const CARD = [
-  { rank: 1, id: 1, name: "rcexyz", energy: 48300, natural: 41000, str: 1200000, def: 0, spe: 0, dex: 0 },
-  { rank: 2, id: 2, name: "quiet", energy: 900, natural: null, str: 0, def: 40000, spe: 0, dex: 0 }
+  { rank: 1, id: 1, name: "rcexyz", energy: 48300, natural: 41000, str: 36225, def: 12075, spe: 0, dex: 0 },
+  { rank: 2, id: 2, name: "quiet", energy: 900, natural: null, str: 0, def: 900, spe: 0, dex: 0 }
 ];
-const card = (fmt) => call(["fmt", "ROUND", "boardShort", "boardGains", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+const card = (fmt) => call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
   `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "Dead Fragment", week: MON, fmt: fmt })})`);
 
 t("the card names the faction and the week it covers", () => {
@@ -310,9 +345,10 @@ t("the card lists members in rank order with their energy", () => {
   assert.ok(s.includes("48,300"), "thousands separators: " + s);
 });
 
-t("the card carries the battle stats gained, not only the energy", () => {
+t("the card carries the battle stats trained, not only the energy total", () => {
   const s = card("chat");
-  assert.ok(/1\.2m|1,200,000/.test(s), "strength gain missing from the card: " + s);
+  assert.ok(/str 75%/.test(s), "the per-stat split is missing from the card: " + s);
+  assert.ok(/all def/.test(s), "a single-stat week should read as 'all def': " + s);
 });
 
 t("a natural figure nobody worked out is left off that row rather than shown as zero", () => {
@@ -335,22 +371,22 @@ t("the chat card is NOT fenced -- Torn chat renders backticks literally", () => 
 t("a card that anchored mid-week says so on its face", () => {
   // Otherwise it lands in faction chat as a full week's standings when it is
   // three days of them.
-  const s = call(["fmt", "ROUND", "boardShort", "boardGains", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+  const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
     `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat", since: { at: MON + 3 * DAY, start: MON, partial: true } })})`);
   assert.match(s, /counting from/, s.split("\n")[0]);
   assert.match(s.split("\n")[0], /Thu/, "the anchor day should be stated: " + s.split("\n")[0]);
 });
 
 t("and a card that really did start on Monday says nothing extra", () => {
-  const s = call(["fmt", "ROUND", "boardShort", "boardGains", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+  const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
     `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat", since: { at: MON, start: MON, partial: false } })})`);
   assert.ok(!/counting from/.test(s), s.split("\n")[0]);
 });
 
 t("the card never runs away with a 100-member faction", () => {
   const many = [];
-  for (let i = 1; i <= 100; i++) many.push({ rank: i, id: i, name: "m" + i, energy: 1000 - i, natural: null, str: 0, def: 0, spe: 0, dex: 0 });
-  const s = call(["fmt", "ROUND", "boardShort", "boardGains", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+  for (let i = 1; i <= 100; i++) many.push({ rank: i, id: i, name: "m" + i, energy: 1000 - i, natural: null, str: 1000 - i, def: 0, spe: 0, dex: 0 });
+  const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
     `boardCardText(${JSON.stringify(many)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat" })})`);
   assert.ok(s.split("\n").length <= 20, "a chat message cannot be 100 lines: " + s.split("\n").length);
   assert.ok(s.includes("m1"), "the top of the board must survive the trim");

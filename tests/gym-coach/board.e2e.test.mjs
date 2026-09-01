@@ -26,24 +26,29 @@ await page.route("**/*", r => {
 
 const ME = 2598755;
 // Three members, so rank order is a real claim and not a coin toss.
+// gym<stat> is ENERGY SPENT on that stat and gymenergy is their sum, so these
+// add up. A fixture that does not is a fixture teaching a model Torn does not
+// have -- which is how "+340 str" shipped.
 const CONTRIB = {
   // in_faction:false -- somebody who left. cat=current should already drop
   // them, but a board that quietly lists ex-members is worse than one that
   // asks twice.
   gymenergy:    [[ME, "rcexyz", 5000000], [77, "quiet", 90000000], [88, "grinder", 12000000], [99, "gone", 400000000, false]],
-  gymstrength:  [[ME, "rcexyz", 600000000], [77, "quiet", 1000], [88, "grinder", 40000000]],
-  gymdefense:   [[ME, "rcexyz", 10000], [77, "quiet", 500000], [88, "grinder", 1000]],
-  gymspeed:     [[ME, "rcexyz", 1], [77, "quiet", 1], [88, "grinder", 1]],
-  gymdexterity: [[ME, "rcexyz", 1], [77, "quiet", 1], [88, "grinder", 1]]
+  gymstrength:  [[ME, "rcexyz", 4000000], [77, "quiet", 10000000], [88, "grinder", 6000000]],
+  gymdefense:   [[ME, "rcexyz", 1000000], [77, "quiet", 80000000], [88, "grinder", 6000000]],
+  gymspeed:     [[ME, "rcexyz", 0], [77, "quiet", 0], [88, "grinder", 0]],
+  gymdexterity: [[ME, "rcexyz", 0], [77, "quiet", 0], [88, "grinder", 0]]
 };
 // Same members, moved on. grinder trained hardest; rcexyz trained less but
 // bought none of it; quiet's whole week came out of xanax.
 const LATER = {
   gymenergy:    [[ME, "rcexyz", 5003360], [77, "quiet", 90010000], [88, "grinder", 12050000], [99, "gone", 400900000, false]],
-  gymstrength:  [[ME, "rcexyz", 601200000], [77, "quiet", 1000], [88, "grinder", 42000000]],
-  gymdefense:   [[ME, "rcexyz", 10000], [77, "quiet", 540000], [88, "grinder", 1000]],
-  gymspeed:     [[ME, "rcexyz", 1], [77, "quiet", 1], [88, "grinder", 1]],
-  gymdexterity: [[ME, "rcexyz", 1], [77, "quiet", 1], [88, "grinder", 1]]
+  // rcexyz put the whole week into strength; grinder split it 60/40; quiet
+  // trained defense only.
+  gymstrength:  [[ME, "rcexyz", 4003360], [77, "quiet", 10000000], [88, "grinder", 6030000]],
+  gymdefense:   [[ME, "rcexyz", 1000000], [77, "quiet", 80010000], [88, "grinder", 6020000]],
+  gymspeed:     [[ME, "rcexyz", 0], [77, "quiet", 0], [88, "grinder", 0]],
+  gymdexterity: [[ME, "rcexyz", 0], [77, "quiet", 0], [88, "grinder", 0]]
 };
 const PS = {
   // rcexyz bought nothing all week.
@@ -157,15 +162,19 @@ await t("once the faction moves, the board ranks on the week's energy", async ()
   assert.strictEqual(r[2].energy, "3,360e");
 });
 
-await t("battle stats gained ride along with the energy", async () => {
+await t("the row says which stats the energy went into, never a stat gain", async () => {
   await load({ contributors: CONTRIB });
   await openBoard();
   await load({ contributors: LATER });
   await openBoard();
   const r = await rows();
-  assert.match(r.find(x => x.name === "grinder").gain, /2m str/);
-  assert.match(r.find(x => x.name === "rcexyz").gain, /1\.2m str/);
-  assert.match(r.find(x => x.name === "quiet").gain, /40k def/);
+  // grinder: 30,000 of 50,000 into strength, 20,000 into defense.
+  assert.strictEqual(r.find(x => x.name === "grinder").gain, "str 60% \u00b7 def 40%");
+  // rcexyz put all 3,360 into strength.
+  assert.strictEqual(r.find(x => x.name === "rcexyz").gain, "all str");
+  assert.strictEqual(r.find(x => x.name === "quiet").gain, "all def");
+  // The 0.9.45 bug in one assertion: energy printed as though it were points.
+  r.forEach(x => assert.ok(!/^\+/.test(x.gain), "a signed number reads as a stat gain: " + x.gain));
 });
 
 await t("your own row is marked, so you can find yourself on it", async () => {
@@ -253,6 +262,7 @@ await t("the copy buttons reach a handler and put the card on the clipboard", as
   assert.match(chat, /Dead Fragment/);
   assert.match(chat, /grinder/);
   assert.match(chat, /50,000e/);
+  assert.match(chat, /str 60%/, "the split belongs on the card: " + chat);
   assert.ok(!chat.includes("```"), "the chat card must not be fenced");
 });
 
@@ -310,7 +320,7 @@ await t("a faction that has trained nothing renders as a board, not as an error"
   await openBoard();
   const r = await rows();
   assert.strictEqual(r.length, 1);
-  assert.strictEqual(r[0].gain, "—", "no gains should read as a dash, not as undefined");
+  assert.strictEqual(r[0].gain, "—", "no split should read as a dash, not as undefined");
 });
 
 await b.close();
