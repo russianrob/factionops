@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.90
+// @version      5.1.91
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -97,7 +97,7 @@
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined' && !IS_WARBOARD;
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.90';
+    const SCRIPT_VERSION = '5.1.91';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -2021,6 +2021,12 @@ body.wb-chain-active {
     display: flex; align-items: center; justify-content: space-between;
 }
 .wb-payouts-settings-header h3 { margin: 0; font-size: 14px; color: #74c69d; }
+.wb-payouts-settings-stale {
+    margin: 0 0 12px; padding: 9px 11px; border-radius: 8px;
+    background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.4);
+    color: #fbbf24; font-size: 12px; line-height: 1.45;
+}
+.wb-payouts-settings-stale strong { display: block; margin-bottom: 3px; color: #fcd34d; }
 .wb-payouts-settings-close {
     background: none; border: 0; color: #d1d5db;
     font-size: 18px; cursor: pointer;
@@ -15370,6 +15376,13 @@ body.wb-chain-active {
                     <button class="wb-payouts-settings-close" title="Close">✕</button>
                 </div>
                 <div class="wb-payouts-settings-body">
+                    ${war.settingsApplied === false ? `
+                    <div class="wb-payouts-settings-stale">
+                        <strong>These weights are saved but not applied.</strong>
+                        This war has ended and there is no stored attack log to recompute it from,
+                        so the figures below still come from the archived calculation. Saving will
+                        keep the settings for later, but the numbers will not move.
+                    </div>` : ''}
                     <label>
                         <span>Loot total ($)</span>
                         <input type="number" id="wb-set-loot" min="0" step="1" placeholder="auto: ${(war.lootTotal || 0).toLocaleString()}" value="${cur.lootOverride != null ? cur.lootOverride : ''}">
@@ -15631,10 +15644,16 @@ body.wb-chain-active {
 
         // v5.0.60: surface the 80/20 split so admins can see how much
         // of the loot is being distributed vs retained by the faction.
+        // Saved-but-not-applied has to be visible from the board itself. The
+        // whole class of bug this came from was settings being silently ignored,
+        // and a warning you have to open a panel to find is barely a warning.
+        const staleLine = war.settingsApplied === false
+            ? ' · <span style="color:#f59e0b">custom weights saved but NOT applied (archived war)</span>'
+            : '';
         const splitLine = (war.payoutPct != null && war.payoutPool != null && war.factionShare != null)
             ? ` · payout pool ${fmt$(war.payoutPool)} (${Math.round(war.payoutPct * 100)}%) · faction keeps ${fmt$(war.factionShare)}`
             : '';
-        let html = `<div class="wb-payouts-section-label">Drilldown — vs ${escapeHtml(war.enemyFactionName||'?')} · ${escapeHtml(war.warResult||'?')} · loot ${fmt$(war.lootTotal)} <span style="opacity:0.6;font-size:10px;">(${escapeHtml(sourceLabel)})</span>${splitLine} · total score ${war.totalScore}</div>`;
+        let html = `<div class="wb-payouts-section-label">Drilldown — vs ${escapeHtml(war.enemyFactionName||'?')} · ${escapeHtml(war.warResult||'?')} · loot ${fmt$(war.lootTotal)} <span style="opacity:0.6;font-size:10px;">(${escapeHtml(sourceLabel)})</span>${splitLine}${staleLine} · total score ${war.totalScore}</div>`;
         html += lootDetail;
         html += `<div class="wb-payouts-drilldown"><table>`;
         // v5.0.45: simplified to 5 columns. Earlier 11-column layout

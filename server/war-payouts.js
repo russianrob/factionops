@@ -807,6 +807,8 @@ export async function computePayoutsHeatmap(factionId, options = {}) {
         payoutPool: r.payoutPool,
         factionShare: r.factionShare,
         settings: r.settings, // pass through for the gear panel
+        // Whether the numbers beside those settings were computed WITH them.
+        settingsApplied: r.settingsApplied !== false,
         totalScore: r.totalScore,
         members: r.members,
       });
@@ -895,6 +897,7 @@ export async function computePayoutsHeatmap(factionId, options = {}) {
       payoutPool: w.payoutPool || 0,
       factionShare: w.factionShare || 0,
       settings: w.settings || {},
+      settingsApplied: w.settingsApplied !== false,
       totalScore: w.totalScore || 0,
       error: w.error || null,
     })),
