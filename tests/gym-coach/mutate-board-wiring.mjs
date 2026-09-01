@@ -44,6 +44,14 @@ const mutants = [
   // line -- only gymenergy can set `applied` either way. It would stop being
   // equivalent the day the round tolerates a partial failure, which is exactly
   // when someone should re-add it.
+  ["the raw week-start and live counts are never shown",
+    "        var raw = state.playerId && state.natRaw[String(state.playerId)];", "        var raw = null;", [E]],
+  ["a whole faction of identical counts passes without comment",
+    "        var same = ids.length >= 3 && moved === 0;", "        var same = false;", [E]],
+  ["one member buying nothing trips the API warning",
+    "        var same = ids.length >= 3 && moved === 0;", "        var same = flat(raw);", [E]],
+  ["the raw pair is never recorded, so there is nothing to show",
+    "          if (live && haveBase) state.natRaw[id] = { now: live, then: haveBase };", "", [E]],
   ["a skewed board says nothing about it",
     "      (boardSkew(state.board) > BOARD_SKEW_MS", "      (false && boardSkew(state.board) > BOARD_SKEW_MS", [E]],
   ["re-anchoring keeps the old baselines, so it changes nothing",

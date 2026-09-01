@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.62
+// @version      0.9.63
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,26 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.63 - Show the working behind the Regen column, and name it properly.
+ *
+ *         "Nat" meant natural regen and nobody could be expected to know that.
+ *         It is the Regen column now.
+ *
+ *         It also reads 100% for every member, which is impossible: 1,725
+ *         energy inside a day is roughly triple what a bar can regenerate in
+ *         that time. Every row at 100% means every delta came out zero, and
+ *         there are two very different reasons that could happen -- nobody
+ *         bought anything, or Torn handed back the same figures for the
+ *         week-start call as for the live one.
+ *
+ *         The arithmetic is sound, so guessing which would be guessing at
+ *         Torn's payload again, and that has cost two round trips today
+ *         already. Both ends of the subtraction are kept now and printed for
+ *         your own row: refills, xanax and cans as they were at the week start
+ *         and as they are now. If the two are identical the card says so, in
+ *         red, and says the column is meaningless rather than leaving 100%
+ *         standing as a claim about people.
+ *
 * 0.9.62 - Drop the train count; say what the energy went into instead.
  *
  *         gymtrains was added so the board could show trains as well as energy,
@@ -2059,6 +2079,8 @@
     natUse: {},
     natBase: {},
     natBusy: false,
+    // The live and week-start consumable counts behind each natural figure.
+    natRaw: {},
     // How many stats made it through when a round died part-way, and how many
     // members the natural pass could not read. Both are zero on a clean run and
     // are what stops a half-read board from looking like a whole one.
@@ -7958,6 +7980,7 @@
     state.natError = null;
     state.natMissed = 0;
     if (!state.natBase[wk]) state.natBase[wk] = {};
+    state.natRaw = {};
 
     function one(i) {
       if (i >= picked.length) return Promise.resolve();
@@ -7981,6 +8004,11 @@
           if (!haveBase && res[1]) { state.natBase[wk][id] = res[1]; haveBase = res[1]; }
           var d = psDelta(live, haveBase);
           if (d) state.natUse[id] = d;
+          // Both ends of the subtraction, kept for the diagnostic. Every row
+          // reading 100% natural means every delta came out zero, and the only
+          // way to tell a broken subtraction from an API that ignored the
+          // timestamp is to see the two numbers that went into it.
+          if (live && haveBase) state.natRaw[id] = { now: live, then: haveBase };
           // readPs returns null for a reshaped or empty payload and nothing
           // throws, so without this the pass reported "12 of 12" with holes in
           // it and every hole rendered as an em dash indistinguishable from
@@ -8170,11 +8198,11 @@
       // screen was "why nat empty". The prompt belongs next to the column.
       (natKnown || state.natBusy || state.boardBusy ? "" :
         '<div class="gcb-natprompt">' +
-        '<span class="muted">The <b>Nat</b> column is empty until it is worked out \u2014 it is a request per member, so it is not automatic.</span>' +
+        '<span class="muted">The <b>Regen</b> column is empty until it is worked out \u2014 it is a request per member, so it is not automatic.</span>' +
         '<button type="button" class="gcb-btn" data-board="natural">Fill it in (top ' + BOARD_NATURAL_TOP + ')</button>' +
         "</div>") +
       '<div class="gcb-brow head"><span class="gcb-brank">#</span><span class="gcb-bname">Member</span>' +
-      '<span class="gcb-benergy">Energy</span><span class="gcb-bnat">Nat</span><span class="gcb-bgain">Trained</span></div>' +
+      '<span class="gcb-benergy">Energy</span><span class="gcb-bnat">Regen</span><span class="gcb-bgain">Trained</span></div>' +
       rows.map(function (r) { return boardLine(r, meId); }).join("") +
       // Your own row in Torn's raw terms. Every number above is a subtraction,
       // and when one of them is disputed the only useful thing the board can do
@@ -8221,6 +8249,31 @@
         ? '<p class="muted" style="margin:0 0 8px">Worked out for the top ' + natKnown + '. The <b>Nat</b> column is the share of the week\u2019s energy that did not come from a refill, a xanax or a can — the part you earned by just being there.</p>'
         : '<p class="muted" style="margin:0 0 8px">The <b>Nat</b> column ranks who used the most energy they simply regenerated, rather than bought. Torn answers each member\u2019s refill, xanax and can counts — including what they were at Monday 00:00 — so this needs no stored history, but it is one request per member.</p>') +
       (state.natError ? '<p class="bad" style="margin:0 0 8px">' + esc(state.natError) + "</p>" : "") +
+      // What the two calls actually returned, for your own row. A column of
+      // 100% means every delta was zero, and only the raw pair can say whether
+      // that is because nobody bought anything or because Torn handed back the
+      // same numbers twice.
+      (function () {
+        var raw = state.playerId && state.natRaw[String(state.playerId)];
+        if (!raw) return "";
+        function flat(r) {
+          return ["refills", "xantaken", "energydrinkused"].every(function (k) {
+            return (r.now[k] || 0) === (r.then[k] || 0);
+          });
+        }
+        var ids = Object.keys(state.natRaw);
+        var moved = 0;
+        ids.forEach(function (id) { if (!flat(state.natRaw[id])) moved += 1; });
+        // Three is the smallest sample worth concluding from: one or two people
+        // buying nothing in a week is ordinary, a whole faction is not.
+        var same = ids.length >= 3 && moved === 0;
+        return '<p class="' + (same ? "bad" : "muted") + '" style="margin:0 0 8px;font-size:11px">' +
+          "your counts, week start \u2192 now: refills " + (raw.then.refills || 0) + "\u2192" + (raw.now.refills || 0) +
+          " \u00b7 xanax " + (raw.then.xantaken || 0) + "\u2192" + (raw.now.xantaken || 0) +
+          " \u00b7 cans " + (raw.then.energydrinkused || 0) + "\u2192" + (raw.now.energydrinkused || 0) +
+          (same ? " \u2014 identical, so Torn returned the same figures for both calls and every Regen% here is meaningless" : "") +
+          "</p>";
+      })() +
       (!state.natBusy && state.natMissed
         ? '<p class="bad" style="margin:0 0 8px">' + state.natMissed + " member" + (state.natMissed === 1 ? "" : "s") +
           " could not be read, so their Nat is still blank rather than zero.</p>"

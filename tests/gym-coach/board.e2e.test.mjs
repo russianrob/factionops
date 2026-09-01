@@ -222,7 +222,7 @@ await t("the natural column is worked out only when asked for", async () => {
   await load({ contributors: LATER, ps: PS });
   await openBoard();
   assert.strictEqual(await countUrls(/personalstats/), 0, "personalstats went out unasked");
-  (await rows()).forEach(x => assert.strictEqual(x.nat, "—", "an unasked natural column must be blank, not 0%"));
+  (await rows()).forEach(x => assert.strictEqual(x.nat, "—", "an unasked regen column must be blank, not 0%"));
 });
 
 await t("asking for it ranks who trained on regen rather than on pills", async () => {
@@ -240,6 +240,42 @@ await t("asking for it ranks who trained on regen rather than on pills", async (
   // grinder trained most but bought 7 refills, 100 xanax and 20 cans.
   const g = parseInt(r.find(x => x.name === "grinder").nat, 10);
   assert.ok(g > 0 && g < 60, "grinder's natural share should be partial, got " + g + "%");
+});
+
+await t("identical week-start and live counts are called out, not shown as 100%", async () => {
+  // Reported: every row reading 100% regen, which is impossible. Both ends of
+  // the subtraction are printed so the two explanations -- nobody bought
+  // anything, or Torn returned the same figures twice -- can be told apart.
+  const FLAT = {
+    [ME]: { then: { refills: 10, xantaken: 100, energydrinkused: 5 },
+            now:  { refills: 10, xantaken: 100, energydrinkused: 5 } },
+    77: { then: { refills: 0, xantaken: 0, energydrinkused: 0 },
+          now:  { refills: 0, xantaken: 0, energydrinkused: 0 } },
+    88: { then: { refills: 0, xantaken: 0, energydrinkused: 0 },
+          now:  { refills: 0, xantaken: 0, energydrinkused: 0 } }
+  };
+  await load({ contributors: CONTRIB, ps: FLAT, fresh: true });
+  await openBoard();
+  await load({ contributors: LATER, ps: FLAT });
+  await openBoard();
+  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
+  await page.waitForTimeout(9000);
+  const txt = await boardText();
+  assert.match(txt, /week start → now/i, "the raw counts should be printed: " + txt.slice(-400));
+  assert.match(txt, /identical/i, "an all-zero delta must be called out: " + txt.slice(-400));
+});
+
+await t("counts that DID move are reported without the warning", async () => {
+  await load({ contributors: CONTRIB, ps: PS, fresh: true });
+  await openBoard();
+  await load({ contributors: LATER, ps: PS });
+  await openBoard();
+  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
+  await page.waitForTimeout(9000);
+  const txt = await boardText();
+  assert.match(txt, /week start → now/i, "the raw counts should still be shown");
+  assert.ok(!/identical/i.test(txt),
+    "one member buying nothing is ordinary and must not trip the warning: " + txt.slice(-400));
 });
 
 await t("the week-start half is fetched once and then remembered", async () => {
