@@ -62,6 +62,11 @@
   function answer(url) {
     window.__urls.push(url);
     if (/selections=calendar/.test(url)) return { competitions: [] };
+    // cfg.failStat makes exactly one contributors stat fail, for the
+    // partial-fetch paths. cfg.keyFaction drives /key/info's access.faction.
+    if (cfg.failStat && new RegExp("stat=" + cfg.failStat + "(&|$)").test(url)) {
+      return { error: { code: 5, error: "Too many requests" } };
+    }
     // ---- faction board ----
     if (/v2\/faction\/basic/.test(url)) {
       if (cfg.factionDenied) return { error: { code: 7, error: "Incorrect ID-entity relation value" } };
@@ -128,7 +133,11 @@
       if (cfg.keyErr) return { error: { code: cfg.keyErr, error: "stub" } };
       var lv = N(cfg.keyLevel, 4);
       return { info: { access: { level: lv, type: lv >= 4 ? "Full Access" : "Limited Access",
-                                 faction: true, company: false,
+                                 // "Faction API Access" is a position ability,
+                                 // independent of the key's level -- cfg.keyFaction
+                                 // is how a suite says a member does not have it.
+                                 faction: cfg.keyFaction === undefined ? true : cfg.keyFaction,
+                                 company: false,
                                  log: { custom_permissions: false, available: [] } },
                        selections: { user: ["bars", "attacks", "log"] }, user: { id: 2598755 } } };
     }
@@ -171,6 +180,11 @@
     return {};
   }
   window.GM_xmlhttpRequest = function (o) {
+    // cfg.hangUrl is a substring; a matching request NEVER settles -- neither
+    // onload nor onerror. That is not a hypothetical: PDA's HTTP layer collapses
+    // two identical in-flight GETs and orphans the second callback. A feature
+    // that only recovers from REJECTION cannot recover from this.
+    if (cfg.hangUrl && String(o.url).indexOf(cfg.hangUrl) !== -1) return;
     setTimeout(function () {
       var body = JSON.stringify(answer(o.url));
       if (o.onload) o.onload({ status: 200, responseText: body, response: body });

@@ -72,6 +72,10 @@ const BASE = {
 };
 async function load(extra) {
   errors.length = 0;
+  if (extra && extra.fresh) {
+    await page.goto("https://www.torn.com/gym.php", { waitUntil: "domcontentloaded" });
+    await page.evaluate(() => localStorage.clear());
+  }
   const cfg = Object.assign({}, BASE, extra || {});
   cfg.mem = Object.assign({}, BASE.mem, (extra && extra.mem) || {});
   await page.goto("https://www.torn.com/gym.php?cfg=" + encodeURIComponent(JSON.stringify(cfg)),
@@ -355,6 +359,112 @@ await t("somebody who left the faction is not on the board", async () => {
   const r = await rows();
   assert.ok(!r.some(x => x.name === "gone"), "an ex-member is on the board: " + JSON.stringify(r));
   assert.strictEqual(r.length, 3);
+});
+
+await t("a request that never settles does not wedge the tab for good", async () => {
+  // The one finding that made the feature unusable rather than merely wrong.
+  // httpGet has no timeout and PDA's HTTP layer can orphan a callback outright,
+  // so boardBusy stayed true, every button went dead, and only a reload
+  // recovered. A rejected promise is recoverable; an unsettled one is not.
+  await load({ contributors: CONTRIB, hangUrl: "stat=gymtrains", fresh: true });
+  await page.evaluate(() => document.querySelector('[data-tab="board"]').click());
+  await page.waitForTimeout(25000); // past the 20s request clock
+  const txt = await boardText();
+  assert.ok(!/reading…/.test(txt), "still claims to be reading after the timeout: " + txt.slice(0, 200));
+  assert.match(txt, /parts were read/, "a timed-out round must say it was short: " + txt.slice(0, 300));
+  // and the tab is alive again
+  assert.ok(await page.$('[data-board="refresh"]'), "no way back");
+});
+
+await t("a round that dies part-way anchors nothing, rather than anchoring half the week", async () => {
+  // Committing baselines per stat meant energy anchored at Monday and trains at
+  // whenever the next attempt succeeded -- and a split normalised across
+  // differently-anchored stats looks plausible while being wrong all week.
+  await load({ contributors: CONTRIB, failStat: "gymdefense", fresh: true });
+  await openBoard();
+  const saved = await page.evaluate(() => localStorage.getItem("gcb_v1_board"));
+  assert.ok(!saved || !JSON.parse(saved).stats || !Object.keys(JSON.parse(saved).stats).length,
+    "a half-read round persisted its anchors: " + saved);
+});
+
+await t("a half-read board says so instead of looking complete", async () => {
+  await load({ contributors: CONTRIB, failStat: "gymdexterity", fresh: true });
+  await openBoard();
+  const txt = await boardText();
+  assert.match(txt, /parts were read/, txt.slice(0, 300));
+  assert.ok((await rows()).length > 0, "the rows that did land should still show");
+});
+
+await t("a key known to lack faction access is told BEFORE six refused requests", async () => {
+  await load({ contributors: CONTRIB, keyFaction: false, fresh: true });
+  await page.evaluate(() => document.querySelector('[data-tab="board"]').click());
+  await page.waitForTimeout(2500);
+  assert.strictEqual(await countUrls(/faction\/contributors/), 0,
+    "spent refused requests to learn what the key already said");
+  const txt = await boardText();
+  assert.match(txt, /position/i, "should name the position ability: " + txt.slice(0, 300));
+  assert.ok(await page.$('[data-board="anyway"]'), "offered, not enforced -- there must be a way through");
+});
+
+await t("and pressing through anyway really does try", async () => {
+  await load({ contributors: CONTRIB, keyFaction: false, fresh: true });
+  await page.evaluate(() => document.querySelector('[data-tab="board"]').click());
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => document.querySelector('[data-board="anyway"]').click());
+  await page.waitForTimeout(6000);
+  assert.ok(await countUrls(/faction\/contributors/) > 0, "the escape hatch did nothing");
+});
+
+await t("a key that HAS faction access is not obstructed", async () => {
+  await load({ contributors: CONTRIB, keyFaction: true, fresh: true });
+  await openBoard();
+  assert.strictEqual(await countUrls(/faction\/contributors/), 6);
+});
+
+await t("a transient error is not blamed on faction permissions", async () => {
+  // Code 5 is rate limiting. Telling somebody to go change their faction
+  // position over it sends them off fixing the wrong thing.
+  await load({ contributors: {}, failStat: "gymenergy", fresh: true });
+  await openBoard();
+  const txt = await boardText();
+  assert.ok(!/position/i.test(txt), "a rate-limit error blamed on permissions: " + txt.slice(0, 300));
+  assert.match(txt, /Too many requests/);
+});
+
+await t("the natural pass cannot be re-run on a hair trigger", async () => {
+  await load({ contributors: CONTRIB, ps: PS });
+  await openBoard();
+  await load({ contributors: LATER, ps: PS });
+  await openBoard();
+  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
+  await page.waitForTimeout(9000);
+  const after = await countUrls(/personalstats/);
+  await page.evaluate(() => { const b = document.querySelector('[data-board="natural"]'); if (b) b.click(); });
+  await page.waitForTimeout(2500);
+  assert.strictEqual(await countUrls(/personalstats/), after,
+    "a second press inside the cooldown spent another twelve requests");
+});
+
+await t("Refresh is not offered while the natural pass is running", async () => {
+  // Both chains at once means the 700ms spacing that protects the rate limit
+  // ends up spacing two streams instead of one.
+  await load({ contributors: CONTRIB, ps: PS });
+  await openBoard();
+  await load({ contributors: LATER, ps: PS });
+  await openBoard();
+  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
+  await page.waitForTimeout(1500);
+  assert.strictEqual(await page.$('[data-board="refresh"]'), null,
+    "Refresh stayed live during the natural pass");
+});
+
+await t("a corrupt stored board does not take the panel down", async () => {
+  await load({ contributors: CONTRIB });
+  await page.evaluate(() => localStorage.setItem("gcb_v1_board",
+    JSON.stringify({ week: "banana", at: 0, stats: { gymenergy: { 1: "not a number" } }, rows: [], hist: [] })));
+  await load({ contributors: CONTRIB });
+  await openBoard();
+  assert.ok((await rows()).length > 0, "a corrupt baseline cost the whole board");
 });
 
 await t("a faction that has trained nothing renders as a board, not as an error", async () => {

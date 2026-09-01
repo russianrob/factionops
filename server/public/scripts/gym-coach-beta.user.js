@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.47
+// @version      0.9.48
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,54 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.48 — Board hardening, after an adversarial read of the whole feature.
+ *
+ *         Twelve findings, all real, none of them cosmetic:
+ *
+ *         A request that never SETTLES wedged the tab for good. httpGet has no
+ *         timeout, and PDA's HTTP layer collapses two identical in-flight GETs
+ *         and orphans the second callback -- so boardBusy stayed true, every
+ *         button went dead, and only a reload recovered it. Board requests are
+ *         now raced against a 20s clock. A rejected promise is recoverable; an
+ *         unsettled one is not.
+ *
+ *         Anchoring is atomic. Baselines were committed per stat as each landed,
+ *         so a round that died half-way anchored energy at Monday and trains at
+ *         whenever the next attempt succeeded -- and a split normalised across
+ *         differently-anchored stats looks entirely plausible while being wrong
+ *         for the rest of the week. Anchors now go to a draft and commit
+ *         together or not at all.
+ *
+ *         A half-read board says so, and a rollover no longer throws away a
+ *         good board when the fetch that follows it fails.
+ *
+ *         Refresh and the natural pass can no longer run at once, doubling the
+ *         request rate the 700ms spacing exists to hold down. The natural pass
+ *         gained a two-minute cooldown, the key guard fetchBoard already had,
+ *         and it reports the members it could not read instead of counting them
+ *         as done. Stale Nat figures are cleared rather than carried.
+ *
+ *         The pasted card printed "0% natural" beside members the table showed
+ *         nothing for -- the two used different guards. One guard now.
+ *
+ *         Past weeks archived every member's full row to render one name each.
+ *         Top three now: storeSet swallows a quota error, and this origin's
+ *         localStorage is shared with Torn's own chat.
+ *
+ *         Boot sieves a stored board to finite numbers. A string in a stat map
+ *         threw; a NaN week rolled on every read and dated a week to 1970.
+ *
+ *         Copy reported success it had not got -- writeText is a promise and
+ *         its rejection was dropped, so a denied clipboard said "Copied" and
+ *         never reached the fallback.
+ *
+ *         Also: the board now knows BEFORE asking whether your key has faction
+ *         API access, from the /key/info call it already makes, and says so
+ *         instead of spending six refused requests to find out. It is a faction
+ *         POSITION ability, not a key property, so a Full key does not grant it
+ *         -- and only codes 16 and 7 get that explanation now. Anything else is
+ *         transient and no longer sends you off changing permissions.
+ *
 * 0.9.47 — Trains on the board, beside the energy.
  *
  *         Asked for: see trains, not only energy. gymtrains is in the same
@@ -1646,6 +1694,11 @@
     natUse: {},
     natBase: {},
     natBusy: false,
+    // How many stats made it through when a round died part-way, and how many
+    // members the natural pass could not read. Both are zero on a clean run and
+    // are what stops a half-read board from looking like a whole one.
+    boardPartial: 0,
+    natMissed: 0,
     natDone: 0,
     natTotal: 0,
     natError: null,
@@ -2023,7 +2076,17 @@
     if (!a || typeof a.level !== "number") return null;
     // The numeric level decides it. The type string is shown to you because it
     // is what Torn's own key page calls it, but it is wording and could change.
-    return { level: a.level, type: String(a.type || ""), full: a.level >= 4 };
+    // "Faction API Access" is a POSITION ability, a separate axis from the
+    // key's access level -- a Full key held by a member whose position lacks it
+    // still cannot read contributors. /key/info answers any key and the coach
+    // already calls it, so knowing this costs nothing and saves firing six
+    // requests Torn will refuse; a refused call still spends the rate limit.
+    //
+    // null, NOT false, when the field is absent: Torn does not document it, and
+    // "I could not tell" must never hide the tab from somebody whose board
+    // works perfectly.
+    return { level: a.level, type: String(a.type || ""), full: a.level >= 4,
+             faction: typeof a.faction === "boolean" ? a.faction : null };
   }
 
   // Are we actually inside Torn PDA? Three PDA-specific lines in Settings used
@@ -6387,8 +6450,14 @@
     var hist = (board && board.hist) || [];
     if (board && board.week === wk) return { base: board, hist: hist, rolled: false };
     if (board && board.stats && Object.keys(board.stats).length) {
+      // The podium, not the roster. "Past weeks" renders one name per week, and
+      // archiving every member's full row for a hundred-member faction is ~800
+      // stored objects to show eight -- into a localStorage that storeSet
+      // writes inside a swallowed try/catch, so hitting quota loses the save
+      // silently. This origin's quota is shared with Torn's own chat.
       hist = hist.concat([{ week: board.week, at: board.at || weekStartMs(board.week),
-                            endAt: weekStartMs(board.week + 1), rows: board.rows || [] }]);
+                            endAt: weekStartMs(board.week + 1),
+                            rows: (board.rows || []).slice(0, 3) }]);
       // Bounded, or eight months of dead baselines end up in storage.
       if (hist.length > BOARD_WEEKS) hist = hist.slice(hist.length - BOARD_WEEKS);
     }
@@ -6512,8 +6581,12 @@
         // character wider than "37% nat", and an unknown one is blank -- so a
         // ragged cell here is what knocks the split column out of line, in the
         // one format whose whole reason for existing is that it lines up.
-        var nat = pad(r.natural === null ? "" :
-          Math.round((r.natural / Math.max(1, r.energy)) * 100) + "% nat", 8, true);
+        // Through the same guard the table uses. Math.max(1, energy) turns a
+        // zero-energy member into 0/1 = "0% nat", which reads as "every point
+        // they trained was bought" about somebody who trained nothing -- and it
+        // went into faction chat while the table beside it said nothing at all.
+        var np = boardNatPct(r);
+        var nat = pad(np === null ? "" : np + "% nat", 8, true);
         var split = boardSplit(r);
         return pad(String(r.rank), 2, true) + ". " + name + "  " +
                pad(String(fmt(r.energy)) + "e", 10, true) + "  " +
@@ -6524,8 +6597,8 @@
              (more > 0 ? "\n+ " + more + " more" : "") + "\n```";
     }
     lines = shown.map(function (r) {
-      var nat = r.natural === null ? "" :
-        " (" + Math.round((r.natural / Math.max(1, r.energy)) * 100) + "% natural)";
+      var np = boardNatPct(r);
+      var nat = np === null ? "" : " (" + np + "% natural)";
       var split = boardSplit(r);
       var trains = r.trains > 0 ? " / " + fmt(r.trains) + " train" + (r.trains === 1 ? "" : "s") : "";
       return r.rank + ". " + r.name + " — " + fmt(r.energy) + "e" + trains + nat + (split ? " — " + split : "");
@@ -6573,39 +6646,94 @@
   // sits behind a five-minute TTL and a tab you have to open, because this
   // shares a hundred-calls-a-minute budget with everything else the coach does.
   var BOARD_GAP_MS = 700;
+  // Every board request is raced against a clock.
+  //
+  // httpGet has no timeout of its own, and PDA's Dart HTTP layer collapses two
+  // identical in-flight GETs and orphans the second callback -- so a request
+  // CAN simply never settle. When that happens the terminal .then never runs,
+  // boardBusy stays true forever, and every button on the tab is dead until the
+  // page is reloaded. A rejected promise is recoverable; an unsettled one is not.
+  var BOARD_REQ_MS = 20000;
+  function boardGet(url) {
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        reject(new Error("timed out"));
+      }, BOARD_REQ_MS);
+      httpGet(url).then(function (d) {
+        if (done) return;
+        done = true; clearTimeout(timer); resolve(d);
+      }, function (e) {
+        if (done) return;
+        done = true; clearTimeout(timer); reject(e);
+      });
+    });
+  }
+  // A forced refresh still cannot be spammed. The TTL is what stops idle
+  // re-reads; this is what stops a finger on the Try again button, which is
+  // exactly the button people press hardest when every call is being refused.
+  var BOARD_FORCE_MS = 15000;
+
   function fetchBoard(force) {
-    if (state.boardBusy) return;
+    // natBusy as well as boardBusy. The natural pass is up to 24 requests and
+    // the Refresh button sits in a card that stays on screen throughout it, so
+    // without this the two chains interleave and the 700ms spacing that exists
+    // to protect the rate limit ends up spacing two streams instead of one.
+    if (state.boardBusy || state.natBusy) return;
     var last = Math.max(state.boardAt || 0, state.boardTriedAt || 0);
     if (!force && Date.now() - last < BOARD_TTL) return;
+    if (force && Date.now() - (state.boardTriedAt || 0) < BOARD_FORCE_MS) return;
     if (!resolveKey()) return;
+    // The key already told us Torn will refuse this, so do not spend six
+    // refused requests confirming it -- a refused call still costs rate limit.
+    // Only on the automatic path: `force` is the user pressing through, which
+    // has to work in case the undocumented flag is ever wrong.
+    if (!force && state.keyLevel && state.keyLevel.faction === false) return;
     state.boardBusy = true;
     state.boardTriedAt = Date.now();
     state.boardError = null;
+    state.boardPartial = 0;
     fetchFactionName(false);
 
     var now = Date.now();
+    // The roll is decided now but APPLIED only once gymenergy has landed.
+    // Rolling first and then failing every request replaces a board that was
+    // correct a second ago with "Nothing read yet", and the TTL then blocks a
+    // retry for five minutes.
     var rolled = boardRoll(state.board, now);
-    if (rolled.rolled) {
-      state.board = rolled.base;
-      // Deltas and consumable counts belong to the week they were measured in.
-      // Left standing across a rollover they would be read against the NEW
-      // baseline -- and if the fetch below then failed, last week's board would
-      // sit there labelled as this week's.
-      state.boardBy = {};
-      state.natUse = {};
-    }
-    var base = state.board;
-    var got = 0;
+    var applied = false;
+    var base = rolled.base;
+    // Anchoring is a side effect on the baseline, so it happens on a COPY until
+    // every stat has landed. Committing per stat means a fetch that dies
+    // half-way anchors energy at Monday and trains at whenever the next attempt
+    // succeeded -- and a split normalised across differently-anchored stats
+    // looks perfectly plausible while being wrong for the rest of the week.
+    var draft = { week: base.week, at: base.at, stats: {} };
+    var k;
+    for (k in (base.stats || {})) draft.stats[k] = base.stats[k];
+    var pending = {}, got = 0;
 
     function step(i) {
       if (i >= BOARD_STATS.length) return Promise.resolve();
       var stat = BOARD_STATS[i];
-      return httpGet(boardUrl(stat))
+      return boardGet(boardUrl(stat))
         .then(function (d) {
           var rows = boardRowsOf(d);
           if (!rows) throw new Error("no contributors array");
-          state.boardBy[stat] = boardDeltas(base, stat, rows);
+          // Anchors go to the draft; only the rendered deltas go live, so the
+          // tab can paint progressively without the baseline being committed.
+          var before = {};
+          for (var q in (draft.stats[stat] || {})) before[q] = draft.stats[stat][q];
+          pending[stat] = boardDeltas(draft, stat, rows);
+          if (stat === BOARD_STATS[0] && rolled.rolled && !applied) {
+            // gymenergy answered, so the week really has turned over and the
+            // roll is safe to keep.
+            applied = true;
+          }
           got += 1;
+          state.boardBy[stat] = pending[stat];
           // Paint as each stat lands. gymenergy comes first, so names and the
           // ranking appear at once and the rest fills in, rather than the tab
           // sitting empty for five seconds and looking stuck.
@@ -6626,11 +6754,29 @@
 
     step(0)
       .then(function () {
+        // Every stat landed: commit the anchors as one, together.
+        if (applied) {
+          state.board = rolled.base;
+          state.board.hist = rolled.hist;
+          // Deltas and consumable counts belong to the week they were measured
+          // in. Left standing across a rollover they would be read against the
+          // NEW baseline.
+          state.natUse = {};
+        }
+        state.board.stats = draft.stats;
+        state.board.week = draft.week;
+        state.boardBy = pending;
         state.boardAt = Date.now();
         state.board.rows = boardCurrent();
         saveBoard();
       })
-      .catch(function () { if (got) state.boardAt = Date.now(); })
+      .catch(function () {
+        // A half-read board is shown -- it is better than nothing -- but it is
+        // NOT anchored and NOT saved, and it says so. Silently rendering the
+        // stats that made it through is how a wrong split looks confident.
+        state.boardPartial = got;
+        if (got) state.boardAt = Date.now();
+      })
       .then(function () {
         state.boardBusy = false;
         if (state.tab === "board") renderPanel();
@@ -6686,8 +6832,18 @@
   // Worked out on request, never on the poll tick: this is one call per member
   // for the live side plus one for the week start, and the week-start half is
   // only ever paid once.
-  function fetchBoardNatural() {
+  // The pass is up to 24 requests. natBusy only blocks it DURING a pass, so
+  // without a cooldown a finger on "Refresh natural" sustains ~85 requests a
+  // minute from this feature alone, against a budget of 100 that a refused call
+  // still spends.
+  var NAT_TTL = 120000;
+  function fetchBoardNatural(force) {
     if (state.boardBusy || state.natBusy) return;
+    if (!force && Date.now() - (state.natAt || 0) < NAT_TTL) return;
+    // fetchBoard checks this and this one did not: with a cleared key but a
+    // populated board still in memory, the button fired twelve calls that Torn
+    // was guaranteed to refuse.
+    if (!resolveKey()) return;
     var rows = boardCurrent();
     if (!rows.length) return;
     var wk = state.board && state.board.week;
@@ -6697,9 +6853,16 @@
     var startSec = Math.floor(weekStartMs(wk) / 1000);
     var picked = rows.slice(0, BOARD_NATURAL_TOP);
     state.natBusy = true;
+    // Cleared, not merged. boardBuild applies a natUse entry to ANY id that has
+    // one, but a pass only refreshes the twelve currently on top -- so somebody
+    // who dropped out of the top twelve kept a frozen numerator over a growing
+    // denominator, and their Nat % drifted down as though they had started
+    // buying energy.
+    state.natUse = {};
     state.natDone = 0;
     state.natTotal = picked.length;
     state.natError = null;
+    state.natMissed = 0;
     if (!state.natBase[wk]) state.natBase[wk] = {};
 
     function one(i) {
@@ -6710,9 +6873,9 @@
       // array of already-started requests would put both of a member's calls
       // on the wire together and the gap below would only space the HANDLING.
       // The rate limit counts requests, not callbacks.
-      var jobs = [function () { return httpGet(psUrl(id, 0)).then(readPs); }];
+      var jobs = [function () { return boardGet(psUrl(id, 0)).then(readPs); }];
       // The week-start reading never changes, so it is fetched once and kept.
-      if (!haveBase) jobs.push(function () { return httpGet(psUrl(id, startSec)).then(readPs); });
+      if (!haveBase) jobs.push(function () { return boardGet(psUrl(id, startSec)).then(readPs); });
       return jobs.reduce(function (p, job) {
         return p.then(function (acc) {
           return job().then(function (v) { acc.push(v); return acc; })
@@ -6724,6 +6887,11 @@
           if (!haveBase && res[1]) { state.natBase[wk][id] = res[1]; haveBase = res[1]; }
           var d = psDelta(live, haveBase);
           if (d) state.natUse[id] = d;
+          // readPs returns null for a reshaped or empty payload and nothing
+          // throws, so without this the pass reported "12 of 12" with holes in
+          // it and every hole rendered as an em dash indistinguishable from
+          // "not asked for".
+          else state.natMissed = (state.natMissed || 0) + 1;
         })
         .catch(function (e) { state.natError = e.message || "unreadable"; })
         .then(function () {
@@ -6736,6 +6904,7 @@
     one(0).then(function () {
       state.natBusy = false;
       state.natAt = Date.now();
+      state.natTotal = picked.length;
       saveBoard();
       if (state.tab === "board") renderPanel();
     });
@@ -6768,6 +6937,18 @@
 
   // ---- the Board tab -------------------------------------------------------
 
+  // Torn has no dedicated "missing faction permission" error. 16 is
+  // "access level of this key is not high enough" and 7 is "incorrect
+  // ID-entity relation", which is what a private-to-you faction selection
+  // returns -- both mean the same thing here. Anything else is transient, and
+  // telling somebody to go change their faction position because Torn was
+  // rate-limiting them would send them off fixing the wrong thing.
+  function boardPermissionError(err) {
+    if (!err) return false;
+    var c = Number(err.code);
+    return c === 7 || c === 16;
+  }
+
   function boardNatPct(r) {
     if (r.natural === null || r.energy <= 0) return null;
     return Math.round((r.natural / r.energy) * 100);
@@ -6791,6 +6972,12 @@
       "</div>";
   }
 
+  // Said in one place, because it is said in three.
+  var FAA_WHY = "The board reads <b>faction contributors</b>, which needs <b>faction API access</b>. " +
+    "That is a faction <b>position</b> ability rather than a property of the key, so a Full key does not grant it \u2014 " +
+    "only your leader or co-leader can turn it on, under Faction \u2192 Controls \u2192 Positions. " +
+    "Anyone who has it can post the board to chat with the copy buttons, so the faction only needs one.";
+
   function boardHtml() {
     var rows = boardCurrent();
     var wk = state.board && state.board.week;
@@ -6805,8 +6992,20 @@
       return '<div class="gc-card"><h3>Faction board</h3>' +
         '<p class="bad" style="margin:0 0 6px">Torn refused the request: ' + esc(state.boardError.msg) +
         (state.boardError.code ? " (code " + esc(String(state.boardError.code)) + ")" : "") + "</p>" +
-        '<p class="muted" style="margin:0">The board reads <b>faction contributors</b>, which needs an API key with <b>faction API access</b>. That is granted by your faction position, not by the key level — an officer can turn it on for your position, and no other member has to install or share anything.</p>' +
+        (boardPermissionError(state.boardError)
+          ? '<p class="muted" style="margin:0">' + FAA_WHY + "</p>"
+          : '<p class="muted" style="margin:0">That one usually passes on its own \u2014 it is not a permissions problem.</p>') +
         '<button type="button" class="gcb-btn" data-board="refresh" style="margin-top:9px">Try again</button></div>';
+    }
+
+    // Known in advance, from the key itself, so six refused requests are never
+    // sent in the first place. Offered rather than enforced: Torn does not
+    // document the flag, so if the reading is ever wrong it must cost a tap,
+    // not the whole feature.
+    if (!rows.length && !state.boardBusy && state.keyLevel && state.keyLevel.faction === false) {
+      return '<div class="gc-card"><h3>Faction board</h3>' +
+        '<p class="muted" style="margin:0 0 8px">Your key does not have <b>faction API access</b>, so Torn will refuse this. ' + FAA_WHY + "</p>" +
+        '<button type="button" class="gcb-btn" data-board="anyway">Load it anyway</button></div>';
     }
 
     if (!rows.length) {
@@ -6842,6 +7041,14 @@
       '<div class="gcb-brow foot"><span class="muted" style="grid-column:1/-1">' +
       (fresh ? "Read " + Math.max(0, Math.round((Date.now() - state.boardAt) / 1000)) + "s ago" : "Not read yet") +
       (state.boardBusy ? " · reading…" : "") + "</span></div>" +
+      // Once gymenergy has landed the board has rows, and the error card above
+      // never shows again -- so a stat that failed after it used to vanish
+      // entirely and leave a confident board with a wrong split on it.
+      (!state.boardBusy && state.boardPartial
+        ? '<p class="bad" style="margin:8px 0 0">Only ' + state.boardPartial + " of " + BOARD_STATS.length +
+          " parts were read" + (state.boardError ? " (" + esc(state.boardError.msg) + ")" : "") +
+          ". The split and the train count may be short, and nothing was saved. Refresh to try again.</p>"
+        : "") +
       "</div>";
 
     var natCard =
@@ -6852,6 +7059,10 @@
         ? '<p class="muted" style="margin:0 0 8px">Worked out for the top ' + natKnown + '. The <b>Nat</b> column is the share of the week\u2019s energy that did not come from a refill, a xanax or a can — the part you earned by just being there.</p>'
         : '<p class="muted" style="margin:0 0 8px">The <b>Nat</b> column ranks who used the most energy they simply regenerated, rather than bought. Torn answers each member\u2019s refill, xanax and can counts — including what they were at Monday 00:00 — so this needs no stored history, but it is one request per member.</p>') +
       (state.natError ? '<p class="bad" style="margin:0 0 8px">' + esc(state.natError) + "</p>" : "") +
+      (!state.natBusy && state.natMissed
+        ? '<p class="bad" style="margin:0 0 8px">' + state.natMissed + " member" + (state.natMissed === 1 ? "" : "s") +
+          " could not be read, so their Nat is still blank rather than zero.</p>"
+        : "") +
       (state.natBusy ? "" :
         '<button type="button" class="gcb-btn" data-board="natural">' +
         (natKnown ? "Refresh natural (top " + BOARD_NATURAL_TOP + ")" : "Work out natural (top " + BOARD_NATURAL_TOP + ")") +
@@ -6866,7 +7077,8 @@
       '<div class="gcb-brow btns">' +
       '<button type="button" class="gcb-btn" data-board="copy-chat">Copy for chat</button>' +
       '<button type="button" class="gcb-btn" data-board="copy-discord">Copy for Discord</button>' +
-      '<button type="button" class="gcb-btn ghost" data-board="refresh">Refresh</button>' +
+      (state.natBusy || state.boardBusy ? ""
+        : '<button type="button" class="gcb-btn ghost" data-board="refresh">Refresh</button>') +
       "</div>" +
       '<pre class="gcb-card-preview">' + esc(boardCardText(rows, {
         faction: state.boardFaction, week: startMs, fmt: "chat", since: since
@@ -6895,10 +7107,24 @@
     } catch (_) {}
     try {
       if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        navigator.clipboard.writeText(text);
+        // writeText is a PROMISE. Returning true on the call alone reported a
+        // copy that a denied permission or a non-secure context had rejected --
+        // "Copied" on screen, empty clipboard, and the textarea fallback below
+        // never reached. The rejection re-runs the fallback and corrects the
+        // toast rather than going unhandled.
+        navigator.clipboard.writeText(text).then(null, function () {
+          if (execCopy(text)) showToast("Copied", "Paste it wherever you like.");
+          else showToast("Copy blocked", "Select the card below and copy it by hand.");
+        });
         return true;
       }
     } catch (_) {}
+    return execCopy(text);
+  }
+
+  // The last resort, factored out because the clipboard promise above needs it
+  // too when it rejects after the fact.
+  function execCopy(text) {
     try {
       var ta = document.createElement("textarea");
       ta.value = text;
@@ -6913,7 +7139,7 @@
   }
 
   function onBoardClick(what) {
-    if (what === "refresh") {
+    if (what === "refresh" || what === "anyway") {
       fetchBoard(true);
       renderPanel();
       return;
@@ -9265,8 +9491,23 @@
       // corrupt baseline must cost the board, not the panel.
       var bd = storeGet("board", null);
       if (typeof bd === "string") { try { bd = JSON.parse(bd); } catch (_) { bd = null; } }
-      if (bd && typeof bd === "object" && bd.stats && typeof bd.stats === "object") {
-        state.board = { week: Number(bd.week), at: Number(bd.at) || 0, stats: bd.stats,
+      if (bd && typeof bd === "object" && bd.stats && typeof bd.stats === "object" &&
+          isFinite(Number(bd.week))) {
+        // Values sieved to finite numbers. A string in a stat map made
+        // boardSnap's `id in map` throw, and a NaN week rolled on every read
+        // and archived a week dated 1970 for ever.
+        var clean = {};
+        Object.keys(bd.stats).forEach(function (st) {
+          var m = bd.stats[st];
+          if (!m || typeof m !== "object") return;
+          var out = {};
+          Object.keys(m).forEach(function (id) {
+            var v = Number(m[id]);
+            if (isFinite(v)) out[id] = v;
+          });
+          clean[st] = out;
+        });
+        state.board = { week: Number(bd.week), at: Number(bd.at) || 0, stats: clean,
                         rows: Array.isArray(bd.rows) ? bd.rows : [],
                         hist: Array.isArray(bd.hist) ? bd.hist : [] };
       }

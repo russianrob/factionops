@@ -154,6 +154,20 @@ t("and the week just ended is kept, so there is a hall of fame", () => {
   assert.strictEqual(b.hist[0].week, 0);
 });
 
+t("an archived week keeps the podium, not the whole roster", () => {
+  // "Past weeks" renders ONE name per week. Archiving every member's full row
+  // for a hundred-member faction is ~800 stored objects to show eight names --
+  // into a localStorage that storeSet writes inside a swallowed try/catch, so
+  // hitting quota loses the save with no error. This origin shares its quota
+  // with Torn's own chat.
+  const many = [];
+  for (let i = 1; i <= 60; i++) many.push({ rank: i, id: i, name: "m" + i, energy: 100 - i });
+  const out = roll({ week: 0, at: MON, stats: { gymenergy: { 1: 1 } }, rows: many, hist: [] },
+                   MON + 7 * DAY);
+  assert.ok(out.hist[0].rows.length <= 3, "archived " + out.hist[0].rows.length + " rows to render one name");
+  assert.strictEqual(out.hist[0].rows[0].name, "m1", "and it has to be the TOP of the board");
+});
+
 t("the hall of fame is bounded, so storage cannot grow without limit", () => {
   let board = { week: 0, at: MON, stats: { gymenergy: { 1: 1 } }, rows: [], hist: [] };
   for (let w = 1; w <= 20; w++) {
@@ -357,7 +371,7 @@ const CARD = [
   { rank: 1, id: 1, name: "rcexyz", energy: 48300, trains: 1932, natural: 41000, str: 36225, def: 12075, spe: 0, dex: 0 },
   { rank: 2, id: 2, name: "quiet", energy: 900, trains: 90, natural: null, str: 0, def: 900, spe: 0, dex: 0 }
 ];
-const card = (fmt) => call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+const card = (fmt) => call(["fmt", "ROUND", "boardSplit", "boardNatPct", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
   `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "Dead Fragment", week: MON, fmt: fmt })})`);
 
 t("the card names the faction and the week it covers", () => {
@@ -408,14 +422,14 @@ t("the chat card is NOT fenced -- Torn chat renders backticks literally", () => 
 t("a card that anchored mid-week says so on its face", () => {
   // Otherwise it lands in faction chat as a full week's standings when it is
   // three days of them.
-  const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+  const s = call(["fmt", "ROUND", "boardSplit", "boardNatPct", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
     `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat", since: { at: MON + 3 * DAY, start: MON, partial: true } })})`);
   assert.match(s, /counting from/, s.split("\n")[0]);
   assert.match(s.split("\n")[0], /Thu/, "the anchor day should be stated: " + s.split("\n")[0]);
 });
 
 t("and a card that really did start on Monday says nothing extra", () => {
-  const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+  const s = call(["fmt", "ROUND", "boardSplit", "boardNatPct", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
     `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat", since: { at: MON, start: MON, partial: false } })})`);
   assert.ok(!/counting from/.test(s), s.split("\n")[0]);
 });
@@ -423,7 +437,7 @@ t("and a card that really did start on Monday says nothing extra", () => {
 t("the card never runs away with a 100-member faction", () => {
   const many = [];
   for (let i = 1; i <= 100; i++) many.push({ rank: i, id: i, name: "m" + i, energy: 1000 - i, trains: 40, natural: null, str: 1000 - i, def: 0, spe: 0, dex: 0 });
-  const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
+  const s = call(["fmt", "ROUND", "boardSplit", "boardNatPct", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
     `boardCardText(${JSON.stringify(many)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat" })})`);
   assert.ok(s.split("\n").length <= 20, "a chat message cannot be 100 lines: " + s.split("\n").length);
   assert.ok(s.includes("m1"), "the top of the board must survive the trim");

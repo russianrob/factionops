@@ -25,7 +25,7 @@ function resolve({ injected = "", own = "", stable = "" }) {
     R = resolveKey();
   ` + "return R;")();
 }
-// readKeyLevel(payload) -> { level, type, full } | null
+// readKeyLevel(payload) -> { level, type, full, faction } | null
 function level(payload) {
   return new Function("var R;" + `
     ${grab("readKeyLevel")}
@@ -33,6 +33,7 @@ function level(payload) {
   ` + "return R;")();
 }
 const FULL = "aaaaaaaaaaaaaaaa", LIM = "bbbbbbbbbbbbbbbb", PDA = "cccccccccccccccc";
+const ACCESS = (extra) => ({ info: { access: Object.assign({ level: 3, type: "Limited Access" }, extra) } });
 
 let pass = 0, fail = 0;
 const t = (n, f) => { try { f(); pass++; console.log("ok   " + n); } catch (e) { fail++; console.log("FAIL " + n + " :: " + e.message); } };
@@ -68,7 +69,9 @@ t("blank entries are skipped rather than returned", () => {
 
 t("a Full key is recognised", () => {
   assert.deepStrictEqual(level({ info: { access: { level: 4, type: "Full Access" } } }),
-    { level: 4, type: "Full Access", full: true });
+    // faction is null, not false: Torn does not send the flag here and "I could
+    // not tell" is a different claim from "you do not have it".
+    { level: 4, type: "Full Access", full: true, faction: null });
 });
 
 t("a Limited key is recognised, and is not full", () => {
@@ -138,6 +141,42 @@ t("the verdict reads the shape httpGet's REJECTION is rebuilt into", () => {
   assert.strictEqual(verdict(rebuilt(2)), "invalid");
   assert.strictEqual(verdict(rebuilt(5)), "unknown");
   assert.strictEqual(verdict(rebuilt(16)), "unknown");
+});
+
+
+// ---- faction API access -----------------------------------------------------
+//
+// The faction board needs a POSITION ability ("Faction API Access"), which is a
+// separate axis from the key's access level -- a Full key held by a member
+// whose position lacks it still cannot read contributors. /key/info answers any
+// key and the coach already calls it, so knowing this costs nothing and saves
+// firing six requests that Torn will refuse. A refused call still counts
+// against the hundred a minute.
+
+t("faction access is read off the key, alongside the level", () => {
+  assert.strictEqual(level(ACCESS({ faction: true })).faction, true);
+  assert.strictEqual(level(ACCESS({ faction: false })).faction, false);
+});
+
+t("an absent flag is null, NOT false", () => {
+  // Torn does not describe this field. If it ever stops being sent, "I could
+  // not tell" must not turn into "you do not have it" and hide the tab from
+  // somebody whose board works perfectly.
+  assert.strictEqual(level(ACCESS({})).faction, null);
+});
+
+t("a Full key does not imply faction access", () => {
+  // The two axes are independent. Inferring one from the other is the mistake
+  // this whole field exists to prevent.
+  const k = level({ info: { access: { level: 4, type: "Full Access", faction: false } } });
+  assert.strictEqual(k.full, true);
+  assert.strictEqual(k.faction, false);
+});
+
+t("and a Limited key can perfectly well have it", () => {
+  const k = level(ACCESS({ faction: true }));
+  assert.strictEqual(k.full, false);
+  assert.strictEqual(k.faction, true);
 });
 
 console.log("\n" + pass + " passed, " + fail + " failed");
