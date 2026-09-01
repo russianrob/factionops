@@ -19,6 +19,7 @@ import { fetchFactionAttacks, fetchRankedWarReport } from "./torn-api.js";
 import * as warHistory from "./war-history.js";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const _cache = new Map(); // `${warId}:${mode}` → { result, expiresAt }
@@ -910,6 +911,52 @@ export async function computePayoutsHeatmap(factionId, options = {}) {
  * fields, and finally a fields-only reconstruction. Returns null if the war
  * isn't in any faction's archive.
  */
+/**
+ * The stored attack log for a finished war.
+ *
+ * The post-war cache is filed under the key that was live when it was captured
+ * -- war_<factionId>, which is reused every war -- while the payouts UI asks by
+ * the war's REAL id. So a direct filename hit is tried first, and failing that
+ * the directory is searched for the file whose report carries that id.
+ *
+ * The search result is remembered because these files run to megabytes and the
+ * answer cannot change: a war's id and its capture are both immutable. It is
+ * also only ever reached when someone has actually set weights on an archived
+ * war, so the cost is paid by the feature that needs it.
+ */
+const _archivePathByWar = new Map();
+function loadArchivedAttacks(warKey) {
+  const key = String(warKey);
+  if (_archivePathByWar.has(key)) {
+    const p = _archivePathByWar.get(key);
+    if (!p) return null;
+    try { return JSON.parse(fs.readFileSync(p, "utf-8")).attackLog || null; }
+    catch (_) { return null; }
+  }
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "data", "post-war-cache");
+  const direct = path.join(dir, key.replace(/[^A-Za-z0-9_-]/g, "_") + ".json");
+  const candidates = [];
+  try {
+    if (fs.existsSync(direct)) candidates.push(direct);
+    for (const f of fs.readdirSync(dir)) {
+      const full = path.join(dir, f);
+      if (full !== direct && f.endsWith(".json")) candidates.push(full);
+    }
+  } catch (_) { _archivePathByWar.set(key, null); return null; }
+  for (const full of candidates) {
+    try {
+      const d = JSON.parse(fs.readFileSync(full, "utf-8"));
+      const id = d && d.warReportData && d.warReportData.id;
+      if (full === direct || String(id) === key) {
+        _archivePathByWar.set(key, full);
+        return d.attackLog || null;
+      }
+    } catch (_) { /* unreadable file — keep looking */ }
+  }
+  _archivePathByWar.set(key, null);
+  return null;
+}
+
 function serveArchivedPayout(warKey, mode) {
   let fid = null, hw = null;
   for (const f of warHistory.factionIds()) {
@@ -918,6 +965,19 @@ function serveArchivedPayout(warKey, mode) {
   }
   if (!hw) return null;
   const endedSec = hw.warEndedAt ? Math.floor(Number(hw.warEndedAt) / 1000) : 0;
+
+  // Settings the admin has set for THIS war. A finished war never reaches the
+  // live compute path, so without this every exit below serves numbers that
+  // predate them -- and the gear panel showed the frozen archive copy, which is
+  // what made a save look like it had not happened.
+  const live = store.getPayoutSettings(warKey) || {};
+  const liveSig = settingsSignature(live);
+  const hasLive = liveSig !== settingsSignature({});
+  if (hasLive) {
+    const attacks = loadArchivedAttacks(warKey);
+    const fresh = attacks && recomputeArchivedResult({ hw, fid, mode, attacks, settings: live });
+    if (fresh) return fresh;
+  }
   // 1) Cache-by-identity: a cached compute for this same physical war may still
   // live in memory under a now-orphaned key. Match on faction+enemy+end-second.
   let best = null;
@@ -926,13 +986,27 @@ function serveArchivedPayout(warKey, mode) {
     if (!r) continue;
     if (String(r.factionId) !== fid || String(r.enemyFactionId) !== String(hw.enemyFactionId)) continue;
     if (endedSec && r.toTs && Math.abs(Math.floor(Number(r.toTs)) - endedSec) > 60) continue;
+    // Identity is not enough: this scan matches on faction + enemy + end-time,
+    // so it will happily return the entry cached under the reused war_<fid> key
+    // -- computed under THAT war's weights. Serving it here is how settings got
+    // silently ignored twice over.
+    if (settingsSignature(r.settings) !== liveSig) continue;
     if (!best || (r.mode === mode && best.mode !== mode)) best = r;
   }
-  if (best) return { ...best, warId: String(warKey), factionId: fid };
+  if (best) return { ...best, warId: String(warKey), factionId: fid, settingsApplied: true };
   // 2) Archive record's own backfilled payout fields.
-  if (warHistory.hasPayout(fid, warKey)) return warHistory.getPayout(fid, warKey);
+  if (warHistory.hasPayout(fid, warKey)) {
+    const p = warHistory.getPayout(fid, warKey);
+    const applied = settingsSignature(p && p.settings) === liveSig;
+    // The live settings travel with it either way, so the gear panel shows what
+    // was saved -- but it is told plainly whether the numbers beside them were
+    // computed with those settings or predate them.
+    return { ...p, settings: hasLive ? live : (p.settings || {}), settingsApplied: applied };
+  }
   // 3) Fields-only reconstruction from the raw archive record.
-  return archiveRecordToResult(hw, mode, fid);
+  const rec = archiveRecordToResult(hw, mode, fid);
+  return { ...rec, settings: hasLive ? live : (rec.settings || {}),
+           settingsApplied: !hasLive };
 }
 
 /** Map a durable archive record into a computePayouts-shaped result literal. */
@@ -975,6 +1049,125 @@ function archiveRecordToResult(hw, mode, fid) {
     totalScore: members.reduce((s, m) => s + (m.score || 0), 0),
     members,
     attackCount: members.reduce((s, m) => s + (m.attackCount || 0), 0),
+    generatedAt: Date.now(),
+  };
+}
+
+/**
+ * A comparable fingerprint of the knobs that change a payout number.
+ *
+ * Was built inline in two places with slightly different field lists, which is
+ * how a cache entry computed under one set of weights could be served for
+ * another. `updatedAt` is deliberately out: saving the same numbers again must
+ * not bust a cache that is still correct.
+ */
+export function settingsSignature(s) {
+  const o = s || {};
+  return `L${o.lootOverride ?? '_'}|A${o.assistWeight ?? '_'}|N${o.nonWarWeight ?? '_'}` +
+         `|P${o.payoutPct ?? '_'}|F${o.failedWeight ?? '_'}`;
+}
+
+/**
+ * Score shares and dollar payouts from a tally.
+ *
+ * Deliberately NOT a refactor of the live path's copy of this arithmetic: that
+ * path pays real money and is covered by a frozen fixture, and rewriting it to
+ * share code with a new feature is a risk the feature does not need. The two
+ * are kept in step by the tests either side rather than by sharing a function.
+ */
+export function membersFromTally(byAttacker, payoutPool) {
+  const base = Object.values(byAttacker || {}).map(m => ({
+    playerId: String(m.playerId),
+    name: m.name,
+    fairScore: Number(m.fairScoreSum) || 0,
+    attackCount: Number(m.attackCount) || 0,
+    totalAttacks: Number(m.totalAttacks) || 0,
+    breakdown: m.breakdown || {},
+    avgFf: m.ffSamples > 0 ? (m.ffSum / m.ffSamples) : 0,
+    maxFf: Number(m.ffMax) || 0,
+  }));
+  const totalScore = base.reduce((sum, m) => sum + m.fairScore, 0);
+  const members = base.map(m => ({
+    playerId: m.playerId,
+    name: m.name,
+    score: m.fairScore,
+    sharePct: totalScore > 0 ? (m.fairScore / totalScore) * 100 : 0,
+    dollarPayout: totalScore > 0 ? Math.round((m.fairScore / totalScore) * payoutPool) : 0,
+    attackCount: m.attackCount,
+    totalAttacks: m.totalAttacks,
+    avgFf: m.avgFf,
+    maxFf: m.maxFf,
+    level: 0,
+    breakdown: m.breakdown,
+    tornScore: 0,
+    tornAttacks: 0,
+  })).sort((a, b) => b.score - a.score);
+  return { members, totalScore };
+}
+
+/**
+ * Recompute a finished war's payouts from its stored attack log.
+ *
+ * A war that has ended is not in the live store -- that is keyed
+ * war_<factionId> and reused every war -- so the payout code serves it from the
+ * archive, which carries member scores frozen at capture time. New weights
+ * therefore could not change anything, and the gear panel showed the archived
+ * settings rather than the ones just saved: "i cant save the payout weights, it
+ * doesnt get saved". They saved; nothing read them.
+ *
+ * The raw attacks survive in the post-war cache, so this needs no API key and
+ * no pool: it is a pure re-tally of rows already on disk.
+ *
+ * Returns null when there is nothing to recompute from. An empty board would
+ * read as "nobody earned anything", which is a claim about the war rather than
+ * about the data.
+ */
+export function recomputeArchivedResult({ hw, fid, mode, attacks, settings }) {
+  if (!Array.isArray(attacks) || !attacks.length) return null;
+  const s = settings || {};
+  const byAttacker = tallyAttacks(attacks, {
+    ourFid: String(fid),
+    enemyFactionId: hw.enemyFactionId,
+    mode,
+    settings: s,
+  });
+  if (!Object.keys(byAttacker).length) return null;
+
+  const lootTotal = Number.isFinite(s.lootOverride)
+    ? Math.max(0, Number(s.lootOverride))
+    : Number(hw.lootTotal) || 0;
+  const pct = Number.isFinite(s.payoutPct)
+    ? Math.min(1, Math.max(0, Number(s.payoutPct)))
+    : (hw.payoutPct != null ? Number(hw.payoutPct) : 0.8);
+  const payoutPool = Math.round(lootTotal * pct);
+  const { members, totalScore } = membersFromTally(byAttacker, payoutPool);
+
+  return {
+    warId: String(hw.warKey),
+    factionId: String(fid),
+    enemyFactionId: hw.enemyFactionId,
+    enemyFactionName: hw.enemyFactionName || null,
+    warResult: hw.warResult || null,
+    warScores: hw.warScores || null,
+    mode,
+    scoreSource: 'fair',
+    reportTotalScore: 0,
+    fromTs: (hw.warStart ? Math.floor(Number(hw.warStart) / 1000) : 0),
+    toTs: (hw.warEndedAt ? Math.floor(Number(hw.warEndedAt) / 1000) : 0),
+    lootTotal,
+    lootBreakdown: hw.lootBreakdown || null,
+    lootSource: Number.isFinite(s.lootOverride) ? 'override' : (hw.lootSource || 'archive'),
+    lootAutoDetected: false,
+    payoutPct: pct,
+    payoutPool,
+    factionShare: lootTotal - payoutPool,
+    settings: s,
+    // The panel needs to know the difference between "your weights are in these
+    // numbers" and "these numbers predate your weights".
+    settingsApplied: true,
+    totalScore,
+    members,
+    attackCount: members.reduce((sum, m) => sum + (m.attackCount || 0), 0),
     generatedAt: Date.now(),
   };
 }
