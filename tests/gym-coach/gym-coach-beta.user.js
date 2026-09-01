@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.61
+// @version      0.9.62
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,30 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.62 - Drop the train count; say what the energy went into instead.
+ *
+ *         gymtrains was added so the board could show trains as well as energy,
+ *         and it does not reconcile. 1,470 energy against 113 trains, at a
+ *         confirmed 10 energy a train, is 34 trains missing.
+ *
+ *         Nor can it be checked. The contributors row is {id, username, value,
+ *         in_faction} and there is no /user/{id}/gym path anywhere, so nobody's
+ *         energy-per-train can be validated against a gym cost -- which also
+ *         means my earlier reading of that column, calling 12.2 and 13.5 "not
+ *         valid costs", assumed one gym per member for a whole week and was
+ *         never sound.
+ *
+ *         A count that can be neither reconciled nor verified is worse than no
+ *         count, so it is gone. What the energy went INTO is shown instead, and
+ *         the board is one request cheaper.
+ *
+ *         The split survives that, because the four per-stat counters are
+ *         ENERGY rather than trains -- and being energy, they add up to the
+ *         energy counter by construction. Your own row now checks exactly that
+ *         and says whether they agree. Unlike energy-per-train it needs no
+ *         knowledge of anyone's gym, which the API will never give, and a
+ *         disagreement is the signature of baselines taken at different moments.
+ *
 * 0.9.61 - The board says when its own baselines disagree.
  *
  *         Reported: 1,470 energy against 113 trains, at 10 energy a train. The
@@ -7368,10 +7392,19 @@
   // subtracted are the FACTION's and not this device's. Two clients that
   // anchored at the same Monday compute the same board without ever talking to
   // each other. The shared clock is the sync.
-  var BOARD_STATS = ["gymenergy", "gymtrains", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];
+  // gymtrains is deliberately NOT here.
+  //
+  // It was added so the board could show trains as well as energy, and it does
+  // not reconcile: 1,470 energy against 113 trains, at a confirmed 10 energy a
+  // train, is 34 trains missing. Torn gives no way to check it either -- the
+  // contributors row is {id, username, value, in_faction} and there is no
+  // /user/{id}/gym path, so nobody's energy-per-train can be validated against
+  // a gym cost. A count that cannot be reconciled or verified is worse than no
+  // count, so what the energy went INTO is shown instead of how many times.
+  // Also one request cheaper.
+  var BOARD_STATS = ["gymenergy", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];
   var BOARD_LABEL = {
     gymenergy: "Energy",
-    gymtrains: "Trains",
     gymstrength: "Strength",
     gymdefense: "Defense",
     gymspeed: "Speed",
@@ -7563,10 +7596,6 @@
       var use = used && used[id];
       return {
         id: e.id, name: e.name, energy: e.delta || 0,
-        // Its own counter, never energy divided by anything: energy per train
-        // runs from 5 in a starter gym to 25 in a specialist one, so a derived
-        // figure would be fiction dressed up as a count.
-        trains: d("gymtrains"),
         // null, NOT zero: "not worked out yet" and "every point of it was
         // bought" are different claims about a person.
         natural: use ? naturalEnergy(e.delta || 0, use, own && String(own.id) === String(e.id) ? own : null) : null,
@@ -7657,7 +7686,7 @@
         var split = boardSplit(r);
         return pad(String(r.rank), 2, true) + ". " + name + "  " +
                pad(String(fmt(r.energy)) + "e", 10, true) + "  " +
-               pad(r.trains > 0 ? fmt(r.trains) + "t" : "", 8, true) + "  " + nat +
+               nat +
                (split ? "  " + split : "");
       });
       return "```\n" + head + "\n" + lines.join("\n") +
@@ -7667,8 +7696,7 @@
       var np = boardNatPct(r);
       var nat = np === null ? "" : " (" + np + "% natural)";
       var split = boardSplit(r);
-      var trains = r.trains > 0 ? " / " + fmt(r.trains) + " train" + (r.trains === 1 ? "" : "s") : "";
-      return r.rank + ". " + r.name + " — " + fmt(r.energy) + "e" + trains + nat + (split ? " — " + split : "");
+      return r.rank + ". " + r.name + " — " + fmt(r.energy) + "e" + nat + (split ? " \u2014 " + split : "");
     });
     return head + "\n" + lines.join("\n") + (more > 0 ? "\n+ " + more + " more" : "");
   }
@@ -8016,6 +8044,37 @@
     return c === 7 || c === 16;
   }
 
+  // The four per-stat counters are ENERGY, so they add up to the energy counter
+  // by construction. That makes the split checkable against data the board
+  // already holds -- and unlike energy-per-train it needs no knowledge of
+  // anyone's gym, which the API will never give.
+  //
+  // A disagreement means the baselines were taken at different moments, and the
+  // split is then comparing windows of different lengths. null means "cannot
+  // tell yet": mid-round, some of the four may not have landed, and reporting a
+  // mismatch then would cry wolf on every board while it loads.
+  var BOARD_SPLIT_STATS = ["gymstrength", "gymdefense", "gymspeed", "gymdexterity"];
+  function boardStatSum(byStat, id) {
+    var key = String(id);
+    var e = byStat && byStat.gymenergy && byStat.gymenergy[key];
+    if (!e) return null;
+    var parts = {}, sum = 0, i;
+    for (i = 0; i < BOARD_SPLIT_STATS.length; i++) {
+      var st = BOARD_SPLIT_STATS[i];
+      var m = byStat[st];
+      // Not fetched at all is unknown; fetched with no row for this member is a
+      // real zero -- somebody who never touched dexterity simply is not in it.
+      if (!m) return null;
+      var v = (m[key] && m[key].delta) || 0;
+      parts[st] = v;
+      sum += v;
+    }
+    var energy = e.delta || 0;
+    // Exact. These are whole energy counters, and a tolerance would wave
+    // through precisely the small skew that is hardest to see by eye.
+    return { energy: energy, sum: sum, parts: parts, ok: sum === energy };
+  }
+
   function boardNatPct(r) {
     if (r.natural === null || r.energy <= 0) return null;
     return Math.round((r.natural / r.energy) * 100);
@@ -8027,8 +8086,7 @@
     // Trains lead the second line rather than taking a column of their own:
     // five columns do not fit a phone, and the tab bar wrapping onto two rows
     // when Board was added is the same mistake one element further in.
-    var sub = (r.trains > 0 ? '<b>' + fmt(r.trains) + "</b> train" + (r.trains === 1 ? "" : "s") : "") +
-      (r.trains > 0 && split ? " \u00b7 " : "") + esc(split || "");
+    var sub = esc(split || "");
     return '<div class="gcb-brow' + (String(r.id) === String(meId) ? " me" : "") + '">' +
       '<span class="gcb-brank">' + r.rank + "</span>" +
       '<span class="gcb-bname">' + esc(String(r.name || r.id)) + "</span>" +
@@ -8091,7 +8149,7 @@
       (since && since.partial
         ? "since this device first read the faction, <b>" + esc(boardSinceLabel(since.at)) + "</b>"
         : "since <b>Monday 00:00 TCT</b>") +
-      ", how many trains that was, and which stats it went into. " +
+      ", which stats it went into. " +
       'Read from Torn\u2019s own faction contributors, so it is the same board on every device and nothing is stored anywhere but here.</p>' +
       // Baselines taken minutes apart make every ratio between two stats a
       // comparison of different windows. Each stat's own delta is still honest,
@@ -8116,7 +8174,7 @@
         '<button type="button" class="gcb-btn" data-board="natural">Fill it in (top ' + BOARD_NATURAL_TOP + ')</button>' +
         "</div>") +
       '<div class="gcb-brow head"><span class="gcb-brank">#</span><span class="gcb-bname">Member</span>' +
-      '<span class="gcb-benergy">Energy</span><span class="gcb-bnat">Nat</span><span class="gcb-bgain">Trains · split</span></div>' +
+      '<span class="gcb-benergy">Energy</span><span class="gcb-bnat">Nat</span><span class="gcb-bgain">Trained</span></div>' +
       rows.map(function (r) { return boardLine(r, meId); }).join("") +
       // Your own row in Torn's raw terms. Every number above is a subtraction,
       // and when one of them is disputed the only useful thing the board can do
@@ -8129,7 +8187,18 @@
           }).map(function (st) {
             var e = state.boardBy[st][String(meId)];
             return BOARD_LABEL[st] + " " + fmt(e.value - e.delta) + " \u2192 " + fmt(e.value);
-          }).join(" \u00b7 ") + "</span></div>"
+          }).join(" \u00b7 ") + "</span></div>" +
+          (function () {
+            var chk = boardStatSum(state.boardBy, meId);
+            if (!chk) return "";
+            return '<div class="gcb-brow foot"><span class="' + (chk.ok ? "muted" : "bad") +
+              '" style="grid-column:1/-1;font-size:11px">' +
+              (chk.ok
+                ? "stat totals add up to your energy (" + fmt(chk.sum) + "e), so the split is sound"
+                : "stat totals come to " + fmt(chk.sum) + "e but energy says " + fmt(chk.energy) +
+                  "e \u2014 the baselines were not all taken at the same moment, so treat the split as rough") +
+              "</span></div>";
+          })()
         : "") +
       '<div class="gcb-brow foot"><span class="muted" style="grid-column:1/-1">' +
       (fresh ? "Read " + Math.max(0, Math.round((Date.now() - state.boardAt) / 1000)) + "s ago" : "Not read yet") +
@@ -8258,7 +8327,11 @@
       // fetchBoardNatural refuses while the board itself is still coming in,
       // because it works from the rows. Refusing in silence looks like a dead
       // button, which is worse than waiting.
-      if (state.boardBusy) { showToast("Still reading", "The board is loading. Try again in a moment."); return; }
+      if (state.boardBusy) {
+        showToast("Still reading", "The board is loading. Try again in a moment.");
+        renderPanel();
+        return;
+      }
       fetchBoardNatural();
       renderPanel();
       return;
