@@ -31,8 +31,8 @@ const mutants = [
 
   // ---- rollover ----
   ["last week's anchors carry into the new week",
-    "    return { base: { week: wk, at: now, stats: {}, hist: hist }, hist: hist, rolled: true };",
-    "    return { base: { week: wk, at: now, stats: board ? board.stats : {}, hist: hist }, hist: hist, rolled: true };", [U]],
+    "    return { base: { week: wk, at: now, stats: {}, statsAt: {}, hist: hist }, hist: hist, rolled: true };",
+    "    return { base: { week: wk, at: now, stats: board ? board.stats : {}, statsAt: {}, hist: hist }, hist: hist, rolled: true };", [U]],
   ["the week never rolls, so the board is frozen at whenever it first ran",
     "    if (board && board.week === wk) return { base: board, hist: hist, rolled: false };",
     "    if (board) return { base: board, hist: hist, rolled: false };", [U]],
@@ -66,6 +66,20 @@ const mutants = [
     "      out.stats[k] = src[k];", [U]],
   ["the draft copies no anchors at all, so every week restarts from zero",
     "    for (k in src) {", "    for (k in {}) {", [U]],
+  ["a stat's baseline is never stamped, so a skew can never be seen",
+    "    if (!base.statsAt[stat]) base.statsAt[stat] = Number(now) || Date.now();", "", [U]],
+  ["the stamp is rewritten on every read, so it always looks freshly anchored",
+    "    if (!base.statsAt[stat]) base.statsAt[stat] = Number(now) || Date.now();",
+    "    base.statsAt[stat] = Number(now) || Date.now();", [U]],
+  ["a missing stamp is read as 1970, crying wolf on every older board",
+    "      if (!v) continue;", "", [U]],
+  // NOT listed: dropping the `n >= 2` guard from boardSkew. With one stat lo
+  // and hi are the same reading, so hi - lo is zero either way -- provably
+  // equivalent. The guard stays because it says what the function means.
+  ["the skew threshold is tighter than a single round of requests",
+    "  var BOARD_SKEW_MS = 60000;", "  var BOARD_SKEW_MS = 1000;", [U]],
+  ["the draft drops the stamps, so committing a round loses them",
+    "    for (var a in srcAt) out.statsAt[a] = srcAt[a];", "", [U]],
   ["the train count is inferred from the energy instead of read",
     '        trains: d("gymtrains"),', "        trains: Math.round((e.delta || 0) / 10),", [U]],
   ["trains are folded into the per-stat split, making a pie of five out of four",

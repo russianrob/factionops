@@ -44,6 +44,15 @@ const mutants = [
   // line -- only gymenergy can set `applied` either way. It would stop being
   // equivalent the day the round tolerates a partial failure, which is exactly
   // when someone should re-add it.
+  ["a skewed board says nothing about it",
+    "      (boardSkew(state.board) > BOARD_SKEW_MS", "      (false && boardSkew(state.board) > BOARD_SKEW_MS", [E]],
+  ["re-anchoring keeps the old baselines, so it changes nothing",
+    "      state.board.stats = {};\n      state.board.statsAt = {};", "", [E]],
+  ["the stamps never reach storage, so a reload loses the skew",
+    "                          statsAt: state.board.statsAt || {},", "", [E]],
+  ["the owner's raw before-and-after is not printed",
+    "      (meId && state.boardBy.gymenergy && state.boardBy.gymenergy[String(meId)]",
+    "      (false && state.boardBy.gymenergy && state.boardBy.gymenergy[String(meId)]", [E]],
   ["gymtrains is not requested at all, so the train count is always zero",
     '  var BOARD_STATS = ["gymenergy", "gymtrains", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];',
     '  var BOARD_STATS = ["gymenergy", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];', [E]],

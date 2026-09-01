@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.60
+// @version      0.9.61
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,33 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.61 - The board says when its own baselines disagree.
+ *
+ *         Reported: 1,470 energy against 113 trains, at 10 energy a train. The
+ *         energy confirmed right, the trains short by about 34.
+ *
+ *         There were three explanations and the board could not tell them
+ *         apart: Torn\u2019s two counters updating at different rates, a week
+ *         spent across two gyms, or six baselines frozen at six different
+ *         moments -- which is what the pre-0.9.51 anchoring did when a round
+ *         died half-way. I guessed twice and was wrong twice, including
+ *         calling a 50-energy specialist gym "impossible" when the script\u2019s
+ *         own table lists four of them.
+ *
+ *         So it stops guessing and records the evidence: each stat\u2019s
+ *         baseline is stamped with WHEN it was taken, and a board whose stamps
+ *         are more than a minute apart says so. Each stat\u2019s own total stays
+ *         honest either way -- it is only the RATIOS between two of them, the
+ *         per-stat split and energy-per-train, that compare different windows.
+ *
+ *         Your own row also prints its raw before and after for every stat.
+ *         When a subtraction is disputed the useful thing is both ends of it,
+ *         not an argument.
+ *
+ *         And a Re-anchor button, so a board already known to be skewed can be
+ *         restarted without waiting for Monday. It throws the week-to-date away
+ *         deliberately: those were the figures being doubted.
+ *
 * 0.9.60 - Stop asking which book, and say where the cap bites.
  *
  *         Two asked for together.
@@ -7400,9 +7427,23 @@
   // Freeze the first reading of the week, and hand back the map that deltas
   // measure against. Mutates the baseline on purpose: anchoring is a side
   // effect that must survive the render that triggered it.
-  function boardSnap(base, stat, rows) {
+  function boardSnap(base, stat, rows, now) {
     if (!base.stats) base.stats = {};
+    // WHEN this stat's baseline was frozen. Reported as 1,470 energy against
+    // 113 trains at 10 energy a train: the energy right, the trains short, and
+    // no way to tell from the board whether that was Torn's counters updating
+    // at different rates, a week spent across two gyms, or six baselines taken
+    // at six different moments -- which is exactly what the pre-0.9.51
+    // anchoring did when a round died half-way.
+    //
+    // A stat's own delta is honest either way. Any RATIO between two of them --
+    // energy per train, the per-stat split -- is not, because they may be
+    // measuring windows of different lengths.
+    if (!base.statsAt) base.statsAt = {};
     var map = base.stats[stat] || (base.stats[stat] = {});
+    // The FIRST anchoring, never the latest read, or it would say every stat
+    // was anchored a moment ago and could never reveal a skew at all.
+    if (!base.statsAt[stat]) base.statsAt[stat] = Number(now) || Date.now();
     for (var i = 0; i < rows.length; i++) {
       var id = String(rows[i].id), v = Number(rows[i].value) || 0;
       // Never seen before -- the board's first run, or a member who joined
@@ -7428,7 +7469,9 @@
   // week against them. The bug outlived a browser test that only checked what
   // reached storage.
   function boardDraft(base) {
-    var out = { week: base ? base.week : null, at: (base && base.at) || 0, stats: {} };
+    var out = { week: base ? base.week : null, at: (base && base.at) || 0, stats: {}, statsAt: {} };
+    var srcAt = (base && base.statsAt) || {};
+    for (var a in srcAt) out.statsAt[a] = srcAt[a];
     var src = (base && base.stats) || {}, k, q;
     for (k in src) {
       out.stats[k] = {};
@@ -7437,13 +7480,33 @@
     return out;
   }
 
-  function boardDeltas(base, stat, rows) {
-    var map = boardSnap(base, stat, rows), out = {};
+  function boardDeltas(base, stat, rows, now) {
+    var map = boardSnap(base, stat, rows, now), out = {};
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i], id = String(r.id), v = Number(r.value) || 0;
       out[id] = { id: r.id, name: r.username, value: v, delta: v - (map[id] || 0) };
     }
     return out;
+  }
+
+  // How far apart this week's baselines were taken.
+  //
+  // Zero when there is nothing to compare, and a missing stamp is skipped
+  // rather than read as 1970 -- boards anchored before this existed have no
+  // stamps, and treating an absent one as zero would report a 56-year spread
+  // and cry wolf on every board in existence.
+  var BOARD_SKEW_MS = 60000;
+  function boardSkew(base) {
+    var at = (base && base.statsAt) || {};
+    var lo = 0, hi = 0, n = 0, k;
+    for (k in at) {
+      var v = Number(at[k]) || 0;
+      if (!v) continue;
+      n += 1;
+      if (!lo || v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    return n >= 2 ? hi - lo : 0;
   }
 
   // Roll the baseline when the week turns over, keeping the week that just
@@ -7465,7 +7528,7 @@
       // Bounded, or eight months of dead baselines end up in storage.
       if (hist.length > BOARD_WEEKS) hist = hist.slice(hist.length - BOARD_WEEKS);
     }
-    return { base: { week: wk, at: now, stats: {}, hist: hist }, hist: hist, rolled: true };
+    return { base: { week: wk, at: now, stats: {}, statsAt: {}, hist: hist }, hist: hist, rolled: true };
   }
 
   // Energy that did not come out of a pill, a can or a refill.
@@ -7766,6 +7829,7 @@
           state.natUse = {};
         }
         state.board.stats = draft.stats;
+        state.board.statsAt = draft.statsAt;
         state.board.week = draft.week;
         state.boardBy = pending;
         state.boardAt = Date.now();
@@ -7915,6 +7979,7 @@
   function saveBoard() {
     try {
       storeSet("board", { week: state.board.week, at: state.board.at, stats: state.board.stats,
+                          statsAt: state.board.statsAt || {},
                           rows: state.board.rows || [], hist: state.board.hist || [] });
       // Pruned to the same window as the baselines, so a cache that is only
       // ever added to cannot outgrow storage.
@@ -8028,6 +8093,19 @@
         : "since <b>Monday 00:00 TCT</b>") +
       ", how many trains that was, and which stats it went into. " +
       'Read from Torn\u2019s own faction contributors, so it is the same board on every device and nothing is stored anywhere but here.</p>' +
+      // Baselines taken minutes apart make every ratio between two stats a
+      // comparison of different windows. Each stat's own delta is still honest,
+      // so the board is not withdrawn -- but the split and the energy-per-train
+      // are, and saying nothing is how "1,470e over 113 trains" reads as fact.
+      (boardSkew(state.board) > BOARD_SKEW_MS
+        ? '<div class="gcb-natprompt" style="border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.10)">' +
+          '<span style="color:#fbbf24">This week\u2019s baselines were taken <b>' +
+          fmtCd(Math.round(boardSkew(state.board) / 1000)) +
+          '</b> apart, so the per-stat split and trains-per-energy are comparing ' +
+          'different windows. Each stat\u2019s own total is still right. Re-anchor to start clean.</span>' +
+          '<button type="button" class="gcb-btn" data-board="reanchor">Re-anchor</button>' +
+          "</div>"
+        : "") +
       // The button that fills the Nat column used to live BELOW the whole
       // table. On a twenty-member faction that is a long scroll away from the
       // column of dashes it explains, and the first question asked about this
@@ -8040,6 +8118,19 @@
       '<div class="gcb-brow head"><span class="gcb-brank">#</span><span class="gcb-bname">Member</span>' +
       '<span class="gcb-benergy">Energy</span><span class="gcb-bnat">Nat</span><span class="gcb-bgain">Trains · split</span></div>' +
       rows.map(function (r) { return boardLine(r, meId); }).join("") +
+      // Your own row in Torn's raw terms. Every number above is a subtraction,
+      // and when one of them is disputed the only useful thing the board can do
+      // is show both ends of it rather than argue.
+      (meId && state.boardBy.gymenergy && state.boardBy.gymenergy[String(meId)]
+        ? '<div class="gcb-brow foot"><span class="muted" style="grid-column:1/-1;font-size:11px">' +
+          BOARD_STATS.filter(function (st) {
+            var e = state.boardBy[st] && state.boardBy[st][String(meId)];
+            return e && e.delta > 0;
+          }).map(function (st) {
+            var e = state.boardBy[st][String(meId)];
+            return BOARD_LABEL[st] + " " + fmt(e.value - e.delta) + " \u2192 " + fmt(e.value);
+          }).join(" \u00b7 ") + "</span></div>"
+        : "") +
       '<div class="gcb-brow foot"><span class="muted" style="grid-column:1/-1">' +
       (fresh ? "Read " + Math.max(0, Math.round((Date.now() - state.boardAt) / 1000)) + "s ago" : "Not read yet") +
       (state.boardBusy ? " · reading…" : "") + "</span></div>" +
@@ -8141,6 +8232,23 @@
   }
 
   function onBoardClick(what) {
+    if (what === "reanchor") {
+      // Throw this week's baselines away and take them again, together. The
+      // week-to-date figures go with them -- that is the point, they were the
+      // ones being doubted.
+      state.board.stats = {};
+      state.board.statsAt = {};
+      state.board.at = Date.now();
+      state.boardBy = {};
+      state.natUse = {};
+      state.boardAt = 0;
+      state.boardTriedAt = 0;
+      saveBoard();
+      showToast("Re-anchored", "Counting again from now, all stats together.");
+      fetchBoard(true);
+      renderPanel();
+      return;
+    }
     if (what === "refresh" || what === "anyway") {
       fetchBoard(true);
       renderPanel();
@@ -10526,6 +10634,7 @@
           clean[st] = out;
         });
         state.board = { week: Number(bd.week), at: Number(bd.at) || 0, stats: clean,
+                        statsAt: (bd.statsAt && typeof bd.statsAt === "object") ? bd.statsAt : {},
                         rows: Array.isArray(bd.rows) ? bd.rows : [],
                         hist: Array.isArray(bd.hist) ? bd.hist : [] };
       }

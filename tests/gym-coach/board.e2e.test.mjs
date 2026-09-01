@@ -565,6 +565,65 @@ await t("a corrupt stored board is rejected outright, not partly believed", asyn
     "anchors from a board with an unreadable week were used anyway: " + JSON.stringify(r)));
 });
 
+await t("a board whose baselines were taken apart says so, and offers a re-anchor", async () => {
+  // A stat's own delta is honest; the RATIOS between two of them are not, and
+  // saying nothing is how "1,470e over 113 trains" reads as fact.
+  await load({ contributors: CONTRIB, fresh: true });
+  await openBoard();
+  await page.evaluate(() => {
+    const raw = JSON.parse(localStorage.getItem("gcb_v1_board"));
+    raw.statsAt = raw.statsAt || {};
+    raw.statsAt.gymenergy = Date.now() - 3600000;   // an hour before
+    raw.statsAt.gymtrains = Date.now();
+    localStorage.setItem("gcb_v1_board", JSON.stringify(raw));
+  });
+  await load({ contributors: LATER });
+  await openBoard();
+  const txt = await boardText();
+  assert.match(txt, /baselines were taken/i, "a skewed board said nothing: " + txt.slice(0, 300));
+  assert.ok(await page.$('[data-board="reanchor"]'), "no way to start clean");
+});
+
+await t("a board anchored in one round says nothing about skew", async () => {
+  // Six requests 700ms apart is about four seconds. Warning on that would cry
+  // wolf on every board there is.
+  await load({ contributors: CONTRIB, fresh: true });
+  await openBoard();
+  const txt = await boardText();
+  assert.ok(!/baselines were taken/i.test(txt), "cried wolf on a clean round: " + txt.slice(0, 300));
+});
+
+await t("re-anchoring clears the week and starts counting again", async () => {
+  await load({ contributors: CONTRIB, fresh: true });
+  await openBoard();
+  await load({ contributors: LATER });
+  await openBoard();
+  assert.ok((await rows())[0].energy !== "0e", "setup: the week should have moved");
+  await page.evaluate(() => {
+    const raw = JSON.parse(localStorage.getItem("gcb_v1_board"));
+    raw.statsAt = { gymenergy: Date.now() - 3600000, gymtrains: Date.now() };
+    localStorage.setItem("gcb_v1_board", JSON.stringify(raw));
+  });
+  await load({ contributors: LATER });
+  await openBoard();
+  await page.evaluate(() => document.querySelector('[data-board="reanchor"]').click());
+  await page.waitForTimeout(6500);
+  const r = await rows();
+  r.forEach(x => assert.strictEqual(x.energy, "0e",
+    "re-anchor should restart the week at zero: " + JSON.stringify(r)));
+});
+
+await t("your own row shows the raw before and after it subtracted", async () => {
+  await load({ contributors: CONTRIB, fresh: true });
+  await openBoard();
+  await load({ contributors: LATER });
+  await openBoard();
+  const txt = await boardText();
+  // rcexyz: gymenergy 5,000,000 -> 5,003,360
+  assert.match(txt, /5,000,000\s*→\s*5,003,360/,
+    "the owner's raw energy figures should be printed: " + txt.slice(-400));
+});
+
 await t("a faction that has trained nothing renders as a board, not as an error", async () => {
   await load({ contributors: { gymenergy: [[ME, "rcexyz", 5000000]] } });
   await openBoard();

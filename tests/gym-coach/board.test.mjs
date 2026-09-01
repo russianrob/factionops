@@ -31,6 +31,7 @@ function grab(n) {
 const CONST = [
   /var DAY_MS = [^;]+;/, /var WEEK_EPOCH_DAY = [^;]+;/,
   /var BOARD_STATS = \[[^\]]*\];/, /var BOARD_WEEKS = [^;]+;/, /var BOARD_CARD_ROWS = [^;]+;/,
+  /var BOARD_GAP_MS = [^;]+;/, /var BOARD_SKEW_MS = [^;]+;/,
   /var BOARD_PARTIAL_MS = [^;]+;/, /var XAN_ENERGY = [^;]+;/, /var REFILL_ENERGY = [^;]+;/, /var CAN_ENERGY = [^;]+;/,
   /var BOARD_LABEL = \{[\s\S]*?\n  \};/,
 ].map(re => { const m = re.exec(src); assert.ok(m, "missing " + re); return m[0]; }).join("\n");
@@ -152,6 +153,13 @@ t("a draft does not alias the baseline it was copied from", () => {
   assert.strictEqual(out.base.stats.gymspeed, undefined, "a draft added a stat to the live baseline");
 });
 
+t("a draft carries the baseline STAMPS too, not just the anchors", () => {
+  // Dropped, and committing a round would silently lose when each stat was
+  // anchored -- which is the whole basis for spotting a skew.
+  const d = call(["boardDraft"], `boardDraft({ week: 1, at: 5, stats: { gymenergy: { 1: 100 } }, statsAt: { gymenergy: 4242 } })`);
+  assert.strictEqual(d.statsAt.gymenergy, 4242);
+});
+
 t("a draft carries the week's existing anchors, so the week keeps counting", () => {
   // The other half. A draft that starts empty is perfectly atomic and
   // perfectly useless: every member re-anchors at their current value and the
@@ -167,6 +175,77 @@ t("a draft of nothing is still a usable draft", () => {
   const d = call(["boardDraft"], "boardDraft(null)");
   assert.deepStrictEqual(d.stats, {});
   assert.strictEqual(d.week, null);
+});
+
+// ---- were the baselines even taken at the same moment? ---------------------
+//
+// Reported: 1,470 energy against 113 trains, at 10 energy a train. The energy
+// is right and the trains are short, and there is no way to tell from the board
+// whether that is Torn's two counters updating at different rates, a week spent
+// across two gyms, or six baselines frozen at six different moments -- which is
+// what the pre-0.9.51 anchoring did when a round died half-way.
+//
+// A stat's OWN delta is honest either way. Any RATIO between two of them is not,
+// because they may be measuring windows of different lengths.
+
+t("each stat records when its baseline was taken", () => {
+  const out = new Function("var R;" + env("boardSnap") + `
+    var base = { week: 1, stats: {} };
+    boardSnap(base, "gymenergy", [{ id: 1, username: "a", value: 100 }], 1000);
+    boardSnap(base, "gymtrains", [{ id: 1, username: "a", value: 10 }], 5000);
+    R = base.statsAt;
+    return R;`)();
+  assert.strictEqual(out.gymenergy, 1000);
+  assert.strictEqual(out.gymtrains, 5000);
+});
+
+t("the stamp is the FIRST anchoring, not the latest read", () => {
+  // Otherwise it would say every stat was anchored a moment ago, on every read,
+  // and could never reveal a skew.
+  const out = new Function("var R;" + env("boardSnap") + `
+    var base = { week: 1, stats: {} };
+    boardSnap(base, "gymenergy", [{ id: 1, username: "a", value: 100 }], 1000);
+    boardSnap(base, "gymenergy", [{ id: 1, username: "a", value: 150 }], 9000);
+    R = base.statsAt.gymenergy;
+    return R;`)();
+  assert.strictEqual(out, 1000);
+});
+
+const skew = (statsAt) => call(["boardSkew"], `boardSkew(${JSON.stringify({ statsAt })})`);
+
+t("baselines taken together have no skew", () => {
+  assert.strictEqual(skew({ gymenergy: 1000, gymtrains: 1300, gymstrength: 2000 }), 1000);
+});
+
+t("baselines taken hours apart report the spread", () => {
+  assert.strictEqual(skew({ gymenergy: 1000, gymtrains: 3601000 }), 3600000);
+});
+
+t("a board with one stat, or none, has nothing to compare", () => {
+  assert.strictEqual(skew({ gymenergy: 1000 }), 0);
+  assert.strictEqual(skew({}), 0);
+  assert.strictEqual(skew(undefined), 0);
+});
+
+t("a missing stamp does not read as 1970 and invent an enormous skew", () => {
+  // Boards anchored before this existed have no stamps at all. Treating an
+  // absent one as zero would report a 56-year spread and cry wolf on every
+  // board in existence.
+  //
+  // The zero comes SECOND on purpose: with it first, a version that fails to
+  // skip it still returns 0 by accident of the `!lo` short-circuit, and the
+  // test proves nothing.
+  assert.strictEqual(skew({ gymtrains: 5000, gymenergy: 0 }), 0);
+  assert.strictEqual(skew({ gymenergy: 0, gymtrains: 5000 }), 0);
+});
+
+t("the threshold is wide enough for a normal round but not for a broken one", () => {
+  // Six requests spaced 700ms apart is about four seconds end to end, so the
+  // threshold has to clear that comfortably while still catching a half-anchored
+  // week.
+  const gap = call([], "BOARD_GAP_MS"), thr = call([], "BOARD_SKEW_MS");
+  assert.ok(thr > gap * 6, "threshold " + thr + " must clear a whole round of " + (gap * 6));
+  assert.ok(thr <= 300000, "and still catch a genuinely skewed board");
 });
 
 // ---- the week rolling over ------------------------------------------------
