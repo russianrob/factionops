@@ -162,7 +162,7 @@ t("the most recent reading still wins when matching by id", () => {
 
 // ---- resolving the four book names to item ids -----------------------------
 
-const ids = (payload) => call(["readBookIds"], `readBookIds(${JSON.stringify(payload)})`);
+const ids = (payload) => call(["bookKeyOf", "readBookIds"], `readBookIds(${JSON.stringify(payload)})`);
 
 t("the four stat books are picked out of Torn's item catalogue", () => {
   const out = ids({ items: [
@@ -182,6 +182,29 @@ t("books Torn lists that are not one of the four are ignored", () => {
 
 t("the catalogue is matched case-insensitively", () => {
   assert.deepStrictEqual(ids({ items: [{ id: 745, name: "TIME IS IN THE MIND" }] }), { spe: 745 });
+});
+
+t("punctuation and spacing do not defeat the match", () => {
+  // Reported live: "catalogue had 44 books, none of the four matched". A strict
+  // lowercase equality fails on a single apostrophe, a doubled space, or a
+  // hyphen -- and there is no reason Torn's item name has to punctuate the way
+  // the wiki does.
+  assert.deepStrictEqual(ids({ items: [{ id: 745, name: "Time  Is In The  Mind" }] }), { spe: 745 });
+  assert.deepStrictEqual(ids({ items: [{ id: 745, name: "Time-Is-In-The-Mind" }] }), { spe: 745 });
+  assert.deepStrictEqual(ids({ items: [{ id: 700, name: "Brawn over Brains!" }] }), { str: 700 });
+});
+
+t("a prefixed catalogue name still resolves", () => {
+  // Torn's own log message reads "You began reading the Book : <name>", so a
+  // "Book:" prefix on the item name is entirely plausible.
+  assert.deepStrictEqual(ids({ items: [{ id: 745, name: "Book: Time Is In The Mind" }] }), { spe: 745 });
+});
+
+t("a book that merely mentions the words is not a match", () => {
+  // The looseness has to stop somewhere: containing the name is a match,
+  // sharing a word or two is not.
+  assert.deepStrictEqual(ids({ items: [{ id: 900, name: "Mind Over Matter" }] }), {});
+  assert.deepStrictEqual(ids({ items: [{ id: 901, name: "Brains" }] }), {});
 });
 
 t("an object-keyed catalogue is read too, not only an array", () => {

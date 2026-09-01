@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.57
+// @version      0.9.58
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,25 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.58 - Match the book catalogue on the name, not on its punctuation.
+ *
+ *         0.9.57's diagnostic paid for itself immediately: "catalogue had 44
+ *         books, none of the four matched". The call worked, Torn answered, and
+ *         a strict lowercase equality threw the answer away -- one apostrophe,
+ *         one doubled space or one prefix is enough. Torn's own log message
+ *         reads "You began reading the Book : <name>", so a prefixed item name
+ *         was never a stretch.
+ *
+ *         Compared on letters and digits only now, and a catalogue name that
+ *         CONTAINS a book name counts. Not the reverse: an item called "Brains"
+ *         must not claim "Brawn Over Brains", and there is a test for it. The
+ *         four names are distinctive enough that no punctuation can make two of
+ *         them collide.
+ *
+ *         And if it still misses, the card now prints what Torn actually calls
+ *         them rather than how many there were. A count told me nothing I could
+ *         act on; four names would have settled this in one look.
+ *
 * 0.9.57 - One book at a time, and the id lookup stops failing in silence.
  *
  *         Reported with Strength showing "31d left" beside Speed. Torn's strip
@@ -7070,16 +7089,30 @@
   // the four ids has ever been seen (745, "Time Is In The Mind"), and guessing
   // the other three would fail silently -- no match, no start, back to dating
   // from the sighting.
+  // Letters and digits only. A strict lowercase equality failed against Torn's
+  // real catalogue -- "44 books, none of the four matched" -- and the four
+  // names are distinctive enough that punctuation cannot make two of them
+  // collide. Torn's own log message reads "You began reading the Book : <name>",
+  // so a prefix on the item name is entirely plausible too.
+  function bookKeyOf(n) {
+    return String(n || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+
   function readBookIds(d) {
     var list = d && d.items;
     if (!list) return {};
     var rows = Array.isArray(list) ? list : Object.keys(list).map(function (k) { return list[k]; });
-    var out = {}, byName = {}, k;
-    for (k in STAT_BOOKS) byName[STAT_BOOKS[k].name.toLowerCase()] = k;
+    var out = {}, k;
     rows.forEach(function (it) {
       if (!it || !it.name || !(Number(it.id) > 0)) return;
-      var key = byName[String(it.name).toLowerCase()];
-      if (key) out[key] = Number(it.id);
+      var got = bookKeyOf(it.name);
+      for (var key in STAT_BOOKS) {
+        var want = bookKeyOf(STAT_BOOKS[key].name);
+        // Equal, or the catalogue name CONTAINS the book name -- which covers a
+        // prefix. Not the other way round: a catalogue entry called "Brains"
+        // must not claim "Brawn Over Brains".
+        if (got === want || got.indexOf(want) !== -1) { out[key] = Number(it.id); break; }
+      }
     });
     return out;
   }
@@ -7106,9 +7139,20 @@
       .then(function (d) {
         var m = readBookIds(d);
         var n = ((d && d.items) || []).length;
-        state.bookIdsDiag = Object.keys(m).length
-          ? "book ids: " + JSON.stringify(m)
-          : "book ids: catalogue had " + n + " books, none of the four matched";
+        if (Object.keys(m).length) {
+          state.bookIdsDiag = "book ids: " + JSON.stringify(m);
+        } else {
+          // Naming the count told me nothing I could act on. Show what Torn
+          // actually calls them, closest first, so the next miss is readable
+          // rather than another round of guessing.
+          var names = ((d && d.items) || []).map(function (it) { return it && it.name; })
+            .filter(Boolean);
+          var near = names.filter(function (nm) {
+            return /mind|brawn|handsome|hands|brain/i.test(nm);
+          });
+          state.bookIdsDiag = "book ids: " + n + " books, none matched. Torn calls them: " +
+            (near.length ? near.slice(0, 4).join(" | ") : names.slice(0, 4).join(" | "));
+        }
         if (Object.keys(m).length) {
           state.bookIds = m;
           storeSet("bookIds", m);
