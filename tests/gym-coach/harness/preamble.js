@@ -118,6 +118,12 @@
       // able to scramble them: the script reads the stat from Torn's wording
       // for the row, and anything that secretly keyed off request order would
       // pass every same-order fixture and be wrong on the real thing.
+      if (lg[1] === "2050") {
+        (cfg.bookLogRows || []).forEach(function (r, i) {
+          rows["b" + i] = { log: 2050, title: "Item use book", timestamp: r[0],
+                            category: "Item use book", data: { item: r[1] } };
+        });
+      }
       (cfg.trainLogRows || []).forEach(function (r, i) {
         if (String(r[0]) !== lg[1]) return;
         rows["r" + i] = { log: r[0], title: r[1], timestamp: r[2],

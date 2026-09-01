@@ -165,6 +165,56 @@ await t("tapping on a page without the strip takes the date back from the detect
   assert.strictEqual((await auto()).spe, false, "the detector still owns a date you just set by hand");
 });
 
+await t("the start date comes from the item log, not from when the page was first seen", async () => {
+  // The reported problem: "31d left" shown to someone with about 28 hours left,
+  // because the sighting was thirty days into the book.
+  const THIRTY = Math.floor((Date.now() - 30 * 86400000) / 1000);
+  await load({ strip: [READING], cfg: { keyLevel: 4, bookLogRows: [[THIRTY, "Time Is In The Mind"]] } });
+  await page.waitForTimeout(2500);
+  const bk = await books();
+  const drift = Math.abs(bk.spe - THIRTY * 1000);
+  assert.ok(drift < 5000, "the book was dated from the sighting, not from the log: off by " + drift + "ms");
+  const ex = await page.evaluate(() => {
+    try { return JSON.parse(localStorage.getItem("gcb_v1_booksExact") || "{}"); } catch (e) { return {}; }
+  });
+  assert.strictEqual(ex.spe, true, "an exact date should be marked as one");
+});
+
+await t("and the panel then counts down in hours, not a rounded-up day", async () => {
+  const THIRTY = Math.floor((Date.now() - 30 * 86400000) / 1000);
+  await load({ strip: [READING], cfg: { keyLevel: 4, bookLogRows: [[THIRTY, "Time Is In The Mind"]] } });
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => document.querySelector('[data-tab="plan"]').click());
+  await page.waitForTimeout(600);
+  const txt = await page.evaluate(() => {
+    const c = [...document.querySelectorAll("#gcb-panel .gc-card")].filter(x => /stat books/i.test(x.textContent))[0];
+    return c ? c.innerText.replace(/\s+/g, " ") : "";
+  });
+  assert.match(txt, /\d+h left/, "a book finishing tomorrow should be counted in hours: " + txt.slice(0, 200));
+  assert.match(txt, /exact/i, "and should say the date is exact: " + txt.slice(0, 200));
+});
+
+await t("the card shows the book you are on, not four rows of maybe", async () => {
+  await load({ strip: [READING], cfg: { keyLevel: 4 } });
+  await page.evaluate(() => document.querySelector('[data-tab="plan"]').click());
+  await page.waitForTimeout(600);
+  const txt = await page.evaluate(() => {
+    const c = [...document.querySelectorAll("#gcb-panel .gc-card")].filter(x => /stat books/i.test(x.textContent))[0];
+    return c ? c.innerText.replace(/\s+/g, " ") : "";
+  });
+  assert.match(txt, /Time Is In The Mind/, txt.slice(0, 200));
+  assert.ok(!/reading\?/i.test(txt), "the three you are NOT reading are still shouting: " + txt.slice(0, 300));
+  assert.match(txt, /Reading a different one/i, "there must still be a way to record another: " + txt.slice(0, 300));
+});
+
+await t("but with no book on the go, all four are offered", async () => {
+  await load({ strip: ["Donator: yes"], cfg: { keyLevel: 4 } });
+  await page.evaluate(() => document.querySelector('[data-tab="plan"]').click());
+  await page.waitForTimeout(600);
+  const n = await page.evaluate(() => document.querySelectorAll('#gcb-panel [data-book]').length);
+  assert.strictEqual(n, 4, "with nothing being read every book should be tappable, saw " + n);
+});
+
 await t("a non-stat book on the strip does not credit a stat", async () => {
   await load({ strip: ["Reading Book: Get Hard Or Go Home — Increase gym gains by 20%"] });
   const bk = await books();

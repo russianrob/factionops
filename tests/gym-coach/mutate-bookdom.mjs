@@ -3,7 +3,7 @@ import { execSync } from "child_process";
 const FILE = fs.realpathSync("gym-coach-beta.user.js");
 const original = fs.readFileSync(FILE, "utf8");
 const build = () => execSync("./build-harness.sh");
-const U = "bookdom.test.mjs", E = "bookdom.e2e.test.mjs", B = "books.test.mjs";
+const U = "bookdom.test.mjs", E = "bookdom.e2e.test.mjs", B = "books.test.mjs", S = "bookstart.test.mjs";
 const mutants = [
   ["the label is read from title instead of aria-label, which is where it is NOT",
     'n.getAttribute("aria-label") : null;', 'n.getAttribute("title") : null;', [U, E]],
@@ -29,6 +29,24 @@ const mutants = [
     '      return { found: true, name: name, k: k || "str", raw: String(label) };', [U, E]],
   ["the selector pins the volatile class hash instead of prefix-matching",
     "'ul[class*=\"status-icons\"] a[aria-label]'", "'ul.status-icons___sskG2 a[aria-label]'", [E]],
+  ["the start date is guessed from the sighting again, ignoring the log",
+    "      if (!(state.booksExact || {})[r.k]) fetchBookStart(r.k, r.name);", "", [E]],
+  ["the log is asked for the wrong id, which returns an empty log rather than an error",
+    "  var BOOK_USE_LOG = 2050;", "  var BOOK_USE_LOG = 2051;", [S, E]],
+  ["only one field of the log row is searched for the book name",
+    "        try { blob = JSON.stringify(e).toLowerCase(); } catch (_) { continue; }",
+    "        try { blob = String((e.data || {}).title || \"\").toLowerCase(); } catch (_) { continue; }", [S, E]],
+  ["the OLDEST reading of a book wins, so a re-read counts from years ago",
+    "        if (ts > best) best = ts;", "        if (!best || ts < best) best = ts;", [S]],
+  ["an exact date is not marked as one, so the card keeps disclaiming it",
+    "          state.booksExact[k] = true;", "", [E]],
+  ["the card lists every book even while one is being read",
+    "    var rows = live.length", "    var rows = false", [E]],
+  ["there is no way to record a book the page cannot show",
+    "        '<div class=\"row\"><span class=\"muted\" style=\"font-size:11px\">Reading a different one?</span>' +",
+    "        '' +", [E]],
+  ["a book finishing tonight is reported as a rounded-up day",
+    "        p.finishesAt - now < 172800000", "        false", [E]],
   ["detection never reaches the stored book dates",
     "        state.books[r.k] = Date.now();", "", [E]],
   ["detection overwrites a date already on record",

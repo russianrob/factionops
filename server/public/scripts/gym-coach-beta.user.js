@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.52
+// @version      0.9.53
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,36 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.53 - The book countdown is the real one, and the card shows one book.
+ *
+ *         0.9.52 found the book and then guessed its age. Reported as "31d
+ *         left" by someone with about 28 HOURS left -- they were thirty days
+ *         in when the coach first looked, and a sighting can only ever be
+ *         dated from now.
+ *
+ *         Torn's log index names the row that knows: 2050, "Item use book",
+ *         written when you start one. One call, asked the moment a book is
+ *         recognised and not again for six hours, because a start date does
+ *         not move while you are reading. The countdown is then exact and the
+ *         card says so instead of carrying the "latest it can be" caveat.
+ *
+ *         The whole log row is searched for the book name rather than one
+ *         field of it. Which key carries the item is undocumented and the
+ *         probe ran out of rate limit before it could read one -- and a wrong
+ *         key would find no start at all, silently falling back to dating from
+ *         now, which is precisely the bug being fixed. Searching the row
+ *         cannot fail that way.
+ *
+ *         Full keys only, since the log is. A Limited key keeps the sighting
+ *         date and the caveat that goes with it.
+ *
+ *         The card also stops listing four books when you are reading one.
+ *         Three rows saying "reading?" around the one that matters is three
+ *         lines of noise; they fold behind a single line, and a tap is still
+ *         how you record a book the page cannot show. And once a book is
+ *         inside two days it counts down in HOURS -- "1d left" for something
+ *         finishing this evening is the least useful way to say it.
+ *
 * 0.9.52 - Book detection actually detects the book.
  *
  *         Reported as not working within minutes of 0.9.51 shipping, and it
@@ -1855,6 +1885,11 @@
     // Which book dates this device worked out for itself, rather than being
     // told. Only these are ever cleared automatically.
     booksAuto: {},
+    // Which dates came from Torn's own item log rather than from a sighting.
+    // Those are exact; the rest are floors and say so.
+    booksExact: {},
+    bookStartAt: 0,
+    bookStartBusy: false,
     bookSeen: "",
     // What the status-icon strip said last time it was read, verbatim.
     bookDiag: "",
@@ -4265,20 +4300,46 @@
   // The four stat books, and what finishing one is worth.
   function booksHtml() {
     var now = Date.now();
-    var rows = HIST_KEYS.map(function (k) {
+    function bookRow(k) {
       var p = bookPending(k, (state.books || {})[k], now);
       var award = bookAward(k, state.stats);
-      var on = !!p;
+      var exact = (state.booksExact || {})[k];
+      // Hours once it is close. "1d left" for something finishing this evening
+      // is the least useful way to say it.
+      var left = !p ? "" :
+        p.finishesAt - now < 172800000
+          ? Math.max(1, Math.round((p.finishesAt - now) / 3600000)) + "h left"
+          : p.daysLeft + "d left";
       return '<div class="row"><span>' + STAT_LABEL[k] +
         '<span class="muted"> \u00b7 ' + esc(STAT_BOOKS[k].name) + "</span></span>" +
         '<button type="button" class="gc-btn secondary" data-book="' + k + '" ' +
         'style="width:auto;min-height:0;padding:5px 11px;font-size:12px' +
-        (on ? ";background:#2ecc71;color:#08131c" : "") + '">' +
-        (p ? p.daysLeft + "d left \u00b7 +" + fmt(award) : "reading?") + "</button>" +
-        ((state.booksAuto || {})[k] && p
-          ? '<span class="muted" style="flex:1 1 100%;font-size:11px">detected on the page \u2014 counted from when this device first saw it, so the finish date is the latest it can be</span>'
+        (p ? ";background:#2ecc71;color:#08131c" : "") + '">' +
+        (p ? left + " \u00b7 +" + fmt(award) : "reading?") + "</button>" +
+        (p && !exact && (state.booksAuto || {})[k]
+          ? '<span class="muted" style="flex:1 1 100%;font-size:11px">spotted on the page, but Torn does not say when you started \u2014 counted from when this device first saw it, so this is the LATEST it can finish</span>'
+          : p && exact
+          ? '<span class="muted" style="flex:1 1 100%;font-size:11px">dated from your item log, so this is exact</span>'
           : "") + "</div>";
-    }).join("");
+    }
+
+    // Only the book you are actually on.
+    //
+    // Four rows, three of them saying "reading?", is three lines of noise
+    // around the one that matters. The others stay reachable -- a tap is still
+    // how you record a book the page cannot show -- but they fold away behind
+    // one line until then.
+    var live = HIST_KEYS.filter(function (k) { return !!bookPending(k, (state.books || {})[k], now); });
+    var rest = HIST_KEYS.filter(function (k) { return live.indexOf(k) === -1; });
+    var rows = live.length
+      ? live.map(bookRow).join("") +
+        '<div class="row"><span class="muted" style="font-size:11px">Reading a different one?</span>' +
+        rest.map(function (k) {
+          return '<button type="button" class="gc-btn secondary" data-book="' + k + '" ' +
+            'style="width:auto;min-height:0;padding:4px 9px;font-size:11px;margin-left:6px">' +
+            esc(STAT_LABEL[k]) + "</button>";
+        }).join("") + "</div>"
+      : HIST_KEYS.map(bookRow).join("");
     // What the page actually said, in Torn's words. Present whether or not a
     // book was recognised, because "recognised nothing" and "saw nothing" are
     // different failures and the wording is what tells them apart.
@@ -6772,6 +6833,8 @@
         auto[r.k] = true;
         changed = true;
       }
+      // The page cannot say when you started, and the log can. Asked once.
+      if (!(state.booksExact || {})[r.k]) fetchBookStart(r.k, r.name);
     } else {
       // The strip is here and no stat book is on it -- including the case where
       // some OTHER book is, since only one can be read at a time. Anything this
@@ -6788,6 +6851,73 @@
       resetPlanCaches();
     }
     return changed;
+  }
+
+  // Torn's "Item use book" log. Named by its own index (/torn/logtypes, public
+  // key), not guessed: 2050 is the row written when you START a book, and 2051
+  // through 2055 are the finishes.
+  var BOOK_USE_LOG = 2050;
+  var BOOK_LOG_TTL = 21600000;   // the start date does not move while you read
+
+  // When the book you are on was actually started.
+  //
+  // Detection off the page says WHICH book and nothing about when, so a
+  // sighting gets dated from now -- reported as "31d left" by someone with
+  // about 28 hours left, because they were thirty days in when the coach first
+  // looked. This is the row that knows.
+  //
+  // The whole row is searched for the name rather than one field of it. Which
+  // key carries the item is undocumented, the probe ran out of rate limit
+  // before it could read one, and a wrong key would return no start at all --
+  // silently falling back to dating from now, which is the exact bug being
+  // fixed. Searching the row cannot fail that way.
+  function bookStartFromLog(responses, name) {
+    var want = String(name || "").toLowerCase();
+    if (!want) return 0;
+    var best = 0;
+    (responses || []).forEach(function (r) {
+      var rows = (r && r.log) || {};
+      for (var k in rows) {
+        var e = rows[k];
+        if (!e) continue;
+        var ts = Number(e.timestamp);
+        if (!(ts > 0)) continue;
+        var blob = "";
+        try { blob = JSON.stringify(e).toLowerCase(); } catch (_) { continue; }
+        if (blob.indexOf(want) === -1) continue;
+        // The most recent reading of that book: you can read one more than once
+        // over a career, and the countdown is for the one you are on.
+        if (ts > best) best = ts;
+      }
+    });
+    return best * 1000;
+  }
+
+  // Asked once per book sighting, never on the poll tick. The log is Full-only,
+  // so a Limited key keeps the sighting date and the caveat that goes with it.
+  function fetchBookStart(k, name) {
+    if (!k || !name) return;
+    if (state.logReadable === false) return;
+    if (!resolveKey()) return;
+    if (state.bookStartAt && Date.now() - state.bookStartAt < BOOK_LOG_TTL) return;
+    if (state.bookStartBusy) return;
+    state.bookStartBusy = true;
+    state.bookStartAt = Date.now();
+    httpGet(apiUrl("log&log=" + BOOK_USE_LOG))
+      .then(function (d) {
+        var when = bookStartFromLog([d], name);
+        if (when > 0 && when !== state.books[k]) {
+          state.books[k] = when;
+          if (!state.booksExact) state.booksExact = {};
+          state.booksExact[k] = true;
+          storeSet("books", state.books);
+          storeSet("booksExact", state.booksExact);
+          resetPlanCaches();
+          renderPanel();
+        }
+      })
+      .catch(function () { /* the sighting date and its caveat still stand */ })
+      .then(function () { state.bookStartBusy = false; });
   }
 
   function bookAward(k, stats) {
@@ -9613,6 +9743,7 @@
       // Tapping makes the date yours, so the auto-detector stops managing it --
       // otherwise a strip without the book would clear what you just set.
       if (state.booksAuto) { state.booksAuto[bkey] = false; storeSet("booksAuto", state.booksAuto); }
+      if (state.booksExact) { state.booksExact[bkey] = false; storeSet("booksExact", state.booksExact); }
       storeSet("books", state.books);
       resetPlanCaches();
       applyGoalFocus();
@@ -9948,6 +10079,9 @@
       var ba = storeGet("booksAuto", null);
       if (typeof ba === "string") { try { ba = JSON.parse(ba); } catch (_) { ba = null; } }
       state.booksAuto = (ba && typeof ba === "object") ? ba : {};
+      var bx = storeGet("booksExact", null);
+      if (typeof bx === "string") { try { bx = JSON.parse(bx); } catch (_) { bx = null; } }
+      state.booksExact = (bx && typeof bx === "object") ? bx : {};
       state.verdictFold = storeBool("verdictFold", true);
       var sh = storeGet("shares", null);
       if (typeof sh === "string") { try { sh = JSON.parse(sh); } catch (_) { sh = null; } }
