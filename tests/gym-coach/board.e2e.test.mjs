@@ -290,6 +290,83 @@ await t("a refused request does not turn into a retry loop", async () => {
     "a refused board re-requested on every re-open");
 });
 
+await t("a member's two requests are SPACED, not fired as a burst", async () => {
+  // The 700ms gap exists to hold the request rate under Torn's 100 a minute,
+  // and a refused call still spends that budget. Counting requests cannot see
+  // whether they were spaced -- only their timing can, which is why the harness
+  // records when each one went out.
+  await load({ contributors: CONTRIB, ps: PS, fresh: true });
+  await openBoard();
+  await load({ contributors: LATER, ps: PS });
+  await openBoard();
+  await page.evaluate(() => { window.__reqAt.length = 0; });
+  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
+  await page.waitForTimeout(9000);
+  const gaps = await page.evaluate(() => {
+    const ps = window.__reqAt.filter(r => /personalstats/.test(r.url)).map(r => r.t).sort((a, b) => a - b);
+    return ps.slice(1).map((t, i) => t - ps[i]);
+  });
+  assert.ok(gaps.length >= 3, "expected several personalstats requests, saw " + (gaps.length + 1));
+  // Allow slack for the event loop, but a burst is two requests in the same
+  // handful of milliseconds and nothing here should look like that.
+  const burst = gaps.filter(g => g < 300);
+  assert.deepStrictEqual(burst, [], "requests went out as a burst: gaps were " + JSON.stringify(gaps));
+});
+
+await t("a board refresh cannot start while the natural pass is running", async () => {
+  // The Refresh button is hidden during the pass, but the tab-open path calls
+  // fetchBoard too -- so switching away and back mid-pass would start a second
+  // chain, and the 700ms spacing would then be spacing two streams instead of
+  // one. The guard is in fetchBoard, and only this reaches it.
+  await load({ contributors: CONTRIB, ps: PS, fresh: true });
+  await openBoard();
+  await load({ contributors: LATER, ps: PS });
+  await openBoard();
+  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
+  await page.waitForTimeout(1200);
+  const before = await countUrls(/faction\/contributors/);
+  for (let i = 0; i < 3; i++) {
+    await page.evaluate(() => document.querySelector('[data-tab="now"]').click());
+    await page.waitForTimeout(150);
+    await page.evaluate(() => document.querySelector('[data-tab="board"]').click());
+    await page.waitForTimeout(300);
+  }
+  assert.strictEqual(await countUrls(/faction\/contributors/), before,
+    "a second board round started while the natural pass was still going");
+});
+
+await t("the natural button does not silently no-op while the board is loading", async () => {
+  // Once a natural figure exists the button reads "Refresh natural" and stays
+  // on screen through a board load. Without the guard it does nothing at all,
+  // which is indistinguishable from a broken button.
+  await load({ contributors: CONTRIB, ps: PS, fresh: true });
+  await openBoard();
+  await load({ contributors: LATER, ps: PS });
+  await openBoard();
+  await page.evaluate(() => document.querySelector('[data-board="natural"]').click());
+  await page.waitForTimeout(9000);
+  // Now start a board round and press it mid-flight.
+  await page.evaluate(() => document.querySelector('[data-board="refresh"]').click());
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { window.__urls.length = 0; });
+  const clicked = await page.evaluate(() => {
+    const b = document.querySelector('[data-board="natural"]');
+    if (!b) return false;
+    b.click();
+    return true;
+  });
+  assert.ok(clicked, "the natural button vanished mid-load, so nothing can be asserted");
+  await page.waitForTimeout(800);
+  assert.strictEqual(await countUrls(/personalstats/), 0,
+    "the natural pass started on top of a board round");
+  const toast = await page.evaluate(() => {
+    const el = document.querySelector("#gcb-panel .gc-toast");
+    return el ? el.innerText.replace(/\s+/g, " ").trim() : "";
+  });
+  assert.ok(/still reading/i.test(toast) || /loading/i.test(toast),
+    "pressing it mid-load said nothing at all; toast was " + JSON.stringify(toast));
+});
+
 await t("the copy buttons reach a handler and put the card on the clipboard", async () => {
   // The click router matches on an explicit attribute list. A data-board
   // button that is not on it is dead code, and looks identical until pressed.
@@ -469,13 +546,23 @@ await t("Refresh is not offered while the natural pass is running", async () => 
     "Refresh stayed live during the natural pass");
 });
 
-await t("a corrupt stored board does not take the panel down", async () => {
-  await load({ contributors: CONTRIB });
-  await page.evaluate(() => localStorage.setItem("gcb_v1_board",
-    JSON.stringify({ week: "banana", at: 0, stats: { gymenergy: { 1: "not a number" } }, rows: [], hist: [] })));
-  await load({ contributors: CONTRIB });
+await t("a corrupt stored board is rejected outright, not partly believed", async () => {
+  // The week is unusable, but the anchors alongside it look perfectly fine --
+  // and that is the point. Believing them measures this week against numbers
+  // from a board whose own week cannot be read. Seeded with a real anchor for
+  // rcexyz so accepting it is VISIBLE: it would show 1,000e rather than 0e.
+  await load({ contributors: CONTRIB, fresh: true });
+  await page.evaluate(me => localStorage.setItem("gcb_v1_board",
+    JSON.stringify({ week: "banana", at: 0,
+                     stats: { gymenergy: { [me]: 4999000, 77: 89999000, 88: 11999000 },
+                              gymtrains: { [me]: "not a number" } },
+                     rows: [], hist: [] })), ME);
+  await load({ contributors: CONTRIB });   // no fresh: the seeded board must survive into this run
   await openBoard();
-  assert.ok((await rows()).length > 0, "a corrupt baseline cost the whole board");
+  const r = await rows();
+  assert.ok(r.length > 0, "a corrupt baseline cost the whole board");
+  r.forEach(x => assert.strictEqual(x.energy, "0e",
+    "anchors from a board with an unreadable week were used anyway: " + JSON.stringify(r)));
 });
 
 await t("a faction that has trained nothing renders as a board, not as an error", async () => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.51
+// @version      0.9.52
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,34 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.52 - Book detection actually detects the book.
+ *
+ *         Reported as not working within minutes of 0.9.51 shipping, and it
+ *         was not.
+ *
+ *         The first sighting of the label was written out as "Reading Book:
+ *         <name> - <effect>", so the name was taken as everything up to the
+ *         dash. The DOM note that followed it had the two run straight
+ *         together with no separator at all -- "Reading Book: <name><effect>"
+ *         -- and against that the split hands back the whole sentence, which
+ *         matches none of the four books. Detection then found nothing, said
+ *         nothing, and looked perfectly healthy doing it.
+ *
+ *         The names are known, so there was never anything to parse. A label
+ *         that begins with one of the four IS that book, whatever punctuation
+ *         follows. Matched now, not parsed, and both label shapes are pinned
+ *         in the tests.
+ *
+ *         The Stat books card also prints what the strip actually said, in
+ *         Torn's own words -- or says the strip was not on the page at all.
+ *         Guessing at that wording is what caused this, and the next time it
+ *         changes the fix should start from a screenshot rather than a guess.
+ *
+ *         Also moves a back-compat guard added in 0.9.50 that sat 58 lines
+ *         before the value it guards is restored, so it could never fire.
+ *         Harmless -- calibration already handles the absence -- but a check
+ *         that cannot run reads as protection and is not.
+ *
 * 0.9.51 - The coach works out which stat book you are reading.
  *
  *         Asked for after 0.9.44 shipped it as a manual tap. The tap stays --
@@ -1828,6 +1856,8 @@
     // told. Only these are ever cleared automatically.
     booksAuto: {},
     bookSeen: "",
+    // What the status-icon strip said last time it was read, verbatim.
+    bookDiag: "",
     // Verdict folded to one line on the Now tab. Boot overwrites this from
     // storage, so the real default lives in that storeBool call, not here.
     verdictFold: true,
@@ -4249,8 +4279,14 @@
           ? '<span class="muted" style="flex:1 1 100%;font-size:11px">detected on the page \u2014 counted from when this device first saw it, so the finish date is the latest it can be</span>'
           : "") + "</div>";
     }).join("");
+    // What the page actually said, in Torn's words. Present whether or not a
+    // book was recognised, because "recognised nothing" and "saw nothing" are
+    // different failures and the wording is what tells them apart.
+    var diag = '<p class="muted" style="margin:8px 0 0;font-size:11px;overflow-wrap:anywhere">' +
+      (state.bookDiag ? esc(state.bookDiag) : "no status-icon strip on this page, so nothing was read") +
+      "</p>";
     var counted = HIST_KEYS.filter(function (k) { return pendingBookAward(k) > 0; });
-    return '<div class="gc-card"><h3>Stat books</h3>' + rows +
+    return '<div class="gc-card"><h3>Stat books</h3>' + rows + diag +
       '<p class="muted" style="margin:8px 0 0">Each awards +' + Math.round(BOOK_PCT * 100) +
       "% of the stat, capped at " + fmt(BOOK_CAP) + ", after " + BOOK_DAYS +
       " days. Tap when you start reading one and the plan below counts it \u2014 " +
@@ -6679,15 +6715,32 @@
       var n = nodes[i];
       var label = n && typeof n.getAttribute === "function" ? n.getAttribute("aria-label") : null;
       if (!label || !BOOK_LABEL_RE.test(label)) continue;
-      var name = String(label).replace(BOOK_LABEL_RE, "").split(BOOK_DASH_RE)[0].trim();
-      if (!name) continue;
-      var k = null, key;
+      var rest = String(label).replace(BOOK_LABEL_RE, "").trim();
+      if (!rest) continue;
+      // MATCHED, not parsed.
+      //
+      // The first sighting of this label was written out with an em dash
+      // between the name and the effect; the DOM note that followed had them
+      // run straight together with no separator at all. Splitting on a dash
+      // handed back the whole sentence, which matches no book, and the whole
+      // feature detected nothing while looking perfectly healthy.
+      //
+      // The four names are known, so there is nothing to parse: a label that
+      // begins with one IS that book, whatever punctuation follows it.
+      var low = rest.toLowerCase(), k = null, key;
       for (key in STAT_BOOKS) {
-        if (STAT_BOOKS[key].name.toLowerCase() === name.toLowerCase()) { k = key; break; }
+        if (low.indexOf(STAT_BOOKS[key].name.toLowerCase()) === 0) { k = key; break; }
       }
-      return { found: true, name: name, k: k };
+      // A book that is not one of the four still gets reported by name, so the
+      // "no stat book is being read" branch is not confused with "no book".
+      // Only here is the dash needed, and only as a best effort.
+      var name = k ? STAT_BOOKS[k].name : rest.split(BOOK_DASH_RE)[0].trim();
+      // The raw label travels with the answer. Getting this format wrong once
+      // already cost a silent non-detection, and the fix for the next one
+      // should be a screenshot rather than another guess.
+      return { found: true, name: name, k: k, raw: String(label) };
     }
-    return { found: false };
+    return { found: false, icons: nodes ? nodes.length : 0 };
   }
 
   // Fold what the page says into the book state.
@@ -6706,6 +6759,9 @@
     if (!state.booksAuto) state.booksAuto = {};
     var auto = state.booksAuto, changed = false, k;
 
+    state.bookDiag = r.found
+      ? "page says: " + r.raw
+      : "strip found (" + r.icons + " icons), no book on it";
     if (r.found && r.k) {
       state.bookSeen = r.name;
       // Never overwrite a date already on record. One you tapped in is better
@@ -9907,10 +9963,6 @@
       if (typeof state.hist === "string") { try { state.hist = JSON.parse(state.hist); } catch (_) { state.hist = []; } }
       if (!Array.isArray(state.hist)) state.hist = [];
       state.hist = state.hist.filter(function (e) { return e && typeof e.d === "number" && Array.isArray(e.v) && e.v.length === 4; });
-      // A stored train log written before byDayStat existed has none, and an
-      // absent map simply leaves every day to the one-stat rule until the next
-      // log round fills it in.
-      if (state.trainLog && typeof state.trainLog.byDayStat !== "object") state.trainLog.byDayStat = {};
       // Trend is the centrepiece of this layout, and a fresh beta namespace
       // means it opens blank next to a stable script holding weeks of history.
       // Copy that history in once, through the same guards; stable is never
@@ -9971,6 +10023,12 @@
       state.trainLog = storeGet("trainLog", null) || null;
       if (typeof state.trainLog === "string") { try { state.trainLog = JSON.parse(state.trainLog); } catch (_) { state.trainLog = null; } }
       if (state.trainLog && !state.trainLog.byDay) state.trainLog = null;
+      // A stored train log written before byDayStat existed has none, and an
+      // absent map simply leaves every day to the one-stat rule until the next
+      // log round fills it in. Placed AFTER the restore above: it originally sat
+      // 58 lines earlier, where state.trainLog is still undefined and the guard
+      // could never fire -- protection in appearance only.
+      if (state.trainLog && typeof state.trainLog.byDayStat !== "object") state.trainLog.byDayStat = {};
       state.gymsOwned = storeGet("gymsOwned", []) || [];
       if (typeof state.gymsOwned === "string") { try { state.gymsOwned = JSON.parse(state.gymsOwned); } catch (_) { state.gymsOwned = []; } }
       if (!Array.isArray(state.gymsOwned)) state.gymsOwned = [];

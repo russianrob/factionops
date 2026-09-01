@@ -92,14 +92,51 @@ t("a book with no effect text after it still gives its name", () => {
   assert.strictEqual(r.k, "str");
 });
 
+t("the name is matched even with NO separator before the effect text", () => {
+  // The reported failure. The first sighting of this label was written out as
+  // "Reading Book: <name> — <effect>", but the DOM note that followed it read
+  // "Reading Book: <name><effect text>" -- no separator at all. Splitting on a
+  // dash then hands back the whole sentence, which matches no book, and the
+  // feature silently detects nothing.
+  //
+  // So the name is not PARSED out any more, it is MATCHED: the four names are
+  // known, and a label that starts with one is that book whatever follows it.
+  const r = read(["Reading Book: Time Is In The MindIncrease speed by 5% up to 10m after 31 days"]);
+  assert.strictEqual(r.k, "spe", "no-separator label was not recognised");
+  assert.strictEqual(r.name, "Time Is In The Mind", "the name should come back clean, not glued to the effect");
+});
+
+t("a label with the effect run straight on still resolves for every book", () => {
+  assert.strictEqual(read(["Reading Book: Brawn Over BrainsIncrease strength by 5%"]).k, "str");
+  assert.strictEqual(read(["Reading Book: Keeping Your Face HandsomeIncrease defense by 5%"]).k, "def");
+  assert.strictEqual(read(["Reading Book: A Job For Your HandsIncrease dexterity by 5%"]).k, "dex");
+});
+
 t("every dash Torn might use separates the name from the effect", () => {
-  // An em dash today is a hyphen tomorrow, and a name that swallowed the whole
-  // effect sentence would match no book at all.
   ["—", "–", "-"].forEach(dash => {
     const r = read(["Reading Book: Brawn Over Brains " + dash + " Increase strength by 5%"]);
     assert.strictEqual(r.name, "Brawn Over Brains", "failed on " + JSON.stringify(dash));
     assert.strictEqual(r.k, "str");
   });
+});
+
+t("and the dash still does the work for a book that is NOT one of the four", () => {
+  // The four stat books are matched by name and need no separator at all. The
+  // dash is only load-bearing for everything else, where there is no known name
+  // to match and the effect has to be trimmed off some other way.
+  ["—", "–", "-"].forEach(dash => {
+    const r = read(["Reading Book: Get Hard Or Go Home " + dash + " Increase gym gains by 20%"]);
+    assert.strictEqual(r.name, "Get Hard Or Go Home", "failed on " + JSON.stringify(dash));
+    assert.strictEqual(r.k, null);
+  });
+});
+
+t("a book name buried mid-label is not a match", () => {
+  // The name has to START the label. Matching it anywhere would let a title
+  // that merely mentions one of the four be read as that book.
+  const r = read(["Reading Book: Notes On Time Is In The Mind — a commentary"]);
+  assert.strictEqual(r.k, null, "a name found mid-label was taken as the book");
+  assert.strictEqual(r.found, true);
 });
 
 t("the prefix is matched whatever its casing", () => {

@@ -7,12 +7,16 @@ const original = fs.readFileSync(FILE, "utf8");
 const build = () => execSync("./build-harness.sh");
 const E = "board.e2e.test.mjs";
 const mutants = [
-  ["board requests have no timeout, so one that never settles wedges the tab",
-    "      httpGet(url).then(function (d) {", "      httpGet(url).then(function (d) { if (0) return;", [E]],
+  // NOT listed: inserting `if (0) return;` into boardGet's success handler.
+  // Dead code that cannot execute, so it is an equivalent mutant and proves
+  // nothing. The timeout itself IS covered -- "the timeout clock is removed
+  // outright" below is killed by the hang test.
   ["the timeout clock is removed outright",
     "        reject(new Error(\"timed out\"));", "", [E]],
-  ["anchors are committed per stat again, so a half-read week half-anchors",
-    "        state.board.stats = draft.stats;", "        state.board.stats = draft.stats;\n        void 0;", [E]],
+  // NOT listed: appending `void 0;` after the anchor commit. Another no-op.
+  // The real version of this concern -- the draft aliasing the live baseline
+  // through a shallow copy -- was a genuine bug, and is covered by
+  // mutate-board.mjs's "the draft aliases the baseline" against boardDraft.
   ["a half-read round saves anyway",
     "        state.boardPartial = got;", "        state.boardPartial = 0;", [E]],
   ["the partial warning is dropped, so a short board looks complete",
@@ -34,9 +38,12 @@ const mutants = [
     "    if (state.boardBusy) return;\n    var last = Math.max", [E]],
   ["a corrupt stored board is trusted, and a string anchor throws",
     "          isFinite(Number(bd.week))) {", "          true) {", [E]],
-  ["the rollover is applied before anything has landed, blanking a good board",
-    "          if (stat === BOARD_STATS[0] && rolled.rolled && !applied) {",
-    "          if (rolled.rolled && !applied) {", [E]],
+  // NOT listed: dropping the `stat === BOARD_STATS[0]` half of the applied
+  // check. Provably equivalent as the code stands: step() rethrows, so a
+  // failure at gymenergy aborts the chain and no later stat can ever reach this
+  // line -- only gymenergy can set `applied` either way. It would stop being
+  // equivalent the day the round tolerates a partial failure, which is exactly
+  // when someone should re-add it.
   ["gymtrains is not requested at all, so the train count is always zero",
     '  var BOARD_STATS = ["gymenergy", "gymtrains", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];',
     '  var BOARD_STATS = ["gymenergy", "gymstrength", "gymdefense", "gymspeed", "gymdexterity"];', [E]],
@@ -56,11 +63,14 @@ const mutants = [
   ["the natural fan-out fires on its own rather than on request",
     '    if (what === "natural") {', '    if (false) {', [E]],
   ["the week-start reading is re-fetched every time, doubling the call count forever",
-    "      if (!haveBase) jobs.push(function () { return httpGet(psUrl(id, startSec)).then(readPs); });",
-    "      jobs.push(function () { return httpGet(psUrl(id, startSec)).then(readPs); });", [E]],
-  ["both of a member's requests go out at once, so the gap only spaces the callbacks",
-    "          return job().then(function (v) { acc.push(v); return acc; })",
-    "          var started = job(); return started.then(function (v) { acc.push(v); return acc; })", [E]],
+    "      if (!haveBase) jobs.push(function () { return boardGet(psUrl(id, startSec)).then(readPs); });",
+    "      jobs.push(function () { return boardGet(psUrl(id, startSec)).then(readPs); });", [E]],
+  ["the spacing between a member's two requests is dropped",
+    "            .then(function (a) { return new Promise(function (r) { setTimeout(function () { r(a); }, BOARD_GAP_MS); }); });",
+    "            .then(function (a) { return a; });", [E]],
+  // Replaced below by a mutant that removes the GAP itself, which is the
+  // property that actually matters. Hoisting `job()` into a variable is
+  // equivalent -- it is called at the same moment either way.
   ["the historic array shape is not read, so every natural figure silently zeroes",
     "      p.forEach(function (row) { if (row && row.name) out[row.name] = Number(row.value) || 0; });", "", [E]],
   ["your own row is not marked, so you cannot find yourself",

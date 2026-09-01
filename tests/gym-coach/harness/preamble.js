@@ -4,6 +4,7 @@
   // Every URL the script asks for, so a suite can assert on request COUNT --
   // the rate limit is a real constraint and "does it render" cannot see it.
   window.__urls = [];
+  window.__reqAt = [];
   var cfg = {};
   try {
     var q = new URLSearchParams(location.search).get("cfg");
@@ -61,6 +62,7 @@
 
   function answer(url) {
     window.__urls.push(url);
+    window.__reqAt.push({ t: Date.now(), url: url });
     if (/selections=calendar/.test(url)) return { competitions: [] };
     // cfg.failStat makes exactly one contributors stat fail, for the
     // partial-fetch paths. cfg.keyFaction drives /key/info's access.faction.
