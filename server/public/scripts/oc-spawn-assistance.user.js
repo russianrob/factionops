@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.73
+// @version      3.2.74
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -42,6 +42,7 @@
 // v3.1.56 — Vault-request notifications now work for partner factions that aren't running FactionOps. Added an "Enable on This Device" button next to "Send Test Notification" in Settings → Notifications. It opens tornwar.com/push/setup with the saved API key, which handles service-worker registration, VAPID fetch, and pushManager.subscribe on the tornwar.com origin, then POSTs to the new /api/oc/push/subscribe endpoint (auth'd by the same Torn API key used everywhere else). After enabling, the existing vault_request preference toggle + Send Test Notification flow work exactly as they did for FactionOps factions. Test-button error text updated to reference the Enable button instead of FactionOps.
 // v3.1.38 — Outcome EV tables now include a Hit % column: empirical top-tier hit rate per scenario, computed from the faction's historical OC completions. We bucket by money payout since Torn doesn't label ending tiers directly — successful completions whose reward lands in the top quartile for that scenario count as top-tier hits. Lets admins compare predicted Top end % (tornprobability model) vs observed Hit % (faction's own history). Needs ≥4 successful completions to show a rate; otherwise displays '—' with the current sample count. Sortable like the other numeric columns.
 // v3.1.37 — Empty-slot placeholder in Recruiting Outcome EV now uses the faction's avg CPR at each OC's difficulty level instead of the flat CPR-50. Average is computed client-side from cprCache across every member whose joinable/highestLevel reaches the OC's level, so the Recruiting numbers reflect "what-if-filled-by-an-average-one-of-us" instead of an artificially low floor. Planning panel unchanged (no empty slots to fill).
+// v3.2.74 — The chat OC badge is admin-only. It tags every speaker in faction chat with when they last ran an OC, which is a management view; the whole faction was reading it beside each other's messages. The vault-balance badge next to it was already gated this way. Fails closed: if the admin check has not answered, nothing is injected.
 // v3.1.36 — Outcome EV table rows now link to the specific OC: the crime name is an anchor to /factions.php?step=your#/tab=crimes&crimeId=<id>, so "row with best Top end %" → one click → the exact OC in Torn's crimes list. Fill chip (e.g. 3/4) added next to each name so multiple same-named OCs at the same difficulty are distinguishable before clicking.
 // v3.1.35 — Click-to-sort on Outcome EV tables: click any of the three numeric column headers (Pass %, Top end %, Q score) to rank OCs by that metric. Default sort is Top end % descending so the highest-payout slate is always on top once data lands. Click the same header twice to flip direction. Arrow (▼/▲) shows which column/direction is currently active. Rows still fetching stay anchored at the bottom of descending sorts. Info-icon (?) clicks continue to open tooltips without triggering a sort.
 // v3.1.34 — Clickable info tooltips on Outcome EV column headers: click the ? next to Pass %, Top end %, or Q score for a short explanation of each metric. Reuses the existing CPR/scope tooltip pattern; tooltip closes on click-outside or second click on the same icon.
@@ -301,7 +302,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.73';
+    const SCRIPT_VERSION = '3.2.74';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -7529,6 +7530,19 @@
 
     function annotateChat() {
         if (!dataReady) return;
+        // Admin-only, both badges.
+        //
+        // The OC badge tags every speaker in faction chat with when they last
+        // ran one. That is a management view -- useful to whoever chases people
+        // into crimes, and an annotation on everyone else's conversation that
+        // they never asked for. The vault-balance badge below was gated this way
+        // from the start; this one never was, so the whole faction has been
+        // reading "[OC: never]" beside each other's messages.
+        //
+        // Fails CLOSED: if the admin check has not answered yet, or could not
+        // answer at all, nothing is injected. A missing badge for an admin is a
+        // smaller problem than the badge appearing for everyone.
+        if (!viewerIsOcAdmin) return;
         const chatAreas = document.querySelectorAll('[class*="chat" i], [id*="chat" i]');
         if (!chatAreas.length) return;
         chatAreas.forEach(area => {
