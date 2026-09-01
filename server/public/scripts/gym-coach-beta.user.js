@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.59
+// @version      0.9.60
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,27 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.60 - Stop asking which book, and say where the cap bites.
+ *
+ *         Two asked for together.
+ *
+ *         "Reading a different one?" is only worth the space when the answer is
+ *         not already known. Where the page NAMED the book there is nothing to
+ *         ask -- you can only read one at a time, so the other three are not
+ *         candidates, they are noise. The prompt stays for a book recorded by
+ *         hand, where the page has said nothing and a tap is the only way in.
+ *
+ *         And the card now states the stat at which +5% stops being +5%. Ten
+ *         million is five percent of two hundred million, so above that every
+ *         book is worth a flat ten million however big the stat gets -- and a
+ *         row whose stat is already past it says so, because the same book on a
+ *         40m stat is worth 2m and on a 260m stat is worth the same 10m as on a
+ *         200m one. That is the difference between a book being worth reading
+ *         and being worth reading LAST.
+ *
+ *         Derived from the percentage and the cap rather than typed in, so if
+ *         either ever changes the number printed follows instead of lying.
+ *
 * 0.9.59 - A book the page told us about is not a toggle.
  *
  *         Reported: tapping the green pill reset the countdown to 31 days. It
@@ -4462,6 +4483,10 @@
       // renders as a chip. Books the page has NOT told us about stay tappable,
       // which is the whole point of them.
       var owned = p && ((state.booksAuto || {})[k] || exact);
+      // Whether THIS stat is already past the point where the percentage stops
+      // mattering. Worth saying on the row: the same book on a 40m stat is
+      // worth 2m, and on a 260m stat it is worth the same 10m as on a 200m one.
+      var atCap = (state.stats && state.stats[k] || 0) >= bookCapAt();
       return '<div class="row"><span>' + STAT_LABEL[k] +
         '<span class="muted"> \u00b7 ' + esc(STAT_BOOKS[k].name) + "</span></span>" +
         (owned
@@ -4476,6 +4501,11 @@
           ? '<span class="muted" style="flex:1 1 100%;font-size:11px">spotted on the page, but Torn does not say when you started \u2014 counted from when this device first saw it, so this is the LATEST it can finish</span>'
           : p && exact
           ? '<span class="muted" style="flex:1 1 100%;font-size:11px">dated from your item log, so this is exact</span>'
+          : "") +
+        (p && atCap
+          ? '<span class="muted" style="flex:1 1 100%;font-size:11px">your ' + STAT_LABEL[k] +
+            " is past " + fmt(bookCapAt()) + ", so this is the flat " + fmt(BOOK_CAP) +
+            " cap rather than " + Math.round(BOOK_PCT * 100) + "%</span>"
           : "") + "</div>";
     }
 
@@ -4487,15 +4517,23 @@
     // one line until then.
     var live = HIST_KEYS.filter(function (k) { return !!bookPending(k, (state.books || {})[k], now); });
     var rest = HIST_KEYS.filter(function (k) { return live.indexOf(k) === -1; });
-    var rows = live.length
-      ? live.map(bookRow).join("") +
+    // Asking "reading a different one?" is only worth the space when the answer
+    // is not already known. If the page NAMED the book, there is nothing to ask
+    // -- you can only read one at a time, so the other three are not candidates,
+    // they are noise. The prompt stays for a book recorded by hand, where the
+    // page has told us nothing and the tap is the only way in.
+    var pageKnows = live.some(function (k) {
+      return (state.booksAuto || {})[k] || (state.booksExact || {})[k];
+    });
+    var rows = !live.length
+      ? HIST_KEYS.map(bookRow).join("")
+      : live.map(bookRow).join("") + (pageKnows ? "" :
         '<div class="row"><span class="muted" style="font-size:11px">Reading a different one?</span>' +
         rest.map(function (k) {
           return '<button type="button" class="gc-btn secondary" data-book="' + k + '" ' +
             'style="width:auto;min-height:0;padding:4px 9px;font-size:11px;margin-left:6px">' +
             esc(STAT_LABEL[k]) + "</button>";
-        }).join("") + "</div>"
-      : HIST_KEYS.map(bookRow).join("");
+        }).join("") + "</div>");
     // What the page actually said, in Torn's words. Present whether or not a
     // book was recognised, because "recognised nothing" and "saw nothing" are
     // different failures and the wording is what tells them apart.
@@ -4508,7 +4546,8 @@
     return '<div class="gc-card"><h3>Stat books</h3>' + rows + diag +
       '<p class="muted" style="margin:8px 0 0">Each awards +' + Math.round(BOOK_PCT * 100) +
       "% of the stat, capped at " + fmt(BOOK_CAP) + ", after " + BOOK_DAYS +
-      " days. Tap when you start reading one and the plan below counts it \u2014 " +
+      " days \u2014 so the cap bites at <b>" + fmt(bookCapAt()) + "</b>, and above that " +
+      "every book is worth a flat " + fmt(BOOK_CAP) + " however big the stat gets. Tap when you start reading one and the plan below counts it \u2014 " +
       "it is a known gain with a date, and the dates were being drawn as if it " +
       "were not coming. It stops counting the moment it lands, because by then " +
       "the stat itself carries it." +
@@ -7248,6 +7287,16 @@
           (e && e.code ? " (code " + e.code + ")" : "");
       })
       .then(function () { state.bookStartBusy = false; renderPanel(); });
+  }
+
+  // The stat at which the percentage stops being the percentage.
+  //
+  // Above this, +5% would exceed the ten-million cap, so the award is flat and
+  // the book is worth steadily less the bigger the stat gets. Derived from the
+  // two constants rather than typed in: if either ever changes, the number the
+  // card prints has to follow rather than quietly lie.
+  function bookCapAt() {
+    return BOOK_PCT > 0 ? Math.round(BOOK_CAP / BOOK_PCT) : 0;
   }
 
   function bookAward(k, stats) {

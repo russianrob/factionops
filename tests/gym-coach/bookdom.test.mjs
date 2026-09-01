@@ -239,5 +239,30 @@ t("a strip with no book still only clears what this device set itself", () => {
   assert.strictEqual(out.books.def, 2000, "a hand-set book was cleared by a strip that named nothing");
 });
 
+
+// ---- where the 5% stops being 5% ------------------------------------------
+
+const capAt = () => new Function("var R;" + BOOKS_SRC + "\n" +
+  [/var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/]
+    .map(re => { const m = re.exec(src); assert.ok(m, "missing " + re); return m[0]; }).join("\n") +
+  "\n" + grab("bookCapAt") + "\nR = bookCapAt(); return R;")();
+
+t("the cap bites at the stat where 5% of it reaches ten million", () => {
+  // Derived, not typed in: if either the percentage or the cap ever changes,
+  // the number the card prints has to follow rather than quietly lie.
+  assert.strictEqual(capAt(), 200000000);
+});
+
+t("the award is the percentage below that, and the flat cap above it", () => {
+  const at = capAt();
+  const award = (v) => new Function("var R;" + BOOKS_SRC + "\n" +
+    [/var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/]
+      .map(re => re.exec(src)[0]).join("\n") + "\n" + grab("bookAward") +
+    `\nR = bookAward("spe", { spe: ${v} }); return R;`)();
+  assert.strictEqual(award(at - 100000000), (at - 100000000) * 0.05);
+  assert.strictEqual(award(at), 10000000);
+  assert.strictEqual(award(at * 2), 10000000, "past the cap it stops growing");
+});
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

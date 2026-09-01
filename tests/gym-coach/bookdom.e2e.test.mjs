@@ -155,7 +155,38 @@ await t("a page-detected book has no toggle to tap", async () => {
   // and the others must remain tappable, or a book Torn cannot show is unrecordable
   const others = await page.evaluate(() =>
     ["str", "def", "dex"].filter(k => !!document.querySelector('[data-book="' + k + '"]')).length);
-  assert.strictEqual(others, 3, "the books you are not reading should still be tappable");
+  assert.strictEqual(others, 0,
+    "the page already named the book, so the other three are noise, not candidates");
+  const txt = await page.evaluate(() => {
+    const c = [...document.querySelectorAll("#gcb-panel .gc-card")].filter(x => /stat books/i.test(x.textContent))[0];
+    return c ? c.innerText.replace(/\s+/g, " ") : "";
+  });
+  assert.ok(!/Reading a different one/i.test(txt), "still asking which book: " + txt.slice(0, 200));
+});
+
+await t("a book recorded BY HAND still offers the others", async () => {
+  // No strip on the page, so nothing is page-detected: the tap is the only way
+  // in and the prompt has to stay.
+  await load({
+    strip: null,
+    seed: { gcb_v1_books: JSON.stringify({ str: 0, def: 0, spe: Date.now() - 86400000, dex: 0 }) }
+  });
+  await page.evaluate(() => document.querySelector('[data-tab="plan"]').click());
+  await page.waitForTimeout(600);
+  const others = await page.evaluate(() =>
+    ["str", "def", "dex"].filter(k => !!document.querySelector('[data-book="' + k + '"]')).length);
+  assert.strictEqual(others, 3, "a hand-recorded book must still let you pick another");
+});
+
+await t("the card says where the ten-million cap starts biting", async () => {
+  await load({ strip: [READING], cfg: { keyLevel: 4 } });
+  await page.evaluate(() => document.querySelector('[data-tab="plan"]').click());
+  await page.waitForTimeout(600);
+  const txt = await page.evaluate(() => {
+    const c = [...document.querySelectorAll("#gcb-panel .gc-card")].filter(x => /stat books/i.test(x.textContent))[0];
+    return c ? c.innerText.replace(/\s+/g, " ") : "";
+  });
+  assert.match(txt, /200,000,000/, "the cap threshold should be stated: " + txt.slice(0, 300));
 });
 
 await t("the countdown is stated in days and hours, as Torn states it", async () => {
@@ -237,7 +268,8 @@ await t("the card shows the book you are on, not four rows of maybe", async () =
   });
   assert.match(txt, /Time Is In The Mind/, txt.slice(0, 200));
   assert.ok(!/reading\?/i.test(txt), "the three you are NOT reading are still shouting: " + txt.slice(0, 300));
-  assert.match(txt, /Reading a different one/i, "there must still be a way to record another: " + txt.slice(0, 300));
+  assert.ok(!/Reading a different one/i.test(txt),
+    "the page named the book, so the other three should not be offered: " + txt.slice(0, 300));
 });
 
 await t("but with no book on the go, all four are offered", async () => {
