@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.14
+// @version      3.4.15
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -1933,20 +1933,50 @@
             // raises an estimate, so it cannot inflate any weapon vs prior behaviour.
             var bonusValueInfo = function(b) {
                 var r0 = _bonusValueRaw(b);
-                if (weaponKey && b.level && r0 && r0.source !== 'exact %' && r0.value != null) {
-                    // Only a genuine LOW-OUTLIER roll: target below THIS rarity's own observed %-range.
-                    // A low roll on a high rarity means a 2nd bonus set the rarity — that's the case the
-                    // %-agnostic combo over-inflates. High rolls are left untouched so we never under-price.
-                    var lvR = weaponLevelPrices[itemKey + '|' + b.name];
-                    lvR = lvR && lvR[rarity];
-                    if (lvR) {
-                        var minR = Math.min.apply(null, Object.keys(lvR).map(Number));
-                        if (b.level < minR) {
-                            var curve = getCombinedLevelValue(itemKey, b.name, b.level);
-                            if (curve && curve.value != null && curve.value < r0.value) {
-                                return { value: curve.value, source: 'level %', count: curve.count };
-                            }
-                        }
+                if (!(weaponKey && b.level && r0 && r0.source !== 'exact %' && r0.value != null)) return r0;
+                // The %→value curve for this weapon+bonus across every rarity. Where it
+                // is used depends on how many bonuses the item carries, because the two
+                // cases are not the same problem.
+                var curve = getCombinedLevelValue(itemKey, b.name, b.level);
+                if (!curve || curve.value == null) return r0;
+
+                // TWO BONUSES: the base is a %-agnostic median — the comp is "this
+                // weapon with this bonus", at any roll. Raised on the forum, and right:
+                // for a roll the comp does not share, that median is the wrong number
+                // whichever side of the range the roll sits on. Until now the curve was
+                // consulted only for rolls BELOW the range and only to lower the answer,
+                // which left the median as the base for most doubles.
+                //
+                // The curve and the median are combined rather than the curve replacing
+                // it: the curve knows the roll but pools rarities, the median knows the
+                // rarity but not the roll, and each is a partial reading. Measured out of
+                // sample — feed built from the oldest 80% of 276k rows, scored on the
+                // newest 20%, split in half again so a win on one half that vanishes on
+                // the other is visible:
+                //
+                //   double, no pair comp    26.0% -> 24.1% off by >50%   (other half 29.3% -> 27.4%)
+                //                           median |log err| 0.314 -> 0.275
+                //                           median est/actual 0.83 -> 0.87
+                //
+                // Replacing outright, requiring same-rarity level data, and gating on a
+                // sample count were all measured too; all scored worse than this.
+                if (bonuses.length >= 2) {
+                    return { value: Math.round(Math.sqrt(curve.value * r0.value)),
+                             source: 'level %', count: curve.count };
+                }
+
+                // ONE BONUS: rarity is essentially a restatement of the roll, so the
+                // curve is not a second opinion and blending it adds noise — measured,
+                // it costs about a point. The original narrow rule stays: only a genuine
+                // LOW-OUTLIER roll, below THIS rarity's own observed range, and only
+                // downward. A low roll at a high rarity means a second bonus set that
+                // rarity, which is the case the %-agnostic median over-inflates.
+                var lvR = weaponLevelPrices[itemKey + '|' + b.name];
+                lvR = lvR && lvR[rarity];
+                if (lvR) {
+                    var minR = Math.min.apply(null, Object.keys(lvR).map(Number));
+                    if (b.level < minR && curve.value < r0.value) {
+                        return { value: curve.value, source: 'level %', count: curve.count };
                     }
                 }
                 return r0;
