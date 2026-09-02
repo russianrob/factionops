@@ -35,12 +35,12 @@ function extractFunction(src, name) {
 
 function extractCompute(src) {
   const parts = [];
-  for (const name of ["COMBO_MIN_SAMPLES","LEVEL_MIN_SAMPLES","WEAPON_CLASS","BONUS_ID_MAP","ITEM_ID_MAP","ARMOUR_SET","ARMOUR_ID_MAP","ARMOUR_BONUS_MAP","RARITY_MAP"]) {
+  for (const name of ["COMBO_MIN_SAMPLES","LEVEL_MIN_SAMPLES","RECENT_DAYS","RECENT_MIN","WEAPON_CLASS","BONUS_ID_MAP","ITEM_ID_MAP","ARMOUR_SET","ARMOUR_ID_MAP","ARMOUR_BONUS_MAP","RARITY_MAP"]) {
     const m = src.match(new RegExp("^[ \\t]*var[ \\t]+" + name + "[ \\t]*=.*$", "m"));
     if (!m) throw new Error("rwp: var not found: " + name);
     parts.push(m[0].trim());
   }
-  for (const fn of ["percentile","parseCSVAndComputePrices","parseArmourCSVAndComputePrices"]) {
+  for (const fn of ["percentile","parseCSVAndComputePrices","attachRecentPrices","parseArmourCSVAndComputePrices"]) {
     parts.push(extractFunction(src, fn));
   }
   return parts.join("\n");
@@ -52,8 +52,9 @@ function buildComputeFns() {
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox, { timeout: 5000, filename: "rwp-compute.js" });
   const w = sandbox.parseCSVAndComputePrices, a = sandbox.parseArmourCSVAndComputePrices;
-  if (typeof w !== "function" || typeof a !== "function") throw new Error("rwp: compute fns not exposed");
-  return { w, a };
+  const r = sandbox.attachRecentPrices;
+  if (typeof w !== "function" || typeof a !== "function" || typeof r !== "function") throw new Error("rwp: compute fns not exposed");
+  return { w, a, r };
 }
 
 async function fetchBuf(url) {
@@ -66,9 +67,13 @@ export async function refreshRwpPrices(reason) {
   if (_running) return null;
   _running = true;
   try {
-    const { w, a } = buildComputeFns();
+    const { w, a, r } = buildComputeFns();
     const [wGz, aGz] = await Promise.all([fetchBuf(WEAPON_CDN), fetchBuf(ARMOUR_CDN)]);
-    const wData = w(gunzipSync(wGz).toString("utf8"));
+    const wCsv = gunzipSync(wGz).toString("utf8");
+    const wData = w(wCsv);
+    // Per-group recency, weapon side only. Single-bonus lookups read these; the
+    // all-time tables above are untouched and still serve everything else.
+    r(wCsv, wData);
     const aData = a(gunzipSync(aGz).toString("utf8"));
     const out = {
       weaponPrices:      wData.weaponPrices,
@@ -82,6 +87,7 @@ export async function refreshRwpPrices(reason) {
       weaponLevelPrices: wData.levelPrices,
       armourComboPrices: aData.comboPrices,
       weaponMaxBonus:    wData.weaponMaxBonus,
+      recent:            wData.recent || null,
       timestamp: Date.now(),
     };
     if (!out.weaponPrices || Object.keys(out.weaponPrices).length === 0) throw new Error("empty weaponPrices — refusing to overwrite");

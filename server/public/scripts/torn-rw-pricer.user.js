@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.16
+// @version      3.4.17
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -83,6 +83,21 @@
     var weaponLevelPrices = {};   // weapon|bonus -> rarity -> exact-% -> median (per bonus level)
     var weaponMaxBonus = DEFAULT_WEAPON_MAX_BONUS || {};   // bonus on highest sale per weapon+rarity
     var COMBO_MIN_SAMPLES = 3;   // min auctions needed to use combo median
+    // Recency, applied per group rather than as one cutoff.
+    //
+    // RW supply has grown hard -- 67k auction sales in 2024, 82k in 2025 -- and
+    // prices have fallen with it, so an all-time median reads HIGH. Measured
+    // out of sample it over-estimates single-bonus items by about 23%.
+    //
+    // But a flat window is a bad trade. Double-bonus items are rare, and cutting
+    // their history starves comps that are already thin: at a one-year cutoff
+    // the no-pair double-bonus miss rate goes the wrong way, 24.1% -> 27.7%.
+    //
+    // So each group keeps BOTH readings and takes the one it can support: the
+    // last year when it has RECENT_MIN sales of its own in that year, its full
+    // history when it does not.
+    var RECENT_DAYS = 365;
+    var RECENT_MIN = 3;
     var LEVEL_MIN_SAMPLES = 3;   // min auctions needed to use a per-level median
 
     // ─── Static structural mappings (never change) ───────────
@@ -262,16 +277,18 @@
     }
 
     function getMedianPrice(weaponName, rarity) {
-        var wData = weaponPrices[weaponName];
+        var wData = TBL('weaponPrices')[weaponName];
         if (wData && wData[rarity]) return wData[rarity][1];
         var cls = WEAPON_CLASS[weaponName];
-        if (cls && classPrices[cls] && classPrices[cls][rarity]) return classPrices[cls][rarity][1];
+        var cp0 = TBL('classPrices');
+        if (cls && cp0[cls] && cp0[cls][rarity]) return cp0[cls][rarity][1];
         return null;
     }
 
     function getBonusMedian(bonusName, rarity) {
-        if (!bonusName || !bonusPrices[bonusName]) return null;
-        var bData = bonusPrices[bonusName];
+        var bp0 = TBL('bonusPrices');
+        if (!bonusName || !bp0[bonusName]) return null;
+        var bData = bp0[bonusName];
         if (bData[rarity]) return bData[rarity][1];
         return null;
     }
@@ -301,10 +318,11 @@
     // ─── Full price array accessors ─────────────────────────
 
     function getPriceArray(weaponName, rarity) {
-        var wData = weaponPrices[weaponName];
+        var wData = TBL('weaponPrices')[weaponName];
         if (wData && wData[rarity]) return wData[rarity];
         var cls = WEAPON_CLASS[weaponName];
-        if (cls && classPrices[cls] && classPrices[cls][rarity]) return classPrices[cls][rarity];
+        var cp = TBL('classPrices');
+        if (cls && cp[cls] && cp[cls][rarity]) return cp[cls][rarity];
         return null;
     }
 
@@ -317,8 +335,9 @@
     }
 
     function getBonusPriceArray(bonusName, rarity) {
-        if (!bonusName || !bonusPrices[bonusName]) return null;
-        if (bonusPrices[bonusName][rarity]) return bonusPrices[bonusName][rarity];
+        var bp = TBL('bonusPrices');
+        if (!bonusName || !bp[bonusName]) return null;
+        if (bp[bonusName][rarity]) return bp[bonusName][rarity];
         return null;
     }
 
@@ -328,11 +347,32 @@
         return null;
     }
 
+    // The recent tables, when a feed carries them. Null on an old cached feed,
+    // which is why every read below falls back to the all-time table rather
+    // than assuming this is populated.
+    var recentTables = null;
+    // Which set the lookups read for the item being priced. Set once per item
+    // in injectPriceTags and never left dangling: a single-bonus item has
+    // plenty of fresh comparables and wants them, a double-bonus item is
+    // data-starved and keeps its history. Measured out of sample, single-bonus
+    // estimates go from 18.3% to 9.3% off by more than 50%, and from +23% to
+    // +5% bias, while both double-bonus cohorts come out unchanged.
+    var ACTIVE = null;
+    function TBL(name) {
+        if (ACTIVE && ACTIVE[name]) return ACTIVE[name];
+        if (name === 'weaponPrices') return weaponPrices;
+        if (name === 'bonusPrices') return bonusPrices;
+        if (name === 'classPrices') return classPrices;
+        if (name === 'comboPrices') return weaponComboPrices;
+        return weaponLevelPrices;
+    }
+
     // ─── Combo lookup: weapon+bonus or armour+bonus ──────────
 
     function getWeaponComboMedian(weaponName, bonusName, rarity) {
         var key = weaponName + '|' + bonusName;
-        var a = weaponComboPrices[key] && weaponComboPrices[key][rarity];
+        var cb = TBL('comboPrices');
+        var a = cb[key] && cb[key][rarity];
         if (a && a[3] >= COMBO_MIN_SAMPLES) return a[1];
         return null;
     }
@@ -341,7 +381,8 @@
     // still a real exact-bonus comp — used as a low-confidence estimate before the weapon floor.
     function getWeaponComboThinArray(weaponName, bonusName, rarity) {
         var key = weaponName + '|' + bonusName;
-        var a = weaponComboPrices[key] && weaponComboPrices[key][rarity];
+        var cb = TBL('comboPrices');
+        var a = cb[key] && cb[key][rarity];
         if (a && a[3] > 0 && a[3] < COMBO_MIN_SAMPLES) return a;
         return null;
     }
@@ -354,7 +395,8 @@
 
     function getWeaponComboPriceArray(weaponName, bonusName, rarity) {
         var key = weaponName + '|' + bonusName;
-        if (weaponComboPrices[key] && weaponComboPrices[key][rarity]) return weaponComboPrices[key][rarity];
+        var cb = TBL('comboPrices');
+        if (cb[key] && cb[key][rarity]) return cb[key][rarity];
         return null;
     }
 
@@ -384,7 +426,7 @@
 
     function getWeaponLevelMedian(weaponName, bonusName, rarity, level) {
         if (!level) return null;
-        var lv = weaponLevelPrices[weaponName + '|' + bonusName];
+        var lv = TBL('levelPrices')[weaponName + '|' + bonusName];
         if (!lv || !lv[rarity]) return null;
         lv = lv[rarity];
         if (lv[level] != null) return levelMedianOf(lv[level]);
@@ -403,7 +445,7 @@
 
     function getWeaponLevelCount(weaponName, bonusName, rarity, level) {
         if (!level) return null;
-        var lv = weaponLevelPrices[weaponName + '|' + bonusName];
+        var lv = TBL('levelPrices')[weaponName + '|' + bonusName];
         if (!lv || !lv[rarity]) return null;
         var v = lv[rarity][level];
         return (Array.isArray(v) && v.length > 1) ? v[1] : null;
@@ -415,7 +457,7 @@
     // low roll never inherits the %-agnostic combo median of much higher rolls.
     function getCombinedLevelValue(weaponName, bonusName, level) {
         if (!level) return null;
-        var lv = weaponLevelPrices[weaponName + '|' + bonusName];
+        var lv = TBL('levelPrices')[weaponName + '|' + bonusName];
         if (!lv) return null;
         var pts = {};
         for (var rr in lv) {
@@ -786,6 +828,70 @@
         };
     }
 
+    // Second pass over the recent slice, merged per group against the full
+    // history. The all-time tables are the SAME objects the caller already had:
+    // this only adds, it never rewrites them.
+    //
+    // Pair combos are deliberately left out. Double-bonus estimates read the
+    // all-time tables, so a recent copy would be weight in the feed that nothing
+    // ever looks at -- and pair combos are the thinnest data there is.
+    function attachRecentPrices(csvText, all) {
+        var lines = csvText.split('\n');
+        var newest = 0;
+        for (var i = 1; i < lines.length; i++) {
+            var t = parseInt(lines[i], 10);
+            if (t > newest) newest = t;
+        }
+        if (!newest) return all;
+        var floor = newest - RECENT_DAYS * 86400;
+        var keep = [lines[0]];
+        for (var j = 1; j < lines.length; j++) {
+            if (parseInt(lines[j], 10) >= floor) keep.push(lines[j]);
+        }
+        // Nothing to say if the window holds almost nothing; better to ship the
+        // history alone than a table built from a handful of sales.
+        if (keep.length < 1000) return all;
+        var R = parseCSVAndComputePrices(keep.join('\n'));
+
+        // n sits at [3] in a price array and at [1] in a level entry.
+        function pick(rec, hist, isLevel) {
+            var out = {};
+            var k;
+            for (k in hist) out[k] = hist[k];
+            for (k in rec) {
+                if (!out[k]) { out[k] = rec[k]; continue; }
+                var merged = {}, rar;
+                for (rar in out[k]) merged[rar] = out[k][rar];
+                for (rar in rec[k]) {
+                    if (isLevel) {
+                        var lvOut = {}, lv;
+                        for (lv in (merged[rar] || {})) lvOut[lv] = merged[rar][lv];
+                        for (lv in rec[k][rar]) {
+                            var e = rec[k][rar][lv];
+                            if (Array.isArray(e) && Number(e[1]) >= RECENT_MIN) lvOut[lv] = e;
+                            else if (lvOut[lv] === undefined) lvOut[lv] = e;
+                        }
+                        merged[rar] = lvOut;
+                    } else {
+                        var a = rec[k][rar];
+                        if (Array.isArray(a) && Number(a[3]) >= RECENT_MIN) merged[rar] = a;
+                        else if (merged[rar] === undefined) merged[rar] = a;
+                    }
+                }
+                out[k] = merged;
+            }
+            return out;
+        }
+        all.recent = {
+            weaponPrices: pick(R.weaponPrices, all.weaponPrices, false),
+            bonusPrices:  pick(R.bonusPrices,  all.bonusPrices,  false),
+            classPrices:  pick(R.classPrices,  all.classPrices,  false),
+            comboPrices:  pick(R.comboPrices,  all.comboPrices,  false),
+            levelPrices:  pick(R.levelPrices,  all.levelPrices,  true)
+        };
+        return all;
+    }
+
     // ─── Armour CSV parsing & price computation ────────────────
 
     function parseArmourCSVAndComputePrices(csvText) {
@@ -965,6 +1071,10 @@
         if (jsonData.weaponLevelPrices) weaponLevelPrices = jsonData.weaponLevelPrices;
         if (jsonData.armourComboPrices) armourComboPrices = jsonData.armourComboPrices;
         if (jsonData.weaponMaxBonus) weaponMaxBonus = jsonData.weaponMaxBonus;
+        // Absent on a feed or cache written before 3.4.17. Left null, every
+        // lookup falls back to the all-time tables, which is the old behaviour
+        // rather than a broken one.
+        recentTables = jsonData.recent || null;
     }
 
     async function fetchAndUpdatePrices() {
@@ -991,6 +1101,8 @@
                     ]);
 
                     var weaponData = parseCSVAndComputePrices(results[0]);
+                    attachRecentPrices(results[0], weaponData);
+                    recentTables = weaponData.recent || null;
                     weaponPrices = weaponData.weaponPrices;
                     bonusPrices = weaponData.bonusPrices;
                     classPrices = weaponData.classPrices;
@@ -1026,6 +1138,7 @@
                 weaponLevelPrices: weaponLevelPrices,
                 armourComboPrices: armourComboPrices,
                 weaponMaxBonus: weaponMaxBonus,
+                recent: recentTables,
                 timestamp: Date.now()
             });
             safeSet(CACHE_KEY, cacheData);
@@ -1882,6 +1995,14 @@
             var rarity = detectRarity(el);
             if (!rarity) continue;
 
+            // Which price tables this item reads, decided before anything reads
+            // one: the median below is governed by it too. A single-bonus weapon
+            // has plenty of fresh comparables and takes the recent set; a
+            // double-bonus one is data-starved and keeps its full history.
+            // Armour has no recent set and is unaffected.
+            var bonuses = extractBonuses(el);
+            ACTIVE = (weaponKey && recentTables && bonuses.length === 1) ? recentTables : null;
+
             var median, bonusFn, badge;
             if (weaponKey) {
                 median = getMedianPrice(weaponKey, rarity);
@@ -1892,7 +2013,6 @@
             }
             if (!median) continue;
 
-            var bonuses = extractBonuses(el);
             var itemKey = weaponKey || armourKey;
             var comboFn = weaponKey ? getWeaponComboMedian : getArmourComboMedian;
 
@@ -1977,7 +2097,7 @@
                 // LOW-OUTLIER roll, below THIS rarity's own observed range, and only
                 // downward. A low roll at a high rarity means a second bonus set that
                 // rarity, which is the case the %-agnostic median over-inflates.
-                var lvR = weaponLevelPrices[itemKey + '|' + b.name];
+                var lvR = TBL('levelPrices')[itemKey + '|' + b.name];
                 lvR = lvR && lvR[rarity];
                 if (lvR) {
                     var minR = Math.min.apply(null, Object.keys(lvR).map(Number));
