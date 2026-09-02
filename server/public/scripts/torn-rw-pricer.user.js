@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.15
+// @version      3.4.16
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -1506,7 +1506,13 @@
             for (var di = 0; di < deriv.length; di++) {
                 var d = deriv[di];
                 var amt = (d.prem ? '+' : '') + fmtMoney(d.amt);
-                html += '<div class="rwp-tooltip-row"><span class="rwp-tooltip-label">' + d.label + '</span><span class="rwp-tooltip-value">' + amt + ' <span style="opacity:0.5;font-size:11px;">' + (d.src || '') + salesMeta(d.n) + '</span></span></div>';
+                // "+$0 · 78 sales" read as "78 sales say this is worth nothing". It
+                // means "78 sales say $27.6M, and a bare Orange Lorcin already costs
+                // $55.0M, so it adds nothing on top". Say the second thing.
+                var meta = (d.prem && !d.amt && d.raw != null && d.floor != null)
+                    ? 'worth ' + fmtMoney(d.raw) + ', under the ' + fmtMoney(d.floor) + ' ' + rarity + ' floor'
+                    : (d.src || '') + salesMeta(d.n);
+                html += '<div class="rwp-tooltip-row"><span class="rwp-tooltip-label">' + d.label + '</span><span class="rwp-tooltip-value">' + amt + ' <span style="opacity:0.5;font-size:11px;">' + meta + '</span></span></div>';
             }
             if (prices && prices.length === 4) {
                 html += '<div class="rwp-tooltip-row" style="opacity:0.65;"><span class="rwp-tooltip-label">' + rarity + ' ' + itemName + '</span><span class="rwp-tooltip-value">' + fmtMoney(prices[1]) + ' <span style="opacity:0.6;font-size:11px;">' + salesMeta(prices[3]) + '</span></span></div>';
@@ -2013,7 +2019,12 @@
                         } else {
                             var prem = Math.max(0, inf.value - plain);
                             estimatedPrice += prem;
-                            deriv.push({ label: derivLabel(bonuses[pv]), amt: prem, src: inf.source, n: inf.count, prem: true });
+                            // raw and floor ride along so the tooltip can explain a zero.
+                            // A premium is what the bonus adds ABOVE a bare weapon of this
+                            // colour, so a bonus worth less than that floor adds nothing --
+                            // which is a different statement from "we have no data".
+                            deriv.push({ label: derivLabel(bonuses[pv]), amt: prem, src: inf.source,
+                                         n: inf.count, prem: true, raw: inf.value, floor: plain });
                         }
                     }
                 }

@@ -1,0 +1,40 @@
+<p>You're right, and thanks for actually digging into the logic instead of just telling me the number looked wrong. That saved me a lot of time.</p>
+
+<p>The short version of what was happening: the comp table is keyed by the item's <strong>colour</strong>, and on a double-bonus item the colour is usually set by the <em>other</em> bonus.</p>
+
+<p>Rarity comes from total quality across both bonuses. So a single-bonus Uzi only ever reaches Orange if that one bonus rolled high, which means every Orange single-Revitalize sale in the data is a 13% or 15% roll. Your Uzi got to Orange on Revitalize 10% plus Specialist 31%, where Specialist did most of the work on colour. The script then asked "what does an Orange Uzi with Revitalize sell for" and got back the answer for a roll five points higher than yours.</p>
+
+<p>Here's what the data actually holds for 9mm Uzi + Revitalize:</p>
+
+<pre>per-roll sales      Yellow  10%  ->    $227.4M   (270 sales)
+                    Yellow  11%  ->    $351.0M   (157 sales)
+                    Yellow  12%  ->    $744.4M   ( 67 sales)
+                    Orange  13%  ->  $1,770.0M   (  5 sales)
+                    Orange  15%  ->  $4,904.3M   (  5 sales)
+
+colour-keyed median Orange       ->  $3,825.7M   ( 14 sales)   &lt;- what it used</pre>
+
+<p>Your roll was worth about $227M. It got priced off $3,825.7M, and adding the Specialist premium on top lands on $3,853,872,840, which is your number to the dollar.</p>
+
+<p>What makes it so ugly is that Revitalize's ladder is steep, roughly 1.5x to 2.4x per percentage point. Ten to fifteen percent is a 21x move. Get the roll wrong by a few points and you're not off by a bit, you're off by an order of magnitude. On a flatter bonus the same mistake would barely show.</p>
+
+<p>One thing before you re-test it: part of this was already fixed a few versions before your post, so the $3.85B won't reproduce. On the version you were reading it does, but current builds price that Uzi at a few hundred million. Not trying to dodge the point, just flagging it so you're not confused when the number doesn't match.</p>
+
+<p>I back-tested the rest of what you said against Marches' full sale history rather than guessing, building the price data from the oldest 80% of about 276k weapon auctions and then pricing every double-bonus sale in the newest 20% against it, so nothing about a test sale was in the data pricing it. Your stats hold up. In that hold-out <strong>84.7%</strong> of double-bonus sales had no exact-pair comp, which is worse than the ~50% you estimated, and <strong>30.1%</strong> of them were off by more than 50%. Almost exactly your figure.</p>
+
+<p>Two changes have gone out since. The estimate for a two-bonus item is now blended with the weapon's own median at that rarity, which is an independent second reading of the same thing, and the roll percentage is now interpolated in both directions instead of only being used to pull down rolls that fell below the observed range. Where that lands:</p>
+
+<pre>double, no pair comp   30.1%  ->  25.7%  off by more than 50%
+double, with a comp    31.7%  ->  20.0%
+single bonus           15.3%  ->  15.3%  (deliberately untouched)
+
+Lorcin 380 Red, Motivation 19% + Deadeye 104%
+  was $4,200M, now $379M, against real sales of $299M and $340M</pre>
+
+<p>Single-bonus items are left alone on purpose. I tried the same treatment there and it made them about a point worse, which makes sense once you think about it, because with one bonus the rarity is nearly a restatement of the roll, so you're averaging a number with itself. I also tried replacing the colour median outright rather than blending, and a few fitted correction factors. All of them scored worse out of sample, so they're not in.</p>
+
+<p>The part I didn't expect, and you should know it because it caps what any of this can do: when I measured it, double-bonus items that <em>did</em> have an exact-pair comp were missing by more than 50% just as often, 31.7%. The best comp that exists was no more accurate than the fallback you were complaining about. A good chunk of that error isn't the method at all, it's that two identical items genuinely sell for wildly different sums depending on who's in the auction that night.</p>
+
+<p>So it's better, not solved. Roughly a quarter of no-comp doubles still miss by more than half, and Red is still the worst of it. Estimates also sit a bit low on average now rather than a bit high, which I'd rather have than the other way round when someone's using this to decide what to pay.</p>
+
+<p>If you spot more of these, the useful thing is the item plus both bonuses and rolls plus what it actually sold for. That's what let me reproduce yours exactly.</p>
