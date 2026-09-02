@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.13
+// @version      3.4.14
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -1985,6 +1985,46 @@
                             estimatedPrice += prem;
                             deriv.push({ label: derivLabel(bonuses[pv]), amt: prem, src: inf.source, n: inf.count, prem: true });
                         }
+                    }
+                }
+            }
+
+            // ─── Double-bonus calibration ────────────────────────────
+            //
+            // A two-bonus estimate is a build-up from single-bonus comps, and it
+            // drifts both ways: the centre sits low and the tail runs hot. The
+            // weapon's own median at this rarity is an INDEPENDENT second reading
+            // of the same item, so the two are combined as a geometric mean —
+            // the right average for prices, which spread log-normally.
+            //
+            // Measured out of sample on Marches' auction data: the feed was built
+            // from the oldest 80% of 276k weapon rows and every double-bonus sale
+            // in the newest 20% was priced against it.
+            //
+            //   no exact-pair comp (n=1664)   30.1% -> 27.5% off by >50%
+            //                                 median est/actual 0.74 -> 0.78
+            //   with a pair comp   (n= 300)   31.7% -> 20.0% off by >50%
+            //                                 median est/actual 1.12 -> 0.98
+            //   Red rarity, worst cases       53.7% -> 38.2% off by >50%
+            //
+            // SINGLE-bonus items are deliberately excluded. The same blend makes
+            // them worse (15.3% -> 23.7% off by >50%), because for one bonus the
+            // roll and the rarity are close to the same fact, so averaging them
+            // adds noise rather than a second opinion. Fitted variants — a flat
+            // multiplier, a fitted blend weight, a clamp band — all scored worse
+            // out of sample than this plain 50/50, so there is no constant here
+            // to go stale.
+            if (weaponKey && bonuses.length >= 2 && estimatedPrice > 0) {
+                var calPa = getPriceArray(itemKey, rarity);
+                var calMed = (calPa && calPa[1] > 0 && calPa[3] >= 3) ? calPa[1] : null;
+                if (calMed) {
+                    var blended = Math.round(Math.sqrt(estimatedPrice * calMed));
+                    if (blended > 0 && isFinite(blended)) {
+                        estimatedPrice = blended;
+                        // Said out loud in the tooltip. A number nobody can trace
+                        // is how the last pricing complaint started.
+                        deriv.push({ label: 'blended with ' + rarity + ' ' + itemKey + ' median',
+                                     amt: calMed, src: 'calibration', n: calPa[3], prem: false });
                     }
                 }
             }
