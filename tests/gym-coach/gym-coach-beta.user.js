@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.72
+// @version      0.9.73
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,7 +29,24 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
-* 0.9.72 - Using a can moves the number you are looking at.
+* 0.9.73 - The board week runs Sunday to Saturday.
+ *
+ *         Asked for directly. It ran Monday to Sunday because epoch day 0 is a
+ *         Thursday and day 4 was the first Monday; it now counts from day 3.
+ *         The boundary is still 00:00 TCT and still computed from the UTC day
+ *         number, never from a local-time getter -- a local reading starts the
+ *         week hours late and the two halves of a board disagree.
+ *
+ *         Moving it renumbers every week index, so the first read after
+ *         updating finds a week the stored baseline does not match and
+ *         re-anchors. One week-to-date is lost, once. Weeks already archived
+ *         keep their figures and their labels.
+ *
+ *         A test that hardcoded the weekday of a mid-week anchor went with it,
+ *         and now derives the day instead -- it is a test about saying when a
+ *         card started counting, not about which day the week begins.
+ *
+ * 0.9.72 - Using a can moves the number you are looking at.
  *
  *         Reported: "used x amount of cans but the number stayed the same
  *         until I refreshed".
@@ -7744,11 +7761,17 @@
   // Energy each assist is worth, for the natural-regen column. The owner's own
   // row uses their real bar maximum and can strength; everyone else's is an
   // estimate, and the card says so.
-  // Monday 00:00 TCT. Epoch day 0 was a Thursday, so day 4 was the first
-  // Monday and the week index counts from there. TCT is UTC, so this is
+  // Sunday 00:00 TCT. Epoch day 0 was a Thursday, so day 3 was the first
+  // Sunday and the week index counts from there. TCT is UTC, so this is
   // computed from dayKey and never from a local-time getter -- a local reading
   // starts the week hours late and the two halves of a board disagree.
-  var WEEK_EPOCH_DAY = 4;
+  //
+  // Sunday rather than Monday because that is the week people actually compare:
+  // asked for directly. Moving it renumbers every week index, so the first read
+  // after the change finds a week the stored baseline does not match and
+  // re-anchors -- one week-to-date is lost, once, and the archive keeps what
+  // was already banked.
+  var WEEK_EPOCH_DAY = 3;
 
   function weekKey(ms) {
     return Math.floor((dayKey(ms) - WEEK_EPOCH_DAY) / 7);
@@ -8883,7 +8906,7 @@
       esc(state.boardFaction || "Your faction") + " — energy spent in the gym " +
       (since && since.partial
         ? "since this device first read the faction, <b>" + esc(boardSinceLabel(since.at)) + "</b>"
-        : "since <b>Monday 00:00 TCT</b>") +
+        : "since <b>Sunday 00:00 TCT</b>") +
       ", which stats it went into. " +
       'Read from Torn\u2019s own faction contributors, so it is the same board on every device and nothing is stored anywhere but here.</p>' +
       // Baselines taken minutes apart make every ratio between two stats a

@@ -71,12 +71,12 @@ t("the settings override opens it whatever the key says", () => {
 // ---- what a week of your own training adds up to ---------------------------
 
 const WK = 2385;
-const D0 = WK * 7 + WEEK_EPOCH_DAY;          // Monday of that gym week
+const D0 = WK * 7 + WEEK_EPOCH_DAY;          // Sunday of that gym week
 const totals = (ledger, byDayStat, wk) => run(["weekTotals"],
   "R = weekTotals(" + JSON.stringify(ledger) + ", " + JSON.stringify(byDayStat) +
   ", " + JSON.stringify(wk) + ");");
 
-t("the week is the seven ledger days from its Monday", () => {
+t("the week is the seven ledger days from its Sunday", () => {
   const led = [{ d: D0 - 1, used: 999, off: 999 },   // last week
                { d: D0, used: 300, off: 25 },
                { d: D0 + 6, used: 200, off: 50 },

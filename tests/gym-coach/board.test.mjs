@@ -43,29 +43,29 @@ let pass = 0, fail = 0;
 const t = (n, f) => { try { f(); pass++; console.log("ok   " + n); } catch (e) { fail++; console.log("FAIL " + n + " :: " + e.message); } };
 
 const DAY = 86400000;
-// 1970-01-05 was a Monday. Every boundary in these tests is derived from that
+// 1970-01-04 was a Sunday. Every boundary in these tests is derived from that
 // fact rather than from a hand-computed epoch millisecond.
-const MON = 4 * DAY;
+const SUN = 3 * DAY;
 
 // ---- the week boundary ----------------------------------------------------
 
-t("the week turns over on Monday 00:00 TCT, not Sunday and not local midnight", () => {
+t("the week turns over on Sunday 00:00 TCT, not Monday and not local midnight", () => {
   const wk = ms => call(["dayKey", "weekKey"], `weekKey(${ms})`);
-  assert.strictEqual(wk(MON), wk(MON + 6 * DAY + 86399999), "Mon..Sun is one week");
-  assert.strictEqual(wk(MON + 7 * DAY), wk(MON) + 1, "the next Monday is the next week");
-  assert.strictEqual(wk(MON - 1), wk(MON) - 1, "the instant before Monday is last week");
+  assert.strictEqual(wk(SUN), wk(SUN + 6 * DAY + 86399999), "Sun..Sat is one week");
+  assert.strictEqual(wk(SUN + 7 * DAY), wk(SUN) + 1, "the next Sunday is the next week");
+  assert.strictEqual(wk(SUN - 1), wk(SUN) - 1, "the instant before Sunday is last week");
 });
 
-t("a week index converts back to the Monday it started on", () => {
-  const k = call(["dayKey", "weekKey"], `weekKey(${MON + 3 * DAY})`);
-  assert.strictEqual(call(["weekStartMs"], `weekStartMs(${k})`), MON);
+t("a week index converts back to the Sunday it started on", () => {
+  const k = call(["dayKey", "weekKey"], `weekKey(${SUN + 3 * DAY})`);
+  assert.strictEqual(call(["weekStartMs"], `weekStartMs(${k})`), SUN);
 });
 
 t("the boundary is UTC, so it does not move with the machine's timezone", () => {
   // Torn's day is TCT = UTC. Reading the boundary through local getters is the
-  // bug this pins: on a UTC-4 box a local Monday starts four hours late.
-  const at = call(["dayKey", "weekKey", "weekStartMs"], `weekStartMs(weekKey(${MON + 2 * DAY}))`);
-  assert.strictEqual(new Date(at).getUTCDay(), 1, "Monday");
+  // bug this pins: on a UTC-4 box a local Sunday starts four hours late.
+  const at = call(["dayKey", "weekKey", "weekStartMs"], `weekStartMs(weekKey(${SUN + 2 * DAY}))`);
+  assert.strictEqual(new Date(at).getUTCDay(), 0, "Sunday");
   assert.strictEqual(new Date(at).getUTCHours(), 0);
 });
 
@@ -254,15 +254,15 @@ const roll = (board, now) => call(["dayKey", "weekKey", "weekStartMs", "boardRol
   `boardRoll(${JSON.stringify(board)}, ${now})`);
 
 t("crossing Monday starts a fresh baseline", () => {
-  const b = roll({ week: call(["dayKey", "weekKey"], `weekKey(${MON})`), at: MON, stats: { gymenergy: { 1: 10 } } },
-                  MON + 7 * DAY + 3600000);
-  assert.strictEqual(b.base.week, call(["dayKey", "weekKey"], `weekKey(${MON + 7 * DAY})`));
+  const b = roll({ week: call(["dayKey", "weekKey"], `weekKey(${SUN})`), at: SUN, stats: { gymenergy: { 1: 10 } } },
+                  SUN + 7 * DAY + 3600000);
+  assert.strictEqual(b.base.week, call(["dayKey", "weekKey"], `weekKey(${SUN + 7 * DAY})`));
   assert.deepStrictEqual(b.base.stats, {}, "last week's anchors do not measure this week");
 });
 
 t("and the week just ended is kept, so there is a hall of fame", () => {
-  const prev = { week: 0, at: MON, stats: { gymenergy: { 1: 10 } } };
-  const b = roll({ week: 0, at: MON, stats: prev.stats, hist: [] }, MON + 7 * DAY);
+  const prev = { week: 0, at: SUN, stats: { gymenergy: { 1: 10 } } };
+  const b = roll({ week: 0, at: SUN, stats: prev.stats, hist: [] }, SUN + 7 * DAY);
   assert.strictEqual(b.hist.length, 1);
   assert.strictEqual(b.hist[0].week, 0);
 });
@@ -275,16 +275,16 @@ t("an archived week keeps the podium, not the whole roster", () => {
   // with Torn's own chat.
   const many = [];
   for (let i = 1; i <= 60; i++) many.push({ rank: i, id: i, name: "m" + i, energy: 100 - i });
-  const out = roll({ week: 0, at: MON, stats: { gymenergy: { 1: 1 } }, rows: many, hist: [] },
-                   MON + 7 * DAY);
+  const out = roll({ week: 0, at: SUN, stats: { gymenergy: { 1: 1 } }, rows: many, hist: [] },
+                   SUN + 7 * DAY);
   assert.ok(out.hist[0].rows.length <= 3, "archived " + out.hist[0].rows.length + " rows to render one name");
   assert.strictEqual(out.hist[0].rows[0].name, "m1", "and it has to be the TOP of the board");
 });
 
 t("the hall of fame is bounded, so storage cannot grow without limit", () => {
-  let board = { week: 0, at: MON, stats: { gymenergy: { 1: 1 } }, rows: [], hist: [] };
+  let board = { week: 0, at: SUN, stats: { gymenergy: { 1: 1 } }, rows: [], hist: [] };
   for (let w = 1; w <= 20; w++) {
-    const out = roll(board, MON + w * 7 * DAY);
+    const out = roll(board, SUN + w * 7 * DAY);
     board = out.base; board.hist = out.hist;
     // A real week gets a baseline written into it before the next rollover;
     // an empty one is nothing to archive and must not consume a slot.
@@ -298,18 +298,18 @@ t("the hall of fame is bounded, so storage cannot grow without limit", () => {
 
 t("staying inside the same week leaves the baseline alone", () => {
   const stats = { gymenergy: { 1: 10 } };
-  const b = roll({ week: call(["dayKey", "weekKey"], `weekKey(${MON})`), at: MON, stats: stats }, MON + 3 * DAY);
+  const b = roll({ week: call(["dayKey", "weekKey"], `weekKey(${SUN})`), at: SUN, stats: stats }, SUN + 3 * DAY);
   assert.deepStrictEqual(b.base.stats, stats);
   assert.strictEqual(b.rolled, false);
 });
 
 t("the week label is the TCT date, not the reader's local one", () => {
-  // Monday 00:00 UTC is Sunday 19:00 in New York. A local getter labels this
+  // Sunday 00:00 UTC is Saturday 19:00 in New York. A local getter labels this
   // week with YESTERDAY's date, and the card then disagrees with the board it
   // came from.
-  const label = call(["boardWeekLabel"], `boardWeekLabel(${MON})`);
-  assert.strictEqual(new Date(MON).getUTCDate(), 5, "fixture sanity: epoch day 4 is the 5th");
-  assert.ok(label.endsWith(" 5"), "labelled with the local date instead of TCT: " + label);
+  const label = call(["boardWeekLabel"], `boardWeekLabel(${SUN})`);
+  assert.strictEqual(new Date(SUN).getUTCDate(), 4, "fixture sanity: epoch day 3 is the 4th");
+  assert.ok(label.endsWith(" 4"), "labelled with the local date instead of TCT: " + label);
 });
 
 // ---- assembling the board -------------------------------------------------
@@ -381,17 +381,17 @@ t("a member who trained nothing all week is still listed, at the bottom", () => 
 // ---- how much of the week the board actually covers ------------------------
 
 const SINCE = ["dayKey", "weekKey", "weekStartMs", "boardSince"];
-const since = (at) => call(SINCE, `boardSince({week: weekKey(${MON}), at: ${at}})`);
+const since = (at) => call(SINCE, `boardSince({week: weekKey(${SUN}), at: ${at}})`);
 
 t("a baseline frozen at the boundary really does cover the week", () => {
-  assert.strictEqual(since(MON + 60000).partial, false);
+  assert.strictEqual(since(SUN + 60000).partial, false);
 });
 
 t("a baseline anchored mid-week is flagged, not passed off as a full week", () => {
   // Everyone who installs this on a Thursday is in exactly this state, so the
   // header claiming "since Monday 00:00 TCT" would be false for all of them.
-  assert.strictEqual(since(MON + 3 * DAY).partial, true);
-  assert.strictEqual(since(MON + 3 * DAY).at, MON + 3 * DAY);
+  assert.strictEqual(since(SUN + 3 * DAY).partial, true);
+  assert.strictEqual(since(SUN + 3 * DAY).at, SUN + 3 * DAY);
 });
 
 t("a board that has never been read has no window to report", () => {
@@ -538,7 +538,7 @@ const CARD = [
   { rank: 2, id: 2, name: "quiet", energy: 900, natural: null, str: 0, def: 900, spe: 0, dex: 0 }
 ];
 const card = (fmt) => call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
-  `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "Dead Fragment", week: MON, fmt: fmt })})`);
+  `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "Dead Fragment", week: SUN, fmt: fmt })})`);
 
 t("the card names the faction and the week it covers", () => {
   const s = card("chat");
@@ -575,14 +575,19 @@ t("a card that anchored mid-week says so on its face", () => {
   // Otherwise it lands in faction chat as a full week's standings when it is
   // three days of them.
   const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
-    `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat", since: { at: MON + 3 * DAY, start: MON, partial: true } })})`);
+    `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "F", week: SUN, fmt: "chat", since: { at: SUN + 3 * DAY, start: SUN, partial: true } })})`);
   assert.match(s, /counting from/, s.split("\n")[0]);
-  assert.match(s.split("\n")[0], /Thu/, "the anchor day should be stated: " + s.split("\n")[0]);
+  // Derived, not spelled out: the day this lands on depends on where the week
+  // starts, and hardcoding it meant moving the week boundary broke a test that
+  // is not about the week boundary.
+  const day = new Date(SUN + 3 * DAY).toUTCString().slice(0, 3);
+  assert.match(s.split("\n")[0], new RegExp(day),
+    "the anchor day should be stated: " + s.split("\n")[0]);
 });
 
-t("and a card that really did start on Monday says nothing extra", () => {
+t("and a card that really did start on Sunday says nothing extra", () => {
   const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
-    `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat", since: { at: MON, start: MON, partial: false } })})`);
+    `boardCardText(${JSON.stringify(CARD)}, ${JSON.stringify({ faction: "F", week: SUN, fmt: "chat", since: { at: SUN, start: SUN, partial: false } })})`);
   assert.ok(!/counting from/.test(s), s.split("\n")[0]);
 });
 
@@ -590,7 +595,7 @@ t("the card never runs away with a 100-member faction", () => {
   const many = [];
   for (let i = 1; i <= 100; i++) many.push({ rank: i, id: i, name: "m" + i, energy: 1000 - i, natural: null, str: 1000 - i, def: 0, spe: 0, dex: 0 });
   const s = call(["fmt", "ROUND", "boardSplit", "boardWeekLabel", "boardSinceLabel", "boardCardText"],
-    `boardCardText(${JSON.stringify(many)}, ${JSON.stringify({ faction: "F", week: MON, fmt: "chat" })})`);
+    `boardCardText(${JSON.stringify(many)}, ${JSON.stringify({ faction: "F", week: SUN, fmt: "chat" })})`);
   assert.ok(s.split("\n").length <= 20, "a chat message cannot be 100 lines: " + s.split("\n").length);
   assert.ok(s.includes("m1"), "the top of the board must survive the trim");
 });

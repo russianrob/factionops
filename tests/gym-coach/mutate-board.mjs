@@ -6,8 +6,12 @@ const build = () => execSync("./build-harness.sh");
 const U = "board.test.mjs";
 const mutants = [
   // ---- the week boundary ----
-  ["the week starts on Sunday, so every board is a day out of step",
-    "  var WEEK_EPOCH_DAY = 4;", "  var WEEK_EPOCH_DAY = 3;", [U]],
+  // 0.9.73 moved the week to Sunday, which left this mutant pointing at a
+  // constant that no longer exists -- it reported SKIP (no match), which the
+  // summary counts as a survivor. Pointed the other way now: Monday is the
+  // regression to catch.
+  ["the week starts on Monday again, so every board is a day out of step",
+    "  var WEEK_EPOCH_DAY = 3;", "  var WEEK_EPOCH_DAY = 4;", [U]],
   ["the week is seven days long only by accident",
     "    return Math.floor((dayKey(ms) - WEEK_EPOCH_DAY) / 7);",
     "    return Math.floor((dayKey(ms) - WEEK_EPOCH_DAY) / 6);", [U]],

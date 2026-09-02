@@ -13,7 +13,7 @@ const src = fs.readFileSync("gym-coach-beta.user.js", "utf8");
 const b = await chromium.launch({ args: ["--no-sandbox"] });
 
 // Constants off the source, never restated: WEEK_EPOCH_DAY is why a gym week
-// starts on Monday rather than on the epoch's Thursday.
+// starts on Sunday rather than on the epoch's Thursday.
 const num = n => Number((src.match(new RegExp("var\\s+" + n + "\\s*=\\s*([0-9]+)")) || [])[1]);
 const DAY_MS = num("DAY_MS");
 const WEEK_EPOCH_DAY = num("WEEK_EPOCH_DAY");
