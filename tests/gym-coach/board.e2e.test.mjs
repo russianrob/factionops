@@ -224,54 +224,8 @@ await t("a refused request does not turn into a retry loop", async () => {
 
 
 
-await t("the year's xanax board is a button, not something that just happens", async () => {
-  await load({ contributors: CONTRIB, fresh: true });
-  await openBoard();
-  assert.strictEqual(await countUrls(/stat=xantaken/), 0, "xanax went out unasked");
-  assert.ok(await page.$('[data-board="xan"]'), "no way to ask for it");
-});
 
-await t("it ranks on the year, not on the lifetime counter", async () => {
-  // quiet has taken far more xanax EVER and fewer this year. Ranking on the
-  // raw counter would put them top, which answers a different question.
-  const XAN = {
-    [ME]: { now: 900, then: 400 },     // 500 this year
-    77:   { now: 5000, then: 4900 },   // 100 this year, most ever
-    88:   { now: 700, then: 500 }      // 200 this year
-  };
-  await load({ contributors: CONTRIB, xan: XAN, fresh: true });
-  await openBoard();
-  await page.evaluate(() => document.querySelector('[data-board="xan"]').click());
-  await page.waitForTimeout(12000);
-  const rows = await page.evaluate(() => {
-    const c = [...document.querySelectorAll("#gcb-panel .gc-card")].filter(x => /xanax/i.test(x.textContent))[0];
-    if (!c) return null;
-    return [...c.querySelectorAll(".gcb-brow:not(.head)")].map(r => ({
-      name: r.querySelector(".gcb-bname")?.textContent,
-      year: r.querySelector(".gcb-benergy")?.textContent,
-      ever: r.querySelector(".gcb-bnat")?.textContent
-    }));
-  });
-  assert.ok(rows && rows.length >= 3, "no xanax rows rendered: " + JSON.stringify(rows));
-  assert.strictEqual(rows[0].name, "rcexyz", "should rank on the year: " + JSON.stringify(rows));
-  assert.strictEqual(rows[0].year, "500");
-  assert.strictEqual(rows[0].ever, "900");
-  assert.strictEqual(rows[2].name, "quiet", "most ever, least this year, so last: " + JSON.stringify(rows));
-});
 
-await t("the year-ago half is fetched once and then kept", async () => {
-  const XAN = { [ME]: { now: 900, then: 400 }, 77: { now: 5000, then: 4900 }, 88: { now: 700, then: 500 } };
-  await load({ contributors: CONTRIB, xan: XAN, fresh: true });
-  await openBoard();
-  await page.evaluate(() => document.querySelector('[data-board="xan"]').click());
-  await page.waitForTimeout(12000);
-  const withBase = await countUrls(/stat=xantaken.*timestamp/);
-  assert.ok(withBase >= 3, "expected a year-ago call per member, saw " + withBase);
-  await page.evaluate(() => document.querySelector('[data-board="xan"]').click());
-  await page.waitForTimeout(9000);
-  assert.strictEqual(await countUrls(/stat=xantaken.*timestamp/), withBase,
-    "a year-ago figure is history and cannot change, so it must not be re-fetched");
-});
 
 await t("the copy buttons reach a handler and put the card on the clipboard", async () => {
   // The click router matches on an explicit attribute list. A data-board

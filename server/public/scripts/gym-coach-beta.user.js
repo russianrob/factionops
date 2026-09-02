@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.65
+// @version      0.9.66
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,33 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.66 - The xanax board is removed. Torn cannot answer the question.
+ *
+ *         Checked against a real account rather than assumed, and the answer
+ *         was no. Torn keeps fine-grained personal-stat history only for the
+ *         last few months; ask for an older date and it silently returns the
+ *         nearest snapshot it still holds:
+ *
+ *           asked 2026-06-01 -> snapshot 2026-06-01   exact
+ *           asked 2026-08-01 -> snapshot 2026-08-01   exact
+ *           asked 2026-01-01 -> snapshot 2024-02-23   two years out
+ *           asked 2025-01-01 -> snapshot 2024-02-23   two years out
+ *
+ *         So the board shipped in 0.9.64 would have put 513 under a column
+ *         headed 2026, when 513 is that account\u2019s xanax since FEBRUARY
+ *         2024 -- about two and a half years of it, labelled as this year.
+ *
+ *         A shorter window is answerable, but "who has taken the most in the
+ *         last 90 days" is not the question that was asked, and quietly
+ *         swapping one for the other is how a number nobody can check ends up
+ *         being trusted. So the board goes rather than becoming approximately
+ *         right about something else.
+ *
+ *         The response does carry the snapshot date it actually used, which is
+ *         what made this findable at all. Worth remembering if per-member
+ *         history is ever wanted again: it is answerable for recent months and
+ *         self-describing about when it is not.
+ *
 * 0.9.65 - The xanax board counts from 1 January, not a rolling year.
  *
  *         A rolling twelve months quietly gives every member a different start
@@ -2111,13 +2138,6 @@
     boardAt: 0,
     boardError: null,
     boardBusy: false,
-    // The year's xanax board. `then` is history and never changes once read.
-    xanRows: {},
-    xanAt: 0,
-    xanBusy: false,
-    xanDone: 0,
-    xanTotal: 0,
-    xanError: null,
     // How many stats made it through when a round died part-way, and how many
     // members the natural pass could not read. Both are zero on a clean run and
     // are what stops a half-read board from looking like a whole one.
@@ -7811,11 +7831,7 @@
   var BOARD_FORCE_MS = 15000;
 
   function fetchBoard(force) {
-    // xanBusy as well as boardBusy: the year's xanax pass is up to 40 requests
-    // and the Refresh button sits in a card that stays on screen throughout it,
-    // so without this the two chains interleave and the 700ms spacing that
-    // exists to protect the rate limit ends up spacing two streams, not one.
-    if (state.boardBusy || state.xanBusy) return;
+    if (state.boardBusy) return;
     var last = Math.max(state.boardAt || 0, state.boardTriedAt || 0);
     if (!force && Date.now() - last < BOARD_TTL) return;
     if (force && Date.now() - (state.boardTriedAt || 0) < BOARD_FORCE_MS) return;
@@ -7925,9 +7941,6 @@
   //
   // getUTC*, because Torn's day is TCT. A local getter starts the year hours
   // out and the board disagrees with Torn's own counters at the boundary.
-  function yearStartMs(now) {
-    return Date.UTC(new Date(Number(now) || Date.now()).getUTCFullYear(), 0, 1);
-  }
 
   // The year's xanax board, from two readings of a lifetime counter.
   //
@@ -7935,23 +7948,6 @@
   // answers historically given a timestamp -- so this is an exact subtraction
   // rather than an estimate. Ranking on the raw counter instead would put
   // whoever has taken the most EVER on top, which is a different question.
-  function xanBuild(rows) {
-    var out = [], id;
-    for (id in (rows || {})) {
-      var r = rows[id];
-      // A missing baseline means "not fetched", which is a different claim
-      // from "took none" -- and would rank them alongside somebody clean.
-      if (!r || r.then == null) continue;
-      out.push({
-        id: r.id, name: r.name,
-        taken: Math.max(0, (Number(r.now) || 0) - (Number(r.then) || 0)),
-        total: Number(r.now) || 0
-      });
-    }
-    out.sort(function (a, b) { return b.taken - a.taken || String(a.name).localeCompare(String(b.name)); });
-    out.forEach(function (r, i) { r.rank = i + 1; });
-    return out;
-  }
 
   // Consumable counts for one member as of a moment.
   //
@@ -7974,104 +7970,11 @@
   // Two calls each -- now, and a year ago -- on a PUBLIC key, spaced like every
   // other fan-out here. The year-ago half never changes once fetched, so it is
   // kept for good; only the live half is ever asked again.
-  var XAN_TOP = 20;
-  var XAN_TTL = 3600000;
-  function fetchXanYear(force) {
-    if (state.xanBusy || state.boardBusy) return;
-    if (!force && Date.now() - (state.xanAt || 0) < XAN_TTL) return;
-    if (!resolveKey()) return;
-    var rows = boardCurrent();
-    if (!rows.length) return;
-    var picked = rows.slice(0, XAN_TOP);
-    var thenSec = Math.floor(yearStartMs(Date.now()) / 1000);
-    state.xanBusy = true;
-    state.xanAt = Date.now();
-    state.xanDone = 0;
-    state.xanTotal = picked.length;
-    state.xanError = null;
 
-    function one(i) {
-      if (i >= picked.length) return Promise.resolve();
-      var m = picked[i], id = String(m.id);
-      if (!state.xanRows[id]) state.xanRows[id] = { id: m.id, name: m.name, now: null, then: null };
-      state.xanRows[id].name = m.name;
-      var jobs = [function () { return boardGet(xanUrl(id, 0)).then(readXan); }];
-      // The year-ago figure is history and cannot change, so it is paid once.
-      if (state.xanRows[id].then == null) {
-        jobs.push(function () { return boardGet(xanUrl(id, thenSec)).then(readXan); });
-      }
-      return jobs.reduce(function (p, job) {
-        return p.then(function (acc) {
-          return job().then(function (v) { acc.push(v); return acc; })
-            .then(function (a) { return new Promise(function (r) { setTimeout(function () { r(a); }, BOARD_GAP_MS); }); });
-        });
-      }, Promise.resolve([]))
-        .then(function (res) {
-          if (res[0] != null) state.xanRows[id].now = res[0];
-          if (res.length > 1 && res[1] != null) state.xanRows[id].then = res[1];
-        })
-        .catch(function (e) { state.xanError = (e && e.message) || "unreadable"; })
-        .then(function () {
-          state.xanDone = i + 1;
-          if (state.tab === "board") renderPanel();
-          return one(i + 1);
-        });
-    }
-    one(0).then(function () {
-      state.xanBusy = false;
-      storeSet("xanRows", state.xanRows);
-      if (state.tab === "board") renderPanel();
-    });
-  }
-
-  function xanUrl(id, atSec) {
-    return "https://api.torn.com/v2/user/" + encodeURIComponent(id) + "/personalstats?stat=xantaken" +
-      (atSec ? "&timestamp=" + atSec : "") +
-      "&key=" + encodeURIComponent(resolveKey()) + "&comment=" + encodeURIComponent(COMMENT);
-  }
 
   // Historic form is an array of { name, value }; the live form is a flat
   // object. null means unreadable, which is not the same as zero.
-  function readXan(d) {
-    var p = d && d.personalstats;
-    if (!p) return null;
-    if (Array.isArray(p)) {
-      for (var i = 0; i < p.length; i++) {
-        if (p[i] && p[i].name === "xantaken") return Number(p[i].value) || 0;
-      }
-      return null;
-    }
-    if (p.xantaken != null) return Number(p.xantaken) || 0;
-    if (p.drugs && p.drugs.xanax != null) return Number(p.drugs.xanax) || 0;
-    return null;
-  }
 
-  function xanHtml() {
-    var rows = xanBuild(state.xanRows);
-    var head = '<div class="gc-card"><h3>Xanax \u00b7 since 1 Jan</h3>';
-    if (state.xanBusy) {
-      return head + '<p class="muted" style="margin:0">Reading \u2014 ' + state.xanDone + " of " + state.xanTotal + "\u2026</p></div>";
-    }
-    if (!rows.length) {
-      return head +
-        '<p class="muted" style="margin:0 0 8px">Who has taken the most since 1 January, from Torn\u2019s own personal stats \u2014 exact, not estimated. Two requests per member, so it is a button rather than automatic.</p>' +
-        (state.xanError ? '<p class="bad" style="margin:0 0 8px">' + esc(state.xanError) + "</p>" : "") +
-        '<button type="button" class="gcb-btn" data-board="xan">Work it out (top ' + XAN_TOP + ")</button></div>";
-    }
-    return head +
-      '<div class="gcb-brow head"><span class="gcb-brank">#</span><span class="gcb-bname">Member</span>' +
-      '<span class="gcb-benergy">' + new Date().getUTCFullYear() + '</span><span class="gcb-bnat">Ever</span></div>' +
-      rows.map(function (r) {
-        return '<div class="gcb-brow' + (String(r.id) === String(state.playerId) ? " me" : "") + '">' +
-          '<span class="gcb-brank">' + r.rank + "</span>" +
-          '<span class="gcb-bname">' + esc(String(r.name || r.id)) + "</span>" +
-          '<span class="gcb-benergy">' + fmt(r.taken) + "</span>" +
-          '<span class="gcb-bnat muted">' + fmt(r.total) + "</span></div>";
-      }).join("") +
-      (state.xanError ? '<p class="bad" style="margin:8px 0 0">' + esc(state.xanError) + "</p>" : "") +
-      '<p class="muted" style="margin:8px 0 0;font-size:11px">Counted from 1 January 00:00 TCT; Ever is the lifetime total Torn holds. Ranked on this year, because the lifetime figure mostly measures how long someone has played \u2014 and it resets on 1 January.</p>' +
-      '<button type="button" class="gcb-btn" data-board="xan" style="margin-top:9px">Refresh</button></div>';
-  }
 
   function saveBoard() {
     try {
@@ -8291,7 +8194,7 @@
       '<div class="gcb-brow btns">' +
       '<button type="button" class="gcb-btn" data-board="copy-chat">Copy for chat</button>' +
       '<button type="button" class="gcb-btn" data-board="copy-discord">Copy for Discord</button>' +
-      (state.xanBusy || state.boardBusy ? ""
+      (state.boardBusy ? ""
         : '<button type="button" class="gcb-btn ghost" data-board="refresh">Refresh</button>') +
       "</div>" +
       '<pre class="gcb-card-preview">' + esc(boardCardText(rows, {
@@ -8307,7 +8210,7 @@
           (top ? esc(String(top.name)) + " · " + fmt(top.energy) + "e" : "—") + "</b></div>";
       }).join("") + "</div>";
 
-    return head + xanHtml() + shareCard + hofCard;
+    return head + shareCard + hofCard;
   }
 
 
@@ -8371,12 +8274,6 @@
     }
     if (what === "refresh" || what === "anyway") {
       fetchBoard(true);
-      renderPanel();
-      return;
-    }
-    if (what === "xan") {
-      if (state.boardBusy) { showToast("Still reading", "The board is loading. Try again in a moment."); renderPanel(); return; }
-      fetchXanYear(true);
       renderPanel();
       return;
     }
@@ -10686,9 +10583,6 @@
       var bx = storeGet("booksExact", null);
       if (typeof bx === "string") { try { bx = JSON.parse(bx); } catch (_) { bx = null; } }
       state.booksExact = (bx && typeof bx === "object") ? bx : {};
-      var xr = storeGet("xanRows", null);
-      if (typeof xr === "string") { try { xr = JSON.parse(xr); } catch (_) { xr = null; } }
-      state.xanRows = (xr && typeof xr === "object") ? xr : {};
       var bi = storeGet("bookIds", null);
       if (typeof bi === "string") { try { bi = JSON.parse(bi); } catch (_) { bi = null; } }
       state.bookIds = (bi && typeof bi === "object") ? bi : {};

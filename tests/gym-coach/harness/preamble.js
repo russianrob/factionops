@@ -84,15 +84,6 @@
         return { id: r[0], username: r[1], value: r[2], in_faction: r[3] !== false };
       }) };
     }
-    if (/\/personalstats\?stat=xantaken/.test(url)) {
-      var xid = (/user\/(\d+)\/personalstats/.exec(url) || [])[1] || "0";
-      var xts = (/[?&]timestamp=(\d+)/.exec(url) || [])[1];
-      var who = (cfg.xan || {})[xid];
-      if (!who) return { error: { code: 6, error: "Incorrect ID" } };
-      var val = xts ? who.then : who.now;
-      if (xts) return { personalstats: [{ name: "xantaken", value: val, timestamp: Number(xts) }] };
-      return { personalstats: { xantaken: val } };
-    }
     if (/\/personalstats/.test(url)) {
       var uid = (/user\/(\d+)\/personalstats/.exec(url) || [])[1] || "0";
       var ts = (/[?&]timestamp=(\d+)/.exec(url) || [])[1];
