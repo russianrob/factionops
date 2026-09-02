@@ -190,7 +190,16 @@
                                  faction: cfg.keyFaction === undefined ? true : cfg.keyFaction,
                                  company: false,
                                  log: { custom_permissions: false, available: [] } },
-                       selections: { user: ["bars", "attacks", "log"] }, user: { id: 2598755 } } };
+                       // `selections.faction` lists the faction selections this key
+                       // may use. Torn's schema makes it required, and the board
+                       // needs "contributors" from it as well as the position
+                       // ability above -- cfg.keyFactionSel is how a suite says a
+                       // key's own reach falls short.
+                       selections: { user: ["bars", "attacks", "log"],
+                                     faction: cfg.keyFactionSel === undefined
+                                       ? ["basic", "contributors", "members"]
+                                       : cfg.keyFactionSel },
+                       user: { id: 2598755 } } };
     }
     if (/v2\/user\/attacks/.test(url)) {
       if (cfg.attacksErr) return { error: { code: 16, error: "Access level of this key is not high enough" } };
