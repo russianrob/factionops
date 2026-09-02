@@ -10,7 +10,8 @@ const GYM_TABLE = new Function(grabArr("var GYMS = [") + " return GYMS;")();
 
 // The unit tests call betterGym directly, so they stay green even if the scan
 // never runs or the step never reaches the card. This drives the real page.
-async function panel({ gym, focus, seedOwned = null, buttons = null }) {
+async function panel({ gym, focus, seedOwned = null, buttons = null,
+                       owned = null, pct = null, progressUnlocked = false }) {
   // `buttons` short-renders the gym list — React paints it late, and a partial
   // read would look like "most gyms locked". The harness page builds its own
   // button list, so this rides in on the config rather than by patching markup.
@@ -24,6 +25,9 @@ async function panel({ gym, focus, seedOwned = null, buttons = null }) {
   const cfg = { energy:150, energyMax:150, fulltime:0, drug:4000, booster:60000,
     xan:85, cans:21, happy:4300, happyMax:5000, gym,
     ...(buttons === null ? {} : { buttons }),
+    ...(owned === null ? {} : { owned }),
+    ...(pct === null ? {} : { pct }),
+    ...(progressUnlocked ? { progressUnlocked: true } : {}),
     stats:{ str:150422278, def:104614286, spe:150464114, dex:146009 },
     mem: Object.assign({ gcb_v1_mode:"xan", gcb_v1_focus: focus },
                        seedOwned ? { gcb_v1_gymsOwned: seedOwned } : {}) };
@@ -58,6 +62,10 @@ await t("the reported case: it names George's from Anabolic Anomalies", async ()
   // somewhere else — that was the contradiction.
   assert.match(r.body, /Change gym to George.s first .* trains Strength 46% faster for the same 10e/,
     r.body.slice(0, 400));
+  // And it says where the ownership claim comes from, including how old the
+  // reading is -- a confident sentence that cannot be traced is how the coach
+  // came to recommend a gym somebody did not own.
+  assert.match(r.body, /read from the gym page[^)]* ago\)/, r.body.slice(0, 400));
 });
 
 await t("already in the best gym you own, it says nothing", async () => {
@@ -69,7 +77,9 @@ await t("a gym that cannot train the stat is told where it can", async () => {
   const r = await panel({ gym: 25, focus: "str" });       // Balboas (0-based 24): no Strength
   assert.match(r.body, /cannot train Strength at all/);
   assert.match(r.body, /Change gym to George.s first/);
-  assert.match(r.body, /you have George.s unlocked/);
+  // 0.9.69 replaced the bare ownership claim with where it came from: the
+  // count the scan saw and when it looked.
+  assert.match(r.body, /\d+ of 31 unlocked, read from the gym page/);
 });
 
 await t("a half-rendered gym list is not read as a set of locked gyms", async () => {
@@ -100,6 +110,40 @@ await t("when a better gym exists, the training step names THAT gym", async () =
     "still naming the worse gym:\n" + r.steps);
 });
 
-console.log("\n" + pass + " passed, " + fail + " failed");
+
+// ---- the reported case: told to switch to the gym you are unlocking ---------
+//
+// A member standing in Cha Cha's (id 20) was told "change gym to Atlas first —
+// it trains Strength 9% faster for the same 10e a train, and you have it
+// unlocked". Atlas (id 21) is the very next rung, and they did not own it.
+
+await t("the tile being unlocked is not counted as a gym you own", async () => {
+  const r = await panel({ gym: 20, focus: "str", owned: 20, pct: 63 });
+  assert.ok(!r.owned.includes(20), "Atlas (index 20) was stored as owned: " + JSON.stringify(r.owned));
+  assert.ok(r.owned.includes(19), "Cha Cha's (19) is genuinely owned: " + JSON.stringify(r.owned));
+});
+
+await t("the reported wording does not appear: no switch to Atlas", async () => {
+  const r = await panel({ gym: 20, focus: "str", owned: 20, pct: 63 });
+  assert.ok(!/Change gym to Atlas/.test(r.body), "still names Atlas: " + r.body.slice(0, 400));
+});
+
+await t("and not when the in-progress tile carries no lock class either", async () => {
+  // The shape the live report points at. With the lock class absent, the only
+  // thing separating that tile from an owned one is the unlock percentage.
+  const r = await panel({ gym: 20, focus: "str", owned: 20, pct: 63, progressUnlocked: true });
+  assert.ok(!r.owned.includes(20), "Atlas counted as owned: " + JSON.stringify(r.owned));
+  assert.ok(!/Change gym to Atlas/.test(r.body), "still names Atlas: " + r.body.slice(0, 400));
+});
+
+await t("a gym you really do own is still recommended from the same page", async () => {
+  // The guard must not silence the feature: from Force Training (id 19) with
+  // Cha Cha's and everything below it owned, Cha Cha's is a real upgrade for
+  // Dexterity and should still be named.
+  const r = await panel({ gym: 19, focus: "dex", owned: 20, pct: 63 });
+  assert.match(r.body, /Change gym to Cha Cha/, r.body.slice(0, 400));
+});
+
 await b.close();
+console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

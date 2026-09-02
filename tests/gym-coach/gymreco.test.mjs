@@ -123,5 +123,96 @@ t("with nothing scanned it stays quiet rather than guessing", () => {
   assert.strictEqual(better("Anabolic Anomalies", "str", null), null);
 });
 
+
+// ---- how far the unlocked-gym scan can be trusted ---------------------------
+//
+// Reported: the coach told somebody to switch to a gym they do not own, and
+// asserted they had it unlocked. The scan maps index-1:1 against the gym table
+// and skips the Jail placeholder, so the mapping is not the suspect -- what was
+// missing was any way to tell which scan the claim rested on.
+
+const trust = (owned, at) => new Function("var R;" + grabArr("var GYMS = [") + `
+  var state = { gymsOwned: ${JSON.stringify(owned)}, gymsOwnedAt: ${at || 0} };
+  ${grab("gymScanTrust")}
+  R = gymScanTrust();
+  return R;`)();
+
+t("a partial scan is trusted, and reports what it saw", () => {
+  const r = trust([0, 1, 2, 3, 20], 1234);
+  assert.strictEqual(r.known, true);
+  assert.strictEqual(r.count, 5);
+  assert.strictEqual(r.at, 1234);
+});
+
+t("never having scanned is not knowing", () => {
+  assert.strictEqual(trust([], 0).known, false);
+});
+
+t("EVERY gym unlocked is treated as suspicious, not as impressive", () => {
+  // A gym is marked unlocked by the ABSENCE of a lock class, so a class Torn
+  // has renamed finds nothing locked and reports the lot as owned. That is the
+  // shape of the report this exists for.
+  const all = [];
+  const n = GYMS.length;
+  for (let i = 0; i < n; i++) all.push(i);
+  const r = trust(all, Date.now());
+  assert.strictEqual(r.known, false, "a full house should not be asserted as fact");
+  assert.match(r.why, /page changed/i);
+});
+
+t("one short of every gym is still trusted", () => {
+  // The guard is for the all-or-nothing failure, not for people who own a lot.
+  const n = GYMS.length;
+  const nearly = [];
+  for (let i = 0; i < n - 1; i++) nearly.push(i);
+  assert.strictEqual(trust(nearly, Date.now()).known, true);
+});
+
+
+// ---- the gym you are climbing toward is not a gym you own -------------------
+//
+// Reported live: a member standing in Cha Cha's was told to "change gym to
+// Atlas -- and you have it unlocked". Atlas is the very next rung. Unlocked
+// gyms never re-lock, so a stale scan can only UNDER-report; an over-report by
+// exactly one is the tile being unlocked reading as owned.
+
+t("a gym marked in progress is not owned, whatever else its class says", () => {
+  assert.deepStrictEqual(unlocked(["gymButton___a", "gymButton___a inProgress___c"]), [0]);
+});
+
+const node = pct => ({
+  className: "gymButton___h",
+  querySelector: sel => (pct && /percentage/.test(sel) ? { textContent: pct } : null)
+});
+
+const sansProgress = (owned, nodes) => new Function("var R;" + `
+  ${grab("ownedSansProgress")}
+  R = ownedSansProgress(${JSON.stringify(owned)}, arguments[0]);
+  return R;`)(nodes);
+
+t("the one tile carrying an unlock percentage is dropped from the owned set", () => {
+  // Keyed on the percentage child, not on a class token: the percentage is the
+  // part that has been read off the live page.
+  assert.deepStrictEqual(sansProgress([0, 1, 2], [node(), node(), node("63%")]), [0, 1]);
+});
+
+t("no percentage anywhere leaves the set alone", () => {
+  assert.deepStrictEqual(sansProgress([0, 1, 2], [node(), node(), node()]), [0, 1, 2]);
+});
+
+t("several percentages mean something else, and nothing is dropped", () => {
+  // If the element ever stops meaning unlock progress, dropping every tile that
+  // carries one would empty the owned set and silence every recommendation.
+  assert.deepStrictEqual(sansProgress([0, 1, 2], [node("5%"), node("9%"), node()]), [0, 1, 2]);
+});
+
+t("a tile too primitive to query is skipped rather than thrown on", () => {
+  assert.deepStrictEqual(sansProgress([0, 1], [{ className: "x" }, node("63%")]), [0]);
+});
+
+t("a percentage on a tile that is locked anyway changes nothing", () => {
+  assert.deepStrictEqual(sansProgress([0, 1], [node(), node(), node("63%")]), [0, 1]);
+});
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
