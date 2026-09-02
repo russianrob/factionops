@@ -402,7 +402,8 @@ await t("a half-read board says so instead of looking complete", async () => {
 });
 
 await t("a key known to lack faction access is told BEFORE six refused requests", async () => {
-  await load({ contributors: CONTRIB, keyFaction: false, fresh: true });
+  await load({ contributors: CONTRIB, keyFaction: false, fresh: true,
+               mem: { gcb_v1_boardForce: "true" } });
   await page.evaluate(() => document.querySelector('[data-tab="board"]').click());
   await page.waitForTimeout(2500);
   assert.strictEqual(await countUrls(/faction\/contributors/), 0,
@@ -413,7 +414,8 @@ await t("a key known to lack faction access is told BEFORE six refused requests"
 });
 
 await t("and pressing through anyway really does try", async () => {
-  await load({ contributors: CONTRIB, keyFaction: false, fresh: true });
+  await load({ contributors: CONTRIB, keyFaction: false, fresh: true,
+               mem: { gcb_v1_boardForce: "true" } });
   await page.evaluate(() => document.querySelector('[data-tab="board"]').click());
   await page.waitForTimeout(2500);
   await page.evaluate(() => document.querySelector('[data-board="anyway"]').click());

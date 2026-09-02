@@ -20,9 +20,9 @@ function decl(n){const m=src.match(new RegExp("(  var\\s+"+n+"\\s*=\\s*[^\\n]*)"
 const DAY_MS = num("DAY_MS");
 const WEEK_EPOCH_DAY = num("WEEK_EPOCH_DAY");
 
-const run = (fns, body) => new Function("var R;" +
+const run = (fns, body, ...args) => new Function("var R;" +
   [decl("DAY_MS"), decl("WEEK_EPOCH_DAY"), decl("LINE_TAG")].join("\n") + "\n" +
-  fns.map(grab).join("\n") + "\n" + body + "\nreturn R;")();
+  fns.map(grab).join("\n") + "\n" + body + "\nreturn R;")(...args);
 
 let pass = 0, fail = 0;
 const t = (n, f) => { try { f(); pass++; console.log("ok   " + n); }
@@ -190,8 +190,28 @@ t("a digit edited by hand fails the check", () => {
   assert.deepStrictEqual(parse(tampered), []);
 });
 
+const reTag = (str, tag) => run(["pasteCk"], `
+  var f = ${JSON.stringify(str)}.split("|");
+  f.pop(); f[0] = arguments[0];
+  var body = f.join("|");
+  R = body + "|" + pasteCk(body);`, tag);
+
 t("a line from another version is ignored rather than misread", () => {
-  assert.deepStrictEqual(parse(line(OWN).replace(/^GCB1/, "GCB2")), []);
+  // Its check digits are correct FOR THAT TAG, so only the tag gate can refuse
+  // it. Rewriting the tag in place breaks the checksum instead, and then the
+  // checksum does the rejecting and the tag gate is never exercised.
+  const foreign = reTag(line(OWN), "GCB2");
+  assert.ok(/^GCB2\|/.test(foreign), "fixture is not a GCB2 line: " + foreign);
+  assert.deepStrictEqual(parse(foreign), []);
+});
+
+t("the check digits notice two digits swapped round", () => {
+  // A positional checksum, not a plain sum: transposing a pair is the classic
+  // typo, and a sum cannot see it.
+  const s = line(OWN);
+  const swapped = s.replace("|12400|", "|21400|");
+  assert.notStrictEqual(swapped, s, "fixture did not change");
+  assert.deepStrictEqual(parse(swapped), []);
 });
 
 t("nothing recognisable is an empty list, not an error", () => {

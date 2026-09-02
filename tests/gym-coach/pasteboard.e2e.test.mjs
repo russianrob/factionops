@@ -20,7 +20,7 @@ const WEEK_EPOCH_DAY = num("WEEK_EPOCH_DAY");
 const WK = Math.floor((Math.floor(Date.now() / DAY_MS) - WEEK_EPOCH_DAY) / 7);
 const D0 = WK * 7 + WEEK_EPOCH_DAY;
 
-async function panel({ mem = {}, keyFaction, keyFactionSel, tab = "now" } = {}) {
+async function panel({ mem = {}, keyFaction, keyFactionSel } = {}) {
   const ctx = await b.newContext({
     viewport: { width: 393, height: 1400 },
     permissions: ["clipboard-read", "clipboard-write"]
@@ -38,7 +38,7 @@ async function panel({ mem = {}, keyFaction, keyFactionSel, tab = "now" } = {}) 
     stats: { str: 150422278, def: 104614286, spe: 150464114, dex: 146009 },
     ...(keyFaction === undefined ? {} : { keyFaction }),
     ...(keyFactionSel === undefined ? {} : { keyFactionSel }),
-    mem: Object.assign({ gcb_v1_mode: "xan", gcb_v1_focus: "str", gcb_v1_tab: tab }, mem)
+    mem: Object.assign({ gcb_v1_mode: "xan", gcb_v1_focus: "str" }, mem)
   };
   await page.goto("https://www.torn.com/gym.php?cfg=" + encodeURIComponent(JSON.stringify(cfg)),
                   { waitUntil: "domcontentloaded" });
@@ -102,15 +102,20 @@ await t("the settings override brings the tab back", async () => {
   await ctx.close();
 });
 
-await t("sitting on the board when the gate closes lands you on Now", async () => {
-  const { page, ctx } = await panel({ keyFaction: false, tab: "board" });
+// ---- the card, for everyone -------------------------------------------------
+
+await t("clicking Board with a key that can read contributors stays on Board", async () => {
+  // The guard that coerces off the board must fire on a DEFINITE no, never on
+  // "not answered yet" -- keyLevel is null on the first render of every load.
+  const { page, ctx } = await panel({});
+  await click(page, '[data-tab="board"]');
+  await page.waitForTimeout(1200);
   const r = await readPanel(page);
-  assert.ok(!/Faction board<\/h3>/.test(r.body), "still rendering the board tab");
-  assert.ok(/Faction board by paste/.test(r.body), "did not land on Now: " + r.body.slice(0, 200));
+  assert.ok(r.tabs.includes("Board"), "no Board tab: " + JSON.stringify(r.tabs));
+  assert.ok(!/Faction board by paste/.test(r.body),
+    "bounced back to Now: " + r.body.slice(0, 200));
   await ctx.close();
 });
-
-// ---- the card, for everyone -------------------------------------------------
 
 await t("the paste card is on Now even with no faction access", async () => {
   const { page, ctx } = await panel({ keyFaction: false });
@@ -198,9 +203,15 @@ await t("what you paste survives the render tick before you press the button", a
   const a = await lineFor(page, { id: 111, name: "Alfie", week: WK, gymE: 4000, str: 4000,
                                   def: 0, spe: 0, dex: 0, atkE: 0, xan: null, at: Math.round(Date.now() / 1000) });
   await fillBox(page, a);
-  // No forced render: the panel repaints on its own poll, which is exactly the
-  // repaint that used to wipe the box.
-  await page.waitForTimeout(2500);
+  // Leave the tab and come back. That is a real repaint of the panel's markup
+  // -- and a real thing to do while collecting lines out of chat -- where
+  // simply waiting is not: the panel only rebuilds when something changed, so
+  // the old version of this test sat through 2.5s in which nothing repainted
+  // and would have passed with the restore deleted.
+  await click(page, '[data-tab="stock"]');
+  await page.waitForTimeout(500);
+  await click(page, '[data-tab="now"]');
+  await page.waitForTimeout(500);
   const kept = await page.evaluate(() => document.getElementById("gcbPaste").value);
   assert.strictEqual(kept, a, "the box was wiped by a re-render");
   await click(page, '[data-act="pasteread"]');

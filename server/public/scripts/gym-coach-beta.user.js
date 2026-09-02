@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.70
+// @version      0.9.72
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,7 +29,64 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
-* 0.9.70 - The gym you are UNLOCKING is not a gym you own.
+* 0.9.72 - Using a can moves the number you are looking at.
+ *
+ *         Reported: "used x amount of cans but the number stayed the same
+ *         until I refreshed".
+ *
+ *         The machinery for this was already here, and its own comment says
+ *         what it is for: Torn caches the inventory for about thirty seconds,
+ *         so the refresh fired straight after a use reads the PRE-use count
+ *         back. A use is therefore recorded as PENDING and re-applied to every
+ *         fetch until Torn's own number comes down, which is why the figure
+ *         does not drop and then spring back up.
+ *
+ *         It was applied to the aggregate counts and to the happy-item list.
+ *         It was never applied to the cans list -- which is what the rows on
+ *         the Stock tab render from, what the heading above them totals, and
+ *         what the can advice sums. So the use was recorded correctly and
+ *         subtracted from a number nobody was looking at.
+ *
+ *         The cans list now takes the same treatment the happy list already
+ *         had: the quantities are snapshotted when a fresh inventory lands,
+ *         and pending uses are subtracted from THAT baseline rather than from
+ *         the row's own current value -- re-applying on every fetch is the
+ *         point, and subtracting from itself would compound one use into
+ *         several. A drink that reaches zero also stops offering a USE button
+ *         for an item you no longer hold.
+ *
+ * 0.9.71 - A faction board for the members Torn will not answer for.
+ *
+ *         The Board tab reads /faction/contributors, which needs faction API
+ *         access -- a POSITION ability, granted by a leader, not a property of
+ *         the key. Most members will never have it, and for them the tab was
+ *         only ever a page explaining why it was empty. It is no longer offered
+ *         to them at all. Torn's OpenAPI schema makes both halves of the answer
+ *         REQUIRED on /key/info -- `access.faction` for the ability and
+ *         `selections.faction` for whether the key may ask for contributors --
+ *         so this is a read, not a guess. No answer yet means the request has
+ *         not landed, and the tab waits rather than appearing and being taken
+ *         away under a finger already moving. Settings has the way back in if
+ *         Torn's flags are ever wrong.
+ *
+ *         What replaces it, on Now, where everybody can reach it: the same
+ *         board, collected by hand. The gym counters are not in personalstats
+ *         at all -- checked against Torn's own list of stat names -- so there
+ *         is no endpoint to fall back on. But this script has been measuring
+ *         your training all along, by stat, by day, without asking Torn about
+ *         anybody. So the collection is inverted. Copy one line into faction
+ *         chat, and whoever keeps the board pastes the pile in.
+ *
+ *         The line is one whitespace-free token so chat cannot break it up,
+ *         and it carries four check digits because chat truncates long
+ *         messages -- a cut tail is refused rather than read as a smaller
+ *         week. Lines from another gym week are set aside rather than mixed
+ *         in, the newest line per member wins, and every row says how old it
+ *         is: a pasted board is a pile of snapshots taken at different moments,
+ *         and a row that looks live but was copied on Tuesday is the one way
+ *         this can mislead.
+ *
+ * 0.9.70 - The gym you are UNLOCKING is not a gym you own.
  *
  *         Reported live: a member standing in Cha Cha\u2019s was told "change gym
  *         to Atlas first \u2014 it trains Strength 9% faster for the same 10e a
@@ -2212,6 +2269,11 @@
     board: { week: null, at: 0, stats: {}, rows: [], hist: [] },
     boardBy: {},
     boardFaction: "",
+    // Show the Board tab even when the key says it cannot serve it.
+    boardForce: false,
+    // The paste board: lines other members copied, folded together here.
+    pasted: null,
+    playerName: "",
     boardAt: 0,
     boardError: null,
     boardBusy: false,
@@ -2327,6 +2389,9 @@
     pendingUse: null,
     rawQty: null,
     rawHappy: null,
+    // Pre-use quantities for the cans list, so a pending use has a baseline
+    // to subtract from rather than compounding on its own last answer.
+    rawDrinks: null,
     invAt: 0,
     toast: null,
     invCatErr: "",
@@ -2346,6 +2411,10 @@
   var observers = [];
   var clickHandler = null;
   var draftKey = "";
+  // What is currently typed into the paste box. renderPanel() rebuilds the
+  // panel's markup on every poll tick, so anything in an unbacked field is gone
+  // a second after it is pasted.
+  var draftPaste = "";
   var keyBoxFocused = false;
 
   function pdaGlobal(name) {
@@ -2635,8 +2704,14 @@
     // null, NOT false, when the field is absent: Torn does not document it, and
     // "I could not tell" must never hide the tab from somebody whose board
     // works perfectly.
+    // `selections.faction` is the OTHER half of the answer and is required by
+    // the same schema: it lists the faction selections this key may use. The
+    // position ability and the key's own reach are separate axes, and the board
+    // needs "contributors" from both of them.
+    var sel = d.info.selections && d.info.selections.faction;
     return { level: a.level, type: String(a.type || ""), full: a.level >= 4,
-             faction: typeof a.faction === "boolean" ? a.faction : null };
+             faction: typeof a.faction === "boolean" ? a.faction : null,
+             contributors: Array.isArray(sel) ? sel.indexOf("contributors") !== -1 : null };
   }
 
   // Are we actually inside Torn PDA? Three PDA-specific lines in Settings used
@@ -2899,7 +2974,7 @@
     var byId = {};
     for (var id in pend) {
       var p = pend[id];
-      // Give up after two minutes. If the API still disagrees by then the use
+      // Give up after thirty minutes. If the API still disagrees by then the use
       // did not land, and holding the adjustment forever would lie the other way.
       if (now - p.at > 1800000) {
         delete pend[id];
@@ -2919,6 +2994,17 @@
       if (raw === undefined) continue;
       var n = byId[list[i].id] || 0;
       list[i].qty = Math.max(0, Number(raw) - n);
+    }
+    // The cans list is what the Stock tab actually renders -- both each row and
+    // the total in its heading -- and what cansOnHand() sums for the advice.
+    // Adjusting state.items alone left every one of those sitting still until
+    // the next inventory landed, which is the whole reason this machinery
+    // exists.
+    var drinks = state.drinkList || [];
+    for (var di2 = 0; di2 < drinks.length; di2++) {
+      var rawD = state.rawDrinks ? state.rawDrinks[drinks[di2].id] : undefined;
+      if (rawD === undefined) continue;
+      drinks[di2].qty = Math.max(0, Number(rawD) - (byId[drinks[di2].id] || 0));
     }
   }
 
@@ -3434,6 +3520,10 @@
     state.rawHappy = {};
     for (var hi = 0; hi < state.happyList.length; hi++) {
       state.rawHappy[state.happyList[hi].id] = state.happyList[hi].qty;
+    }
+    state.rawDrinks = {};
+    for (var di = 0; di < state.drinkList.length; di++) {
+      state.rawDrinks[state.drinkList[di].id] = state.drinkList[di].qty;
     }
     applyPendingUses();
     // The candidate list is built from the cans you actually hold, so it is not
@@ -7668,6 +7758,241 @@
     return (wk * 7 + WEEK_EPOCH_DAY) * DAY_MS;
   }
 
+  // ---- The paste board ------------------------------------------------------
+  //
+  // /faction/contributors is the only endpoint that reads another player's gym
+  // energy, and it needs faction API access -- a POSITION ability, so most
+  // members will never have it. The gym counters are not in personalstats at
+  // all (checked against Torn's own OpenAPI schema, which lists every stat
+  // name), so there is no second endpoint to fall back on.
+  //
+  // What every member DOES have is this script's own ledger. It has been
+  // measuring their trains -- by stat, by day -- since the day they installed
+  // it, without asking Torn anything about anybody else. So the collection is
+  // inverted: everybody copies one line for their own week, and one person
+  // pastes the pile in and gets the same board out. No server, no permissions,
+  // and nothing leaves the device except what the member pastes into their own
+  // faction's chat themselves.
+
+  // Both fields are REQUIRED by Torn's OpenAPI spec: `access.faction` is the
+  // position ability, and `selections.faction` lists the faction selections the
+  // key may use, "contributors" among them. The board needs both -- a Full key
+  // held by a member whose position lacks the ability cannot read contributors,
+  // and neither can a Limited key held by one who has it.
+  //
+  // An absent answer means the request has not landed or failed, NOT that the
+  // member lacks access -- and the tab stays hidden until an answer arrives
+  // rather than appearing and being taken away under a finger already moving.
+  // The override is the way back in if Torn's flag is ever wrong: the cost of
+  // that has to be a setting, never the whole feature.
+  function boardAllowed(keyLevel, force) {
+    if (force) return true;
+    if (!keyLevel) return false;
+    return keyLevel.faction === true && keyLevel.contributors === true;
+  }
+
+  function boardTabOn() {
+    return boardAllowed(state.keyLevel, state.boardForce);
+  }
+
+  // A gym week of your own training, read off the ledger rather than the API.
+  //
+  // The split is whatever the train log could read, and it is deliberately NOT
+  // scaled up to meet the energy total: trainStatFromLogRow drops rows whose
+  // wording it does not recognise, so a short split is honest. Stretching it to
+  // fit would invent a stat nobody trained.
+  function weekTotals(ledger, byDayStat, wk) {
+    var d0 = wk * 7 + WEEK_EPOCH_DAY;
+    var keys = ["str", "def", "spe", "dex"];
+    var out = { gymE: 0, atkE: 0, str: 0, def: 0, spe: 0, dex: 0 };
+    (ledger || []).forEach(function (e) {
+      if (!e || typeof e.d !== "number" || e.d < d0 || e.d > d0 + 6) return;
+      out.gymE += Math.max(0, Number(e.used) || 0);
+      out.atkE += Math.max(0, Number(e.off) || 0);
+    });
+    for (var i = 0; i < 7; i++) {
+      var day = (byDayStat || {})[d0 + i];
+      if (!day) continue;
+      for (var j = 0; j < keys.length; j++) {
+        out[keys[j]] += Math.max(0, Number(day[keys[j]]) || 0);
+      }
+    }
+    return out;
+  }
+
+  // Xanax so far this year, from your own log. null when there is no log to
+  // read: "no figure" and "took none" are different statements about a person,
+  // and the faction xanax board shipped the first as the second once already.
+  function xanYear(xanLog, now) {
+    var by = xanLog && xanLog.byMonth;
+    if (!by || typeof by !== "object") return null;
+    var y = String(new Date(Number(now) || Date.now()).getUTCFullYear());
+    var n = 0;
+    for (var k in by) if (String(k).slice(0, 4) === y) n += Number(by[k]) || 0;
+    return n;
+  }
+
+  // The line is one whitespace-free token so faction chat cannot break it into
+  // pieces, and so a paste can be scanned by splitting on whitespace and
+  // ignoring everything that is not one of these.
+  var LINE_TAG = "GCB1";
+
+  // Chat truncates long messages, and people edit things. Four digits over the
+  // whole payload is enough that a cut tail or a changed digit fails to verify
+  // rather than parsing as a smaller week.
+  function pasteCk(s) {
+    var n = 0;
+    for (var i = 0; i < s.length; i++) n = (n * 31 + s.charCodeAt(i)) % 9973;
+    return ("000" + n).slice(-4);
+  }
+
+  function pasteLine(o) {
+    // Torn usernames are letters, digits, underscore and hyphen; anything else
+    // arrived by accident and would break the delimiter.
+    var name = String((o && o.name) || "").replace(/[^A-Za-z0-9_-]/g, "");
+    var body = [LINE_TAG, o.week, o.id, name, o.gymE, o.str, o.def, o.spe, o.dex,
+                o.atkE, (o.xan == null ? "-" : o.xan), o.at].join("|");
+    return body + "|" + pasteCk(body);
+  }
+
+  function pasteParse(text) {
+    var out = [];
+    String(text || "").split(/\s+/).forEach(function (tok) {
+      if (tok.slice(0, LINE_TAG.length + 1) !== LINE_TAG + "|") return;
+      var f = tok.split("|");
+      if (f.length !== 13) return;
+      var ck = f.pop();
+      if (pasteCk(f.join("|")) !== ck) return;
+      var n = function (i) { var v = Number(f[i]); return f[i] !== "" && isFinite(v) ? v : null; };
+      var row = { week: n(1), id: n(2), name: f[3], gymE: n(4), str: n(5), def: n(6),
+                  spe: n(7), dex: n(8), atkE: n(9),
+                  xan: f[10] === "-" ? null : n(10), at: n(11) };
+      // Half a row is worse than none: a member listed with a plausible-looking
+      // week they did not do is exactly the kind of wrong this board must not
+      // produce.
+      if (row.week === null || row.id === null || row.gymE === null || row.at === null) return;
+      out.push(row);
+    });
+    return out;
+  }
+
+  // Newest line per member wins, and the ordering is the board's own: most
+  // energy into the gym first. Ties keep whichever was seen first, so pasting
+  // the same block twice cannot reshuffle the table.
+  function pasteMerge(list) {
+    var by = {}, order = [];
+    (list || []).forEach(function (r) {
+      if (!r || r.id == null) return;
+      var k = String(r.id);
+      if (!by[k]) order.push(k);
+      if (!by[k] || (Number(r.at) || 0) > (Number(by[k].at) || 0)) by[k] = r;
+    });
+    return order.map(function (k) { return by[k]; })
+      .sort(function (a, b) { return (Number(b.gymE) || 0) - (Number(a.gymE) || 0); });
+  }
+
+  // Take a pasted blob and fold it into what has already been collected.
+  //
+  // Lines from another gym week are set aside rather than mixed in: two weeks
+  // in one table is a leaderboard nobody can read, since last week's heavy
+  // trainer outranks this week's while the header names one week.
+  function pasteCollect(have, text, wk) {
+    var fresh = pasteParse(text);
+    var mine = [], other = 0;
+    fresh.forEach(function (r) {
+      if (r.week !== wk) { other += 1; return; }
+      mine.push(r);
+    });
+    var before = {};
+    (have || []).forEach(function (r) { if (r && r.id != null) before[String(r.id)] = 1; });
+    var rows = pasteMerge((have || []).concat(mine));
+    var added = 0;
+    mine.forEach(function (r) { if (!before[String(r.id)]) { added += 1; before[String(r.id)] = 1; } });
+    return { rows: rows, added: added, otherWeek: other, read: mine.length };
+  }
+
+  // Your own week, in the shape a line is made from. Every figure comes off
+  // this device's own ledger -- the gym counters are not in personalstats at
+  // all, so there is nothing to ask Torn for and nothing that needs a key.
+  function myPasteLine(now) {
+    var wk = weekKey(now);
+    var t = weekTotals(state.ledger, (state.trainLog && state.trainLog.byDayStat) || {}, wk);
+    return { id: Number(state.playerId) || 0, name: state.playerName || "",
+             week: wk, gymE: t.gymE, str: t.str, def: t.def, spe: t.spe, dex: t.dex,
+             atkE: t.atkE, xan: xanYear(state.xanLog, now), at: Math.round(now / 1000) };
+  }
+
+  // The paste board, and it lives on Now rather than on Board on purpose: the
+  // Board tab needs faction API access, and the whole point of this is the
+  // members who will never have it.
+  function pasteCardHtml() {
+    var now = Date.now();
+    var wk = weekKey(now);
+    var mine = myPasteLine(now);
+    var have = state.pasted && state.pasted.week === wk && Array.isArray(state.pasted.rows)
+      ? state.pasted.rows : [];
+    var split = [["str", "Str"], ["def", "Def"], ["spe", "Spe"], ["dex", "Dex"]]
+      .filter(function (k) { return mine[k[0]] > 0; })
+      .map(function (k) { return fmt(mine[k[0]]) + "e " + k[1]; }).join(" \u00b7 ");
+
+    return '<div class="gc-card"><h3>Faction board by paste</h3>' +
+      '<p class="muted" style="margin:0 0 9px">Torn will only tell one person the whole faction\u2019s gym energy, ' +
+      'and only if their <b>position</b> grants faction API access. This does not ask Torn anything: your line is ' +
+      'built from the training this script has already watched on this device. Copy it into faction chat, and ' +
+      'whoever is keeping the board pastes everybody\u2019s in below.</p>' +
+
+      '<div class="row"><div><b>Your week</b><div class="muted">' +
+      fmt(mine.gymE) + "e into the gym" +
+      (mine.atkE > 0 ? " \u00b7 " + fmt(mine.atkE) + "e attacking" : "") +
+      (split ? "<br>" + split : "") +
+      (mine.gymE > 0 && !split ? "<br>No stat split yet \u2014 the train log fills it in." : "") +
+      "</div></div>" +
+      (mine.id
+        ? '<button type="button" class="chip use" data-act="pastecopy">COPY</button>'
+        : '<span class="chip wait">KEY</span>') +
+      "</div>" +
+
+      '<textarea id="gcbPaste" rows="3" placeholder="Paste the lines from faction chat here" ' +
+      'style="width:100%;margin-top:9px;box-sizing:border-box;background:rgba(0,0,0,.25);' +
+      'border:1px solid rgba(255,255,255,.14);border-radius:8px;color:inherit;padding:7px;' +
+      'font:11px/1.4 ui-monospace,Menlo,monospace;resize:vertical"></textarea>' +
+      '<div class="actions" style="margin-top:7px">' +
+      (have.length ? '<button class="gc-btn secondary" data-act="pasteclear">Clear board</button>' : "") +
+      '<button class="gc-btn" data-act="pasteread">Read pasted lines</button></div>' +
+
+      (have.length
+        ? '<div class="gcb-brow head" style="margin-top:10px"><span class="gcb-brank">#</span>' +
+          '<span class="gcb-bname">Member</span><span class="gcb-benergy">Gym</span>' +
+          '<span class="gcb-bnat">Attack</span><span class="gcb-bgain">Trained</span></div>' +
+          have.map(function (r, i) { return pasteRowHtml(r, i, mine.id); }).join("") +
+          '<p class="muted gc-cap">Week of ' + boardWeekLabel(weekStartMs(wk)) +
+          ' \u00b7 ' + have.length + (have.length === 1 ? " member" : " members") +
+          ' \u00b7 each line is as fresh as the moment that member copied it.</p>'
+        : '<p class="muted" style="margin:9px 0 0">Nothing collected yet.</p>') +
+      "</div>";
+  }
+
+  function pasteRowHtml(r, i, meId) {
+    var split = [["str", "Str"], ["def", "Def"], ["spe", "Spe"], ["dex", "Dex"]]
+      .filter(function (k) { return r[k[0]] > 0; })
+      .map(function (k) { return k[1] + " " + fmt(r[k[0]]); }).join(" \u00b7 ");
+    // How old the line is, said plainly. A pasted board is a pile of snapshots
+    // taken at different moments, and a row that looks live but was copied on
+    // Tuesday is the one way this can mislead.
+    var age = r.at ? fmtCd(Math.max(0, Math.round(Date.now() / 1000 - r.at))) + " ago" : "";
+    return '<div class="gcb-brow' + (meId && r.id === meId ? " me" : "") + '">' +
+      '<span class="gcb-brank">' + (i + 1) + "</span>" +
+      '<span class="gcb-bname">' + esc(r.name || String(r.id)) +
+      (age ? '<span class="muted" style="display:block;font-size:10px">' + esc(age) +
+             (r.xan == null ? "" : " \u00b7 " + fmt(r.xan) + " xan this year") + "</span>" : "") +
+      "</span>" +
+      '<span class="gcb-benergy">' + fmt(r.gymE) + "e</span>" +
+      '<span class="gcb-bnat ' + (r.atkE > 0 ? "bad" : "muted") + '">' +
+      (r.atkE > 0 ? fmt(r.atkE) + "e" : "\u2014") + "</span>" +
+      '<span class="gcb-bgain muted">' + (split || "\u2014") + "</span>" +
+      "</div>";
+  }
+
   // A device that was closed on Monday -- or installed on a Thursday -- anchors
   // its baseline mid-week, and the board then covers less than it says. Ten
   // minutes of slack for the first poll after the boundary; past that, the
@@ -9148,6 +9473,9 @@
       .then(function (data) {
         applyUserPayload(data, false);
         if (data && data.player_id != null) state.playerId = String(data.player_id);
+        // The same `basic` selection carries the name, and the paste line needs
+        // it -- a board of bare player ids is not one anybody reads.
+        if (data && data.name) { state.playerName = String(data.name); storeSet("playerName", state.playerName); }
         // Torn's own record of what was trained. Refreshed on its own TTL, and
         // forced right after a detected session so the figure settles quickly.
         // NOT on "train". The gym-page click handler fires refresh("train")
@@ -9607,17 +9935,33 @@
   var POLL_OFF_MS = 60000;
 
   var KEYLEVEL_TTL = 3600000; // it only changes when you make a new key
+  var KEYLEVEL_RETRY = 60000; // after a failed check, not after the full hour
   function fetchKeyLevel(force) {
     var key = resolveKey();
     if (!key) { state.keyLevel = null; return; }
     if (!force && Date.now() - (state.keyLevelAt || 0) < KEYLEVEL_TTL) return;
+    // Stamped before the request on purpose -- a failing check must not be
+    // retried on every poll. The catch below walks it back to a short retry so
+    // one dropped request cannot hide the Board tab for the whole hour.
     state.keyLevelAt = Date.now();
     // /v2/key/info answers ANY key, Public included, so the check itself can
     // never be the thing that fails and mislabels a good key.
     httpGet("https://api.torn.com/v2/key/info?key=" + encodeURIComponent(key) +
             "&comment=" + encodeURIComponent(COMMENT))
-      .then(function (d) { state.keyLevel = readKeyLevel(d); })
-      .catch(function () { state.keyLevel = null; });
+      .then(function (d) {
+        state.keyLevel = readKeyLevel(d);
+        // Kept across reloads. It decides whether the Board tab exists, and an
+        // in-memory-only answer means every page load starts by not knowing --
+        // the tab is missing until the request lands, on every single load.
+        storeSet("keyLevel", state.keyLevel);
+        storeSet("keyLevelAt", state.keyLevelAt);
+      })
+      .catch(function () {
+        // The previous answer is left standing: a dropped request is not
+        // evidence about the key. Only the clock is walked back, so the next
+        // poll a minute from now tries again instead of waiting out the TTL.
+        state.keyLevelAt = Date.now() - KEYLEVEL_TTL + KEYLEVEL_RETRY;
+      });
   }
 
   function trySaveKey(raw) {
@@ -9783,7 +10127,8 @@
         .join("<br>") || "No gym perks found in what Torn sent.") +
       "</p></div>" +
       '<div class="gc-card toggle"><div><h3 style="margin:0">War stack</h3><div class="muted">Hold energy. Mute training and Xanax pings.</div></div>' +
-      '<div class="sw' + (state.warStack ? " on" : "") + '" id="stackSw"><i></i></div></div>';
+      '<div class="sw' + (state.warStack ? " on" : "") + '" id="stackSw"><i></i></div></div>'  +
+      pasteCardHtml();
 
     var boostOk = boosterOpen(state.boosterCd);
     var jumpGo = state.mode === "jump" && nextTickSec() <= 90;
@@ -9815,7 +10160,7 @@
       // Its own section: the drinks are a shortlist you pick from, not one line
       // in a list of unrelated items.
       (function () {
-        var list = state.drinkList || [];
+        var list = (state.drinkList || []).filter(function (d) { return (d.qty || 0) > 0; });
         // Total the rows actually shown. Taking it from the API count instead
         // meant the header said 21 while the only row under it said 18.
         var total = list.length
@@ -9950,6 +10295,19 @@
       "";
 
     var setHtml =
+      // The way back in. Torn's key flags decide whether the Board tab appears
+      // at all, and this script has never read those flags off a live key --
+      // if they are ever wrong, the cost has to be one switch, not the feature.
+      '<div class="gc-card toggle"><div><h3 style="margin:0">Faction board</h3><div class="muted">' +
+      // The switch is deliberately NOT part of this sentence: with the override
+      // on it would report a key that cannot read contributors as one that can.
+      (!state.keyLevel
+        ? "Torn has not said what your key can read yet."
+        : boardAllowed(state.keyLevel, false)
+        ? "Your key can read faction contributors, so the Board tab is shown."
+        : "Your key cannot read faction contributors. Turn this on to show the Board tab anyway.") +
+      '</div></div>' +
+      '<div class="sw' + (state.boardForce ? " on" : "") + '" id="boardSw"><i></i></div></div>' +
       '<div class="gc-card"><h3>API</h3>' +
       // A key you paste now WINS over PDA's injected one, so this box is worth
       // offering even on PDA -- it used to be the one place a Full key could
@@ -9987,6 +10345,15 @@
       '<p class="muted" style="margin:8px 12px 0">Goals, energy sources and playstyle moved to the Plan tab.</p>';
 
     var tab = state.tab;
+    // /key/info answers a moment after boot, so someone can already be on the
+    // board when the gate closes. Fall back rather than render a tab that has
+    // no button any more.
+    //
+    // Only on a DEFINITE no, and this is not the same test the tab strip uses.
+    // Hiding an unanswered tab costs a moment; REWRITING state.tab while the
+    // answer is still in flight costs the board keeper their tab on every
+    // single page load, because keyLevel starts null every time.
+    if (tab === "board" && state.keyLevel && !boardTabOn()) { tab = "now"; state.tab = "now"; }
     // The verdict is one line at the top and never a tab, so the question the
     // panel exists to answer is readable before anything is tapped.
     var TAG = { go: "Do it now", wait: "Hold", stack: "War stack" };
@@ -10036,6 +10403,10 @@
           "</button>") +
       '<div class="tabs">' +
       ["now", "plan", "stock", "trend", "board"]
+        // The board reads faction contributors and nothing else can. Without
+        // the access it is a tab that only ever explains why it is empty, so
+        // it is not offered at all -- see boardAllowed().
+        .filter(function (id) { return id !== "board" || boardTabOn(); })
         .map(function (id) {
           var labels = { now: "Now", plan: "Plan", stock: "Stock", trend: "Trend", board: "Board" };
           return '<button data-tab="' + id + '" class="' + (tab === id ? "on" : "") + '">' + labels[id] + "</button>";
@@ -10057,6 +10428,8 @@
       var body2 = panel.querySelector(".gc-body");
       if (body2) body2.scrollTop = bodyY;
     }
+    var box = panel.querySelector("#gcbPaste");
+    if (box) box.value = draftPaste;
     var key2 = panel.querySelector("#gcKey");
     if (key2) {
       key2.value = keyVal || draftKey || "";
@@ -10372,6 +10745,10 @@
     panel.addEventListener(
       "input",
       function (e) {
+        if (e.target && e.target.id === "gcbPaste") {
+          draftPaste = String(e.target.value || "");
+          return;
+        }
         if (!isKey(e.target)) return;
         draftKey = String(e.target.value || "");
         trySaveKey(draftKey);
@@ -10569,7 +10946,7 @@
     if (!t || typeof t.closest !== "function") return;
     // Every clickable attribute has to be listed here or the handler below it is
     // dead code -- closest() returns null and this returns before reaching it.
-    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-preset],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],[data-board],#stackSw,#novSw");
+    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-preset],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],[data-board],#stackSw,#novSw,#boardSw");
     if (!t) return;
     if (t.dataset.board) {
       onBoardClick(t.dataset.board);
@@ -10635,6 +11012,12 @@
     if (t.dataset.tip) {
       var tip = itemTip(t.dataset.tip);
       showToast(tip[0], tip[1]);
+      return;
+    }
+    if (t.id === "boardSw") {
+      state.boardForce = !state.boardForce;
+      storeSet("boardForce", state.boardForce);
+      renderPanel();
       return;
     }
     if (t.id === "stackSw") {
@@ -10720,6 +11103,50 @@
       // Only what is on screen, and only what is not already cleared -- so the
       // button can never reach further back than the list the user just read.
       ledgerWasteDays().forEach(function (r) { if (!r.cleared) clearLedgerDay(r.d); });
+      renderPanel();
+      return;
+    }
+    if (t.dataset.act === "pastecopy") {
+      // copyText() must be reached inside the tap: PDA hands the clipboard over
+      // for the duration of the gesture and takes it back afterwards.
+      var mineNow = myPasteLine(Date.now());
+      if (!mineNow.id) {
+        showToast("No player id yet", "Save an API key first \u2014 the line needs to say who it is from.");
+        renderPanel();
+        return;
+      }
+      copyText(pasteLine(mineNow));
+      showToast("Copied", "Paste it into faction chat.");
+      renderPanel();
+      return;
+    }
+    if (t.dataset.act === "pasteread") {
+      var boxEl = document.getElementById("gcbPaste");
+      var text = boxEl ? String(boxEl.value || "") : draftPaste;
+      var wkNow = weekKey(Date.now());
+      var haveNow = state.pasted && state.pasted.week === wkNow && Array.isArray(state.pasted.rows)
+        ? state.pasted.rows : [];
+      var res = pasteCollect(haveNow, text, wkNow);
+      state.pasted = { week: wkNow, rows: res.rows, at: Date.now() };
+      storeSet("pasted", state.pasted);
+      draftPaste = "";
+      if (boxEl) boxEl.value = "";
+      showToast(
+        res.read ? "Read " + res.read + (res.read === 1 ? " line" : " lines") : "No lines found",
+        res.read
+          ? res.added + " new, " + (res.read - res.added) + " updated" +
+            (res.otherWeek ? " \u00b7 " + res.otherWeek + " from another week ignored" : "")
+          : (res.otherWeek
+              ? res.otherWeek + " line(s) were from another gym week."
+              : "Nothing in that paste looked like a line from this script.")
+      );
+      renderPanel();
+      return;
+    }
+    if (t.dataset.act === "pasteclear") {
+      state.pasted = null;
+      storeSet("pasted", null);
+      showToast("Cleared", "The pasted board is empty again.");
       renderPanel();
       return;
     }
@@ -11102,6 +11529,15 @@
       if (typeof nb === "string") { try { nb = JSON.parse(nb); } catch (_) { nb = null; } }
       if (nb && typeof nb === "object") state.natBase = nb;
       state.boardFaction = String(storeGet("boardFaction", "") || "");
+      state.boardForce = storeBool("boardForce", false);
+      state.playerName = String(storeGet("playerName", "") || "");
+      state.keyLevel = storeGet("keyLevel", null) || null;
+      if (typeof state.keyLevel === "string") { try { state.keyLevel = JSON.parse(state.keyLevel); } catch (_) { state.keyLevel = null; } }
+      if (state.keyLevel && typeof state.keyLevel.level !== "number") state.keyLevel = null;
+      state.keyLevelAt = state.keyLevel ? Number(storeGet("keyLevelAt", 0)) || 0 : 0;
+      state.pasted = storeGet("pasted", null) || null;
+      if (typeof state.pasted === "string") { try { state.pasted = JSON.parse(state.pasted); } catch (_) { state.pasted = null; } }
+      if (state.pasted && !Array.isArray(state.pasted.rows)) state.pasted = null;
       state.unlock = storeGet("unlock", null) || null;
       if (typeof state.unlock === "string") { try { state.unlock = JSON.parse(state.unlock); } catch (_) { state.unlock = null; } }
       if (state.unlock && typeof state.unlock.gymId !== "number") state.unlock = null;

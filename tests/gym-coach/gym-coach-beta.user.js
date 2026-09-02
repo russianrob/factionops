@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.71
+// @version      0.9.72
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,7 +29,33 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
-* 0.9.71 - A faction board for the members Torn will not answer for.
+* 0.9.72 - Using a can moves the number you are looking at.
+ *
+ *         Reported: "used x amount of cans but the number stayed the same
+ *         until I refreshed".
+ *
+ *         The machinery for this was already here, and its own comment says
+ *         what it is for: Torn caches the inventory for about thirty seconds,
+ *         so the refresh fired straight after a use reads the PRE-use count
+ *         back. A use is therefore recorded as PENDING and re-applied to every
+ *         fetch until Torn's own number comes down, which is why the figure
+ *         does not drop and then spring back up.
+ *
+ *         It was applied to the aggregate counts and to the happy-item list.
+ *         It was never applied to the cans list -- which is what the rows on
+ *         the Stock tab render from, what the heading above them totals, and
+ *         what the can advice sums. So the use was recorded correctly and
+ *         subtracted from a number nobody was looking at.
+ *
+ *         The cans list now takes the same treatment the happy list already
+ *         had: the quantities are snapshotted when a fresh inventory lands,
+ *         and pending uses are subtracted from THAT baseline rather than from
+ *         the row's own current value -- re-applying on every fetch is the
+ *         point, and subtracting from itself would compound one use into
+ *         several. A drink that reaches zero also stops offering a USE button
+ *         for an item you no longer hold.
+ *
+ * 0.9.71 - A faction board for the members Torn will not answer for.
  *
  *         The Board tab reads /faction/contributors, which needs faction API
  *         access -- a POSITION ability, granted by a leader, not a property of
@@ -2363,6 +2389,9 @@
     pendingUse: null,
     rawQty: null,
     rawHappy: null,
+    // Pre-use quantities for the cans list, so a pending use has a baseline
+    // to subtract from rather than compounding on its own last answer.
+    rawDrinks: null,
     invAt: 0,
     toast: null,
     invCatErr: "",
@@ -2945,7 +2974,7 @@
     var byId = {};
     for (var id in pend) {
       var p = pend[id];
-      // Give up after two minutes. If the API still disagrees by then the use
+      // Give up after thirty minutes. If the API still disagrees by then the use
       // did not land, and holding the adjustment forever would lie the other way.
       if (now - p.at > 1800000) {
         delete pend[id];
@@ -2965,6 +2994,17 @@
       if (raw === undefined) continue;
       var n = byId[list[i].id] || 0;
       list[i].qty = Math.max(0, Number(raw) - n);
+    }
+    // The cans list is what the Stock tab actually renders -- both each row and
+    // the total in its heading -- and what cansOnHand() sums for the advice.
+    // Adjusting state.items alone left every one of those sitting still until
+    // the next inventory landed, which is the whole reason this machinery
+    // exists.
+    var drinks = state.drinkList || [];
+    for (var di2 = 0; di2 < drinks.length; di2++) {
+      var rawD = state.rawDrinks ? state.rawDrinks[drinks[di2].id] : undefined;
+      if (rawD === undefined) continue;
+      drinks[di2].qty = Math.max(0, Number(rawD) - (byId[drinks[di2].id] || 0));
     }
   }
 
@@ -3480,6 +3520,10 @@
     state.rawHappy = {};
     for (var hi = 0; hi < state.happyList.length; hi++) {
       state.rawHappy[state.happyList[hi].id] = state.happyList[hi].qty;
+    }
+    state.rawDrinks = {};
+    for (var di = 0; di < state.drinkList.length; di++) {
+      state.rawDrinks[state.drinkList[di].id] = state.drinkList[di].qty;
     }
     applyPendingUses();
     // The candidate list is built from the cans you actually hold, so it is not
@@ -9891,17 +9935,33 @@
   var POLL_OFF_MS = 60000;
 
   var KEYLEVEL_TTL = 3600000; // it only changes when you make a new key
+  var KEYLEVEL_RETRY = 60000; // after a failed check, not after the full hour
   function fetchKeyLevel(force) {
     var key = resolveKey();
     if (!key) { state.keyLevel = null; return; }
     if (!force && Date.now() - (state.keyLevelAt || 0) < KEYLEVEL_TTL) return;
+    // Stamped before the request on purpose -- a failing check must not be
+    // retried on every poll. The catch below walks it back to a short retry so
+    // one dropped request cannot hide the Board tab for the whole hour.
     state.keyLevelAt = Date.now();
     // /v2/key/info answers ANY key, Public included, so the check itself can
     // never be the thing that fails and mislabels a good key.
     httpGet("https://api.torn.com/v2/key/info?key=" + encodeURIComponent(key) +
             "&comment=" + encodeURIComponent(COMMENT))
-      .then(function (d) { state.keyLevel = readKeyLevel(d); })
-      .catch(function () { state.keyLevel = null; });
+      .then(function (d) {
+        state.keyLevel = readKeyLevel(d);
+        // Kept across reloads. It decides whether the Board tab exists, and an
+        // in-memory-only answer means every page load starts by not knowing --
+        // the tab is missing until the request lands, on every single load.
+        storeSet("keyLevel", state.keyLevel);
+        storeSet("keyLevelAt", state.keyLevelAt);
+      })
+      .catch(function () {
+        // The previous answer is left standing: a dropped request is not
+        // evidence about the key. Only the clock is walked back, so the next
+        // poll a minute from now tries again instead of waiting out the TTL.
+        state.keyLevelAt = Date.now() - KEYLEVEL_TTL + KEYLEVEL_RETRY;
+      });
   }
 
   function trySaveKey(raw) {
@@ -10100,7 +10160,7 @@
       // Its own section: the drinks are a shortlist you pick from, not one line
       // in a list of unrelated items.
       (function () {
-        var list = state.drinkList || [];
+        var list = (state.drinkList || []).filter(function (d) { return (d.qty || 0) > 0; });
         // Total the rows actually shown. Taking it from the API count instead
         // meant the header said 21 while the only row under it said 18.
         var total = list.length
@@ -10239,7 +10299,11 @@
       // at all, and this script has never read those flags off a live key --
       // if they are ever wrong, the cost has to be one switch, not the feature.
       '<div class="gc-card toggle"><div><h3 style="margin:0">Faction board</h3><div class="muted">' +
-      (boardTabOn()
+      // The switch is deliberately NOT part of this sentence: with the override
+      // on it would report a key that cannot read contributors as one that can.
+      (!state.keyLevel
+        ? "Torn has not said what your key can read yet."
+        : boardAllowed(state.keyLevel, false)
         ? "Your key can read faction contributors, so the Board tab is shown."
         : "Your key cannot read faction contributors. Turn this on to show the Board tab anyway.") +
       '</div></div>' +
@@ -10284,7 +10348,12 @@
     // /key/info answers a moment after boot, so someone can already be on the
     // board when the gate closes. Fall back rather than render a tab that has
     // no button any more.
-    if (tab === "board" && !boardTabOn()) { tab = "now"; state.tab = "now"; }
+    //
+    // Only on a DEFINITE no, and this is not the same test the tab strip uses.
+    // Hiding an unanswered tab costs a moment; REWRITING state.tab while the
+    // answer is still in flight costs the board keeper their tab on every
+    // single page load, because keyLevel starts null every time.
+    if (tab === "board" && state.keyLevel && !boardTabOn()) { tab = "now"; state.tab = "now"; }
     // The verdict is one line at the top and never a tab, so the question the
     // panel exists to answer is readable before anything is tapped.
     var TAG = { go: "Do it now", wait: "Hold", stack: "War stack" };
@@ -11462,6 +11531,10 @@
       state.boardFaction = String(storeGet("boardFaction", "") || "");
       state.boardForce = storeBool("boardForce", false);
       state.playerName = String(storeGet("playerName", "") || "");
+      state.keyLevel = storeGet("keyLevel", null) || null;
+      if (typeof state.keyLevel === "string") { try { state.keyLevel = JSON.parse(state.keyLevel); } catch (_) { state.keyLevel = null; } }
+      if (state.keyLevel && typeof state.keyLevel.level !== "number") state.keyLevel = null;
+      state.keyLevelAt = state.keyLevel ? Number(storeGet("keyLevelAt", 0)) || 0 : 0;
       state.pasted = storeGet("pasted", null) || null;
       if (typeof state.pasted === "string") { try { state.pasted = JSON.parse(state.pasted); } catch (_) { state.pasted = null; } }
       if (state.pasted && !Array.isArray(state.pasted.rows)) state.pasted = null;

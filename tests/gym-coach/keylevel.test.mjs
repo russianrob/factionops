@@ -69,9 +69,40 @@ t("blank entries are skipped rather than returned", () => {
 
 t("a Full key is recognised", () => {
   assert.deepStrictEqual(level({ info: { access: { level: 4, type: "Full Access" } } }),
-    // faction is null, not false: Torn does not send the flag here and "I could
-    // not tell" is a different claim from "you do not have it".
-    { level: 4, type: "Full Access", full: true, faction: null });
+    // faction and contributors are null, not false: nothing in this response
+    // said either way, and "I could not tell" is a different claim from "you do
+    // not have it". The Board tab now turns on this distinction.
+    { level: 4, type: "Full Access", full: true, faction: null, contributors: null });
+});
+
+// ---- what the key may ask the faction for ----------------------------------
+//
+// `selections.faction` is required by Torn's schema and lists the faction
+// selections this key may use. It is the other half of the board's answer:
+// the position ability says whether the MEMBER has faction API access, this
+// says whether the KEY can reach contributors.
+
+t("a key whose faction selections include contributors says so", () => {
+  const r = level({ info: { access: { level: 3, type: "Limited Access" },
+                            selections: { faction: ["basic", "contributors"] } } });
+  assert.strictEqual(r.contributors, true);
+});
+
+t("a faction selection list without contributors is a definite no", () => {
+  const r = level({ info: { access: { level: 4, type: "Full Access" },
+                            selections: { faction: ["basic", "members"] } } });
+  assert.strictEqual(r.contributors, false);
+});
+
+t("an empty faction selection list is still a definite no", () => {
+  const r = level({ info: { access: { level: 4, type: "Full Access" },
+                            selections: { faction: [] } } });
+  assert.strictEqual(r.contributors, false);
+});
+
+t("no selections block at all is unknown, not a no", () => {
+  const r = level({ info: { access: { level: 4, type: "Full Access" }, selections: {} } });
+  assert.strictEqual(r.contributors, null);
 });
 
 t("a Limited key is recognised, and is not full", () => {
