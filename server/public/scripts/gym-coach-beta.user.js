@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.66
+// @version      0.9.70
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,83 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.70 - The gym you are UNLOCKING is not a gym you own.
+ *
+ *         Reported live: a member standing in Cha Cha\u2019s was told "change gym
+ *         to Atlas first \u2014 it trains Strength 9% faster for the same 10e a
+ *         train, and you have it unlocked". Atlas is the very next rung on the
+ *         ladder, and they did not own it.
+ *
+ *         Unlocked gyms never re-lock, so a stale scan can only UNDER-report.
+ *         An over-report by exactly one is the tile being unlocked reading as
+ *         owned \u2014 and a browser run against a gym list whose in-progress tile
+ *         carries no lock class reproduces it exactly: the set comes back one
+ *         too long, ending on the gym you cannot walk into.
+ *
+ *         A gym is counted unlocked by the ABSENCE of a lock class, so a tile
+ *         Torn marks only as in-progress passes straight through. Two rules now
+ *         stop it. The class token `inProgress` reads as not-owned, and \u2014 keyed
+ *         on evidence read off the live page rather than on a class name \u2014 the
+ *         one tile painting an unlock percentage is dropped from the set. You
+ *         cannot be in progress toward a gym you already own. If several tiles
+ *         ever carry a percentage the element means something else, and none is
+ *         dropped rather than emptying the set and silencing every suggestion.
+ *
+ *         The switch advice also says what it is relying on now: how many of
+ *         the 31 the scan saw unlocked and how long ago it looked, stamped at
+ *         scan time. A confident sentence that cannot be traced is how this got
+ *         believed in the first place. "Every gym unlocked" is reported as
+ *         suspicious rather than impressive, since that is what a renamed lock
+ *         class would produce.
+ *
+ * 0.9.68 - The faction xanax board is back, for the members Torn can answer for.
+ *
+ *         0.9.66 removed it on the grounds that Torn cannot answer "since
+ *         January". That was generalised from ONE account -- mine, which has no
+ *         January snapshot. Testing four members found coverage varies per
+ *         member: two returned an exact 1 Jan 2026 snapshot, one returned
+ *         December 2025, one returned August 2021.
+ *
+ *         So it is not impossible, it is PARTIAL -- and every response carries
+ *         the date of the snapshot it actually used, which makes who can be
+ *         answered knowable rather than guessed. A member whose snapshot is
+ *         within a day of 1 January is counted. Everyone else is listed and
+ *         marked, never shown as zero: "no January figure" and "took none" are
+ *         different statements about a person, and 0.9.64 shipped the first as
+ *         the second.
+ *
+ *         A day of slack, because a daily snapshot job is not a clock. Not a
+ *         fortnight: that is a fortnight of xanax counted into the wrong year,
+ *         which is what the December snapshot would have done.
+ *
+ *         Your own row skips all of this and comes from the item log, which is
+ *         exact and needs no snapshot to exist.
+ *
+* 0.9.67 - Xanax is back, counted from the log instead of guessed from a snapshot.
+ *
+ *         0.9.66 removed it because the snapshot route cannot answer "since
+ *         January" -- asked for 1 Jan 2026 Torn returns a snapshot from Feb
+ *         2024, and even where it answers an exact date the figure disagrees
+ *         with the itemised log by 18% over two months.
+ *
+ *         Log 2290, "Item use xanax", is a record of discrete events with
+ *         unique ids and timestamps. It can be COUNTED. Six pages covers a
+ *         year, walked backwards through the link Torn hands back, deduplicated
+ *         by id because pages overlap at the boundary.
+ *
+ *         What it cannot be is a faction board. There is no /user/{id}/log, so
+ *         this is your own usage and the card says so rather than implying a
+ *         ranking that Torn will not serve. Full key only, like the gym log.
+ *
+ *         Months are bucketed in TCT. Locally, a xanax taken just after
+ *         midnight moves into the previous month, and in January into the
+ *         previous year.
+ *
+ *         For the record, the faction-wide version people will ask about:
+ *         FactionStatEnum has `drugsused`, which is ALL drugs rather than
+ *         xanax, and is cumulative with no history -- so it could only ever
+ *         count forward from the day a device first read it.
+ *
 * 0.9.66 - The xanax board is removed. Torn cannot answer the question.
  *
  *         Checked against a real account rather than assumed, and the answer
@@ -2162,6 +2239,18 @@
     // Which book dates this device worked out for itself, rather than being
     // told. Only these are ever cleared automatically.
     booksAuto: {},
+    // Your own xanax for the calendar year, counted from Torn's item log.
+    xanLog: null,
+    xanAt: 0,
+    xanBusy: false,
+    xanPages: 0,
+    xanError: null,
+    // The faction's January figures, where Torn has them.
+    xanFac: {},
+    xanFacAt: 0,
+    xanFacBusy: false,
+    xanFacDone: 0,
+    xanFacTotal: 0,
     // Which dates came from Torn's own item log rather than from a sighting.
     // Those are exact; the rest are floors and say so.
     booksExact: {},
@@ -2203,6 +2292,7 @@
     ledger: [],
     prices: {},
     gymsOwned: [],
+    gymsOwnedAt: 0,
     unlock: null,
     gymExpMult: 1,
     goalOrder: [],
@@ -6228,13 +6318,22 @@
     if (!b) return null;
     var cur = GYMS.filter(function (g) { return g.Gym === state.gymName; })[0];
     var e = cur ? Number(cur.Energy) || 25 : 25;
+    // Where the claim comes from, on the line that makes it. Asserting "you
+    // have it unlocked" from a scan of unknown age is how the coach came to
+    // recommend a gym somebody does not own -- and there was no way to tell,
+    // from the advice, what it was relying on.
+    var trust = gymScanTrust();
+    var since = trust.at ? " " + fmtCd(Math.round((Date.now() - trust.at) / 1000)) + " ago" : "";
+    var prov = trust.known
+      ? " (" + trust.count + " of " + GYMS.length + " unlocked, read from the gym page" + since + ")"
+      : " \u2014 but " + trust.why + ", so check it is actually yours";
     return {
       t: "SWITCH",
       text: b.pct === null
         ? "Change gym to " + b.gym.Gym + " first \u2014 " + state.gymName + " cannot train " +
-          STAT_LABEL[k] + " at all, and you have " + b.gym.Gym + " unlocked."
+          STAT_LABEL[k] + " at all" + prov + "."
         : "Change gym to " + b.gym.Gym + " first \u2014 it trains " + STAT_LABEL[k] + " " +
-          b.pct + "% faster for the same " + fmt(e) + "e a train, and you have it unlocked."
+          b.pct + "% faster for the same " + fmt(e) + "e a train" + prov + "."
     };
   }
 
@@ -6409,10 +6508,43 @@
       // `locked___` and `lockedPurchased___` both mean unusable; one regex
       // catches both. The active gym also carries `active___`, which is not a
       // lock and must not read as one.
-      if (/locked/i.test(String((nodes[i] && nodes[i].className) || ""))) continue;
+      //
+      // `inProgress___` marks the gym you are climbing toward. You cannot be in
+      // progress toward a gym you already own, so it is not a lock but it is
+      // not ownership either. Whether the real page also locks that tile is
+      // unconfirmed -- if it does, this line changes nothing, and
+      // ownedSansProgress() carries the same rule keyed on evidence that HAS
+      // been read off the live page.
+      if (/locked|inProgress/i.test(String((nodes[i] && nodes[i].className) || ""))) continue;
       out.push(i);
     }
     return out;
+  }
+
+  // The gym being unlocked is the only one on the page painting an unlock
+  // percentage. Reported live: a member standing in Cha Cha's was told to
+  // "change gym to Atlas -- and you have it unlocked", Atlas being the very
+  // next rung. Unlocked gyms never re-lock, so a stale scan can only
+  // UNDER-report; an over-report by exactly one is the tile being unlocked
+  // reading as owned.
+  //
+  // Keyed on the percentage child rather than on a class token because the
+  // percentage is the part that has been read off the live page. Exactly one
+  // tile, or none: if several carry a percentage then the element means
+  // something other than unlock progress, and dropping them all would empty
+  // the owned set and silence every recommendation.
+  function ownedSansProgress(owned, nodes) {
+    if (!owned || !owned.length || !nodes) return owned || [];
+    var hit = -1;
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (!n || typeof n.querySelector !== "function") continue;
+      if (!n.querySelector('[class*="percentage"]')) continue;
+      if (hit !== -1) return owned;
+      hit = i;
+    }
+    if (hit === -1) return owned;
+    return owned.filter(function (i) { return i !== hit; });
   }
 
   function scanGymList() {
@@ -6422,10 +6554,18 @@
     // The React list renders late; a handful of buttons means a half-built page,
     // and half a page would read as "most gyms locked" and hide real upgrades.
     if (!btns || btns.length < 20) return false;
-    var owned = gymsUnlocked(btns);
+    var owned = ownedSansProgress(gymsUnlocked(btns), btns);
     if (!owned.length) return false;
     state.gymsOwned = owned;
+    // WHEN the list was read, and how many it saw. Reported: the coach told a
+    // member to switch to a gym they do not own. The scan itself is index-1:1
+    // with the gym table and skips the Jail placeholder, so the mapping is not
+    // the suspect -- what was missing was any way to tell a fresh scan from one
+    // taken months ago, or a real reading from a selector that has stopped
+    // matching and therefore finds nothing locked.
+    state.gymsOwnedAt = Date.now();
     storeSet("gymsOwned", owned);
+    storeSet("gymsOwnedAt", state.gymsOwnedAt);
     // gym.php is the only place the unlock percentage exists, so it is read
     // here and kept — the Trend tab has to answer while you are somewhere else.
     // A null reading is never persisted over a real one: once every standard
@@ -6447,6 +6587,23 @@
   // the coach does not get to make that call for you. What it will not stay
   // quiet about is the case with no trade in it at all: Anabolic Anomalies and
   // George's are both 10e a train, and George's returns 46% more.
+  // How much the unlocked-gym list can be relied on.
+  //
+  // "all" is deliberately suspicious rather than impressive: the scan marks a
+  // gym unlocked by the ABSENCE of a lock class, so a selector Torn has renamed
+  // finds nothing locked and reports the whole list as owned. Somebody really
+  // owning all 31 -- including the four specialists and Sports Science Lab --
+  // is rare enough that it is worth saying which of the two it looks like.
+  function gymScanTrust() {
+    var owned = state.gymsOwned || [];
+    if (!owned.length) return { known: false, why: "the gym list has not been read on this device yet" };
+    if (owned.length >= GYMS.length) {
+      return { known: false, count: owned.length,
+               why: "the last scan found every gym unlocked, which usually means the page changed rather than that you own all of them" };
+    }
+    return { known: true, count: owned.length, at: state.gymsOwnedAt || 0 };
+  }
+
   function betterGym(k) {
     var owned = state.gymsOwned;
     if (!owned || !owned.length) return null;   // never scanned: say nothing
@@ -7976,6 +8133,277 @@
   // object. null means unreadable, which is not the same as zero.
 
 
+  // Your own xanax, counted rather than estimated.
+  //
+  // The snapshot route does not work: asked for 1 Jan 2026 Torn returns a
+  // snapshot from Feb 2024, and even where it answers an exact date the figure
+  // disagrees with the itemised log by 18% over two months. Log 2290 is a
+  // record of discrete events with unique ids, so it can be counted.
+  //
+  // Owner-only -- there is no /user/{id}/log -- so this is never a faction
+  // ranking, and the card says whose it is. Full key only, like the gym log.
+  var XAN_LOG = 2290;
+  var XAN_MAX_PAGES = 20;   // a year is about six; this is a backstop
+  var XAN_TTL = 900000;
+
+  // Whether a snapshot Torn returned is close enough to the date asked for.
+  //
+  // Coverage varies per member: asked for 1 Jan 2026, one account answers with
+  // a 1 Jan 2026 snapshot and another with one from August 2021. The response
+  // always carries the date it actually used, so this is checkable rather than
+  // assumed -- and checking it is the whole difference between a partial board
+  // that says who it cannot answer for, and the board in 0.9.64 that reported
+  // two and a half years of xanax as this year's.
+  //
+  // A day either side, because a daily snapshot job is not a clock. Not more:
+  // a fortnight of slack is a fortnight of xanax counted into the wrong year.
+  var XAN_SNAP_SLACK_MS = 86400000;
+  function xanSnapUsable(snapSec, wantMs) {
+    var t = Number(snapSec) || 0;
+    if (!t) return false;
+    return Math.abs(t * 1000 - (Number(wantMs) || 0)) <= XAN_SNAP_SLACK_MS;
+  }
+
+  function xanLogTally(pages) {
+    var seen = {}, byMonth = {}, total = 0, n = 0;
+    (pages || []).forEach(function (rows) {
+      (rows || []).forEach(function (r) {
+        var ts = Number(r && r.timestamp) || 0;
+        if (!ts) return;
+        // Pages overlap at the boundary when walking backwards by timestamp, so
+        // a duplicate id is the same use seen twice. A row with no id is still
+        // a real use and is counted on its own.
+        var key = r.id != null ? String(r.id) : "t" + ts + "#" + (n++);
+        if (seen[key]) return;
+        seen[key] = 1;
+        total += 1;
+        // getUTC*, because Torn's day is TCT. Bucketing locally moves a use
+        // taken just after midnight into the previous month, and in January
+        // into the previous year.
+        var d = new Date(ts * 1000);
+        var m = d.getUTCFullYear() + "-" + (d.getUTCMonth() < 9 ? "0" : "") + (d.getUTCMonth() + 1);
+        byMonth[m] = (byMonth[m] || 0) + 1;
+      });
+    });
+    return { total: total, byMonth: byMonth };
+  }
+
+  // Torn hands back the next page as a link. `prev` walks backwards in time,
+  // which is the direction this reads.
+  function xanLogNext(d) {
+    var l = d && d._metadata && d._metadata.links;
+    return (l && l.prev) || null;
+  }
+
+  // The faction's xanax since 1 January, for the members Torn can answer for.
+  //
+  // Two readings per member: now, and 1 January. The January half is history
+  // and never changes, so it is fetched once and kept. Whether it is USABLE is
+  // decided by the snapshot date Torn returns, not by the date requested --
+  // coverage varies per member and half the sample had none.
+  //
+  // The owner's row comes from the item log instead, which is exact and does
+  // not depend on a snapshot existing at all.
+  function xanFacBuild(rows, wantMs, ownId, ownTotal) {
+    var out = [], id;
+    for (id in (rows || {})) {
+      var r = rows[id];
+      if (!r) continue;
+      var mine = ownId != null && String(id) === String(ownId);
+      if (mine && ownTotal != null) {
+        out.push({ id: r.id, name: r.name, taken: ownTotal, total: Number(r.now) || 0,
+                   usable: true, source: "log" });
+        continue;
+      }
+      if (r.now == null || !xanSnapUsable(r.snapAt, wantMs)) {
+        // Listed, not dropped and not zeroed: "Torn has no January figure for
+        // this member" is a different statement from "they took none", and
+        // showing it as zero would rank somebody clean who simply is not known.
+        out.push({ id: r.id, name: r.name, taken: null, total: Number(r.now) || 0,
+                   usable: false, source: "none" });
+        continue;
+      }
+      out.push({ id: r.id, name: r.name,
+                 taken: Math.max(0, (Number(r.now) || 0) - (Number(r.then) || 0)),
+                 total: Number(r.now) || 0, usable: true, source: "snapshot" });
+    }
+    out.sort(function (a, b) {
+      if (a.usable !== b.usable) return a.usable ? -1 : 1;
+      return (b.taken || 0) - (a.taken || 0) || String(a.name).localeCompare(String(b.name));
+    });
+    out.forEach(function (r, i) { r.rank = r.usable ? i + 1 : null; });
+    return out;
+  }
+
+  var XAN_FAC_TOP = 20;
+  function fetchXanFaction(force) {
+    if (state.xanBusy || state.xanFacBusy || state.boardBusy) return;
+    if (!force && Date.now() - (state.xanFacAt || 0) < XAN_TTL) return;
+    if (!resolveKey()) return;
+    var rows = boardCurrent();
+    if (!rows.length) return;
+    var picked = rows.slice(0, XAN_FAC_TOP);
+    var wantSec = Math.floor(yearStartMs(Date.now()) / 1000);
+    state.xanFacBusy = true;
+    state.xanFacAt = Date.now();
+    state.xanFacDone = 0;
+    state.xanFacTotal = picked.length;
+
+    function one(i) {
+      if (i >= picked.length) return Promise.resolve();
+      var m = picked[i], id = String(m.id);
+      var have = state.xanFac[id] || (state.xanFac[id] = { id: m.id, name: m.name, now: null, then: null, snapAt: 0 });
+      have.name = m.name;
+      var jobs = [function () { return boardGet(xanStatUrl(id, 0)).then(readXanStat); }];
+      // History cannot change, so the January half is paid for once.
+      if (!have.snapAt) jobs.push(function () { return boardGet(xanStatUrl(id, wantSec)).then(readXanStat); });
+      return jobs.reduce(function (p, job) {
+        return p.then(function (acc) {
+          return job().then(function (v) { acc.push(v); return acc; })
+            .then(function (a) { return new Promise(function (r) { setTimeout(function () { r(a); }, BOARD_GAP_MS); }); });
+        });
+      }, Promise.resolve([]))
+        .then(function (res) {
+          if (res[0]) have.now = res[0].value;
+          if (res.length > 1 && res[1]) { have.then = res[1].value; have.snapAt = res[1].at; }
+        })
+        .catch(function (e) { state.xanError = (e && e.message) || "unreadable"; })
+        .then(function () {
+          state.xanFacDone = i + 1;
+          if (state.tab === "board") renderPanel();
+          return one(i + 1);
+        });
+    }
+    one(0).then(function () {
+      state.xanFacBusy = false;
+      storeSet("xanFac", state.xanFac);
+      if (state.tab === "board") renderPanel();
+    });
+  }
+
+  function xanStatUrl(id, atSec) {
+    return "https://api.torn.com/v2/user/" + encodeURIComponent(id) + "/personalstats?stat=xantaken" +
+      (atSec ? "&timestamp=" + atSec : "") +
+      "&key=" + encodeURIComponent(resolveKey()) + "&comment=" + encodeURIComponent(COMMENT);
+  }
+
+  // The value AND the date of the snapshot it came from. The date is the whole
+  // point: without it there is no way to tell a January figure from a 2021 one.
+  function readXanStat(d) {
+    var p = d && d.personalstats;
+    if (!p) return null;
+    if (Array.isArray(p)) {
+      for (var i = 0; i < p.length; i++) {
+        if (p[i] && p[i].name === "xantaken") return { value: Number(p[i].value) || 0, at: Number(p[i].timestamp) || 0 };
+      }
+      return null;
+    }
+    if (p.xantaken != null) return { value: Number(p.xantaken) || 0, at: 0 };
+    return null;
+  }
+
+  function fetchXanLog(force) {
+    if (state.xanBusy || state.boardBusy) return;
+    if (!force && Date.now() - (state.xanAt || 0) < XAN_TTL) return;
+    var key = resolveKey();
+    if (!key) return;
+    if (state.logReadable === false) {
+      state.xanError = "Torn\u2019s log needs a FULL access key; this one cannot read it.";
+      return;
+    }
+    state.xanBusy = true;
+    state.xanAt = Date.now();
+    state.xanError = null;
+    state.xanPages = 0;
+    var from = Math.floor(yearStartMs(Date.now()) / 1000);
+    var url = "https://api.torn.com/v2/user/log?log=" + XAN_LOG + "&from=" + from +
+      "&limit=100&key=" + encodeURIComponent(key) + "&comment=" + encodeURIComponent(COMMENT);
+    var pages = [];
+
+    function step(u, n) {
+      if (!u || n >= XAN_MAX_PAGES) return Promise.resolve();
+      return boardGet(u).then(function (d) {
+        var rows = (d && d.log) || [];
+        pages.push(rows);
+        state.xanPages = n + 1;
+        if (state.tab === "board") renderPanel();
+        var nxt = xanLogNext(d);
+        if (!rows.length || !nxt) return;
+        return new Promise(function (r) { setTimeout(r, BOARD_GAP_MS); })
+          .then(function () { return step(nxt + "&key=" + encodeURIComponent(key) +
+                                          "&comment=" + encodeURIComponent(COMMENT), n + 1); });
+      });
+    }
+
+    step(url, 0)
+      .then(function () {
+        state.xanLog = xanLogTally(pages);
+        state.xanLog.at = Date.now();
+        storeSet("xanLog", state.xanLog);
+      })
+      .catch(function (e) { state.xanError = (e && e.message) || "unreadable"; })
+      .then(function () {
+        state.xanBusy = false;
+        if (state.tab === "board") renderPanel();
+      });
+  }
+
+  // Midnight TCT on 1 January of the current year.
+  function yearStartMs(now) {
+    return Date.UTC(new Date(Number(now) || Date.now()).getUTCFullYear(), 0, 1);
+  }
+
+  function xanHtml() {
+    var year = new Date().getUTCFullYear();
+    var head = '<div class="gc-card"><h3>Your xanax \u00b7 ' + year + "</h3>";
+    if (state.xanBusy) {
+      return head + '<p class="muted" style="margin:0">Reading Torn\u2019s log \u2014 page ' +
+        (state.xanPages || 1) + "\u2026</p></div>";
+    }
+    var lg = state.xanLog;
+    var body = "";
+    if (lg && lg.total != null) {
+      var months = Object.keys(lg.byMonth).sort();
+      body =
+        '<div class="row"><span>Taken since 1 Jan</span><b>' + fmt(lg.total) + "</b></div>" +
+        months.map(function (m) {
+          var d = new Date(m + "-01T00:00:00Z");
+          var MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          return '<div class="row"><span class="muted">' + MON[d.getUTCMonth()] + "</span><b>" +
+            fmt(lg.byMonth[m]) + "</b></div>";
+        }).join("");
+    }
+    var fac = xanFacBuild(state.xanFac, yearStartMs(Date.now()), state.playerId,
+                          state.xanLog ? state.xanLog.total : null);
+    var known = fac.filter(function (r) { return r.usable; }).length;
+    var facBody = state.xanFacBusy
+      ? '<p class="muted" style="margin:10px 0 0">Reading the faction \u2014 ' + state.xanFacDone + " of " + state.xanFacTotal + "\u2026</p>"
+      : !fac.length
+      ? '<p class="muted" style="margin:10px 0 0;font-size:11px">The rest of the faction can be counted too, for the members Torn kept a January figure for. Two requests each.</p>' +
+        '<button type="button" class="gcb-btn" data-board="xanfac" style="margin-top:9px">Count the faction (top ' + XAN_FAC_TOP + ")</button>"
+      : '<div class="gcb-brow head" style="margin-top:10px"><span class="gcb-brank">#</span>' +
+        '<span class="gcb-bname">Member</span><span class="gcb-benergy">Since 1 Jan</span>' +
+        '<span class="gcb-bnat">Ever</span></div>' +
+        fac.map(function (r) {
+          return '<div class="gcb-brow' + (String(r.id) === String(state.playerId) ? " me" : "") + '">' +
+            '<span class="gcb-brank">' + (r.rank || "\u2014") + "</span>" +
+            '<span class="gcb-bname">' + esc(String(r.name || r.id)) + "</span>" +
+            '<span class="gcb-benergy' + (r.usable ? "" : " muted") + '">' +
+              (r.usable ? fmt(r.taken) + (r.source === "log" ? "" : "") : "no Jan data") + "</span>" +
+            '<span class="gcb-bnat muted">' + fmt(r.total) + "</span></div>";
+        }).join("") +
+        '<p class="muted" style="margin:8px 0 0;font-size:11px">' + known + " of " + fac.length +
+        " have a January figure Torn still holds; the rest are marked rather than shown as zero, because " +
+        "\u201cnot known\u201d and \u201ctook none\u201d are different things. Your own row is counted from the log instead.</p>" +
+        '<button type="button" class="gcb-btn" data-board="xanfac" style="margin-top:9px">Refresh faction</button>';
+
+    return head + body + facBody +
+      (state.xanError ? '<p class="bad" style="margin:8px 0 0">' + esc(state.xanError) + "</p>" : "") +
+      '<p class="muted" style="margin:8px 0 0;font-size:11px">Yours is counted one by one from Torn\u2019s item log, which is exact. Everyone else is a subtraction of two stat snapshots, and only counts where Torn still holds a January one for them.</p>' +
+      '<button type="button" class="gcb-btn" data-board="xanlog" style="margin-top:9px">' +
+      (lg && lg.total != null ? "Refresh" : "Count them") + "</button></div>";
+  }
+
   function saveBoard() {
     try {
       storeSet("board", { week: state.board.week, at: state.board.at, stats: state.board.stats,
@@ -8210,7 +8638,7 @@
           (top ? esc(String(top.name)) + " · " + fmt(top.energy) + "e" : "—") + "</b></div>";
       }).join("") + "</div>";
 
-    return head + shareCard + hofCard;
+    return head + xanHtml() + shareCard + hofCard;
   }
 
 
@@ -8269,6 +8697,18 @@
       saveBoard();
       showToast("Re-anchored", "Counting again from now, all stats together.");
       fetchBoard(true);
+      renderPanel();
+      return;
+    }
+    if (what === "xanfac") {
+      if (state.boardBusy) { showToast("Still reading", "The board is loading. Try again in a moment."); renderPanel(); return; }
+      fetchXanFaction(true);
+      renderPanel();
+      return;
+    }
+    if (what === "xanlog") {
+      if (state.boardBusy) { showToast("Still reading", "The board is loading. Try again in a moment."); renderPanel(); return; }
+      fetchXanLog(true);
       renderPanel();
       return;
     }
@@ -10583,6 +11023,12 @@
       var bx = storeGet("booksExact", null);
       if (typeof bx === "string") { try { bx = JSON.parse(bx); } catch (_) { bx = null; } }
       state.booksExact = (bx && typeof bx === "object") ? bx : {};
+      var xf = storeGet("xanFac", null);
+      if (typeof xf === "string") { try { xf = JSON.parse(xf); } catch (_) { xf = null; } }
+      state.xanFac = (xf && typeof xf === "object") ? xf : {};
+      var xl = storeGet("xanLog", null);
+      if (typeof xl === "string") { try { xl = JSON.parse(xl); } catch (_) { xl = null; } }
+      state.xanLog = (xl && typeof xl === "object" && xl.byMonth) ? xl : null;
       var bi = storeGet("bookIds", null);
       if (typeof bi === "string") { try { bi = JSON.parse(bi); } catch (_) { bi = null; } }
       state.bookIds = (bi && typeof bi === "object") ? bi : {};
@@ -10672,6 +11118,7 @@
       if (typeof state.gymsOwned === "string") { try { state.gymsOwned = JSON.parse(state.gymsOwned); } catch (_) { state.gymsOwned = []; } }
       if (!Array.isArray(state.gymsOwned)) state.gymsOwned = [];
       state.gymsOwned = state.gymsOwned.filter(function (i) { return typeof i === "number" && i >= 0 && i < GYMS.length; });
+      state.gymsOwnedAt = Number(storeGet("gymsOwnedAt", 0)) || 0;
       state.goalOrder = storeGet("goalOrder", []) || [];
       if (typeof state.goalOrder === "string") { try { state.goalOrder = JSON.parse(state.goalOrder); } catch (_) { state.goalOrder = []; } }
       if (!Array.isArray(state.goalOrder)) state.goalOrder = [];

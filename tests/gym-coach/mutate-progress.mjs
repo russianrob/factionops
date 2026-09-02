@@ -37,8 +37,12 @@ const mutants = [
     'if (!n || typeof n.querySelector !== "function") continue;',
     "if (!n) continue;",
     "gymreco.test.mjs"],
+  // Anchored on the whole line: unlockScan() carries the same selector a few
+  // hundred lines earlier, and a bare selector string mutates THAT instead --
+  // which is how this mutant survived its first run.
   ["the percentage selector is loosened to any class at all",
-    "n.querySelector('[class*=\"percentage\"]')", "n.querySelector('[class]')",
+    "if (!n.querySelector('[class*=\"percentage\"]')) continue;",
+    "if (!n.querySelector('[class]')) continue;",
     "gymreco.test.mjs"],
   ["every gym unlocked is trusted rather than treated as a broken selector",
     "if (owned.length >= GYMS.length) {", "if (owned.length > GYMS.length) {",

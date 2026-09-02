@@ -11,7 +11,8 @@ const GYM_TABLE = new Function(grabArr("var GYMS = [") + " return GYMS;")();
 // The unit tests call betterGym directly, so they stay green even if the scan
 // never runs or the step never reaches the card. This drives the real page.
 async function panel({ gym, focus, seedOwned = null, buttons = null,
-                       owned = null, pct = null, progressUnlocked = false }) {
+                       owned = null, pct = null, progressUnlocked = false,
+                       progressNoToken = false }) {
   // `buttons` short-renders the gym list — React paints it late, and a partial
   // read would look like "most gyms locked". The harness page builds its own
   // button list, so this rides in on the config rather than by patching markup.
@@ -28,6 +29,7 @@ async function panel({ gym, focus, seedOwned = null, buttons = null,
     ...(owned === null ? {} : { owned }),
     ...(pct === null ? {} : { pct }),
     ...(progressUnlocked ? { progressUnlocked: true } : {}),
+    ...(progressNoToken ? { progressUnlocked: true, progressNoToken: true } : {}),
     stats:{ str:150422278, def:104614286, spe:150464114, dex:146009 },
     mem: Object.assign({ gcb_v1_mode:"xan", gcb_v1_focus: focus },
                        seedOwned ? { gcb_v1_gymsOwned: seedOwned } : {}) };
@@ -132,6 +134,16 @@ await t("and not when the in-progress tile carries no lock class either", async 
   // The shape the live report points at. With the lock class absent, the only
   // thing separating that tile from an owned one is the unlock percentage.
   const r = await panel({ gym: 20, focus: "str", owned: 20, pct: 63, progressUnlocked: true });
+  assert.ok(!r.owned.includes(20), "Atlas counted as owned: " + JSON.stringify(r.owned));
+  assert.ok(!/Change gym to Atlas/.test(r.body), "still names Atlas: " + r.body.slice(0, 400));
+});
+
+await t("the percentage alone is enough, with no in-progress class to help", async () => {
+  // `inProgress___` has never been captured off the live page; the unlock
+  // percentage has. If Torn's token is spelled something else, the percentage
+  // rule is the only thing standing between the member and a gym they cannot
+  // walk into -- so it gets tested with the token taken away.
+  const r = await panel({ gym: 20, focus: "str", owned: 20, pct: 63, progressNoToken: true });
   assert.ok(!r.owned.includes(20), "Atlas counted as owned: " + JSON.stringify(r.owned));
   assert.ok(!/Change gym to Atlas/.test(r.body), "still names Atlas: " + r.body.slice(0, 400));
 });

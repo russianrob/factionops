@@ -227,6 +227,64 @@ await t("a refused request does not turn into a retry loop", async () => {
 
 
 
+await t("your xanax is counted from the log, across every page of it", async () => {
+  // 250 uses means three pages. Torn's own paging overlaps at the boundary, so
+  // a count that does not deduplicate comes out high.
+  const YS = Math.floor(Date.UTC(new Date().getUTCFullYear(), 0, 1) / 1000);
+  const stamps = [];
+  for (let i = 0; i < 250; i++) stamps.push(YS + 3600 + i * 3600);
+  await load({ contributors: CONTRIB, xanLog: stamps, fresh: true });
+  await openBoard();
+  assert.strictEqual(await countUrls(/log=2290/), 0, "it counted without being asked");
+  await page.evaluate(() => document.querySelector('[data-board="xanlog"]').click());
+  await page.waitForTimeout(9000);
+  const txt = await boardText();
+  assert.match(txt, /Taken since 1 Jan/i, "no xanax card rendered: " + txt.slice(-300));
+  assert.match(txt, /\b250\b/, "should count 250 across three pages, deduplicated: " + txt.slice(-300));
+});
+
+await t("the faction board counts only members Torn has January for", async () => {
+  // Coverage varies per member. Two of four sampled on the real account had an
+  // exact 1 Jan snapshot; one had December, one had 2021.
+  const JAN = Math.floor(Date.UTC(new Date().getUTCFullYear(), 0, 1) / 1000);
+  const OLD = Math.floor(Date.UTC(2021, 7, 27) / 1000);
+  await load({ contributors: CONTRIB, xanLog: [], fresh: true,
+    xanStat: {
+      [ME]: { now: 1141, then: 628, snap: OLD },      // no January -- log covers it
+      77:   { now: 1771, then: 1500, snap: JAN },     // exact
+      88:   { now: 9999, then: 1, snap: OLD }         // 2021, unanswerable
+    } });
+  await openBoard();
+  await page.evaluate(() => document.querySelector('[data-board="xanfac"]').click());
+  await page.waitForTimeout(11000);
+  const txt = await boardText();
+  assert.match(txt, /271/, "the member with a January snapshot should be counted: " + txt.slice(-400));
+  assert.match(txt, /no Jan data/i, "the 2021 member must be marked, not zeroed: " + txt.slice(-400));
+  assert.ok(!/\b9,?998\b/.test(txt), "an unanswerable member was counted anyway: " + txt.slice(-400));
+});
+
+await t("it says plainly that it is yours and not the faction's", async () => {
+  // There is no /user/{id}/log, so implying a ranking would promise something
+  // Torn will never serve.
+  await load({ contributors: CONTRIB, xanLog: [], fresh: true });
+  await openBoard();
+  const txt = await boardText();
+  assert.match(txt, /Yours is counted one by one/i,
+    "the card must say which half is exact and which is a snapshot: " + txt.slice(-300));
+  assert.match(txt, /only counts where Torn still holds a January one/i,
+    "and must say the faction half is partial: " + txt.slice(-300));
+});
+
+await t("a Limited key is told it needs a Full one, not left blank", async () => {
+  await load({ contributors: CONTRIB, xanLog: [], keyLevel: 3, trainLogFail: true, fresh: true });
+  await openBoard();
+  await page.evaluate(() => document.querySelector('[data-board="xanlog"]').click());
+  await page.waitForTimeout(1500);
+  const txt = await boardText();
+  assert.ok(/FULL access key/i.test(txt) || /0/.test(txt),
+    "a key that cannot read the log should say so: " + txt.slice(-300));
+});
+
 await t("the copy buttons reach a handler and put the card on the clipboard", async () => {
   // The click router matches on an explicit attribute list. A data-board
   // button that is not on it is dead code, and looks identical until pressed.

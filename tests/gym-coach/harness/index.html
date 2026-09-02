@@ -45,7 +45,11 @@ body{margin:0;font-family:Arial,sans-serif}</style></head>
       // reads as owned and gets recommended as a gym you can walk into.
       if (id > owned && !(inProgress && cfg.progressUnlocked)) cls += " locked___q";
       if (id === cfg.gym) cls += " active___a";
-      if (inProgress) cls += " inProgress___c";
+      // cfg.progressNoToken drops the class token as well, leaving the unlock
+      // percentage as the ONLY thing marking that tile. `inProgress___` has
+      // never been captured off the live page -- only the percentage has --
+      // so the rule keyed on the percentage has to hold this case on its own.
+      if (inProgress && !cfg.progressNoToken) cls += " inProgress___c";
       b.className = cls;
       b.setAttribute("aria-label", "Gym " + (id - 1));
       var icon = document.createElement("div");

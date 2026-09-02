@@ -84,6 +84,15 @@
         return { id: r[0], username: r[1], value: r[2], in_faction: r[3] !== false };
       }) };
     }
+    if (/\/personalstats\?stat=xantaken/.test(url)) {
+      var sid = (/user\/(\d+)\/personalstats/.exec(url) || [])[1] || "0";
+      var sts = (/[?&]timestamp=(\d+)/.exec(url) || [])[1];
+      var who = (cfg.xanStat || {})[sid];
+      if (!who) return { error: { code: 6, error: "Incorrect ID" } };
+      if (!sts) return { personalstats: [{ name: "xantaken", value: who.now, timestamp: Math.floor(Date.now() / 1000) }] };
+      return { personalstats: [{ name: "xantaken", value: who.then,
+                                 timestamp: who.snap != null ? who.snap : Number(sts) }] };
+    }
     if (/\/personalstats/.test(url)) {
       var uid = (/user\/(\d+)\/personalstats/.exec(url) || [])[1] || "0";
       var ts = (/[?&]timestamp=(\d+)/.exec(url) || [])[1];
@@ -146,6 +155,24 @@
       if (cfg.refillUsedAfterMs && Date.now() - BOOTED > cfg.refillUsedAfterMs) used = true;
       return { refills: { energy_refill_used: used, nerve_refill_used: false,
                           token_refill_used: false, special_refills_available: 0 } };
+    }
+    if (/v2\/user\/log/.test(url) && /log=2290/.test(url)) {
+      if (cfg.xanLogErr) return { error: { code: 5, error: "Too many requests" } };
+      var all = (cfg.xanLog || []).slice().sort(function (a, b) { return b - a; });
+      var from = Number((/[?&]from=(\d+)/.exec(url) || [])[1] || 0);
+      var to = Number((/[?&]to=(\d+)/.exec(url) || [])[1] || 0);
+      var win = all.filter(function (t) { return t >= from && (!to || t <= to); });
+      var page = win.slice(0, 100);
+      var log = page.map(function (t, i) {
+        return { id: "x" + t + "_" + i, timestamp: t,
+                 details: { id: 2290, title: "Item use xanax", category: "Drugs" },
+                 data: { item: 206, faction: 0 }, params: { color: "green" } };
+      });
+      var more = win.length > page.length;
+      return { log: log, _metadata: { links: { prev: more
+        ? "https://api.torn.com/v2/user/log?log=2290&limit=100&from=" + from +
+          "&to=" + (page[page.length - 1] - 1)
+        : null, next: null } } };
     }
     if (/v2\/torn\/items/.test(url)) {
       if (cfg.bookItemsErr) return { error: { code: 5, error: "Too many requests" } };
