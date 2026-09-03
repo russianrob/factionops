@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.17
+// @version      3.4.18
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -2160,13 +2160,18 @@
             //
             // Measured out of sample on Marches' auction data: the feed was built
             // from the oldest 80% of 276k weapon rows and every double-bonus sale
-            // in the newest 20% was priced against it.
+            // in the newest 20% was priced against it, split in half again so a
+            // win on one half that vanishes on the other would show.
             //
-            //   no exact-pair comp (n=1664)   30.1% -> 27.5% off by >50%
-            //                                 median est/actual 0.74 -> 0.78
-            //   with a pair comp   (n= 300)   31.7% -> 20.0% off by >50%
-            //                                 median est/actual 1.12 -> 0.98
-            //   Red rarity, worst cases       53.7% -> 38.2% off by >50%
+            //   flat half-and-half   23.7% / 26.0% off by >50%, |log err| 0.273 / 0.321
+            //   spread + lift        22.5% / 23.9%,             |log err| 0.273 / 0.317
+            //   thin comps (<=10)    21.6% -> 20.8%,            |log err| 0.270 -> 0.266
+            //
+            // Weighting by the chain's own sample count, and by how expensive
+            // the bonus is across all weapons, were both measured and both
+            // scored WORSE -- the second badly, because Warlord's cross-weapon
+            // median sits below a big weapon's colour median and it reads as a
+            // cheap bonus.
             //
             // SINGLE-bonus items are deliberately excluded. The same blend makes
             // them worse (15.3% -> 23.7% off by >50%), because for one bonus the
@@ -2179,13 +2184,35 @@
                 var calPa = getPriceArray(itemKey, rarity);
                 var calMed = (calPa && calPa[1] > 0 && calPa[3] >= 3) ? calPa[1] : null;
                 if (calMed) {
-                    var blended = Math.round(Math.sqrt(estimatedPrice * calMed));
+                    // How much to lean on the bonus comps rather than the colour
+                    // median. It was a flat half-and-half; two things say the
+                    // median deserves less than that.
+                    //
+                    // SPREAD -- an Orange MP5k runs from $33M to $10.5B, and a
+                    // median drawn across a range that wide says very little
+                    // about any ONE item. A tight range means the opposite.
+                    //
+                    // LIFT -- when the bonus comps land far ABOVE the median,
+                    // that is the signal the item really is one of the rare
+                    // ones, not that the comps are noisy. Raised from the
+                    // thread: a 26% Warlord was being averaged down to a
+                    // quarter of what its own comps said.
+                    //
+                    // Whichever argues harder wins, so a wide range and a big
+                    // lift do not compound into blind trust.
+                    var calLo = calPa[0], calHi = calPa[2];
+                    var calSpread = (calLo > 0 && calHi > 0) ? Math.log(calHi / calLo) : 0;
+                    var calLift = Math.max(0, Math.log(estimatedPrice / calMed));
+                    var calW = Math.max(calSpread / (calSpread + 2), calLift / (calLift + 0.5));
+                    var blended = Math.round(Math.exp(
+                        calW * Math.log(estimatedPrice) + (1 - calW) * Math.log(calMed)));
                     if (blended > 0 && isFinite(blended)) {
                         estimatedPrice = blended;
                         // Said out loud in the tooltip. A number nobody can trace
                         // is how the last pricing complaint started.
                         deriv.push({ label: 'blended with ' + rarity + ' ' + itemKey + ' median',
-                                     amt: calMed, src: 'calibration', n: calPa[3], prem: false });
+                                     amt: calMed, src: Math.round(calW * 100) + '% comps',
+                                     n: calPa[3], prem: false });
                     }
                 }
             }

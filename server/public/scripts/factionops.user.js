@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.99
+// @version      5.2.0
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -5461,7 +5461,7 @@ body.wb-chain-active {
             const mins = m.lastAt ? Math.max(0, Math.round(Date.now() / 1000 - m.lastAt) / 60) : null;
             const ago = mins == null ? '' : (mins < 1 ? ' · just now' : ` · ${Math.round(mins)}m ago`);
             // A link, never a click: the script suggests the hit, the member makes it.
-            return `<span class="fo-turtle-item"><a href="https://www.torn.com/loader.php?sid=attack&user2ID=${encodeURIComponent(m.playerId)}" target="_blank" rel="noopener">${escapeHtml(m.name)}</a>` +
+            return `<span class="fo-turtle-item"><a href="https://www.torn.com/page.php?sid=attack&user2ID=${encodeURIComponent(m.playerId)}" target="_blank" rel="noopener">${escapeHtml(m.name)}</a>` +
                    `<span class="fo-turtle-cost">-${Math.round(m.respectLost)}</span>` +
                    `<span style="opacity:.6">${m.hits} hit${m.hits === 1 ? '' : 's'}${ago}</span></span>`;
         }).join('');
