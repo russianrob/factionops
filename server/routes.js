@@ -1842,10 +1842,10 @@ router.post("/api/war/:warId/payout-settings-admin", requireAuth, express.json({
     const n = Number(body.failedWeight);
     if (Number.isFinite(n) && n >= 0) settings.failedWeight = n;
   }
-  // Fixed-rate payouts. Whitelisted like everything above, which is the point:
-  // a key that is not listed here is dropped in silence, and that is exactly
-  // how "I saved the weights and nothing changed" happened last time.
-  if (body.payoutMode === 'rates' || body.payoutMode === 'pool') settings.payoutMode = body.payoutMode;
+  // The FF-Mode rate card. Whitelisted like everything above, which is the
+  // point: a key that is not listed here is dropped in silence, and that is
+  // exactly how "I saved the weights and nothing changed" happened last time.
+  // The basis itself is not stored -- it follows the war mode.
   if (body.payoutRates && typeof body.payoutRates === 'object') {
     const rates = {};
     for (const cat of warPayouts.PAYOUT_CATEGORIES) {
@@ -10658,10 +10658,10 @@ router.post("/api/war/:warId/payout-settings", express.json({ limit: '4kb' }), a
     const n = Number(body.failedWeight);
     if (Number.isFinite(n) && n >= 0) settings.failedWeight = n;
   }
-  // Fixed-rate payouts. Whitelisted like everything above, which is the point:
-  // a key that is not listed here is dropped in silence, and that is exactly
-  // how "I saved the weights and nothing changed" happened last time.
-  if (body.payoutMode === 'rates' || body.payoutMode === 'pool') settings.payoutMode = body.payoutMode;
+  // The FF-Mode rate card. Whitelisted like everything above, which is the
+  // point: a key that is not listed here is dropped in silence, and that is
+  // exactly how "I saved the weights and nothing changed" happened last time.
+  // The basis itself is not stored -- it follows the war mode.
   if (body.payoutRates && typeof body.payoutRates === 'object') {
     const rates = {};
     for (const cat of warPayouts.PAYOUT_CATEGORIES) {

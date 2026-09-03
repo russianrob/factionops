@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.92
+// @version      5.1.93
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -15389,17 +15389,9 @@ body.wb-chain-active {
                         <small>Auto-detected from cache market values. Override here with the actual amount you got from selling caches + treasury.</small>
                     </label>
                     <label>
-                        <span>Payout basis</span>
-                        <select id="wb-set-payoutmode">
-                            <option value="pool"${cur.payoutMode !== 'rates' ? ' selected' : ''}>Share of the pool</option>
-                            <option value="rates"${cur.payoutMode === 'rates' ? ' selected' : ''}>Fixed rate per hit</option>
-                        </select>
-                        <small>Share of the pool splits the loot by score, so a hit is worth whatever the division leaves it. Fixed rate pays a set amount per hit and the total is whatever that comes to \u2014 which can be more than the war looted.</small>
-                    </label>
-                    <label>
                         <span>Payout pool %</span>
                         <input type="number" id="wb-set-payoutpct" min="0" max="100" step="1" placeholder="80" value="${cur.payoutPct != null ? Math.round(cur.payoutPct * 100) : ''}">
-                        <small>Percent of loot distributed to members; rest goes to faction. Default 80. Ignored on fixed rates.</small>
+                        <small>Used in <b>Termed Mode</b>: percent of loot distributed to members, rest goes to faction. Default 80. FF Mode pays the rate card below instead.</small>
                     </label>
                     <div class="wb-payouts-rates">
                         ${[['war_hit', 'War hit'], ['retal', 'Retaliation'], ['overseas_war', 'Overseas war hit'],
@@ -15408,7 +15400,7 @@ body.wb-chain-active {
                         <span>${label} ($)</span>
                         <input type="number" class="wb-set-rate" data-rate="${k}" min="0" step="100000" placeholder="0" value="${(cur.payoutRates && cur.payoutRates[k] != null) ? cur.payoutRates[k] : ''}">
                     </label>`).join('')}
-                        <small>Only used on fixed rates. A category left blank pays nothing.</small>
+                        <small>Used in <b>FF Mode</b>: a flat amount per hit, so the total is whatever the war adds up to \u2014 which can be more than it looted. A category left blank pays nothing.</small>
                     </div>
                     <label>
                         <span>Assist weight</span>
@@ -15466,18 +15458,14 @@ body.wb-chain-active {
             const fw = overlay.querySelector('#wb-set-failed').value.trim();
             if (loot !== '') settings.lootOverride = Number(loot);
             if (pct !== '') settings.payoutPct = Number(pct) / 100;
-            const mode = overlay.querySelector('#wb-set-payoutmode').value;
-            if (mode === 'rates') {
-                settings.payoutMode = 'rates';
-                // Sent whole rather than merged, so clearing a box really does
-                // stop paying for that category.
-                const rates = {};
-                overlay.querySelectorAll('.wb-set-rate').forEach(el => {
-                    const v = el.value.trim();
-                    if (v !== '' && Number(v) > 0) rates[el.dataset.rate] = Number(v);
-                });
-                settings.payoutRates = rates;
-            }
+            // Sent whole rather than merged, so clearing a box really does stop
+            // paying for that category. Saved in either mode; only FF Mode reads it.
+            const rates = {};
+            overlay.querySelectorAll('.wb-set-rate').forEach(el => {
+                const v = el.value.trim();
+                if (v !== '' && Number(v) > 0) rates[el.dataset.rate] = Number(v);
+            });
+            settings.payoutRates = rates;
             if (asw !== '') settings.assistWeight = Number(asw);
             if (nw !== '') settings.nonWarWeight = Number(nw);
             if (fw !== '') settings.failedWeight = Number(fw);

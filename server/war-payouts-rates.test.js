@@ -118,15 +118,17 @@ test("the counts that earned the money travel with the row", () => {
 test("changing a rate changes the settings signature", () => {
   // The signature is what tells an archived war its numbers are stale. A rate
   // that does not reach it repeats the bug where saved weights changed nothing.
-  const a = settingsSignature({ payoutMode: "rates", payoutRates: { war_hit: 1_000_000 } });
-  const b = settingsSignature({ payoutMode: "rates", payoutRates: { war_hit: 2_000_000 } });
+  const a = settingsSignature({ payoutRates: { war_hit: 1_000_000 } });
+  const b = settingsSignature({ payoutRates: { war_hit: 2_000_000 } });
   assert.notStrictEqual(a, b);
 });
 
-test("switching between pool and rates changes the signature too", () => {
-  const pool = settingsSignature({ payoutMode: "pool", payoutPct: 0.8 });
-  const rates = settingsSignature({ payoutMode: "rates", payoutPct: 0.8 });
-  assert.notStrictEqual(pool, rates);
+test("the rate card alone is enough to change the signature", () => {
+  // The basis is the war mode, which already keys the cache separately. What
+  // the signature has to catch is a rate being edited within a mode.
+  const a = settingsSignature({ payoutRates: { war_hit: 1_000_000 } });
+  const b = settingsSignature({ payoutRates: { war_hit: 1_000_000, assist: 1 } });
+  assert.notStrictEqual(a, b);
 });
 
 // ---- the mode actually reaches a recomputed war ----------------------------
@@ -148,11 +150,13 @@ const HW = {
   warStart: 1787000000000, warEndedAt: 1787100000000,
   lootTotal: 1000000, warResult: "win", warScores: { myScore: 1, enemyScore: 0 },
 };
-const recompute = settings => recomputeArchivedResult({
-  hw: HW, fid: OUR, mode: "static", attacks: ATTACKS, settings });
+// FF Mode pays fixed rates, Termed Mode splits the pool. Asked for that way
+// round explicitly, having been offered the reverse.
+const recompute = (settings, mode = "dynamic") => recomputeArchivedResult({
+  hw: HW, fid: OUR, mode, attacks: ATTACKS, settings });
 
-test("a recomputed war pays the rates, not a share of the loot", () => {
-  const r = recompute({ payoutMode: "rates", payoutRates: { war_hit: 2_000_000, assist: 500_000 } });
+test("FF Mode pays the rates, not a share of the loot", () => {
+  const r = recompute({ payoutRates: { war_hit: 2_000_000, assist: 500_000 } });
   assert.strictEqual(r.payoutMode, "rates");
   const by = Object.fromEntries(r.members.map(m => [m.name, m.dollarPayout]));
   assert.strictEqual(by.Hitter, 2_000_000);
@@ -160,7 +164,7 @@ test("a recomputed war pays the rates, not a share of the loot", () => {
 });
 
 test("the pool is what the rates came to, and ignores payoutPct entirely", () => {
-  const r = recompute({ payoutMode: "rates", payoutPct: 0.1,
+  const r = recompute({ payoutPct: 0.1,
                         payoutRates: { war_hit: 2_000_000, assist: 500_000 } });
   assert.strictEqual(r.payoutPool, 2_500_000);
 });
@@ -168,20 +172,19 @@ test("the pool is what the rates came to, and ignores payoutPct entirely", () =>
 test("promising more than the war looted is reported, not hidden", () => {
   // Loot is 1m and the rates come to 2.5m. A faction has to see that it is
   // 1.5m short before it starts paying people.
-  const r = recompute({ payoutMode: "rates",
-                        payoutRates: { war_hit: 2_000_000, assist: 500_000 } });
+  const r = recompute({ payoutRates: { war_hit: 2_000_000, assist: 500_000 } });
   assert.strictEqual(r.factionShare, -1_500_000);
   assert.strictEqual(r.payoutShortfall, 1_500_000);
 });
 
 test("a war that comfortably covers its rates has no shortfall", () => {
-  const r = recompute({ payoutMode: "rates", payoutRates: { war_hit: 100_000, assist: 50_000 } });
+  const r = recompute({ payoutRates: { war_hit: 100_000, assist: 50_000 } });
   assert.strictEqual(r.payoutShortfall, 0);
   assert.ok(r.factionShare > 0);
 });
 
-test("without the mode set, nothing about the pool split changes", () => {
-  const r = recompute({ payoutPct: 0.8, assistWeight: 0.5 });
+test("Termed Mode is untouched and still splits the pool by score", () => {
+  const r = recompute({ payoutPct: 0.8, assistWeight: 0.5 }, "static");
   assert.strictEqual(r.payoutMode, "pool");
   assert.strictEqual(r.payoutPool, 800_000);
   assert.strictEqual(r.payoutShortfall, 0);
@@ -190,5 +193,5 @@ test("without the mode set, nothing about the pool split changes", () => {
 
 test("the rate card travels with the result so the panel can show it", () => {
   const rates = { war_hit: 2_000_000, assist: 500_000 };
-  assert.deepStrictEqual(recompute({ payoutMode: "rates", payoutRates: rates }).payoutRates, rates);
+  assert.deepStrictEqual(recompute({ payoutRates: rates }).payoutRates, rates);
 });
