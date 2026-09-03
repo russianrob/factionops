@@ -10623,9 +10623,11 @@ if (getKey()) {
 // Who the enemy is farming right now, so somebody can turtle them -- put them
 // in hospital before they give away more points.
 //
-// Not admin-gated: any member can be the one to land the hospitalisation, and
-// the list is about our own faction rather than about money.
+// Admin-gated, on request. It is a list of our own members' weaknesses, and
+// who is quietly being farmed is not something the whole faction needs to
+// read -- the same union of admin and broadcast roles the payout screens use.
 router.get("/api/war/:warId/turtle-watch", requireAuth, (req, res) => {
+  if (!_payoutsAdminGate(req, res)) return;
   const fid = String((req.user && req.user.factionId) || "");
   if (!fid) return res.status(400).json({ error: "No faction" });
   // Clamped: the point is what is happening NOW, and a window long enough to

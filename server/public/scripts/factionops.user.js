@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.96
+// @version      5.1.97
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -5441,6 +5441,9 @@ body.wb-chain-active {
     async function refreshTurtleBar() {
         const bar = document.getElementById('fo-turtle-bar');
         if (!bar) return;
+        // Admin-only, matching the server. Checked here as well so a member
+        // without the role never spends a request learning they cannot have it.
+        if (typeof isLeader === 'function' && !isLeader()) { bar.innerHTML = ''; return; }
         const warId = (typeof deriveWarId === 'function') ? deriveWarId() : null;
         if (!warId || !state.jwtToken) { bar.innerHTML = ''; return; }
         let data;
