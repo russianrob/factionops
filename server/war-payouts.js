@@ -437,7 +437,7 @@ export async function computePayouts(warId, options = {}) {
   // separately (and the gear panel's 'save' invalidates whichever
   // entry was current).
   const settings = store.getPayoutSettings(warId) || {};
-  const settingsKey = `L${settings.lootOverride ?? '_'}|A${settings.assistWeight ?? '_'}|N${settings.nonWarWeight ?? '_'}|P${settings.payoutPct ?? '_'}|F${settings.failedWeight ?? '_'}`;
+  const settingsKey = settingsSignature(settings);
   const cacheKey = `${warId}:${mode}:${settingsKey}`;
   const cached = _cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() && !options.forceFresh) {
@@ -681,6 +681,23 @@ export async function computePayouts(warId, options = {}) {
     .filter(m => m.score > 0 || m.tornScore > 0) // drop zero-contribution noise
     .sort((a, b) => b.score - a.score);
 
+  // ── Fixed-rate mode ──────────────────────────────────────────────────
+  // Laid over the top rather than folded into the arithmetic above: that
+  // path pays real money and is pinned by a frozen fixture, and the two
+  // models share nothing but their output shape. In pool mode nothing here
+  // runs and nothing above changes.
+  const ratesOn = String(settings.payoutMode || "") === "rates";
+  const rated = ratesOn ? ratePayouts(baseMembers, settings.payoutRates) : null;
+  const outMembers = rated
+    ? rated.members.filter(m => m.dollarPayout > 0 || m.attackCount > 0)
+    : members;
+  const outPool = rated ? rated.payoutPool : payoutPool;
+  // Deliberately allowed to go negative. Rates are a promise made before the
+  // war and the loot is whatever the war produced; if the promise costs more
+  // than it earned, that is a fact the faction needs to see, not one to clamp
+  // away. `payoutShortfall` is the same number said out loud for the panel.
+  const outFactionShare = lootTotal - outPool;
+
   const result = {
     warId,
     factionId: war.factionId,
@@ -689,7 +706,7 @@ export async function computePayouts(warId, options = {}) {
     warResult: war.warResult || null,
     warScores: war.warScores || reportWarScores || null,
     mode,
-    scoreSource, // "fair" (excludes chain/war/warlord), "report" (fallback), "computed" (legacy)
+    scoreSource: ratesOn ? "rates" : scoreSource, // "rates" | "fair" | "report" | "computed"
     reportTotalScore: Math.round(reportTotalScore * 10) / 10, // for UI comparison
     fromTs,
     toTs,
@@ -698,11 +715,15 @@ export async function computePayouts(warId, options = {}) {
     lootSource,
     lootAutoDetected: options.lootTotal == null && lootTotal > 0,
     payoutPct: clampedPct, // e.g., 0.8 = 80% to members
-    payoutPool,            // dollars distributed to members
-    factionShare,          // dollars retained by faction
+    payoutMode: ratesOn ? "rates" : "pool",
+    payoutRates: ratesOn ? (settings.payoutRates || {}) : null,
+    payoutPool: outPool,   // dollars distributed to members
+    factionShare: outFactionShare, // dollars retained by faction; negative = owed
+    payoutShortfall: outFactionShare < 0 ? -outFactionShare : 0,
     settings,              // active per-war overrides (for the gear panel)
-    totalScore: Math.round(totalScore * 10) / 10,
-    members,
+    // Under rates the score IS the money, so the two cannot drift apart.
+    totalScore: rated ? rated.payoutPool : Math.round(totalScore * 10) / 10,
+    members: outMembers,
     // Total attacks shown in heatmap header. Sum from our merged member
     // list rather than raw attacks.length (which over-counts if Torn
     // returns duplicates across paginated calls).
@@ -1064,10 +1085,70 @@ function archiveRecordToResult(hw, mode, fid) {
  * another. `updatedAt` is deliberately out: saving the same numbers again must
  * not bust a cache that is still correct.
  */
+// The six categories classify() can return. Anything else in a stored
+// breakdown came from an older build and is worth nothing rather than NaN.
+export const PAYOUT_CATEGORIES = ["war_hit", "retal", "overseas_war", "assist", "chain_hit", "os_chain"];
+
+/**
+ * Fixed-rate payouts: a dollar figure per hit, per category.
+ *
+ * The opposite shape to the pool split. There the pool is fixed and a hit is
+ * worth whatever the division leaves it; here the RATES are fixed and the pool
+ * is whatever the war adds up to. A faction that wants to promise "$2m a war
+ * hit" can only say that this way.
+ *
+ * The bill can exceed what the war looted. That is the caller's to surface --
+ * see the negative factionShare handling -- because a promise costing more than
+ * it earned is a fact about the war, not an error to swallow.
+ */
+export function ratePayouts(byAttacker, rates) {
+  const r = rates || {};
+  const priced = {};
+  for (const cat of PAYOUT_CATEGORIES) {
+    const v = Number(r[cat]);
+    // A negative rate is a typo in a settings box, never an instruction to
+    // claw money back off somebody who fought.
+    priced[cat] = Number.isFinite(v) && v > 0 ? v : 0;
+  }
+  const members = Object.values(byAttacker || {}).map(m => {
+    const breakdown = m.breakdown || {};
+    let due = 0;
+    for (const cat of PAYOUT_CATEGORIES) due += (Number(breakdown[cat]) || 0) * priced[cat];
+    return {
+      playerId: String(m.playerId),
+      name: m.name,
+      // The board sorts and renders on `score`; under rates the score IS the
+      // money, so the two cannot drift apart.
+      score: Math.round(due),
+      dollarPayout: Math.round(due),
+      sharePct: 0,
+      attackCount: Number(m.attackCount) || 0,
+      totalAttacks: Number(m.totalAttacks) || 0,
+      avgFf: m.ffSamples > 0 ? (m.ffSum / m.ffSamples) : (Number(m.avgFf) || 0),
+      maxFf: Number(m.ffMax) || Number(m.maxFf) || 0,
+      level: 0,
+      breakdown,
+      tornScore: 0,
+      tornAttacks: 0,
+    };
+  });
+  const payoutPool = members.reduce((sum, m) => sum + m.dollarPayout, 0);
+  // Kept for display only: the share is a consequence of the rates here, not
+  // the thing that decides the money.
+  for (const m of members) m.sharePct = payoutPool > 0 ? (m.dollarPayout / payoutPool) * 100 : 0;
+  members.sort((a, b) => b.dollarPayout - a.dollarPayout);
+  return { members, payoutPool, totalScore: payoutPool };
+}
+
 export function settingsSignature(s) {
   const o = s || {};
+  // Rates and the mode belong here or an archived war never notices they
+  // changed -- exactly the bug where saved weights read back as "not saved".
+  const r = o.payoutRates || {};
+  const rates = PAYOUT_CATEGORIES.map(c => r[c] ?? '_').join(',');
   return `L${o.lootOverride ?? '_'}|A${o.assistWeight ?? '_'}|N${o.nonWarWeight ?? '_'}` +
-         `|P${o.payoutPct ?? '_'}|F${o.failedWeight ?? '_'}`;
+         `|P${o.payoutPct ?? '_'}|F${o.failedWeight ?? '_'}` +
+         `|M${o.payoutMode ?? '_'}|R${rates}`;
 }
 
 /**
@@ -1142,8 +1223,17 @@ export function recomputeArchivedResult({ hw, fid, mode, attacks, settings }) {
   const pct = Number.isFinite(s.payoutPct)
     ? Math.min(1, Math.max(0, Number(s.payoutPct)))
     : (hw.payoutPct != null ? Number(hw.payoutPct) : 0.8);
-  const payoutPool = Math.round(lootTotal * pct);
-  const { members, totalScore } = membersFromTally(byAttacker, payoutPool);
+  const poolFromPct = Math.round(lootTotal * pct);
+  // Same fork as the live path, and for the same reason: the pool split and
+  // the rate card are different promises, not two settings of one promise.
+  const ratesOn = String(s.payoutMode || "") === "rates";
+  const rated = ratesOn ? ratePayouts(byAttacker, s.payoutRates) : null;
+  const { members, totalScore } = rated
+    ? { members: rated.members, totalScore: rated.payoutPool }
+    : membersFromTally(byAttacker, poolFromPct);
+  const payoutPool = rated ? rated.payoutPool : poolFromPct;
+  // Negative on purpose when the rates promised more than the war looted.
+  const factionShare = lootTotal - payoutPool;
 
   return {
     warId: String(hw.warKey),
@@ -1153,7 +1243,7 @@ export function recomputeArchivedResult({ hw, fid, mode, attacks, settings }) {
     warResult: hw.warResult || null,
     warScores: hw.warScores || null,
     mode,
-    scoreSource: 'fair',
+    scoreSource: ratesOn ? 'rates' : 'fair',
     reportTotalScore: 0,
     fromTs: (hw.warStart ? Math.floor(Number(hw.warStart) / 1000) : 0),
     toTs: (hw.warEndedAt ? Math.floor(Number(hw.warEndedAt) / 1000) : 0),
@@ -1162,8 +1252,11 @@ export function recomputeArchivedResult({ hw, fid, mode, attacks, settings }) {
     lootSource: Number.isFinite(s.lootOverride) ? 'override' : (hw.lootSource || 'archive'),
     lootAutoDetected: false,
     payoutPct: pct,
+    payoutMode: ratesOn ? 'rates' : 'pool',
+    payoutRates: ratesOn ? (s.payoutRates || {}) : null,
     payoutPool,
-    factionShare: lootTotal - payoutPool,
+    factionShare,
+    payoutShortfall: factionShare < 0 ? -factionShare : 0,
     settings: s,
     // The panel needs to know the difference between "your weights are in these
     // numbers" and "these numbers predate your weights".
