@@ -991,7 +991,15 @@ export function getPollInterval(factionId, purpose) {
   const n = Math.max(1, pool.length);
   const config = {
     chain:           { min: 10_000, max: 20_000 }, // Torn cache ~15s
-    "war-status":    { min: 15_000, max: 30_000 }, // Torn cache ~30s
+    // Pinned flat at 45s on request, 2026-09-03, after the enemy-profile sweep
+    // was disabled for the same reason: phones lagging on the re-render each
+    // update causes. min == max so a bigger key pool cannot speed it back up.
+    //
+    // Beyond Torn's ~30s cache on this endpoint, so it is a real reduction in
+    // freshness rather than just fewer duplicate reads: hospital countdowns and
+    // online state can now be up to 45s behind. The attacks-feed hospital
+    // override still corrects a stale "Okay" between polls.
+    "war-status":    { min: 45_000, max: 45_000 },
     "attacks-feed":  { min: 15_000, max: 60_000 }, // our faction's attacks feed
     "enemy-attacks": { min: 10_000, max: 30_000 }, // (unused — Torn blocks other factions' attacks)
     // Per-enemy profile round-robin. Flat 30s, min == max so a bigger key pool
