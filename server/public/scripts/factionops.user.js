@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.97
+// @version      5.1.98
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -15453,28 +15453,10 @@ body.wb-chain-active {
                         <small>Auto-detected from cache market values. Override here with the actual amount you got from selling caches + treasury.</small>
                     </label>
                     <label>
-                        <span>Payout basis</span>
-                        <select id="wb-set-payoutmode">
-                            <option value="pool"${cur.payoutMode !== 'rates' ? ' selected' : ''}>Share of the pool</option>
-                            <option value="rates"${cur.payoutMode === 'rates' ? ' selected' : ''}>Fixed rate per hit</option>
-                        </select>
-                        <small>Share of the pool splits the loot by score, so a hit is worth whatever the division leaves it. Fixed rate pays a set amount per hit and the total is whatever that comes to \u2014 which can be more than the war looted.</small>
-                    </label>
-                    <label>
                         <span>Payout pool %</span>
                         <input type="number" id="wb-set-payoutpct" min="0" max="100" step="1" placeholder="80" value="${cur.payoutPct != null ? Math.round(cur.payoutPct * 100) : ''}">
-                        <small>Percent of loot distributed to members; rest goes to faction. Default 80. Ignored on fixed rates.</small>
+                        <small>Percent of loot distributed to members; rest goes to faction. Default 80.</small>
                     </label>
-                    <div class="wb-payouts-rates">
-                        ${[['war_hit', 'War hit'], ['retal', 'Retaliation'], ['overseas_war', 'Overseas war hit'],
-                           ['assist', 'Assist'], ['chain_hit', 'Chain hit'], ['os_chain', 'Overseas chain hit'],
-                           ['turtle', 'Turtle (hosp our own)']]
-                          .map(([k, label]) => `<label>
-                        <span>${label} ($)</span>
-                        <input type="number" class="wb-set-rate" data-rate="${k}" min="0" step="100000" placeholder="0" value="${(cur.payoutRates && cur.payoutRates[k] != null) ? cur.payoutRates[k] : ''}">
-                    </label>`).join('')}
-                        <small>Only used on fixed rates. A category left blank pays nothing.</small>
-                    </div>
                     <label>
                         <span>Assist weight</span>
                         <input type="number" id="wb-set-assist" min="0" step="0.05" placeholder="0.3" value="${cur.assistWeight != null ? cur.assistWeight : ''}">
@@ -15537,18 +15519,6 @@ body.wb-chain-active {
             const tw = overlay.querySelector('#wb-set-turtle').value.trim();
             if (loot !== '') settings.lootOverride = Number(loot);
             if (pct !== '') settings.payoutPct = Number(pct) / 100;
-            const mode = overlay.querySelector('#wb-set-payoutmode').value;
-            if (mode === 'rates') {
-                settings.payoutMode = 'rates';
-                // Sent whole rather than merged, so clearing a box really does
-                // stop paying for that category.
-                const rates = {};
-                overlay.querySelectorAll('.wb-set-rate').forEach(el => {
-                    const v = el.value.trim();
-                    if (v !== '' && Number(v) > 0) rates[el.dataset.rate] = Number(v);
-                });
-                settings.payoutRates = rates;
-            }
             if (asw !== '') settings.assistWeight = Number(asw);
             if (nw !== '') settings.nonWarWeight = Number(nw);
             if (fw !== '') settings.failedWeight = Number(fw);
@@ -15751,18 +15721,10 @@ body.wb-chain-active {
         const staleLine = war.settingsApplied === false
             ? ' · <span style="color:#f59e0b">custom weights saved but NOT applied (archived war)</span>'
             : '';
-        // On fixed rates the pool is an OUTPUT, so calling it a percentage of
-        // the loot would be a lie. A promise that costs more than the war
-        // earned is said out loud rather than shown as a negative to squint at.
-        const splitLine = war.payoutMode === 'rates'
-            ? ` · rate card totals ${fmt$(war.payoutPool)}` + (
-                war.payoutShortfall > 0
-                    ? ` · <span style="color:#ef4444">${fmt$(war.payoutShortfall)} MORE than this war looted</span>`
-                    : ` · faction keeps ${fmt$(war.factionShare)}`)
-            : (war.payoutPct != null && war.payoutPool != null && war.factionShare != null)
+        const splitLine = (war.payoutPct != null && war.payoutPool != null && war.factionShare != null)
             ? ` · payout pool ${fmt$(war.payoutPool)} (${Math.round(war.payoutPct * 100)}%) · faction keeps ${fmt$(war.factionShare)}`
             : '';
-        let html = `<div class="wb-payouts-section-label">Drilldown — vs ${escapeHtml(war.enemyFactionName||'?')} · ${escapeHtml(war.warResult||'?')} · loot ${fmt$(war.lootTotal)} <span style="opacity:0.6;font-size:10px;">(${escapeHtml(sourceLabel)})</span>${splitLine}${staleLine}${war.payoutMode === 'rates' ? '' : ` · total score ${war.totalScore}`}</div>`;
+        let html = `<div class="wb-payouts-section-label">Drilldown — vs ${escapeHtml(war.enemyFactionName||'?')} · ${escapeHtml(war.warResult||'?')} · loot ${fmt$(war.lootTotal)} <span style="opacity:0.6;font-size:10px;">(${escapeHtml(sourceLabel)})</span>${splitLine}${staleLine} · total score ${war.totalScore}</div>`;
         html += lootDetail;
         html += `<div class="wb-payouts-drilldown"><table>`;
         // v5.0.45: simplified to 5 columns. Earlier 11-column layout

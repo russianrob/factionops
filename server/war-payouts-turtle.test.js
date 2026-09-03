@@ -10,7 +10,7 @@
 // so it can be told apart with no new data.
 import test from "node:test";
 import assert from "node:assert";
-import { tallyAttacks, ratePayouts, PAYOUT_CATEGORIES } from "./war-payouts.js";
+import { tallyAttacks, settingsSignature } from "./war-payouts.js";
 
 const OUR = "42055", ENEMY = "14820";
 const hit = (over = {}) => ({
@@ -78,10 +78,9 @@ test("two turtles are worth two", () => {
   assert.strictEqual(t["1"].fairScoreSum, 2);
 });
 
-test("the rate card can price a turtle", () => {
-  assert.ok(PAYOUT_CATEGORIES.includes("turtle"), "turtle needs a rate box of its own");
-  const { members } = ratePayouts({
-    1: { playerId: "1", name: "Turtler", breakdown: { turtle: 3 }, attackCount: 3, totalAttacks: 3 },
-  }, { turtle: 1_000_000 });
-  assert.strictEqual(members[0].dollarPayout, 3_000_000);
+test("the turtle weight reaches the settings signature", () => {
+  // Otherwise an archived war would never notice it changed -- the bug where
+  // saved weights read back as "not saved".
+  assert.notStrictEqual(settingsSignature({ turtleWeight: 0 }),
+                        settingsSignature({ turtleWeight: 1 }));
 });

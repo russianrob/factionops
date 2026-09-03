@@ -1847,19 +1847,6 @@ router.post("/api/war/:warId/payout-settings-admin", requireAuth, express.json({
     const n = Number(body.turtleWeight);
     if (Number.isFinite(n) && n >= 0) settings.turtleWeight = n;
   }
-  // Fixed-rate payouts. Whitelisted like everything above, which is the point:
-  // a key that is not listed here is dropped in silence, and that is exactly
-  // how "I saved the weights and nothing changed" happened last time.
-  if (body.payoutMode === 'rates' || body.payoutMode === 'pool') settings.payoutMode = body.payoutMode;
-  if (body.payoutRates && typeof body.payoutRates === 'object') {
-    const rates = {};
-    for (const cat of warPayouts.PAYOUT_CATEGORIES) {
-      const n = Number(body.payoutRates[cat]);
-      // Zero and negative are both "do not pay for this", so neither is stored.
-      if (Number.isFinite(n) && n > 0) rates[cat] = n;
-    }
-    settings.payoutRates = rates;
-  }
   store.setPayoutSettings(req.params.warId, settings);
   warPayouts.invalidateCache(req.params.warId);
   return res.json({ ok: true, settings });
@@ -10689,19 +10676,6 @@ router.post("/api/war/:warId/payout-settings", express.json({ limit: '4kb' }), a
   if (body.turtleWeight != null && body.turtleWeight !== '') {
     const n = Number(body.turtleWeight);
     if (Number.isFinite(n) && n >= 0) settings.turtleWeight = n;
-  }
-  // Fixed-rate payouts. Whitelisted like everything above, which is the point:
-  // a key that is not listed here is dropped in silence, and that is exactly
-  // how "I saved the weights and nothing changed" happened last time.
-  if (body.payoutMode === 'rates' || body.payoutMode === 'pool') settings.payoutMode = body.payoutMode;
-  if (body.payoutRates && typeof body.payoutRates === 'object') {
-    const rates = {};
-    for (const cat of warPayouts.PAYOUT_CATEGORIES) {
-      const n = Number(body.payoutRates[cat]);
-      // Zero and negative are both "do not pay for this", so neither is stored.
-      if (Number.isFinite(n) && n > 0) rates[cat] = n;
-    }
-    settings.payoutRates = rates;
   }
   store.setPayoutSettings(req.params.warId, settings);
   warPayouts.invalidateCache(req.params.warId);
