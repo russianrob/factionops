@@ -991,10 +991,17 @@ export function getPollInterval(factionId, purpose) {
   const n = Math.max(1, pool.length);
   const config = {
     chain:           { min: 10_000, max: 20_000 }, // Torn cache ~15s
-    // Back to 15-30s on request, 2026-09-03 -- the 45s pin was tried for a few
-    // hours to reduce phone lag and reverted. Torn caches this endpoint ~30s,
-    // so a single key polls at 30s and a pool floors it at 15s.
-    "war-status":    { min: 15_000, max: 30_000 }, // Torn cache ~30s
+    // Pinned flat at 45s, 2026-09-04. Torn caches this endpoint ~30s, so 15s
+    // was mostly re-reading the same data -- but 45s is PAST that cache, so it
+    // is a real freshness cost, not just fewer duplicate calls: hospital
+    // countdowns and online state can sit up to 45s behind.
+    //
+    // The attacks-feed hospital override still corrects a stale "Okay" between
+    // polls, which is the case that matters -- somebody hospitalised a moment
+    // ago must not read as attackable.
+    //
+    // min == max so a bigger key pool cannot speed it back up.
+    "war-status":    { min: 45_000, max: 45_000 },
     "attacks-feed":  { min: 15_000, max: 60_000 }, // our faction's attacks feed
     "enemy-attacks": { min: 10_000, max: 30_000 }, // (unused — Torn blocks other factions' attacks)
     // Per-enemy profile round-robin. Flat 30s, min == max so a bigger key pool
@@ -1014,22 +1021,21 @@ export function getPollInterval(factionId, purpose) {
     // roster poll already refreshes every enemy every ~30s in ONE call, and
     // hospital timers tick down client-side between polls, so the sweep buys
     // much less than its cost suggests.
-    // 2.5s on request, 2026-09-03. This is the value that hit Torn's rate limit
-    // on 2026-08-28, so it is being watched rather than assumed: measured
-    // before the change at 53 calls/min across 41 rotating keys, busiest key
-    // 2.4% of its 100/min cap.
+    // Per-enemy profile round-robin. Back to a flat 30s, 2026-09-04.
     //
-    // The pre-war throttle (enemyProfilePrewarDelay, 5 min) still applies, so
-    // this cadence only runs during a live war -- which is also when August
-    // went wrong.
+    // 2.5s was tried for a few hours and measured properly this time: 467
+    // calls/min across 41 keys, busiest key 13.5% of its 100/min cap -- so it
+    // was NOT unsafe, unlike the August attempt that prompted the pin. It was
+    // reverted because the freshness it buys is unproven: Torn's cache TTL on
+    // the profile endpoint is unknown, so most of those extra calls may return
+    // identical data, and the sweep is a live suspect for phone lag.
     //
-    // The failure mode to watch is NOT the average. Each tick issues
-    // min(poolKeys, enemies, 20) requests and the cursor rotates, so a full
-    // 41-key pool spreads 480 calls/min to ~12 per key. QUARANTINED KEYS SHRINK
-    // THAT ROTATION: at 20 keys it is 24/min each, at 10 keys 48/min, and the
-    // concentration climbs as keys drop out -- which is how the average misled
-    // last time. Watch pctOfCap on the BUSIEST key, not callsPerMin.
-    "enemy-profile": { min: 2_500, max: 2_500 },
+    // min == max so a bigger key pool cannot speed it back up.
+    //
+    // Do not unpin again on a headroom calculation alone. Measure real per-key
+    // usage first -- /api/debug/key-usage-local?playerId=<id>&window=5, and
+    // watch pctOfCap on the BUSIEST key rather than the average.
+    "enemy-profile": { min: 30_000, max: 30_000 },
   };
   const c = config[purpose] || config["war-status"];
   // Divide the conservative max by pool size, floor at min.
