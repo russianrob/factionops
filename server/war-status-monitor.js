@@ -43,8 +43,10 @@ const nextEnemyAttacks = (war) =>
   war && war.factionId
     ? store.getPollInterval(war.factionId, "enemy-attacks")
     : 30_000;
-// Off by default since 2026-09-03; see pollOne below.
-const ENEMY_PROFILE_SWEEP = process.env.WB_ENEMY_PROFILE_SWEEP === "1";
+// On by default. Switched off for a few hours on 2026-09-03 to test whether it
+// was behind phone lag, and switched back on. Set WB_ENEMY_PROFILE_SWEEP=0 to
+// disable it again without a deploy.
+const ENEMY_PROFILE_SWEEP = process.env.WB_ENEMY_PROFILE_SWEEP !== "0";
 const nextEnemyProfile = (war) => {
   const base = war && war.factionId
     ? store.getPollInterval(war.factionId, "enemy-profile")
@@ -787,16 +789,11 @@ function startEnemyProfileMonitor(io, warId) {
   }
 
   const pollOne = async () => {
-    // Disabled on request, 2026-09-03: phones were lagging. The sweep touches
-    // every enemy on a 30s rotation and each reply streams a status update, so
-    // a 60-strong enemy faction is a couple of re-renders a second on a device
-    // that cannot absorb them.
-    //
-    // What is lost is sub-30s per-enemy freshness and the fine-grained
-    // "attacking" state. The 15s war-status poll still keeps the roster, online
-    // state and hospital times up to date, which is most of what the list shows.
-    //
-    // Set WB_ENEMY_PROFILE_SWEEP=1 to turn it back on.
+    // The kill switch stays for next time: the sweep touches every enemy on a
+    // 30s rotation and each reply streams a status update, so on a big enemy
+    // faction it is a couple of list re-renders a second. That made it the
+    // first suspect when phones lagged; turning it off did not settle it, and
+    // it is back on.
     if (!ENEMY_PROFILE_SWEEP) {
       scheduleNext(600_000);
       return;
