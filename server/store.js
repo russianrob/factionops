@@ -1014,7 +1014,22 @@ export function getPollInterval(factionId, purpose) {
     // roster poll already refreshes every enemy every ~30s in ONE call, and
     // hospital timers tick down client-side between polls, so the sweep buys
     // much less than its cost suggests.
-    "enemy-profile": { min: 30_000, max: 30_000 },
+    // 2.5s on request, 2026-09-03. This is the value that hit Torn's rate limit
+    // on 2026-08-28, so it is being watched rather than assumed: measured
+    // before the change at 53 calls/min across 41 rotating keys, busiest key
+    // 2.4% of its 100/min cap.
+    //
+    // The pre-war throttle (enemyProfilePrewarDelay, 5 min) still applies, so
+    // this cadence only runs during a live war -- which is also when August
+    // went wrong.
+    //
+    // The failure mode to watch is NOT the average. Each tick issues
+    // min(poolKeys, enemies, 20) requests and the cursor rotates, so a full
+    // 41-key pool spreads 480 calls/min to ~12 per key. QUARANTINED KEYS SHRINK
+    // THAT ROTATION: at 20 keys it is 24/min each, at 10 keys 48/min, and the
+    // concentration climbs as keys drop out -- which is how the average misled
+    // last time. Watch pctOfCap on the BUSIEST key, not callsPerMin.
+    "enemy-profile": { min: 2_500, max: 2_500 },
   };
   const c = config[purpose] || config["war-status"];
   // Divide the conservative max by pool size, floor at min.

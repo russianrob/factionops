@@ -27,13 +27,16 @@ function poolOf(n) {
 // rotation — so the per-faction average badly understated the real load.
 //
 // This test exists to make an unpinning deliberate rather than incidental.
+// 2.5s since 2026-09-03, on request. The value moved deliberately; the FLATNESS
+// is the part this guards -- a bigger pool must never change the cadence on its
+// own, whatever the cadence happens to be.
 test("enemy-profile stays flat however large the pool grows", () => {
   poolOf(1);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000);
+  assert.equal(getPollInterval(FID, "enemy-profile"), 2_500);
   poolOf(36);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000, "a big pool must NOT speed it up");
+  assert.equal(getPollInterval(FID, "enemy-profile"), 2_500, "a big pool must NOT speed it up");
   poolOf(200);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000);
+  assert.equal(getPollInterval(FID, "enemy-profile"), 2_500);
 });
 
 test("the other purposes keep their own floors", () => {
