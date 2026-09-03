@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.98
+// @version      5.1.99
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -15468,6 +15468,11 @@ body.wb-chain-active {
                         <small>Multiplier for hits during the war that weren't ranked-war attacks. Default 0.3 (assist-level).</small>
                     </label>
                     <label>
+                        <span>Turtle pay ($ each)</span>
+                        <input type="number" id="wb-set-turtlepay" min="0" step="100000" placeholder="0" value="${cur.turtlePay != null ? cur.turtlePay : ''}">
+                        <small>A flat amount per friendly hospitalisation, paid off the <b>top</b> of the pool \u2014 turtlers first, everyone else splits what is left, so the faction share is untouched. Capped at the pool and shared out in proportion if it would exceed it. Set this and the turtle weight below is ignored, so a turtle is never paid twice.</small>
+                    </label>
+                    <label>
                         <span>Turtle weight</span>
                         <input type="number" id="wb-set-turtle" min="0" step="0.05" placeholder="0" value="${cur.turtleWeight != null ? cur.turtleWeight : ''}">
                         <small>Score per friendly hospitalisation \u2014 hitting our own member so the enemy cannot farm them. Default 0: counted and shown, but unpaid. A turtle earns no respect, so this is a flat score in both modes.</small>
@@ -15517,12 +15522,14 @@ body.wb-chain-active {
             const nw = overlay.querySelector('#wb-set-nonwar').value.trim();
             const fw = overlay.querySelector('#wb-set-failed').value.trim();
             const tw = overlay.querySelector('#wb-set-turtle').value.trim();
+            const tp = overlay.querySelector('#wb-set-turtlepay').value.trim();
             if (loot !== '') settings.lootOverride = Number(loot);
             if (pct !== '') settings.payoutPct = Number(pct) / 100;
             if (asw !== '') settings.assistWeight = Number(asw);
             if (nw !== '') settings.nonWarWeight = Number(nw);
             if (fw !== '') settings.failedWeight = Number(fw);
             if (tw !== '') settings.turtleWeight = Number(tw);
+            if (tp !== '') settings.turtlePay = Number(tp);
             try {
                 await post(settings);
                 closeOverlay();
@@ -15721,10 +15728,15 @@ body.wb-chain-active {
         const staleLine = war.settingsApplied === false
             ? ' · <span style="color:#f59e0b">custom weights saved but NOT applied (archived war)</span>'
             : '';
+        // Off the top, so the shares below will not reconcile against the pool
+        // unless this is stated.
+        const turtleLine = (war.turtlePaid > 0)
+            ? ` · ${fmt$(war.turtlePaid)} paid flat for turtling${war.turtleCapped ? ' <span style="color:#f59e0b">(capped at the pool)</span>' : ''}`
+            : '';
         const splitLine = (war.payoutPct != null && war.payoutPool != null && war.factionShare != null)
             ? ` · payout pool ${fmt$(war.payoutPool)} (${Math.round(war.payoutPct * 100)}%) · faction keeps ${fmt$(war.factionShare)}`
             : '';
-        let html = `<div class="wb-payouts-section-label">Drilldown — vs ${escapeHtml(war.enemyFactionName||'?')} · ${escapeHtml(war.warResult||'?')} · loot ${fmt$(war.lootTotal)} <span style="opacity:0.6;font-size:10px;">(${escapeHtml(sourceLabel)})</span>${splitLine}${staleLine} · total score ${war.totalScore}</div>`;
+        let html = `<div class="wb-payouts-section-label">Drilldown — vs ${escapeHtml(war.enemyFactionName||'?')} · ${escapeHtml(war.warResult||'?')} · loot ${fmt$(war.lootTotal)} <span style="opacity:0.6;font-size:10px;">(${escapeHtml(sourceLabel)})</span>${splitLine}${turtleLine}${staleLine} · total score ${war.totalScore}</div>`;
         html += lootDetail;
         html += `<div class="wb-payouts-drilldown"><table>`;
         // v5.0.45: simplified to 5 columns. Earlier 11-column layout

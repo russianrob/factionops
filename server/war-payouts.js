@@ -343,8 +343,13 @@ export function tallyAttacks(attacks, { ourFid, enemyFactionId, mode, settings =
     // visible. Once priced the weight is flat in both modes, because there is
     // no respect for a respect-scaled weight to scale.
     if (String(atk.defender_faction || "") === ourFid) {
+      // A flat dollar rate takes precedence over the score weight. Awarding
+      // both would pay for the same hospitalisation twice -- once off the top
+      // of the pool and again through the share.
+      const tp = Number(settings.turtlePay);
+      const paidFlat = Number.isFinite(tp) && tp > 0;
       const tw = Number(settings.turtleWeight);
-      byAttacker[aid].fairScoreSum += (Number.isFinite(tw) && tw > 0) ? tw : 0;
+      byAttacker[aid].fairScoreSum += (!paidFlat && Number.isFinite(tw) && tw > 0) ? tw : 0;
       byAttacker[aid].breakdown.turtle = (byAttacker[aid].breakdown.turtle || 0) + 1;
       continue;
     }
@@ -702,6 +707,31 @@ export async function computePayouts(warId, options = {}) {
     .filter(m => m.score > 0 || m.tornScore > 0) // drop zero-contribution noise
     .sort((a, b) => b.score - a.score);
 
+  // Turtles are paid a flat amount off the TOP of the pool, and everyone else
+  // splits what is left. The pool stays what the faction decided to pay out.
+  const turtle = turtleDollars(baseMembers, settings.turtlePay, payoutPool);
+  if (turtle.spent > 0) {
+    const splitPool = Math.max(0, payoutPool - turtle.spent);
+    for (const mem of members) {
+      const share = totalScore > 0 ? (useFair ? mem.score : mem.tornScore) / totalScore : 0;
+      mem.dollarPayout = Math.round(share * splitPool) + (turtle.byPlayer[mem.playerId] || 0);
+    }
+    // A member who ONLY turtled has no score and was filtered out above, so
+    // they are added back -- being paid and not listed is the worse failure.
+    for (const bm of baseMembers) {
+      const pay = turtle.byPlayer[bm.playerId];
+      if (!pay || members.some(x => x.playerId === bm.playerId)) continue;
+      members.push({
+        playerId: bm.playerId, name: bm.name, score: 0, sharePct: 0,
+        dollarPayout: pay, attackCount: bm.attackCount || 0,
+        totalAttacks: bm.totalAttacks || bm.attackCount || 0,
+        avgFf: 0, maxFf: 0, level: bm.level, breakdown: bm.breakdown,
+        tornScore: 0, tornAttacks: bm.tornAttacks || 0,
+      });
+    }
+    members.sort((a, b) => b.dollarPayout - a.dollarPayout);
+  }
+
   const result = {
     warId,
     factionId: war.factionId,
@@ -721,6 +751,8 @@ export async function computePayouts(warId, options = {}) {
     payoutPct: clampedPct, // e.g., 0.8 = 80% to members
     payoutPool,            // dollars distributed to members
     factionShare,          // dollars retained by faction
+    turtlePaid: turtle.spent,       // of the pool, paid flat for turtling
+    turtleCapped: turtle.capped,    // true when the flat rate hit the pool ceiling
     settings,              // active per-war overrides (for the gear panel)
     totalScore: Math.round(totalScore * 10) / 10,
     members,
@@ -1085,10 +1117,55 @@ function archiveRecordToResult(hw, mode, fid) {
  * another. `updatedAt` is deliberately out: saving the same numbers again must
  * not bust a cache that is still correct.
  */
+/**
+ * A flat dollar amount per turtle, taken off the top of the payout pool.
+ *
+ * Turtling as a SCORE was awkward: the same weight is a war hit's worth in
+ * Termed Mode and almost nothing in FF Mode, where a real hit scores its
+ * respect. A dollar figure means the same thing in both.
+ *
+ * Off the top rather than on top -- the turtlers are paid first and everyone
+ * else splits what is left. The pool stays what the faction decided to pay
+ * out, and the faction share is untouched.
+ *
+ * Capped at the pool, and shared out in proportion when it would exceed it:
+ * paying the first member in full and the next nothing would be arbitrary.
+ */
+export function turtleDollars(members, turtlePay, pool) {
+  const rate = Number(turtlePay);
+  const budget = Math.max(0, Number(pool) || 0);
+  const byPlayer = {};
+  if (!Number.isFinite(rate) || rate <= 0 || !budget) return { byPlayer, spent: 0, capped: false };
+
+  const owed = [];
+  let wanted = 0;
+  for (const mem of members || []) {
+    const n = Math.max(0, Number((mem.breakdown || {}).turtle) || 0);
+    if (!n) continue;
+    const due = n * rate;
+    owed.push({ id: String(mem.playerId), due });
+    wanted += due;
+  }
+  if (!wanted) return { byPlayer, spent: 0, capped: false };
+
+  const capped = wanted > budget;
+  // Floor each share so the rounding can only ever spend LESS than the pool.
+  const scale = capped ? budget / wanted : 1;
+  let spent = 0;
+  for (const o of owed) {
+    const pay = Math.floor(o.due * scale);
+    if (pay <= 0) continue;
+    byPlayer[o.id] = pay;
+    spent += pay;
+  }
+  return { byPlayer, spent, capped };
+}
+
 export function settingsSignature(s) {
   const o = s || {};
   return `L${o.lootOverride ?? '_'}|A${o.assistWeight ?? '_'}|N${o.nonWarWeight ?? '_'}` +
-         `|P${o.payoutPct ?? '_'}|F${o.failedWeight ?? '_'}|T${o.turtleWeight ?? '_'}`;
+         `|P${o.payoutPct ?? '_'}|F${o.failedWeight ?? '_'}|T${o.turtleWeight ?? '_'}` +
+         `|$${o.turtlePay ?? '_'}`;
 }
 
 /**
@@ -1164,8 +1241,15 @@ export function recomputeArchivedResult({ hw, fid, mode, attacks, settings }) {
     ? Math.min(1, Math.max(0, Number(s.payoutPct)))
     : (hw.payoutPct != null ? Number(hw.payoutPct) : 0.8);
   const poolFromPct = Math.round(lootTotal * pct);
-  const { members, totalScore } = membersFromTally(byAttacker, poolFromPct);
   const payoutPool = poolFromPct;
+  // Turtles first, off the top, then the rest is split -- same as the live path.
+  const turtle = turtleDollars(Object.values(byAttacker), s.turtlePay, payoutPool);
+  const splitPool = Math.max(0, payoutPool - turtle.spent);
+  const { members, totalScore } = membersFromTally(byAttacker, splitPool);
+  if (turtle.spent > 0) {
+    for (const mem of members) mem.dollarPayout += (turtle.byPlayer[mem.playerId] || 0);
+    members.sort((a, b) => b.dollarPayout - a.dollarPayout);
+  }
 
   return {
     warId: String(hw.warKey),
@@ -1186,6 +1270,8 @@ export function recomputeArchivedResult({ hw, fid, mode, attacks, settings }) {
     payoutPct: pct,
     payoutPool,
     factionShare: lootTotal - payoutPool,
+    turtlePaid: turtle.spent,
+    turtleCapped: turtle.capped,
     settings: s,
     // The panel needs to know the difference between "your weights are in these
     // numbers" and "these numbers predate your weights".

@@ -1847,6 +1847,10 @@ router.post("/api/war/:warId/payout-settings-admin", requireAuth, express.json({
     const n = Number(body.turtleWeight);
     if (Number.isFinite(n) && n >= 0) settings.turtleWeight = n;
   }
+  if (body.turtlePay != null && body.turtlePay !== '') {
+    const n = Number(body.turtlePay);
+    if (Number.isFinite(n) && n >= 0) settings.turtlePay = n;
+  }
   store.setPayoutSettings(req.params.warId, settings);
   warPayouts.invalidateCache(req.params.warId);
   return res.json({ ok: true, settings });
@@ -10676,6 +10680,10 @@ router.post("/api/war/:warId/payout-settings", express.json({ limit: '4kb' }), a
   if (body.turtleWeight != null && body.turtleWeight !== '') {
     const n = Number(body.turtleWeight);
     if (Number.isFinite(n) && n >= 0) settings.turtleWeight = n;
+  }
+  if (body.turtlePay != null && body.turtlePay !== '') {
+    const n = Number(body.turtlePay);
+    if (Number.isFinite(n) && n >= 0) settings.turtlePay = n;
   }
   store.setPayoutSettings(req.params.warId, settings);
   warPayouts.invalidateCache(req.params.warId);
