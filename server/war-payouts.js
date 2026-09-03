@@ -686,7 +686,7 @@ export async function computePayouts(warId, options = {}) {
   // path pays real money and is pinned by a frozen fixture, and the two
   // models share nothing but their output shape. In pool mode nothing here
   // runs and nothing above changes.
-  const ratesOn = String(mode) === "dynamic";
+  const ratesOn = String(settings.payoutMode || "") === "rates";
   const rated = ratesOn ? ratePayouts(baseMembers, settings.payoutRates) : null;
   const outMembers = rated
     ? rated.members.filter(m => m.dollarPayout > 0 || m.attackCount > 0)
@@ -1092,8 +1092,6 @@ export const PAYOUT_CATEGORIES = ["war_hit", "retal", "overseas_war", "assist", 
 /**
  * Fixed-rate payouts: a dollar figure per hit, per category.
  *
- * Used in FF Mode; Termed Mode keeps the pool split.
- *
  * The opposite shape to the pool split. There the pool is fixed and a hit is
  * worth whatever the division leaves it; here the RATES are fixed and the pool
  * is whatever the war adds up to. A faction that wants to promise "$2m a war
@@ -1148,11 +1146,9 @@ export function settingsSignature(s) {
   // changed -- exactly the bug where saved weights read back as "not saved".
   const r = o.payoutRates || {};
   const rates = PAYOUT_CATEGORIES.map(c => r[c] ?? '_').join(',');
-  // The war mode is NOT here on purpose: it already keys the live cache
-  // (`warId:mode:settings`) and picks the archived entry, so folding it in
-  // would say the same thing twice.
   return `L${o.lootOverride ?? '_'}|A${o.assistWeight ?? '_'}|N${o.nonWarWeight ?? '_'}` +
-         `|P${o.payoutPct ?? '_'}|F${o.failedWeight ?? '_'}|R${rates}`;
+         `|P${o.payoutPct ?? '_'}|F${o.failedWeight ?? '_'}` +
+         `|M${o.payoutMode ?? '_'}|R${rates}`;
 }
 
 /**
@@ -1230,7 +1226,7 @@ export function recomputeArchivedResult({ hw, fid, mode, attacks, settings }) {
   const poolFromPct = Math.round(lootTotal * pct);
   // Same fork as the live path, and for the same reason: the pool split and
   // the rate card are different promises, not two settings of one promise.
-  const ratesOn = String(mode) === "dynamic";
+  const ratesOn = String(s.payoutMode || "") === "rates";
   const rated = ratesOn ? ratePayouts(byAttacker, s.payoutRates) : null;
   const { members, totalScore } = rated
     ? { members: rated.members, totalScore: rated.payoutPool }
