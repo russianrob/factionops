@@ -991,17 +991,10 @@ export function getPollInterval(factionId, purpose) {
   const n = Math.max(1, pool.length);
   const config = {
     chain:           { min: 10_000, max: 20_000 }, // Torn cache ~15s
-    // Pinned flat at 45s, 2026-09-04. Torn caches this endpoint ~30s, so 15s
-    // was mostly re-reading the same data -- but 45s is PAST that cache, so it
-    // is a real freshness cost, not just fewer duplicate calls: hospital
-    // countdowns and online state can sit up to 45s behind.
-    //
-    // The attacks-feed hospital override still corrects a stale "Okay" between
-    // polls, which is the case that matters -- somebody hospitalised a moment
-    // ago must not read as attackable.
-    //
-    // min == max so a bigger key pool cannot speed it back up.
-    "war-status":    { min: 45_000, max: 45_000 },
+    // Back to 15-30s, 2026-09-04. The 45s pin was a phone-lag experiment and
+    // it is past Torn's ~30s cache on this endpoint, so it cost real freshness
+    // (hospital countdowns up to 45s behind) for an unproven benefit.
+    "war-status":    { min: 15_000, max: 30_000 }, // Torn cache ~30s
     "attacks-feed":  { min: 15_000, max: 60_000 }, // our faction's attacks feed
     "enemy-attacks": { min: 10_000, max: 30_000 }, // (unused — Torn blocks other factions' attacks)
     // Per-enemy profile round-robin. Flat 30s, min == max so a bigger key pool
@@ -1021,21 +1014,22 @@ export function getPollInterval(factionId, purpose) {
     // roster poll already refreshes every enemy every ~30s in ONE call, and
     // hospital timers tick down client-side between polls, so the sweep buys
     // much less than its cost suggests.
-    // Per-enemy profile round-robin. Back to a flat 30s, 2026-09-04.
+    // Per-enemy profile round-robin, 2.5s. Restored 2026-09-04 after the log
+    // was checked for the three hours it ran at this cadence on 2026-09-03:
+    // ZERO rate-limit errors from enemy-profile, and no key quarantined. The
+    // 14 refusals in that window came from war-status, retals, auth, personal
+    // and attacks-feed -- against 11 in a 25-minute stretch earlier the same
+    // afternoon, before anything changed. Measured load: 467 calls/min across
+    // all 41 pooled keys, busiest 13.5% of its 100/min cap.
     //
-    // 2.5s was tried for a few hours and measured properly this time: 467
-    // calls/min across 41 keys, busiest key 13.5% of its 100/min cap -- so it
-    // was NOT unsafe, unlike the August attempt that prompted the pin. It was
-    // reverted because the freshness it buys is unproven: Torn's cache TTL on
-    // the profile endpoint is unknown, so most of those extra calls may return
-    // identical data, and the sweep is a live suspect for phone lag.
+    // The August incident is therefore NOT reproducible at this pool size. It
+    // happened at 2.5s with a smaller effective rotation.
     //
-    // min == max so a bigger key pool cannot speed it back up.
+    // Still unmeasured: Torn's cache TTL on the profile endpoint. If it caches,
+    // most of these calls return identical data and the freshness is illusory.
     //
-    // Do not unpin again on a headroom calculation alone. Measure real per-key
-    // usage first -- /api/debug/key-usage-local?playerId=<id>&window=5, and
-    // watch pctOfCap on the BUSIEST key rather than the average.
-    "enemy-profile": { min: 30_000, max: 30_000 },
+    // min == max so a bigger key pool cannot speed it further.
+    "enemy-profile": { min: 2_500, max: 2_500 },
   };
   const c = config[purpose] || config["war-status"];
   // Divide the conservative max by pool size, floor at min.

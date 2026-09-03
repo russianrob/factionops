@@ -29,19 +29,18 @@ function poolOf(n) {
 // This test exists to make an unpinning deliberate rather than incidental.
 test("enemy-profile stays flat however large the pool grows", () => {
   poolOf(1);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000);
+  assert.equal(getPollInterval(FID, "enemy-profile"), 2_500);
   poolOf(36);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000, "a big pool must NOT speed it up");
+  assert.equal(getPollInterval(FID, "enemy-profile"), 2_500, "a big pool must NOT speed it up");
   poolOf(200);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000);
+  assert.equal(getPollInterval(FID, "enemy-profile"), 2_500);
 });
 
 test("the other purposes keep their own floors", () => {
   // Regression guard: this change must not speed anything else up.
   poolOf(36);
   assert.equal(getPollInterval(FID, "chain"), 10_000);
-  // Pinned flat at 45s since 2026-09-04; a big pool must not speed it up.
-  assert.equal(getPollInterval(FID, "war-status"), 45_000);
+  assert.equal(getPollInterval(FID, "war-status"), 15_000);
   assert.equal(getPollInterval(FID, "attacks-feed"), 15_000);
 });
 
