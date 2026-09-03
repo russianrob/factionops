@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.94
+// @version      5.1.95
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -15403,7 +15403,8 @@ body.wb-chain-active {
                     </label>
                     <div class="wb-payouts-rates">
                         ${[['war_hit', 'War hit'], ['retal', 'Retaliation'], ['overseas_war', 'Overseas war hit'],
-                           ['assist', 'Assist'], ['chain_hit', 'Chain hit'], ['os_chain', 'Overseas chain hit']]
+                           ['assist', 'Assist'], ['chain_hit', 'Chain hit'], ['os_chain', 'Overseas chain hit'],
+                           ['turtle', 'Turtle (hosp our own)']]
                           .map(([k, label]) => `<label>
                         <span>${label} ($)</span>
                         <input type="number" class="wb-set-rate" data-rate="${k}" min="0" step="100000" placeholder="0" value="${(cur.payoutRates && cur.payoutRates[k] != null) ? cur.payoutRates[k] : ''}">
@@ -15419,6 +15420,11 @@ body.wb-chain-active {
                         <span>Non-war hit weight</span>
                         <input type="number" id="wb-set-nonwar" min="0" step="0.05" placeholder="0.3" value="${cur.nonWarWeight != null ? cur.nonWarWeight : ''}">
                         <small>Multiplier for hits during the war that weren't ranked-war attacks. Default 0.3 (assist-level).</small>
+                    </label>
+                    <label>
+                        <span>Turtle weight</span>
+                        <input type="number" id="wb-set-turtle" min="0" step="0.05" placeholder="0" value="${cur.turtleWeight != null ? cur.turtleWeight : ''}">
+                        <small>Score per friendly hospitalisation \u2014 hitting our own member so the enemy cannot farm them. Default 0: counted and shown, but unpaid. A turtle earns no respect, so this is a flat score in both modes.</small>
                     </label>
                     <label>
                         <span>Loss attack weight</span>
@@ -15464,6 +15470,7 @@ body.wb-chain-active {
             const asw = overlay.querySelector('#wb-set-assist').value.trim();
             const nw = overlay.querySelector('#wb-set-nonwar').value.trim();
             const fw = overlay.querySelector('#wb-set-failed').value.trim();
+            const tw = overlay.querySelector('#wb-set-turtle').value.trim();
             if (loot !== '') settings.lootOverride = Number(loot);
             if (pct !== '') settings.payoutPct = Number(pct) / 100;
             const mode = overlay.querySelector('#wb-set-payoutmode').value;
@@ -15481,6 +15488,7 @@ body.wb-chain-active {
             if (asw !== '') settings.assistWeight = Number(asw);
             if (nw !== '') settings.nonWarWeight = Number(nw);
             if (fw !== '') settings.failedWeight = Number(fw);
+            if (tw !== '') settings.turtleWeight = Number(tw);
             try {
                 await post(settings);
                 closeOverlay();

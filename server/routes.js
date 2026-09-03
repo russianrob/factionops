@@ -1842,6 +1842,10 @@ router.post("/api/war/:warId/payout-settings-admin", requireAuth, express.json({
     const n = Number(body.failedWeight);
     if (Number.isFinite(n) && n >= 0) settings.failedWeight = n;
   }
+  if (body.turtleWeight != null && body.turtleWeight !== '') {
+    const n = Number(body.turtleWeight);
+    if (Number.isFinite(n) && n >= 0) settings.turtleWeight = n;
+  }
   // Fixed-rate payouts. Whitelisted like everything above, which is the point:
   // a key that is not listed here is dropped in silence, and that is exactly
   // how "I saved the weights and nothing changed" happened last time.
@@ -10657,6 +10661,10 @@ router.post("/api/war/:warId/payout-settings", express.json({ limit: '4kb' }), a
   if (body.failedWeight != null && body.failedWeight !== '') {
     const n = Number(body.failedWeight);
     if (Number.isFinite(n) && n >= 0) settings.failedWeight = n;
+  }
+  if (body.turtleWeight != null && body.turtleWeight !== '') {
+    const n = Number(body.turtleWeight);
+    if (Number.isFinite(n) && n >= 0) settings.turtleWeight = n;
   }
   // Fixed-rate payouts. Whitelisted like everything above, which is the point:
   // a key that is not listed here is dropped in silence, and that is exactly

@@ -328,6 +328,27 @@ export function tallyAttacks(attacks, { ourFid, enemyFactionId, mode, settings =
     // "losses" bucket or earn failedWeight credit.
     const LOSS_RESULTS = new Set(['Lost']);
     const respectGain = Number(atk.respect_gain) || 0;
+
+    // Turtling: hospitalising your own member so the enemy cannot farm them
+    // for points. Both ends of the attack are ours, which nothing else in a
+    // war looks like, so it needs no new data to spot.
+    //
+    // It is not a ranked-war attack, so without this it fell into the non-war
+    // bucket below and was filed beside somebody mugging a random mid-war.
+    //
+    // It earns no respect either, so today it is dropped by the zero-respect
+    // gate just below and scores nothing in either mode. That stays true until
+    // a turtle weight is set -- naming a category must not move money on wars
+    // already settled -- but the hit is now COUNTED, so the work is at least
+    // visible. Once priced the weight is flat in both modes, because there is
+    // no respect for a respect-scaled weight to scale.
+    if (String(atk.defender_faction || "") === ourFid) {
+      const tw = Number(settings.turtleWeight);
+      byAttacker[aid].fairScoreSum += (Number.isFinite(tw) && tw > 0) ? tw : 0;
+      byAttacker[aid].breakdown.turtle = (byAttacker[aid].breakdown.turtle || 0) + 1;
+      continue;
+    }
+
     if (respectGain <= 0) {
       const result = String(atk.result || '');
       if (LOSS_RESULTS.has(result)) {
@@ -1085,9 +1106,11 @@ function archiveRecordToResult(hw, mode, fid) {
  * another. `updatedAt` is deliberately out: saving the same numbers again must
  * not bust a cache that is still correct.
  */
-// The six categories classify() can return. Anything else in a stored
+// Everything a payout can be priced on: the six classify() returns, plus
+// turtling, which is caught before the classifier because a friendly
+// hospitalisation is not a ranked-war attack. Anything else in a stored
 // breakdown came from an older build and is worth nothing rather than NaN.
-export const PAYOUT_CATEGORIES = ["war_hit", "retal", "overseas_war", "assist", "chain_hit", "os_chain"];
+export const PAYOUT_CATEGORIES = ["war_hit", "retal", "overseas_war", "assist", "chain_hit", "os_chain", "turtle"];
 
 /**
  * Fixed-rate payouts: a dollar figure per hit, per category.
@@ -1148,7 +1171,7 @@ export function settingsSignature(s) {
   const rates = PAYOUT_CATEGORIES.map(c => r[c] ?? '_').join(',');
   return `L${o.lootOverride ?? '_'}|A${o.assistWeight ?? '_'}|N${o.nonWarWeight ?? '_'}` +
          `|P${o.payoutPct ?? '_'}|F${o.failedWeight ?? '_'}` +
-         `|M${o.payoutMode ?? '_'}|R${rates}`;
+         `|M${o.payoutMode ?? '_'}|T${o.turtleWeight ?? '_'}|R${rates}`;
 }
 
 /**
