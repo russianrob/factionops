@@ -43,9 +43,8 @@ const nextEnemyAttacks = (war) =>
   war && war.factionId
     ? store.getPollInterval(war.factionId, "enemy-attacks")
     : 30_000;
-// Far above any real key pool -- a guard against a pathological pool size, not
-// a cadence control. The pool and the enemy roster are what bound the sweep.
-const ENEMY_PROFILE_CEILING = 100;
+// Requests issued per tick, at most. See the note where it is used.
+const ENEMY_PROFILE_CEILING = 20;
 // On by default. Switched off for a few hours on 2026-09-03 to test whether it
 // was behind phone lag, and switched back on. Set WB_ENEMY_PROFILE_SWEEP=0 to
 // disable it again without a deploy.
@@ -826,19 +825,16 @@ function startEnemyProfileMonitor(io, warId) {
     // budget without tipping into 429 cascades.
     // Request-rotation (cursor index) spreads the load evenly across keys.
     const pool = store.getPooledKeysForFaction(war.factionId);
-    // Use the whole pool, not a fixed 20. Raised on request 2026-09-03, having
-    // measured the 2.5s cadence first: 467 calls/min across 41 keys, busiest
-    // key 13.5% of its 100/min cap.
+    // Held at 20. Briefly raised to the pool size on 2026-09-03 and reverted
+    // the same hour: at a full 41-key pool it doubles per-key usage from ~13.5%
+    // to ~21% of Torn's 100/min limit, and the instruction was not to spend
+    // more of that limit.
     //
-    // Removing the fixed cap also removes the concentration effect that made
-    // August's arithmetic misleading. With a cap, a shrinking pool kept issuing
-    // the same requests per tick and per-key load CLIMBED -- 41 keys is ~11/min
-    // each, 20 keys ~24/min. Bounded by the pool instead, concurrency shrinks
-    // with it and per-key load stays flat at roughly ticks-per-minute however
-    // many keys survive quarantine.
-    //
-    // The ceiling is a runaway guard, not a tuning knob: it sits far above any
-    // real pool so it should never bind.
+    // Known trade, recorded rather than argued: with this cap a SHRINKING pool
+    // concentrates load, because the same 20 requests per tick spread over
+    // fewer keys -- 41 keys is ~11/min each, 20 keys ~24/min. Uncapped it stays
+    // flat. So the cap is cheaper at full pool and worse as keys quarantine.
+    // Watch pctOfCap on the busiest key, not the average.
     const concurrency = Math.max(
       1,
       Math.min(pool.length || 1, ids.length, ENEMY_PROFILE_CEILING),
