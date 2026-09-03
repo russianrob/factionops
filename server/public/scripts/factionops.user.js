@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.95
+// @version      5.1.96
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -1334,6 +1334,21 @@ body.wb-chain-active {
     white-space: nowrap;
 }
 .fo-next-up-bar:empty { display: none; }
+.fo-turtle-bar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 5px 10px; font-size: 11px;
+    background: rgba(214,48,49,0.10);
+    border-bottom: 1px solid rgba(214,48,49,0.25);
+}
+.fo-turtle-bar:empty { display: none; }
+.fo-turtle-label {
+    opacity: 0.75; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--wb-hospital-red); font-weight: 700;
+}
+.fo-turtle-item { display: inline-flex; align-items: center; gap: 5px; }
+.fo-turtle-item a { text-decoration: none; color: var(--wb-text); font-weight: 600; }
+.fo-turtle-item a:hover { text-decoration: underline; }
+.fo-turtle-cost { color: var(--wb-hospital-red); font-weight: 600; }
 .fo-next-up-label {
     font-weight: 600; color: #fdcb6e;
     white-space: nowrap; font-size: 10px;
@@ -5413,6 +5428,44 @@ body.wb-chain-active {
      * Uses httpRequest wrapper which routes through PDA_httpGet (with headers)
      * on Torn PDA, or GM_xmlhttpRequest on desktop.
      */
+    /**
+     * Who the enemy is farming right now, so somebody can turtle them --
+     * hospitalise our own member so the enemy cannot keep scoring off them.
+     *
+     * Ranked by respect bled rather than by hits: a member giving away 40
+     * respect an hour wants taking off the board before one poked twice for
+     * nothing. The server reads it from the attack ledger, which already
+     * stores incoming attacks.
+     */
+    const TURTLE_TOP = 3;
+    async function refreshTurtleBar() {
+        const bar = document.getElementById('fo-turtle-bar');
+        if (!bar) return;
+        const warId = (typeof deriveWarId === 'function') ? deriveWarId() : null;
+        if (!warId || !state.jwtToken) { bar.innerHTML = ''; return; }
+        let data;
+        try {
+            data = await getAction(`/api/war/${encodeURIComponent(warId)}/turtle-watch`);
+        } catch (e) {
+            // Silent: an empty bar is the honest state, and a war overlay is no
+            // place for a network error nobody can act on.
+            bar.innerHTML = '';
+            return;
+        }
+        const list = (data && Array.isArray(data.members)) ? data.members : [];
+        if (!list.length) { bar.innerHTML = ''; return; }
+        const items = list.slice(0, TURTLE_TOP).map(m => {
+            const mins = m.lastAt ? Math.max(0, Math.round(Date.now() / 1000 - m.lastAt) / 60) : null;
+            const ago = mins == null ? '' : (mins < 1 ? ' · just now' : ` · ${Math.round(mins)}m ago`);
+            // A link, never a click: the script suggests the hit, the member makes it.
+            return `<span class="fo-turtle-item"><a href="https://www.torn.com/loader.php?sid=attack&user2ID=${encodeURIComponent(m.playerId)}" target="_blank" rel="noopener">${escapeHtml(m.name)}</a>` +
+                   `<span class="fo-turtle-cost">-${Math.round(m.respectLost)}</span>` +
+                   `<span style="opacity:.6">${m.hits} hit${m.hits === 1 ? '' : 's'}${ago}</span></span>`;
+        }).join('');
+        const more = list.length > TURTLE_TOP ? `<span style="opacity:.5">+${list.length - TURTLE_TOP} more</span>` : '';
+        bar.innerHTML = `<span class="fo-turtle-label">\u{1F422} Turtle</span>${items}${more}`;
+    }
+
     function getAction(endpoint) {
         if (!state.jwtToken) return Promise.reject(new Error('Not authenticated'));
 
@@ -10767,6 +10820,7 @@ body.wb-chain-active {
                 </div>
             </div>
             <div class="fo-next-up-bar" id="fo-next-up"></div>
+            <div class="fo-turtle-bar" id="fo-turtle-bar"></div>
             ${isLeader() ? `
             <div class="fo-broadcast-entry-bar">
                 <input type="text" id="fo-input-broadcast" placeholder="Broadcast message to faction..." maxlength="150">
@@ -11192,6 +11246,13 @@ body.wb-chain-active {
             updateWarTimer();
             setInterval(updateWarTimer, 30000);
             setInterval(updateWarTimerDisplay, 1000);
+        }
+
+        // Every 90s: often enough to catch somebody being farmed, rare enough
+        // that it costs nothing. Reads a server cache, not Torn's API.
+        if (typeof refreshTurtleBar === 'function') {
+            refreshTurtleBar();
+            setInterval(refreshTurtleBar, 90000);
         }
 
         // Wire up broadcast button in overlay (leader/banker only)

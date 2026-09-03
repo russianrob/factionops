@@ -95,6 +95,7 @@ import * as inspectRelay from "./inspect-relay.js";
 import * as missingOverrides from "./missing-overrides.js";
 import * as ocCheckpointHistory from "./oc-checkpoint-history.js";
 import * as warPayouts from "./war-payouts.js";
+import { turtleWatch } from "./turtle-watch.js";
 import * as warHistory from "./war-history.js";
 import * as xanaxModel from "./xanax-model.js";
 import * as attackLedger from "./attack-ledger.js";
@@ -10619,6 +10620,27 @@ if (getKey()) {
 // v5.0.68: per-war payout-calc settings (admin-only). GET returns
 // the current overrides; POST stores new ones + invalidates the
 // payouts cache for that war so the next compute uses them.
+// Who the enemy is farming right now, so somebody can turtle them -- put them
+// in hospital before they give away more points.
+//
+// Not admin-gated: any member can be the one to land the hospitalisation, and
+// the list is about our own faction rather than about money.
+router.get("/api/war/:warId/turtle-watch", requireAuth, (req, res) => {
+  const fid = String((req.user && req.user.factionId) || "");
+  if (!fid) return res.status(400).json({ error: "No faction" });
+  // Clamped: the point is what is happening NOW, and a window long enough to
+  // cover the whole war would just rank people by how much they fought.
+  const mins = Math.min(360, Math.max(5, Number(req.query.mins) || 60));
+  let attacks = [];
+  try {
+    attacks = attackLedger.getAttacksForWar(req.params.warId, fid) || [];
+  } catch (_) {
+    attacks = [];
+  }
+  const members = turtleWatch(attacks, { ourFid: fid, windowMs: mins * 60_000 });
+  return res.json({ windowMins: mins, members, at: Date.now() });
+});
+
 router.get("/api/war/:warId/payout-settings", async (req, res) => {
   const ctx = await resolveVaultCaller(req, res);
   if (!ctx) return;
