@@ -8336,12 +8336,21 @@ router.post('/api/admin/xanax-backfill', async (req, res) => {
       if (batch.length < 100 || oldest <= fromTs) break;
       to = oldest - 1;
     }
+    // Chronological. The page loop above walks BACKWARDS (to = oldest - 1),
+    // so `all` arrives newest-page-first -- and the floor at 0 below is
+    // order-dependent, so a deposit netted before the takes it belongs to is
+    // silently discarded.
+    all.sort((a, b) => a.timestamp - b.timestamp);
     const taken = {}, names = {};
     for (const e of all) {
       const p = xt._internal.parseXanaxEntry(e.news);
       if (!p) continue;
-      taken[p.playerId] = (taken[p.playerId] || 0) + 1;
       names[p.playerId] = p.playerName;
+      // Was `+ 1` for EVERY entry: a deposit counted as a take, and qty was
+      // ignored so "deposited 3x" moved the number by one. Mirrors the live
+      // tracker now -- used adds, deposited subtracts, floored at 0.
+      if (p.type === 'deposited') taken[p.playerId] = Math.max(0, (taken[p.playerId] || 0) - p.qty);
+      else taken[p.playerId] = (taken[p.playerId] || 0) + p.qty;
     }
     war.xanaxStats = {
       lastPolledAt: toTs,
@@ -8407,6 +8416,11 @@ router.post('/api/admin/xanax-backfill-history', async (req, res) => {
         await sleep(250);
       }
       // Net taken: used +1, deposited -qty, floored at 0 (mirrors the tracker).
+      // Chronologically, because that floor is order-dependent and the page
+      // loop above walks backwards: a deposit seen before its takes nets to
+      // max(0, 0 - qty) = 0 and the return is lost. That is what left Shefin
+      // reading 4 in the frozen report while the live war correctly said 1.
+      all.sort((a, b) => a.timestamp - b.timestamp);
       const taken = {}, names = {};
       for (const e of all) {
         const p = xt._internal.parseXanaxEntry(e.news);
