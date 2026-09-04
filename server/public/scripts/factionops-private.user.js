@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.12
+// @version      5.2.13
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.12';
+    const SCRIPT_VERSION = '5.2.13';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -708,8 +708,12 @@ html.wb-theme-light {
    member cell is full of the FFS banner and the right edge is the Attack
    link. */
 .fo-call-cell {
-    display: block; margin: 2px auto 0; padding: 2px 0;
-    width: 90%; min-width: 42px; box-sizing: border-box;
+    /* Layered and hit-testable. It rendered ON TOP of the score rather than
+       under it, which means something in that cell was taking the clicks --
+       a button you can see but cannot press is worse than no button. */
+    position: relative; z-index: 40; pointer-events: auto;
+    display: block; margin: 4px auto 2px; padding: 3px 0;
+    width: 92%; min-width: 44px; box-sizing: border-box;
     border: 1px solid rgba(225,112,85,.55); border-radius: 4px;
     background: rgba(225,112,85,.14); color: #e17055;
     font-size: 10px; font-weight: 700; letter-spacing: .04em;
@@ -9901,17 +9905,41 @@ body.wb-chain-active {
         if (!btn) {
             btn = document.createElement('div');
             btn.className = 'fo-call-cell';
-            btn.addEventListener('click', function (e) {
+            const onTap = function (e) {
                 e.stopPropagation();
                 e.preventDefault();
                 // Only ever act on our own call, never steal somebody else's.
                 const cur = (state.calls || {})[targetId];
                 const isMine = cur && cur.calledBy && String(cur.calledBy.id) === String(state.myPlayerId);
+                // One tap should say what it did. Every early return inside
+                // emitCallTarget is a silent toast from here, and "nothing
+                // happened" is indistinguishable from "never fired".
+                try {
+                    httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
+                        headers: { 'Content-Type': 'application/json' },
+                        data: JSON.stringify({ tag: 'fo-call-click', data: {
+                            tid: targetId, had: !!cur, mine: !!isMine,
+                            jwt: !!state.jwtToken, me: state.myPlayerId || null,
+                            warId: (typeof deriveWarId === 'function' ? deriveWarId() : null),
+                            calls: Object.keys(state.calls || {}).length,
+                            v: SCRIPT_VERSION } }) });
+                } catch (_) {}
                 try {
                     if (!cur) emitCallTarget(targetId);
                     else if (isMine) emitUncallTarget(targetId);
-                } catch (_) {}
-            });
+                } catch (err) {
+                    try {
+                        httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
+                            headers: { 'Content-Type': 'application/json' },
+                            data: JSON.stringify({ tag: 'fo-call-click', data: {
+                                tid: targetId, threw: String(err && err.message).slice(0, 120) } }) });
+                    } catch (_) {}
+                }
+            };
+            // touchend as well as click: on a phone a tap inside a React row
+            // can be swallowed before it becomes a click.
+            btn.addEventListener('click', onTap);
+            btn.addEventListener('touchend', onTap, { passive: false });
             cell.appendChild(btn);
         }
         if (btn.textContent !== label) btn.textContent = label;
