@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.30
+// @version      5.2.31
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,18 +99,22 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.30';
+    const SCRIPT_VERSION = '5.2.31';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
         API_KEY: GM_getValue('factionops_apikey', '') || (IS_PDA ? PDA_API_KEY : ''),
         THEME: GM_getValue('factionops_theme', 'dark'),
-        AUTO_SORT: GM_getValue('factionops_autosort', true),
         CHAIN_ALERT: GM_getValue('factionops_chain_alert', true),
         CHAIN_ALERT_THRESHOLD: GM_getValue('factionops_chain_alert_threshold', 60),
         PDA_NOTIFICATIONS: GM_getValue('factionops_pda_notif', IS_PDA),
-        ENEMY_ATTACK_NOTIF: GM_getValue('factionops_enemy_attack_notif', false),
+        // The war-page display, added 5.2.31. These three shipped without any
+        // control at all -- default on, because that is how they have behaved
+        // since they landed and somebody who liked it should not have to opt in.
+        WP_CHIPS: GM_getValue('factionops_wp_chips', true),
+        WP_HOSP:  GM_getValue('factionops_wp_hosp', true),
+        WP_SORT:  GM_getValue('factionops_wp_sort', true),
         KEEP_ALIVE: GM_getValue('factionops_keep_alive', false),
         // v5.0.92: opt-in BSP sharing — uploads your BSP cache entries
         // for current war targets to the warboard server, where they
@@ -153,11 +157,12 @@
             SERVER_URL: 'factionops_server',
             API_KEY: 'factionops_apikey',
             THEME: 'factionops_theme',
-            AUTO_SORT: 'factionops_autosort',
             CHAIN_ALERT: 'factionops_chain_alert',
             CHAIN_ALERT_THRESHOLD: 'factionops_chain_alert_threshold',
             PDA_NOTIFICATIONS: 'factionops_pda_notif',
-            ENEMY_ATTACK_NOTIF: 'factionops_enemy_attack_notif',
+            WP_CHIPS: 'factionops_wp_chips',
+            WP_HOSP: 'factionops_wp_hosp',
+            WP_SORT: 'factionops_wp_sort',
             KEEP_ALIVE: 'factionops_keep_alive',
             SHARE_BSP: 'factionops_share_bsp',
             CALL_CHAT: 'factionops_call_chat',
@@ -729,6 +734,62 @@ html.wb-theme-light {
 .fo-wp-call.fo-wp-call-drop:hover { background: #123028; }
 /* Stats range bar above Torn's enemy list. Same palette as the call button
    so the two additions read as one thing rather than two scripts. */
+/* War-page settings popover. Deliberately not the overlay's centred, page
+   dimming modal -- this one hangs off the gear and stays out of the way, so
+   the two are never mistaken for each other even at a glance.
+   No backticks anywhere in here: this stylesheet is a JS template literal. */
+.fo-wp-panel {
+    position: absolute; z-index: 2147483000; width: 244px;
+    box-sizing: border-box; padding: 10px;
+    border: 1px solid rgba(225,112,85,.5); border-radius: 6px;
+    background: #14100e; color: #ffd9c9;
+    box-shadow: 0 8px 26px rgba(0,0,0,.6);
+    font-size: 12px; line-height: 1.35;
+}
+.fo-wp-prow { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
+.fo-wp-pstat { font-size: 11px; }
+.fo-wp-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: #b2bec3; }
+.fo-wp-dot.ok { background: #00b894; }
+.fo-wp-dot.warn { background: #ffd166; }
+.fo-wp-dot.bad { background: #ff7675; }
+.fo-wp-sub { margin-left: auto; font-size: 10px; font-weight: 700; }
+.fo-wp-sub.ok { color: #00b894; }
+.fo-wp-sub.warn { color: #ffd166; }
+.fo-wp-sub.bad { color: #ff7675; }
+.fo-wp-sub.muted { color: #8a6a5e; }
+.fo-wp-plabel {
+    display: block; margin: 2px 0 4px; font-size: 10px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; color: #ff9a72;
+}
+.fo-wp-pin {
+    flex: 1 1 auto; min-width: 0; padding: 5px 6px; box-sizing: border-box;
+    border: 1px solid rgba(225,112,85,.35); border-radius: 3px;
+    background: rgba(0,0,0,.35); color: #ffd9c9;
+    font-family: monospace; font-size: 11px;
+}
+.fo-wp-pin:focus { outline: none; border-color: rgba(225,112,85,.8); }
+.fo-wp-pbtn, .fo-wp-pfull {
+    padding: 5px 9px; cursor: pointer; white-space: nowrap;
+    border: 1px solid rgba(225,112,85,.4); border-radius: 3px;
+    background: rgba(0,0,0,.35); color: #ff9a72;
+    font-size: 11px; font-weight: 700;
+}
+.fo-wp-pbtn:hover, .fo-wp-pfull:hover { background: #241a15; }
+.fo-wp-pfull { width: 100%; margin-top: 4px; }
+.fo-wp-pnote { min-height: 13px; margin: -3px 0 6px; font-size: 10px; color: #8a6a5e; }
+/* A rule with a word on it, same device as the settings group headings. */
+.fo-wp-psep {
+    display: flex; align-items: center; gap: 7px;
+    margin: 10px 0 6px; font-size: 10px; font-weight: 700;
+    letter-spacing: .07em; text-transform: uppercase; color: #ff9a72; opacity: .8;
+}
+.fo-wp-psep::after {
+    content: ''; flex: 1 1 auto; height: 1px; background: currentColor; opacity: .3;
+}
+/* The whole row is the label, so the tap target is the row not the box. */
+.fo-wp-ptog { cursor: pointer; justify-content: space-between; }
+.fo-wp-ptog input { margin: 0; cursor: pointer; flex: 0 0 auto; }
+
 /* Applied by applyRowOrder, not by a static selector, so the layout change is
    scoped to a list we are actually sorting and comes off by removing a class.
    The rows already stack vertically; this only makes CSS order apply to them.
@@ -7520,18 +7581,6 @@ body.wb-chain-active {
             <button class="wb-btn wb-btn-sm" id="fo-btn-test-pda-notif" style="margin-bottom:14px;font-size:11px;">Test PDA Notification</button>
             <div id="fo-pda-notif-result" style="font-size:11px;margin-bottom:10px;min-height:14px;"></div>
 
-            <div class="wb-settings-row">
-                <span>Notify when enemies attack</span>
-                <label class="wb-toggle">
-                    <input type="checkbox" id="wb-toggle-enemy-attack-notif" ${CONFIG.ENEMY_ATTACK_NOTIF ? 'checked' : ''}>
-                    <span class="wb-toggle-slider"></span>
-                </label>
-            </div>
-            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
-                When off (default): in-overlay toast only when an enemy
-                is caught mid-attack. When on: also fires a native PDA
-                notification. Toasts are unaffected by this toggle.
-            </div>
 
             <button class="wb-btn wb-btn-sm" id="fo-btn-test-toast" style="margin-bottom:14px;font-size:11px;">Test Toast Notification</button>
 
@@ -7878,13 +7927,6 @@ body.wb-chain-active {
         if (pdaNotifToggle) {
             pdaNotifToggle.addEventListener('change', (e) => {
                 setConfig('PDA_NOTIFICATIONS', e.target.checked);
-            });
-        }
-
-        const enemyAttackNotifToggle = document.getElementById('wb-toggle-enemy-attack-notif');
-        if (enemyAttackNotifToggle) {
-            enemyAttackNotifToggle.addEventListener('change', (e) => {
-                setConfig('ENEMY_ATTACK_NOTIF', e.target.checked);
             });
         }
 
@@ -9582,7 +9624,7 @@ body.wb-chain-active {
             e.stopPropagation();
             // openSettings appends its own modal to document.body and reads
             // nothing off the overlay, so it works with the overlay unbuilt.
-            try { openSettings(); } catch (err) { log('[settings] ' + (err && err.message)); }
+            try { openWarSettings(); } catch (err) { log('[settings] ' + (err && err.message)); }
         });
 
         // Torn's list is clickable underneath; typing must not reach it.
@@ -9603,6 +9645,11 @@ body.wb-chain-active {
     function ensureStatChip(row, targetId) {
         const cell = row.querySelector('[class*="member"]');
         if (!cell) return;
+        if (!CONFIG.WP_CHIPS) {
+            var old = cell.querySelector('.fo-wp-stat');
+            if (old) old.remove();
+            return;
+        }
         let n = null;
         try { n = getTargetStatsEstimate(targetId); } catch (_) {}
         let chip = cell.querySelector('.fo-wp-stat');
@@ -9651,7 +9698,7 @@ body.wb-chain-active {
         var cell = warStatusCell(row);
         if (!cell) return;
         var st = (state.statuses || {})[targetId];
-        var hosp = st && normalizeStatus(st.status) === 'hospital';
+        var hosp = CONFIG.WP_HOSP && st && normalizeStatus(st.status) === 'hospital';
         var chip = cell.querySelector('.fo-wp-hosp');
         if (!hosp) { if (chip) chip.remove(); return; }
         if (!chip) {
@@ -9747,6 +9794,13 @@ body.wb-chain-active {
     function applyRowOrder(entries) {
         if (!entries.length) return;
         var list = entries[0].row.parentElement;
+        if (!CONFIG.WP_SORT) {
+            // Hand the list back rather than leaving it flex with stale order
+            // values -- Torn's own sequence must return intact.
+            if (list) list.classList.remove('fo-wp-sorted');
+            for (var j = 0; j < entries.length; j++) entries[j].row.style.order = '';
+            return;
+        }
         if (list && !list.classList.contains('fo-wp-sorted')) list.classList.add('fo-wp-sorted');
         entries.sort(function (a, b) {
             if (a.key[0] !== b.key[0]) return a.key[0] - b.key[0];
@@ -9757,6 +9811,127 @@ body.wb-chain-active {
             var v = String(i);
             if (entries[i].row.style.order !== v) entries[i].row.style.order = v;
         }
+    }
+
+    /**
+     * War-page settings: a popover under the gear, deliberately NOT the
+     * overlay's centred modal.
+     *
+     * Different shape because it holds different things. The overlay panel is
+     * configuration -- keys, roles, faction setup. This is what is on screen
+     * right now, and every one of these three shipped between 5.2.24 and
+     * 5.2.29 with no control at all.
+     *
+     * No FFScouter or BSP key here on purpose: those are separate userscripts
+     * that render on this page themselves and hold their own keys. Asking for
+     * them twice invites somebody to paste a key into the wrong script.
+     */
+    function closeWarSettings() {
+        var el = document.getElementById('fo-wp-panel');
+        if (el) el.remove();
+        document.removeEventListener('click', warSettingsOutside, true);
+    }
+
+    function warSettingsOutside(e) {
+        var panel = document.getElementById('fo-wp-panel');
+        if (!panel) return;
+        if (panel.contains(e.target)) return;
+        if (e.target.closest && e.target.closest('#fo-wp-settings')) return;
+        closeWarSettings();
+    }
+
+    function subLine() {
+        var exp = state.subscriptionExpiresAt;
+        if (exp === 'permanent') return { txt: 'Permanent', cls: 'ok' };
+        if (typeof exp === 'number' && exp > 0) {
+            var d = Math.floor((exp - Date.now()) / 86400000);
+            if (d <= 0) return { txt: 'Expired', cls: 'bad' };
+            return { txt: d + ' day' + (d === 1 ? '' : 's') + ' left', cls: d < 7 ? 'warn' : 'ok' };
+        }
+        return { txt: 'Unknown', cls: 'muted' };
+    }
+
+    function openWarSettings() {
+        if (document.getElementById('fo-wp-panel')) { closeWarSettings(); return; }
+        var gear = document.getElementById('fo-wp-settings');
+        var sub = subLine();
+        var conn = state.connected ? ['Connected', 'ok']
+                 : state.connecting ? ['Connecting\u2026', 'warn'] : ['Disconnected', 'bad'];
+
+        var el = document.createElement('div');
+        el.id = 'fo-wp-panel';
+        el.className = 'fo-wp-panel';
+        el.innerHTML =
+            '<div class="fo-wp-prow fo-wp-pstat">' +
+                '<span class="fo-wp-dot ' + conn[1] + '"></span><b>' + conn[0] + '</b>' +
+                '<span class="fo-wp-sub ' + sub.cls + '">' + sub.txt + '</span>' +
+            '</div>' +
+            '<label class="fo-wp-plabel">Torn API key</label>' +
+            '<div class="fo-wp-prow">' +
+                // text, never password: a password field makes the browser
+                // offer to save and autofill Torn API keys.
+                '<input type="text" class="fo-wp-pin" id="fo-wp-key" spellcheck="false" ' +
+                       'autocomplete="off" autocapitalize="off" autocorrect="off" ' +
+                       'placeholder="' + (CONFIG.API_KEY ? '\u2022\u2022\u2022\u2022 ' + CONFIG.API_KEY.slice(-4) : 'paste your key') + '">' +
+                '<button type="button" class="fo-wp-pbtn" id="fo-wp-key-save">Save</button>' +
+            '</div>' +
+            '<div class="fo-wp-pnote" id="fo-wp-key-note"></div>' +
+            '<div class="fo-wp-psep">On this page</div>' +
+            row('fo-wp-t-chips', 'Stat estimates', CONFIG.WP_CHIPS) +
+            row('fo-wp-t-hosp', 'Hospital timers', CONFIG.WP_HOSP) +
+            row('fo-wp-t-sort', 'Sort: available first', CONFIG.WP_SORT) +
+            '<div class="fo-wp-psep">Alerts</div>' +
+            row('fo-wp-t-chain', 'Chain alert', CONFIG.CHAIN_ALERT) +
+            row('fo-wp-t-pda', 'PDA notifications', CONFIG.PDA_NOTIFICATIONS) +
+            '<button type="button" class="fo-wp-pfull" id="fo-wp-full">Full settings\u2026</button>';
+
+        function row(id, label, on) {
+            return '<label class="fo-wp-prow fo-wp-ptog"><span>' + label + '</span>' +
+                   '<input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '></label>';
+        }
+
+        document.body.appendChild(el);
+        // Anchored under the gear, clamped so it cannot hang off a phone.
+        if (gear) {
+            var r = gear.getBoundingClientRect();
+            var w = 244;
+            el.style.top = Math.round(r.bottom + window.scrollY + 6) + 'px';
+            el.style.left = Math.round(Math.max(8, Math.min(
+                r.right + window.scrollX - w, window.innerWidth + window.scrollX - w - 8))) + 'px';
+        }
+
+        var bind = function (id, key, after) {
+            var c = el.querySelector('#' + id);
+            if (!c) return;
+            c.addEventListener('change', function () {
+                setConfig(key, c.checked);
+                if (after) { try { after(); } catch (_) {} }
+            });
+        };
+        bind('fo-wp-t-chips', 'WP_CHIPS', markCalledRows);
+        bind('fo-wp-t-hosp',  'WP_HOSP',  markCalledRows);
+        bind('fo-wp-t-sort',  'WP_SORT',  markCalledRows);
+        bind('fo-wp-t-chain', 'CHAIN_ALERT');
+        bind('fo-wp-t-pda',   'PDA_NOTIFICATIONS');
+
+        el.querySelector('#fo-wp-key-save').addEventListener('click', function () {
+            var v = el.querySelector('#fo-wp-key').value.trim();
+            var note = el.querySelector('#fo-wp-key-note');
+            if (!v) { note.textContent = 'Nothing to save.'; return; }
+            setConfig('API_KEY', v);
+            note.textContent = 'Saved \u2014 reconnecting\u2026';
+            try { authenticate(); } catch (_) {}
+        });
+        el.querySelector('#fo-wp-full').addEventListener('click', function () {
+            closeWarSettings();
+            try { openSettings(); } catch (_) {}
+        });
+        el.addEventListener('click', function (e) { e.stopPropagation(); });
+        // capture phase, so a tap outside closes even though Torn's own
+        // handlers stop propagation on much of this page.
+        setTimeout(function () {
+            document.addEventListener('click', warSettingsOutside, true);
+        }, 0);
     }
 
     function markCalledRows() {
@@ -13025,13 +13200,6 @@ body.wb-chain-active {
             if (e.altKey && e.key === 'w') {
                 e.preventDefault();
                 toggleSettings();
-            }
-            // Alt+S: toggle auto-sort
-            if (e.altKey && e.key === 's') {
-                e.preventDefault();
-                setConfig('AUTO_SORT', !CONFIG.AUTO_SORT);
-                if (CONFIG.AUTO_SORT) debouncedSort();
-                log('Auto-sort:', CONFIG.AUTO_SORT ? 'ON' : 'OFF');
             }
             // Escape: close settings
             if (e.key === 'Escape' && state.ui.settingsOpen) {
