@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.34
+// @version      5.2.35
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.34';
+    const SCRIPT_VERSION = '5.2.35';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -789,6 +789,21 @@ html.wb-theme-light {
 /* The whole row is the label, so the tap target is the row not the box. */
 .fo-wp-ptog { cursor: pointer; justify-content: space-between; }
 .fo-wp-ptog input { margin: 0; cursor: pointer; flex: 0 0 auto; }
+
+/* Battle Stats Predictor draws its own estimate at the left of a war row,
+   where Torn's avatar sits on top of it -- the number is there but unreadable.
+   Our chip carries the same value (it reads BSP's own localStorage cache) and
+   is legible, so theirs is hidden rather than rescued.
+
+   Matched by namespace: BSP keys its storage tdup.battleStatsPredictor.*, and
+   a script that namespaces storage that way normally namespaces its markup
+   too. Scoped to li.enemy so nothing outside a war row can be caught, and
+   harmless if the guess is wrong -- it simply matches nothing.
+   No backticks in here: this stylesheet is a JS template literal. */
+li.enemy [class*="tdup" i],
+li.enemy [id*="tdup" i],
+li.enemy [class*="battleStat" i],
+li.enemy [class*="statsPredictor" i] { display: none !important; }
 
 /* Applied by applyRowOrder, not by a static selector, so the layout change is
    scoped to a list we are actually sorting and comes off by removing a class.
