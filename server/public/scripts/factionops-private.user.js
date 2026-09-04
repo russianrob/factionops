@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.11
+// @version      5.2.12
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.11';
+    const SCRIPT_VERSION = '5.2.12';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -702,6 +702,27 @@ html.wb-theme-light {
     overflow: hidden; text-overflow: ellipsis;
 }
 .fo-called-mine .fo-called-tag { background: #00b894; }
+
+/* Call control, in the Score column (div.points___). That cell holds one
+   short number and is the only one on the row with room to spare -- the
+   member cell is full of the FFS banner and the right edge is the Attack
+   link. */
+.fo-call-cell {
+    display: block; margin: 2px auto 0; padding: 2px 0;
+    width: 90%; min-width: 42px; box-sizing: border-box;
+    border: 1px solid rgba(225,112,85,.55); border-radius: 4px;
+    background: rgba(225,112,85,.14); color: #e17055;
+    font-size: 10px; font-weight: 700; letter-spacing: .04em;
+    text-align: center; cursor: pointer; line-height: 1.4;
+}
+.fo-call-cell:hover { background: rgba(225,112,85,.28); }
+.fo-call-cell.fo-call-drop {
+    border-color: rgba(0,184,148,.55); background: rgba(0,184,148,.16); color: #00b894;
+}
+.fo-call-cell.fo-call-taken {
+    border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.06);
+    color: #9aa0a6; cursor: default;
+}
 
 .wb-cell-container {
     position: absolute;
@@ -9819,6 +9840,7 @@ body.wb-chain-active {
             try { targetId = uidFromWarRow(row); } catch (_) { continue; }
             if (!targetId) continue;
             const call = (state.calls || {})[targetId];
+            try { ensureCallButton(row, targetId, call); } catch (_) {}
             const old = row.querySelector('.fo-called-tag');
             if (!call) {
                 row.classList.remove('fo-called-row', 'fo-called-mine');
@@ -9861,6 +9883,44 @@ body.wb-chain-active {
             row.appendChild(tag);
         }
     }
+
+    /**
+     * A Call control in the Score column.
+     *
+     * div.points___ holds one short number and is the only cell on the row
+     * with room: the member cell is full of the FFS banner, and div.attack is
+     * a control that must not be covered. The score itself is left in place --
+     * the button goes underneath it.
+     */
+    function ensureCallButton(row, targetId, call) {
+        const cell = row.querySelector('[class*="points"]');
+        if (!cell) return;
+        let btn = cell.querySelector('.fo-call-cell');
+        const mine = call && call.calledBy && String(call.calledBy.id) === String(state.myPlayerId);
+        const label = !call ? 'CALL' : (mine ? 'DROP' : 'TAKEN');
+        if (!btn) {
+            btn = document.createElement('div');
+            btn.className = 'fo-call-cell';
+            btn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                e.preventDefault();
+                // Only ever act on our own call, never steal somebody else's.
+                const cur = (state.calls || {})[targetId];
+                const isMine = cur && cur.calledBy && String(cur.calledBy.id) === String(state.myPlayerId);
+                try {
+                    if (!cur) emitCallTarget(targetId);
+                    else if (isMine) emitUncallTarget(targetId);
+                } catch (_) {}
+            });
+            cell.appendChild(btn);
+        }
+        if (btn.textContent !== label) btn.textContent = label;
+        btn.classList.toggle('fo-call-drop', !!mine);
+        btn.classList.toggle('fo-call-taken', !!call && !mine);
+        btn.title = !call ? 'Call this target'
+                  : (mine ? 'Drop your call' : 'Called by ' +
+                     ((call.calledBy && call.calledBy.name) || 'someone'));
+        }
 
     function enhanceRow(row) {
         if (enhancedRows.has(row)) return;
