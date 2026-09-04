@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.3
+// @version      5.2.4
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.3';
+    const SCRIPT_VERSION = '5.2.4';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9603,13 +9603,20 @@ body.wb-chain-active {
      * Torn frequently changes its HTML, so we try several patterns.
      */
     const MEMBER_LIST_SELECTORS = [
-        // Torn's CURRENT ranked-war list, first because the rest of this list
-        // does not match it: the rows are `ul.f-war-list.members-list >
-        // li.warListItem___<hash>` with NO .table-body wrapper, so every
-        // selector below that expects one silently finds nothing.
-        'ul.f-war-list > li[class*="warListItem"]',
-        '[class*="members-list" i] > li[class*="warListItem"]',
-        'li[class*="warListItem"]',
+        // Measured against the live page rather than guessed at (see
+        // fo-war-row-diag): `.members-list li` is the only selector that finds
+        // the member rows -- 171 of them, both rosters.
+        //
+        // `ul.f-war-list > li[class*="warListItem"]` looks right and is NOT:
+        // it matches the war HEADER rows ("Chain active", the scores), two of
+        // them, with no links in it. Put first it wins the race in
+        // findMemberRows() and the real list is never reached, which is
+        // exactly the bug this replaced.
+        //
+        // `.faction-war .members-list li` below needs a .faction-war ancestor
+        // that this page does not have, which is why the original list found
+        // nothing here at all.
+        '.members-list li',
         '.members-list .table-body > li',
         '.faction-war .members-list li',
         '.ranked-war-list li',
@@ -9622,7 +9629,6 @@ body.wb-chain-active {
     ];
 
     const MEMBER_CONTAINER_SELECTORS = [
-        'ul.f-war-list',
         '.members-list',
         '.faction-war',
         '.ranked-war-list',
