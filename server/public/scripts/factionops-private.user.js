@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.1
+// @version      5.2.2
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -97,7 +97,10 @@
     const IS_PDA = typeof window.flutter_inappwebview !== 'undefined' && !IS_WARBOARD;
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.91';
+    // Keep in step with @version above -- this is the number the footer shows
+// AND the one sent as scriptVersion, which the server's minimum-version
+// gate parses. Strictly numeric: a suffix would break that comparison.
+    const SCRIPT_VERSION = '5.2.2';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -10974,7 +10977,7 @@ body.wb-chain-active {
                     <span class="fo-footer-stat">Called: <span class="fo-val" id="fo-stat-called">0</span></span>
                     <span class="fo-footer-stat">Hosp: <span class="fo-val" id="fo-stat-hosp">0</span></span>
                 </div>
-                <span class="fo-footer-version">v${CONFIG.VERSION || '3.0.0'}</span>
+                <span class="fo-footer-version">v${CONFIG.VERSION || '3.0.0'} private</span>
             </div>
         `;
 
