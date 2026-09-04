@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.19
+// @version      5.2.20
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.19';
+    const SCRIPT_VERSION = '5.2.20';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -705,7 +705,7 @@ html.wb-theme-light {
    short number and is the only one on the row with room to spare -- the
    member cell is full of the FFS banner and the right edge is the Attack
    link. */
-.fo-call-cell {
+.fo-wp-call {
     /* Layered and hit-testable. It rendered ON TOP of the score rather than
        under it, which means something in that cell was taking the clicks --
        a button you can see but cannot press is worse than no button. */
@@ -720,14 +720,14 @@ html.wb-theme-light {
     text-align: center; cursor: pointer; line-height: 1.2;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.fo-call-cell:hover { background: #241a15; }
+.fo-wp-call:hover { background: #241a15; }
 /* DROP sat as dark green on a translucent green panel over an already-green
    row -- three greens fighting, and unreadable. Dark panel, bright text. */
-.fo-call-cell.fo-call-drop {
+.fo-wp-call.fo-wp-call-drop {
     border-color: rgba(0,184,148,.75); background: #0c1a17; color: #2fe6bb;
 }
-.fo-call-cell.fo-call-drop:hover { background: #123028; }
-.fo-call-cell.fo-call-taken {
+.fo-wp-call.fo-wp-call-drop:hover { background: #123028; }
+.fo-wp-call.fo-wp-call-taken {
     border-color: rgba(225,112,85,.45); background: #171310;
     color: #f0b39f; cursor: default;
 }
@@ -9849,7 +9849,7 @@ body.wb-chain-active {
         const cell = row.querySelector('[class*="points"]');
         if (!cell) return;
         cell.classList.add('fo-call-host');
-        let btn = cell.querySelector('.fo-call-cell');
+        let btn = cell.querySelector('.fo-wp-call');
         const mine = call && call.calledBy && String(call.calledBy.id) === String(state.myPlayerId);
         // Taken shows WHO rather than the word TAKEN: the name is the useful
         // half, and this is now the only place it appears.
@@ -9858,7 +9858,7 @@ body.wb-chain-active {
                     : (mine ? 'DROP' : (call.isDeal ? '\uD83D\uDD12 ' : '') + who);
         if (!btn) {
             btn = document.createElement('div');
-            btn.className = 'fo-call-cell';
+            btn.className = 'fo-wp-call';
             const onTap = function (e) {
                 e.stopPropagation();
                 e.preventDefault();
@@ -9949,8 +9949,8 @@ body.wb-chain-active {
             cell.appendChild(btn);
         }
         if (btn.textContent !== label) btn.textContent = label;
-        btn.classList.toggle('fo-call-drop', !!mine);
-        btn.classList.toggle('fo-call-taken', !!call && !mine);
+        btn.classList.toggle('fo-wp-call-drop', !!mine);
+        btn.classList.toggle('fo-wp-call-taken', !!call && !mine);
         btn.title = !call ? 'Call this target'
                   : (mine ? 'Drop your call' : 'Called by ' +
                      ((call.calledBy && call.calledBy.name) || 'someone'));
