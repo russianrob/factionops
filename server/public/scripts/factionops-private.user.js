@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.14
+// @version      5.2.15
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.14';
+    const SCRIPT_VERSION = '5.2.15';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -694,25 +694,13 @@ html.wb-theme-light {
     background: rgba(0,184,148,0.26) !important;
     box-shadow: inset 6px 0 0 #00b894;
 }
-/* The caller's name lives in the Score cell with the button, NOT on a
-   full-width line of its own. That line rendered between two rows and there
-   was no way to tell which of them it belonged to -- worse than
-   unaligned, it was ambiguous. */
-.fo-called-tag {
-    display: block; max-width: 100%; margin-top: 1px;
-    font-size: 9px; font-weight: 700; letter-spacing: .02em;
-    color: #e17055; text-align: center;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.fo-called-mine .fo-called-tag { color: #00b894; }
-
-/* Stack the cell instead of appending into it. The score is a bare text
-   node, so a block appended after it overlapped rather than sat below;
-   as a flex column the text becomes an anonymous item and the two stack. */
-.fo-call-host {
-    display: flex !important; flex-direction: column;
-    align-items: center; justify-content: center; gap: 1px;
-}
+/* The control OVERLAYS the score rather than sitting beside it. During a war
+   that number is 0.00 for nearly everyone, so covering it costs almost
+   nothing -- and it keeps the row exactly as tall as its neighbours, which
+   stacking did not.
+   One element carries every state, so there is no second label to align and
+   no ambiguity about which row a caller's name belongs to. */
+.fo-call-host { position: relative; }
 
 /* Call control, in the Score column (div.points___). That cell holds one
    short number and is the only one on the row with room to spare -- the
@@ -722,21 +710,22 @@ html.wb-theme-light {
     /* Layered and hit-testable. It rendered ON TOP of the score rather than
        under it, which means something in that cell was taking the clicks --
        a button you can see but cannot press is worse than no button. */
-    position: relative; z-index: 40; pointer-events: auto;
-    display: block; margin: 0; padding: 2px 0;
-    width: 92%; min-width: 44px; box-sizing: border-box;
-    border: 1px solid rgba(225,112,85,.55); border-radius: 4px;
-    background: rgba(225,112,85,.14); color: #e17055;
-    font-size: 10px; font-weight: 700; letter-spacing: .04em;
-    text-align: center; cursor: pointer; line-height: 1.4;
+    position: absolute; inset: 0; z-index: 40; pointer-events: auto;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 2px; box-sizing: border-box;
+    border: 1px solid rgba(225,112,85,.55);
+    background: rgba(20,16,14,.86); color: #e17055;
+    font-size: 10px; font-weight: 700; letter-spacing: .03em;
+    text-align: center; cursor: pointer; line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .fo-call-cell:hover { background: rgba(225,112,85,.28); }
 .fo-call-cell.fo-call-drop {
     border-color: rgba(0,184,148,.55); background: rgba(0,184,148,.16); color: #00b894;
 }
 .fo-call-cell.fo-call-taken {
-    border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.06);
-    color: #9aa0a6; cursor: default;
+    border-color: rgba(225,112,85,.45); background: rgba(20,16,14,.86);
+    color: #e8a08a; cursor: default;
 }
 
 .wb-cell-container {
@@ -9856,45 +9845,18 @@ body.wb-chain-active {
             if (!targetId) continue;
             const call = (state.calls || {})[targetId];
             try { ensureCallButton(row, targetId, call); } catch (_) {}
-            const old = row.querySelector('.fo-called-tag');
             if (!call) {
                 row.classList.remove('fo-called-row', 'fo-called-mine');
-                if (old) old.remove();
                 continue;
             }
             const mine = call.calledBy && String(call.calledBy.id) === String(state.myPlayerId);
             row.classList.add('fo-called-row');
             row.classList.toggle('fo-called-mine', !!mine);
-            const who = mine ? 'YOU' : (call.calledBy && call.calledBy.name) || 'someone';
-            const label = (call.isDeal ? '\uD83D\uDD12 ' : '') + (mine ? 'YOU' : who);
-            if (old) { if (old.textContent !== label) old.textContent = label; continue; }
-            const tag = document.createElement('span');
-            tag.className = 'fo-called-tag';
-            tag.textContent = label;
-            tag.title = (call.isDeal ? 'Deal call by ' : 'Called by ') +
-                        ((call.calledBy && call.calledBy.name) || 'unknown');
-            // Placement, from a live probe of one li.enemy rather than guessed:
-            //
-            //   li.enemy > div.member > div.userInfoBox___
-            //     > div.userStatusWrap___   (the online dot)
-            //     > div.factionWrap___      (-> factions.php)
-            //     > div.honorWrap___        (-> profiles.php?XID=, the NAME)
-            //   li.enemy > div.status | div.attack | div.clear
-            //
-            // The name link is the only reliable handle: `a.user.name`,
-            // `.name` and `.honorWrap a` all return nothing here, the last
-            // because the class is honorWrap___<hash> and an unprefixed match
-            // never hits it. Prefix-matched below so it survives a rebuild.
-            //
-            // The tag goes into userInfoBox as a SIBLING of honorWrap, not
-            // inside it: honorWrap is a flex cell holding the honour bar, and
-            // appending there makes the badge fight that layout. As a sibling
-            // it sits after the name on the same row, and nowhere near the
-            // Attack control in div.attack.
-            // Into the Score cell under the button, so the name is
-            // unambiguously attached to its own row.
-            const cell = row.querySelector('[class*="points"]');
-            (cell || row).appendChild(tag);
+            // The tint and stripe say "taken"; ensureCallButton above says by
+            // whom. Nothing else is drawn on the row itself.
+            // carries CALL / DROP / who has it, so a second label would sit
+            // underneath the overlay where it cannot be read.
+
         }
     }
 
@@ -9912,7 +9874,11 @@ body.wb-chain-active {
         cell.classList.add('fo-call-host');
         let btn = cell.querySelector('.fo-call-cell');
         const mine = call && call.calledBy && String(call.calledBy.id) === String(state.myPlayerId);
-        const label = !call ? 'CALL' : (mine ? 'DROP' : 'TAKEN');
+        // Taken shows WHO rather than the word TAKEN: the name is the useful
+        // half, and this is now the only place it appears.
+        const who = (call && call.calledBy && call.calledBy.name) || 'TAKEN';
+        const label = !call ? 'CALL'
+                    : (mine ? 'DROP' : (call.isDeal ? '\uD83D\uDD12 ' : '') + who);
         if (!btn) {
             btn = document.createElement('div');
             btn.className = 'fo-call-cell';
