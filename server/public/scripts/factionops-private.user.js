@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.25
+// @version      5.2.26
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.25';
+    const SCRIPT_VERSION = '5.2.26';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9431,35 +9431,6 @@ body.wb-chain-active {
         return m ? m[1] : null;
     }
 
-    let _callsDiagSent = false;
-    function reportCallsDiag() {
-        if (_callsDiagSent) return;
-        _callsDiagSent = true;
-        let rows = [];
-        try { rows = findMemberRows() || []; } catch (_) {}
-        const ids = [];
-        for (const r of rows) { try { const t = uidFromWarRow(r); if (t) ids.push(t); } catch (_) {} }
-        const diag = {
-            rows: rows.length,
-            withId: ids.length,
-            calls: Object.keys(state.calls || {}).length,
-            callIds: Object.keys(state.calls || {}).slice(0, 5),
-            sampleIds: ids.slice(0, 5),
-            marked: document.querySelectorAll('.fo-called-row').length,
-            enemyLi: document.querySelectorAll('.enemy-faction ul.members-list li.enemy').length,
-            anyLi: document.querySelectorAll('.members-list li').length,
-            jwt: !!state.jwtToken,
-            polling: !!pollTimer,
-            url: location.href.slice(0, 100),
-            v: SCRIPT_VERSION,
-        };
-        log('[calls] ' + JSON.stringify(diag));
-        try {
-            httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
-                headers: { 'Content-Type': 'application/json' },
-                data: JSON.stringify({ tag: 'fo-calls-diag', data: diag }) });
-        } catch (_) {}
-    }
 
     /**
      * The stats range bar, above the enemy list on Torn's own war page.
@@ -9636,29 +9607,14 @@ body.wb-chain-active {
                 // Only ever act on our own call, never steal somebody else's.
                 const cur = (state.calls || {})[targetId];
                 const isMine = cur && cur.calledBy && String(cur.calledBy.id) === String(state.myPlayerId);
-                // One tap should say what it did. Every early return inside
-                // emitCallTarget is a silent toast from here, and "nothing
-                // happened" is indistinguishable from "never fired".
-                try {
-                    httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
-                        headers: { 'Content-Type': 'application/json' },
-                        data: JSON.stringify({ tag: 'fo-call-click', data: {
-                            tid: targetId, had: !!cur, mine: !!isMine,
-                            jwt: !!state.jwtToken, me: state.myPlayerId || null,
-                            warId: (typeof deriveWarId === 'function' ? deriveWarId() : null),
-                            calls: Object.keys(state.calls || {}).length,
-                            v: SCRIPT_VERSION } }) });
-                } catch (_) {}
                 try {
                     if (!cur) emitCallTarget(targetId);
                     else if (isMine) emitUncallTarget(targetId);
                 } catch (err) {
-                    try {
-                        httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
-                            headers: { 'Content-Type': 'application/json' },
-                            data: JSON.stringify({ tag: 'fo-call-click', data: {
-                                tid: targetId, threw: String(err && err.message).slice(0, 120) } }) });
-                    } catch (_) {}
+                    // Local only. This used to POST to the debug endpoint while
+                    // the button was being proven; an empty catch here would
+                    // swallow a real failure, so it keeps the message.
+                    log('[calls] tap failed: ' + (err && err.message));
                 }
             };
             // touchend as well as click, because on a phone a tap inside a
@@ -12528,10 +12484,6 @@ body.wb-chain-active {
             return;
         }
         markCalledRows();
-        // Report once the page has SETTLED. The first pass above runs before
-        // React has painted the member list, so a diagnostic tied to it
-        // reports rows:0 every time and tells us nothing.
-        setTimeout(function () { try { reportCallsDiag(); } catch (_) {} }, 15000);
         // The war list is a React table that repaints on its own, so a one-off
         // pass loses the marks the moment Torn re-renders a row.
         try {
