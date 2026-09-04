@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.15
+// @version      5.2.16
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.15';
+    const SCRIPT_VERSION = '5.2.16';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -713,19 +713,24 @@ html.wb-theme-light {
     position: absolute; inset: 0; z-index: 40; pointer-events: auto;
     display: flex; align-items: center; justify-content: center;
     padding: 0 2px; box-sizing: border-box;
-    border: 1px solid rgba(225,112,85,.55);
-    background: rgba(20,16,14,.86); color: #e17055;
+    /* Fully opaque. At 86% the score bled through behind the label, and on a
+       tinted row the row colour came through too. */
+    border: 1px solid rgba(225,112,85,.7);
+    background: #171310; color: #ff9a72;
     font-size: 10px; font-weight: 700; letter-spacing: .03em;
     text-align: center; cursor: pointer; line-height: 1.2;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.fo-call-cell:hover { background: rgba(225,112,85,.28); }
+.fo-call-cell:hover { background: #241a15; }
+/* DROP sat as dark green on a translucent green panel over an already-green
+   row -- three greens fighting, and unreadable. Dark panel, bright text. */
 .fo-call-cell.fo-call-drop {
-    border-color: rgba(0,184,148,.55); background: rgba(0,184,148,.16); color: #00b894;
+    border-color: rgba(0,184,148,.75); background: #0c1a17; color: #2fe6bb;
 }
+.fo-call-cell.fo-call-drop:hover { background: #123028; }
 .fo-call-cell.fo-call-taken {
-    border-color: rgba(225,112,85,.45); background: rgba(20,16,14,.86);
-    color: #e8a08a; cursor: default;
+    border-color: rgba(225,112,85,.45); background: #171310;
+    color: #f0b39f; cursor: default;
 }
 
 .wb-cell-container {
