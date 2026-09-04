@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.23
+// @version      5.2.24
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.23';
+    const SCRIPT_VERSION = '5.2.24';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -727,6 +727,36 @@ html.wb-theme-light {
     border-color: rgba(0,184,148,.75); background: #0c1a17; color: #2fe6bb;
 }
 .fo-wp-call.fo-wp-call-drop:hover { background: #123028; }
+/* Stats range bar above Torn's enemy list. Same palette as the call button
+   so the two additions read as one thing rather than two scripts. */
+.fo-wp-filter {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin: 4px 0 6px; padding: 5px 8px; box-sizing: border-box;
+    border: 1px solid rgba(225,112,85,.45); border-radius: 4px;
+    background: #171310; color: #ff9a72;
+    font-size: 11px; font-weight: 700; letter-spacing: .03em;
+}
+.fo-wp-filter-label { text-transform: uppercase; opacity: .85; }
+.fo-wp-filter-dash { opacity: .6; }
+.fo-wp-filter-in {
+    width: 62px; min-width: 0; padding: 4px 6px; box-sizing: border-box;
+    border: 1px solid rgba(225,112,85,.35); border-radius: 3px;
+    background: rgba(0,0,0,.35); color: #ffd9c9;
+    font-family: inherit; font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.fo-wp-filter-in:focus { outline: none; border-color: rgba(225,112,85,.8); }
+.fo-wp-filter-in::placeholder { color: #8a6a5e; }
+/* 28px so it stays a real thumb target on a phone. */
+.fo-wp-filter-clear {
+    min-width: 28px; height: 28px; padding: 0 6px; cursor: pointer;
+    border: 1px solid rgba(225,112,85,.35); border-radius: 3px;
+    background: rgba(0,0,0,.35); color: #ff9a72;
+    font-size: 12px; line-height: 1;
+}
+.fo-wp-filter-clear:hover { background: #241a15; }
+/* Only speaks up when the filter is actually removing somebody. */
+.fo-wp-filter-count { margin-left: auto; font-weight: 700; color: #8a6a5e; }
+.fo-wp-filter-count.is-on { color: #ffd166; }
 .fo-wp-call.fo-wp-call-taken {
     border-color: rgba(225,112,85,.45); background: #171310;
     color: #f0b39f; cursor: default;
@@ -9411,13 +9441,80 @@ body.wb-chain-active {
         } catch (_) {}
     }
 
+    /**
+     * The stats range bar, above the enemy list on Torn's own war page.
+     *
+     * Re-injected on the same 5s pass as the call buttons, because React
+     * rebuilds this list and takes our nodes with it. Idempotent: it returns
+     * early once its own id is present, so a normal tick costs one lookup.
+     *
+     * Values live in the same GM keys the overlay's filter used, so a range
+     * set before 5.2.23 is still there and still applies.
+     */
+    function ensureWarFilterBar() {
+        if (document.getElementById('fo-wp-filter')) return;
+        const list = document.querySelector('.enemy-faction ul.members-list')
+                  || document.querySelector('ul.members-list');
+        if (!list || !list.parentElement) return;
+
+        const bar = document.createElement('div');
+        bar.id = 'fo-wp-filter';
+        bar.className = 'fo-wp-filter';
+        bar.innerHTML =
+            '<span class="fo-wp-filter-label">Stats</span>' +
+            '<input class="fo-wp-filter-in" id="fo-wp-min" placeholder="min" ' +
+                   'spellcheck="false" autocomplete="off" autocapitalize="off" inputmode="text">' +
+            '<span class="fo-wp-filter-dash">\u2013</span>' +
+            '<input class="fo-wp-filter-in" id="fo-wp-max" placeholder="max" ' +
+                   'spellcheck="false" autocomplete="off" autocapitalize="off" inputmode="text">' +
+            '<button type="button" class="fo-wp-filter-clear" id="fo-wp-clear" title="Clear">\u2715</button>' +
+            '<span class="fo-wp-filter-count" id="fo-wp-count"></span>';
+        list.parentElement.insertBefore(bar, list);
+
+        const minEl = bar.querySelector('#fo-wp-min');
+        const maxEl = bar.querySelector('#fo-wp-max');
+        minEl.value = fmtStatsForInput(_statsFilterMin);
+        maxEl.value = fmtStatsForInput(_statsFilterMax);
+
+        const apply = function () {
+            _statsFilterMin = parseStatsInput(minEl.value);
+            _statsFilterMax = parseStatsInput(maxEl.value);
+            try {
+                GM_setValue('factionops_stats_filter_min', _statsFilterMin || 0);
+                GM_setValue('factionops_stats_filter_max', _statsFilterMax || 0);
+            } catch (_) {}
+            // Repaint now rather than waiting out the 5s tick.
+            try { markCalledRows(); } catch (_) {}
+        };
+        // 'change' alone leaves a phone user staring at an unchanged list until
+        // the field loses focus; 'input' is what makes typing feel connected.
+        minEl.addEventListener('input', apply);
+        maxEl.addEventListener('input', apply);
+        bar.querySelector('#fo-wp-clear').addEventListener('click', function () {
+            minEl.value = ''; maxEl.value = ''; apply();
+        });
+        // Torn's list is clickable underneath; typing must not reach it.
+        bar.addEventListener('click', function (e) { e.stopPropagation(); });
+    }
+
     function markCalledRows() {
         let rows;
         try { rows = findMemberRows(); } catch (_) { return; }
+        try { ensureWarFilterBar(); } catch (_) {}
+        let hidden = 0, total = 0;
         for (const row of rows || []) {
             let targetId;
             try { targetId = uidFromWarRow(row); } catch (_) { continue; }
             if (!targetId) continue;
+            // The range filter. passesStatsFilter shows a target whose stats
+            // cannot be estimated -- on this page a hidden row is one nobody
+            // attacks, so a missing FFScouter reading must never quietly
+            // remove somebody from the war.
+            total++;
+            let show = true;
+            try { show = passesStatsFilter(targetId); } catch (_) {}
+            row.style.display = show ? '' : 'none';
+            if (!show) { hidden++; continue; }   // no point dressing a hidden row
             const call = (state.calls || {})[targetId];
             try { ensureCallButton(row, targetId, call); } catch (_) {}
             if (!call) {
@@ -9432,6 +9529,13 @@ body.wb-chain-active {
             // carries CALL / DROP / who has it, so a second label would sit
             // underneath the overlay where it cannot be read.
 
+        }
+        // Say how much is being hidden. A filter left on from a previous war
+        // would otherwise look like a short enemy faction.
+        const countEl = document.getElementById('fo-wp-count');
+        if (countEl) {
+            countEl.textContent = hidden ? ('hiding ' + hidden + ' of ' + total) : '';
+            countEl.classList.toggle('is-on', hidden > 0);
         }
     }
 
@@ -11070,6 +11174,30 @@ body.wb-chain-active {
         _hideOffline = !!GM_getValue('factionops_hide_offline', false);
     } catch (_) {}
 
+
+    // Parses what a person types into the range boxes: "10m", "1.5B",
+    // "750,000". Restored in 5.2.24 -- it went with the overlay's sort bar in
+    // 5.2.23, and the war-page range filter needs the same parsing.
+    function parseStatsInput(str) {
+        if (str == null) return null;
+        const t = String(str).trim().toUpperCase().replace(/,/g, '');
+        if (!t) return null;
+        const m = t.match(/^([\d.]+)\s*([KMB])?$/);
+        if (!m) return null;
+        const n = parseFloat(m[1]);
+        if (!Number.isFinite(n) || n <= 0) return null;
+        const u = m[2] === 'B' ? 1e9 : m[2] === 'M' ? 1e6 : m[2] === 'K' ? 1e3 : 1;
+        return n * u;
+    }
+
+    // Renders a stored number back into the box the way it was typed.
+    function fmtStatsForInput(n) {
+        if (n == null) return '';
+        if (n >= 1e9) return String(n / 1e9).replace(/\.0$/, '') + 'B';
+        if (n >= 1e6) return String(n / 1e6).replace(/\.0$/, '') + 'M';
+        if (n >= 1e3) return String(n / 1e3).replace(/\.0$/, '') + 'K';
+        return String(Math.round(n));
+    }
 
     // Returns the best stats estimate for a target, or null if unknown.
     // Same chain as renderInlineBsp / sort: BSP TBS → FFS bs_estimate
