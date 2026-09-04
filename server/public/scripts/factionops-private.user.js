@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.10
+// @version      5.2.11
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.10';
+    const SCRIPT_VERSION = '5.2.11';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -680,19 +680,26 @@ html.wb-theme-light {
    another cell: .wb-cell-container floats over the RIGHT edge of a row, which
    on a phone is exactly where Torn puts its Attack link, so a badge there
    covers the control people are trying to tap. */
+/* The member cell is FULL -- the FFS banner image, the name overlaid on it,
+   and the stat estimate all live there, so a badge dropped in gets covered
+   and clipped. The row itself carries the signal instead: a thick stripe and
+   a tint strong enough to read on a dark theme, plus a full-width caption
+   line under the row for the caller's name, which cannot collide with
+   anything because it is on its own line. */
 .fo-called-row {
-    background: rgba(225,112,85,0.10) !important;
-    box-shadow: inset 4px 0 0 #e17055;
+    background: rgba(225,112,85,0.26) !important;
+    box-shadow: inset 6px 0 0 #e17055;
 }
 .fo-called-row.fo-called-mine {
-    background: rgba(0,184,148,0.12) !important;
-    box-shadow: inset 4px 0 0 #00b894;
+    background: rgba(0,184,148,0.26) !important;
+    box-shadow: inset 6px 0 0 #00b894;
 }
 .fo-called-tag {
-    display: inline-block; margin-left: 6px; padding: 1px 6px;
-    border-radius: 8px; font-size: 10px; font-weight: 700;
-    letter-spacing: .03em; vertical-align: middle;
+    display: block; clear: both; width: 100%; box-sizing: border-box;
+    padding: 2px 10px 3px 12px; font-size: 11px; font-weight: 700;
+    letter-spacing: .04em; text-align: left;
     background: #e17055; color: #fff; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
 }
 .fo-called-mine .fo-called-tag { background: #00b894; }
 
@@ -9821,8 +9828,9 @@ body.wb-chain-active {
             const mine = call.calledBy && String(call.calledBy.id) === String(state.myPlayerId);
             row.classList.add('fo-called-row');
             row.classList.toggle('fo-called-mine', !!mine);
-            const who = mine ? 'YOU' : (call.calledBy && call.calledBy.name) || 'CALLED';
-            const label = (call.isDeal ? '\uD83D\uDD12 ' : '') + who;
+            const who = mine ? 'YOU' : (call.calledBy && call.calledBy.name) || 'someone';
+            const label = (call.isDeal ? '\uD83D\uDD12 DEAL \u2014 ' : '') +
+                          (mine ? 'CALLED BY YOU' : 'CALLED BY ' + who.toUpperCase());
             if (old) { if (old.textContent !== label) old.textContent = label; continue; }
             const tag = document.createElement('span');
             tag.className = 'fo-called-tag';
@@ -9847,12 +9855,10 @@ body.wb-chain-active {
             // appending there makes the badge fight that layout. As a sibling
             // it sits after the name on the same row, and nowhere near the
             // Attack control in div.attack.
-            const nameEl = row.querySelector('a[href*="profiles.php"], [class*="honorWrap"] a, a.user.name, .member-name');
-            const honor = nameEl && nameEl.closest ? nameEl.closest('[class*="honorWrap"]') : null;
-            const host = (honor && honor.parentNode) ||
-                         (nameEl && nameEl.parentNode) ||
-                         row.querySelector('[class*="userInfoBox"]') || row;
-            host.appendChild(tag);
+            // On the ROW, last, so it renders as its own line beneath the
+            // member cell. Anywhere inside that cell is covered by the FFS
+            // banner; anywhere at the right edge covers the Attack link.
+            row.appendChild(tag);
         }
     }
 
