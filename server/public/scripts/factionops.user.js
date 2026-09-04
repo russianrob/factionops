@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.26
+// @version      5.2.39
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,18 +99,21 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.26';
+    const SCRIPT_VERSION = '5.2.39';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
         SERVER_URL: GM_getValue('factionops_server', 'https://tornwar.com'),
         API_KEY: GM_getValue('factionops_apikey', '') || (IS_PDA ? PDA_API_KEY : ''),
         THEME: GM_getValue('factionops_theme', 'dark'),
-        AUTO_SORT: GM_getValue('factionops_autosort', true),
         CHAIN_ALERT: GM_getValue('factionops_chain_alert', true),
         CHAIN_ALERT_THRESHOLD: GM_getValue('factionops_chain_alert_threshold', 60),
         PDA_NOTIFICATIONS: GM_getValue('factionops_pda_notif', IS_PDA),
-        ENEMY_ATTACK_NOTIF: GM_getValue('factionops_enemy_attack_notif', false),
+        // The war-page display, added 5.2.31. Both shipped without any control
+        // at all -- default on, because that is how they have behaved since
+        // they landed and somebody who liked it should not have to opt in.
+        WP_HOSP:  GM_getValue('factionops_wp_hosp', true),
+        WP_SORT:  GM_getValue('factionops_wp_sort', true),
         KEEP_ALIVE: GM_getValue('factionops_keep_alive', false),
         // v5.0.92: opt-in BSP sharing — uploads your BSP cache entries
         // for current war targets to the warboard server, where they
@@ -153,11 +156,11 @@
             SERVER_URL: 'factionops_server',
             API_KEY: 'factionops_apikey',
             THEME: 'factionops_theme',
-            AUTO_SORT: 'factionops_autosort',
             CHAIN_ALERT: 'factionops_chain_alert',
             CHAIN_ALERT_THRESHOLD: 'factionops_chain_alert_threshold',
             PDA_NOTIFICATIONS: 'factionops_pda_notif',
-            ENEMY_ATTACK_NOTIF: 'factionops_enemy_attack_notif',
+            WP_HOSP: 'factionops_wp_hosp',
+            WP_SORT: 'factionops_wp_sort',
             KEEP_ALIVE: 'factionops_keep_alive',
             SHARE_BSP: 'factionops_share_bsp',
             CALL_CHAT: 'factionops_call_chat',
@@ -729,6 +732,85 @@ html.wb-theme-light {
 .fo-wp-call.fo-wp-call-drop:hover { background: #123028; }
 /* Stats range bar above Torn's enemy list. Same palette as the call button
    so the two additions read as one thing rather than two scripts. */
+/* War-page settings popover. Deliberately not the overlay's centred, page
+   dimming modal -- this one hangs off the gear and stays out of the way, so
+   the two are never mistaken for each other even at a glance.
+   No backticks anywhere in here: this stylesheet is a JS template literal. */
+.fo-wp-panel {
+    position: absolute; z-index: 2147483000; width: 244px;
+    box-sizing: border-box; padding: 10px;
+    border: 1px solid rgba(225,112,85,.5); border-radius: 6px;
+    background: #14100e; color: #ffd9c9;
+    box-shadow: 0 8px 26px rgba(0,0,0,.6);
+    font-size: 12px; line-height: 1.35;
+}
+.fo-wp-prow { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
+.fo-wp-pstat { font-size: 11px; }
+.fo-wp-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: #b2bec3; }
+.fo-wp-dot.ok { background: #00b894; }
+.fo-wp-dot.warn { background: #ffd166; }
+.fo-wp-dot.bad { background: #ff7675; }
+.fo-wp-sub { margin-left: auto; font-size: 10px; font-weight: 700; }
+.fo-wp-sub.ok { color: #00b894; }
+.fo-wp-sub.warn { color: #ffd166; }
+.fo-wp-sub.bad { color: #ff7675; }
+.fo-wp-sub.muted { color: #8a6a5e; }
+.fo-wp-plabel {
+    display: block; margin: 2px 0 4px; font-size: 10px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; color: #ff9a72;
+}
+.fo-wp-pin {
+    flex: 1 1 auto; min-width: 0; padding: 5px 6px; box-sizing: border-box;
+    border: 1px solid rgba(225,112,85,.35); border-radius: 3px;
+    background: rgba(0,0,0,.35); color: #ffd9c9;
+    font-family: monospace; font-size: 11px;
+}
+.fo-wp-pin:focus { outline: none; border-color: rgba(225,112,85,.8); }
+.fo-wp-pbtn, .fo-wp-pfull {
+    padding: 5px 9px; cursor: pointer; white-space: nowrap;
+    border: 1px solid rgba(225,112,85,.4); border-radius: 3px;
+    background: rgba(0,0,0,.35); color: #ff9a72;
+    font-size: 11px; font-weight: 700;
+}
+.fo-wp-pbtn:hover, .fo-wp-pfull:hover { background: #241a15; }
+.fo-wp-pfull { width: 100%; margin-top: 4px; }
+.fo-wp-pnote { min-height: 13px; margin: -3px 0 6px; font-size: 10px; color: #8a6a5e; }
+/* A rule with a word on it, same device as the settings group headings. */
+.fo-wp-psep {
+    display: flex; align-items: center; gap: 7px;
+    margin: 10px 0 6px; font-size: 10px; font-weight: 700;
+    letter-spacing: .07em; text-transform: uppercase; color: #ff9a72; opacity: .8;
+}
+.fo-wp-psep::after {
+    content: ''; flex: 1 1 auto; height: 1px; background: currentColor; opacity: .3;
+}
+/* The whole row is the label, so the tap target is the row not the box. */
+.fo-wp-ptog { cursor: pointer; justify-content: space-between; }
+.fo-wp-ptog input { margin: 0; cursor: pointer; flex: 0 0 auto; }
+
+/* Applied by applyRowOrder, not by a static selector, so the layout change is
+   scoped to a list we are actually sorting and comes off by removing a class.
+   The rows already stack vertically; this only makes CSS order apply to them.
+   No backticks in here -- this whole stylesheet is a JS template literal. */
+.fo-wp-sorted { display: flex; flex-direction: column; }
+
+/* Settings section headings. The panel had 48 controls, one title and two
+   <hr>s -- no way to navigate it except reading every row. */
+.wb-sgroup {
+    display: flex; align-items: center; gap: 8px;
+    margin: 18px 0 8px; font-size: 11px; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase;
+    color: var(--wb-accent, #e17055); opacity: .85;
+}
+.wb-sgroup:first-of-type { margin-top: 10px; }
+.wb-sgroup span { flex: 0 0 auto; }
+/* The rule runs to the right of the label, so the eye catches the break
+   without another element to lay out. */
+.wb-sgroup::after {
+    content: ''; flex: 1 1 auto; height: 1px;
+    background: currentColor; opacity: .28;
+}
+
 .fo-wp-filter {
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     margin: 4px 0 6px; padding: 5px 8px; box-sizing: border-box;
@@ -755,6 +837,24 @@ html.wb-theme-light {
 }
 .fo-wp-filter-clear:hover { background: #241a15; }
 /* Only speaks up when the filter is actually removing somebody. */
+/* Hospital countdown in Torn's own status cell. Sits alongside whatever else
+   is in there (the FFS banner puts its own chip there) rather than fighting
+   another script for the same node. */
+.fo-wp-hosp {
+    display: inline-block; margin-left: 5px; padding: 1px 5px;
+    border-radius: 3px; border: 1px solid rgba(225,112,85,.4);
+    background: rgba(0,0,0,.35); color: #ff9a72;
+    font-size: 10px; font-weight: 700; line-height: 1.4;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+    vertical-align: middle;
+}
+/* Under two minutes -- worth waiting for rather than moving on. */
+.fo-wp-hosp.soon { color: #ffd166; border-color: rgba(255,209,102,.6); }
+/* Counted to zero but Torn still says hospital. Clamped on purpose: releasing
+   on our own countdown is what flashes a still-hospitalised target as
+   attackable, so this waits for the server to say otherwise. */
+.fo-wp-hosp.held { color: #b2bec3; border-color: rgba(255,255,255,.18); }
+
 .fo-wp-filter-chk {
     display: flex; align-items: center; gap: 4px; cursor: pointer;
     text-transform: none; letter-spacing: 0; font-weight: 600; color: #ffd9c9;
@@ -775,6 +875,16 @@ html.wb-theme-light {
 .fo-wp-stat[data-tier="a"] { color: #ffd166; border-color: rgba(255,209,102,.45); }
 .fo-wp-stat[data-tier="b"] { color: #55efc4; border-color: rgba(85,239,196,.45); }
 .fo-wp-stat[data-tier="c"] { color: #b2bec3; }
+/* Pushed to the far right by the count's margin-left:auto when a filter is
+   hiding rows, and by its own when nothing is. 28px keeps it a thumb target. */
+.fo-wp-filter-gear {
+    margin-left: auto; min-width: 28px; height: 28px; padding: 0 6px;
+    border: 1px solid rgba(225,112,85,.35); border-radius: 3px;
+    background: rgba(0,0,0,.35); color: #ff9a72;
+    font-size: 14px; line-height: 1; cursor: pointer;
+}
+.fo-wp-filter-gear:hover { background: #241a15; }
+.fo-wp-filter-count + .fo-wp-filter-gear { margin-left: 6px; }
 .fo-wp-filter-count { margin-left: auto; font-weight: 700; color: #8a6a5e; }
 .fo-wp-filter-count.is-on { color: #ffd166; }
 .fo-wp-call.fo-wp-call-taken {
@@ -3598,6 +3708,11 @@ body.wb-chain-active {
      *    current (lower) value — it's been counting down locally.
      *  - Zero tolerance: timers only go down, never up (even by 1s).
      */
+    // Matches enemy-status-diff.js on the server, deliberately: both sides are
+    // deciding the same question -- is this `until` moving because a timer is
+    // draining, or because a new one was set?
+    const UNTIL_JUMP_SEC = 5;
+
     function mergeStatusesMonotonic(incoming) {
         for (const [targetId, newData] of Object.entries(incoming)) {
             // Race guard against purgeNonEnemyStatuses: a request already in
@@ -3640,7 +3755,18 @@ body.wb-chain-active {
             if (!statusChanged && Object.prototype.hasOwnProperty.call(newData, 'until')) {
                 const existingUntil = typeof existing.until === 'number' ? existing.until : 0;
                 const newUntil      = typeof newData.until === 'number' ? newData.until : existingUntil;
-                state.statuses[targetId].until = Math.min(existingUntil, newUntil);
+                // A LARGE jump upward is not cache lag, it is a new hospital
+                // sentence stacked on the old one -- ipecac and a wrong blood
+                // bag SET the timer to ~60-90 min rather than adding to it, and
+                // a defender about to be released uses exactly that to dodge.
+                // Status stays 'hospital' throughout, so statusChanged is false
+                // and the monotonic guard below would silently discard it: the
+                // countdown would run to zero on a target with 50 minutes left.
+                // The server already treats this as news (UNTIL_JUMP_SEC in
+                // enemy-status-diff.js); this is the client half of that.
+                state.statuses[targetId].until = (newUntil > existingUntil + UNTIL_JUMP_SEC)
+                    ? newUntil
+                    : Math.min(existingUntil, newUntil);
             }
             // v4.9.80: stamp releaseAt so render paths read from an
             // absolute timestamp instead of decrementing a drifting
@@ -3657,7 +3783,12 @@ body.wb-chain-active {
                     // Fresh status → trust incoming absolutely.
                     merged = incomingReleaseAt;
                 } else if (existingReleaseAt > 0 && incomingReleaseAt > 0) {
-                    merged = Math.min(existingReleaseAt, incomingReleaseAt);
+                    // Same escape as the `until` guard above: a release time
+                    // that moves substantially LATER is a re-hospitalisation,
+                    // not a stale push, and min() would throw it away.
+                    merged = incomingReleaseAt > existingReleaseAt + UNTIL_JUMP_SEC
+                        ? incomingReleaseAt
+                        : Math.min(existingReleaseAt, incomingReleaseAt);
                 } else {
                     merged = incomingReleaseAt || existingReleaseAt;
                 }
@@ -4629,7 +4760,6 @@ body.wb-chain-active {
         return c.value;
     }
 
-
     /**
      * FFScouter's own wording, ported from ffs-banner-estimates'
      * get_difficulty_text so the chip reads the way users already expect.
@@ -4988,8 +5118,6 @@ body.wb-chain-active {
         }
         return `rgb(${r},${g},${b})`;
     }
-
-
 
     /**
      * Estimated one-way travel times in minutes (standard / airstrip).
@@ -7379,9 +7507,7 @@ body.wb-chain-active {
                 ${escapeHtml(subLabel)}
             </div>
 
-            <label for="wb-input-server">Server URL</label>
-            <input type="text" id="wb-input-server" value="${escapeHtml(CONFIG.SERVER_URL)}" placeholder="http://localhost:3000">
-
+            <div class="wb-sgroup"><span>Connection</span></div>
             <label for="wb-input-apikey">Torn API Key</label>
             <div style="display:flex;gap:6px;margin-bottom:14px;">
                 <input type="password" id="wb-input-apikey" value="${escapeHtml(CONFIG.API_KEY)}" placeholder="Your Torn API key" style="margin-bottom:0;flex:1;" ${CONFIG.IS_PDA && CONFIG.API_KEY === PDA_API_KEY ? 'disabled' : ''}>
@@ -7397,6 +7523,7 @@ body.wb-chain-active {
                  anything when fetched with YOUR key. type="text", never
                  password: a password field makes password managers offer to
                  autofill and save an API key as a site credential. -->
+            <div class="wb-sgroup"><span>My keys</span></div>
             <label for="wb-input-my-ffs-key">My FFScouter Key <span style="font-weight:400;opacity:0.6;font-size:11px;">(optional, personal)</span></label>
             <!-- wrap + min-width: three controls don't fit one 360px phone row,
                  and a squeezed key input is unusable — let the buttons drop. -->
@@ -7422,26 +7549,7 @@ body.wb-chain-active {
                 Stored only in this browser; sent only to ffscouter.com.
             </div>
 
-            <div class="wb-settings-row">
-                <span>Theme</span>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="font-size:11px;opacity:0.6;">Dark</span>
-                    <label class="wb-toggle">
-                        <input type="checkbox" id="wb-toggle-theme" ${CONFIG.THEME === 'light' ? 'checked' : ''}>
-                        <span class="wb-toggle-slider"></span>
-                    </label>
-                    <span style="font-size:11px;opacity:0.6;">Light</span>
-                </div>
-            </div>
-
-            <div class="wb-settings-row">
-                <span>Auto-Sort Targets</span>
-                <label class="wb-toggle">
-                    <input type="checkbox" id="wb-toggle-autosort" ${CONFIG.AUTO_SORT ? 'checked' : ''}>
-                    <span class="wb-toggle-slider"></span>
-                </label>
-            </div>
-
+            <div class="wb-sgroup"><span>Alerts</span></div>
             <div class="wb-settings-row">
                 <span>Chain Break Alert</span>
                 <label class="wb-toggle">
@@ -7456,13 +7564,21 @@ body.wb-chain-active {
             </div>
 
             <div class="wb-settings-row">
-                <span>Stay Active</span>
+                <span>PDA Notifications</span>
                 <label class="wb-toggle">
-                    <input type="checkbox" id="wb-toggle-keep-alive" ${CONFIG.KEEP_ALIVE ? 'checked' : ''}>
+                    <input type="checkbox" id="wb-toggle-pda-notif" ${CONFIG.PDA_NOTIFICATIONS ? 'checked' : ''}>
                     <span class="wb-toggle-slider"></span>
                 </label>
             </div>
+            <div style="font-size:11px;opacity:0.6;margin-bottom:8px;">
+                Native push notifications for calls, chain alerts, bonus hits, and war targets.
+            </div>
+            <button class="wb-btn wb-btn-sm" id="fo-btn-test-pda-notif" style="margin-bottom:14px;font-size:11px;">Test PDA Notification</button>
+            <div id="fo-pda-notif-result" style="font-size:11px;margin-bottom:10px;min-height:14px;"></div>
 
+            <button class="wb-btn wb-btn-sm" id="fo-btn-test-toast" style="margin-bottom:14px;font-size:11px;">Test Toast Notification</button>
+
+            <div class="wb-sgroup"><span>Preferences</span></div>
             <div class="wb-settings-row">
                 <span>Share my BSP stats with faction</span>
                 <label class="wb-toggle">
@@ -7496,20 +7612,74 @@ body.wb-chain-active {
             </div>
 
             <div class="wb-settings-row">
-                <span>Long-poll transport (beta)</span>
+                <span>Theme</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:11px;opacity:0.6;">Dark</span>
+                    <label class="wb-toggle">
+                        <input type="checkbox" id="wb-toggle-theme" ${CONFIG.THEME === 'light' ? 'checked' : ''}>
+                        <span class="wb-toggle-slider"></span>
+                    </label>
+                    <span style="font-size:11px;opacity:0.6;">Light</span>
+                </div>
+            </div>
+
+            <div class="wb-settings-row">
+                <span>Stay Active</span>
                 <label class="wb-toggle">
-                    <input type="checkbox" id="wb-toggle-longpoll" ${CONFIG.USE_LONGPOLL ? 'checked' : ''}>
+                    <input type="checkbox" id="wb-toggle-keep-alive" ${CONFIG.KEEP_ALIVE ? 'checked' : ''}>
                     <span class="wb-toggle-slider"></span>
                 </label>
             </div>
-            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
-                Experimental. On phones this replaces the 1-second poll with a
-                held connection that only wakes on real changes — much lighter on
-                CPU/battery. Falls back automatically if unsupported; desktop uses
-                real-time and is unaffected. Takes effect within a few seconds.
+
+            ${isLeader() ? `
+            <div class="wb-sgroup"><span>Faction setup</span></div>
+            <label>Faction API Key</label>
+            <div style="font-size:11px;opacity:0.7;margin-bottom:8px;">
+                Provide a Limited API key for server-side war status updates. This lets the server poll Torn directly instead of relying on page data.
+            </div>
+            <div style="font-size:11px;margin-bottom:8px;">
+                <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener" style="color:#87ceeb;text-decoration:underline;">Create a Limited key on Torn</a>
+            </div>
+            <div id="wb-faction-key-status" style="font-size:11px;margin-bottom:8px;min-height:14px;"></div>
+            <div id="wb-faction-key-input-row" style="display:flex;gap:6px;margin-bottom:14px;">
+                <input type="text" id="wb-input-faction-key" placeholder="Paste faction API key" style="margin-bottom:0;flex:1;">
+                <button class="wb-btn wb-btn-sm" id="wb-btn-save-faction-key">Save Key</button>
+            </div>
+            <div id="wb-faction-key-saved-row" style="display:none;align-items:center;gap:8px;margin-bottom:14px;">
+                <span style="color:var(--wb-call-green);font-size:12px;">Key saved \u2713</span>
+                <button class="wb-btn wb-btn-sm wb-btn-danger" id="wb-btn-remove-faction-key">Remove</button>
             </div>
 
-            <div style="margin: 14px 0;">
+                <label for="wb-input-ffs-key">FFScouter API Key <span style="font-weight:400;opacity:0.6;font-size:11px;">(optional, admin-only)</span></label>
+                <div style="display:flex;gap:6px;">
+                    <!-- type=text, never password. A password field makes the
+                         browser's password manager offer to save and then
+                         autofill Torn API keys, which silently overwrites what
+                         the admin typed and stores a credential where nobody
+                         expects to find one. The key is never at rest in this
+                         field anyway: the saved value is shown only as a masked
+                         placeholder, and .value is cleared the moment it saves,
+                         so there is nothing here for type=password to conceal. -->
+                    <input type="text" id="wb-input-ffs-key" spellcheck="false" autocomplete="off"
+                           placeholder="Paste a Torn key registered at ffscouter.com" style="margin-bottom:0;flex:1;font-family:monospace;">
+                    <button class="wb-btn wb-btn-sm" id="wb-btn-save-ffs-key">Save</button>
+                </div>
+                <div id="fo-ffs-key-result" style="font-size:11px;opacity:0.6;margin-top:4px;min-height:14px;">
+                    Any Torn API key that's been registered at
+                    <a href="https://ffscouter.com" target="_blank" style="color:#60a5fa;">ffscouter.com</a>.
+                    Used server-side (never leaves the server) for:
+                    <ul style="margin:4px 0 4px 18px;padding:0;font-size:11px;">
+                      <li><b>Flight tracker</b> — live landing countdown on travel pills in the war overlay</li>
+                      <li><b>Abroad destinations</b> — shows country name ('UK', 'Mexico') on abroad pills</li>
+                      <li><b>OC delay attribution</b> (when OC Spawn Assistance is installed) — backdates blocker delays to real takeoff time</li>
+                    </ul>
+                    Shared with OC Spawn Assistance. Leave blank to keep the existing key, or enter a new one to replace.
+                </div>
+            </div>
+            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
+                Keeps your Torn activity fresh while the warboard is open, so enemies can't tell you're idle.
+            </div>
+
                 <label for="wb-input-broadcast-roles">Custom Admin Roles (comma-separated)</label>
                 <div style="display:flex;gap:6px;">
                     <input type="text" id="wb-input-broadcast-roles" placeholder="e.g. leader,co-leader,banker,warmaster" style="margin-bottom:0;flex:1;">
@@ -7527,6 +7697,7 @@ body.wb-chain-active {
                  the watcher on data clients are already pushing, so zero extra
                  Torn API cost. Defaults: disabled / +5 enemies / 60s / 10min. -->
             <div style="margin: 14px 0;">
+            <div class="wb-sgroup"><span>War</span></div>
                 <label>Enemy Online Surge Alert <span style="font-weight:400;opacity:0.6;font-size:11px;">(admin-only)</span></label>
                 <div style="font-size:11px;opacity:0.7;margin-bottom:8px;">
                     Push notification when N+ enemies come online inside a short window — coordinated-rally signal during war.
@@ -7561,64 +7732,7 @@ body.wb-chain-active {
                  so setting it here also enables OC delay attribution and
                  vice versa. -->
             <div style="margin: 14px 0;">
-                <label for="wb-input-ffs-key">FFScouter API Key <span style="font-weight:400;opacity:0.6;font-size:11px;">(optional, admin-only)</span></label>
-                <div style="display:flex;gap:6px;">
-                    <!-- type=text, never password. A password field makes the
-                         browser's password manager offer to save and then
-                         autofill Torn API keys, which silently overwrites what
-                         the admin typed and stores a credential where nobody
-                         expects to find one. The key is never at rest in this
-                         field anyway: the saved value is shown only as a masked
-                         placeholder, and .value is cleared the moment it saves,
-                         so there is nothing here for type=password to conceal. -->
-                    <input type="text" id="wb-input-ffs-key" spellcheck="false" autocomplete="off"
-                           placeholder="Paste a Torn key registered at ffscouter.com" style="margin-bottom:0;flex:1;font-family:monospace;">
-                    <button class="wb-btn wb-btn-sm" id="wb-btn-save-ffs-key">Save</button>
-                </div>
-                <div id="fo-ffs-key-result" style="font-size:11px;opacity:0.6;margin-top:4px;min-height:14px;">
-                    Any Torn API key that's been registered at
-                    <a href="https://ffscouter.com" target="_blank" style="color:#60a5fa;">ffscouter.com</a>.
-                    Used server-side (never leaves the server) for:
-                    <ul style="margin:4px 0 4px 18px;padding:0;font-size:11px;">
-                      <li><b>Flight tracker</b> — live landing countdown on travel pills in the war overlay</li>
-                      <li><b>Abroad destinations</b> — shows country name ('UK', 'Mexico') on abroad pills</li>
-                      <li><b>OC delay attribution</b> (when OC Spawn Assistance is installed) — backdates blocker delays to real takeoff time</li>
-                    </ul>
-                    Shared with OC Spawn Assistance. Leave blank to keep the existing key, or enter a new one to replace.
-                </div>
-            </div>
-            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
-                Keeps your Torn activity fresh while the warboard is open, so enemies can't tell you're idle.
-            </div>
-
-            <div class="wb-settings-row">
-                <span>PDA Notifications</span>
-                <label class="wb-toggle">
-                    <input type="checkbox" id="wb-toggle-pda-notif" ${CONFIG.PDA_NOTIFICATIONS ? 'checked' : ''}>
-                    <span class="wb-toggle-slider"></span>
-                </label>
-            </div>
-            <div style="font-size:11px;opacity:0.6;margin-bottom:8px;">
-                Native push notifications for calls, chain alerts, bonus hits, and war targets.
-            </div>
-            <button class="wb-btn wb-btn-sm" id="fo-btn-test-pda-notif" style="margin-bottom:14px;font-size:11px;">Test PDA Notification</button>
-            <div id="fo-pda-notif-result" style="font-size:11px;margin-bottom:10px;min-height:14px;"></div>
-
-            <div class="wb-settings-row">
-                <span>Notify when enemies attack</span>
-                <label class="wb-toggle">
-                    <input type="checkbox" id="wb-toggle-enemy-attack-notif" ${CONFIG.ENEMY_ATTACK_NOTIF ? 'checked' : ''}>
-                    <span class="wb-toggle-slider"></span>
-                </label>
-            </div>
-            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
-                When off (default): in-overlay toast only when an enemy
-                is caught mid-attack. When on: also fires a native PDA
-                notification. Toasts are unaffected by this toggle.
-            </div>
-
-            <button class="wb-btn wb-btn-sm" id="fo-btn-test-toast" style="margin-bottom:14px;font-size:11px;">Test Toast Notification</button>
-
+            ` : ''}
             <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:14px 0;">
 
             ${isLeader() ? `
@@ -7639,22 +7753,24 @@ body.wb-chain-active {
             </div>
             ` : '')}
 
-            <label>Faction API Key</label>
-            <div style="font-size:11px;opacity:0.7;margin-bottom:8px;">
-                Provide a Limited API key for server-side war status updates. This lets the server poll Torn directly instead of relying on page data.
+            <div class="wb-sgroup"><span>Advanced</span></div>
+            <div class="wb-settings-row">
+                <span>Long-poll transport (beta)</span>
+                <label class="wb-toggle">
+                    <input type="checkbox" id="wb-toggle-longpoll" ${CONFIG.USE_LONGPOLL ? 'checked' : ''}>
+                    <span class="wb-toggle-slider"></span>
+                </label>
             </div>
-            <div style="font-size:11px;margin-bottom:8px;">
-                <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener" style="color:#87ceeb;text-decoration:underline;">Create a Limited key on Torn</a>
+            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
+                Experimental. On phones this replaces the 1-second poll with a
+                held connection that only wakes on real changes — much lighter on
+                CPU/battery. Falls back automatically if unsupported; desktop uses
+                real-time and is unaffected. Takes effect within a few seconds.
             </div>
-            <div id="wb-faction-key-status" style="font-size:11px;margin-bottom:8px;min-height:14px;"></div>
-            <div id="wb-faction-key-input-row" style="display:flex;gap:6px;margin-bottom:14px;">
-                <input type="text" id="wb-input-faction-key" placeholder="Paste faction API key" style="margin-bottom:0;flex:1;">
-                <button class="wb-btn wb-btn-sm" id="wb-btn-save-faction-key">Save Key</button>
-            </div>
-            <div id="wb-faction-key-saved-row" style="display:none;align-items:center;gap:8px;margin-bottom:14px;">
-                <span style="color:var(--wb-call-green);font-size:12px;">Key saved \u2713</span>
-                <button class="wb-btn wb-btn-sm wb-btn-danger" id="wb-btn-remove-faction-key">Remove</button>
-            </div>
+
+            <div style="margin: 14px 0;">
+            <label for="wb-input-server">Server URL</label>
+            <input type="text" id="wb-input-server" value="${escapeHtml(CONFIG.SERVER_URL)}" placeholder="http://localhost:3000">
 
             ${state.myPlayerId === '137558' ? `
             <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:14px 0;">
@@ -7735,11 +7851,6 @@ body.wb-chain-active {
             applyTheme();
         });
 
-        document.getElementById('wb-toggle-autosort').addEventListener('change', (e) => {
-            setConfig('AUTO_SORT', e.target.checked);
-            if (e.target.checked) debouncedSort();
-        });
-
         document.getElementById('wb-toggle-chain-alert').addEventListener('change', (e) => {
             setConfig('CHAIN_ALERT', e.target.checked);
             const thresholdRow = document.getElementById('wb-chain-alert-threshold-row');
@@ -7809,13 +7920,6 @@ body.wb-chain-active {
         if (pdaNotifToggle) {
             pdaNotifToggle.addEventListener('change', (e) => {
                 setConfig('PDA_NOTIFICATIONS', e.target.checked);
-            });
-        }
-
-        const enemyAttackNotifToggle = document.getElementById('wb-toggle-enemy-attack-notif');
-        if (enemyAttackNotifToggle) {
-            enemyAttackNotifToggle.addEventListener('change', (e) => {
-                setConfig('ENEMY_ATTACK_NOTIF', e.target.checked);
             });
         }
 
@@ -9255,9 +9359,6 @@ body.wb-chain-active {
         // its countdowns just step on data rather than sweeping every second.
     }
 
-
-
-
     // =========================================================================
     // SECTION 12: DOM MANIPULATION — WAR PAGE ENHANCEMENT
     // =========================================================================
@@ -9431,7 +9532,6 @@ body.wb-chain-active {
         return m ? m[1] : null;
     }
 
-
     /**
      * The stats range bar, above the enemy list on Torn's own war page.
      *
@@ -9462,7 +9562,13 @@ body.wb-chain-active {
             '<label class="fo-wp-filter-chk"><input type="checkbox" id="fo-wp-hide-online">Hide online</label>' +
             '<label class="fo-wp-filter-chk" title="Last action 5+ min ago -- Torn\'s idle and offline both">' +
                 '<input type="checkbox" id="fo-wp-hide-offline">Hide offline</label>' +
-            '<span class="fo-wp-filter-count" id="fo-wp-count"></span>';
+            '<span class="fo-wp-filter-count" id="fo-wp-count"></span>' +
+            // Settings without opening the overlay. The gear used to live only
+            // in the overlay header, so reaching it from the war page meant
+            // activating the whole thing -- which is the one surface we keep
+            // deliberately unbuilt here.
+            '<button type="button" class="fo-wp-filter-gear" id="fo-wp-settings" ' +
+                   'title="FactionOps settings" aria-label="FactionOps settings">\u2699</button>';
         list.parentElement.insertBefore(bar, list);
 
         const minEl = bar.querySelector('#fo-wp-min');
@@ -9502,6 +9608,14 @@ body.wb-chain-active {
             try { markCalledRows(); } catch (_) {}
         });
 
+        bar.querySelector('#fo-wp-settings').addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            // openSettings appends its own modal to document.body and reads
+            // nothing off the overlay, so it works with the overlay unbuilt.
+            try { openWarSettings(); } catch (err) { log('[settings] ' + (err && err.message)); }
+        });
+
         // Torn's list is clickable underneath; typing must not reach it.
         bar.addEventListener('click', function (e) { e.stopPropagation(); });
     }
@@ -9517,9 +9631,44 @@ body.wb-chain-active {
      * Predictor's own localStorage, and the FFScouter half is already being
      * fetched by applyServerData.
      */
+    // Torn's own numbers on a war row are a level and a score, neither of which
+    // carries a K/M/B suffix -- so a LEAF in the member cell whose entire text
+    // is "2.56B" is another script's stat estimate, not Torn's.
+    var ESTIMATE_TEXT = /^[\d.,]+\s*[KMB]$/i;
+
+    /**
+     * Hide Battle Stats Predictor's estimate on a war row.
+     *
+     * BSP draws it at the left where Torn's avatar covers it, and its values
+     * run a row behind besides -- the first row has none and each of the rest
+     * shows the row above's number. Ours is legible and reads the very same
+     * source (BSP's own localStorage cache), so theirs goes.
+     *
+     * Matched by SHAPE, not by class: a guess at BSP's namespace did not
+     * match, and this needs no knowledge of another script's internals.
+     * Deliberately narrow -- a leaf element, whole text is a number with a
+     * magnitude suffix, and never our own chip. The flag it stamps is a
+     * do-not-repeat marker, so a row is only walked once.
+     */
+    function hideForeignEstimate(cell) {
+        var n = cell.querySelectorAll('*');
+        for (var i = 0; i < n.length; i++) {
+            var e = n[i];
+            if (e.children.length) continue;                        // leaves only
+            if (e.classList && e.classList.contains('fo-wp-stat')) continue;
+            if (e.closest && e.closest('.fo-wp-stat')) continue;    // never ours
+            if (e.dataset.foHid === '1') continue;                  // already done
+            var t = String(e.textContent || '').trim();
+            if (!t || !ESTIMATE_TEXT.test(t)) continue;
+            e.dataset.foHid = '1';
+            e.style.display = 'none';
+        }
+    }
+
     function ensureStatChip(row, targetId) {
         const cell = row.querySelector('[class*="member"]');
         if (!cell) return;
+        hideForeignEstimate(cell);
         let n = null;
         try { n = getTargetStatsEstimate(targetId); } catch (_) {}
         let chip = cell.querySelector('.fo-wp-stat');
@@ -9536,14 +9685,314 @@ body.wb-chain-active {
         chip.title = 'Estimated total battle stats';
     }
 
+    /**
+     * The status cell of a war row.
+     *
+     * NOT row.querySelector('[class*="status"]') -- userStatusWrap___ lives
+     * inside the member cell and comes first in document order, so that
+     * selector returns the online dot instead. The status cell is a direct
+     * child of the li carrying a literal "status" class.
+     */
+    function warStatusCell(row) {
+        for (var i = 0; i < row.children.length; i++) {
+            var c = row.children[i];
+            var cls = String((c.getAttribute && c.getAttribute('class')) || '');
+            if (/(^|\s)status(\s|$)/.test(cls)) return c;
+        }
+        return null;
+    }
+
+    /**
+     * Hospital countdown, from the absolute releaseAt the client already
+     * stamps on arrival -- so it is drift-free under poll jitter rather than
+     * a duration being decremented.
+     *
+     * It NEVER releases on its own countdown. At zero it clamps and keeps
+     * saying hospital; only the server reporting a non-hospital state clears
+     * it. The inverse of that rule is how a still-hospitalised target gets
+     * flashed as attackable, which is worse than a timer that reads 0:00 for
+     * a while.
+     */
+    function ensureHospTimer(row, targetId) {
+        var cell = warStatusCell(row);
+        if (!cell) return;
+        var st = (state.statuses || {})[targetId];
+        var hosp = CONFIG.WP_HOSP && st && normalizeStatus(st.status) === 'hospital';
+        var chip = cell.querySelector('.fo-wp-hosp');
+        if (!hosp) { if (chip) chip.remove(); return; }
+        if (!chip) {
+            chip = document.createElement('span');
+            chip.className = 'fo-wp-hosp';
+            cell.appendChild(chip);
+        }
+        paintHospTimer(chip, targetId);
+    }
+
+    function paintHospTimer(chip, targetId) {
+        var st = (state.statuses || {})[targetId];
+        if (!st) return;
+        var rem = 0;
+        try { rem = statusRemainingSec(st); } catch (_) {}
+        var txt = rem > 0 ? formatTimer(rem) : '0s';
+        if (chip.textContent !== txt) chip.textContent = txt;
+        // Under two minutes is the window where it is worth waiting rather
+        // than moving on, so it is the only thing this bothers to colour.
+        var soon = rem > 0 && rem <= 120;
+        if (chip.classList.contains('soon') !== soon) chip.classList.toggle('soon', soon);
+        // Zero but still reported hospital: clamped, waiting on the server.
+        var held = rem <= 0;
+        if (chip.classList.contains('held') !== held) chip.classList.toggle('held', held);
+    }
+
+    /**
+     * The tick. Separate from the 5s row pass on purpose -- that one walks
+     * every row and re-injects; this one only repaints chips that already
+     * exist, which on a normal war is a handful rather than 78.
+     *
+     * Gated on document.hidden, which is the same seam War Stuff Enhanced
+     * uses. PDA is exempt because its WebView reports hidden=true while the
+     * user is looking straight at the page, and gating there would freeze the
+     * timers on the device most likely to be reading them.
+     */
+    function startHospTick() {
+        if (window.__foHospTick) return;
+        window.__foHospTick = setInterval(function () {
+            if (!IS_PDA && document.hidden) return;
+            var chips = document.querySelectorAll('.fo-wp-hosp');
+            if (!chips.length) return;
+            for (var i = 0; i < chips.length; i++) {
+                var row = chips[i].closest('li');
+                if (!row) continue;
+                var tid;
+                try { tid = uidFromWarRow(row); } catch (_) { continue; }
+                if (tid) paintHospTimer(chips[i], tid);
+            }
+        }, 1000);
+    }
+
+    /**
+     * Where a row belongs in the list.
+     *
+     * Buckets rather than one number, because "soonest out" only means
+     * anything inside hospital -- an available target has no timer to compare
+     * against and must simply be above all of them.
+     *
+     *   0  available now
+     *   1  hospital, soonest out first
+     *   2  jail / travelling / abroad -- not coming back on a useful timescale
+     *   3  a row we could not identify; it sinks rather than floats, because
+     *      order defaults to 0 and an unknown row must never sit on top
+     */
+    function rowSortKey(targetId) {
+        if (!targetId) return [3, 0];
+        var st = (state.statuses || {})[targetId];
+        var status = normalizeStatus(st ? st.status : 'ok');
+        if (status === 'hospital') {
+            var rem = 0;
+            try { rem = statusRemainingSec(st); } catch (_) {}
+            return [1, rem];
+        }
+        if (status === 'jail' || status === 'traveling' || status === 'abroad' ||
+            status === 'federal' || status === 'fallen') return [2, 0];
+        return [0, 0];
+    }
+
+    /**
+     * Reorder by CSS `order` rather than by moving nodes.
+     *
+     * Moving rows inside a React-managed list is a fight -- it reverts on the
+     * next render. An inline `order` is not part of React's tree, so there is
+     * nothing for it to disagree with, and if it does replace a row we simply
+     * set it again on the next pass.
+     *
+     * `order` only applies to flex children and these rows are float-based
+     * (every li ends in a div.clear), so the container needs one class. It
+     * changes how the LIs stack relative to each other -- which is vertically,
+     * exactly as before -- and leaves each row's internal float layout alone.
+     */
+    function applyRowOrder(entries) {
+        if (!entries.length) return;
+        var list = entries[0].row.parentElement;
+        if (!CONFIG.WP_SORT) {
+            // Hand the list back rather than leaving it flex with stale order
+            // values -- Torn's own sequence must return intact. Every child,
+            // not just the member rows, because the pass below stamps them all.
+            if (list) list.classList.remove('fo-wp-sorted');
+            for (var j = 0; j < entries.length; j++) entries[j].row.style.order = '';
+            if (list) for (var c = 0; c < list.children.length; c++) list.children[c].style.order = '';
+            return;
+        }
+        if (list && !list.classList.contains('fo-wp-sorted')) list.classList.add('fo-wp-sorted');
+        entries.sort(function (a, b) {
+            if (a.key[0] !== b.key[0]) return a.key[0] - b.key[0];
+            if (a.key[1] !== b.key[1]) return a.key[1] - b.key[1];
+            return a.seen - b.seen;      // ties keep Torn's own order
+        });
+        for (var i = 0; i < entries.length; i++) {
+            var v = String(i);
+            if (entries[i].row.style.order !== v) entries[i].row.style.order = v;
+        }
+
+        // Torn's own non-member children -- the Total summary row, any header --
+        // are not in findMemberRows (they carry no li.enemy), so they never got
+        // an order. In a flex container an unset order is 0, which TIES them
+        // with the row we numbered 0 and drops them near the top of the list.
+        // That is how Total ended up second. Push everything we did not sort
+        // below everything we did, keeping its own relative order.
+        if (!list) return;
+        var ours = [];
+        for (var m = 0; m < entries.length; m++) ours.push(entries[m].row);
+        var kids = list.children;
+        for (var k = 0; k < kids.length; k++) {
+            if (ours.indexOf(kids[k]) !== -1) continue;
+            var ov = String(entries.length + k);
+            if (kids[k].style.order !== ov) kids[k].style.order = ov;
+        }
+    }
+
+    /**
+     * War-page settings: a popover under the gear, deliberately NOT the
+     * overlay's centred modal.
+     *
+     * Different shape because it holds different things. The overlay panel is
+     * configuration -- keys, roles, faction setup. This is what is on screen
+     * right now, and every one of these three shipped between 5.2.24 and
+     * 5.2.29 with no control at all.
+     *
+     * No FFScouter or BSP key here on purpose: those are separate userscripts
+     * that render on this page themselves and hold their own keys. Asking for
+     * them twice invites somebody to paste a key into the wrong script.
+     */
+    function closeWarSettings() {
+        var el = document.getElementById('fo-wp-panel');
+        if (el) el.remove();
+        document.removeEventListener('click', warSettingsOutside, true);
+    }
+
+    function warSettingsOutside(e) {
+        var panel = document.getElementById('fo-wp-panel');
+        if (!panel) return;
+        if (panel.contains(e.target)) return;
+        if (e.target.closest && e.target.closest('#fo-wp-settings')) return;
+        closeWarSettings();
+    }
+
+    function subLine() {
+        var exp = state.subscriptionExpiresAt;
+        if (exp === 'permanent') return { txt: 'Permanent', cls: 'ok' };
+        if (typeof exp === 'number' && exp > 0) {
+            var d = Math.floor((exp - Date.now()) / 86400000);
+            if (d <= 0) return { txt: 'Expired', cls: 'bad' };
+            return { txt: d + ' day' + (d === 1 ? '' : 's') + ' left', cls: d < 7 ? 'warn' : 'ok' };
+        }
+        return { txt: 'Unknown', cls: 'muted' };
+    }
+
+    function openWarSettings() {
+        if (document.getElementById('fo-wp-panel')) { closeWarSettings(); return; }
+        var gear = document.getElementById('fo-wp-settings');
+        var sub = subLine();
+        var conn = state.connected ? ['Connected', 'ok']
+                 : state.connecting ? ['Connecting\u2026', 'warn'] : ['Disconnected', 'bad'];
+
+        var el = document.createElement('div');
+        el.id = 'fo-wp-panel';
+        el.className = 'fo-wp-panel';
+        el.innerHTML =
+            '<div class="fo-wp-prow fo-wp-pstat">' +
+                '<span class="fo-wp-dot ' + conn[1] + '"></span><b>' + conn[0] + '</b>' +
+                '<span class="fo-wp-sub ' + sub.cls + '">' + sub.txt + '</span>' +
+            '</div>' +
+            '<label class="fo-wp-plabel">Torn API key</label>' +
+            '<div class="fo-wp-prow">' +
+                // text, never password: a password field makes the browser
+                // offer to save and autofill Torn API keys.
+                '<input type="text" class="fo-wp-pin" id="fo-wp-key" spellcheck="false" ' +
+                       'autocomplete="off" autocapitalize="off" autocorrect="off" ' +
+                       'placeholder="' + (CONFIG.API_KEY ? '\u2022\u2022\u2022\u2022 ' + CONFIG.API_KEY.slice(-4) : 'paste your key') + '">' +
+                '<button type="button" class="fo-wp-pbtn" id="fo-wp-key-save">Save</button>' +
+            '</div>' +
+            '<div class="fo-wp-pnote" id="fo-wp-key-note"></div>' +
+            '<div class="fo-wp-psep">On this page</div>' +
+            row('fo-wp-t-hosp', 'Hospital timers', CONFIG.WP_HOSP) +
+            row('fo-wp-t-sort', 'Sort: available first', CONFIG.WP_SORT) +
+            row('fo-wp-t-chat', 'Post calls to chat', CONFIG.CALL_CHAT === '1') +
+            '<div class="fo-wp-psep">Alerts</div>' +
+            row('fo-wp-t-chain', 'Chain alert', CONFIG.CHAIN_ALERT) +
+            row('fo-wp-t-pda', 'PDA notifications', CONFIG.PDA_NOTIFICATIONS) +
+            '<button type="button" class="fo-wp-pfull" id="fo-wp-full">Full settings\u2026</button>';
+
+        function row(id, label, on) {
+            return '<label class="fo-wp-prow fo-wp-ptog"><span>' + label + '</span>' +
+                   '<input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '></label>';
+        }
+
+        document.body.appendChild(el);
+        // Anchored under the gear, clamped so it cannot hang off a phone.
+        if (gear) {
+            var r = gear.getBoundingClientRect();
+            var w = 244;
+            el.style.top = Math.round(r.bottom + window.scrollY + 6) + 'px';
+            el.style.left = Math.round(Math.max(8, Math.min(
+                r.right + window.scrollX - w, window.innerWidth + window.scrollX - w - 8))) + 'px';
+        }
+
+        var bind = function (id, key, after) {
+            var c = el.querySelector('#' + id);
+            if (!c) return;
+            c.addEventListener('change', function () {
+                setConfig(key, c.checked);
+                if (after) { try { after(); } catch (_) {} }
+            });
+        };
+        bind('fo-wp-t-hosp',  'WP_HOSP',  markCalledRows);
+        bind('fo-wp-t-sort',  'WP_SORT',  markCalledRows);
+        // NOT via bind(): CALL_CHAT is stored as the strings '1' and '0', never a
+        // boolean. PDA's GM storage hands values back as strings and !!"false"
+        // is truthy, so a boolean here would leave this permanently on for
+        // anyone who switched it off on a phone. Same reason the overlay's own
+        // handler writes it this way.
+        var chatEl = el.querySelector('#fo-wp-t-chat');
+        if (chatEl) chatEl.addEventListener('change', function () {
+            setConfig('CALL_CHAT', chatEl.checked ? '1' : '0');
+        });
+        bind('fo-wp-t-chain', 'CHAIN_ALERT');
+        bind('fo-wp-t-pda',   'PDA_NOTIFICATIONS');
+
+        el.querySelector('#fo-wp-key-save').addEventListener('click', function () {
+            var v = el.querySelector('#fo-wp-key').value.trim();
+            var note = el.querySelector('#fo-wp-key-note');
+            if (!v) { note.textContent = 'Nothing to save.'; return; }
+            setConfig('API_KEY', v);
+            note.textContent = 'Saved \u2014 reconnecting\u2026';
+            try { authenticate(); } catch (_) {}
+        });
+        el.querySelector('#fo-wp-full').addEventListener('click', function () {
+            closeWarSettings();
+            try { openSettings(); } catch (_) {}
+        });
+        el.addEventListener('click', function (e) { e.stopPropagation(); });
+        // capture phase, so a tap outside closes even though Torn's own
+        // handlers stop propagation on much of this page.
+        setTimeout(function () {
+            document.addEventListener('click', warSettingsOutside, true);
+        }, 0);
+    }
+
     function markCalledRows() {
         let rows;
         try { rows = findMemberRows(); } catch (_) { return; }
         try { ensureWarFilterBar(); } catch (_) {}
         let hidden = 0, total = 0;
+        // Sorted at the end of this 5s pass, never on the 1s tick: a row that
+        // jumped the moment its timer expired would move under a thumb that is
+        // already coming down, and that is how you attack the wrong person.
+        const ordering = [];
+        let seen = 0;
         for (const row of rows || []) {
             let targetId;
             try { targetId = uidFromWarRow(row); } catch (_) { continue; }
+            ordering.push({ row: row, key: rowSortKey(targetId), seen: seen++ });
             if (!targetId) continue;
             // The range filter. passesStatsFilter shows a target whose stats
             // cannot be estimated -- on this page a hidden row is one nobody
@@ -9555,6 +10004,7 @@ body.wb-chain-active {
             row.style.display = show ? '' : 'none';
             if (!show) { hidden++; continue; }   // no point dressing a hidden row
             try { ensureStatChip(row, targetId); } catch (_) {}
+            try { ensureHospTimer(row, targetId); } catch (_) {}
             const call = (state.calls || {})[targetId];
             try { ensureCallButton(row, targetId, call); } catch (_) {}
             if (!call) {
@@ -9572,6 +10022,7 @@ body.wb-chain-active {
         }
         // Say how much is being hidden. A filter left on from a previous war
         // would otherwise look like a short enemy faction.
+        try { applyRowOrder(ordering); } catch (_) {}
         const countEl = document.getElementById('fo-wp-count');
         if (countEl) {
             countEl.textContent = hidden ? ('hiding ' + hidden + ' of ' + total) : '';
@@ -9627,34 +10078,74 @@ body.wb-chain-active {
             // if it stayed put -- a scroll cancels itself on the first move.
             const TAP_SLOP_PX = 12;    // finger wander that still reads as a tap
             const TAP_MAX_MS = 700;    // longer is a press or a drag, not a tap
+            // Hold for a deal call. Below TAP_MAX_MS on purpose: the hold has
+            // to win before the tap gate would accept the same gesture, or a
+            // 650ms press would place a deal AND then a normal call.
+            const HOLD_MS = 600;
             let touchStart = null;
             let lastTouchFire = -Infinity;
+            let holdTimer = null;
+            let holdFired = false;
 
             const strayed = function (pt, s) {
                 return Math.abs(pt.clientX - s.x) > TAP_SLOP_PX ||
                        Math.abs(pt.clientY - s.y) > TAP_SLOP_PX;
             };
 
+            const cancelHold = function () {
+                if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+            };
+
+            /**
+             * A deal call: ours for fifteen minutes, and it shows a lock to
+             * everybody else. Only offered on a target nobody has -- holding
+             * somebody else's call must not steal it, and holding your own
+             * would be an odd way to ask for a drop.
+             */
+            const startHold = function () {
+                cancelHold();
+                holdFired = false;
+                const cur = (state.calls || {})[targetId];
+                if (cur) return;                       // taken: nothing to deal
+                holdTimer = setTimeout(function () {
+                    holdTimer = null;
+                    holdFired = true;
+                    touchStart = null;                 // the tap gate must not also fire
+                    try {
+                        emitCallTarget(targetId, true);
+                        showToast('\uD83D\uDD12 Deal call \u2014 yours for 15 min', 'info');
+                    } catch (err) {
+                        log('[calls] deal failed: ' + (err && err.message));
+                    }
+                }, HOLD_MS);
+            };
+
             btn.addEventListener('touchstart', function (e) {
                 // Two fingers is a pinch or a stray palm, never a call.
-                if (e.touches && e.touches.length > 1) { touchStart = null; return; }
+                if (e.touches && e.touches.length > 1) { touchStart = null; cancelHold(); return; }
                 const t = e.touches && e.touches[0];
                 touchStart = t ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
+                if (touchStart) startHold();
             }, { passive: true });
 
             btn.addEventListener('touchmove', function (e) {
                 if (!touchStart) return;
                 const t = e.touches && e.touches[0];
-                if (t && strayed(t, touchStart)) touchStart = null;   // it's a scroll
+                // A scroll cancels the hold too, or dragging the page past a
+                // CALL button would place a deal on whoever it started over.
+                if (t && strayed(t, touchStart)) { touchStart = null; cancelHold(); }
             }, { passive: true });
 
             btn.addEventListener('touchcancel', function () {
                 touchStart = null;
+                cancelHold();
             }, { passive: true });
 
             btn.addEventListener('touchend', function (e) {
                 const s = touchStart;
                 touchStart = null;
+                cancelHold();
+                if (holdFired) { holdFired = false; lastTouchFire = Date.now(); return; }
                 if (!s) return;                                 // moved, or multi-touch
                 if (Date.now() - s.at > TAP_MAX_MS) return;     // a press, not a tap
                 const t = e.changedTouches && e.changedTouches[0];
@@ -9662,6 +10153,26 @@ body.wb-chain-active {
                 lastTouchFire = Date.now();
                 onTap(e);
             }, { passive: false });
+
+            btn.addEventListener('mousedown', function (e) {
+                if (e.button !== 0) return;
+                startHold();
+            });
+            btn.addEventListener('mouseup', cancelHold);
+            btn.addEventListener('mouseleave', cancelHold);
+
+            // Right-click is the mouse's version of a hold, and matches what
+            // the overlay's own call button has always done.
+            btn.addEventListener('contextmenu', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                cancelHold();
+                if ((state.calls || {})[targetId]) return;
+                try {
+                    emitCallTarget(targetId, true);
+                    showToast('\uD83D\uDD12 Deal call \u2014 yours for 15 min', 'info');
+                } catch (err) { log('[calls] deal failed: ' + (err && err.message)); }
+            });
 
             btn.addEventListener('click', function (e) {
                 // The synthetic click that trails a touch we already acted on.
@@ -9671,6 +10182,9 @@ body.wb-chain-active {
                     e.preventDefault();
                     return;
                 }
+                // A completed hold already did the work; the mouseup that ends
+                // it still arrives here as a click.
+                if (holdFired) { holdFired = false; e.preventDefault(); return; }
                 onTap(e);
             });
             cell.appendChild(btn);
@@ -10000,7 +10514,6 @@ body.wb-chain-active {
         const isCalled = !!state.calls[targetId];
         row.classList.toggle('wb-row-called', isCalled);
     }
-
 
     let warEndedBannerShown = false;
 
@@ -10912,7 +11425,6 @@ body.wb-chain-active {
             });
         }
 
-
         // Check if war already ended (persisted state from server)
         if (state.warEnded) {
             setTimeout(showWarEndedBanner, 500);
@@ -11134,9 +11646,6 @@ body.wb-chain-active {
         return div.innerHTML;
     }
 
-
-
-
     /** Render the priority cell for overlay rows. */
     function renderOverlayPriorityCell(cell, targetId) {
         cell.innerHTML = '';
@@ -11176,8 +11685,6 @@ body.wb-chain-active {
         }
     }
 
-
-
     // v5.1.1: stats range filter state. Both bounds optional; null
     // means unbounded. Persisted via GM_setValue so it survives
     // page reload / refresh.
@@ -11198,7 +11705,6 @@ body.wb-chain-active {
         _hideOnline = !!GM_getValue('factionops_hide_online', false);
         _hideOffline = !!GM_getValue('factionops_hide_offline', false);
     } catch (_) {}
-
 
     // Online / idle / offline, from the server's enemyStatuses -- the same
     // field the overlay filtered on. Torn's own row has an online icon, but
@@ -11294,7 +11800,6 @@ body.wb-chain-active {
         const b = parts[1] ? toNum(parts[1]) : null;
         return b !== null ? (a + b) / 2 : a;
     }
-
 
     /** Render the call cell for overlay rows. */
     function renderOverlayCallCell(cell, targetId) {
@@ -11397,7 +11902,6 @@ body.wb-chain-active {
             cell.appendChild(btn);
         }
     }
-
 
     /** Update footer stats. */
     function updateOverlayFooter() {
@@ -12492,6 +12996,7 @@ body.wb-chain-active {
                 .observe(host, { childList: true, subtree: true });
         } catch (_) {}
         setInterval(() => { try { markCalledRows(); } catch (_) {} }, 5000);
+        startHospTick();
     }
 
     function detectPageAndInit() {
@@ -12793,13 +13298,6 @@ body.wb-chain-active {
             if (e.altKey && e.key === 'w') {
                 e.preventDefault();
                 toggleSettings();
-            }
-            // Alt+S: toggle auto-sort
-            if (e.altKey && e.key === 's') {
-                e.preventDefault();
-                setConfig('AUTO_SORT', !CONFIG.AUTO_SORT);
-                if (CONFIG.AUTO_SORT) debouncedSort();
-                log('Auto-sort:', CONFIG.AUTO_SORT ? 'ON' : 'OFF');
             }
             // Escape: close settings
             if (e.key === 'Escape' && state.ui.settingsOpen) {
