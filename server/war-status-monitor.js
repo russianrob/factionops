@@ -6,7 +6,7 @@
  */
 
 import * as store from "./store.js";
-import { fetchFactionMembers, fetchRecentFactionAttacks, fetchUserProfile } from "./torn-api.js";
+import { fetchFactionMembers, fetchRecentFactionAttacks } from "./torn-api.js";
 import { recordSample } from "./activity-heatmap.js";
 import { broadcastSSE } from "./routes.js";
 import * as push from "./push-notifications.js";
@@ -36,27 +36,16 @@ const nextAttacksFeed = (war) => {
   const base = war && war.factionId
     ? store.getPollInterval(war.factionId, "attacks-feed")
     : ATTACKS_FEED_INTERVAL_MS;
-  // Same pre-war throttle as the enemy-profile sweep: before a war starts
-  // there are no war hospitalisations to detect, so don't burn the feed.
+  // Pre-war throttle: before a war starts there are no war hospitalisations
+  // to detect, so don't burn the feed. (The helper is named for the enemy
+  // profile sweep it was written for; that sweep was removed 2026-09-04 and
+  // this is now its only caller.)
   return enemyProfilePrewarDelay(war && war.warStart, base, Date.now() / 1000);
 };
 const nextEnemyAttacks = (war) =>
   war && war.factionId
     ? store.getPollInterval(war.factionId, "enemy-attacks")
     : 30_000;
-// Requests issued per tick, at most. See the note where it is used.
-const ENEMY_PROFILE_CEILING = 20;
-// On by default. Switched off for a few hours on 2026-09-03 to test whether it
-// was behind phone lag, and switched back on. Set WB_ENEMY_PROFILE_SWEEP=0 to
-// disable it again without a deploy.
-const ENEMY_PROFILE_SWEEP = process.env.WB_ENEMY_PROFILE_SWEEP !== "0";
-const nextEnemyProfile = (war) => {
-  const base = war && war.factionId
-    ? store.getPollInterval(war.factionId, "enemy-profile")
-    : 2_500;
-  return enemyProfilePrewarDelay(war && war.warStart, base, Date.now() / 1000);
-};
-
 // Attacks-feed watcher — near-real-time hospital detection.
 // Shorter Torn cache on attacks endpoint + atomic event semantics (each
 // record says who hospitalized whom) give us ~20s latency for any enemy
@@ -98,13 +87,6 @@ const attackOverrides = new Map();
 const enemyAttacksTimeouts = new Map();
 const enemyAttacksCursors = new Map();
 const enemyAttacksBackoffs = new Map();
-
-/** Per-enemy profile round-robin. Polls one enemy's /user/:id?selections=profile
- *  per tick at a dynamic interval. Catches status.state === "Attacking"
- *  (sub-30s attack-activity detection that works against any public
- *  user, unlike the faction attacks feed which is key-restricted). */
-const enemyProfileTimeouts = new Map();
-const enemyProfileCursors = new Map();
 
 // Round-robin cursor per (warId, purpose) used to spread pool-key load
 // across ALL opted-in keys instead of hashing each purpose to a fixed
@@ -315,10 +297,6 @@ export function startWarStatusMonitor(io, warId) {
   // Enemy-attacks watcher disabled: Torn's attacks endpoint only
   // accepts the owning faction's key. See note on startEnemyAttacksMonitor.
   // startEnemyAttacksMonitor(io, warId);
-
-  // Per-enemy profile round-robin — catches status.state === "Attacking"
-  // and gives sub-30s freshness on individual enemies' status.
-  startEnemyProfileMonitor(io, warId);
 
   console.log(`[war-status] Started monitoring for war ${warId}`);
 }
@@ -662,14 +640,6 @@ export function stopWarStatusMonitor(warId) {
   enemyAttacksCursors.delete(warId);
   enemyAttacksBackoffs.delete(warId);
 
-  // Enemy-profile watcher
-  const eptid = enemyProfileTimeouts.get(warId);
-  if (eptid) {
-    clearTimeout(eptid);
-    enemyProfileTimeouts.delete(warId);
-  }
-  enemyProfileCursors.delete(warId);
-
   // Retal tracker
   stopRetalTracker(warId);
 
@@ -700,182 +670,6 @@ export function stopAll() {
   enemyAttacksCursors.clear();
   enemyAttacksBackoffs.clear();
 
-  for (const [, eptid] of enemyProfileTimeouts) clearTimeout(eptid);
-  enemyProfileTimeouts.clear();
-  enemyProfileCursors.clear();
-
   stopAllRetals();
 }
 
-/**
- * Rotate through the enemy faction's known members, polling one profile
- * per tick. Feeds status.state (attacking / hospital / jail / traveling
- * / okay) into war.enemyStatuses and stamps lastAttackAt when we catch
- * someone mid-attack. Uses rotating pool keys (per-call index, not
- * per-purpose hash) so the request load spreads across all pooled keys
- * instead of landing on one.
- */
-function startEnemyProfileMonitor(io, warId) {
-  if (enemyProfileTimeouts.has(warId)) return;
-
-  const scheduleNext = (delay) => {
-    const tid = setTimeout(pollOne, delay);
-    enemyProfileTimeouts.set(warId, tid);
-  };
-
-  async function fetchAndApply(targetId, apiKey, batch) {
-    try {
-      const data = await fetchUserProfile(targetId, apiKey);
-      // Re-look up the war fresh in case state changed during the
-      // in-flight request (war ended, enemy faction swapped, etc.).
-      const curWar = store.getWar(warId);
-      if (!curWar || !curWar.enemyStatuses) return;
-      const existing = curWar.enemyStatuses[targetId] || {};
-
-      const nowSec = Date.now() / 1000;
-      const state_str = String(data.status?.state || "").toLowerCase();
-      const untilTs = data.status?.until ?? 0;
-      const untilRemaining = untilTs > 0 ? Math.max(0, untilTs - nowSec) : 0;
-
-      const updated = {
-        ...existing,
-        name: data.name ?? existing.name,
-        level: data.level ?? existing.level,
-        status: state_str === "okay" ? "okay" : state_str,
-        description: data.status?.description ?? "",
-        until: untilRemaining,
-        lastAction: data.last_action?.relative ?? existing.lastAction ?? "Unknown",
-        activity: String(data.last_action?.status || "offline").toLowerCase(),
-      };
-
-      // Detect transition into Attacking state.
-      //
-      // The push that used to fire here was removed 2026-08-28 — nobody used
-      // it, and at the 2.5s sweep it would fire twelve times more often than it
-      // did when it was written. `lastAttackAt` STAYS: target_called reads it,
-      // and it has to be server-stamped (a client-supplied value there would be
-      // the unfocused-scrape problem all over again).
-      const wasAttacking = existing.status === "attacking";
-      if (state_str === "attacking") {
-        updated.lastAttackAt = Math.floor(nowSec);
-        if (!wasAttacking) {
-          console.log(`[enemy-profile] ${targetId} (${updated.name || '?'}) is attacking`);
-        }
-      }
-
-      // Compared BEFORE the store is overwritten -- `existing` is the only copy
-      // of what the clients already hold, and the next line destroys it.
-      //
-      // The sweep used to broadcast every fetch, changed or not: 480 status
-      // objects a minute at the 2.5s cadence, nearly all identical to what the
-      // client already had. On a phone that keeps the radio awake continuously,
-      // which costs more power than handling them does. Now a tick where
-      // nothing moved sends nothing at all.
-      //
-      // Safe to suppress, because this is not the only path: a client gets the
-      // full war record on connect and the 15-30s war-status poll rebroadcasts
-      // every member regardless. This drops repeats, not state.
-      const worthSending = statusChanged(existing, updated);
-      curWar.enemyStatuses[targetId] = updated;
-      // Collected, NOT broadcast here. This runs once per enemy and the tick
-      // fetches 20 in parallel, so broadcasting from inside it sent 20 separate
-      // SSE frames per tick — 8 a second at the 2.5s cadence, each one a merge
-      // and a DOM update on every connected phone. One frame per tick instead:
-      // same data, same freshness, a twentieth of the wake-ups. The
-      // enemy-attacks poller above has always batched this way.
-      if (batch && worthSending) batch[targetId] = updated;
-    } catch (err) {
-      const msg = err.message || "";
-      // 5xx are transient Torn-side gateway outages, not per-enemy actionable —
-      // suppress the per-member spam (during a Torn 504 wave this poller logged
-      // ~one line per enemy per 30s = thousands). The war-level chain/war-status
-      // pollers still log 504s once per war, so outages stay visible.
-      if (!/Too many requests|HTTP 5\d\d/i.test(msg)) {
-        console.warn(`[enemy-profile] ${targetId}: ${msg}`);
-      }
-      // v5.0.3: per-enemy poller cycles through MANY pool keys per second,
-      // so a single bad key spams hundreds of these per minute. Quarantine
-      // on either code 7 (left faction) OR code 2 (regenerated/revoked).
-      const curWar = store.getWar(warId);
-      if (curWar && (/Incorrect ID-entity relation/i.test(msg) || /Incorrect key|\(code 2\)/i.test(msg))) {
-        const reason = /Incorrect ID-entity relation/i.test(msg) ? 'enemy-profile code 7' : 'enemy-profile code 2';
-        store.quarantinePoolKey(apiKey, curWar.factionId, reason);
-      }
-    }
-  }
-
-  const pollOne = async () => {
-    // The kill switch stays for next time: the sweep touches every enemy on a
-    // 30s rotation and each reply streams a status update, so on a big enemy
-    // faction it is a couple of list re-renders a second. That made it the
-    // first suspect when phones lagged; turning it off did not settle it, and
-    // it is back on.
-    if (!ENEMY_PROFILE_SWEEP) {
-      scheduleNext(600_000);
-      return;
-    }
-    const war = store.getWar(warId);
-    if (!war || !war.enemyStatuses || war.warEnded) {
-      scheduleNext(nextEnemyProfile(war));
-      return;
-    }
-    // Poll every enemy in rotation (2026-08-11: dropped the online/free
-    // pre-filter). At the 30s cadence the sweep no longer needs to be selective
-    // to stay under rate limits, and covering everyone avoids depending on
-    // possibly-stale online status to decide whose profile to refresh.
-    const ids = Object.keys(war.enemyStatuses).sort();
-    if (ids.length === 0) {
-      scheduleNext(nextEnemyProfile(war));
-      return;
-    }
-
-    // Concurrency scales linearly with pool size — one request per key
-    // per tick, so per-key rate stays at 60/tick_sec regardless of pool
-    // size. Bounded by enemy count (no point polling more users than
-    // exist) and a hard safety cap to keep Node from issuing an absurd
-    // burst if the pool grows huge. Cap of 20 leaves ~30% headroom
-    // under Torn's 100/min per-key limit so concurrent pollers
-    // (chain, war-status, attacks-feed, oc/spawn-key) can share the
-    // budget without tipping into 429 cascades.
-    // Request-rotation (cursor index) spreads the load evenly across keys.
-    const pool = store.getPooledKeysForFaction(war.factionId);
-    // Held at 20. Briefly raised to the pool size on 2026-09-03 and reverted
-    // the same hour: at a full 41-key pool it doubles per-key usage from ~13.5%
-    // to ~21% of Torn's 100/min limit, and the instruction was not to spend
-    // more of that limit.
-    //
-    // Known trade, recorded rather than argued: with this cap a SHRINKING pool
-    // concentrates load, because the same 20 requests per tick spread over
-    // fewer keys -- 41 keys is ~11/min each, 20 keys ~24/min. Uncapped it stays
-    // flat. So the cap is cheaper at full pool and worse as keys quarantine.
-    // Watch pctOfCap on the busiest key, not the average.
-    const concurrency = Math.max(
-      1,
-      Math.min(pool.length || 1, ids.length, ENEMY_PROFILE_CEILING),
-    );
-
-    const startCursor = (enemyProfileCursors.get(warId) || 0);
-    const batch = {};
-    const requests = [];
-    for (let i = 0; i < concurrency; i++) {
-      const c = startCursor + i;
-      const targetId = ids[c % ids.length];
-      const apiKey = store.getPollingKey(war.factionId, "enemy-profile", c);
-      if (!apiKey) continue;
-      requests.push(fetchAndApply(targetId, apiKey, batch));
-    }
-    enemyProfileCursors.set(warId, startCursor + concurrency);
-
-    try { await Promise.all(requests); } catch (_) { /* each handles its own */ }
-
-    // One frame for the whole tick.
-    if (Object.keys(batch).length > 0) {
-      io.to(`war_${warId}`).emit("status_update", batch);
-      broadcastSSE(warId, { enemyStatuses: batch });
-    }
-
-    scheduleNext(nextEnemyProfile(war));
-  };
-
-  pollOne();
-}

@@ -997,37 +997,6 @@ export function getPollInterval(factionId, purpose) {
     "war-status":    { min: 45_000, max: 45_000 },
     "attacks-feed":  { min: 15_000, max: 60_000 }, // our faction's attacks feed
     "enemy-attacks": { min: 10_000, max: 30_000 }, // (unused — Torn blocks other factions' attacks)
-    // Per-enemy profile round-robin. Flat 30s, min == max so a bigger key pool
-    // cannot speed it back up.
-    //
-    // Pinned 2026-08-11, unpinned to 2.5s on 2026-08-28, RE-PINNED the same day
-    // after the owner hit Torn's rate limit. The arithmetic said 480 calls/min
-    // against a 3,600/min pool ceiling — 13% — and that was wrong in practice:
-    // the pool's keys are not 36 independent 100/min budgets for this poller.
-    // Chain, war-status, attacks-feed, WarScanner and xanax-subs draw on the
-    // same keys, quarantined keys shrink the rotation, and Torn's limit is per
-    // KEY per minute rather than per faction, so the rotation concentrates far
-    // more than the average suggested.
-    //
-    // Do not unpin again on a headroom calculation alone. Measure real per-key
-    // call rates first (see /api/debug/key-usage-local) — the basic war-status
-    // roster poll already refreshes every enemy every ~30s in ONE call, and
-    // hospital timers tick down client-side between polls, so the sweep buys
-    // much less than its cost suggests.
-    // Per-enemy profile round-robin, back to a flat 30s 2026-09-04.
-    //
-    // 2.5s is SAFE -- three hours of it produced zero rate-limit errors from
-    // this poller and no key quarantined, at 467 calls/min across 41 keys with
-    // the busiest at 13.5% of its cap. That is measured, not assumed, and the
-    // August incident is not reproducible at this pool size.
-    //
-    // It is reverted because it did not fix what it was tried for. Phones still
-    // lagged at 2.5s even after the sweep was made change-only, so the message
-    // volume is not the cause -- look at the client render path or the SSE
-    // connection itself before spending this budget again.
-    //
-    // min == max so a bigger key pool cannot speed it back up.
-    "enemy-profile": { min: 30_000, max: 30_000 },
   };
   const c = config[purpose] || config["war-status"];
   // Divide the conservative max by pool size, floor at min.

@@ -4,7 +4,7 @@
 // keys that can't serve a given call — e.g. a Custom key with only
 // [timestamp, basic, lookup] is routed away from `chain` instead of failing
 // every poll with code 16 — while staying available for calls it CAN serve
-// (e.g. enemy-profile, which needs no faction selection).
+// (e.g. `attacks-feed`, which routes on the owning faction's own key).
 //
 // Non-destructive: it never disables a key, it only records what each can do.
 

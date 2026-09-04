@@ -17,23 +17,18 @@ function poolOf(n) {
   }
 }
 
-// The per-enemy profile sweep is pinned FLAT: min == max, so a bigger key pool
-// cannot speed it back up.
+// The per-enemy profile sweep was removed on 2026-09-04 and its config entry
+// with it, so an "enemy-profile" lookup now falls through to the default.
 //
-// It was unpinned to 2.5s on 2026-08-28 on the arithmetic that 480 calls/min
-// against a 3,600/min pool ceiling was 13% headroom, and re-pinned hours later
-// when the owner hit Torn's rate limit. Torn limits per KEY per minute, several
-// other pollers draw on the same keys, and quarantined keys shrink the
-// rotation — so the per-faction average badly understated the real load.
-//
-// This test exists to make an unpinning deliberate rather than incidental.
-test("enemy-profile stays flat however large the pool grows", () => {
+// That fallback is what this covers. getPollInterval never returns undefined
+// for an unknown purpose -- it lands on war-status's interval -- and a NaN
+// here would go straight into setTimeout and spin a poller at zero delay.
+test("an unknown purpose falls back to the war-status interval, never NaN", () => {
   poolOf(1);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000);
+  assert.equal(getPollInterval(FID, "enemy-profile"), 45_000);
   poolOf(36);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000, "a big pool must NOT speed it up");
-  poolOf(200);
-  assert.equal(getPollInterval(FID, "enemy-profile"), 30_000);
+  assert.equal(getPollInterval(FID, "no-such-poller"), 45_000, "a big pool must not speed the fallback up");
+  assert.equal(Number.isFinite(getPollInterval(FID, undefined)), true);
 });
 
 test("the other purposes keep their own floors", () => {
