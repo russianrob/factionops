@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.27
+// @version      5.2.28
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.27';
+    const SCRIPT_VERSION = '5.2.28';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -729,6 +729,23 @@ html.wb-theme-light {
 .fo-wp-call.fo-wp-call-drop:hover { background: #123028; }
 /* Stats range bar above Torn's enemy list. Same palette as the call button
    so the two additions read as one thing rather than two scripts. */
+/* Settings section headings. The panel had 48 controls, one title and two
+   <hr>s -- no way to navigate it except reading every row. */
+.wb-sgroup {
+    display: flex; align-items: center; gap: 8px;
+    margin: 18px 0 8px; font-size: 11px; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase;
+    color: var(--wb-accent, #e17055); opacity: .85;
+}
+.wb-sgroup:first-of-type { margin-top: 10px; }
+.wb-sgroup span { flex: 0 0 auto; }
+/* The rule runs to the right of the label, so the eye catches the break
+   without another element to lay out. */
+.wb-sgroup::after {
+    content: ''; flex: 1 1 auto; height: 1px;
+    background: currentColor; opacity: .28;
+}
+
 .fo-wp-filter {
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     margin: 4px 0 6px; padding: 5px 8px; box-sizing: border-box;
@@ -7418,9 +7435,7 @@ body.wb-chain-active {
                 ${escapeHtml(subLabel)}
             </div>
 
-            <label for="wb-input-server">Server URL</label>
-            <input type="text" id="wb-input-server" value="${escapeHtml(CONFIG.SERVER_URL)}" placeholder="http://localhost:3000">
-
+            <div class="wb-sgroup"><span>Connection</span></div>
             <label for="wb-input-apikey">Torn API Key</label>
             <div style="display:flex;gap:6px;margin-bottom:14px;">
                 <input type="password" id="wb-input-apikey" value="${escapeHtml(CONFIG.API_KEY)}" placeholder="Your Torn API key" style="margin-bottom:0;flex:1;" ${CONFIG.IS_PDA && CONFIG.API_KEY === PDA_API_KEY ? 'disabled' : ''}>
@@ -7436,6 +7451,7 @@ body.wb-chain-active {
                  anything when fetched with YOUR key. type="text", never
                  password: a password field makes password managers offer to
                  autofill and save an API key as a site credential. -->
+            <div class="wb-sgroup"><span>My keys</span></div>
             <label for="wb-input-my-ffs-key">My FFScouter Key <span style="font-weight:400;opacity:0.6;font-size:11px;">(optional, personal)</span></label>
             <!-- wrap + min-width: three controls don't fit one 360px phone row,
                  and a squeezed key input is unusable — let the buttons drop. -->
@@ -7461,26 +7477,7 @@ body.wb-chain-active {
                 Stored only in this browser; sent only to ffscouter.com.
             </div>
 
-            <div class="wb-settings-row">
-                <span>Theme</span>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="font-size:11px;opacity:0.6;">Dark</span>
-                    <label class="wb-toggle">
-                        <input type="checkbox" id="wb-toggle-theme" ${CONFIG.THEME === 'light' ? 'checked' : ''}>
-                        <span class="wb-toggle-slider"></span>
-                    </label>
-                    <span style="font-size:11px;opacity:0.6;">Light</span>
-                </div>
-            </div>
-
-            <div class="wb-settings-row">
-                <span>Auto-Sort Targets</span>
-                <label class="wb-toggle">
-                    <input type="checkbox" id="wb-toggle-autosort" ${CONFIG.AUTO_SORT ? 'checked' : ''}>
-                    <span class="wb-toggle-slider"></span>
-                </label>
-            </div>
-
+            <div class="wb-sgroup"><span>Alerts</span></div>
             <div class="wb-settings-row">
                 <span>Chain Break Alert</span>
                 <label class="wb-toggle">
@@ -7495,13 +7492,34 @@ body.wb-chain-active {
             </div>
 
             <div class="wb-settings-row">
-                <span>Stay Active</span>
+                <span>PDA Notifications</span>
                 <label class="wb-toggle">
-                    <input type="checkbox" id="wb-toggle-keep-alive" ${CONFIG.KEEP_ALIVE ? 'checked' : ''}>
+                    <input type="checkbox" id="wb-toggle-pda-notif" ${CONFIG.PDA_NOTIFICATIONS ? 'checked' : ''}>
                     <span class="wb-toggle-slider"></span>
                 </label>
             </div>
+            <div style="font-size:11px;opacity:0.6;margin-bottom:8px;">
+                Native push notifications for calls, chain alerts, bonus hits, and war targets.
+            </div>
+            <button class="wb-btn wb-btn-sm" id="fo-btn-test-pda-notif" style="margin-bottom:14px;font-size:11px;">Test PDA Notification</button>
+            <div id="fo-pda-notif-result" style="font-size:11px;margin-bottom:10px;min-height:14px;"></div>
 
+            <div class="wb-settings-row">
+                <span>Notify when enemies attack</span>
+                <label class="wb-toggle">
+                    <input type="checkbox" id="wb-toggle-enemy-attack-notif" ${CONFIG.ENEMY_ATTACK_NOTIF ? 'checked' : ''}>
+                    <span class="wb-toggle-slider"></span>
+                </label>
+            </div>
+            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
+                When off (default): in-overlay toast only when an enemy
+                is caught mid-attack. When on: also fires a native PDA
+                notification. Toasts are unaffected by this toggle.
+            </div>
+
+            <button class="wb-btn wb-btn-sm" id="fo-btn-test-toast" style="margin-bottom:14px;font-size:11px;">Test Toast Notification</button>
+
+            <div class="wb-sgroup"><span>Preferences</span></div>
             <div class="wb-settings-row">
                 <span>Share my BSP stats with faction</span>
                 <label class="wb-toggle">
@@ -7535,20 +7553,74 @@ body.wb-chain-active {
             </div>
 
             <div class="wb-settings-row">
-                <span>Long-poll transport (beta)</span>
+                <span>Theme</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:11px;opacity:0.6;">Dark</span>
+                    <label class="wb-toggle">
+                        <input type="checkbox" id="wb-toggle-theme" ${CONFIG.THEME === 'light' ? 'checked' : ''}>
+                        <span class="wb-toggle-slider"></span>
+                    </label>
+                    <span style="font-size:11px;opacity:0.6;">Light</span>
+                </div>
+            </div>
+
+            <div class="wb-settings-row">
+                <span>Stay Active</span>
                 <label class="wb-toggle">
-                    <input type="checkbox" id="wb-toggle-longpoll" ${CONFIG.USE_LONGPOLL ? 'checked' : ''}>
+                    <input type="checkbox" id="wb-toggle-keep-alive" ${CONFIG.KEEP_ALIVE ? 'checked' : ''}>
                     <span class="wb-toggle-slider"></span>
                 </label>
             </div>
-            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
-                Experimental. On phones this replaces the 1-second poll with a
-                held connection that only wakes on real changes — much lighter on
-                CPU/battery. Falls back automatically if unsupported; desktop uses
-                real-time and is unaffected. Takes effect within a few seconds.
+
+            ${isLeader() ? `
+            <div class="wb-sgroup"><span>Faction setup</span></div>
+            <label>Faction API Key</label>
+            <div style="font-size:11px;opacity:0.7;margin-bottom:8px;">
+                Provide a Limited API key for server-side war status updates. This lets the server poll Torn directly instead of relying on page data.
+            </div>
+            <div style="font-size:11px;margin-bottom:8px;">
+                <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener" style="color:#87ceeb;text-decoration:underline;">Create a Limited key on Torn</a>
+            </div>
+            <div id="wb-faction-key-status" style="font-size:11px;margin-bottom:8px;min-height:14px;"></div>
+            <div id="wb-faction-key-input-row" style="display:flex;gap:6px;margin-bottom:14px;">
+                <input type="text" id="wb-input-faction-key" placeholder="Paste faction API key" style="margin-bottom:0;flex:1;">
+                <button class="wb-btn wb-btn-sm" id="wb-btn-save-faction-key">Save Key</button>
+            </div>
+            <div id="wb-faction-key-saved-row" style="display:none;align-items:center;gap:8px;margin-bottom:14px;">
+                <span style="color:var(--wb-call-green);font-size:12px;">Key saved \u2713</span>
+                <button class="wb-btn wb-btn-sm wb-btn-danger" id="wb-btn-remove-faction-key">Remove</button>
             </div>
 
-            <div style="margin: 14px 0;">
+                <label for="wb-input-ffs-key">FFScouter API Key <span style="font-weight:400;opacity:0.6;font-size:11px;">(optional, admin-only)</span></label>
+                <div style="display:flex;gap:6px;">
+                    <!-- type=text, never password. A password field makes the
+                         browser's password manager offer to save and then
+                         autofill Torn API keys, which silently overwrites what
+                         the admin typed and stores a credential where nobody
+                         expects to find one. The key is never at rest in this
+                         field anyway: the saved value is shown only as a masked
+                         placeholder, and .value is cleared the moment it saves,
+                         so there is nothing here for type=password to conceal. -->
+                    <input type="text" id="wb-input-ffs-key" spellcheck="false" autocomplete="off"
+                           placeholder="Paste a Torn key registered at ffscouter.com" style="margin-bottom:0;flex:1;font-family:monospace;">
+                    <button class="wb-btn wb-btn-sm" id="wb-btn-save-ffs-key">Save</button>
+                </div>
+                <div id="fo-ffs-key-result" style="font-size:11px;opacity:0.6;margin-top:4px;min-height:14px;">
+                    Any Torn API key that's been registered at
+                    <a href="https://ffscouter.com" target="_blank" style="color:#60a5fa;">ffscouter.com</a>.
+                    Used server-side (never leaves the server) for:
+                    <ul style="margin:4px 0 4px 18px;padding:0;font-size:11px;">
+                      <li><b>Flight tracker</b> — live landing countdown on travel pills in the war overlay</li>
+                      <li><b>Abroad destinations</b> — shows country name ('UK', 'Mexico') on abroad pills</li>
+                      <li><b>OC delay attribution</b> (when OC Spawn Assistance is installed) — backdates blocker delays to real takeoff time</li>
+                    </ul>
+                    Shared with OC Spawn Assistance. Leave blank to keep the existing key, or enter a new one to replace.
+                </div>
+            </div>
+            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
+                Keeps your Torn activity fresh while the warboard is open, so enemies can't tell you're idle.
+            </div>
+
                 <label for="wb-input-broadcast-roles">Custom Admin Roles (comma-separated)</label>
                 <div style="display:flex;gap:6px;">
                     <input type="text" id="wb-input-broadcast-roles" placeholder="e.g. leader,co-leader,banker,warmaster" style="margin-bottom:0;flex:1;">
@@ -7566,6 +7638,7 @@ body.wb-chain-active {
                  the watcher on data clients are already pushing, so zero extra
                  Torn API cost. Defaults: disabled / +5 enemies / 60s / 10min. -->
             <div style="margin: 14px 0;">
+            <div class="wb-sgroup"><span>War</span></div>
                 <label>Enemy Online Surge Alert <span style="font-weight:400;opacity:0.6;font-size:11px;">(admin-only)</span></label>
                 <div style="font-size:11px;opacity:0.7;margin-bottom:8px;">
                     Push notification when N+ enemies come online inside a short window — coordinated-rally signal during war.
@@ -7600,64 +7673,7 @@ body.wb-chain-active {
                  so setting it here also enables OC delay attribution and
                  vice versa. -->
             <div style="margin: 14px 0;">
-                <label for="wb-input-ffs-key">FFScouter API Key <span style="font-weight:400;opacity:0.6;font-size:11px;">(optional, admin-only)</span></label>
-                <div style="display:flex;gap:6px;">
-                    <!-- type=text, never password. A password field makes the
-                         browser's password manager offer to save and then
-                         autofill Torn API keys, which silently overwrites what
-                         the admin typed and stores a credential where nobody
-                         expects to find one. The key is never at rest in this
-                         field anyway: the saved value is shown only as a masked
-                         placeholder, and .value is cleared the moment it saves,
-                         so there is nothing here for type=password to conceal. -->
-                    <input type="text" id="wb-input-ffs-key" spellcheck="false" autocomplete="off"
-                           placeholder="Paste a Torn key registered at ffscouter.com" style="margin-bottom:0;flex:1;font-family:monospace;">
-                    <button class="wb-btn wb-btn-sm" id="wb-btn-save-ffs-key">Save</button>
-                </div>
-                <div id="fo-ffs-key-result" style="font-size:11px;opacity:0.6;margin-top:4px;min-height:14px;">
-                    Any Torn API key that's been registered at
-                    <a href="https://ffscouter.com" target="_blank" style="color:#60a5fa;">ffscouter.com</a>.
-                    Used server-side (never leaves the server) for:
-                    <ul style="margin:4px 0 4px 18px;padding:0;font-size:11px;">
-                      <li><b>Flight tracker</b> — live landing countdown on travel pills in the war overlay</li>
-                      <li><b>Abroad destinations</b> — shows country name ('UK', 'Mexico') on abroad pills</li>
-                      <li><b>OC delay attribution</b> (when OC Spawn Assistance is installed) — backdates blocker delays to real takeoff time</li>
-                    </ul>
-                    Shared with OC Spawn Assistance. Leave blank to keep the existing key, or enter a new one to replace.
-                </div>
-            </div>
-            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
-                Keeps your Torn activity fresh while the warboard is open, so enemies can't tell you're idle.
-            </div>
-
-            <div class="wb-settings-row">
-                <span>PDA Notifications</span>
-                <label class="wb-toggle">
-                    <input type="checkbox" id="wb-toggle-pda-notif" ${CONFIG.PDA_NOTIFICATIONS ? 'checked' : ''}>
-                    <span class="wb-toggle-slider"></span>
-                </label>
-            </div>
-            <div style="font-size:11px;opacity:0.6;margin-bottom:8px;">
-                Native push notifications for calls, chain alerts, bonus hits, and war targets.
-            </div>
-            <button class="wb-btn wb-btn-sm" id="fo-btn-test-pda-notif" style="margin-bottom:14px;font-size:11px;">Test PDA Notification</button>
-            <div id="fo-pda-notif-result" style="font-size:11px;margin-bottom:10px;min-height:14px;"></div>
-
-            <div class="wb-settings-row">
-                <span>Notify when enemies attack</span>
-                <label class="wb-toggle">
-                    <input type="checkbox" id="wb-toggle-enemy-attack-notif" ${CONFIG.ENEMY_ATTACK_NOTIF ? 'checked' : ''}>
-                    <span class="wb-toggle-slider"></span>
-                </label>
-            </div>
-            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
-                When off (default): in-overlay toast only when an enemy
-                is caught mid-attack. When on: also fires a native PDA
-                notification. Toasts are unaffected by this toggle.
-            </div>
-
-            <button class="wb-btn wb-btn-sm" id="fo-btn-test-toast" style="margin-bottom:14px;font-size:11px;">Test Toast Notification</button>
-
+            ` : ''}
             <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:14px 0;">
 
             ${isLeader() ? `
@@ -7678,22 +7694,24 @@ body.wb-chain-active {
             </div>
             ` : '')}
 
-            <label>Faction API Key</label>
-            <div style="font-size:11px;opacity:0.7;margin-bottom:8px;">
-                Provide a Limited API key for server-side war status updates. This lets the server poll Torn directly instead of relying on page data.
+            <div class="wb-sgroup"><span>Advanced</span></div>
+            <div class="wb-settings-row">
+                <span>Long-poll transport (beta)</span>
+                <label class="wb-toggle">
+                    <input type="checkbox" id="wb-toggle-longpoll" ${CONFIG.USE_LONGPOLL ? 'checked' : ''}>
+                    <span class="wb-toggle-slider"></span>
+                </label>
             </div>
-            <div style="font-size:11px;margin-bottom:8px;">
-                <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener" style="color:#87ceeb;text-decoration:underline;">Create a Limited key on Torn</a>
+            <div style="font-size:11px;opacity:0.6;margin-bottom:14px;">
+                Experimental. On phones this replaces the 1-second poll with a
+                held connection that only wakes on real changes — much lighter on
+                CPU/battery. Falls back automatically if unsupported; desktop uses
+                real-time and is unaffected. Takes effect within a few seconds.
             </div>
-            <div id="wb-faction-key-status" style="font-size:11px;margin-bottom:8px;min-height:14px;"></div>
-            <div id="wb-faction-key-input-row" style="display:flex;gap:6px;margin-bottom:14px;">
-                <input type="text" id="wb-input-faction-key" placeholder="Paste faction API key" style="margin-bottom:0;flex:1;">
-                <button class="wb-btn wb-btn-sm" id="wb-btn-save-faction-key">Save Key</button>
-            </div>
-            <div id="wb-faction-key-saved-row" style="display:none;align-items:center;gap:8px;margin-bottom:14px;">
-                <span style="color:var(--wb-call-green);font-size:12px;">Key saved \u2713</span>
-                <button class="wb-btn wb-btn-sm wb-btn-danger" id="wb-btn-remove-faction-key">Remove</button>
-            </div>
+
+            <div style="margin: 14px 0;">
+            <label for="wb-input-server">Server URL</label>
+            <input type="text" id="wb-input-server" value="${escapeHtml(CONFIG.SERVER_URL)}" placeholder="http://localhost:3000">
 
             ${state.myPlayerId === '137558' ? `
             <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:14px 0;">
@@ -7774,10 +7792,6 @@ body.wb-chain-active {
             applyTheme();
         });
 
-        document.getElementById('wb-toggle-autosort').addEventListener('change', (e) => {
-            setConfig('AUTO_SORT', e.target.checked);
-            if (e.target.checked) debouncedSort();
-        });
 
         document.getElementById('wb-toggle-chain-alert').addEventListener('change', (e) => {
             setConfig('CHAIN_ALERT', e.target.checked);
