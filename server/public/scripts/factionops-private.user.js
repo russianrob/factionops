@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.38
+// @version      5.2.39
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.38';
+    const SCRIPT_VERSION = '5.2.39';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9916,6 +9916,7 @@ body.wb-chain-active {
             '<div class="fo-wp-psep">On this page</div>' +
             row('fo-wp-t-hosp', 'Hospital timers', CONFIG.WP_HOSP) +
             row('fo-wp-t-sort', 'Sort: available first', CONFIG.WP_SORT) +
+            row('fo-wp-t-chat', 'Post calls to chat', CONFIG.CALL_CHAT === '1') +
             '<div class="fo-wp-psep">Alerts</div>' +
             row('fo-wp-t-chain', 'Chain alert', CONFIG.CHAIN_ALERT) +
             row('fo-wp-t-pda', 'PDA notifications', CONFIG.PDA_NOTIFICATIONS) +
@@ -9946,6 +9947,15 @@ body.wb-chain-active {
         };
         bind('fo-wp-t-hosp',  'WP_HOSP',  markCalledRows);
         bind('fo-wp-t-sort',  'WP_SORT',  markCalledRows);
+        // NOT via bind(): CALL_CHAT is stored as the strings '1' and '0', never a
+        // boolean. PDA's GM storage hands values back as strings and !!"false"
+        // is truthy, so a boolean here would leave this permanently on for
+        // anyone who switched it off on a phone. Same reason the overlay's own
+        // handler writes it this way.
+        var chatEl = el.querySelector('#fo-wp-t-chat');
+        if (chatEl) chatEl.addEventListener('change', function () {
+            setConfig('CALL_CHAT', chatEl.checked ? '1' : '0');
+        });
         bind('fo-wp-t-chain', 'CHAIN_ALERT');
         bind('fo-wp-t-pda',   'PDA_NOTIFICATIONS');
 
