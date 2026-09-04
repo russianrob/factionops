@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.16
+// @version      5.2.17
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.16';
+    const SCRIPT_VERSION = '5.2.17';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9918,10 +9918,62 @@ body.wb-chain-active {
                     } catch (_) {}
                 }
             };
-            // touchend as well as click: on a phone a tap inside a React row
-            // can be swallowed before it becomes a click.
-            btn.addEventListener('click', onTap);
-            btn.addEventListener('touchend', onTap, { passive: false });
+            // touchend as well as click, because on a phone a tap inside a
+            // React row can be swallowed before it ever becomes a click.
+            //
+            // But touchend on its own knows nothing about whether the finger
+            // moved: scrolling the page with a finger that happened to land
+            // on this button still ends with a touchend here, and that was
+            // firing the call. So track where the touch started and only act
+            // if it stayed put -- a scroll cancels itself on the first move.
+            const TAP_SLOP_PX = 12;    // finger wander that still reads as a tap
+            const TAP_MAX_MS = 700;    // longer is a press or a drag, not a tap
+            let touchStart = null;
+            let lastTouchFire = -Infinity;
+
+            const strayed = function (pt, s) {
+                return Math.abs(pt.clientX - s.x) > TAP_SLOP_PX ||
+                       Math.abs(pt.clientY - s.y) > TAP_SLOP_PX;
+            };
+
+            btn.addEventListener('touchstart', function (e) {
+                // Two fingers is a pinch or a stray palm, never a call.
+                if (e.touches && e.touches.length > 1) { touchStart = null; return; }
+                const t = e.touches && e.touches[0];
+                touchStart = t ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
+            }, { passive: true });
+
+            btn.addEventListener('touchmove', function (e) {
+                if (!touchStart) return;
+                const t = e.touches && e.touches[0];
+                if (t && strayed(t, touchStart)) touchStart = null;   // it's a scroll
+            }, { passive: true });
+
+            btn.addEventListener('touchcancel', function () {
+                touchStart = null;
+            }, { passive: true });
+
+            btn.addEventListener('touchend', function (e) {
+                const s = touchStart;
+                touchStart = null;
+                if (!s) return;                                 // moved, or multi-touch
+                if (Date.now() - s.at > TAP_MAX_MS) return;     // a press, not a tap
+                const t = e.changedTouches && e.changedTouches[0];
+                if (t && strayed(t, s)) return;                 // ended somewhere else
+                lastTouchFire = Date.now();
+                onTap(e);
+            }, { passive: false });
+
+            btn.addEventListener('click', function (e) {
+                // The synthetic click that trails a touch we already acted on.
+                // Without this the button calls and instantly drops again.
+                if (Date.now() - lastTouchFire < 900) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    return;
+                }
+                onTap(e);
+            });
             cell.appendChild(btn);
         }
         if (btn.textContent !== label) btn.textContent = label;
