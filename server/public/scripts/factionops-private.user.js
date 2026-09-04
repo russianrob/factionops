@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.20
+// @version      5.2.21
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.20';
+    const SCRIPT_VERSION = '5.2.21';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -11100,7 +11100,6 @@ body.wb-chain-active {
                     <div class="fo-online-badge"><span class="fo-dot"></span><span id="fo-online-count">${state.ourFactionOnline ? state.ourFactionOnline.online : state.onlinePlayers.length} us</span> · <span id="fo-enemy-online-count">0 enemy</span></div>
                 </div>
             </div>
-            <div class="fo-next-up-bar" id="fo-next-up"></div>
             <div class="fo-turtle-bar" id="fo-turtle-bar"></div>
             ${isLeader() ? `
             <div class="fo-broadcast-entry-bar">
@@ -11116,72 +11115,13 @@ body.wb-chain-active {
                 <div class="fo-bars-list" id="fo-bars-list" style="display:none;"></div>
             </div>
             ` : ''}
-            <div class="fo-sort-bar" id="fo-sort-bar">
-                <span class="fo-sort-label">Stats:</span>
-                <!-- Personal FFScouter key, sat directly beside the Stats header
-                     rather than buried in Settings: this is the row people are
-                     already on when they want to know how hard a target is.
-                     Placed BEFORE the min/max inputs so it stays on the header
-                     line — the row already wraps (the hint span below uses
-                     flex-basis:100%), and anything appended after the two
-                     checkboxes would fall to a second line on a phone.
-                     The label doubles as the state readout, because otherwise a
-                     member has no way to tell whether the FF numbers on screen
-                     are computed for them or absent entirely. -->
-                <!-- Sizing (touch box, padding, letter-spacing) lives in the
-                     injected #fo-myffs-btn rule, NOT inline: an inline padding
-                     here would outrank the stylesheet and silently undo the
-                     28px thumb target. -->
-                <button class="fo-stats-filter-clear" id="fo-myffs-btn" style="margin-right:2px;"
-                        title="Your own FFScouter key — FF scores are relative to YOUR stats, so they only appear with your own key">🔑 <span id="fo-myffs-label">FF</span></button>
-                <input class="fo-stats-filter-input" id="fo-stats-filter-min" placeholder="min" title="Min stats — e.g. 10M, 1.5B, 100000">
-                <span style="color:#636e72;">–</span>
-                <input class="fo-stats-filter-input" id="fo-stats-filter-max" placeholder="max" title="Max stats — e.g. 50M, 2B, 1000000">
-                <button class="fo-stats-filter-clear" id="fo-stats-filter-clear" title="Clear filter">✕</button>
-                <span id="fo-myffs-row" style="display:none;flex-basis:100%;margin-top:5px;gap:5px;align-items:center;">
-                    <!-- type=text, never password: a password field triggers the
-                         browser's password manager and it starts offering to save
-                         and autofill Torn API keys. -->
-                    <!-- autocapitalize/autocorrect off: iOS soft keyboards
-                         (PDA and the warboard app) default to sentence case, so
-                         a hand-typed key gets its first character upper-cased.
-                         Keys are case-sensitive, so ffscouter silently rejects
-                         it and the only trace is a console line nobody reads on
-                         a phone. enterkeyhint=done + the keydown handler below
-                         mean the soft keyboard's Go key saves. -->
-                    <input type="text" id="fo-myffs-input" spellcheck="false" autocomplete="off"
-                           autocapitalize="off" autocorrect="off" enterkeyhint="done"
-                           placeholder="Torn key registered at ffscouter.com"
-                           style="flex:1;min-width:0;font-family:monospace;font-size:11px;padding:5px 6px;background:rgba(0,0,0,0.25);border:1px solid var(--wb-border,#2d3436);border-radius:4px;color:var(--wb-text);">
-                    <button class="fo-stats-filter-clear" id="fo-myffs-save">Save</button>
-                    <button class="fo-stats-filter-clear" id="fo-myffs-clear">Clear</button>
-                </span>
-                <label class="fo-sort-label" style="margin-left:8px;display:flex;align-items:center;gap:3px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:11px;color:var(--wb-text);">
-                    <input type="checkbox" id="fo-hide-online" style="margin:0;cursor:pointer;">
-                    Hide online
-                </label>
-                <label class="fo-sort-label" style="margin-left:6px;display:flex;align-items:center;gap:3px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:11px;color:var(--wb-text);" title="Hide players whose last action was 5+ min ago (Torn idle + offline)">
-                    <input type="checkbox" id="fo-hide-offline" style="margin:0;cursor:pointer;">
-                    Hide offline
-                </label>
-                <span class="fo-stats-filter-hint" id="fo-stats-filter-hint" style="flex-basis:100%;margin-left:0;"></span>
-            </div>
-            <div class="fo-col-headers">
-                <div class="fo-col-header">Target</div>
-                <div class="fo-col-header center">Lvl</div>
-                <div class="fo-col-header center">BSP</div>
-                <div class="fo-col-header">Status</div>
-                <div class="fo-col-header center">On</div>
-                <div class="fo-col-header">Call</div>
-                <div class="fo-col-header right">Action</div>
-            </div>
-            <ul class="fo-target-list" id="fo-target-list"></ul>
+            <!-- Targets moved to Torn's own war page (2026-09-04). The sort bar,
+                 column headers and target list lived here; the personal FFScouter
+                 key sat in the sort bar because FF only ever showed on a target
+                 row. renderOverlay() looks for #fo-target-list and returns early
+                 when it is absent, which is what makes this a clean cut. -->
             <div class="fo-footer">
                 <div class="fo-footer-stats">
-                    <span class="fo-footer-stat">Targets: <span class="fo-val" id="fo-stat-targets">0</span></span>
-                    <span class="fo-footer-stat">Available: <span class="fo-val" id="fo-stat-available">0</span></span>
-                    <span class="fo-footer-stat">Called: <span class="fo-val" id="fo-stat-called">0</span></span>
-                    <span class="fo-footer-stat">Hosp: <span class="fo-val" id="fo-stat-hosp">0</span></span>
                 </div>
                 <span class="fo-footer-version">v${CONFIG.VERSION || '3.0.0'} private</span>
             </div>
