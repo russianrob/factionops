@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.18
+// @version      5.2.19
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.18';
+    const SCRIPT_VERSION = '5.2.19';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -6443,7 +6443,12 @@ body.wb-chain-active {
             try { if (sseAbort && typeof sseAbort.abort === 'function') sseAbort.abort(); } catch (e) {}
             cleanupSSE();      // clears sseConnected, which is what lets polling restart
             scheduleSSERetry();
-        }, 5000);
+        // 30s, not 5s (2026-09-04). The threshold above is still 20s of
+        // silence, so a dead stream is caught within 20-50s rather than
+        // 20-25s -- the owner traded that window for six times fewer
+        // wakeups. This is the ONE timer here that is not overlay dressing:
+        // it is what reconnects the stream the war-page call markers read.
+        }, 30000);
     }
 
     function stopSSEStaleWatch() {
@@ -9092,7 +9097,9 @@ body.wb-chain-active {
         // the server independently polls the chain every ~10s. v5.1.65: 2s ->
         // 10s; a 2-second re-parse of Torn's chain bar bought nothing that the
         // observer had not already caught a moment earlier.
-        chainDOMReadInterval = setInterval(parseChainFromDOM, 10000);
+        // The 10s re-parse was removed 2026-09-04. Its own note called it a
+        // backup only -- the MutationObserver above is the real detector and
+        // the server polls chain independently, so nothing lost a source.
 
         log('Chain DOM observer started (zero API calls)');
         return true;
@@ -9425,11 +9432,9 @@ body.wb-chain-active {
         // arrival time), so a 1s tick gives an exact, smooth count.
         // Cheap: when target IDs haven't changed it's just N timer-text
         // updates (top 5), no DOM rebuild.
-        if (!window.__foNextUpTickInterval) {
-            window.__foNextUpTickInterval = setInterval(() => {
-                if (typeof updateNextUp === 'function') updateNextUp();
-            }, 1000);
-        }
+        // The 1s next-up tick was removed 2026-09-04. updateNextUp still runs
+        // whenever call or status data arrives, so the list stays correct --
+        // its countdowns just step on data rather than sweeping every second.
     }
 
     function updateEnemyAttackingBadges() {
@@ -11516,15 +11521,15 @@ body.wb-chain-active {
 
         if (typeof updateWarTimer === 'function') {
             updateWarTimer();
-            setInterval(updateWarTimer, 30000);
-            setInterval(updateWarTimerDisplay, 1000);
+            // Self-ticking removed 2026-09-04 (was 30s + 1s). Both still run
+            // on data arrival; the chip steps instead of sweeping.
         }
 
         // Every 90s: often enough to catch somebody being farmed, rare enough
         // that it costs nothing. Reads a server cache, not Torn's API.
         if (typeof refreshTurtleBar === 'function') {
             refreshTurtleBar();
-            setInterval(refreshTurtleBar, 90000);
+            // 90s refresh removed 2026-09-04 -- populates once on open.
         }
 
         // Wire up broadcast button in overlay (leader/banker only)
