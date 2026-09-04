@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.2
+// @version      5.2.3
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.2';
+    const SCRIPT_VERSION = '5.2.3';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9603,6 +9603,13 @@ body.wb-chain-active {
      * Torn frequently changes its HTML, so we try several patterns.
      */
     const MEMBER_LIST_SELECTORS = [
+        // Torn's CURRENT ranked-war list, first because the rest of this list
+        // does not match it: the rows are `ul.f-war-list.members-list >
+        // li.warListItem___<hash>` with NO .table-body wrapper, so every
+        // selector below that expects one silently finds nothing.
+        'ul.f-war-list > li[class*="warListItem"]',
+        '[class*="members-list" i] > li[class*="warListItem"]',
+        'li[class*="warListItem"]',
         '.members-list .table-body > li',
         '.faction-war .members-list li',
         '.ranked-war-list li',
@@ -9615,6 +9622,7 @@ body.wb-chain-active {
     ];
 
     const MEMBER_CONTAINER_SELECTORS = [
+        'ul.f-war-list',
         '.members-list',
         '.faction-war',
         '.ranked-war-list',
@@ -9714,9 +9722,18 @@ body.wb-chain-active {
      * that somebody who never presses "Activate FactionOps" can still see that
      * a target is taken.
      */
+    let _markDiagShown = false;
     function markCalledRows() {
         let rows;
         try { rows = findMemberRows(); } catch (_) { return; }
+        if (!_markDiagShown) {
+            _markDiagShown = true;
+            const ids = [];
+            for (const r of rows || []) { try { const t = getPlayerIdFromRow(r); if (t) ids.push(t); } catch (_) {} }
+            log('[calls] rows=' + (rows ? rows.length : 0) + ' withId=' + ids.length +
+                ' calls=' + Object.keys(state.calls || {}).length +
+                ' jwt=' + (state.jwtToken ? 'yes' : 'no'));
+        }
         for (const row of rows || []) {
             let targetId;
             try { targetId = getPlayerIdFromRow(row); } catch (_) { continue; }
