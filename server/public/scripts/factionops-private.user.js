@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.24
+// @version      5.2.25
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.24';
+    const SCRIPT_VERSION = '5.2.25';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -755,6 +755,26 @@ html.wb-theme-light {
 }
 .fo-wp-filter-clear:hover { background: #241a15; }
 /* Only speaks up when the filter is actually removing somebody. */
+.fo-wp-filter-chk {
+    display: flex; align-items: center; gap: 4px; cursor: pointer;
+    text-transform: none; letter-spacing: 0; font-weight: 600; color: #ffd9c9;
+}
+.fo-wp-filter-chk input { margin: 0; cursor: pointer; }
+/* The estimate, in the member cell. tabular-nums so the column of numbers
+   lines up as the eye runs down the list. */
+.fo-wp-stat {
+    display: inline-block; margin-left: 6px; padding: 1px 5px;
+    border-radius: 3px; border: 1px solid rgba(255,255,255,.14);
+    background: rgba(0,0,0,.35);
+    font-size: 10px; font-weight: 700; line-height: 1.4;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+    vertical-align: middle;
+}
+/* Same tiers the overlay's BSP cell used: S 3B+, A 1-3B, B 500M-1B, C under. */
+.fo-wp-stat[data-tier="s"] { color: #ff7675; border-color: rgba(255,118,117,.45); }
+.fo-wp-stat[data-tier="a"] { color: #ffd166; border-color: rgba(255,209,102,.45); }
+.fo-wp-stat[data-tier="b"] { color: #55efc4; border-color: rgba(85,239,196,.45); }
+.fo-wp-stat[data-tier="c"] { color: #b2bec3; }
 .fo-wp-filter-count { margin-left: auto; font-weight: 700; color: #8a6a5e; }
 .fo-wp-filter-count.is-on { color: #ffd166; }
 .fo-wp-call.fo-wp-call-taken {
@@ -9468,6 +9488,9 @@ body.wb-chain-active {
             '<input class="fo-wp-filter-in" id="fo-wp-max" placeholder="max" ' +
                    'spellcheck="false" autocomplete="off" autocapitalize="off" inputmode="text">' +
             '<button type="button" class="fo-wp-filter-clear" id="fo-wp-clear" title="Clear">\u2715</button>' +
+            '<label class="fo-wp-filter-chk"><input type="checkbox" id="fo-wp-hide-online">Hide online</label>' +
+            '<label class="fo-wp-filter-chk" title="Last action 5+ min ago -- Torn\'s idle and offline both">' +
+                '<input type="checkbox" id="fo-wp-hide-offline">Hide offline</label>' +
             '<span class="fo-wp-filter-count" id="fo-wp-count"></span>';
         list.parentElement.insertBefore(bar, list);
 
@@ -9493,8 +9516,53 @@ body.wb-chain-active {
         bar.querySelector('#fo-wp-clear').addEventListener('click', function () {
             minEl.value = ''; maxEl.value = ''; apply();
         });
+        const onEl = bar.querySelector('#fo-wp-hide-online');
+        const offEl = bar.querySelector('#fo-wp-hide-offline');
+        onEl.checked = _hideOnline;
+        offEl.checked = _hideOffline;
+        onEl.addEventListener('change', function () {
+            _hideOnline = onEl.checked;
+            try { GM_setValue('factionops_hide_online', _hideOnline); } catch (_) {}
+            try { markCalledRows(); } catch (_) {}
+        });
+        offEl.addEventListener('change', function () {
+            _hideOffline = offEl.checked;
+            try { GM_setValue('factionops_hide_offline', _hideOffline); } catch (_) {}
+            try { markCalledRows(); } catch (_) {}
+        });
+
         // Torn's list is clickable underneath; typing must not reach it.
         bar.addEventListener('click', function (e) { e.stopPropagation(); });
+    }
+
+    /**
+     * The stat estimate, as a chip in the member cell.
+     *
+     * The points cell is taken by the Call control and the attack cell is a
+     * link that must stay clickable, so this goes in the member cell -- the
+     * widest one, and where a person already looks to size a target up.
+     *
+     * Costs nothing: fetchBspPrediction is a synchronous read of Battle Stats
+     * Predictor's own localStorage, and the FFScouter half is already being
+     * fetched by applyServerData.
+     */
+    function ensureStatChip(row, targetId) {
+        const cell = row.querySelector('[class*="member"]');
+        if (!cell) return;
+        let n = null;
+        try { n = getTargetStatsEstimate(targetId); } catch (_) {}
+        let chip = cell.querySelector('.fo-wp-stat');
+        if (n == null) { if (chip) chip.remove(); return; }
+        if (!chip) {
+            chip = document.createElement('span');
+            chip.className = 'fo-wp-stat';
+            cell.appendChild(chip);
+        }
+        const txt = formatBspNumber(n);
+        if (chip.textContent !== txt) chip.textContent = txt;
+        const tier = bspTier(n);
+        if (chip.dataset.tier !== tier) chip.dataset.tier = tier;
+        chip.title = 'Estimated total battle stats';
     }
 
     function markCalledRows() {
@@ -9512,9 +9580,10 @@ body.wb-chain-active {
             // remove somebody from the war.
             total++;
             let show = true;
-            try { show = passesStatsFilter(targetId); } catch (_) {}
+            try { show = passesStatsFilter(targetId) && passesActivityFilter(targetId); } catch (_) {}
             row.style.display = show ? '' : 'none';
             if (!show) { hidden++; continue; }   // no point dressing a hidden row
+            try { ensureStatChip(row, targetId); } catch (_) {}
             const call = (state.calls || {})[targetId];
             try { ensureCallButton(row, targetId, call); } catch (_) {}
             if (!call) {
@@ -11174,6 +11243,23 @@ body.wb-chain-active {
         _hideOffline = !!GM_getValue('factionops_hide_offline', false);
     } catch (_) {}
 
+
+    // Online / idle / offline, from the server's enemyStatuses -- the same
+    // field the overlay filtered on. Torn's own row has an online icon, but
+    // reading state is steadier: the icon is React's to repaint.
+    //
+    // 'Offline' follows the overlay's meaning: last action 5+ min ago, which
+    // is Torn's idle AND offline both. Unknown activity SHOWS, for the same
+    // reason unknown stats do -- a hidden row is a target nobody attacks.
+    function passesActivityFilter(targetId) {
+        if (!_hideOnline && !_hideOffline) return true;
+        const st = (state.statuses || {})[targetId];
+        const act = st && st.activity ? String(st.activity).toLowerCase() : null;
+        if (!act) return true;
+        if (_hideOnline && act === 'online') return false;
+        if (_hideOffline && act !== 'online') return false;
+        return true;
+    }
 
     // Parses what a person types into the range boxes: "10m", "1.5B",
     // "750,000". Restored in 5.2.24 -- it went with the overlay's sort bar in
