@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.22
+// @version      5.2.23
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.22';
+    const SCRIPT_VERSION = '5.2.23';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -3176,114 +3176,6 @@ body.wb-chain-active {
      *  N concurrent renderOverlay calls from each kicking off the same
      *  Promise.all when FFS data is still landing. */
     let _ffsRefreshInFlight = false;
-    /** Sort the supplied target objects {targetId, ...} in place by the
-     *  current _sortMode. For 'smart', preserves caller-supplied order
-     *  (caller has already applied sortPriority/sortTimerValue). */
-    function applyManualSort(items) {
-        if (_sortMode === 'smart') return items;
-        const getLevel = (it) => {
-            const s = state.statuses[it.targetId];
-            return (s && Number(s.level)) || 0;
-        };
-
-        // Level sorts don't need stats sources — handle and return.
-        if (_sortMode === 'level-asc' || _sortMode === 'level-desc') {
-            items.sort((a,b) => _sortMode === 'level-asc'
-                ? getLevel(a) - getLevel(b)
-                : getLevel(b) - getLevel(a));
-            return items;
-        }
-
-        // v5.0.79: three stats sources in order of precision:
-        //   1. BSP TBS (exact, from user's own profile visits)
-        //   2. FFS bs_estimate (exact, from FFS userscript IndexedDB)
-        //   3. ffCache[id].bsHuman parsed midpoint (range like "10M-50M"
-        //      → 30M, less precise but factionops already fetches it
-        //      via ffscouter.com API for every war target so it's
-        //      almost always available)
-        const parseBsHuman = (s) => {
-            // Examples: "10M-50M", "1.2B", "500K", "10M", "1.5B-3B"
-            if (!s || typeof s !== 'string') return null;
-            const unit = (u) => u === 'B' ? 1e9 : u === 'M' ? 1e6 : u === 'K' ? 1e3 : 1;
-            const parts = s.split('-').map(p => p.trim());
-            const toNum = (p) => {
-                const m = p.match(/^([\d.]+)\s*([KMB])?$/i);
-                if (!m) return null;
-                const n = parseFloat(m[1]);
-                if (!Number.isFinite(n)) return null;
-                return n * unit((m[2] || '').toUpperCase());
-            };
-            const a = toNum(parts[0]);
-            if (a === null) return null;
-            const b = parts[1] ? toNum(parts[1]) : null;
-            return b !== null ? (a + b) / 2 : a;
-        };
-        const getBspFfs = (it) => {
-            try {
-                const bsp = fetchBspPrediction(it.targetId);
-                if (bsp && bsp.TBS != null) {
-                    const n = Number(bsp.TBS);
-                    if (Number.isFinite(n)) return n;
-                }
-            } catch (_) {}
-            const ffs = _ffsStatsCache.get(String(it.targetId));
-            if (typeof ffs === 'number') return ffs;
-            // Tertiary: parse ffCache's human-readable string.
-            const c = (typeof ffCache !== 'undefined') ? ffCache[it.targetId] : null;
-            const parsed = c ? parseBsHuman(c.bsHuman) : null;
-            return parsed !== null ? parsed : null;
-        };
-        // One key snapshot for the whole sort. The comparator runs O(n log n)
-        // times and activeFfsKey() is a synchronous storage read each call —
-        // on PDA that is a bridge hop, so resolving it per comparison would put
-        // hundreds of them inside a sort.
-        let ffSortKey = null;
-        try { ffSortKey = activeFfsKey(); } catch (_) {}
-        const getFfRating = (it) => {
-            // Attacker-relative, so it must go through the active-key check:
-            // a score cached under a previous key would silently reorder the
-            // target list against a different attacker's stats — the same
-            // wrong-person harm as a mis-shown chip, just harder to notice.
-            try { return ffValueFor(it.targetId, ffSortKey); } catch (_) { return null; }
-        };
-
-        const statsMap = new Map();
-        let withStats = 0;
-        for (const it of items) {
-            const v = getBspFfs(it);
-            if (v !== null) { withStats++; statsMap.set(it.targetId, v); }
-        }
-
-        let valueFn;
-        if (withStats > 0) {
-            // Mix: items with BSP/FFS use that value; items without
-            // get -1 so they sink to the bottom of the sort.
-            valueFn = (it) => statsMap.has(it.targetId)
-                ? statsMap.get(it.targetId) : -1;
-        } else {
-            // Nobody in the current target set has BSP/FFS — fall back
-            // to FF rating (factionops's own data, populated by every
-            // overlay render). At least produces a meaningful order.
-            valueFn = (it) => {
-                const v = getFfRating(it);
-                return v !== null ? v : -1;
-            };
-        }
-        // v5.0.85: removed diagnostic console.log lines that fired
-        // every render under stats sort. On PDA each console.log is
-        // measurably expensive — keeping them after the bug was
-        // diagnosed adds lag for no benefit.
-
-        const cmpAsc = (a, b) => {
-            const av = valueFn(a), bv = valueFn(b);
-            if (av === -1 && bv === -1) return 0;
-            if (av === -1) return 1;
-            if (bv === -1) return -1;
-            return av - bv;
-        };
-        items.sort(_sortMode === 'stats-asc' ? cmpAsc : (a, b) => -cmpAsc(a, b));
-        return items;
-    }
 
     /** Centralised reactive state for the entire extension. */
     const state = {
@@ -4687,17 +4579,6 @@ body.wb-chain-active {
         return c.value;
     }
 
-    /**
-     * FF score to DISPLAY. The chip is specifically the payoff for setting your
-     * own FFScouter key. We deliberately don't show one for the Torn-key
-     * fallback: that path only fires on a server miss, so the chip would
-     * appear and vanish with server health rather than with anything the
-     * member did.
-     */
-    function ffChipValue(targetId, snapshot) {
-        const active = snapshot || activeFfsKey();
-        return active.personal ? ffValueFor(targetId, active) : null;
-    }
 
     /**
      * FFScouter's own wording, ported from ffs-banner-estimates'
@@ -4739,7 +4620,6 @@ body.wb-chain-active {
         ffPersonalKeyRejected = false;
         try { repaintMyFfsUi(); } catch (_) {}
         for (const k of Object.keys(ffCache)) delete ffCache[k];
-        try { updateAllFfBadges(); } catch (_) {}
         try { fetchFairFightBatch(); } catch (_) {}
     }
 
@@ -4835,7 +4715,6 @@ body.wb-chain-active {
                 }
             }
             log('FF: direct call unusable — degraded to shared server estimates for', okCount, 'of', batch.length, 'targets');
-            try { updateAllFfBadges(); } catch (_) {}
         }).catch(() => {});
     }
 
@@ -4904,7 +4783,6 @@ body.wb-chain-active {
                 }
                 log('FF: server returned', Object.keys(serverEstimates).length, 'estimates');
                 ffFetchInFlight = false;
-                updateAllFfBadges();
                 return;
             }
         } catch (e) {
@@ -5030,7 +4908,6 @@ body.wb-chain-active {
                     // a DOM exception in here is not a bad response, and letting
                     // it reach the catch below would degrade a batch that had
                     // just been written correctly.
-                    try { updateAllFfBadges(); } catch (_) {}
                 } catch (e) {
                     log('FF: parse error', e);
                     failed('parse error');
@@ -5062,108 +4939,7 @@ body.wb-chain-active {
         return `rgb(${r},${g},${b})`;
     }
 
-    /**
-     * Render an inline FF badge element.
-     * `snapshot` is an optional pre-resolved activeFfsKey() shared across a
-     * whole repaint pass — see updateAllFfBadges. Omitted, it resolves itself.
-     */
-    function renderInlineFf(el, targetId, snapshot) {
-        // Priority: BSP (local cache or faction-shared pool — EXACT stats
-        // from profile visits) → server-cached FFS estimate → direct-
-        // ffscouter estimate (already in ffCache).
-        // The stats number is shown to everyone; the FF chip beside it appears
-        // only for a member who set their own FFScouter key, because only then
-        // is the score computed against their own battle stats.
-        const ffVal = ffChipValue(targetId, snapshot);
-        let statsNum = null;
-        let source = '';
 
-        const bsp = fetchBspPrediction(targetId);
-        if (bsp && bsp.TBS != null) {
-            const n = Number(bsp.TBS);
-            if (Number.isFinite(n) && n > 0) {
-                statsNum = n;
-                source = (bsp._source === 'shared') ? 'BSP-shared' : 'BSP';
-            }
-        }
-        if (statsNum == null) {
-            const cached = ffCache[targetId];
-            if (cached && cached.stats != null) {
-                const n = Number(cached.stats);
-                if (Number.isFinite(n) && n > 0) {
-                    statsNum = n;
-                    source = 'FFS';
-                }
-            }
-        }
-
-        if (statsNum == null && ffVal == null) {
-            if (el.dataset.foCache === 'empty') return;
-            el.dataset.foCache = 'empty';
-            el.textContent = '';
-            el.className = 'fo-ff-inline';
-            el.style.color = '';
-            el.style.background = '';
-            el.title = '';
-            return;
-        }
-        const tier = statsNum != null ? bspTier(statsNum) : 'unknown';
-        const human = statsNum != null ? formatBspNumber(statsNum) : '';
-        const ffTxt = ffVal != null ? ffVal.toFixed(2) : '';
-        // The FF value is part of the repaint key: clearing the personal key
-        // takes the chip away, and without it in the key that repaint would be
-        // skipped by the early-out below and a dead chip would stay on screen.
-        // This badge renders the FF chip ONLY — never a stats number.
-        //
-        // The sibling .fo-bsp-inline badge already owns the stat for BOTH
-        // sources: it prints the BSP TBS when a prediction exists, and falls
-        // back to the ffCache entry's bsHuman when it does not. Printing the
-        // number here too put it on the row twice — visible before the chip
-        // existed as a bare repeat of the same figure, and unmistakable once
-        // the chip landed beside it ("[153301] 716m" then "716.1M 2.81", two
-        // formatters disagreeing about the same value).
-        //
-        // `statsNum` is still computed above, because whether a stat is known
-        // at all decides the tooltip and, together with `ffVal`, whether this
-        // badge should render anything.
-        const key = `ff${ffTxt}_${source}`;
-        if (el.dataset.foCache === key) return;
-        el.dataset.foCache = key;
-        el.className = 'fo-ff-inline';
-        el.style.color = '';
-        el.style.background = '';
-        // Clears any previous chip child as well as any stale text.
-        el.textContent = '';
-        if (ffVal == null) { el.title = ''; return; }
-        const chip = document.createElement('span');
-        chip.className = 'fo-ff-score';
-        chip.textContent = ffTxt;
-        // Same blue→green→red ramp FFScouter uses on its own banners, so the
-        // colour carries the meaning members already read it as.
-        chip.style.background = ffColor(ffVal);
-        // Nothing precedes the chip in this badge any more, so the separating
-        // margin would render as a dead indent against the BSP badge.
-        chip.style.marginLeft = '0';
-        el.appendChild(chip);
-        el.title = `FF ${ffTxt} — ${ffDifficultyText(ffVal)} (scored with your own key)`
-            + (statsNum != null ? ` · stats ${human} (${source})` : '');
-    }
-
-    /** Update all rendered FF badges from cache. */
-    function updateAllFfBadges() {
-        const badges = document.querySelectorAll('[id^="fo-ff-inline-"]');
-        // Resolve the active key ONCE for the pass. This runs on every FF fetch
-        // and every render, so on a 100-target war the per-badge version cost
-        // ~200 synchronous storage reads a pass where 5.1.73 cost zero.
-        // Deliberately not memoised across passes: a key cleared in another tab
-        // must still make the chips disappear on the very next repaint.
-        let snapshot = null;
-        try { snapshot = activeFfsKey(); } catch (_) {}
-        badges.forEach((el) => {
-            const tid = el.id.replace('fo-ff-inline-', '');
-            renderInlineFf(el, tid, snapshot);
-        });
-    }
 
     /**
      * Estimated one-way travel times in minutes (standard / airstrip).
@@ -5365,7 +5141,6 @@ body.wb-chain-active {
                     // static 'Travel' text with no fo-timer-<uid>
                     // element — so the tick loop has nothing to update.
                     for (const uid of touched) {
-                        try { updateTargetRow(uid); } catch (_) {}
                     }
                     // v4.9.93: re-sort so traveling members with tighter
                     // landing times float to the top of the travel
@@ -6071,7 +5846,6 @@ body.wb-chain-active {
         updateStrategyBar();
 
         // Refresh UI rows
-        refreshAllRows();
 
         // Trigger FF fetch if we have new targets without cached FF data
         fetchFairFightBatch();
@@ -7065,7 +6839,6 @@ body.wb-chain-active {
             calledAt: Date.now(),
             isDeal: !!isDeal,
         };
-        updateTargetRow(tid);
         // The native war row is not one of updateTargetRow's concerns, so mark
         // it here too -- otherwise pressing Call changes nothing on Torn's own
         // list until the next poll echoes the call back.
@@ -7102,7 +6875,6 @@ body.wb-chain-active {
             .catch(e => {
                 warn('Call failed:', e.message);
                 delete state.calls[tid];
-                updateTargetRow(tid);
                 try { markCalledRows(); } catch (_) {}
                 showToast(e.message || 'Call failed', 'error');
             });
@@ -7126,7 +6898,6 @@ body.wb-chain-active {
         const tid = String(targetId);
         const prev = state.calls[tid];
         delete state.calls[tid];
-        updateTargetRow(tid);
         // The native war row is not one of updateTargetRow's concerns, so mark
         // it here too -- otherwise pressing Call changes nothing on Torn's own
         // list until the next poll echoes the call back.
@@ -7136,7 +6907,6 @@ body.wb-chain-active {
             .catch(e => {
                 warn('Uncall failed:', e.message);
                 if (prev) state.calls[tid] = prev;
-                updateTargetRow(tid);
                 try { markCalledRows(); } catch (_) {}
                 showToast(e.message || 'Uncall failed', 'error');
             });
@@ -9181,8 +8951,6 @@ body.wb-chain-active {
             nextUpAccum += dt;
             if (nextUpAccum >= 1) {
                 nextUpAccum = 0;
-                updateNextUp();
-                updateEnemyAttackingBadges();
                 // v4.9.81: tick live travel countdowns — landingAt is
                 // absolute, so each pass computes remaining exactly.
                 for (const targetId of Object.keys(state.statuses)) {
@@ -9437,178 +9205,8 @@ body.wb-chain-active {
         // its countdowns just step on data rather than sweeping every second.
     }
 
-    function updateEnemyAttackingBadges() {
-        const nowSec = Date.now() / 1000;
-        const WINDOW = 60;
-        // One querySelectorAll for the whole overlay instead of one PER target
-        // (was N qSA/sec on a full enemy faction). Bucket the tagged rows by id,
-        // rebuilt each call so it survives overlay re-renders. Behaviour is
-        // identical — every target's rows still get the same is-attacking toggle.
-        const rowsById = {};
-        document.querySelectorAll('[data-fo-id], [data-wb-target-id]').forEach((row) => {
-            const id = row.getAttribute('data-fo-id') || row.getAttribute('data-wb-target-id');
-            if (id) (rowsById[id] || (rowsById[id] = [])).push(row);
-        });
-        for (const targetId of Object.keys(state.statuses)) {
-            // This loop runs off the rAF tick, which can fire before the
-            // first purge in _refreshAllRowsImpl has run this second — and it
-            // does more than paint a class: it raises a toast AND a PDA
-            // notification carrying an attack link. A freshly leaked own
-            // member must not be able to trigger "<name> is attacking".
-            if (!isRenderableEnemyId(targetId)) continue;
-            const s = state.statuses[targetId];
-            const active = !!(s.lastAttackAt && (nowSec - s.lastAttackAt) < WINDOW);
-            const rows = rowsById[targetId];
-            if (rows) rows.forEach((row) => row.classList.toggle('is-attacking', active));
 
-            // Transition detection: was not attacking, now is. Toast
-            // for ANY enemy (not just ones you called) with a per-enemy
-            // 2-minute cooldown so a chain-attacker doesn't spam the
-            // overlay. The in-page toast + PDA notification fire per
-            // browser tab, so each FactionOps user sees it locally.
-            const wasActive = !!_lastAttackingState[targetId];
-            _lastAttackingState[targetId] = active;
-            if (active && !wasActive) {
-                const lastToast = _lastAttackToastAt[targetId] || 0;
-                if (nowSec - lastToast >= ATTACK_TOAST_COOLDOWN) {
-                    _lastAttackToastAt[targetId] = nowSec;
-                    const targetName = (s.name && s.name.trim()) || `Player #${targetId}`;
-                    showToast(`\u26A0\uFE0F ${targetName} is attacking`, 'warning');
-                    if (CONFIG.ENEMY_ATTACK_NOTIF && typeof firePdaNotification === 'function') {
-                        firePdaNotification('target_called',
-                            '\u26A0\uFE0F Enemy is attacking',
-                            `${targetName} is mid-swing`,
-                            `https://www.torn.com/page.php?sid=attack&user2ID=${targetId}`);
-                    }
-                }
-            }
-        }
-    }
 
-    /**
-     * Update the "Next Up" queue in the chain bar.
-     * Shows the top 3 hospital targets closest to being released.
-     * Excludes called targets (they're already claimed).
-     */
-    function updateNextUp() {
-        // Update both chain-bar version and overlay version
-        const wbContainer = document.getElementById('wb-next-up');
-        const foContainer = document.getElementById('fo-next-up');
-        if (wbContainer) updateNextUpContainer(wbContainer, 'wb');
-        if (foContainer) updateNextUpContainer(foContainer, 'fo');
-    }
-
-    function updateNextUpContainer(container, prefix) {
-        // Collect hospital targets that aren't called and still have a timer
-        const hospitalTargets = [];
-        for (const [targetId, s] of Object.entries(state.statuses)) {
-            // Next Up also runs straight off the rAF tick, where no purge has
-            // necessarily run yet this second — apply the predicate so a leak
-            // can't flash one of our own members into the queue.
-            if (!isRenderableEnemyId(targetId)) continue;
-            const rem = statusRemainingSec(s);
-            if (normalizeStatus(s.status) === 'hospital' && rem > 0 && !state.calls[targetId]) {
-                hospitalTargets.push({ targetId, until: rem, name: s.name || `#${targetId}` });
-            }
-        }
-
-        // Sort by shortest timer first, take top 5
-        hospitalTargets.sort((a, b) => a.until - b.until);
-        const topN = hospitalTargets.slice(0, 5);
-
-        if (topN.length === 0) {
-            container.innerHTML = '';
-            return;
-        }
-
-        // Check if the same targets are already rendered — only update timers
-        const currentIds = Array.from(container.querySelectorAll('[data-nu-id]')).map(el => el.dataset.nuId);
-        const newIds = topN.map(t => t.targetId);
-        const sameSet = currentIds.length === newIds.length && currentIds.every((id, i) => id === newIds[i]);
-
-        if (sameSet) {
-            for (const t of topN) {
-                const item = container.querySelector(`[data-nu-id="${t.targetId}"]`);
-                if (!item) continue;
-                const timerSpan = item.querySelector(`.${prefix}-next-timer, .fo-next-up-timer, .wb-next-timer`);
-                if (timerSpan) timerSpan.textContent = formatTimer(t.until);
-                // Refresh the stat chip — cheap no-op once cache is filled,
-                // but lets a chip that started empty pop in when BSP/FFS
-                // data finally lands mid-timer.
-                const statChip = item.querySelector('.fo-bsp-inline');
-                if (statChip) renderInlineBsp(statChip, t.targetId);
-                const imminent = t.until <= 120;
-                if (prefix === 'fo') {
-                    item.classList.toggle('imminent', imminent);
-                } else {
-                    item.classList.toggle('wb-next-imminent', imminent);
-                }
-            }
-            return;
-        }
-
-        // Full rebuild
-        container.innerHTML = '';
-
-        const label = document.createElement('span');
-        label.className = prefix === 'fo' ? 'fo-next-up-label' : 'wb-next-up-label';
-        label.textContent = 'Next Up:';
-        container.appendChild(label);
-
-        for (const t of topN) {
-            // Try to get the name from the overlay row or status data
-            const foRow = document.querySelector(`[data-fo-id="${t.targetId}"]`);
-            const wbRow = document.querySelector(`[data-wb-target-id="${t.targetId}"]`);
-            let name = t.name;
-            if (foRow) {
-                const n = foRow.querySelector('.fo-name');
-                if (n) name = n.textContent;
-            } else if (wbRow) {
-                name = getPlayerNameFromRow(wbRow) || name;
-            }
-            const imminent = t.until <= 120;
-
-            const item = document.createElement('span');
-            if (prefix === 'fo') {
-                item.className = 'fo-next-up-item' + (imminent ? ' imminent' : '');
-            } else {
-                item.className = imminent ? 'wb-next-up-item wb-next-imminent' : 'wb-next-up-item';
-            }
-            item.dataset.nuId = t.targetId;
-
-            const nameLink = buildNameAnchor(t.targetId, name);
-            nameLink.title = name;
-            nameLink.style.cssText = 'text-decoration:none;color:inherit;';
-            item.appendChild(nameLink);
-
-            // Stat chip (BSP cache → FFS fallback). Same renderer the
-            // overlay row's inline badge uses, so colors / tier rules
-            // match. Sits between name and timer at a glance.
-            const statChip = document.createElement('span');
-            statChip.className = 'fo-bsp-inline';
-            statChip.style.marginLeft = '4px';
-            renderInlineBsp(statChip, t.targetId);
-            item.appendChild(statChip);
-
-            const timerSpan = document.createElement('span');
-            timerSpan.className = prefix === 'fo' ? 'fo-next-up-timer' : 'wb-next-timer';
-            timerSpan.textContent = formatTimer(t.until);
-            item.appendChild(timerSpan);
-
-            const callBtn = document.createElement('button');
-            callBtn.className = prefix === 'fo' ? 'fo-next-up-call' : 'wb-next-up-call';
-            callBtn.textContent = 'Call';
-            callBtn.title = `Call ${name}`;
-            callBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                emitCallTarget(t.targetId);
-            });
-            item.appendChild(callBtn);
-
-            container.appendChild(item);
-        }
-    }
 
     // =========================================================================
     // SECTION 12: DOM MANIPULATION — WAR PAGE ENHANCEMENT
@@ -10274,34 +9872,6 @@ body.wb-chain-active {
         row.classList.toggle('wb-row-called', isCalled);
     }
 
-    /** Re-render all FactionOps cells for a specific target. */
-    function updateTargetRow(targetId) {
-        // Update overlay row if overlay is active
-        const foRow = document.querySelector(`[data-fo-id="${targetId}"]`);
-        if (foRow) {
-            updateOverlayRow(foRow, targetId);
-        }
-
-        // Also update old-style enhanced row cells
-        const callEl = document.getElementById(`wb-call-${targetId}`);
-        if (callEl) renderCallCell(callEl, targetId);
-
-        const statusEl = document.getElementById(`wb-status-${targetId}`);
-        if (statusEl) renderStatusCell(statusEl, targetId);
-
-        const prioEl = document.getElementById(`wb-priority-${targetId}`);
-        if (prioEl) renderPriorityCell(prioEl, targetId);
-
-        const bspEl = document.getElementById(`wb-bsp-${targetId}`);
-        if (bspEl) renderBspCell(bspEl, targetId);
-
-        const viewersEl = document.getElementById(`wb-viewers-${targetId}`);
-        if (viewersEl) renderViewersBadge(viewersEl, targetId);
-
-        // Update row highlight
-        const row = document.querySelector(`[data-wb-target-id="${targetId}"]`);
-        if (row) applyRowHighlights(row, targetId);
-    }
 
     let warEndedBannerShown = false;
 
@@ -10315,20 +9885,6 @@ body.wb-chain-active {
     // constrained.
     const REFRESH_DEBOUNCE_MS = IS_PDA ? 500 : 200;
     let _refreshDebounceTimer = null;
-    function refreshAllRows() {
-        // v5.0.89: hidden-tab skip is DESKTOP ONLY. PDA WebViews can
-        // report document.hidden=true even while the user is actively
-        // viewing the app (different visibility semantics than a
-        // browser tab). That was blocking every render on Android PDA
-        // and leaving the stats column empty in user screenshots.
-        if (!IS_PDA && typeof document.hidden === 'boolean' && document.hidden) return;
-        if (_refreshDebounceTimer) return;
-        _refreshDebounceTimer = setTimeout(() => {
-            _refreshDebounceTimer = null;
-            if (!IS_PDA && typeof document.hidden === 'boolean' && document.hidden) return;
-            _refreshAllRowsImpl();
-        }, REFRESH_DEBOUNCE_MS);
-    }
     // visibilitychange catch-up — only meaningful for desktop where
     // the hidden-skip actually fires. PDA never skips so no catch-up
     // needed there either.
@@ -10339,79 +9895,8 @@ body.wb-chain-active {
                     clearTimeout(_refreshDebounceTimer);
                     _refreshDebounceTimer = null;
                 }
-                try { _refreshAllRowsImpl(); } catch (_) {}
             }
         });
-    }
-    function _refreshAllRowsImpl() {
-        // Purge non-enemy ids BEFORE any row work. This sits here rather
-        // than inside renderOverlay because renderOverlay only runs when the
-        // overlay is actually open — Next Up, the enemy-attacking badges,
-        // the footer counts and the rAF status timers all consume
-        // state.statuses regardless, and would otherwise keep counting our
-        // own members as enemies with the overlay closed.
-        try { purgeNonEnemyStatuses(); } catch (_) {}
-
-        // Check war-ended state on every refresh cycle
-        if (state.warEnded && !warEndedBannerShown) showWarEndedBanner();
-
-        const overlayActive = !!document.getElementById('fo-overlay');
-        // If the overlay is active, re-render it (renderOverlay already sorts)
-        if (overlayActive) {
-            renderOverlay();
-        }
-
-        // Also update any old-style enhanced rows (e.g. non-war pages)
-        const rows = document.querySelectorAll('[data-wb-target-id]');
-        rows.forEach((row) => {
-            const targetId = row.dataset.wbTargetId;
-
-            // UN-ENHANCE sweep. enhanceRow's guard only protects rows it has
-            // not already touched — it returns early on `enhancedRows.has(row)`
-            // before any check runs, and nothing ever strips cells back off.
-            // That is exactly the reported repro: the MutationObserver fires
-            // as soon as Torn's war-page member list renders, which routinely
-            // beats both /api/faction/bars and the first poll, so rows get
-            // enhanced while we still have no idea who is on our side. Without
-            // this sweep those ATK/Call cells stay on our own members for the
-            // life of the page, no matter what we learn afterwards.
-            //
-            // OWN half only, matching enhanceRow: these selectors also match a
-            // plain faction profile's member list, so enforcing the allow-list
-            // here would strip cells from someone scouting a third faction.
-            if (isOwnFactionMember(targetId)) {
-                const cells = document.getElementById('wb-cells-' + targetId);
-                if (cells && cells.parentNode) cells.parentNode.removeChild(cells);
-                row.classList.remove('wb-sortable-row');
-                delete row.dataset.wbTargetId;
-                // Let it be enhanced again later if it turns out to be a
-                // legitimate target (e.g. corrected by a getwarusers payload).
-                try { enhancedRows.delete(row); } catch (_) {}
-                return;
-            }
-
-            updateTargetRow(targetId);
-        });
-        // Only trigger sort when overlay is NOT active — overlay handles its own sorting
-        if (CONFIG.AUTO_SORT && !overlayActive) debouncedSort();
-        updateNextUp();
-
-        // Update online counts in header
-        const usOnlineEl = document.getElementById('fo-online-count');
-        if (usOnlineEl) {
-            const usCount = state.ourFactionOnline ? state.ourFactionOnline.online : state.onlinePlayers.length;
-            usOnlineEl.textContent = `${usCount} us`;
-        }
-        const enemyOnlineEl = document.getElementById('fo-enemy-online-count');
-        if (enemyOnlineEl) {
-            // Count only ids that can actually be rendered, so the header
-            // cannot read "38 enemy" over a list of 35 rows.
-            const enemyOnline = Object.entries(state.statuses).filter(
-                ([id, s]) => isRenderableEnemyId(id)
-                    && s.activity && s.activity.toLowerCase() === 'online'
-            ).length;
-            enemyOnlineEl.textContent = `${enemyOnline} enemy`;
-        }
     }
 
     /**
@@ -11118,8 +10603,7 @@ body.wb-chain-active {
             <!-- Targets moved to Torn's own war page (2026-09-04). The sort bar,
                  column headers and target list lived here; the personal FFScouter
                  key sat in the sort bar because FF only ever showed on a target
-                 row. renderOverlay() looks for #fo-target-list and returns early
-                 when it is absent, which is what makes this a clean cut. -->
+                 row. The render code that filled them was deleted in 5.2.23. -->
             <div class="fo-footer">
                 <div class="fo-footer-stats">
                 </div>
@@ -11175,26 +10659,10 @@ body.wb-chain-active {
         }
         if (minEl && _statsFilterMin) minEl.value = fmtBackToInput(_statsFilterMin);
         if (maxEl && _statsFilterMax) maxEl.value = fmtBackToInput(_statsFilterMax);
-        function applyStatsFilter() {
-            _statsFilterMin = parseStatsInput(minEl ? minEl.value : '');
-            _statsFilterMax = parseStatsInput(maxEl ? maxEl.value : '');
-            try {
-                GM_setValue('factionops_stats_filter_min', _statsFilterMin || 0);
-                GM_setValue('factionops_stats_filter_max', _statsFilterMax || 0);
-            } catch (_) {}
-            // Kick ffscouter so missing stats data fills in faster
-            if (_statsFilterMin || _statsFilterMax) {
-                try { fetchFairFightBatch(); } catch (_) {}
-            }
-            renderOverlay();
-        }
-        if (minEl) minEl.addEventListener('change', applyStatsFilter);
-        if (maxEl) maxEl.addEventListener('change', applyStatsFilter);
         if (clearEl) {
             clearEl.addEventListener('click', () => {
                 if (minEl) minEl.value = '';
                 if (maxEl) maxEl.value = '';
-                applyStatsFilter();
             });
         }
 
@@ -11279,7 +10747,6 @@ body.wb-chain-active {
                 // number computed for someone else can never survive the switch.
                 // This also repaints the button via repaintMyFfsUi.
                 resetFfCacheForKeyChange();
-                renderOverlay();
             });
             // The soft keyboard's Go/Done key. Without it a phone user must
             // dismiss the keyboard — which on iOS often scrolls the sort bar
@@ -11293,7 +10760,6 @@ body.wb-chain-active {
                 myFfsInput.value = '';
                 myFfsRow.style.display = 'none';
                 resetFfCacheForKeyChange();
-                renderOverlay();
             });
         }
 
@@ -11304,7 +10770,6 @@ body.wb-chain-active {
             hideOnlineEl.addEventListener('change', () => {
                 _hideOnline = hideOnlineEl.checked;
                 try { GM_setValue('factionops_hide_online', _hideOnline); } catch (_) {}
-                renderOverlay();
             });
         }
         // v5.1.12: hide-offline checkbox handler. 'Offline' = activity
@@ -11315,11 +10780,9 @@ body.wb-chain-active {
             hideOfflineEl.addEventListener('change', () => {
                 _hideOffline = hideOfflineEl.checked;
                 try { GM_setValue('factionops_hide_offline', _hideOffline); } catch (_) {}
-                renderOverlay();
             });
         }
 
-        renderOverlay();
 
         // Check if war already ended (persisted state from server)
         if (state.warEnded) {
@@ -11542,464 +11005,8 @@ body.wb-chain-active {
         return div.innerHTML;
     }
 
-    /**
-     * Full render/re-render of all overlay rows from state.statuses.
-     * Uses DOM diffing: updates existing rows in-place, adds new ones,
-     * removes stale ones.
-     */
-    function renderOverlay() {
-        const list = document.getElementById('fo-target-list');
-        if (!list) return;
 
-        // Belt to the purge's braces: filter at the single point overlay rows
-        // are produced (this one loop feeds BOTH the attackable list and the
-        // collapsed unavailable section), so a leak from any ingestion path —
-        // including one added later — can never reach the screen even if the
-        // purge has not run yet this tick.
-        const allIds = Object.keys(state.statuses).filter(isRenderableEnemyId);
-        const unavailableStatuses = ['traveling', 'abroad', 'jail'];
-        const hiddenStatuses = ['federal', 'fallen'];
 
-        const targetIds = [];      // attackable: ok, hospital
-        const unavailableIds = []; // collapsed section: traveling, abroad, jail
-        // federal/fallen are simply excluded from everything
-
-        // v5.1.1/5/12: filters applied per target. Track hidden counts
-        // per filter so the hint line shows the user which filter is
-        // doing the work.
-        let _statsFilteredOut = 0;
-        let _onlineFilteredOut = 0;
-        let _offlineFilteredOut = 0;
-        for (const tid of allIds) {
-            const s = state.statuses[tid];
-            const status = normalizeStatus(s ? s.status : 'ok');
-            if (hiddenStatuses.includes(status)) {
-                // Completely hidden — skip
-                continue;
-            } else if (unavailableStatuses.includes(status)) {
-                unavailableIds.push(tid);
-            } else {
-                // v5.1.1: stats range filter. Unknown stats pass.
-                if (!passesStatsFilter(tid)) { _statsFilteredOut++; continue; }
-                const activity = s && String(s.activity || '').toLowerCase();
-                // v5.1.5: hide-online — only activity==='online' is hidden.
-                if (_hideOnline && activity === 'online') {
-                    _onlineFilteredOut++;
-                    continue;
-                }
-                // v5.1.12: hide-offline — anything NOT online (idle +
-                // offline, i.e. last action 5+ min per Torn's
-                // classification). Unknown activity treated as offline
-                // since we have no signal they're active.
-                if (_hideOffline && activity !== 'online') {
-                    _offlineFilteredOut++;
-                    continue;
-                }
-                targetIds.push(tid);
-            }
-        }
-        // Update the filter hint with hidden-count(s).
-        const hintEl = document.getElementById('fo-stats-filter-hint');
-        if (hintEl) {
-            const parts = [];
-            if (_statsFilteredOut > 0) parts.push(_statsFilteredOut + ' by stats');
-            if (_onlineFilteredOut > 0) parts.push(_onlineFilteredOut + ' online');
-            if (_offlineFilteredOut > 0) parts.push(_offlineFilteredOut + ' offline');
-            const anyFilterActive = _statsFilterMin != null || _statsFilterMax != null || _hideOnline || _hideOffline;
-            if (!anyFilterActive) {
-                hintEl.textContent = '';
-                hintEl.classList.remove('active');
-            } else {
-                hintEl.textContent = parts.length > 0
-                    ? '(' + parts.join(' + ') + ' hidden)'
-                    : '(filter active)';
-                hintEl.classList.add('active');
-            }
-        }
-
-        // Build a set of current attackable targets for stale-removal
-        const currentSet = new Set(targetIds);
-
-        // Remove stale rows (including members who transitioned to traveling/hidden)
-        const existingRows = list.querySelectorAll('[data-fo-id]');
-        existingRows.forEach((row) => {
-            if (!currentSet.has(row.dataset.foId)) {
-                row.remove();
-            }
-        });
-
-        // Sort targets
-        const sorted = targetIds.map((tid) => ({
-            targetId: tid,
-            priority: sortPriority(tid),
-            timer: sortTimerValue(tid),
-        }));
-
-        sorted.sort((a, b) => {
-            if (a.priority !== b.priority) return a.priority - b.priority;
-            return a.timer - b.timer;
-        });
-
-        // v5.0.19: apply user-chosen manual sort. Stats sort consults
-        // BSP (sync, in localStorage) first, then falls back to the
-        // FFS cache. We still kick off a fire-and-forget FFS pre-fetch
-        // for uids missing from both sources — cache populates in the
-        // background and the dropdown change handler triggers ONE
-        // delayed re-render to pick it up. No Promise chain, no
-        // recursion, cannot freeze the UI thread.
-        if (_sortMode !== 'smart') {
-            if (_sortMode === 'stats-asc' || _sortMode === 'stats-desc') {
-                for (const it of sorted) {
-                    const k = String(it.targetId);
-                    if (_ffsStatsCache.has(k)) continue;
-                    // Skip the FFS hit if BSP already has this uid — no
-                    // need to fetch what we already have a sync source
-                    // for. (The sort itself prefers BSP over FFS, so
-                    // pre-fetching FFS for BSP-known uids is wasted I/O.)
-                    let bspKnown = false;
-                    try {
-                        const p = fetchBspPrediction(it.targetId);
-                        if (p && p.TBS != null) bspKnown = true;
-                    } catch (_) {}
-                    if (!bspKnown) {
-                        try { getFfScouterEstimate(it.targetId); } catch (_) {}
-                    }
-                }
-            }
-            applyManualSort(sorted);
-        }
-
-        // Build a map of existing rows for O(1) lookup instead of O(n) querySelectorAll
-        const existingMap = new Map();
-        for (const child of list.querySelectorAll('[data-fo-id]')) {
-            existingMap.set(child.dataset.foId, child);
-        }
-
-        // Phase 1: Update row content (classes, text, etc.) without moving DOM nodes
-        const orderedRows = [];
-        for (const item of sorted) {
-            let row = existingMap.get(item.targetId);
-            if (row) {
-                updateOverlayRow(row, item.targetId);
-            } else {
-                row = renderOverlayRow(item.targetId);
-            }
-            orderedRows.push(row);
-        }
-
-        // Phase 2: Reorder DOM nodes only if the order actually differs.
-        // Compare current DOM order to desired order — skip reordering entirely
-        // if they already match, preventing layout thrashing and CSS transition flicker.
-        const currentChildren = Array.from(list.querySelectorAll('[data-fo-id]'));
-        let orderChanged = currentChildren.length !== orderedRows.length;
-        if (!orderChanged) {
-            for (let i = 0; i < orderedRows.length; i++) {
-                if (currentChildren[i] !== orderedRows[i]) { orderChanged = true; break; }
-            }
-        }
-        if (orderChanged) {
-            let prevNode = null;
-            for (const row of orderedRows) {
-                const expectedNext = prevNode ? prevNode.nextSibling : list.firstChild;
-                if (row !== expectedNext) {
-                    list.insertBefore(row, expectedNext);
-                }
-                prevNode = row;
-            }
-        }
-
-        // Render collapsed unavailable section (traveling + jail)
-        let unavailSection = document.getElementById('fo-unavailable-section');
-        if (unavailableIds.length > 0) {
-            if (!unavailSection) {
-                unavailSection = document.createElement('div');
-                unavailSection.id = 'fo-unavailable-section';
-                unavailSection.className = 'fo-unavailable-section';
-                list.parentElement.appendChild(unavailSection);
-            }
-
-            // Count by status type
-            const counts = {};
-            for (const tid of unavailableIds) {
-                const s = state.statuses[tid];
-                const status = normalizeStatus(s ? s.status : 'ok');
-                counts[status] = (counts[status] || 0) + 1;
-            }
-
-            const countParts = [];
-            if (counts.traveling) countParts.push(`${counts.traveling} traveling`);
-            if (counts.abroad) countParts.push(`${counts.abroad} abroad`);
-            if (counts.jail) countParts.push(`${counts.jail} jailed`);
-
-            const isExpanded = unavailSection.dataset.expanded === 'true';
-            const toggleIcon = isExpanded ? '\u25BC' : '\u25B6';
-
-            // Header toggle
-            let header = unavailSection.querySelector('.fo-unavail-header');
-            if (!header) {
-                header = document.createElement('div');
-                header.className = 'fo-unavail-header';
-                header.style.cursor = 'pointer';
-                header.addEventListener('click', () => {
-                    const section = document.getElementById('fo-unavailable-section');
-                    const expanded = section.dataset.expanded === 'true';
-                    section.dataset.expanded = expanded ? 'false' : 'true';
-                    renderOverlay(); // re-render to toggle visibility
-                });
-                unavailSection.appendChild(header);
-            }
-            header.innerHTML = `<span style="margin-right:6px;">${toggleIcon}</span>Unavailable (${unavailableIds.length})${countParts.length ? ': ' + countParts.join(', ') : ''}`;
-
-            // Render unavailable rows if expanded
-            let unavailList = unavailSection.querySelector('.fo-unavail-list');
-            if (!unavailList) {
-                unavailList = document.createElement('div');
-                unavailList.className = 'fo-unavail-list';
-                unavailSection.appendChild(unavailList);
-            }
-
-            if (isExpanded) {
-                unavailList.style.display = '';
-                // v4.9.95: sort the unavailable section — traveling
-                // members with the soonest landing float to the top,
-                // then members without landing data (abroad / unknown),
-                // then jailed (by hospital-style remaining time). This
-                // is where traveling members actually live; the main
-                // attackable list had been getting all the sort love.
-                const sortedUnavail = [...unavailableIds].sort((a, b) => {
-                    const pa = sortPriority(a), pb = sortPriority(b);
-                    if (pa !== pb) return pa - pb;
-                    return sortTimerValue(a) - sortTimerValue(b);
-                });
-                // Remove stale
-                unavailList.querySelectorAll('[data-fo-id]').forEach(r => {
-                    if (!unavailableIds.includes(r.dataset.foId)) r.remove();
-                });
-                // Add/update in sorted order, then reorder DOM to match.
-                const unavailRows = [];
-                for (const tid of sortedUnavail) {
-                    let row = unavailList.querySelector(`[data-fo-id="${tid}"]`);
-                    if (row) {
-                        updateOverlayRow(row, tid);
-                    } else {
-                        row = renderOverlayRow(tid);
-                        row.style.opacity = '0.45';
-                        unavailList.appendChild(row);
-                    }
-                    unavailRows.push(row);
-                }
-                // Reorder DOM: insert rows in sorted order only if the
-                // current order doesn't match (avoids layout thrash).
-                let prevNode = null;
-                for (const row of unavailRows) {
-                    const expectedNext = prevNode ? prevNode.nextSibling : unavailList.firstChild;
-                    if (row !== expectedNext) unavailList.insertBefore(row, expectedNext);
-                    prevNode = row;
-                }
-            } else {
-                unavailList.style.display = 'none';
-            }
-        } else if (unavailSection) {
-            unavailSection.remove();
-        }
-
-        // Update footer stats
-        updateOverlayFooter();
-
-        // Update header connection dot
-        const dot = document.getElementById('fo-conn-dot');
-        if (dot) {
-            dot.classList.toggle('disconnected', !state.connected);
-            dot.title = state.connected ? 'Connected' : 'Disconnected';
-        }
-
-        // Update online counts (us = server-side Torn API poll, enemy = Torn online status)
-        const onlineEl = document.getElementById('fo-online-count');
-        if (onlineEl) {
-            const usCount = state.ourFactionOnline ? state.ourFactionOnline.online : state.onlinePlayers.length;
-            onlineEl.textContent = `${usCount} us`;
-        }
-
-        const enemyOnlineEl = document.getElementById('fo-enemy-online-count');
-        if (enemyOnlineEl) {
-            // Count only ids that can actually be rendered, so the header
-            // cannot read "38 enemy" over a list of 35 rows.
-            const enemyOnline = Object.entries(state.statuses).filter(
-                ([id, s]) => isRenderableEnemyId(id)
-                    && s.activity && s.activity.toLowerCase() === 'online'
-            ).length;
-            enemyOnlineEl.textContent = `${enemyOnline} enemy`;
-        }
-
-        // Update enemy name
-        const enemyEl = document.getElementById('fo-enemy-name');
-        if (enemyEl && state.enemyFactionName) {
-            enemyEl.textContent = state.enemyFactionName;
-        }
-
-    }
-
-    /**
-     * Build a single overlay row <li> for a target.
-     */
-    function renderOverlayRow(targetId) {
-        const li = document.createElement('li');
-        li.className = 'fo-row';
-        li.dataset.foId = targetId;
-
-        const s = state.statuses[targetId] || {};
-        const callData = state.calls[targetId];
-        const viewers = state.viewers[targetId];
-
-        // Row status classes
-        applyOverlayRowClasses(li, targetId);
-
-        // v5.0.14: priority cell retired (grid is now 7 cols).
-
-        // 1. Target cell (name + id + eye badge)
-        const targetCell = document.createElement('div');
-        targetCell.className = 'fo-cell';
-        const playerName = document.createElement('div');
-        playerName.className = 'fo-player-name';
-
-        const nameRow = document.createElement('div');
-        nameRow.className = 'fo-name-row';
-
-        const nameSpan = buildNameAnchor(targetId, s.name);
-        nameRow.appendChild(nameSpan);
-
-        // v5.0.22: inline level badge next to the name. Quick-glance
-        // info so members don't need to scan across to the dedicated
-        // Lvl column. Updates handled in updateOverlayRow via the
-        // .fo-name-level class.
-        const lvlInline = document.createElement('span');
-        lvlInline.className = 'fo-name-level';
-        lvlInline.textContent = s.level != null ? `Lv${s.level}` : '';
-        nameRow.appendChild(lvlInline);
-
-        // Eye badge for viewers
-        if (viewers && viewers.length > 0) {
-            const eye = document.createElement('span');
-            eye.className = 'fo-eye-badge';
-            eye.title = viewers.map((v) => v.name).join(', ') + ' viewing';
-            eye.innerHTML = `<span class="fo-eye-icon">\uD83D\uDC41</span>${viewers.length}`;
-            nameRow.appendChild(eye);
-        }
-
-        playerName.appendChild(nameRow);
-
-        // Sub-row: ID + inline BSP badge
-        const subRow = document.createElement('div');
-        subRow.className = 'fo-sub-row';
-
-        const pid = document.createElement('span');
-        pid.className = 'fo-pid';
-        pid.textContent = `[${targetId}]`;
-        subRow.appendChild(pid);
-
-        // Inline BSP badge
-        const bspBadge = document.createElement('span');
-        bspBadge.className = 'fo-bsp-inline';
-        bspBadge.id = `fo-bsp-inline-${targetId}`;
-        renderInlineBsp(bspBadge, targetId);
-        subRow.appendChild(bspBadge);
-
-        // Inline FF badge
-        const ffBadge = document.createElement('span');
-        ffBadge.className = 'fo-ff-inline';
-        ffBadge.id = `fo-ff-inline-${targetId}`;
-        renderInlineFf(ffBadge, targetId);
-        subRow.appendChild(ffBadge);
-
-        playerName.appendChild(subRow);
-
-        targetCell.appendChild(playerName);
-        li.appendChild(targetCell);
-
-        // 3. Level cell
-        const lvlCell = document.createElement('div');
-        lvlCell.className = 'fo-cell center';
-        const lvlSpan = document.createElement('span');
-        lvlSpan.className = 'fo-level';
-        lvlSpan.textContent = s.level != null ? String(s.level) : '\u2014';
-        lvlCell.appendChild(lvlSpan);
-        li.appendChild(lvlCell);
-
-        // 4. BSP cell
-        const bspCell = document.createElement('div');
-        bspCell.className = 'fo-cell center';
-        bspCell.id = `fo-bsp-${targetId}`;
-        renderOverlayBspCell(bspCell, targetId);
-        li.appendChild(bspCell);
-
-        // 5. Status cell
-        const statusCell = document.createElement('div');
-        statusCell.className = 'fo-cell';
-        statusCell.id = `fo-status-${targetId}`;
-        renderOverlayStatusCell(statusCell, targetId);
-        li.appendChild(statusCell);
-
-        // 6. Online cell
-        const onlineCell = document.createElement('div');
-        onlineCell.className = 'fo-cell center';
-        onlineCell.id = `fo-online-${targetId}`;
-        const onlineDot = document.createElement('span');
-        const activity = (s.activity || 'offline').toLowerCase();
-        const onlineClass = activity === 'online' ? 'on' : (activity === 'idle' ? 'idle' : 'off');
-        onlineDot.className = `fo-online-dot ${onlineClass}`;
-        onlineDot.title = activity.charAt(0).toUpperCase() + activity.slice(1);
-        onlineCell.appendChild(onlineDot);
-        li.appendChild(onlineCell);
-
-        // 7. Call cell
-        const callCell = document.createElement('div');
-        callCell.className = 'fo-call-cell';
-        callCell.id = `fo-call-${targetId}`;
-        renderOverlayCallCell(callCell, targetId);
-        li.appendChild(callCell);
-
-        // 8. Action cell
-        const actionCell = document.createElement('div');
-        actionCell.className = 'fo-cell';
-        actionCell.style.justifyContent = 'flex-end';
-        const atkLink = document.createElement('a');
-        atkLink.className = 'fo-attack-btn';
-        atkLink.href = `https://www.torn.com/page.php?sid=attack&user2ID=${targetId}`;
-        atkLink.target = '_blank';
-        atkLink.rel = 'noopener';
-        atkLink.innerHTML = 'Atk<span class="fo-arrow">\u203A</span>';
-        atkLink.addEventListener('click', (e) => e.stopPropagation());
-        actionCell.appendChild(atkLink);
-        li.appendChild(actionCell);
-
-        return li;
-    }
-
-    /** Apply status/call/priority classes to an overlay row.
-     *  Uses conditional toggle to avoid re-triggering CSS transitions
-     *  when the class state hasn't actually changed.
-     */
-    function applyOverlayRowClasses(row, targetId) {
-        const s = state.statuses[targetId] || {};
-        const status = normalizeStatus(s.status);
-        const isCalled = !!state.calls[targetId];
-        const prio = state.priorities[targetId];
-        const isHigh = prio && prio.level === 'high';
-
-        // Only toggle when the desired state differs from current — prevents
-        // CSS transition flicker caused by remove-then-readd of the same class.
-        const pairs = [
-            ['is-hospital', status === 'hospital'],
-            ['is-jail', status === 'jail' || status === 'federal'],
-            ['is-travel', status === 'traveling' || status === 'abroad'],
-            ['is-called', isCalled],
-            ['is-high-priority', isHigh],
-        ];
-        for (const [cls, want] of pairs) {
-            const has = row.classList.contains(cls);
-            if (has !== want) row.classList.toggle(cls, want);
-        }
-    }
 
     /** Render the priority cell for overlay rows. */
     function renderOverlayPriorityCell(cell, targetId) {
@@ -12040,118 +11047,7 @@ body.wb-chain-active {
         }
     }
 
-    /** Render the status pill for overlay rows. */
-    function renderOverlayStatusCell(cell, targetId) {
-        cell.innerHTML = '';
-        const s = state.statuses[targetId] || {};
-        const status = normalizeStatus(s.status);
 
-        let pillClass = 'ok';
-        let label = 'OK';
-
-        if (status === 'hospital') {
-            pillClass = 'hosp';
-            // Show timer instead of "Hosp" text
-            const remaining = statusRemainingSec(s);
-            if (remaining > 0) {
-                label = formatTimer(remaining);
-            } else {
-                label = 'Hosp';
-            }
-        } else if (status === 'federal') {
-            pillClass = 'jail';
-            label = 'Federal';
-        } else if (status === 'jail') {
-            pillClass = 'jail';
-            label = 'Jail';
-        } else if (status === 'traveling' || status === 'abroad') {
-            pillClass = 'travel';
-            // v4.9.88: default label is the destination country when we
-            // have it (from FFS flights), falling back to generic Travel.
-            // Abroad members ALWAYS show the country; in-flight shows the
-            // timer instead (handled below).
-            label = s.flightDest || 'Travel';
-        }
-
-        // v4.9.81: travel pill uses landing-time countdown when FFS data
-        // is available (populated by refreshFlightsForTravelers).
-        const pill = document.createElement('span');
-        pill.className = `fo-status-pill ${pillClass}`;
-        const curRemaining = statusRemainingSec(s);
-        const travelRem = (status === 'traveling' && Number(s.landingAt) > 0)
-            ? Math.max(0, Number(s.landingAt) - _nowSec())
-            : 0;
-        const isHospTimer   = status === 'hospital' && curRemaining > 0;
-        const isTravelTimer = status === 'traveling' && travelRem > 0;
-        const labelId = (isHospTimer || isTravelTimer) ? `fo-timer-${targetId}` : '';
-        const shown = isTravelTimer ? formatTimer(travelRem) : label;
-        pill.innerHTML = `<span class="fo-s-dot"></span><span class="fo-s-label"${labelId ? ` id="${labelId}"` : ''}>${shown}</span>`;
-
-        // Timer (for non-hospital / non-travel statuses that still have timers, e.g. jail)
-        if (!isHospTimer && !isTravelTimer && curRemaining > 0) {
-            const timer = document.createElement('span');
-            timer.id = `fo-timer-${targetId}`;
-            timer.style.marginLeft = '4px';
-            timer.textContent = formatTimer(curRemaining);
-            pill.appendChild(timer);
-        }
-
-        cell.appendChild(pill);
-    }
-
-    /** Render the BSP cell for overlay rows. */
-    /** Render compact inline BSP badge (next to player name). */
-    function renderInlineBsp(el, targetId) {
-        // 1. BSP prediction (sync)
-        const pred = fetchBspPrediction(targetId);
-        if (pred && pred.TBS != null) {
-            const num = Number(pred.TBS);
-            const key = `bsp_${num}`;
-            if (el.dataset.foCache === key) return; // no change
-            el.dataset.foCache = key;
-            const tier = bspTier(num);
-            el.className = `fo-bsp-inline tier-${tier}`;
-            el.textContent = formatBspNumber(num);
-            el.title = `~${num.toLocaleString()} total stats (BSP)`;
-            return;
-        }
-
-        // 2. v5.0.83: ffCache bsHuman (sync) — factionops's own
-        // ffscouter.com API integration populates this for every war
-        // target with a human-readable range like "10M-50M". Doesn't
-        // require the FFS userscript to be installed.
-        const cc = (typeof ffCache !== 'undefined') ? ffCache[targetId] : null;
-        if (cc && cc.bsHuman) {
-            const key = `ffsh_${cc.bsHuman}`;
-            if (el.dataset.foCache === key) return;
-            const midpoint = parseBsHumanMid(cc.bsHuman);
-            const tier = midpoint !== null ? bspTier(midpoint) : 'unknown';
-            el.dataset.foCache = key;
-            el.className = `fo-bsp-inline tier-${tier}`;
-            el.textContent = cc.bsHuman;
-            el.title = `~${cc.bsHuman} total stats (FFS)`;
-            return;
-        }
-
-        // If already has content, don't wipe for async reload
-        if (el.dataset.foCache && el.dataset.foCache !== 'empty') return;
-
-        // 3. FFS IndexedDB fallback (async) — only fires when the user
-        // has the FFS userscript itself installed AND it has cached
-        // data for this uid.
-        el.dataset.foCache = 'loading';
-        el.className = 'fo-bsp-inline tier-unknown';
-        getFfScouterEstimate(targetId).then((ffs) => {
-            if (!ffs) return;
-            const num = Number(ffs.total);
-            if (isNaN(num)) return;
-            el.dataset.foCache = `ffs_${num}`;
-            const tier = bspTier(num);
-            el.className = `fo-bsp-inline tier-${tier}`;
-            el.textContent = ffs.human || formatBspNumber(num);
-            el.title = `~${num.toLocaleString()} total stats (FFS)`;
-        });
-    }
 
     // v5.1.1: stats range filter state. Both bounds optional; null
     // means unbounded. Persisted via GM_setValue so it survives
@@ -12174,18 +11070,6 @@ body.wb-chain-active {
         _hideOffline = !!GM_getValue('factionops_hide_offline', false);
     } catch (_) {}
 
-    // Parse user input like "50M", "1.5B", "10K", "100000".
-    function parseStatsInput(s) {
-        if (s == null) return null;
-        const str = String(s).trim().toUpperCase().replace(/,/g, '');
-        if (!str) return null;
-        const m = str.match(/^([\d.]+)\s*([KMB])?$/);
-        if (!m) return null;
-        const n = parseFloat(m[1]);
-        if (!Number.isFinite(n) || n <= 0) return null;
-        const u = m[2] === 'B' ? 1e9 : m[2] === 'M' ? 1e6 : m[2] === 'K' ? 1e3 : 1;
-        return n * u;
-    }
 
     // Returns the best stats estimate for a target, or null if unknown.
     // Same chain as renderInlineBsp / sort: BSP TBS → FFS bs_estimate
@@ -12241,65 +11125,6 @@ body.wb-chain-active {
         return b !== null ? (a + b) / 2 : a;
     }
 
-    function renderOverlayBspCell(cell, targetId) {
-        // 1. Try BSP prediction (synchronous)
-        const pred = fetchBspPrediction(targetId);
-        if (pred && pred.TBS != null) {
-            const num = Number(pred.TBS);
-            const tier = bspTier(num);
-            const key = `bsp_${num}`;
-            if (cell.dataset.foCache === key) return; // no change
-            cell.innerHTML = '';
-            cell.dataset.foCache = key;
-            const span = document.createElement('span');
-            span.className = `fo-bsp-stat tier-${tier}`;
-            span.title = `~${num.toLocaleString()} total stats (BSP)`;
-            span.innerHTML = `${formatBspNumber(num)}<span class="fo-bsp-source">bsp</span>`;
-            cell.appendChild(span);
-            return;
-        }
-
-        // 2. v5.0.83: ffCache bsHuman (sync) — populated by
-        // fetchFairFightBatch() for every war target. No FFS
-        // userscript install required.
-        const cc = (typeof ffCache !== 'undefined') ? ffCache[targetId] : null;
-        if (cc && cc.bsHuman) {
-            const key = `ffsh_${cc.bsHuman}`;
-            if (cell.dataset.foCache === key) return;
-            const midpoint = parseBsHumanMid(cc.bsHuman);
-            const tier = midpoint !== null ? bspTier(midpoint) : 'unknown';
-            cell.innerHTML = '';
-            cell.dataset.foCache = key;
-            const span = document.createElement('span');
-            span.className = `fo-bsp-stat tier-${tier}`;
-            span.title = `~${cc.bsHuman} total stats (FFS)`;
-            span.innerHTML = `${cc.bsHuman}<span class="fo-bsp-source">ffs</span>`;
-            cell.appendChild(span);
-            return;
-        }
-
-        // If cell already has content, don't wipe it for async FFS reload
-        if (cell.dataset.foCache && cell.dataset.foCache !== 'empty') return;
-
-        // 3. FFS IndexedDB fallback (async) — show dash while loading
-        cell.innerHTML = '';
-        cell.dataset.foCache = 'loading';
-        const span = document.createElement('span');
-        span.className = 'fo-bsp-stat tier-unknown';
-        span.textContent = '\u2014';
-        cell.appendChild(span);
-
-        getFfScouterEstimate(targetId).then((ffs) => {
-            if (!ffs) return;
-            const num = Number(ffs.total);
-            if (isNaN(num)) return;
-            const tier = bspTier(num);
-            cell.dataset.foCache = `ffs_${num}`;
-            span.className = `fo-bsp-stat tier-${tier}`;
-            span.title = `~${num.toLocaleString()} total stats (FFS)`;
-            span.innerHTML = `${ffs.human || formatBspNumber(num)}<span class="fo-bsp-source">ffs</span>`;
-        });
-    }
 
     /** Render the call cell for overlay rows. */
     function renderOverlayCallCell(cell, targetId) {
@@ -12403,83 +11228,6 @@ body.wb-chain-active {
         }
     }
 
-    /** Update an existing overlay row in-place. */
-    function updateOverlayRow(row, targetId) {
-        if (!row) return;
-
-        applyOverlayRowClasses(row, targetId);
-
-        const s = state.statuses[targetId] || {};
-
-        // Update name
-        const nameEl = row.querySelector('.fo-name');
-        if (nameEl && s.name) {
-            nameEl.textContent = s.name;
-            nameEl.dataset.placeholder = `${s.name} [${targetId}]`;
-        }
-
-        // Update level (column cell + v5.0.22 inline badge next to name)
-        const lvlEl = row.querySelector('.fo-level');
-        if (lvlEl) lvlEl.textContent = s.level != null ? String(s.level) : '\u2014';
-        const lvlInlineEl = row.querySelector('.fo-name-level');
-        if (lvlInlineEl) lvlInlineEl.textContent = s.level != null ? `Lv${s.level}` : '';
-
-        // Update online dot
-        const onlineCell = document.getElementById(`fo-online-${targetId}`);
-        if (onlineCell) {
-            const dot = onlineCell.querySelector('.fo-online-dot');
-            if (dot) {
-                const activity = (s.activity || 'offline').toLowerCase();
-                const cls = activity === 'online' ? 'on' : (activity === 'idle' ? 'idle' : 'off');
-                dot.className = `fo-online-dot ${cls}`;
-                dot.title = activity.charAt(0).toUpperCase() + activity.slice(1);
-            }
-        }
-
-        // Update viewers badge
-        // v5.0.14: target cell is now the FIRST cell (was [1] before
-        // the priority column was removed in this version).
-        const targetCell = row.children[0];
-        if (targetCell) {
-            const existingEye = targetCell.querySelector('.fo-eye-badge');
-            const viewers = state.viewers[targetId];
-            if (viewers && viewers.length > 0) {
-                if (existingEye) {
-                    existingEye.innerHTML = `<span class="fo-eye-icon">\uD83D\uDC41</span>${viewers.length}`;
-                    existingEye.title = viewers.map((v) => v.name).join(', ') + ' viewing';
-                } else {
-                    const nameRow = targetCell.querySelector('.fo-name-row');
-                    if (nameRow) {
-                        const eye = document.createElement('span');
-                        eye.className = 'fo-eye-badge';
-                        eye.title = viewers.map((v) => v.name).join(', ') + ' viewing';
-                        eye.innerHTML = `<span class="fo-eye-icon">\uD83D\uDC41</span>${viewers.length}`;
-                        nameRow.appendChild(eye);
-                    }
-                }
-            } else if (existingEye) {
-                existingEye.remove();
-            }
-        }
-
-        // Re-render volatile cells (skip priority if user is interacting with dropdown)
-        const prioCell = document.getElementById(`fo-priority-${targetId}`);
-        if (prioCell && !prioCell.dataset.foActive) {
-            renderOverlayPriorityCell(prioCell, targetId);
-        }
-
-        const statusCell = document.getElementById(`fo-status-${targetId}`);
-        if (statusCell) renderOverlayStatusCell(statusCell, targetId);
-
-        const callCell = document.getElementById(`fo-call-${targetId}`);
-        if (callCell) renderOverlayCallCell(callCell, targetId);
-
-        const bspCell = document.getElementById(`fo-bsp-${targetId}`);
-        if (bspCell) renderOverlayBspCell(bspCell, targetId);
-
-        const bspInline = document.getElementById(`fo-bsp-inline-${targetId}`);
-        if (bspInline) renderInlineBsp(bspInline, targetId);
-    }
 
     /** Update footer stats. */
     function updateOverlayFooter() {
@@ -12583,7 +11331,6 @@ body.wb-chain-active {
     function sortMemberList() {
         // If the overlay is active, re-render it (renderOverlay handles sorting)
         if (document.getElementById('fo-overlay')) {
-            renderOverlay();
             return;
         }
         const rows = Array.from(document.querySelectorAll('[data-wb-target-id]'));
@@ -13013,11 +11760,9 @@ body.wb-chain-active {
 
             // Update DOM for each affected target
             for (const targetId of Object.keys(statusBatch)) {
-                updateTargetRow(targetId);
             }
 
             // Refresh the Next Up queue after status changes
-            updateNextUp();
         }
 
         // Chain data — intercepted API is the fast path for timeout
@@ -13080,7 +11825,6 @@ body.wb-chain-active {
                     const enemyEl = document.getElementById('fo-enemy-name');
                     if (enemyEl && state.enemyFactionName) enemyEl.textContent = state.enemyFactionName;
 
-                    refreshAllRows();
                     pollOnce();
                 }
             }
@@ -13101,8 +11845,6 @@ body.wb-chain-active {
                     const batch = { [mid]: statusInfo };
                     mergeStatusesMonotonic(batch);
                     queuePeerRelay(batch);
-                    updateTargetRow(mid);
-                    updateNextUp();
                     log(`[profile-intercept] Updated ${mid} from profile response`);
                 }
             }
@@ -13145,8 +11887,6 @@ body.wb-chain-active {
                     const batch = { [targetId]: statusInfo };
                     mergeStatusesMonotonic(batch);
                     queuePeerRelay(batch);
-                    updateTargetRow(targetId);
-                    updateNextUp();
                     log(`[attack-result] Target ${targetId} marked hospital (${minutesFromResult || '~30'}m)`);
                     // Auto-uncall on hospital runs via maybeAutoUncallOnHospital
                     // inside mergeStatusesMonotonic.
@@ -13349,7 +12089,6 @@ body.wb-chain-active {
                     until: state.statuses[targetId].until || 0,
                 };
                 changeCount++;
-                updateTargetRow(targetId);
             }
         });
 
@@ -13364,7 +12103,6 @@ body.wb-chain-active {
                 }).catch((e) => warn('Failed to forward DOM status:', e.message));
             }
             if (CONFIG.AUTO_SORT) debouncedSort();
-            updateNextUp();
         }
     }
 
@@ -13441,7 +12179,6 @@ body.wb-chain-active {
                 const timeout = callData.isDeal ? CONFIG.DEAL_TIMEOUT : CONFIG.CALL_TIMEOUT;
                 if (callData.calledAt && (now - callData.calledAt) > timeout) {
                     delete state.calls[targetId];
-                    updateTargetRow(targetId);
                     pruned++;
                 }
             }
@@ -13848,13 +12585,11 @@ body.wb-chain-active {
                                 chainCooldownSetVal = cooldown;
                             }
                         }
-                        refreshAllRows();
                         updateChainBar();
                         if (typeof updateWarTimer === 'function') updateWarTimer();
                         if (typeof updateWarTimerDisplay === 'function') updateWarTimerDisplay();
                         break;
                     case 'call_update':
-                        if (msg.targetId) updateTargetRow(msg.targetId);
                         break;
                     case 'war_update':
                         if (msg.pct !== undefined) {
