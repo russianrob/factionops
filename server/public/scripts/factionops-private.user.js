@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.35
+// @version      5.2.36
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.35';
+    const SCRIPT_VERSION = '5.2.36';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -790,20 +790,6 @@ html.wb-theme-light {
 .fo-wp-ptog { cursor: pointer; justify-content: space-between; }
 .fo-wp-ptog input { margin: 0; cursor: pointer; flex: 0 0 auto; }
 
-/* Battle Stats Predictor draws its own estimate at the left of a war row,
-   where Torn's avatar sits on top of it -- the number is there but unreadable.
-   Our chip carries the same value (it reads BSP's own localStorage cache) and
-   is legible, so theirs is hidden rather than rescued.
-
-   Matched by namespace: BSP keys its storage tdup.battleStatsPredictor.*, and
-   a script that namespaces storage that way normally namespaces its markup
-   too. Scoped to li.enemy so nothing outside a war row can be caught, and
-   harmless if the guess is wrong -- it simply matches nothing.
-   No backticks in here: this stylesheet is a JS template literal. */
-li.enemy [class*="tdup" i],
-li.enemy [id*="tdup" i],
-li.enemy [class*="battleStat" i],
-li.enemy [class*="statsPredictor" i] { display: none !important; }
 
 /* Applied by applyRowOrder, not by a static selector, so the layout change is
    scoped to a list we are actually sorting and comes off by removing a class.
@@ -9657,14 +9643,60 @@ body.wb-chain-active {
      * Predictor's own localStorage, and the FFScouter half is already being
      * fetched by applyServerData.
      */
+    // Torn's own numbers on a war row are a level and a score, neither of which
+    // carries a K/M/B suffix -- so a LEAF in the member cell whose entire text
+    // is "2.56B" is another script's stat estimate, not Torn's.
+    var ESTIMATE_TEXT = /^[\d.,]+\s*[KMB]$/i;
+
+    /**
+     * Hide Battle Stats Predictor's estimate on a war row.
+     *
+     * BSP draws it at the left where Torn's avatar covers it, and its values
+     * run a row behind besides -- the first row has none and each of the rest
+     * shows the row above's number. Ours is legible and reads the very same
+     * source (BSP's own localStorage cache), so theirs goes.
+     *
+     * Matched by SHAPE, not by class: a guess at BSP's namespace did not
+     * match, and this needs no knowledge of another script's internals.
+     * Deliberately narrow -- a leaf element, whole text is a number with a
+     * magnitude suffix, and never our own chip. Reversible: the flag it stamps
+     * is what showForeignEstimate looks for.
+     */
+    function hideForeignEstimate(cell) {
+        var n = cell.querySelectorAll('*');
+        for (var i = 0; i < n.length; i++) {
+            var e = n[i];
+            if (e.children.length) continue;                        // leaves only
+            if (e.classList && e.classList.contains('fo-wp-stat')) continue;
+            if (e.closest && e.closest('.fo-wp-stat')) continue;    // never ours
+            if (e.dataset.foHid === '1') continue;                  // already done
+            var t = String(e.textContent || '').trim();
+            if (!t || !ESTIMATE_TEXT.test(t)) continue;
+            e.dataset.foHid = '1';
+            e.style.display = 'none';
+        }
+    }
+
+    function showForeignEstimate(cell) {
+        var n = cell.querySelectorAll('[data-fo-hid="1"]');
+        for (var i = 0; i < n.length; i++) {
+            n[i].style.display = '';
+            delete n[i].dataset.foHid;
+        }
+    }
+
     function ensureStatChip(row, targetId) {
         const cell = row.querySelector('[class*="member"]');
         if (!cell) return;
         if (!CONFIG.WP_CHIPS) {
             var old = cell.querySelector('.fo-wp-stat');
             if (old) old.remove();
+            // Ours is off, so give BSP's back rather than leaving the row with
+            // no estimate at all.
+            showForeignEstimate(cell);
             return;
         }
+        hideForeignEstimate(cell);
         let n = null;
         try { n = getTargetStatsEstimate(targetId); } catch (_) {}
         let chip = cell.querySelector('.fo-wp-stat');
