@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.26
+// @version      5.2.27
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.26';
+    const SCRIPT_VERSION = '5.2.27';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -755,6 +755,24 @@ html.wb-theme-light {
 }
 .fo-wp-filter-clear:hover { background: #241a15; }
 /* Only speaks up when the filter is actually removing somebody. */
+/* Hospital countdown in Torn's own status cell. Sits alongside whatever else
+   is in there (the FFS banner puts its own chip there) rather than fighting
+   another script for the same node. */
+.fo-wp-hosp {
+    display: inline-block; margin-left: 5px; padding: 1px 5px;
+    border-radius: 3px; border: 1px solid rgba(225,112,85,.4);
+    background: rgba(0,0,0,.35); color: #ff9a72;
+    font-size: 10px; font-weight: 700; line-height: 1.4;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+    vertical-align: middle;
+}
+/* Under two minutes -- worth waiting for rather than moving on. */
+.fo-wp-hosp.soon { color: #ffd166; border-color: rgba(255,209,102,.6); }
+/* Counted to zero but Torn still says hospital. Clamped on purpose: releasing
+   on our own countdown is what flashes a still-hospitalised target as
+   attackable, so this waits for the server to say otherwise. */
+.fo-wp-hosp.held { color: #b2bec3; border-color: rgba(255,255,255,.18); }
+
 .fo-wp-filter-chk {
     display: flex; align-items: center; gap: 4px; cursor: pointer;
     text-transform: none; letter-spacing: 0; font-weight: 600; color: #ffd9c9;
@@ -3598,6 +3616,11 @@ body.wb-chain-active {
      *    current (lower) value — it's been counting down locally.
      *  - Zero tolerance: timers only go down, never up (even by 1s).
      */
+    // Matches enemy-status-diff.js on the server, deliberately: both sides are
+    // deciding the same question -- is this `until` moving because a timer is
+    // draining, or because a new one was set?
+    const UNTIL_JUMP_SEC = 5;
+
     function mergeStatusesMonotonic(incoming) {
         for (const [targetId, newData] of Object.entries(incoming)) {
             // Race guard against purgeNonEnemyStatuses: a request already in
@@ -3640,7 +3663,18 @@ body.wb-chain-active {
             if (!statusChanged && Object.prototype.hasOwnProperty.call(newData, 'until')) {
                 const existingUntil = typeof existing.until === 'number' ? existing.until : 0;
                 const newUntil      = typeof newData.until === 'number' ? newData.until : existingUntil;
-                state.statuses[targetId].until = Math.min(existingUntil, newUntil);
+                // A LARGE jump upward is not cache lag, it is a new hospital
+                // sentence stacked on the old one -- ipecac and a wrong blood
+                // bag SET the timer to ~60-90 min rather than adding to it, and
+                // a defender about to be released uses exactly that to dodge.
+                // Status stays 'hospital' throughout, so statusChanged is false
+                // and the monotonic guard below would silently discard it: the
+                // countdown would run to zero on a target with 50 minutes left.
+                // The server already treats this as news (UNTIL_JUMP_SEC in
+                // enemy-status-diff.js); this is the client half of that.
+                state.statuses[targetId].until = (newUntil > existingUntil + UNTIL_JUMP_SEC)
+                    ? newUntil
+                    : Math.min(existingUntil, newUntil);
             }
             // v4.9.80: stamp releaseAt so render paths read from an
             // absolute timestamp instead of decrementing a drifting
@@ -3657,7 +3691,12 @@ body.wb-chain-active {
                     // Fresh status → trust incoming absolutely.
                     merged = incomingReleaseAt;
                 } else if (existingReleaseAt > 0 && incomingReleaseAt > 0) {
-                    merged = Math.min(existingReleaseAt, incomingReleaseAt);
+                    // Same escape as the `until` guard above: a release time
+                    // that moves substantially LATER is a re-hospitalisation,
+                    // not a stale push, and min() would throw it away.
+                    merged = incomingReleaseAt > existingReleaseAt + UNTIL_JUMP_SEC
+                        ? incomingReleaseAt
+                        : Math.min(existingReleaseAt, incomingReleaseAt);
                 } else {
                     merged = incomingReleaseAt || existingReleaseAt;
                 }
@@ -9536,6 +9575,91 @@ body.wb-chain-active {
         chip.title = 'Estimated total battle stats';
     }
 
+    /**
+     * The status cell of a war row.
+     *
+     * NOT row.querySelector('[class*="status"]') -- userStatusWrap___ lives
+     * inside the member cell and comes first in document order, so that
+     * selector returns the online dot instead. The status cell is a direct
+     * child of the li carrying a literal "status" class.
+     */
+    function warStatusCell(row) {
+        for (var i = 0; i < row.children.length; i++) {
+            var c = row.children[i];
+            var cls = String((c.getAttribute && c.getAttribute('class')) || '');
+            if (/(^|\s)status(\s|$)/.test(cls)) return c;
+        }
+        return null;
+    }
+
+    /**
+     * Hospital countdown, from the absolute releaseAt the client already
+     * stamps on arrival -- so it is drift-free under poll jitter rather than
+     * a duration being decremented.
+     *
+     * It NEVER releases on its own countdown. At zero it clamps and keeps
+     * saying hospital; only the server reporting a non-hospital state clears
+     * it. The inverse of that rule is how a still-hospitalised target gets
+     * flashed as attackable, which is worse than a timer that reads 0:00 for
+     * a while.
+     */
+    function ensureHospTimer(row, targetId) {
+        var cell = warStatusCell(row);
+        if (!cell) return;
+        var st = (state.statuses || {})[targetId];
+        var hosp = st && normalizeStatus(st.status) === 'hospital';
+        var chip = cell.querySelector('.fo-wp-hosp');
+        if (!hosp) { if (chip) chip.remove(); return; }
+        if (!chip) {
+            chip = document.createElement('span');
+            chip.className = 'fo-wp-hosp';
+            cell.appendChild(chip);
+        }
+        paintHospTimer(chip, targetId);
+    }
+
+    function paintHospTimer(chip, targetId) {
+        var st = (state.statuses || {})[targetId];
+        if (!st) return;
+        var rem = 0;
+        try { rem = statusRemainingSec(st); } catch (_) {}
+        var txt = rem > 0 ? formatTimer(rem) : '0s';
+        if (chip.textContent !== txt) chip.textContent = txt;
+        // Under two minutes is the window where it is worth waiting rather
+        // than moving on, so it is the only thing this bothers to colour.
+        var soon = rem > 0 && rem <= 120;
+        if (chip.classList.contains('soon') !== soon) chip.classList.toggle('soon', soon);
+        // Zero but still reported hospital: clamped, waiting on the server.
+        var held = rem <= 0;
+        if (chip.classList.contains('held') !== held) chip.classList.toggle('held', held);
+    }
+
+    /**
+     * The tick. Separate from the 5s row pass on purpose -- that one walks
+     * every row and re-injects; this one only repaints chips that already
+     * exist, which on a normal war is a handful rather than 78.
+     *
+     * Gated on document.hidden, which is the same seam War Stuff Enhanced
+     * uses. PDA is exempt because its WebView reports hidden=true while the
+     * user is looking straight at the page, and gating there would freeze the
+     * timers on the device most likely to be reading them.
+     */
+    function startHospTick() {
+        if (window.__foHospTick) return;
+        window.__foHospTick = setInterval(function () {
+            if (!IS_PDA && document.hidden) return;
+            var chips = document.querySelectorAll('.fo-wp-hosp');
+            if (!chips.length) return;
+            for (var i = 0; i < chips.length; i++) {
+                var row = chips[i].closest('li');
+                if (!row) continue;
+                var tid;
+                try { tid = uidFromWarRow(row); } catch (_) { continue; }
+                if (tid) paintHospTimer(chips[i], tid);
+            }
+        }, 1000);
+    }
+
     function markCalledRows() {
         let rows;
         try { rows = findMemberRows(); } catch (_) { return; }
@@ -9555,6 +9679,7 @@ body.wb-chain-active {
             row.style.display = show ? '' : 'none';
             if (!show) { hidden++; continue; }   // no point dressing a hidden row
             try { ensureStatChip(row, targetId); } catch (_) {}
+            try { ensureHospTimer(row, targetId); } catch (_) {}
             const call = (state.calls || {})[targetId];
             try { ensureCallButton(row, targetId, call); } catch (_) {}
             if (!call) {
@@ -12492,6 +12617,7 @@ body.wb-chain-active {
                 .observe(host, { childList: true, subtree: true });
         } catch (_) {}
         setInterval(() => { try { markCalledRows(); } catch (_) {} }, 5000);
+        startHospTick();
     }
 
     function detectPageAndInit() {
