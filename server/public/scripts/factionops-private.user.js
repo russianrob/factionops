@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.9
+// @version      5.2.10
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.9';
+    const SCRIPT_VERSION = '5.2.10';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9749,6 +9749,31 @@ body.wb-chain-active {
      * that somebody who never presses "Activate FactionOps" can still see that
      * a target is taken.
      */
+    /**
+     * The player id for one war row.
+     *
+     * NOT getPlayerIdFromRow(): that walks every a[href] in document order and
+     * returns the first id it can parse, and the FIRST link in one of these
+     * rows is the faction:
+     *
+     *   div.factionWrap___ -> a  /factions.php?step=profile&ID=40692
+     *   div.honorWrap___   -> a  /profiles.php?XID=3703493        <- the player
+     *   div.attack         -> a  /page.php?sid=attack&user2ID=3703493
+     *
+     * So it returned 40692 for all 78 rows, state.calls[40692] was undefined
+     * every time, and nothing marked -- with rows:78 and withId:78 in the
+     * diagnostic, which read as healthy. Only sampleIds being 40692 repeated
+     * gave it away.
+     *
+     * Matched on the id parameters that mean a PLAYER, never on link order.
+     */
+    function uidFromWarRow(row) {
+        const a = row.querySelector('a[href*="user2ID="], a[href*="XID="]');
+        if (!a) return null;
+        const m = String(a.getAttribute('href') || '').match(/(?:user2ID|XID)=(\d+)/);
+        return m ? m[1] : null;
+    }
+
     let _callsDiagSent = false;
     function reportCallsDiag() {
         if (_callsDiagSent) return;
@@ -9756,7 +9781,7 @@ body.wb-chain-active {
         let rows = [];
         try { rows = findMemberRows() || []; } catch (_) {}
         const ids = [];
-        for (const r of rows) { try { const t = getPlayerIdFromRow(r); if (t) ids.push(t); } catch (_) {} }
+        for (const r of rows) { try { const t = uidFromWarRow(r); if (t) ids.push(t); } catch (_) {} }
         const diag = {
             rows: rows.length,
             withId: ids.length,
@@ -9784,7 +9809,7 @@ body.wb-chain-active {
         try { rows = findMemberRows(); } catch (_) { return; }
         for (const row of rows || []) {
             let targetId;
-            try { targetId = getPlayerIdFromRow(row); } catch (_) { continue; }
+            try { targetId = uidFromWarRow(row); } catch (_) { continue; }
             if (!targetId) continue;
             const call = (state.calls || {})[targetId];
             const old = row.querySelector('.fo-called-tag');
