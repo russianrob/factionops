@@ -10,7 +10,6 @@ import { fetchFactionMembers, fetchRecentFactionAttacks } from "./torn-api.js";
 import { recordSample } from "./activity-heatmap.js";
 import { broadcastSSE } from "./routes.js";
 import * as push from "./push-notifications.js";
-import { startRetalTracker, stopRetalTracker, stopAll as stopAllRetals } from "./retal-tracker.js";
 import { enemyProfilePrewarDelay } from "./enemy-profile-gate.js";
 import { statusChanged } from "./enemy-status-diff.js";
 
@@ -290,9 +289,6 @@ export function startWarStatusMonitor(io, warId) {
   // Companion watcher — attacks-feed polling runs on its own 10s cadence
   // alongside the 15s basic poll.
   startAttacksFeedMonitor(io, warId);
-
-  // Incoming-retal list — viewing-gated poll of our own attack feed.
-  startRetalTracker(io, warId);
 
   // Enemy-attacks watcher disabled: Torn's attacks endpoint only
   // accepts the owning faction's key. See note on startEnemyAttacksMonitor.
@@ -640,9 +636,6 @@ export function stopWarStatusMonitor(warId) {
   enemyAttacksCursors.delete(warId);
   enemyAttacksBackoffs.delete(warId);
 
-  // Retal tracker
-  stopRetalTracker(warId);
-
   console.log(`[war-status] Stopped monitoring for war ${warId}`);
 }
 
@@ -669,7 +662,5 @@ export function stopAll() {
   enemyAttacksTimeouts.clear();
   enemyAttacksCursors.clear();
   enemyAttacksBackoffs.clear();
-
-  stopAllRetals();
 }
 

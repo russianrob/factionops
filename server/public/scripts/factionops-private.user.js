@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.17
+// @version      5.2.18
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -27,7 +27,6 @@
 // @connect      *
 // @run-at       document-idle
 // ==/UserScript==
-
 
 (function () {
     'use strict';
@@ -100,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.17';
+    const SCRIPT_VERSION = '5.2.18';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -921,10 +920,7 @@ html.wb-theme-light {
     background: rgba(0,184,148,0.06) !important;
 }
 
-
 /* (transition rule merged into .wb-sortable-row above) */
-
-
 
 /* ----- Group attack / viewers indicator ----- */
 .wb-viewers-badge {
@@ -1352,7 +1348,6 @@ body.wb-chain-active {
 .fo-war-timer-detail-label { color: rgba(255,255,255,0.5) !important; }
 .fo-war-timer-detail-val { color: #dfe6e9 !important; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 
-
 /* Fallback: custom chain info when Torn bar not found */
 .fo-chain-info {
     display: flex; align-items: center; gap: 8px;
@@ -1656,7 +1651,6 @@ body.wb-chain-active {
     font-weight: 600; font-size: 12.5px; color: var(--wb-text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-
 
 .fo-player-name .fo-pid { font-size: 10px; color: #636e72; font-weight: 400; }
 .fo-sub-row { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
@@ -3146,15 +3140,6 @@ body.wb-chain-active {
     filter: brightness(1.2); transform: translateY(-1px);
     box-shadow: 0 2px 8px rgba(214,48,49,0.3);
 }
-.fo-retal-section { margin-top: 8px; border-top: 1px solid var(--wb-border, #2a3447); padding-top: 6px; }
-.fo-retal-header { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--wb-hospital-red, #e03a3a); margin: 0 0 4px 4px; letter-spacing: .5px; }
-.fo-retal-list { list-style: none; margin: 0; padding: 0; }
-.fo-retal-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid var(--wb-border, #1c2330); font-size: 12px; }
-.fo-retal-main { flex: 1; min-width: 0; }
-.fo-retal-name { font-weight: 600; color: var(--wb-text, #e6e8ee); text-decoration: none; }
-.fo-retal-sub { font-size: 10px; color: #9aa3b2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fo-retal-cd { font-variant-numeric: tabular-nums; color: #ffb44d; font-weight: 700; min-width: 42px; text-align: right; }
-.fo-retal-attack { background: linear-gradient(135deg, #ff6b52, #e03a3a); color: #fff; border: 0; border-radius: 5px; padding: 3px 8px; font-size: 11px; font-weight: 700; text-decoration: none; box-shadow: 0 1px 4px rgba(214,48,49,0.3); }
 `;
         GM_addStyle(css);
         log('Styles injected');
@@ -3325,8 +3310,6 @@ body.wb-chain-active {
 
         // Map of targetId -> { level, setBy: { id, name }, timestamp }
         priorities: {},
-
-        retals: [],
 
         // Map of targetId -> { status, until, description, activity }
         statuses: {},
@@ -4274,7 +4257,6 @@ body.wb-chain-active {
             warn('[ws-intercept] install failed:', e && e.message);
         }
     }
-
 
     function queuePeerRelay(statusBatch) {
         if (!statusBatch || Object.keys(statusBatch).length === 0) return;
@@ -5249,8 +5231,6 @@ body.wb-chain-active {
         return formatEstimate(estimate);
     }
 
-
-
     function formatEstimate(mins) {
         const h = Math.floor(mins / 60);
         const m = mins % 60;
@@ -5950,8 +5930,6 @@ body.wb-chain-active {
             try { markCalledRows(); } catch (_) {}
         }
 
-        if (data.retals) { state.retals = data.retals; if (typeof renderRetalList === 'function') renderRetalList(); }
-
         // ── Chain ──
         if (data.chainData && !CHAIN_POLL_ONLY) {
             const oldCurrent = state.chain.current;
@@ -6130,7 +6108,6 @@ body.wb-chain-active {
             log('Starting SSE Stream (CSP-bypass)...');
             connectSSEStream();
         }
-
 
         // 2. Socket.IO is no longer attempted at all.
         //
@@ -8057,7 +8034,6 @@ body.wb-chain-active {
             });
         }
 
-
         // War target — set/clear (leader only)
         const warTargetSetBtn = document.getElementById('fo-btn-set-war-target');
         const warTargetClearBtn = document.getElementById('fo-btn-clear-war-target');
@@ -8335,7 +8311,6 @@ body.wb-chain-active {
 
         const viewLogsBtn = document.getElementById('wb-btn-view-logs');
 
-
         if (viewLogsBtn) {
             viewLogsBtn.addEventListener('click', async () => {
                 viewLogsBtn.textContent = 'Loading...';
@@ -8515,8 +8490,6 @@ body.wb-chain-active {
 
         updateChainBar();
     }
-
-
 
     /**
      * Forward intercepted chain data to the server so all faction members
@@ -8872,7 +8845,6 @@ body.wb-chain-active {
     let energyState = { current: 0, max: 0, ticktime: 0, fulltime: 0 };
     let energyTickAnchorAt = 0; // wall-clock when we last set ticktime
     let energyTickAnchorVal = 0; // ticktime value at anchor
-
 
     function pollEnergy() {
         if (!CONFIG.API_KEY) return;
@@ -9456,11 +9428,6 @@ body.wb-chain-active {
         if (!window.__foNextUpTickInterval) {
             window.__foNextUpTickInterval = setInterval(() => {
                 if (typeof updateNextUp === 'function') updateNextUp();
-            }, 1000);
-        }
-        if (!window.__foRetalTickInterval) {
-            window.__foRetalTickInterval = setInterval(() => {
-                if (typeof updateRetalCountdowns === 'function') updateRetalCountdowns();
             }, 1000);
         }
     }
@@ -11204,10 +11171,6 @@ body.wb-chain-active {
                 <div class="fo-col-header right">Action</div>
             </div>
             <ul class="fo-target-list" id="fo-target-list"></ul>
-            <div class="fo-retal-section" id="fo-retal-section" style="display:none;">
-                <div class="fo-retal-header">⚔ Retal</div>
-                <ul class="fo-retal-list" id="fo-retal-list"></ul>
-            </div>
             <div class="fo-footer">
                 <div class="fo-footer-stats">
                     <span class="fo-footer-stat">Targets: <span class="fo-val" id="fo-stat-targets">0</span></span>
@@ -11929,47 +11892,6 @@ body.wb-chain-active {
             enemyEl.textContent = state.enemyFactionName;
         }
 
-        renderRetalList();
-    }
-
-    function renderRetalList() {
-        const sec = document.getElementById('fo-retal-section');
-        const ul = document.getElementById('fo-retal-list');
-        if (!sec || !ul) return;
-        const list = Array.isArray(state.retals) ? state.retals : [];
-        const nowSec = Math.floor(Date.now() / 1000);
-        const live = list.filter(r => (r.endedTs + 300 - nowSec) > 0);
-        sec.style.display = live.length ? 'block' : 'none';
-        ul.innerHTML = live.map(r => {
-            const rem = r.endedTs + 300 - nowSec;
-            const cd = Math.floor(rem / 60) + ':' + String(rem % 60).padStart(2, '0');
-            const lvl = r.attackerLevel ? ' [' + r.attackerLevel + ']' : '';
-            return '<li class="fo-retal-row" data-fo-retal="' + escapeHtml(r.attackId) + '" data-ended="' + r.endedTs + '">'
-                + '<div class="fo-retal-main">'
-                + '<a class="fo-retal-name" href="/profiles.php?XID=' + r.attackerId + '" target="_blank" rel="noopener">'
-                + escapeHtml(r.attackerName) + lvl + '</a>'
-                + '<div class="fo-retal-sub">→ ' + escapeHtml(r.defenderName) + ' · ' + escapeHtml(r.result) + '</div>'
-                + '</div>'
-                + '<span class="fo-retal-cd" data-ended="' + r.endedTs + '">' + cd + '</span>'
-                + '<a class="fo-retal-attack" href="https://www.torn.com/page.php?sid=attack&user2ID=' + r.attackerId + '" target="_blank" rel="noopener">Attack</a>'
-                + '</li>';
-        }).join('');
-        ul.querySelectorAll('a').forEach(a => a.addEventListener('click', e => e.stopPropagation()));
-    }
-
-    function updateRetalCountdowns() {
-        const ul = document.getElementById('fo-retal-list');
-        const sec = document.getElementById('fo-retal-section');
-        if (!ul || !sec) return;
-        const nowSec = Math.floor(Date.now() / 1000);
-        ul.querySelectorAll('.fo-retal-row').forEach(li => {
-            const ended = Number(li.getAttribute('data-ended')) || 0;
-            const rem = ended + 300 - nowSec;
-            if (rem <= 0) { li.remove(); return; }
-            const cd = li.querySelector('.fo-retal-cd');
-            if (cd) cd.textContent = Math.floor(rem / 60) + ':' + String(rem % 60).padStart(2, '0');
-        });
-        sec.style.display = ul.children.length ? 'block' : 'none';
     }
 
     /**

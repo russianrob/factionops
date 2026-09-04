@@ -317,8 +317,7 @@ export function startChainMonitor(io, warId) {
             // and does nothing at all.
             //
             // Dynamic import because routes.js imports THIS module (routes.js:120),
-            // so a static import would close the cycle. Same pattern as
-            // retal-tracker.js:85.
+            // so a static import would close the cycle.
             import("./routes.js").then(r => r.broadcastSSE(warId, {
               warEnded: true,
               warResult: war.warResult,
