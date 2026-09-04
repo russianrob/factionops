@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.32
+// @version      5.2.33
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.32';
+    const SCRIPT_VERSION = '5.2.33';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -109,10 +109,9 @@
         CHAIN_ALERT: GM_getValue('factionops_chain_alert', true),
         CHAIN_ALERT_THRESHOLD: GM_getValue('factionops_chain_alert_threshold', 60),
         PDA_NOTIFICATIONS: GM_getValue('factionops_pda_notif', IS_PDA),
-        // The war-page display, added 5.2.31. These three shipped without any
-        // control at all -- default on, because that is how they have behaved
-        // since they landed and somebody who liked it should not have to opt in.
-        WP_CHIPS: GM_getValue('factionops_wp_chips', true),
+        // The war-page display, added 5.2.31. Both shipped without any control
+        // at all -- default on, because that is how they have behaved since
+        // they landed and somebody who liked it should not have to opt in.
         WP_HOSP:  GM_getValue('factionops_wp_hosp', true),
         WP_SORT:  GM_getValue('factionops_wp_sort', true),
         KEEP_ALIVE: GM_getValue('factionops_keep_alive', false),
@@ -160,7 +159,6 @@
             CHAIN_ALERT: 'factionops_chain_alert',
             CHAIN_ALERT_THRESHOLD: 'factionops_chain_alert_threshold',
             PDA_NOTIFICATIONS: 'factionops_pda_notif',
-            WP_CHIPS: 'factionops_wp_chips',
             WP_HOSP: 'factionops_wp_hosp',
             WP_SORT: 'factionops_wp_sort',
             KEEP_ALIVE: 'factionops_keep_alive',
@@ -862,21 +860,6 @@ html.wb-theme-light {
     text-transform: none; letter-spacing: 0; font-weight: 600; color: #ffd9c9;
 }
 .fo-wp-filter-chk input { margin: 0; cursor: pointer; }
-/* The estimate, in the member cell. tabular-nums so the column of numbers
-   lines up as the eye runs down the list. */
-.fo-wp-stat {
-    display: inline-block; margin-left: 6px; padding: 1px 5px;
-    border-radius: 3px; border: 1px solid rgba(255,255,255,.14);
-    background: rgba(0,0,0,.35);
-    font-size: 10px; font-weight: 700; line-height: 1.4;
-    font-variant-numeric: tabular-nums; white-space: nowrap;
-    vertical-align: middle;
-}
-/* Same tiers the overlay's BSP cell used: S 3B+, A 1-3B, B 500M-1B, C under. */
-.fo-wp-stat[data-tier="s"] { color: #ff7675; border-color: rgba(255,118,117,.45); }
-.fo-wp-stat[data-tier="a"] { color: #ffd166; border-color: rgba(255,209,102,.45); }
-.fo-wp-stat[data-tier="b"] { color: #55efc4; border-color: rgba(85,239,196,.45); }
-.fo-wp-stat[data-tier="c"] { color: #b2bec3; }
 /* Pushed to the far right by the count's margin-left:auto when a filter is
    hiding rows, and by its own when nothing is. 28px keeps it a thumb target. */
 .fo-wp-filter-gear {
@@ -9631,40 +9614,6 @@ body.wb-chain-active {
         bar.addEventListener('click', function (e) { e.stopPropagation(); });
     }
 
-    /**
-     * The stat estimate, as a chip in the member cell.
-     *
-     * The points cell is taken by the Call control and the attack cell is a
-     * link that must stay clickable, so this goes in the member cell -- the
-     * widest one, and where a person already looks to size a target up.
-     *
-     * Costs nothing: fetchBspPrediction is a synchronous read of Battle Stats
-     * Predictor's own localStorage, and the FFScouter half is already being
-     * fetched by applyServerData.
-     */
-    function ensureStatChip(row, targetId) {
-        const cell = row.querySelector('[class*="member"]');
-        if (!cell) return;
-        if (!CONFIG.WP_CHIPS) {
-            var old = cell.querySelector('.fo-wp-stat');
-            if (old) old.remove();
-            return;
-        }
-        let n = null;
-        try { n = getTargetStatsEstimate(targetId); } catch (_) {}
-        let chip = cell.querySelector('.fo-wp-stat');
-        if (n == null) { if (chip) chip.remove(); return; }
-        if (!chip) {
-            chip = document.createElement('span');
-            chip.className = 'fo-wp-stat';
-            cell.appendChild(chip);
-        }
-        const txt = formatBspNumber(n);
-        if (chip.textContent !== txt) chip.textContent = txt;
-        const tier = bspTier(n);
-        if (chip.dataset.tier !== tier) chip.dataset.tier = tier;
-        chip.title = 'Estimated total battle stats';
-    }
 
     /**
      * The status cell of a war row.
@@ -9895,7 +9844,6 @@ body.wb-chain-active {
             '</div>' +
             '<div class="fo-wp-pnote" id="fo-wp-key-note"></div>' +
             '<div class="fo-wp-psep">On this page</div>' +
-            row('fo-wp-t-chips', 'Stat estimates', CONFIG.WP_CHIPS) +
             row('fo-wp-t-hosp', 'Hospital timers', CONFIG.WP_HOSP) +
             row('fo-wp-t-sort', 'Sort: available first', CONFIG.WP_SORT) +
             '<div class="fo-wp-psep">Alerts</div>' +
@@ -9926,7 +9874,6 @@ body.wb-chain-active {
                 if (after) { try { after(); } catch (_) {} }
             });
         };
-        bind('fo-wp-t-chips', 'WP_CHIPS', markCalledRows);
         bind('fo-wp-t-hosp',  'WP_HOSP',  markCalledRows);
         bind('fo-wp-t-sort',  'WP_SORT',  markCalledRows);
         bind('fo-wp-t-chain', 'CHAIN_ALERT');
@@ -9976,7 +9923,6 @@ body.wb-chain-active {
             try { show = passesStatsFilter(targetId) && passesActivityFilter(targetId); } catch (_) {}
             row.style.display = show ? '' : 'none';
             if (!show) { hidden++; continue; }   // no point dressing a hidden row
-            try { ensureStatChip(row, targetId); } catch (_) {}
             try { ensureHospTimer(row, targetId); } catch (_) {}
             const call = (state.calls || {})[targetId];
             try { ensureCallButton(row, targetId, call); } catch (_) {}
