@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.6
+// @version      5.2.8
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.6';
+    const SCRIPT_VERSION = '5.2.8';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -7047,6 +7047,10 @@ body.wb-chain-active {
             isDeal: !!isDeal,
         };
         updateTargetRow(tid);
+        // The native war row is not one of updateTargetRow's concerns, so mark
+        // it here too -- otherwise pressing Call changes nothing on Torn's own
+        // list until the next poll echoes the call back.
+        try { markCalledRows(); } catch (_) {}
         if (CONFIG.AUTO_SORT) debouncedSort();
         const targetName = state.statuses[tid]?.name || null;
         // v5.0.95: copy call message to clipboard — wording branches
@@ -7080,6 +7084,7 @@ body.wb-chain-active {
                 warn('Call failed:', e.message);
                 delete state.calls[tid];
                 updateTargetRow(tid);
+                try { markCalledRows(); } catch (_) {}
                 showToast(e.message || 'Call failed', 'error');
             });
     }
@@ -7103,12 +7108,17 @@ body.wb-chain-active {
         const prev = state.calls[tid];
         delete state.calls[tid];
         updateTargetRow(tid);
+        // The native war row is not one of updateTargetRow's concerns, so mark
+        // it here too -- otherwise pressing Call changes nothing on Torn's own
+        // list until the next poll echoes the call back.
+        try { markCalledRows(); } catch (_) {}
         if (CONFIG.AUTO_SORT) debouncedSort();
         postAction('/api/call', { warId, targetId: tid, action: 'uncall' })
             .catch(e => {
                 warn('Uncall failed:', e.message);
                 if (prev) state.calls[tid] = prev;
                 updateTargetRow(tid);
+                try { markCalledRows(); } catch (_) {}
                 showToast(e.message || 'Uncall failed', 'error');
             });
     }
@@ -9759,6 +9769,7 @@ body.wb-chain-active {
             jwt: !!state.jwtToken,
             polling: !!pollTimer,
             url: location.href.slice(0, 100),
+            v: SCRIPT_VERSION,
         };
         log('[calls] ' + JSON.stringify(diag));
         try {
