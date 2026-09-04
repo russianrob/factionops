@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.39
+// @version      5.2.40
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.39';
+    const SCRIPT_VERSION = '5.2.40';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9631,44 +9631,10 @@ body.wb-chain-active {
      * Predictor's own localStorage, and the FFScouter half is already being
      * fetched by applyServerData.
      */
-    // Torn's own numbers on a war row are a level and a score, neither of which
-    // carries a K/M/B suffix -- so a LEAF in the member cell whose entire text
-    // is "2.56B" is another script's stat estimate, not Torn's.
-    var ESTIMATE_TEXT = /^[\d.,]+\s*[KMB]$/i;
-
-    /**
-     * Hide Battle Stats Predictor's estimate on a war row.
-     *
-     * BSP draws it at the left where Torn's avatar covers it, and its values
-     * run a row behind besides -- the first row has none and each of the rest
-     * shows the row above's number. Ours is legible and reads the very same
-     * source (BSP's own localStorage cache), so theirs goes.
-     *
-     * Matched by SHAPE, not by class: a guess at BSP's namespace did not
-     * match, and this needs no knowledge of another script's internals.
-     * Deliberately narrow -- a leaf element, whole text is a number with a
-     * magnitude suffix, and never our own chip. The flag it stamps is a
-     * do-not-repeat marker, so a row is only walked once.
-     */
-    function hideForeignEstimate(cell) {
-        var n = cell.querySelectorAll('*');
-        for (var i = 0; i < n.length; i++) {
-            var e = n[i];
-            if (e.children.length) continue;                        // leaves only
-            if (e.classList && e.classList.contains('fo-wp-stat')) continue;
-            if (e.closest && e.closest('.fo-wp-stat')) continue;    // never ours
-            if (e.dataset.foHid === '1') continue;                  // already done
-            var t = String(e.textContent || '').trim();
-            if (!t || !ESTIMATE_TEXT.test(t)) continue;
-            e.dataset.foHid = '1';
-            e.style.display = 'none';
-        }
-    }
 
     function ensureStatChip(row, targetId) {
         const cell = row.querySelector('[class*="member"]');
         if (!cell) return;
-        hideForeignEstimate(cell);
         let n = null;
         try { n = getTargetStatsEstimate(targetId); } catch (_) {}
         let chip = cell.querySelector('.fo-wp-stat');
