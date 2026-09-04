@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.28
+// @version      5.2.29
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.28';
+    const SCRIPT_VERSION = '5.2.29';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -729,6 +729,12 @@ html.wb-theme-light {
 .fo-wp-call.fo-wp-call-drop:hover { background: #123028; }
 /* Stats range bar above Torn's enemy list. Same palette as the call button
    so the two additions read as one thing rather than two scripts. */
+/* Applied by applyRowOrder, not by a static selector, so the layout change is
+   scoped to a list we are actually sorting and comes off by removing a class.
+   The rows already stack vertically; this only makes CSS order apply to them.
+   No backticks in here -- this whole stylesheet is a JS template literal. */
+.fo-wp-sorted { display: flex; flex-direction: column; }
+
 /* Settings section headings. The panel had 48 controls, one title and two
    <hr>s -- no way to navigate it except reading every row. */
 .wb-sgroup {
@@ -9674,14 +9680,75 @@ body.wb-chain-active {
         }, 1000);
     }
 
+    /**
+     * Where a row belongs in the list.
+     *
+     * Buckets rather than one number, because "soonest out" only means
+     * anything inside hospital -- an available target has no timer to compare
+     * against and must simply be above all of them.
+     *
+     *   0  available now
+     *   1  hospital, soonest out first
+     *   2  jail / travelling / abroad -- not coming back on a useful timescale
+     *   3  a row we could not identify; it sinks rather than floats, because
+     *      order defaults to 0 and an unknown row must never sit on top
+     */
+    function rowSortKey(targetId) {
+        if (!targetId) return [3, 0];
+        var st = (state.statuses || {})[targetId];
+        var status = normalizeStatus(st ? st.status : 'ok');
+        if (status === 'hospital') {
+            var rem = 0;
+            try { rem = statusRemainingSec(st); } catch (_) {}
+            return [1, rem];
+        }
+        if (status === 'jail' || status === 'traveling' || status === 'abroad' ||
+            status === 'federal' || status === 'fallen') return [2, 0];
+        return [0, 0];
+    }
+
+    /**
+     * Reorder by CSS `order` rather than by moving nodes.
+     *
+     * Moving rows inside a React-managed list is a fight -- it reverts on the
+     * next render. An inline `order` is not part of React's tree, so there is
+     * nothing for it to disagree with, and if it does replace a row we simply
+     * set it again on the next pass.
+     *
+     * `order` only applies to flex children and these rows are float-based
+     * (every li ends in a div.clear), so the container needs one class. It
+     * changes how the LIs stack relative to each other -- which is vertically,
+     * exactly as before -- and leaves each row's internal float layout alone.
+     */
+    function applyRowOrder(entries) {
+        if (!entries.length) return;
+        var list = entries[0].row.parentElement;
+        if (list && !list.classList.contains('fo-wp-sorted')) list.classList.add('fo-wp-sorted');
+        entries.sort(function (a, b) {
+            if (a.key[0] !== b.key[0]) return a.key[0] - b.key[0];
+            if (a.key[1] !== b.key[1]) return a.key[1] - b.key[1];
+            return a.seen - b.seen;      // ties keep Torn's own order
+        });
+        for (var i = 0; i < entries.length; i++) {
+            var v = String(i);
+            if (entries[i].row.style.order !== v) entries[i].row.style.order = v;
+        }
+    }
+
     function markCalledRows() {
         let rows;
         try { rows = findMemberRows(); } catch (_) { return; }
         try { ensureWarFilterBar(); } catch (_) {}
         let hidden = 0, total = 0;
+        // Sorted at the end of this 5s pass, never on the 1s tick: a row that
+        // jumped the moment its timer expired would move under a thumb that is
+        // already coming down, and that is how you attack the wrong person.
+        const ordering = [];
+        let seen = 0;
         for (const row of rows || []) {
             let targetId;
             try { targetId = uidFromWarRow(row); } catch (_) { continue; }
+            ordering.push({ row: row, key: rowSortKey(targetId), seen: seen++ });
             if (!targetId) continue;
             // The range filter. passesStatsFilter shows a target whose stats
             // cannot be estimated -- on this page a hidden row is one nobody
@@ -9711,6 +9778,7 @@ body.wb-chain-active {
         }
         // Say how much is being hidden. A filter left on from a previous war
         // would otherwise look like a short enemy faction.
+        try { applyRowOrder(ordering); } catch (_) {}
         const countEl = document.getElementById('fo-wp-count');
         if (countEl) {
             countEl.textContent = hidden ? ('hiding ' + hidden + ' of ' + total) : '';
