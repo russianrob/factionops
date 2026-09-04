@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.13
+// @version      5.2.14
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.13';
+    const SCRIPT_VERSION = '5.2.14';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -694,14 +694,25 @@ html.wb-theme-light {
     background: rgba(0,184,148,0.26) !important;
     box-shadow: inset 6px 0 0 #00b894;
 }
+/* The caller's name lives in the Score cell with the button, NOT on a
+   full-width line of its own. That line rendered between two rows and there
+   was no way to tell which of them it belonged to -- worse than
+   unaligned, it was ambiguous. */
 .fo-called-tag {
-    display: block; clear: both; width: 100%; box-sizing: border-box;
-    padding: 2px 10px 3px 12px; font-size: 11px; font-weight: 700;
-    letter-spacing: .04em; text-align: left;
-    background: #e17055; color: #fff; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis;
+    display: block; max-width: 100%; margin-top: 1px;
+    font-size: 9px; font-weight: 700; letter-spacing: .02em;
+    color: #e17055; text-align: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.fo-called-mine .fo-called-tag { background: #00b894; }
+.fo-called-mine .fo-called-tag { color: #00b894; }
+
+/* Stack the cell instead of appending into it. The score is a bare text
+   node, so a block appended after it overlapped rather than sat below;
+   as a flex column the text becomes an anonymous item and the two stack. */
+.fo-call-host {
+    display: flex !important; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1px;
+}
 
 /* Call control, in the Score column (div.points___). That cell holds one
    short number and is the only one on the row with room to spare -- the
@@ -712,7 +723,7 @@ html.wb-theme-light {
        under it, which means something in that cell was taking the clicks --
        a button you can see but cannot press is worse than no button. */
     position: relative; z-index: 40; pointer-events: auto;
-    display: block; margin: 4px auto 2px; padding: 3px 0;
+    display: block; margin: 0; padding: 2px 0;
     width: 92%; min-width: 44px; box-sizing: border-box;
     border: 1px solid rgba(225,112,85,.55); border-radius: 4px;
     background: rgba(225,112,85,.14); color: #e17055;
@@ -9855,8 +9866,7 @@ body.wb-chain-active {
             row.classList.add('fo-called-row');
             row.classList.toggle('fo-called-mine', !!mine);
             const who = mine ? 'YOU' : (call.calledBy && call.calledBy.name) || 'someone';
-            const label = (call.isDeal ? '\uD83D\uDD12 DEAL \u2014 ' : '') +
-                          (mine ? 'CALLED BY YOU' : 'CALLED BY ' + who.toUpperCase());
+            const label = (call.isDeal ? '\uD83D\uDD12 ' : '') + (mine ? 'YOU' : who);
             if (old) { if (old.textContent !== label) old.textContent = label; continue; }
             const tag = document.createElement('span');
             tag.className = 'fo-called-tag';
@@ -9881,10 +9891,10 @@ body.wb-chain-active {
             // appending there makes the badge fight that layout. As a sibling
             // it sits after the name on the same row, and nowhere near the
             // Attack control in div.attack.
-            // On the ROW, last, so it renders as its own line beneath the
-            // member cell. Anywhere inside that cell is covered by the FFS
-            // banner; anywhere at the right edge covers the Attack link.
-            row.appendChild(tag);
+            // Into the Score cell under the button, so the name is
+            // unambiguously attached to its own row.
+            const cell = row.querySelector('[class*="points"]');
+            (cell || row).appendChild(tag);
         }
     }
 
@@ -9899,6 +9909,7 @@ body.wb-chain-active {
     function ensureCallButton(row, targetId, call) {
         const cell = row.querySelector('[class*="points"]');
         if (!cell) return;
+        cell.classList.add('fo-call-host');
         let btn = cell.querySelector('.fo-call-cell');
         const mine = call && call.calledBy && String(call.calledBy.id) === String(state.myPlayerId);
         const label = !call ? 'CALL' : (mine ? 'DROP' : 'TAKEN');
