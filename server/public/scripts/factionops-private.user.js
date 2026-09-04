@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.5
+// @version      5.2.6
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.5';
+    const SCRIPT_VERSION = '5.2.6';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9739,32 +9739,38 @@ body.wb-chain-active {
      * that somebody who never presses "Activate FactionOps" can still see that
      * a target is taken.
      */
-    let _markDiagShown = false;
+    let _callsDiagSent = false;
+    function reportCallsDiag() {
+        if (_callsDiagSent) return;
+        _callsDiagSent = true;
+        let rows = [];
+        try { rows = findMemberRows() || []; } catch (_) {}
+        const ids = [];
+        for (const r of rows) { try { const t = getPlayerIdFromRow(r); if (t) ids.push(t); } catch (_) {} }
+        const diag = {
+            rows: rows.length,
+            withId: ids.length,
+            calls: Object.keys(state.calls || {}).length,
+            callIds: Object.keys(state.calls || {}).slice(0, 5),
+            sampleIds: ids.slice(0, 5),
+            marked: document.querySelectorAll('.fo-called-row').length,
+            enemyLi: document.querySelectorAll('.enemy-faction ul.members-list li.enemy').length,
+            anyLi: document.querySelectorAll('.members-list li').length,
+            jwt: !!state.jwtToken,
+            polling: !!pollTimer,
+            url: location.href.slice(0, 100),
+        };
+        log('[calls] ' + JSON.stringify(diag));
+        try {
+            httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ tag: 'fo-calls-diag', data: diag }) });
+        } catch (_) {}
+    }
+
     function markCalledRows() {
         let rows;
         try { rows = findMemberRows(); } catch (_) { return; }
-        if (!_markDiagShown) {
-            _markDiagShown = true;
-            const ids = [];
-            for (const r of rows || []) { try { const t = getPlayerIdFromRow(r); if (t) ids.push(t); } catch (_) {} }
-            const diag = {
-                rows: rows ? rows.length : 0,
-                withId: ids.length,
-                calls: Object.keys(state.calls || {}).length,
-                callIds: Object.keys(state.calls || {}).slice(0, 5),
-                sampleIds: ids.slice(0, 5),
-                jwt: !!state.jwtToken,
-                polling: !!pollTimer,
-                url: location.href.slice(0, 100),
-            };
-            log('[calls] ' + JSON.stringify(diag));
-            // Console is no use on a phone. Send it where it can be read.
-            try {
-                httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
-                    headers: { 'Content-Type': 'application/json' },
-                    data: JSON.stringify({ tag: 'fo-calls-diag', data: diag }) });
-            } catch (_) {}
-        }
         for (const row of rows || []) {
             let targetId;
             try { targetId = getPlayerIdFromRow(row); } catch (_) { continue; }
@@ -13520,6 +13526,10 @@ body.wb-chain-active {
             return;
         }
         markCalledRows();
+        // Report once the page has SETTLED. The first pass above runs before
+        // React has painted the member list, so a diagnostic tied to it
+        // reports rows:0 every time and tells us nothing.
+        setTimeout(function () { try { reportCallsDiag(); } catch (_) {} }, 15000);
         // The war list is a React table that repaints on its own, so a one-off
         // pass loses the marks the moment Torn re-renders a row.
         try {

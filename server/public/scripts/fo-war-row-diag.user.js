@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps War Row Diag
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.1.0
 // @description  Temporary diagnostic — reports which selectors match Torn's ranked-war member rows, and whether FactionOps managed to touch them. Safe to remove after.
 // @author       RussianRob
 // @match        https://www.torn.com/factions.php*
@@ -13,7 +13,7 @@
 (function () {
   "use strict";
   var URL_ = "https://tornwar.com/api/debug/client-log";
-  var sent = 0, MAX = 6;
+  var sent = 0, MAX = 10;
 
   // The endpoint truncates at 1500 chars, so each post carries one small
   // question rather than a dump that gets cut off mid-answer.
@@ -103,6 +103,56 @@
     });
   }
 
+  // The innards of ONE enemy row: what the children are, and which selector
+  // actually finds the name. The tag has to attach beside the name, and
+  // guessing where that is has already cost several rounds.
+  function probeRow() {
+    var row = document.querySelector('.enemy-faction ul.members-list li.enemy')
+           || document.querySelector('ul.members-list li.enemy')
+           || document.querySelector('.members-list li');
+    if (!row) { post("enemy-row", { none: true }); return; }
+
+    var kids = [];
+    try {
+      Array.prototype.forEach.call(row.children, function (c) {
+        if (kids.length >= 8) return;
+        kids.push({
+          t: c.tagName,
+          c: cls(c).slice(0, 46),
+          x: String(c.textContent || "").replace(/\s+/g, " ").trim().slice(0, 26)
+        });
+      });
+    } catch (_) {}
+    post("enemy-row-children", { cls: cls(row), n: row.children.length, kids: kids });
+
+    // Which of these finds the NAME, and what each returns.
+    var NAME_SELS = [
+      "a.user.name", ".user.name", ".honorWrap a", "a[href*='profiles.php']",
+      ".member .name", ".name-wrap a", ".userName", "[class*='name' i] a",
+      "[class*='honor' i]", "span.name"
+    ];
+    var found = {};
+    NAME_SELS.forEach(function (sel) {
+      try {
+        var el = row.querySelector(sel);
+        found[sel] = el ? String(el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 22) : 0;
+      } catch (_) { found[sel] = "err"; }
+    });
+    post("enemy-row-name", found);
+
+    // The cells worth surfacing alongside a call marker.
+    var cells = {};
+    [["lvl", "[class*='level' i]"], ["score", "[class*='score' i]"],
+     ["status", "[class*='status' i]"], ["attack", "[class*='attack' i]"]].forEach(function (pair) {
+      try {
+        var el = row.querySelector(pair[1]);
+        cells[pair[0]] = el ? (cls(el).slice(0, 30) + " = " +
+          String(el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 18)) : 0;
+      } catch (_) { cells[pair[0]] = "err"; }
+    });
+    post("enemy-row-cells", cells);
+  }
+
   // The war list is React-rendered and arrives after load, so one pass at
   // document-idle usually sees an empty page. Sample a few times instead.
   var tries = 0;
@@ -110,6 +160,6 @@
     tries++;
     var any = false;
     try { any = document.querySelectorAll('li[class*="warListItem"], .members-list li').length > 0; } catch (_) {}
-    if (any || tries >= 10) { clearInterval(t); run(); }
+    if (any || tries >= 10) { clearInterval(t); run(); probeRow(); }
   }, 1500);
 })();
