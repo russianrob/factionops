@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.4
+// @version      5.2.5
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.4';
+    const SCRIPT_VERSION = '5.2.5';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9603,9 +9603,20 @@ body.wb-chain-active {
      * Torn frequently changes its HTML, so we try several patterns.
      */
     const MEMBER_LIST_SELECTORS = [
-        // Measured against the live page rather than guessed at (see
-        // fo-war-row-diag): `.members-list li` is the only selector that finds
-        // the member rows -- 171 of them, both rosters.
+        // Traced live from an Attack link up to its container:
+        //
+        //   a.t-blue  ->  div.attack___  ->  li.enemy  ->  ul.members-list
+        //     ->  div.members-cont  ->  div…enemy-faction  ->  div.faction-war
+        //
+        // The ENEMY list specifically: there are TWO ul.members-list on the
+        // page, one per faction, so a bare `.members-list li` matches 171 rows
+        // -- both rosters plus their headers -- and marks people on our side.
+        // members-list, enemy and enemy-faction are stable classes; the
+        // ___hash suffixes rotate per build and are not matched on.
+        '.enemy-faction ul.members-list li.enemy',
+        'ul.members-list li.enemy',
+        // Fallbacks, in case Torn drops the .enemy marker. Broader, and the
+        // per-row own-faction guard is what keeps them honest.
         //
         // `ul.f-war-list > li[class*="warListItem"]` looks right and is NOT:
         // it matches the war HEADER rows ("Chain active", the scores), two of
@@ -9736,9 +9747,23 @@ body.wb-chain-active {
             _markDiagShown = true;
             const ids = [];
             for (const r of rows || []) { try { const t = getPlayerIdFromRow(r); if (t) ids.push(t); } catch (_) {} }
-            log('[calls] rows=' + (rows ? rows.length : 0) + ' withId=' + ids.length +
-                ' calls=' + Object.keys(state.calls || {}).length +
-                ' jwt=' + (state.jwtToken ? 'yes' : 'no'));
+            const diag = {
+                rows: rows ? rows.length : 0,
+                withId: ids.length,
+                calls: Object.keys(state.calls || {}).length,
+                callIds: Object.keys(state.calls || {}).slice(0, 5),
+                sampleIds: ids.slice(0, 5),
+                jwt: !!state.jwtToken,
+                polling: !!pollTimer,
+                url: location.href.slice(0, 100),
+            };
+            log('[calls] ' + JSON.stringify(diag));
+            // Console is no use on a phone. Send it where it can be read.
+            try {
+                httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ tag: 'fo-calls-diag', data: diag }) });
+            } catch (_) {}
         }
         for (const row of rows || []) {
             let targetId;
