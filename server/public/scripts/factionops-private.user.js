@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.29
+// @version      5.2.30
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.29';
+    const SCRIPT_VERSION = '5.2.30';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -816,6 +816,16 @@ html.wb-theme-light {
 .fo-wp-stat[data-tier="a"] { color: #ffd166; border-color: rgba(255,209,102,.45); }
 .fo-wp-stat[data-tier="b"] { color: #55efc4; border-color: rgba(85,239,196,.45); }
 .fo-wp-stat[data-tier="c"] { color: #b2bec3; }
+/* Pushed to the far right by the count's margin-left:auto when a filter is
+   hiding rows, and by its own when nothing is. 28px keeps it a thumb target. */
+.fo-wp-filter-gear {
+    margin-left: auto; min-width: 28px; height: 28px; padding: 0 6px;
+    border: 1px solid rgba(225,112,85,.35); border-radius: 3px;
+    background: rgba(0,0,0,.35); color: #ff9a72;
+    font-size: 14px; line-height: 1; cursor: pointer;
+}
+.fo-wp-filter-gear:hover { background: #241a15; }
+.fo-wp-filter-count + .fo-wp-filter-gear { margin-left: 6px; }
 .fo-wp-filter-count { margin-left: auto; font-weight: 700; color: #8a6a5e; }
 .fo-wp-filter-count.is-on { color: #ffd166; }
 .fo-wp-call.fo-wp-call-taken {
@@ -9521,7 +9531,13 @@ body.wb-chain-active {
             '<label class="fo-wp-filter-chk"><input type="checkbox" id="fo-wp-hide-online">Hide online</label>' +
             '<label class="fo-wp-filter-chk" title="Last action 5+ min ago -- Torn\'s idle and offline both">' +
                 '<input type="checkbox" id="fo-wp-hide-offline">Hide offline</label>' +
-            '<span class="fo-wp-filter-count" id="fo-wp-count"></span>';
+            '<span class="fo-wp-filter-count" id="fo-wp-count"></span>' +
+            // Settings without opening the overlay. The gear used to live only
+            // in the overlay header, so reaching it from the war page meant
+            // activating the whole thing -- which is the one surface we keep
+            // deliberately unbuilt here.
+            '<button type="button" class="fo-wp-filter-gear" id="fo-wp-settings" ' +
+                   'title="FactionOps settings" aria-label="FactionOps settings">\u2699</button>';
         list.parentElement.insertBefore(bar, list);
 
         const minEl = bar.querySelector('#fo-wp-min');
@@ -9559,6 +9575,14 @@ body.wb-chain-active {
             _hideOffline = offEl.checked;
             try { GM_setValue('factionops_hide_offline', _hideOffline); } catch (_) {}
             try { markCalledRows(); } catch (_) {}
+        });
+
+        bar.querySelector('#fo-wp-settings').addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            // openSettings appends its own modal to document.body and reads
+            // nothing off the overlay, so it works with the overlay unbuilt.
+            try { openSettings(); } catch (err) { log('[settings] ' + (err && err.message)); }
         });
 
         // Torn's list is clickable underneath; typing must not reach it.
