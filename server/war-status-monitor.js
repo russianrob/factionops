@@ -12,6 +12,7 @@ import { broadcastSSE } from "./routes.js";
 import * as push from "./push-notifications.js";
 import { startRetalTracker, stopRetalTracker, stopAll as stopAllRetals } from "./retal-tracker.js";
 import { enemyProfilePrewarDelay } from "./enemy-profile-gate.js";
+import { statusChanged } from "./enemy-status-diff.js";
 
 // Fallback intervals used when we can't look up the dynamic value (no
 // war loaded, store unavailable). Under normal operation both pollers
@@ -762,6 +763,19 @@ function startEnemyProfileMonitor(io, warId) {
         }
       }
 
+      // Compared BEFORE the store is overwritten -- `existing` is the only copy
+      // of what the clients already hold, and the next line destroys it.
+      //
+      // The sweep used to broadcast every fetch, changed or not: 480 status
+      // objects a minute at the 2.5s cadence, nearly all identical to what the
+      // client already had. On a phone that keeps the radio awake continuously,
+      // which costs more power than handling them does. Now a tick where
+      // nothing moved sends nothing at all.
+      //
+      // Safe to suppress, because this is not the only path: a client gets the
+      // full war record on connect and the 15-30s war-status poll rebroadcasts
+      // every member regardless. This drops repeats, not state.
+      const worthSending = statusChanged(existing, updated);
       curWar.enemyStatuses[targetId] = updated;
       // Collected, NOT broadcast here. This runs once per enemy and the tick
       // fetches 20 in parallel, so broadcasting from inside it sent 20 separate
@@ -769,7 +783,7 @@ function startEnemyProfileMonitor(io, warId) {
       // and a DOM update on every connected phone. One frame per tick instead:
       // same data, same freshness, a twentieth of the wake-ups. The
       // enemy-attacks poller above has always batched this way.
-      if (batch) batch[targetId] = updated;
+      if (batch && worthSending) batch[targetId] = updated;
     } catch (err) {
       const msg = err.message || "";
       // 5xx are transient Torn-side gateway outages, not per-enemy actionable —
