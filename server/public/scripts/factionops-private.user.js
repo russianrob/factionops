@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.37
+// @version      5.2.38
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.37';
+    const SCRIPT_VERSION = '5.2.38';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -10068,34 +10068,74 @@ body.wb-chain-active {
             // if it stayed put -- a scroll cancels itself on the first move.
             const TAP_SLOP_PX = 12;    // finger wander that still reads as a tap
             const TAP_MAX_MS = 700;    // longer is a press or a drag, not a tap
+            // Hold for a deal call. Below TAP_MAX_MS on purpose: the hold has
+            // to win before the tap gate would accept the same gesture, or a
+            // 650ms press would place a deal AND then a normal call.
+            const HOLD_MS = 600;
             let touchStart = null;
             let lastTouchFire = -Infinity;
+            let holdTimer = null;
+            let holdFired = false;
 
             const strayed = function (pt, s) {
                 return Math.abs(pt.clientX - s.x) > TAP_SLOP_PX ||
                        Math.abs(pt.clientY - s.y) > TAP_SLOP_PX;
             };
 
+            const cancelHold = function () {
+                if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+            };
+
+            /**
+             * A deal call: ours for fifteen minutes, and it shows a lock to
+             * everybody else. Only offered on a target nobody has -- holding
+             * somebody else's call must not steal it, and holding your own
+             * would be an odd way to ask for a drop.
+             */
+            const startHold = function () {
+                cancelHold();
+                holdFired = false;
+                const cur = (state.calls || {})[targetId];
+                if (cur) return;                       // taken: nothing to deal
+                holdTimer = setTimeout(function () {
+                    holdTimer = null;
+                    holdFired = true;
+                    touchStart = null;                 // the tap gate must not also fire
+                    try {
+                        emitCallTarget(targetId, true);
+                        showToast('\uD83D\uDD12 Deal call \u2014 yours for 15 min', 'info');
+                    } catch (err) {
+                        log('[calls] deal failed: ' + (err && err.message));
+                    }
+                }, HOLD_MS);
+            };
+
             btn.addEventListener('touchstart', function (e) {
                 // Two fingers is a pinch or a stray palm, never a call.
-                if (e.touches && e.touches.length > 1) { touchStart = null; return; }
+                if (e.touches && e.touches.length > 1) { touchStart = null; cancelHold(); return; }
                 const t = e.touches && e.touches[0];
                 touchStart = t ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
+                if (touchStart) startHold();
             }, { passive: true });
 
             btn.addEventListener('touchmove', function (e) {
                 if (!touchStart) return;
                 const t = e.touches && e.touches[0];
-                if (t && strayed(t, touchStart)) touchStart = null;   // it's a scroll
+                // A scroll cancels the hold too, or dragging the page past a
+                // CALL button would place a deal on whoever it started over.
+                if (t && strayed(t, touchStart)) { touchStart = null; cancelHold(); }
             }, { passive: true });
 
             btn.addEventListener('touchcancel', function () {
                 touchStart = null;
+                cancelHold();
             }, { passive: true });
 
             btn.addEventListener('touchend', function (e) {
                 const s = touchStart;
                 touchStart = null;
+                cancelHold();
+                if (holdFired) { holdFired = false; lastTouchFire = Date.now(); return; }
                 if (!s) return;                                 // moved, or multi-touch
                 if (Date.now() - s.at > TAP_MAX_MS) return;     // a press, not a tap
                 const t = e.changedTouches && e.changedTouches[0];
@@ -10103,6 +10143,26 @@ body.wb-chain-active {
                 lastTouchFire = Date.now();
                 onTap(e);
             }, { passive: false });
+
+            btn.addEventListener('mousedown', function (e) {
+                if (e.button !== 0) return;
+                startHold();
+            });
+            btn.addEventListener('mouseup', cancelHold);
+            btn.addEventListener('mouseleave', cancelHold);
+
+            // Right-click is the mouse's version of a hold, and matches what
+            // the overlay's own call button has always done.
+            btn.addEventListener('contextmenu', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                cancelHold();
+                if ((state.calls || {})[targetId]) return;
+                try {
+                    emitCallTarget(targetId, true);
+                    showToast('\uD83D\uDD12 Deal call \u2014 yours for 15 min', 'info');
+                } catch (err) { log('[calls] deal failed: ' + (err && err.message)); }
+            });
 
             btn.addEventListener('click', function (e) {
                 // The synthetic click that trails a touch we already acted on.
@@ -10112,6 +10172,9 @@ body.wb-chain-active {
                     e.preventDefault();
                     return;
                 }
+                // A completed hold already did the work; the mouseup that ends
+                // it still arrives here as a click.
+                if (holdFired) { holdFired = false; e.preventDefault(); return; }
                 onTap(e);
             });
             cell.appendChild(btn);
