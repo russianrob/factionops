@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.2
+// @version      5.2.22
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.2';
+    const SCRIPT_VERSION = '5.2.22';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -675,6 +675,63 @@ html.wb-theme-light {
 }
 
 /* ----- FactionOps cell container — right-aligned in each row ----- */
+/* War-page call markers. The row is tinted and striped rather than given
+   another cell: .wb-cell-container floats over the RIGHT edge of a row, which
+   on a phone is exactly where Torn puts its Attack link, so a badge there
+   covers the control people are trying to tap. */
+/* The member cell is FULL -- the FFS banner image, the name overlaid on it,
+   and the stat estimate all live there, so a badge dropped in gets covered
+   and clipped. The row itself carries the signal instead: a thick stripe and
+   a tint strong enough to read on a dark theme, plus a full-width caption
+   line under the row for the caller's name, which cannot collide with
+   anything because it is on its own line. */
+.fo-called-row {
+    background: rgba(225,112,85,0.26) !important;
+    box-shadow: inset 6px 0 0 #e17055;
+}
+.fo-called-row.fo-called-mine {
+    background: rgba(0,184,148,0.26) !important;
+    box-shadow: inset 6px 0 0 #00b894;
+}
+/* The control OVERLAYS the score rather than sitting beside it. During a war
+   that number is 0.00 for nearly everyone, so covering it costs almost
+   nothing -- and it keeps the row exactly as tall as its neighbours, which
+   stacking did not.
+   One element carries every state, so there is no second label to align and
+   no ambiguity about which row a caller's name belongs to. */
+.fo-call-host { position: relative; }
+
+/* Call control, in the Score column (div.points___). That cell holds one
+   short number and is the only one on the row with room to spare -- the
+   member cell is full of the FFS banner and the right edge is the Attack
+   link. */
+.fo-wp-call {
+    /* Layered and hit-testable. It rendered ON TOP of the score rather than
+       under it, which means something in that cell was taking the clicks --
+       a button you can see but cannot press is worse than no button. */
+    position: absolute; inset: 0; z-index: 40; pointer-events: auto;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 2px; box-sizing: border-box;
+    /* Fully opaque. At 86% the score bled through behind the label, and on a
+       tinted row the row colour came through too. */
+    border: 1px solid rgba(225,112,85,.7);
+    background: #171310; color: #ff9a72;
+    font-size: 10px; font-weight: 700; letter-spacing: .03em;
+    text-align: center; cursor: pointer; line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fo-wp-call:hover { background: #241a15; }
+/* DROP sat as dark green on a translucent green panel over an already-green
+   row -- three greens fighting, and unreadable. Dark panel, bright text. */
+.fo-wp-call.fo-wp-call-drop {
+    border-color: rgba(0,184,148,.75); background: #0c1a17; color: #2fe6bb;
+}
+.fo-wp-call.fo-wp-call-drop:hover { background: #123028; }
+.fo-wp-call.fo-wp-call-taken {
+    border-color: rgba(225,112,85,.45); background: #171310;
+    color: #f0b39f; cursor: default;
+}
+
 .wb-cell-container {
     position: absolute;
     right: 4px;
@@ -5870,6 +5927,7 @@ body.wb-chain-active {
                 }
             }
             state.calls = data.calls;
+            try { markCalledRows(); } catch (_) {}
         }
 
         // ── Chain ──
@@ -6385,7 +6443,12 @@ body.wb-chain-active {
             try { if (sseAbort && typeof sseAbort.abort === 'function') sseAbort.abort(); } catch (e) {}
             cleanupSSE();      // clears sseConnected, which is what lets polling restart
             scheduleSSERetry();
-        }, 5000);
+        // 30s, not 5s (2026-09-04). The threshold above is still 20s of
+        // silence, so a dead stream is caught within 20-50s rather than
+        // 20-25s -- the owner traded that window for six times fewer
+        // wakeups. This is the ONE timer here that is not overlay dressing:
+        // it is what reconnects the stream the war-page call markers read.
+        }, 30000);
     }
 
     function stopSSEStaleWatch() {
@@ -7003,6 +7066,10 @@ body.wb-chain-active {
             isDeal: !!isDeal,
         };
         updateTargetRow(tid);
+        // The native war row is not one of updateTargetRow's concerns, so mark
+        // it here too -- otherwise pressing Call changes nothing on Torn's own
+        // list until the next poll echoes the call back.
+        try { markCalledRows(); } catch (_) {}
         if (CONFIG.AUTO_SORT) debouncedSort();
         const targetName = state.statuses[tid]?.name || null;
         // v5.0.95: copy call message to clipboard — wording branches
@@ -7036,6 +7103,7 @@ body.wb-chain-active {
                 warn('Call failed:', e.message);
                 delete state.calls[tid];
                 updateTargetRow(tid);
+                try { markCalledRows(); } catch (_) {}
                 showToast(e.message || 'Call failed', 'error');
             });
     }
@@ -7059,12 +7127,17 @@ body.wb-chain-active {
         const prev = state.calls[tid];
         delete state.calls[tid];
         updateTargetRow(tid);
+        // The native war row is not one of updateTargetRow's concerns, so mark
+        // it here too -- otherwise pressing Call changes nothing on Torn's own
+        // list until the next poll echoes the call back.
+        try { markCalledRows(); } catch (_) {}
         if (CONFIG.AUTO_SORT) debouncedSort();
         postAction('/api/call', { warId, targetId: tid, action: 'uncall' })
             .catch(e => {
                 warn('Uncall failed:', e.message);
                 if (prev) state.calls[tid] = prev;
                 updateTargetRow(tid);
+                try { markCalledRows(); } catch (_) {}
                 showToast(e.message || 'Uncall failed', 'error');
             });
     }
@@ -9024,7 +9097,9 @@ body.wb-chain-active {
         // the server independently polls the chain every ~10s. v5.1.65: 2s ->
         // 10s; a 2-second re-parse of Torn's chain bar bought nothing that the
         // observer had not already caught a moment earlier.
-        chainDOMReadInterval = setInterval(parseChainFromDOM, 10000);
+        // The 10s re-parse was removed 2026-09-04. Its own note called it a
+        // backup only -- the MutationObserver above is the real detector and
+        // the server polls chain independently, so nothing lost a source.
 
         log('Chain DOM observer started (zero API calls)');
         return true;
@@ -9357,11 +9432,9 @@ body.wb-chain-active {
         // arrival time), so a 1s tick gives an exact, smooth count.
         // Cheap: when target IDs haven't changed it's just N timer-text
         // updates (top 5), no DOM rebuild.
-        if (!window.__foNextUpTickInterval) {
-            window.__foNextUpTickInterval = setInterval(() => {
-                if (typeof updateNextUp === 'function') updateNextUp();
-            }, 1000);
-        }
+        // The 1s next-up tick was removed 2026-09-04. updateNextUp still runs
+        // whenever call or status data arrives, so the list stays correct --
+        // its countdowns just step on data rather than sweeping every second.
     }
 
     function updateEnemyAttackingBadges() {
@@ -9549,6 +9622,31 @@ body.wb-chain-active {
      * Torn frequently changes its HTML, so we try several patterns.
      */
     const MEMBER_LIST_SELECTORS = [
+        // Traced live from an Attack link up to its container:
+        //
+        //   a.t-blue  ->  div.attack___  ->  li.enemy  ->  ul.members-list
+        //     ->  div.members-cont  ->  div…enemy-faction  ->  div.faction-war
+        //
+        // The ENEMY list specifically: there are TWO ul.members-list on the
+        // page, one per faction, so a bare `.members-list li` matches 171 rows
+        // -- both rosters plus their headers -- and marks people on our side.
+        // members-list, enemy and enemy-faction are stable classes; the
+        // ___hash suffixes rotate per build and are not matched on.
+        '.enemy-faction ul.members-list li.enemy',
+        'ul.members-list li.enemy',
+        // Fallbacks, in case Torn drops the .enemy marker. Broader, and the
+        // per-row own-faction guard is what keeps them honest.
+        //
+        // `ul.f-war-list > li[class*="warListItem"]` looks right and is NOT:
+        // it matches the war HEADER rows ("Chain active", the scores), two of
+        // them, with no links in it. Put first it wins the race in
+        // findMemberRows() and the real list is never reached, which is
+        // exactly the bug this replaced.
+        //
+        // `.faction-war .members-list li` below needs a .faction-war ancestor
+        // that this page does not have, which is why the original list found
+        // nothing here at all.
+        '.members-list li',
         '.members-list .table-body > li',
         '.faction-war .members-list li',
         '.ranked-war-list li',
@@ -9648,6 +9746,216 @@ body.wb-chain-active {
      * Enhance a single member row with FactionOps columns.
      * Injects Attack, Call, and Status cells into the row.
      */
+    /**
+     * Mark war-page rows whose target somebody has called.
+     *
+     * Deliberately NOT part of enhanceRow: that injects a cell container
+     * absolutely positioned over the right edge of the row, which is where
+     * Torn's Attack link sits on a narrow screen. This tints the row and puts
+     * a small tag beside the NAME, so nothing is covered.
+     *
+     * Runs whether or not the overlay has been opened -- the whole point is
+     * that somebody who never presses "Activate FactionOps" can still see that
+     * a target is taken.
+     */
+    /**
+     * The player id for one war row.
+     *
+     * NOT getPlayerIdFromRow(): that walks every a[href] in document order and
+     * returns the first id it can parse, and the FIRST link in one of these
+     * rows is the faction:
+     *
+     *   div.factionWrap___ -> a  /factions.php?step=profile&ID=40692
+     *   div.honorWrap___   -> a  /profiles.php?XID=3703493        <- the player
+     *   div.attack         -> a  /page.php?sid=attack&user2ID=3703493
+     *
+     * So it returned 40692 for all 78 rows, state.calls[40692] was undefined
+     * every time, and nothing marked -- with rows:78 and withId:78 in the
+     * diagnostic, which read as healthy. Only sampleIds being 40692 repeated
+     * gave it away.
+     *
+     * Matched on the id parameters that mean a PLAYER, never on link order.
+     */
+    function uidFromWarRow(row) {
+        const a = row.querySelector('a[href*="user2ID="], a[href*="XID="]');
+        if (!a) return null;
+        const m = String(a.getAttribute('href') || '').match(/(?:user2ID|XID)=(\d+)/);
+        return m ? m[1] : null;
+    }
+
+    let _callsDiagSent = false;
+    function reportCallsDiag() {
+        if (_callsDiagSent) return;
+        _callsDiagSent = true;
+        let rows = [];
+        try { rows = findMemberRows() || []; } catch (_) {}
+        const ids = [];
+        for (const r of rows) { try { const t = uidFromWarRow(r); if (t) ids.push(t); } catch (_) {} }
+        const diag = {
+            rows: rows.length,
+            withId: ids.length,
+            calls: Object.keys(state.calls || {}).length,
+            callIds: Object.keys(state.calls || {}).slice(0, 5),
+            sampleIds: ids.slice(0, 5),
+            marked: document.querySelectorAll('.fo-called-row').length,
+            enemyLi: document.querySelectorAll('.enemy-faction ul.members-list li.enemy').length,
+            anyLi: document.querySelectorAll('.members-list li').length,
+            jwt: !!state.jwtToken,
+            polling: !!pollTimer,
+            url: location.href.slice(0, 100),
+            v: SCRIPT_VERSION,
+        };
+        log('[calls] ' + JSON.stringify(diag));
+        try {
+            httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ tag: 'fo-calls-diag', data: diag }) });
+        } catch (_) {}
+    }
+
+    function markCalledRows() {
+        let rows;
+        try { rows = findMemberRows(); } catch (_) { return; }
+        for (const row of rows || []) {
+            let targetId;
+            try { targetId = uidFromWarRow(row); } catch (_) { continue; }
+            if (!targetId) continue;
+            const call = (state.calls || {})[targetId];
+            try { ensureCallButton(row, targetId, call); } catch (_) {}
+            if (!call) {
+                row.classList.remove('fo-called-row', 'fo-called-mine');
+                continue;
+            }
+            const mine = call.calledBy && String(call.calledBy.id) === String(state.myPlayerId);
+            row.classList.add('fo-called-row');
+            row.classList.toggle('fo-called-mine', !!mine);
+            // The tint and stripe say "taken"; ensureCallButton above says by
+            // whom. Nothing else is drawn on the row itself.
+            // carries CALL / DROP / who has it, so a second label would sit
+            // underneath the overlay where it cannot be read.
+
+        }
+    }
+
+    /**
+     * A Call control in the Score column.
+     *
+     * div.points___ holds one short number and is the only cell on the row
+     * with room: the member cell is full of the FFS banner, and div.attack is
+     * a control that must not be covered. The score itself is left in place --
+     * the button goes underneath it.
+     */
+    function ensureCallButton(row, targetId, call) {
+        const cell = row.querySelector('[class*="points"]');
+        if (!cell) return;
+        cell.classList.add('fo-call-host');
+        let btn = cell.querySelector('.fo-wp-call');
+        const mine = call && call.calledBy && String(call.calledBy.id) === String(state.myPlayerId);
+        // Taken shows WHO rather than the word TAKEN: the name is the useful
+        // half, and this is now the only place it appears.
+        const who = (call && call.calledBy && call.calledBy.name) || 'TAKEN';
+        const label = !call ? 'CALL'
+                    : (mine ? 'DROP' : (call.isDeal ? '\uD83D\uDD12 ' : '') + who);
+        if (!btn) {
+            btn = document.createElement('div');
+            btn.className = 'fo-wp-call';
+            const onTap = function (e) {
+                e.stopPropagation();
+                e.preventDefault();
+                // Only ever act on our own call, never steal somebody else's.
+                const cur = (state.calls || {})[targetId];
+                const isMine = cur && cur.calledBy && String(cur.calledBy.id) === String(state.myPlayerId);
+                // One tap should say what it did. Every early return inside
+                // emitCallTarget is a silent toast from here, and "nothing
+                // happened" is indistinguishable from "never fired".
+                try {
+                    httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
+                        headers: { 'Content-Type': 'application/json' },
+                        data: JSON.stringify({ tag: 'fo-call-click', data: {
+                            tid: targetId, had: !!cur, mine: !!isMine,
+                            jwt: !!state.jwtToken, me: state.myPlayerId || null,
+                            warId: (typeof deriveWarId === 'function' ? deriveWarId() : null),
+                            calls: Object.keys(state.calls || {}).length,
+                            v: SCRIPT_VERSION } }) });
+                } catch (_) {}
+                try {
+                    if (!cur) emitCallTarget(targetId);
+                    else if (isMine) emitUncallTarget(targetId);
+                } catch (err) {
+                    try {
+                        httpRequest({ method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
+                            headers: { 'Content-Type': 'application/json' },
+                            data: JSON.stringify({ tag: 'fo-call-click', data: {
+                                tid: targetId, threw: String(err && err.message).slice(0, 120) } }) });
+                    } catch (_) {}
+                }
+            };
+            // touchend as well as click, because on a phone a tap inside a
+            // React row can be swallowed before it ever becomes a click.
+            //
+            // But touchend on its own knows nothing about whether the finger
+            // moved: scrolling the page with a finger that happened to land
+            // on this button still ends with a touchend here, and that was
+            // firing the call. So track where the touch started and only act
+            // if it stayed put -- a scroll cancels itself on the first move.
+            const TAP_SLOP_PX = 12;    // finger wander that still reads as a tap
+            const TAP_MAX_MS = 700;    // longer is a press or a drag, not a tap
+            let touchStart = null;
+            let lastTouchFire = -Infinity;
+
+            const strayed = function (pt, s) {
+                return Math.abs(pt.clientX - s.x) > TAP_SLOP_PX ||
+                       Math.abs(pt.clientY - s.y) > TAP_SLOP_PX;
+            };
+
+            btn.addEventListener('touchstart', function (e) {
+                // Two fingers is a pinch or a stray palm, never a call.
+                if (e.touches && e.touches.length > 1) { touchStart = null; return; }
+                const t = e.touches && e.touches[0];
+                touchStart = t ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
+            }, { passive: true });
+
+            btn.addEventListener('touchmove', function (e) {
+                if (!touchStart) return;
+                const t = e.touches && e.touches[0];
+                if (t && strayed(t, touchStart)) touchStart = null;   // it's a scroll
+            }, { passive: true });
+
+            btn.addEventListener('touchcancel', function () {
+                touchStart = null;
+            }, { passive: true });
+
+            btn.addEventListener('touchend', function (e) {
+                const s = touchStart;
+                touchStart = null;
+                if (!s) return;                                 // moved, or multi-touch
+                if (Date.now() - s.at > TAP_MAX_MS) return;     // a press, not a tap
+                const t = e.changedTouches && e.changedTouches[0];
+                if (t && strayed(t, s)) return;                 // ended somewhere else
+                lastTouchFire = Date.now();
+                onTap(e);
+            }, { passive: false });
+
+            btn.addEventListener('click', function (e) {
+                // The synthetic click that trails a touch we already acted on.
+                // Without this the button calls and instantly drops again.
+                if (Date.now() - lastTouchFire < 900) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    return;
+                }
+                onTap(e);
+            });
+            cell.appendChild(btn);
+        }
+        if (btn.textContent !== label) btn.textContent = label;
+        btn.classList.toggle('fo-wp-call-drop', !!mine);
+        btn.classList.toggle('fo-wp-call-taken', !!call && !mine);
+        btn.title = !call ? 'Call this target'
+                  : (mine ? 'Drop your call' : 'Called by ' +
+                     ((call.calledBy && call.calledBy.name) || 'someone'));
+        }
+
     function enhanceRow(row) {
         if (enhancedRows.has(row)) return;
 
@@ -10792,7 +11100,6 @@ body.wb-chain-active {
                     <div class="fo-online-badge"><span class="fo-dot"></span><span id="fo-online-count">${state.ourFactionOnline ? state.ourFactionOnline.online : state.onlinePlayers.length} us</span> · <span id="fo-enemy-online-count">0 enemy</span></div>
                 </div>
             </div>
-            <div class="fo-next-up-bar" id="fo-next-up"></div>
             <div class="fo-turtle-bar" id="fo-turtle-bar"></div>
             ${isLeader() ? `
             <div class="fo-broadcast-entry-bar">
@@ -10808,72 +11115,13 @@ body.wb-chain-active {
                 <div class="fo-bars-list" id="fo-bars-list" style="display:none;"></div>
             </div>
             ` : ''}
-            <div class="fo-sort-bar" id="fo-sort-bar">
-                <span class="fo-sort-label">Stats:</span>
-                <!-- Personal FFScouter key, sat directly beside the Stats header
-                     rather than buried in Settings: this is the row people are
-                     already on when they want to know how hard a target is.
-                     Placed BEFORE the min/max inputs so it stays on the header
-                     line — the row already wraps (the hint span below uses
-                     flex-basis:100%), and anything appended after the two
-                     checkboxes would fall to a second line on a phone.
-                     The label doubles as the state readout, because otherwise a
-                     member has no way to tell whether the FF numbers on screen
-                     are computed for them or absent entirely. -->
-                <!-- Sizing (touch box, padding, letter-spacing) lives in the
-                     injected #fo-myffs-btn rule, NOT inline: an inline padding
-                     here would outrank the stylesheet and silently undo the
-                     28px thumb target. -->
-                <button class="fo-stats-filter-clear" id="fo-myffs-btn" style="margin-right:2px;"
-                        title="Your own FFScouter key — FF scores are relative to YOUR stats, so they only appear with your own key">🔑 <span id="fo-myffs-label">FF</span></button>
-                <input class="fo-stats-filter-input" id="fo-stats-filter-min" placeholder="min" title="Min stats — e.g. 10M, 1.5B, 100000">
-                <span style="color:#636e72;">–</span>
-                <input class="fo-stats-filter-input" id="fo-stats-filter-max" placeholder="max" title="Max stats — e.g. 50M, 2B, 1000000">
-                <button class="fo-stats-filter-clear" id="fo-stats-filter-clear" title="Clear filter">✕</button>
-                <span id="fo-myffs-row" style="display:none;flex-basis:100%;margin-top:5px;gap:5px;align-items:center;">
-                    <!-- type=text, never password: a password field triggers the
-                         browser's password manager and it starts offering to save
-                         and autofill Torn API keys. -->
-                    <!-- autocapitalize/autocorrect off: iOS soft keyboards
-                         (PDA and the warboard app) default to sentence case, so
-                         a hand-typed key gets its first character upper-cased.
-                         Keys are case-sensitive, so ffscouter silently rejects
-                         it and the only trace is a console line nobody reads on
-                         a phone. enterkeyhint=done + the keydown handler below
-                         mean the soft keyboard's Go key saves. -->
-                    <input type="text" id="fo-myffs-input" spellcheck="false" autocomplete="off"
-                           autocapitalize="off" autocorrect="off" enterkeyhint="done"
-                           placeholder="Torn key registered at ffscouter.com"
-                           style="flex:1;min-width:0;font-family:monospace;font-size:11px;padding:5px 6px;background:rgba(0,0,0,0.25);border:1px solid var(--wb-border,#2d3436);border-radius:4px;color:var(--wb-text);">
-                    <button class="fo-stats-filter-clear" id="fo-myffs-save">Save</button>
-                    <button class="fo-stats-filter-clear" id="fo-myffs-clear">Clear</button>
-                </span>
-                <label class="fo-sort-label" style="margin-left:8px;display:flex;align-items:center;gap:3px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:11px;color:var(--wb-text);">
-                    <input type="checkbox" id="fo-hide-online" style="margin:0;cursor:pointer;">
-                    Hide online
-                </label>
-                <label class="fo-sort-label" style="margin-left:6px;display:flex;align-items:center;gap:3px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:11px;color:var(--wb-text);" title="Hide players whose last action was 5+ min ago (Torn idle + offline)">
-                    <input type="checkbox" id="fo-hide-offline" style="margin:0;cursor:pointer;">
-                    Hide offline
-                </label>
-                <span class="fo-stats-filter-hint" id="fo-stats-filter-hint" style="flex-basis:100%;margin-left:0;"></span>
-            </div>
-            <div class="fo-col-headers">
-                <div class="fo-col-header">Target</div>
-                <div class="fo-col-header center">Lvl</div>
-                <div class="fo-col-header center">BSP</div>
-                <div class="fo-col-header">Status</div>
-                <div class="fo-col-header center">On</div>
-                <div class="fo-col-header">Call</div>
-                <div class="fo-col-header right">Action</div>
-            </div>
-            <ul class="fo-target-list" id="fo-target-list"></ul>
+            <!-- Targets moved to Torn's own war page (2026-09-04). The sort bar,
+                 column headers and target list lived here; the personal FFScouter
+                 key sat in the sort bar because FF only ever showed on a target
+                 row. renderOverlay() looks for #fo-target-list and returns early
+                 when it is absent, which is what makes this a clean cut. -->
             <div class="fo-footer">
                 <div class="fo-footer-stats">
-                    <span class="fo-footer-stat">Targets: <span class="fo-val" id="fo-stat-targets">0</span></span>
-                    <span class="fo-footer-stat">Available: <span class="fo-val" id="fo-stat-available">0</span></span>
-                    <span class="fo-footer-stat">Called: <span class="fo-val" id="fo-stat-called">0</span></span>
-                    <span class="fo-footer-stat">Hosp: <span class="fo-val" id="fo-stat-hosp">0</span></span>
                 </div>
                 <span class="fo-footer-version">v${CONFIG.VERSION || '3.0.0'}</span>
             </div>
@@ -11213,15 +11461,15 @@ body.wb-chain-active {
 
         if (typeof updateWarTimer === 'function') {
             updateWarTimer();
-            setInterval(updateWarTimer, 30000);
-            setInterval(updateWarTimerDisplay, 1000);
+            // Self-ticking removed 2026-09-04 (was 30s + 1s). Both still run
+            // on data arrival; the chip steps instead of sweeping.
         }
 
         // Every 90s: often enough to catch somebody being farmed, rare enough
         // that it costs nothing. Reads a server cache, not Torn's API.
         if (typeof refreshTurtleBar === 'function') {
             refreshTurtleBar();
-            setInterval(refreshTurtleBar, 90000);
+            // 90s refresh removed 2026-09-04 -- populates once on open.
         }
 
         // Wire up broadcast button in overlay (leader/banker only)
@@ -13304,6 +13552,45 @@ body.wb-chain-active {
         return false;
     }
 
+    /**
+     * Calls-only mode: connect, watch the member list, mark called rows.
+     *
+     * Deliberately does NOT call initWarOverlay(). That builds the overlay,
+     * hides Torn's own page content, and starts four timers (chain, statuses,
+     * call pruner, keep-alive). None of that is needed to answer "is this one
+     * taken", and the overlay is a live suspect for phone lag.
+     *
+     * It DOES need the connection: on a war page nothing authenticates until
+     * the button is pressed, so without this there is no calls data at all.
+     */
+    let callsOnlyStarted = false;
+    async function startCallsOnlyMode() {
+        if (callsOnlyStarted) return;
+        callsOnlyStarted = true;
+        try {
+            if (!state.jwtToken) await authenticate();
+            if (!state.jwtToken) return;          // no key saved: nothing to show
+            startPolling();
+            connectRealtime();
+        } catch (e) {
+            log('calls-only: not connecting (' + (e && e.message) + ')');
+            return;
+        }
+        markCalledRows();
+        // Report once the page has SETTLED. The first pass above runs before
+        // React has painted the member list, so a diagnostic tied to it
+        // reports rows:0 every time and tells us nothing.
+        setTimeout(function () { try { reportCallsDiag(); } catch (_) {} }, 15000);
+        // The war list is a React table that repaints on its own, so a one-off
+        // pass loses the marks the moment Torn re-renders a row.
+        try {
+            const host = findMemberContainer() || document.body;
+            new MutationObserver(() => { try { markCalledRows(); } catch (_) {} })
+                .observe(host, { childList: true, subtree: true });
+        } catch (_) {}
+        setInterval(() => { try { markCalledRows(); } catch (_) {} }, 5000);
+    }
+
     function detectPageAndInit() {
         const url = window.location.href;
 
@@ -13313,6 +13600,11 @@ body.wb-chain-active {
         } else if (url.includes('factions.php') || url.includes('war.php')) {
             log('Page: Faction/War — showing activate button');
             showActivateButton();
+            // Calls-only mode runs alongside the activate button: it marks
+            // called rows on Torn's own war page, so the one thing a member
+            // needs mid-war -- has somebody already got this target -- is
+            // visible without opening the overlay at all.
+            startCallsOnlyMode();
         } else {
             log('Page: Unknown — running in passive mode');
             // Re-create settings/heatmap if they were removed on an attack page
