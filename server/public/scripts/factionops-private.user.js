@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.31
+// @version      5.2.32
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.31';
+    const SCRIPT_VERSION = '5.2.32';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9796,9 +9796,11 @@ body.wb-chain-active {
         var list = entries[0].row.parentElement;
         if (!CONFIG.WP_SORT) {
             // Hand the list back rather than leaving it flex with stale order
-            // values -- Torn's own sequence must return intact.
+            // values -- Torn's own sequence must return intact. Every child,
+            // not just the member rows, because the pass below stamps them all.
             if (list) list.classList.remove('fo-wp-sorted');
             for (var j = 0; j < entries.length; j++) entries[j].row.style.order = '';
+            if (list) for (var c = 0; c < list.children.length; c++) list.children[c].style.order = '';
             return;
         }
         if (list && !list.classList.contains('fo-wp-sorted')) list.classList.add('fo-wp-sorted');
@@ -9810,6 +9812,22 @@ body.wb-chain-active {
         for (var i = 0; i < entries.length; i++) {
             var v = String(i);
             if (entries[i].row.style.order !== v) entries[i].row.style.order = v;
+        }
+
+        // Torn's own non-member children -- the Total summary row, any header --
+        // are not in findMemberRows (they carry no li.enemy), so they never got
+        // an order. In a flex container an unset order is 0, which TIES them
+        // with the row we numbered 0 and drops them near the top of the list.
+        // That is how Total ended up second. Push everything we did not sort
+        // below everything we did, keeping its own relative order.
+        if (!list) return;
+        var ours = [];
+        for (var m = 0; m < entries.length; m++) ours.push(entries[m].row);
+        var kids = list.children;
+        for (var k = 0; k < kids.length; k++) {
+            if (ours.indexOf(kids[k]) !== -1) continue;
+            var ov = String(entries.length + k);
+            if (kids[k].style.order !== ov) kids[k].style.order = ov;
         }
     }
 
