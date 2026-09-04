@@ -317,6 +317,19 @@ async function pollOnce(warId) {
   war.xanaxStats = stats;
   store.saveState();
 
+  // Carry the figures into the frozen history record, if this war has one.
+  // A no-op mid-war (nothing is archived yet) and the whole point afterwards:
+  // the 24h post-war window exists to catch returned xanax, and without this
+  // those corrections never reached the report.
+  try {
+    const wh = await import("./war-history.js");
+    wh.syncXanaxFromWar(war);
+  } catch (e) {
+    // Never fail a poll over the mirror; the live record is still correct and
+    // the admin backfill can still repair history by hand.
+    console.warn(`[xanax-tracker] history sync skipped for ${warId}: ${e.message}`);
+  }
+
   if (newCount > 0) {
     console.log(`[xanax-tracker] war ${warId}: +${newCount} xanax across ${entries.length} new entry(s)`);
   }

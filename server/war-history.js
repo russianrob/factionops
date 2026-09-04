@@ -340,6 +340,37 @@ export function backfillXanaxForWar(factionId, warKey, takenMap, names, meta = {
 }
 
 /** Set the ranked-war score on an existing entry (score-backfill). */
+/**
+ * Push a live war's current xanax figures into its frozen history record.
+ *
+ * A war is snapshotted into history within minutes of ending, but the tracker
+ * keeps reading armoury news for 24 hours afterwards to catch people handing
+ * unused vials back. Nothing carried those corrections into the frozen copy,
+ * so the report kept showing take-only numbers while the live war had the net
+ * figure -- which is how Shefin read 4 in the report and 1 in the war record.
+ *
+ * Keyed here rather than in the tracker on purpose: _warKey is the one place
+ * that knows how a war resolves to a history key, and a second copy of that
+ * rule would drift.
+ *
+ * Returns null when there is nothing to do -- no stats yet, unkeyable, or the
+ * war has not been archived, which is the normal case while it is still being
+ * fought.
+ */
+export function syncXanaxFromWar(war) {
+  if (!war || !war.factionId) return null;
+  const xs = war.xanaxStats;
+  if (!xs || !xs.taken) return null;
+  const warKey = _warKey(war, null);
+  if (!warKey) return null;
+  const fid = String(war.factionId);
+  const rec = _load(fid).wars[String(warKey)];
+  if (!rec) return null;                       // not archived yet
+  return backfillXanaxForWar(fid, warKey, xs.taken, xs.names || {}, {
+    lastPolledAt: xs.lastPolledAt || null,
+  });
+}
+
 export function setScores(factionId, warKey, warScores) {
   const entry = _load(factionId);
   const w = entry.wars[String(warKey)];
