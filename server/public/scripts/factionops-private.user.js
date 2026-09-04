@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.8
+// @version      5.2.9
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.8';
+    const SCRIPT_VERSION = '5.2.9';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9804,10 +9804,30 @@ body.wb-chain-active {
             tag.textContent = label;
             tag.title = (call.isDeal ? 'Deal call by ' : 'Called by ') +
                         ((call.calledBy && call.calledBy.name) || 'unknown');
-            // Beside the name, which is the one part of the row that is never
-            // a control and never scrolled off on a phone.
-            const nameEl = row.querySelector('a[href*="profiles.php"], .user.name, .member-name, .honorWrap a');
-            (nameEl && nameEl.parentNode ? nameEl.parentNode : row).appendChild(tag);
+            // Placement, from a live probe of one li.enemy rather than guessed:
+            //
+            //   li.enemy > div.member > div.userInfoBox___
+            //     > div.userStatusWrap___   (the online dot)
+            //     > div.factionWrap___      (-> factions.php)
+            //     > div.honorWrap___        (-> profiles.php?XID=, the NAME)
+            //   li.enemy > div.status | div.attack | div.clear
+            //
+            // The name link is the only reliable handle: `a.user.name`,
+            // `.name` and `.honorWrap a` all return nothing here, the last
+            // because the class is honorWrap___<hash> and an unprefixed match
+            // never hits it. Prefix-matched below so it survives a rebuild.
+            //
+            // The tag goes into userInfoBox as a SIBLING of honorWrap, not
+            // inside it: honorWrap is a flex cell holding the honour bar, and
+            // appending there makes the badge fight that layout. As a sibling
+            // it sits after the name on the same row, and nowhere near the
+            // Attack control in div.attack.
+            const nameEl = row.querySelector('a[href*="profiles.php"], [class*="honorWrap"] a, a.user.name, .member-name');
+            const honor = nameEl && nameEl.closest ? nameEl.closest('[class*="honorWrap"]') : null;
+            const host = (honor && honor.parentNode) ||
+                         (nameEl && nameEl.parentNode) ||
+                         row.querySelector('[class*="userInfoBox"]') || row;
+            host.appendChild(tag);
         }
     }
 
