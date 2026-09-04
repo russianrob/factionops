@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.40
+// @version      5.2.43
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.40';
+    const SCRIPT_VERSION = '5.2.43';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -860,21 +860,6 @@ html.wb-theme-light {
     text-transform: none; letter-spacing: 0; font-weight: 600; color: #ffd9c9;
 }
 .fo-wp-filter-chk input { margin: 0; cursor: pointer; }
-/* The estimate, in the member cell. tabular-nums so the column of numbers
-   lines up as the eye runs down the list. */
-.fo-wp-stat {
-    display: inline-block; margin-left: 6px; padding: 1px 5px;
-    border-radius: 3px; border: 1px solid rgba(255,255,255,.14);
-    background: rgba(0,0,0,.35);
-    font-size: 10px; font-weight: 700; line-height: 1.4;
-    font-variant-numeric: tabular-nums; white-space: nowrap;
-    vertical-align: middle;
-}
-/* Same tiers the overlay's BSP cell used: S 3B+, A 1-3B, B 500M-1B, C under. */
-.fo-wp-stat[data-tier="s"] { color: #ff7675; border-color: rgba(255,118,117,.45); }
-.fo-wp-stat[data-tier="a"] { color: #ffd166; border-color: rgba(255,209,102,.45); }
-.fo-wp-stat[data-tier="b"] { color: #55efc4; border-color: rgba(85,239,196,.45); }
-.fo-wp-stat[data-tier="c"] { color: #b2bec3; }
 /* Pushed to the far right by the count's margin-left:auto when a filter is
    hiding rows, and by its own when nothing is. 28px keeps it a thumb target. */
 .fo-wp-filter-gear {
@@ -9632,25 +9617,6 @@ body.wb-chain-active {
      * fetched by applyServerData.
      */
 
-    function ensureStatChip(row, targetId) {
-        const cell = row.querySelector('[class*="member"]');
-        if (!cell) return;
-        let n = null;
-        try { n = getTargetStatsEstimate(targetId); } catch (_) {}
-        let chip = cell.querySelector('.fo-wp-stat');
-        if (n == null) { if (chip) chip.remove(); return; }
-        if (!chip) {
-            chip = document.createElement('span');
-            chip.className = 'fo-wp-stat';
-            cell.appendChild(chip);
-        }
-        const txt = formatBspNumber(n);
-        if (chip.textContent !== txt) chip.textContent = txt;
-        const tier = bspTier(n);
-        if (chip.dataset.tier !== tier) chip.dataset.tier = tier;
-        chip.title = 'Estimated total battle stats';
-    }
-
     /**
      * The status cell of a war row.
      *
@@ -9969,7 +9935,6 @@ body.wb-chain-active {
             try { show = passesStatsFilter(targetId) && passesActivityFilter(targetId); } catch (_) {}
             row.style.display = show ? '' : 'none';
             if (!show) { hidden++; continue; }   // no point dressing a hidden row
-            try { ensureStatChip(row, targetId); } catch (_) {}
             try { ensureHospTimer(row, targetId); } catch (_) {}
             const call = (state.calls || {})[targetId];
             try { ensureCallButton(row, targetId, call); } catch (_) {}
