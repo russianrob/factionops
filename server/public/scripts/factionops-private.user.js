@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.36
+// @version      5.2.37
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.36';
+    const SCRIPT_VERSION = '5.2.37';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -109,10 +109,9 @@
         CHAIN_ALERT: GM_getValue('factionops_chain_alert', true),
         CHAIN_ALERT_THRESHOLD: GM_getValue('factionops_chain_alert_threshold', 60),
         PDA_NOTIFICATIONS: GM_getValue('factionops_pda_notif', IS_PDA),
-        // The war-page display, added 5.2.31. These three shipped without any
-        // control at all -- default on, because that is how they have behaved
-        // since they landed and somebody who liked it should not have to opt in.
-        WP_CHIPS: GM_getValue('factionops_wp_chips', true),
+        // The war-page display, added 5.2.31. Both shipped without any control
+        // at all -- default on, because that is how they have behaved since
+        // they landed and somebody who liked it should not have to opt in.
         WP_HOSP:  GM_getValue('factionops_wp_hosp', true),
         WP_SORT:  GM_getValue('factionops_wp_sort', true),
         KEEP_ALIVE: GM_getValue('factionops_keep_alive', false),
@@ -160,7 +159,6 @@
             CHAIN_ALERT: 'factionops_chain_alert',
             CHAIN_ALERT_THRESHOLD: 'factionops_chain_alert_threshold',
             PDA_NOTIFICATIONS: 'factionops_pda_notif',
-            WP_CHIPS: 'factionops_wp_chips',
             WP_HOSP: 'factionops_wp_hosp',
             WP_SORT: 'factionops_wp_sort',
             KEEP_ALIVE: 'factionops_keep_alive',
@@ -789,7 +787,6 @@ html.wb-theme-light {
 /* The whole row is the label, so the tap target is the row not the box. */
 .fo-wp-ptog { cursor: pointer; justify-content: space-between; }
 .fo-wp-ptog input { margin: 0; cursor: pointer; flex: 0 0 auto; }
-
 
 /* Applied by applyRowOrder, not by a static selector, so the layout change is
    scoped to a list we are actually sorting and comes off by removing a class.
@@ -4763,7 +4760,6 @@ body.wb-chain-active {
         return c.value;
     }
 
-
     /**
      * FFScouter's own wording, ported from ffs-banner-estimates'
      * get_difficulty_text so the chip reads the way users already expect.
@@ -5122,8 +5118,6 @@ body.wb-chain-active {
         }
         return `rgb(${r},${g},${b})`;
     }
-
-
 
     /**
      * Estimated one-way travel times in minutes (standard / airstrip).
@@ -7582,7 +7576,6 @@ body.wb-chain-active {
             <button class="wb-btn wb-btn-sm" id="fo-btn-test-pda-notif" style="margin-bottom:14px;font-size:11px;">Test PDA Notification</button>
             <div id="fo-pda-notif-result" style="font-size:11px;margin-bottom:10px;min-height:14px;"></div>
 
-
             <button class="wb-btn wb-btn-sm" id="fo-btn-test-toast" style="margin-bottom:14px;font-size:11px;">Test Toast Notification</button>
 
             <div class="wb-sgroup"><span>Preferences</span></div>
@@ -7857,7 +7850,6 @@ body.wb-chain-active {
             setConfig('THEME', theme);
             applyTheme();
         });
-
 
         document.getElementById('wb-toggle-chain-alert').addEventListener('change', (e) => {
             setConfig('CHAIN_ALERT', e.target.checked);
@@ -9367,9 +9359,6 @@ body.wb-chain-active {
         // its countdowns just step on data rather than sweeping every second.
     }
 
-
-
-
     // =========================================================================
     // SECTION 12: DOM MANIPULATION — WAR PAGE ENHANCEMENT
     // =========================================================================
@@ -9543,7 +9532,6 @@ body.wb-chain-active {
         return m ? m[1] : null;
     }
 
-
     /**
      * The stats range bar, above the enemy list on Torn's own war page.
      *
@@ -9659,8 +9647,8 @@ body.wb-chain-active {
      * Matched by SHAPE, not by class: a guess at BSP's namespace did not
      * match, and this needs no knowledge of another script's internals.
      * Deliberately narrow -- a leaf element, whole text is a number with a
-     * magnitude suffix, and never our own chip. Reversible: the flag it stamps
-     * is what showForeignEstimate looks for.
+     * magnitude suffix, and never our own chip. The flag it stamps is a
+     * do-not-repeat marker, so a row is only walked once.
      */
     function hideForeignEstimate(cell) {
         var n = cell.querySelectorAll('*');
@@ -9677,25 +9665,9 @@ body.wb-chain-active {
         }
     }
 
-    function showForeignEstimate(cell) {
-        var n = cell.querySelectorAll('[data-fo-hid="1"]');
-        for (var i = 0; i < n.length; i++) {
-            n[i].style.display = '';
-            delete n[i].dataset.foHid;
-        }
-    }
-
     function ensureStatChip(row, targetId) {
         const cell = row.querySelector('[class*="member"]');
         if (!cell) return;
-        if (!CONFIG.WP_CHIPS) {
-            var old = cell.querySelector('.fo-wp-stat');
-            if (old) old.remove();
-            // Ours is off, so give BSP's back rather than leaving the row with
-            // no estimate at all.
-            showForeignEstimate(cell);
-            return;
-        }
         hideForeignEstimate(cell);
         let n = null;
         try { n = getTargetStatsEstimate(targetId); } catch (_) {}
@@ -9942,7 +9914,6 @@ body.wb-chain-active {
             '</div>' +
             '<div class="fo-wp-pnote" id="fo-wp-key-note"></div>' +
             '<div class="fo-wp-psep">On this page</div>' +
-            row('fo-wp-t-chips', 'Stat estimates', CONFIG.WP_CHIPS) +
             row('fo-wp-t-hosp', 'Hospital timers', CONFIG.WP_HOSP) +
             row('fo-wp-t-sort', 'Sort: available first', CONFIG.WP_SORT) +
             '<div class="fo-wp-psep">Alerts</div>' +
@@ -9973,7 +9944,6 @@ body.wb-chain-active {
                 if (after) { try { after(); } catch (_) {} }
             });
         };
-        bind('fo-wp-t-chips', 'WP_CHIPS', markCalledRows);
         bind('fo-wp-t-hosp',  'WP_HOSP',  markCalledRows);
         bind('fo-wp-t-sort',  'WP_SORT',  markCalledRows);
         bind('fo-wp-t-chain', 'CHAIN_ALERT');
@@ -10471,7 +10441,6 @@ body.wb-chain-active {
         const isCalled = !!state.calls[targetId];
         row.classList.toggle('wb-row-called', isCalled);
     }
-
 
     let warEndedBannerShown = false;
 
@@ -11383,7 +11352,6 @@ body.wb-chain-active {
             });
         }
 
-
         // Check if war already ended (persisted state from server)
         if (state.warEnded) {
             setTimeout(showWarEndedBanner, 500);
@@ -11605,9 +11573,6 @@ body.wb-chain-active {
         return div.innerHTML;
     }
 
-
-
-
     /** Render the priority cell for overlay rows. */
     function renderOverlayPriorityCell(cell, targetId) {
         cell.innerHTML = '';
@@ -11647,8 +11612,6 @@ body.wb-chain-active {
         }
     }
 
-
-
     // v5.1.1: stats range filter state. Both bounds optional; null
     // means unbounded. Persisted via GM_setValue so it survives
     // page reload / refresh.
@@ -11669,7 +11632,6 @@ body.wb-chain-active {
         _hideOnline = !!GM_getValue('factionops_hide_online', false);
         _hideOffline = !!GM_getValue('factionops_hide_offline', false);
     } catch (_) {}
-
 
     // Online / idle / offline, from the server's enemyStatuses -- the same
     // field the overlay filtered on. Torn's own row has an online icon, but
@@ -11765,7 +11727,6 @@ body.wb-chain-active {
         const b = parts[1] ? toNum(parts[1]) : null;
         return b !== null ? (a + b) / 2 : a;
     }
-
 
     /** Render the call cell for overlay rows. */
     function renderOverlayCallCell(cell, targetId) {
@@ -11868,7 +11829,6 @@ body.wb-chain-active {
             cell.appendChild(btn);
         }
     }
-
 
     /** Update footer stats. */
     function updateOverlayFooter() {
