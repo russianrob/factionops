@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.2.43
+// @version      5.2.44
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.43';
+    const SCRIPT_VERSION = '5.2.44';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12909,6 +12909,28 @@ body.wb-chain-active {
     async function startCallsOnlyMode() {
         if (callsOnlyStarted) return;
         callsOnlyStarted = true;
+
+        // Draw before authenticating. None of the row furniture needs a token
+        // -- the buttons, the hospital timers, the filter bar and the sort all
+        // read the DOM and local state -- only ACTING on a call does. Waiting
+        // on a server round trip first is why the page sat there looking dead
+        // for ten to fifteen seconds while FFScouter, which waits for nothing,
+        // had its numbers in already.
+        //
+        // Before auth state.calls is empty, so every row simply reads CALL;
+        // the real call state arrives with the first poll and repaints.
+        try { markCalledRows(); } catch (_) {}
+        // The war list is a React table that repaints on its own, so a one-off
+        // pass loses the marks the moment Torn re-renders a row. Attached here
+        // rather than after auth so a list that paints late is still caught.
+        try {
+            const host = findMemberContainer() || document.body;
+            new MutationObserver(() => { try { markCalledRows(); } catch (_) {} })
+                .observe(host, { childList: true, subtree: true });
+        } catch (_) {}
+        setInterval(() => { try { markCalledRows(); } catch (_) {} }, 5000);
+        startHospTick();
+
         try {
             if (!state.jwtToken) await authenticate();
             if (!state.jwtToken) return;          // no key saved: nothing to show
@@ -12918,16 +12940,7 @@ body.wb-chain-active {
             log('calls-only: not connecting (' + (e && e.message) + ')');
             return;
         }
-        markCalledRows();
-        // The war list is a React table that repaints on its own, so a one-off
-        // pass loses the marks the moment Torn re-renders a row.
-        try {
-            const host = findMemberContainer() || document.body;
-            new MutationObserver(() => { try { markCalledRows(); } catch (_) {} })
-                .observe(host, { childList: true, subtree: true });
-        } catch (_) {}
-        setInterval(() => { try { markCalledRows(); } catch (_) {} }, 5000);
-        startHospTick();
+        markCalledRows();   // repaint with real call state now that it can arrive
     }
 
     function detectPageAndInit() {
