@@ -56,7 +56,7 @@ export const DELI_ROWS = [
   // The standing buy is the eye round at $10.99; `def.brand` is the CUT here, to
   // match what `label` puts in the cell on a week that does have a deal.
   { row: 10, item: "Roast Beef",   match: t => /roast beef/.test(t),
-    def: { brand: "Eye Round", price: 10.99 },
+    def: { brand: "Eye Round", price: 13.99 },
     label: o => { const s = `${o.product || ""} ${o.description || ""}`.toLowerCase();
       return /eye round/.test(s) ? "Eye Round" : /london broil/.test(s) ? "London Broil" : "Regular"; } },
   // American cheese — but NOT "American Cheddar" (that's a sharp cheddar, belongs
@@ -104,6 +104,14 @@ const excluded = (o) => EXCLUDE_BRANDS.some(b => (String(o.brand || "") + " " + 
 // exclude named brands, cheapest per row, blank if no deal. Returns an array
 // aligned to DELI_ROWS: { row, item, brand, price } with brand/price null when
 // blank.
+/// Marks a brand cell "PP" when the offer's price requires the Price Plus card.
+/// Idempotent, and never turns a blank cell into a bare "PP" — a row with no
+/// brand and no price must stay empty rather than gain a card note.
+export function withPP(brand, offer) {
+  if (!brand || !offer || offer.cardOnly !== true) return brand;
+  return /\bPP\b/.test(brand) ? brand : `${brand} PP`;
+}
+
 export function matchDeliOffers(offers) {
   const usable = offers.filter(o => isPerLb(o) && num(o) != null && !excluded(o));
   const fills = DELI_ROWS.map(({ row, item, match, label, def }) => {
@@ -124,7 +132,11 @@ export function matchDeliOffers(offers) {
     // A row may override how its "brand" cell is labelled (Roast Beef shows the
     // cut, not the maker); default is the offer's brand.
     const brand = label ? label(best) : ((best.brand || "").trim() || null);
-    return { row, item, brand, price: num(best), product: best.product };
+    // "PP" for Price Plus: a price that needs the loyalty card is not the price
+    // on the shelf, and the form is used at the counter -- so the cell has to
+    // say so. Appended to the brand because that column already carries
+    // qualifiers ("Bowl & Basket Ultra Sharp"); column B is the store's own.
+    return { row, item, brand: withPP(brand, best), price: num(best), product: best.product };
   });
 
   // Second pass: rows that MIRROR another row. Runs after every direct match so
@@ -257,13 +269,14 @@ export function buildDeliVisionPrompt() {
   return `This is ONE page from a supermarket weekly circular. Find EVERY DELI-COUNTER item on it — the ones sold BY THE POUND and marked "Store Sliced" (sliced turkey, ham, salami, bologna, roast beef, and deli cheeses: American, provolone, mozzarella, muenster, swiss, cheddar). They usually sit in a dedicated "Deli / Specialty Cheese" section, but they ALSO appear as featured tiles ANYWHERE on the page — e.g. a front-page store-brand showcase with a "Store Sliced ... $X.YY lb" turkey or American cheese. Look over the WHOLE page, not just a deli-labelled block. Some pages have NONE — return an empty array [] if so.
 
 Return ONLY a JSON array. Each element:
-{"product": string, "brand": string, "priceText": string, "pricePerLb": number|null, "unit": "lb"|"each"|null, "description": string}
+{"product": string, "brand": string, "priceText": string, "pricePerLb": number|null, "unit": "lb"|"each"|null, "description": string, "cardOnly": boolean}
 
 CRITICAL — grouped tiles: one big price often covers MULTIPLE products joined by "or". Example: a "$7.99 lb" tile reading "Black Bear Deli Classic Ham ... or Bowl & Basket Chicken Breast ..." means BOTH are $7.99/lb. Emit a SEPARATE entry for EACH product, each with that same price. A "your choice $5.99 lb" tile listing six cheeses/meats = six entries at $5.99.
 
 - brand is the maker (Black Bear, Bowl & Basket, Farmland, Glen Rock, Carando, Auricchio, Land O'Lakes, Smithfield, etc.), separate from the product.
 - description keeps the flavor/style words ("Deep Smoked, Maple Glazed", "Virginia or Honey", "Oven Roasted, BBQ or Buffalo") — they decide which form row an item belongs to.
 - pricePerLb: the dollars-per-pound number when the price is "$X.YY lb", else null.
+- cardOnly: TRUE when the price shown needs the store loyalty card (Price Plus) — the tile carries the Price Plus card mark, a "with card" line, or a card-shaped SAVE badge. FALSE when the price stands on its own with no card required. If you genuinely cannot tell, use false.
 - Include only true deli-counter (by-the-pound) items. Skip packaged grab-and-go (Sargento sliced, Galbani cups, Hillshire packages), prepared hot foods, crackers, hummus, and dips.
 
 Be exhaustive and re-read both images before finalizing.`;

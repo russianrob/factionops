@@ -2,8 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   matchDeliOffers, isFlavoredHam, findDeliPages, countFilled, countMatched, promoteDecision, fillSheetXml, dateRangeLabel,
-  visionCacheUsable,
-} from "./deli-form.js";
+  visionCacheUsable, withPP } from "./deli-form.js";
 
 // Fixture: this week's deli offers as the VISION step should return them —
 // including the grouped-tile expansion (each $5.99 / $7.99 product its own entry).
@@ -140,12 +139,62 @@ test("Cheddar on sale overrides the default, keeping its sharpness label", () =>
   assert.equal(c.price, 5.99);
 });
 
-test("Roast Beef defaults to Eye Round $10.99 when none is on sale", () => {
+test("Roast Beef defaults to Eye Round $13.99 when none is on sale", () => {
   // The Roast Beef cell carries the CUT, not the maker — so the default's
   // "brand" is the cut, matching what the label function produces on a real deal.
+  // 13.99 set by the owner 2026-09-05 (was 10.99).
   const r = matchDeliOffers(NO_DELI).find(x => x.item === "Roast Beef");
   assert.equal(r.brand, "Eye Round");
-  assert.equal(r.price, 10.99);
+  assert.equal(r.price, 13.99);
+});
+
+// ── Price Plus ───────────────────────────────────────────────────────────────
+// A card price is not the shelf price, and the form is read at the counter, so
+// a row bought on the loyalty card has to say so.
+
+test("a card-only offer marks the brand PP", () => {
+  const r = matchDeliOffers([{ product: "Bowl & Basket Muenster", brand: "Bowl & Basket",
+    priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced",
+    cardOnly: true }]).find(x => x.item === "Muenster");
+  assert.equal(r.brand, "Bowl & Basket PP");
+  assert.equal(r.price, 5.99);
+});
+
+test("an offer that needs no card is left alone", () => {
+  const r = matchDeliOffers([{ product: "Bowl & Basket Muenster", brand: "Bowl & Basket",
+    priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced",
+    cardOnly: false }]).find(x => x.item === "Muenster");
+  assert.equal(r.brand, "Bowl & Basket");
+});
+
+test("a missing cardOnly is treated as no card, never as PP", () => {
+  // Every offer read before this field existed omits it; none of them should
+  // suddenly grow a card note.
+  const r = matchDeliOffers([{ product: "Bowl & Basket Muenster", brand: "Bowl & Basket",
+    priceText: "$5.99 lb", pricePerLb: 5.99, unit: "lb", description: "Store Sliced" }])
+    .find(x => x.item === "Muenster");
+  assert.equal(r.brand, "Bowl & Basket");
+});
+
+test("PP rides along with a row that relabels its brand", () => {
+  // Roast Beef shows the CUT; the card note must survive that relabelling.
+  const r = matchDeliOffers([{ product: "Eye Round Roast Beef", brand: "Store",
+    priceText: "$9.99 lb", pricePerLb: 9.99, unit: "lb", description: "Store Sliced, Eye Round",
+    cardOnly: true }]).find(x => x.item === "Roast Beef");
+  assert.equal(r.brand, "Eye Round PP");
+});
+
+test("PP is never added twice, and never to an empty cell", () => {
+  assert.equal(withPP("Bowl & Basket PP", { cardOnly: true }), "Bowl & Basket PP");
+  assert.equal(withPP(null, { cardOnly: true }), null);
+  assert.equal(withPP("", { cardOnly: true }), "");
+});
+
+test("a standing default never gains PP", () => {
+  // Defaults are the owner's standing buys, not this week's card deals.
+  const r = matchDeliOffers(NO_DELI).find(x => x.item === "Bologna");
+  assert.equal(r.brand, "Bowl & Basket");
+  assert.ok(r.fromDefault);
 });
 
 test("Roast Beef on sale overrides the default and still shows the cut", () => {
