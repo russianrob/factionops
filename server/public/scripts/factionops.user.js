@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.44
+// @version      5.2.45
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.44';
+    const SCRIPT_VERSION = '5.2.45';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -890,11 +890,6 @@ html.wb-theme-light {
 }
 
 /* Ensure rows have room for our right-aligned cells */
-.wb-sortable-row {
-    position: relative !important;
-    padding-right: 300px !important;
-    transition: transform 0.3s ease, opacity 0.3s ease;
-}
 
 /* ----- Call / Status elements in member rows ----- */
 .wb-cell {
@@ -1064,8 +1059,6 @@ html.wb-theme-light {
 .wb-row-called {
     background: rgba(0,184,148,0.06) !important;
 }
-
-/* (transition rule merged into .wb-sortable-row above) */
 
 /* ----- Group attack / viewers indicator ----- */
 .wb-viewers-badge {
@@ -5309,9 +5302,6 @@ body.wb-chain-active {
                     // landing times float to the top of the travel
                     // group. Debounced 300ms so multiple batch landings
                     // in quick succession collapse to one DOM reorder.
-                    if (touched.length && CONFIG.AUTO_SORT && typeof debouncedSort === 'function') {
-                        try { debouncedSort(); } catch (_) {}
-                    }
                     state.flightsLastFetchedAt = Date.now();
                 }
             } catch (_) { /* swallow; next tick retries */ }
@@ -7006,7 +6996,6 @@ body.wb-chain-active {
         // it here too -- otherwise pressing Call changes nothing on Torn's own
         // list until the next poll echoes the call back.
         try { markCalledRows(); } catch (_) {}
-        if (CONFIG.AUTO_SORT) debouncedSort();
         const targetName = state.statuses[tid]?.name || null;
         // v5.0.95: copy call message to clipboard — wording branches
         // on isDeal flag. Fires on the optimistic update so clipboard
@@ -7065,7 +7054,6 @@ body.wb-chain-active {
         // it here too -- otherwise pressing Call changes nothing on Torn's own
         // list until the next poll echoes the call back.
         try { markCalledRows(); } catch (_) {}
-        if (CONFIG.AUTO_SORT) debouncedSort();
         postAction('/api/call', { warId, targetId: tid, action: 'uncall' })
             .catch(e => {
                 warn('Uncall failed:', e.message);
@@ -9115,9 +9103,6 @@ body.wb-chain-active {
                 // v4.9.94: also nudge the sort once a minute so new
                 // landing data / newly-boarded flights re-order
                 // without waiting for an unrelated trigger.
-                if (CONFIG.AUTO_SORT && typeof debouncedSort === 'function') {
-                    try { debouncedSort(); } catch (_) {}
-                }
             }
 
             statusTimerRAF = requestAnimationFrame(tick);
@@ -9349,7 +9334,6 @@ body.wb-chain-active {
     // =========================================================================
 
     // Track which rows we've already enhanced to avoid double-injection.
-    const enhancedRows = new WeakSet();
 
     /**
      * Multiple possible selectors for member rows across different Torn pages.
@@ -9428,33 +9412,6 @@ body.wb-chain-active {
         return document.getElementById('mainContainer') || document.body;
     }
 
-    /**
-     * Try to extract a player ID from a member row element.
-     * We look for links, data attributes, and other common patterns.
-     */
-    function getPlayerIdFromRow(row) {
-        // Check data attributes
-        if (row.dataset.id) return row.dataset.id;
-        if (row.dataset.user) return row.dataset.user;
-
-        // Check href links within the row
-        const links = row.querySelectorAll('a[href]');
-        for (const link of links) {
-            const id = extractPlayerId(link.href);
-            if (id) return id;
-        }
-
-        // Check for attack link specifically
-        const attackLink = row.querySelector('a[href*="loader.php?sid=attack"], a[href*="page.php?sid=attack"]');
-        if (attackLink) return extractPlayerId(attackLink.href);
-
-        // Check for profile link
-        const profileLink = row.querySelector('a[href*="profiles.php"]');
-        if (profileLink) return extractPlayerId(profileLink.href);
-
-        return null;
-    }
-
     /** Get the player name from a row. */
     function getPlayerNameFromRow(row) {
         // Try common selectors for player names
@@ -9483,10 +9440,10 @@ body.wb-chain-active {
     /**
      * Mark war-page rows whose target somebody has called.
      *
-     * Deliberately NOT part of enhanceRow: that injects a cell container
-     * absolutely positioned over the right edge of the row, which is where
-     * Torn's Attack link sits on a narrow screen. This tints the row and puts
-     * a small tag beside the NAME, so nothing is covered.
+     * Tints the row and puts a small tag beside the NAME rather than covering
+     * the right edge, which is where Torn's Attack link sits on a narrow
+     * screen. (The old in-page row enhancer put a container there; it was
+     * unreachable and was deleted in 5.2.45.)
      *
      * Runs whether or not the overlay has been opened -- the whole point is
      * that somebody who never presses "Activate FactionOps" can still see that
@@ -10128,97 +10085,6 @@ body.wb-chain-active {
                      ((call.calledBy && call.calledBy.name) || 'someone'));
         }
 
-    function enhanceRow(row) {
-        if (enhancedRows.has(row)) return;
-
-        const targetId = getPlayerIdFromRow(row);
-        if (!targetId) {
-            // Might be a header row or empty — skip silently
-            return;
-        }
-
-        // Second place target rows are produced (renderOverlay is the other).
-        // These are Torn's OWN member rows for whichever faction the user is
-        // currently viewing — which is exactly how our own members end up
-        // wearing ATK/Call cells when someone clicks their own faction on the
-        // war page.
-        //
-        // Only the own-faction half of the predicate is applied here, NOT the
-        // allow-list half: MEMBER_LIST_SELECTORS also match a plain faction
-        // profile's member list, so a user scouting a third faction (retal
-        // target, next war) would otherwise lose their ATK/Call cells for a
-        // faction that legitimately isn't the current enemy.
-        //
-        // Deliberately returns WITHOUT adding the row to `enhancedRows`:
-        // marking it would freeze the decision for the life of the page, so a
-        // row skipped while identity was mid-load would never get its cells.
-        // Unmarked, scanAndEnhanceRows re-evaluates it next observer cycle.
-        //
-        // This guard only covers rows we have NOT already enhanced — the
-        // early return above fires first. Rows enhanced before we learned who
-        // is ours are stripped by the un-enhance sweep in _refreshAllRowsImpl.
-        if (isOwnFactionMember(targetId)) return;
-
-        enhancedRows.add(row);
-        row.classList.add('wb-sortable-row');
-        row.dataset.wbTargetId = targetId;
-
-        // Create a container for our injected cells (absolutely positioned right)
-        const wbContainer = document.createElement('div');
-        wbContainer.className = 'wb-cell-container';
-        wbContainer.id = `wb-cells-${targetId}`;
-
-        // --- Status cell ---
-        const statusCell = document.createElement('span');
-        statusCell.className = 'wb-cell';
-        statusCell.id = `wb-status-${targetId}`;
-        renderStatusCell(statusCell, targetId);
-
-        // --- Attack button ---
-        const attackCell = document.createElement('span');
-        attackCell.className = 'wb-cell';
-        const attackLink = document.createElement('a');
-        attackLink.className = 'wb-attack-btn';
-        attackLink.textContent = 'Attack';
-        attackLink.href = `https://www.torn.com/page.php?sid=attack&user2ID=${targetId}`;
-        attackLink.target = '_blank';
-        attackLink.rel = 'noopener';
-        attackLink.addEventListener('click', (e) => e.stopPropagation());
-        attackCell.appendChild(attackLink);
-
-        // --- Call cell ---
-        const callCell = document.createElement('span');
-        callCell.className = 'wb-cell';
-        callCell.id = `wb-call-${targetId}`;
-        renderCallCell(callCell, targetId);
-
-        // v5.0.14: priority cell retired.
-
-        // --- BSP / FFS estimated stats cell ---
-        const bspCell = document.createElement('span');
-        bspCell.className = 'wb-cell';
-        bspCell.id = `wb-bsp-${targetId}`;
-        renderBspCell(bspCell, targetId);
-
-        // --- Viewers (group attack) badge ---
-        const viewersCell = document.createElement('span');
-        viewersCell.className = 'wb-cell';
-        viewersCell.id = `wb-viewers-${targetId}`;
-        renderViewersBadge(viewersCell, targetId);
-
-        wbContainer.appendChild(viewersCell);
-        wbContainer.appendChild(bspCell);
-        wbContainer.appendChild(statusCell);
-        wbContainer.appendChild(attackCell);
-        wbContainer.appendChild(callCell);
-
-        // Always append to the row directly — CSS handles positioning
-        row.appendChild(wbContainer);
-
-        // Apply initial row highlights
-        applyRowHighlights(row, targetId);
-    }
-
     // ---- Cell renderers ----
 
     function renderCallCell(container, targetId) {
@@ -10470,25 +10336,6 @@ body.wb-chain-active {
                 }
             }
         });
-    }
-
-    /**
-     * Scan the page for member rows and enhance any new ones.
-     * Called on initial load and whenever the DOM mutates.
-     */
-    function scanAndEnhanceRows() {
-        const rows = findMemberRows();
-        let count = 0;
-        rows.forEach((row) => {
-            if (!enhancedRows.has(row)) {
-                enhanceRow(row);
-                count++;
-            }
-        });
-        if (count > 0) {
-            log(`Enhanced ${count} new member rows`);
-            if (CONFIG.AUTO_SORT) debouncedSort();
-        }
     }
 
     // =========================================================================
@@ -11928,63 +11775,6 @@ body.wb-chain-active {
         return statusRemainingSec(s);
     }
 
-    /**
-     * Re-order the DOM rows based on sort priorities.
-     * Uses CSS transitions for smooth re-ordering by manipulating `order`
-     * on a flex container, or by physically moving DOM nodes.
-     */
-    function sortMemberList() {
-        // If the overlay is active, re-render it (renderOverlay handles sorting)
-        if (document.getElementById('fo-overlay')) {
-            return;
-        }
-        const rows = Array.from(document.querySelectorAll('[data-wb-target-id]'));
-        if (rows.length === 0) return;
-
-        // Determine the parent container
-        const parent = rows[0].parentElement;
-        if (!parent) return;
-
-        // Build sort array
-        const sorted = rows.map((row) => {
-            const tid = row.dataset.wbTargetId;
-            return {
-                row,
-                targetId: tid,
-                priority: sortPriority(tid),
-                timer: sortTimerValue(tid),
-            };
-        });
-
-        sorted.sort((a, b) => {
-            if (a.priority !== b.priority) return a.priority - b.priority;
-            return a.timer - b.timer;
-        });
-
-        // Use CSS order property if parent is flex/grid, otherwise re-append nodes
-        const computedDisplay = window.getComputedStyle(parent).display;
-        const isFlex = computedDisplay === 'flex' || computedDisplay === 'inline-flex'
-            || computedDisplay === 'grid' || computedDisplay === 'inline-grid';
-
-        if (isFlex) {
-            sorted.forEach((item, index) => {
-                item.row.style.order = String(index);
-            });
-        } else {
-            // Physically re-order DOM nodes in-place (no detach/reattach flicker).
-            let prev = null;
-            for (const item of sorted) {
-                const expected = prev ? prev.nextSibling : parent.firstChild;
-                if (item.row !== expected) {
-                    parent.insertBefore(item.row, expected);
-                }
-                prev = item.row;
-            }
-        }
-    }
-
-    const debouncedSort = debounce(sortMemberList, 300);
-
     // =========================================================================
     // SECTION 14: ATTACK PAGE ENHANCEMENT
     // =========================================================================
@@ -12574,198 +12364,11 @@ body.wb-chain-active {
     let observer = null;
 
     /**
-     * Read a member's status directly from Torn's DOM row.
-     * Torn uses icon classes and text to indicate hospital/jail/travel/ok.
-     * Returns { status, until } or null if unreadable.
-     */
-    // v5.1.19: rewritten from the ground up to drop ~95% of the qSA
-    // pressure this function was generating. The old implementation
-    // cloned the row, ran 4 querySelectorAll calls per row (including
-    // a fatal qSA('*') that scanned every descendant), and was called
-    // for every member row every 500ms — measured at ~47,000 qSA/min
-    // on a faction-war page with ~100 rows.
-    //
-    // The new path: NO clone, ONE narrow qSA per row scoped to
-    // [class*="status"], read title attribute then textContent, fall
-    // back to row classname inspection (no DOM access). Detection
-    // accuracy is preserved for hospital/jail/federal/traveling/
-    // abroad/fallen because Torn surfaces these states via the row's
-    // status element title or text in every layout we've seen.
-    function readStatusFromDOM(row) {
-        if (!row) return null;
-
-        // Helper: classify a piece of text into a status object.
-        // Returns null when no status word matched so caller can try
-        // the next source.
-        function classify(text) {
-            if (!text) return null;
-            const t = String(text).toLowerCase();
-            if (t.includes('hospital')) return { status: 'hospital', until: parseDurationFromText(text) };
-            if (t.includes('jail'))     return { status: 'jail',     until: parseDurationFromText(text) };
-            if (t.includes('federal'))  return { status: 'federal',  until: 0 };
-            if (t.includes('traveling') || t.includes('travel')) return { status: 'traveling', until: 0 };
-            if (t.includes('abroad'))   return { status: 'abroad',   until: 0 };
-            if (t.includes('fallen'))   return { status: 'fallen',   until: 0 };
-            return null;
-        }
-
-        // Source 1: row's own title attribute. Cheap, no DOM walk.
-        const rowTitle = row.getAttribute && row.getAttribute('title');
-        const fromRowTitle = classify(rowTitle);
-        if (fromRowTitle) return fromRowTitle;
-
-        // Source 2: the row's status element (single scoped qSA).
-        // Most Torn layouts render the status inside a child whose
-        // class contains "status".
-        const statusEl = row.querySelector && row.querySelector('[class*="status"]');
-        if (statusEl) {
-            const stTitle = statusEl.getAttribute && statusEl.getAttribute('title');
-            const fromElTitle = classify(stTitle);
-            if (fromElTitle) return fromElTitle;
-            const fromElText = classify(statusEl.textContent);
-            if (fromElText) return fromElText;
-        }
-
-        // Source 3: row classname (no DOM access at all — instant).
-        // Catches Torn variants that signal status purely via class.
-        const cls = String(row.className || '').toLowerCase();
-        if (cls.includes('hospital')) return { status: 'hospital', until: 0 };
-        if (cls.includes('jail'))     return { status: 'jail',     until: 0 };
-        if (cls.includes('travel'))   return { status: 'traveling', until: 0 };
-
-        return { status: 'ok', until: 0 };
-    }
-
-    /**
      * Check all enhanced member rows for DOM status changes.
      * Compares DOM-read status against state.statuses and forwards
      * any changes to the server so all faction members see them instantly.
      */
     let _lastDomStatusCheck = 0;
-    function checkDOMStatusChanges() {
-        const now = Date.now();
-        // Throttle to at most once per 500ms
-        if (now - _lastDomStatusCheck < 500) return;
-        _lastDomStatusCheck = now;
-
-        const rows = document.querySelectorAll('.wb-sortable-row');
-        const changedStatuses = {};
-        let changeCount = 0;
-
-        rows.forEach((row) => {
-            const targetId = row.dataset.wbTargetId;
-            if (!targetId) return;
-
-            const domStatus = readStatusFromDOM(row);
-            if (!domStatus) return;
-
-            const current = state.statuses[targetId] || {};
-            const currentNorm = normalizeStatus(current.status || 'ok');
-            const domNorm = normalizeStatus(domStatus.status);
-            const statusChanged = currentNorm !== domNorm;
-
-            // Build a merge payload. Force until=0 on "ok" so lingering
-            // timers don't stick around when a target gets released.
-            const payload = { status: domNorm };
-            if (domNorm === 'ok') {
-                payload.until = 0;
-            } else if (typeof domStatus.until === 'number') {
-                payload.until = domStatus.until;
-            }
-
-            // Cheap change detection — skip DOM reads where nothing of
-            // interest moved. We care about status transitions and any
-            // meaningful timer change (>2s to absorb rounding).
-            const currentUntil = typeof current.until === 'number' ? current.until : 0;
-            const timerDelta = Math.abs(currentUntil - (payload.until ?? currentUntil));
-            if (!statusChanged && timerDelta < 2) return;
-
-            // Route through the monotonic merge so stale tooltip durations
-            // can't bump a decrementing timer back up (same guard that
-            // fixes the "Next Up rebounds 0 → 2s" bug for server pushes).
-            const prevUntil = state.statuses[targetId]?.until;
-            mergeStatusesMonotonic({ [targetId]: payload });
-            const postUntil = state.statuses[targetId]?.until;
-
-            if (statusChanged || prevUntil !== postUntil) {
-                log(`[dom-status] #${targetId} ${currentNorm} → ${domNorm}${payload.until ? ` (${Math.round(payload.until/60)}m)` : ''}`);
-                changedStatuses[targetId] = {
-                    status: state.statuses[targetId].status,
-                    until: state.statuses[targetId].until || 0,
-                };
-                changeCount++;
-            }
-        });
-
-        if (changeCount > 0) {
-            log(`Forwarding ${changeCount} DOM-detected status change(s) to server`);
-            // Forward to server so all faction members see it instantly
-            const warId = deriveWarId();
-            if (warId && state.jwtToken) {
-                postAction('/api/status', {
-                    warId,
-                    statuses: changedStatuses,
-                }).catch((e) => warn('Failed to forward DOM status:', e.message));
-            }
-            if (CONFIG.AUTO_SORT) debouncedSort();
-        }
-    }
-
-    /**
-     * Set up MutationObserver to watch for Torn dynamically loading faction
-     * member lists AND for status changes within existing rows.
-     * Torn uses AJAX to load content, so we can't just run once
-     * on page load — we need to continuously watch.
-     */
-    function setupMutationObserver() {
-        if (observer) {
-            observer.disconnect();
-        }
-
-        const container = findMemberContainer();
-        log('Setting up MutationObserver on:', container.tagName, container.id || container.className);
-
-        const debouncedScan = debounce(scanAndEnhanceRows, 200);
-        const debouncedStatusCheck = debounce(checkDOMStatusChanges, 300);
-
-        observer = new MutationObserver((mutations) => {
-            let shouldScan = false;
-            let shouldCheckStatus = false;
-            for (const mutation of mutations) {
-                // Skip mutations caused by our own injected elements
-                const target = mutation.target;
-                if (target && target.closest && (
-                    target.closest('.wb-cell-container') ||
-                    target.closest('.fo-overlay') ||
-                    target.closest('#wb-chain-bar')
-                )) continue;
-
-                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                    shouldScan = true;
-                    shouldCheckStatus = true;
-                } else if (mutation.type === 'characterData' || mutation.type === 'attributes') {
-                    shouldCheckStatus = true;
-                }
-            }
-            if (shouldScan) {
-                debouncedScan();
-            }
-            if (shouldCheckStatus) {
-                debouncedStatusCheck();
-            }
-        });
-
-        observer.observe(container, {
-            childList: true,
-            subtree: true,
-            characterData: true,
-            attributes: true,
-            attributeFilter: ['class', 'title'],
-        });
-
-        // Initial scan
-        scanAndEnhanceRows();
-    }
 
     // =========================================================================
     // SECTION 17: PERIODIC REFRESH
@@ -12965,14 +12568,6 @@ body.wb-chain-active {
         }
     }
 
-    /** Initialise war/faction page enhancements. */
-    function initWarPage() {
-        createStandaloneNextUp();
-        setupMutationObserver();
-        startStatusTimers();
-        startCallPruner();
-    }
-
     /** Initialise attack page enhancements. */
     function initAttackPage() {
         // Remove FactionOps overlay if it exists (shouldn't be on attack pages)
@@ -13150,16 +12745,14 @@ body.wb-chain-active {
     // SECTION 19: CALL EXPIRY VISUAL FEEDBACK
     // =========================================================================
 
-    /* v5.1.64: updateCallAges deleted — it was a self-rearming requestAnimationFrame
-       loop that could never do anything. It looked up `wb-call-<id>`, but those ids
-       are created only in enhanceRow(), reachable solely via
-       enhanceRow <- scanAndEnhanceRows <- setupMutationObserver <- initWarPage,
-       and initWarPage has ZERO callers (detectPageAndInit routes elsewhere). The
-       live overlay uses `fo-call-<id>`. So every lookup missed while the loop kept
-       the render pipeline off frame-idle at ~60fps — started from main(), so it ran
-       on every matched Torn page, overlay or not, and its handle was never stored so
-       deactivateWarOverlay could not cancel it. If call-age fading is wanted again,
-       target `fo-call-<id>` from the existing 1Hz accumulator, not rAF. */
+    /* v5.1.64: updateCallAges deleted — a self-rearming requestAnimationFrame loop
+       that could never do anything. It looked up `wb-call-<id>` ids belonging to
+       the in-page row enhancer, which was itself unreachable and has since been
+       deleted outright (5.2.45). So every lookup missed while the loop held the
+       render pipeline off frame-idle at ~60fps, on every matched Torn page,
+       with its handle never stored so nothing could cancel it. If call-age
+       fading is wanted again, target `fo-call-<id>` from the existing 1Hz
+       accumulator, not rAF. */
 
     // =========================================================================
     // SECTION 20: TAB COORDINATION
