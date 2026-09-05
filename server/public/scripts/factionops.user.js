@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.39
+// @version      5.2.44
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.39';
+    const SCRIPT_VERSION = '5.2.44';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -860,21 +860,6 @@ html.wb-theme-light {
     text-transform: none; letter-spacing: 0; font-weight: 600; color: #ffd9c9;
 }
 .fo-wp-filter-chk input { margin: 0; cursor: pointer; }
-/* The estimate, in the member cell. tabular-nums so the column of numbers
-   lines up as the eye runs down the list. */
-.fo-wp-stat {
-    display: inline-block; margin-left: 6px; padding: 1px 5px;
-    border-radius: 3px; border: 1px solid rgba(255,255,255,.14);
-    background: rgba(0,0,0,.35);
-    font-size: 10px; font-weight: 700; line-height: 1.4;
-    font-variant-numeric: tabular-nums; white-space: nowrap;
-    vertical-align: middle;
-}
-/* Same tiers the overlay's BSP cell used: S 3B+, A 1-3B, B 500M-1B, C under. */
-.fo-wp-stat[data-tier="s"] { color: #ff7675; border-color: rgba(255,118,117,.45); }
-.fo-wp-stat[data-tier="a"] { color: #ffd166; border-color: rgba(255,209,102,.45); }
-.fo-wp-stat[data-tier="b"] { color: #55efc4; border-color: rgba(85,239,196,.45); }
-.fo-wp-stat[data-tier="c"] { color: #b2bec3; }
 /* Pushed to the far right by the count's margin-left:auto when a filter is
    hiding rows, and by its own when nothing is. 28px keeps it a thumb target. */
 .fo-wp-filter-gear {
@@ -9631,59 +9616,6 @@ body.wb-chain-active {
      * Predictor's own localStorage, and the FFScouter half is already being
      * fetched by applyServerData.
      */
-    // Torn's own numbers on a war row are a level and a score, neither of which
-    // carries a K/M/B suffix -- so a LEAF in the member cell whose entire text
-    // is "2.56B" is another script's stat estimate, not Torn's.
-    var ESTIMATE_TEXT = /^[\d.,]+\s*[KMB]$/i;
-
-    /**
-     * Hide Battle Stats Predictor's estimate on a war row.
-     *
-     * BSP draws it at the left where Torn's avatar covers it, and its values
-     * run a row behind besides -- the first row has none and each of the rest
-     * shows the row above's number. Ours is legible and reads the very same
-     * source (BSP's own localStorage cache), so theirs goes.
-     *
-     * Matched by SHAPE, not by class: a guess at BSP's namespace did not
-     * match, and this needs no knowledge of another script's internals.
-     * Deliberately narrow -- a leaf element, whole text is a number with a
-     * magnitude suffix, and never our own chip. The flag it stamps is a
-     * do-not-repeat marker, so a row is only walked once.
-     */
-    function hideForeignEstimate(cell) {
-        var n = cell.querySelectorAll('*');
-        for (var i = 0; i < n.length; i++) {
-            var e = n[i];
-            if (e.children.length) continue;                        // leaves only
-            if (e.classList && e.classList.contains('fo-wp-stat')) continue;
-            if (e.closest && e.closest('.fo-wp-stat')) continue;    // never ours
-            if (e.dataset.foHid === '1') continue;                  // already done
-            var t = String(e.textContent || '').trim();
-            if (!t || !ESTIMATE_TEXT.test(t)) continue;
-            e.dataset.foHid = '1';
-            e.style.display = 'none';
-        }
-    }
-
-    function ensureStatChip(row, targetId) {
-        const cell = row.querySelector('[class*="member"]');
-        if (!cell) return;
-        hideForeignEstimate(cell);
-        let n = null;
-        try { n = getTargetStatsEstimate(targetId); } catch (_) {}
-        let chip = cell.querySelector('.fo-wp-stat');
-        if (n == null) { if (chip) chip.remove(); return; }
-        if (!chip) {
-            chip = document.createElement('span');
-            chip.className = 'fo-wp-stat';
-            cell.appendChild(chip);
-        }
-        const txt = formatBspNumber(n);
-        if (chip.textContent !== txt) chip.textContent = txt;
-        const tier = bspTier(n);
-        if (chip.dataset.tier !== tier) chip.dataset.tier = tier;
-        chip.title = 'Estimated total battle stats';
-    }
 
     /**
      * The status cell of a war row.
@@ -10003,7 +9935,6 @@ body.wb-chain-active {
             try { show = passesStatsFilter(targetId) && passesActivityFilter(targetId); } catch (_) {}
             row.style.display = show ? '' : 'none';
             if (!show) { hidden++; continue; }   // no point dressing a hidden row
-            try { ensureStatChip(row, targetId); } catch (_) {}
             try { ensureHospTimer(row, targetId); } catch (_) {}
             const call = (state.calls || {})[targetId];
             try { ensureCallButton(row, targetId, call); } catch (_) {}
@@ -12978,6 +12909,28 @@ body.wb-chain-active {
     async function startCallsOnlyMode() {
         if (callsOnlyStarted) return;
         callsOnlyStarted = true;
+
+        // Draw before authenticating. None of the row furniture needs a token
+        // -- the buttons, the hospital timers, the filter bar and the sort all
+        // read the DOM and local state -- only ACTING on a call does. Waiting
+        // on a server round trip first is why the page sat there looking dead
+        // for ten to fifteen seconds while FFScouter, which waits for nothing,
+        // had its numbers in already.
+        //
+        // Before auth state.calls is empty, so every row simply reads CALL;
+        // the real call state arrives with the first poll and repaints.
+        try { markCalledRows(); } catch (_) {}
+        // The war list is a React table that repaints on its own, so a one-off
+        // pass loses the marks the moment Torn re-renders a row. Attached here
+        // rather than after auth so a list that paints late is still caught.
+        try {
+            const host = findMemberContainer() || document.body;
+            new MutationObserver(() => { try { markCalledRows(); } catch (_) {} })
+                .observe(host, { childList: true, subtree: true });
+        } catch (_) {}
+        setInterval(() => { try { markCalledRows(); } catch (_) {} }, 5000);
+        startHospTick();
+
         try {
             if (!state.jwtToken) await authenticate();
             if (!state.jwtToken) return;          // no key saved: nothing to show
@@ -12987,16 +12940,7 @@ body.wb-chain-active {
             log('calls-only: not connecting (' + (e && e.message) + ')');
             return;
         }
-        markCalledRows();
-        // The war list is a React table that repaints on its own, so a one-off
-        // pass loses the marks the moment Torn re-renders a row.
-        try {
-            const host = findMemberContainer() || document.body;
-            new MutationObserver(() => { try { markCalledRows(); } catch (_) {} })
-                .observe(host, { childList: true, subtree: true });
-        } catch (_) {}
-        setInterval(() => { try { markCalledRows(); } catch (_) {} }, 5000);
-        startHospTick();
+        markCalledRows();   // repaint with real call state now that it can arrive
     }
 
     function detectPageAndInit() {
