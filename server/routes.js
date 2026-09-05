@@ -8341,20 +8341,25 @@ router.post('/api/admin/xanax-backfill', async (req, res) => {
     // order-dependent, so a deposit netted before the takes it belongs to is
     // silently discarded.
     all.sort((a, b) => a.timestamp - b.timestamp);
-    const taken = {}, names = {};
+    const taken = {}, names = {}, gross = {}, deposited = {};
     for (const e of all) {
       const p = xt._internal.parseXanaxEntry(e.news);
       if (!p) continue;
       names[p.playerId] = p.playerName;
       // Was `+ 1` for EVERY entry: a deposit counted as a take, and qty was
-      // ignored so "deposited 3x" moved the number by one. Mirrors the live
-      // tracker now -- used adds, deposited subtracts, floored at 0.
-      if (p.type === 'deposited') taken[p.playerId] = Math.max(0, (taken[p.playerId] || 0) - p.qty);
-      else taken[p.playerId] = (taken[p.playerId] || 0) + p.qty;
+      // ignored so "deposited 3x" moved the number by one. Both halves are kept
+      // now, so a return beyond this war's takes survives as surplus.
+      if (p.type === 'deposited') deposited[p.playerId] = (deposited[p.playerId] || 0) + p.qty;
+      else gross[p.playerId] = (gross[p.playerId] || 0) + p.qty;
+    }
+    for (const id of new Set([...Object.keys(gross), ...Object.keys(deposited)])) {
+      taken[id] = Math.max(0, (gross[id] || 0) - (deposited[id] || 0));
     }
     war.xanaxStats = {
       lastPolledAt: toTs,
       taken,
+      gross,
+      deposited,
       names,
       entryCount: all.length,
       backfilledFrom: fromTs,
@@ -8421,16 +8426,22 @@ router.post('/api/admin/xanax-backfill-history', async (req, res) => {
       // max(0, 0 - qty) = 0 and the return is lost. That is what left Shefin
       // reading 4 in the frozen report while the live war correctly said 1.
       all.sort((a, b) => a.timestamp - b.timestamp);
-      const taken = {}, names = {};
+      // gross and deposited are kept apart so a return larger than this war's
+      // takes survives as surplus instead of being flattened by the floor.
+      const taken = {}, names = {}, gross = {}, deposited = {};
       for (const e of all) {
         const p = xt._internal.parseXanaxEntry(e.news);
         if (!p) continue;
         names[p.playerId] = p.playerName;
-        if (p.type === 'deposited') taken[p.playerId] = Math.max(0, (taken[p.playerId] || 0) - p.qty);
-        else taken[p.playerId] = (taken[p.playerId] || 0) + p.qty;
+        if (p.type === 'deposited') deposited[p.playerId] = (deposited[p.playerId] || 0) + p.qty;
+        else gross[p.playerId] = (gross[p.playerId] || 0) + p.qty;
+      }
+      for (const id of new Set([...Object.keys(gross), ...Object.keys(deposited)])) {
+        taken[id] = Math.max(0, (gross[id] || 0) - (deposited[id] || 0));
       }
       let patched = null;
-      if (ok) patched = warHistory.backfillXanaxForWar(factionId, wmeta.warKey, taken, names, { lastPolledAt: toTs, from: fromTs, to: toTs });
+      if (ok) patched = warHistory.backfillXanaxForWar(factionId, wmeta.warKey, taken, names,
+        { lastPolledAt: toTs, from: fromTs, to: toTs, gross, deposited });
       results.push({
         warKey: wmeta.warKey, enemy: wmeta.enemyFactionName,
         entries: all.length, xanaxMembers: Object.keys(taken).length,

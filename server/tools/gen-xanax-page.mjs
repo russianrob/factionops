@@ -67,14 +67,61 @@ function warDosers(w) {
 const players = {};
 list.forEach((it, ci) => {
   for (const d of warDosers(it.w)) {
-    const p = players[d.id] || (players[d.id] = { name: d.name, cells: Array(N).fill(null), xanax: 0, deficit: 0, flagged: 0 });
+    const p = players[d.id] || (players[d.id] = { id: d.id, name: d.name, cells: Array(N).fill(null), xanax: 0, deficit: 0, flagged: 0, returned: 0 });
     p.name = d.name;
     const def = xm.deficit(d.x, d.ta), flag = xm.flagged(d.x, d.ta);
-    p.cells[ci] = { x: d.x, h: d.h, def, flag, left: d.left };
-    p.xanax += d.x; p.deficit += def; if (flag) p.flagged++;
+    // ta is kept on the cell so a carry-back can re-score it.
+    p.cells[ci] = { x: d.x, h: d.h, ta: d.ta, def, flag, left: d.left, ret: 0 };
   }
 });
 const playerList = Object.values(players);
+
+// ── Carry-back ────────────────────────────────────────────────────────────
+//
+// A return bigger than its own war's takes used to vanish: the per-war floor
+// reads 0 either way, so handing back eight vials against a two-vial war
+// settled two and burned six. Vials are fungible and the debt is the faction's,
+// so the surplus now pays down EARLIER wars, newest first.
+//
+// Bounded to the wars on this page on purpose. Unbounded, one large return
+// today would quietly rewrite months of history nobody is looking at.
+//
+// The no-show is NOT erased: the war still shows the vials taken and the
+// attacks made, and the cell says how many were later returned. Only the debt
+// is settled.
+const surplusByWar = list.map(it => {
+  const xs = (it.w && it.w.xanaxStats) || {};
+  const gross = xs.gross || {}, dep = xs.deposited || {};
+  const out = {};
+  for (const id of new Set([...Object.keys(gross), ...Object.keys(dep)])) {
+    const over = (dep[id] || 0) - (gross[id] || 0);
+    if (over > 0) out[id] = over;
+  }
+  return out;
+});
+for (const p of playerList) {
+  let credit = 0;
+  for (let ci = N - 1; ci >= 0; ci--) {
+    credit += surplusByWar[ci][p.id] || 0;
+    const c = p.cells[ci];
+    if (!c || credit <= 0 || c.x <= 0) continue;
+    const paid = Math.min(credit, c.x);
+    credit -= paid;
+    c.x -= paid;
+    c.ret += paid;
+  }
+}
+// Totals are derived AFTER the carry-back, never before.
+for (const p of playerList) {
+  p.xanax = 0; p.deficit = 0; p.flagged = 0; p.returned = 0;
+  for (const c of p.cells) {
+    if (!c) continue;
+    c.def = xm.deficit(c.x, c.ta);
+    c.flag = xm.flagged(c.x, c.ta);
+    p.xanax += c.x; p.deficit += c.def; p.returned += c.ret;
+    if (c.flag) p.flagged++;
+  }
+}
 
 // ── Derived (all data-driven) ──
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -93,7 +140,10 @@ function cell(c) {
   if (!c) return `<td class="c empty"><span class="dash">·</span></td>`;
   const flag = c.flag ? `<span class="flag" title="flagged">⚑</span>` : "";
   const defTxt = c.def > 0 ? `<b>${c.def}</b>` : `<span class="ok">ok</span>`;
-  return `<td class="c ${sev(c.def, true)}">${flag}<span class="xh">${c.x}x→${c.h}h</span><span class="def">${defTxt}</span></td>`;
+  // The returned count is shown, not folded away: a vial handed back is
+  // something the member did, and without it the cell just reads lower.
+  const ret = c.ret > 0 ? `<span class="ret" title="${c.ret} returned to the armoury">\u21a9${c.ret}</span>` : "";
+  return `<td class="c ${sev(c.def, true)}">${flag}<span class="xh">${c.x}x\u2192${c.h}h</span>${ret}<span class="def">${defTxt}</span></td>`;
 }
 function row(p) {
   const badgeCls = p.flagged >= 2 ? "b-hot" : "b-warn";
@@ -268,6 +318,9 @@ tr.band td{border-bottom:1px solid var(--line);background:var(--panel)}
 td.c{text-align:center;padding:7px 8px;border-bottom:1px solid var(--line2);position:relative;vertical-align:middle;min-width:96px}
 td.c .xh{display:block;font-size:11px;font-weight:600;opacity:.85;letter-spacing:-.01em}
 td.c .def{display:block;font-size:15px;font-weight:800;line-height:1.15;margin-top:1px}
+/* Vials handed back. Quiet, but present -- the debt it settled came off
+   the number above it, and a reader should be able to see why. */
+td.c .ret{display:block;font-size:10px;font-weight:700;opacity:.75;color:var(--good,#1a7f5a);letter-spacing:-.01em}
 td.c .def .ok{font-size:11px;font-weight:700;opacity:.7}
 td.c .flag{position:absolute;top:3px;right:5px;font-size:9px;opacity:.9}
 td.c.none{background:var(--none-bg)} td.c.none .def,td.c.none .flag{color:var(--none-fg)}

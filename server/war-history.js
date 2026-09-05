@@ -321,6 +321,11 @@ export function backfillXanaxForWar(factionId, warKey, takenMap, names, meta = {
   const taken = takenMap || {};
   w.xanaxStats = {
     taken: { ...taken },
+    // Kept beside the net so the report can carry a surplus return back to an
+    // earlier war. Absent on anything frozen before 5.2.x, which simply carries
+    // nothing back.
+    gross: { ...(meta.gross || {}) },
+    deposited: { ...(meta.deposited || {}) },
     names: { ...(names || {}) },
     lastPolledAt: Number(meta.lastPolledAt) || null,
     backfilledFrom: Number(meta.from) || null,
@@ -368,6 +373,8 @@ export function syncXanaxFromWar(war) {
   if (!rec) return null;                       // not archived yet
   return backfillXanaxForWar(fid, warKey, xs.taken, xs.names || {}, {
     lastPolledAt: xs.lastPolledAt || null,
+    gross: xs.gross || {},
+    deposited: xs.deposited || {},
   });
 }
 

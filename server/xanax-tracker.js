@@ -203,11 +203,13 @@ export function stopAll() {
 export function getStats(warId) {
   const war = store.getWar(warId);
   if (!war || !war.xanaxStats) {
-    return { lastPolledAt: 0, taken: {}, names: {}, entryCount: 0 };
+    return { lastPolledAt: 0, taken: {}, gross: {}, deposited: {}, names: {}, entryCount: 0 };
   }
   return {
     lastPolledAt: war.xanaxStats.lastPolledAt || 0,
     taken:        war.xanaxStats.taken        || {},
+    gross:        war.xanaxStats.gross        || {},
+    deposited:    war.xanaxStats.deposited    || {},
     names:        war.xanaxStats.names        || {},
     entryCount:   war.xanaxStats.entryCount   || 0,
   };
@@ -228,7 +230,7 @@ async function pollOnce(warId) {
   const apiKey = store.getPollingKey(war.factionId, "xanax-tracker", cursor);
   if (!apiKey) throw new Error("no pool key available");
 
-  const stats = war.xanaxStats || { lastPolledAt: 0, taken: {}, names: {}, entryCount: 0 };
+  const stats = war.xanaxStats || { lastPolledAt: 0, taken: {}, gross: {}, deposited: {}, names: {}, entryCount: 0 };
   // First-ever poll for this war: walk back PRE_WAR_LOOKBACK_SEC so we
   // capture the pre-war stacking phase (faction members typically take
   // 1-3 xanax in the 24h before kickoff to bank energy). Subsequent
@@ -299,19 +301,26 @@ async function pollOnce(warId) {
     stats.entryCount++;
     const parsed = parseXanaxEntry(e.news);
     if (!parsed) continue;
+    // Both halves are kept, not just their difference. `taken` stays the net,
+    // floored, so every existing consumer reads the same number it always has;
+    // `gross` and `deposited` are what let a return that EXCEEDS this war's
+    // takes be carried back to an earlier one. The old code computed the net in
+    // place, so that surplus was destroyed before it was ever stored.
+    if (!stats.gross) stats.gross = {};
+    if (!stats.deposited) stats.deposited = {};
+    const pid = parsed.playerId;
+    stats.names[pid] = parsed.playerName;
     if (parsed.type === 'deposited') {
-      // 2026-05-17: deposits net against takes. Floor at 0 — a member
-      // who only deposits (e.g. brought xanax from outside) shouldn't
-      // show as a negative consumer.
-      const cur = stats.taken[parsed.playerId] || 0;
-      stats.taken[parsed.playerId] = Math.max(0, cur - parsed.qty);
-      stats.names[parsed.playerId] = parsed.playerName;
+      stats.deposited[pid] = (stats.deposited[pid] || 0) + parsed.qty;
       newCount -= parsed.qty; // log shows net change
     } else {
-      stats.taken[parsed.playerId] = (stats.taken[parsed.playerId] || 0) + parsed.qty;
-      stats.names[parsed.playerId] = parsed.playerName;
+      stats.gross[pid] = (stats.gross[pid] || 0) + parsed.qty;
       newCount += parsed.qty;
     }
+    // 2026-05-17: deposits net against takes. Floor at 0 — a member who only
+    // deposits (brought xanax in from outside) must not read as a negative
+    // consumer. The floored remainder is now recoverable as surplus().
+    stats.taken[pid] = Math.max(0, (stats.gross[pid] || 0) - (stats.deposited[pid] || 0));
   }
   stats.lastPolledAt = highestTs || Math.floor(Date.now()/1000);
   war.xanaxStats = stats;
@@ -337,6 +346,23 @@ async function pollOnce(warId) {
 
 // Exported for unit-style testing of the regex from elsewhere if ever
 // useful. Not used by production code paths.
+/**
+ * Vials a member handed back BEYOND what they took in this war.
+ *
+ * The per-war floor means a return bigger than the war's takes vanishes: they
+ * read 0 either way. This is the part that vanished, and it is what the report
+ * carries back to settle an earlier war's debt.
+ *
+ * Zero for any war recorded before 5.2.x, which has no gross/deposited maps --
+ * old wars simply carry nothing back, rather than guessing.
+ */
+export function surplus(stats, playerId) {
+  if (!stats) return 0;
+  const dep = (stats.deposited || {})[playerId] || 0;
+  const gro = (stats.gross || {})[playerId] || 0;
+  return Math.max(0, dep - gro);
+}
+
 export const _internal = { parseXanaxEntry, TOOK_XANAX_RE };
 
 // Exposed for admin one-time repoll endpoint — bypasses the
