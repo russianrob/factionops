@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.74
+// @version      0.9.75
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -9463,7 +9463,12 @@
             : '<span class="muted"> \u00b7 from the bar</span>') + "</div>"
         : "") +
       (pct === null ? "" : '<div class="row"><span>Bar actually used</span><b class="' + (pct >= 90 ? "ok" : pct >= 70 ? "" : "bad") + '">' + pct + "%</b></div>") +
-      '<p class="muted" style="margin:8px 0 0">Missed energy is regen your bar dropped because it was already full. Counted from when the script last saw your bar, so time with Torn closed still counts. Energy spent attacking is listed apart \u2014 it left the bar, but it never reached the gym, so it counts against your bar-used figure rather than toward it.</p>' +
+      // The explanation under this card is gone (0.9.74, owner's call). Same
+      // reasoning as the stat-books paragraph: it says the same thing every
+      // day, while the rows above it are what actually changed. The two
+      // qualifiers that are per-DAY rather than general survive on their own
+      // rows -- "observed only" on a knowingly short figure, and "5 hits" or
+      // "from the bar" on the attacking line.
       "</div>"
     );
   }
