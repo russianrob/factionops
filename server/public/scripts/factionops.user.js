@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.45
+// @version      5.2.46
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.45';
+    const SCRIPT_VERSION = '5.2.46';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9702,6 +9702,10 @@ body.wb-chain-active {
     function applyRowOrder(entries) {
         if (!entries.length) return;
         var list = entries[0].row.parentElement;
+        // Second guard on the same mistake: whatever the selectors matched, a
+        // list holding no enemy rows is not the war list and must not be made
+        // a flex container.
+        if (list && !list.querySelector('li.enemy')) return;
         if (!CONFIG.WP_SORT) {
             // Hand the list back rather than leaving it flex with stale order
             // values -- Torn's own sequence must return intact. Every child,
@@ -9869,6 +9873,26 @@ body.wb-chain-active {
     }
 
     function markCalledRows() {
+        // Everything below is WAR-VIEW furniture, and findMemberRows falls back
+        // to a bare `.members-list li` -- which the faction page's own roster
+        // matches. applyRowOrder then made THAT list a flex container, and
+        // Torn's header cells (Lvl / FF / Position / Days / Status) turned into
+        // a vertical stack down the left of the first five members.
+        //
+        // li.enemy is the structural marker for an enemy war list. Requiring it
+        // means that if Torn ever drops the class the feature degrades to OFF
+        // rather than deranging a page it was never meant to touch.
+        if (!document.querySelector('li.enemy')) {
+            // Undo it if a previous pass already flexed something here.
+            var stale = document.querySelector('.fo-wp-sorted');
+            if (stale) {
+                stale.classList.remove('fo-wp-sorted');
+                for (var q = 0; q < stale.children.length; q++) stale.children[q].style.order = '';
+            }
+            var bar = document.getElementById('fo-wp-filter');
+            if (bar) bar.remove();
+            return;
+        }
         let rows;
         try { rows = findMemberRows(); } catch (_) { return; }
         try { ensureWarFilterBar(); } catch (_) {}
