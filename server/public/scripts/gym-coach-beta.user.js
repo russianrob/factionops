@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.75
+// @version      0.9.76
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -4735,22 +4735,6 @@
     return out;
   }
 
-  var SRC_PRESETS = [
-    { id: "xan",       label: "Xan",         set: { xan: 3, refill: 0, fhc: 0, munster: 0, redcow: 0, tourine: 0 } },
-    { id: "xanref",    label: "Xan + refill", set: { xan: 3, refill: 1, fhc: 0, munster: 0, redcow: 0, tourine: 0 } },
-    { id: "xanrefcan", label: "+ cans",      set: { xan: 3, refill: 1, fhc: 0, munster: 0, redcow: 4, tourine: 0 } },
-    { id: "all",       label: "Everything",  set: { xan: 4, refill: 1, fhc: 1, munster: 0, redcow: 0, tourine: 8 } }
-  ];
-
-  function srcPresetId() {
-    for (var i = 0; i < SRC_PRESETS.length; i++) {
-      var p = SRC_PRESETS[i], hit = true;
-      for (var k in p.set) if (srcCount(k) !== p.set[k]) { hit = false; break; }
-      if (hit) return p.id;
-    }
-    return "";
-  }
-
   // The manual pickers. Only shown when no goals are set — with goals, the
   // coach chooses the stat and a picker beside it would just contradict it.
   function pickerCards() {
@@ -5246,7 +5230,6 @@
 
   function srcHtml() {
     var e = dailyEnergy();
-    var now = srcPresetId();
     function rowHtml(r) {
       var n = srcCount(r.k);
       var on = n > 0;
@@ -5275,11 +5258,10 @@
     return (
       '<div class="gc-card"><h3>Energy sources</h3>' +
       '<p class="muted" style="margin:0 0 8px">Tick what you actually use. Everything here feeds the projections \u2014 the Trend chart and the 7/30/90 day figures move with it.</p>' +
-      '<div class="pick">' +
-      SRC_PRESETS.map(function (p) {
-        return '<button data-preset="' + p.id + '" class="' + (now === p.id ? "on" : "") + '">' + p.label + "</button>";
-      }).join("") +
-      "</div>" +
+      // The Xan / Xan+refill / +cans / Everything shortcuts are gone (0.9.76,
+      // owner's call). The per-source rows below are the real control, and the
+      // presets only ever set the same counters to a fixed guess at what
+      // somebody uses.
       '<div class="gcb-srcs">' +
       srcRows().filter(function (r) { return r.grp !== "cans"; }).map(rowHtml).join("") +
       '<div class="gcb-grp">Energy cans</div>' +
@@ -6551,7 +6533,6 @@
     };
   }
 
-
   // --- how far off the next gym is ------------------------------------------
   // Torn already tracks this and paints it: the gym you are working toward
   // carries inProgress___ and a whole-number percentage. That percentage is the
@@ -7732,7 +7713,6 @@
              daysLeft: Math.ceil((finishesAt - now) / 86400000) };
   }
 
-
   // ---- Faction gym board ---------------------------------------------------
   //
   // A leaderboard with no server behind it.
@@ -8283,7 +8263,6 @@
     return head + "\n" + lines.join("\n") + (more > 0 ? "\n+ " + more + " more" : "");
   }
 
-
   // ---- reading the faction -------------------------------------------------
 
   function boardUrl(stat) {
@@ -8483,7 +8462,6 @@
   // Historic form is an array of { name, value }; the live form is a flat
   // object. Reading both means a shape change cannot silently zero the column.
 
-
   // Worked out on request, never on the poll tick: this is one call per member
   // for the live side plus one for the week start, and the week-start half is
   // only ever paid once.
@@ -8494,10 +8472,8 @@
   // other fan-out here. The year-ago half never changes once fetched, so it is
   // kept for good; only the live half is ever asked again.
 
-
   // Historic form is an array of { name, value }; the live form is a flat
   // object. null means unreadable, which is not the same as zero.
-
 
   // Your own xanax, counted rather than estimated.
   //
@@ -8849,7 +8825,6 @@
     return n * ATTACK_ENERGY;
   }
 
-
   function boardLine(r, meId) {
     var split = boardSplit(r);
     // Trains lead the second line rather than taking a column of their own:
@@ -8980,8 +8955,6 @@
         : "") +
       "</div>";
 
-
-
     var shareCard =
       '<div class="gc-card"><h3>Share it</h3>' +
       '<p class="muted" style="margin:0 0 9px">Copies the top ' + BOARD_CARD_ROWS + ' as text you can paste straight into faction chat. Nothing is uploaded — the card is built here and goes to your clipboard.</p>' +
@@ -9006,7 +8979,6 @@
 
     return head + xanHtml() + shareCard + hofCard;
   }
-
 
   // Every write here is SYNCHRONOUS inside the tap. Torn PDA only grants the
   // clipboard for the duration of the gesture, so anything awaited first --
@@ -10998,7 +10970,7 @@
     if (!t || typeof t.closest !== "function") return;
     // Every clickable attribute has to be listed here or the handler below it is
     // dead code -- closest() returns null and this returns before reaching it.
-    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-preset],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],[data-board],#stackSw,#novSw,#boardSw");
+    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],[data-board],#stackSw,#novSw,#boardSw");
     if (!t) return;
     if (t.dataset.board) {
       onBoardClick(t.dataset.board);
@@ -11014,16 +10986,6 @@
     }
     if (t.dataset.raise) {
       raiseGoal(t.dataset.raise);
-      return;
-    }
-    if (t.dataset.preset) {
-      var pre = null;
-      SRC_PRESETS.forEach(function (p) { if (p.id === t.dataset.preset) pre = p; });
-      if (pre) {
-        state.src = { xan: pre.set.xan, refill: pre.set.refill, cans: pre.set.cans, fhc: pre.set.fhc };
-        storeSet("src", state.src);
-        renderPanel();
-      }
       return;
     }
     if (t.dataset.tick) {
