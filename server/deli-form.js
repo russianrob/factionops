@@ -77,7 +77,11 @@ export const DELI_ROWS = [
         ? { brand: prov.brand, price: prov.price } : null;
     } },
   { row: 14, item: "Muenster",     match: t => /muenster|munster/.test(t) },
-  { row: 15, item: "Swiss",        match: t => /swiss/.test(t) },
+  // Standing buy: Bowl & Basket at $8.99. Swiss is rarely on sale -- the deli
+  // page usually offers Jarlsberg instead, which is Swiss-STYLE but is not what
+  // this row is buying, so it must not match here.
+  { row: 15, item: "Swiss",        match: t => /swiss/.test(t),
+    def: { brand: "Bowl & Basket", price: 8.99 } },
   // Cheddar cell includes the sharpness variety (e.g. "Bowl & Basket Ultra Sharp")
   // when the text names one, since that's how the user identifies the cheddar.
   // Exclude "-wurst" sausages (a Black Bear "Cheddarwurst" bratwurst wrongly

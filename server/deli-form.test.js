@@ -190,6 +190,33 @@ test("PP is never added twice, and never to an empty cell", () => {
   assert.equal(withPP("", { cardOnly: true }), "");
 });
 
+test("Swiss defaults to Bowl & Basket $8.99 when none is on sale", () => {
+  // Set by the owner 2026-09-05. Swiss is rarely on sale: the 9/6 circular's
+  // deli page offered Jarlsberg and no Swiss at all, and the row read blank.
+  const r = matchDeliOffers(NO_DELI).find(x => x.item === "Swiss");
+  assert.equal(r.brand, "Bowl & Basket");
+  assert.equal(r.price, 8.99);
+  assert.ok(r.fromDefault, "a default must not count as a circular match");
+});
+
+test("a real Swiss deal still beats the default", () => {
+  const r = matchDeliOffers([{ product: "Boar's Head Gold Label Swiss", brand: "Boar's Head",
+    priceText: "$7.99 lb", pricePerLb: 7.99, unit: "lb", description: "Store Sliced" }])
+    .find(x => x.item === "Swiss");
+  assert.equal(r.brand, "Boar's Head");
+  assert.equal(r.price, 7.99);
+  assert.ok(!r.fromDefault);
+});
+
+test("Jarlsberg does NOT fill the Swiss row", () => {
+  // Swiss-STYLE, but not what this row buys -- it must fall to the default.
+  const r = matchDeliOffers([{ product: "Jarlsberg", brand: "Jarlsberg",
+    priceText: "$6.99 lb", pricePerLb: 6.99, unit: "lb", description: "Sweet & Nutty" }])
+    .find(x => x.item === "Swiss");
+  assert.equal(r.price, 8.99);
+  assert.ok(r.fromDefault);
+});
+
 test("a standing default never gains PP", () => {
   // Defaults are the owner's standing buys, not this week's card deals.
   const r = matchDeliOffers(NO_DELI).find(x => x.item === "Bologna");
@@ -309,12 +336,13 @@ test("fillSheetXml escapes XML in brand names (Bowl & Basket)", () => {
 test("the overwrite guard counts circular matches only, not standing defaults", () => {
   // The guard exists to stop a degraded vision read replacing the user's approved
   // form. Defaults fill even when the read returned NOTHING, so counting them
-  // would defeat it: four free rows would be most of the way to the threshold.
+  // would defeat it: FIVE free rows would be most of the way to the threshold.
+  // (Swiss joined them 2026-09-05, which is why this number moved from four.)
   const nothingRead = matchDeliOffers([]);
   assert.equal(countMatched(nothingRead), 0);          // guard sees zero
-  assert.equal(countFilled(nothingRead), 4);           // but four cells are populated
+  assert.equal(countFilled(nothingRead), 5);           // but five cells are populated
   assert.deepEqual(nothingRead.filter(f => f.price != null).map(f => f.item).sort(),
-                   ["Bologna", "Cheddar", "Pepperoni", "Roast Beef"]);
+                   ["Bologna", "Cheddar", "Pepperoni", "Roast Beef", "Swiss"]);
 });
 
 test("a real match is not marked fromDefault", () => {
