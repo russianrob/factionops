@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.76
+// @version      0.9.77
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -2001,21 +2001,15 @@
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  // Read from the manager rather than hard-coded. This constant sat at 0.9.44
-  // while @version reached 0.9.73 -- 29 versions of drift, because nothing ever
-  // displayed it, so nothing could notice. Now it IS displayed, and it comes
-  // from the same place Tampermonkey reports, so it cannot disagree.
+  // A plain constant, checked at deploy time.
   //
-  // typeof-guarded: an unguarded GM_* reference aborts the whole script under
-  // Torn PDA before any UI renders.
-  var GC_VERSION = (function () {
-    try {
-      if (typeof GM_info !== "undefined" && GM_info && GM_info.script && GM_info.script.version) {
-        return String(GM_info.script.version);
-      }
-    } catch (_) { /* manager without GM_info */ }
-    return "0.9.74";   // fallback only — keep in step with @version
-  })();
+  // 0.9.74 read this from GM_info.script.version instead, to stop it drifting
+  // from @version the way it had (it sat at 0.9.44 for 29 versions). That was
+  // worse: under Torn PDA the GM_info shim reports the PDA APP's version, so
+  // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
+  // where this and @version disagree, which fixes the drift at the only moment
+  // that matters without trusting a shim to tell the truth.
+  var GC_VERSION = "0.9.77";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4453,8 +4447,15 @@
       if (r.k === "refill" || r.k === "mcs") return;
       var id = srcItemId(r.k);
       if (!id) return;
+      // How many more a day are actually available. Xanax caps at three; the
+      // Sources card has always disabled its + at that point, but this card
+      // went on pricing a fourth — a saving that cannot be collected. Anything
+      // already at its cap is dropped, and the step search below is bounded by
+      // what is left rather than reaching for ten a day of a three-a-day item.
+      var room = r.max != null ? r.max - srcCount(r.k) : Infinity;
+      if (!(room > 0)) return;
       out.push({ k: r.k, label: r.label, id: id, e: r.e || (state.energyMax || 150),
-                 grp: r.grp || "" });
+                 grp: r.grp || "", room: room });
     });
     return out;
   }
@@ -4490,7 +4491,10 @@
       // The added energy goes through the same usage factor the baseline did,
       // or the two ETAs are not measured the same way and the diff is fiction.
       var per = c.e * (cal && cal.ok ? cal.usage : 1);
-      var steps = base <= VALUE_STEP_MAX_DAYS ? VALUE_STEPS : [1];
+      var room = c.room != null ? c.room : Infinity;
+      var steps = (base <= VALUE_STEP_MAX_DAYS ? VALUE_STEPS : [1])
+        .filter(function (n) { return n <= room; });
+      if (!steps.length) return;
       var n = 0, days = base;
       for (var i = 0; i < steps.length; i++) {
         var d = scheduleDays(plan.totalTrains, (plan.energy || 0) + per * steps[i]);

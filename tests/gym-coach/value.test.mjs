@@ -89,6 +89,10 @@ const rank = (prices, opts = {}) => { const canRows = opts.rows || DEFAULT_SRC_R
       ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
     var state = { books: {}, goalOrder: [], goalStep: 0,
     hist: [], ledger: [], prices: ${JSON.stringify(prices)}, mcsCost: 0,
+    // How many of each source you already take a day. valueCandidates asks
+    // srcCount for the room left under each row's max, so this decides whether
+    // a row can offer "one more".
+    src: ${JSON.stringify(opts.src || {})},
     gymName: "T", happyMax: 5000, perks: {}, focus: "str", energyMax: 150,
     stats: { str: 1000000, def: 0, spe: 0, dex: 0 },
     goals: ${JSON.stringify(opts.goals || { str: 4000000 })}
@@ -100,7 +104,7 @@ const rank = (prices, opts = {}) => { const canRows = opts.rows || DEFAULT_SRC_R
   function srcRows(){ return ${JSON.stringify(canRows)}; }
   ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("calibration")}
   ${grab("canIdFor")} ${grab("srcItemId")} ${grab("priceOf")} ${grab("priceStale")}
-  ${grab("valueCandidates")} ${grab("valuePlan")}
+  ${grab("valueCandidates")} ${grab("valuePlan")} ${grab("srcCount")} ${grab("srcRow")}
   ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
     ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")} ${grab("hasGoals")}
   RESULT = { plan: valuePlan(), cands: valueCandidates() };` + "; return RESULT;")(); };
@@ -242,7 +246,7 @@ t("added energy is discounted the same way the baseline is", () => {
     function srcRows(){ return [{ k: "xan", label: "Xanax", e: 250 }]; }
     ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("calibration")}
     ${grab("canIdFor")} ${grab("srcItemId")} ${grab("priceOf")} ${grab("priceStale")}
-    ${grab("valueCandidates")} ${grab("valuePlan")}
+    ${grab("valueCandidates")} ${grab("valuePlan")} ${grab("srcCount")} ${grab("srcRow")}
     ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")}
     ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
     ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")} ${grab("shareCap")} ${grab("goalSegments")}
@@ -332,6 +336,50 @@ t("things that cost only money keep the money ranking, above the cans", () => {
     "fixture is wrong — the can should look cheaper: " + can.each + " vs " + xan.each);
   assert.strictEqual(r.plan.rows[0].k, "xan", "a xanax costs no booster slot");
   assert.strictEqual(r.plan.rows[r.plan.rows.length - 1].grp, "cans");
+});
+
+// --- the daily cap ----------------------------------------------------------
+// Reported from the panel: "Xanax +250e a day" was still being priced while
+// the Sources card had xanax at 3 of 3 and its + disabled. A fourth a day is
+// not a saving you can collect.
+//
+// The cap comes from the FIXTURE, not from a number written here — the fixture
+// and production have disagreed on xanax before (4 vs 3), and a test carrying
+// its own copy would pass while saying nothing.
+const XAN_MAX = DEFAULT_SRC_ROWS.find(r => r.k === "xan").max;
+
+t("a source already at its daily cap is not offered", () => {
+  const maxed = rank({ 206: 800000 }, { src: { xan: XAN_MAX } });
+  assert.ok(!maxed.cands.map(c => c.k).includes("xan"),
+    `xanax at ${XAN_MAX} of ${XAN_MAX} has no room for one more`);
+});
+
+t("the same source IS offered when there is room", () => {
+  const room = rank({ 206: 800000 }, { src: { xan: XAN_MAX - 2 } });
+  const c = room.cands.find(x => x.k === "xan");
+  assert.ok(c, "two under the cap must still be offered");
+  assert.strictEqual(c.room, 2);
+});
+
+t("with no count recorded the whole cap is available", () => {
+  const c = rank({ 206: 800000 }, {}).cands.find(x => x.k === "xan");
+  assert.strictEqual(c.room, XAN_MAX);
+});
+
+t("a row never quotes more a day than the cap allows", () => {
+  // Even against a plan long enough that the step search would reach for 10 or
+  // 24 a day, the quote must stay inside the room that is left.
+  const r = rank({ 206: 800000 }, { src: { xan: XAN_MAX - 2 }, goals: { str: 900000000 } });
+  const row = (r.plan && r.plan.rows || []).find(x => x.k === "xan");
+  if (row) assert.ok(row.n <= 2, "quoted " + row.n + " a day with room for 2");
+});
+
+t("production caps xanax at three a day", () => {
+  // The panel's own number, read from the script rather than restated: the
+  // report was that a FOURTH was being offered, so the cap itself is the fact
+  // under test.
+  const row = /\{\s*k:\s*"xan",[^}]*\}/.exec(src)[0];
+  assert.match(row, /max:\s*3\b/, "xanax should cap at 3: " + row);
 });
 
 console.log("\n" + pass + " passed, " + fail + " failed");
