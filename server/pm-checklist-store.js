@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { claudeExtractImage, extractJsonArray } from "./circular-pipeline.js";
-import {
+import { scheduleFor,
   closersForDay, assignAlternating, dayKeyForDate, fillChecklistXml, buildScheduleVisionPrompt,
   resolveTaskTexts, parseSharedStrings, excelSerial,
 } from "./pm-checklist.js";
@@ -18,13 +18,38 @@ const TEMPLATE = process.env.TASKS_TEMPLATE || "/opt/warboard/server/data/tasks-
 // can't create files in); GET /tasks reads and serves it from here.
 const OUT_LATEST = process.env.TASKS_LATEST || join(DATA_DIR, "tasks-latest.xlsx");
 const SCHED_JSON = join(DATA_DIR, "schedule.json");
+const SCHED_PREV_JSON = join(DATA_DIR, "schedule-prev.json");
 const XLSX_TOOL = "/opt/warboard/server/bin/xlsx-tool.py";
 const TASK_ROWS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];   // Appy sheet task rows (r16 = "Check out")
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function ensureDir() { mkdirSync(DATA_DIR, { recursive: true }); }
 export function readSchedule() { try { return JSON.parse(readFileSync(SCHED_JSON, "utf8")); } catch { return null; } }
-function writeSchedule(obj) { ensureDir(); writeFileSync(SCHED_JSON, JSON.stringify(obj, null, 1)); }
+
+/// The schedule that was current before the newest upload.
+///
+/// Next week's schedule normally arrives mid-week, and it used to REPLACE the
+/// running one — so from that moment until the new week began, every remaining
+/// day of the current week produced a blank checklist. The stale guard was
+/// right to refuse next week's crew; the mistake was throwing away the week
+/// people were still working.
+export function readPrevSchedule() {
+  try { return JSON.parse(readFileSync(SCHED_PREV_JSON, "utf8")); } catch { return null; }
+}
+
+function writeSchedule(obj) {
+  ensureDir();
+  // Demote the outgoing schedule instead of dropping it, but only when it is a
+  // DIFFERENT week -- re-uploading the same week must not push the real
+  // previous week out of reach.
+  try {
+    const cur = readSchedule();
+    if (cur && cur.weekStart && obj && obj.weekStart && cur.weekStart !== obj.weekStart) {
+      writeFileSync(SCHED_PREV_JSON, JSON.stringify(cur, null, 1));
+    }
+  } catch { /* first upload, or unreadable — nothing to keep */ }
+  writeFileSync(SCHED_JSON, JSON.stringify(obj, null, 1));
+}
 
 // "8/2" + a reference Date → ISO date, choosing the year that puts it nearest the
 // reference (handles a Dec/Jan schedule without a year printed).
@@ -82,15 +107,13 @@ export function generateTasks(date, opts = {}) {
   const dayKey = dayKeyForDate(date);
   const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
-  let closers = [], stale = false;
-  if (sched && sched.byDay) {
-    // Only use the schedule if `date` is within its week (else it's last week's).
-    const dayIso = sched.isoByDay ? sched.isoByDay[dayKey] : null;
-    stale = dayIso ? dayIso !== iso : false;
-    closers = stale ? [] : (sched.byDay[dayKey] || []);
-  } else {
-    stale = true;
-  }
+  // Whichever stored schedule covers THIS date — the current one, or the week
+  // it displaced. A schedule is only used when its own ISO date for this
+  // weekday equals today's, so next week's crew can never land on today.
+  const covering = opts.schedule !== undefined ? opts.schedule
+                 : scheduleFor(dayKey, iso, [sched, readPrevSchedule()]);
+  const stale = !covering;
+  const closers = covering ? (covering.byDay[dayKey] || []) : [];
 
   const sheet = execFileSync("python3", [XLSX_TOOL, "extract", template, "xl/worksheets/sheet1.xml"]).toString();
   const ss = execFileSync("python3", [XLSX_TOOL, "extract", template, "xl/sharedStrings.xml"]).toString();

@@ -157,3 +157,22 @@ Return ONLY a JSON object:
 
 Read every employee row. Align each shift to the CORRECT day column — the rows are tall and the cells can look offset, so check carefully. Keep the exact end time and AM/PM (the A/P after the time). Use "" for blank days and "Vacation" where written. weekDates are the M/D printed under each weekday header.`;
 }
+
+/// Pick whichever schedule actually covers `iso` on `dayKey`, from the ones
+/// given in order of preference (current first, then the week it displaced).
+///
+/// Next week's schedule normally arrives mid-week. It used to REPLACE the
+/// running one, so from that moment every remaining day of the current week
+/// produced a blank checklist: the stale guard was right to refuse next week's
+/// crew, but the week people were still working had been thrown away.
+///
+/// A schedule qualifies only when its OWN date for that weekday equals the
+/// date being filled, so next week's crew can never land on today. Returns
+/// null when none qualifies — which keeps the sheet blank rather than wrong.
+export function scheduleFor(dayKey, iso, schedules) {
+  for (const s of schedules || []) {
+    if (!s || !s.byDay || !s.isoByDay) continue;
+    if (s.isoByDay[dayKey] === iso) return s;
+  }
+  return null;
+}
