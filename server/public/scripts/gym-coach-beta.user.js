@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.73
+// @version      0.9.74
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -1995,12 +1995,27 @@
   // whose whole point is that the verdict is the first thing you see, that is
   // the most expensive space on the panel. The credit stays; the art goes.
   function ownerBannerHtml() {
-    return '<div class="gcb-own">' + OWNER_TAG + "</div>";
+    return '<div class="gcb-own">' + OWNER_TAG +
+      '<span class="gcb-ver">v' + esc(GC_VERSION) + "</span></div>";
   }
 
   var NS = "gcb_v1";
   var STABLE_NS = "gc_v1"; // read-only fallback so the beta inherits the saved key
-  var GC_VERSION = "0.9.44";
+  // Read from the manager rather than hard-coded. This constant sat at 0.9.44
+  // while @version reached 0.9.73 -- 29 versions of drift, because nothing ever
+  // displayed it, so nothing could notice. Now it IS displayed, and it comes
+  // from the same place Tampermonkey reports, so it cannot disagree.
+  //
+  // typeof-guarded: an unguarded GM_* reference aborts the whole script under
+  // Torn PDA before any UI renders.
+  var GC_VERSION = (function () {
+    try {
+      if (typeof GM_info !== "undefined" && GM_info && GM_info.script && GM_info.script.version) {
+        return String(GM_info.script.version);
+      }
+    } catch (_) { /* manager without GM_info */ }
+    return "0.9.74";   // fallback only — keep in step with @version
+  })();
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4866,16 +4881,19 @@
       (state.bookIdsDiag ? "<br>" + esc(state.bookIdsDiag) : "") +
       "</p>";
     var counted = HIST_KEYS.filter(function (k) { return pendingBookAward(k) > 0; });
+    // The explanatory paragraph is gone (0.9.74, owner's call). The mechanics
+    // are the same every week and the card is opened for THIS week's numbers --
+    // and the row above already says the useful half of it per stat ("your
+    // Speed is past 200,000,000, so this is the flat cap rather than 5%").
+    //
+    // What survives is the part that is STATE, not explanation: which stats
+    // currently have a book counted into the plan.
     return '<div class="gc-card"><h3>Stat books</h3>' + rows + diag +
-      '<p class="muted" style="margin:8px 0 0">Each awards +' + Math.round(BOOK_PCT * 100) +
-      "% of the stat, capped at " + fmt(BOOK_CAP) + ", after " + BOOK_DAYS +
-      " days \u2014 so the cap bites at <b>" + fmt(bookCapAt()) + "</b>, and above that " +
-      "every book is worth a flat " + fmt(BOOK_CAP) + " however big the stat gets. Tap when you start reading one and the plan below counts it \u2014 " +
-      "it is a known gain with a date, and the dates were being drawn as if it " +
-      "were not coming. It stops counting the moment it lands, because by then " +
-      "the stat itself carries it." +
-      (counted.length ? " Counting: " + counted.map(function (k) { return STAT_LABEL[k]; }).join(", ") + "." : "") +
-      "</p></div>";
+      (counted.length
+        ? '<p class="muted" style="margin:8px 0 0">Counting: ' +
+          counted.map(function (k) { return STAT_LABEL[k]; }).join(", ") + ".</p>"
+        : "") +
+      "</div>";
   }
 
   function sharesHtml() {
@@ -9906,7 +9924,10 @@
       "#" + PANEL_ID + " .gc-btn{background:#f2a03d;color:#12161b}" +
       "#" + PANEL_ID + " .gc-ranges button.on{background:#f2a03d;border-color:#f2a03d;color:#12161b}" +
       "#" + PANEL_ID + " .gcb-own{flex:0 0 auto;padding:6px 13px;background:#0e1116;border-bottom:1px solid #262e39;" +
-      "font:400 10px/1.4 ui-monospace,Menlo,monospace;color:#5f6a78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}"
+      "font:400 10px/1.4 ui-monospace,Menlo,monospace;color:#5f6a78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}" +
+      // Dimmer than the tag beside it: the version is for reporting a problem,
+      // not something to read every time the panel opens.
+      "#" + PANEL_ID + " .gcb-ver{margin-left:7px;opacity:.62;letter-spacing:.02em}"
     );
   }
 
@@ -10304,16 +10325,19 @@
     // half that matters. Goals, sources and playstyle are what you DECIDE and
     // they move every projection in the script; a key and a perk dump are what
     // you configure once. Only the second half stays behind an icon.
+    // Playstyle first: it is the switch that changes what every card below it
+    // means, so it reads badly buried under them. Stat books last: a book is a
+    // 31-day commitment you set once, not something to scroll past every visit.
     var planHtml =
-      booksHtml() +
-      sharesHtml() +
-      goalsHtml() +
-      steadfastHtml() +
-      srcHtml() +
       '<div class="gc-card"><h3>Playstyle</h3><div class="pick">' +
       pickBtn("mode", "xan", "Xan + gym", state.mode !== "jump") +
       pickBtn("mode", "jump", "Happy jump", state.mode === "jump") +
       '</div><p class="muted" style="margin:8px 0 0">Xan + gym is your default. Happy jump uses every Candy-type item in inventory — chocolates, lollipops, bags of sweets, cupcakes, eggs, and the rest — plus e-dvds on the :00/:15/:30/:45 tick, ecstasy last.</p></div>' +
+      sharesHtml() +
+      goalsHtml() +
+      steadfastHtml() +
+      srcHtml() +
+      booksHtml() +
       (hasGoals() ? "" : pickerCards()) +
       "";
 
