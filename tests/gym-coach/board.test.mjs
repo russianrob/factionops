@@ -30,7 +30,7 @@ function grab(n) {
 // production and lets every mutation of them survive.
 const CONST = [
   /var DAY_MS = [^;]+;/, /var WEEK_EPOCH_DAY = [^;]+;/,
-  /var BOARD_STATS = \[[^\]]*\];/, /var BOARD_WEEKS = [^;]+;/, /var BOARD_HOF_ROWS = [^;]+;/, /var BOARD_CARD_ROWS = [^;]+;/,
+  /var BOARD_STATS = \[[^\]]*\];/, /var BOARD_WEEKS = [^;]+;/, /var BOARD_HOF_ROWS = [^;]+;/, /var BOARD_ROW_FIELD = \{[^}]*\};/, /var BOARD_CARD_ROWS = [^;]+;/,
   /var ATTACK_ENERGY = [^;]+;/, /var BOARD_GAP_MS = [^;]+;/, /var BOARD_SKEW_MS = [^;]+;/, /var BOARD_SPLIT_STATS = \[[^\]]*\];/,
   /var BOARD_PARTIAL_MS = [^;]+;/,
   /var BOARD_LABEL = \{[\s\S]*?\n  \};/,
@@ -250,7 +250,11 @@ t("the threshold is wide enough for a normal round but not for a broken one", ()
 
 // ---- the week rolling over ------------------------------------------------
 
-const roll = (board, now) => call(["dayKey", "weekKey", "weekStartMs", "boardRoll"],
+// boardRoll now asks boardAnchorChoice which reading anchors the new week, and
+// that asks boardLastAbsolute to rebuild the pre-boundary values from
+// baseline + row deltas.
+const roll = (board, now) => call(["dayKey", "weekKey", "weekStartMs",
+                                   "boardLastAbsolute", "boardAnchorChoice", "boardRoll"],
   `boardRoll(${JSON.stringify(board)}, ${now})`);
 
 t("crossing Monday starts a fresh baseline", () => {
@@ -603,6 +607,81 @@ t("the card never runs away with a 100-member faction", () => {
     `boardCardText(${JSON.stringify(many)}, ${JSON.stringify({ faction: "F", week: SUN, fmt: "chat" })})`);
   assert.ok(s.split("\n").length <= 20, "a chat message cannot be 100 lines: " + s.split("\n").length);
   assert.ok(s.includes("m1"), "the top of the board must survive the trim");
+});
+
+// ---- which reading anchors the new week ------------------------------------
+//
+// Reported from the panel: the board said it was counting from "Sun 00:41 TCT"
+// because that is when the device first opened. Torn's contributors endpoint
+// has no history, so a week can only be measured from a reading this device
+// took -- but there is a choice of two, and the nearer one should win.
+
+const SUN2 = SUN + 7 * DAY;                 // the boundary being crossed
+const MIN = 60000;
+const withRead = (readAt, rows) => ({
+  week: 0, at: SUN, readAt: readAt,
+  stats: { gymenergy: { 1: 1000 }, gymstrength: { 1: 400 } },
+  rows: rows || [{ id: 1, name: "a", energy: 250, str: 100, def: 0, spe: 0, dex: 0 }],
+  hist: [],
+});
+
+t("a reading just before the boundary beats one 41 minutes after", () => {
+  const out = roll(withRead(SUN2 - 5 * MIN), SUN2 + 41 * MIN);
+  assert.strictEqual(out.base.at, SUN2 - 5 * MIN, "should anchor on the nearer read");
+  assert.ok(Object.keys(out.base.stats).length, "and carry a baseline, not start empty");
+});
+
+t("a reading hours before the boundary does NOT beat one 41 minutes after", () => {
+  // The panel was shut overnight. Carrying Saturday evening forward would book
+  // a whole evening of training into the new week -- worse than missing 41min.
+  const out = roll(withRead(SUN2 - 6 * 3600000), SUN2 + 41 * MIN);
+  assert.strictEqual(out.base.at, SUN2 + 41 * MIN);
+  assert.deepStrictEqual(out.base.stats, {}, "no carry: it re-anchors as before");
+});
+
+t("with no recorded read it behaves exactly as it used to", () => {
+  const out = roll({ week: 0, at: SUN, stats: { gymenergy: { 1: 1 } }, rows: [], hist: [] },
+                   SUN2 + 41 * MIN);
+  assert.strictEqual(out.base.at, SUN2 + 41 * MIN);
+  assert.deepStrictEqual(out.base.stats, {});
+});
+
+t("the carried baseline is where the counters actually stood", () => {
+  // baseline + delta. Member 1 started the week at 1000 gym energy and put 250
+  // in, so the new week starts from 1250 -- not from 1000, and not from zero.
+  const out = roll(withRead(SUN2 - 5 * MIN), SUN2 + 41 * MIN);
+  assert.strictEqual(out.base.stats.gymenergy["1"], 1250);
+  assert.strictEqual(out.base.stats.gymstrength["1"], 500);
+});
+
+t("attack counters are not carried, because a row cannot rebuild them", () => {
+  // The row keeps attacks as a SUM of won and lost, so neither can be
+  // reconstructed. They anchor on the first read of the new week as always.
+  const out = roll(withRead(SUN2 - 5 * MIN), SUN2 + 41 * MIN);
+  assert.ok(!("attackswon" in out.base.stats));
+  assert.ok(!("attackslost" in out.base.stats));
+});
+
+t("only the carried stats are dated to the earlier read", () => {
+  const out = roll(withRead(SUN2 - 5 * MIN), SUN2 + 41 * MIN);
+  assert.strictEqual(out.base.statsAt.gymenergy, SUN2 - 5 * MIN);
+  assert.ok(!("attackswon" in out.base.statsAt), "un-carried stats stay unanchored");
+});
+
+t("a read after the boundary is never treated as before it", () => {
+  // readAt from the new week already: nothing to carry, and no pretending.
+  const out = roll(withRead(SUN2 + 2 * MIN), SUN2 + 41 * MIN);
+  assert.strictEqual(out.base.at, SUN2 + 41 * MIN);
+  assert.deepStrictEqual(out.base.stats, {});
+});
+
+t("an anchor before the boundary is still reported as approximate", () => {
+  // Counting a little of last week into this one is no more exact than missing
+  // a little of this one, so both sides of the boundary read as partial.
+  const since = call(["weekStartMs", "boardSince"], `boardSince({ week: 1, at: ${SUN2 - 40 * MIN} })`);
+  assert.ok(since.partial, "40 minutes early must not read as exact");
+  const near = call(["weekStartMs", "boardSince"], `boardSince({ week: 1, at: ${SUN2 - 60000} })`);
+  assert.ok(!near.partial, "a minute either side is within the slack");
 });
 
 console.log("\n" + pass + " passed, " + fail + " failed");

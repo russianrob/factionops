@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.78
+// @version      0.9.79
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -2009,7 +2009,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.78";
+  var GC_VERSION = "0.9.79";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -8028,7 +8028,10 @@
     if (!board || board.week == null) return null;
     var start = weekStartMs(board.week);
     var at = Number(board.at) || start;
-    return { at: at, start: start, partial: at - start > BOARD_PARTIAL_MS };
+    // Distance either side. An anchor BEFORE the boundary counts a little of
+    // last week into this one, which is no more exact than missing a little of
+    // this one -- so both are stated.
+    return { at: at, start: start, partial: Math.abs(at - start) > BOARD_PARTIAL_MS };
   }
 
   // getUTC*, because the week boundary is TCT.
@@ -8127,6 +8130,57 @@
   // Roll the baseline when the week turns over, keeping the week that just
   // ended so there is something to look back at. Returns the board rather than
   // mutating it, so the caller decides when to persist.
+  // The per-stat delta each row carries, so an absolute reading can be rebuilt
+  // as baseline + delta. attackswon/attackslost are deliberately absent: the
+  // row keeps their SUM, not the two apart, so they cannot be reconstructed and
+  // re-anchor on the first read of the new week like they always did.
+  var BOARD_ROW_FIELD = { gymenergy: "energy", gymstrength: "str",
+                          gymdefense: "def", gymspeed: "spe", gymdexterity: "dex" };
+
+  // What the counters read at the LAST poll of the outgoing week.
+  //
+  // Nothing extra is stored for this: the baseline holds where each member
+  // started the week and the rows hold how far they got, so their sum is where
+  // they stood when the rows were computed.
+  function boardLastAbsolute(board) {
+    var byId = {};
+    (board.rows || []).forEach(function (r) { byId[String(r.id)] = r; });
+    var out = {};
+    for (var st in BOARD_ROW_FIELD) {
+      var base = (board.stats && board.stats[st]) || {};
+      var f = BOARD_ROW_FIELD[st], map = {}, any = false;
+      for (var id in base) {
+        var r = byId[id];
+        map[id] = (Number(base[id]) || 0) + (r ? (Number(r[f]) || 0) : 0);
+        any = true;
+      }
+      if (any) out[st] = map;
+    }
+    return out;
+  }
+
+  /// Which reading anchors the new week: the last one BEFORE the boundary, or
+  /// the first one after.
+  ///
+  /// Torn's contributors endpoint has no history, so a week can only be
+  /// measured from a reading this device actually took. Anchoring on the first
+  /// read after midnight loses everything trained before you opened the panel
+  /// -- the reported case was a board counting from Sun 00:41. Anchoring on the
+  /// last read before it has the opposite fault: with the panel shut overnight
+  /// that read might be Saturday evening, and hours of Saturday training would
+  /// land in the new week.
+  ///
+  /// So take whichever is NEARER the boundary. Neither is exact and the card
+  /// still says which moment it counted from.
+  function boardAnchorChoice(board, now, boundary) {
+    var prevAt = Number(board && (board.readAt || board.at)) || 0;
+    if (!(prevAt > 0) || prevAt >= boundary) return { at: now, carry: null };
+    if (boundary - prevAt >= now - boundary) return { at: now, carry: null };
+    var carry = boardLastAbsolute(board);
+    if (!Object.keys(carry).length) return { at: now, carry: null };
+    return { at: prevAt, carry: carry };
+  }
+
   function boardRoll(board, now) {
     var wk = weekKey(now);
     var hist = (board && board.hist) || [];
@@ -8151,7 +8205,18 @@
       // Bounded, or eight months of dead baselines end up in storage.
       if (hist.length > BOARD_WEEKS) hist = hist.slice(hist.length - BOARD_WEEKS);
     }
-    return { base: { week: wk, at: now, stats: {}, statsAt: {}, hist: hist }, hist: hist, rolled: true };
+    // Anchor on whichever reading sits nearer the week boundary.
+    var pick = boardAnchorChoice(board, now, weekStartMs(wk));
+    var statsAt = {};
+    if (pick.carry) {
+      // Only the carried stats are dated to the earlier read. The rest have no
+      // baseline yet and will anchor on the first read, which is exactly the
+      // skew statsAt exists to expose.
+      for (var st in pick.carry) statsAt[st] = pick.at;
+    }
+    return { base: { week: wk, at: pick.at, readAt: pick.at,
+                     stats: pick.carry || {}, statsAt: statsAt, hist: hist },
+             hist: hist, rolled: true };
   }
 
   // Energy that did not come out of a pill, a can or a refill.
@@ -8763,6 +8828,10 @@
     try {
       storeSet("board", { week: state.board.week, at: state.board.at, stats: state.board.stats,
                           statsAt: state.board.statsAt || {},
+                          // When the rows were last read. Without it a rollover
+                          // that happens after a restart cannot tell how close
+                          // the previous reading was to the boundary.
+                          readAt: state.boardAt || state.board.readAt || 0,
                           rows: state.board.rows || [], hist: state.board.hist || [] });
       // Pruned to the same window as the baselines, so a cache that is only
       // ever added to cannot outgrow storage.
@@ -11565,6 +11634,10 @@
         });
         state.board = { week: Number(bd.week), at: Number(bd.at) || 0, stats: clean,
                         statsAt: (bd.statsAt && typeof bd.statsAt === "object") ? bd.statsAt : {},
+                        // When the stored rows were read. Restored so a
+                        // rollover that fires after a restart can still tell
+                        // how close the last reading was to the boundary.
+                        readAt: Number(bd.readAt) || 0,
                         rows: Array.isArray(bd.rows) ? bd.rows : [],
                         hist: Array.isArray(bd.hist) ? bd.hist : [] };
       }
