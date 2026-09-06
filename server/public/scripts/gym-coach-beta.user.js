@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.77
+// @version      0.9.78
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -2009,7 +2009,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.77";
+  var GC_VERSION = "0.9.78";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -7759,6 +7759,7 @@
   // rather than on the poll tick.
   var BOARD_TTL = 300000;
   var BOARD_WEEKS = 8;         // past weeks kept, for the hall of fame
+  var BOARD_HOF_ROWS = 10;     // ranks archived per past week
   var BOARD_CARD_ROWS = 12;    // rows a pasted card carries
   // Energy each assist is worth, for the natural-regen column. The owner's own
   // row uses their real bar maximum and can strength; everyone else's is an
@@ -8131,14 +8132,22 @@
     var hist = (board && board.hist) || [];
     if (board && board.week === wk) return { base: board, hist: hist, rolled: false };
     if (board && board.stats && Object.keys(board.stats).length) {
-      // The podium, not the roster. "Past weeks" renders one name per week, and
-      // archiving every member's full row for a hundred-member faction is ~800
-      // stored objects to show eight -- into a localStorage that storeSet
-      // writes inside a swallowed try/catch, so hitting quota loses the save
-      // silently. This origin's quota is shared with Torn's own chat.
+      // A top TEN, but only the two fields the card renders.
+      //
+      // The roster is still not archived: a hundred full rows a week would be
+      // ~800 stored objects, into a localStorage that storeSet writes inside a
+      // swallowed try/catch -- so hitting quota loses the save in silence, and
+      // this origin's quota is shared with Torn's own chat.
+      //
+      // Ten SLIM rows is smaller than the three fat ones this replaces: a full
+      // row carries nine fields (per-stat splits, attacks, attack energy, id),
+      // and the hall of fame shows a name and an energy figure. 3x9 = 27 values
+      // a week becomes 10x2 = 20.
       hist = hist.concat([{ week: board.week, at: board.at || weekStartMs(board.week),
                             endAt: weekStartMs(board.week + 1),
-                            rows: (board.rows || []).slice(0, 3) }]);
+                            rows: (board.rows || []).slice(0, BOARD_HOF_ROWS).map(function (r) {
+                              return { name: r.name, energy: r.energy || 0 };
+                            }) }]);
       // Bounded, or eight months of dead baselines end up in storage.
       if (hist.length > BOARD_WEEKS) hist = hist.slice(hist.length - BOARD_WEEKS);
     }
@@ -8976,9 +8985,18 @@
     var hofCard = !hist.length ? "" :
       '<div class="gc-card"><h3>Past weeks</h3>' +
       hist.slice().reverse().map(function (h) {
-        var top = (h.rows || [])[0];
-        return '<div class="row"><span>week of ' + esc(boardWeekLabel(h.at)) + "</span><b>" +
-          (top ? esc(String(top.name)) + " · " + fmt(top.energy) + "e" : "—") + "</b></div>";
+        var rows = h.rows || [];
+        var top = rows[0];
+        // Weeks archived before 0.9.78 hold three rows, not ten. Rendering
+        // whatever is there beats pretending the older ones are short.
+        var list = rows.map(function (r, i) {
+          return '<div class="gcb-hofrow"><span>' + (i + 1) + ". " + esc(String(r.name)) +
+            "</span><b>" + fmt(r.energy || 0) + "e</b></div>";
+        }).join("");
+        return '<div class="gcb-hofwk"><div class="row"><span>week of ' +
+          esc(boardWeekLabel(h.at)) + "</span><b>" +
+          (top ? esc(String(top.name)) + " · " + fmt(top.energy) + "e" : "—") + "</b></div>" +
+          list + "</div>";
       }).join("") + "</div>";
 
     return head + xanHtml() + shareCard + hofCard;
@@ -9699,6 +9717,13 @@
       // shrink and the numbers cannot -- a long username must not push the
       // energy figure off a phone.
       "#" + PANEL_ID + " .gcb-brow{display:grid;grid-template-columns:20px minmax(0,1fr) auto 34px;grid-template-areas:'r n e p' '. g g g';gap:2px 8px;align-items:baseline;padding:7px 0;border-top:1px solid #2e333c;font-size:13px}" +
+      // The hall of fame: the week line keeps its weight, the ranks under it
+      // are quieter and indented so a week reads as one block rather than
+      // eleven equal lines.
+      "#" + PANEL_ID + " .gcb-hofwk{margin:0 0 10px}" +
+      "#" + PANEL_ID + " .gcb-hofwk:last-child{margin-bottom:0}" +
+      "#" + PANEL_ID + " .gcb-hofrow{display:flex;justify-content:space-between;gap:8px;padding:1px 0 1px 12px;font-size:11px;color:#8b96a5}" +
+      "#" + PANEL_ID + " .gcb-hofrow b{font-weight:600;color:#aab4c0;font-variant-numeric:tabular-nums}" +
       "#" + PANEL_ID + " .gcb-brow:first-of-type{border-top:0}" +
       "#" + PANEL_ID + " .gcb-brow.head{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#94a3b8;font-weight:700;border-top:0}" +
       "#" + PANEL_ID + " .gcb-brow.head .gcb-bgain{display:none}" +

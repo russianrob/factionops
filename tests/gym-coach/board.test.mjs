@@ -30,7 +30,7 @@ function grab(n) {
 // production and lets every mutation of them survive.
 const CONST = [
   /var DAY_MS = [^;]+;/, /var WEEK_EPOCH_DAY = [^;]+;/,
-  /var BOARD_STATS = \[[^\]]*\];/, /var BOARD_WEEKS = [^;]+;/, /var BOARD_CARD_ROWS = [^;]+;/,
+  /var BOARD_STATS = \[[^\]]*\];/, /var BOARD_WEEKS = [^;]+;/, /var BOARD_HOF_ROWS = [^;]+;/, /var BOARD_CARD_ROWS = [^;]+;/,
   /var ATTACK_ENERGY = [^;]+;/, /var BOARD_GAP_MS = [^;]+;/, /var BOARD_SKEW_MS = [^;]+;/, /var BOARD_SPLIT_STATS = \[[^\]]*\];/,
   /var BOARD_PARTIAL_MS = [^;]+;/,
   /var BOARD_LABEL = \{[\s\S]*?\n  \};/,
@@ -267,17 +267,22 @@ t("and the week just ended is kept, so there is a hall of fame", () => {
   assert.strictEqual(b.hist[0].week, 0);
 });
 
-t("an archived week keeps the podium, not the whole roster", () => {
-  // "Past weeks" renders ONE name per week. Archiving every member's full row
-  // for a hundred-member faction is ~800 stored objects to show eight names --
-  // into a localStorage that storeSet writes inside a swallowed try/catch, so
-  // hitting quota loses the save with no error. This origin shares its quota
-  // with Torn's own chat.
+t("an archived week keeps a top ten, not the whole roster", () => {
+  // The roster is still never archived: a hundred full rows a week is ~800
+  // stored objects, into a localStorage that storeSet writes inside a swallowed
+  // try/catch -- so hitting quota loses the save with no error, and this origin
+  // shares its quota with Torn's own chat.
+  const HOF = call([], "BOARD_HOF_ROWS");
   const many = [];
   for (let i = 1; i <= 60; i++) many.push({ rank: i, id: i, name: "m" + i, energy: 100 - i });
   const out = roll({ week: 0, at: SUN, stats: { gymenergy: { 1: 1 } }, rows: many, hist: [] },
                    SUN + 7 * DAY);
-  assert.ok(out.hist[0].rows.length <= 3, "archived " + out.hist[0].rows.length + " rows to render one name");
+  assert.strictEqual(out.hist[0].rows.length, HOF,
+    "archived " + out.hist[0].rows.length + " rows, expected " + HOF);
+  // Slimmed to what the card renders. A full row carries nine fields; keeping
+  // ten of those would cost more than the three fat rows this replaced.
+  assert.deepStrictEqual(Object.keys(out.hist[0].rows[0]).sort(), ["energy", "name"]);
+  assert.strictEqual(out.hist[0].rows[0].name, "m1", "still ranked, best first");
   assert.strictEqual(out.hist[0].rows[0].name, "m1", "and it has to be the TOP of the board");
 });
 
