@@ -8,6 +8,7 @@ function grabArr(decl){const i=src.indexOf(decl);const j=src.indexOf("\n  ];",i)
 const count = rows => new Function("var RESULT;" + `
   ${grabArr("var ITEM_MAP = [")}
   ${grabArr("var CAN_TYPES = [")}
+  ${/var ALCOHOL_NAME = [^;]+;/.exec(src)[0]}
   var state = { canMult: 1 , calEvents: [] };
   ${grab("eventActive")} ${grab("caffeineOn")} ${grab("canType")} ${grab("canEnergy")}
   var HAPPY_CANDY = /candy/i;
@@ -113,5 +114,42 @@ t("the perk scan does not fire on unrelated faction perks", () => {
   [ "+ 10% gym gains", "+ 5% strength gym gains", "Increases maximum life by 100" ]
     .forEach(line => assert.strictEqual(perkScan([line]).boosterPerk, false, "false positive: " + line));
 });
+
+// ---- alcohol is not an energy drink ---------------------------------------
+// Reported from the panel: "Bottle of Kandy Kane", "Bottle of Pumpkin Brew"
+// and "Bottle of Christmas Cocktail" were listed under Energy drinks. They are
+// alcohol and give NERVE. They had been added to the cans name-pattern by hand,
+// and showed with no energy figure because no CAN_TYPES entry exists for them.
+
+t("bottles of alcohol are not counted as energy drinks", () => {
+  const r = count([D("Bottle of Kandy Kane", 53, 1001),
+                   D("Bottle of Pumpkin Brew", 36, 1002),
+                   D("Bottle of Christmas Cocktail", 27, 1003)]);
+  assert.strictEqual(r.drinks.length, 0,
+    "listed " + r.drinks.map(d => d.name).join(", "));
+});
+
+t("the seasonal CANS are still counted, with their energy", () => {
+  // These share the holiday theme with the bottles above but are real cans and
+  // each has a CAN_TYPES entry, which is the difference.
+  const r = count([D("Can of Santa Shooters", 1, 553),
+                   D("Can of Rockstar Rudolph", 1, 554),
+                   D("Can of X-MASS", 1, 555)]);
+  assert.strictEqual(r.drinks.length, 3);
+  const by = Object.fromEntries(r.drinks.map(d => [d.name, d.e]));
+  assert.strictEqual(by["Can of Santa Shooters"], 20);
+  assert.strictEqual(by["Can of Rockstar Rudolph"], 25);
+  assert.strictEqual(by["Can of X-MASS"], 30);
+});
+
+t("every name the cans pattern admits has an energy value behind it", () => {
+  // The bottles got in because the pattern claimed them and nothing checked
+  // that an energy figure existed. A drink with no CAN_TYPES entry shows a
+  // blank where its energy should be, which is what made this visible.
+  const pat = /\{ key: "cans", test: (\/[^/]+\/i)/.exec(src);
+  assert.ok(pat, "cans pattern not found");
+  assert.ok(!/bottle of/i.test(pat[1]), "a bottle is back in the pattern: " + pat[1]);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.79
+// @version      0.9.80
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -2009,7 +2009,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.79";
+  var GC_VERSION = "0.9.80";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -2087,11 +2087,23 @@
     { key: "munster", test: /munster/i, cat: "Energy Drink" },
     { key: "redcow", test: /red cow/i, cat: "Energy Drink" },
     { key: "tourine", test: /tourine|taurine elite/i, cat: "Energy Drink" },
-    { key: "cans", test: /can of |bottle of pumpkin|bottle of kandy|bottle of christmas|santa shooters|rockstar rudolph|x-mass/i, cat: "Energy Drink" },
+    // "Bottle of ..." is ALCOHOL and gives NERVE. Three of them -- Pumpkin Brew,
+    // Kandy Kane, Christmas Cocktail -- were listed here and showed up under
+    // Energy drinks with no energy figure at all, because no CAN_TYPES entry
+    // exists for them. That absence was the tell: every real can has one.
+    //
+    // The bare names that remain are cans whose inventory label may omit the
+    // "Can of" prefix -- Santa Shooters (20e), Rockstar Rudolph (25e) and
+    // X-MASS (30e) each have a CAN_TYPES entry with an id and an energy value.
+    { key: "cans", test: /can of |santa shooters|rockstar rudolph|x-?mass/i, cat: "Energy Drink" },
     { key: "fhc", test: /feathery hotel/i },
     { key: "edvd", test: /erotic dvd/i },
     { key: "nandrolone", test: /nandrolone/i },
   ];
+
+  // Alcohol gives NERVE, not energy. Torn's energy drinks are all "Can of ..."
+  // -- every CAN_TYPES entry is one -- so a bottle is never one of them.
+  var ALCOHOL_NAME = /^\s*bottle of /i;
   var HAPPY_CANDY =
     /lollipop|bon\s?bon|chocolate|cupcake|pixie|jawbreaker|cotton candy|revels|mints|sweets|toffee|caramel|gingerbread|stollen|easter egg|chocolate egg|honeycomb|doughnut|donut|cookie|brownie|fudge|marshmallow|ice cream|candy apple|candy corn|truffle|praline|macaron|birthday cake|wedding cake|pumpkin pie|humbug|sherbet|tootsie|kisses|sweet hearts|reindeer dropping|bloody eyeball|gobstopper|nougat|liquorice|licorice|wine gum|cola bottle|bubblegum|popcorn|popsicle|sundae|muffin|waffle|pancake|parfait|cheesecake|candy cane|candy/i;
   // Lifted from the Drink Gains script (torn-can-energy 1.2.2), which already
@@ -3496,6 +3508,14 @@
       var drinkByName = nameKey === "munster" || nameKey === "redcow" ||
                         nameKey === "tourine" || nameKey === "cans";
       var notDrink = nameKey && !drinkByName;
+      // Alcohol gives NERVE. Torn's energy drinks are all "Can of ..." -- every
+      // entry in CAN_TYPES is -- so a bottle is not one, whatever the row's
+      // category says. Checked BEFORE the category branch on purpose: three
+      // bottles reached the Energy drinks card, and removing them from the name
+      // pattern alone did not stop it, because the category admitted them by
+      // itself. If Torn ever ships a bottled energy drink it needs an exception
+      // here, and it will have a CAN_TYPES entry to justify one.
+      if (ALCOHOL_NAME.test(name)) return;
       if (drinkByName || (rowCat === "Energy Drink" && !notDrink)) {
         drinks.push({ id: id, name: name, qty: qty, e: drinkEnergy(name, id) });
       }
@@ -10286,12 +10306,13 @@
           ? list.reduce(function (a, d) { return a + (d.qty || 0); }, 0)
           : cans;
         var head = '<div class="gc-card"><h3>Energy drinks \u00d7' + fmt(total) + "</h3>";
-        var foot = '<p class="muted" style="margin:8px 0 0">' +
-          (caffeineOn() ? "Caffeine Consumption is on \u2014 every can is doubled. " : "") +
-          (state.canMult > 1 ? "Values include your +" + Math.round((state.canMult - 1) * 100) + "% drink bonus. " : "") +
-          'Each adds 2h to the booster cooldown. Keep using while that bar is under ' +
-          (boosterCap() / 3600) + "h" + (state.boosterPerk ? " (faction perk)" : "") +
-          " \u2014 it is at " + fmtCd(state.boosterCd) + ".</p></div>";
+        // The explanation is gone (0.9.80, owner's call). What is left is the
+        // only part that changes between visits: where the booster cooldown
+        // stands against the cap you are allowed to fill it to.
+        var foot = '<p class="muted" style="margin:8px 0 0">Booster ' +
+          fmtCd(state.boosterCd) + " / " + (boosterCap() / 3600) + "h" +
+          (state.boosterPerk ? " (faction perk)" : "") +
+          (caffeineOn() ? " \u00b7 caffeine on" : "") + "</p></div>";
         if (!total) return head + '<p class="muted" style="margin:0">None in your inventory.</p></div>';
         if (!list.length) {
           return head + '<div class="row"><div><b>' + fmt(cans) + ' in stock</b><div class="muted">' +
