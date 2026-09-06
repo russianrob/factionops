@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.80
+// @version      0.9.81
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -2009,7 +2009,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.80";
+  var GC_VERSION = "0.9.81";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -10551,7 +10551,12 @@
         // it is not offered at all -- see boardAllowed().
         .filter(function (id) { return id !== "board" || boardTabOn(); })
         .map(function (id) {
-          var labels = { now: "Now", plan: "Plan", stock: "Stock", trend: "Trend", board: "Board" };
+          // "Inventory", because that is what the tab shows -- what you are
+          // holding. The KEY stays "stock": it is the persisted tab value and
+          // the data-tab the click router matches on, so renaming it would
+          // strand anyone whose last tab was this one. Unrelated to the STOCK
+          // MARKET perk source, which keeps its own "Stock" label elsewhere.
+          var labels = { now: "Now", plan: "Plan", stock: "Inventory", trend: "Trend", board: "Board" };
           return '<button data-tab="' + id + '" class="' + (tab === id ? "on" : "") + '">' + labels[id] + "</button>";
         })
         .join("") +
