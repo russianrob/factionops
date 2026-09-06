@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Chat - Hide User Messages
 // @namespace    RussianRob
-// @version      1.2.0
-// @description  Hide a person's group-chat messages. Long-press a name on mobile, right-click on desktop; tap a hidden message to reveal it. Torn PDA compatible. Based on Ben_Hagen [2966467]'s script (Greasy Fork 588787).
+// @version      1.3.0
+// @description  Hide a person's group-chat messages. Tap a name and use the Hide chat button on their mini profile, or long-press the name (right-click on desktop); tap a hidden message to reveal it. Torn PDA compatible. Based on Ben_Hagen [2966467]'s script (Greasy Fork 588787).
 // @author       RussianRob
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -464,10 +464,127 @@
         });
     }
 
+    // ---------- the mini profile ----------
+    //
+    // Tapping a name in chat opens Torn's own mini-profile card. That is the
+    // discoverable route: nobody guesses a long-press exists, and a button in
+    // the card is reached by an ordinary tap with no gesture to get wrong.
+    //
+    // Torn REBUILDS this card every time it opens, so the button is re-added on
+    // every pass rather than once -- the same reason the chat rows are re-synced
+    // instead of processed once.
+    const MINI_WRAP = '#profile-mini-root .mini-profile-wrapper';
+    const MINI_BTN = 'tch-mini-btn';
+
+    function miniXid(wrap) {
+        // The card's own profile link. Several shapes are tried because this is
+        // Torn's markup, not ours, and a wrong id would hide the wrong person --
+        // so when none matches, nothing is injected at all.
+        const sels = ['a[href*="profiles.php?XID="]', 'a[href*="XID="]', '[data-id]'];
+        for (const sel of sels) {
+            const el = wrap.querySelector(sel);
+            if (!el) continue;
+            const href = el.getAttribute('href') || '';
+            const m = href.match(/XID=(\d+)/);
+            if (m) return m[1];
+            const d = el.getAttribute('data-id');
+            if (d && /^\d+$/.test(d)) return d;
+        }
+        return null;
+    }
+
+    function miniName(wrap, xid) {
+        const el = wrap.querySelector('a[href*="XID=' + xid + '"]');
+        const t = el && el.textContent ? el.textContent.trim().replace(/:$/, '') : '';
+        // A name is only needed for the label and the stored record; the id is
+        // what actually does the hiding.
+        return t || hiddenUsers[xid] || ('#' + xid);
+    }
+
+    function syncMiniProfile() {
+        const wrap = document.querySelector(MINI_WRAP);
+        if (!wrap) return;
+        const list = wrap.querySelector('.buttons-list') || wrap.querySelector('[class*="buttons-list"]');
+        if (!list) return;
+        const xid = miniXid(wrap);
+        if (!xid) return;
+
+        let btn = list.querySelector('.' + MINI_BTN);
+        if (!btn) {
+            btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = MINI_BTN;
+            list.appendChild(btn);
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const id = btn.dataset.tchXid;
+                if (!id) return;
+                if (hiddenUsers[id]) delete hiddenUsers[id];
+                else hiddenUsers[id] = btn.dataset.tchName || ('#' + id);
+                saveHiddenUsers(hiddenUsers);
+                refreshAllRows();
+                paintMini(btn, id);
+            });
+        }
+        btn.dataset.tchXid = xid;
+        btn.dataset.tchName = miniName(wrap, xid);
+        paintMini(btn, xid);
+    }
+
+    function paintMini(btn, xid) {
+        const hidden = !!hiddenUsers[xid];
+        const label = hidden ? '\u2705 Unhide chat' : '\u{1F6AB} Hide chat';
+        if (btn.textContent !== label) btn.textContent = label;
+        btn.classList.toggle('tch-mini-on', hidden);
+    }
+
+    addStyle(`
+        .${MINI_BTN} {
+            display: block;
+            width: 100%;
+            margin: 4px 0 0;
+            padding: 7px 10px;
+            box-sizing: border-box;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #222;
+            color: #eee;
+            font: inherit;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .${MINI_BTN}.tch-mini-on { border-color: #4a7; color: #8d8; }
+        @media (pointer: coarse) { .${MINI_BTN} { padding: 11px 12px; font-size: 14px; } }
+    `);
+
+    // Watch the card's own root so the button lands as the card opens rather
+    // than up to a second later. #profile-mini-root is a stable container that
+    // Torn empties and refills, so this is scoped tightly -- no body-wide
+    // subtree observer. The poll below is still the net: on a page where the
+    // root does not exist yet, this never attaches.
+    let miniObs = null;
+    function ensureMiniObserver() {
+        const root = document.getElementById('profile-mini-root');
+        if (!root || miniObs) {
+            if (miniObs && !document.contains(miniObs.__root)) { miniObs.disconnect(); miniObs = null; }
+            return;
+        }
+        miniObs = new MutationObserver(() => {
+            try { syncMiniProfile(); } catch (e) { /* markup moved; the long-press still works */ }
+        });
+        miniObs.__root = root;
+        miniObs.observe(root, { childList: true, subtree: true });
+    }
+
     ensureContainers();
+    ensureMiniObserver();
     setInterval(() => {
         ensureContainers();
         containers.forEach((_obs, el) => scan(el));
+        ensureMiniObserver();
+        // Cheap: one querySelector when no card is open, which is most ticks.
+        try { syncMiniProfile(); } catch (e) { /* markup moved; the long-press still works */ }
     }, 1000);
 
 })();
