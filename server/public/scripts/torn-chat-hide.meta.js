@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Chat - Hide User Messages
 // @namespace    RussianRob
-// @version      1.5.0
-// @description  Hide a person's group-chat messages. Tap a name and use the Hide chat button on their mini profile, or long-press the name (right-click on desktop); muted messages disappear entirely, and their profile page carries the same button so you can unhide them without finding them in chat. Torn PDA compatible. Based on Ben_Hagen [2966467]'s script (Greasy Fork 588787).
+// @version      1.6.0
+// @description  Hide a person's group-chat messages. Long-press their name in chat (right-click on desktop) to hide them and their messages disappear entirely; their profile page carries a Hide chat / Unhide chat button, so you can unhide someone without having to find them in chat. Torn PDA compatible. Based on Ben_Hagen [2966467]'s script (Greasy Fork 588787).
 // @author       RussianRob
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
