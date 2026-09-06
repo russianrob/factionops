@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Chat - Hide User Messages
 // @namespace    RussianRob
-// @version      1.3.0
-// @description  Hide a person's group-chat messages. Tap a name and use the Hide chat button on their mini profile, or long-press the name (right-click on desktop); tap a hidden message to reveal it. Torn PDA compatible. Based on Ben_Hagen [2966467]'s script (Greasy Fork 588787).
+// @version      1.4.0
+// @description  Hide a person's group-chat messages. Tap a name and use the Hide chat button on their mini profile, or long-press the name (right-click on desktop); muted messages disappear entirely. Torn PDA compatible. Based on Ben_Hagen [2966467]'s script (Greasy Fork 588787).
 // @author       RussianRob
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -65,20 +65,12 @@
 
     // ---------- styles ----------
     addStyle(`
+        /* Gone, not collapsed. This used to leave a clickable "Hidden message
+           from X" placeholder -- which still took a line, still named them, and
+           came back on every reopen because the reveal was per-row and the rows
+           are recycled. Muted means muted. */
         .tch-hidden-row {
-            padding: 2px 6px !important;
-            font-style: italic;
-            color: #888 !important;
-            cursor: pointer;
-            font-size: 12px;
-            background: rgba(255,255,255,0.03);
-            border-radius: 3px;
-        }
-        .tch-hidden-row * {
             display: none !important;
-        }
-        .tch-hidden-row::after {
-            content: attr(data-tch-label);
         }
         .tch-menu {
             position: fixed;
@@ -188,7 +180,9 @@
     }
 
     function applyHiddenState(row, xid, name) {
-        if (row.dataset.tchRevealed === 'true') return; // user manually revealed this one
+        // The click-to-reveal opt-out went with the placeholder. It was also a
+        // bug waiting on this list: Torn RECYCLES these rows, so one revealed
+        // once stayed revealed after being reused for another message.
 
         // Final safety net: never collapse an element that contains more
         // than one message's sender link - that would mean we're about to
@@ -201,17 +195,9 @@
         if (hiddenUsers[xid]) {
             row.classList.add('tch-hidden-row');
             row.dataset.tchXid = xid;
-            row.setAttribute('data-tch-label', `Hidden message from ${name} — click to show`);
         } else {
             row.classList.remove('tch-hidden-row');
-            row.removeAttribute('data-tch-label');
         }
-    }
-
-    function revealRow(row) {
-        row.dataset.tchRevealed = 'true';
-        row.classList.remove('tch-hidden-row');
-        row.removeAttribute('data-tch-label');
     }
 
     // ---------- context menu ----------
@@ -293,29 +279,16 @@
         // If this row previously belonged to a different user (recycled node),
         // wipe its stale state before reapplying.
         if (row.dataset.tchXid && row.dataset.tchXid !== xid) {
-            delete row.dataset.tchRevealed;
             row.classList.remove('tch-hidden-row');
-            row.removeAttribute('data-tch-label');
         }
 
         row.dataset.tchXid = xid;
         row.dataset.tchName = name;
         applyHiddenState(row, xid, name);
 
-        // Attach listeners only once per physical element (they read live
-        // state off the row/dataset at click-time, so they stay correct
-        // even after the node gets recycled for a different message).
-        if (!listenersAttached.has(row)) {
-            listenersAttached.add(row);
-            row.addEventListener('click', (e) => {
-                if (row.classList.contains('tch-hidden-row')) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    revealRow(row);
-                }
-            });
-        }
-
+        // Attached once per physical element: the handlers read live state off
+        // the row/dataset when they fire, so they stay correct even after Torn
+        // recycles the node for a different message.
         if (!listenersAttached.has(link)) {
             listenersAttached.add(link);
 
