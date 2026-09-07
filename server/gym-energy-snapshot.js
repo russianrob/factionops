@@ -19,6 +19,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(__dirname, "data", "gym-energy");
 const RETAIN_DAYS = 400;
 const INTERVAL_MS = 24 * 60 * 60 * 1000;
+// A reading is worth taking once a day; anything closer is a reload, not a day.
+const MIN_GAP_MS = 20 * 60 * 60 * 1000;
 const FACTION = "42055";
 
 function fileFor(factionId) {
@@ -69,19 +71,32 @@ async function fetchContributors(factionId, apiKey) {
  * faction (so the report can show an average since joining before there is
  * enough history for a real window).
  */
-export async function snapshotOnce(factionId = FACTION) {
-  const apiKey = store.getPollingKey(factionId, "gym-energy");
-  if (!apiKey) return { ok: false, reason: "no-key" };
+export async function snapshotOnce(factionId = FACTION, { force = false } = {}) {
+  // start() fires one at boot, and the server is reloaded far more often than
+  // once a day — without this, a week of deploys would be a week of readings
+  // taken minutes apart and no real span between any of them.
+  const existing = readSnapshots(factionId);
+  const newest = existing.length ? Number(existing[existing.length - 1].at) : 0;
+  if (!force && Date.now() - newest < MIN_GAP_MS) {
+    return { ok: true, skipped: "recent", lastAt: newest };
+  }
+
+  // The owner's own faction key, deliberately NOT a rotated pool key. This
+  // report reads how hard every member has been training and how much Xanax
+  // they took; borrowing a member's key to gather it is the owner's call to
+  // make, and they made it — their key, not the pool's. It also keeps a
+  // 2-calls-a-day job off the pool that the war pollers share.
+  const apiKey = store.getFactionApiKey(factionId);
+  if (!apiKey) return { ok: false, reason: "no-faction-key" };
 
   let rows, basic;
   try {
     rows = await fetchContributors(factionId, apiKey);
     basic = await fetchFactionBasic(factionId, apiKey);
   } catch (err) {
-    // A key whose key/info advertises `contributors` can still refuse it in
-    // practice. Demoting it here is what stops the same key being picked
-    // tomorrow — the same self-healing path chain and xanax-tracker use.
-    if (err.code === 16) store.demotePoolKeySelection(apiKey, factionId, "contributors");
+    // No pool demotion to do here: there is one key and it is the owner's.
+    // A code 16 means that key lacks faction API access, which is a thing to
+    // fix on the key rather than route around.
     console.error(`[gym-energy] snapshot failed: ${err.message}`);
     return { ok: false, reason: err.message };
   }
@@ -97,7 +112,7 @@ export async function snapshotOnce(factionId = FACTION) {
     members[id] = { energy: Number(r.value) || 0, days: days[id] ?? 0 };
   }
 
-  const readings = readSnapshots(factionId);
+  const readings = existing;
   readings.push({ at: Date.now(), members });
   writeSnapshots(factionId, readings);
   return { ok: true, members: Object.keys(members).length };

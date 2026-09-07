@@ -97,6 +97,8 @@ import * as ocCheckpointHistory from "./oc-checkpoint-history.js";
 import * as warPayouts from "./war-payouts.js";
 import { turtleWatch } from "./turtle-watch.js";
 import * as warHistory from "./war-history.js";
+import * as slackers from "./slackers-model.js";
+import * as gymEnergy from "./gym-energy-snapshot.js";
 import * as xanaxModel from "./xanax-model.js";
 import * as attackLedger from "./attack-ledger.js";
 import * as webauthn from "./webauthn.js";
@@ -12001,6 +12003,80 @@ startOcReadyPoller({
     // the same cache so the notifier can do completion detection too.
     return { ...d, completedCrimes: getCachedCompletedCrimes(fid) || [] };
   },
+});
+
+// ── Slackers report ───────────────────────────────────────────────────
+// Who has been carrying the faction for the last 90 days and who has not:
+// war hits, chain hits (the payout section's non-war hits), Xanax and gym
+// energy, per member, rated per war they were actually present for.
+//
+// Admin-gated on the JSON rather than only on the page, because the page is
+// markup and THIS is the part that names people.
+const SLACKERS_FACTION = "42055";
+const SLACKERS_ROSTER_TTL_MS = 3600_000;
+let _slackersRoster = { at: 0, members: [] };
+
+router.get("/api/admin/slackers", async (req, res) => {
+  if (!_verifyAdminCookie(req)) return res.status(401).json({ error: "Admin login required" });
+
+  const factionId = SLACKERS_FACTION;
+  const minDays = Math.max(0, Number(req.query.minDays ?? 100) || 0);
+  const windowDays = Math.max(1, Number(req.query.windowDays ?? 90) || 90);
+
+  // Through war-history's own accessors, not the JSON file: the module holds a
+  // debounced in-memory cache, so the file on disk can lag what the server has.
+  let wars;
+  try {
+    wars = warHistory.listWars(factionId)
+      .map((w) => warHistory.getWar(factionId, w.warKey))
+      .filter(Boolean);
+  } catch (err) {
+    return res.status(500).json({ error: `war history unreadable: ${err.message}` });
+  }
+
+  // The roster moves slowly, so it is cached for an hour — and a failed refresh
+  // must not blank the report. A stale roster with a banner beats no page.
+  let rosterStale = false;
+  if (Date.now() - _slackersRoster.at > SLACKERS_ROSTER_TTL_MS) {
+    try {
+      // The owner's own key, not a pooled member key — same call the
+      // gym-energy snapshot makes, same reasoning.
+      const key = store.getFactionApiKey(factionId);
+      if (!key) throw new Error("no faction key stored");
+      const basic = await fetchFactionBasic(factionId, key);
+      _slackersRoster = {
+        at: Date.now(),
+        members: Object.entries(basic?.members || {}).map(([id, m]) => ({
+          playerId: String(id),
+          name: m.name,
+          level: m.level ?? null,
+          position: m.position ?? "",
+          daysInFaction: Number(m.days_in_faction) || 0,
+        })),
+      };
+    } catch (err) {
+      rosterStale = true;
+      if (!_slackersRoster.members.length) {
+        return res.status(502).json({ error: `roster unavailable: ${err.message}` });
+      }
+    }
+  }
+
+  const readings = gymEnergy.readSnapshots(factionId);
+  const report = slackers.buildReport({
+    wars,
+    roster: _slackersRoster.members,
+    readings,
+    nowMs: Date.now(),
+    windowDays,
+    minDays,
+  });
+
+  return res.json({
+    ...report,
+    roster: { stale: rosterStale, at: _slackersRoster.at },
+    energyReadings: readings.length,
+  });
 });
 
 export default router;
