@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>Slackers — faction 42055</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap">
+<style>
+/* Light is the base set; both dark paths redefine only the tokens, so no colour
+   is ever defined solely inside a media query. */
+:root{
+  --bg:#eef1f5; --panel:#ffffff; --sunk:#f6f8fa;
+  --ink:#151a21; --muted:#5d6875; --faint:#8a95a3;
+  --line:#e0e5ec; --line2:#eef1f5;
+  --cool:#2f5d8a;
+  --warn:#c8790a; --warn-ink:#7a4805; --warn-wash:rgba(200,121,10,.10); --warn-wash2:rgba(200,121,10,.20);
+  --good:#186a6a;
+  --rail:#c8790a;
+  --shadow:0 1px 2px rgba(20,30,45,.05),0 8px 24px rgba(20,30,45,.07);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#10141a; --panel:#171d25; --sunk:#131920;
+    --ink:#e6ebf2; --muted:#94a1b1; --faint:#6a7683;
+    --line:#242c36; --line2:#1c232c;
+    --cool:#6aa6dd;
+    --warn:#f0a93a; --warn-ink:#f7c983; --warn-wash:rgba(240,169,58,.11); --warn-wash2:rgba(240,169,58,.22);
+    --good:#4fb3a5;
+    --rail:#f0a93a;
+    --shadow:0 1px 2px rgba(0,0,0,.35),0 10px 30px rgba(0,0,0,.4);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10141a; --panel:#171d25; --sunk:#131920;
+  --ink:#e6ebf2; --muted:#94a1b1; --faint:#6a7683;
+  --line:#242c36; --line2:#1c232c;
+  --cool:#6aa6dd;
+  --warn:#f0a93a; --warn-ink:#f7c983; --warn-wash:rgba(240,169,58,.11); --warn-wash2:rgba(240,169,58,.22);
+  --good:#4fb3a5;
+  --rail:#f0a93a;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 10px 30px rgba(0,0,0,.4);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--ink); min-height:100vh;
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font-variant-numeric:tabular-nums; line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+  padding:clamp(16px,3.5vw,40px);
+}
+.inner{max-width:1120px;margin:0 auto}
+
+/* ── header ─────────────────────────────────────────────────────────── */
+.eyebrow{font-size:11.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+h1{
+  font-family:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  font-weight:800; font-size:clamp(30px,6vw,52px); line-height:1;
+  letter-spacing:-.03em; margin:0 0 10px;
+}
+.lede{color:var(--muted);font-size:15px;margin:0 0 20px;max-width:64ch}
+.lede b{color:var(--ink);font-weight:700}
+
+.banner{
+  display:none; align-items:flex-start; gap:10px; margin:0 0 18px; padding:11px 14px;
+  border:1px solid var(--warn); border-radius:10px; background:var(--warn-wash);
+  color:var(--warn-ink); font-size:13px;
+}
+.banner.on{display:flex}
+
+/* ── stat strip ─────────────────────────────────────────────────────── */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:0 0 20px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow)}
+.stat b{display:block;font-size:26px;font-weight:800;letter-spacing:-.02em;line-height:1.15}
+.stat span{display:block;font-size:11.5px;color:var(--muted);font-weight:600;margin-top:2px}
+.stat.flagcount b{color:var(--warn)}
+
+/* ── controls ───────────────────────────────────────────────────────── */
+.controls{
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;
+  box-shadow:var(--shadow);margin:0 0 22px;
+  display:flex;flex-wrap:wrap;gap:18px;align-items:center;
+}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl label{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.ctl .val{font-size:13px;font-weight:700;color:var(--ink)}
+input[type=range]{width:220px;max-width:52vw;accent-color:var(--cool)}
+select,button{
+  font:inherit;font-size:13px;background:var(--sunk);color:var(--ink);
+  border:1px solid var(--line);border-radius:8px;padding:7px 10px;cursor:pointer;
+}
+button.primary{background:var(--cool);border-color:var(--cool);color:#fff;font-weight:600}
+button:hover{border-color:var(--cool)}
+:focus-visible{outline:2px solid var(--cool);outline-offset:2px}
+
+/* ── conversation cards ─────────────────────────────────────────────── */
+h2{font-family:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+   font-weight:600;font-size:19px;letter-spacing:-.01em;margin:0 0 4px}
+.h2sub{color:var(--muted);font-size:13px;margin:0 0 14px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin:0 0 30px}
+.card{
+  background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--rail);
+  border-radius:10px;padding:13px 15px;box-shadow:var(--shadow);
+}
+.card .who{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:7px}
+.card .nm{font-weight:700;font-size:15.5px;letter-spacing:-.01em}
+.card .nm a{color:inherit;text-decoration:none;border-bottom:1px solid transparent}
+.card .nm a:hover{border-bottom-color:var(--cool);color:var(--cool)}
+.card .tenure{font-size:11.5px;color:var(--faint);font-weight:600;white-space:nowrap}
+.card .line{font-size:13.5px;color:var(--ink);margin-bottom:9px}
+.card .line .sep{color:var(--faint);padding:0 5px}
+.card .line .bad{color:var(--warn);font-weight:700}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{
+  font-size:10.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;
+  padding:3px 7px;border-radius:5px;background:var(--warn-wash);color:var(--warn-ink);
+  border:1px solid var(--warn-wash2);
+}
+.empty{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;color:var(--muted);text-align:center;margin-bottom:30px}
+
+/* ── table ──────────────────────────────────────────────────────────── */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
+.scroll{overflow-x:auto}
+table{border-collapse:separate;border-spacing:0;width:100%;min-width:760px;font-size:13.5px}
+thead th{
+  position:sticky;top:0;z-index:3;background:var(--panel);
+  border-bottom:2px solid var(--line);padding:11px 10px;
+  font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);
+  text-align:right;white-space:nowrap;cursor:pointer;user-select:none;
+}
+thead th:first-child{text-align:left;position:sticky;left:0;z-index:4}
+thead th .arrow{color:var(--cool);font-size:9px;margin-left:3px}
+thead th.sorted{color:var(--ink)}
+tbody td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--line2);white-space:nowrap}
+tbody td.nm{
+  text-align:left;position:sticky;left:0;background:var(--panel);z-index:2;
+  font-weight:600;max-width:210px;overflow:hidden;text-overflow:ellipsis;
+}
+tbody td.nm a{color:inherit;text-decoration:none}
+tbody td.nm a:hover{color:var(--cool)}
+tbody tr.flagged td.nm{box-shadow:inset 3px 0 0 var(--rail)}
+tbody tr.inelig{opacity:.42}
+tbody tr:hover td{background:var(--sunk)}
+tbody tr:hover td.nm{background:var(--sunk)}
+td .sub{color:var(--faint);font-size:11.5px;font-weight:600}
+td.below{background:var(--warn-wash)}
+td.below .n{color:var(--warn-ink);font-weight:700}
+td.deep{background:var(--warn-wash2)}
+.mode{display:block;font-size:10.5px;color:var(--faint);font-weight:600;letter-spacing:.01em}
+.foot{color:var(--muted);font-size:12.5px;margin:16px 2px 0;max-width:78ch}
+.foot code{background:var(--sunk);border:1px solid var(--line);border-radius:4px;padding:1px 4px;font-size:11.5px}
+.medrow td{background:var(--sunk);border-bottom:2px solid var(--line);font-size:11.5px;color:var(--muted);font-weight:700}
+.medrow td.nm{background:var(--sunk);text-transform:uppercase;letter-spacing:.06em;font-size:10.5px;color:var(--faint)}
+@media (prefers-reduced-motion:no-preference){
+  .card,.stat{transition:border-color .15s ease}
+}
+@media (max-width:560px){
+  tbody td.nm,thead th:first-child{max-width:130px}
+  .cards{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="inner">
+  <p class="eyebrow" id="eyebrow">Faction 42055 · Dead Fragment</p>
+  <h1>Slackers</h1>
+  <p class="lede" id="lede">Loading…</p>
+
+  <div class="banner" id="banner"></div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="cut">Minimum time in faction</label>
+      <input type="range" id="cut" min="0" max="400" step="5" value="100">
+      <span class="val" id="cutval">100+ days</span>
+    </div>
+    <div class="ctl">
+      <label for="win">Window</label>
+      <select id="win">
+        <option value="30">Last 30 days</option>
+        <option value="60">Last 60 days</option>
+        <option value="90" selected>Last 90 days</option>
+        <option value="180">Last 180 days</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="copy">Talking list</label>
+      <button id="copy" class="primary">Copy flagged</button>
+    </div>
+  </div>
+
+  <h2 id="talkh">Worth a conversation</h2>
+  <p class="h2sub" id="talksub"></p>
+  <div class="cards" id="cards"></div>
+
+  <div class="panel">
+    <div class="scroll">
+      <table id="tbl">
+        <thead><tr id="thead"></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <p class="foot" id="foot"></p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // Every number on this page comes from /api/admin/slackers, which is where
+  // the model lives. The only arithmetic repeated here is the median and the
+  // flag rule, because the tenure slider re-runs them without a round trip —
+  // the payload carries EVERY member, not just the eligible ones.
+  var METRICS = ["warHitsPerWar", "chainHitsPerWar", "xanaxPerWar", "energyPerDay"];
+  var FLAG_FRACTION = 0.5;
+  var FLAG_MIN_METRICS = 2;
+  var LABEL = {
+    warHitsPerWar: "war hits",
+    chainHitsPerWar: "chain hits",
+    xanaxPerWar: "xanax",
+    energyPerDay: "energy"
+  };
+
+  var COLS = [
+    { key: "name",           head: "Member",     align: "left" },
+    { key: "daysInFaction",  head: "Days" },
+    { key: "warsPresent",    head: "Wars" },
+    { key: "warHitsPerWar",  head: "War hits" },
+    { key: "chainHitsPerWar",head: "Chain hits" },
+    { key: "xanaxPerWar",    head: "Xanax" },
+    { key: "energyPerDay",   head: "Energy/day" }
+  ];
+
+  var state = { data: null, minDays: 100, windowDays: 90, sortKey: "warHitsPerWar", sortDir: 1 };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c];
+    });
+  }
+  function num(n) {
+    if (n == null || !isFinite(n)) return "—";
+    return Math.abs(n) >= 1000 ? Math.round(n).toLocaleString() : String(n);
+  }
+
+  function median(values) {
+    var v = values.filter(function (n) { return typeof n === "number" && isFinite(n); })
+                  .sort(function (a, b) { return a - b; });
+    if (!v.length) return 0;
+    var mid = Math.floor(v.length / 2);
+    return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+  }
+
+  // Same rule as the server's: below half the cohort median on two or more of
+  // the metrics that are actually alive. A metric whose median is zero is
+  // dropped — "below half of zero" is unreachable, and leaving it in would let
+  // a dead column silently absorb one of the two strikes a flag needs.
+  function recompute() {
+    var rows = state.data.rows.map(function (r) {
+      return Object.assign({}, r, { eligible: r.daysInFaction >= state.minDays, flagged: false, reasons: [] });
+    });
+    var cohort = rows.filter(function (r) { return r.eligible; });
+    var medians = {};
+    METRICS.forEach(function (k) { medians[k] = median(cohort.map(function (r) { return r[k]; })); });
+    var live = METRICS.filter(function (k) { return medians[k] > 0; });
+    var need = Math.min(FLAG_MIN_METRICS, live.length || 1);
+
+    cohort.forEach(function (r) {
+      if (r.warsPresent === 0) { r.flagged = true; r.reasons = ["no-wars"]; return; }
+      var below = live.filter(function (k) { return (r[k] || 0) < medians[k] * FLAG_FRACTION; });
+      r.reasons = below;
+      r.flagged = live.length > 0 && below.length >= need;
+    });
+
+    return { rows: rows, cohort: cohort, medians: medians, live: live };
+  }
+
+  function energyCell(r) {
+    var e = r.energy || {};
+    var mode = {
+      lifetime: "avg since joining",
+      partial: "last " + e.spanDays + "d",
+      full: "last " + state.windowDays + "d",
+      rejoined: "since rejoining, " + e.spanDays + "d",
+      unknown: "no reading"
+    }[e.mode || "unknown"];
+    return "<span class='n'>" + num(r.energyPerDay) + "</span><span class='mode'>" + esc(mode) + "</span>";
+  }
+
+  function summaryLine(r, view) {
+    var bad = function (k, text) {
+      return view.live.indexOf(k) !== -1 && (r[k] || 0) < view.medians[k] * FLAG_FRACTION
+        ? "<span class='bad'>" + text + "</span>" : text;
+    };
+    return [
+      r.warsPresent + " of " + state.data.warsCounted + " wars",
+      bad("warHitsPerWar", r.warHitsPerWar + " hits/war"),
+      bad("chainHitsPerWar", r.chainHits + " chain hits"),
+      bad("xanaxPerWar", r.xanax + " xanax"),
+      bad("energyPerDay", num(r.energyPerDay) + " e/day")
+    ].join("<span class='sep'>·</span>");
+  }
+
+  function plainLine(r) {
+    return r.name + " [" + r.playerId + "] — " + r.daysInFaction + "d in faction · " +
+      r.warsPresent + "/" + state.data.warsCounted + " wars · " +
+      r.warHitsPerWar + " hits/war · " + r.chainHits + " chain hits · " +
+      r.xanax + " xanax · " + (r.energyPerDay == null ? "no energy reading" : r.energyPerDay + " e/day");
+  }
+
+  function render() {
+    var view = recompute();
+    var d = state.data;
+    var flagged = view.cohort.filter(function (r) { return r.flagged; })
+      .sort(function (a, b) { return b.reasons.length - a.reasons.length || a.warHitsPerWar - b.warHitsPerWar; });
+
+    $("lede").innerHTML = "<b>" + d.warsCounted + " ranked wars</b> in the last " + state.windowDays +
+      " days, scored per war each member was actually present for. " +
+      "Everyone under " + state.minDays + " days in the faction is greyed out and left out of the medians" +
+      (d.formerMembers ? ", and " + d.formerMembers + " former member" + (d.formerMembers === 1 ? "" : "s") +
+       " who fought in these wars " + (d.formerMembers === 1 ? "is" : "are") + " not listed" : "") + ".";
+
+    var stale = [];
+    if (d.roster && d.roster.stale) stale.push("The roster could not be refreshed — showing the last one fetched.");
+    if (!d.energyReadings) stale.push("No gym-energy reading has been taken yet, so the energy column is empty.");
+    else if (view.medians.energyPerDay === 0) stale.push("Gym energy is not yet contributing to flags — no reading has a median above zero.");
+    $("banner").className = stale.length ? "banner on" : "banner";
+    $("banner").innerHTML = stale.map(esc).join(" ");
+
+    $("stats").innerHTML = [
+      ["Assessed", view.cohort.length],
+      ["Wars counted", d.warsCounted],
+      ["Flagged", flagged.length, "flagcount"],
+      ["Median hits/war", view.medians.warHitsPerWar],
+      ["Median xanax/war", view.medians.xanaxPerWar]
+    ].map(function (s) {
+      return "<div class='stat " + (s[2] || "") + "'><b>" + num(s[1]) + "</b><span>" + esc(s[0]) + "</span></div>";
+    }).join("");
+
+    $("talksub").textContent = flagged.length
+      ? "Below half the faction median on two or more of the four, or absent from every war."
+      : "Nobody in the current cohort is behind on more than one front.";
+    $("cards").innerHTML = flagged.length ? flagged.map(function (r) {
+      return "<div class='card'>" +
+        "<div class='who'><span class='nm'><a href='https://www.torn.com/profiles.php?XID=" +
+          encodeURIComponent(r.playerId) + "' target='_blank' rel='noopener'>" + esc(r.name) + "</a></span>" +
+        "<span class='tenure'>" + r.daysInFaction + "d · " + esc(r.position || "Member") + "</span></div>" +
+        "<div class='line'>" + summaryLine(r, view) + "</div>" +
+        "<div class='chips'>" + r.reasons.map(function (k) {
+          return "<span class='chip'>" + esc(k === "no-wars" ? "no wars at all" : "low " + LABEL[k]) + "</span>";
+        }).join("") + "</div></div>";
+    }).join("")
+      : "<div class='empty'>Nobody is behind on more than one front at this cutoff. " +
+        "Drag the slider down to include newer members.</div>";
+
+    $("thead").innerHTML = COLS.map(function (c) {
+      var on = state.sortKey === c.key;
+      return "<th data-key='" + c.key + "' class='" + (on ? "sorted" : "") + "'>" + esc(c.head) +
+        (on ? "<span class='arrow'>" + (state.sortDir > 0 ? "▲" : "▼") + "</span>" : "") + "</th>";
+    }).join("");
+
+    var sorted = view.rows.slice().sort(function (a, b) {
+      var x = a[state.sortKey], y = b[state.sortKey];
+      if (typeof x === "string" || typeof y === "string") {
+        return String(x).localeCompare(String(y)) * state.sortDir;
+      }
+      return ((x == null ? -1 : x) - (y == null ? -1 : y)) * state.sortDir;
+    });
+
+    var cells = function (r) {
+      var td = function (key, inner, extra) {
+        var below = view.live.indexOf(key) !== -1 && r.eligible && (r[key] || 0) < view.medians[key] * FLAG_FRACTION;
+        var deep = below && (r[key] || 0) < view.medians[key] * 0.25;
+        return "<td class='" + (below ? "below " : "") + (deep ? "deep " : "") + (extra || "") + "'>" + inner + "</td>";
+      };
+      return "<td class='nm'><a href='https://www.torn.com/profiles.php?XID=" + encodeURIComponent(r.playerId) +
+          "' target='_blank' rel='noopener'>" + esc(r.name) + "</a></td>" +
+        "<td>" + r.daysInFaction + "</td>" +
+        "<td>" + r.warsPresent + "<span class='sub'>/" + state.data.warsCounted + "</span></td>" +
+        td("warHitsPerWar", "<span class='n'>" + r.warHitsPerWar + "</span><span class='sub'> · " + num(r.warHits) + "</span>") +
+        td("chainHitsPerWar", "<span class='n'>" + r.chainHitsPerWar + "</span><span class='sub'> · " + num(r.chainHits) + "</span>") +
+        td("xanaxPerWar", "<span class='n'>" + r.xanaxPerWar + "</span><span class='sub'> · " + num(r.xanax) + "</span>") +
+        td("energyPerDay", energyCell(r));
+    };
+
+    var medRow = "<tr class='medrow'><td class='nm'>Cohort median</td><td></td><td></td>" +
+      "<td>" + view.medians.warHitsPerWar + "</td><td>" + view.medians.chainHitsPerWar + "</td>" +
+      "<td>" + view.medians.xanaxPerWar + "</td><td>" + num(view.medians.energyPerDay) + "</td></tr>";
+
+    $("tbody").innerHTML = medRow + sorted.map(function (r) {
+      return "<tr class='" + (r.flagged ? "flagged " : "") + (r.eligible ? "" : "inelig") + "'>" + cells(r) + "</tr>";
+    }).join("");
+
+    $("foot").innerHTML =
+      "<b>War hits</b> and <b>chain hits</b> both come from the war reports: chain hits are the " +
+      "non-war attacks made during a war, the same number the payout panel shows. Big number is per war present, " +
+      "small number is the total. <b>Xanax</b> is what was taken during those wars. " +
+      "<b>Energy</b> is gym energy per day — Torn only reports a lifetime total, so until daily readings build up " +
+      "it is an average since joining rather than a figure for this window. " +
+      "Generated " + new Date(d.generatedAt).toLocaleString() + ".";
+  }
+
+  function load() {
+    fetch("/api/admin/slackers?windowDays=" + state.windowDays + "&minDays=0", { credentials: "same-origin" })
+      .then(function (r) {
+        if (r.status === 401) throw new Error("401");
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        if (d.error) throw new Error(d.error);
+        state.data = d;
+        render();
+      })
+      .catch(function (err) {
+        if (String(err.message) === "401") {
+          document.querySelector(".inner").innerHTML =
+            "<h1>Slackers</h1><p class='lede'>This page is admin-only. " +
+            "<a href='/admin'>Sign in</a> and come back.</p>";
+          return;
+        }
+        $("lede").textContent = "Could not load the report: " + err.message;
+      });
+  }
+
+  $("cut").addEventListener("input", function (e) {
+    state.minDays = Number(e.target.value);
+    $("cutval").textContent = state.minDays + "+ days";
+    if (state.data) render();
+  });
+  $("win").addEventListener("change", function (e) {
+    state.windowDays = Number(e.target.value);
+    $("lede").textContent = "Loading…";
+    load();
+  });
+  $("copy").addEventListener("click", function () {
+    if (!state.data) return;
+    var view = recompute();
+    var flagged = view.cohort.filter(function (r) { return r.flagged; })
+      .sort(function (a, b) { return b.reasons.length - a.reasons.length || a.warHitsPerWar - b.warHitsPerWar; });
+    var text = "Last " + state.windowDays + " days · " + state.data.warsCounted + " wars · " +
+      state.minDays + "+ days in faction\n\n" + flagged.map(plainLine).join("\n");
+    navigator.clipboard.writeText(text).then(function () {
+      var b = $("copy"); var old = b.textContent;
+      b.textContent = "Copied " + flagged.length; setTimeout(function () { b.textContent = old; }, 1600);
+    });
+  });
+  document.getElementById("thead").addEventListener("click", function (e) {
+    var th = e.target.closest("th"); if (!th) return;
+    var key = th.getAttribute("data-key");
+    if (state.sortKey === key) state.sortDir *= -1;
+    else { state.sortKey = key; state.sortDir = key === "name" ? 1 : 1; }
+    render();
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

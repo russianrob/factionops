@@ -99,6 +99,7 @@ import { turtleWatch } from "./turtle-watch.js";
 import * as warHistory from "./war-history.js";
 import * as slackers from "./slackers-model.js";
 import * as gymEnergy from "./gym-energy-snapshot.js";
+import { renderSlackersPage } from "./slackers-page.js";
 import * as xanaxModel from "./xanax-model.js";
 import * as attackLedger from "./attack-ledger.js";
 import * as webauthn from "./webauthn.js";
@@ -12077,6 +12078,16 @@ router.get("/api/admin/slackers", async (req, res) => {
     roster: { stale: rosterStale, at: _slackersRoster.at },
     energyReadings: readings.length,
   });
+});
+
+// The page itself. It holds no member data — every number arrives from the
+// route above — but it is gated all the same, so there is one answer to
+// "who can see this" rather than two.
+router.get("/admin/slackers", (req, res) => {
+  if (!_verifyAdminCookie(req)) return res.redirect(302, "/admin");
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.set("Cache-Control", "no-store");
+  return res.send(renderSlackersPage());
 });
 
 export default router;
