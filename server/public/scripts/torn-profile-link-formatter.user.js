@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.53
+// @version      3.6.54
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -21,6 +21,10 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v3.6.54 - Mini-profile copy button sits INSIDE the card's top-right corner.
+//           It was anchored just outside the card's right edge and read as a
+//           loose icon floating beside it. Still a body-level overlay, so the
+//           React re-render problem that put it there in v3.6.50 stays solved.
 // v3.6.22 - Faction copy simplified: shows (Stats: N) instead of dual FFS+BSP
 //           labels. FFS used when available, falls back to BSP only if FFS has
 //           no data. W/L ratio removed from output. Cleaner one-liner for
@@ -372,11 +376,16 @@
         }
         const r = card.getBoundingClientRect();
         if (!r.width || !r.height) { _tplfMiniBtn.style.display = 'none'; return; }
-        let left = r.right + 4;
-        if (left + 28 > window.innerWidth) left = r.right - 30; // flip inside if off-screen
         _tplfMiniBtn.style.display = 'block';
-        _tplfMiniBtn.style.top = (r.top + 4) + 'px';
-        _tplfMiniBtn.style.left = left + 'px';
+        // v3.6.54: anchored INSIDE the card's top-right corner. It used to sit
+        // just outside it (r.right + 4), which read as an icon floating loose
+        // beside the card rather than part of it. Still a body-level overlay,
+        // so React re-rendering the card cannot touch it -- only where it is
+        // drawn has changed. Measured after display:block, since a hidden
+        // element has no width to measure.
+        const bw = _tplfMiniBtn.getBoundingClientRect().width || 28;
+        _tplfMiniBtn.style.top = (r.top + 6) + 'px';
+        _tplfMiniBtn.style.left = Math.max(4, r.right - bw - 6) + 'px';
     }
 
     function injectButtonsIntoList(listElement) {
