@@ -258,7 +258,9 @@ app.use(gateMiddleware);
 import("./battery-diag.js").then(m => m.registerRoutes(app, express));
 
 // ── Static files (landing page) ─────────────────────────────────────────
-app.use(express.static(join(__dirname, "public")));
+// /prewar (and any other page) resolves without the .html — the dossier is a
+// URL people type and share, not a filename.
+app.use(express.static(join(__dirname, "public"), { extensions: ["html"] }));
 
 // ── Userscript download route (legacy) ──────────────────────────────────
 const USERSCRIPT_PATH = join(__dirname, "..", "client", "factionops.user.js");
@@ -878,6 +880,14 @@ import('./status-la-poller.js').then(m => m.start()).catch(e => {
 // failures like the 2026-05-19 scout-report breakage.
 import('./faction-key-health.js').then(m => m.start()).catch(e => {
   console.error('[key-health] failed to start monitor:', e.message);
+});
+
+// Daily gym-energy reading for the slackers report. Torn's contributors
+// endpoint is cumulative with no history of its own, so the only way to answer
+// "how much did they train over the last 90 days" is to keep our own readings
+// and subtract two of them. Two API calls a day.
+import('./gym-energy-snapshot.js').then(m => m.start()).catch(e => {
+  console.error('[gym-energy] failed to start snapshot:', e.message);
 });
 
 // ── Graceful shutdown ───────────────────────────────────────────────────
