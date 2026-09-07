@@ -223,7 +223,7 @@ test("someone who fought but has left the faction is not a row", () => {
 });
 
 test("the four metrics are the ones the page renders", () => {
-  assert.deepEqual(METRICS, ["warHitsPerWar", "chainHitsPerWar", "xanaxPerWar", "energyPerDay"]);
+  assert.deepEqual(METRICS, ["warHitsPerWar", "chainHits", "xanaxPerWar", "energyPerDay"]);
 });
 
 test("a war hitter above the median is never flagged, whatever else is low", () => {
@@ -255,30 +255,32 @@ test("at or below the median the immunity does not apply", () => {
   assert.equal(four.flagged, true);
 });
 
+test("chain hits come from the chain reports, not from the war records", () => {
+  const members = [mkMember("1", 30, 99, 5), mkMember("2", 30, 99, 5)];
+  const r = buildReport({
+    wars: [mkWar(11, members)], roster: mkRoster(["1", "2"]), readings: [], nowMs: NOW,
+    chainHits: { 1: { hits: 412, chains: 31 } },
+  });
+  const one = r.rows.find((x) => x.playerId === "1");
+  const two = r.rows.find((x) => x.playerId === "2");
+  assert.equal(one.chainHits, 412);      // every hit in a chain, war ones included
+  assert.equal(one.chainsJoined, 31);
+  // The war record's non_war count is kept, but it is no longer the column.
+  assert.equal(one.nonWarHits, 99);
+  // A member in no chain report is 0, not undefined.
+  assert.equal(two.chainHits, 0);
+  assert.equal(two.chainsJoined, 0);
+});
+
 test("chain hits are shown but never flag anybody", () => {
-  var members = [
-    mkMember("1", 30, 20, 5), mkMember("2", 30, 20, 5), mkMember("3", 30, 20, 5),
-    mkMember("4", 30, 0, 5),   // zero chain hits, everything else at the median
-  ];
+  const members = [mkMember("1", 30, 0, 5), mkMember("2", 30, 0, 5), mkMember("3", 30, 0, 5), mkMember("4", 30, 0, 5)];
   const r = buildReport({
     wars: [mkWar(11, members)], roster: mkRoster(["1", "2", "3", "4"]), readings: [], nowMs: NOW,
+    chainHits: { 1: { hits: 400, chains: 30 }, 2: { hits: 400, chains: 30 }, 3: { hits: 400, chains: 30 }, 4: { hits: 0, chains: 0 } },
   });
   const four = r.rows.find((x) => x.playerId === "4");
   assert.equal(four.flagged, false);
-  assert.equal(four.reasons.includes("chainHitsPerWar"), false);
-  // Still carried and still shown: the column is context for the conversation.
-  assert.equal(four.chainHitsPerWar, 0);
-  assert.equal(r.medians.chainHitsPerWar, 20);
-  assert.equal(r.liveMetrics.includes("chainHitsPerWar"), false);
-});
-
-test("chain hits cannot be the second strike either", () => {
-  const members = [
-    mkMember("1", 30, 20, 5), mkMember("2", 30, 20, 5), mkMember("3", 30, 20, 5),
-    mkMember("4", 5, 0, 5),    // war hits low + chain hits zero: one strike, not two
-  ];
-  const r = buildReport({
-    wars: [mkWar(11, members)], roster: mkRoster(["1", "2", "3", "4"]), readings: [], nowMs: NOW,
-  });
-  assert.equal(r.rows.find((x) => x.playerId === "4").flagged, false);
+  assert.equal(four.reasons.includes("chainHits"), false);
+  assert.equal(r.medians.chainHits, 400);
+  assert.equal(r.liveMetrics.includes("chainHits"), false);
 });

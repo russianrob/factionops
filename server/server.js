@@ -890,6 +890,13 @@ import('./gym-energy-snapshot.js').then(m => m.start()).catch(e => {
   console.error('[gym-energy] failed to start snapshot:', e.message);
 });
 
+// Per-member chain hits for the slackers report. Every finished chain's report
+// is immutable, so this fetches each one once and then only picks up the new
+// ones — the 90-day backfill was 79 calls, a refresh is a handful.
+import('./chain-hits.js').then(m => m.start()).catch(e => {
+  console.error('[chain-hits] failed to start collector:', e.message);
+});
+
 // ── Graceful shutdown ───────────────────────────────────────────────────
 
 function shutdown(signal) {

@@ -143,20 +143,21 @@ export function energyForMember(readings, playerId, daysInFaction, nowMs, window
 // The four columns the page shows, in order. All are RATES, not totals: a total
 // rewards being in the faction longer, which is what the tenure cutoff already
 // accounts for.
-export const METRICS = ["warHitsPerWar", "chainHitsPerWar", "xanaxPerWar", "energyPerDay"];
+export const METRICS = ["warHitsPerWar", "chainHits", "xanaxPerWar", "energyPerDay"];
 
 // What a flag can be built from — chain hits deliberately excluded.
 //
-// They are the non-war attacks made during a war: keeping the chain alive by
-// hitting whoever is around. As a measure of effort they run BACKWARDS. In the
-// war of 2026-09-03 the four members at the top of that column had 0, 0, 0 and
-// 0 war hits between them — 49, 18, 15 and 9 non-war hits and nothing aimed at
-// the enemy — while the faction's best hitter sat at 0.4 a war. Flagging people
-// for being low on it punished exactly the people doing the job.
+// Chain hits are every attack a member landed inside a faction chain, war
+// targets and everyone else alike, read from the per-chain reports. That makes
+// them the wrong thing to flag on for a simple reason: they already CONTAIN the
+// war hits, so a member low on chain hits is nearly always a member already
+// flagged for war hits, and the two would count as separate strikes for what is
+// one failing.
 //
-// The column stays on the page, because "0 war hits and 49 non-war hits" is the
-// most useful thing a leader can put in front of somebody. It just cannot
-// decide anything. (Owner's call, 2026-09-07.)
+// The column stays because it answers a question war hits cannot — whether
+// somebody turns up for the chains between wars — and because the contrast
+// reads at a glance: heavy chain hits against thin war hits is a member who
+// chains randoms instead of fighting. (Owner's call, 2026-09-07.)
 export const FLAG_METRICS = ["warHitsPerWar", "xanaxPerWar", "energyPerDay"];
 export const FLAG_FRACTION = 0.5;   // "below half the median"
 export const FLAG_MIN_METRICS = 2;  // "on two or more of them"
@@ -180,7 +181,7 @@ export function median(values) {
  * has since left is counted (as `formerMembers`) but not listed, since there is
  * no conversation to have with them.
  */
-export function buildReport({ wars, roster, readings, nowMs, windowDays = 90, minDays = 100 }) {
+export function buildReport({ wars, roster, readings, chainHits, nowMs, windowDays = 90, minDays = 100 }) {
   const kept = warsInWindow(wars, nowMs, windowDays);
   const presence = presenceByPlayer(kept);
 
@@ -198,6 +199,7 @@ export function buildReport({ wars, roster, readings, nowMs, windowDays = 90, mi
     }
   }
 
+  const chain = chainHits || {};
   const rosterIds = new Set((roster || []).map((r) => String(r.playerId)));
   let formerMembers = 0;
   for (const id of totals.keys()) if (!rosterIds.has(id)) formerMembers++;
@@ -219,10 +221,18 @@ export function buildReport({ wars, roster, readings, nowMs, windowDays = 90, mi
       eligible: (Number(r.daysInFaction) || 0) >= minDays,
       warsPresent: present,
       warHits: t.warHits,
-      chainHits: t.chainHits,
+      // Every hit inside a chain, from the chain reports — nothing to do with
+      // the war window, which is why it is a total and not a per-war rate.
+      // Members under the tenure cutoff aside, everyone in the cohort was here
+      // for the whole window, so totals compare fairly.
+      chainHits: Number(chain[id]?.hits) || 0,
+      chainsJoined: Number(chain[id]?.chains) || 0,
+      // The war records' own non-war count. Not a column any more, but kept
+      // because it is the only figure that separates in-war chaining from the
+      // chains between wars.
+      nonWarHits: t.chainHits,
       xanax: t.xanax,
       warHitsPerWar: per(t.warHits),
-      chainHitsPerWar: per(t.chainHits),
       xanaxPerWar: per(t.xanax),
       energy,
       energyPerDay: energy.perDay,

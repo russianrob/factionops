@@ -99,6 +99,7 @@ import { turtleWatch } from "./turtle-watch.js";
 import * as warHistory from "./war-history.js";
 import * as slackers from "./slackers-model.js";
 import * as gymEnergy from "./gym-energy-snapshot.js";
+import * as chainHits from "./chain-hits.js";
 import { renderSlackersPage } from "./slackers-page.js";
 import * as xanaxModel from "./xanax-model.js";
 import * as attackLedger from "./attack-ledger.js";
@@ -12081,11 +12082,14 @@ router.get("/api/slackers", requireAuth, async (req, res) => {
   }
 
   const readings = gymEnergy.readSnapshots(factionId);
+  const now = Date.now();
+  const chains = chainHits.hitsInWindow(factionId, now, windowDays);
   const report = slackers.buildReport({
     wars,
     roster: _slackersRoster.members,
     readings,
-    nowMs: Date.now(),
+    chainHits: chains,
+    nowMs: now,
     windowDays,
     minDays,
   });
@@ -12094,6 +12098,8 @@ router.get("/api/slackers", requireAuth, async (req, res) => {
     ...report,
     roster: { stale: rosterStale, at: _slackersRoster.at },
     energyReadings: readings.length,
+    chainsCounted: chainHits.readChains(factionId)
+      .filter((c) => (Number(c.start) || 0) * 1000 >= now - windowDays * 86400000).length,
   });
 });
 

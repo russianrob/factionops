@@ -250,16 +250,16 @@ td.deep{background:var(--warn-wash2)}
   // the model lives. The only arithmetic repeated here is the median and the
   // flag rule, because the tenure slider re-runs them without a round trip —
   // the payload carries EVERY member, not just the eligible ones.
-  var METRICS = ["warHitsPerWar", "chainHitsPerWar", "xanaxPerWar", "energyPerDay"];
-  // Chain hits are shown but never flag: they are the non-war attacks made
-  // during a war, and the people highest on them are usually the ones who
-  // never touched the enemy. Mirrors FLAG_METRICS on the server.
+  var METRICS = ["warHitsPerWar", "chainHits", "xanaxPerWar", "energyPerDay"];
+  // Chain hits are shown but never flag: they already contain the war hits, so
+  // being low on them is nearly always the same failing as being low on war
+  // hits and would count twice. Mirrors FLAG_METRICS on the server.
   var FLAG_METRICS = ["warHitsPerWar", "xanaxPerWar", "energyPerDay"];
   var FLAG_FRACTION = 0.5;
   var FLAG_MIN_METRICS = 2;
   var LABEL = {
     warHitsPerWar: "war hits",
-    chainHitsPerWar: "chain hits",
+    chainHits: "chain hits",
     xanaxPerWar: "xanax",
     energyPerDay: "energy"
   };
@@ -269,7 +269,7 @@ td.deep{background:var(--warn-wash2)}
     { key: "daysInFaction",  head: "Days" },
     { key: "warsPresent",    head: "Wars" },
     { key: "warHitsPerWar",  head: "War hits" },
-    { key: "chainHitsPerWar",head: "Chain hits" },
+    { key: "chainHits",      head: "Chain hits" },
     { key: "xanaxPerWar",    head: "Xanax" },
     { key: "energyPerDay",   head: "Energy/day" }
   ];
@@ -343,7 +343,7 @@ td.deep{background:var(--warn-wash2)}
     return [
       r.warsPresent + " of " + state.data.warsCounted + " wars",
       bad("warHitsPerWar", r.warHitsPerWar + " hits/war"),
-      bad("chainHitsPerWar", r.chainHits + " chain hits"),
+      r.chainHits + " chain hits in " + r.chainsJoined + " chains",
       bad("xanaxPerWar", r.xanax + " xanax"),
       bad("energyPerDay", num(r.energyPerDay) + " e/day")
     ].join("<span class='sep'>·</span>");
@@ -352,7 +352,7 @@ td.deep{background:var(--warn-wash2)}
   function plainLine(r) {
     return r.name + " [" + r.playerId + "] — " + r.daysInFaction + "d in faction · " +
       r.warsPresent + "/" + state.data.warsCounted + " wars · " +
-      r.warHitsPerWar + " hits/war · " + r.chainHits + " chain hits · " +
+      r.warHitsPerWar + " hits/war · " + r.chainHits + " chain hits (" + r.chainsJoined + " chains) · " +
       r.xanax + " xanax · " + (r.energyPerDay == null ? "no energy reading" : r.energyPerDay + " e/day");
   }
 
@@ -364,6 +364,7 @@ td.deep{background:var(--warn-wash2)}
 
     $("lede").innerHTML = "<b>" + d.warsCounted + " ranked wars</b> in the last " + state.windowDays +
       " days, scored per war each member was actually present for. " +
+      "Chain hits span the same 90 days across " + (d.chainsCounted || 0) + " chains. " +
       "Everyone under " + state.minDays + " days in the faction is greyed out and left out of the medians" +
       (d.formerMembers ? ", and " + d.formerMembers + " former member" + (d.formerMembers === 1 ? "" : "s") +
        " who fought in these wars " + (d.formerMembers === 1 ? "is" : "are") + " not listed" : "") + ".";
@@ -427,13 +428,13 @@ td.deep{background:var(--warn-wash2)}
         "<td>" + r.daysInFaction + "</td>" +
         "<td>" + r.warsPresent + "<span class='sub'>/" + state.data.warsCounted + "</span></td>" +
         td("warHitsPerWar", "<span class='n'>" + r.warHitsPerWar + "</span><span class='sub'> · " + num(r.warHits) + "</span>") +
-        td("chainHitsPerWar", "<span class='n'>" + r.chainHitsPerWar + "</span><span class='sub'> · " + num(r.chainHits) + "</span>") +
+        td("chainHits", "<span class='n'>" + num(r.chainHits) + "</span><span class='sub'> · " + r.chainsJoined + " chains</span>") +
         td("xanaxPerWar", "<span class='n'>" + r.xanaxPerWar + "</span><span class='sub'> · " + num(r.xanax) + "</span>") +
         td("energyPerDay", energyCell(r));
     };
 
     var medRow = "<tr class='medrow'><td class='nm'>Cohort median</td><td></td><td></td>" +
-      "<td>" + view.medians.warHitsPerWar + "</td><td>" + view.medians.chainHitsPerWar + "</td>" +
+      "<td>" + view.medians.warHitsPerWar + "</td><td>" + num(view.medians.chainHits) + "</td>" +
       "<td>" + view.medians.xanaxPerWar + "</td><td>" + num(view.medians.energyPerDay) + "</td></tr>";
 
     $("tbody").innerHTML = medRow + sorted.map(function (r) {
@@ -441,11 +442,12 @@ td.deep{background:var(--warn-wash2)}
     }).join("");
 
     $("foot").innerHTML =
-      "<b>War hits</b> and <b>chain hits</b> both come from the war reports: chain hits are the " +
-      "non-war attacks made during a war, the same number the payout panel shows under Non-war hits. " +
-      "They are shown for context and never flag anyone — the members highest on them are usually the ones " +
-      "who never hit the enemy. Big number is per war present, small number is the total. " +
-      "<b>Xanax</b> is what was taken during those wars. " +
+      "<b>War hits</b> come from the war reports — big number is per war present, small number is the " +
+      "total — and <b>xanax</b> is what was taken during those wars. <b>Chain hits</b> are something else: " +
+      "every attack landed inside a faction chain, war targets and everyone else alike, read from Torn's " +
+      "own chain reports across " + (d.chainsCounted || 0) + " chains in this window. They never flag anyone, " +
+      "because they already contain the war hits. Heavy chain hits against thin war hits is somebody " +
+      "chaining randoms instead of fighting. " +
       "<b>Energy</b> is gym energy per day — Torn only reports a lifetime total, so until daily readings build up " +
       "it is an average since joining rather than a figure for this window. " +
       "Generated " + new Date(d.generatedAt).toLocaleString() + ".";

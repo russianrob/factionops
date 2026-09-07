@@ -30,10 +30,11 @@ which already stores a per-member row for every ranked war:
 ```
 
 - **War hits** — `warHits`.
-- **Chain hits** — `breakdown.non_war`: attacks made during the war period that
-  were not ranked-war hits, i.e. chain building. This is the same number the
-  factionops payout section shows, and it is what the owner means by "chain
-  hits". Classified in `war-payouts.js` at the `atk.ranked_war !== 1` branch.
+- **Non-war hits** — `breakdown.non_war`: attacks made during the war period
+  that were not ranked-war hits. Classified in `war-payouts.js` at the
+  `atk.ranked_war !== 1` branch. Kept on the row as `nonWarHits`; it was the
+  chain-hits column until 2026-09-07, when the owner defined chain hits as war
+  hits and outside hits combined — see the chain-reports section.
 - **Xanax** — `xanaxTaken`, war periods only, the same figure `/xanax` reports.
 
 No new API traffic is needed for any of them.
@@ -58,7 +59,7 @@ The kept entry's `members` array is the record for that war.
 | Column | Source | Call | Notes |
 |---|---|---|---|
 | War hits | `war-history` `listWars`/`getWar` | none | local, through the module's cache |
-| Chain hits | `war-history` `breakdown.non_war` | none | local |
+| Chain hits | `/v2/faction/{chainId}/chainreport` | 1 per new chain | every hit in a chain, war and non-war |
 | Xanax | `war-history` `xanaxTaken` | none | war periods only |
 | Gym energy | `/v2/faction/contributors?stat=gymenergy` | 1/day | cumulative; see below |
 | Days in faction | `faction/<id>?selections=basic` (`fetchFactionBasic`) | 1/day + 1/h on demand | `days_in_faction`; the route caches the roster an hour |
@@ -96,6 +97,33 @@ delta smaller than zero between two snapshots means a reset, so that member's
 window starts at the first snapshot after the reset and the label says
 "since rejoining".
 
+## Chain hits come from the chain reports
+
+A chain hit is **any attack landed inside a faction chain**, war targets and
+everyone else alike (owner's definition, 2026-09-07: "war hits + outside hits
+combined"). The war records cannot answer that — they only cover the war
+windows, so every chain the faction runs between wars is invisible in them.
+
+`/v2/faction/{id}/chains?from&to` lists the chains in a window (Torn records
+chains of 10+; the `next` link stops after one page, so the fetch pages by
+moving the `to` cursor below the oldest chain seen). Then
+`/v2/faction/{chainId}/chainreport` gives one row per attacker:
+
+```json
+{ "id": 2402229,
+  "attacks": { "total": 10, "war": 0, "assists": 0, "retaliations": 0, ... } }
+```
+
+`attacks.total` is the number kept. A finished chain never changes, so each
+report is fetched once and cached in `data/chain-hits/<factionId>.json`
+forever (400-day retention). The 90-day backfill was **79 chains, 22,298 hits,
+79 calls**; a refresh afterwards is only the chains since, so it costs a
+handful every six hours. Requests are spaced 350ms apart to stay clear of the
+100-a-minute ceiling the rest of the server shares.
+
+`sumHits(chains, fromMs, toMs)` is pure and separately tested; the totals are
+per window and not per war, because chains are not war-shaped.
+
 ## The 90-day window
 
 - Window = `now − 90 days` to `now`, wars selected on `warStart`.
@@ -116,22 +144,16 @@ date, whereas the median moves with the faction's own tempo.
 Compute the cohort median for each normalized metric. A member is **flagged**
 when they fall below half the median on **two or more** of them.
 
-**Chain hits are shown but never flag** (owner's call, 2026-09-07, after seeing
-the first real numbers). They are the non-war attacks made during a war —
-keeping the chain alive by hitting whoever is around — and as a measure of
-effort they run backwards. In the 2026-09-03 war the four members at the top of
-that column had **zero war hits between them** (49, 18, 15 and 9 non-war hits
-and nothing aimed at the enemy), while the faction's best hitter sat at 0.4 a
-war. Flagging people for being low on it punished the people doing the job. So
-the flag rests on `FLAG_METRICS` — war hits, Xanax, energy — while `METRICS`
-stays four wide for the columns and the median row. The column earns its place
-as context: "0 war hits and 49 non-war hits" is the most useful sentence a
-leader can put in front of somebody.
+**Chain hits are shown but never flag.** They already contain the war hits, so
+a member low on chain hits is nearly always a member already flagged for war
+hits, and the two would count as separate strikes for one failing. The flag
+rests on `FLAG_METRICS` — war hits, Xanax, energy — while `METRICS` stays four
+wide for the columns and the median row.
 
-Related: factionops' payout popover has both a "Chain hits" row (`chain_hit`)
-and a "Non-war hits" row (`non_war`). The first is **empty in every archived
-war** — Torn returns those attacks with `ranked_war ≠ 1`, so they all land in
-`non_war`. What this report calls chain hits is the popover's Non-war hits.
+The column earns its place by answering what war hits cannot: whether somebody
+turns up for the chains between wars. The contrast reads at a glance —
+NicoWhite, 651 chain hits against 244 war hits, is a member who chains randoms;
+N4dj1b, 795 against 847, is one who fights.
 
 **Carrying the war is immunity.** A member above the cohort median on war
 hits is never flagged, whatever the other three columns say. Run against the
