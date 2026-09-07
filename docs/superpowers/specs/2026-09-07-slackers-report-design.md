@@ -1,12 +1,12 @@
 # Slackers Report — Design
 
 **Date:** 2026-09-07
-**Status:** built and live at `/admin/slackers` (2026-09-07)
+**Status:** built and live at `/slackers` (2026-09-07)
 **Owner:** RussianRob [137558], faction 42055 (Dead Fragment)
 
 ## Goal
 
-An admin-only page that ranks every eligible faction member by their
+A leadership-only page that ranks every eligible faction member by their
 contribution over the last 90 days across four axes — war hits, chain hits,
 Xanax, gym energy — so leadership can open an expectations conversation with a
 member holding the actual numbers rather than an impression.
@@ -192,10 +192,20 @@ makes `writeFileSync` fail with EACCES and the failure is swallowed.
 
 ### Routes
 
-- `GET /admin/slackers` — the page. Checks `_verifyAdminCookie(req)`;
-  without it, redirects to `/admin` like the other admin pages.
-- `GET /api/admin/slackers?minDays=100&windowDays=90` — the JSON, same cookie
-  check. This is the gate that matters; a page shell is only markup.
+- `GET /slackers` — the page. Ungated, because it holds no member data: the
+  markup ships a sign-in and asks for the numbers separately.
+- `GET /api/slackers?minDays=100&windowDays=90` — the JSON, behind `requireAuth`
+  plus a role check. This is the gate that matters.
+
+**Sign-in is a Torn API key and nothing else** (owner's call, 2026-09-07 —
+the TOTP admin cookie was the first cut and was replaced). The page posts the
+key to the existing `POST /api/auth`, which verifies it with Torn and returns a
+JWT carrying `factionId` and `factionPosition`; the page keeps the token in
+`localStorage` and never the key. The route then admits the owner (137558) or
+anyone whose position is in `store.getAdminRoles("42055")` — currently leader,
+co-leader, admin leader, war leader, banker — so leadership reads it without
+borrowing the owner's login. A plain member's key returns 403, as does a
+leader of any other faction.
 
 Computed per request. Thirteen wars against roughly eighty members is
 microseconds, and it means the page is never stale after a war ends.
@@ -252,12 +262,11 @@ on `body`. Sorting and filtering in plain inline JS; no dependencies, no CDN.
 | Member in wars, not in roster | Excluded (they left); a line reports how many |
 | Member in roster, no wars in window | Row with `no-wars`, flagged |
 | war-history unreadable | 500 with the reason, not a blank page |
-| No admin cookie | `/admin/slackers` redirects; the API returns 401 |
+| No token | The page shows its sign-in; the API returns 401 |
+| Key outside leadership | The API returns 403 and the page says so |
 
 ## Out of scope
 
-- **Co-leader access.** The admin cookie is owner-only (`playerId === 137558`).
-  Extending the login to accept any faction-admin key is separate work.
 - **Total (non-war) Xanax.** Would need a per-member personalstats sweep and
   mostly measures stacking habits rather than war effort.
 - **True chain reports.** `/v2/faction/{id}/chains` plus per-chain reports could

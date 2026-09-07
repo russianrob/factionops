@@ -12017,10 +12017,20 @@ const SLACKERS_FACTION = "42055";
 const SLACKERS_ROSTER_TTL_MS = 3600_000;
 let _slackersRoster = { at: 0, members: [] };
 
-router.get("/api/admin/slackers", async (req, res) => {
-  if (!_verifyAdminCookie(req)) return res.status(401).json({ error: "Admin login required" });
-
+// Signed in with a Torn API key alone — no TOTP, no admin cookie — and gated
+// on the faction's own admin roles, so leadership sees it rather than only the
+// owner. requireAuth carries factionId and factionPosition out of the token
+// that POST /api/auth issued, so the check needs no second Torn call.
+router.get("/api/slackers", requireAuth, async (req, res) => {
   const factionId = SLACKERS_FACTION;
+  const pos = String(req.user?.factionPosition || "").toLowerCase();
+  const isOwner = String(req.user?.playerId) === "137558";
+  const isFactionAdmin = String(req.user?.factionId) === factionId
+    && store.getAdminRoles(factionId).map((r) => String(r).toLowerCase()).includes(pos);
+  if (!isOwner && !isFactionAdmin) {
+    return res.status(403).json({ error: "This report is for faction leadership." });
+  }
+
   const minDays = Math.max(0, Number(req.query.minDays ?? 100) || 0);
   const windowDays = Math.max(1, Number(req.query.windowDays ?? 90) || 90);
 
@@ -12080,11 +12090,10 @@ router.get("/api/admin/slackers", async (req, res) => {
   });
 });
 
-// The page itself. It holds no member data — every number arrives from the
-// route above — but it is gated all the same, so there is one answer to
-// "who can see this" rather than two.
-router.get("/admin/slackers", (req, res) => {
-  if (!_verifyAdminCookie(req)) return res.redirect(302, "/admin");
+// The page itself carries no member data — every number arrives from the route
+// above, which is where the gate is. So this serves the markup to anyone and
+// the markup asks for a key; without one it shows a sign-in and nothing else.
+router.get("/slackers", (_req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
   res.set("Cache-Control", "no-store");
   return res.send(renderSlackersPage());
