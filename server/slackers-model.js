@@ -139,3 +139,117 @@ export function energyForMember(readings, playerId, daysInFaction, nowMs, window
     spanDays,
   };
 }
+
+// The four columns a member is judged on, in the order the page shows them.
+// All four are RATES, not totals: a total rewards being in the faction longer,
+// which is the thing the tenure cutoff already accounts for.
+export const METRICS = ["warHitsPerWar", "chainHitsPerWar", "xanaxPerWar", "energyPerDay"];
+export const FLAG_FRACTION = 0.5;   // "below half the median"
+export const FLAG_MIN_METRICS = 2;  // "on two or more of them"
+
+export function median(values) {
+  const v = values.filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+  if (!v.length) return 0;
+  const mid = Math.floor(v.length / 2);
+  return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+}
+
+/**
+ * The whole report: one row per CURRENT member, medians over the eligible
+ * cohort, and a flag on anyone who is well behind on more than one front.
+ *
+ * Judged against the faction's own median rather than fixed numbers, because a
+ * quiet month drags every absolute threshold out of date — a slow war would
+ * flag the entire faction, and a heavy one would flag nobody.
+ *
+ * The roster is the source of truth for WHO gets a row: someone who fought and
+ * has since left is counted (as `formerMembers`) but not listed, since there is
+ * no conversation to have with them.
+ */
+export function buildReport({ wars, roster, readings, nowMs, windowDays = 90, minDays = 100 }) {
+  const kept = warsInWindow(wars, nowMs, windowDays);
+  const presence = presenceByPlayer(kept);
+
+  const totals = new Map();
+  for (const w of kept) {
+    for (const m of w.members || []) {
+      const id = String(m.playerId);
+      const t = totals.get(id) || { warHits: 0, chainHits: 0, xanax: 0 };
+      t.warHits += Number(m.warHits) || 0;
+      // breakdown.non_war — hits during the war that were not war hits, i.e.
+      // chain building. The number the factionops payout section shows.
+      t.chainHits += Number(m.breakdown?.non_war) || 0;
+      t.xanax += Number(m.xanaxTaken) || 0;
+      totals.set(id, t);
+    }
+  }
+
+  const rosterIds = new Set((roster || []).map((r) => String(r.playerId)));
+  let formerMembers = 0;
+  for (const id of totals.keys()) if (!rosterIds.has(id)) formerMembers++;
+
+  const rows = (roster || []).map((r) => {
+    const id = String(r.playerId);
+    const t = totals.get(id) || { warHits: 0, chainHits: 0, xanax: 0 };
+    const present = presence.get(id) || 0;
+    // Zero wars present is a real state, not an error — it is the loudest
+    // signal on the page — so it returns 0 rather than dividing by it.
+    const per = (n) => (present > 0 ? Math.round((n / present) * 10) / 10 : 0);
+    const energy = energyForMember(readings, id, r.daysInFaction, nowMs, windowDays);
+    return {
+      playerId: id,
+      name: r.name,
+      level: r.level ?? null,
+      position: r.position ?? "",
+      daysInFaction: Number(r.daysInFaction) || 0,
+      eligible: (Number(r.daysInFaction) || 0) >= minDays,
+      warsPresent: present,
+      warHits: t.warHits,
+      chainHits: t.chainHits,
+      xanax: t.xanax,
+      warHitsPerWar: per(t.warHits),
+      chainHitsPerWar: per(t.chainHits),
+      xanaxPerWar: per(t.xanax),
+      energy,
+      energyPerDay: energy.perDay,
+      flagged: false,
+      reasons: [],
+    };
+  });
+
+  const cohort = rows.filter((r) => r.eligible);
+  const medians = {};
+  for (const k of METRICS) medians[k] = median(cohort.map((r) => r[k]));
+
+  // A metric whose median is zero is dropped from the comparison. "Below half
+  // of zero" is unreachable, so leaving it in would let a dead metric silently
+  // absorb one of the two strikes a flag needs, and nobody would ever be
+  // flagged on the metrics that are alive.
+  const live = METRICS.filter((k) => medians[k] > 0);
+  const need = Math.min(FLAG_MIN_METRICS, live.length || 1);
+
+  for (const r of cohort) {
+    if (r.warsPresent === 0) { r.flagged = true; r.reasons = ["no-wars"]; continue; }
+    const below = live.filter((k) => Number(r[k] ?? 0) < medians[k] * FLAG_FRACTION);
+    r.reasons = below;
+    r.flagged = live.length > 0 && below.length >= need;
+  }
+
+  return {
+    rows,
+    medians,
+    liveMetrics: live,
+    warsCounted: kept.length,
+    cohortSize: cohort.length,
+    formerMembers,
+    windowDays,
+    minDays,
+    generatedAt: nowMs,
+    wars: kept.map((w) => ({
+      enemyFactionId: w.enemyFactionId,
+      enemyFactionName: w.enemyFactionName,
+      warStart: w.warStart,
+      warResult: w.warResult ?? null,
+    })),
+  };
+}

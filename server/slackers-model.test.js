@@ -123,3 +123,98 @@ test("a member missing from a reading does not read as a reset", () => {
   assert.equal(e.mode, "partial");
   assert.equal(e.energy, 30000);
 });
+
+// ── rows, medians, flags ─────────────────────────────────────────────────
+// The flag is what a leader acts on, so it has to be explainable and it has to
+// be hard to trip by accident. These pin both halves: what makes a flag fire,
+// and what must never make one fire.
+import { buildReport, METRICS } from "./slackers-model.js";
+
+const NOW = 1788800000000;
+const mkWar = (enemy, members) => ({
+  warKey: String(enemy), realWarId: enemy, enemyFactionId: enemy, enemyFactionName: "E" + enemy,
+  warStart: NOW - 10 * DAY, capturedAt: NOW - 9 * DAY, members,
+});
+const mkMember = (id, warHits, nonWar, xan) => ({
+  playerId: id, name: "P" + id, warHits, xanaxTaken: xan, breakdown: { non_war: nonWar },
+});
+const mkRoster = (ids, days = 400) => ids.map((id) => ({
+  playerId: id, name: "P" + id, level: 50, position: "Member", daysInFaction: days,
+}));
+
+test("totals are not doubled by a war stored twice", () => {
+  const w = mkWar(11, [mkMember("1", 10, 2, 1)]);
+  const dup = { ...w, warKey: "archived_42055_11_x", realWarId: null };
+  const r = buildReport({ wars: [w, dup], roster: mkRoster(["1"]), readings: [], nowMs: NOW });
+  assert.equal(r.warsCounted, 1);
+  assert.equal(r.rows[0].warHits, 10);
+});
+
+test("a member who missed wars is rated per war present, not per war fought", () => {
+  const wars = [
+    mkWar(11, [mkMember("1", 30, 0, 3), mkMember("2", 10, 0, 1)]),
+    mkWar(12, [mkMember("1", 30, 0, 3)]),
+  ];
+  const r = buildReport({ wars, roster: mkRoster(["1", "2"]), readings: [], nowMs: NOW });
+  const two = r.rows.find((x) => x.playerId === "2");
+  assert.equal(two.warsPresent, 1);
+  assert.equal(two.warHits, 10);
+  assert.equal(two.warHitsPerWar, 10);
+});
+
+test("someone below half the median on two metrics is flagged, on one is not", () => {
+  const members = [
+    mkMember("1", 100, 20, 10), mkMember("2", 100, 20, 10), mkMember("3", 100, 20, 10),
+    mkMember("4", 10, 1, 10),   // war hits AND chain hits far below
+    mkMember("5", 10, 20, 10),  // war hits only
+  ];
+  const r = buildReport({
+    wars: [mkWar(11, members)], roster: mkRoster(["1", "2", "3", "4", "5"]), readings: [], nowMs: NOW,
+  });
+  assert.equal(r.rows.find((x) => x.playerId === "4").flagged, true);
+  assert.equal(r.rows.find((x) => x.playerId === "5").flagged, false);
+});
+
+test("a metric whose median is zero cannot flag anyone", () => {
+  const members = [mkMember("1", 100, 0, 10), mkMember("2", 100, 0, 10), mkMember("3", 4, 0, 10)];
+  const r = buildReport({
+    wars: [mkWar(11, members)], roster: mkRoster(["1", "2", "3"]), readings: [], nowMs: NOW,
+  });
+  const three = r.rows.find((x) => x.playerId === "3");
+  assert.equal(three.reasons.includes("chainHitsPerWar"), false);
+});
+
+test("a member in no wars is flagged and never divides by zero", () => {
+  const r = buildReport({
+    wars: [mkWar(11, [mkMember("1", 50, 5, 5)])], roster: mkRoster(["1", "9"]), readings: [], nowMs: NOW,
+  });
+  const nine = r.rows.find((x) => x.playerId === "9");
+  assert.equal(nine.warsPresent, 0);
+  assert.equal(nine.warHitsPerWar, 0);
+  assert.equal(nine.flagged, true);
+  assert.ok(nine.reasons.includes("no-wars"));
+});
+
+test("under the cutoff is carried but not eligible, and not in the medians", () => {
+  const members = [mkMember("1", 100, 10, 10), mkMember("2", 100, 10, 10), mkMember("3", 2, 0, 0)];
+  const roster = [...mkRoster(["1", "2"]), ...mkRoster(["3"], 30)];
+  const r = buildReport({ wars: [mkWar(11, members)], roster, readings: [], nowMs: NOW });
+  const three = r.rows.find((x) => x.playerId === "3");
+  assert.equal(three.eligible, false);
+  assert.equal(three.flagged, false);
+  assert.equal(r.cohortSize, 2);
+  assert.equal(r.medians.warHitsPerWar, 100);
+});
+
+test("someone who fought but has left the faction is not a row", () => {
+  const r = buildReport({
+    wars: [mkWar(11, [mkMember("1", 50, 5, 5), mkMember("gone", 1, 0, 0)])],
+    roster: mkRoster(["1"]), readings: [], nowMs: NOW,
+  });
+  assert.equal(r.rows.length, 1);
+  assert.equal(r.formerMembers, 1);
+});
+
+test("the four metrics are the ones the page renders", () => {
+  assert.deepEqual(METRICS, ["warHitsPerWar", "chainHitsPerWar", "xanaxPerWar", "energyPerDay"]);
+});
