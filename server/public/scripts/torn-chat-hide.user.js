@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat - Hide User Messages
 // @namespace    RussianRob
-// @version      1.7.0
+// @version      1.7.1
 // @description  Hide a person's group-chat messages. Tap their name in chat and use the Hide chat button on the mini profile that opens; muted messages disappear entirely. Their full profile page carries the same button, so you can unhide someone without having to find them in chat. Torn PDA compatible. Based on Ben_Hagen [2966467]'s script (Greasy Fork 588787).
 // @author       RussianRob
 // @match        https://www.torn.com/*
@@ -71,6 +71,20 @@
            are recycled. Muted means muted. */
         .tch-hidden-row {
             display: none !important;
+        }
+        /* Opening a mini profile is a press on a name, and on a touch screen a
+           press that lingers on text starts the platform's own selection --
+           which anchors in a parent and tints the whole page blue behind the
+           card. This rule used to sit with the long-press menu's styles and
+           went out with them in 1.7.0; it was never the menu's, it belongs to
+           the name itself. Kept to coarse pointers so a desktop drag can still
+           select a name to copy it. */
+        @media (pointer: coarse) {
+            [data-tch-xid] a[href*="XID="] {
+                -webkit-touch-callout: none;
+                -webkit-user-select: none;
+                user-select: none;
+            }
         }
     `);
 
