@@ -12015,6 +12015,7 @@ startOcReadyPoller({
 // markup and THIS is the part that names people.
 const SLACKERS_FACTION = "42055";
 const SLACKERS_ROSTER_TTL_MS = 3600_000;
+const SLACKERS_ROLE_EXCLUDE = new Set(["banker"]);
 let _slackersRoster = { at: 0, members: [] };
 
 // Signed in with a Torn API key alone — no TOTP, no admin cookie — and gated
@@ -12025,8 +12026,14 @@ router.get("/api/slackers", requireAuth, async (req, res) => {
   const factionId = SLACKERS_FACTION;
   const pos = String(req.user?.factionPosition || "").toLowerCase();
   const isOwner = String(req.user?.playerId) === "137558";
-  const isFactionAdmin = String(req.user?.factionId) === factionId
-    && store.getAdminRoles(factionId).map((r) => String(r).toLowerCase()).includes(pos);
+  // The faction's admin roles minus banker: the money job is admin for vault
+  // and payout purposes, which is not the same as reading who is slacking in
+  // wars. Excluded here rather than in faction-settings, because that list is
+  // shared with broadcasts and the other admin gates.
+  const allowedRoles = store.getAdminRoles(factionId)
+    .map((r) => String(r).toLowerCase())
+    .filter((r) => !SLACKERS_ROLE_EXCLUDE.has(r));
+  const isFactionAdmin = String(req.user?.factionId) === factionId && allowedRoles.includes(pos);
   if (!isOwner && !isFactionAdmin) {
     return res.status(403).json({ error: "This report is for faction leadership." });
   }
