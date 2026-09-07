@@ -141,6 +141,13 @@ const mkMember = (id, warHits, nonWar, xan) => ({
 const mkRoster = (ids, days = 400) => ids.map((id) => ({
   playerId: id, name: "P" + id, level: 50, position: "Member", daysInFaction: days,
 }));
+// Two readings 30 days apart, so each id's energyPerDay is exactly what is asked
+// for here. Energy has to be a live metric in these fixtures: with chain hits
+// out of the flag rule there are only three left, and a flag needs two.
+const mkReadings = (perDay) => [
+  { at: NOW - 30 * DAY, members: Object.fromEntries(Object.keys(perDay).map((id) => [id, { energy: 0, days: 400 }])) },
+  { at: NOW, members: Object.fromEntries(Object.entries(perDay).map(([id, e]) => [id, { energy: e * 30, days: 400 }])) },
+];
 
 test("totals are not doubled by a war stored twice", () => {
   const w = mkWar(11, [mkMember("1", 10, 2, 1)]);
@@ -165,7 +172,7 @@ test("a member who missed wars is rated per war present, not per war fought", ()
 test("someone below half the median on two metrics is flagged, on one is not", () => {
   const members = [
     mkMember("1", 100, 20, 10), mkMember("2", 100, 20, 10), mkMember("3", 100, 20, 10),
-    mkMember("4", 10, 1, 10),   // war hits AND chain hits far below
+    mkMember("4", 10, 20, 1),   // war hits AND xanax far below
     mkMember("5", 10, 20, 10),  // war hits only
   ];
   const r = buildReport({
@@ -222,25 +229,56 @@ test("the four metrics are the ones the page renders", () => {
 test("a war hitter above the median is never flagged, whatever else is low", () => {
   const members = [
     mkMember("1", 20, 10, 5), mkMember("2", 20, 10, 5), mkMember("3", 20, 10, 5),
-    mkMember("4", 60, 0, 0),   // 3x the median on war hits, nothing else
+    mkMember("4", 60, 10, 0),   // 3x the median on war hits, no xanax, low energy
   ];
   const r = buildReport({
-    wars: [mkWar(11, members)], roster: mkRoster(["1", "2", "3", "4"]), readings: [], nowMs: NOW,
+    wars: [mkWar(11, members)], roster: mkRoster(["1", "2", "3", "4"]), readings: mkReadings({ 1: 1000, 2: 1000, 3: 1000, 4: 100 }), nowMs: NOW,
   });
   const four = r.rows.find((x) => x.playerId === "4");
   assert.equal(four.warHitsPerWar > r.medians.warHitsPerWar, true);
   assert.equal(four.flagged, false);
   // The reasons still record what was low, so the table can shade those cells.
-  assert.ok(four.reasons.includes("chainHitsPerWar"));
+  assert.ok(four.reasons.includes("xanaxPerWar"));
+  assert.ok(four.reasons.includes("energyPerDay"));
 });
 
 test("at or below the median the immunity does not apply", () => {
   const members = [
     mkMember("1", 20, 10, 5), mkMember("2", 20, 10, 5), mkMember("3", 20, 10, 5),
-    mkMember("4", 20, 0, 0),   // exactly the median on war hits, low on two
+    mkMember("4", 20, 10, 0),   // exactly the median on war hits, low on the other two
+  ];
+  const r = buildReport({
+    wars: [mkWar(11, members)], roster: mkRoster(["1", "2", "3", "4"]), readings: mkReadings({ 1: 1000, 2: 1000, 3: 1000, 4: 100 }), nowMs: NOW,
+  });
+  const four = r.rows.find((x) => x.playerId === "4");
+  assert.equal(four.warHitsPerWar, r.medians.warHitsPerWar);
+  assert.equal(four.flagged, true);
+});
+
+test("chain hits are shown but never flag anybody", () => {
+  var members = [
+    mkMember("1", 30, 20, 5), mkMember("2", 30, 20, 5), mkMember("3", 30, 20, 5),
+    mkMember("4", 30, 0, 5),   // zero chain hits, everything else at the median
   ];
   const r = buildReport({
     wars: [mkWar(11, members)], roster: mkRoster(["1", "2", "3", "4"]), readings: [], nowMs: NOW,
   });
-  assert.equal(r.rows.find((x) => x.playerId === "4").flagged, true);
+  const four = r.rows.find((x) => x.playerId === "4");
+  assert.equal(four.flagged, false);
+  assert.equal(four.reasons.includes("chainHitsPerWar"), false);
+  // Still carried and still shown: the column is context for the conversation.
+  assert.equal(four.chainHitsPerWar, 0);
+  assert.equal(r.medians.chainHitsPerWar, 20);
+  assert.equal(r.liveMetrics.includes("chainHitsPerWar"), false);
+});
+
+test("chain hits cannot be the second strike either", () => {
+  const members = [
+    mkMember("1", 30, 20, 5), mkMember("2", 30, 20, 5), mkMember("3", 30, 20, 5),
+    mkMember("4", 5, 0, 5),    // war hits low + chain hits zero: one strike, not two
+  ];
+  const r = buildReport({
+    wars: [mkWar(11, members)], roster: mkRoster(["1", "2", "3", "4"]), readings: [], nowMs: NOW,
+  });
+  assert.equal(r.rows.find((x) => x.playerId === "4").flagged, false);
 });

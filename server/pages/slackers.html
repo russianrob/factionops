@@ -251,6 +251,10 @@ td.deep{background:var(--warn-wash2)}
   // flag rule, because the tenure slider re-runs them without a round trip —
   // the payload carries EVERY member, not just the eligible ones.
   var METRICS = ["warHitsPerWar", "chainHitsPerWar", "xanaxPerWar", "energyPerDay"];
+  // Chain hits are shown but never flag: they are the non-war attacks made
+  // during a war, and the people highest on them are usually the ones who
+  // never touched the enemy. Mirrors FLAG_METRICS on the server.
+  var FLAG_METRICS = ["warHitsPerWar", "xanaxPerWar", "energyPerDay"];
   var FLAG_FRACTION = 0.5;
   var FLAG_MIN_METRICS = 2;
   var LABEL = {
@@ -302,7 +306,7 @@ td.deep{background:var(--warn-wash2)}
     var cohort = rows.filter(function (r) { return r.eligible; });
     var medians = {};
     METRICS.forEach(function (k) { medians[k] = median(cohort.map(function (r) { return r[k]; })); });
-    var live = METRICS.filter(function (k) { return medians[k] > 0; });
+    var live = FLAG_METRICS.filter(function (k) { return medians[k] > 0; });
     var need = Math.min(FLAG_MIN_METRICS, live.length || 1);
 
     cohort.forEach(function (r) {
@@ -382,8 +386,8 @@ td.deep{background:var(--warn-wash2)}
     }).join("");
 
     $("talksub").textContent = flagged.length
-      ? "Below half the faction median on two or more of the four, or absent from every war. " +
-        "Anyone above the median on war hits is left off whatever else is low."
+      ? "Below half the faction median on two or more of war hits, xanax and energy, or absent " +
+        "from every war. Anyone above the median on war hits is left off whatever else is low."
       : "Nobody in the current cohort is behind on more than one front.";
     $("cards").innerHTML = flagged.length ? flagged.map(function (r) {
       return "<div class='card'>" +
@@ -438,8 +442,10 @@ td.deep{background:var(--warn-wash2)}
 
     $("foot").innerHTML =
       "<b>War hits</b> and <b>chain hits</b> both come from the war reports: chain hits are the " +
-      "non-war attacks made during a war, the same number the payout panel shows. Big number is per war present, " +
-      "small number is the total. <b>Xanax</b> is what was taken during those wars. " +
+      "non-war attacks made during a war, the same number the payout panel shows under Non-war hits. " +
+      "They are shown for context and never flag anyone — the members highest on them are usually the ones " +
+      "who never hit the enemy. Big number is per war present, small number is the total. " +
+      "<b>Xanax</b> is what was taken during those wars. " +
       "<b>Energy</b> is gym energy per day — Torn only reports a lifetime total, so until daily readings build up " +
       "it is an average since joining rather than a figure for this window. " +
       "Generated " + new Date(d.generatedAt).toLocaleString() + ".";

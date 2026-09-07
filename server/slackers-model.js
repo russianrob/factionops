@@ -140,10 +140,24 @@ export function energyForMember(readings, playerId, daysInFaction, nowMs, window
   };
 }
 
-// The four columns a member is judged on, in the order the page shows them.
-// All four are RATES, not totals: a total rewards being in the faction longer,
-// which is the thing the tenure cutoff already accounts for.
+// The four columns the page shows, in order. All are RATES, not totals: a total
+// rewards being in the faction longer, which is what the tenure cutoff already
+// accounts for.
 export const METRICS = ["warHitsPerWar", "chainHitsPerWar", "xanaxPerWar", "energyPerDay"];
+
+// What a flag can be built from — chain hits deliberately excluded.
+//
+// They are the non-war attacks made during a war: keeping the chain alive by
+// hitting whoever is around. As a measure of effort they run BACKWARDS. In the
+// war of 2026-09-03 the four members at the top of that column had 0, 0, 0 and
+// 0 war hits between them — 49, 18, 15 and 9 non-war hits and nothing aimed at
+// the enemy — while the faction's best hitter sat at 0.4 a war. Flagging people
+// for being low on it punished exactly the people doing the job.
+//
+// The column stays on the page, because "0 war hits and 49 non-war hits" is the
+// most useful thing a leader can put in front of somebody. It just cannot
+// decide anything. (Owner's call, 2026-09-07.)
+export const FLAG_METRICS = ["warHitsPerWar", "xanaxPerWar", "energyPerDay"];
 export const FLAG_FRACTION = 0.5;   // "below half the median"
 export const FLAG_MIN_METRICS = 2;  // "on two or more of them"
 
@@ -225,7 +239,7 @@ export function buildReport({ wars, roster, readings, nowMs, windowDays = 90, mi
   // of zero" is unreachable, so leaving it in would let a dead metric silently
   // absorb one of the two strikes a flag needs, and nobody would ever be
   // flagged on the metrics that are alive.
-  const live = METRICS.filter((k) => medians[k] > 0);
+  const live = FLAG_METRICS.filter((k) => medians[k] > 0);
   const need = Math.min(FLAG_MIN_METRICS, live.length || 1);
 
   for (const r of cohort) {

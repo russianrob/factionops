@@ -113,9 +113,25 @@ Computed against the **eligible cohort** (after the tenure cutoff), never
 against fixed numbers: a slow war month drags every absolute threshold out of
 date, whereas the median moves with the faction's own tempo.
 
-For each of the four normalized metrics — war hits/war, chain hits/war,
-xanax/war, energy/day — compute the cohort median. A member is **flagged** when
-they fall below half the median on **two or more** of the four.
+Compute the cohort median for each normalized metric. A member is **flagged**
+when they fall below half the median on **two or more** of them.
+
+**Chain hits are shown but never flag** (owner's call, 2026-09-07, after seeing
+the first real numbers). They are the non-war attacks made during a war —
+keeping the chain alive by hitting whoever is around — and as a measure of
+effort they run backwards. In the 2026-09-03 war the four members at the top of
+that column had **zero war hits between them** (49, 18, 15 and 9 non-war hits
+and nothing aimed at the enemy), while the faction's best hitter sat at 0.4 a
+war. Flagging people for being low on it punished the people doing the job. So
+the flag rests on `FLAG_METRICS` — war hits, Xanax, energy — while `METRICS`
+stays four wide for the columns and the median row. The column earns its place
+as context: "0 war hits and 49 non-war hits" is the most useful sentence a
+leader can put in front of somebody.
+
+Related: factionops' payout popover has both a "Chain hits" row (`chain_hit`)
+and a "Non-war hits" row (`non_war`). The first is **empty in every archived
+war** — Torn returns those attacks with `ranked_war ≠ 1`, so they all land in
+`non_war`. What this report calls chain hits is the popover's Non-war hits.
 
 **Carrying the war is immunity.** A member above the cohort median on war
 hits is never flagged, whatever the other three columns say. Run against the
@@ -196,6 +212,12 @@ makes `writeFileSync` fail with EACCES and the failure is swallowed.
   markup ships a sign-in and asks for the numbers separately.
 - `GET /api/slackers?minDays=100&windowDays=90` — the JSON, behind `requireAuth`
   plus a role check. This is the gate that matters.
+
+**Banker is excluded** from the admitted roles (owner's call, 2026-09-07) —
+the money job is admin for vault and payout purposes, which is not the same as
+reading who is slacking in wars. Excluded in the route rather than in
+faction-settings, because that list is shared with broadcasts and every other
+admin gate.
 
 **Sign-in is a Torn API key and nothing else** (owner's call, 2026-09-07 —
 the TOTP admin cookie was the first cut and was replaced). The page posts the
