@@ -1,7 +1,7 @@
 # Slackers Report — Design
 
 **Date:** 2026-09-07
-**Status:** approved for planning
+**Status:** built and live at `/admin/slackers` (2026-09-07)
 **Owner:** RussianRob [137558], faction 42055 (Dead Fragment)
 
 ## Goal
@@ -57,11 +57,11 @@ The kept entry's `members` array is the record for that war.
 
 | Column | Source | Call | Notes |
 |---|---|---|---|
-| War hits | `war-history/42055.json` | none | local |
+| War hits | `war-history` `listWars`/`getWar` | none | local, through the module's cache |
 | Chain hits | `war-history` `breakdown.non_war` | none | local |
 | Xanax | `war-history` `xanaxTaken` | none | war periods only |
 | Gym energy | `/v2/faction/contributors?stat=gymenergy` | 1/day | cumulative; see below |
-| Days in faction | `faction/<id>?selections=basic` (`fetchFactionBasic`) | 1/day | `days_in_faction` |
+| Days in faction | `faction/<id>?selections=basic` (`fetchFactionBasic`) | 1/day + 1/h on demand | `days_in_faction`; the route caches the roster an hour |
 | Wars present | derived: member appears in a kept war's `members` | none | fairness denominator |
 
 Two API calls a day in total.
@@ -148,12 +148,15 @@ Four pieces, following the shapes already in this repo:
 No IO, no clock of its own. Exported functions:
 
 - `dedupeWars(wars)` → the kept war per `(enemyFactionId, warStart)`.
-- `warsInWindow(wars, nowMs, days)` → filtered, sorted oldest-first.
-- `energyForMember(snapshots, playerId, daysInFaction, nowMs)` →
-  `{ mode: "lifetime"|"partial"|"full"|"rejoined", energy, perDay, spanDays }`.
-- `buildRows({ wars, roster, snapshots, nowMs, windowDays, minDays })` →
-  `{ rows, medians, cohortSize, warsCounted, excluded }`.
-- `flagRow(row, medians)` → `{ flagged, reasons[] }`.
+- `warsInWindow(wars, nowMs, windowDays)` → filtered, sorted oldest-first.
+- `presenceByPlayer(wars)` → `Map<playerId, warsPresent>`.
+- `energyForMember(readings, playerId, daysInFaction, nowMs, windowDays)` →
+  `{ mode: "unknown"|"lifetime"|"partial"|"full"|"rejoined", energy, perDay, spanDays }`.
+- `median(values)`, `METRICS`, `FLAG_FRACTION`, `FLAG_MIN_METRICS`.
+- `buildReport({ wars, roster, readings, nowMs, windowDays, minDays })` →
+  `{ rows, medians, liveMetrics, warsCounted, cohortSize, formerMembers, wars, generatedAt }`.
+  Flagging happens inside it, so a row arrives already carrying `flagged` and
+  `reasons` — there is no second call that could be skipped.
 
 Every number the page shows comes from here, so the page has no arithmetic of
 its own to get wrong.
@@ -162,9 +165,14 @@ its own to get wrong.
 
 Exports `start()`, launched from `server.js` the way `status-la-poller` and
 `faction-key-health` are — `import('./gym-energy-snapshot.js').then(m => m.start())`
-— which runs once at boot and then on a 24-hour `setInterval`. Takes a pooled
-key via `store.getPollingKey(factionId, "gym-energy", idx)`, fetches
-contributors and the basic roster, and appends one record to
+— which runs once at boot and then on a 24-hour `setInterval`, with a 20-hour
+freshness guard so a reload storm cannot fill the file with readings taken
+minutes apart. Uses the **owner's own faction key**
+(`store.getFactionApiKey(factionId)`), never a rotated pool key: this report
+reads how hard every member trains and how much Xanax they took, and gathering
+that on a borrowed member key is not the owner's to do (their call,
+2026-09-07). It fetches contributors and the basic roster, and appends one
+record to
 `server/data/gym-energy/<factionId>.json`:
 
 ```json
@@ -175,11 +183,9 @@ contributors and the basic roster, and appends one record to
 
 Retention: 400 days, matching the other history stores.
 
-`store.js` gains `"gym-energy": "contributors"` in `PURPOSE_REQUIRED_SELECTION`,
-without which the router hands this purpose keys that cannot serve
-contributors and the poller floods pm2 with Torn code 16. On a code 16 it calls
-`store.demotePoolKeySelection(key, factionId, "contributors")`, the same
-self-healing path chain and xanax-tracker use.
+No pool-routing entry and no demote-on-code-16: with one fixed key there is
+nothing to route around. A code 16 here means that key lacks faction API
+access, which is a thing to fix on the key rather than steer past.
 
 The file is written by the `warboard` user, never root — a root-owned data file
 makes `writeFileSync` fail with EACCES and the failure is swallowed.
