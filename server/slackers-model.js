@@ -67,3 +67,75 @@ export function presenceByPlayer(wars) {
   }
   return seen;
 }
+
+// Below this many days between the oldest and newest reading, a "window" would
+// be noise: two readings a day apart say nothing about ninety.
+export const ENERGY_MIN_SPAN_DAYS = 7;
+
+/**
+ * Gym energy is the one metric Torn will not hand over historically.
+ * /v2/faction/contributors reports a CUMULATIVE total per member and its
+ * `timestamp` parameter is a cache-buster, not a query — there is no way to ask
+ * what somebody's number was in June. So a windowed figure can only ever be the
+ * difference between two readings we took ourselves, and until enough of those
+ * exist the honest answer is the lifetime average rather than an invented one.
+ *
+ * Four states, and the column always says which one it is in:
+ *   unknown   — this member appears in no reading at all
+ *   lifetime  — under 7 days of history: total ÷ days in faction
+ *   partial   — a real delta over a span shorter than the window
+ *   full      — a real delta over the whole window
+ *   rejoined  — the counter reset mid-history (see below)
+ *
+ * The reset is the trap. Contributors values are per-membership: leave the
+ * faction and rejoin, and the number starts again at zero. Subtracting across
+ * that boundary reports a huge negative — a member who trained hard reading as
+ * having trained nothing — so a reading lower than the one before it starts the
+ * window over.
+ */
+export function energyForMember(readings, playerId, daysInFaction, nowMs, windowDays = 90) {
+  const id = String(playerId);
+  const mine = (readings || [])
+    .filter((r) => r && r.members && r.members[id] && Number.isFinite(Number(r.members[id].energy)))
+    .map((r) => ({ at: Number(r.at), energy: Number(r.members[id].energy) }))
+    .sort((a, b) => a.at - b.at);
+
+  if (!mine.length) return { mode: "unknown", energy: null, perDay: null, spanDays: 0 };
+
+  const latest = mine[mine.length - 1];
+  const cut = nowMs - windowDays * 86400000;
+
+  let startIdx = 0;
+  let rejoined = false;
+  for (let i = 1; i < mine.length; i++) {
+    if (mine[i].energy < mine[i - 1].energy) { startIdx = i; rejoined = true; }
+  }
+
+  // The oldest reading still inside the window — and never one from before a
+  // reset, since that belongs to a different membership.
+  let base = mine[startIdx];
+  for (let i = startIdx; i < mine.length; i++) {
+    base = mine[i];
+    if (mine[i].at >= cut) break;
+  }
+
+  const spanDays = Math.round((latest.at - base.at) / 86400000);
+  const days = Number(daysInFaction) || 0;
+
+  if (spanDays < ENERGY_MIN_SPAN_DAYS) {
+    return {
+      mode: "lifetime",
+      energy: latest.energy,
+      perDay: days > 0 ? Math.round(latest.energy / days) : null,
+      spanDays,
+    };
+  }
+
+  const energy = latest.energy - base.energy;
+  return {
+    mode: rejoined ? "rejoined" : (spanDays >= windowDays ? "full" : "partial"),
+    energy,
+    perDay: spanDays > 0 ? Math.round(energy / spanDays) : null,
+    spanDays,
+  };
+}
