@@ -223,6 +223,10 @@ td.deep{background:var(--warn-wash2)}
       <label for="copy">Talking list</label>
       <button id="copy" class="primary">Copy flagged</button>
     </div>
+    <div class="ctl">
+      <label for="signout">Session</label>
+      <button id="signout" type="button">Sign out</button>
+    </div>
   </div>
 
   <h2 id="talkh">Worth a conversation</h2>
@@ -559,6 +563,16 @@ td.deep{background:var(--warn-wash2)}
     else { state.sortKey = key; state.sortDir = key === "name" ? 1 : 1; }
     render();
   });
+
+  $("signout").addEventListener("click", function () {
+    setToken("");
+    state.data = null;
+    showSignin("Signed out.", true);
+  });
+
+  // ?signout in the URL clears the token before anything loads — a way back to
+  // the sign-in card from a browser where the button cannot be reached.
+  if (location.search.indexOf("signout") !== -1) setToken("");
 
   load();
 })();
