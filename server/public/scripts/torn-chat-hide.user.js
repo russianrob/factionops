@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat - Hide User Messages
 // @namespace    RussianRob
-// @version      1.7.1
+// @version      1.8.0
 // @description  Hide a person's group-chat messages. Tap their name in chat and use the Hide chat button on the mini profile that opens; muted messages disappear entirely. Their full profile page carries the same button, so you can unhide someone without having to find them in chat. Torn PDA compatible. Based on Ben_Hagen [2966467]'s script (Greasy Fork 588787).
 // @author       RussianRob
 // @match        https://www.torn.com/*
@@ -283,6 +283,108 @@
         });
     }
 
+    // ---------- the toggle tile ----------
+    //
+    // One button with two homes: Torn's mini-profile card, which opens from a
+    // tap on a chat name, and the Actions grid on a full profile. Both are flex
+    // rows of square tiles, so the toggle is built as another tile.
+    //
+    // It used to be a full-width bar across the bottom of the mini profile, and
+    // that made the card's contents taller than the card Torn had already sized
+    // -- so the card's own "View profile / New tab" footer was pushed out from
+    // under the background and left floating on the page. A tile drops into the
+    // space already on the last row and adds no height at all.
+    const TILE_BTN = 'tch-tile-btn';
+
+    function paintTile(btn, xid) {
+        const hidden = !!hiddenUsers[xid];
+        // Two lines, like the tiles beside it; `white-space: pre-line` renders
+        // the break.
+        const label = hidden ? 'Unhide\nchat' : 'Hide\nchat';
+        if (btn.textContent !== label) btn.textContent = label;
+        btn.title = hidden
+            ? 'Their chat messages are hidden - tap to show them again'
+            : 'Hide their group-chat messages';
+        btn.classList.toggle('tch-tile-on', hidden);
+    }
+
+    // Torn's two grids are not the same size as each other, and neither matches
+    // a phone's, so the tile copies the geometry of whichever tile it lands
+    // beside rather than a number guessed here.
+    function sizeToSiblings(list, btn) {
+        let sib = null;
+        for (let i = 0; i < list.children.length; i++) {
+            if (list.children[i] !== btn) { sib = list.children[i]; break; }
+        }
+        if (!sib) return;
+        const r = sib.getBoundingClientRect();
+        if (r.width < 8 || r.height < 8) return;   // still being laid out
+        const cs = getComputedStyle(sib);
+        btn.style.width = Math.round(r.width) + 'px';
+        btn.style.height = Math.round(r.height) + 'px';
+        btn.style.margin = [cs.marginTop, cs.marginRight, cs.marginBottom, cs.marginLeft].join(' ');
+        btn.style.borderRadius = cs.borderRadius;
+    }
+
+    function syncTile(list, xid, name) {
+        if (!list || !xid) return;
+        let btn = list.querySelector('.' + TILE_BTN);
+        if (!btn) {
+            btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = TILE_BTN;
+            list.appendChild(btn);
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const id = btn.dataset.tchXid;
+                if (!id) return;
+                if (hiddenUsers[id]) delete hiddenUsers[id];
+                else hiddenUsers[id] = btn.dataset.tchName || ('#' + id);
+                saveHiddenUsers(hiddenUsers);
+                refreshAllRows();
+                paintTile(btn, id);
+            });
+        }
+        // Re-stamped every pass: Torn swaps one person's card or profile for
+        // another in place, so the tile can outlive who it was built for.
+        btn.dataset.tchXid = xid;
+        btn.dataset.tchName = name;
+        sizeToSiblings(list, btn);
+        paintTile(btn, xid);
+    }
+
+    addStyle(`
+        .${TILE_BTN} {
+            font: inherit;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            /* Overwritten inline from the tile beside it; these are the
+               fallback for a grid that has not laid out yet. */
+            width: 42px;
+            height: 42px;
+            margin: 0 12px 12px 0;
+            padding: 0;
+            box-sizing: border-box;
+            border: 1px solid rgb(17, 17, 17);
+            border-radius: 5px;
+            background: #3a3a3a;
+            color: #ddd;
+            font-size: 9.5px;
+            font-weight: bold;
+            line-height: 1.2;
+            letter-spacing: 0.3px;
+            white-space: pre-line;
+            text-align: center;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .${TILE_BTN}.tch-tile-on { background: #2e6b45; border-color: #245436; color: #dff5e6; }
+        body:not(.dark-mode) .${TILE_BTN} { border-color: #b0c4d8; background: #e9e9e9; color: #333; }
+        body:not(.dark-mode) .${TILE_BTN}.tch-tile-on { background: #cfeeda; border-color: #8fc7a5; color: #1c5133; }
+    `);
+
     // ---------- the mini profile ----------
     //
     // Tapping a name in chat opens Torn's own mini-profile card, and this is
@@ -290,11 +392,10 @@
     // long-press menu used to do the same job from outside the card -- two
     // buttons for one setting, so the menu went and the card kept it.
     //
-    // Torn REBUILDS this card every time it opens, so the button is re-added on
+    // Torn REBUILDS this card every time it opens, so the tile is re-added on
     // every pass rather than once -- the same reason the chat rows are re-synced
     // instead of processed once.
     const MINI_WRAP = '#profile-mini-root .mini-profile-wrapper';
-    const MINI_BTN = 'tch-mini-btn';
 
     function miniXid(wrap) {
         // The card's own profile link. Several shapes are tried because this is
@@ -328,70 +429,16 @@
         if (!list) return;
         const xid = miniXid(wrap);
         if (!xid) return;
-
-        let btn = list.querySelector('.' + MINI_BTN);
-        if (!btn) {
-            btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = MINI_BTN;
-            list.appendChild(btn);
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const id = btn.dataset.tchXid;
-                if (!id) return;
-                if (hiddenUsers[id]) delete hiddenUsers[id];
-                else hiddenUsers[id] = btn.dataset.tchName || ('#' + id);
-                saveHiddenUsers(hiddenUsers);
-                refreshAllRows();
-                paintMini(btn, id);
-            });
-        }
-        btn.dataset.tchXid = xid;
-        btn.dataset.tchName = miniName(wrap, xid);
-        paintMini(btn, xid);
+        syncTile(list, xid, miniName(wrap, xid));
     }
-
-    function paintMini(btn, xid) {
-        const hidden = !!hiddenUsers[xid];
-        const label = hidden ? '\u2705 Unhide chat' : '\u{1F6AB} Hide chat';
-        if (btn.textContent !== label) btn.textContent = label;
-        btn.classList.toggle('tch-mini-on', hidden);
-    }
-
-    addStyle(`
-        .${MINI_BTN} {
-            display: block;
-            width: 100%;
-            margin: 4px 0 0;
-            padding: 7px 10px;
-            box-sizing: border-box;
-            border: 1px solid #555;
-            border-radius: 4px;
-            background: #222;
-            color: #eee;
-            font: inherit;
-            font-size: 12px;
-            cursor: pointer;
-        }
-        .${MINI_BTN}.tch-mini-on { border-color: #4a7; color: #8d8; }
-        @media (pointer: coarse) { .${MINI_BTN} { padding: 11px 12px; font-size: 14px; } }
-    `);
 
     // ---------- the full profile page ----------
     //
-    // The mini profile is where someone gets hidden; this is where they get
-    // un-hidden. Once their messages are gone from chat there is no name left
-    // to tap, so the only way back used to be catching them talking somewhere
-    // the script does not touch. Their profile is the one page always reachable
-    // -- from a friend list, a search, an attack log -- so the toggle lives
-    // there too.
-    //
-    // Torn's Actions block is a flex row of square tiles that takes a bare
-    // appended child (FFScouter's "FF History" tile is one), so a tile styled
-    // to match drops into the grid with no wrapper markup.
+    // The one place the toggle can always be reached. Hiding someone from the
+    // mini profile takes their name out of chat, so there is nothing left to
+    // tap -- and a profile is reachable from a friend list, a search or an
+    // attack log, with nothing to find in chat first.
     const PROF_LIST = '.profile-buttons.profile-action .buttons-list';
-    const PROF_BTN = 'tch-prof-btn';
 
     function profXid() {
         // Read the id from the address bar rather than the page: on a profile
@@ -416,73 +463,8 @@
         if (location.pathname !== '/profiles.php') return;
         const xid = profXid();
         if (!xid) return;
-        const list = document.querySelector(PROF_LIST);
-        if (!list) return;
-
-        let btn = list.querySelector('.' + PROF_BTN);
-        if (!btn) {
-            btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = PROF_BTN;
-            list.appendChild(btn);
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const id = btn.dataset.tchXid;
-                if (!id) return;
-                if (hiddenUsers[id]) delete hiddenUsers[id];
-                else hiddenUsers[id] = btn.dataset.tchName || ('#' + id);
-                saveHiddenUsers(hiddenUsers);
-                refreshAllRows();
-                paintProf(btn, id);
-            });
-        }
-        // Re-stamped every pass: Torn swaps profiles in place on its own
-        // routing, so the tile can outlive the person it was built for.
-        btn.dataset.tchXid = xid;
-        btn.dataset.tchName = profName(xid);
-        paintProf(btn, xid);
+        syncTile(document.querySelector(PROF_LIST), xid, profName(xid));
     }
-
-    function paintProf(btn, xid) {
-        const hidden = !!hiddenUsers[xid];
-        const label = hidden ? 'Unhide\nchat' : 'Hide\nchat';
-        if (btn.textContent !== label) btn.textContent = label;
-        btn.title = hidden
-            ? 'Their chat messages are hidden - tap to show them again'
-            : 'Hide their group-chat messages';
-        btn.classList.toggle('tch-prof-on', hidden);
-    }
-
-    addStyle(`
-        .${PROF_BTN} {
-            font: inherit;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 42px;
-            height: 42px;
-            margin: 0 12px 12px 0;
-            padding: 0;
-            box-sizing: border-box;
-            border: 1px solid rgb(17, 17, 17);
-            border-radius: 5px;
-            background: #3a3a3a;
-            color: #ddd;
-            font-size: 9.5px;
-            font-weight: bold;
-            line-height: 1.2;
-            letter-spacing: 0.3px;
-            /* the label is two words on two lines, like the tiles beside it */
-            white-space: pre-line;
-            text-align: center;
-            cursor: pointer;
-            flex-shrink: 0;
-        }
-        .${PROF_BTN}.tch-prof-on { background: #2e6b45; border-color: #245436; color: #dff5e6; }
-        body:not(.dark-mode) .${PROF_BTN} { border-color: #b0c4d8; background: #e9e9e9; color: #333; }
-        body:not(.dark-mode) .${PROF_BTN}.tch-prof-on { background: #cfeeda; border-color: #8fc7a5; color: #1c5133; }
-    `);
 
     // Watch the card's own root so the button lands as the card opens rather
     // than up to a second later. #profile-mini-root is a stable container that
