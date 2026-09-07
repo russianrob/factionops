@@ -117,6 +117,15 @@ For each of the four normalized metrics — war hits/war, chain hits/war,
 xanax/war, energy/day — compute the cohort median. A member is **flagged** when
 they fall below half the median on **two or more** of the four.
 
+**Carrying the war is immunity.** A member above the cohort median on war
+hits is never flagged, whatever the other three columns say. Run against the
+real cohort, the rule without this put the faction's best hitter on the list —
+54 hits a war against a median of 23, present for 12 of 13 wars — for not chain
+hitting and not taking Xanax. War hits are the axis this report exists for and
+the other three are how somebody gets there, so they cannot outvote it. Their
+low columns are still recorded (the table shades them); they just do not flag.
+Added 2026-09-07 after the first live run.
+
 `no-wars` members are flagged unconditionally.
 
 **Zero medians.** If half the faction never chain-hits, the cohort median for

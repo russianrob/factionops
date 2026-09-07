@@ -279,7 +279,11 @@ td.deep{background:var(--warn-wash2)}
       if (r.warsPresent === 0) { r.flagged = true; r.reasons = ["no-wars"]; return; }
       var below = live.filter(function (k) { return (r[k] || 0) < medians[k] * FLAG_FRACTION; });
       r.reasons = below;
-      r.flagged = live.length > 0 && below.length >= need;
+      // Mirrors the server: above the median on war hits and nothing else can
+      // flag you. The other three columns are how somebody gets to war hits,
+      // not a substitute for them.
+      var carrying = medians.warHitsPerWar > 0 && r.warHitsPerWar > medians.warHitsPerWar;
+      r.flagged = !carrying && live.length > 0 && below.length >= need;
     });
 
     return { rows: rows, cohort: cohort, medians: medians, live: live };
@@ -348,7 +352,8 @@ td.deep{background:var(--warn-wash2)}
     }).join("");
 
     $("talksub").textContent = flagged.length
-      ? "Below half the faction median on two or more of the four, or absent from every war."
+      ? "Below half the faction median on two or more of the four, or absent from every war. " +
+        "Anyone above the median on war hits is left off whatever else is low."
       : "Nobody in the current cohort is behind on more than one front.";
     $("cards").innerHTML = flagged.length ? flagged.map(function (r) {
       return "<div class='card'>" +

@@ -232,7 +232,13 @@ export function buildReport({ wars, roster, readings, nowMs, windowDays = 90, mi
     if (r.warsPresent === 0) { r.flagged = true; r.reasons = ["no-wars"]; continue; }
     const below = live.filter((k) => Number(r[k] ?? 0) < medians[k] * FLAG_FRACTION);
     r.reasons = below;
-    r.flagged = live.length > 0 && below.length >= need;
+    // War hits are the axis this report exists for; the other three are how
+    // somebody gets there. Without this, the faction's best hitter was landing
+    // on the list for not chaining and not taking Xanax — 54 hits a war against
+    // a median of 23 is not a weak link, it is someone who fights without
+    // vials. Above the median on war hits, nothing else can flag you.
+    const carrying = medians.warHitsPerWar > 0 && r.warHitsPerWar > medians.warHitsPerWar;
+    r.flagged = !carrying && live.length > 0 && below.length >= need;
   }
 
   return {

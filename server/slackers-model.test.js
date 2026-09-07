@@ -218,3 +218,29 @@ test("someone who fought but has left the faction is not a row", () => {
 test("the four metrics are the ones the page renders", () => {
   assert.deepEqual(METRICS, ["warHitsPerWar", "chainHitsPerWar", "xanaxPerWar", "energyPerDay"]);
 });
+
+test("a war hitter above the median is never flagged, whatever else is low", () => {
+  const members = [
+    mkMember("1", 20, 10, 5), mkMember("2", 20, 10, 5), mkMember("3", 20, 10, 5),
+    mkMember("4", 60, 0, 0),   // 3x the median on war hits, nothing else
+  ];
+  const r = buildReport({
+    wars: [mkWar(11, members)], roster: mkRoster(["1", "2", "3", "4"]), readings: [], nowMs: NOW,
+  });
+  const four = r.rows.find((x) => x.playerId === "4");
+  assert.equal(four.warHitsPerWar > r.medians.warHitsPerWar, true);
+  assert.equal(four.flagged, false);
+  // The reasons still record what was low, so the table can shade those cells.
+  assert.ok(four.reasons.includes("chainHitsPerWar"));
+});
+
+test("at or below the median the immunity does not apply", () => {
+  const members = [
+    mkMember("1", 20, 10, 5), mkMember("2", 20, 10, 5), mkMember("3", 20, 10, 5),
+    mkMember("4", 20, 0, 0),   // exactly the median on war hits, low on two
+  ];
+  const r = buildReport({
+    wars: [mkWar(11, members)], roster: mkRoster(["1", "2", "3", "4"]), readings: [], nowMs: NOW,
+  });
+  assert.equal(r.rows.find((x) => x.playerId === "4").flagged, true);
+});
