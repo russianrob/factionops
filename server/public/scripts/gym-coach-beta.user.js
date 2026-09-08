@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.82
+// @version      0.9.83
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,35 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.83 - A can drunk anywhere is a can off the shelf.
+ *
+ *         The machinery for this was already here and correct:
+ *         decrementItemLocal holds a use against Torn's ~30s inventory cache
+ *         and applyPendingUses re-applies it to every fetch until the API
+ *         catches up. It had exactly one trigger -- the coach's own Use button.
+ *         Drink a can on item.php, from the sidebar, on PDA or through another
+ *         script and nothing recorded it: the Stock tab kept the can, and the
+ *         advice kept offering it, until the next poll.
+ *
+ *         The energy bar is the tell, and it is not on the API's cache at all
+ *         -- syncEnergyFromDom reads it off Torn's own page every second. A can
+ *         is a discrete step of a size this script already knows, perk and
+ *         Caffeine Consumption included, so an EXACT match against a can in the
+ *         bag is a can you just drank.
+ *
+ *         Strict on purpose. Natural regen trickles, a Xanax is 250, a refill
+ *         fills the bar, and a can you hold none of cannot be the one you
+ *         drank. A false positive would show a can you still own as gone, which
+ *         is worse than the stale number being fixed.
+ *
+ *         Ten seconds after the coach's own Use button, a jump is that use
+ *         arriving rather than a new drink -- otherwise one can came off the
+ *         shelf twice.
+ *
+ *         Where two cans share a size -- Munster and Santa at 20, Red Cow and
+ *         Rudolph at 25, Taurine and X-MASS at 30 -- the count is right either
+ *         way and the one you hold more of is assumed.
+ *
 * 0.9.82 - Lock a specialist gym and the plan stops walking you out of it.
  *
  *         Six gyms are conditional: Balboas wants Def+Dex at 1.25x Str+Spd,
@@ -2031,7 +2060,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.82";
+  var GC_VERSION = "0.9.83";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -2539,6 +2568,7 @@
     invTally: null,
     energyDom: "",
     pendingUse: null,
+    selfUseAt: 0,
     rawQty: null,
     rawHappy: null,
     // Pre-use quantities for the cans list, so a pending use has a baseline
@@ -3171,6 +3201,10 @@
     useTornItem(id)
       .then(function () {
         decrementItemLocal(id);
+        // The bar is about to jump by exactly one can, and the energy-step
+        // detector would read that as a SECOND drink. This is the receipt that
+        // says the jump is already accounted for.
+        state.selfUseAt = Date.now();
         showToast("Used", "Took one. Refreshing bars.");
         state.flash = "USED";
         if (state.open) renderPanel();
@@ -3475,6 +3509,47 @@
   }
 
   // Adopt the live bar whenever it disagrees with the cached API value.
+  // How long after the coach's own Use button a bar jump is assumed to be that
+  // use. Torn answers the use before the bar repaints, and the next sync is a
+  // second later; ten seconds is slack enough for a slow round trip and far
+  // short of the gap between two real drinks.
+  var SELF_USE_MS = 10000;
+
+  /**
+   * Which can, if any, explains an energy step.
+   *
+   * The inventory API is cached for ~30s, but the energy bar on Torn's own page
+   * is not cached at all — syncEnergyFromDom reads it every second. A can is a
+   * discrete jump of a size this script already knows, perk and Caffeine
+   * Consumption included, so a step that exactly matches a can you are holding
+   * is a can you just drank.
+   *
+   * Deliberately strict. Only an EXACT match against a can currently in the bag
+   * counts: natural regen trickles, a Xanax is 250 and a refill fills the bar,
+   * and none of those may be mistaken for a drink. A false positive here shows
+   * a can you still own as gone, which is worse than the stale number this is
+   * fixing.
+   *
+   * Reports; never mutates. The caller decides what to do with it.
+   */
+  function canFromEnergyStep(prevE, nowE) {
+    var step = Math.round(Number(nowE) - Number(prevE));
+    if (!(step > 0)) return null;
+    var hits = [];
+    (state.drinkList || []).forEach(function (d) {
+      if (!d || (d.qty || 0) <= 0) return;
+      var t = canType(d.name, d.id);
+      if (t && canEnergy(t) === step) hits.push(d);
+    });
+    if (!hits.length) return null;
+    // Munster and Santa Shooters are both 20, Red Cow and Rudolph both 25,
+    // Taurine and X-MASS both 30. The COUNT is right whichever we pick, and the
+    // advice they drive is identical at equal energy — so assume the one there
+    // are more of rather than refuse to decrement anything.
+    hits.sort(function (a, b) { return (b.qty || 0) - (a.qty || 0); });
+    return hits[0];
+  }
+
   function syncEnergyFromDom() {
     var d = readEnergyFromDom();
     if (!d) {
@@ -3485,6 +3560,25 @@
     state.energyKnown = true;
     var changed = false;
     if (d.cur !== state.energy) {
+      // A can drunk ANYWHERE — item page, sidebar, PDA, another script — shows
+      // up here first, because this reads Torn's own bar rather than the API.
+      // decrementItemLocal already knows how to hold the use against the cache
+      // until the fetch catches up; until now the only thing that ever called
+      // it was this script's own Use button, so a can drunk any other way sat
+      // in the Stock tab for a full poll and kept being offered as advice.
+      //
+      // Only once the bar has been read at least once: the first sync jumps
+      // from nothing to whatever you happen to have, and that is not a drink.
+      // SELF_USE_MS after our own Use button, a jump is that use arriving —
+      // counting it again would take two cans off the shelf for one drink,
+      // which is the same double-count applyPendingUses was written to avoid.
+      var mine = state.selfUseAt && (Date.now() - state.selfUseAt) < SELF_USE_MS;
+      if (state.energyKnown && typeof state.energy === "number" && !mine) {
+        try {
+          var drank = canFromEnergyStep(state.energy, d.cur);
+          if (drank && drank.id) decrementItemLocal(drank.id);
+        } catch (_) { /* a detector must never break the bar it reads */ }
+      }
       state.energy = d.cur;
       state.energyKnown = true;
       changed = true;
