@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.3.1
+// @version      5.4.0
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.3.1';
+    const SCRIPT_VERSION = '5.4.0';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -112,8 +112,6 @@
         // The war-page display, added 5.2.31. Both shipped without any control
         // at all -- default on, because that is how they have behaved since
         // they landed and somebody who liked it should not have to opt in.
-        WP_HOSP:  GM_getValue('factionops_wp_hosp', true),
-        WP_SORT:  GM_getValue('factionops_wp_sort', true),
         KEEP_ALIVE: GM_getValue('factionops_keep_alive', false),
         // v5.0.92: opt-in BSP sharing — uploads your BSP cache entries
         // for current war targets to the warboard server, where they
@@ -159,8 +157,6 @@
             CHAIN_ALERT: 'factionops_chain_alert',
             CHAIN_ALERT_THRESHOLD: 'factionops_chain_alert_threshold',
             PDA_NOTIFICATIONS: 'factionops_pda_notif',
-            WP_HOSP: 'factionops_wp_hosp',
-            WP_SORT: 'factionops_wp_sort',
             KEEP_ALIVE: 'factionops_keep_alive',
             SHARE_BSP: 'factionops_share_bsp',
             CALL_CHAT: 'factionops_call_chat',
@@ -788,11 +784,6 @@ html.wb-theme-light {
 .fo-wp-ptog { cursor: pointer; justify-content: space-between; }
 .fo-wp-ptog input { margin: 0; cursor: pointer; flex: 0 0 auto; }
 
-/* Applied by applyRowOrder, not by a static selector, so the layout change is
-   scoped to a list we are actually sorting and comes off by removing a class.
-   The rows already stack vertically; this only makes CSS order apply to them.
-   No backticks in here -- this whole stylesheet is a JS template literal. */
-.fo-wp-sorted { display: flex; flex-direction: column; }
 
 /* Settings section headings. The panel had 48 controls, one title and two
    <hr>s -- no way to navigate it except reading every row. */
@@ -852,20 +843,6 @@ html.wb-theme-light {
 /* Hospital countdown in Torn's own status cell. Sits alongside whatever else
    is in there (the FFS banner puts its own chip there) rather than fighting
    another script for the same node. */
-.fo-wp-hosp {
-    display: inline-block; margin-left: 5px; padding: 1px 5px;
-    border-radius: 3px; border: 1px solid rgba(225,112,85,.4);
-    background: rgba(0,0,0,.35); color: #ff9a72;
-    font-size: 10px; font-weight: 700; line-height: 1.4;
-    font-variant-numeric: tabular-nums; white-space: nowrap;
-    vertical-align: middle;
-}
-/* Under two minutes -- worth waiting for rather than moving on. */
-.fo-wp-hosp.soon { color: #ffd166; border-color: rgba(255,209,102,.6); }
-/* Counted to zero but Torn still says hospital. Clamped on purpose: releasing
-   on our own countdown is what flashes a still-hospitalised target as
-   attackable, so this waits for the server to say otherwise. */
-.fo-wp-hosp.held { color: #b2bec3; border-color: rgba(255,255,255,.18); }
 
 .fo-wp-filter-chk {
     display: flex; align-items: center; gap: 4px; cursor: pointer;
@@ -9603,225 +9580,7 @@ body.wb-chain-active {
      * fetched by applyServerData.
      */
 
-    /**
-     * The status cell of a war row.
-     *
-     * NOT row.querySelector('[class*="status"]') -- userStatusWrap___ lives
-     * inside the member cell and comes first in document order, so that
-     * selector returns the online dot instead. Only DIRECT children are
-     * considered, which is what makes the looser class test below safe.
-     *
-     * 5.2.53: the test used to demand the literal word "status", and Torn's
-     * newer war markup names its cells with CSS-module hashes -- the same
-     * page carries membersCont___jebcC and tabMenuCont___kXNgr. A cell called
-     * status___XYZ failed the test, warStatusCell returned null, and the
-     * hospital countdowns silently stopped appearing while the CALL button
-     * kept working, because that one matches [class*="points"] by prefix.
-     *
-     * Two ways in now: the class, hash suffix allowed; and failing that, the
-     * cell whose text IS a Torn status. The second is there because the first
-     * has now broken once on a markup change, and a countdown that quietly
-     * vanishes is worse than one found by reading the word Hospital.
-     */
-    var WAR_STATUS_TEXT = /^\s*(okay|hospital|traveling|travelling|abroad|jail|federal|fallen)\b/i;
-    function warStatusCell(row) {
-        for (var i = 0; i < row.children.length; i++) {
-            var c = row.children[i];
-            var cls = String((c.getAttribute && c.getAttribute('class')) || '');
-            if (/(^|\s)status(___|-|\s|$)/i.test(cls)) return c;
-        }
-        for (var j = 0; j < row.children.length; j++) {
-            var d = row.children[j];
-            if (WAR_STATUS_TEXT.test(String(d.textContent || ''))) return d;
-        }
-        return null;
-    }
-
-    /**
-     * Hospital countdown, from the absolute releaseAt the client already
-     * stamps on arrival -- so it is drift-free under poll jitter rather than
-     * a duration being decremented.
-     *
-     * It NEVER releases on its own countdown. At zero it clamps and keeps
-     * saying hospital; only the server reporting a non-hospital state clears
-     * it. The inverse of that rule is how a still-hospitalised target gets
-     * flashed as attackable, which is worse than a timer that reads 0:00 for
-     * a while.
-     */
-    function ensureHospTimer(row, targetId) {
-        var cell = warStatusCell(row);
-        if (!cell) return;
-        var st = (state.statuses || {})[targetId];
-        var hosp = CONFIG.WP_HOSP && st && normalizeStatus(st.status) === 'hospital';
-        var chip = cell.querySelector('.fo-wp-hosp');
-        if (!hosp) { if (chip) chip.remove(); return; }
-
-        // Somebody else already counting down? Then say nothing.
-        //
-        // War Stuff Enhanced puts a full 01:54:07 in this cell (FFScouter can
-        // too), and ours landed beside it as a second, redundant clock — which
-        // the column has no room for, so it clipped to "1h". Two timers for one
-        // fact, one of them cut in half.
-        //
-        // Ours is a fallback now: it appears when nothing else is counting and
-        // stands aside when something is. Deliberately NOT a check for which
-        // script is installed — what matters is whether this cell already has a
-        // clock in it, so it keeps working if TWSE is disabled on a page, or
-        // renames itself, or Torn ships its own timer tomorrow.
-        //
-        // The test is the colon. Our own format never has one (1h 54m, 45m 03s,
-        // 12s), so this cannot mistake our chip for a foreign clock.
-        var rest = String(cell.textContent || '');
-        if (chip) rest = rest.replace(String(chip.textContent || ''), '');
-        if (/\d{1,2}:\d{2}/.test(rest)) { if (chip) chip.remove(); return; }
-
-        if (!chip) {
-            chip = document.createElement('span');
-            chip.className = 'fo-wp-hosp';
-            cell.appendChild(chip);
-        }
-        paintHospTimer(chip, targetId);
-    }
-
-    function paintHospTimer(chip, targetId) {
-        var st = (state.statuses || {})[targetId];
-        if (!st) return;
-        var rem = 0;
-        try { rem = statusRemainingSec(st); } catch (_) {}
-        var txt = rem > 0 ? formatTimer(rem) : '0s';
-        if (chip.textContent !== txt) chip.textContent = txt;
-        // Under two minutes is the window where it is worth waiting rather
-        // than moving on, so it is the only thing this bothers to colour.
-        var soon = rem > 0 && rem <= 120;
-        if (chip.classList.contains('soon') !== soon) chip.classList.toggle('soon', soon);
-        // Zero but still reported hospital: clamped, waiting on the server.
-        var held = rem <= 0;
-        if (chip.classList.contains('held') !== held) chip.classList.toggle('held', held);
-    }
-
-    /**
-     * The tick. Separate from the 5s row pass on purpose -- that one walks
-     * every row and re-injects; this one only repaints chips that already
-     * exist, which on a normal war is a handful rather than 78.
-     *
-     * Gated on document.hidden, which is the same seam War Stuff Enhanced
-     * uses. PDA is exempt because its WebView reports hidden=true while the
-     * user is looking straight at the page, and gating there would freeze the
-     * timers on the device most likely to be reading them.
-     */
-    function startHospTick() {
-        if (window.__foHospTick) return;
-        window.__foHospTick = setInterval(function () {
-            if (!IS_PDA && document.hidden) return;
-            var chips = document.querySelectorAll('.fo-wp-hosp');
-            if (!chips.length) return;
-            for (var i = 0; i < chips.length; i++) {
-                var chip = chips[i];
-                // The id was resolved by walking up to the row and parsing it,
-                // every second, for every chip on screen — on PDA this never
-                // pauses, because PDA reports document.hidden as true even in
-                // the foreground and the tick has to ignore it. Ninety-eight
-                // closest() calls and ninety-eight parses a second, forever,
-                // is not a timer; it is a space heater. The id cannot change
-                // for a given chip, so it is resolved once and kept on it.
-                var tid = chip.dataset.foTid;
-                if (!tid) {
-                    var row = chip.closest('li');
-                    if (!row) continue;
-                    try { tid = uidFromWarRow(row); } catch (_) { continue; }
-                    if (!tid) continue;
-                    chip.dataset.foTid = tid;
-                }
-                paintHospTimer(chip, tid);
-            }
-        }, 1000);
-    }
-
-    /**
-     * Where a row belongs in the list.
-     *
-     * Buckets rather than one number, because "soonest out" only means
-     * anything inside hospital -- an available target has no timer to compare
-     * against and must simply be above all of them.
-     *
-     *   0  available now
-     *   1  hospital, soonest out first
-     *   2  jail / travelling / abroad -- not coming back on a useful timescale
-     *   3  a row we could not identify; it sinks rather than floats, because
-     *      order defaults to 0 and an unknown row must never sit on top
-     */
-    function rowSortKey(targetId) {
-        if (!targetId) return [3, 0];
-        var st = (state.statuses || {})[targetId];
-        var status = normalizeStatus(st ? st.status : 'ok');
-        if (status === 'hospital') {
-            var rem = 0;
-            try { rem = statusRemainingSec(st); } catch (_) {}
-            return [1, rem];
-        }
-        if (status === 'jail' || status === 'traveling' || status === 'abroad' ||
-            status === 'federal' || status === 'fallen') return [2, 0];
-        return [0, 0];
-    }
-
-    /**
-     * Reorder by CSS `order` rather than by moving nodes.
-     *
-     * Moving rows inside a React-managed list is a fight -- it reverts on the
-     * next render. An inline `order` is not part of React's tree, so there is
-     * nothing for it to disagree with, and if it does replace a row we simply
-     * set it again on the next pass.
-     *
-     * `order` only applies to flex children and these rows are float-based
-     * (every li ends in a div.clear), so the container needs one class. It
-     * changes how the LIs stack relative to each other -- which is vertically,
-     * exactly as before -- and leaves each row's internal float layout alone.
-     */
-    function applyRowOrder(entries) {
-        if (!entries.length) return;
-        var list = entries[0].row.parentElement;
-        // Second guard on the same mistake: whatever the selectors matched, a
-        // list holding no enemy rows is not the war list and must not be made
-        // a flex container.
-        if (list && !list.querySelector('li.enemy')) return;
-        if (!CONFIG.WP_SORT) {
-            // Hand the list back rather than leaving it flex with stale order
-            // values -- Torn's own sequence must return intact. Every child,
-            // not just the member rows, because the pass below stamps them all.
-            if (list) list.classList.remove('fo-wp-sorted');
-            for (var j = 0; j < entries.length; j++) entries[j].row.style.order = '';
-            if (list) for (var c = 0; c < list.children.length; c++) list.children[c].style.order = '';
-            return;
-        }
-        if (list && !list.classList.contains('fo-wp-sorted')) list.classList.add('fo-wp-sorted');
-        entries.sort(function (a, b) {
-            if (a.key[0] !== b.key[0]) return a.key[0] - b.key[0];
-            if (a.key[1] !== b.key[1]) return a.key[1] - b.key[1];
-            return a.seen - b.seen;      // ties keep Torn's own order
-        });
-        for (var i = 0; i < entries.length; i++) {
-            var v = String(i);
-            if (entries[i].row.style.order !== v) entries[i].row.style.order = v;
-        }
-
-        // Torn's own non-member children -- the Total summary row, any header --
-        // are not in findMemberRows (they carry no li.enemy), so they never got
-        // an order. In a flex container an unset order is 0, which TIES them
-        // with the row we numbered 0 and drops them near the top of the list.
-        // That is how Total ended up second. Push everything we did not sort
-        // below everything we did, keeping its own relative order.
-        if (!list) return;
-        var ours = [];
-        for (var m = 0; m < entries.length; m++) ours.push(entries[m].row);
-        var kids = list.children;
-        for (var k = 0; k < kids.length; k++) {
-            if (ours.indexOf(kids[k]) !== -1) continue;
-            var ov = String(entries.length + k);
-            if (kids[k].style.order !== ov) kids[k].style.order = ov;
-        }
-    }
-
-    /**
+     /**
      * War-page settings: a popover under the gear, deliberately NOT the
      * overlay's centred modal.
      *
@@ -9885,8 +9644,6 @@ body.wb-chain-active {
             '</div>' +
             '<div class="fo-wp-pnote" id="fo-wp-key-note"></div>' +
             '<div class="fo-wp-psep">On this page</div>' +
-            row('fo-wp-t-hosp', 'Hospital timers', CONFIG.WP_HOSP) +
-            row('fo-wp-t-sort', 'Sort: available first', CONFIG.WP_SORT) +
             row('fo-wp-t-chat', 'Post calls to chat', CONFIG.CALL_CHAT === '1') +
             '<div class="fo-wp-psep">Alerts</div>' +
             row('fo-wp-t-chain', 'Chain alert', CONFIG.CHAIN_ALERT) +
@@ -9916,8 +9673,6 @@ body.wb-chain-active {
                 if (after) { try { after(); } catch (_) {} }
             });
         };
-        bind('fo-wp-t-hosp',  'WP_HOSP',  markCalledRows);
-        bind('fo-wp-t-sort',  'WP_SORT',  markCalledRows);
         // NOT via bind(): CALL_CHAT is stored as the strings '1' and '0', never a
         // boolean. PDA's GM storage hands values back as strings and !!"false"
         // is truthy, so a boolean here would leave this permanently on for
@@ -9953,20 +9708,14 @@ body.wb-chain-active {
     function markCalledRows() {
         // Everything below is WAR-VIEW furniture, and findMemberRows falls back
         // to a bare `.members-list li` -- which the faction page's own roster
-        // matches. applyRowOrder then made THAT list a flex container, and
-        // Torn's header cells (Lvl / FF / Position / Days / Status) turned into
-        // a vertical stack down the left of the first five members.
+        // matches. The sort that once flexed that list is gone (5.3.0), but the
+        // guard stays: the call buttons, the tint and the filter have no
+        // business on a roster page either.
         //
         // li.enemy is the structural marker for an enemy war list. Requiring it
         // means that if Torn ever drops the class the feature degrades to OFF
         // rather than deranging a page it was never meant to touch.
         if (!document.querySelector('li.enemy')) {
-            // Undo it if a previous pass already flexed something here.
-            var stale = document.querySelector('.fo-wp-sorted');
-            if (stale) {
-                stale.classList.remove('fo-wp-sorted');
-                for (var q = 0; q < stale.children.length; q++) stale.children[q].style.order = '';
-            }
             var bar = document.getElementById('fo-wp-filter');
             if (bar) bar.remove();
             return;
@@ -9978,12 +9727,10 @@ body.wb-chain-active {
         // Sorted at the end of this 5s pass, never on the 1s tick: a row that
         // jumped the moment its timer expired would move under a thumb that is
         // already coming down, and that is how you attack the wrong person.
-        const ordering = [];
         let seen = 0;
         for (const row of rows || []) {
             let targetId;
             try { targetId = uidFromWarRow(row); } catch (_) { continue; }
-            ordering.push({ row: row, key: rowSortKey(targetId), seen: seen++ });
             if (!targetId) continue;
             // The range filter. passesStatsFilter shows a target whose stats
             // cannot be estimated -- on this page a hidden row is one nobody
@@ -9994,7 +9741,6 @@ body.wb-chain-active {
             try { show = passesStatsFilter(targetId) && passesActivityFilter(targetId); } catch (_) {}
             row.style.display = show ? '' : 'none';
             if (!show) { hidden++; continue; }   // no point dressing a hidden row
-            try { ensureHospTimer(row, targetId); } catch (_) {}
             const call = (state.calls || {})[targetId];
             try { ensureCallButton(row, targetId, call); } catch (_) {}
             if (!call) {
@@ -10012,7 +9758,6 @@ body.wb-chain-active {
         }
         // Say how much is being hidden. A filter left on from a previous war
         // would otherwise look like a short enemy faction.
-        try { applyRowOrder(ordering); } catch (_) {}
         const countEl = document.getElementById('fo-wp-count');
         if (countEl) {
             countEl.textContent = hidden ? ('hiding ' + hidden + ' of ' + total) : '';
@@ -12662,7 +12407,6 @@ body.wb-chain-active {
         // script made anywhere on the page triggered a full 98-row repaint.
         // The five-second sweep below is the net for a list that appears late.
         setInterval(function () { markSafely(); }, 5000);
-        startHospTick();
 
         try {
             if (!state.jwtToken) await authenticate();
