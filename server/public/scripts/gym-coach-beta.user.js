@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.83
+// @version      0.9.84
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,30 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.84 - A referee for the cans nobody watched.
+ *
+ *         0.9.83 catches a can the instant the bar moves, but only while the
+ *         script is watching. Drink one with Torn closed, on another device, or
+ *         mid page load, and the step happens where nothing is looking.
+ *
+ *         personalstats.energydrinkused is a cumulative count of cans drunk, so
+ *         its delta since the last inventory snapshot is how many left the bag
+ *         whoever was watching. Anything the detector did not already record is
+ *         recorded now, through the same pending ledger.
+ *
+ *         v1 selections=personalstats, deliberately. Measured 2026-09-08: v1
+ *         answered xantaken 718 while v2's ?stat= form answered 716 "as of
+ *         yesterday". The v2 shape is a daily snapshot and cannot referee
+ *         anything that happened today.
+ *
+ *         One-directional. A delta smaller than what was detected is not proof
+ *         of over-detection -- the counter can lag the bar it referees -- and
+ *         handing back a negative correction would put a drunk can back on the
+ *         shelf. The ledger's thirty-minute expiry already covers a use that
+ *         never landed.
+ *
+ *         It says how many, never which: attribution stays the detector's guess.
+ *
 * 0.9.83 - A can drunk anywhere is a can off the shelf.
  *
  *         The machinery for this was already here and correct:
@@ -2060,7 +2084,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.83";
+  var GC_VERSION = "0.9.84";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -2569,6 +2593,9 @@
     energyDom: "",
     pendingUse: null,
     selfUseAt: 0,
+    cansUsed: null,
+    cansUsedAt: 0,
+    canRefBase: null,
     rawQty: null,
     rawHappy: null,
     // Pre-use quantities for the cans list, so a pending use has a baseline
@@ -3396,6 +3423,60 @@
   // on request count -- but it also decides how long the gym-page strip keeps
   // telling you to spend a refill you have already spent, and being wrong in
   // that direction is worse than one request every three minutes.
+  // Torn's own tally of cans drunk. v1 selections=personalstats, deliberately:
+  // measured 2026-09-08, v1 answered xantaken 718 while v2's ?stat= form
+  // answered 716 "as of yesterday" — the v2 shape is a daily snapshot and
+  // cannot referee anything that happened today.
+  //
+  // Same three minutes as refills. It is a correction for drinks nobody
+  // watched, not the primary signal; the bar is the primary signal and it is
+  // free.
+  var CANS_USED_TTL = 180000;
+  function fetchCansUsed(force) {
+    if (!force && Date.now() - (state.cansUsedAt || 0) < CANS_USED_TTL) return;
+    state.cansUsedAt = Date.now();
+    httpGet(apiUrl("personalstats"))
+      .then(function (d) {
+        var ps = d && d.personalstats;
+        var v = ps && ps.energydrinkused;
+        if (typeof v !== "number") return;
+        state.cansUsed = v;
+        // First reading with no baseline: adopt it rather than treat every can
+        // ever drunk as unaccounted for.
+        if (state.canRefBase == null) state.canRefBase = v;
+        applyCanReferee();
+      })
+      ["catch"](function () {});
+  }
+
+  /**
+   * Record the cans Torn counted that this script never saw.
+   *
+   * Fed through decrementItemLocal — the same ledger the Use button and the
+   * energy-step detector use — because that one already expires after thirty
+   * minutes, recomputes from the raw API baseline rather than the adjusted
+   * display, and adjusts the cans list the Stock tab renders. A second
+   * mechanism would drift away from it.
+   *
+   * Attribution stays a guess: the counter says how many, never which. The most
+   * plentiful can is assumed, exactly as the energy-step detector does.
+   */
+  function applyCanReferee() {
+    var pend = state.pendingUse || {};
+    var ids = {};
+    (state.drinkList || []).forEach(function (d) { if (d && d.id) ids[d.id] = true; });
+    var pendingCans = 0;
+    for (var id in pend) if (ids[id]) pendingCans += Number(pend[id].n) || 0;
+
+    var missed = canRefereeShortfall(state.cansUsed, state.canRefBase, pendingCans);
+    if (!missed) return;
+
+    var held = (state.drinkList || []).filter(function (d) { return d && (d.qty || 0) > 0; })
+      .sort(function (a, b) { return (b.qty || 0) - (a.qty || 0); });
+    if (!held.length) return;                 // nothing to take off the shelf
+    for (var i = 0; i < missed && i < 20; i++) decrementItemLocal(held[0].id);
+  }
+
   var REFILL_TTL = 180000;
   function fetchRefills(force) {
     if (!force && Date.now() - (state.refillAt || 0) < REFILL_TTL) return;
@@ -3509,6 +3590,33 @@
   }
 
   // Adopt the live bar whenever it disagrees with the cached API value.
+  /**
+   * How many can-drinks Torn has counted that this script did not.
+   *
+   * personalstats.energydrinkused is cumulative, so its delta since the last
+   * inventory snapshot is how many cans left the bag — including the ones drunk
+   * while the page was closed, on another device, or during a reload, which is
+   * exactly the time the energy-step detector cannot watch.
+   *
+   * Only ever positive. A delta SMALLER than what was detected is not proof of
+   * over-detection: the counter can lag the bar it is refereeing. Handing back a
+   * negative correction would put a can on the shelf that was really drunk, and
+   * the ledger's own thirty-minute expiry already deals with a use that never
+   * landed.
+   */
+  function canRefereeShortfall(usedNow, usedAtSnapshot, pendingCans) {
+    // Number(null) is 0, not NaN, so an absent baseline would read as "every
+    // can you have ever drunk, all since the snapshot". Rejected by identity
+    // before arithmetic gets a chance.
+    if (usedNow == null || usedAtSnapshot == null) return 0;
+    var now = Number(usedNow), base = Number(usedAtSnapshot);
+    if (!isFinite(now) || !isFinite(base)) return 0;
+    var drunk = now - base;
+    if (!(drunk > 0)) return 0;                 // equal, or a bad reading
+    var missed = drunk - (Number(pendingCans) || 0);
+    return missed > 0 ? missed : 0;
+  }
+
   // How long after the coach's own Use button a bar jump is assumed to be that
   // use. Torn answers the use before the bar repaints, and the next sync is a
   // second later; ten seconds is slack enough for a slow round trip and far
@@ -3780,6 +3888,10 @@
       state.rawDrinks[state.drinkList[di].id] = state.drinkList[di].qty;
     }
     applyPendingUses();
+    // The snapshot now includes everything drunk up to the moment it was taken,
+    // so the referee's baseline moves with it. Without this the same drinks
+    // would be recovered again after every fetch.
+    if (typeof state.cansUsed === "number") state.canRefBase = state.cansUsed;
     // The candidate list is built from the cans you actually hold, so it is not
     // final until the inventory has landed. Asking for prices before this point
     // fetches the placeholder staples and never the cans in your bag.
@@ -9852,6 +9964,10 @@
         // asking Torn at all, which is what makes this safe to drop.
         fetchTrainLog(kind === "boot" || kind === "manual");
         fetchRefills(kind === "boot" || kind === "manual");
+        // The referee on cans drunk where the bar could not be watched. Same
+        // three-minute TTL as refills, and it rides the poll that is already
+        // happening rather than adding one of its own.
+        fetchCansUsed(kind === "boot" || kind === "manual");
         fetchStocks(kind === "boot" || kind === "manual");
         fetchAttacksToday(kind === "boot" || kind === "manual" || kind === "train");
         fetchKeyLevel(kind === "boot" || kind === "manual");
