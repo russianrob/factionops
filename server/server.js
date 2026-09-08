@@ -476,7 +476,10 @@ app.post("/api/debug/client-log", express.json({ limit: "4kb" }), (req, res) => 
   _diagHits.set(key, bucket);
   if (bucket.count > cap) return res.status(429).end();
   let payload;
-  try { payload = JSON.stringify(req.body?.data || {}).slice(0, 1500); }
+  // Quiet tags report once and are worth reading whole; the 1500-char cut was
+  // truncating a geometry report mid-JSON.
+  const limit = _QUIET_TAGS.has(tag) ? 6000 : 1500;
+  try { payload = JSON.stringify(req.body?.data || {}).slice(0, limit); }
   catch (_) { payload = '<unserializable>'; }
   console.log(`[${tag}] ${payload}`);
   res.status(204).end();

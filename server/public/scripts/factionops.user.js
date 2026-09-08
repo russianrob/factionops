@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.49
+// @version      5.2.50
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.49';
+    const SCRIPT_VERSION = '5.2.50';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -15712,7 +15712,7 @@ body.wb-chain-active {
         watchNavigation();
     }
 
-    // ── War-page layout probe (5.2.48) ────────────────────────────────────
+    // ── War-page layout A/B probe (5.2.50) ────────────────────────────────────
     // Runs after startup, NOT inside it: 5.2.47 put this call inside the
     // `document.readyState === 'loading'` branch, which at @run-at document-idle
     // never runs. It parsed, it shipped, and it reported nothing at all.
@@ -15732,52 +15732,95 @@ body.wb-chain-active {
         var tries = 0;
         var timer = setInterval(function () {
             tries++;
-            var lists = document.querySelectorAll('ul.members-list, ul.f-war-list, ul[class*="war-list"], ul[class*="members"]');
-            if (!lists.length && tries < 20) return;
+            var lists = document.querySelectorAll('ul.members-list, ul.f-war-list');
+            if (lists.length < 2 && tries < 20) return;
             clearInterval(timer);
+
             var box = function (el) {
                 var r = el.getBoundingClientRect();
                 return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
             };
-            var info = {
-                v: SCRIPT_VERSION, tries: tries, w: window.innerWidth,
-                path: String(location.pathname).slice(0, 40),
-                search: String(location.search).slice(0, 60),
-                hash: String(location.hash).slice(0, 40),
-                err: foFirstError, lists: [],
+            var brief = function (el) {
+                if (!el) return null;
+                var cs = getComputedStyle(el);
+                return (el.tagName + '.' + String(el.className || '').split(/\s+/).slice(0, 2).join('.')).slice(0, 44)
+                    + ' ' + cs.display + '/' + cs.position + '/f:' + cs.cssFloat + ' ' + box(el).join(',');
             };
-            Array.prototype.forEach.call(lists, function (ul, i) {
-                var p = ul.parentElement;
-                var cs = p ? getComputedStyle(p) : null;
-                var gp = p && p.parentElement;
-                info.lists.push({
-                    i: i,
-                    cls: String(ul.className || '').slice(0, 70),
-                    rows: ul.children.length,
-                    sorted: ul.classList.contains('fo-wp-sorted'),
-                    inlineDisplay: ul.style.display || '',
-                    rect: box(ul),
-                    parent: p ? {
-                        tag: p.tagName, cls: String(p.className || '').slice(0, 70),
-                        rect: box(p), display: cs.display, flexDir: cs.flexDirection,
-                        flt: cs.cssFloat, pos: cs.position, width: cs.width,
-                    } : null,
-                    gp: gp ? {
-                        tag: gp.tagName, cls: String(gp.className || '').slice(0, 70),
-                        display: getComputedStyle(gp).display,
-                        flexWrap: getComputedStyle(gp).flexWrap,
-                        rect: box(gp),
-                    } : null,
-                });
+            // Four levels up: the thing that decides where a column sits is
+            // rarely the element the column is in.
+            var chain = function (el) {
+                var out = [], n = el.parentElement;
+                for (var i = 0; i < 4 && n; i++) { out.push(brief(n)); n = n.parentElement; }
+                return out;
+            };
+
+            var arr = Array.prototype.slice.call(lists);
+            var enemy = null, mine = null;
+            arr.forEach(function (ul) {
+                var host = ul.closest ? ul.closest('.enemy-faction, .your-faction') : null;
+                if (host && /enemy/.test(host.className)) enemy = ul;
+                else if (host && /your/.test(host.className)) mine = ul;
             });
-            var bar = document.getElementById('fo-wp-filter');
-            info.bar = bar ? {
-                rect: box(bar),
-                parentCls: String(bar.parentElement && bar.parentElement.className || '').slice(0, 70),
-                parentTag: bar.parentElement && bar.parentElement.tagName,
-                prev: bar.previousElementSibling ? String(bar.previousElementSibling.className || bar.previousElementSibling.tagName).slice(0, 50) : null,
-                next: bar.nextElementSibling ? String(bar.nextElementSibling.className || bar.nextElementSibling.tagName).slice(0, 50) : null,
-            } : null;
+
+            var info = {
+                v: SCRIPT_VERSION, w: window.innerWidth, tries: tries,
+                path: String(location.pathname) + String(location.search) + String(location.hash),
+                err: foFirstError,
+                found: { enemy: !!enemy, mine: !!mine, lists: arr.length },
+            };
+
+            if (enemy && mine) {
+                // The experiment: undo each of FactionOps' two changes to this
+                // page, one at a time, and measure whether the columns snap
+                // back into line. Nothing else can distinguish "we broke it"
+                // from "Torn's new layout does this on its own".
+                var read = function () { return { enemy: box(enemy), mine: box(mine) }; };
+                info.asIs = read();
+                info.ulDisplay = getComputedStyle(enemy).display;
+
+                var hadSorted = enemy.classList.contains('fo-wp-sorted');
+                if (hadSorted) {
+                    enemy.classList.remove('fo-wp-sorted');
+                    void enemy.offsetHeight;
+                    info.withoutSort = read();
+                    enemy.classList.add('fo-wp-sorted');
+                }
+                info.hadSorted = hadSorted;
+
+                // The bar is put back exactly where it was, by remembering its
+                // parent AND its next sibling — appending it to the container
+                // would "restore" it to the bottom of a list it belongs above.
+                var bar = document.getElementById('fo-wp-filter');
+                var barParent = bar ? bar.parentElement : null;
+                var barNext = bar ? bar.nextElementSibling : null;
+                var putBarBack = function () {
+                    if (bar && barParent && !bar.parentElement) barParent.insertBefore(bar, barNext);
+                };
+                if (bar) {
+                    info.barRect = box(bar);
+                    info.barParent = brief(barParent);
+                    bar.remove();
+                    void document.body.offsetHeight;
+                    info.withoutBar = read();
+                    putBarBack();
+                }
+
+                // And with BOTH removed, which is the page as Torn ships it.
+                if (hadSorted || bar) {
+                    if (hadSorted) enemy.classList.remove('fo-wp-sorted');
+                    if (bar) bar.remove();
+                    void document.body.offsetHeight;
+                    info.clean = read();
+                    if (hadSorted) enemy.classList.add('fo-wp-sorted');
+                    putBarBack();
+                }
+
+                info.enemyChain = chain(enemy);
+                info.mineChain = chain(mine);
+            } else {
+                info.classes = arr.map(function (u) { return String(u.className || '').slice(0, 50); });
+            }
+
             try {
                 var body = JSON.stringify({ tag: 'fo-warlayout', data: info });
                 var url = CONFIG.SERVER_URL + '/api/debug/client-log';
