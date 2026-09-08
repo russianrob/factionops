@@ -458,15 +458,23 @@ app.post("/upload-ids", express.json({ limit: "1kb" }), (req, res) => {
 // to debug why a feature fires or doesn't on a user's browser without
 // needing them to paste console output.
 const _diagHits = new Map(); // ip → { count, firstAt }
+// Tags that report once per page load rather than once per row. They get
+// their own bucket, because the shared one is a per-IP cap and a chatty
+// neighbour empties it: a war-page probe went silent for three rounds of
+// debugging while a sibling script spent all 60 posts on 153 per-banner
+// diagnostics from the same browser.
+const _QUIET_TAGS = new Set(["fo-warlayout"]);
 app.post("/api/debug/client-log", express.json({ limit: "4kb" }), (req, res) => {
   const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
   const now = Date.now();
-  const bucket = _diagHits.get(ip) || { count: 0, firstAt: now };
+  const tag = String(req.body?.tag || 'client-diag').slice(0, 40);
+  const key = _QUIET_TAGS.has(tag) ? `quiet:${tag}:${ip}` : ip;
+  const cap = _QUIET_TAGS.has(tag) ? 10 : 60;
+  const bucket = _diagHits.get(key) || { count: 0, firstAt: now };
   if (now - bucket.firstAt > 60_000) { bucket.count = 0; bucket.firstAt = now; }
   bucket.count++;
-  _diagHits.set(ip, bucket);
-  if (bucket.count > 60) return res.status(429).end(); // 60/min per IP cap
-  const tag = String(req.body?.tag || 'client-diag').slice(0, 40);
+  _diagHits.set(key, bucket);
+  if (bucket.count > cap) return res.status(429).end();
   let payload;
   try { payload = JSON.stringify(req.body?.data || {}).slice(0, 1500); }
   catch (_) { payload = '<unserializable>'; }
