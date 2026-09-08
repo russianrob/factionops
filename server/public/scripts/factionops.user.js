@@ -9658,11 +9658,16 @@ body.wb-chain-active {
 
         // Somebody else already counting down? Then say nothing.
         //
-        // FFScouter puts a full 01:54:07 in this cell, and ours landed beside
-        // it as a second, redundant clock — which the column has no room for,
-        // so it clipped to "1h". Two timers for one fact, one of them cut in
-        // half. Ours is a fallback now: it appears when nothing else is
-        // counting, and stands aside when something is.
+        // War Stuff Enhanced puts a full 01:54:07 in this cell (FFScouter can
+        // too), and ours landed beside it as a second, redundant clock — which
+        // the column has no room for, so it clipped to "1h". Two timers for one
+        // fact, one of them cut in half.
+        //
+        // Ours is a fallback now: it appears when nothing else is counting and
+        // stands aside when something is. Deliberately NOT a check for which
+        // script is installed — what matters is whether this cell already has a
+        // clock in it, so it keeps working if TWSE is disabled on a page, or
+        // renames itself, or Torn ships its own timer tomorrow.
         //
         // The test is the colon. Our own format never has one (1h 54m, 45m 03s,
         // 12s), so this cannot mistake our chip for a foreign clock.
