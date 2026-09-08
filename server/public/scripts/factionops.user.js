@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.52
+// @version      5.2.53
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.52';
+    const SCRIPT_VERSION = '5.2.53';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9608,14 +9608,31 @@ body.wb-chain-active {
      *
      * NOT row.querySelector('[class*="status"]') -- userStatusWrap___ lives
      * inside the member cell and comes first in document order, so that
-     * selector returns the online dot instead. The status cell is a direct
-     * child of the li carrying a literal "status" class.
+     * selector returns the online dot instead. Only DIRECT children are
+     * considered, which is what makes the looser class test below safe.
+     *
+     * 5.2.53: the test used to demand the literal word "status", and Torn's
+     * newer war markup names its cells with CSS-module hashes -- the same
+     * page carries membersCont___jebcC and tabMenuCont___kXNgr. A cell called
+     * status___XYZ failed the test, warStatusCell returned null, and the
+     * hospital countdowns silently stopped appearing while the CALL button
+     * kept working, because that one matches [class*="points"] by prefix.
+     *
+     * Two ways in now: the class, hash suffix allowed; and failing that, the
+     * cell whose text IS a Torn status. The second is there because the first
+     * has now broken once on a markup change, and a countdown that quietly
+     * vanishes is worse than one found by reading the word Hospital.
      */
+    var WAR_STATUS_TEXT = /^\s*(okay|hospital|traveling|travelling|abroad|jail|federal|fallen)\b/i;
     function warStatusCell(row) {
         for (var i = 0; i < row.children.length; i++) {
             var c = row.children[i];
             var cls = String((c.getAttribute && c.getAttribute('class')) || '');
-            if (/(^|\s)status(\s|$)/.test(cls)) return c;
+            if (/(^|\s)status(___|-|\s|$)/i.test(cls)) return c;
+        }
+        for (var j = 0; j < row.children.length; j++) {
+            var d = row.children[j];
+            if (WAR_STATUS_TEXT.test(String(d.textContent || ''))) return d;
         }
         return null;
     }
