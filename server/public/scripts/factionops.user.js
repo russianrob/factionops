@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.47
+// @version      5.2.48
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.47';
+    const SCRIPT_VERSION = '5.2.48';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -15694,7 +15694,16 @@ body.wb-chain-active {
             watchNavigation();
         });
 
-    // ── War-page layout probe (5.2.47) ────────────────────────────────────
+    } else {
+        main();
+        watchNavigation();
+    }
+
+    // ── War-page layout probe (5.2.48) ────────────────────────────────────
+    // Runs after startup, NOT inside it: 5.2.47 put this call inside the
+    // `document.readyState === 'loading'` branch, which at @run-at document-idle
+    // never runs. It parsed, it shipped, and it reported nothing at all.
+    //
     // A desktop report that the two faction lists no longer line up, from a
     // photograph of a screen — which cannot say WHICH element moved. The
     // filter bar is inserted with list.parentElement.insertBefore(bar, list),
@@ -15767,10 +15776,5 @@ body.wb-chain-active {
         }, 1500);
     }
     try { foWarLayoutProbe(); } catch (e) {}
-
-    } else {
-        main();
-        watchNavigation();
-    }
 
 })();
