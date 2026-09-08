@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.51
+// @version      5.2.52
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.51';
+    const SCRIPT_VERSION = '5.2.52';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9424,6 +9424,23 @@ body.wb-chain-active {
         return document.getElementById('mainContainer') || document.body;
     }
 
+    /**
+     * The member container, or nothing — never the page.
+     *
+     * findMemberContainer falls back to #mainContainer and then to <body>,
+     * which is the right answer for "where do I look for rows" and the wrong
+     * one for "what should I watch for changes": a subtree observer on <body>
+     * fires for every write any script on the page makes, and this page has
+     * several writing constantly.
+     */
+    function findMemberContainerStrict() {
+        for (const sel of MEMBER_CONTAINER_SELECTORS) {
+            const el = document.querySelector(sel);
+            if (el) return el;
+        }
+        return null;
+    }
+
     /** Get the player name from a row. */
     function getPlayerNameFromRow(row) {
         // Try common selectors for player names
@@ -9662,11 +9679,23 @@ body.wb-chain-active {
             var chips = document.querySelectorAll('.fo-wp-hosp');
             if (!chips.length) return;
             for (var i = 0; i < chips.length; i++) {
-                var row = chips[i].closest('li');
-                if (!row) continue;
-                var tid;
-                try { tid = uidFromWarRow(row); } catch (_) { continue; }
-                if (tid) paintHospTimer(chips[i], tid);
+                var chip = chips[i];
+                // The id was resolved by walking up to the row and parsing it,
+                // every second, for every chip on screen — on PDA this never
+                // pauses, because PDA reports document.hidden as true even in
+                // the foreground and the tick has to ignore it. Ninety-eight
+                // closest() calls and ninety-eight parses a second, forever,
+                // is not a timer; it is a space heater. The id cannot change
+                // for a given chip, so it is resolved once and kept on it.
+                var tid = chip.dataset.foTid;
+                if (!tid) {
+                    var row = chip.closest('li');
+                    if (!row) continue;
+                    try { tid = uidFromWarRow(row); } catch (_) { continue; }
+                    if (!tid) continue;
+                    chip.dataset.foTid = tid;
+                }
+                paintHospTimer(chip, tid);
             }
         }, 1000);
     }
@@ -12559,15 +12588,43 @@ body.wb-chain-active {
         // Before auth state.calls is empty, so every row simply reads CALL;
         // the real call state arrives with the first poll and repaints.
         try { markCalledRows(); } catch (_) {}
+
         // The war list is a React table that repaints on its own, so a one-off
         // pass loses the marks the moment Torn re-renders a row. Attached here
         // rather than after auth so a list that paints late is still caught.
-        try {
-            const host = findMemberContainer() || document.body;
-            new MutationObserver(() => { try { markCalledRows(); } catch (_) {} })
-                .observe(host, { childList: true, subtree: true });
-        } catch (_) {}
-        setInterval(() => { try { markCalledRows(); } catch (_) {} }, 5000);
+        //
+        // 5.2.52: this observer used to call markCalledRows() directly, and
+        // markCalledRows WRITES INTO THE SUBTREE IT WATCHES — call buttons,
+        // hospital chips, an inline `order` on every row. Each write raised
+        // more mutations, which ran it again: a loop with nothing to stop it,
+        // across ninety-eight rows, which is what was heating Android phones.
+        //
+        // Two guards now. The observer is disconnected for the duration of the
+        // pass, so our own writes are never recorded; and the callback is
+        // debounced, so a React repaint that arrives as fifty mutations costs
+        // one pass instead of fifty.
+        var moHost = findMemberContainerStrict();
+        var MO_OPTS = { childList: true, subtree: true };
+        var moTimer = null, mo = null;
+        var markSafely = function () {
+            if (mo) mo.disconnect();
+            try { markCalledRows(); } catch (_) {}
+            if (mo && moHost && document.contains(moHost)) mo.observe(moHost, MO_OPTS);
+        };
+        if (moHost) {
+            try {
+                mo = new MutationObserver(function () {
+                    if (moTimer) return;
+                    moTimer = setTimeout(function () { moTimer = null; markSafely(); }, 250);
+                });
+                mo.observe(moHost, MO_OPTS);
+            } catch (_) {}
+        }
+        // Without a specific container there is no observer at all. The old
+        // fallback watched document.body with subtree:true — every change any
+        // script made anywhere on the page triggered a full 98-row repaint.
+        // The five-second sweep below is the net for a list that appears late.
+        setInterval(function () { markSafely(); }, 5000);
         startHospTick();
 
         try {
@@ -15699,19 +15756,6 @@ body.wb-chain-active {
     // SECTION 26: STARTUP
     // =========================================================================
 
-    // The 5.2.48 probe never reported from the desktop even though the client
-    // authenticated on it — which is what happens when main() throws before the
-    // call is reached. So the probe now starts FIRST, and carries the first
-    // uncaught error with it: if Torn's new war layout is breaking startup, that
-    // message is the actual bug and the alignment is only its shadow.
-    var foFirstError = null;
-    window.addEventListener('error', function (e) {
-        if (foFirstError) return;
-        foFirstError = String((e && e.message) || 'error').slice(0, 200)
-            + ' @ ' + String((e && e.filename) || '').slice(-40) + ':' + (e && e.lineno);
-    });
-    try { foWarLayoutProbe(); } catch (e) {}
-
     // Wait for DOM to be ready (we're @run-at document-idle, but double-check)
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
@@ -15724,126 +15768,4 @@ body.wb-chain-active {
         watchNavigation();
     }
 
-    // ── War-page layout A/B probe (5.2.50) ────────────────────────────────────
-    // Runs after startup, NOT inside it: 5.2.47 put this call inside the
-    // `document.readyState === 'loading'` branch, which at @run-at document-idle
-    // never runs. It parsed, it shipped, and it reported nothing at all.
-    //
-    // A desktop report that the two faction lists no longer line up, from a
-    // photograph of a screen — which cannot say WHICH element moved. The
-    // filter bar is inserted with list.parentElement.insertBefore(bar, list),
-    // so everything turns on whether that parent is the enemy column or a
-    // wrapper holding both factions; in the second case the bar becomes a
-    // sibling of both lists and shoves one of them.
-    //
-    // Reports geometry once, and reports it even when it finds nothing — the
-    // first war-row probe this session fired before React had painted and came
-    // back empty, which looked like "no problem here".
-    function foWarLayoutProbe() {
-        if (!/factions\.php|war\.php/i.test(location.pathname)) return;
-        var tries = 0;
-        var timer = setInterval(function () {
-            tries++;
-            var lists = document.querySelectorAll('ul.members-list, ul.f-war-list');
-            if (lists.length < 2 && tries < 20) return;
-            clearInterval(timer);
-
-            var box = function (el) {
-                var r = el.getBoundingClientRect();
-                return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
-            };
-            var brief = function (el) {
-                if (!el) return null;
-                var cs = getComputedStyle(el);
-                return (el.tagName + '.' + String(el.className || '').split(/\s+/).slice(0, 2).join('.')).slice(0, 44)
-                    + ' ' + cs.display + '/' + cs.position + '/f:' + cs.cssFloat + ' ' + box(el).join(',');
-            };
-            // Four levels up: the thing that decides where a column sits is
-            // rarely the element the column is in.
-            var chain = function (el) {
-                var out = [], n = el.parentElement;
-                for (var i = 0; i < 4 && n; i++) { out.push(brief(n)); n = n.parentElement; }
-                return out;
-            };
-
-            var arr = Array.prototype.slice.call(lists);
-            var enemy = null, mine = null;
-            arr.forEach(function (ul) {
-                var host = ul.closest ? ul.closest('.enemy-faction, .your-faction') : null;
-                if (host && /enemy/.test(host.className)) enemy = ul;
-                else if (host && /your/.test(host.className)) mine = ul;
-            });
-
-            var info = {
-                v: SCRIPT_VERSION, w: window.innerWidth, tries: tries,
-                path: String(location.pathname) + String(location.search) + String(location.hash),
-                err: foFirstError,
-                found: { enemy: !!enemy, mine: !!mine, lists: arr.length },
-            };
-
-            if (enemy && mine) {
-                // The experiment: undo each of FactionOps' two changes to this
-                // page, one at a time, and measure whether the columns snap
-                // back into line. Nothing else can distinguish "we broke it"
-                // from "Torn's new layout does this on its own".
-                var read = function () { return { enemy: box(enemy), mine: box(mine) }; };
-                info.asIs = read();
-                info.ulDisplay = getComputedStyle(enemy).display;
-
-                var hadSorted = enemy.classList.contains('fo-wp-sorted');
-                if (hadSorted) {
-                    enemy.classList.remove('fo-wp-sorted');
-                    void enemy.offsetHeight;
-                    info.withoutSort = read();
-                    enemy.classList.add('fo-wp-sorted');
-                }
-                info.hadSorted = hadSorted;
-
-                // The bar is put back exactly where it was, by remembering its
-                // parent AND its next sibling — appending it to the container
-                // would "restore" it to the bottom of a list it belongs above.
-                var bar = document.getElementById('fo-wp-filter');
-                var barParent = bar ? bar.parentElement : null;
-                var barNext = bar ? bar.nextElementSibling : null;
-                var putBarBack = function () {
-                    if (bar && barParent && !bar.parentElement) barParent.insertBefore(bar, barNext);
-                };
-                if (bar) {
-                    info.barRect = box(bar);
-                    info.barParent = brief(barParent);
-                    bar.remove();
-                    void document.body.offsetHeight;
-                    info.withoutBar = read();
-                    putBarBack();
-                }
-
-                // And with BOTH removed, which is the page as Torn ships it.
-                if (hadSorted || bar) {
-                    if (hadSorted) enemy.classList.remove('fo-wp-sorted');
-                    if (bar) bar.remove();
-                    void document.body.offsetHeight;
-                    info.clean = read();
-                    if (hadSorted) enemy.classList.add('fo-wp-sorted');
-                    putBarBack();
-                }
-
-                info.enemyChain = chain(enemy);
-                info.mineChain = chain(mine);
-            } else {
-                info.classes = arr.map(function (u) { return String(u.className || '').slice(0, 50); });
-            }
-
-            try {
-                var body = JSON.stringify({ tag: 'fo-warlayout', data: info });
-                var url = CONFIG.SERVER_URL + '/api/debug/client-log';
-                if (typeof GM_xmlhttpRequest === 'function') {
-                    GM_xmlhttpRequest({ method: 'POST', url: url, data: body,
-                        headers: { 'Content-Type': 'application/json' },
-                        onload: function () {}, onerror: function () {} });
-                } else {
-                    fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body }).catch(function () {});
-                }
-            } catch (e) { /* a probe must never break the page it measures */ }
-        }, 1500);
-    }
 })();
