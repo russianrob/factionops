@@ -20,7 +20,7 @@ function grab(n) {
 // production and lets any mutation of them survive.
 const BOOKS = [
   /var STAT_BOOKS = \{[\s\S]*?\n  \};/,
-  /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/,
+  /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/, /var SPECIALIST_RATIO = [^;]+;/, /var SPECIALIST_GYMS = \[[\s\S]*?\];/,
 ].map(re => { const m = re.exec(src); assert.ok(m, "missing " + re); return m[0]; }).join("\n");
 const DAY = 86400000, NOW = 1e12;
 const call = (fn, ...a) => new Function("var R;" + BOOKS + `
@@ -96,7 +96,7 @@ function trainsFor(books) {
                   perks: {}, goalOrder: [], goalStep: 0, shares: null };
     function trainsTo(k, from, to) { return to > from ? { trains: Math.ceil((to - from) / 1e6), end: to } : null; }
     ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")}
-    ${grab("orderedGoalKeys")} ${grab("goalLevels")} ${grab("shareCap")} ${grab("goalSegments")}
+    ${grab("orderedGoalKeys")} ${grab("goalLevels")} ${grab("shareCap")} ${grab("specialistGym")} ${grab("lockCap")} ${grab("goalSegments")}
     R = goalSegments(1).reduce(function (n, x) { return n + x.trains; }, 0);
   ` + "return R;")();
 }

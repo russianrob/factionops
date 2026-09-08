@@ -24,7 +24,7 @@ const run = (hist, ledger, opts = {}) => new Function("var RESULT;" + `
   var GOAL_STEPS = [0, 5e7, 1e8, 2.5e8, 5e8];
   var GOAL_MAX_TRAINS = 4e6;
   ${consts(["CAL_WINDOW","CAL_MIN_DAYS","CAL_MODEL_LO","CAL_MODEL_HI","CAL_USAGE_LO","CAL_USAGE_HI","MIXED_SLACK"])}
-      ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
+      ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/, /var SPECIALIST_RATIO = [^;]+;/, /var SPECIALIST_GYMS = \[[\s\S]*?\];/].map(re => re.exec(src)[0]).join("\n")}
     var state = { books: {}, goalOrder: [], goalStep: 0,
     hist: ${JSON.stringify(hist)}, ledger: ${JSON.stringify(ledger)},
     trainLog: ${JSON.stringify(opts.trainLog || null)},
@@ -37,7 +37,7 @@ const run = (hist, ledger, opts = {}) => new Function("var RESULT;" + `
   function dailyEnergy(){ return { total: ${opts.plan === undefined ? 100 : opts.plan} }; }
   function gainOne(){ return 1000; }
   ${grab("dayKey")} ${grab("calClamp")} ${grab("predictDay")} ${grab("mixedDayEnergy")} ${grab("calibration")}
-  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")} ${grab("shareCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")}
+  ${grab("gymFor")} ${grab("dotsFor")} ${grab("trainsTo")} ${grab("trainsPerDay")} ${grab("goalLevels")} ${grab("orderedGoalKeys")} ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")} ${grab("shareCap")} ${grab("specialistGym")} ${grab("lockCap")} ${grab("goalSegments")} ${grab("scheduleDays")} ${grab("goalPlan")}
   RESULT = { cal: calibration(), plan: goalPlan() };` + "; return RESULT;")();
 
 // A clean run of single-stat days: str climbs by `gain` each day on `energy`.

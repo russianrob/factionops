@@ -17,6 +17,10 @@ const FNS = ["gymFor","dotsFor","trainsTo","trainsPerDay","goalLevels","orderedG
              // survive. With no book ticked they contribute nothing, which is
              // what these schedules are about.
              "bookAward","bookPending","pendingBookAward",
+             // goalSegments consults the specialist-gym lock, so its helpers
+             // belong here too — grabbed, never stubbed, for the same reason
+             // as the book helpers above.
+             "specialistGym","lockCap",
              "goalSegments","goalPlan","scheduleDays","hasGoals","applyGoalFocus"];
 
 // `gain` is per train; a linear one keeps the arithmetic checkable by hand.
@@ -30,7 +34,7 @@ function run(opts) {
     var GYMS = [{ Gym: "T", Energy: ${gymEnergy}, Str: 1, Def: 1, Spe: 1, Dex: 1 }];
     ${konst("GOAL_STEPS")} ${konst("GOAL_MAX_TRAINS")}
     ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/,
-       /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/]
+       /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/, /var SPECIALIST_RATIO = [^;]+;/, /var SPECIALIST_GYMS = \[[\s\S]*?\];/]
        .map(re => re.exec(src)[0]).join("\n")}
     var goalCache = { key: "", val: null };
     var state = { books: {},

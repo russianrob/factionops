@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.81
+// @version      0.9.82
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,28 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.82 - Lock a specialist gym and the plan stops walking you out of it.
+ *
+ *         Six gyms are conditional: Balboas wants Def+Dex at 1.25x Str+Spd,
+ *         and the four single-stat gyms want their own stat at 1.25x the
+ *         second-highest. Access is withdrawn the moment the ratio stops
+ *         holding, and nothing here knew that -- GYM_DATA carried the gains
+ *         and the planner chased goals, so a plan could schedule its way out
+ *         of range and then say "train Defense tomorrow" at a gym that had
+ *         shut. Which is exactly what happened.
+ *
+ *         Plan tab, under Playstyle: pick a gym and it becomes a hard cap
+ *         inside goalSegments, recomputed on every segment because the ceiling
+ *         MOVES -- training the gym's own stat raises it and hands the others
+ *         their room back. A goal past the ceiling reads as held rather than
+ *         as coming. With no lock set the card still lists which of the six
+ *         are open, because losing one quietly is the whole failure.
+ *
+ *         A warning was the alternative and was rejected: the warning and the
+ *         damage arrive together.
+ *
+ *         (The entries between 0.9.73 and this one were never written up.)
+ *
 * 0.9.73 - The board week runs Sunday to Saturday.
  *
  *         Asked for directly. It ran Monday to Sunday because epoch day 0 is a
@@ -2009,7 +2031,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.81";
+  var GC_VERSION = "0.9.82";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -2057,6 +2079,98 @@
     { Gym: "Elites", Energy: 50, Str: 0, Spe: 0, Def: 0, Dex: 8 },
     { Gym: "Sports Science Lab", Energy: 25, Str: 9, Spe: 9, Def: 9, Dex: 9 },
   ];
+
+  // ── Specialist gyms close behind you ──────────────────────────────────
+  //
+  // Six of the gyms are CONDITIONAL. Access is granted by a stat ratio and
+  // withdrawn the moment that ratio stops holding — there is no purchase, no
+  // permanence, and no warning. Balboas wants Def+Dex at 1.25x Str+Spd; the
+  // four single-stat gyms want their own stat at 1.25x the second-highest.
+  //
+  // Nothing here knew that. GYM_DATA carried the gains and the planner
+  // scheduled toward goals, so a plan could — and did — train its way out of
+  // range and then cheerfully say "train Defense tomorrow" at a gym that had
+  // shut. That is what these three functions are for: the status to show, and
+  // the cap that stops goalSegments walking past the door.
+  //
+  // The Sports Science Lab is deliberately absent. Its gate is a lifetime
+  // Xanax + Ecstasy count and losing it is permanent, so a training plan
+  // cannot protect it and should not pretend to.
+  var SPECIALIST_RATIO = 1.25;
+  var SPECIALIST_GYMS = [
+    { name: "Balboas Gym",       pair: ["def", "dex"], vs: ["str", "spe"] },
+    { name: "Frontline Fitness", pair: ["str", "spe"], vs: ["def", "dex"] },
+    { name: "Gym 3000",          solo: "str" },
+    { name: "Mr. Isoyamas",      solo: "def" },
+    { name: "Total Rebound",     solo: "spe" },
+    { name: "Elites",            solo: "dex" },
+  ];
+
+  function specialistGym(name) {
+    if (!name) return null;
+    for (var i = 0; i < SPECIALIST_GYMS.length; i++) {
+      if (SPECIALIST_GYMS[i].name === name) return SPECIALIST_GYMS[i];
+    }
+    return null;
+  }
+
+  /**
+   * Where you stand with one conditional gym.
+   *
+   * `headroom` is the number worth showing while it is open: how much the
+   * stats you are NOT protecting may still grow before the door shuts. `short`
+   * is its mirror once it has — how far the gating side has to climb to get
+   * back in.
+   */
+  function specialistStatus(stats, name) {
+    var g = specialistGym(name);
+    if (!g) return null;
+    var st = stats || {};
+    var n = function (k) { return Number(st[k]) || 0; };
+    var have, against;
+    if (g.solo) {
+      have = n(g.solo);
+      against = 0;
+      ["str", "spe", "def", "dex"].forEach(function (k) {
+        if (k !== g.solo && n(k) > against) against = n(k);
+      });
+    } else {
+      have = n(g.pair[0]) + n(g.pair[1]);
+      against = n(g.vs[0]) + n(g.vs[1]);
+    }
+    var need = SPECIALIST_RATIO * against;
+    return {
+      name: g.name,
+      open: have >= need,
+      have: have,
+      against: against,
+      need: need,
+      headroom: Math.max(0, have / SPECIALIST_RATIO - against),
+      short: Math.max(0, need - have),
+    };
+  }
+
+  /**
+   * The highest this stat may reach without closing the gym you are holding.
+   *
+   * Infinity where the lock has nothing to say: no lock, a gym with no ratio,
+   * or the gym's own stat — training that can only help. Everything else gets
+   * a real ceiling, and goalSegments takes it as one more cap alongside the
+   * share cap, so a goal simply stops there instead of walking through it.
+   */
+  function lockCap(stats, name, k) {
+    var g = specialistGym(name);
+    if (!g) return Infinity;
+    var st = stats || {};
+    var n = function (x) { return Number(st[x]) || 0; };
+    if (g.solo) {
+      if (k === g.solo) return Infinity;
+      return Math.max(0, n(g.solo) / SPECIALIST_RATIO);
+    }
+    if (g.pair.indexOf(k) !== -1) return Infinity;
+    var other = g.vs[0] === k ? g.vs[1] : g.vs[0];
+    return Math.max(0, (n(g.pair[0]) + n(g.pair[1])) / SPECIALIST_RATIO - n(other));
+  }
 
   // Energy trained WHILE AT a gym before the next one unlocks. Index i is the
   // segment that ends by unlocking Torn gym i+2, so the segment leading to gym
@@ -4184,16 +4298,33 @@
     var maxShare = 0;
     if (shares) HIST_KEYS.forEach(function (k) { if (shares[k] > maxShare) maxShare = shares[k]; });
     var segs = [], at = 0;
+    var lock = state.gymLock || "";
+    // The lock reads ALL FOUR stats, and `cur` above only carries the ones with
+    // goals — so handing it straight to lockCap made Def+Dex read as zero, every
+    // ceiling collapse to zero, and the whole schedule vanish. This mirrors the
+    // real stats and takes the simulated progress on top.
+    var simStats = { str: 0, def: 0, spe: 0, dex: 0 };
+    HIST_KEYS.forEach(function (k) { simStats[k] = (state.stats && state.stats[k]) || 0; });
+    keys.forEach(function (k) { simStats[k] = cur[k]; });
     levels.forEach(function (L) {
       keys.forEach(function (k) {
         var cap = shareCap(k, L, targets[k], shares, maxShare);
+        // The lock is a hard block, and it belongs here rather than in a
+        // warning: the plan is what the owner follows, and a plan that walks
+        // out of a specialist gym has already done the damage by the time
+        // anyone reads a caution. Recomputed against `cur` on every segment
+        // because the ceiling MOVES -- training the gym's own stat raises it,
+        // which is how the schedule earns room for the others later.
+        var lc = lockCap(simStats, lock, k);
+        if (lc < cap) cap = lc;
         if (cur[k] >= cap) return;
         var r = trainsTo(k, cur[k], cap, mf);
         if (!r || !r.trains) return;
         segs.push({ k: k, from: cur[k], to: r.end, cap: cap, target: targets[k],
-                    trains: r.trains, at: at });
+                    trains: r.trains, at: at, lockCap: lc });
         at += r.trains;
         cur[k] = r.end;
+        simStats[k] = r.end;
       });
     });
     return segs;
@@ -4269,6 +4400,11 @@
     var sh = state.shares || {};
     var bkk = state.books || {};
     var key = [e, state.gymName, state.happyMax, st.str, st.def, st.spe, st.dex,
+               // The lock changes every cap in the schedule, so leaving it out
+               // of the key would serve a pre-lock plan forever -- the same
+               // omission that once showed "Strength next" while the verdict
+               // trained Speed.
+               state.gymLock || "",
                g.str, g.def, g.spe, g.dex, state.goalStep,
                (state.goalOrder || []).join(","),
                pk.str, pk.def, pk.spe, pk.dex,
@@ -4308,12 +4444,20 @@
         r.days = toDays(r.trains);
         r.startsIn = toDays(r.startTrains);
         r.doneIn = toDays(r.endTrains);
+        r.lockCap = lockCap(st, state.gymLock || "", k);
+        r.heldByLock = r.lockCap < target;
         rows.push(r);
       } else {
         // Either already reached, or no dots for it at this gym.
+        var lcap = lockCap(st, state.gymLock || "", k);
         rows.push({ k: k, target: target, cur: cur, done: cur >= target,
                     trains: 0, days: cur >= target ? 0 : Infinity,
-                    startsIn: 0, doneIn: cur >= target ? 0 : Infinity });
+                    startsIn: 0, doneIn: cur >= target ? 0 : Infinity,
+                    lockCap: lcap,
+                    // Not "unreachable" — held. The gating stat can grow and
+                    // hand this one its room back, which is a different thing
+                    // from a goal that is simply too far away.
+                    heldByLock: cur < target && lcap <= cur });
       }
     });
     // Finished goals sink to the bottom; the rest keep the order they are
@@ -10429,6 +10573,7 @@
       pickBtn("mode", "xan", "Xan + gym", state.mode !== "jump") +
       pickBtn("mode", "jump", "Happy jump", state.mode === "jump") +
       '</div><p class="muted" style="margin:8px 0 0">Xan + gym is your default. Happy jump uses every Candy-type item in inventory — chocolates, lollipops, bags of sweets, cupcakes, eggs, and the rest — plus e-dvds on the :00/:15/:30/:45 tick, ecstasy last.</p></div>' +
+      gymLockHtml() +
       sharesHtml() +
       goalsHtml() +
       steadfastHtml() +
@@ -11029,8 +11174,70 @@
   // Goal fields commit on change (blur or enter) rather than on every keystroke,
   // so a re-render cannot land mid-word. keyBoxBusy() holds the render back
   // while one is focused.
+  /**
+   * The specialist-gym lock.
+   *
+   * Six gyms are conditional: they open on a stat ratio and shut again the
+   * moment it stops holding. Nothing in this script knew that, so a plan could
+   * schedule its way out of range and then recommend a stat whose gym had
+   * closed — which is exactly how the owner lost Balboas.
+   *
+   * Locking one is a HARD block, not a warning: goalSegments takes the ceiling
+   * as a cap, so a goal stops at the door instead of walking through it. A
+   * warning would arrive at the same moment as the damage.
+   */
+  function gymLockHtml() {
+    var lock = state.gymLock || "";
+    var opts = ['<option value="">No lock — train whatever the goals say</option>'];
+    SPECIALIST_GYMS.forEach(function (g) {
+      opts.push('<option value="' + esc(g.name) + '"' + (lock === g.name ? " selected" : "") +
+                ">" + esc(g.name) + "</option>");
+    });
+    var body = "";
+    var st = state.stats || {};
+    var haveStats = HIST_KEYS.some(function (k) { return (st[k] || 0) > 0; });
+    if (!haveStats) {
+      body = '<p class="muted" style="margin:8px 0 0">Stats have not been read yet, so nothing can be checked.</p>';
+    } else if (lock) {
+      var s2 = specialistStatus(st, lock);
+      if (s2 && s2.open) {
+        body = '<p class="ok" style="margin:8px 0 0">Open. The stats it does not train can still grow <b>' +
+               fmt(Math.round(s2.headroom)) + '</b> between them before it shuts — and the plan will not spend that.</p>';
+      } else if (s2) {
+        body = '<p class="warn" style="margin:8px 0 0">Shut. It needs <b>' + fmt(Math.round(s2.short)) +
+               '</b> more on the gating side to reopen. Goals that would push further out are on hold.</p>';
+      }
+    } else {
+      // Without a lock, still say which doors are open — losing one quietly is
+      // the whole failure this card exists to prevent.
+      var open = [], shut = [];
+      SPECIALIST_GYMS.forEach(function (g) {
+        var s3 = specialistStatus(st, g.name);
+        if (!s3) return;
+        (s3.open ? open : shut).push(s3);
+      });
+      body = '<p class="muted" style="margin:8px 0 0">' +
+             (open.length
+               ? "Open now: <b>" + open.map(function (o) { return esc(o.name); }).join("</b>, <b>") + "</b>. "
+               : "None of the six are open on your current stats. ") +
+             (open.length ? "Lock one and no goal will train you out of it." : "") +
+             "</p>";
+    }
+    return '<div class="gc-card"><h3>Specialist gym</h3>' +
+           '<select id="gymLock" data-gymlock style="width:100%">' + opts.join("") + "</select>" +
+           body + "</div>";
+  }
+
   function onGoalChange(e) {
     var el = e && e.target;
+    if (el && el.dataset && el.dataset.gymlock !== undefined) {
+      state.gymLock = String(el.value || "");
+      storeSet("gymLock", state.gymLock);
+      // Every cap in the schedule changes, so the cached plan has to go.
+      resetPlanCaches();
+      renderPanel();
+      return;
+    }
     if (el && el.dataset && el.dataset.mcscost) {
       var m = parseGoal(el.value);
       if (isNaN(m)) {
@@ -11703,6 +11910,11 @@
       state.goalOrder = state.goalOrder.filter(function (k) { return HIST_KEYS.indexOf(k) !== -1; });
       var stepSaved = Number(storeGet("goalStep", GOAL_STEP_DEFAULT));
       state.goalStep = GOAL_STEPS.indexOf(stepSaved) !== -1 ? stepSaved : GOAL_STEP_DEFAULT;
+      // Validated against the list rather than trusted: a stored name that is
+      // not one of the six would be a lock nothing can satisfy, and every goal
+      // would sit on hold with no way to see why.
+      var lockSaved = String(storeGet("gymLock", "") || "");
+      state.gymLock = specialistGym(lockSaved) ? lockSaved : "";
       state.prices = storeGet("prices", {}) || {};
       if (typeof state.prices === "string") { try { state.prices = JSON.parse(state.prices); } catch (_) { state.prices = {}; } }
       if (!state.prices || typeof state.prices !== "object") state.prices = {};

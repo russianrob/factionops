@@ -35,7 +35,7 @@ const t=async(n,f)=>{try{await f();pass++;console.log("ok   "+n);}catch(e){fail+
 
 await t("Plan is a tab you can see, not an icon you have to know about", async () => {
   await load({ str:1e9, def:1e9, spe:1e9 });
-  assert.deepStrictEqual(await tabLabels(), ["Now","Plan","Stock","Trend","Board"]);
+  assert.deepStrictEqual(await tabLabels(), ["Now","Plan","Inventory","Trend","Board"]);
 });
 
 await t("every tab sits on one row at phone width, unclipped", async () => {

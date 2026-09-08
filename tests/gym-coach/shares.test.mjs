@@ -172,7 +172,7 @@ t("no shares set means no opinion", () => {
 function order(shares, stats, goals, perks) {
   return new Function("var R;" + HIST + `
     ${grab("shareState")}
-        ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
+        ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/, /var SPECIALIST_RATIO = [^;]+;/, /var SPECIALIST_GYMS = \[[\s\S]*?\];/].map(re => re.exec(src)[0]).join("\n")}
     var state = { books: {}, shares: ${JSON.stringify(shares)}, stats: ${JSON.stringify(stats)},
                   goals: ${JSON.stringify(goals)}, perks: ${JSON.stringify(perks)}, goalOrder: [] };
     function trainsTo(k, from, to) { return { trains: Math.max(0, to - from) }; }
@@ -222,7 +222,7 @@ function segs(shares, stats, goals, step) {
                   goalStep: ${step} };
     function trainsTo(k, from, to) { return to > from ? { trains: Math.ceil((to - from) / 1e6), end: to } : null; }
     ${grab("orderedGoalKeys")} ${grab("goalLevels")} ${[/var STAT_BOOKS = \{[\s\S]*?\n  \};/, /var BOOK_PCT = [^;]+;/, /var BOOK_CAP = [^;]+;/, /var BOOK_DAYS = [^;]+;/].map(re => re.exec(src)[0]).join("\n")}
-    ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")} ${grab("shareCap")} ${grab("goalSegments")}
+    ${grab("bookAward")} ${grab("bookPending")} ${grab("pendingBookAward")} ${grab("shareCap")} ${grab("specialistGym")} ${grab("lockCap")} ${grab("goalSegments")}
     R = goalSegments(1).slice(0, 8).map(function (x) { return x.k; });
   ` + "return R;")();
 }
