@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.46
+// @version      5.2.47
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.46';
+    const SCRIPT_VERSION = '5.2.47';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -15693,6 +15693,81 @@ body.wb-chain-active {
             main();
             watchNavigation();
         });
+
+    // ── War-page layout probe (5.2.47) ────────────────────────────────────
+    // A desktop report that the two faction lists no longer line up, from a
+    // photograph of a screen — which cannot say WHICH element moved. The
+    // filter bar is inserted with list.parentElement.insertBefore(bar, list),
+    // so everything turns on whether that parent is the enemy column or a
+    // wrapper holding both factions; in the second case the bar becomes a
+    // sibling of both lists and shoves one of them.
+    //
+    // Reports geometry once, and reports it even when it finds nothing — the
+    // first war-row probe this session fired before React had painted and came
+    // back empty, which looked like "no problem here".
+    function foWarLayoutProbe() {
+        if (!/factions\.php/i.test(location.pathname)) return;
+        var tries = 0;
+        var timer = setInterval(function () {
+            tries++;
+            var lists = document.querySelectorAll('ul.members-list, ul.f-war-list');
+            if (!lists.length && tries < 20) return;
+            clearInterval(timer);
+            var box = function (el) {
+                var r = el.getBoundingClientRect();
+                return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+            };
+            var info = {
+                v: SCRIPT_VERSION, tries: tries, w: window.innerWidth,
+                hash: String(location.hash).slice(0, 40), lists: [],
+            };
+            Array.prototype.forEach.call(lists, function (ul, i) {
+                var p = ul.parentElement;
+                var cs = p ? getComputedStyle(p) : null;
+                var gp = p && p.parentElement;
+                info.lists.push({
+                    i: i,
+                    cls: String(ul.className || '').slice(0, 70),
+                    rows: ul.children.length,
+                    sorted: ul.classList.contains('fo-wp-sorted'),
+                    inlineDisplay: ul.style.display || '',
+                    rect: box(ul),
+                    parent: p ? {
+                        tag: p.tagName, cls: String(p.className || '').slice(0, 70),
+                        rect: box(p), display: cs.display, flexDir: cs.flexDirection,
+                        flt: cs.cssFloat, pos: cs.position, width: cs.width,
+                    } : null,
+                    gp: gp ? {
+                        tag: gp.tagName, cls: String(gp.className || '').slice(0, 70),
+                        display: getComputedStyle(gp).display,
+                        flexWrap: getComputedStyle(gp).flexWrap,
+                        rect: box(gp),
+                    } : null,
+                });
+            });
+            var bar = document.getElementById('fo-wp-filter');
+            info.bar = bar ? {
+                rect: box(bar),
+                parentCls: String(bar.parentElement && bar.parentElement.className || '').slice(0, 70),
+                parentTag: bar.parentElement && bar.parentElement.tagName,
+                prev: bar.previousElementSibling ? String(bar.previousElementSibling.className || bar.previousElementSibling.tagName).slice(0, 50) : null,
+                next: bar.nextElementSibling ? String(bar.nextElementSibling.className || bar.nextElementSibling.tagName).slice(0, 50) : null,
+            } : null;
+            try {
+                var body = JSON.stringify({ tag: 'fo-warlayout', data: info });
+                var url = CONFIG.SERVER_URL + '/api/debug/client-log';
+                if (typeof GM_xmlhttpRequest === 'function') {
+                    GM_xmlhttpRequest({ method: 'POST', url: url, data: body,
+                        headers: { 'Content-Type': 'application/json' },
+                        onload: function () {}, onerror: function () {} });
+                } else {
+                    fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body }).catch(function () {});
+                }
+            } catch (e) { /* a probe must never break the page it measures */ }
+        }, 1500);
+    }
+    try { foWarLayoutProbe(); } catch (e) {}
+
     } else {
         main();
         watchNavigation();
