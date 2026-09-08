@@ -12,8 +12,8 @@
 // `attacks.total` is the number this module keeps.
 //
 // A finished chain never changes, so each report is fetched once and cached
-// forever. The 90-day backfill was 79 calls; a refresh after that is only the
-// chains that have happened since, which is a handful.
+// forever, and only chains with no cached report are ever requested — so the
+// window can be a year without costing a year of calls every six hours.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +22,10 @@ import * as store from "./store.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(__dirname, "data", "chain-hits");
 const RETAIN_DAYS = 400;
-const WINDOW_DAYS = 90;
+// A year of chains, because the owner asked for a year of faction data and the
+// store already keeps 400 days. Only chains without a cached report are ever
+// fetched, so widening this costs one backfill and nothing afterwards.
+const WINDOW_DAYS = 365;
 const REFRESH_MS = 6 * 60 * 60 * 1000;
 // Torn allows 100 calls a minute across everything this server does, so the
 // backfill walks rather than sprints.
@@ -142,6 +145,10 @@ export async function refresh(factionId = FACTION, { windowDays = WINDOW_DAYS, l
         byPlayer: rep.byPlayer,
       };
       fetched++;
+      // Save as we go. A year's backfill is three hundred requests at a third
+      // of a second each — nearly two minutes during which a restart used to
+      // throw away every one of them, because the write was at the end.
+      if (fetched % 25 === 0) save(factionId, data);
     } catch (err) {
       // One unreadable chain should not abandon the other 78.
       console.error(`[chain-hits] report ${c.id} failed: ${err.message}`);
