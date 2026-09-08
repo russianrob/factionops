@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Elimination Revives
 // @namespace    aaronpmc.elim.revives
-// @version      1.0.0
-// @description  Shows which Elimination team members have revives on (API revivable flag), badged per row.
+// @version      1.0.1
+// @description  Shows which Elimination team members have revives on (API revivable flag), badged per row, with a copy-paste list.
 // @author       AaronPMC
 // @match        https://www.torn.com/page.php?sid=elimination*
 // @match        https://torn.com/page.php?sid=elimination*
@@ -15,20 +15,26 @@
     'use strict';
 
     // --- config ---
-    const REQ_SPACING_MS = 750;          // ~80 calls/min ceiling; cap is 100/min
+    const REQ_SPACING_MS = 750;                // ~80 calls/min ceiling; cap is 100/min
     const CACHE_TTL_MS   = 3 * 60 * 60 * 1000; // 3h — revive setting rarely changes
-    const RESCAN_MS      = 2000;         // re-apply badges React may have wiped
+    const RESCAN_MS      = 2000;               // re-apply badges React may have wiped
     const OWN_KEY_STORE  = 'elim_revive_apikey';
 
-    // uid -> { revivable: 0|1|null, at: ts }
+    // uid -> { revivable: 0|1|null, name: string|null, at: ts }
     const results = new Map();
-    const queued  = new Set();   // uids awaiting fetch
-    const queue   = [];          // uids in fetch order
+    // uid -> display name, scoped to the CURRENT team (reset on team switch).
+    const roster  = new Map();
+    const queued  = new Set();
+    const queue   = [];
     let draining  = false;
 
+    function currentTeamId() {
+        const m = String(location.hash || '').match(/team\/(\d+)/);
+        return m ? m[1] : '';
+    }
+    let teamId = currentTeamId();
+
     // ---- API key resolution --------------------------------------------------
-    // GM storage is per-script, so FactionOps' key may not be readable here.
-    // Try our own store, then FactionOps' GM key, then its localStorage mirror.
     function resolveKey() {
         try { const k = GM_getValue(OWN_KEY_STORE, ''); if (k) return String(k); } catch (_) {}
         try { const k = GM_getValue('factionops_apikey', ''); if (k) return String(k); } catch (_) {}
@@ -38,15 +44,11 @@
         } catch (_) {}
         return '';
     }
-
     function promptForKey() {
         const k = window.prompt(
             'Elimination Revives — paste a Torn API key (Limited is fine).\n' +
             'Stored only in this browser.');
-        if (k && k.trim()) {
-            try { GM_setValue(OWN_KEY_STORE, k.trim()); } catch (_) {}
-            return k.trim();
-        }
+        if (k && k.trim()) { try { GM_setValue(OWN_KEY_STORE, k.trim()); } catch (_) {} return k.trim(); }
         return '';
     }
 
@@ -59,7 +61,7 @@
             const now = Date.now();
             for (const [uid, e] of Object.entries(obj)) {
                 if (e && typeof e.at === 'number' && (now - e.at) < CACHE_TTL_MS) {
-                    results.set(String(uid), { revivable: e.revivable, at: e.at });
+                    results.set(String(uid), { revivable: e.revivable, name: e.name || null, at: e.at });
                 }
             }
         } catch (_) {}
@@ -88,37 +90,91 @@
         .er-unk{background:rgba(99,110,114,.18);color:#b2bec3;border:1px solid rgba(99,110,114,.4);}
         #er-status{position:fixed;left:10px;bottom:10px;z-index:2147483000;
             background:#14100e;color:#ffd9c9;border:1px solid rgba(225,112,85,.5);
-            border-radius:6px;padding:6px 10px;font:600 11px/1.3 Arial,sans-serif;
-            box-shadow:0 6px 20px rgba(0,0,0,.5);cursor:pointer;}
-        #er-status b{color:#00b894;}`;
+            border-radius:6px;padding:6px 8px;font:600 11px/1.3 Arial,sans-serif;
+            box-shadow:0 6px 20px rgba(0,0,0,.5);display:flex;align-items:center;gap:8px;}
+        #er-status b{color:#00b894;}
+        .er-btn{cursor:pointer;border:1px solid rgba(225,112,85,.5);border-radius:4px;
+            background:rgba(0,0,0,.35);color:#ff9a72;font:700 11px/1 Arial,sans-serif;
+            padding:5px 7px;white-space:nowrap;}
+        .er-btn:hover{background:#241a15;}
+        #er-copy{position:fixed;left:10px;bottom:52px;z-index:2147483001;width:280px;max-width:92vw;
+            background:#14100e;color:#ffd9c9;border:1px solid rgba(225,112,85,.6);border-radius:8px;
+            padding:10px;box-shadow:0 8px 26px rgba(0,0,0,.6);font:600 11px/1.3 Arial,sans-serif;}
+        #er-copy h4{margin:0 0 6px;font-size:12px;color:#00b894;}
+        #er-copy textarea{width:100%;height:180px;box-sizing:border-box;resize:vertical;
+            background:rgba(0,0,0,.35);color:#ffd9c9;border:1px solid rgba(225,112,85,.35);
+            border-radius:4px;font:12px/1.4 monospace;padding:6px;}
+        #er-copy .er-row{display:flex;gap:6px;margin-top:8px;}`;
         const s = document.createElement('style');
         s.textContent = css;
         (document.head || document.documentElement).appendChild(s);
     })();
 
-    function statusEl() {
+    // ---- status pill ---------------------------------------------------------
+    function ensureStatus() {
         let el = document.getElementById('er-status');
         if (!el) {
             el = document.createElement('div');
             el.id = 'er-status';
-            el.title = 'Tap to set/replace the API key';
-            el.addEventListener('click', () => {
-                const k = promptForKey();
-                if (k) { drain(); }
-            });
+            el.innerHTML =
+                '<span id="er-text">Revives: \u2026</span>' +
+                '<button class="er-btn" id="er-copy-btn" title="Copy revives-on list">\uD83D\uDCCB Copy ON</button>' +
+                '<button class="er-btn" id="er-key-btn" title="Set / replace API key">\uD83D\uDD11</button>';
             document.body.appendChild(el);
+            el.querySelector('#er-key-btn').addEventListener('click', () => { if (promptForKey()) drain(); });
+            el.querySelector('#er-copy-btn').addEventListener('click', openCopyPanel);
         }
         return el;
     }
     function updateStatus() {
-        const rows = document.querySelectorAll('[class*="teamPageWrapper"] a[href*="profiles.php?XID="]');
-        const total = rows.length;
-        let checked = 0, on = 0;
-        results.forEach((e) => {
-            if (e.revivable === 0 || e.revivable === 1) { checked++; if (e.revivable === 1) on++; }
+        let total = roster.size, checked = 0, on = 0;
+        roster.forEach((_n, uid) => {
+            const e = results.get(uid);
+            if (e && (e.revivable === 0 || e.revivable === 1)) { checked++; if (e.revivable === 1) on++; }
         });
-        const el = statusEl();
-        el.innerHTML = 'Revives: ' + checked + '/' + total + ' checked · <b>' + on + ' on</b>';
+        const t = ensureStatus().querySelector('#er-text');
+        if (t) t.innerHTML = '<b>' + on + '</b> revives on \u00b7 ' + checked + '/' + total + ' checked';
+    }
+
+    // ---- copy-paste list -----------------------------------------------------
+    function buildOnList() {
+        const arr = [];
+        roster.forEach((name, uid) => {
+            const e = results.get(uid);
+            if (e && e.revivable === 1) arr.push({ name: (e.name || name || ('#' + uid)), uid });
+        });
+        arr.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+        return arr.map((x) => x.name + ' [' + x.uid + ']').join('\n');
+    }
+    function openCopyPanel() {
+        const old = document.getElementById('er-copy');
+        if (old) old.remove();
+        const list = buildOnList();
+        const panel = document.createElement('div');
+        panel.id = 'er-copy';
+        panel.innerHTML =
+            '<h4>Revives ON (' + (list ? list.split('\n').length : 0) + ')</h4>' +
+            '<textarea readonly></textarea>' +
+            '<div class="er-row">' +
+                '<button class="er-btn" id="er-copy-do" style="flex:1;">Copy</button>' +
+                '<button class="er-btn" id="er-copy-close">Close</button>' +
+            '</div>';
+        document.body.appendChild(panel);
+        const ta = panel.querySelector('textarea');
+        ta.value = list || '(none checked yet — let the list finish scanning)';
+        ta.focus(); ta.select();
+        panel.querySelector('#er-copy-close').addEventListener('click', () => panel.remove());
+        panel.querySelector('#er-copy-do').addEventListener('click', () => {
+            ta.focus(); ta.select();
+            const done = () => { const b = panel.querySelector('#er-copy-do'); b.textContent = 'Copied!'; setTimeout(() => { b.textContent = 'Copy'; }, 1500); };
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(ta.value).then(done, () => { try { document.execCommand('copy'); done(); } catch (_) {} });
+                    return;
+                }
+            } catch (_) {}
+            try { document.execCommand('copy'); done(); } catch (_) {}
+        });
     }
 
     // ---- fetch queue ---------------------------------------------------------
@@ -130,41 +186,29 @@
         queue.push(uid);
         drain();
     }
-
-    function drain() {
-        if (draining) return;
-        draining = true;
-        step();
-    }
-
+    function drain() { if (draining) return; draining = true; step(); }
     function step() {
         if (queue.length === 0) { draining = false; return; }
         const key = resolveKey();
         if (!key) {
-            // Leave everything queued; user can tap the status pill to set a key.
             draining = false;
-            statusEl().innerHTML = 'Revives: set API key \u2192 tap here';
+            const t = ensureStatus().querySelector('#er-text');
+            if (t) t.innerHTML = 'Set API key \u2192 tap \uD83D\uDD11';
             return;
         }
         const uid = queue.shift();
         const url = 'https://api.torn.com/user/' + encodeURIComponent(uid) +
             '?selections=profile&comment=ElimRevive&key=' + encodeURIComponent(key);
-
         fetch(url)
             .then((r) => r.json())
             .then((data) => {
                 if (data && data.error) {
-                    // 5 = too many requests: back off and requeue.
-                    if (data.error.code === 5) {
-                        queue.unshift(uid);
-                        setTimeout(step, 5000);
-                        return;
-                    }
-                    // 2 = incorrect key: stop and prompt.
-                    results.set(uid, { revivable: null, at: Date.now() });
+                    if (data.error.code === 5) { queue.unshift(uid); setTimeout(step, 5000); return; }
+                    results.set(uid, { revivable: null, name: null, at: Date.now() });
                     applyForUid(uid);
                     if (data.error.code === 2) {
-                        statusEl().innerHTML = 'Revives: invalid key \u2192 tap here';
+                        const t = ensureStatus().querySelector('#er-text');
+                        if (t) t.innerHTML = 'Invalid key \u2192 tap \uD83D\uDD11';
                     }
                     setTimeout(step, REQ_SPACING_MS);
                     return;
@@ -172,19 +216,17 @@
                 const rev = (data && (data.revivable === 1 || data.revivable === true)) ? 1
                           : (data && (data.revivable === 0 || data.revivable === false)) ? 0
                           : null;
-                results.set(uid, { revivable: rev, at: Date.now() });
+                results.set(uid, { revivable: rev, name: (data && data.name) || null, at: Date.now() });
                 queued.delete(uid);
                 applyForUid(uid);
                 updateStatus();
                 saveCacheSoon();
             })
             .catch(() => {
-                results.set(uid, { revivable: null, at: Date.now() });
+                results.set(uid, { revivable: null, name: null, at: Date.now() });
                 applyForUid(uid);
             })
-            .finally(() => {
-                setTimeout(step, REQ_SPACING_MS);
-            });
+            .finally(() => { setTimeout(step, REQ_SPACING_MS); });
     }
 
     // ---- DOM badging ---------------------------------------------------------
@@ -192,7 +234,6 @@
         const m = String(a.getAttribute('href') || '').match(/XID=(\d+)/);
         return m ? m[1] : null;
     }
-
     function badgeFor(rev) {
         const b = document.createElement('span');
         b.className = 'er-badge ' + (rev === 1 ? 'er-on' : rev === 0 ? 'er-off' : 'er-unk');
@@ -200,32 +241,30 @@
         b.setAttribute('data-er', '1');
         return b;
     }
-
     function applyToAnchor(a) {
         const uid = uidFromAnchor(a);
         if (!uid) return;
+        // Track this member as part of the current team roster (fallback name).
+        if (!roster.has(uid)) roster.set(uid, (a.textContent || '').trim());
         const e = results.get(uid);
         const rev = e ? e.revivable : undefined;
-
-        // Remove any stale badge we placed, then (re)add current state.
         const next = a.nextElementSibling;
         if (next && next.getAttribute && next.getAttribute('data-er') === '1') next.remove();
-
         if (rev === 0 || rev === 1) {
             a.insertAdjacentElement('afterend', badgeFor(rev));
         } else {
-            // pending: show a placeholder so the row shows it's being checked
             a.insertAdjacentElement('afterend', badgeFor(undefined));
             enqueue(uid);
         }
     }
-
     function applyForUid(uid) {
         const rows = document.querySelectorAll('[class*="teamPageWrapper"] a[href*="profiles.php?XID=' + uid + '"]');
         rows.forEach(applyToAnchor);
     }
-
     function scan() {
+        // Reset team-scoped roster when the viewed team changes.
+        const tid = currentTeamId();
+        if (tid !== teamId) { teamId = tid; roster.clear(); }
         const wrap = document.querySelector('[class*="teamPageWrapper"]');
         if (!wrap) return;
         const anchors = wrap.querySelectorAll('a[href*="profiles.php?XID="]');
@@ -236,7 +275,6 @@
 
     // ---- boot ----------------------------------------------------------------
     loadCache();
-    // The elimination app is React + hash-routed; poll rather than rely on one paint.
     setInterval(scan, RESCAN_MS);
     scan();
 })();
