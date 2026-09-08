@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.48
+// @version      5.2.49
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.48';
+    const SCRIPT_VERSION = '5.2.49';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -15687,6 +15687,19 @@ body.wb-chain-active {
     // SECTION 26: STARTUP
     // =========================================================================
 
+    // The 5.2.48 probe never reported from the desktop even though the client
+    // authenticated on it — which is what happens when main() throws before the
+    // call is reached. So the probe now starts FIRST, and carries the first
+    // uncaught error with it: if Torn's new war layout is breaking startup, that
+    // message is the actual bug and the alignment is only its shadow.
+    var foFirstError = null;
+    window.addEventListener('error', function (e) {
+        if (foFirstError) return;
+        foFirstError = String((e && e.message) || 'error').slice(0, 200)
+            + ' @ ' + String((e && e.filename) || '').slice(-40) + ':' + (e && e.lineno);
+    });
+    try { foWarLayoutProbe(); } catch (e) {}
+
     // Wait for DOM to be ready (we're @run-at document-idle, but double-check)
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
@@ -15715,11 +15728,11 @@ body.wb-chain-active {
     // first war-row probe this session fired before React had painted and came
     // back empty, which looked like "no problem here".
     function foWarLayoutProbe() {
-        if (!/factions\.php/i.test(location.pathname)) return;
+        if (!/factions\.php|war\.php/i.test(location.pathname)) return;
         var tries = 0;
         var timer = setInterval(function () {
             tries++;
-            var lists = document.querySelectorAll('ul.members-list, ul.f-war-list');
+            var lists = document.querySelectorAll('ul.members-list, ul.f-war-list, ul[class*="war-list"], ul[class*="members"]');
             if (!lists.length && tries < 20) return;
             clearInterval(timer);
             var box = function (el) {
@@ -15728,7 +15741,10 @@ body.wb-chain-active {
             };
             var info = {
                 v: SCRIPT_VERSION, tries: tries, w: window.innerWidth,
-                hash: String(location.hash).slice(0, 40), lists: [],
+                path: String(location.pathname).slice(0, 40),
+                search: String(location.search).slice(0, 60),
+                hash: String(location.hash).slice(0, 40),
+                err: foFirstError, lists: [],
             };
             Array.prototype.forEach.call(lists, function (ul, i) {
                 var p = ul.parentElement;
@@ -15775,6 +15791,4 @@ body.wb-chain-active {
             } catch (e) { /* a probe must never break the page it measures */ }
         }, 1500);
     }
-    try { foWarLayoutProbe(); } catch (e) {}
-
 })();
