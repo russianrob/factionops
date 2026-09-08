@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.53
+// @version      5.2.54
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.53';
+    const SCRIPT_VERSION = '5.2.54';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9655,6 +9655,21 @@ body.wb-chain-active {
         var hosp = CONFIG.WP_HOSP && st && normalizeStatus(st.status) === 'hospital';
         var chip = cell.querySelector('.fo-wp-hosp');
         if (!hosp) { if (chip) chip.remove(); return; }
+
+        // Somebody else already counting down? Then say nothing.
+        //
+        // FFScouter puts a full 01:54:07 in this cell, and ours landed beside
+        // it as a second, redundant clock — which the column has no room for,
+        // so it clipped to "1h". Two timers for one fact, one of them cut in
+        // half. Ours is a fallback now: it appears when nothing else is
+        // counting, and stands aside when something is.
+        //
+        // The test is the colon. Our own format never has one (1h 54m, 45m 03s,
+        // 12s), so this cannot mistake our chip for a foreign clock.
+        var rest = String(cell.textContent || '');
+        if (chip) rest = rest.replace(String(chip.textContent || ''), '');
+        if (/\d{1,2}:\d{2}/.test(rest)) { if (chip) chip.remove(); return; }
+
         if (!chip) {
             chip = document.createElement('span');
             chip.className = 'fo-wp-hosp';
