@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Elimination Revives
 // @namespace    aaronpmc.elim.revives
-// @version      1.0.1
+// @version      1.0.2
 // @description  Shows which Elimination team members have revives on (API revivable flag), badged per row, with a copy-paste list.
 // @author       AaronPMC
 // @match        https://www.torn.com/page.php?sid=elimination*
@@ -15,18 +15,20 @@
     'use strict';
 
     // --- config ---
-    const REQ_SPACING_MS = 750;                // ~80 calls/min ceiling; cap is 100/min
-    const CACHE_TTL_MS   = 3 * 60 * 60 * 1000; // 3h — revive setting rarely changes
-    const RESCAN_MS      = 2000;               // re-apply badges React may have wiped
-    const OWN_KEY_STORE  = 'elim_revive_apikey';
+    const REQ_SPACING_MS  = 1500;               // ~40 calls/min; leaves headroom under 100/min
+    const CACHE_TTL_MS    = 3 * 60 * 60 * 1000; // 3h — revive setting rarely changes
+    const NULL_RETRY_MS   = 10 * 60 * 1000;     // don't re-fetch a failed/unknown lookup for 10 min
+    const RATE_PAUSE_MS   = 60 * 1000;          // full-queue backoff when Torn throttles
+    const RESCAN_MS       = 2000;               // re-apply badges React may have wiped
+    const OWN_KEY_STORE   = 'elim_revive_apikey';
 
     // uid -> { revivable: 0|1|null, name: string|null, at: ts }
     const results = new Map();
-    // uid -> display name, scoped to the CURRENT team (reset on team switch).
-    const roster  = new Map();
+    const roster  = new Map();   // uid -> name, scoped to the current team
     const queued  = new Set();
     const queue   = [];
     let draining  = false;
+    let pauseUntil = 0;          // wall-clock; queue is idle until then
 
     function currentTeamId() {
         const m = String(location.hash || '').match(/team\/(\d+)/);
@@ -126,14 +128,21 @@
         }
         return el;
     }
+    function setText(html) {
+        const t = ensureStatus().querySelector('#er-text');
+        if (t) t.innerHTML = html;
+    }
     function updateStatus() {
+        if (Date.now() < pauseUntil) {
+            setText('rate-limited \u2014 pausing ' + Math.ceil((pauseUntil - Date.now()) / 1000) + 's');
+            return;
+        }
         let total = roster.size, checked = 0, on = 0;
         roster.forEach((_n, uid) => {
             const e = results.get(uid);
             if (e && (e.revivable === 0 || e.revivable === 1)) { checked++; if (e.revivable === 1) on++; }
         });
-        const t = ensureStatus().querySelector('#er-text');
-        if (t) t.innerHTML = '<b>' + on + '</b> revives on \u00b7 ' + checked + '/' + total + ' checked';
+        setText('<b>' + on + '</b> revives on \u00b7 ' + checked + '/' + total + ' checked');
     }
 
     // ---- copy-paste list -----------------------------------------------------
@@ -180,52 +189,60 @@
     // ---- fetch queue ---------------------------------------------------------
     function enqueue(uid) {
         if (queued.has(uid)) return;
-        const cached = results.get(uid);
-        if (cached && (cached.revivable === 0 || cached.revivable === 1)) return;
+        const c = results.get(uid);
+        if (c) {
+            if (c.revivable === 0 || c.revivable === 1) return;      // resolved — done
+            if ((Date.now() - c.at) < NULL_RETRY_MS) return;         // failed recently — wait, don't hammer
+        }
         queued.add(uid);
         queue.push(uid);
         drain();
     }
     function drain() { if (draining) return; draining = true; step(); }
+
+    // Full-queue backoff: Torn is throttling us, so stop firing for a while.
+    function rateBackoff(uid) {
+        pauseUntil = Date.now() + RATE_PAUSE_MS;
+        if (uid != null) queue.unshift(uid);   // keep it (still in `queued`) to retry after the pause
+        updateStatus();
+    }
+
     function step() {
         if (queue.length === 0) { draining = false; return; }
-        const key = resolveKey();
-        if (!key) {
-            draining = false;
-            const t = ensureStatus().querySelector('#er-text');
-            if (t) t.innerHTML = 'Set API key \u2192 tap \uD83D\uDD11';
+        if (Date.now() < pauseUntil) {          // respect backoff — do NOT fetch while throttled
+            setTimeout(step, (pauseUntil - Date.now()) + 250);
             return;
         }
+        const key = resolveKey();
+        if (!key) { draining = false; setText('Set API key \u2192 tap \uD83D\uDD11'); return; }
+
         const uid = queue.shift();
         const url = 'https://api.torn.com/user/' + encodeURIComponent(uid) +
             '?selections=profile&comment=ElimRevive&key=' + encodeURIComponent(key);
+
         fetch(url)
-            .then((r) => r.json())
+            .then((r) => r.json().catch(() => null))   // block page = HTML, not JSON
             .then((data) => {
-                if (data && data.error) {
-                    if (data.error.code === 5) { queue.unshift(uid); setTimeout(step, 5000); return; }
+                if (!data) { rateBackoff(uid); return; } // no JSON => throttled / blocked
+                if (data.error) {
+                    if (data.error.code === 5) { rateBackoff(uid); return; } // too many requests
+                    // Other API error (bad key, etc.): record as unknown, retry after NULL_RETRY_MS.
                     results.set(uid, { revivable: null, name: null, at: Date.now() });
+                    queued.delete(uid);
                     applyForUid(uid);
-                    if (data.error.code === 2) {
-                        const t = ensureStatus().querySelector('#er-text');
-                        if (t) t.innerHTML = 'Invalid key \u2192 tap \uD83D\uDD11';
-                    }
-                    setTimeout(step, REQ_SPACING_MS);
+                    if (data.error.code === 2) setText('Invalid key \u2192 tap \uD83D\uDD11');
                     return;
                 }
-                const rev = (data && (data.revivable === 1 || data.revivable === true)) ? 1
-                          : (data && (data.revivable === 0 || data.revivable === false)) ? 0
+                const rev = (data.revivable === 1 || data.revivable === true) ? 1
+                          : (data.revivable === 0 || data.revivable === false) ? 0
                           : null;
-                results.set(uid, { revivable: rev, name: (data && data.name) || null, at: Date.now() });
+                results.set(uid, { revivable: rev, name: data.name || null, at: Date.now() });
                 queued.delete(uid);
                 applyForUid(uid);
                 updateStatus();
                 saveCacheSoon();
             })
-            .catch(() => {
-                results.set(uid, { revivable: null, name: null, at: Date.now() });
-                applyForUid(uid);
-            })
+            .catch(() => { rateBackoff(uid); })          // network/other: treat as throttle, back off
             .finally(() => { setTimeout(step, REQ_SPACING_MS); });
     }
 
@@ -244,7 +261,6 @@
     function applyToAnchor(a) {
         const uid = uidFromAnchor(a);
         if (!uid) return;
-        // Track this member as part of the current team roster (fallback name).
         if (!roster.has(uid)) roster.set(uid, (a.textContent || '').trim());
         const e = results.get(uid);
         const rev = e ? e.revivable : undefined;
@@ -262,7 +278,6 @@
         rows.forEach(applyToAnchor);
     }
     function scan() {
-        // Reset team-scoped roster when the viewed team changes.
         const tid = currentTeamId();
         if (tid !== teamId) { teamId = tid; roster.clear(); }
         const wrap = document.querySelector('[class*="teamPageWrapper"]');
