@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.2.50
+// @version      5.2.51
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.2.50';
+    const SCRIPT_VERSION = '5.2.51';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -812,6 +812,18 @@ html.wb-theme-light {
 }
 
 .fo-wp-filter {
+    /* width:0 + min-width:100% is not a trick for its own sake — it is what
+       keeps this bar from widening the column it sits in.
+       Torn's war page floats the enemy list left and your own faction right
+       inside a 784px wrapper, and a float is shrink-to-fit: it takes its
+       contents' PREFERRED width when that fits. This bar's preferred width is
+       everything on one line, 417px, so the enemy column grew from 387 to 417,
+       417 + 386 no longer fitted in 784, and your faction's column dropped
+       below the enemy's — 3,466px down the page. flex-wrap was already on and
+       did not help: wrapping lowers a box's minimum width, never its preferred
+       one. A declared width of zero contributes nothing to that calculation,
+       and min-width:100% then fills whatever width the LIST settled on. */
+    width: 0; min-width: 100%;
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     margin: 4px 0 6px; padding: 5px 8px; box-sizing: border-box;
     border: 1px solid rgba(225,112,85,.45); border-radius: 4px;
