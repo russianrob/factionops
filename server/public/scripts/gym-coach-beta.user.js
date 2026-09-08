@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.84
+// @version      0.9.85
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,28 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.85 - The regen rate is read from Torn, not inferred from it.
+ *
+ *         Every missed-energy figure is a multiplication by seconds-per-energy,
+ *         and the rate was derived as fulltime / (max - current). That has two
+ *         holes. A FULL bar reports fulltime 0, so it can supply no rate at all
+ *         -- the cold-start-on-a-full-bar case that fell back to Torn's 180s
+ *         base and read 13e where the honest answer was 19e. And the quotient
+ *         of two integers only approximates: 5983 seconds over a 50-point gap
+ *         is 119.66 where the truth is 120.
+ *
+ *         The bars payload has carried the answer all along, and carries it on
+ *         a full bar too: increment 5 every interval 600 is 120s a point,
+ *         exactly. Measured live 2026-09-08.
+ *
+ *         The old derivation stays as the fallback for a payload without the
+ *         tick fields, and the rate is still persisted for a cold start.
+ *
+ *         Checked while looking for this: Torn PDA exposes no energy or timer
+ *         API to userscripts at all -- its documented surface is the API-key
+ *         placeholder, PDA_httpGet, PDA_httpPost, PDA_storage and a GM_* shim.
+ *         Its energy alerts are native and unreachable from here.
+ *
 * 0.9.84 - A referee for the cans nobody watched.
  *
  *         0.9.83 catches a can the instant the bar moves, but only while the
@@ -2084,7 +2106,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.84";
+  var GC_VERSION = "0.9.85";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -3411,6 +3433,33 @@
   //
   // Anything else is null, NOT false: "I could not tell" must never be read as
   // "you still have it".
+  /**
+   * Seconds per point of energy, read from Torn rather than inferred.
+   *
+   * The bars payload carries `increment` points every `interval` seconds, and
+   * carries them on a FULL bar too — which is exactly where the old derivation
+   * failed. fulltime / (max - current) needs a gap to divide by, so a bar at the
+   * cap reported nothing and a cold start there fell back to Torn's 180s base:
+   * half again too long for a donator's 120, and every inferred fill wrong with
+   * it.
+   *
+   * The quotient is also only approximately right when it does work — 5983
+   * seconds over a 50-point gap is 119.66 where the truth is 120.
+   *
+   * Falls back to that derivation when the tick fields are absent, and to
+   * nothing at all rather than a guess. The caller keeps the last good rate.
+   */
+  function secPerEnergyFrom(e) {
+    if (!e) return 0;
+    var inc = Number(e.increment) || 0;
+    var iv = Number(e.interval) || 0;
+    if (inc > 0 && iv > 0) return iv / inc;
+    var gap = (Number(e.maximum) || 0) - (Number(e.current) || 0);
+    var full = Number(e.fulltime) || 0;
+    if (gap > 0 && full > 0) return full / gap;
+    return 0;
+  }
+
   function readRefillUsed(d) {
     var r = d && d.refills;
     if (!r) return null;
@@ -7536,8 +7585,13 @@
     // the energy it was measured at is still current — and the DOM updates
     // energy between polls. Convert it to a per-point rate, which stays true as
     // energy moves. Keep the last good rate if this payload cannot supply one.
+    var exact = secPerEnergyFrom(e);
+    if (exact > 0) {
+      state.energySecPerE = exact;
+      storeSet("energySecPerE", exact);
+    }
     var eGap = (Number(e.maximum) || 150) - (Number(e.current) || 0);
-    if (eGap > 0 && state.energyFulltime > 0) {
+    if (!(exact > 0) && eGap > 0 && state.energyFulltime > 0) {
       state.energySecPerE = state.energyFulltime / eGap;
       // Persist it. A full bar reports fulltime 0, so a cold start that opens
       // ON a full bar can never derive the rate and fell back to Torn's base of
