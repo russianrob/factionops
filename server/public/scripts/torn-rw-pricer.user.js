@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.5.4
+// @version      3.5.5
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.5.4';
+    var SCRIPT_VERSION = '3.5.5';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -611,6 +611,11 @@
         var comboGroups = {};   // weapon|bonus|rarity -> [prices]
         var pairGroups = {};    // weapon|bonusA+bonusB|rarity -> [prices] (double-bonus)
         var levelGroups = {};   // weapon|bonus|rarity|level -> [prices] (single-bonus only)
+        // The exact weapon: both bonuses AND both rolls. This is a record
+        // rather than an estimate, and it beats every rung below it — an S&W
+        // Revolver with 70% Assassinate and 52% Double-Tap was priced at $375m
+        // off one bonus while that very weapon had sold for $2.14b.
+        var pairLevelGroups = {}; // weapon|A+B|rarity|pctA+pctB -> {prices, last}
         var comboMaxTracker = {};  // combo key -> {price, qual}
         var maxBonusTracker = {}; // weapon+rarity -> {price, bonuses}
         // Observed QUALITY span per weapon+rarity. A card that shows a quality
@@ -693,6 +698,18 @@
                 var pgKey = weaponName + '|' + (bn1 < bn2 ? bn1 + '+' + bn2 : bn2 + '+' + bn1) + '|' + rarityName;
                 if (!pairGroups[pgKey]) pairGroups[pgKey] = [];
                 pairGroups[pgKey].push(price);
+
+                // ...and the same pair at the exact rolls it was carrying.
+                // Bonus names are sorted so the key is the same whichever order
+                // the sale listed them in, and the rolls follow that order.
+                if (qual1 > 0 && qual2 > 0) {
+                    var first = (bn1 < bn2), pctKey = first ? (qual1 + '+' + qual2) : (qual2 + '+' + qual1);
+                    var plKey = pgKey + '|' + pctKey;
+                    if (!pairLevelGroups[plKey]) pairLevelGroups[plKey] = { p: [], last: 0 };
+                    pairLevelGroups[plKey].p.push(price);
+                    var ts = parseInt(cols[0], 10);
+                    if (ts > pairLevelGroups[plKey].last) pairLevelGroups[plKey].last = ts;
+                }
             }
 
             // Per-level: single-bonus sales only, keyed by exact bonus %
@@ -841,6 +858,22 @@
             if (Object.keys(keep).length) newQualRanges[w] = keep;
         });
 
+        // No minimum here, deliberately. One sale of THIS weapon with THIS
+        // pair at THESE rolls is better evidence than a median over a dozen
+        // weapons that only share one of them — as long as it is reported as
+        // the single sale it is, with its date.
+        var newPairLevelPrices = {};
+        Object.keys(pairLevelGroups).forEach(function(key) {
+            var parts = key.split('|');
+            var g = pairLevelGroups[key];
+            var arr = g.p.sort(function(a, b) { return a - b; });
+            var wbKey = parts[0] + '|' + parts[1];
+            if (!newPairLevelPrices[wbKey]) newPairLevelPrices[wbKey] = {};
+            if (!newPairLevelPrices[wbKey][parts[2]]) newPairLevelPrices[wbKey][parts[2]] = {};
+            newPairLevelPrices[wbKey][parts[2]][parts[3]] =
+                [Math.round(percentile(arr, 50)), arr.length, Math.floor(g.last / 86400)];
+        });
+
         return {
             weaponPrices: newWeaponPrices,
             bonusPrices: newBonusPrices,
@@ -848,6 +881,7 @@
             comboPrices: newComboPrices,
             pairComboPrices: newPairComboPrices,
             levelPrices: newLevelPrices,
+            pairLevelPrices: newPairLevelPrices,
             qualityRanges: newQualRanges,
             weaponMaxBonus: newMaxBonus
         };
@@ -908,6 +942,10 @@
             return out;
         }
         all.recent = {
+            // Recent ONLY, with no all-time fallback: this table exists to say
+            // "that very weapon sold for X on this date", and a three-year-old
+            // sale of it is a different market, not a better record.
+            pairLevelPrices: R.pairLevelPrices || {},
             weaponPrices: pick(R.weaponPrices, all.weaponPrices, false),
             bonusPrices:  pick(R.bonusPrices,  all.bonusPrices,  false),
             classPrices:  pick(R.classPrices,  all.classPrices,  false),

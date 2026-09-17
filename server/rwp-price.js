@@ -23,6 +23,9 @@ const an = (w) => (/^[aeiou]/i.test(String(w || "")) ? "an " : "a ");
 // rewrite: nobody outside here knows what a roll is. The words to reach for
 // are the ones on the card -- the colour, the bonus, the percentage.
 const thing = (rarity, name) => (rarity ? an(rarity) + rarity + " " + name : name);
+// Days since epoch, as the feed stores them. UTC throughout: a local getter
+// here would report a sale a day early for anyone west of Greenwich.
+const dayToDate = (d) => (num(d) ? new Date(num(d) * 86400000).toISOString().slice(0, 10) : "an unknown date");
 
 /**
  * Read a price table, newest evidence first.
@@ -119,6 +122,35 @@ export function valueAtPct(points, pct) {
   // A negative or absurd extension is worse than admitting ignorance.
   if (!(v > 0)) return null;
   return { value: v, extrapolated: true };
+}
+
+/**
+ * Match a read BONUS name to the dataset's spelling.
+ *
+ * The reader returns what is printed on the card — "Double Tap" — and every
+ * price table says "Double-Tap". That one hyphen made an S&W Revolver miss its
+ * own sale record, rank the wrong bonus as the lead, and quote $353m for a
+ * weapon that had sold for $2.14b.
+ *
+ * Case, hyphens and spaces are the only things forgiven. Anything further would
+ * be guessing at which bonus a card carries, and the wrong bonus is a wrong
+ * price with a confident number on it.
+ */
+let _bonusIndex = null, _bonusIndexFor = null;
+export function resolveBonus(feed, raw) {
+  const want = String(raw || "").toLowerCase().replace(/[\s-]+/g, "");
+  if (!want) return null;
+  if (_bonusIndexFor !== feed) {
+    _bonusIndex = new Map();
+    for (const t of [feed && feed.bonusPrices, feed && feed.armourBonusPrices]) {
+      for (const k of Object.keys(t || {})) {
+        const norm = k.toLowerCase().replace(/[\s-]+/g, "");
+        if (!_bonusIndex.has(norm)) _bonusIndex.set(norm, k);
+      }
+    }
+    _bonusIndexFor = feed;
+  }
+  return _bonusIndex.get(want) || null;
 }
 
 /**
@@ -269,7 +301,11 @@ function isArmour(feed, name) {
 export function priceItem(feed, item) {
   const name = resolveName(feed, item && item.name);
   let rarity = item && item.rarity;
-  const bonuses = Array.isArray(item && item.bonuses) ? item.bonuses.slice() : [];
+  // Spelled the way the tables spell it, before anything looks one up.
+  const bonuses = (Array.isArray(item && item.bonuses) ? item.bonuses : []).map((b) => {
+    const fixed = resolveBonus(feed, b && b.name);
+    return fixed ? { ...b, name: fixed } : b;
+  });
   // A name that matches nothing in the catalogue is a MISREAD, not a rare item.
   // A cropped card names no weapon, and the reader does not reliably decline:
   // the Kodachi post came back "Big Al's Gun Shop Katana" -- the sell shop
@@ -359,6 +395,38 @@ export function priceItem(feed, item) {
     out.notes.push(`The picture doesn't show a colour. Only ${rarity} ones have ever sold with ${bonuses[0].pct}% ${bonuses[0].name}, so that's what this assumes.`);
   } else if (inferredRarity && rarityFrom === "quality") {
     out.notes.push(`The picture doesn't show a colour, but at ${num(item && item.quality)}% quality only ${rarity} ones have ever sold, so that's what this assumes.`);
+  }
+
+  // 0. The exact weapon: both bonuses AND both rolls.
+  //
+  // Every rung below is an estimate built from weapons that share SOME of what
+  // is on the card. This one is a record of the card itself, and a record beats
+  // a model — an S&W Revolver with 70% Assassinate and 52% Double-Tap was being
+  // priced at $375m off one bonus while that very weapon had sold for $2.14b.
+  //
+  // No minimum sample: one sale of THIS weapon is better evidence than a median
+  // over a dozen that share one bonus with it, provided it is reported as the
+  // single sale it is, with its date. The table is built from the last year
+  // only, because a three-year-old sale of it is a different market rather than
+  // a better record.
+  if (bonuses.length >= 2 && rarity) {
+    const order = [bonuses[0].name, bonuses[1].name].sort();
+    const pctOf = {};
+    pctOf[bonuses[0].name] = num(bonuses[0].pct);
+    pctOf[bonuses[1].name] = num(bonuses[1].pct);
+    const rolls = order.map((n) => pctOf[n]).join("+");
+    const e = (((feed.weaponPairLevelPrices || {})[name + "|" + order.join("+")] || {})[rarity] || {})[rolls];
+    if (Array.isArray(e) && num(e[0])) {
+      const n = num(e[1]) || 1;
+      const when = dayToDate(num(e[2]));
+      out.basis = "what this exact weapon has sold for — both bonuses, both rolls";
+      out.estimate = num(e[0]);
+      out.samples = n;
+      out.notes.push(n === 1
+        ? `This exact weapon — both bonuses, both rolls — sold once, on ${when}.`
+        : `This exact weapon — both bonuses, both rolls — has sold ${n} times, most recently on ${when}.`);
+      return out;
+    }
   }
 
   // 1. The exact pair.

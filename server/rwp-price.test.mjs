@@ -25,20 +25,31 @@ test("extends the trend past the last sale, and admits it", () => {
   assert.ok(at.value > 1.8e9 && at.value < 2.6e9, "got $" + (at.value / 1e9).toFixed(2) + "b");
 });
 
-test("the weapon from the forum post prices off its roll, not the median", () => {
+test("the weapon from the forum post is priced by its own sale", () => {
+  // The first screenshot this was ever pointed at. It used to extrapolate to
+  // ~$2.19b past the highest recorded Assassinate roll; that exact weapon --
+  // 97% Assassinate AND 23% Specialist -- turns out to have sold for $6.1b.
+  // A record of the card beats a trend drawn near it.
   const p = priceItem(feed, {
     name: "Cobra Derringer", rarity: "Orange",
     bonuses: [{ name: "Specialist", pct: 23 }, { name: "Assassinate", pct: 97 }],
   });
   assert.equal(p.ok, true);
-  // Assassinate leads: it is the bonus the price is about.
-  assert.equal(p.bonuses[0].name, "Assassinate");
-  assert.match(p.basis, /with Assassinate has sold for, matched to the 97%/);
-  assert.equal(p.extrapolated, true);
-  // Far above the roll-agnostic Orange median of $163m.
-  assert.ok(p.estimate > 1e9, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
-  assert.ok(p.notes.some((n) => /best on record/.test(n)));
-  assert.ok(p.notes.some((n) => /isn't counted/.test(n)), "the unpriced second bonus must be stated");
+  assert.match(p.basis, /this exact weapon/i);
+  assert.ok(p.estimate > 5e9, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
+  assert.equal(p.extrapolated, false, "a sale is not an extrapolation");
+  // Nothing was dropped, so nothing should warn that it was.
+  assert.ok(!p.notes.some((n) => /isn't counted/.test(n)));
+});
+
+test("a high roll with no sale of its own still beats the pooled median", () => {
+  // What the level curve is for, kept under test now that the exact rung
+  // covers the case above: 50% and 67% are not one price.
+  const p = priceItem(feed, {
+    name: "Cobra Derringer", rarity: "Yellow", bonuses: [{ name: "Assassinate", pct: 67 }],
+  });
+  assert.match(p.basis, /matched to the 67%/);
+  assert.ok(p.estimate > 200e6, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
 });
 
 test("an exact pair beats the curve when one exists", () => {
@@ -458,11 +469,90 @@ test("an uncounted second bonus says which way the number is wrong", () => {
   // one, the pair goes for about 1.4x the better single at the median -- so the
   // quoted number is a floor, and saying so is the difference between a caveat
   // and a warning. It is only a floor USUALLY: a quarter of pairs sell for less.
+  // 71%, not the 70% that has a sale of its own — this is the case where the
+  // second bonus genuinely cannot be priced.
   const p = priceItem(feed, {
     name: "S&W Revolver", rarity: "Red",
-    bonuses: [{ name: "Assassinate", pct: 70 }, { name: "Double-Tap", pct: 52 }],
+    bonuses: [{ name: "Assassinate", pct: 71 }, { name: "Double-Tap", pct: 52 }],
   });
   assert.ok(p.notes.some((n) => /isn't counted/.test(n)));
   assert.ok(p.notes.some((n) => /floor/i.test(n)),
     "the reader must be told which way it is wrong: " + p.notes.join(" | "));
+});
+
+// ── The exact weapon ───────────────────────────────────────────
+// Every rung below this one is an estimate built from weapons that share
+// SOME of what is on the card. When the very same weapon — both bonuses, both
+// rolls — has sold, that is a record, and a record beats a model.
+
+test("the exact weapon outranks every estimate", () => {
+  const p = priceItem(feed, {
+    name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 70 }, { name: "Double-Tap", pct: 52 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  // It sold for $2.14b. Pricing off one bonus gave $375m.
+  assert.ok(p.estimate > 2e9, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
+  assert.match(p.basis, /this exact weapon/i);
+  assert.ok(p.notes.some((n) => /2026-08-26/.test(n)), "the date belongs on a record: " + p.notes.join(" | "));
+  // Nothing is missing from this number, so nothing should warn that it is.
+  assert.ok(!p.notes.some((n) => /isn't counted|floor/i.test(n)));
+});
+
+test("which bonus was listed first does not matter", () => {
+  const a = priceItem(feed, { name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 70 }, { name: "Double-Tap", pct: 52 }] });
+  const b = priceItem(feed, { name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "Double-Tap", pct: 52 }, { name: "Assassinate", pct: 70 }] });
+  assert.equal(a.estimate, b.estimate);
+});
+
+test("a different roll is a different weapon", () => {
+  // 71% is not 70%. Matching it would turn a record back into a guess.
+  const p = priceItem(feed, { name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 71 }, { name: "Double-Tap", pct: 52 }] });
+  assert.ok(!/this exact weapon/i.test(p.basis || ""), "got: " + p.basis);
+});
+
+test("a single sale is reported as a single sale", () => {
+  const p = priceItem(feed, { name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 70 }, { name: "Double-Tap", pct: 52 }] });
+  assert.equal(p.samples, 1);
+  assert.ok(p.notes.some((n) => /once/i.test(n)), p.notes.join(" | "));
+});
+
+// ── Bonus names as they are WRITTEN ────────────────────────────
+// The reader returns what the card says: "Double Tap". Every price table says
+// "Double-Tap". That one hyphen made the S&W Revolver miss its own sale
+// record, rank the wrong bonus as the lead, and quote $353m for a weapon that
+// had sold for $2.14b — the exact failure this rung was built to stop.
+
+test("a bonus written with a space still finds its table", () => {
+  const spaced = priceItem(feed, {
+    name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 70 }, { name: "Double Tap", pct: 52 }],
+  });
+  const hyphen = priceItem(feed, {
+    name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 70 }, { name: "Double-Tap", pct: 52 }],
+  });
+  assert.equal(spaced.estimate, hyphen.estimate, "a hyphen is not a different weapon");
+  assert.match(spaced.basis, /this exact weapon/i);
+  assert.ok(spaced.estimate > 2e9, "got $" + (spaced.estimate / 1e6).toFixed(0) + "m");
+});
+
+test("the resolved spelling is what gets reported back", () => {
+  const p = priceItem(feed, {
+    name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "double tap", pct: 52 }],
+  });
+  assert.equal(p.bonuses[0].name, "Double-Tap");
+});
+
+test("a bonus that is not a bonus is left alone, not invented", () => {
+  const p = priceItem(feed, {
+    name: "S&W Revolver", rarity: "Red", bonuses: [{ name: "Nonsense", pct: 52 }],
+  });
+  // It must not be silently mapped onto a real bonus.
+  assert.notEqual(p.bonuses[0] && p.bonuses[0].name, "Double-Tap");
 });

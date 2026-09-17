@@ -88,6 +88,8 @@ export async function refreshRwpPrices(reason) {
       // Quality span per weapon+rarity, so a card showing a quality but no
       // colour can still be placed. myGear listings show one and not the other.
       weaponQualityRanges: wData.qualityRanges,
+      // The exact weapon: both bonuses at both rolls, last 365 days only.
+      weaponPairLevelPrices: (wData.recent && wData.recent.pairLevelPrices) || {},
       armourComboPrices: aData.comboPrices,
       // Per-roll armour medians. The armour side had none, so a 23%
       // Impenetrable Assault Body was quoted the median across every roll --
