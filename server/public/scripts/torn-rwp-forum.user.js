@@ -2,7 +2,7 @@
 // @name         RW Pricer — Forum Screenshots
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      1.5.1
+// @version      1.5.2
 // @description  Prices the item screenshots people paste in forum trade threads. Reads the card out of the picture and puts the RW Pricer estimate on it.
 // @match        https://www.torn.com/forums.php*
 // @grant        GM_xmlhttpRequest
@@ -16,6 +16,10 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 1.5.2  When a card does not name its weapon, the post's own text is offered
+ *         to the reader as a caption and the read is tried once more. The badge
+ *         now shows the rarity the price was built on, marked when it was
+ *         worked out from the roll rather than read off the card.
  * 1.5.1  A name the catalogue does not have is treated as an unread card. The
  *         reader invented "Big Al's Gun Shop Katana" for a Kodachi whose card
  *         was cropped above the name, and said it was confident.
@@ -158,7 +162,7 @@
     var signedIn = !!token();
     var who = gv(NAME_KEY, "");
     el.innerHTML =
-      "<b style='color:#ff9f2e'>RW Pricer forum 1.5.1</b> " +
+      "<b style='color:#ff9f2e'>RW Pricer forum 1.5.2</b> " +
       "<span id='rwpf-x' style='opacity:.6;float:right;cursor:pointer'>close</span><br>" +
       "images: <b>" + DIAG.imgs + "</b> &middot; furniture: <b>" + DIAG.furniture +
       "</b> &middot; asked: <b>" + DIAG.asked + "</b><br>" +
@@ -260,7 +264,17 @@
       '<div class="hd">' +
         (p ? '<span class="px">' + money(p.estimate) + "</span>" : '<span class="px">no price</span>') +
         '<span class="nm">' + it.name + "</span>" +
-        (it.rarity ? '<span class="sub">' + it.rarity + (it.quality ? " &middot; " + it.quality + "%" : "") + "</span>" : "") +
+        // The rarity the price was actually built on, which is not always the
+        // one on the card: a Mag 7 card gave no rarity and the roll said Red.
+        // Quality is its own test -- nesting it inside the rarity check meant a
+        // card that gave one and not the other lost both.
+        (function () {
+          var rar = (p && p.rarity) || it.rarity;
+          var bits = [];
+          if (rar) bits.push(rar + (p && p.inferredRarity ? " (inferred)" : ""));
+          if (it.quality) bits.push(it.quality + "%");
+          return bits.length ? '<span class="sub">' + bits.join(" &middot; ") + "</span>" : "";
+        })() +
       "</div>" +
       (bonuses ? '<div class="sub">' + bonuses + "</div>" : "") +
       // The basis, always. An estimate whose derivation is invisible gets
@@ -282,7 +296,37 @@
     if (anchor.parentNode) anchor.parentNode.insertBefore(node, anchor.nextSibling);
   }
 
-  function ask(img) {
+  /**
+   * The words the picture was posted with, minus anything we put there.
+   *
+   * A cropped card names no weapon -- the Kodachi post's card starts below the
+   * name line -- but the post around it does: "Kodachi - 53% parry". Walk up
+   * from the image until a container holds real prose, and stop before the walk
+   * reaches the whole page, because a caption is only useful if it is about
+   * THIS picture.
+   */
+  function ownText(node) {
+    if (node.nodeType === 3) return node.nodeValue || "";
+    if (node.nodeType !== 1) return "";
+    // Never feed our own badge back to the reader as evidence.
+    if (node.classList && node.classList.contains("rwpf")) return "";
+    var out = "";
+    for (var i = 0; i < node.childNodes.length; i++) out += ownText(node.childNodes[i]) + " ";
+    return out;
+  }
+
+  function caption(img) {
+    var n = img.parentNode, best = "";
+    for (var i = 0; i < 6 && n && n.nodeType === 1; i++, n = n.parentNode) {
+      var t = ownText(n).replace(/\s+/g, " ").trim();
+      if (t.length > 1200) break;          // too far up: this is the thread, not the post
+      if (t.length >= 6) best = t;
+      if (best.length >= 40) break;        // enough to name a weapon
+    }
+    return best.slice(0, 300);
+  }
+
+  function ask(img, hint) {
     var url = img.currentSrc || img.src;
     var pending = document.createElement("div");
     pending.className = "rwpf pending";
@@ -300,7 +344,7 @@
         if (t) h.Authorization = "Bearer " + t;
         return h;
       })(),
-      data: JSON.stringify({ url: url }),
+      data: JSON.stringify(hint ? { url: url, hint: hint } : { url: url }),
       timeout: 45000,
       onload: function (res) {
         INFLIGHT--; pump();
@@ -313,6 +357,20 @@
         panel();
         if (res.status === 401) { sv(TOKEN_KEY, ""); }
         if (!data || data.error) { pending.remove(); return; }
+        // No item, or a name the catalogue does not have. The card probably
+        // does not show the weapon's name -- but the post it was attached to
+        // usually does. Try once more with that, and only once: `hint` being
+        // set already is what stops this looping.
+        if (!hint && (data.unknownItem || (!data.item && !data.needsMember))) {
+          var cap = caption(img);
+          if (cap) {
+            DIAG.replies.push("retrying with the post's caption");
+            pending.remove();
+            INFLIGHT++;
+            ask(img, cap);
+            return;
+          }
+        }
         // Seen an image nobody has read, and we have no session: offer once.
         if (data.needsMember && !token()) {
           DIAG.wantsSession = true;
@@ -340,7 +398,7 @@
       method: "POST",
       url: SERVER + "/api/auth",
       headers: { "Content-Type": "application/json" },
-      data: JSON.stringify({ apiKey: key, scriptName: "rwp-forum", scriptVersion: "1.5.1" }),
+      data: JSON.stringify({ apiKey: key, scriptName: "rwp-forum", scriptVersion: "1.5.2" }),
       timeout: 20000,
       onload: function (res) {
         var d = null;

@@ -12305,7 +12305,12 @@ router.post("/api/rwp/read-image", express.json({ limit: "8kb" }), async (req, r
   if (!url) return res.status(400).json({ error: "url is required" });
   if (!rwpImage.hostAllowed(url)) return res.status(400).json({ error: "that image host is not allowed" });
 
-  const cached = rwpImage.readCache(url);
+  // The caption the picture was posted with, when the script offers one. It is
+  // only ever sent on a SECOND attempt, after an un-hinted read failed to
+  // produce a usable name, so the ordinary path still hits the ordinary cache.
+  const hint = rwpImage.cleanHint(req.body && req.body.hint);
+
+  const cached = rwpImage.readCache(url, hint);
   if (cached) return res.json({ item: cached.item, price: priceOf(cached.item), unknownItem: unknownItem(cached.item), cached: true });
 
   // No cache entry — this one costs. Require a session for that, and say so
@@ -12321,7 +12326,7 @@ router.post("/api/rwp/read-image", express.json({ limit: "8kb" }), async (req, r
   } catch { user = null; }
   if (!user) return res.json({ item: null, cached: false, needsMember: true });
 
-  const out = await rwpImage.readItemImage(url);
+  const out = await rwpImage.readItemImage(url, { hint });
   if (!out.ok) return res.status(400).json({ error: out.reason });
   return res.json({ item: out.item, price: priceOf(out.item), unknownItem: unknownItem(out.item), cached: !!out.cached, reason: out.reason || null });
 });
