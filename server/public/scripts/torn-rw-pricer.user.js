@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.5.2
+// @version      3.5.3
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.5.2';
+    var SCRIPT_VERSION = '3.5.3';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -3604,8 +3604,9 @@
         if (!bonuses.length) return null;
 
         var lead = bonuses[0];
-        var rarity = rarityFromRoll(key, lead.name, lead.level);
-        var inferred = !!rarity;
+        // A rarity the seller wrote down beats one worked back out of the roll.
+        var rarity = item.rarity || rarityFromRoll(key, lead.name, lead.level);
+        var inferred = !item.rarity && !!rarity;
 
         // Prefer the last year where it has enough sales, exactly as the badges
         // do for a single-bonus weapon.
@@ -3641,6 +3642,113 @@
                      source: source, count: count, bonuses: bonuses };
         } finally {
             ACTIVE = prevActive;
+        }
+    }
+
+    var RARITY_WORD = /^(Yellow|Orange|Red)$/i;
+
+    /**
+     * One line of a price list written as prose rather than a table.
+     *
+     *   Guandao - 68% (swan)Grace • 51% (angry)Berserk - Red - Q:227.77% - 77.00/43.78
+     *
+     * The separator is a SPACED hyphen, which is what lets "Tavor TAR-21" and
+     * "AK-47" through unharmed. Emoji sit flush against the bonus name and are
+     * stripped; two bonuses are joined by a bullet. The rarity is stated
+     * outright here, so it is used rather than worked back out of the roll.
+     *
+     * Returns null unless the weapon AND at least one bonus are both
+     * recognised — a forum post is mostly prose, and a badge on a sentence is
+     * worse than no badge at all.
+     */
+    function forumLineItem(text) {
+        var raw = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!raw) return null;
+        var parts = raw.split(' - ');
+        if (parts.length < 2) return null;
+
+        var name = parts[0].trim();
+        if (!lookupWeapon(normalizeWeaponName(name))) return null;
+
+        var bonuses = [];
+        var chunks = parts[1].split(/[•·]/);
+        for (var i = 0; i < chunks.length; i++) {
+            var m = chunks[i].match(/(\d+(?:\.\d+)?)\s*%\s*(.+)/);
+            if (!m) continue;
+            // Whatever is left after the emoji: bonus names are letters, with a
+            // space or a hyphen inside some of them ("Sure Shot", "Double-Tap").
+            var nm = resolveBonusName(m[2].replace(/[^A-Za-z\- ]+/g, ' ').replace(/\s+/g, ' ').trim());
+            var lv = Math.round(parseFloat(m[1]));
+            if (nm && lv > 0) bonuses.push({ name: nm, level: lv });
+        }
+        if (!bonuses.length) return null;
+        bonuses.sort(function (a, b) { return b.level - a.level; });
+
+        var rarity = null;
+        for (var j = 2; j < parts.length; j++) {
+            var t = parts[j].trim();
+            if (RARITY_WORD.test(t)) { rarity = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase(); break; }
+        }
+        return { name: name, rarity: rarity, bonuses: bonuses };
+    }
+
+    /**
+     * A post's children split into visual lines at every <br>.
+     *
+     * Torn colours each field of these lines separately, so one line is a dozen
+     * spans and no single element holds it. The line has to be reassembled from
+     * the run of nodes between one break and the next, which is also the only
+     * place a price can be hung.
+     */
+    function forumLineSegments(el) {
+        var out = [], cur = [], kids = el.childNodes;
+        for (var i = 0; i < kids.length; i++) {
+            var n = kids[i];
+            if (n.nodeType === 1 && n.nodeName === 'BR') { if (cur.length) out.push(cur); cur = []; continue; }
+            if (n.nodeType === 1 && n.classList && n.classList.contains('rwp-tbl-cell')) continue;
+            cur.push(n);
+        }
+        if (cur.length) out.push(cur);
+        return out;
+    }
+
+    function segmentText(nodes) {
+        var s = '';
+        for (var i = 0; i < nodes.length; i++) s += (nodes[i].textContent || nodes[i].nodeValue || '') + ' ';
+        return s;
+    }
+
+    function injectForumLines() {
+        // Any element that holds <br>-separated text is a candidate; the parser
+        // is what decides, not the container.
+        var hosts = document.querySelectorAll('div, p, td, li, blockquote');
+        for (var h = 0; h < hosts.length; h++) {
+            var host = hosts[h];
+            if (!host.querySelector || !host.getElementsByTagName('br').length) continue;
+            var segs = forumLineSegments(host);
+            for (var s = 0; s < segs.length; s++) {
+                var nodes = segs[s];
+                var last = nodes[nodes.length - 1];
+                if (!last || last.__rwpLine) continue;
+                var item = forumLineItem(segmentText(nodes));
+                if (!item) continue;
+                var p = priceForumRow(item);
+                if (!p) continue;
+                last.__rwpLine = 1;
+                var tag = document.createElement('span');
+                tag.className = 'rwp-tbl-cell';
+                tag.style.cssText = 'margin-left:8px;color:#9fe870;font-weight:700;white-space:nowrap';
+                tag.textContent = '\u2248 ' + fmtBigDollar(p.value);
+                tag.title = p.name + ' — ' + p.bonuses.map(function (b) { return b.level + '% ' + b.name; }).join(' + ') +
+                            (p.rarity ? ' — ' + p.rarity + (p.inferred ? ' (worked out from the %)' : '') : '') +
+                            (p.count ? ' — ' + p.count + ' sales' : '') +
+                            (p.source ? ' — from ' + p.source : '') +
+                            (p.bonuses.length > 1 && p.source !== 'sales of this exact pair of bonuses'
+                               ? ' — the ' + p.bonuses[1].level + '% ' + p.bonuses[1].name +
+                                 ' is NOT priced in: no sale of this exact pair exists'
+                               : '');
+                if (last.parentNode) last.parentNode.insertBefore(tag, last.nextSibling);
+            }
         }
     }
 
@@ -3699,7 +3807,10 @@
     function ensureForumTables() {
         if (forumInited) return;
         forumInited = true;
-        var run = function () { try { injectForumTables(); } catch (e) {} };
+        var run = function () {
+            try { injectForumTables(); } catch (e) {}
+            try { injectForumLines(); } catch (e) {}
+        };
         run();
         // Forum threads paginate and re-render in place, so a one-shot pass sees
         // only whichever page happened to be open when the script loaded.

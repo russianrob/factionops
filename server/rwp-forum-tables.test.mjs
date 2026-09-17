@@ -36,7 +36,7 @@ function v(name) {
 const sandbox = { FEED };
 vm.createContext(sandbox);
 vm.runInContext([
-  v("WEAPON_CLASS"),
+  v("WEAPON_CLASS"), v("COMBO_MIN_SAMPLES"), v("LEVEL_MIN_SAMPLES"),
   "var weaponPrices = FEED.weaponPrices, armourPrices = FEED.armourPrices || {};",
   "var bonusPrices = FEED.bonusPrices, armourBonusPrices = FEED.armourBonusPrices || {};",
   "var weaponComboPrices = FEED.weaponComboPrices, weaponPairComboPrices = FEED.weaponPairComboPrices;",
@@ -152,4 +152,144 @@ test("every row of the posted table prices", () => {
 test("a price is never invented for a weapon with no sales", () => {
   const p = priceForumRow({ name: "Definitely Not A Weapon", bonuses: [{ name: "Expose", level: 9 }] });
   assert.equal(p, null);
+});
+
+// ── Price LISTS written as lines, not tables ───────────────────
+// The other way people post stock: one line per weapon, grouped under a
+// heading per bonus. Everything needed is there in the text.
+//
+//   Guandao - 68% (swan)Grace • 51% (angry)Berserk - Red - Q:227.77% - 77.00/43.78
+//
+// Emoji sit flush against the bonus name, two bonuses are joined by a bullet,
+// and the separator is a SPACED hyphen so "Tavor TAR-21" survives it.
+const line = (() => {
+  vm.runInContext([v("RARITY_WORD"), fn("forumLineItem"), "globalThis.__line = forumLineItem;"].join("\n"), sandbox);
+  return sandbox.__line;
+})();
+
+test("a line becomes an item", () => {
+  const r = line("Samurai Sword - 27% \u{1FA78}Bleed - Yellow - Q:110.73% - 64.43/56.65");
+  assert.equal(r.name, "Samurai Sword");
+  assert.equal(r.rarity, "Yellow");
+  assert.equal(JSON.stringify(r.bonuses), JSON.stringify([{ name: "Bleed", level: 27 }]));
+});
+
+test("the emoji in front of the bonus is not part of its name", () => {
+  const r = line("Mag 7 - 15% \u{1FAC0}Eviscerate - Yellow - Q:100.69% - 62.43/65.64");
+  assert.equal(r.bonuses[0].name, "Eviscerate");
+});
+
+test("two bonuses joined by a bullet are both kept", () => {
+  const r = line("Guandao - 68% \u{1F9A2}Grace • 51% \u{1F620}Berserk - Red - Q:227.77% - 77.00/43.78");
+  assert.equal(r.rarity, "Red");
+  assert.equal(r.bonuses.length, 2);
+  // Biggest roll leads.
+  assert.equal(r.bonuses[0].name, "Grace");
+  assert.equal(r.bonuses[0].level, 68);
+  assert.equal(r.bonuses[1].level, 51);
+});
+
+test("a hyphen inside a weapon name is not a separator", () => {
+  for (const [text, want] of [
+    ["Tavor TAR-21 - 9% \u{1F440}Expose - Yellow - Q:110.32%", "Tavor TAR-21"],
+    ["AK-47 - 7% \u{1F6E1}Disarm - Orange - Q:142.4%", "AK-47"],
+    ["ArmaLite M-15A4 - 25% \u{1F3AF}Deadeye - Yellow - Q:109.62%", "ArmaLite M-15A4"],
+  ]) assert.equal(line(text).name, want, text);
+});
+
+test("prose is not mistaken for stock", () => {
+  assert.equal(line("Selling only these below:"), null);
+  assert.equal(line("Happy to hear offers - will respond as soon as possible"), null);
+  assert.equal(line(""), null);
+  assert.equal(line("Samurai Sword - 27% NotARealBonus - Yellow"), null,
+    "an unrecognised bonus is not guessed at");
+});
+
+test("a stated rarity is used, not re-derived", () => {
+  // The line says Orange outright. Working it back out of the roll would be
+  // second-guessing something the seller actually wrote down.
+  const r = line("AK-47 - 7% \u{1F6E1}Disarm - Orange - Q:142.4% - 64.78/57.46");
+  assert.equal(r.rarity, "Orange");
+  const p = priceForumRow(r);
+  assert.equal(p.rarity, "Orange");
+  assert.equal(p.inferred, false);
+});
+
+test("every line of the posted list prices", () => {
+  const lines = [
+    "Guandao - 68% \u{1F9A2}Grace • 51% \u{1F620}Berserk - Red - Q:227.77% - 77.00/43.78",
+    "Samurai Sword - 27% \u{1FA78}Bleed - Yellow - Q:110.73% - 64.43/56.65",
+    "ArmaLite M-15A4 - 25% \u{1F3AF}Deadeye - Yellow - Q:109.62% - 73.91/62.05",
+    "Enfield SA-80 - 35% \u{1F3AF}Deadeye - Yellow - Q:113.29% - 69.98/59.35",
+    "Qsz-92 - 41% \u{1F3AF}Deadeye - Yellow - Q:101.89% - 68.35/56.84",
+    "AK-47 - 7% \u{1F6E1}Disarm - Orange - Q:142.4% - 64.78/57.46",
+    "Mag 7 - 15% \u{1FAC0}Eviscerate - Yellow - Q:100.69% - 62.43/65.64",
+    "Cobra Derringer - 16% ⚔Execute - Yellow - Q:101.1% - 67.11/57.00",
+    "ArmaLite M-15A4 - 8% \u{1F440}Expose - Yellow - Q:104.94% - 74.51/60.98",
+    "Enfield SA-80 - 8% \u{1F440}Expose - Yellow - Q:109.78% - 70.16/58.82",
+    "Tavor TAR-21 - 9% \u{1F440}Expose - Yellow - Q:110.32% - 72.16/55.87",
+  ];
+  const missed = [];
+  for (const t of lines) {
+    const it = line(t);
+    const p = it && priceForumRow(it);
+    if (!p || !(p.value > 0)) missed.push(t.slice(0, 40));
+  }
+  assert.equal(JSON.stringify(missed), "[]", "lines that did not price: " + missed.join(" | "));
+});
+
+// ── Reassembling a line from the spans Torn shreds it into ─────
+const seg = (() => {
+  vm.runInContext([fn("forumLineSegments"), fn("segmentText"),
+    "globalThis.__seg = forumLineSegments; globalThis.__segText = segmentText;"].join("\n"), sandbox);
+  return { split: sandbox.__seg, text: sandbox.__segText };
+})();
+
+const T = (v) => ({ nodeType: 3, nodeValue: v, textContent: v });
+const BR = () => ({ nodeType: 1, nodeName: "BR", classList: { contains: () => false } });
+const SPAN = (v, cls) => ({ nodeType: 1, nodeName: "SPAN", textContent: v,
+                            classList: { contains: (c) => c === cls } });
+const HOST = (kids) => ({ nodeType: 1, childNodes: kids });
+
+test("a line shredded across coloured spans is put back together", () => {
+  // This is how Torn renders it: the percentage green, the bonus green, the
+  // rarity its own colour. No single element holds the line.
+  const host = HOST([
+    T("Samurai Sword - "), SPAN("27%"), SPAN(" \u{1FA78}Bleed"), T(" - "),
+    SPAN("Yellow"), T(" - Q:110.73% - 64.43/56.65"), BR(),
+    T("Cobra Derringer - "), SPAN("16%"), SPAN(" ⚔Execute"), T(" - "),
+    SPAN("Yellow"), T(" - Q:101.1%"),
+  ]);
+  const segs = seg.split(host);
+  assert.equal(segs.length, 2, "one segment per <br>-separated line");
+  const first = line(seg.text(segs[0]));
+  assert.equal(first.name, "Samurai Sword");
+  assert.equal(first.bonuses[0].name, "Bleed");
+  assert.equal(first.rarity, "Yellow");
+  const second = line(seg.text(segs[1]));
+  assert.equal(second.name, "Cobra Derringer");
+});
+
+test("a price already added is not read back into the next line", () => {
+  // The badge is a sibling in the same run of nodes. Letting it back in would
+  // feed "$251m" into the text the parser reads.
+  const host = HOST([
+    T("Samurai Sword - 27% Bleed - Yellow"), SPAN("≈ $251m", "rwp-tbl-cell"), BR(),
+  ]);
+  const text = seg.text(seg.split(host)[0]);
+  assert.ok(!/251/.test(text), "our own badge must be excluded: " + text);
+  assert.equal(line(text).name, "Samurai Sword");
+});
+
+test("a run with no break is still one line", () => {
+  const host = HOST([T("Mag 7 - 15% Eviscerate - Yellow - Q:100.69%")]);
+  const segs = seg.split(host);
+  assert.equal(segs.length, 1);
+  assert.equal(line(seg.text(segs[0])).name, "Mag 7");
+});
+
+test("empty lines do not become segments", () => {
+  const host = HOST([BR(), BR(), T("AK-47 - 7% Disarm - Orange"), BR(), BR()]);
+  const segs = seg.split(host);
+  assert.equal(segs.length, 1, "consecutive breaks must not produce empty segments");
 });
