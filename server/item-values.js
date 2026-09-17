@@ -23,6 +23,7 @@ const REFRESH_MS = 4 * 60 * 1000; // 4 min — just under server.js's 5-min sche
 
 let _values = {};          // { [itemId]: marketValue }
 let _byName = {};          // { [name.toLowerCase()]: marketValue }
+let _buyByName = {};       // { [name.toLowerCase()]: shop buy price } — fixed, unlike value
 let _types = {};           // { [itemId]: typeString } — for the junk-finder catalog
 let _subtypes = {};        // { [itemId]: subTypeString } — weapon class / armor slot
 let _fetchedAt = 0;
@@ -38,6 +39,7 @@ function _load() {
     if (obj?.values && typeof obj.values === 'object') {
       _values = obj.values;
       _byName = (obj.byName && typeof obj.byName === 'object') ? obj.byName : {};
+      _buyByName = (obj.buyByName && typeof obj.buyByName === 'object') ? obj.buyByName : {};
       _types = (obj.types && typeof obj.types === 'object') ? obj.types : {};
       _subtypes = (obj.subtypes && typeof obj.subtypes === 'object') ? obj.subtypes : {};
       _fetchedAt = Number(obj.fetchedAt) || 0;
@@ -53,7 +55,7 @@ function _save() {
   try {
     const dir = pathDirname(CACHE_FILE);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(CACHE_FILE, JSON.stringify({ values: _values, byName: _byName, types: _types, subtypes: _subtypes, fetchedAt: _fetchedAt }, null, 0), 'utf8');
+    writeFileSync(CACHE_FILE, JSON.stringify({ values: _values, byName: _byName, buyByName: _buyByName, types: _types, subtypes: _subtypes, fetchedAt: _fetchedAt }, null, 0), 'utf8');
   } catch (e) {
     console.warn('[item-values] save failed:', e.message);
   }
@@ -78,6 +80,11 @@ async function _refreshWithKey(key) {
       const items = Array.isArray(data.items) ? data.items : Object.values(data.items || {});
       const out = {};
       const outByName = {};
+      // Shop BUY price, kept alongside the market value because it is a fixed
+      // catalogue figure. RW Pricer uses it to identify a weapon from a
+      // screenshot whose card was cropped above the name: "Buy: $20,000,000
+      // (Mexico)" names the gun when nothing else on the card does.
+      const outBuyByName = {};
       const outTypes = {};
       const outSubtypes = {};
       for (const it of items) {
@@ -86,6 +93,9 @@ async function _refreshWithKey(key) {
         if (id != null && ty) outTypes[String(id)] = String(ty);
         const st = it?.sub_type;
         if (id != null && st) outSubtypes[String(id)] = String(st);
+        const nmRaw = it?.name;
+        const bp = Number(it?.value?.buy_price ?? it?.buy_price ?? 0);
+        if (nmRaw && Number.isFinite(bp) && bp > 0) outBuyByName[String(nmRaw).toLowerCase()] = bp;
         const mp = Number(
           it?.value?.market_price ?? it?.market_value ?? it?.marketValue ?? 0
         );
@@ -97,6 +107,8 @@ async function _refreshWithKey(key) {
       if (Object.keys(out).length > 0) {
         _values = out;
         _byName = outByName;
+        if (Object.keys(outBuyByName).length > 0) _buyByName = outBuyByName;
+        else console.warn('[item-values] no buy prices in the items payload — field name may have changed');
         _types = outTypes;
         _subtypes = outSubtypes;
         _fetchedAt = Date.now();
@@ -129,6 +141,13 @@ export function getItemPriceByName(name) {
   if (!name) return 0;
   return Number(_byName[String(name).toLowerCase()]) || 0;
 }
+
+/**
+ * Shop BUY price by item NAME, lowercased. Empty until the first refresh after
+ * this was added, so callers must treat an empty map as "unknown", never as
+ * "no such item".
+ */
+export function getAllBuyPricesByName() { return _buyByName; }
 
 /** Full Torn item id → market value map (live cache). */
 export function getAllItemPricesById() { return _values; }

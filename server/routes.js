@@ -102,7 +102,7 @@ import * as gymEnergy from "./gym-energy-snapshot.js";
 import * as gymComp from "./gym-comp.js";
 import * as upcomingWar from "./upcoming-war.js";
 import * as rwpImage from "./rwp-image-read.js";
-import { priceItem as rwpPriceItem } from "./rwp-price.js";
+import { priceItem as rwpPriceItem, weaponByBuyPrice as rwpWeaponByBuyPrice } from "./rwp-price.js";
 import * as chainHits from "./chain-hits.js";
 import { renderSlackersPage } from "./slackers-page.js";
 import * as xanaxModel from "./xanax-model.js";
@@ -121,7 +121,7 @@ import { getHeatmap, resetHeatmap } from "./activity-heatmap.js";
 import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName } from "./oc-spawn.js";
 import { createFlyerDelayPoller } from "./flyer-delay-poll.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
-import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById, getItemCatalog } from "./item-values.js";
+import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById, getItemCatalog, getAllBuyPricesByName } from "./item-values.js";
 import { getLowestListing, trackItem, getListingsById, getListingsByName, fetchNow as itemMarketFetchNow } from "./item-market.js";
 import * as vaultRequests from "./vault-requests.js";
 import * as keyUsage from "./key-usage-log.js";
@@ -12263,10 +12263,31 @@ function rwpFeed() {
   return _rwpFeed;
 }
 
+/**
+ * The item as read, with a name we can actually price where one can be worked
+ * out.
+ *
+ * A cropped card names no weapon and the reader fills the gap from the picture:
+ * an ArmaLite M-15A4 came back as "M16A4". But the card carries the shop buy
+ * price, and that is a fixed catalogue figure -- exactly one weapon costs
+ * $20,000,000 -- so it names the gun when nothing else on the card does.
+ */
+function identify(item) {
+  if (!item || !item.name) return item;
+  try {
+    const feed = rwpFeed();
+    if (rwpPriceItem(feed, item).unknown) {
+      const byBuy = rwpWeaponByBuyPrice(feed, getAllBuyPricesByName(), item.buy);
+      if (byBuy) return { ...item, name: byBuy, readAs: item.name, identifiedByBuyPrice: true };
+    }
+  } catch (_) { /* identification is a bonus, never a failure mode */ }
+  return item;
+}
+
 function priceOf(item) {
   if (!item || !item.name) return null;
   try {
-    const p = rwpPriceItem(rwpFeed(), item);
+    const p = rwpPriceItem(rwpFeed(), identify(item));
     return p.ok ? p : null;
   } catch (e) {
     console.warn(`[rwp-price] ${e.message}`);
@@ -12287,7 +12308,7 @@ function priceOf(item) {
 function unknownItem(item) {
   if (!item || !item.name) return false;
   try {
-    const p = rwpPriceItem(rwpFeed(), item);
+    const p = rwpPriceItem(rwpFeed(), identify(item));
     return !p.ok && !!p.unknown;
   } catch { return false; }
 }

@@ -5,7 +5,7 @@
 // the caption is fenced off from the instructions it sits next to.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hostAllowed, cacheKey, hintKey, buildPrompt, cleanHint } from "./rwp-image-read.js";
+import { hostAllowed, cacheKey, hintKey, buildPrompt, cleanHint, PROMPT_VERSION } from "./rwp-image-read.js";
 
 const URL1 = "https://editor.torn.com/a78795b3-1de5-4aa6-bc33-e62f2d5dc822-4154995.png";
 
@@ -55,4 +55,16 @@ test("with no caption the prompt is unchanged", () => {
   const bare = buildPrompt("");
   assert.ok(!/untrusted/i.test(bare), "no caption, no caption section");
   assert.equal(bare, buildPrompt(), "absent and empty behave alike");
+});
+
+test("a reading made by an older prompt is not reused", () => {
+  // The prompt gained a "buy" field so a cropped card could be identified by
+  // its shop price. Every reading cached before that lacks the field, and
+  // without the version in the key those stale answers would be served forever
+  // and the new field would never reach the images that needed it -- the same
+  // trap the caption keying already closed.
+  assert.notEqual(cacheKey(URL1, "", 1), cacheKey(URL1, "", 2));
+  assert.equal(cacheKey(URL1, "", 2), cacheKey(URL1, "", 2));
+  assert.equal(cacheKey(URL1), cacheKey(URL1, "", PROMPT_VERSION),
+    "the default must be the current prompt version");
 });

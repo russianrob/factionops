@@ -78,9 +78,23 @@ export function hintKey(hint) {
  * un-hinted read would be served back forever and a hint could never take
  * effect on the one image that needed it.
  */
-export function cacheKey(url, hint) {
+/**
+ * Bump when the PROMPT changes what a reading CONTAINS.
+ *
+ * 2 added "buy", so a card cropped above its name could be identified by its
+ * shop price. Every reading cached before that lacks the field; without the
+ * version in the key those stale answers would be served forever and the new
+ * field would never reach the images that needed it. Cosmetic rewording does
+ * not need a bump -- a new or changed FIELD does.
+ */
+export const PROMPT_VERSION = 2;
+
+export function cacheKey(url, hint, version) {
   const hk = hintKey(hint);
-  return createHash("sha256").update(String(url) + (hk ? "|" + hk : "")).digest("hex").slice(0, 32);
+  const v = Number.isFinite(Number(version)) ? Number(version) : PROMPT_VERSION;
+  return createHash("sha256")
+    .update(String(url) + (hk ? "|" + hk : "") + "|v" + v)
+    .digest("hex").slice(0, 32);
 }
 
 const fileFor = (url, hint) => path.join(DIR, cacheKey(url, hint) + ".json");
@@ -91,7 +105,7 @@ const fileFor = (url, hint) => path.join(DIR, cacheKey(url, hint) + ".json");
 // it does above.
 const bodyFileFor = (sha, hint) => {
   const hk = hintKey(hint);
-  return path.join(DIR, "img-" + sha.slice(0, 32) + (hk ? "-" + hk : "") + ".json");
+  return path.join(DIR, "img-" + sha.slice(0, 32) + (hk ? "-" + hk : "") + "-v" + PROMPT_VERSION + ".json");
 };
 
 function writeBodyCache(sha, item, hint) {
@@ -122,13 +136,17 @@ const PROMPT = `This image is a screenshot of a Torn item tooltip for a weapon o
 
 Return ONE JSON object, nothing else:
 {"name":"<exact item name>","rarity":"Yellow|Orange|Red|null","quality":<number or null>,
- "bonuses":[{"name":"<bonus name>","pct":<number>}],"confident":true|false}
+ "bonuses":[{"name":"<bonus name>","pct":<number>}],"buy":<number or null>,"confident":true|false}
 
 Rules:
 - "name" is the item name as Torn writes it, e.g. "Cobra Derringer".
 - "rarity" is the coloured word beside Quality (Yellow, Orange, Red). null if absent.
 - "quality" is the Quality percentage as a number, e.g. 182.77.
 - Each bonus appears as "<pct>% <Name>", e.g. "97% Assassinate". Return every one.
+- "buy" is the number beside "Buy:", digits only — "Buy: $20,000,000 (Mexico)"
+  is 20000000. null if the card does not show one. This is a fixed shop price
+  and it identifies the weapon when the card is cropped above its name, so it
+  is worth reading carefully.
 - If the image is not a Torn item tooltip, or the text is too small or blurred to
   read with certainty, return {"confident":false} and nothing else. Do NOT guess:
   a misread percentage is worth billions in the wrong direction.`;

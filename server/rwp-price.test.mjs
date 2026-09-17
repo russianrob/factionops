@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { priceItem, valueAtPct, levelCurve, resolveName, rarityForRoll } from "./rwp-price.js";
+import { priceItem, valueAtPct, levelCurve, resolveName, rarityForRoll, weaponByBuyPrice } from "./rwp-price.js";
 
 const feed = JSON.parse(fs.readFileSync(new URL("./data/rwp-prices.json", import.meta.url), "utf8"));
 
@@ -198,4 +198,39 @@ test("the roll picks the rarity out of three candidates", () => {
   assert.equal(rarityForRoll(feed, "Mag 7", "Expose", 8), "Yellow");
   assert.equal(rarityForRoll(feed, "Mag 7", "Expose", 11), "Orange");
   assert.equal(rarityForRoll(feed, "Mag 7", "Expose", 15), "Red");
+});
+
+// ── Identifying a weapon that the card does not name ───────────
+// A cropped card names no weapon and the reader fills the gap: an ArmaLite
+// M-15A4 came back as "M16A4", which is not a Torn item, so it priced at
+// nothing. But the card always carries the shop BUY price -- "Buy: $20,000,000
+// (Mexico)" -- and that is a fixed catalogue figure, not a market value that
+// drifts. Matched exactly, it names the weapon.
+
+test("a buy price identifies the weapon the card did not name", () => {
+  const buys = { "armalite m-15a4": 20000000, "mag 7": 60000, "sig 552": 7500000 };
+  assert.equal(weaponByBuyPrice(feed, buys, 20000000), "ArmaLite M-15A4");
+  assert.equal(weaponByBuyPrice(feed, buys, 7500000), "SIG 552");
+});
+
+test("an ambiguous buy price is refused, not picked", () => {
+  // Two weapons at the same shop price cannot be told apart this way, and
+  // guessing between them prices the wrong gun.
+  const buys = { "mag 7": 60000, "axe": 60000 };
+  assert.equal(weaponByBuyPrice(feed, buys, 60000), null);
+});
+
+test("a buy price nothing matches is refused", () => {
+  const buys = { "mag 7": 60000 };
+  assert.equal(weaponByBuyPrice(feed, buys, 12345), null);
+  assert.equal(weaponByBuyPrice(feed, buys, 0), null);
+  assert.equal(weaponByBuyPrice(feed, buys, null), null);
+});
+
+test("only weapons the price feed actually knows are candidates", () => {
+  // The catalogue has every item in Torn; the price feed has the 101 with
+  // sales. Identifying something we cannot price is not an identification.
+  const buys = { "plushie": 20000000, "armalite m-15a4": 20000000 };
+  assert.equal(weaponByBuyPrice(feed, buys, 20000000), "ArmaLite M-15A4",
+    "a non-weapon at the same price must not create ambiguity");
 });

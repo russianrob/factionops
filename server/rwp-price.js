@@ -145,6 +145,31 @@ export function rarityForRoll(feed, name, bonus, pct) {
   return hits.length === 1 ? hits[0] : null;
 }
 
+/**
+ * Identify a weapon by the shop price printed on its card.
+ *
+ * A cropped card names no weapon and the reader fills the gap from the picture:
+ * an ArmaLite M-15A4 came back as "M16A4", which is not a Torn item, so it
+ * priced at nothing. But every card carries "Buy: $20,000,000 (Mexico)", and a
+ * shop price is a fixed catalogue figure rather than a market value that
+ * drifts, so it can be matched exactly instead of within a tolerance.
+ *
+ * Candidates are restricted to weapons the PRICE FEED knows, not every item in
+ * Torn: identifying something we cannot price is not an identification, and
+ * letting a plushie at the same shop price create a tie would throw away a
+ * reading that was never ambiguous.
+ *
+ * Answers only when exactly one weapon matches. Two weapons at one shop price
+ * cannot be told apart this way, and guessing between them prices the wrong gun.
+ */
+export function weaponByBuyPrice(feed, buyPrices, buy) {
+  const want = num(buy);
+  if (!want || !buyPrices) return null;
+  const weapons = Object.keys((feed && feed.weaponPrices) || {});
+  const hits = weapons.filter((w) => num(buyPrices[w.toLowerCase()]) === want);
+  return hits.length === 1 ? hits[0] : null;
+}
+
 export function priceItem(feed, item) {
   const name = resolveName(feed, item && item.name);
   let rarity = item && item.rarity;
