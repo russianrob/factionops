@@ -247,6 +247,20 @@ function bonusWorth(feed, name, bonus, rarity) {
   return best;
 }
 
+/**
+ * What to say when a second bonus could not be priced.
+ *
+ * Which WAY the number is wrong matters more than the fact that it is. Across
+ * 950 pairs that have both a pair comp and a single-bonus one, the pair goes
+ * for about 1.4x the better single at the median, so the quoted figure is
+ * usually a floor. Usually, not always -- a quarter of those pairs sold for
+ * LESS than the best single, which is why no multiplier is applied and the
+ * wording promises a direction rather than an amount.
+ */
+function secondBonusNote(bonuses) {
+  return `The ${bonuses[1].pct}% ${bonuses[1].name} isn't counted. Nobody has sold this exact pair, so there's nothing to price it from — treat this as a floor. Two-bonus weapons usually go for more than either bonus alone, often around half again, sometimes far more.`;
+}
+
 /** Is this name an armour piece rather than a weapon? They price differently. */
 function isArmour(feed, name) {
   return !!((feed && feed.armourPrices) || {})[name];
@@ -376,7 +390,7 @@ export function priceItem(feed, item) {
       // A second bonus is worth something, but there is no measurement of THIS
       // pair — flagged rather than silently multiplied in.
       if (bonuses.length > 1) {
-        out.notes.push(`The ${bonuses[1].pct}% ${bonuses[1].name} isn't counted. Nobody has sold this exact pair, so there's nothing to price it from.`);
+        out.notes.push(secondBonusNote(bonuses));
       }
       // Same window for the range as for the estimate. Quoting an all-time
       // low-high beside a last-year median reads as one measurement and is two.
@@ -404,6 +418,10 @@ export function priceItem(feed, item) {
       out.basis = `what ${thing(rarity, name)} with ${bonuses[0].name} has sold for, at any percentage`;
       out.estimate = medOf(arr); out.low = num(arr[0]); out.high = num(arr[2]); out.samples = cntOf(arr);
       out.notes.push(`This ignores the ${bonuses[0].pct}% — it's the middle price for any ${bonuses[0].name} one, good or bad.`);
+      // This rung drops the second bonus too, and said nothing about it. The
+      // S&W Revolver that exposed this quoted $375m off one bonus; the same
+      // revolver, both bonuses, had sold three weeks earlier for $2.14b.
+      if (bonuses.length > 1) out.notes.push(secondBonusNote(bonuses));
       return out;
     }
   }

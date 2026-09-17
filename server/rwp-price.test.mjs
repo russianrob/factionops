@@ -451,3 +451,18 @@ test("an extrapolation below the range says so correctly", () => {
       "a roll below every sale must say so: " + p.notes.join(" | "));
   }
 });
+
+test("an uncounted second bonus says which way the number is wrong", () => {
+  // "isn't counted" tells the reader something is missing but not what to do
+  // about it. Measured over 950 pairs that have both a pair comp and a single
+  // one, the pair goes for about 1.4x the better single at the median -- so the
+  // quoted number is a floor, and saying so is the difference between a caveat
+  // and a warning. It is only a floor USUALLY: a quarter of pairs sell for less.
+  const p = priceItem(feed, {
+    name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 70 }, { name: "Double-Tap", pct: 52 }],
+  });
+  assert.ok(p.notes.some((n) => /isn't counted/.test(n)));
+  assert.ok(p.notes.some((n) => /floor/i.test(n)),
+    "the reader must be told which way it is wrong: " + p.notes.join(" | "));
+});
