@@ -33,12 +33,12 @@ test("the weapon from the forum post prices off its roll, not the median", () =>
   assert.equal(p.ok, true);
   // Assassinate leads: it is the bonus the price is about.
   assert.equal(p.bonuses[0].name, "Assassinate");
-  assert.match(p.basis, /Assassinate sales by roll/);
+  assert.match(p.basis, /with Assassinate has sold for, matched to the 97%/);
   assert.equal(p.extrapolated, true);
   // Far above the roll-agnostic Orange median of $163m.
   assert.ok(p.estimate > 1e9, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
-  assert.ok(p.notes.some((n) => /beyond the highest recorded sale/.test(n)));
-  assert.ok(p.notes.some((n) => /second bonus/.test(n)), "the unpriced second bonus must be stated");
+  assert.ok(p.notes.some((n) => /best on record/.test(n)));
+  assert.ok(p.notes.some((n) => /isn't counted/.test(n)), "the unpriced second bonus must be stated");
 });
 
 test("an exact pair beats the curve when one exists", () => {
@@ -46,7 +46,7 @@ test("an exact pair beats the curve when one exists", () => {
     name: "Cobra Derringer", rarity: "Orange",
     bonuses: [{ name: "Assassinate", pct: 60 }, { name: "Double-Tap", pct: 20 }],
   });
-  assert.match(p.basis, /Assassinate\+Double-Tap/);
+  assert.match(p.basis, /both Assassinate and Double-Tap/);
   assert.equal(p.extrapolated, false);
   assert.equal(p.samples, 4);
 });
@@ -63,8 +63,8 @@ test("a low roll is not given a high roll's median", () => {
 
 test("falls back to the weapon alone and says the bonuses are not counted", () => {
   const p = priceItem(feed, { name: "Cobra Derringer", rarity: "Orange", bonuses: [] });
-  assert.match(p.basis, /all Orange Cobra Derringer sales/);
-  assert.ok(p.notes.some((n) => /Bonuses not accounted for/.test(n)));
+  assert.match(p.basis, /whatever bonus it had/);
+  assert.ok(p.notes.some((n) => /ignores the bonus completely/.test(n)));
 });
 
 test("an unknown item is refused rather than guessed", () => {
@@ -126,7 +126,7 @@ test("says so when the recent market differs from the history", () => {
   const p = priceItem(feed, {
     name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
   });
-  assert.ok(p.notes.some((n) => /all-time/i.test(n)),
+  assert.ok(p.notes.some((n) => /going all the way back/i.test(n)),
     "no note naming the all-time figure: " + p.notes.join(" | "));
 });
 
@@ -176,7 +176,8 @@ test("infers the rarity from the roll when the card did not give one", () => {
   assert.equal(p.ok, true, p.reason);
   assert.equal(p.rarity, "Red", "15% Expose only ever sold as Red");
   assert.ok(p.estimate > 0);
-  assert.ok(p.notes.some((n) => /rarity/i.test(n)), "an inferred rarity must be declared: " + p.notes.join(" | "));
+  assert.ok(p.notes.some((n) => /doesn't show a colour/i.test(n)),
+    "an inferred rarity must be declared: " + p.notes.join(" | "));
 });
 
 test("a rarity that IS given is never second-guessed", () => {
@@ -184,7 +185,7 @@ test("a rarity that IS given is never second-guessed", () => {
     name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
   });
   assert.equal(p.rarity, "Yellow");
-  assert.ok(!p.notes.some((n) => /only ever sold/.test(n)));
+  assert.ok(!p.notes.some((n) => /doesn't show a colour/.test(n)));
 });
 
 test("an ambiguous roll is not guessed at", () => {
@@ -233,4 +234,43 @@ test("only weapons the price feed actually knows are candidates", () => {
   const buys = { "plushie": 20000000, "armalite m-15a4": 20000000 };
   assert.equal(weaponByBuyPrice(feed, buys, 20000000), "ArmaLite M-15A4",
     "a non-weapon at the same price must not create ambiguity");
+});
+
+// ── Plain English ──────────────────────────────────────────────
+// The badge is read by people mid-trade, not by the person who wrote it.
+// "sales by roll (Orange, 6 price points)" was the line that prompted this:
+// nobody outside this file knows what a roll is.
+
+test("nothing on the badge is written in jargon", () => {
+  const jargon = [/\broll\b/i, /price points?/i, /\bmedian\b/i, /\bsample\b/i,
+                  /extrapolat/i, /roll-agnostic/i, /\bbasis\b/i, /\bpct\b/i];
+  const cases = [
+    { name: "Cobra Derringer", rarity: "Orange", bonuses: [{ name: "Assassinate", pct: 97 }, { name: "Specialist", pct: 23 }] },
+    { name: "Cobra Derringer", rarity: "Orange", bonuses: [{ name: "Assassinate", pct: 60 }, { name: "Double-Tap", pct: 20 }] },
+    { name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }] },
+    { name: "Mag 7", rarity: null, bonuses: [{ name: "Expose", pct: 15 }] },
+    { name: "Cobra Derringer", rarity: "Orange", bonuses: [] },
+  ];
+  for (const c of cases) {
+    const p = priceItem(feed, c);
+    if (!p.ok) continue;
+    for (const text of [p.basis].concat(p.notes)) {
+      for (const bad of jargon) {
+        assert.ok(!bad.test(text), "jargon " + bad + " in: " + text);
+      }
+    }
+  }
+});
+
+test("the basis reads as a sentence about what things sold for", () => {
+  const p = priceItem(feed, { name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }] });
+  assert.match(p.basis, /^what a Yellow SIG 552 with Expose has sold for/);
+  assert.match(p.basis, /matched to the 9%/);
+});
+
+test("the article agrees with the colour", () => {
+  const orange = priceItem(feed, { name: "Cobra Derringer", rarity: "Orange", bonuses: [] });
+  const yellow = priceItem(feed, { name: "Cobra Derringer", rarity: "Yellow", bonuses: [] });
+  assert.match(orange.basis, /what an Orange/);
+  assert.match(yellow.basis, /what a Yellow/);
 });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.5.0
+// @version      3.5.1
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.5.0';
+    var SCRIPT_VERSION = '3.5.1';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -3592,25 +3592,25 @@
 
             if (bonuses.length >= 2 && rarity) {
                 value = getWeaponPairComboMedian(key, bonuses[0].name, bonuses[1].name, rarity);
-                if (value) source = 'exact pair';
+                if (value) source = 'sales of this exact pair of bonuses';
             }
             if (!value && rarity) {
                 value = getWeaponLevelMedian(key, lead.name, rarity, lead.level);
-                if (value) { source = 'roll'; count = getWeaponLevelCount(key, lead.name, rarity, lead.level); }
+                if (value) { source = 'sales at this exact %'; count = getWeaponLevelCount(key, lead.name, rarity, lead.level); }
             }
             if (!value) {
                 // No rarity, or none recorded at this roll: the curve pools every
                 // rarity, which is the right fallback when the roll is all we have.
                 var c = getCombinedLevelValue(key, lead.name, lead.level);
-                if (c && c.value != null) { value = c.value; source = 'roll'; count = c.count; }
+                if (c && c.value != null) { value = c.value; source = 'sales at this exact %'; count = c.count; }
             }
             if (!value && rarity) {
                 value = getWeaponComboMedian(key, lead.name, rarity);
-                if (value) source = 'bonus median';
+                if (value) source = 'sales with this bonus at any %';
             }
             if (!value && rarity) {
                 value = getMedianPrice(key, rarity);
-                if (value) source = 'weapon median';
+                if (value) source = 'sales of the weapon on its own';
             }
             if (!value) return null;
             return { name: key, value: value, rarity: rarity, inferred: inferred,
@@ -3652,9 +3652,9 @@
                     if (p) {
                         cell.textContent = fmtBigDollar(p.value);
                         cell.title = p.name + ' — ' + p.bonuses.map(function (b) { return b.level + '% ' + b.name; }).join(' + ') +
-                                     (p.rarity ? ' — ' + p.rarity + (p.inferred ? ' (from the roll)' : '') : '') +
+                                     (p.rarity ? ' — ' + p.rarity + (p.inferred ? ' (worked out from the %)' : '') : '') +
                                      (p.count ? ' — ' + p.count + ' sales' : '') +
-                                     (p.source ? ' — by ' + p.source : '') +
+                                     (p.source ? ' — from ' + p.source : '') +
                                      // A second bonus is worth something, but with no sale
                                      // of this exact pair there is no measurement of THIS
                                      // one. Flagged rather than silently multiplied in.

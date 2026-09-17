@@ -16,6 +16,13 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
 const medOf = (a) => (Array.isArray(a) ? num(a[1]) : null);
 const cntOf = (a) => (Array.isArray(a) ? num(a[3]) : null);
 const money = (n) => (n >= 1e9 ? "$" + (n / 1e9).toFixed(2) + "b" : "$" + Math.round(n / 1e6) + "m");
+// "an Orange", "a Yellow", "a Red".
+const an = (w) => (/^[aeiou]/i.test(String(w || "")) ? "an " : "a ");
+// Every line below is read by somebody mid-trade who did not write this file.
+// "sales by roll (Orange, 6 price points)" was the line that prompted the
+// rewrite: nobody outside here knows what a roll is. The words to reach for
+// are the ones on the card -- the colour, the bonus, the percentage.
+const thing = (rarity, name) => (rarity ? an(rarity) + rarity + " " + name : name);
 
 /**
  * Read a price table, newest evidence first.
@@ -200,7 +207,7 @@ export function priceItem(feed, item) {
   const out = { ok: true, name, readAs: (item && item.name) || name, rarity, bonuses, basis: null, estimate: null,
                 low: null, high: null, samples: null, extrapolated: false, inferredRarity, notes: [] };
   if (inferredRarity) {
-    out.notes.push(`The card did not give a rarity. ${bonuses[0].pct}% ${bonuses[0].name} has only ever sold as ${rarity}, so that is what this prices.`);
+    out.notes.push(`The picture doesn't show a colour. Only ${rarity} ones have ever sold with ${bonuses[0].pct}% ${bonuses[0].name}, so that's what this assumes.`);
   }
 
   // 1. The exact pair.
@@ -208,7 +215,7 @@ export function priceItem(feed, item) {
     const pair = [bonuses[0].name, bonuses[1].name].sort().join("+");
     const arr = ((feed.weaponPairComboPrices || {})[name + "|" + pair] || {})[rarity];
     if (arr) {
-      out.basis = `sales of ${name} with ${pair} (${rarity})`;
+      out.basis = `what ${thing(rarity, name)} with both ${bonuses[0].name} and ${bonuses[1].name} has sold for`;
       out.estimate = medOf(arr); out.low = num(arr[0]); out.high = num(arr[2]); out.samples = cntOf(arr);
       return out;
     }
@@ -220,17 +227,17 @@ export function priceItem(feed, item) {
     const pts = levelCurve(feed, name, lead.name, rarity);
     const at = valueAtPct(pts, num(lead.pct));
     if (at) {
-      out.basis = `${name} + ${lead.name} sales by roll (${rarity}, ${pts.length} price point${pts.length === 1 ? "" : "s"})`;
+      out.basis = `what ${thing(rarity, name)} with ${lead.name} has sold for, matched to the ${lead.pct}%`;
       out.estimate = at.value;
       out.extrapolated = at.extrapolated;
       if (at.extrapolated) {
         const top = pts[pts.length - 1];
-        out.notes.push(`${lead.pct}% is beyond the highest recorded sale (${top[0]}%), so this extends the trend rather than matching a sale.`);
+        out.notes.push(`Nothing this good has ever sold — the best on record is ${top[0]}%. This follows the trend past that, so treat it as a guess rather than a price.`);
       }
       // A second bonus is worth something, but there is no measurement of THIS
       // pair — flagged rather than silently multiplied in.
       if (bonuses.length > 1) {
-        out.notes.push(`A second bonus (${bonuses[1].pct}% ${bonuses[1].name}) is not priced in: no sale of this exact pair exists.`);
+        out.notes.push(`The ${bonuses[1].pct}% ${bonuses[1].name} isn't counted. Nobody has sold this exact pair, so there's nothing to price it from.`);
       }
       // Same window for the range as for the estimate. Quoting an all-time
       // low-high beside a last-year median reads as one measurement and is two.
@@ -238,7 +245,7 @@ export function priceItem(feed, item) {
       if (combo) { out.low = num(combo[0]); out.high = num(combo[2]); out.samples = cntOf(combo); }
       const histAt = valueAtPct(curveOf(feed.weaponLevelPrices, name, lead.name, rarity), num(lead.pct));
       if (histAt && at.value && Math.abs(histAt.value - at.value) / at.value > 0.05) {
-        out.notes.push(`Priced on the last 365 days. All-time the median is ${money(histAt.value)}, which is a different market rather than a better sample.`);
+        out.notes.push(`These are the last year's prices. Going all the way back it's ${money(histAt.value)}, but those older sales were a different market, not a bigger one.`);
       }
       return out;
     }
@@ -248,9 +255,9 @@ export function priceItem(feed, item) {
   if (bonuses.length && rarity) {
     const arr = (table(feed, "comboPrices", "weaponComboPrices")[name + "|" + bonuses[0].name] || {})[rarity];
     if (arr) {
-      out.basis = `sales of ${name} with ${bonuses[0].name} (${rarity})`;
+      out.basis = `what ${thing(rarity, name)} with ${bonuses[0].name} has sold for, at any percentage`;
       out.estimate = medOf(arr); out.low = num(arr[0]); out.high = num(arr[2]); out.samples = cntOf(arr);
-      out.notes.push("Roll percentage not accounted for — this is the median across all rolls.");
+      out.notes.push(`This ignores the ${bonuses[0].pct}% — it's the middle price for any ${bonuses[0].name} one, good or bad.`);
       return out;
     }
   }
@@ -258,9 +265,9 @@ export function priceItem(feed, item) {
   // 4. The weapon alone.
   const arr = (table(feed, "weaponPrices", "weaponPrices")[name] || {})[rarity];
   if (arr) {
-    out.basis = `all ${rarity} ${name} sales`;
+    out.basis = `what ${thing(rarity, name)} has sold for, whatever bonus it had`;
     out.estimate = medOf(arr); out.low = num(arr[0]); out.high = num(arr[2]); out.samples = cntOf(arr);
-    out.notes.push("Bonuses not accounted for.");
+    out.notes.push("This ignores the bonus completely — it's the middle price for the weapon on its own.");
     return out;
   }
 

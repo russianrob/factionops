@@ -2,7 +2,7 @@
 // @name         RW Pricer — Forum Screenshots
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      1.5.2
+// @version      1.5.3
 // @description  Prices the item screenshots people paste in forum trade threads. Reads the card out of the picture and puts the RW Pricer estimate on it.
 // @match        https://www.torn.com/forums.php*
 // @grant        GM_xmlhttpRequest
@@ -16,6 +16,8 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 1.5.3  The badge speaks English. "sales by roll (Orange, 6 price points)"
+ *         told the reader nothing they could act on.
  * 1.5.2  When a card does not name its weapon, the post's own text is offered
  *         to the reader as a caption and the read is tried once more. The badge
  *         now shows the rarity the price was built on, marked when it was
@@ -162,7 +164,7 @@
     var signedIn = !!token();
     var who = gv(NAME_KEY, "");
     el.innerHTML =
-      "<b style='color:#ff9f2e'>RW Pricer forum 1.5.2</b> " +
+      "<b style='color:#ff9f2e'>RW Pricer forum 1.5.3</b> " +
       "<span id='rwpf-x' style='opacity:.6;float:right;cursor:pointer'>close</span><br>" +
       "images: <b>" + DIAG.imgs + "</b> &middot; furniture: <b>" + DIAG.furniture +
       "</b> &middot; asked: <b>" + DIAG.asked + "</b><br>" +
@@ -271,7 +273,7 @@
         (function () {
           var rar = (p && p.rarity) || it.rarity;
           var bits = [];
-          if (rar) bits.push(rar + (p && p.inferredRarity ? " (inferred)" : ""));
+          if (rar) bits.push(rar + (p && p.inferredRarity ? " (worked out)" : ""));
           if (it.quality) bits.push(it.quality + "%");
           return bits.length ? '<span class="sub">' + bits.join(" &middot; ") + "</span>" : "";
         })() +
@@ -279,13 +281,17 @@
       (bonuses ? '<div class="sub">' + bonuses + "</div>" : "") +
       // The basis, always. An estimate whose derivation is invisible gets
       // trusted exactly as much as one that measured something.
-      (p ? '<div class="sub">Based on ' + p.basis +
-            (p.samples ? " &middot; " + p.samples + " sales" : "") +
-            (p.low && p.high ? " &middot; range " + money(p.low) + "–" + money(p.high) : "") + "</div>" : "") +
+      // Sentences, not a field list. Somebody reads this mid-trade to decide
+      // whether an asking price is fair, and "· 20 sales · range" made them
+      // parse a record instead of reading an answer.
+      (p ? '<div class="sub">Based on ' + p.basis + "." +
+            (p.samples ? " " + p.samples + " sale" + (p.samples === 1 ? "" : "s") : "") +
+            (p.low && p.high ? (p.samples ? ", from " : " Sales ran from ") + money(p.low) + " to " + money(p.high) : "") +
+            ((p.samples || (p.low && p.high)) ? "." : "") + "</div>" : "") +
       ((p && p.notes || []).map(function (n) {
         return '<div class="sub warn">' + n + "</div>";
       }).join("")) +
-      '<div class="sub">Read from the picture, so check the numbers against the image above.</div>';
+      '<div class="sub">These numbers were read out of the picture above, so give them a glance.</div>';
     return box;
   }
 
@@ -398,7 +404,7 @@
       method: "POST",
       url: SERVER + "/api/auth",
       headers: { "Content-Type": "application/json" },
-      data: JSON.stringify({ apiKey: key, scriptName: "rwp-forum", scriptVersion: "1.5.2" }),
+      data: JSON.stringify({ apiKey: key, scriptName: "rwp-forum", scriptVersion: "1.5.3" }),
       timeout: 20000,
       onload: function (res) {
         var d = null;

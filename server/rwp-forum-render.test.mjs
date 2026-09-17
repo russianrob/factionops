@@ -83,7 +83,7 @@ test("an inferred rarity is shown, and shown as inferred", () => {
     unknownItem: false, cached: true,
   });
   assert.match(box.innerHTML, /Red/, "the worked-out rarity belongs on the badge");
-  assert.match(box.innerHTML, /inferred/i, "and it must not pass as something the card said");
+  assert.match(box.innerHTML, /worked out/i, "and it must not pass as something the card said");
 });
 
 test("a quality with no rarity is still shown", () => {
