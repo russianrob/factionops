@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.4.18
+// @version      3.5.0
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -15,6 +15,7 @@
 // @match        https://www.torn.com/page.php?sid=auctionHouse*
 // @match        https://www.torn.com/profiles.php*
 // @match        https://www.torn.com/factions.php*
+// @match        https://www.torn.com/forums.php*
 // @match        https://www.torn.com/index.php*
 // @match        https://www.torn.com/
 // @grant        GM_getValue
@@ -33,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.4.13';
+    var SCRIPT_VERSION = '3.5.0';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -3496,6 +3497,193 @@
             if (amtEl && amtEl.textContent !== totalTxt) amtEl.textContent = totalTxt;
         }
     }
+    // ─── Forum price-list tables ─────────────────────────────
+    //
+    // People post weapon price lists on the forums as real tables: Weapon,
+    // Bonus, B %, Quality, and usually their own asking price. Every column
+    // needed to value a weapon is already there as text, so there is nothing to
+    // read off a picture and nothing to pay for -- except the rarity, which the
+    // table never carries. The roll supplies it: for a single bonus, rarity is
+    // very nearly a restatement of the roll.
+
+    /** Column positions in a price-list header, or -1 where there is none. */
+    function forumHeaderMap(cells) {
+        var map = { weapon: -1, bonus: -1, pct: -1 };
+        for (var i = 0; i < (cells || []).length; i++) {
+            var t = String(cells[i] || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            if (map.weapon < 0 && /^(weapon|item|gun|name)s?$/.test(t)) map.weapon = i;
+            else if (map.bonus < 0 && /^bonus(es)?$/.test(t)) map.bonus = i;
+            else if (map.pct < 0 && /^(b ?%|bonus ?%|%|roll|level)$/.test(t)) map.pct = i;
+        }
+        return map;
+    }
+
+    /**
+     * One row of a price list, as something priceable.
+     *
+     * A row can carry two bonuses written across the slash -- "Bleed/Stun" with
+     * "23%/22%" -- and pricing that as a single 23% Bleed misses what the second
+     * one is worth, so the pair is split and kept together.
+     *
+     * Bonus spelling is normalised to the feed's, because the table writes
+     * "Double Tap" and every price table says "Double-Tap"; that one hyphen was
+     * the only row of twelve in the posted list that would not price.
+     */
+    function forumRowItem(cells, map) {
+        if (!cells || map.weapon < 0 || map.bonus < 0 || map.pct < 0) return null;
+        var name = String(cells[map.weapon] || '').trim();
+        var bRaw = String(cells[map.bonus] || '').trim();
+        var pRaw = String(cells[map.pct] || '').trim();
+        if (!name || !bRaw || !pRaw) return null;
+
+        var bParts = bRaw.split('/'), pParts = pRaw.split('/');
+        var bonuses = [];
+        for (var i = 0; i < bParts.length; i++) {
+            var nm = resolveBonusName(bParts[i].trim());
+            var raw = String(pParts[i] != null ? pParts[i] : pParts[0]).replace(/[^0-9.]/g, '');
+            var lv = Math.round(parseFloat(raw));
+            // An unrecognised bonus is dropped rather than guessed at: pricing
+            // the wrong bonus is worse than pricing nothing.
+            if (nm && lv > 0) bonuses.push({ name: nm, level: lv });
+        }
+        if (!bonuses.length) return null;
+        bonuses.sort(function (a, b) { return b.level - a.level; });
+        return { name: name, bonuses: bonuses };
+    }
+
+    /**
+     * Which rarity a roll belongs to, when the table has no rarity column.
+     *
+     * Answers only when exactly one rarity ever recorded that exact roll.
+     * Interpolating across a gap, or picking a side where two rarities overlap,
+     * is how a Yellow gets priced as a Red.
+     */
+    function rarityFromRoll(weaponName, bonusName, level) {
+        if (!level) return null;
+        var lv = TBL('levelPrices')[weaponName + '|' + bonusName];
+        if (!lv) return null;
+        var hit = null, n = 0;
+        for (var r in lv) { if (lv[r] && lv[r][level] != null) { hit = r; n++; } }
+        return n === 1 ? hit : null;
+    }
+
+    /**
+     * Value one row, best evidence first, and say which rung answered.
+     *
+     * The same ladder the badges use, driven from text instead of the DOM.
+     */
+    function priceForumRow(item) {
+        if (!item) return null;
+        var key = lookupWeapon(normalizeWeaponName(item.name));
+        if (!key) return null;
+        var bonuses = item.bonuses || [];
+        if (!bonuses.length) return null;
+
+        var lead = bonuses[0];
+        var rarity = rarityFromRoll(key, lead.name, lead.level);
+        var inferred = !!rarity;
+
+        // Prefer the last year where it has enough sales, exactly as the badges
+        // do for a single-bonus weapon.
+        var prevActive = ACTIVE;
+        ACTIVE = (recentTables && bonuses.length === 1) ? recentTables : null;
+        try {
+            var value = null, source = null, count = null;
+
+            if (bonuses.length >= 2 && rarity) {
+                value = getWeaponPairComboMedian(key, bonuses[0].name, bonuses[1].name, rarity);
+                if (value) source = 'exact pair';
+            }
+            if (!value && rarity) {
+                value = getWeaponLevelMedian(key, lead.name, rarity, lead.level);
+                if (value) { source = 'roll'; count = getWeaponLevelCount(key, lead.name, rarity, lead.level); }
+            }
+            if (!value) {
+                // No rarity, or none recorded at this roll: the curve pools every
+                // rarity, which is the right fallback when the roll is all we have.
+                var c = getCombinedLevelValue(key, lead.name, lead.level);
+                if (c && c.value != null) { value = c.value; source = 'roll'; count = c.count; }
+            }
+            if (!value && rarity) {
+                value = getWeaponComboMedian(key, lead.name, rarity);
+                if (value) source = 'bonus median';
+            }
+            if (!value && rarity) {
+                value = getMedianPrice(key, rarity);
+                if (value) source = 'weapon median';
+            }
+            if (!value) return null;
+            return { name: key, value: value, rarity: rarity, inferred: inferred,
+                     source: source, count: count, bonuses: bonuses };
+        } finally {
+            ACTIVE = prevActive;
+        }
+    }
+
+    function forumCellTexts(tr) {
+        var out = [], cells = tr.querySelectorAll('th,td');
+        for (var i = 0; i < cells.length; i++) {
+            // Our own column is never read back as evidence.
+            if (cells[i].classList && cells[i].classList.contains('rwp-tbl-cell')) continue;
+            out.push((cells[i].textContent || '').replace(/\s+/g, ' ').trim());
+        }
+        return out;
+    }
+
+    function injectForumTables() {
+        var tables = document.querySelectorAll('table');
+        for (var t = 0; t < tables.length; t++) {
+            var table = tables[t];
+            var rows = table.querySelectorAll('tr');
+            if (rows.length < 2) continue;
+            var map = forumHeaderMap(forumCellTexts(rows[0]));
+            if (map.weapon < 0 || map.bonus < 0 || map.pct < 0) continue;
+
+            for (var r = 0; r < rows.length; r++) {
+                var tr = rows[r];
+                if (tr.getAttribute('data-rwp-tbl')) continue;
+                tr.setAttribute('data-rwp-tbl', '1');
+                var cell = document.createElement(r === 0 ? 'th' : 'td');
+                cell.className = 'rwp-tbl-cell';
+                if (r === 0) {
+                    cell.textContent = 'RW Pricer';
+                } else {
+                    var p = priceForumRow(forumRowItem(forumCellTexts(tr), map));
+                    if (p) {
+                        cell.textContent = fmtBigDollar(p.value);
+                        cell.title = p.name + ' — ' + p.bonuses.map(function (b) { return b.level + '% ' + b.name; }).join(' + ') +
+                                     (p.rarity ? ' — ' + p.rarity + (p.inferred ? ' (from the roll)' : '') : '') +
+                                     (p.count ? ' — ' + p.count + ' sales' : '') +
+                                     (p.source ? ' — by ' + p.source : '') +
+                                     // A second bonus is worth something, but with no sale
+                                     // of this exact pair there is no measurement of THIS
+                                     // one. Flagged rather than silently multiplied in.
+                                     (p.bonuses.length > 1 && p.source !== 'exact pair'
+                                        ? ' — the ' + p.bonuses[1].level + '% ' + p.bonuses[1].name +
+                                          ' is NOT priced in: no sale of this exact pair exists'
+                                        : '');
+                    } else {
+                        cell.textContent = '';
+                    }
+                }
+                tr.appendChild(cell);
+            }
+        }
+    }
+
+    var forumInited = false;
+    function ensureForumTables() {
+        if (forumInited) return;
+        forumInited = true;
+        var run = function () { try { injectForumTables(); } catch (e) {} };
+        run();
+        // Forum threads paginate and re-render in place, so a one-shot pass sees
+        // only whichever page happened to be open when the script loaded.
+        var obs = new MutationObserver(function () { clearTimeout(ensureForumTables._t);
+            ensureForumTables._t = setTimeout(run, 250); });
+        obs.observe(document.body, { childList: true, subtree: true });
+    }
+
     var tradeInited = false;
     function ensureTradePrices() {
         if (tradeInited) return;
@@ -3518,6 +3706,11 @@
     if (isTradePage()) {
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ensureTradePrices);
         else ensureTradePrices();
+    }
+
+    if (location.href.indexOf('forums.php') !== -1) {
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ensureForumTables);
+        else ensureForumTables();
     }
 
 })();
