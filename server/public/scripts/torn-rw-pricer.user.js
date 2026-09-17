@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.5.3
+// @version      3.5.4
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.5.3';
+    var SCRIPT_VERSION = '3.5.4';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -613,6 +613,10 @@
         var levelGroups = {};   // weapon|bonus|rarity|level -> [prices] (single-bonus only)
         var comboMaxTracker = {};  // combo key -> {price, qual}
         var maxBonusTracker = {}; // weapon+rarity -> {price, bonuses}
+        // Observed QUALITY span per weapon+rarity. A card that shows a quality
+        // but no colour can be placed by it: an Enfield SA-80 at 245.2% is past
+        // every Orange one ever sold (206.1) and inside the Red range.
+        var qualRanges = {};      // weapon -> rarity -> [min, max, n]
 
         for (var i = 1; i < lines.length; i++) {
             var line = lines[i].trim();
@@ -632,6 +636,14 @@
             var weaponName = ITEM_ID_MAP[itemId];
             if (!weaponName) continue;
             if (isNaN(price) || price <= 0) continue;
+
+            var qv = parseFloat(cols[10]);
+            if (qv > 0) {
+                if (!qualRanges[weaponName]) qualRanges[weaponName] = {};
+                var qr = qualRanges[weaponName][rarityName];
+                if (!qr) qualRanges[weaponName][rarityName] = [qv, qv, 1];
+                else { if (qv < qr[0]) qr[0] = qv; if (qv > qr[1]) qr[1] = qv; qr[2]++; }
+            }
 
             // Weapon + rarity group
             var wKey = weaponName + '|' + rarityName;
@@ -818,6 +830,17 @@
             }
         });
 
+        // A span built from one or two sales is not a span. Thin rarities are
+        // dropped rather than left to place a weapon on no evidence.
+        var newQualRanges = {};
+        Object.keys(qualRanges).forEach(function(w) {
+            var keep = {};
+            Object.keys(qualRanges[w]).forEach(function(r) {
+                if (qualRanges[w][r][2] >= 3) keep[r] = qualRanges[w][r];
+            });
+            if (Object.keys(keep).length) newQualRanges[w] = keep;
+        });
+
         return {
             weaponPrices: newWeaponPrices,
             bonusPrices: newBonusPrices,
@@ -825,6 +848,7 @@
             comboPrices: newComboPrices,
             pairComboPrices: newPairComboPrices,
             levelPrices: newLevelPrices,
+            qualityRanges: newQualRanges,
             weaponMaxBonus: newMaxBonus
         };
     }
@@ -905,6 +929,7 @@
         // Without it an Assault Body is quoted "$68m to $3.5b", which is a range
         // wide enough to be no answer at all: the 23% is what decides the price.
         var levelGroups = {};    // armour|bonus|rarity|level -> [prices]
+        var aQualRanges = {};    // armour -> rarity -> [min, max, n]
 
         for (var i = 1; i < lines.length; i++) {
             var line = lines[i].trim();
@@ -923,6 +948,14 @@
             var armourName = ARMOUR_ID_MAP[itemId];
             if (!armourName) continue;
             if (isNaN(price) || price <= 0) continue;
+
+            var aqv = parseFloat(cols[10]);
+            if (aqv > 0) {
+                if (!aQualRanges[armourName]) aQualRanges[armourName] = {};
+                var aqr = aQualRanges[armourName][rarityName];
+                if (!aqr) aQualRanges[armourName][rarityName] = [aqv, aqv, 1];
+                else { if (aqv < aqr[0]) aqr[0] = aqv; if (aqv > aqr[1]) aqr[1] = aqv; aqr[2]++; }
+            }
 
             // Armour + rarity group
             var aKey = armourName + '|' + rarityName;
@@ -1045,12 +1078,22 @@
             newArmourLevelPrices[abKey][parts[2]][parts[3]] = [Math.round(percentile(arr, 50)), arr.length];
         });
 
+        var newAQualRanges = {};
+        Object.keys(aQualRanges).forEach(function(a) {
+            var keep = {};
+            Object.keys(aQualRanges[a]).forEach(function(r) {
+                if (aQualRanges[a][r][2] >= 3) keep[r] = aQualRanges[a][r];
+            });
+            if (Object.keys(keep).length) newAQualRanges[a] = keep;
+        });
+
         return {
             armourPrices: newArmourPrices,
             armourBonusPrices: newBonusPrices,
             armourSetPrices: newSetPrices,
             comboPrices: newComboPrices,
-            levelPrices: newArmourLevelPrices
+            levelPrices: newArmourLevelPrices,
+            qualityRanges: newAQualRanges
         };
     }
 

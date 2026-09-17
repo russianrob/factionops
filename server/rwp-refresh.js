@@ -85,11 +85,15 @@ export async function refreshRwpPrices(reason) {
       weaponComboPrices: wData.comboPrices,
       weaponPairComboPrices: wData.pairComboPrices,
       weaponLevelPrices: wData.levelPrices,
+      // Quality span per weapon+rarity, so a card showing a quality but no
+      // colour can still be placed. myGear listings show one and not the other.
+      weaponQualityRanges: wData.qualityRanges,
       armourComboPrices: aData.comboPrices,
       // Per-roll armour medians. The armour side had none, so a 23%
       // Impenetrable Assault Body was quoted the median across every roll --
       // "$68m to $3.5b", a range wide enough to be no answer at all.
       armourLevelPrices: aData.levelPrices,
+      armourQualityRanges: aData.qualityRanges,
       weaponMaxBonus:    wData.weaponMaxBonus,
       recent:            wData.recent || null,
       timestamp: Date.now(),

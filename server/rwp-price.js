@@ -190,6 +190,34 @@ export function weaponByBuyPrice(feed, buyPrices, buy) {
   return hits.length === 1 ? hits[0] : null;
 }
 
+/**
+ * Which rarity a quality belongs to, when the card shows no colour.
+ *
+ * myGear lists a weapon with its quality on the thumbnail and its rarity
+ * nowhere: "Enfield SA-80, 245.2%, 75% Cupid, 41% Specialist". Both bonuses
+ * read fine and it priced at nothing, because every rung needs a rarity and 75%
+ * Cupid is not a roll any single rarity recorded.
+ *
+ * Quality settles it from the sales themselves. An Enfield's Yellows top out at
+ * 178.3 and its Oranges at 217.09, while its Reds run 219.79 to 275.15 — 245.2
+ * is inside one span and outside the others. Across every weapon that has sold
+ * in more than one rarity, a quality names exactly one about 7 times in 10;
+ * the rest are refused rather than guessed.
+ *
+ * Two bonuses rule out Yellow, which can settle a tie on its own: of 8,004
+ * recorded two-bonus sales, exactly zero were Yellow.
+ */
+export function rarityForQuality(feed, name, quality, bonusCount) {
+  const q = num(quality);
+  if (!q) return null;
+  const ranges = (isArmour(feed, name) ? (feed && feed.armourQualityRanges) : (feed && feed.weaponQualityRanges)) || {};
+  const t = ranges[name];
+  if (!t) return null;
+  let hits = Object.keys(t).filter((r) => Array.isArray(t[r]) && q >= num(t[r][0]) && q <= num(t[r][1]));
+  if (num(bonusCount) >= 2) hits = hits.filter((r) => r !== "Yellow");
+  return hits.length === 1 ? hits[0] : null;
+}
+
 /** Is this name an armour piece rather than a weapon? They price differently. */
 function isArmour(feed, name) {
   return !!((feed && feed.armourPrices) || {})[name];
@@ -216,10 +244,16 @@ export function priceItem(feed, item) {
 
   // No rarity on the card? The roll usually names it. Never overrides a rarity
   // that WAS read -- this only fills a hole.
-  let inferredRarity = false;
+  let inferredRarity = false, rarityFrom = null;
   if (!rarity && bonuses.length) {
     const guess = rarityForRoll(feed, name, bonuses[0].name, num(bonuses[0].pct));
-    if (guess) { rarity = guess; inferredRarity = true; }
+    if (guess) { rarity = guess; inferredRarity = true; rarityFrom = "roll"; }
+  }
+  // The roll is the stronger signal — it needs an exact recorded match — so
+  // quality only gets asked when the roll could not answer.
+  if (!rarity) {
+    const byQ = rarityForQuality(feed, name, item && item.quality, bonuses.length);
+    if (byQ) { rarity = byQ; inferredRarity = true; rarityFrom = "quality"; }
   }
 
   const out = { ok: true, name, readAs: (item && item.name) || name, rarity, bonuses, basis: null, estimate: null,
@@ -270,8 +304,10 @@ export function priceItem(feed, item) {
       return out;
     }
   }
-  if (inferredRarity) {
+  if (inferredRarity && rarityFrom === "roll") {
     out.notes.push(`The picture doesn't show a colour. Only ${rarity} ones have ever sold with ${bonuses[0].pct}% ${bonuses[0].name}, so that's what this assumes.`);
+  } else if (inferredRarity && rarityFrom === "quality") {
+    out.notes.push(`The picture doesn't show a colour, but at ${num(item && item.quality)}% quality only ${rarity} ones have ever sold, so that's what this assumes.`);
   }
 
   // 1. The exact pair.

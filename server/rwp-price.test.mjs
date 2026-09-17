@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { priceItem, valueAtPct, levelCurve, resolveName, rarityForRoll, weaponByBuyPrice } from "./rwp-price.js";
+import { priceItem, valueAtPct, levelCurve, resolveName, rarityForRoll, weaponByBuyPrice, rarityForQuality } from "./rwp-price.js";
 
 const feed = JSON.parse(fs.readFileSync(new URL("./data/rwp-prices.json", import.meta.url), "utf8"));
 
@@ -354,4 +354,55 @@ test("a roll nobody has sold keeps the wider range, because that is all there is
   });
   assert.equal(p.extrapolated, true);
   assert.ok(p.low > 0 && p.high > 0, "an estimated roll keeps the pooled range");
+});
+
+// ── Placing a card that shows a quality but no colour ──────────
+// myGear lists a weapon with its quality on the thumbnail and no rarity
+// anywhere: "Enfield SA-80, 245.2%, 75% Cupid, 41% Specialist". Both bonuses
+// and the name read fine and it priced at nothing, because every rung needs a
+// rarity and 75% Cupid is not a roll any single rarity recorded.
+
+test("quality places a weapon when the card gives no colour", () => {
+  // Enfield SA-80: Yellow tops out at 178.3, Orange at 217.09, Red runs
+  // 219.79-275.15. 245.2 is inside one of those and outside the others.
+  assert.equal(rarityForQuality(feed, "Enfield SA-80", 245.2, 2), "Red");
+  assert.equal(rarityForQuality(feed, "Enfield SA-80", 100, 1), "Yellow");
+});
+
+test("a quality inside two spans is refused", () => {
+  // 160 sits in Yellow (83.55-178.3) and Orange (137.08-217.09) at once.
+  assert.equal(rarityForQuality(feed, "Enfield SA-80", 160, 1), null);
+});
+
+test("two bonuses rule out Yellow, which can settle a tie", () => {
+  // Of 8,004 recorded two-bonus sales, exactly zero are Yellow. So a quality
+  // that would be ambiguous on its own stops being ambiguous.
+  assert.equal(rarityForQuality(feed, "Enfield SA-80", 160, 2), "Orange");
+});
+
+test("a quality nothing has ever sold at is refused", () => {
+  assert.equal(rarityForQuality(feed, "Enfield SA-80", 900, 1), null);
+  assert.equal(rarityForQuality(feed, "Enfield SA-80", 0, 1), null);
+  assert.equal(rarityForQuality(feed, "Not A Weapon", 150, 1), null);
+});
+
+test("the myGear listing prices end to end", () => {
+  const p = priceItem(feed, {
+    name: "Enfield SA-80", rarity: null, quality: 245.2,
+    bonuses: [{ name: "Cupid", pct: 75 }, { name: "Specialist", pct: 41 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  assert.equal(p.rarity, "Red");
+  assert.ok(p.estimate > 0);
+  assert.ok(p.notes.some((n) => /quality/i.test(n)),
+    "a colour worked out from quality must say so: " + p.notes.join(" | "));
+});
+
+test("a colour the card DID show is still never second-guessed", () => {
+  const p = priceItem(feed, {
+    name: "Enfield SA-80", rarity: "Yellow", quality: 245.2,
+    bonuses: [{ name: "Specialist", pct: 25 }],
+  });
+  assert.equal(p.rarity, "Yellow");
+  assert.ok(!p.notes.some((n) => /quality/i.test(n)));
 });
