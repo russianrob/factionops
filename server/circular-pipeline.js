@@ -353,7 +353,10 @@ export async function claudeExtractImage(images, prompt, opts = {}) {
   const maxTokens = opts.maxTokens || 8000;
   const doFetch = opts.fetchImpl || globalThis.fetch;
   const content = [
-    ...images.map(b64 => ({ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } })),
+    // media_type must match the bytes. The circular renders PNGs, so that stays
+    // the default — but a forum screenshot is usually a JPEG, and labelling one
+    // as PNG is rejected upstream and then retried through the whole backoff.
+    ...images.map(b64 => ({ type: "image", source: { type: "base64", media_type: opts.mediaType || "image/png", data: b64 } })),
     { type: "text", text: prompt },
   ];
   const body = JSON.stringify({
