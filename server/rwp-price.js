@@ -122,9 +122,32 @@ export function resolveName(feed, name) {
   return null;
 }
 
+/**
+ * Which rarity a roll belongs to, when the reading did not say.
+ *
+ * The reader drops the coloured word often enough to matter -- the Mag 7 post
+ * came back with a name and a bonus but rarity null, and every rung below needs
+ * a rarity, so a perfectly readable card priced at nothing.
+ *
+ * The roll almost always settles it: of 1043 weapon+bonus groups with more than
+ * one rarity on record, only 62 have roll ranges that overlap at all. A 15%
+ * Expose Mag 7 is Red and cannot be anything else.
+ *
+ * Only an EXACT recorded roll counts, and only when exactly one rarity recorded
+ * it. Interpolating across a gap, or picking a side where ranges overlap, is
+ * how a Yellow gets priced as a Red.
+ */
+export function rarityForRoll(feed, name, bonus, pct) {
+  if (!Number.isFinite(pct)) return null;
+  const tbl = table(feed, "levelPrices", "weaponLevelPrices")[name + "|" + bonus];
+  if (!tbl) return null;
+  const hits = Object.keys(tbl).filter((r) => tbl[r] && tbl[r][String(pct)]);
+  return hits.length === 1 ? hits[0] : null;
+}
+
 export function priceItem(feed, item) {
   const name = resolveName(feed, item && item.name);
-  const rarity = item && item.rarity;
+  let rarity = item && item.rarity;
   const bonuses = Array.isArray(item && item.bonuses) ? item.bonuses.slice() : [];
   // A name that matches nothing in the catalogue is a MISREAD, not a rare item.
   // A cropped card names no weapon, and the reader does not reliably decline:
@@ -140,8 +163,20 @@ export function priceItem(feed, item) {
 
   // Biggest roll first: it is what the price is really about.
   bonuses.sort((a, b) => (num(b.pct) || 0) - (num(a.pct) || 0));
+
+  // No rarity on the card? The roll usually names it. Never overrides a rarity
+  // that WAS read -- this only fills a hole.
+  let inferredRarity = false;
+  if (!rarity && bonuses.length) {
+    const guess = rarityForRoll(feed, name, bonuses[0].name, num(bonuses[0].pct));
+    if (guess) { rarity = guess; inferredRarity = true; }
+  }
+
   const out = { ok: true, name, readAs: (item && item.name) || name, rarity, bonuses, basis: null, estimate: null,
-                low: null, high: null, samples: null, extrapolated: false, notes: [] };
+                low: null, high: null, samples: null, extrapolated: false, inferredRarity, notes: [] };
+  if (inferredRarity) {
+    out.notes.push(`The card did not give a rarity. ${bonuses[0].pct}% ${bonuses[0].name} has only ever sold as ${rarity}, so that is what this prices.`);
+  }
 
   // 1. The exact pair.
   if (bonuses.length >= 2 && rarity) {
@@ -160,7 +195,7 @@ export function priceItem(feed, item) {
     const pts = levelCurve(feed, name, lead.name, rarity);
     const at = valueAtPct(pts, num(lead.pct));
     if (at) {
-      out.basis = `${name} + ${lead.name} sales by roll (${rarity}, ${pts.length} price points)`;
+      out.basis = `${name} + ${lead.name} sales by roll (${rarity}, ${pts.length} price point${pts.length === 1 ? "" : "s"})`;
       out.estimate = at.value;
       out.extrapolated = at.extrapolated;
       if (at.extrapolated) {

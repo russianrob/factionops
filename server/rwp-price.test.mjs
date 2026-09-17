@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { priceItem, valueAtPct, levelCurve, resolveName } from "./rwp-price.js";
+import { priceItem, valueAtPct, levelCurve, resolveName, rarityForRoll } from "./rwp-price.js";
 
 const feed = JSON.parse(fs.readFileSync(new URL("./data/rwp-prices.json", import.meta.url), "utf8"));
 
@@ -162,4 +162,40 @@ test("a real item with no sales is NOT called unread", () => {
   assert.equal(p.ok, false);
   assert.ok(!p.unknown, "a known weapon must keep its name");
   assert.match(p.reason, /Rheinmetall MG 3/);
+});
+
+// ── A missing rarity ───────────────────────────────────────────
+// The reader drops the coloured word often enough to matter: the Mag 7 post
+// came back with the name and the bonus but rarity null, and every rung below
+// needs a rarity, so a perfectly readable card priced at nothing.
+
+test("infers the rarity from the roll when the card did not give one", () => {
+  const p = priceItem(feed, {
+    name: "Mag 7", rarity: null, bonuses: [{ name: "Expose", pct: 15 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  assert.equal(p.rarity, "Red", "15% Expose only ever sold as Red");
+  assert.ok(p.estimate > 0);
+  assert.ok(p.notes.some((n) => /rarity/i.test(n)), "an inferred rarity must be declared: " + p.notes.join(" | "));
+});
+
+test("a rarity that IS given is never second-guessed", () => {
+  const p = priceItem(feed, {
+    name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
+  });
+  assert.equal(p.rarity, "Yellow");
+  assert.ok(!p.notes.some((n) => /only ever sold/.test(n)));
+});
+
+test("an ambiguous roll is not guessed at", () => {
+  // rarityForRoll answers only when exactly one rarity recorded that roll.
+  // Where ranges overlap, picking one would price a Yellow as a Red.
+  const amb = rarityForRoll(feed, "Mag 7", "Expose", 99);
+  assert.equal(amb, null, "no rarity sold a 99% Expose Mag 7");
+});
+
+test("the roll picks the rarity out of three candidates", () => {
+  assert.equal(rarityForRoll(feed, "Mag 7", "Expose", 8), "Yellow");
+  assert.equal(rarityForRoll(feed, "Mag 7", "Expose", 11), "Orange");
+  assert.equal(rarityForRoll(feed, "Mag 7", "Expose", 15), "Red");
 });
