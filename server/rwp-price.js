@@ -85,7 +85,13 @@ export function levelCurve(feed, name, bonus, rarity) {
  */
 export function valueAtPct(points, pct) {
   if (!points.length) return null;
-  if (points.length === 1) return { value: points[0][1], extrapolated: points[0][0] !== pct };
+  // One observation is a price for THAT roll and nothing else. Handing it back
+  // for a different roll is not an estimate, it is a coincidence with a dollar
+  // sign on it -- a Diamond Bladed Knife got the single Orange Achilles sale at
+  // 76% quoted as its 61% price, a ninth of what the knife was worth.
+  if (points.length === 1) {
+    return points[0][0] === pct ? { value: points[0][1], extrapolated: false } : null;
+  }
   let lo = null, hi = null;
   for (const p of points) {
     if (p[0] <= pct) lo = p;
@@ -96,7 +102,10 @@ export function valueAtPct(points, pct) {
     return { value: Math.round(lo[1] + (hi[1] - lo[1]) * t), extrapolated: false };
   }
   if (lo && hi && lo[0] === hi[0]) return { value: lo[1], extrapolated: false };
-  // Least-squares through the whole curve, extended to pct.
+  // Least-squares through the whole curve, extended to pct. Two points make a
+  // line through noise rather than a trend, and the roll-agnostic median below
+  // is better evidence than that, so extrapolation needs three.
+  if (points.length < 3) return null;
   const n = points.length;
   const sx = points.reduce((s, p) => s + p[0], 0);
   const sy = points.reduce((s, p) => s + p[1], 0);
@@ -218,6 +227,26 @@ export function rarityForQuality(feed, name, quality, bonusCount) {
   return hits.length === 1 ? hits[0] : null;
 }
 
+/**
+ * What a bonus is worth on this weapon: the median of sales carrying it.
+ *
+ * Used to decide which bonus the price is really about. Percentages are not
+ * comparable across bonus types -- 61% Achilles and 35% Bleed are different
+ * scales -- and on a Diamond Bladed Knife at Orange the Achilles is worth $249m
+ * against the Bleed's $2.1b. Ranking by the bigger number picked the cheap one.
+ *
+ * Rarity is optional because the ranking is needed before the rarity has been
+ * worked out; without one, the best any rarity shows stands in.
+ */
+function bonusWorth(feed, name, bonus, rarity) {
+  const t = table(feed, "comboPrices", "weaponComboPrices")[name + "|" + bonus]
+         || (feed && feed.armourComboPrices || {})[name + "|" + bonus] || {};
+  if (rarity && Array.isArray(t[rarity])) return num(t[rarity][1]) || 0;
+  let best = 0;
+  for (const r of Object.keys(t)) best = Math.max(best, (Array.isArray(t[r]) && num(t[r][1])) || 0);
+  return best;
+}
+
 /** Is this name an armour piece rather than a weapon? They price differently. */
 function isArmour(feed, name) {
   return !!((feed && feed.armourPrices) || {})[name];
@@ -239,8 +268,14 @@ export function priceItem(feed, item) {
              reason: `"${(item && item.name) || ""}" is not a Torn item — the picture probably does not name the weapon.` };
   }
 
-  // Biggest roll first: it is what the price is really about.
-  bonuses.sort((a, b) => (num(b.pct) || 0) - (num(a.pct) || 0));
+  // The bonus the price is really about: the one worth more on this weapon,
+  // with the bigger roll breaking a tie. Ranked once before the rarity is known
+  // so the rarity can be worked out from the right bonus, and again after, now
+  // that the rarity narrows what each is worth.
+  const rank = (r) => bonuses.sort((a, b) =>
+    (bonusWorth(feed, name, b.name, r) - bonusWorth(feed, name, a.name, r)) ||
+    ((num(b.pct) || 0) - (num(a.pct) || 0)));
+  rank(rarity);
 
   // No rarity on the card? The roll usually names it. Never overrides a rarity
   // that WAS read -- this only fills a hole.
@@ -255,6 +290,8 @@ export function priceItem(feed, item) {
     const byQ = rarityForQuality(feed, name, item && item.quality, bonuses.length);
     if (byQ) { rarity = byQ; inferredRarity = true; rarityFrom = "quality"; }
   }
+
+  rank(rarity);
 
   const out = { ok: true, name, readAs: (item && item.name) || name, rarity, bonuses, basis: null, estimate: null,
                 low: null, high: null, samples: null, extrapolated: false, inferredRarity, notes: [] };
@@ -331,8 +368,10 @@ export function priceItem(feed, item) {
       out.estimate = at.value;
       out.extrapolated = at.extrapolated;
       if (at.extrapolated) {
-        const top = pts[pts.length - 1];
-        out.notes.push(`Nothing this good has ever sold — the best on record is ${top[0]}%. This follows the trend past that, so treat it as a guess rather than a price.`);
+        const below = num(lead.pct) < pts[0][0];
+        out.notes.push(below
+          ? `Nothing this low has ever sold — the lowest on record is ${pts[0][0]}%. This follows the trend below that, so treat it as a guess rather than a price.`
+          : `Nothing this good has ever sold — the best on record is ${pts[pts.length - 1][0]}%. This follows the trend past that, so treat it as a guess rather than a price.`);
       }
       // A second bonus is worth something, but there is no measurement of THIS
       // pair — flagged rather than silently multiplied in.

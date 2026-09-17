@@ -406,3 +406,48 @@ test("a colour the card DID show is still never second-guessed", () => {
   assert.equal(p.rarity, "Yellow");
   assert.ok(!p.notes.some((n) => /quality/i.test(n)));
 });
+
+// ── Which bonus the price is about ─────────────────────────────
+// A Diamond Bladed Knife with 61% Achilles and 35% Bleed priced at $200m.
+// It had sold for $2.22b thirteen days earlier. Two faults compounded.
+
+test("the leading bonus is the valuable one, not the bigger percentage", () => {
+  // 61% and 35% are different scales: on this knife at Orange the Achilles is
+  // worth $249m and the Bleed $2.1b. Ranking by percentage picked the cheap one.
+  const p = priceItem(feed, {
+    name: "Diamond Bladed Knife", rarity: "Orange",
+    bonuses: [{ name: "Achilles", pct: 61 }, { name: "Bleed", pct: 35 }],
+  });
+  assert.equal(p.bonuses[0].name, "Bleed", "the Bleed is what this knife is worth");
+  assert.ok(p.estimate > 1.5e9, "got $" + (p.estimate / 1e6).toFixed(0) + "m; it sold for $2.22b");
+});
+
+test("one recorded sale does not price a different roll", () => {
+  // The Orange Achilles curve is a single point, 76%. Returning its price for a
+  // 61% weapon is not an estimate, it is a coincidence with a dollar sign.
+  assert.equal(valueAtPct([[76, 200e6]], 61), null);
+  // At the roll it actually recorded, it is a price.
+  const same = valueAtPct([[76, 200e6]], 76);
+  assert.equal(same.value, 200e6);
+  assert.equal(same.extrapolated, false);
+});
+
+test("two points do not license an extrapolation", () => {
+  // A line through two observations is a line through noise. Inside them,
+  // interpolation is still fine.
+  assert.equal(valueAtPct([[33, 2035e6], [34, 1752e6]], 35), null, "outside: refuse");
+  const inside = valueAtPct([[33, 2035e6], [35, 1752e6]], 34);
+  assert.ok(inside && !inside.extrapolated, "inside: interpolate");
+});
+
+test("an extrapolation below the range says so correctly", () => {
+  // The note read "the best on record is 76%" for a 61% weapon, which is the
+  // wrong end of the curve and reads as though the roll were exceptional.
+  const p = priceItem(feed, {
+    name: "Cobra Derringer", rarity: "Yellow", bonuses: [{ name: "Assassinate", pct: 30 }],
+  });
+  if (p.ok && p.extrapolated) {
+    assert.ok(p.notes.some((n) => /lowest on record/i.test(n)),
+      "a roll below every sale must say so: " + p.notes.join(" | "));
+  }
+});
