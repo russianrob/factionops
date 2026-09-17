@@ -82,12 +82,14 @@ export function hintKey(hint) {
  * Bump when the PROMPT changes what a reading CONTAINS.
  *
  * 2 added "buy", so a card cropped above its name could be identified by its
- * shop price. Every reading cached before that lacks the field; without the
- * version in the key those stale answers would be served forever and the new
- * field would never reach the images that needed it. Cosmetic rewording does
- * not need a bump -- a new or changed FIELD does.
+ * shop price. 3 stopped armour's "Armor:" and "Coverage:" rows being returned
+ * as bonuses -- an Assault Body came back carrying "46.47% Armor" and "45.55%
+ * Coverage" alongside its real one. Every reading cached before a bump answers
+ * a different question; without the version in the key those stale answers
+ * would be served forever and the fix would never reach the images that needed
+ * it. Cosmetic rewording does not need a bump -- a changed ANSWER does.
  */
-export const PROMPT_VERSION = 2;
+export const PROMPT_VERSION = 3;
 
 export function cacheKey(url, hint, version) {
   const hk = hintKey(hint);
@@ -143,6 +145,10 @@ Rules:
 - "rarity" is the coloured word beside Quality (Yellow, Orange, Red). null if absent.
 - "quality" is the Quality percentage as a number, e.g. 182.77.
 - Each bonus appears as "<pct>% <Name>", e.g. "97% Assassinate". Return every one.
+- Bonuses come ONLY from the row labelled "Bonus:". On armour, "Armor:" and
+  "Coverage:" are statistics of the piece, not bonuses, even though they are
+  written as percentages — never return those as bonuses. Nor Damage, Accuracy,
+  Stealth, Rate of Fire, Experience or Quality.
 - "buy" is the number beside "Buy:", digits only — "Buy: $20,000,000 (Mexico)"
   is 20000000. null if the card does not show one. This is a fixed shop price
   and it identifies the weapon when the card is cropped above its name, so it

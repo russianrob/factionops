@@ -48,6 +48,19 @@ function table(feed, recentName, histName) {
   return rec || (feed && feed[histName]) || {};
 }
 
+/**
+ * Sales recorded at ONE exact roll: [median, count], or null.
+ *
+ * The count is what makes a roll-matched price honest. Quoting "4688 sales,
+ * $68m to $3.5b" beside a price built from the 592 sales at 23% describes two
+ * different things and labels only one.
+ */
+function levelEntry(tbl, name, bonus, rarity, pct) {
+  const lv = ((tbl || {})[name + "|" + bonus] || {})[rarity];
+  const e = lv && lv[String(pct)];
+  return Array.isArray(e) ? e : null;
+}
+
 /** Points from one level table, as [pct, value] sorted by pct. */
 function curveOf(tbl, name, bonus, rarity) {
   const lv = ((tbl || {})[name + "|" + bonus] || {})[rarity];
@@ -177,6 +190,11 @@ export function weaponByBuyPrice(feed, buyPrices, buy) {
   return hits.length === 1 ? hits[0] : null;
 }
 
+/** Is this name an armour piece rather than a weapon? They price differently. */
+function isArmour(feed, name) {
+  return !!((feed && feed.armourPrices) || {})[name];
+}
+
 export function priceItem(feed, item) {
   const name = resolveName(feed, item && item.name);
   let rarity = item && item.rarity;
@@ -206,6 +224,52 @@ export function priceItem(feed, item) {
 
   const out = { ok: true, name, readAs: (item && item.name) || name, rarity, bonuses, basis: null, estimate: null,
                 low: null, high: null, samples: null, extrapolated: false, inferredRarity, notes: [] };
+
+  // ARMOUR. Every rung below reads weapon tables, so an armour card resolved to
+  // a real item and then priced at nothing. The feed has carried armour prices
+  // all along and nothing was looking at them.
+  //
+  // Armour has no pair table -- a piece carries one bonus in practice -- so the
+  // ladder is shorter: the exact roll, then the piece with that bonus at any
+  // roll, then the piece alone.
+  if (isArmour(feed, name) && rarity) {
+    const lead = bonuses[0];
+    if (lead) {
+      const pts = curveOf(feed.armourLevelPrices, name, lead.name, rarity);
+      const at = valueAtPct(pts, num(lead.pct));
+      if (at) {
+        out.basis = `what ${thing(rarity, name)} with ${lead.name} has sold for, matched to the ${lead.pct}%`;
+        out.estimate = at.value;
+        out.extrapolated = at.extrapolated;
+        if (at.extrapolated) {
+          const top = pts[pts.length - 1];
+          out.notes.push(`Nothing this good has ever sold — the best on record is ${top[0]}%. This follows the trend past that, so treat it as a guess rather than a price.`);
+        }
+        const exact = levelEntry(feed.armourLevelPrices, name, lead.name, rarity, num(lead.pct));
+        if (exact) {
+          out.samples = num(exact[1]);
+        } else {
+          const c = ((feed.armourComboPrices || {})[name + "|" + lead.name] || {})[rarity];
+          if (c) { out.low = num(c[0]); out.high = num(c[2]); out.samples = cntOf(c); }
+        }
+        return out;
+      }
+      const combo = ((feed.armourComboPrices || {})[name + "|" + lead.name] || {})[rarity];
+      if (combo) {
+        out.basis = `what ${thing(rarity, name)} with ${lead.name} has sold for, at any percentage`;
+        out.estimate = medOf(combo); out.low = num(combo[0]); out.high = num(combo[2]); out.samples = cntOf(combo);
+        out.notes.push(`This ignores the ${lead.pct}% — it's the middle price for any ${lead.name} one, good or bad.`);
+        return out;
+      }
+    }
+    const solo = ((feed.armourPrices || {})[name] || {})[rarity];
+    if (solo) {
+      out.basis = `what ${thing(rarity, name)} has sold for, whatever bonus it had`;
+      out.estimate = medOf(solo); out.low = num(solo[0]); out.high = num(solo[2]); out.samples = cntOf(solo);
+      out.notes.push("This ignores the bonus completely — it's the middle price for the piece on its own.");
+      return out;
+    }
+  }
   if (inferredRarity) {
     out.notes.push(`The picture doesn't show a colour. Only ${rarity} ones have ever sold with ${bonuses[0].pct}% ${bonuses[0].name}, so that's what this assumes.`);
   }
@@ -241,8 +305,15 @@ export function priceItem(feed, item) {
       }
       // Same window for the range as for the estimate. Quoting an all-time
       // low-high beside a last-year median reads as one measurement and is two.
-      const combo = (table(feed, "comboPrices", "weaponComboPrices")[name + "|" + lead.name] || {})[rarity];
-      if (combo) { out.low = num(combo[0]); out.high = num(combo[2]); out.samples = cntOf(combo); }
+      // Sales at THIS roll where the roll was actually recorded; the pooled
+      // range only when the price had to be estimated between or beyond them.
+      const exact = levelEntry(table(feed, "levelPrices", "weaponLevelPrices"), name, lead.name, rarity, num(lead.pct));
+      if (exact) {
+        out.samples = num(exact[1]);
+      } else {
+        const combo = (table(feed, "comboPrices", "weaponComboPrices")[name + "|" + lead.name] || {})[rarity];
+        if (combo) { out.low = num(combo[0]); out.high = num(combo[2]); out.samples = cntOf(combo); }
+      }
       const histAt = valueAtPct(curveOf(feed.weaponLevelPrices, name, lead.name, rarity), num(lead.pct));
       if (histAt && at.value && Math.abs(histAt.value - at.value) / at.value > 0.05) {
         out.notes.push(`These are the last year's prices. Going all the way back it's ${money(histAt.value)}, but those older sales were a different market, not a bigger one.`);

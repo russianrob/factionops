@@ -68,3 +68,12 @@ test("a reading made by an older prompt is not reused", () => {
   assert.equal(cacheKey(URL1), cacheKey(URL1, "", PROMPT_VERSION),
     "the default must be the current prompt version");
 });
+
+test("armour statistics are ruled out as bonuses", () => {
+  // An Assault Body came back carrying "46.47% Armor" and "45.55% Coverage" as
+  // bonuses. Both are written as percentages and neither is a bonus.
+  const p = buildPrompt("");
+  assert.match(p, /Bonus:/);
+  assert.match(p, /Coverage/);
+  assert.match(p, /never return those as bonuses/i);
+});

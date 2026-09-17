@@ -274,3 +274,84 @@ test("the article agrees with the colour", () => {
   assert.match(orange.basis, /what an Orange/);
   assert.match(yellow.basis, /what a Yellow/);
 });
+
+// ── Armour ─────────────────────────────────────────────────────
+// Every rung of the ladder read weapon tables, so an armour card resolved to a
+// real item and then priced at nothing. The feed has had armour prices all
+// along; nothing was looking at them.
+
+test("armour prices, matched to its roll", () => {
+  const p = priceItem(feed, {
+    name: "Assault Body", rarity: "Yellow", bonuses: [{ name: "Impenetrable", pct: 23 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  assert.ok(p.estimate > 200e6 && p.estimate < 320e6, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
+  assert.match(p.basis, /matched to the 23%/);
+});
+
+test('"The Assault Body" is priced as "Assault Body"', () => {
+  const p = priceItem(feed, {
+    name: "The Assault Body", rarity: "Yellow", bonuses: [{ name: "Impenetrable", pct: 23 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  assert.equal(p.name, "Assault Body");
+});
+
+test("a low-roll armour is not given a high-roll price", () => {
+  // The reason armour needed per-roll data at all: quoted across every roll,
+  // an Assault Body reads "$68m to $3.5b", which is not an answer.
+  const lo = priceItem(feed, { name: "Assault Body", rarity: "Yellow", bonuses: [{ name: "Impenetrable", pct: 20 }] });
+  const hi = priceItem(feed, { name: "Assault Body", rarity: "Yellow", bonuses: [{ name: "Impenetrable", pct: 29 }] });
+  assert.ok(hi.estimate > lo.estimate * 1.5,
+    `20% $${(lo.estimate/1e6).toFixed(0)}m vs 29% $${(hi.estimate/1e6).toFixed(0)}m`);
+});
+
+test("armour with no usable bonus still prices off the piece itself", () => {
+  const p = priceItem(feed, { name: "Assault Gloves", rarity: "Yellow", bonuses: [] });
+  assert.equal(p.ok, true, p.reason);
+  assert.ok(p.estimate > 0);
+  assert.match(p.basis, /whatever bonus it had/);
+});
+
+test("armour speaks the same English as weapons", () => {
+  const p = priceItem(feed, {
+    name: "Assault Gloves", rarity: "Yellow", bonuses: [{ name: "Impenetrable", pct: 22 }],
+  });
+  assert.match(p.basis, /^what a Yellow Assault Gloves with Impenetrable has sold for/);
+  for (const bad of [/\broll\b/i, /price points?/i, /\bmedian\b/i]) {
+    assert.ok(!bad.test(p.basis), "jargon in: " + p.basis);
+    for (const n of p.notes) assert.ok(!bad.test(n), "jargon in: " + n);
+  }
+});
+
+// ── The range has to answer the same question as the price ─────
+// An Assault Body priced at the 23% was quoted "$68m to $3.5b" beside it,
+// because the range came from every roll pooled while the estimate came from
+// one. The two numbers described different things and only one was labelled.
+
+test("a roll-matched price reports sales at THAT roll, not all of them", () => {
+  const p = priceItem(feed, {
+    name: "Assault Body", rarity: "Yellow", bonuses: [{ name: "Impenetrable", pct: 23 }],
+  });
+  assert.equal(p.samples, 592, "the count must be the sales at 23%, not 4688 across every roll");
+  assert.equal(p.low, null, "an all-roll range beside a one-roll price is two answers wearing one label");
+  assert.equal(p.high, null);
+});
+
+test("the same holds for weapons", () => {
+  const p = priceItem(feed, {
+    name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
+  });
+  assert.ok(p.samples > 0 && p.samples < 100, "got " + p.samples + " — that is the all-roll count");
+  assert.equal(p.low, null);
+});
+
+test("a roll nobody has sold keeps the wider range, because that is all there is", () => {
+  // 97% Assassinate is past every recorded sale, so there is no count at the
+  // roll and the pooled range is the only evidence available.
+  const p = priceItem(feed, {
+    name: "Cobra Derringer", rarity: "Orange", bonuses: [{ name: "Assassinate", pct: 97 }],
+  });
+  assert.equal(p.extrapolated, true);
+  assert.ok(p.low > 0 && p.high > 0, "an estimated roll keeps the pooled range");
+});

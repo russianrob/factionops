@@ -86,6 +86,10 @@ export async function refreshRwpPrices(reason) {
       weaponPairComboPrices: wData.pairComboPrices,
       weaponLevelPrices: wData.levelPrices,
       armourComboPrices: aData.comboPrices,
+      // Per-roll armour medians. The armour side had none, so a 23%
+      // Impenetrable Assault Body was quoted the median across every roll --
+      // "$68m to $3.5b", a range wide enough to be no answer at all.
+      armourLevelPrices: aData.levelPrices,
       weaponMaxBonus:    wData.weaponMaxBonus,
       recent:            wData.recent || null,
       timestamp: Date.now(),

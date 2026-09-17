@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.5.1
+// @version      3.5.2
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.5.1';
+    var SCRIPT_VERSION = '3.5.2';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -901,6 +901,10 @@
         var bonusGroups = {};    // bonus+rarity -> [prices]
         var setGroups = {};      // set+rarity -> [prices]
         var comboGroups = {};    // armour|bonus|rarity -> [prices]
+        // Per-roll, single-bonus only — the same grouping the weapon side has.
+        // Without it an Assault Body is quoted "$68m to $3.5b", which is a range
+        // wide enough to be no answer at all: the 23% is what decides the price.
+        var levelGroups = {};    // armour|bonus|rarity|level -> [prices]
 
         for (var i = 1; i < lines.length; i++) {
             var line = lines[i].trim();
@@ -935,6 +939,13 @@
                 var cbKey1 = armourName + '|' + bName1 + '|' + rarityName;
                 if (!comboGroups[cbKey1]) comboGroups[cbKey1] = [];
                 comboGroups[cbKey1].push(price);
+            }
+            var aQual1 = cols[15] ? parseInt(cols[15], 10) : 0;
+            var aBonus2 = (cols.length > 16) ? cols[16] : null;
+            if (bonusId1 && ARMOUR_BONUS_MAP[bonusId1] && !(aBonus2 && ARMOUR_BONUS_MAP[aBonus2]) && aQual1 > 0) {
+                var algKey = armourName + '|' + ARMOUR_BONUS_MAP[bonusId1] + '|' + rarityName + '|' + aQual1;
+                if (!levelGroups[algKey]) levelGroups[algKey] = [];
+                levelGroups[algKey].push(price);
             }
             if (cols.length > 16) {
                 var bonusId2 = cols[16];
@@ -1022,11 +1033,24 @@
             ];
         });
 
+        // Per-roll medians, same shape and same minimum as the weapon side.
+        var newArmourLevelPrices = {};
+        Object.keys(levelGroups).forEach(function(key) {
+            var parts = key.split('|');
+            var arr = levelGroups[key].sort(function(a, b) { return a - b; });
+            if (arr.length < LEVEL_MIN_SAMPLES) return;
+            var abKey = parts[0] + '|' + parts[1];
+            if (!newArmourLevelPrices[abKey]) newArmourLevelPrices[abKey] = {};
+            if (!newArmourLevelPrices[abKey][parts[2]]) newArmourLevelPrices[abKey][parts[2]] = {};
+            newArmourLevelPrices[abKey][parts[2]][parts[3]] = [Math.round(percentile(arr, 50)), arr.length];
+        });
+
         return {
             armourPrices: newArmourPrices,
             armourBonusPrices: newBonusPrices,
             armourSetPrices: newSetPrices,
-            comboPrices: newComboPrices
+            comboPrices: newComboPrices,
+            levelPrices: newArmourLevelPrices
         };
     }
 
