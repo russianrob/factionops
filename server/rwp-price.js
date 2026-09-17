@@ -289,6 +289,11 @@ function bonusWorth(feed, name, bonus, rarity) {
  * LESS than the best single, which is why no multiplier is applied and the
  * wording promises a direction rather than an amount.
  */
+function withNearMiss(out, nearMiss) {
+  if (nearMiss) out.notes.push(nearMiss);
+  return out;
+}
+
 function secondBonusNote(bonuses) {
   return `The ${bonuses[1].pct}% ${bonuses[1].name} isn't counted. Nobody has sold this exact pair, so there's nothing to price it from — treat this as a floor. Two-bonus weapons usually go for more than either bonus alone, often around half again, sometimes far more.`;
 }
@@ -429,6 +434,38 @@ export function priceItem(feed, item) {
     }
   }
 
+  // No sale of these exact rolls, but perhaps of rolls near them. That is
+  // still a record of this weapon carrying this pair, and it is worth far more
+  // to a reader than another reminder that the number is a floor — a Beretta M9
+  // at 107%/30% was quoted $354m while the same pair at 106%/36% had sold for
+  // $750.6m. Reported as context, never as the estimate: the rolls it actually
+  // carried are named so the reader can judge the comparison themselves.
+  let nearMiss = null;
+  if (bonuses.length >= 2 && rarity) {
+    const order = [bonuses[0].name, bonuses[1].name].sort();
+    const pctOf = {};
+    pctOf[bonuses[0].name] = num(bonuses[0].pct);
+    pctOf[bonuses[1].name] = num(bonuses[1].pct);
+    const want = order.map((n) => pctOf[n]);
+    const bucket = ((feed.weaponPairLevelPrices || {})[name + "|" + order.join("+")] || {})[rarity] || {};
+    let best = null;
+    for (const key of Object.keys(bucket)) {
+      const got = key.split("+").map(Number);
+      if (got.length !== 2 || !want[0] || !want[1]) continue;
+      // Relative, because rolls of different bonuses run on different scales:
+      // six points is nothing on a 107% Assassinate and a fifth of a 30%
+      // Double-Tap. Both have to be close for the sale to be comparable.
+      const da = Math.abs(got[0] - want[0]) / want[0];
+      const db = Math.abs(got[1] - want[1]) / want[1];
+      if (da > 0.25 || db > 0.25) continue;
+      const dist = da + db;
+      if (!best || dist < best.dist) best = { dist, rolls: got, e: bucket[key] };
+    }
+    if (best && Array.isArray(best.e) && num(best.e[0])) {
+      nearMiss = `The closest recorded sale of this pair — ${best.rolls[0]}% ${order[0]} and ${best.rolls[1]}% ${order[1]} — went for ${money(num(best.e[0]))} on ${dayToDate(num(best.e[2]))}.`;
+    }
+  }
+
   // 1. The exact pair.
   if (bonuses.length >= 2 && rarity) {
     const pair = [bonuses[0].name, bonuses[1].name].sort().join("+");
@@ -490,7 +527,7 @@ export function priceItem(feed, item) {
       // S&W Revolver that exposed this quoted $375m off one bonus; the same
       // revolver, both bonuses, had sold three weeks earlier for $2.14b.
       if (bonuses.length > 1) out.notes.push(secondBonusNote(bonuses));
-      return out;
+      return withNearMiss(out, nearMiss);
     }
   }
 

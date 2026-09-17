@@ -556,3 +556,50 @@ test("a bonus that is not a bonus is left alone, not invented", () => {
   // It must not be silently mapped onto a real bonus.
   assert.notEqual(p.bonuses[0] && p.bonuses[0].name, "Double-Tap");
 });
+
+// ── The nearest recorded pair ──────────────────────────────────
+// A Beretta M9 with 107% Assassinate and 30% Double-Tap quoted $354m off one
+// bonus, with a note that it was a floor. It was: the same weapon at 106% and
+// 36% — one roll away on each — sold for $750.6m. The floor was half price and
+// the evidence for that was already in the feed, unread.
+
+test("the closest sale of the same pair is surfaced", () => {
+  const p = priceItem(feed, {
+    name: "Beretta M9", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 107 }, { name: "Double Tap", pct: 30 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  assert.ok(p.notes.some((n) => /closest/i.test(n) && /750|751/.test(n)),
+    "the near-miss sale belongs on the badge: " + p.notes.join(" | "));
+  // It is context, not the price: the estimate stays what the ladder produced.
+  assert.ok(p.estimate < 500e6, "the near-miss must not become the estimate");
+});
+
+test("the near-miss names the rolls it actually was", () => {
+  const p = priceItem(feed, {
+    name: "Beretta M9", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 107 }, { name: "Double-Tap", pct: 30 }],
+  });
+  const note = p.notes.find((n) => /closest/i.test(n)) || "";
+  assert.match(note, /106%/);
+  assert.match(note, /36%/);
+  assert.match(note, /2026-03-08/);
+});
+
+test("a roll nowhere near is not offered as a comparison", () => {
+  // Two weapons sharing a bonus pair at wildly different rolls are not
+  // comparable, and calling one "closest" would imply they were.
+  const p = priceItem(feed, {
+    name: "Beretta M9", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 50 }, { name: "Double-Tap", pct: 5 }],
+  });
+  assert.ok(!p.notes.some((n) => /closest/i.test(n)), p.notes.join(" | "));
+});
+
+test("an exact match does not also report a near-miss", () => {
+  const p = priceItem(feed, {
+    name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 70 }, { name: "Double-Tap", pct: 52 }],
+  });
+  assert.ok(!p.notes.some((n) => /closest/i.test(n)));
+});
