@@ -126,7 +126,17 @@ export function priceItem(feed, item) {
   const name = resolveName(feed, item && item.name);
   const rarity = item && item.rarity;
   const bonuses = Array.isArray(item && item.bonuses) ? item.bonuses.slice() : [];
-  if (!name) return { ok: false, reason: `no sales data for "${(item && item.name) || ""}"` };
+  // A name that matches nothing in the catalogue is a MISREAD, not a rare item.
+  // A cropped card names no weapon, and the reader does not reliably decline:
+  // the Kodachi post came back "Big Al's Gun Shop Katana" -- the sell shop
+  // welded to what the picture looked like -- with confident:true. The model's
+  // own confidence flag is therefore not a guard; existence is. Flagged rather
+  // than merely refused, so the caller can stay silent instead of printing an
+  // invented weapon name onto somebody's sale thread.
+  if (!name) {
+    return { ok: false, unknown: true,
+             reason: `"${(item && item.name) || ""}" is not a Torn item — the picture probably does not name the weapon.` };
+  }
 
   // Biggest roll first: it is what the price is really about.
   bonuses.sort((a, b) => (num(b.pct) || 0) - (num(a.pct) || 0));

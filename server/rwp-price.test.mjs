@@ -137,3 +137,29 @@ test("still prices when the feed carries no recent slice", () => {
   assert.equal(p.ok, true, p.reason);
   assert.equal(p.estimate, 101000001, "must fall straight back to the history");
 });
+
+// ── Invented names ─────────────────────────────────────────────
+// A cropped card names no weapon, and the reader does not always decline: on
+// the Kodachi post it returned "Big Al's Gun Shop Katana" -- the SELL SHOP
+// welded to what the picture looked like -- with confident:true. Trusting the
+// model's own confidence flag is not a guard, so the name is checked against
+// the catalogue instead.
+
+test("an item name that does not exist is flagged as unread, not priced", () => {
+  const p = priceItem(feed, {
+    name: "Big Al's Gun Shop Katana", rarity: "Yellow",
+    bonuses: [{ name: "Parry", pct: 53 }],
+  });
+  assert.equal(p.ok, false);
+  assert.equal(p.unknown, true, "the caller must be able to tell a misread from a rare item");
+});
+
+test("a real item with no sales is NOT called unread", () => {
+  // The distinction the flag exists to protect: Rheinmetall MG 3 is a genuine
+  // weapon with no Orange sales on record. "No price" is the right answer and
+  // its name belongs on the badge.
+  const p = priceItem(feed, { name: "Rheinmetall MG 3", rarity: "Orange", bonuses: [] });
+  assert.equal(p.ok, false);
+  assert.ok(!p.unknown, "a known weapon must keep its name");
+  assert.match(p.reason, /Rheinmetall MG 3/);
+});

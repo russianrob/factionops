@@ -99,6 +99,10 @@ import { turtleWatch } from "./turtle-watch.js";
 import * as warHistory from "./war-history.js";
 import * as slackers from "./slackers-model.js";
 import * as gymEnergy from "./gym-energy-snapshot.js";
+import * as gymComp from "./gym-comp.js";
+import * as upcomingWar from "./upcoming-war.js";
+import * as rwpImage from "./rwp-image-read.js";
+import { priceItem as rwpPriceItem } from "./rwp-price.js";
 import * as chainHits from "./chain-hits.js";
 import { renderSlackersPage } from "./slackers-page.js";
 import * as xanaxModel from "./xanax-model.js";
@@ -3464,7 +3468,40 @@ router.post("/api/faction-key", requireAuth, async (req, res) => {
 
   store.storeFactionApiKey(factionId, apiKey);
   console.log(`[api] Faction API key saved for faction ${factionId} (key: ${maskKey(apiKey)})`);
-  return res.json({ ok: true });
+
+  // The check above only proves the key EXISTS — selections=basic passes on a
+  // Public key. The jobs that use this key need faction access, and a key that
+  // cannot do the work fails later, daily, in a log nobody reads: the gym-energy
+  // snapshot did exactly that for four days with "Incorrect ID-entity relation
+  // (code 7)" while the key sat here looking perfectly valid.
+  //
+  // So probe the call the key will actually be asked to make, and SAY so. It is
+  // reported rather than enforced: refusing to store the key would leave the
+  // owner unable to set one at all, which is worse than storing one that only
+  // does part of the job.
+  let contributors = { ok: false, error: null };
+  try {
+    const probe = await fetch(
+      "https://api.torn.com/v2/faction/contributors?stat=gymenergy&cat=current"
+      + `&key=${encodeURIComponent(apiKey)}&comment=wb-keycheck`);
+    const pd = await probe.json();
+    if (pd.error) contributors = { ok: false, error: `${pd.error.error} (code ${pd.error.code})` };
+    else contributors = { ok: true, error: null };
+  } catch (err) {
+    contributors = { ok: false, error: err.message };
+  }
+  if (!contributors.ok) {
+    console.warn(`[api] faction key for ${factionId} saved but cannot read contributors: ${contributors.error}`);
+  }
+
+  return res.json({
+    ok: true,
+    contributors: contributors.ok,
+    warning: contributors.ok ? null
+      : `Key saved, but it cannot read faction contributor stats (${contributors.error}). `
+        + `The gym-energy snapshot behind the slackers report and the gym competition needs this. `
+        + `Use a key from a member of this faction with Limited access or higher.`,
+  });
 });
 
 // ── DELETE /api/faction-key ──────────────────────────────────────────────
@@ -5664,6 +5701,52 @@ function serverDataPath() {
 function postWarCachePath(warId) {
   return pathJoin(POST_WAR_CACHE_DIR, String(warId).replace(/[^A-Za-z0-9_-]/g, "_") + ".json");
 }
+/**
+ * Find a cached report for a war stored under a DIFFERENT key.
+ *
+ * The same war reaches this endpoint under two names: Torn's real id, the
+ * reused live key `war_<factionId>`, or the synthetic `archived_<fid>_<eid>_<end>`
+ * the history store invents when the real id was not known. A report generated
+ * under one of them was invisible to the others, so opening the picker's newest
+ * entry re-ran the whole thing — 53 seconds of attack-log paging, every single
+ * time, for a report that was already sitting on disk.
+ *
+ * The synthetic key encodes the war (faction, enemy, end), and every cached
+ * report carries its own factions and end time, so the two can be matched
+ * without asking Torn anything. The end times differ by a few seconds between
+ * sources — Torn's `end` against the store's `warEndedAt` — hence the tolerance.
+ */
+function findPostWarCacheByIdentity(warId, war) {
+  let enemyId = null, endSec = 0;
+  const m = /^archived_(\d+)_(\d+)_(\d+)$/.exec(String(warId));
+  if (m) { enemyId = m[2]; endSec = Number(m[3]); }
+  else if (war && war.enemyFactionId && war.warEndedAt) {
+    enemyId = String(war.enemyFactionId);
+    endSec = Math.floor(Number(war.warEndedAt) / 1000);
+  }
+  if (!enemyId || !endSec) return null;
+
+  try {
+    if (!existsSync(POST_WAR_CACHE_DIR)) return null;
+    const files = readdirSync(POST_WAR_CACHE_DIR).filter((f) => f.endsWith(".json"));
+    // The directory holds one file per war; a cap keeps a pathological one from
+    // turning a cache miss into a directory walk.
+    for (const f of files.slice(0, 200)) {
+      let payload;
+      try { payload = JSON.parse(readFileSync(pathJoin(POST_WAR_CACHE_DIR, f), "utf-8")); }
+      catch { continue; }
+      const rep = payload && payload.warReportData;
+      if (!rep || !Array.isArray(rep.factions)) continue;
+      if (!rep.factions.some((x) => String(x.id) === String(enemyId))) continue;
+      if (Math.abs((Number(rep.end) || 0) - endSec) > 120) continue;
+      return { payload, foundIn: f };
+    }
+  } catch (e) {
+    console.warn(`[post-war/cache] identity scan failed: ${e.message}`);
+  }
+  return null;
+}
+
 function loadPostWarCache(warId) {
   try {
     const p = postWarCachePath(warId);
@@ -5730,6 +5813,18 @@ async function handlePostWarReport(req, res) {
   const POST_WAR_ACTIVE_TTL_MS = 3 * 60 * 60 * 1000; // 3h
   {
     cached = loadPostWarCache(warId);
+    if (!cached) {
+      // Same war, different key. Adopt it and write it under the key that was
+      // actually asked for, so the next open is a direct hit rather than
+      // another scan.
+      const alias = findPostWarCacheByIdentity(warId, war);
+      if (alias) {
+        cached = alias.payload;
+        cacheStatus = "alias";
+        console.log(`[post-war/cache] ${warId} served from ${alias.foundIn} (same war, other key)`);
+        savePostWarCache(warId, alias.payload);
+      }
+    }
     if (cached && cached.warReportData) {
       if (war.warEnded) {
         // 2026-05-17: validate the cached report is FOR THIS war, not an older
@@ -12106,6 +12201,143 @@ router.get("/api/slackers", requireAuth, async (req, res) => {
 // The page itself carries no member data — every number arrives from the route
 // above, which is where the gate is. So this serves the markup to anyone and
 // the markup asks for a key; without one it shows a sign-in and nothing else.
+// ── The Energy Ladder ────────────────────────────────────────────────────
+// Open to every member of the faction, not just leadership: it is a
+// competition, and a leaderboard nobody competing can see is a poster.
+router.get("/api/gym", requireAuth, (req, res) => {
+  const FACTION = "42055";
+  if (String(req.user?.factionId) !== FACTION) {
+    return res.status(403).json({ error: "Dead Fragment members only" });
+  }
+  return res.json(gymComp.board(FACTION));
+});
+
+// Force a reading. Used to set a start line the moment a key is fixed, rather
+// than waiting up to fifteen minutes for the next poll.
+router.post("/api/gym/poll", requireAuth, async (req, res) => {
+  if (String(req.user?.playerId) !== "137558") return res.status(403).json({ error: "forbidden" });
+  const r = await gymComp.pollOnce("42055", { force: true });
+  return res.json(r);
+});
+
+// Adopt Gym Coach's 00:31 baseline. Owner only: it rewrites the start line the
+// whole competition is scored against.
+router.post("/api/gym/baseline", requireAuth, express.json({ limit: "2mb" }), (req, res) => {
+  if (String(req.user?.playerId) !== "137558") return res.status(403).json({ error: "forbidden" });
+  const body = req.body || {};
+  // Accepts the export verbatim — {keys,payload,from} — or just the payload.
+  const board = body.payload || body;
+  const out = gymComp.importBaseline(board, "42055");
+  return res.status(out.ok ? 200 : 400).json(out);
+});
+
+// The draw. Reads the same standings /gym does — one source, so the pool can
+// never disagree with the ladder it is drawn from.
+// The next ranked war that has not begun. Its own endpoint rather than part of
+// the war snapshot: that snapshot describes a war in PROGRESS, and a consumer
+// asking "who are we fighting" should not have to tell the two apart.
+router.get("/api/faction/:factionId/upcoming-war", requireAuth, async (req, res) => {
+  const fid = String(req.params.factionId);
+  if (String(req.user?.factionId) !== fid) return res.status(403).json({ error: "wrong faction" });
+  const out = await upcomingWar.getUpcoming(fid);
+  const name = req.user?.factionName || null;
+  return res.json({
+    upcoming: out.upcoming ? {
+      warId: out.upcoming.warId,
+      startsAt: out.upcoming.startsAt,
+      opponent: upcomingWar.opponentOf(out.upcoming, name),
+    } : null,
+    error: out.error,
+  });
+});
+
+// Price a read item off the same rwp-prices.json the script loads, so the badge
+// and RW Pricer are quoting one dataset.
+let _rwpFeed = null, _rwpFeedAt = 0;
+function rwpFeed() {
+  if (!_rwpFeed || Date.now() - _rwpFeedAt > 30 * 60 * 1000) {
+    const f = pathJoin(serverDataPath(), "rwp-prices.json");
+    _rwpFeed = JSON.parse(readFileSync(f, "utf-8"));
+    _rwpFeedAt = Date.now();
+  }
+  return _rwpFeed;
+}
+
+function priceOf(item) {
+  if (!item || !item.name) return null;
+  try {
+    const p = rwpPriceItem(rwpFeed(), item);
+    return p.ok ? p : null;
+  } catch (e) {
+    console.warn(`[rwp-price] ${e.message}`);
+    return null;
+  }
+}
+
+// Did the reader hand back a name that is not a Torn item at all?
+//
+// A cropped card names no weapon, and the model fills the gap from whatever
+// text is nearby: the Kodachi post came back "Big Al's Gun Shop Katana" -- the
+// sell shop welded to what the picture looked like -- with confident:true. The
+// badge printed that invented name onto a public sale thread.
+//
+// Carried as its own field rather than inside `price`, because an already
+// installed script ignores a field it does not know about but would happily
+// render a price object that has no estimate in it.
+function unknownItem(item) {
+  if (!item || !item.name) return false;
+  try {
+    const p = rwpPriceItem(rwpFeed(), item);
+    return !p.ok && !!p.unknown;
+  } catch { return false; }
+}
+
+// Read a Torn item card out of a posted SCREENSHOT, for RW Pricer on the forums.
+// Auth'd because it spends money: one vision call per new image, then cached on
+// the URL so a busy thread costs one read however many people open it.
+// Anyone may READ the cache; only a signed-in faction member can cause a new
+// vision call. RW Pricer ships publicly and has no warboard session, so
+// demanding one would make this a Dead Fragment feature — but an open endpoint
+// would spend the owner's money for strangers. Cache-for-all, pay-for-members
+// gives everyone the common images for nothing and keeps the bill attributable.
+router.post("/api/rwp/read-image", express.json({ limit: "8kb" }), async (req, res) => {
+  const url = String((req.body && req.body.url) || "");
+  if (!url) return res.status(400).json({ error: "url is required" });
+  if (!rwpImage.hostAllowed(url)) return res.status(400).json({ error: "that image host is not allowed" });
+
+  const cached = rwpImage.readCache(url);
+  if (cached) return res.json({ item: cached.item, price: priceOf(cached.item), unknownItem: unknownItem(cached.item), cached: true });
+
+  // No cache entry — this one costs. Require a session for that, and say so
+  // rather than failing silently, so the script can stay quiet instead of
+  // showing a broken badge.
+  // Optional auth: verify a Bearer if one is offered, and simply decline the
+  // paid path when it is not. requireAuth would 401 and the script could not
+  // tell "no session" from "broken".
+  let user = null;
+  try {
+    const h = req.headers.authorization || "";
+    if (h) user = verifyToken(h.startsWith("Bearer ") ? h.slice(7) : h);
+  } catch { user = null; }
+  if (!user) return res.json({ item: null, cached: false, needsMember: true });
+
+  const out = await rwpImage.readItemImage(url);
+  if (!out.ok) return res.status(400).json({ error: out.reason });
+  return res.json({ item: out.item, price: priceOf(out.item), unknownItem: unknownItem(out.item), cached: !!out.cached, reason: out.reason || null });
+});
+
+router.get("/random", (_req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.set("Cache-Control", "no-store");
+  return res.sendFile(new URL("./pages/random.html", import.meta.url).pathname);
+});
+
+router.get("/gym", (_req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.set("Cache-Control", "no-store");
+  return res.sendFile(new URL("./pages/gym.html", import.meta.url).pathname);
+});
+
 router.get("/slackers", (_req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
   res.set("Cache-Control", "no-store");
