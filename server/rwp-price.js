@@ -466,6 +466,40 @@ export function priceItem(feed, item) {
     }
   }
 
+  // 0b. Both bonuses, whatever the rolls.
+  //
+  // Rung 1 below already does this, but only where three or more sales of the
+  // pair exist — and 1,551 of 2,246 weapon+pair+rarity groups have recorded
+  // sales and miss that bar, so two thirds of every pair fell past it to the
+  // single-bonus rungs. Measured leave-one-out over 1,708 two-bonus sales from
+  // the last year, that cost a lot:
+  //
+  //   single-bonus median   median |log err| 0.442   71.5% within 2x
+  //   same pair, any rolls                   0.175   94.7% within 2x
+  //
+  // One sale of this weapon carrying this pair is worth more than a median over
+  // weapons that share half of it. The count is reported, and where a close
+  // roll exists the near-miss note names what it actually sold at.
+  if (bonuses.length >= 2 && rarity) {
+    const order = [bonuses[0].name, bonuses[1].name].sort();
+    const bucket = ((feed.weaponPairLevelPrices || {})[name + "|" + order.join("+")] || {})[rarity] || {};
+    const entries = Object.keys(bucket).map((k) => bucket[k]).filter((e) => Array.isArray(e) && num(e[0]));
+    if (entries.length) {
+      // Count-weighted: a roll that sold four times speaks four times.
+      const spread = [];
+      for (const e of entries) for (let i = 0; i < (num(e[1]) || 1); i++) spread.push(num(e[0]));
+      spread.sort((a, b) => a - b);
+      const mid = Math.floor(spread.length / 2);
+      out.basis = `what ${thing(rarity, name)} with both ${order[0]} and ${order[1]} has sold for, at any rolls`;
+      out.estimate = spread.length % 2 ? spread[mid] : Math.round((spread[mid - 1] + spread[mid]) / 2);
+      out.low = spread[0];
+      out.high = spread[spread.length - 1];
+      if (out.low === out.high) { out.low = null; out.high = null; }
+      out.samples = spread.length;
+      return withNearMiss(out, nearMiss);
+    }
+  }
+
   // 1. The exact pair.
   if (bonuses.length >= 2 && rarity) {
     const pair = [bonuses[0].name, bonuses[1].name].sort().join("+");

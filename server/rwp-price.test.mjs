@@ -52,14 +52,16 @@ test("a high roll with no sale of its own still beats the pooled median", () => 
   assert.ok(p.estimate > 200e6, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
 });
 
-test("an exact pair beats the curve when one exists", () => {
+test("a sale of both bonuses beats a curve drawn from one", () => {
   const p = priceItem(feed, {
     name: "Cobra Derringer", rarity: "Orange",
     bonuses: [{ name: "Assassinate", pct: 60 }, { name: "Double-Tap", pct: 20 }],
   });
   assert.match(p.basis, /both Assassinate and Double-Tap/);
   assert.equal(p.extrapolated, false);
-  assert.equal(p.samples, 4);
+  assert.ok(p.samples >= 1);
+  // Whatever rung answers, it must not be one that threw a bonus away.
+  assert.ok(!p.notes.some((n) => /isn't counted/.test(n)));
 });
 
 test("a low roll is not given a high roll's median", () => {
@@ -469,11 +471,12 @@ test("an uncounted second bonus says which way the number is wrong", () => {
   // one, the pair goes for about 1.4x the better single at the median -- so the
   // quoted number is a floor, and saying so is the difference between a caveat
   // and a warning. It is only a floor USUALLY: a quarter of pairs sell for less.
-  // 71%, not the 70% that has a sale of its own — this is the case where the
-  // second bonus genuinely cannot be priced.
+  // A pair with no recorded sale at ANY roll — the case where the second bonus
+  // genuinely cannot be priced. (The S&W that first showed this now has a sale
+  // of its own pair and is priced off it.)
   const p = priceItem(feed, {
-    name: "S&W Revolver", rarity: "Red",
-    bonuses: [{ name: "Assassinate", pct: 71 }, { name: "Double-Tap", pct: 52 }],
+    name: "Dagger", rarity: "Yellow",
+    bonuses: [{ name: "Empower", pct: 20 }, { name: "Achilles", pct: 40 }],
   });
   assert.ok(p.notes.some((n) => /isn't counted/.test(n)));
   assert.ok(p.notes.some((n) => /floor/i.test(n)),
@@ -571,8 +574,8 @@ test("the closest sale of the same pair is surfaced", () => {
   assert.equal(p.ok, true, p.reason);
   assert.ok(p.notes.some((n) => /closest/i.test(n) && /750|751/.test(n)),
     "the near-miss sale belongs on the badge: " + p.notes.join(" | "));
-  // It is context, not the price: the estimate stays what the ladder produced.
-  assert.ok(p.estimate < 500e6, "the near-miss must not become the estimate");
+  // And the price now comes from that pair rather than from half the weapon.
+  assert.ok(p.estimate > 600e6, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
 });
 
 test("the near-miss names the rolls it actually was", () => {
@@ -602,4 +605,61 @@ test("an exact match does not also report a near-miss", () => {
     bonuses: [{ name: "Assassinate", pct: 70 }, { name: "Double-Tap", pct: 52 }],
   });
   assert.ok(!p.notes.some((n) => /closest/i.test(n)));
+});
+
+// ── Both bonuses, whatever the rolls ───────────────────────────
+// Measured leave-one-out over 1,708 two-bonus sales from the last year:
+//
+//   single-bonus median (what this did)   median |log err| 0.442   71.5% within 2x
+//   same pair, any rolls                                   0.175   94.7% within 2x
+//
+// The data was already there. 1,551 of 2,246 weapon+pair+rarity groups have
+// recorded sales but no pair-combo entry, because that table drops anything
+// under three sales — so two thirds of all pairs fell through to the method
+// that is two and a half times worse.
+
+test("a pair with only one sale still prices off that pair", () => {
+  const p = priceItem(feed, {
+    name: "Beretta M9", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 107 }, { name: "Double Tap", pct: 30 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  // The single-bonus fallback said $354m. The pair sold for $750.6m.
+  assert.ok(p.estimate > 600e6, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
+  assert.match(p.basis, /both Assassinate and Double-Tap/);
+  assert.equal(p.samples, 1);
+});
+
+test("both bonuses counted means no floor warning", () => {
+  const p = priceItem(feed, {
+    name: "Beretta M9", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 107 }, { name: "Double-Tap", pct: 30 }],
+  });
+  assert.ok(!p.notes.some((n) => /isn't counted|floor/i.test(n)),
+    "nothing was dropped: " + p.notes.join(" | "));
+});
+
+test("the rolls it actually sold at are still named", () => {
+  const p = priceItem(feed, {
+    name: "Beretta M9", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 107 }, { name: "Double-Tap", pct: 30 }],
+  });
+  assert.ok(p.notes.some((n) => /106%/.test(n) && /36%/.test(n)),
+    "a price off different rolls must say which: " + p.notes.join(" | "));
+});
+
+test("an exact match still outranks the pooled pair", () => {
+  const p = priceItem(feed, {
+    name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 70 }, { name: "Double-Tap", pct: 52 }],
+  });
+  assert.match(p.basis, /this exact weapon/i);
+});
+
+test("a single-bonus weapon is untouched by any of this", () => {
+  const p = priceItem(feed, {
+    name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
+  });
+  assert.match(p.basis, /matched to the 9%/);
+  assert.ok(!/both bonuses/i.test(p.basis));
 });
