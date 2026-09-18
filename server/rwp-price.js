@@ -826,6 +826,28 @@ export function priceItem(feed, item) {
     out.basis = `what ${thing(rarity, name)} has sold for, whatever bonus it had`;
     out.estimate = medOf(arr); out.low = num(arr[0]); out.high = num(arr[2]); out.samples = cntOf(arr);
     out.notes.push("This ignores the bonus completely — it's the middle price for the weapon on its own.");
+    // Say what the bonus is worth where there IS evidence. Of 3,721
+    // weapon+bonus+colour combinations only four reach this rung — Smurf at
+    // Red, on four machine guns — and Smurf has sold once at Red, which is no
+    // basis for a multiplier. But it goes for 5.3x at Orange, so falling
+    // silently to the colour median understates it by a mile and says nothing.
+    // Reported, never priced on: an Orange multiple is not a Red price.
+    if (bonuses.length) {
+      const lead = bonuses[0];
+      const all = (feed.weaponBonusLift || {})[lead.name] || {};
+      // The NEAREST colour, not the best-sampled one. The multiple climbs with
+      // rarity — Smurf is 1.5x at Yellow and 5.3x at Orange — so for a Red
+      // weapon the Orange figure says far more than the Yellow one, even
+      // though Yellow has ten times the sales behind it.
+      const RANK = { Yellow: 0, Orange: 1, Red: 2 };
+      const here = RANK[rarity];
+      const elsewhere = Object.keys(all)
+        .filter((r) => r !== rarity && Array.isArray(all[r]) && num(all[r][0]) > 0 && RANK[r] != null)
+        .sort((a, b) => Math.abs(RANK[a] - here) - Math.abs(RANK[b] - here))[0];
+      if (elsewhere) {
+        out.notes.push(`No ${rarity} weapon has sold with ${lead.name} often enough to price from. At ${elsewhere} it goes for about ${num(all[elsewhere][0]).toFixed(1)}x the weapon's own middling price, across ${salesWord(num(all[elsewhere][1]))} — worth knowing, though an ${elsewhere} multiple is not a ${rarity} price.`);
+      }
+    }
     return out;
   }
 

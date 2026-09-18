@@ -1126,3 +1126,39 @@ test("a bonus nobody has carried at that colour is not bridged", () => {
     if (/other weapons/i.test(p.basis)) assert.ok(p.samples >= 3, "too thin to bridge from");
   }
 });
+
+// ── The last four gaps ─────────────────────────────────────────
+// Sweeping all 3,721 weapon+bonus+colour combinations where the weapon
+// actually trades: 91.3% have their own sales, 8.5% are covered by the
+// cross-weapon bridge, and FOUR fall through — Smurf at Red, on the Minigun,
+// Stoner 96, PKM and M249 SAW.
+//
+// Smurf has sold exactly once at Red, for $18.0b, which is no basis for a
+// multiplier. But falling silently to the weapon's colour median is the worst
+// possible answer for a bonus that goes for 5.3x at Orange: it understates by
+// a mile and says nothing.
+
+test("a bonus with no comp at this colour reports what it does elsewhere", () => {
+  const p = priceItem(feed, {
+    name: "Minigun", rarity: "Red", bonuses: [{ name: "Smurf", pct: 20 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  const why = p.notes.join(" | ");
+  assert.match(why, /Smurf/, why);
+  // It must name the colour where the bonus DOES have evidence.
+  assert.match(why, /Orange/, "say where the evidence is: " + why);
+  assert.match(why, /5\.\d|\dx/, "and what it is worth there: " + why);
+});
+
+test("it does not price on the other colour, only reports it", () => {
+  const p = priceItem(feed, {
+    name: "Minigun", rarity: "Red", bonuses: [{ name: "Smurf", pct: 20 }],
+  });
+  // Still the weapon-alone rung: an Orange multiple is not a Red price.
+  assert.match(p.basis, /whatever bonus it had/);
+});
+
+test("a bonus with no evidence anywhere says nothing extra", () => {
+  const p = priceItem(feed, { name: "Minigun", rarity: "Red", bonuses: [] });
+  assert.ok(!p.notes.some((n) => /goes for about/.test(n)), p.notes.join(" | "));
+});
