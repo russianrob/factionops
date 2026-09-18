@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.8.2
+// @version      3.8.3
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.8.2';
+    var SCRIPT_VERSION = '3.8.3';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1667,6 +1667,26 @@
 
     // ─── Badge creation ──────────────────────────────────────
 
+    /**
+     * What the badge calls itself.
+     *
+     * The important case is the last one. A Yellow, Orange or Red weapon ALWAYS
+     * carries a bonus — that is what the colour means — so if none could be
+     * read, the number on the badge is the colour median with the bonus thrown
+     * away, and it is knowably not what the weapon is worth. A Red Steyr AUG
+     * with 31% Focus showed "$1.51B" on the trade add-items picker, which
+     * renders no bonus data at all, while item.php priced the same weapon at
+     * $1.07b off its actual bonus.
+     *
+     * Nothing can recover the bonus there — no selector finds what is not in
+     * the page — so the badge stops implying it has. "no bonus read" is a
+     * smaller claim and a true one.
+     */
+    function badgeLabelFor(rarity, bonusCount, estimatedPrice, median) {
+        if (!bonusCount && rarity && RARITY_WORD.test(String(rarity))) return 'RWP ⚠ no bonus read';
+        return (bonusCount > 0 && estimatedPrice && estimatedPrice !== median) ? 'RWP Est' : 'RWP';
+    }
+
     function createBadge(itemName, rarity, median, bonuses, bonusFn, estimatedPrice, priceArray, bonusPriceArrays, bonusColors, comboPriceArrays, maxBonusNames, derivation, range) {
         var color = RARITY_COLORS[rarity] || '#e8c44a';
         var badge = document.createElement('span');
@@ -1686,7 +1706,7 @@
         if (estimatedPrice) badge.setAttribute('data-rwp-est', String(estimatedPrice));
 
         var displayPrice = estimatedPrice || median;
-        var label = (bonuses.length > 0 && estimatedPrice && estimatedPrice !== median) ? 'RWP Est' : 'RWP';
+        var label = badgeLabelFor(rarity, bonuses.length, estimatedPrice, median);
         // fmtMoney with the leading $ stripped — for the high end of a range.
         var fmtBare = function(n) { return fmtMoney(n).replace(/^\$/, ''); };
         var valueText = fmtMoney(displayPrice);

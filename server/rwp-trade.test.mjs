@@ -215,3 +215,38 @@ test("an element whose title is not a bonus fragment is ignored", () => {
   const el = { querySelector: () => ({ getAttribute: () => "Click to view this item" }) };
   assert.equal(sandbox.__bi3(el), null);
 });
+
+// ── A coloured weapon with no bonus on show ────────────────────
+// The trade add-items picker renders no bonus data at all: no info icon, no
+// bonus-attachment icon for the bonus itself, only the weapon name and a
+// damage STAT icon whose class merely looks similar. No selector can find what
+// is not there.
+//
+// But rarity IS readable — the badge knew it was Red — and a Red weapon always
+// carries a bonus. So when the colour says RW and no bonus could be read, the
+// figure is knowably not the weapon's value, and saying so is the whole fix.
+
+test("a coloured weapon with no readable bonus is labelled, not asserted", () => {
+  const i = SRC.indexOf("function badgeLabelFor");
+  assert.ok(i > 0, "badgeLabelFor must exist");
+  const body = SRC.slice(i, i + 400);
+  assert.match(body, /RARITY_WORD/, "the colour has to be consulted: " + body.slice(0, 200));
+  assert.match(body, /bonusCount/);
+});
+
+test("a colourless weapon is untouched by that rule", () => {
+  // A grey weapon genuinely has no bonus, and its median IS its value.
+  const body = SRC.slice(SRC.indexOf("function badgeLabelFor"),
+                         SRC.indexOf("function badgeLabelFor") + 800);
+  assert.ok(body.length > 0, "badgeLabelFor must exist");
+});
+
+test("the label says the bonus is missing rather than implying a price", () => {
+  vm.runInContext([v("RARITY_WORD"), fn("badgeLabelFor"), "globalThis.__bl = badgeLabelFor;"].join("\n"), sandbox);
+  // Red, no bonus read: the dangerous case.
+  assert.match(sandbox.__bl("Red", 0, 1, 1), /bonus/i);
+  // Red with a bonus read: normal.
+  assert.ok(!/bonus/i.test(sandbox.__bl("Red", 1, 2, 1)));
+  // No colour at all: normal.
+  assert.ok(!/bonus/i.test(sandbox.__bl(null, 0, 1, 1)));
+});
