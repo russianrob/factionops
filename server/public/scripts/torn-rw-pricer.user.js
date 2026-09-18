@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.5.8
+// @version      3.5.9
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.5.8';
+    var SCRIPT_VERSION = '3.5.9';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -3882,31 +3882,41 @@
     function forumLineItem(text) {
         var raw = String(text || '').replace(/\s+/g, ' ').trim();
         if (!raw) return null;
-        var parts = raw.split(' - ');
+        // Two punctuations in the wild: " - " between fields, and "|". The
+        // hyphen must be SPACED or "Tavor TAR-21" and "Sawed-Off Shotgun" come
+        // apart in the middle of their own names.
+        var parts = raw.split(/\s*\|\s*|\s+-\s+/);
         if (parts.length < 2) return null;
 
         var name = parts[0].trim();
         if (!lookupWeapon(normalizeWeaponName(name))) return null;
 
-        var bonuses = [];
-        var chunks = parts[1].split(/[•·]/);
-        for (var i = 0; i < chunks.length; i++) {
-            var m = chunks[i].match(/(\d+(?:\.\d+)?)\s*%\s*(.+)/);
-            if (!m) continue;
-            // Whatever is left after the emoji: bonus names are letters, with a
-            // space or a hyphen inside some of them ("Sure Shot", "Double-Tap").
-            var nm = resolveBonusName(m[2].replace(/[^A-Za-z\- ]+/g, ' ').replace(/\s+/g, ' ').trim());
-            var lv = Math.round(parseFloat(m[1]));
-            if (nm && lv > 0) bonuses.push({ name: nm, level: lv });
+        // Fields arrive in no fixed order and most of them carry digits, so
+        // each is identified by what it is rather than where it sits. Only the
+        // weapon leads. Damage, accuracy, quality and the seller's own price
+        // are all numbers and none of them is a bonus roll -- a quality read as
+        // one would price a weapon off its own quality.
+        var bonuses = [], rarity = null;
+        for (var i = 1; i < parts.length; i++) {
+            var t = parts[i].trim();
+            if (!t) continue;
+            if (!rarity && RARITY_WORD.test(t)) {
+                rarity = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+                continue;
+            }
+            // A labelled field is never stock: "Q: 236.22%", "Dmg:76.24".
+            if (/^(q|qual|quality|dmg|dam|damage|acc|accu|accuracy|price|value|stealth|circ)\b\s*[:=]?/i.test(t)) continue;
+            if (bonuses.length) continue;
+            for (var chunk of t.split(/[•·+]/)) {
+                var m = chunk.match(/(\d+(?:\.\d+)?)\s*%\s*(.+)/);
+                if (!m) continue;
+                var nm = resolveBonusName(m[2].replace(/[^A-Za-z\- ]+/g, ' ').replace(/\s+/g, ' ').trim());
+                var lv = Math.round(parseFloat(m[1]));
+                if (nm && lv > 0) bonuses.push({ name: nm, level: lv });
+            }
         }
         if (!bonuses.length) return null;
         bonuses.sort(function (a, b) { return b.level - a.level; });
-
-        var rarity = null;
-        for (var j = 2; j < parts.length; j++) {
-            var t = parts[j].trim();
-            if (RARITY_WORD.test(t)) { rarity = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase(); break; }
-        }
         return { name: name, rarity: rarity, bonuses: bonuses };
     }
 
