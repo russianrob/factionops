@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.5.5
+// @version      3.5.6
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.5.5';
+    var SCRIPT_VERSION = '3.5.6';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -3613,14 +3613,65 @@
 
     /** Column positions in a price-list header, or -1 where there is none. */
     function forumHeaderMap(cells) {
-        var map = { weapon: -1, bonus: -1, pct: -1 };
+        var map = { weapon: -1, bonus: -1, pct: -1, rarity: -1 };
         for (var i = 0; i < (cells || []).length; i++) {
             var t = String(cells[i] || '').trim().toLowerCase().replace(/\s+/g, ' ');
             if (map.weapon < 0 && /^(weapon|item|gun|name)s?$/.test(t)) map.weapon = i;
             else if (map.bonus < 0 && /^bonus(es)?$/.test(t)) map.bonus = i;
             else if (map.pct < 0 && /^(b ?%|bonus ?%|%|roll|level)$/.test(t)) map.pct = i;
+            else if (map.rarity < 0 && /^(rarity|colour|color)$/.test(t)) map.rarity = i;
         }
         return map;
+    }
+
+    /**
+     * Find the percentage column by what is IN it.
+     *
+     * One poster's header says "B %", another's says "Value" — a word that
+     * could as easily mean the item's market price, so it cannot be trusted by
+     * name. The cells can be: in a price list the bonus roll column is
+     * percentages and nothing else is. Returns -1 rather than guess when no
+     * column is convincingly percentages.
+     */
+    function forumFindPctColumn(rows, map) {
+        if (!rows || !rows.length) return -1;
+        var width = 0;
+        for (var r = 0; r < rows.length; r++) width = Math.max(width, rows[r].length);
+        var bestCol = -1, bestHits = 0;
+        for (var c = 0; c < width; c++) {
+            if (c === map.weapon || c === map.bonus || c === map.rarity) continue;
+            var hits = 0, seen = 0;
+            for (var i = 0; i < rows.length; i++) {
+                var t = String(rows[i][c] == null ? '' : rows[i][c]).trim();
+                if (!t) continue;
+                seen++;
+                // Percentages and nothing else: "51%", "82% 17%". A damage
+                // column ("70.91") and a price column ("$1.2b") both fail this.
+                if (/^(\d+(?:\.\d+)?%[\s\/]*)+$/.test(t)) hits++;
+            }
+            if (seen && hits === seen && hits > bestHits) { bestHits = hits; bestCol = c; }
+        }
+        return bestCol;
+    }
+
+    /**
+     * The bonus names in a cell, longest first.
+     *
+     * A cell can hold one name, two names ("Achilles Warlord"), or a name made
+     * of two words ("Sure Shot"). Two-word names are tried before one-word ones
+     * or "Sure Shot" becomes a "Shot" that does not exist.
+     */
+    function forumBonusNames(text) {
+        var words = String(text || '').replace(/[\/,]/g, ' ').split(/\s+/).filter(Boolean);
+        var out = [], i = 0;
+        while (i < words.length) {
+            var two = (i + 1 < words.length) ? resolveBonusName(words[i] + ' ' + words[i + 1]) : null;
+            if (two) { out.push(two); i += 2; continue; }
+            var one = resolveBonusName(words[i]);
+            if (one) { out.push(one); i += 1; continue; }
+            i += 1;   // not a bonus word — a stray label, skipped rather than guessed at
+        }
+        return out;
     }
 
     /**
@@ -3641,19 +3692,26 @@
         var pRaw = String(cells[map.pct] || '').trim();
         if (!name || !bRaw || !pRaw) return null;
 
-        var bParts = bRaw.split('/'), pParts = pRaw.split('/');
+        // Names and percentages are read independently and zipped, because the
+        // two are not always punctuated the same way: one table writes
+        // "Bleed/Stun" against "23%/22%", another "Achilles Warlord" against
+        // "82% 17%" with both bonuses sharing a cell.
+        var names = forumBonusNames(bRaw);
+        var pcts = String(pRaw).match(/\d+(?:\.\d+)?/g) || [];
         var bonuses = [];
-        for (var i = 0; i < bParts.length; i++) {
-            var nm = resolveBonusName(bParts[i].trim());
-            var raw = String(pParts[i] != null ? pParts[i] : pParts[0]).replace(/[^0-9.]/g, '');
-            var lv = Math.round(parseFloat(raw));
-            // An unrecognised bonus is dropped rather than guessed at: pricing
-            // the wrong bonus is worse than pricing nothing.
-            if (nm && lv > 0) bonuses.push({ name: nm, level: lv });
+        for (var i = 0; i < names.length; i++) {
+            var lv = Math.round(parseFloat(pcts[i] != null ? pcts[i] : pcts[0]));
+            if (names[i] && lv > 0) bonuses.push({ name: names[i], level: lv });
         }
         if (!bonuses.length) return null;
         bonuses.sort(function (a, b) { return b.level - a.level; });
-        return { name: name, bonuses: bonuses };
+
+        var rarity = null;
+        if (map.rarity >= 0) {
+            var rt = String(cells[map.rarity] || '').trim();
+            if (RARITY_WORD.test(rt)) rarity = rt.charAt(0).toUpperCase() + rt.slice(1).toLowerCase();
+        }
+        return { name: name, rarity: rarity, bonuses: bonuses };
     }
 
     /**
@@ -3833,12 +3891,29 @@
         }
     }
 
+    /**
+     * One cell's text, with element boundaries kept as spaces.
+     *
+     * textContent does not: a cell holding <div>Achilles</div><div>Warlord</div>
+     * reads back as "AchillesWarlord", which names one bonus that does not
+     * exist instead of two that do.
+     */
+    function forumCellText(node) {
+        if (!node) return '';
+        if (node.nodeType === 3) return node.nodeValue || '';
+        if (node.nodeType !== 1) return '';
+        if (node.classList && node.classList.contains('rwp-tbl-cell')) return '';
+        var out = '';
+        for (var i = 0; i < node.childNodes.length; i++) out += forumCellText(node.childNodes[i]) + ' ';
+        return out;
+    }
+
     function forumCellTexts(tr) {
         var out = [], cells = tr.querySelectorAll('th,td');
         for (var i = 0; i < cells.length; i++) {
             // Our own column is never read back as evidence.
             if (cells[i].classList && cells[i].classList.contains('rwp-tbl-cell')) continue;
-            out.push((cells[i].textContent || '').replace(/\s+/g, ' ').trim());
+            out.push(forumCellText(cells[i]).replace(/\s+/g, ' ').trim());
         }
         return out;
     }
@@ -3850,7 +3925,16 @@
             var rows = table.querySelectorAll('tr');
             if (rows.length < 2) continue;
             var map = forumHeaderMap(forumCellTexts(rows[0]));
-            if (map.weapon < 0 || map.bonus < 0 || map.pct < 0) continue;
+            if (map.weapon < 0 || map.bonus < 0) continue;
+            if (map.pct < 0) {
+                // No header names the roll column. Read a few rows and find it
+                // by content instead — "Value" is a perfectly good name for it
+                // and a perfectly good name for three other things.
+                var sample = [];
+                for (var sr = 1; sr < rows.length && sample.length < 8; sr++) sample.push(forumCellTexts(rows[sr]));
+                map.pct = forumFindPctColumn(sample, map);
+            }
+            if (map.pct < 0) continue;
 
             for (var r = 0; r < rows.length; r++) {
                 var tr = rows[r];

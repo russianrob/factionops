@@ -293,3 +293,97 @@ test("empty lines do not become segments", () => {
   const segs = seg.split(host);
   assert.equal(segs.length, 1, "consecutive breaks must not produce empty segments");
 });
+
+// ── A table that names its columns differently ─────────────────
+// Name | Type | Rarity | Bonus | Value | Damage
+//
+// Three things the first parser could not do: the percentage column is called
+// "Value", the rarity is a column of its own, and a two-bonus weapon puts both
+// names in one cell with both percentages in another.
+const HEADER2 = ["Name", "Type", "Rarity", "Bonus", "Value", "Damage"];
+const findPct = (() => {
+  vm.runInContext([fn("forumFindPctColumn"), fn("forumBonusNames"),
+    "globalThis.__fp = forumFindPctColumn;"].join("\n"), sandbox);
+  return sandbox.__fp;
+})();
+
+test("a percentage column is found by what is in it, not its name", () => {
+  // "Value" could mean anything; the cells cannot. Every one of them is a
+  // percentage, and no other column is.
+  const m = forumHeaderMap(HEADER2);
+  assert.equal(m.weapon, 0);
+  assert.equal(m.bonus, 3);
+  assert.equal(m.pct, -1, "no header here says percentage");
+  const rows = [
+    ["Qsz-92", "Secondary", "Yellow", "Achilles", "51%", "70.91"],
+    ["Enfield SA-80", "Primary", "Yellow", "Assassinate", "57%", "70.23"],
+    ["Macana", "Melee", "Yellow", "Bleed", "29%", "62.72"],
+  ];
+  assert.equal(findPct(rows, m), 4);
+});
+
+test("a rarity column is used rather than worked out", () => {
+  const m = forumHeaderMap(HEADER2);
+  assert.equal(m.rarity, 2);
+  const r = forumRowItem(["Qsz-92", "Secondary", "Yellow", "Achilles", "51%", "70.91"],
+    { weapon: 0, bonus: 3, pct: 4, rarity: 2 });
+  assert.equal(r.rarity, "Yellow");
+  assert.equal(r.bonuses[0].name, "Achilles");
+  assert.equal(r.bonuses[0].level, 51);
+});
+
+test("two bonuses sharing a cell are both read", () => {
+  // The cell holds "Achilles Warlord" and the one beside it "82% 17%".
+  const r = forumRowItem(["ArmaLite M-15A4", "Primary", "Orange", "Achilles Warlord", "82% 17%", "80.58"],
+    { weapon: 0, bonus: 3, pct: 4, rarity: 2 });
+  assert.equal(r.bonuses.length, 2);
+  assert.equal(JSON.stringify(Array.from(r.bonuses).map((b) => b.name + " " + b.level).sort()),
+               JSON.stringify(["Achilles 82", "Warlord 17"]));
+});
+
+test("a two-word bonus is not split into two", () => {
+  // "Sure Shot" is one bonus. Splitting on the space would invent a "Shot".
+  assert.equal(JSON.stringify(Array.from(sandbox.forumBonusNames("Sure Shot"))), JSON.stringify(["Sure Shot"]));
+  assert.equal(JSON.stringify(Array.from(sandbox.forumBonusNames("Double Tap"))), JSON.stringify(["Double-Tap"]));
+  // ...but two one-word bonuses in a cell still come back as two.
+  assert.equal(JSON.stringify(Array.from(sandbox.forumBonusNames("Achilles Warlord"))),
+               JSON.stringify(["Achilles", "Warlord"]));
+});
+
+test("every row of this table prices", () => {
+  const m = { weapon: 0, bonus: 3, pct: 4, rarity: 2 };
+  const rows = [
+    ["Qsz-92", "Secondary", "Yellow", "Achilles", "51%"],
+    ["ArmaLite M-15A4", "Primary", "Orange", "Achilles Warlord", "82% 17%"],
+    ["Enfield SA-80", "Primary", "Yellow", "Assassinate", "57%"],
+    ["Fiveseven", "Secondary", "Orange", "Assassinate Quicken", "81% 50%"],
+    ["Diamond Bladed Knife", "Melee", "Yellow", "Backstab", "37%"],
+    ["Macana", "Melee", "Yellow", "Bleed", "29%"],
+    ["Jackhammer", "Primary", "Yellow", "Bleed", "24%"],
+    ["Scimitar", "Melee", "Yellow", "Bleed", "23%"],
+    ["Rheinmetall MG 3", "Primary", "Yellow", "Blindfire", "16%"],
+    ["Kodachi", "Melee", "Yellow", "Bloodlust", "12%"],
+    ["M4A1 Colt Carbine", "Primary", "Orange", "Conserve Deadeye", "27% 57%"],
+  ];
+  const missed = [];
+  for (const cells of rows) {
+    const item = forumRowItem(cells, m);
+    const p = item && priceForumRow(item);
+    if (!p || !(p.value > 0)) missed.push(cells[0] + " " + cells[3]);
+  }
+  assert.equal(JSON.stringify(missed), "[]", "rows that did not price: " + missed.join(" | "));
+});
+
+test("two lines in one cell do not run together", () => {
+  // <td><div>Achilles</div><div>Warlord</div></td> has textContent
+  // "AchillesWarlord" — no space anywhere, because there is no text between
+  // the divs. Read that way the cell names one bonus that does not exist.
+  vm.runInContext([fn("forumCellText"), "globalThis.__ct = forumCellText;"].join("\n"), sandbox);
+  const el = (kids) => ({ nodeType: 1, childNodes: kids, classList: { contains: () => false } });
+  const txt = (v) => ({ nodeType: 3, nodeValue: v });
+  const cell = el([el([txt("Achilles")]), el([txt("Warlord")])]);
+  const out = sandbox.__ct(cell);
+  assert.match(out, /Achilles\s+Warlord/, "got: " + JSON.stringify(out));
+  assert.equal(JSON.stringify(Array.from(sandbox.forumBonusNames(out))),
+               JSON.stringify(["Achilles", "Warlord"]));
+});
