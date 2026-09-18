@@ -134,13 +134,10 @@ import * as restockTracker from "./restock-tracker.js";
 import { applyNerveReading, buildResponse, hasPerkData, parseMaxNervePerks } from "./nerve-tracker.js";
 import { normalizeChainData, chainWithLiveTimeout, chainHashKey } from "./chain-data.js";
 import { isFactionAllowed, getAllSubscriptions, getOwnerFactionId, getSubscriptionRejectionMessage } from "./subscription-manager.js";
+import { CALL_EXPIRE_MS, DEAL_EXPIRE_MS, expiryFor } from "./call-timings.js";
 
 const router = Router();
 
-const CALL_EXPIRE_MS = parseInt(process.env.CALL_EXPIRE_MS, 10) || 20 * 60 * 1000; // 20 minutes
-const DEAL_EXPIRE_MS = parseInt(process.env.DEAL_EXPIRE_MS, 10) || 2 * 60 * 60 * 1000; // 2 hours (multi-hit deal)
-
-const SOFT_UNCALL_MS = 30_000; // 30 seconds after hospital detection
 const REFRESH_COOLDOWN_MS = 30_000; // 30 seconds between refreshes per war
 
 /** Socket.IO server instance — set via setIO() from server.js. */
@@ -333,7 +330,7 @@ function scheduleCallExpiry(warId, targetId) {
   const timerKey = `${warId}:${targetId}`;
   clearExistingTimer(timerKey);
 
-  const expireMs = call.isDeal ? DEAL_EXPIRE_MS : CALL_EXPIRE_MS;
+  const expireMs = expiryFor(call);
   callTimers.set(
     timerKey,
     setTimeout(() => {
