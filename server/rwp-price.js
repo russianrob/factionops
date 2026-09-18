@@ -137,6 +137,31 @@ export function valueAtPct(points, pct) {
  * price with a confident number on it.
  */
 let _bonusIndex = null, _bonusIndexFor = null;
+
+/** Levenshtein distance, on the normalised forms. */
+export function editDistance(a, b) {
+  const s = String(a || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const t = String(b || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const m = s.length, n = t.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (s[i - 1] === t[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+/**
+ * Below this length a single edit is most of the word rather than a typo, so
+ * no correction is attempted. "age" is not a misread "Rage".
+ */
+const MIN_CORRECTABLE = 5;
+
 export function resolveBonus(feed, raw) {
   const want = String(raw || "").toLowerCase().replace(/[\s-]+/g, "");
   if (!want) return null;
@@ -150,7 +175,30 @@ export function resolveBonus(feed, raw) {
     }
     _bonusIndexFor = feed;
   }
-  return _bonusIndex.get(want) || null;
+  const exact = _bonusIndex.get(want);
+  if (exact) return exact;
+
+  // One letter out. The reader returned "Shricken" for a card saying
+  // "Stricken", which resolved to nothing, dropped the bonus, and priced an
+  // RPG Launcher off the weapon alone.
+  //
+  // Correcting that is safe for a checkable reason rather than a hopeful one:
+  // NO two real bonus names are within one edit of each other, so a name one
+  // edit from a real one has exactly one candidate. There is a test asserting
+  // that property, which fails if Torn ever adds a bonus that breaks it.
+  //
+  // Two edits is NOT safe and is refused — Deadeye/Deadly, Freeze/Frenzy and
+  // Grace/Rage are all two apart, so a two-edit match could pick the wrong
+  // one of a real pair.
+  if (want.length < MIN_CORRECTABLE) return null;
+  let hit = null;
+  for (const [norm, name] of _bonusIndex) {
+    if (Math.abs(norm.length - want.length) > 1) continue;
+    if (editDistance(norm, want) !== 1) continue;
+    if (hit) return null;          // ambiguous: say nothing
+    hit = name;
+  }
+  return hit;
 }
 
 /**

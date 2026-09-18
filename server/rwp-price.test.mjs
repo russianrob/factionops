@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { priceItem, valueAtPct, levelCurve, resolveName, rarityForRoll, weaponByBuyPrice, rarityForQuality } from "./rwp-price.js";
+import { priceItem, valueAtPct, levelCurve, resolveName, rarityForRoll, weaponByBuyPrice, rarityForQuality, resolveBonus, editDistance } from "./rwp-price.js";
 
 const feed = JSON.parse(fs.readFileSync(new URL("./data/rwp-prices.json", import.meta.url), "utf8"));
 
@@ -954,4 +954,78 @@ test("a single-bonus weapon is never bridged", () => {
     name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
   });
   assert.ok(!/other weapons/i.test(p.basis), p.basis);
+});
+
+// ── A bonus misread by one letter ──────────────────────────────
+// The reader returned "Shricken" for a card saying "Stricken". It resolved to
+// nothing, the bonus was dropped, and an RPG Launcher priced off the weapon
+// alone — $88m across 346 sales at any bonus, for a weapon whose 31% Stricken
+// is the whole story.
+//
+// Correcting it is safe for a reason that can be checked rather than hoped:
+// no two real bonus names are within one edit of each other, so a name one
+// edit from a real one has exactly one candidate.
+
+test("no two real bonus names sit within one edit", () => {
+  // The property the correction rests on. If Torn ever adds a bonus that
+  // breaks it, this fails before the correction can pick the wrong one.
+  const names = [...new Set(
+    [...Object.keys(feed.bonusPrices || {}), ...Object.keys(feed.armourBonusPrices || {})]
+      .map((k) => k.split("|")[0])
+  )];
+  for (let i = 0; i < names.length; i++) {
+    for (let j = i + 1; j < names.length; j++) {
+      assert.ok(editDistance(names[i], names[j]) > 1,
+        `"${names[i]}" and "${names[j]}" are one edit apart — correction is unsafe`);
+    }
+  }
+});
+
+test("a bonus misread by one letter still resolves", () => {
+  assert.equal(resolveBonus(feed, "Shricken"), "Stricken");
+  assert.equal(resolveBonus(feed, "Assassinat"), "Assassinate");
+  assert.equal(resolveBonus(feed, "Warlordd"), "Warlord");
+});
+
+test("an exact name is never routed through the correction", () => {
+  assert.equal(resolveBonus(feed, "Stricken"), "Stricken");
+  assert.equal(resolveBonus(feed, "Double Tap"), "Double-Tap");
+  assert.equal(resolveBonus(feed, "double-tap"), "Double-Tap");
+});
+
+test("a name two edits out is refused", () => {
+  // One edit is the whole budget. "Warlrod" is a transposition of Warlord and
+  // therefore two edits away; correcting it would mean widening the window to
+  // a distance where real names collide.
+  assert.equal(resolveBonus(feed, "Warlrod"), null);
+});
+
+test("a misread that could be two different bonuses is refused", () => {
+  // The guard that matters. "Deadlye" is one edit from BOTH Deadeye and
+  // Deadly, and picking either would be a coin flip priced in billions.
+  assert.equal(resolveBonus(feed, "Deadlye"), null);
+});
+
+test("a short name is not corrected at all", () => {
+  // One edit on a three-letter word is most of the word. Correction only
+  // applies where the name is long enough for one letter to be a typo rather
+  // than a different word.
+  assert.equal(resolveBonus(feed, "age"), null);
+  assert.equal(resolveBonus(feed, "ace"), null);
+});
+
+test("nonsense still resolves to nothing", () => {
+  assert.equal(resolveBonus(feed, "Sharpness"), null);
+  assert.equal(resolveBonus(feed, ""), null);
+  assert.equal(resolveBonus(feed, null), null);
+});
+
+test("the RPG Launcher prices off its bonus", () => {
+  const p = priceItem(feed, {
+    name: "RPG Launcher", rarity: "Yellow", quality: 132.33,
+    bonuses: [{ name: "Shricken", pct: 31 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  assert.equal(p.bonuses[0].name, "Stricken");
+  assert.ok(!/whatever bonus it had/.test(p.basis), "it must not fall to the weapon alone: " + p.basis);
 });

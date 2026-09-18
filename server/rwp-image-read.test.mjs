@@ -5,7 +5,7 @@
 // the caption is fenced off from the instructions it sits next to.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hostAllowed, cacheKey, hintKey, buildPrompt, cleanHint, PROMPT_VERSION, usableRead } from "./rwp-image-read.js";
+import { hostAllowed, cacheKey, hintKey, buildPrompt, cleanHint, PROMPT_VERSION, usableRead, bonusNamesFrom } from "./rwp-image-read.js";
 
 const URL1 = "https://editor.torn.com/a78795b3-1de5-4aa6-bc33-e62f2d5dc822-4154995.png";
 
@@ -186,4 +186,32 @@ test("a reading from two years ago is not", (t) => {
   t.after(clean);
   writeBodyCache(SHA, { name: "SIG 552" }, "", Date.now() - 730 * 86400000);
   assert.equal(readBodyCache(SHA, ""), null);
+});
+
+test("the reader is given the list of real bonus names", () => {
+  // A card saying "31% Stricken" came back "Shricken", which resolved to
+  // nothing and priced an RPG Launcher off the weapon alone. Choosing from a
+  // list beats transcribing from a picture.
+  const p = buildPrompt("", ["Stricken", "Warlord", "Double-Tap"]);
+  assert.match(p, /Stricken/);
+  assert.match(p, /Double-Tap/);
+  assert.match(p, /exactly as spelled|from this list/i, "it has to say the list is the choices: " + p.slice(-400));
+});
+
+test("with no list the prompt is unchanged", () => {
+  // The list comes from the price feed at call time; if it is unavailable the
+  // reader still works, just without the help.
+  assert.equal(buildPrompt(""), buildPrompt("", []));
+  assert.equal(buildPrompt(""), buildPrompt("", null));
+});
+
+test("the names come out of the feed rather than a hardcoded list", () => {
+  // A bonus Torn adds appears in the feed the next day and needs no edit here.
+  const names = bonusNamesFrom({
+    bonusPrices: { "Stricken|Yellow": [], "Warlord|Red": [] },
+    armourBonusPrices: { "Impenetrable|Yellow": [] },
+  });
+  assert.deepEqual(names, ["Impenetrable", "Stricken", "Warlord"]);
+  assert.deepEqual(bonusNamesFrom({}), []);
+  assert.deepEqual(bonusNamesFrom(null), []);
 });

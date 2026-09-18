@@ -12353,7 +12353,12 @@ router.post("/api/rwp/read-image", express.json({ limit: "8kb" }), async (req, r
   } catch { user = null; }
   if (!user) return res.json({ item: null, cached: false, needsMember: true });
 
-  const out = await rwpImage.readItemImage(url, { hint });
+  // The reader picks bonus names from the feed's own list rather than
+  // transcribing them: "Stricken" came back "Shricken" once, and a bonus that
+  // resolves to nothing takes the whole bonus out of the price.
+  const out = await rwpImage.readItemImage(url, {
+    hint, bonusNames: rwpImage.bonusNamesFrom(rwpFeed()),
+  });
   if (!out.ok) return res.status(400).json({ error: out.reason });
   return res.json({ item: out.item, price: priceOf(out.item), unknownItem: unknownItem(out.item), cached: !!out.cached, reason: out.reason || null });
 });
