@@ -165,3 +165,25 @@ test("an explicit refusal on a named card is still a refusal", () => {
   // is different from having nothing to name it with.
   assert.equal(usableRead({ name: "Kodachi", confident: false, bonuses: [] }), false);
 });
+
+test("a reading from six months ago is still served", (t) => {
+  // Pinned in days rather than against RETAIN_MS, because a test written
+  // against the constant passes at any value and so asserts nothing about the
+  // window. What is cached is which ITEM is in a picture — a fact about a
+  // screenshot, which does not change — while the prices come from the feed at
+  // request time. So a months-old reading is exactly as correct as a fresh one,
+  // and re-reading it buys nothing.
+  t.after(clean);
+  writeBodyCache(SHA, { name: "SIG 552" }, "", Date.now() - 180 * 86400000);
+  assert.deepEqual(readBodyCache(SHA, ""), { item: { name: "SIG 552" } });
+});
+
+test("a reading from two years ago is not", (t) => {
+  // The window still has a job: a wrong reading is cached for everyone, and an
+  // image nobody has looked at in that long deserves a fresh eye. PROMPT_VERSION
+  // is the lever for a misread found NOW; this is the backstop for one nobody
+  // noticed.
+  t.after(clean);
+  writeBodyCache(SHA, { name: "SIG 552" }, "", Date.now() - 730 * 86400000);
+  assert.equal(readBodyCache(SHA, ""), null);
+});

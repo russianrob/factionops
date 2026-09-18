@@ -16,7 +16,27 @@ import { claudeExtractImage } from "./circular-pipeline.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(__dirname, "data", "rwp-image-cache");
 const MAX_BYTES = 6 * 1024 * 1024;
-export const RETAIN_MS = 90 * 86400000;
+/**
+ * How long a reading stays good.
+ *
+ * What is cached is which ITEM is in a picture — a fact about a screenshot,
+ * which does not change. The PRICES come from the feed at request time, so a
+ * year-old reading of a Cobra Derringer card is exactly as correct as one taken
+ * today, and expiring it only re-pays for the same answer.
+ *
+ * By that argument alone the window would be infinite. It is not, because a
+ * reading can be WRONG, and a wrong one is cached globally for everyone. But
+ * expiry is a poor tool for that: the two invented names that prompted
+ * PROMPT_VERSION 4 sat in the cache for hours and cleared because somebody
+ * asked, not because a timer ran out.
+ *
+ * So the two levers do different jobs. PROMPT_VERSION corrects a misread found
+ * NOW — precise, immediate, tied to an actual change in what a reading
+ * contains. This window is the backstop for one nobody noticed, and for images
+ * whose host has long since dropped them. A year suits that job; the 90 days
+ * this started at was a reflex, not a decision.
+ */
+export const RETAIN_MS = 365 * 86400000;
 
 // Only hosts people actually paste Torn screenshots from. An open fetcher that
 // takes any URL from a userscript is an SSRF hole pointed at our own network.
