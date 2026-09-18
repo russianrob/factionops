@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.5.7
+// @version      3.5.8
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.5.7';
+    var SCRIPT_VERSION = '3.5.8';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -3675,6 +3675,28 @@
     }
 
     /**
+     * Bonuses read out of a single cell that carries its own percentages.
+     *
+     * A third table shape puts both in one place — "29% Motivation 30%
+     * Powerful" — where the others kept names and percentages in separate
+     * columns. Each name runs from its percentage to the next digit, which is
+     * what keeps "55% Throttle 102% Quicken" from reading as one bonus called
+     * "Throttle 102 Quicken", and lets a two-word name like "Sure Shot"
+     * survive intact.
+     */
+    function forumBonusPairs(text) {
+        var out = [], re = /(\d+(?:\.\d+)?)\s*%\s*([A-Za-z][A-Za-z\- ]*?)(?=\s*\d|$)/g, m;
+        while ((m = re.exec(String(text || ''))) !== null) {
+            var names = forumBonusNames(m[2]);
+            var lv = Math.round(parseFloat(m[1]));
+            // One percentage introduces one bonus. If the text after it
+            // resolves to two, only the first belongs to this number.
+            if (names.length && lv > 0) out.push({ name: names[0], level: lv });
+        }
+        return out;
+    }
+
+    /**
      * One row of a price list, as something priceable.
      *
      * A row can carry two bonuses written across the slash -- "Bleed/Stun" with
@@ -3686,11 +3708,26 @@
      * the only row of twelve in the posted list that would not price.
      */
     function forumRowItem(cells, map) {
-        if (!cells || map.weapon < 0 || map.bonus < 0 || map.pct < 0) return null;
+        // No map.pct check here: a bonus cell can carry its own percentages,
+        // and the branch below that reads them must be reachable without one.
+        if (!cells || map.weapon < 0 || map.bonus < 0) return null;
         var name = String(cells[map.weapon] || '').trim();
         var bRaw = String(cells[map.bonus] || '').trim();
+        if (!name || !bRaw) return null;
+
+        // The bonus cell carries its own percentages: no separate column is
+        // needed, and there may not be one at all.
+        if (/\d\s*%/.test(bRaw)) {
+            var selfPairs = forumBonusPairs(bRaw);
+            if (selfPairs.length) {
+                selfPairs.sort(function (a, b) { return b.level - a.level; });
+                return { name: name, rarity: forumRarityIn(cells, map), bonuses: selfPairs };
+            }
+        }
+
+        if (map.pct < 0) return null;
         var pRaw = String(cells[map.pct] || '').trim();
-        if (!name || !bRaw || !pRaw) return null;
+        if (!pRaw) return null;
 
         // Names and percentages are read independently and zipped, because the
         // two are not always punctuated the same way: one table writes
@@ -3706,12 +3743,31 @@
         if (!bonuses.length) return null;
         bonuses.sort(function (a, b) { return b.level - a.level; });
 
-        var rarity = null;
+        return { name: name, rarity: forumRarityIn(cells, map), bonuses: bonuses };
+    }
+
+    /**
+     * The rarity stated somewhere in a row.
+     *
+     * Its own column where there is one, and otherwise any cell that contains
+     * the word — one table writes it inside the quality cell, "265% Red". A
+     * colour the seller wrote down is not ours to derive from the roll.
+     */
+    function forumRarityIn(cells, map) {
+        var take = function (t) {
+            var w = String(t || '').match(/\b(Yellow|Orange|Red)\b/i);
+            return w ? w[1].charAt(0).toUpperCase() + w[1].slice(1).toLowerCase() : null;
+        };
         if (map.rarity >= 0) {
-            var rt = String(cells[map.rarity] || '').trim();
-            if (RARITY_WORD.test(rt)) rarity = rt.charAt(0).toUpperCase() + rt.slice(1).toLowerCase();
+            var own = take(cells[map.rarity]);
+            if (own) return own;
         }
-        return { name: name, rarity: rarity, bonuses: bonuses };
+        for (var i = 0; i < cells.length; i++) {
+            if (i === map.weapon || i === map.bonus) continue;
+            var hit = take(cells[i]);
+            if (hit) return hit;
+        }
+        return null;
     }
 
     /**
@@ -3949,7 +4005,12 @@
             if (rows.length < 2) continue;
             var map = forumHeaderMap(forumCellTexts(rows[0]));
             if (map.weapon < 0 || map.bonus < 0) continue;
-            if (map.pct < 0) {
+            // A bonus cell carrying its own percentages needs no roll column.
+            var selfPct = false;
+            for (var pr = 1; pr < rows.length && pr < 6; pr++) {
+                if (/\d\s*%/.test(forumCellTexts(rows[pr])[map.bonus] || '')) { selfPct = true; break; }
+            }
+            if (map.pct < 0 && !selfPct) {
                 // No header names the roll column. Read a few rows and find it
                 // by content instead — "Value" is a perfectly good name for it
                 // and a perfectly good name for three other things.
@@ -3957,7 +4018,7 @@
                 for (var sr = 1; sr < rows.length && sample.length < 8; sr++) sample.push(forumCellTexts(rows[sr]));
                 map.pct = forumFindPctColumn(sample, map);
             }
-            if (map.pct < 0) continue;
+            if (map.pct < 0 && !selfPct) continue;
 
             for (var r = 0; r < rows.length; r++) {
                 var tr = rows[r];

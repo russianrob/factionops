@@ -48,7 +48,7 @@ vm.runInContext([
   fn("TBL"), fn("levelMedianOf"), fn("lookupWeapon"), fn("normalizeWeaponName"), fn("resolveBonusName"),
   fn("getMedianPrice"), fn("getWeaponComboMedian"), fn("pairKeyFor"), fn("getWeaponPairComboMedian"),
   fn("getWeaponLevelMedian"), fn("getWeaponLevelCount"), fn("getCombinedLevelValue"),
-  fn("forumHeaderMap"), fn("forumRowItem"), fn("rarityFromRoll"), fn("forumBonusWorth"), fn("priceForumRow"),
+  fn("forumHeaderMap"), fn("forumBonusPairs"), fn("forumRarityIn"), fn("forumRowItem"), fn("rarityFromRoll"), fn("forumBonusWorth"), fn("priceForumRow"),
 ].join("\n"), sandbox, { timeout: 5000, filename: "rwp-forum-tables.js" });
 
 const { forumHeaderMap, forumRowItem, rarityFromRoll, priceForumRow } = sandbox;
@@ -398,4 +398,87 @@ test("a table row is priced off its valuable bonus, not its bigger number", () =
   assert.ok(p, "expected a price");
   assert.equal(p.bonuses[0].name, "Warlord", "the Warlord is what this weapon is worth");
   assert.ok(p.value > 600e6, "got $" + (p.value / 1e6).toFixed(0) + "m");
+});
+
+// ── A table with no percentage column at all ───────────────────
+// Weapon | Type | Bonuses | Quality | Dam | Accu | Price
+//
+// The percentages are inside the Bonuses cell, interleaved with the names:
+// "29% Motivation 30% Powerful". And the rarity is inside the Quality cell,
+// "265% Red", rather than a column of its own. With no column that is purely
+// percentages, the content sniffer found nothing and the whole table was
+// skipped.
+const pairs = (() => {
+  vm.runInContext([fn("forumBonusPairs"), "globalThis.__bp = forumBonusPairs;"].join("\n"), sandbox);
+  return sandbox.__bp;
+})();
+
+test("percentages and names read out of one cell", () => {
+  assert.equal(JSON.stringify(Array.from(pairs("29% Motivation 30% Powerful"))),
+               JSON.stringify([{ name: "Motivation", level: 29 }, { name: "Powerful", level: 30 }]));
+  assert.equal(JSON.stringify(Array.from(pairs("4% Rage 9% Frenzy"))),
+               JSON.stringify([{ name: "Rage", level: 4 }, { name: "Frenzy", level: 9 }]));
+});
+
+test("a single bonus in that shape still reads", () => {
+  assert.equal(JSON.stringify(Array.from(pairs("43% Wither"))),
+               JSON.stringify([{ name: "Wither", level: 43 }]));
+});
+
+test("a two-word bonus in that shape is not split", () => {
+  assert.equal(JSON.stringify(Array.from(pairs("30% Sure Shot 12% Rage"))),
+               JSON.stringify([{ name: "Sure Shot", level: 30 }, { name: "Rage", level: 12 }]));
+});
+
+test("rolls above 100% are read, not truncated", () => {
+  // "127% Empower" and "102% Quicken" are real rolls on this table.
+  assert.equal(JSON.stringify(Array.from(pairs("20% Plunder 127% Empower"))),
+               JSON.stringify([{ name: "Plunder", level: 20 }, { name: "Empower", level: 127 }]));
+});
+
+test("a cell with no recognisable bonus yields nothing", () => {
+  assert.equal(pairs("Primary").length, 0);
+  assert.equal(pairs("65.62").length, 0);
+  assert.equal(pairs("").length, 0);
+});
+
+test("the rarity is found inside the quality cell", () => {
+  const m = forumHeaderMap(["Weapon", "Type", "Bonuses", "Quality", "Dam", "Accu", "Price"]);
+  assert.equal(m.weapon, 0);
+  assert.equal(m.bonus, 2);
+  assert.equal(m.pct, -1, "there is no percentage column here");
+  const r = forumRowItem(["Bushmaster Carbon 15", "Primary", "29% Motivation 30% Powerful",
+                          "265% Red", "65.62", "67.98", "$5b"], m);
+  assert.equal(r.rarity, "Red", "the colour is in the Quality cell");
+  assert.equal(r.bonuses.length, 2);
+});
+
+test("every row of this table prices", () => {
+  const m = forumHeaderMap(["Weapon", "Type", "Bonuses", "Quality", "Dam", "Accu", "Price"]);
+  const rows = [
+    ["Bushmaster Carbon 15", "Primary", "29% Motivation 30% Powerful", "265% Red", "65.62", "67.98", "$5b"],
+    ["Macana", "Melee", "4% Rage 9% Frenzy", "144% Orange", "65.99", "70.44", "$3.8b"],
+    ["Naval Cutlass", "Melee", "20% Plunder 127% Empower", "178% Orange", "73.94", "59.9", "$3.5b"],
+    ["Naval Cutlass", "Melee", "20% Motivation 5% Frenzy", "155% Orange", "73.73", "57.83", "$1.5b"],
+    ["Naval Cutlass", "Melee", "55% Throttle 102% Quicken", "200% Orange", "75.22", "60.82", "$900m"],
+    ["Thompson", "Primary", "43% Wither", "271% Red", "56.65", "52.51", "$500m"],
+    ["Beretta 92FS", "Secondary", "17% Expose", "248% Red", "63.94", "59.88", "$1.2b"],
+    ["Magnum", "Secondary", "96% Deadeye", "257% Red", "69.14", "49.64", "$700m"],
+  ];
+  const missed = [];
+  for (const cells of rows) {
+    const item = forumRowItem(cells, m);
+    const p = item && priceForumRow(item);
+    if (!p || !(p.value > 0)) missed.push(cells[0] + " — " + cells[2]);
+  }
+  assert.equal(JSON.stringify(missed), "[]", "rows that did not price: " + missed.join(" | "));
+});
+
+test("the seller's own price column is never read as a bonus roll", () => {
+  // "$5b" and "$900m" sit in a column called Price. Mistaking one for a
+  // percentage would price the weapon off the number the seller chose.
+  const m = forumHeaderMap(["Weapon", "Type", "Bonuses", "Quality", "Dam", "Accu", "Price"]);
+  const r = forumRowItem(["Thompson", "Primary", "43% Wither", "271% Red", "56.65", "52.51", "$500m"], m);
+  assert.equal(r.bonuses.length, 1);
+  assert.equal(r.bonuses[0].level, 43);
 });
