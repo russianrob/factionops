@@ -151,3 +151,26 @@ test("no words near the picture means no caption", () => {
   img.parentNode = post;
   assert.equal(caption(img), "", "an empty caption must not trigger a paid retry");
 });
+
+// ── The panel is a sign-in box, not a diagnostic ───────────────
+// It was built while the feature was being debugged and still reads like it:
+// image counts, HTTP replies, a list of skipped avatars. None of that means
+// anything to somebody who just wants prices on a sale thread.
+test("the panel shows no counters or request logs", () => {
+  const panel = SRC.slice(SRC.indexOf("function panel(force)"),
+                          SRC.indexOf("placePanel(el);", SRC.indexOf("function panel(force)")));
+  for (const leak of [/DIAG\.imgs/, /DIAG\.furniture/, /DIAG\.asked/, /DIAG\.replies/, /DIAG\.skipped/,
+                      /images:/, /furniture:/, /skipped:/]) {
+    assert.ok(!leak.test(panel), "still in the panel: " + leak);
+  }
+});
+
+test("signing in and out is still there", () => {
+  const panel = SRC.slice(SRC.indexOf("function panel(force)"),
+                          SRC.indexOf("placePanel(el);", SRC.indexOf("function panel(force)")));
+  assert.match(panel, /rwpf-in/);
+  assert.match(panel, /rwpf-out/);
+  assert.match(panel, /Torn API key/);
+  // And the one message that is about the reader rather than the machinery.
+  assert.match(panel, /has not been read yet/);
+});

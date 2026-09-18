@@ -2,7 +2,7 @@
 // @name         RW Pricer — Forum Screenshots
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      1.5.3
+// @version      1.5.4
 // @description  Prices the item screenshots people paste in forum trade threads. Reads the card out of the picture and puts the RW Pricer estimate on it.
 // @match        https://www.torn.com/forums.php*
 // @grant        GM_xmlhttpRequest
@@ -16,6 +16,8 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 1.5.4  The cog opens a sign-in box and nothing else. The counters and
+ *         request log it grew during debugging are console-only now.
  * 1.5.3  The badge speaks English. "sales by roll (Orange, 6 price points)"
  *         told the reader nothing they could act on.
  * 1.5.2  When a card does not name its weapon, the post's own text is offered
@@ -164,10 +166,12 @@
     var signedIn = !!token();
     var who = gv(NAME_KEY, "");
     el.innerHTML =
-      "<b style='color:#ff9f2e'>RW Pricer forum 1.5.3</b> " +
+      // A sign-in box, nothing else. It grew image counts, HTTP replies and a
+      // list of skipped avatars while the feature was being debugged, none of
+      // which means anything to somebody who wants prices on a sale thread.
+      // The counters still exist on DIAG for the console; they are not UI.
+      "<b style='color:#ff9f2e'>RW Pricer forum</b> " +
       "<span id='rwpf-x' style='opacity:.6;float:right;cursor:pointer'>close</span><br>" +
-      "images: <b>" + DIAG.imgs + "</b> &middot; furniture: <b>" + DIAG.furniture +
-      "</b> &middot; asked: <b>" + DIAG.asked + "</b><br>" +
       "session: <b style='color:" + (signedIn ? "#9fe870" : "#e0b357") + "'>" +
         (signedIn ? ("yes" + (who ? " \u2014 " + String(who).replace(/[<>&]/g, "") : "")) : "no") +
       "</b> " +
@@ -188,13 +192,7 @@
           "background:#ff9f2e;color:#14170f;font-weight:700;cursor:pointer'>Sign in</button>" +
         "<div id='rwpf-msg' style='margin-top:4px;opacity:.8'>The key is sent once and not stored \u2014 " +
           "only the session token is kept.</div>" +
-      "</div>" +
-      (DIAG.replies.length ? "<div style='margin-top:5px'>" + DIAG.replies.slice(0, 3).map(function (r) {
-        return r.replace(/[<>&]/g, "");
-      }).join("<br>") + "</div>" : "") +
-      (DIAG.skipped.length ? "<div style='opacity:.6;margin-top:5px'>skipped:<br>" +
-        DIAG.skipped.slice(0, 4).map(function (x) { return x.replace(/[<>&]/g, ""); }).join("<br>") +
-        "</div>" : "");
+      "</div>";
 
     placePanel(el);
     var q = function (id) { return document.getElementById(id); };
@@ -404,7 +402,7 @@
       method: "POST",
       url: SERVER + "/api/auth",
       headers: { "Content-Type": "application/json" },
-      data: JSON.stringify({ apiKey: key, scriptName: "rwp-forum", scriptVersion: "1.5.3" }),
+      data: JSON.stringify({ apiKey: key, scriptName: "rwp-forum", scriptVersion: "1.5.4" }),
       timeout: 20000,
       onload: function (res) {
         var d = null;
