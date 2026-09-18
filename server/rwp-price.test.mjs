@@ -1029,3 +1029,49 @@ test("the RPG Launcher prices off its bonus", () => {
   assert.equal(p.bonuses[0].name, "Stricken");
   assert.ok(!/whatever bonus it had/.test(p.basis), "it must not fall to the weapon alone: " + p.basis);
 });
+
+// ── A bonus that could not be read at all ──────────────────────
+// One edit gets "Shricken" back to Stricken. Some misreads are further out
+// than that — a cached Guandao came back with "Double Empower", which is no
+// Torn bonus and is not one edit from one either.
+//
+// Those are dropped, and dropping a bonus silently is how an RPG Launcher came
+// to be priced at a tenth of its worth with a confident-looking badge. It has
+// to say so.
+
+test("a bonus that resolves to nothing is reported, not just discarded", () => {
+  const p = priceItem(feed, {
+    name: "Guandao", rarity: "Red",
+    bonuses: [{ name: "Double Empower", pct: 20 }, { name: "Empower", pct: 189 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  const why = p.notes.join(" | ");
+  assert.match(why, /could not be read|couldn't be read/i, why);
+  assert.match(why, /Double Empower/, "name what it saw, so the reader can check: " + why);
+});
+
+test("the readable bonuses are still used", () => {
+  const p = priceItem(feed, {
+    name: "Guandao", rarity: "Red",
+    bonuses: [{ name: "Double Empower", pct: 20 }, { name: "Empower", pct: 189 }],
+  });
+  assert.equal(p.bonuses.length, 1);
+  assert.equal(p.bonuses[0].name, "Empower");
+});
+
+test("an item whose every bonus is unreadable says so loudest", () => {
+  const p = priceItem(feed, {
+    name: "Guandao", rarity: "Red", bonuses: [{ name: "Sharpness", pct: 20 }],
+  });
+  if (p.ok) {
+    assert.match(p.notes.join(" | "), /could not be read|couldn't be read/i);
+  }
+});
+
+test("a clean reading says nothing about unread bonuses", () => {
+  const p = priceItem(feed, {
+    name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
+  });
+  assert.ok(!p.notes.some((n) => /could not be read|couldn't be read/i.test(n)),
+    p.notes.join(" | "));
+});

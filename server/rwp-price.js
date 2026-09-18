@@ -421,11 +421,17 @@ function isArmour(feed, name) {
 export function priceItem(feed, item) {
   const name = resolveName(feed, item && item.name);
   let rarity = item && item.rarity;
-  // Spelled the way the tables spell it, before anything looks one up.
-  const bonuses = (Array.isArray(item && item.bonuses) ? item.bonuses : []).map((b) => {
+  // Spelled the way the tables spell it, before anything looks one up. A name
+  // that resolves to nothing is DROPPED — it cannot be priced from — but it is
+  // remembered, because dropping a bonus silently is how an RPG Launcher came
+  // to be priced at a tenth of its worth behind a confident-looking badge.
+  const bonuses = [];
+  const unread = [];
+  for (const b of Array.isArray(item && item.bonuses) ? item.bonuses : []) {
     const fixed = resolveBonus(feed, b && b.name);
-    return fixed ? { ...b, name: fixed } : b;
-  });
+    if (fixed) bonuses.push({ ...b, name: fixed });
+    else if (b && b.name) unread.push(String(b.name));
+  }
   // A name that matches nothing in the catalogue is a MISREAD, not a rare item.
   // A cropped card names no weapon, and the reader does not reliably decline:
   // the Kodachi post came back "Big Al's Gun Shop Katana" -- the sell shop
@@ -530,6 +536,9 @@ export function priceItem(feed, item) {
       out.notes.push("This ignores the bonus completely — it's the middle price for the piece on its own.");
       return out;
     }
+  }
+  if (unread.length) {
+    out.notes.push(`${unread.length === 1 ? "A bonus" : "Some bonuses"} on this card could not be read — ${unread.join(", ")} ${unread.length === 1 ? "is" : "are"} not a Torn bonus, so ${unread.length === 1 ? "it is" : "they are"} not counted here. Check the picture.`);
   }
   if (inferredRarity && rarityFrom === "sale") {
     out.notes.push(`No colour was given, but this weapon with these exact bonuses has only ever sold as ${rarity}.`);
