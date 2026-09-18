@@ -189,7 +189,7 @@ test("infers the rarity from the roll when the card did not give one", () => {
   assert.equal(p.ok, true, p.reason);
   assert.equal(p.rarity, "Red", "15% Expose only ever sold as Red");
   assert.ok(p.estimate > 0);
-  assert.ok(p.notes.some((n) => /doesn't show a colour/i.test(n)),
+  assert.ok(p.notes.some((n) => /no colour was given/i.test(n)),
     "an inferred rarity must be declared: " + p.notes.join(" | "));
 });
 
@@ -198,7 +198,7 @@ test("a rarity that IS given is never second-guessed", () => {
     name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
   });
   assert.equal(p.rarity, "Yellow");
-  assert.ok(!p.notes.some((n) => /doesn't show a colour/.test(n)));
+  assert.ok(!p.notes.some((n) => /no colour was given/i.test(n)));
 });
 
 test("an ambiguous roll is not guessed at", () => {
@@ -714,4 +714,18 @@ test("a nameless reading is named by its shop price", () => {
   // none at all, which is what a cropped card now honestly returns.
   const buys = { "kodachi": 95000, "armalite m-15a4": 20000000 };
   assert.equal(weaponByBuyPrice(feed, buys, 95000), "Kodachi");
+});
+
+test("any bonus may place the rarity, not only the leading one", () => {
+  // A post that states no colour: Diamond Bladed Knife, 61% Achilles and 35%
+  // Bleed. The Bleed leads because it is worth more, but 35% Bleed sold at no
+  // single rarity so it cannot place the weapon — while 61% Achilles sold only
+  // as Yellow and can. Asking just the lead gave up and priced nothing.
+  const p = priceItem(feed, {
+    name: "Diamond Bladed Knife", rarity: null,
+    bonuses: [{ name: "Achilles", pct: 61 }, { name: "Bleed", pct: 35 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  assert.ok(p.rarity, "a colour should have been worked out");
+  assert.ok(p.estimate > 0);
 });

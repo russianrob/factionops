@@ -200,10 +200,25 @@ export function resolveName(feed, name) {
  */
 export function rarityForRoll(feed, name, bonus, pct) {
   if (!Number.isFinite(pct)) return null;
-  const tbl = table(feed, "levelPrices", "weaponLevelPrices")[name + "|" + bonus];
+  const tbl = table(feed, "levelPrices", "weaponLevelPrices")[name + "|" + bonus]
+           || (feed && feed.armourLevelPrices || {})[name + "|" + bonus];
   if (!tbl) return null;
-  const hits = Object.keys(tbl).filter((r) => tbl[r] && tbl[r][String(pct)]);
-  return hits.length === 1 ? hits[0] : null;
+
+  // A sale at exactly this roll is the strongest answer.
+  const exact = Object.keys(tbl).filter((r) => tbl[r] && tbl[r][String(pct)]);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return null;
+
+  // Otherwise the observed BAND, when the roll falls inside exactly one of
+  // them. A Diamond Bladed Knife's 61% Achilles never sold at that exact roll,
+  // but Yellow ones run 50-73% and Orange ones start at 76, so it is Yellow and
+  // cannot be anything else. Requiring one band and only one is the same
+  // discipline as the exact match: where two overlap, nothing is claimed.
+  const inBand = Object.keys(tbl).filter((r) => {
+    const lv = Object.keys(tbl[r] || {}).map(Number).filter(Number.isFinite);
+    return lv.length >= 2 && pct >= Math.min(...lv) && pct <= Math.max(...lv);
+  });
+  return inBand.length === 1 ? inBand[0] : null;
 }
 
 /**
@@ -334,10 +349,16 @@ export function priceItem(feed, item) {
 
   // No rarity on the card? The roll usually names it. Never overrides a rarity
   // that WAS read -- this only fills a hole.
-  let inferredRarity = false, rarityFrom = null;
-  if (!rarity && bonuses.length) {
-    const guess = rarityForRoll(feed, name, bonuses[0].name, num(bonuses[0].pct));
-    if (guess) { rarity = guess; inferredRarity = true; rarityFrom = "roll"; }
+  let inferredRarity = false, rarityFrom = null, rarityBy = null;
+  // Any bonus may place the weapon, not only the leading one. A Diamond Bladed
+  // Knife with 61% Achilles and 35% Bleed leads on the Bleed, which is worth
+  // more — but 35% Bleed sold at no single rarity while 61% Achilles sold only
+  // as Yellow. Asking the lead alone gave up and priced nothing.
+  if (!rarity) {
+    for (const b of bonuses) {
+      const guess = rarityForRoll(feed, name, b.name, num(b.pct));
+      if (guess) { rarity = guess; inferredRarity = true; rarityFrom = "roll"; rarityBy = b; break; }
+    }
   }
   // The roll is the stronger signal — it needs an exact recorded match — so
   // quality only gets asked when the roll could not answer.
@@ -397,9 +418,10 @@ export function priceItem(feed, item) {
     }
   }
   if (inferredRarity && rarityFrom === "roll") {
-    out.notes.push(`The picture doesn't show a colour. Only ${rarity} ones have ever sold with ${bonuses[0].pct}% ${bonuses[0].name}, so that's what this assumes.`);
+    const by = rarityBy || bonuses[0];
+    out.notes.push(`No colour was given. Only ${rarity} ones have ever sold with ${by.pct}% ${by.name}, so that's what this assumes.`);
   } else if (inferredRarity && rarityFrom === "quality") {
-    out.notes.push(`The picture doesn't show a colour, but at ${num(item && item.quality)}% quality only ${rarity} ones have ever sold, so that's what this assumes.`);
+    out.notes.push(`No colour was given, but at ${num(item && item.quality)}% quality only ${rarity} ones have ever sold, so that's what this assumes.`);
   }
 
   // 0. The exact weapon: both bonuses AND both rolls.

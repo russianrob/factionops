@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.5.9
+// @version      3.6.0
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.5.9';
+    var SCRIPT_VERSION = '3.6.0';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -3946,13 +3946,35 @@
         return s;
     }
 
+    /**
+     * Elements whose children make up one visual line each.
+     *
+     * Two shapes in the wild and only one was handled. A post can break a single
+     * block with <br>, or give every line its own element — the pipe-format shop
+     * post did the latter, parsed perfectly, and showed no prices at all because
+     * this only looked at containers that HAD a <br>.
+     *
+     * An element with breaks is segmented by them. One without is a line in its
+     * own right, but only if no descendant is a better candidate: otherwise the
+     * whole post reads as one line and every wrapper up to the page gets a badge.
+     */
+    function forumLineHosts(root) {
+        var out = [], all = (root || document).querySelectorAll('div, p, td, li, blockquote');
+        for (var i = 0; i < all.length; i++) {
+            var el = all[i];
+            if (el.getElementsByTagName && el.getElementsByTagName('br').length) { out.push(el); continue; }
+            // A container of other candidates is not itself a line.
+            if (el.querySelector && el.querySelector('div, p, td, li, blockquote')) continue;
+            out.push(el);
+        }
+        return out;
+    }
+
     function injectForumLines() {
-        // Any element that holds <br>-separated text is a candidate; the parser
-        // is what decides, not the container.
-        var hosts = document.querySelectorAll('div, p, td, li, blockquote');
+        var hosts = forumLineHosts(document);
         for (var h = 0; h < hosts.length; h++) {
             var host = hosts[h];
-            if (!host.querySelector || !host.getElementsByTagName('br').length) continue;
+            if (!host.querySelector) continue;
             var segs = forumLineSegments(host);
             for (var s = 0; s < segs.length; s++) {
                 var nodes = segs[s];

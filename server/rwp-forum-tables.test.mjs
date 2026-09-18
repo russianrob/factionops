@@ -562,3 +562,44 @@ test("every line of this post prices", () => {
   }
   assert.equal(JSON.stringify(missed), "[]", "lines that did not price: " + missed.join(" | "));
 });
+
+// ── Lines that are not separated by <br> ───────────────────────
+// The pipe-format post put each line in its own element rather than breaking
+// one block with <br>, and injectForumLines only looked at containers that
+// HAD a <br>. So a post that parses perfectly showed no prices at all.
+test("a line that is its own element is still found", () => {
+  vm.runInContext([fn("forumLineHosts"), "globalThis.__hosts = forumLineHosts;"].join("\n"), sandbox);
+
+  // A DOM small enough to reason about: elements with children, and the two
+  // queries forumLineHosts uses.
+  const BLOCK = ["DIV", "P", "TD", "LI", "BLOCKQUOTE"];
+  const descend = (n, out = []) => {
+    for (const k of n.childNodes || []) if (k.nodeType === 1) { out.push(k); descend(k, out); }
+    return out;
+  };
+  const el = (tag, kids) => {
+    const n = { nodeType: 1, nodeName: tag, childNodes: kids || [] };
+    n.getElementsByTagName = (t) => descend(n).filter((d) => d.nodeName === t.toUpperCase());
+    n.querySelectorAll = () => descend(n).filter((d) => BLOCK.includes(d.nodeName));
+    n.querySelector = () => n.querySelectorAll()[0] || null;
+    return n;
+  };
+  const txt = (v) => ({ nodeType: 3, nodeValue: v, textContent: v });
+
+  // One element per line, no <br> anywhere — the shape that showed no prices.
+  const a = el("DIV", [txt("Yasukuni Sword | orange | 12% Bloodlust | Q:156.39%")]);
+  const b = el("DIV", [txt("Kodachi | red | 38% Double-edged + 75% Throttle | Q: 236.22%")]);
+  const post = el("DIV", [a, b]);
+  const hosts = sandbox.__hosts(post);
+  assert.ok(hosts.includes(a) && hosts.includes(b), "each line element must be a host");
+  assert.ok(!hosts.includes(post), "their container is not itself a line");
+});
+
+test("a block broken by <br> is segmented, not taken whole", () => {
+  // The other shape, which must keep working: three lines in ONE element. Its
+  // whole text would parse as a single bogus item if it were read as one line.
+  const whole = "Scimitar | yellow | 50% Parry | Q: 114.01% Naval Cutlass | yellow | 51% Parry | Q: 126.1%";
+  const it = line(whole);
+  assert.ok(!it || it.bonuses.length <= 2,
+    "two lines read as one must not produce a stack of bonuses: " + JSON.stringify(it));
+});
