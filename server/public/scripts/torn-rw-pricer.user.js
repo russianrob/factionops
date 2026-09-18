@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.9.2
+// @version      3.9.3
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.9.2';
+    var SCRIPT_VERSION = '3.9.3';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -4469,19 +4469,92 @@
      * nothing.
      */
     var textAsked = {};
-    function askServerToRead(host, text) {
+    var WB_TOKEN_KEY = 'rwp_warboard_token';
+
+    function warboardToken() { return safeGet(WB_TOKEN_KEY, '') || ''; }
+
+    /**
+     * Trade the Torn API key already in the cog for a warboard session.
+     *
+     * The read endpoint pays for a vision call, so it only does that for a
+     * signed-in member — and this script had no session at all. It posted the
+     * text with a Content-Type header and nothing else, got
+     * {items: null, needsMember: true} every time, and returned silently on
+     * the empty list. Wired end to end except for the one thing that lets it
+     * spend anything.
+     */
+    function warboardSignIn(cb) {
+        var key = getEffectiveApiKey();
+        if (!key) { cb(false); return; }
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: 'https://tornwar.com/api/auth',
+            headers: { 'Content-Type': 'application/json' },
+            data: JSON.stringify({ apiKey: key, scriptName: 'rw-pricer', scriptVersion: SCRIPT_VERSION }),
+            timeout: 20000,
+            onload: function (res) {
+                var d = null;
+                try { d = JSON.parse(res.responseText); } catch (e) {}
+                if (d && d.token) { safeSet(WB_TOKEN_KEY, d.token); cb(true); }
+                else cb(false);
+            },
+            onerror: function () { cb(false); },
+            ontimeout: function () { cb(false); },
+        });
+    }
+
+    /**
+     * Ask the server to read a post these parsers could not.
+     *
+     * Only when the local pass found NOTHING on a post that plainly offers
+     * weapons — the deterministic parsers handle the known shapes in the
+     * browser for free and this is for the rest. One request per post, cached
+     * server-side by its text, so a busy thread costs one read however many
+     * people open it.
+     */
+    function askServerToRead(host, text, retried) {
         var key = text.slice(0, 200);
-        if (textAsked[key]) return;
-        textAsked[key] = 1;
+        if (!retried) {
+            if (textAsked[key]) return;
+            textAsked[key] = 1;
+        }
+        // Without a key there is no session to be had, so the round trip would
+        // be wasted. Say so rather than doing nothing: a silent no-op on a post
+        // full of weapons reads as the feature being broken, which is exactly
+        // how this one was reported.
+        if (!getEffectiveApiKey()) {
+            if (host && host.parentNode && !document.getElementById('rwp-needs-key')) {
+                var n = document.createElement('div');
+                n.id = 'rwp-needs-key';
+                n.className = 'rwp-tbl-cell';
+                n.style.cssText = 'margin-top:8px;padding:6px 8px;border-left:3px solid #e0b357;' +
+                                  'background:rgba(0,0,0,.25);font-size:12px;color:#e0b357';
+                n.textContent = 'RW Pricer can read this post, but needs a Torn API key — add one in the RW Pricer settings.';
+                host.parentNode.insertBefore(n, host.nextSibling);
+            }
+            return;
+        }
+        var headers = { 'Content-Type': 'application/json' };
+        var tok = warboardToken();
+        if (tok) headers.Authorization = 'Bearer ' + tok;
         GM_xmlhttpRequest({
             method: 'POST',
             url: 'https://tornwar.com/api/rwp/read-text',
-            headers: { 'Content-Type': 'application/json' },
+            headers: headers,
             data: JSON.stringify({ text: text.slice(0, 6000) }),
             timeout: 45000,
             onload: function (res) {
                 var data = null;
                 try { data = JSON.parse(res.responseText); } catch (e) { return; }
+                // No session, or a stale one. Sign in and try once — once, or a
+                // key warboard will not accept loops forever.
+                if ((res.status === 401 || (data && data.needsMember)) && !retried) {
+                    safeSet(WB_TOKEN_KEY, '');
+                    warboardSignIn(function (ok) {
+                        if (ok) askServerToRead(host, text, true);
+                    });
+                    return;
+                }
                 if (!data || !data.items || !data.items.length) return;
                 var box = document.createElement('div');
                 box.className = 'rwp-tbl-cell';

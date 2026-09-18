@@ -805,3 +805,43 @@ test("a lone line with no list above it is sent as itself", () => {
   const chosen = pickPost(only);
   assert.ok(chosen === only || chosen === post);
 });
+
+// ── The fallback could never have worked ───────────────────────
+// askServerToRead posted the text with a Content-Type header and nothing
+// else. /api/rwp/read-text pays for a read only for a signed-in member, so it
+// answered {items: null, needsMember: true} every time, and the client
+// returned silently on the empty list. The feature was wired end to end except
+// for the one thing that lets it spend anything.
+//
+// RW Pricer already holds a Torn API key in its cog; warboard trades one for a
+// session token. It just never asked.
+
+test("the read request carries a session when there is one", () => {
+  const i = SRC.indexOf("function askServerToRead");
+  const body = SRC.slice(i, i + 1400);
+  assert.match(body, /Authorization/, "no session is ever sent: " + body.slice(0, 300));
+  assert.match(body, /Bearer/);
+});
+
+test("a needsMember answer signs in and tries once more", () => {
+  const i = SRC.indexOf("function askServerToRead");
+  const body = SRC.slice(i, i + 2000);
+  assert.match(body, /needsMember/, "the declining answer must be noticed");
+  // And exactly once, or a refused key loops.
+  assert.match(body, /retried|retry/i);
+});
+
+test("warboard sign-in uses the key the cog already holds", () => {
+  const i = SRC.indexOf("function warboardSignIn");
+  assert.ok(i > 0, "there must be a sign-in");
+  const body = SRC.slice(i, i + 900);
+  assert.match(body, /getEffectiveApiKey/, "it must use the key already configured");
+  assert.match(body, /api\/auth/);
+});
+
+test("no API key means the fallback is skipped, not attempted", () => {
+  // Posting without a key would be a wasted round trip on every unknown post.
+  const i = SRC.indexOf("function askServerToRead");
+  const body = SRC.slice(i, i + 700);
+  assert.match(body, /getEffectiveApiKey\(\)/);
+});
