@@ -743,3 +743,65 @@ test("a whole thread is not sent as one post", () => {
   // The cap is what stops a page of replies being read as somebody's stock.
   assert.equal(stock("Kodachi 53% parry Samurai Sword 27% bleed " + "x".repeat(7000)), false);
 });
+
+// ── Sending the post, not one bullet of it ─────────────────────
+// A shop written as a <ul>:
+//
+//   • Jackhammer 18% Expose 3.00B
+//     Damage 83.32 | Accuracy 62.77 | Quality 250.88%
+//   • ArmaLite M-15A4 21% Puncture 1.5B
+//     ...
+//
+// The local parsers cannot read it — the first line has no separator at all
+// between weapon, roll, bonus and price — so the text fallback should take it.
+// It picked the first LEAF element that looked like stock, which is one <li>,
+// and sent that. One weapon read, eleven ignored.
+const pickPost = (() => {
+  vm.runInContext([fn("stockContainerFor"), "globalThis.__pc = stockContainerFor;"].join("\n"), sandbox);
+  return sandbox.__pc;
+})();
+
+const BLOCK = ["DIV", "P", "TD", "LI", "BLOCKQUOTE", "UL"];
+const descend = (n, out = []) => {
+  for (const k of n.childNodes || []) if (k.nodeType === 1) { out.push(k); descend(k, out); }
+  return out;
+};
+const el = (tag, kids) => {
+  const n = { nodeType: 1, nodeName: tag, childNodes: kids || [], parentNode: null,
+              classList: { contains: () => false } };
+  for (const k of n.childNodes) k.parentNode = n;
+  n.querySelectorAll = () => descend(n).filter((d) => BLOCK.includes(d.nodeName));
+  n.querySelector = () => n.querySelectorAll()[0] || null;
+  return n;
+};
+const txt = (v) => ({ nodeType: 3, nodeValue: v, textContent: v });
+const bullet = (s) => el("LI", [txt(s)]);
+
+test("the whole list is sent, not the first bullet", () => {
+  const items = [
+    bullet("Jackhammer 18% Expose 3.00B Damage 83.32 | Accuracy 62.77 | Quality 250.88%"),
+    bullet("ArmaLite M-15A4 21% Puncture 1.5B Damage 77.79 | Accuracy 65.52 | Quality 183.13%"),
+    bullet("Tavor TAR-21 50% Deadeye 1.25B Damage 75.03 | Accuracy 58.74 | Quality 167.70%"),
+  ];
+  const list = el("UL", items);
+  const post = el("DIV", [list]);
+  const chosen = pickPost(items[0]);
+  assert.ok(chosen === list || chosen === post,
+    "it must climb to the list, not stay on one bullet");
+});
+
+test("it does not climb past the post into the thread", () => {
+  // A container so big it is the page, not somebody's stock.
+  const items = [bullet("Jackhammer 18% Expose 3.00B Damage 83.32 | Quality 250.88%")];
+  const list = el("UL", items);
+  const huge = el("DIV", [list, txt("x".repeat(9000))]);
+  const chosen = pickPost(items[0]);
+  assert.notEqual(chosen, huge, "the thread is not one seller's post");
+});
+
+test("a lone line with no list above it is sent as itself", () => {
+  const only = bullet("Jackhammer 18% Expose 3.00B Damage 83.32 | Quality 250.88%");
+  const post = el("DIV", [only, txt("thanks for looking")]);
+  const chosen = pickPost(only);
+  assert.ok(chosen === only || chosen === post);
+});

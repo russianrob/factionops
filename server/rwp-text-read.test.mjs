@@ -160,3 +160,41 @@ test("the prompt says readAs is the name alone", () => {
   const p = buildTextPrompt(POST);
   assert.match(p, /just the name/i, "the instruction has to be explicit: " + p.slice(0, 400));
 });
+
+test("the prompt knows a coloured square is a rarity", () => {
+  // A shop list wrote its rarities as squares rather than words —
+  // red / orange / yellow — and every item came back with no colour at all.
+  // That is real data in the post being thrown away.
+  const p = buildTextPrompt("x".repeat(40));
+  assert.match(p, /\u{1F7E5}|\u{1F7E7}|\u{1F7E8}/u, "the squares must be in the prompt: " + p.slice(-500));
+  assert.match(p, /square/i);
+});
+
+test("a square counts as the post stating a rarity", () => {
+  // verifyItems only keeps a colour the post actually says. A square IS the
+  // post saying it, so the check has to see it as one.
+  const post = "\u{1F7E5} Jackhammer 18% Expose 3.00B";
+  const out = verifyItems(feed, post, [
+    { name: "Jackhammer", readAs: "Jackhammer", rarity: "Red",
+      bonuses: [{ name: "Expose", pct: 18 }] },
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].rarity, "Red", "the square said so");
+});
+
+test("a colour the post states in NO form is still refused", () => {
+  const post = "Jackhammer 18% Expose 3.00B";
+  const out = verifyItems(feed, post, [
+    { name: "Jackhammer", readAs: "Jackhammer", rarity: "Red",
+      bonuses: [{ name: "Expose", pct: 18 }] },
+  ]);
+  assert.equal(out[0].rarity, null);
+});
+
+test("a square of the wrong colour does not license a different one", () => {
+  const post = "\u{1F7E8} Mag 7 17% Warlord 280M";
+  const out = verifyItems(feed, post, [
+    { name: "Mag 7", readAs: "Mag 7", rarity: "Red", bonuses: [{ name: "Warlord", pct: 17 }] },
+  ]);
+  assert.equal(out[0].rarity, null, "the post said yellow, not red");
+});

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.9.1
+// @version      3.9.2
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.9.1';
+    var SCRIPT_VERSION = '3.9.2';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -4537,6 +4537,29 @@
         return false;
     }
 
+    /**
+     * The post a stock line belongs to, rather than the line itself.
+     *
+     * A shop written as a <ul> gives every item its own <li>, and each <li> is
+     * a leaf. Sending the first leaf that looked like stock meant sending ONE
+     * bullet: one weapon read, the other eleven ignored, which reads as the
+     * fallback not working at all.
+     *
+     * So climb from the line to the largest ancestor still small enough to be
+     * one seller's post. The cap is what stops it reaching the whole thread —
+     * a page of replies is not somebody's stock list, and it would be read as
+     * one and priced as one.
+     */
+    function stockContainerFor(el) {
+        var best = el, n = el && el.parentNode;
+        for (var i = 0; i < 6 && n && n.nodeType === 1; i++, n = n.parentNode) {
+            var t = forumCellText(n).replace(/\s+/g, ' ').trim();
+            if (t.length > 6000) break;
+            best = n;
+        }
+        return best;
+    }
+
     var forumInited = false;
     function ensureForumTables() {
         if (forumInited) return;
@@ -4554,7 +4577,12 @@
                     if (posts[i].querySelector && posts[i].querySelector('.rwp-tbl-cell')) continue;
                     if (posts[i].querySelector && posts[i].querySelector('div, td, li, blockquote')) continue;
                     var t = forumCellText(posts[i]).replace(/\s+/g, ' ').trim();
-                    if (looksLikeStock(t)) { askServerToRead(posts[i], t); break; }
+                    if (!looksLikeStock(t)) continue;
+                    // Send the POST, not the one bullet that matched.
+                    var host = stockContainerFor(posts[i]);
+                    var whole = forumCellText(host).replace(/\s+/g, ' ').trim();
+                    askServerToRead(host, looksLikeStock(whole) ? whole : t);
+                    break;
                 }
             } catch (e) {}
         };
