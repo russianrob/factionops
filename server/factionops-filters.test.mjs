@@ -83,3 +83,47 @@ test("a description mentioning a country does not hide a healthy target", () => 
   // Hospital. Torn writes travel plans into other states' descriptions.
   assert.equal(away("okay", "In a Swiss hospital"), false);
 });
+
+// ── Call expiry: the server decides, the client must not undercut it ────
+// Calls were being dropped after five minutes while the userscript said
+// fifteen. The server is the authority — CALL_EXPIRE_MS in the environment —
+// and the client's constant only prunes its own view. A client window SHORTER
+// than the server's is the dangerous direction: it hides a call the server
+// still holds, so the target reads as free and two people hit it.
+const ENV = fs.readFileSync(new URL("./.env", import.meta.url), "utf8");
+const envMs = (k) => {
+  const m = ENV.match(new RegExp("^" + k + "=(\\d+)\\s*$", "m"));
+  return m ? Number(m[1]) : null;
+};
+const clientMs = (k) => {
+  const m = SRC.match(new RegExp(k + ":\\s*([0-9*\\s]+),"));
+  if (!m) return null;
+  return m[1].split("*").map((x) => Number(x.trim())).reduce((a, b) => a * b, 1);
+};
+
+test("a regular call lasts twenty minutes, on both sides", () => {
+  assert.equal(envMs("CALL_EXPIRE_MS"), 20 * 60 * 1000, "server");
+  assert.equal(clientMs("CALL_TIMEOUT"), 20 * 60 * 1000, "client");
+});
+
+test("a deal lasts two hours, on both sides", () => {
+  // The client already said two hours. The server was expiring them at
+  // fifteen minutes, and the server wins — which is why deals lapsed
+  // mid-negotiation despite the constant.
+  assert.equal(envMs("DEAL_EXPIRE_MS"), 2 * 60 * 60 * 1000, "server");
+  assert.equal(clientMs("DEAL_TIMEOUT"), 2 * 60 * 60 * 1000, "client");
+});
+
+test("the client never prunes a call the server still holds", () => {
+  assert.ok(clientMs("CALL_TIMEOUT") >= envMs("CALL_EXPIRE_MS"),
+    "client call window is shorter than the server's");
+  assert.ok(clientMs("DEAL_TIMEOUT") >= envMs("DEAL_EXPIRE_MS"),
+    "client deal window is shorter than the server's");
+});
+
+test("nothing still advertises the old fifteen minutes", () => {
+  // The toasts said "yours for 15 min" while the constant said two hours and
+  // the server enforced fifteen. Three numbers, one of them shown to people.
+  assert.ok(!/Deal call[^']*15 min/.test(SRC), "a deal toast still says 15 min");
+  assert.ok(!/Multi-hit deal[^']*15 min/.test(SRC), "the deal badge still says 15 min");
+});

@@ -5,7 +5,7 @@
 import * as store from "./store.js";
 import { fetchFactionMembers } from "./torn-api.js";
 
-const CALL_EXPIRE_MS = parseInt(process.env.CALL_EXPIRE_MS, 10) || 5 * 60 * 1000; // 5 minutes
+const CALL_EXPIRE_MS = parseInt(process.env.CALL_EXPIRE_MS, 10) || 20 * 60 * 1000; // 20 minutes
 const SOFT_UNCALL_MS = 30_000; // 30 seconds after hospital detection
 const REFRESH_COOLDOWN_MS = 30_000; // 30 seconds between refreshes per war
 

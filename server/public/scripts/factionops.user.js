@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.4.1
+// @version      5.4.2
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.1';
+    const SCRIPT_VERSION = '5.4.2';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -131,12 +131,14 @@
         // deltas) when no SSE/Socket.IO is up (i.e. phones). Default ON, with an
         // auto-fallback to the standard poll if the transport fails on a device.
         USE_LONGPOLL: GM_getValue('factionops_use_longpoll', true),
-        // v5.0.26: bumped per user request — was 5 min / 15 min.
-        // Regular calls: 15 min auto-expire (auto-uncall-on-attack
-        // is a separate server-side change, see backlog).
-        // Deal/locked calls: 2 hours so cross-faction agreements
-        // don't lapse mid-negotiation.
-        CALL_TIMEOUT: 15 * 60 * 1000,        // 15 minute call expiry
+        // These mirror the SERVER's CALL_EXPIRE_MS / DEAL_EXPIRE_MS, which are
+        // the real authority -- the client only prunes its own view. The
+        // client's window must never be SHORTER than the server's: a shorter
+        // one hides a call the server still holds, so the target reads as free
+        // and two people hit it.
+        // v5.4.2: calls 15 -> 20 min. Deals said 2 hours here and were being
+        // expired by the server at 15 min all along.
+        CALL_TIMEOUT: 20 * 60 * 1000,        // 20 minute call expiry
         DEAL_TIMEOUT: 2 * 60 * 60 * 1000,    // 2 hour deal/locked call expiry
         REFRESH_INTERVAL: 30 * 1000,        // 30 second status refresh
         IS_PDA: IS_PDA,
@@ -9857,7 +9859,7 @@ body.wb-chain-active {
                     touchStart = null;                 // the tap gate must not also fire
                     try {
                         emitCallTarget(targetId, true);
-                        showToast('\uD83D\uDD12 Deal call \u2014 yours for 15 min', 'info');
+                        showToast('\uD83D\uDD12 Deal call \u2014 yours for 2 hours', 'info');
                     } catch (err) {
                         log('[calls] deal failed: ' + (err && err.message));
                     }
@@ -9914,7 +9916,7 @@ body.wb-chain-active {
                 if ((state.calls || {})[targetId]) return;
                 try {
                     emitCallTarget(targetId, true);
-                    showToast('\uD83D\uDD12 Deal call \u2014 yours for 15 min', 'info');
+                    showToast('\uD83D\uDD12 Deal call \u2014 yours for 2 hours', 'info');
                 } catch (err) { log('[calls] deal failed: ' + (err && err.message)); }
             });
 
@@ -11486,7 +11488,7 @@ body.wb-chain-active {
                 const dealBadge = document.createElement('span');
                 dealBadge.className = 'fo-deal-badge';
                 dealBadge.textContent = '\uD83D\uDD12 Deal';
-                dealBadge.title = 'Multi-hit deal \u2014 15 min timeout';
+                dealBadge.title = 'Multi-hit deal \u2014 2 hour timeout';
                 tag.appendChild(dealBadge);
             }
             cell.appendChild(tag);
@@ -11518,7 +11520,7 @@ body.wb-chain-active {
                 longPressTimer = setTimeout(() => {
                     longPressTriggered = true;
                     emitCallTarget(targetId, true);
-                    showToast('\uD83D\uDD12 Deal call placed (15 min)', 'info');
+                    showToast('\uD83D\uDD12 Deal call placed (2 hours)', 'info');
                 }, 600);
             });
             btn.addEventListener('mouseup', () => {
@@ -11534,7 +11536,7 @@ body.wb-chain-active {
                 longPressTimer = setTimeout(() => {
                     longPressTriggered = true;
                     emitCallTarget(targetId, true);
-                    showToast('\uD83D\uDD12 Deal call placed (15 min)', 'info');
+                    showToast('\uD83D\uDD12 Deal call placed (2 hours)', 'info');
                 }, 600);
             }, { passive: true });
             btn.addEventListener('touchend', (e) => {
@@ -11557,7 +11559,7 @@ body.wb-chain-active {
                 e.preventDefault();
                 e.stopPropagation();
                 emitCallTarget(targetId, true);
-                showToast('\uD83D\uDD12 Deal call placed (15 min)', 'info');
+                showToast('\uD83D\uDD12 Deal call placed (2 hours)', 'info');
             });
 
             cell.appendChild(btn);
