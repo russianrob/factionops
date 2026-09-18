@@ -2,7 +2,7 @@
 // @name         RW Pricer — Forum Screenshots
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      1.5.5
+// @version      1.5.6
 // @description  Prices the item screenshots people paste in forum trade threads. Reads the card out of the picture and puts the RW Pricer estimate on it.
 // @match        https://www.torn.com/forums.php*
 // @grant        GM_xmlhttpRequest
@@ -16,6 +16,8 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 1.5.6  Drops the "read out of the picture" footer — it said nothing the
+ *         reader could act on and pushed the real notes up the badge.
  * 1.5.5  Shows the name the price was built on. A cropped card returns no
  *         name of its own and is identified by its shop price, so the badge
  *         was reading null off the item and printing it.
@@ -298,7 +300,7 @@
       ((p && p.notes || []).map(function (n) {
         return '<div class="sub warn">' + n + "</div>";
       }).join("")) +
-      '<div class="sub">These numbers were read out of the picture above, so give them a glance.</div>';
+      "";
     return box;
   }
 
@@ -411,7 +413,7 @@
       method: "POST",
       url: SERVER + "/api/auth",
       headers: { "Content-Type": "application/json" },
-      data: JSON.stringify({ apiKey: key, scriptName: "rwp-forum", scriptVersion: "1.5.5" }),
+      data: JSON.stringify({ apiKey: key, scriptName: "rwp-forum", scriptVersion: "1.5.6" }),
       timeout: 20000,
       onload: function (res) {
         var d = null;

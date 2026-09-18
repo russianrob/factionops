@@ -807,3 +807,57 @@ test("the word 'ignores' is gone from the roll-agnostic note", () => {
   assert.ok(!p.notes.some((n) => /ignores the 50%/.test(n)),
     "it explains instead: " + p.notes.join(" | "));
 });
+
+// ── An extrapolation that contradicts itself ───────────────────
+// "matched to the 40%. 25 sales" next to "nothing this good has ever sold —
+// the best on record is 38%". Both cannot be true, and neither was quite: a
+// 40% Weaken Orange Jackhammer HAS sold, once, for $308m. It misses the
+// three-sale bar for the curve, so the curve extrapolated past 38% and the
+// note reported the curve's world rather than the record.
+
+test("an extrapolated price does not claim to be matched to the roll", () => {
+  const p = priceItem(feed, {
+    name: "Jackhammer", rarity: "Orange", bonuses: [{ name: "Weaken", pct: 40 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  assert.equal(p.extrapolated, true);
+  assert.ok(!/matched to the 40%/.test(p.basis),
+    "it is not matched to anything: " + p.basis);
+});
+
+test("the sales it quotes are declared as being at other rolls", () => {
+  const p = priceItem(feed, {
+    name: "Jackhammer", rarity: "Orange", bonuses: [{ name: "Weaken", pct: 40 }],
+  });
+  // 25 sales across every roll, not 25 at 40%.
+  assert.match(p.basis, /other rolls/i, p.basis);
+});
+
+test("a roll that HAS sold is never called unsold", () => {
+  const p = priceItem(feed, {
+    name: "Jackhammer", rarity: "Orange", bonuses: [{ name: "Weaken", pct: 40 }],
+  });
+  const why = p.notes.join(" | ");
+  assert.ok(!/Nothing this good has ever sold/.test(why),
+    "40% sold once for $308m: " + why);
+  assert.match(why, /40%/, why);
+  assert.match(why, /308|309/, "the sale it actually made: " + why);
+});
+
+test("a roll nothing has ever sold at still says so", () => {
+  // 99% Weaken really has no sale at any depth.
+  const p = priceItem(feed, {
+    name: "Jackhammer", rarity: "Orange", bonuses: [{ name: "Weaken", pct: 99 }],
+  });
+  if (p.ok && p.extrapolated) {
+    assert.match(p.notes.join(" | "), /Nothing this good has ever sold/);
+  }
+});
+
+test("a matched roll still says matched", () => {
+  const p = priceItem(feed, {
+    name: "Jackhammer", rarity: "Orange", bonuses: [{ name: "Weaken", pct: 33 }],
+  });
+  assert.match(p.basis, /matched to the 33%/);
+  assert.equal(p.extrapolated, false);
+});

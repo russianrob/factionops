@@ -632,14 +632,28 @@ export function priceItem(feed, item) {
       if (borrowed) {
         out.notes.push(`No ${rarity} one has sold at ${lead.pct}% ${lead.name} — that roll makes a ${borrowed.r} weapon on its own. This is what ${borrowed.n} ${borrowed.r} ones went for at that roll.`);
       }
-      out.basis = `what ${thing(rarity, name)} with ${lead.name} has sold for, matched to the ${lead.pct}%`;
+      // "matched to the 40%" and "nothing this good has ever sold" cannot both
+      // be true, and the badge said both. A price carried past the end of the
+      // curve is matched to nothing, and the sales quoted beside it are at
+      // other rolls — so it says that instead.
+      out.basis = at.extrapolated
+        ? `what ${thing(rarity, name)} with ${lead.name} has sold for at other rolls, carried out to the ${lead.pct}%`
+        : `what ${thing(rarity, name)} with ${lead.name} has sold for, matched to the ${lead.pct}%`;
       out.estimate = at.value;
       out.extrapolated = at.extrapolated;
       if (at.extrapolated && !borrowed) {
-        const below = num(lead.pct) < pts[0][0];
-        out.notes.push(below
-          ? `Nothing this low has ever sold — the lowest on record is ${pts[0][0]}%. This follows the trend below that, so treat it as a guess rather than a price.`
-          : `Nothing this good has ever sold — the best on record is ${pts[pts.length - 1][0]}%. This follows the trend past that, so treat it as a guess rather than a price.`);
+        // Before declaring nothing has sold at this roll, look at the rolls too
+        // thin to price from. A 40% Weaken Orange Jackhammer HAS sold — once,
+        // for $308m — and the curve, which needs three, never saw it.
+        const near = rollNeighbours(feed, name, lead.name, rarity, num(lead.pct));
+        if (near && near.at) {
+          out.notes.push(`Only ${salesWord(near.at.n)} at ${lead.pct}% ${lead.name}, for ${money(near.at.value)} — too few to price from, so this follows the trend from the rolls that have more.`);
+        } else {
+          const below = num(lead.pct) < pts[0][0];
+          out.notes.push(below
+            ? `Nothing this low has ever sold — the lowest on record is ${pts[0][0]}%. This follows the trend below that, so treat it as a guess rather than a price.`
+            : `Nothing this good has ever sold — the best on record is ${pts[pts.length - 1][0]}%. This follows the trend past that, so treat it as a guess rather than a price.`);
+        }
       }
       // A second bonus is worth something, but there is no measurement of THIS
       // pair — flagged rather than silently multiplied in.
