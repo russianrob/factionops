@@ -634,6 +634,11 @@
         // and calling it a floor. Accuracy alone scored worse than not
         // bridging at all.
         var pairLiftGroups = {};  // A+B|rarity -> [price / weapon colour median]
+        // The same idea for ONE bonus. A Red SIG 552 with 38% Penetrate priced
+        // off the weapon alone because SIG 552 + Penetrate has Yellow and
+        // Orange data and no Red — the bonus had nowhere to go. What travels
+        // between weapons is the multiple, not the price.
+        var bonusLiftGroups = {}; // bonus|rarity -> [{w, price}]
         var comboMaxTracker = {};  // combo key -> {price, qual}
         // Earliest sale per combo, so a badge can say how far "all the way
         // back" actually reaches. It is not the dataset's span: the data runs
@@ -701,6 +706,12 @@
                 var bKey2 = bn2 + '|' + rarityName;
                 if (!bonusGroups[bKey2]) bonusGroups[bKey2] = [];
                 bonusGroups[bKey2].push(price);
+            }
+
+            if (bn1 && !bn2) {
+                var blKey = bn1 + '|' + rarityName;
+                if (!bonusLiftGroups[blKey]) bonusLiftGroups[blKey] = [];
+                bonusLiftGroups[blKey].push({ w: wKey, price: price });
             }
 
             // Weapon+bonus combo groups: SINGLE-bonus sales ONLY. Pricing a one-bonus weapon should
@@ -899,8 +910,29 @@
             if (Object.keys(keep).length) newQualRanges[w] = keep;
         });
 
-        // The lift is computed against each weapon's OWN colour median, so it
-        // has to wait until those medians exist.
+        // Both lifts are computed against each weapon's OWN colour median, so
+        // they have to wait until those medians exist.
+        function liftFrom(groups) {
+            var out = {};
+            Object.keys(groups).forEach(function(key) {
+                var parts = key.split('|');
+                var ratios = [];
+                groups[key].forEach(function(s) {
+                    var bits = s.w.split('|');
+                    var wArr = newWeaponPrices[bits[0]];
+                    var base = wArr && wArr[bits[1]] ? wArr[bits[1]][1] : 0;
+                    if (base > 0) ratios.push(s.price / base);
+                });
+                if (ratios.length < 3) return;
+                ratios.sort(function(a, b) { return a - b; });
+                if (!out[parts[0]]) out[parts[0]] = {};
+                out[parts[0]][parts[1]] =
+                    [Math.round(percentile(ratios, 50) * 1000) / 1000, ratios.length];
+            });
+            return out;
+        }
+        var newBonusLift = liftFrom(bonusLiftGroups);
+
         var newPairLift = {};
         Object.keys(pairLiftGroups).forEach(function(key) {
             var parts = key.split('|');
@@ -943,6 +975,7 @@
             thinRolls: newThinRolls,
             pairLevelPrices: newPairLevelPrices,
             pairLift: newPairLift,
+            bonusLift: newBonusLift,
             qualityRanges: newQualRanges,
             comboSince: (function () {
                 var out = {};

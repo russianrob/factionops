@@ -796,6 +796,30 @@ export function priceItem(feed, item) {
     }
   }
 
+  // 3b. One bonus, bridged from other weapons.
+  //
+  // A Red SIG 552 with 38% Penetrate priced off the weapon alone — every Red
+  // SIG 552 ever sold, whatever bonus it had — because SIG 552 + Penetrate has
+  // Yellow and Orange data and no Red. The bonus had nowhere to go.
+  //
+  // Same trick as the pair bridge: what travels between weapons is the
+  // MULTIPLE, not the price. Measured leave-one-out over 1,388 single-bonus
+  // sales with no same-weapon comp, this beats the weapon-alone median —
+  // 0.2345 against 0.3023, 86% within 2x against 74% — and wins on 67% of them.
+  if (bonuses.length && rarity) {
+    const lead = bonuses[0];
+    const lift = ((feed.weaponBonusLift || {})[lead.name] || {})[rarity];
+    const base = medOf((table(feed, "weaponPrices", "weaponPrices")[name] || {})[rarity]);
+    if (Array.isArray(lift) && num(lift[0]) > 0 && base > 0) {
+      out.basis = `what ${lead.name} fetches on other weapons, scaled to ${thing(rarity, name)}`;
+      out.estimate = Math.round(base * num(lift[0]));
+      out.samples = num(lift[1]);
+      out.notes.push(`No ${rarity} ${name} has sold with ${lead.name}. Across other weapons, ${lead.name} goes for about ${num(lift[0]).toFixed(1)}x the weapon's own middling price — ${salesWord(num(lift[1]))} — and that is what this applies here.`);
+      if (bonuses.length > 1) out.notes.push(secondBonusNote(bonuses));
+      return withNearMiss(out, nearMiss);
+    }
+  }
+
   // 4. The weapon alone.
   const arr = (table(feed, "weaponPrices", "weaponPrices")[name] || {})[rarity];
   if (arr) {

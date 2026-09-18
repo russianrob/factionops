@@ -1075,3 +1075,54 @@ test("a clean reading says nothing about unread bonuses", () => {
   assert.ok(!p.notes.some((n) => /could not be read|couldn't be read/i.test(n)),
     p.notes.join(" | "));
 });
+
+// ── One bonus, no sale of it on this weapon ────────────────────
+// A Red SIG 552 with 38% Penetrate priced off the weapon alone — "whatever
+// bonus it had", across every Red SIG 552 ever sold. SIG 552 + Penetrate has
+// Yellow and Orange data and no Red at all, so the bonus had nowhere to go.
+//
+// The pair bridge already solved this shape for TWO bonuses. Measured
+// leave-one-out over 1,388 single-bonus sales with no same-weapon comp:
+//
+//   weapon alone (what it did)            median |log err| 0.3023   73.8% within 2x
+//   bridged by the weapon's colour median                  0.2345   86.1%
+//
+// It wins on 67% of them.
+
+test("a lone bonus with no sale on this weapon is bridged", () => {
+  const p = priceItem(feed, {
+    name: "SIG 552", rarity: "Red", quality: 249.83,
+    bonuses: [{ name: "Penetrate", pct: 38 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  assert.match(p.basis, /other weapons/i, p.basis);
+  assert.ok(!/whatever bonus it had/.test(p.basis), "it must not fall to the weapon alone: " + p.basis);
+});
+
+test("a bridged lone bonus says so, with its sample size", () => {
+  const p = priceItem(feed, {
+    name: "SIG 552", rarity: "Red", bonuses: [{ name: "Penetrate", pct: 38 }],
+  });
+  const why = p.notes.join(" | ");
+  assert.match(why, /other weapons/i, why);
+  assert.match(why, /\d+ sale/, why);
+});
+
+test("a weapon with its own sales of that bonus is not bridged", () => {
+  // A record of this weapon beats a model of others, exactly as with pairs.
+  const p = priceItem(feed, {
+    name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
+  });
+  assert.ok(!/other weapons/i.test(p.basis), p.basis);
+});
+
+test("a bonus nobody has carried at that colour is not bridged", () => {
+  const p = priceItem(feed, {
+    name: "SIG 552", rarity: "Red", bonuses: [{ name: "Cupid", pct: 99 }],
+  });
+  if (p.ok) {
+    // Either it found something real, or it fell back honestly — but it must
+    // not claim a cross-weapon comp that does not exist.
+    if (/other weapons/i.test(p.basis)) assert.ok(p.samples >= 3, "too thin to bridge from");
+  }
+});

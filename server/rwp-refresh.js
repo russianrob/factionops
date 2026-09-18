@@ -95,6 +95,9 @@ export async function refreshRwpPrices(reason) {
       // What a bonus pair fetches as a multiple of the weapon's colour median,
       // pooled across weapons. Prices a pair that never sold on THIS weapon.
       weaponPairLift:    wData.pairLift,
+      // What ONE bonus fetches as a multiple of the weapon's colour median.
+      // Prices a bonus that never sold on THIS weapon at THIS colour.
+      weaponBonusLift:   wData.bonusLift,
       // The exact weapon: both bonuses at both rolls, last 365 days only.
       weaponPairLevelPrices: (wData.recent && wData.recent.pairLevelPrices) || {},
       // Rolls too thin to price from, kept so a badge can say what DID sell
