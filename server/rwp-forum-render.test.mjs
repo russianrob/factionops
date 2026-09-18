@@ -174,3 +174,36 @@ test("signing in and out is still there", () => {
   // And the one message that is about the reader rather than the machinery.
   assert.match(panel, /has not been read yet/);
 });
+
+test("a card with no name of its own shows the name it was identified as", () => {
+  // PROMPT_VERSION 4 made a cropped card return name:null instead of inventing
+  // one, and the buy price identifies it for pricing. The header still read the
+  // name off the ITEM, so the badge said "$253m null".
+  const box = render(null, {
+    item: { name: null, rarity: "Yellow", quality: 110.1, buy: 20000000,
+            bonuses: [{ name: "Deadeye", pct: 29 }] },
+    price: { estimate: 253000000, name: "ArmaLite M-15A4", rarity: "Yellow",
+             basis: "what a Yellow ArmaLite M-15A4 with Deadeye has sold for, matched to the 29%",
+             samples: 10, notes: [] },
+    unknownItem: false, cached: true,
+  });
+  assert.match(box.innerHTML, /ArmaLite M-15A4/);
+  assert.ok(!/null/.test(box.innerHTML), "the word null must never reach the page: " + box.innerHTML);
+});
+
+test("a name the card DID give is what gets shown", () => {
+  const box = render(null, {
+    item: { name: "SIG 552", rarity: "Yellow", quality: 117.51, bonuses: [{ name: "Expose", pct: 9 }] },
+    price: { estimate: 85837512, name: "SIG 552", rarity: "Yellow", basis: "x", samples: 120, notes: [] },
+    unknownItem: false, cached: true,
+  });
+  assert.match(box.innerHTML, /SIG 552/);
+});
+
+test("no name anywhere renders as unread rather than as null", () => {
+  const box = render(null, {
+    item: { name: null, rarity: null, quality: null, buy: null, bonuses: [] },
+    price: null, unknownItem: false, cached: true,
+  });
+  assert.ok(!/null/.test(box.textContent + box.innerHTML), box.textContent + box.innerHTML);
+});

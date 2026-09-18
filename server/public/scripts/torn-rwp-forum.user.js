@@ -2,7 +2,7 @@
 // @name         RW Pricer — Forum Screenshots
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      1.5.4
+// @version      1.5.5
 // @description  Prices the item screenshots people paste in forum trade threads. Reads the card out of the picture and puts the RW Pricer estimate on it.
 // @match        https://www.torn.com/forums.php*
 // @grant        GM_xmlhttpRequest
@@ -16,6 +16,9 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 1.5.5  Shows the name the price was built on. A cropped card returns no
+ *         name of its own and is identified by its shop price, so the badge
+ *         was reading null off the item and printing it.
  * 1.5.4  The cog opens a sign-in box and nothing else. The counters and
  *         request log it grew during debugging are console-only now.
  * 1.5.3  The badge speaks English. "sales by roll (Orange, 6 price points)"
@@ -246,7 +249,13 @@
     // the sell shop welded to what the picture looked like, and said it was
     // confident. Printing an invented weapon name onto somebody's public sale
     // thread is worse than saying nothing, so nothing is what gets said.
-    if (!it || data.unknownItem) {
+    // The name the PRICE was built on, not the one the card showed. A cropped
+    // card honestly returns none, and the shop price on it identifies the
+    // weapon server-side — so the item says null while the price says ArmaLite
+    // M-15A4. Reading the item put the word "null" on somebody's sale thread.
+    var shownName = (p && p.name) || (it && it.name) || null;
+
+    if (!it || data.unknownItem || !shownName) {
       // Say which it is. "No price" and "nobody has paid for a read yet" are
       // different problems and only one of them is yours to fix.
       box.className = "rwpf pending";
@@ -263,7 +272,7 @@
     box.innerHTML =
       '<div class="hd">' +
         (p ? '<span class="px">' + money(p.estimate) + "</span>" : '<span class="px">no price</span>') +
-        '<span class="nm">' + it.name + "</span>" +
+        '<span class="nm">' + shownName + "</span>" +
         // The rarity the price was actually built on, which is not always the
         // one on the card: a Mag 7 card gave no rarity and the roll said Red.
         // Quality is its own test -- nesting it inside the rarity check meant a
@@ -402,7 +411,7 @@
       method: "POST",
       url: SERVER + "/api/auth",
       headers: { "Content-Type": "application/json" },
-      data: JSON.stringify({ apiKey: key, scriptName: "rwp-forum", scriptVersion: "1.5.4" }),
+      data: JSON.stringify({ apiKey: key, scriptName: "rwp-forum", scriptVersion: "1.5.5" }),
       timeout: 20000,
       onload: function (res) {
         var d = null;
