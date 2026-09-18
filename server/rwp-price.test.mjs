@@ -861,3 +861,17 @@ test("a matched roll still says matched", () => {
   assert.match(p.basis, /matched to the 33%/);
   assert.equal(p.extrapolated, false);
 });
+
+test("the all-time note says how many sales back it", () => {
+  // "3 sales" looks thin and invites widening the window. Measured, widening it
+  // to three years nearly doubles the error (median |log err| 0.075 -> 0.140),
+  // because RW prices fall about a quarter a year and older sales are a
+  // different market. What helps is saying how much evidence the longer view
+  // actually holds, so the reader can weigh it themselves.
+  const p = priceItem(feed, {
+    name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
+  });
+  const back = p.notes.find((n) => /going all the way back/i.test(n));
+  assert.ok(back, "expected the all-time note: " + p.notes.join(" | "));
+  assert.match(back, /\d+ sales/, "with its sample size: " + back);
+});

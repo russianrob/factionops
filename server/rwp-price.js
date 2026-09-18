@@ -675,7 +675,15 @@ export function priceItem(feed, item) {
       }
       const histAt = valueAtPct(curveOf(feed.weaponLevelPrices, name, lead.name, rarity), num(lead.pct));
       if (histAt && at.value && Math.abs(histAt.value - at.value) / at.value > 0.05) {
-        out.notes.push(`These are the last year's prices. Going all the way back it's ${money(histAt.value)}, but those older sales were a different market, not a bigger one.`);
+        // With the longer view's sample size, because "3 sales" on its own
+        // reads as too little to trust and invites widening the window.
+        // Measured, widening to three years nearly DOUBLES the error: RW prices
+        // fall about a quarter a year, so older sales are a different market
+        // rather than more of this one. Saying how much evidence sits back
+        // there lets the reader weigh it without the estimate moving.
+        const histCombo = ((feed.weaponComboPrices || {})[name + "|" + lead.name] || {})[rarity];
+        const histN = cntOf(histCombo);
+        out.notes.push(`These are the last year's prices. Going all the way back it's ${money(histAt.value)}${histN ? ` across ${histN} sales` : ""}, but those older sales were a different market, not a bigger one — prices fall roughly a quarter a year.`);
       }
       return out;
     }
