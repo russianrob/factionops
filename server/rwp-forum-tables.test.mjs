@@ -44,11 +44,14 @@ vm.runInContext([
   "var recentTables = FEED.recent || null;",
   "var KNOWN_WEAPONS = {}; Object.keys(WEAPON_CLASS).forEach(function(w){ KNOWN_WEAPONS[w.toLowerCase()] = w; });",
   "var ACTIVE = null;",
+  // Learned shorthands arrive in the feed; empty unless a test sets them.
+  "var ITEM_ALIASES = {};",
   SRC.slice(SRC.indexOf("var BONUS_ALIAS = {};"), SRC.indexOf("function resolveBonusName(")),
   fn("TBL"), fn("levelMedianOf"), fn("lookupWeapon"), fn("normalizeWeaponName"), fn("resolveBonusName"),
   fn("getMedianPrice"), fn("getWeaponComboMedian"), fn("pairKeyFor"), fn("getWeaponPairComboMedian"),
   fn("getWeaponLevelMedian"), fn("getWeaponLevelCount"), fn("getCombinedLevelValue"),
   fn("forumHeaderMap"), fn("forumBonusPairs"), fn("forumRarityIn"), fn("forumRowItem"), fn("rarityFromRoll"), fn("forumBonusWorth"), fn("priceForumRow"),
+  "globalThis.lookupWeapon = lookupWeapon;",
 ].join("\n"), sandbox, { timeout: 5000, filename: "rwp-forum-tables.js" });
 
 const { forumHeaderMap, forumRowItem, rarityFromRoll, priceForumRow } = sandbox;
@@ -682,4 +685,61 @@ test("a carried name does not reach down the page", () => {
   const body = src.slice(src.indexOf("function injectForumLines("));
   assert.match(body, /carryAge > 4/, "the carry must expire");
   assert.match(body, /carry = null/, "and be cleared when it does");
+});
+
+// ── Learned shorthands ─────────────────────────────────────────
+// Names the server worked out from posts the parsers could not read arrive in
+// the price feed the script already fetches hourly. Once "dbk" is known, every
+// later post using it parses in the browser at no cost — which is the whole
+// point of paying for the first one.
+test("a learned shorthand resolves like any other name", () => {
+  sandbox.ITEM_ALIASES = { dbk: "Diamond Bladed Knife", sig552: "SIG 552" };
+  try {
+    assert.equal(sandbox.lookupWeapon("DBK"), "Diamond Bladed Knife");
+    assert.equal(sandbox.lookupWeapon("dbk"), "Diamond Bladed Knife");
+    assert.equal(sandbox.lookupWeapon("sig552"), "SIG 552");
+  } finally { sandbox.ITEM_ALIASES = {}; }
+});
+
+test("a name Torn already has is never overridden by an alias", () => {
+  // An alias table is written from forum text. It fills gaps; it does not get
+  // to redefine a weapon that exists.
+  sandbox.ITEM_ALIASES = { kodachi: "Samurai Sword" };
+  try {
+    assert.equal(sandbox.lookupWeapon("Kodachi"), "Kodachi");
+  } finally { sandbox.ITEM_ALIASES = {}; }
+});
+
+// ── The gate on asking the server ──────────────────────────────
+// The fallback costs money, so it only fires on a post that plainly offers
+// weapons and that the local parsers could not read.
+const stock = (() => {
+  vm.runInContext([fn("looksLikeStock"), "globalThis.__ls = looksLikeStock;"].join("\n"), sandbox);
+  return sandbox.__ls;
+})();
+
+test("a post offering weapons is worth a read", () => {
+  assert.equal(stock("Kodachi 53 parry ~ 600m, and a Samurai Sword 27 bleed going for 285m too"), true);
+});
+
+test("a post that writes its rolls without a percent sign still qualifies", () => {
+  // The formats worth paying to read are the odd ones, and plenty of them write
+  // "Bleed 35" rather than "35%". Requiring the sign would have excluded exactly
+  // the posts this exists for.
+  assert.equal(stock("DBK Achilles 61 and Bleed 35 want 2.2b -- also Kodachi parry 53, 600m"), true);
+});
+
+test("chatter that merely mentions a weapon is not", () => {
+  // Two named weapons and two roll-shaped numbers, or it is a conversation.
+  assert.equal(stock("anyone know if a Kodachi is worth buying these days? 40% seems steep"), false,
+    "one weapon and one number is a question, not a list");
+  assert.equal(stock(""), false);
+  assert.equal(stock("selling stuff, pm me"), false);
+  assert.equal(stock("got a Kodachi and a Scimitar in the bazaar, go look"), false,
+    "two weapons but no rolls is not a stock list");
+});
+
+test("a whole thread is not sent as one post", () => {
+  // The cap is what stops a page of replies being read as somebody's stock.
+  assert.equal(stock("Kodachi 53% parry Samurai Sword 27% bleed " + "x".repeat(7000)), false);
 });

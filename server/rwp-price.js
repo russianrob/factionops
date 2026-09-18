@@ -198,14 +198,21 @@ export function resolveName(feed, name) {
  * it. Interpolating across a gap, or picking a side where ranges overlap, is
  * how a Yellow gets priced as a Red.
  */
-export function rarityForRoll(feed, name, bonus, pct) {
+export function rarityForRoll(feed, name, bonus, pct, bonusCount) {
   if (!Number.isFinite(pct)) return null;
   const tbl = table(feed, "levelPrices", "weaponLevelPrices")[name + "|" + bonus]
            || (feed && feed.armourLevelPrices || {})[name + "|" + bonus];
   if (!tbl) return null;
 
+  // Two bonuses are never Yellow: of 8,004 recorded two-bonus sales, not one
+  // was. A roll sitting in a Yellow band therefore cannot place a two-bonus
+  // weapon there, which is how a Cobra Derringer with 97% Assassinate and 23%
+  // Specialist was called Yellow off the Specialist and priced at a fourteenth
+  // of what it was worth.
+  const rarities = Object.keys(tbl).filter((r) => !(num(bonusCount) >= 2 && r === "Yellow"));
+
   // A sale at exactly this roll is the strongest answer.
-  const exact = Object.keys(tbl).filter((r) => tbl[r] && tbl[r][String(pct)]);
+  const exact = rarities.filter((r) => tbl[r] && tbl[r][String(pct)]);
   if (exact.length === 1) return exact[0];
   if (exact.length > 1) return null;
 
@@ -214,7 +221,7 @@ export function rarityForRoll(feed, name, bonus, pct) {
   // but Yellow ones run 50-73% and Orange ones start at 76, so it is Yellow and
   // cannot be anything else. Requiring one band and only one is the same
   // discipline as the exact match: where two overlap, nothing is claimed.
-  const inBand = Object.keys(tbl).filter((r) => {
+  const inBand = rarities.filter((r) => {
     const lv = Object.keys(tbl[r] || {}).map(Number).filter(Number.isFinite);
     return lv.length >= 2 && pct >= Math.min(...lv) && pct <= Math.max(...lv);
   });
@@ -350,13 +357,27 @@ export function priceItem(feed, item) {
   // No rarity on the card? The roll usually names it. Never overrides a rarity
   // that WAS read -- this only fills a hole.
   let inferredRarity = false, rarityFrom = null, rarityBy = null;
+
+  // A recorded sale of this exact pair at these exact rolls names the rarity
+  // outright. That is a record rather than an inference, so it is asked first
+  // and nothing below gets to overrule it.
+  if (!rarity && bonuses.length >= 2) {
+    const order = [bonuses[0].name, bonuses[1].name].sort();
+    const pctOf = {};
+    pctOf[bonuses[0].name] = num(bonuses[0].pct);
+    pctOf[bonuses[1].name] = num(bonuses[1].pct);
+    const rolls = order.map((n) => pctOf[n]).join("+");
+    const bucket = (feed.weaponPairLevelPrices || {})[name + "|" + order.join("+")] || {};
+    const hits = Object.keys(bucket).filter((r) => bucket[r] && bucket[r][rolls]);
+    if (hits.length === 1) { rarity = hits[0]; inferredRarity = true; rarityFrom = "sale"; }
+  }
   // Any bonus may place the weapon, not only the leading one. A Diamond Bladed
   // Knife with 61% Achilles and 35% Bleed leads on the Bleed, which is worth
   // more — but 35% Bleed sold at no single rarity while 61% Achilles sold only
   // as Yellow. Asking the lead alone gave up and priced nothing.
   if (!rarity) {
     for (const b of bonuses) {
-      const guess = rarityForRoll(feed, name, b.name, num(b.pct));
+      const guess = rarityForRoll(feed, name, b.name, num(b.pct), bonuses.length);
       if (guess) { rarity = guess; inferredRarity = true; rarityFrom = "roll"; rarityBy = b; break; }
     }
   }
@@ -417,7 +438,9 @@ export function priceItem(feed, item) {
       return out;
     }
   }
-  if (inferredRarity && rarityFrom === "roll") {
+  if (inferredRarity && rarityFrom === "sale") {
+    out.notes.push(`No colour was given, but this weapon with these exact bonuses has only ever sold as ${rarity}.`);
+  } else if (inferredRarity && rarityFrom === "roll") {
     const by = rarityBy || bonuses[0];
     out.notes.push(`No colour was given. Only ${rarity} ones have ever sold with ${by.pct}% ${by.name}, so that's what this assumes.`);
   } else if (inferredRarity && rarityFrom === "quality") {

@@ -10,6 +10,7 @@ import { gunzipSync } from "node:zlib";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { learnedAliases } from "./rwp-text-read.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_FILE = join(__dirname, "public", "scripts", "torn-rw-pricer.user.js");
@@ -98,6 +99,11 @@ export async function refreshRwpPrices(reason) {
       armourQualityRanges: aData.qualityRanges,
       weaponMaxBonus:    wData.weaponMaxBonus,
       recent:            wData.recent || null,
+      // Shorthands learned from posts the parsers could not read — "dbk" ->
+      // "Diamond Bladed Knife". They ride out in the feed the client already
+      // fetches hourly, so a name is paid for once and understood by every
+      // installation from then on, with nothing to reinstall.
+      itemAliases:       learnedAliases(),
       timestamp: Date.now(),
     };
     if (!out.weaponPrices || Object.keys(out.weaponPrices).length === 0) throw new Error("empty weaponPrices — refusing to overwrite");

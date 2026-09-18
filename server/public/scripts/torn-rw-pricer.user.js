@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.6.1
+// @version      3.7.0
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.6.1';
+    var SCRIPT_VERSION = '3.7.0';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -269,11 +269,18 @@
         return name;
     }
 
+    // Shorthands learned server-side from posts these parsers could not read,
+    // delivered in the price feed. Consulted LAST: an alias table written from
+    // forum text fills gaps, it does not get to redefine a weapon Torn has.
+    var ITEM_ALIASES = {};
+
     function lookupWeapon(name) {
         if (!name) return null;
         if (weaponPrices[name]) return name;
         var lower = name.toLowerCase();
         if (KNOWN_WEAPONS[lower]) return KNOWN_WEAPONS[lower];
+        var aka = ITEM_ALIASES[lower] || ITEM_ALIASES[lower.replace(/[^a-z0-9]/g, '')];
+        if (aka && weaponPrices[aka]) return aka;
         return null;
     }
 
@@ -1174,6 +1181,7 @@
         if (jsonData.armourSetPrices) armourSetPrices = jsonData.armourSetPrices;
         if (jsonData.weaponComboPrices) weaponComboPrices = jsonData.weaponComboPrices;
         if (jsonData.weaponPairComboPrices) weaponPairComboPrices = jsonData.weaponPairComboPrices;
+        if (jsonData.itemAliases) ITEM_ALIASES = jsonData.itemAliases;
         if (jsonData.weaponLevelPrices) weaponLevelPrices = jsonData.weaponLevelPrices;
         if (jsonData.armourComboPrices) armourComboPrices = jsonData.armourComboPrices;
         if (jsonData.weaponMaxBonus) weaponMaxBonus = jsonData.weaponMaxBonus;
@@ -1215,6 +1223,7 @@
                     weaponComboPrices = weaponData.comboPrices;
                     weaponPairComboPrices = weaponData.pairComboPrices || {};
                     weaponLevelPrices = weaponData.levelPrices || {};
+                    if (weaponData.itemAliases) ITEM_ALIASES = weaponData.itemAliases;
                     if (weaponData.weaponMaxBonus) weaponMaxBonus = weaponData.weaponMaxBonus;
 
                     var armourData = parseArmourCSVAndComputePrices(results[1]);
@@ -4120,13 +4129,108 @@
         }
     }
 
+    /**
+     * Ask the server to read a post these parsers could not.
+     *
+     * Only when the local pass found NOTHING on a post that plainly offers
+     * weapons — six formats are handled in the browser for free and this is for
+     * the seventh. One request per post, cached server-side by its text, so a
+     * busy thread costs one read however many people open it.
+     *
+     * The answer comes back verified against the post's own words and priced by
+     * the same ladder the badges use, and any shorthand it worked out is
+     * remembered in the price feed, so the next post using it parses here for
+     * nothing.
+     */
+    var textAsked = {};
+    function askServerToRead(host, text) {
+        var key = text.slice(0, 200);
+        if (textAsked[key]) return;
+        textAsked[key] = 1;
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: 'https://tornwar.com/api/rwp/read-text',
+            headers: { 'Content-Type': 'application/json' },
+            data: JSON.stringify({ text: text.slice(0, 6000) }),
+            timeout: 45000,
+            onload: function (res) {
+                var data = null;
+                try { data = JSON.parse(res.responseText); } catch (e) { return; }
+                if (!data || !data.items || !data.items.length) return;
+                var box = document.createElement('div');
+                box.className = 'rwp-tbl-cell';
+                box.style.cssText = 'margin-top:8px;padding:8px;border-left:3px solid #9fe870;' +
+                                    'background:rgba(0,0,0,.25);font-size:12px;line-height:1.7';
+                var html = '<b style="color:#9fe870">RW Pricer</b><br>';
+                for (var i = 0; i < data.items.length; i++) {
+                    var it = data.items[i];
+                    if (!it.price || !it.price.estimate) continue;
+                    html += '<span style="color:#fff">' + it.name + '</span> ' +
+                            '<span style="color:#ff9f2e">' +
+                            it.bonuses.map(function (b) { return b.pct + '% ' + b.name; }).join(' + ') +
+                            '</span> &rarr; <b style="color:#9fe870">' + fmtBigDollar(it.price.estimate) + '</b><br>';
+                }
+                box.innerHTML = html + '<span style="color:#9aa0ad">Read from the post\u2019s wording, ' +
+                                'so check it against what is written above.</span>';
+                if (host && host.parentNode) host.parentNode.insertBefore(box, host.nextSibling);
+            },
+            onerror: function () {},
+            ontimeout: function () {},
+        });
+    }
+
+    /**
+     * Does this post plainly offer weapons?
+     *
+     * The gate on asking the server at all. A post has to name something Torn
+     * sells AND carry a percentage before it is worth a read — a thread of
+     * chatter mentioning a Kodachi is not a stock list.
+     */
+    function looksLikeStock(text) {
+        if (!text || text.length < 40 || text.length > 6000) return false;
+
+        // One weapon Torn sells and two roll-shaped numbers. Demanding two
+        // recognised NAMES would defeat the purpose: a post this exists for may
+        // abbreviate every weapon on it, and then nothing is recognised and the
+        // read never happens. The numbers carry the weight instead.
+        var nums = String(text).match(/\d+(?:\.\d+)?/g) || [], rolls = 0;
+        for (var k = 0; k < nums.length; k++) {
+            var n2 = parseFloat(nums[k]);
+            // A bonus roll lives in this range. Prices and dates do not, and a
+            // percent sign cannot be required: plenty of posts write "Bleed 35".
+            if (n2 >= 1 && n2 <= 200) rolls++;
+        }
+        if (rolls < 2) return false;
+
+        var words = text.split(/[^A-Za-z0-9-]+/);
+        for (var i = 0; i < words.length; i++) {
+            for (var n = 1; n <= 3 && i + n <= words.length; n++) {
+                if (lookupWeapon(normalizeWeaponName(words.slice(i, i + n).join(' ')))) return true;
+            }
+        }
+        return false;
+    }
+
     var forumInited = false;
     function ensureForumTables() {
         if (forumInited) return;
         forumInited = true;
         var run = function () {
+            var before = document.querySelectorAll('.rwp-tbl-cell').length;
             try { injectForumTables(); } catch (e) {}
             try { injectForumLines(); } catch (e) {}
+            if (document.querySelectorAll('.rwp-tbl-cell').length > before) return;
+            // Nothing priced. If a post here is plainly selling weapons, it is
+            // in a shape nobody has written a rule for — ask the server once.
+            try {
+                var posts = document.querySelectorAll('div, td, li, blockquote');
+                for (var i = 0; i < posts.length; i++) {
+                    if (posts[i].querySelector && posts[i].querySelector('.rwp-tbl-cell')) continue;
+                    if (posts[i].querySelector && posts[i].querySelector('div, td, li, blockquote')) continue;
+                    var t = forumCellText(posts[i]).replace(/\s+/g, ' ').trim();
+                    if (looksLikeStock(t)) { askServerToRead(posts[i], t); break; }
+                }
+            } catch (e) {}
         };
         run();
         // Forum threads paginate and re-render in place, so a one-shot pass sees

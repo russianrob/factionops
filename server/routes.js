@@ -102,6 +102,7 @@ import * as gymEnergy from "./gym-energy-snapshot.js";
 import * as gymComp from "./gym-comp.js";
 import * as upcomingWar from "./upcoming-war.js";
 import * as rwpImage from "./rwp-image-read.js";
+import * as rwpText from "./rwp-text-read.js";
 import { priceItem as rwpPriceItem, weaponByBuyPrice as rwpWeaponByBuyPrice } from "./rwp-price.js";
 import * as chainHits from "./chain-hits.js";
 import { renderSlackersPage } from "./slackers-page.js";
@@ -12358,6 +12359,40 @@ router.post("/api/rwp/read-image", express.json({ limit: "8kb" }), async (req, r
   const out = await rwpImage.readItemImage(url, { hint });
   if (!out.ok) return res.status(400).json({ error: out.reason });
   return res.json({ item: out.item, price: priceOf(out.item), unknownItem: unknownItem(out.item), cached: !!out.cached, reason: out.reason || null });
+});
+
+// Price a stock list out of a forum post's TEXT, when RW Pricer's own parsers
+// could not. They handle six post formats in the browser for nothing; this is
+// for the seventh. Same policy as the screenshot reader: anyone may read the
+// cache, only a signed-in member can cause a new read, so a busy thread costs
+// one read however many people open it and the bill stays attributable.
+router.post("/api/rwp/read-text", express.json({ limit: "32kb" }), async (req, res) => {
+  const text = String((req.body && req.body.text) || "");
+  if (text.trim().length < 20) return res.status(400).json({ error: "not enough text to read" });
+
+  let user = null;
+  try {
+    const h = req.headers.authorization || "";
+    if (h) user = verifyToken(h.startsWith("Bearer ") ? h.slice(7) : h);
+  } catch { user = null; }
+
+  let out;
+  try {
+    out = await rwpText.readPostText(rwpFeed(), text, { mayRead: !!user });
+  } catch (e) {
+    console.warn(`[rwp-text] ${e.message}`);
+    return res.status(500).json({ error: "could not read that post" });
+  }
+  if (!out.ok) return res.status(400).json({ error: out.reason });
+  if (out.needsMember) return res.json({ items: null, needsMember: true });
+
+  // Priced here rather than in the browser, so the badge and the screenshot
+  // reader quote one ladder.
+  const items = (out.items || []).map((it) => ({
+    ...it,
+    price: priceOf({ name: it.name, rarity: it.rarity, bonuses: it.bonuses }),
+  }));
+  return res.json({ items, cached: !!out.cached, learned: out.learned || null });
 });
 
 router.get("/random", (_req, res) => {

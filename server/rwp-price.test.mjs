@@ -729,3 +729,28 @@ test("any bonus may place the rarity, not only the leading one", () => {
   assert.ok(p.rarity, "a colour should have been worked out");
   assert.ok(p.estimate > 0);
 });
+
+test("a recorded sale of this exact pair names the rarity outright", () => {
+  // A post with no colour: Cobra Derringer, 97% Assassinate and 23% Specialist.
+  // Inferring from the Specialist gave Yellow — its Yellow band is 20-27 — and
+  // priced $434m. The weapon is Orange, and not by inference: that exact pair
+  // at those exact rolls has SOLD, once, for $6.1b. A record outranks a band.
+  const p = priceItem(feed, {
+    name: "Cobra Derringer", rarity: null,
+    bonuses: [{ name: "Assassinate", pct: 97 }, { name: "Specialist", pct: 23 }],
+  });
+  assert.equal(p.rarity, "Orange");
+  assert.ok(p.estimate > 5e9, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
+  assert.match(p.basis, /this exact weapon/i);
+});
+
+test("two bonuses are never inferred as Yellow from a roll", () => {
+  // Of 8,004 recorded two-bonus sales, exactly zero were Yellow. A roll that
+  // sits in a Yellow band therefore cannot place a two-bonus weapon there.
+  assert.equal(rarityForRoll(feed, "Cobra Derringer", "Specialist", 23), "Yellow");
+  assert.equal(rarityForRoll(feed, "Cobra Derringer", "Specialist", 23, 2), null);
+});
+
+test("a single-bonus weapon is still placed as Yellow when the roll says so", () => {
+  assert.equal(rarityForRoll(feed, "Cobra Derringer", "Specialist", 23, 1), "Yellow");
+});
