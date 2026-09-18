@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.8.0
+// @version      3.8.1
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.8.0';
+    var SCRIPT_VERSION = '3.8.1';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1415,6 +1415,25 @@
         return true;
     }
 
+    /**
+     * The bonus out of Torn's info icon, where the row itself shows none.
+     *
+     * The inventory LIST does not render bonuses in the row — only the item
+     * page does. So a Red Steyr AUG with 31% Focus fell all the way to the bare
+     * weapon median: "$1.51B, 85 sales", every Red Steyr AUG ever sold with the
+     * Focus thrown away, while the trade window priced the same weapon at
+     * $1.07b off its own bonus. One weapon, two screens, two answers.
+     *
+     * The bonus was there the whole time, in the same networth-info-icon title
+     * the trade page reads.
+     */
+    function bonusesFromInfoIcon(el) {
+        if (!el || !el.querySelector) return null;
+        var icon = el.querySelector('i.networth-info-icon[title]');
+        if (!icon) return null;
+        return parseTradeBonusTitle(icon.getAttribute('title'));
+    }
+
     function extractBonuses(el) {
         var bonuses = [];
         var seenNames = [];
@@ -2134,6 +2153,13 @@
             // double-bonus one is data-starved and keeps its full history.
             // Armour has no recent set and is unaffected.
             var bonuses = extractBonuses(el);
+            // The row is the better source where it has one: it is what the page
+            // actually shows. The icon is a fallback for the lists that do not
+            // render bonuses at all, never a replacement.
+            if (!bonuses.length) {
+                var fromIcon = bonusesFromInfoIcon(el);
+                if (fromIcon && fromIcon.bonuses.length) bonuses = fromIcon.bonuses;
+            }
             ACTIVE = (weaponKey && recentTables && bonuses.length === 1) ? recentTables : null;
 
             var median, bonusFn, badge;

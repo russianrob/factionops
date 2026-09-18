@@ -159,3 +159,37 @@ test("the total keeps Torn's figure beside the RW one", () => {
   assert.match(body, /anyRw/);
   assert.match(body, /Torn:/);
 });
+
+// ── The same weapon must not price twice ───────────────────────
+// The inventory badge said $1.51b and the trade said $1.07b for one Steyr AUG.
+// The tooltip gave it away: "Median $1.51B · 85 sales" with no bonus named —
+// that is every Red Steyr AUG ever sold, the 31% Focus thrown away entirely.
+// The inventory list does not render bonuses in the row; they are in the same
+// networth-info-icon title the trade page uses.
+
+test("a bonus is recovered from the icon when the row does not show one", () => {
+  vm.runInContext([fn("bonusesFromInfoIcon"), "globalThis.__bi = bonusesFromInfoIcon;"].join("\n"), sandbox);
+  const el = {
+    querySelector: (sel) => (sel.indexOf("networth-info-icon") >= 0
+      ? { getAttribute: () => KODACHI } : null),
+  };
+  const got = sandbox.__bi(el);
+  assert.ok(got, "expected the icon to yield a bonus");
+  assert.equal(JSON.stringify(got.bonuses), JSON.stringify([{ name: "Quicken", level: 82 }]));
+  assert.equal(got.rarity, "Yellow");
+});
+
+test("a row with no icon yields nothing, and claims nothing", () => {
+  vm.runInContext([fn("bonusesFromInfoIcon"), "globalThis.__bi = bonusesFromInfoIcon;"].join("\n"), sandbox);
+  assert.equal(sandbox.__bi({ querySelector: () => null }), null);
+  assert.equal(sandbox.__bi(null), null);
+});
+
+test("the item page asks the icon only when the row gave nothing", () => {
+  // The row's own markup is the better source where it exists — it is what the
+  // page actually shows. The icon is a fallback, not a replacement.
+  const body = SRC.slice(SRC.indexOf("var bonuses = extractBonuses(el);"),
+                         SRC.indexOf("var bonuses = extractBonuses(el);") + 500);
+  assert.match(body, /bonuses\.length/, "gated on the row yielding nothing: " + body.slice(0, 200));
+  assert.match(body, /bonusesFromInfoIcon/);
+});
