@@ -890,3 +890,68 @@ test("the longer view names its window and its size", () => {
   assert.match(back, /back to (19|20)\d\d/, "and how far the other one reaches: " + back);
   assert.ok(!/all the way back/i.test(back), "vague: " + back);
 });
+
+// ── Bridging a bonus pair across weapons ───────────────────────
+// The weakest rung in the ladder was the two-bonus case with no sale of that
+// pair on that weapon: it priced one bonus and called the answer a floor. A
+// Jackhammer with 30% Bleed and 21% Warlord came out at $886m that way, while
+// twelve Orange weapons carrying Bleed+Warlord traded at a $1.13b median.
+//
+// Measured leave-one-out over 2,783 two-bonus sales, predicting each from the
+// same pair on OTHER weapons:
+//
+//   best single bonus (what it did)   median |log err| 0.4336   72.4% within 2x
+//   bridged by damage                                  0.3751   73.5%
+//   bridged by damage x accuracy                       0.3686   75.3%
+//   bridged by the weapon's colour median              0.2867   84.0%
+//
+// Accuracy alone scored WORSE than not bridging at all. The weapon's own
+// colour median wins because it carries everything about how valuable that
+// weapon is, not just how hard it hits.
+
+test("a pair with no sale on this weapon is bridged from other weapons", () => {
+  const p = priceItem(feed, {
+    name: "Jackhammer", rarity: "Orange",
+    bonuses: [{ name: "Bleed", pct: 30 }, { name: "Warlord", pct: 21 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  assert.match(p.basis, /other weapons/i, p.basis);
+  // Well above the $886m single-bonus floor it used to give.
+  assert.ok(p.estimate > 1e9, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
+});
+
+test("a bridged price says it is bridged, and how many weapons carried it", () => {
+  const p = priceItem(feed, {
+    name: "Jackhammer", rarity: "Orange",
+    bonuses: [{ name: "Bleed", pct: 30 }, { name: "Warlord", pct: 21 }],
+  });
+  const why = p.notes.join(" | ");
+  assert.match(why, /other weapons/i, why);
+  assert.match(why, /\d+ sale/, "with its sample size: " + why);
+  // Nothing was dropped, so the floor warning must be gone.
+  assert.ok(!/isn't counted/.test(why), "both bonuses are counted now: " + why);
+});
+
+test("a sale of the pair on THIS weapon still wins", () => {
+  // Bridging is a fallback. A record of this weapon beats a model of others.
+  const p = priceItem(feed, {
+    name: "S&W Revolver", rarity: "Red",
+    bonuses: [{ name: "Assassinate", pct: 70 }, { name: "Double-Tap", pct: 52 }],
+  });
+  assert.match(p.basis, /this exact weapon/i);
+});
+
+test("a pair nobody has ever carried is not bridged", () => {
+  const p = priceItem(feed, {
+    name: "Jackhammer", rarity: "Orange",
+    bonuses: [{ name: "Bleed", pct: 30 }, { name: "Sure Shot", pct: 21 }],
+  });
+  if (p.ok) assert.ok(!/other weapons/i.test(p.basis), "nothing to bridge from: " + p.basis);
+});
+
+test("a single-bonus weapon is never bridged", () => {
+  const p = priceItem(feed, {
+    name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
+  });
+  assert.ok(!/other weapons/i.test(p.basis), p.basis);
+});

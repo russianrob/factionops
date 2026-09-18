@@ -601,6 +601,33 @@ export function priceItem(feed, item) {
     }
   }
 
+  // 1b. The pair, bridged from other weapons.
+  //
+  // The weakest rung used to be exactly here: a two-bonus weapon with no sale
+  // of that pair, priced off ONE bonus and labelled a floor. A Jackhammer with
+  // 30% Bleed and 21% Warlord came out at $886m that way, while twelve Orange
+  // weapons carrying Bleed+Warlord traded at a $1.13b median.
+  //
+  // What travels between weapons is not the price but the MULTIPLE: a pair
+  // fetches some number of times the weapon's own colour median. Measured
+  // leave-one-out over 2,783 two-bonus sales, that scaling beat everything else
+  // tried — damage 0.375, damage x accuracy 0.369, this 0.287, against 0.434
+  // for the single-bonus floor. Accuracy alone scored worse than not bridging.
+  // It covers 82% of two-bonus sales.
+  if (bonuses.length >= 2 && rarity) {
+    const pair = [bonuses[0].name, bonuses[1].name].sort().join("+");
+    const lift = ((feed.weaponPairLift || {})[pair] || {})[rarity];
+    const base = ((table(feed, "weaponPrices", "weaponPrices")[name] || {})[rarity]);
+    const baseMed = medOf(base);
+    if (Array.isArray(lift) && num(lift[0]) > 0 && baseMed > 0) {
+      out.basis = `what ${bonuses[0].name} and ${bonuses[1].name} together fetch on other weapons, scaled to ${thing(rarity, name)}`;
+      out.estimate = Math.round(baseMed * num(lift[0]));
+      out.samples = num(lift[1]);
+      out.notes.push(`No ${name} has sold with this pair. Across other weapons, ${bonuses[0].name} and ${bonuses[1].name} together go for about ${num(lift[0]).toFixed(1)}x the weapon's own middling price — ${salesWord(num(lift[1]))} — and that is what this applies here.`);
+      return withNearMiss(out, nearMiss);
+    }
+  }
+
   // 2. The level curve for the leading bonus — the only rung that knows the ROLL.
   if (bonuses.length && rarity) {
     const lead = bonuses[0];
@@ -630,7 +657,7 @@ export function priceItem(feed, item) {
 
     if (at) {
       if (borrowed) {
-        out.notes.push(`No ${rarity} one has sold at ${lead.pct}% ${lead.name} — that roll makes a ${borrowed.r} weapon on its own. This is what ${borrowed.n} ${borrowed.r} ones went for at that roll.`);
+        out.notes.push(`No ${rarity} one has sold at ${lead.pct}% ${lead.name} — that roll makes ${an(borrowed.r)}${borrowed.r} weapon on its own. This is what ${borrowed.n} ${borrowed.r} ones went for at that roll.`);
       }
       // "matched to the 40%" and "nothing this good has ever sold" cannot both
       // be true, and the badge said both. A price carried past the end of the

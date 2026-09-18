@@ -92,6 +92,9 @@ export async function refreshRwpPrices(reason) {
       // Earliest sale year per weapon+bonus+rarity, so "going back to X" is the
       // truth for THAT weapon rather than the dataset span.
       weaponComboSince:  wData.comboSince,
+      // What a bonus pair fetches as a multiple of the weapon's colour median,
+      // pooled across weapons. Prices a pair that never sold on THIS weapon.
+      weaponPairLift:    wData.pairLift,
       // The exact weapon: both bonuses at both rolls, last 365 days only.
       weaponPairLevelPrices: (wData.recent && wData.recent.pairLevelPrices) || {},
       // Rolls too thin to price from, kept so a badge can say what DID sell
