@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.6.0
+// @version      3.6.1
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.6.0';
+    var SCRIPT_VERSION = '3.6.1';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -3879,17 +3879,39 @@
      * recognised — a forum post is mostly prose, and a badge on a sentence is
      * worse than no badge at all.
      */
-    function forumLineItem(text) {
+    /**
+     * A line that is nothing but a weapon's name.
+     *
+     * Some posts put the name on its own line and everything about it on the
+     * next: "Kodachi" / "4% Rage | 104.55%". The name line has no bonus and the
+     * bonus line has no name, so neither priced on its own.
+     *
+     * Nothing but the name counts. A sentence that merely mentions a weapon
+     * would otherwise capture whatever numbers followed it.
+     */
+    function forumWeaponOnly(text) {
+        var t = String(text || '').replace(/\s+/g, ' ').trim().replace(/[:\-–—|]+$/, '').trim();
+        if (!t || t.length > 40) return null;
+        var key = lookupWeapon(normalizeWeaponName(t));
+        return key ? t : null;
+    }
+
+    function forumLineItem(text, carriedName) {
         var raw = String(text || '').replace(/\s+/g, ' ').trim();
         if (!raw) return null;
         // Two punctuations in the wild: " - " between fields, and "|". The
         // hyphen must be SPACED or "Tavor TAR-21" and "Sawed-Off Shotgun" come
         // apart in the middle of their own names.
         var parts = raw.split(/\s*\|\s*|\s+-\s+/);
-        if (parts.length < 2) return null;
 
-        var name = parts[0].trim();
-        if (!lookupWeapon(normalizeWeaponName(name))) return null;
+        var name = parts[0].trim(), from = 1;
+        if (!lookupWeapon(normalizeWeaponName(name))) {
+            // No weapon on this line: it may belong to a name on the line above.
+            // A name the line states itself always wins over a carried one.
+            if (!carriedName) return null;
+            name = carriedName;
+            from = 0;
+        }
 
         // Fields arrive in no fixed order and most of them carry digits, so
         // each is identified by what it is rather than where it sits. Only the
@@ -3897,7 +3919,7 @@
         // are all numbers and none of them is a bonus roll -- a quality read as
         // one would price a weapon off its own quality.
         var bonuses = [], rarity = null;
-        for (var i = 1; i < parts.length; i++) {
+        for (var i = from; i < parts.length; i++) {
             var t = parts[i].trim();
             if (!t) continue;
             if (!rarity && RARITY_WORD.test(t)) {
@@ -3906,6 +3928,9 @@
             }
             // A labelled field is never stock: "Q: 236.22%", "Dmg:76.24".
             if (/^(q|qual|quality|dmg|dam|damage|acc|accu|accuracy|price|value|stealth|circ)\b\s*[:=]?/i.test(t)) continue;
+            // A bare percentage with no bonus after it is a quality, not a roll:
+            // "4% Rage | 104.55%" states one bonus and one quality.
+            if (/^\d+(?:\.\d+)?\s*%$/.test(t)) continue;
             if (bonuses.length) continue;
             for (var chunk of t.split(/[•·+]/)) {
                 var m = chunk.match(/(\d+(?:\.\d+)?)\s*%\s*(.+)/);
@@ -3972,6 +3997,11 @@
 
     function injectForumLines() {
         var hosts = forumLineHosts(document);
+        // A weapon named on its own line belongs to the lines under it. Held in
+        // document order across hosts, because each line is often its own
+        // element, and dropped after a few lines so a name cannot reach down
+        // the page and claim numbers that are nothing to do with it.
+        var carry = null, carryAge = 0;
         for (var h = 0; h < hosts.length; h++) {
             var host = hosts[h];
             if (!host.querySelector) continue;
@@ -3980,7 +4010,13 @@
                 var nodes = segs[s];
                 var last = nodes[nodes.length - 1];
                 if (!last || last.__rwpLine) continue;
-                var item = forumLineItem(segmentText(nodes));
+                var text = segmentText(nodes);
+
+                var only = forumWeaponOnly(text);
+                if (only) { carry = only; carryAge = 0; continue; }
+                if (carry && ++carryAge > 4) carry = null;
+
+                var item = forumLineItem(text, carry);
                 if (!item) continue;
                 var p = priceForumRow(item);
                 if (!p) continue;

@@ -603,3 +603,83 @@ test("a block broken by <br> is segmented, not taken whole", () => {
   assert.ok(!it || it.bonuses.length <= 2,
     "two lines read as one must not produce a stack of bonuses: " + JSON.stringify(it));
 });
+
+// ── An item spread across several lines ────────────────────────
+//   Kodachi
+//   4% Rage | 104.55%
+//   68.44dmg | 60.01acc
+//   $100m
+//
+// The weapon is on one line and its bonus on the next. Every parser so far
+// wanted both on the same line, so the name line had no bonus, the bonus line
+// had no name, and nothing priced.
+const weaponOnly = (() => {
+  vm.runInContext([fn("forumWeaponOnly"), "globalThis.__wo = forumWeaponOnly;"].join("\n"), sandbox);
+  return sandbox.__wo;
+})();
+
+test("a line that is nothing but a weapon name is recognised as one", () => {
+  assert.equal(weaponOnly("Kodachi"), "Kodachi");
+  assert.equal(weaponOnly("  Samurai Sword  "), "Samurai Sword");
+  assert.equal(weaponOnly("Macana"), "Macana");
+});
+
+test("a line with anything else on it is not a name line", () => {
+  // Otherwise a sentence mentioning a weapon captures the numbers after it.
+  assert.equal(weaponOnly("Kodachi 4% Rage"), null);
+  assert.equal(weaponOnly("selling my Kodachi soon"), null);
+  assert.equal(weaponOnly("Melee:"), null);
+  assert.equal(weaponOnly(""), null);
+});
+
+test("a bonus line is priced against the name above it", () => {
+  const r = line("4% Rage | 104.55%", "Kodachi");
+  assert.equal(r.name, "Kodachi");
+  assert.equal(JSON.stringify(Array.from(r.bonuses)), JSON.stringify([{ name: "Rage", level: 4 }]));
+});
+
+test("the quality beside the bonus is not read as a second bonus", () => {
+  // "4% Rage | 104.55%" — the second field is the quality, bare and unlabelled.
+  const r = line("71% Empower | 117.39%", "Samurai Sword");
+  assert.equal(r.bonuses.length, 1);
+  assert.equal(r.bonuses[0].name, "Empower");
+  assert.equal(r.bonuses[0].level, 71);
+});
+
+test("a carried name never overrides one the line states itself", () => {
+  const r = line("Scimitar | yellow | 50% Parry | Q: 114.01%", "Kodachi");
+  assert.equal(r.name, "Scimitar");
+});
+
+test("a carried name is not applied to a line with no bonus", () => {
+  assert.equal(line("68.44dmg | 60.01acc", "Kodachi"), null);
+  assert.equal(line("$100m", "Kodachi"), null);
+  assert.equal(line("More items coming soon :3", "Kodachi"), null);
+});
+
+test("every item in the multi-line post prices", () => {
+  const post = [
+    ["Kodachi", null], ["4% Rage | 104.55%", "Kodachi"],
+    ["Samurai Sword", null], ["71% Empower | 117.39%", "Samurai Sword"],
+    ["Macana", null], ["24% Bleed | 102.76%", "Macana"],
+    ["Macana", null], ["21% Wither | 119.00%", "Macana"],
+  ];
+  const missed = [];
+  for (const [text, carry] of post) {
+    if (!carry) continue;
+    const it = line(text, carry);
+    const p = it && priceForumRow(it);
+    if (!p || !(p.value > 0)) missed.push(carry + " " + text);
+  }
+  assert.equal(JSON.stringify(missed), "[]", "did not price: " + missed.join(" | "));
+});
+
+test("a carried name does not reach down the page", () => {
+  // The name must not survive far enough to claim numbers in an unrelated post
+  // further down the thread. Four lines is generous for "Kodachi / bonus /
+  // dmg+acc / price" and stops well short of the next seller.
+  const src = fs.readFileSync(new URL("./public/scripts/torn-rw-pricer.user.js", import.meta.url), "utf8");
+  const body = src.slice(src.indexOf("function injectForumLines("));
+  assert.match(body, /carryAge > 4/, "the carry must expire");
+  assert.match(body, /carry = null/, "and be cleared when it does");
+});
