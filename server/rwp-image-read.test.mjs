@@ -77,3 +77,55 @@ test("armour statistics are ruled out as bonuses", () => {
   assert.match(p, /Coverage/);
   assert.match(p, /never return those as bonuses/i);
 });
+
+// ── Both halves of the cache expire together ───────────────────
+// Every reading is stored twice: once under the URL, once under the SHA-256 of
+// the image bytes so a reposted screenshot does not cost a second vision call.
+// readCache enforced the 90 days and the body lookup did not — it wrote a
+// timestamp and never read it. So a stale URL entry triggered a re-FETCH, the
+// body hash matched, and the original reading was served anyway. A reading
+// effectively lived forever, and a misread card stayed misread indefinitely.
+import fs from "node:fs";
+import path from "node:path";
+import { readBodyCache, writeBodyCache, bodyFileFor, RETAIN_MS } from "./rwp-image-read.js";
+
+const SHA = "f".repeat(64);
+const clean = () => { try { fs.unlinkSync(bodyFileFor(SHA, "")); } catch {} };
+
+test("a fresh body-cache entry is served", (t) => {
+  t.after(clean);
+  writeBodyCache(SHA, { name: "SIG 552" }, "", Date.now());
+  // One shape for every answer: null means "nothing usable here", and an
+  // envelope means "this is the answer", even when the answer is that the
+  // picture could not be read.
+  assert.deepEqual(readBodyCache(SHA, ""), { item: { name: "SIG 552" } });
+});
+
+test("a body-cache entry past the retention window is not", (t) => {
+  t.after(clean);
+  writeBodyCache(SHA, { name: "SIG 552" }, "", Date.now() - RETAIN_MS - 1000);
+  assert.equal(readBodyCache(SHA, ""), null, "an expired reading must not be reused");
+});
+
+test("the boundary is inclusive of the window, not past it", (t) => {
+  t.after(clean);
+  writeBodyCache(SHA, { name: "SIG 552" }, "", Date.now() - RETAIN_MS + 60000);
+  assert.deepEqual(readBodyCache(SHA, ""), { item: { name: "SIG 552" } }, "still inside 90 days");
+});
+
+test("a cached null is honoured while fresh and dropped when stale", (t) => {
+  // An unreadable picture is a RESULT and is cached so it is not re-read on
+  // every page load. It has to expire like anything else, or a card that was
+  // once unreadable never gets another chance.
+  t.after(clean);
+  writeBodyCache(SHA, null, "", Date.now());
+  const fresh = readBodyCache(SHA, "");
+  assert.ok(fresh && fresh.item === null, "a fresh null is a real answer: " + JSON.stringify(fresh));
+  writeBodyCache(SHA, null, "", Date.now() - RETAIN_MS - 1000);
+  assert.equal(readBodyCache(SHA, ""), null, "a stale null must not be reused");
+});
+
+test("a missing entry reads as missing, not as an error", () => {
+  clean();
+  assert.equal(readBodyCache("0".repeat(64), ""), null);
+});

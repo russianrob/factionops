@@ -16,7 +16,7 @@ import { claudeExtractImage } from "./circular-pipeline.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(__dirname, "data", "rwp-image-cache");
 const MAX_BYTES = 6 * 1024 * 1024;
-const RETAIN_MS = 90 * 86400000;
+export const RETAIN_MS = 90 * 86400000;
 
 // Only hosts people actually paste Torn screenshots from. An open fetcher that
 // takes any URL from a userscript is an SSRF hole pointed at our own network.
@@ -105,16 +105,39 @@ const fileFor = (url, hint) => path.join(DIR, cacheKey(url, hint) + ".json");
 // whatever address it arrives at — the fetch still happens, but the fetch is
 // free and the vision call is not. The caption rides along for the same reason
 // it does above.
-const bodyFileFor = (sha, hint) => {
+export const bodyFileFor = (sha, hint) => {
   const hk = hintKey(hint);
   return path.join(DIR, "img-" + sha.slice(0, 32) + (hk ? "-" + hk : "") + "-v" + PROMPT_VERSION + ".json");
 };
 
-function writeBodyCache(sha, item, hint) {
+export function writeBodyCache(sha, item, hint, at = Date.now()) {
   try {
     fs.mkdirSync(DIR, { recursive: true });
-    fs.writeFileSync(bodyFileFor(sha, hint), JSON.stringify({ at: Date.now(), sha, item }));
+    fs.writeFileSync(bodyFileFor(sha, hint), JSON.stringify({ at, sha, item }));
   } catch (e) { console.warn(`[rwp-image] body cache write failed: ${e.message}`); }
+}
+
+/**
+ * A reading recovered from the image BYTES, or null if there is not a usable
+ * one — missing, unreadable, or past the retention window.
+ *
+ * The window is the point. readCache has always enforced it and this did not:
+ * it wrote a timestamp and never read it back. A stale URL entry therefore
+ * caused a re-fetch, the body hash matched, and the ORIGINAL reading was
+ * served anyway — so a reading effectively lived forever and a misread card
+ * stayed misread indefinitely.
+ *
+ * Returns an envelope rather than the item, because "read as nothing" is a
+ * real answer worth caching and `null` already means "no answer here".
+ */
+export function readBodyCache(sha, hint) {
+  try {
+    const f = bodyFileFor(sha, hint);
+    if (!fs.existsSync(f)) return null;
+    const c = JSON.parse(fs.readFileSync(f, "utf-8"));
+    if (Date.now() - (c.at || 0) > RETAIN_MS) return null;
+    return { item: c.item === undefined ? null : c.item };
+  } catch { return null; }
 }
 
 export function readCache(url, hint) {
@@ -218,14 +241,11 @@ export async function readItemImage(url, opts = {}) {
 
   // Seen these exact bytes before under another URL: reuse the reading and note
   // this URL for next time, so only the first sighting anywhere costs anything.
-  try {
-    const bf = bodyFileFor(sha, hint);
-    if (fs.existsSync(bf)) {
-      const prev = JSON.parse(fs.readFileSync(bf, "utf-8"));
-      writeCache(url, { item: prev.item, sha }, hint);
-      return { ok: true, cached: true, sameImage: true, item: prev.item };
-    }
-  } catch { /* a cache miss must never be an error */ }
+  const prev = readBodyCache(sha, hint);
+  if (prev) {
+    writeCache(url, { item: prev.item, sha }, hint);
+    return { ok: true, cached: true, sameImage: true, item: prev.item };
+  }
 
   let reply;
   try {
