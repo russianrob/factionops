@@ -339,3 +339,32 @@ test("one uid is asked about once, however many passes run", () => {
   const body = SRC.slice(i, i + 700);
   assert.match(body, /uidAsked\[uid\]/);
 });
+
+// ── The trade page without an API key ──────────────────────────
+// RW pricing needs the price FEED, which is a public CDN file. It does not
+// need an API key. But the trade page refused to run at all without the
+// item-market map, which does need one — so on PDA, where the auto-key often
+// lacks Inventory permission, nothing appeared on a trade at all.
+
+test("the trade page prices without the item-market map", () => {
+  const i = SRC.indexOf("function ensureTradePrices");
+  const body = SRC.slice(i, i + 1100);
+  assert.match(body, /injectTradePrices\(/, "it must be called at all");
+  // And not from inside a branch that only runs when the map exists.
+  const call = body.indexOf("injectTradePrices(");
+  const guard = body.indexOf("if (!haveMap");
+  assert.ok(guard >= 0 && call > guard,
+    "the call must come after the warning, not instead of it: " + body.slice(0, 400));
+  assert.ok(!/\{ injectTradePrices\(maps\); return; \}/.test(body),
+    "the early-return gate must be gone");
+});
+
+test("a missing map costs the base values, not the RW ones", () => {
+  // tradeLineValue needs the map and returns 0 without it. tradeRwValue reads
+  // the price feed and does not. A trade with no key should still show what
+  // the RW weapons in it are worth.
+  const i = SRC.indexOf("function tradeLineValue");
+  const body = SRC.slice(i, i + 600);
+  assert.match(body, /maps && maps\.byId/, "guarded against a null map");
+  assert.match(body, /maps && maps\.byName/);
+});

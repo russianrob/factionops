@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.9.0
+// @version      3.9.1
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.9.0';
+    var SCRIPT_VERSION = '3.9.1';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -4491,11 +4491,18 @@
         var warnedNoMap = false;
         function go() {
             var maps = safeGet(NW_ITEMS_CACHE_KEY, null);
-            if (maps && maps.byId && maps.byName) { injectTradePrices(maps); return; }
-            if (!warnedNoMap) {
+            var haveMap = !!(maps && maps.byId && maps.byName);
+            if (!haveMap && !warnedNoMap) {
                 warnedNoMap = true;
-                try { console.log('[rwp-trade] no price map cached yet (api key ' + (getEffectiveApiKey() ? 'set' : 'MISSING — set one in RW Pricer settings to price trades') + ')'); } catch (_) {}
+                try { console.log('[rwp-trade] no item-market map (api key ' + (getEffectiveApiKey() ? 'set' : 'missing') + ') — RW weapons still price, plain items will not'); } catch (_) {}
             }
+            // Run either way. The RW price comes from the price FEED, which is
+            // a public file needing no key; only the BASE value of a plain item
+            // needs the market map. Gating the whole page on the map meant that
+            // on PDA -- where the auto-key often lacks Inventory permission --
+            // a trade showed nothing at all, including the billion-dollar
+            // weapon in it.
+            injectTradePrices(haveMap ? maps : null);
         }
         var key = getEffectiveApiKey();
         if (key) { try { fetchItemMarketPrices(key, function () { go(); }); } catch (_) {} }
