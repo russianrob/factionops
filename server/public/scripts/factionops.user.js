@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.4.0
+// @version      5.4.1
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -99,7 +99,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.0';
+    const SCRIPT_VERSION = '5.4.1';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9510,6 +9510,8 @@ body.wb-chain-active {
             '<label class="fo-wp-filter-chk"><input type="checkbox" id="fo-wp-hide-online">Hide online</label>' +
             '<label class="fo-wp-filter-chk" title="Last action 5+ min ago -- Torn\'s idle and offline both">' +
                 '<input type="checkbox" id="fo-wp-hide-offline">Hide offline</label>' +
+            '<label class="fo-wp-filter-chk" title="Abroad, flying, or in a foreign hospital -- nobody you can hit from Torn">' +
+                '<input type="checkbox" id="fo-wp-hide-abroad">Hide abroad</label>' +
             '<span class="fo-wp-filter-count" id="fo-wp-count"></span>' +
             // Settings without opening the overlay. The gear used to live only
             // in the overlay header, so reaching it from the war page meant
@@ -9553,6 +9555,13 @@ body.wb-chain-active {
         offEl.addEventListener('change', function () {
             _hideOffline = offEl.checked;
             try { GM_setValue('factionops_hide_offline', _hideOffline); } catch (_) {}
+            try { markCalledRows(); } catch (_) {}
+        });
+        const abEl = bar.querySelector('#fo-wp-hide-abroad');
+        abEl.checked = _hideAbroad;
+        abEl.addEventListener('change', function () {
+            _hideAbroad = abEl.checked;
+            try { GM_setValue('factionops_hide_abroad', _hideAbroad); } catch (_) {}
             try { markCalledRows(); } catch (_) {}
         });
 
@@ -11322,6 +11331,9 @@ body.wb-chain-active {
     // 5+ min ago' per user — matches Torn's idle+offline activity
     // states (online = <5 min, idle = 5-7 min, offline = 7+ min).
     let _hideOffline = false;
+    // v5.4.1: hide-abroad toggle. Abroad, in the air, or in a foreign
+    // hospital -- all of them unattackable from Torn.
+    let _hideAbroad = false;
     try {
         const m = Number(GM_getValue('factionops_stats_filter_min', 0));
         if (Number.isFinite(m) && m > 0) _statsFilterMin = m;
@@ -11329,6 +11341,7 @@ body.wb-chain-active {
         if (Number.isFinite(x) && x > 0) _statsFilterMax = x;
         _hideOnline = !!GM_getValue('factionops_hide_online', false);
         _hideOffline = !!GM_getValue('factionops_hide_offline', false);
+        _hideAbroad = !!GM_getValue('factionops_hide_abroad', false);
     } catch (_) {}
 
     // Online / idle / offline, from the server's enemyStatuses -- the same
@@ -11338,9 +11351,32 @@ body.wb-chain-active {
     // 'Offline' follows the overlay's meaning: last action 5+ min ago, which
     // is Torn's idle AND offline both. Unknown activity SHOWS, for the same
     // reason unknown stats do -- a hidden row is a target nobody attacks.
+    /**
+     * Is this target out of reach from Torn?
+     *
+     * Three states mean the same thing on a call sheet: abroad, on a plane, and
+     * in a foreign hospital. None of them can be attacked from here, so on a
+     * long war list they are rows to scroll past.
+     *
+     * The foreign hospital is the one that needs care. Its state is Hospital
+     * like any other and only the wording separates it -- Torn writes "In a
+     * Swiss hospital for 4 minutes" abroad and plain "In hospital for 10
+     * minutes" at home. Getting that backwards would hide most of a war, so the
+     * country wording is required rather than merely the word hospital.
+     */
+    function isAwayFromTorn(status, description) {
+        const st = String(status || '').toLowerCase();
+        if (st === 'abroad' || st === 'traveling' || st === 'travelling') return true;
+        if (st !== 'hospital') return false;
+        // "In a Swiss hospital", "In a South African hospital" -- a country
+        // sits between the article and the word. "In hospital" has none.
+        return /\bin\s+an?\s+\S.*\bhospital\b/i.test(String(description || ''));
+    }
+
     function passesActivityFilter(targetId) {
-        if (!_hideOnline && !_hideOffline) return true;
+        if (!_hideOnline && !_hideOffline && !_hideAbroad) return true;
         const st = (state.statuses || {})[targetId];
+        if (_hideAbroad && st && isAwayFromTorn(st.status, st.description)) return false;
         const act = st && st.activity ? String(st.activity).toLowerCase() : null;
         if (!act) return true;
         if (_hideOnline && act === 'online') return false;
