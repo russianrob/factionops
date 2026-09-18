@@ -708,3 +708,10 @@ test("the ArmaLite from the table is not priced off its cheaper bonus", () => {
   assert.equal(p.bonuses[0].name, "Warlord", "the Warlord is what this is worth");
   assert.ok(p.estimate > 600e6, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
 });
+
+test("a nameless reading is named by its shop price", () => {
+  // Distinct from the "M16A4" case: there the name was wrong, here there is
+  // none at all, which is what a cropped card now honestly returns.
+  const buys = { "kodachi": 95000, "armalite m-15a4": 20000000 };
+  assert.equal(weaponByBuyPrice(feed, buys, 95000), "Kodachi");
+});

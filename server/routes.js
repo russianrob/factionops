@@ -12273,10 +12273,12 @@ function rwpFeed() {
  * $20,000,000 -- so it names the gun when nothing else on the card does.
  */
 function identify(item) {
-  if (!item || !item.name) return item;
+  if (!item) return item;
   try {
     const feed = rwpFeed();
-    if (rwpPriceItem(feed, item).unknown) {
+    // No name at all is what a cropped card honestly returns now; a name that
+    // resolves to nothing is what it used to invent. The buy price answers both.
+    if (!item.name || rwpPriceItem(feed, item).unknown) {
       const byBuy = rwpWeaponByBuyPrice(feed, getAllBuyPricesByName(), item.buy);
       if (byBuy) return { ...item, name: byBuy, readAs: item.name, identifiedByBuyPrice: true };
     }
@@ -12285,7 +12287,9 @@ function identify(item) {
 }
 
 function priceOf(item) {
-  if (!item || !item.name) return null;
+  // No !item.name guard: identify() can supply one from the shop price, and
+  // bailing here would drop the reading before it got the chance.
+  if (!item) return null;
   try {
     const p = rwpPriceItem(rwpFeed(), identify(item));
     return p.ok ? p : null;
@@ -12306,7 +12310,11 @@ function priceOf(item) {
 // installed script ignores a field it does not know about but would happily
 // render a price object that has no estimate in it.
 function unknownItem(item) {
-  if (!item || !item.name) return false;
+  if (!item) return false;
+  // A nameless card is not an invented one — it is honest about having no name,
+  // and identify() may still place it. Only a name that resolves to nothing is
+  // the failure this flag exists to suppress.
+  if (!item.name) return false;
   try {
     const p = rwpPriceItem(rwpFeed(), identify(item));
     return !p.ok && !!p.unknown;

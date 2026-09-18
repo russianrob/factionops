@@ -84,12 +84,18 @@ export function hintKey(hint) {
  * 2 added "buy", so a card cropped above its name could be identified by its
  * shop price. 3 stopped armour's "Armor:" and "Coverage:" rows being returned
  * as bonuses -- an Assault Body came back carrying "46.47% Armor" and "45.55%
- * Coverage" alongside its real one. Every reading cached before a bump answers
- * a different question; without the version in the key those stale answers
- * would be served forever and the fix would never reach the images that needed
- * it. Cosmetic rewording does not need a bump -- a changed ANSWER does.
+ * Coverage" alongside its real one. 4 forbade inventing a name: two cards
+ * cropped above their name came back as "Big Al's Gun Shop Katana" and "Big
+ * Al's Gun Shop Adjuster", the sell shop welded to what the picture looked
+ * like, both marked confident.
+ *
+ * Every reading cached before a bump answers a different question; without the
+ * version in the key those stale answers would be served forever and the fix
+ * would never reach the images that needed it. Cosmetic rewording does not need
+ * a bump -- a changed ANSWER does, and a bump costs a fresh read of every
+ * picture anyone looks at again, so it should buy one.
  */
-export const PROMPT_VERSION = 3;
+export const PROMPT_VERSION = 4;
 
 export function cacheKey(url, hint, version) {
   const hk = hintKey(hint);
@@ -164,7 +170,12 @@ Return ONE JSON object, nothing else:
  "bonuses":[{"name":"<bonus name>","pct":<number>}],"buy":<number or null>,"confident":true|false}
 
 Rules:
-- "name" is the item name as Torn writes it, e.g. "Cobra Derringer".
+- "name" is the item name as Torn writes it, e.g. "Cobra Derringer". It appears
+  in the sentence at the top — "The Cobra Derringer is a Pistol Weapon." If that
+  line is cut off, return "name":null. Never invent a name: not from the picture
+  of the weapon, and above all not from the shop beside "Sell:" or "Buy:", which
+  names a SHOP and never the item. A null name costs one price; a wrong one is
+  quoted to somebody as though it were real.
 - "rarity" is the coloured word beside Quality (Yellow, Orange, Red). null if absent.
 - "quality" is the Quality percentage as a number, e.g. 182.77.
 - Each bonus appears as "<pct>% <Name>", e.g. "97% Assassinate". Return every one.
@@ -211,6 +222,25 @@ ${h}
 </caption>`;
 }
 
+/**
+ * Is there enough in this reading to price something?
+ *
+ * A name is the usual answer, but not the only one. A card cropped above its
+ * name now correctly returns name:null — and drops to confident:false with it,
+ * because from the reader's side a missing field looks like a failed read. It
+ * is not: the shop price on the card identifies the weapon outright, $95,000
+ * being a Kodachi and nothing else. Discarding those threw away a complete
+ * answer for want of a label.
+ *
+ * A refusal on a NAMED card is still a refusal — that is the reader doubting
+ * what it read, which is a different thing from having nothing to name it with.
+ */
+export function usableRead(item) {
+  if (!item) return false;
+  if (item.name) return item.confident !== false;
+  return Number(item.buy) > 0;
+}
+
 /** Pull the first JSON object out of a model reply. */
 export function parseReply(text) {
   const m = String(text || "").match(/\{[\s\S]*\}/);
@@ -255,9 +285,9 @@ export async function readItemImage(url, opts = {}) {
   }
 
   const item = parseReply(reply);
-  // "confident: false" is the model declining, and it is a RESULT — cache it so
-  // an unreadable picture is not re-read on every page load.
-  if (!item || item.confident === false || !item.name) {
+  // A refusal is a RESULT — cached so an unreadable picture is not re-read on
+  // every page load.
+  if (!usableRead(item)) {
     writeCache(url, { item: null, sha }, hint);
     writeBodyCache(sha, null, hint);
     return { ok: true, item: null, reason: "could not read an item from that image" };

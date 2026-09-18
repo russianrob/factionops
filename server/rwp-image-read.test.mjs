@@ -5,7 +5,7 @@
 // the caption is fenced off from the instructions it sits next to.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hostAllowed, cacheKey, hintKey, buildPrompt, cleanHint, PROMPT_VERSION } from "./rwp-image-read.js";
+import { hostAllowed, cacheKey, hintKey, buildPrompt, cleanHint, PROMPT_VERSION, usableRead } from "./rwp-image-read.js";
 
 const URL1 = "https://editor.torn.com/a78795b3-1de5-4aa6-bc33-e62f2d5dc822-4154995.png";
 
@@ -128,4 +128,40 @@ test("a cached null is honoured while fresh and dropped when stale", (t) => {
 test("a missing entry reads as missing, not as an error", () => {
   clean();
   assert.equal(readBodyCache("0".repeat(64), ""), null);
+});
+
+test("the prompt forbids inventing a name the card does not show", () => {
+  // Two cached reads came back "Big Al's Gun Shop Katana" and "Big Al's Gun
+  // Shop Adjuster" — the SELL SHOP welded to what the picture looked like,
+  // both marked confident. Re-reading those under the same prompt would
+  // reproduce them exactly, so clearing the cache is only worth paying for if
+  // the rule that let them through is gone too.
+  const p = buildPrompt("");
+  assert.match(p, /Sell:/, "the sell shop is the text it keeps stealing");
+  assert.match(p, /\bnull\b/);
+  assert.ok(/never invent|do not invent|rather than invent/i.test(p),
+    "the prompt must forbid it outright: " + p);
+});
+
+test("a nameless card is kept when its shop price can name it", () => {
+  // The name rule works: a cropped card now returns name:null instead of
+  // inventing one. But the reader also drops to confident:false, and the old
+  // discard rule threw the whole reading away — including the buy price that
+  // identifies the weapon outright. $95,000 is a Kodachi and nothing else;
+  // $20,000,000 is an ArmaLite M-15A4 and nothing else.
+  assert.equal(usableRead({ name: null, buy: 95000, confident: false,
+    bonuses: [{ name: "Parry", pct: 53 }] }), true);
+  assert.equal(usableRead({ name: "Kodachi", confident: true, bonuses: [] }), true);
+});
+
+test("a reading with neither a name nor a price is not kept", () => {
+  assert.equal(usableRead({ name: null, buy: null, confident: false, bonuses: [] }), false);
+  assert.equal(usableRead({ confident: false }), false);
+  assert.equal(usableRead(null), false);
+});
+
+test("an explicit refusal on a named card is still a refusal", () => {
+  // confident:false with a name means the reader doubted what it read, which
+  // is different from having nothing to name it with.
+  assert.equal(usableRead({ name: "Kodachi", confident: false, bonuses: [] }), false);
 });
