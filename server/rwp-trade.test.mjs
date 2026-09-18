@@ -193,3 +193,25 @@ test("the item page asks the icon only when the row gave nothing", () => {
   assert.match(body, /bonuses\.length/, "gated on the row yielding nothing: " + body.slice(0, 200));
   assert.match(body, /bonusesFromInfoIcon/);
 });
+
+test("the bonus is found however Torn classes the element carrying it", () => {
+  // The add-items picker at trade.php#step=add is a different list again from
+  // the trade window, and i.networth-info-icon is not necessarily what it uses.
+  // The title's CONTENT is the reliable marker: Torn writes bonus-attachment-*
+  // classes into it wherever the fragment appears.
+  vm.runInContext([fn("bonusesFromInfoIcon"), "globalThis.__bi2 = bonusesFromInfoIcon;"].join("\n"), sandbox);
+  const withSel = (match) => ({
+    querySelector: (sel) => (match(sel) ? { getAttribute: () => KODACHI } : null),
+  });
+  // The trade window's icon.
+  assert.ok(sandbox.__bi2(withSel((s) => s.indexOf("networth-info-icon") >= 0)));
+  // Anything else carrying the same fragment.
+  assert.ok(sandbox.__bi2(withSel((s) => s.indexOf("bonus-attachment") >= 0)),
+    "a differently-classed element with the same title must still be read");
+});
+
+test("an element whose title is not a bonus fragment is ignored", () => {
+  vm.runInContext([fn("bonusesFromInfoIcon"), "globalThis.__bi3 = bonusesFromInfoIcon;"].join("\n"), sandbox);
+  const el = { querySelector: () => ({ getAttribute: () => "Click to view this item" }) };
+  assert.equal(sandbox.__bi3(el), null);
+});

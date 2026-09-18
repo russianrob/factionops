@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.8.1
+// @version      3.8.2
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.8.1';
+    var SCRIPT_VERSION = '3.8.2';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1429,7 +1429,13 @@
      */
     function bonusesFromInfoIcon(el) {
         if (!el || !el.querySelector) return null;
-        var icon = el.querySelector('i.networth-info-icon[title]');
+        // The trade WINDOW uses i.networth-info-icon. The add-items picker at
+        // #step=add is a different list again, and matching on that class alone
+        // found nothing there — so the fragment's own CONTENT is the marker.
+        // Torn writes bonus-attachment-* classes inside the title wherever it
+        // renders one, whatever it hangs the title on.
+        var icon = el.querySelector('i.networth-info-icon[title]')
+                || el.querySelector('[title*="bonus-attachment"]');
         if (!icon) return null;
         return parseTradeBonusTitle(icon.getAttribute('title'));
     }
