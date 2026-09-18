@@ -624,6 +624,10 @@
         // off one bonus while that very weapon had sold for $2.14b.
         var pairLevelGroups = {}; // weapon|A+B|rarity|pctA+pctB -> {prices, last}
         var comboMaxTracker = {};  // combo key -> {price, qual}
+        // Earliest sale per combo, so a badge can say how far "all the way
+        // back" actually reaches. It is not the dataset's span: the data runs
+        // to 2015, while a given weapon+bonus may only have sold since 2023.
+        var comboSince = {};       // combo key -> earliest unix ts
         var maxBonusTracker = {}; // weapon+rarity -> {price, bonuses}
         // Observed QUALITY span per weapon+rarity. A card that shows a quality
         // but no colour can be placed by it: an Enfield SA-80 at 245.2% is past
@@ -698,6 +702,8 @@
                 if (!comboMaxTracker[cbKey1] || price > comboMaxTracker[cbKey1].price) {
                     comboMaxTracker[cbKey1] = { price: price, qual: qual1 };
                 }
+                var cts = parseInt(cols[0], 10);
+                if (cts > 0 && (!comboSince[cbKey1] || cts < comboSince[cbKey1])) comboSince[cbKey1] = cts;
             }
 
             // Double-bonus exact combo (both bonuses present on the same sale)
@@ -905,6 +911,16 @@
             thinRolls: newThinRolls,
             pairLevelPrices: newPairLevelPrices,
             qualityRanges: newQualRanges,
+            comboSince: (function () {
+                var out = {};
+                Object.keys(comboSince).forEach(function (k) {
+                    var parts = k.split('|');
+                    var wb = parts[0] + '|' + parts[1];
+                    if (!out[wb]) out[wb] = {};
+                    out[wb][parts[2]] = new Date(comboSince[k] * 1000).getUTCFullYear();
+                });
+                return out;
+            })(),
             weaponMaxBonus: newMaxBonus
         };
     }

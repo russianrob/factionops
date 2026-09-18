@@ -139,8 +139,8 @@ test("says so when the recent market differs from the history", () => {
   const p = priceItem(feed, {
     name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
   });
-  assert.ok(p.notes.some((n) => /going all the way back/i.test(n)),
-    "no note naming the all-time figure: " + p.notes.join(" | "));
+  assert.ok(p.notes.some((n) => /all \d+ sales on record/i.test(n)),
+    "no note naming the longer view: " + p.notes.join(" | "));
 });
 
 test("still prices when the feed carries no recent slice", () => {
@@ -871,7 +871,22 @@ test("the all-time note says how many sales back it", () => {
   const p = priceItem(feed, {
     name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
   });
-  const back = p.notes.find((n) => /going all the way back/i.test(n));
-  assert.ok(back, "expected the all-time note: " + p.notes.join(" | "));
+  const back = p.notes.find((n) => /on record/i.test(n));
+  assert.ok(back, "expected the longer-view note: " + p.notes.join(" | "));
   assert.match(back, /\d+ sales/, "with its sample size: " + back);
+});
+
+test("the longer view names its window and its size", () => {
+  // "These are the last year's prices. Going all the way back it's $1.23b
+  // across 31 sales" left two questions unanswered: which prices are the last
+  // year's, and how far back is "all the way"? For this weapon it is three
+  // years, not the dataset's eleven.
+  const p = priceItem(feed, {
+    name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
+  });
+  const back = p.notes.find((n) => /\d+ sales/.test(n) && /\$/.test(n));
+  assert.ok(back, "expected the longer-view note: " + p.notes.join(" | "));
+  assert.match(back, /last 12 months/i, "say which window the price used: " + back);
+  assert.match(back, /back to (19|20)\d\d/, "and how far the other one reaches: " + back);
+  assert.ok(!/all the way back/i.test(back), "vague: " + back);
 });

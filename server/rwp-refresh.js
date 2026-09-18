@@ -89,6 +89,9 @@ export async function refreshRwpPrices(reason) {
       // Quality span per weapon+rarity, so a card showing a quality but no
       // colour can still be placed. myGear listings show one and not the other.
       weaponQualityRanges: wData.qualityRanges,
+      // Earliest sale year per weapon+bonus+rarity, so "going back to X" is the
+      // truth for THAT weapon rather than the dataset span.
+      weaponComboSince:  wData.comboSince,
       // The exact weapon: both bonuses at both rolls, last 365 days only.
       weaponPairLevelPrices: (wData.recent && wData.recent.pairLevelPrices) || {},
       // Rolls too thin to price from, kept so a badge can say what DID sell

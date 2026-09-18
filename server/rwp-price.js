@@ -683,7 +683,15 @@ export function priceItem(feed, item) {
         // there lets the reader weigh it without the estimate moving.
         const histCombo = ((feed.weaponComboPrices || {})[name + "|" + lead.name] || {})[rarity];
         const histN = cntOf(histCombo);
-        out.notes.push(`These are the last year's prices. Going all the way back it's ${money(histAt.value)}${histN ? ` across ${histN} sales` : ""}, but those older sales were a different market, not a bigger one — prices fall roughly a quarter a year.`);
+        // Both halves have to be concrete. "The last year's prices" did not say
+        // WHICH price came from the last year, and "all the way back" did not
+        // say how far back that is — three years for this weapon, eleven for
+        // the dataset, and the reader cannot tell which.
+        const since = ((feed.weaponComboSince || {})[name + "|" + lead.name] || {})[rarity];
+        out.notes.push(
+          `Priced on the last 12 months only. All ${histN || "the"} sales on record` +
+          `${since ? `, going back to ${since},` : ""} would give ${money(histAt.value)} — ` +
+          `but prices fall roughly a quarter a year, so the older ones are a different market rather than more of this one.`);
       }
       return out;
     }
