@@ -48,7 +48,7 @@ vm.runInContext([
   fn("TBL"), fn("levelMedianOf"), fn("lookupWeapon"), fn("normalizeWeaponName"), fn("resolveBonusName"),
   fn("getMedianPrice"), fn("getWeaponComboMedian"), fn("pairKeyFor"), fn("getWeaponPairComboMedian"),
   fn("getWeaponLevelMedian"), fn("getWeaponLevelCount"), fn("getCombinedLevelValue"),
-  fn("forumHeaderMap"), fn("forumRowItem"), fn("rarityFromRoll"), fn("priceForumRow"),
+  fn("forumHeaderMap"), fn("forumRowItem"), fn("rarityFromRoll"), fn("forumBonusWorth"), fn("priceForumRow"),
 ].join("\n"), sandbox, { timeout: 5000, filename: "rwp-forum-tables.js" });
 
 const { forumHeaderMap, forumRowItem, rarityFromRoll, priceForumRow } = sandbox;
@@ -386,4 +386,16 @@ test("two lines in one cell do not run together", () => {
   assert.match(out, /Achilles\s+Warlord/, "got: " + JSON.stringify(out));
   assert.equal(JSON.stringify(Array.from(sandbox.forumBonusNames(out))),
                JSON.stringify(["Achilles", "Warlord"]));
+});
+
+test("a table row is priced off its valuable bonus, not its bigger number", () => {
+  // ArmaLite M-15A4, Orange, "Achilles Warlord" / "82% 17%". Ranking by
+  // percentage picked the Achilles (~$492m) and ignored a Warlord worth ~$755m
+  // on its own — more than the whole estimate it produced.
+  const r = forumRowItem(["ArmaLite M-15A4", "Primary", "Orange", "Achilles Warlord", "82% 17%"],
+    { weapon: 0, bonus: 3, pct: 4, rarity: 2 });
+  const p = priceForumRow(r);
+  assert.ok(p, "expected a price");
+  assert.equal(p.bonuses[0].name, "Warlord", "the Warlord is what this weapon is worth");
+  assert.ok(p.value > 600e6, "got $" + (p.value / 1e6).toFixed(0) + "m");
 });

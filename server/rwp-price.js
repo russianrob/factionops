@@ -515,12 +515,37 @@ export function priceItem(feed, item) {
   if (bonuses.length && rarity) {
     const lead = bonuses[0];
     const pts = levelCurve(feed, name, lead.name, rarity);
-    const at = valueAtPct(pts, num(lead.pct));
+    let at = valueAtPct(pts, num(lead.pct));
+
+    // A roll can sit outside its own rarity's band. This weapon is Orange
+    // because of its 82% Achilles, while its 17% Warlord is a Yellow-band roll
+    // — Orange Warlords start at 20%, so "Orange Warlord at 17%" asks for
+    // something that cannot exist as a single-bonus sale, and extrapolating
+    // below the floor returned $1.43b. Yellow recorded that roll twenty-two
+    // times at $755m. An exact roll somebody actually sold beats a line drawn
+    // past the end of a different one, so it is borrowed, and said so.
+    let borrowed = null;
+    if (!at || at.extrapolated) {
+      const tbl = table(feed, "levelPrices", "weaponLevelPrices")[name + "|" + lead.name] || {};
+      for (const r of Object.keys(tbl)) {
+        if (r === rarity) continue;
+        const e = tbl[r] && tbl[r][String(num(lead.pct))];
+        if (Array.isArray(e) && num(e[0])) {
+          if (!borrowed || (num(e[1]) || 0) > borrowed.n) borrowed = { r, v: num(e[0]), n: num(e[1]) || 1 };
+        }
+      }
+      if (borrowed) at = { value: borrowed.v, extrapolated: false };
+      else borrowed = null;
+    }
+
     if (at) {
+      if (borrowed) {
+        out.notes.push(`No ${rarity} one has sold at ${lead.pct}% ${lead.name} — that roll makes a ${borrowed.r} weapon on its own. This is what ${borrowed.n} ${borrowed.r} ones went for at that roll.`);
+      }
       out.basis = `what ${thing(rarity, name)} with ${lead.name} has sold for, matched to the ${lead.pct}%`;
       out.estimate = at.value;
       out.extrapolated = at.extrapolated;
-      if (at.extrapolated) {
+      if (at.extrapolated && !borrowed) {
         const below = num(lead.pct) < pts[0][0];
         out.notes.push(below
           ? `Nothing this low has ever sold — the lowest on record is ${pts[0][0]}%. This follows the trend below that, so treat it as a guess rather than a price.`
@@ -535,7 +560,9 @@ export function priceItem(feed, item) {
       // low-high beside a last-year median reads as one measurement and is two.
       // Sales at THIS roll where the roll was actually recorded; the pooled
       // range only when the price had to be estimated between or beyond them.
-      const exact = levelEntry(table(feed, "levelPrices", "weaponLevelPrices"), name, lead.name, rarity, num(lead.pct));
+      const exact = borrowed
+        ? [borrowed.v, borrowed.n]
+        : levelEntry(table(feed, "levelPrices", "weaponLevelPrices"), name, lead.name, rarity, num(lead.pct));
       if (exact) {
         out.samples = num(exact[1]);
       } else {

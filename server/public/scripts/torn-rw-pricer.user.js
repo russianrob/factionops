@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.5.6
+// @version      3.5.7
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.5.6';
+    var SCRIPT_VERSION = '3.5.7';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -3735,12 +3735,35 @@
      *
      * The same ladder the badges use, driven from text instead of the DOM.
      */
+    /**
+     * What a bonus is worth on this weapon, for deciding which one leads.
+     *
+     * Percentages are not comparable across bonus types. An ArmaLite M-15A4
+     * with 82% Achilles and 17% Warlord was priced off the Achilles because 82
+     * is the bigger number — while the Warlord alone is worth more than the
+     * whole estimate that produced.
+     */
+    function forumBonusWorth(weaponKey, bonusName, rarity) {
+        var best = 0;
+        var t = TBL('comboPrices')[weaponKey + '|' + bonusName];
+        if (!t) return 0;
+        if (rarity && t[rarity]) return t[rarity][1] || 0;
+        for (var r in t) if (t[r] && t[r][1] > best) best = t[r][1];
+        return best;
+    }
+
     function priceForumRow(item) {
         if (!item) return null;
         var key = lookupWeapon(normalizeWeaponName(item.name));
         if (!key) return null;
-        var bonuses = item.bonuses || [];
+        var bonuses = (item.bonuses || []).slice();
         if (!bonuses.length) return null;
+
+        // Worth first, percentage only to break a tie.
+        bonuses.sort(function (a, b) {
+            return (forumBonusWorth(key, b.name, item.rarity) - forumBonusWorth(key, a.name, item.rarity))
+                || (b.level - a.level);
+        });
 
         var lead = bonuses[0];
         // A rarity the seller wrote down beats one worked back out of the roll.

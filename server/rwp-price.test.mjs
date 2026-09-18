@@ -663,3 +663,48 @@ test("a single-bonus weapon is untouched by any of this", () => {
   assert.match(p.basis, /matched to the 9%/);
   assert.ok(!/both bonuses/i.test(p.basis));
 });
+
+// ── A roll outside its rarity's band ───────────────────────────
+// An ArmaLite M-15A4 with 82% Achilles and 17% Warlord. The weapon is Orange
+// because of the Achilles; the 17% Warlord is a YELLOW-band roll. Looking up
+// "Orange Warlord at 17%" asks for something that cannot exist as a single-
+// bonus sale — Orange Warlords start at 20% — so the curve was extrapolated
+// below its own floor and returned $1.43b.
+//
+// Yellow recorded 17% Warlord twenty-two times, at $755m. An exact roll
+// somebody actually sold beats a line drawn past the end of a different one.
+
+test("an exact roll at another rarity beats extrapolating this one", () => {
+  const p = priceItem(feed, {
+    name: "ArmaLite M-15A4", rarity: "Orange",
+    bonuses: [{ name: "Warlord", pct: 17 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  assert.equal(p.extrapolated, false, "there is a real sale at this roll");
+  assert.ok(p.estimate > 600e6 && p.estimate < 900e6,
+    "got $" + (p.estimate / 1e6).toFixed(0) + "m; Yellow sold 22 of them at $755m");
+  assert.ok(p.notes.some((n) => /Yellow/.test(n)),
+    "borrowing another rarity's sales must be declared: " + p.notes.join(" | "));
+});
+
+test("a roll inside the band still uses its own rarity", () => {
+  const p = priceItem(feed, {
+    name: "ArmaLite M-15A4", rarity: "Orange",
+    bonuses: [{ name: "Warlord", pct: 23 }],
+  });
+  assert.match(p.basis, /an Orange ArmaLite M-15A4 with Warlord/);
+  assert.ok(!p.notes.some((n) => /Yellow/.test(n)));
+  assert.ok(p.estimate > 2e9, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
+});
+
+test("the ArmaLite from the table is not priced off its cheaper bonus", () => {
+  // The table pricer ranked by percentage: 82% beat 17%, so it priced the
+  // Achilles and ignored a Warlord worth more on its own than the whole
+  // estimate. Achilles at 82% is ~$492m; Warlord at 17% is ~$755m.
+  const p = priceItem(feed, {
+    name: "ArmaLite M-15A4", rarity: "Orange",
+    bonuses: [{ name: "Achilles", pct: 82 }, { name: "Warlord", pct: 17 }],
+  });
+  assert.equal(p.bonuses[0].name, "Warlord", "the Warlord is what this is worth");
+  assert.ok(p.estimate > 600e6, "got $" + (p.estimate / 1e6).toFixed(0) + "m");
+});
