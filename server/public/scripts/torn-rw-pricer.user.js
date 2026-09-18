@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.7.1
+// @version      3.8.0
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.7.1';
+    var SCRIPT_VERSION = '3.8.0';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -3534,6 +3534,63 @@
         var m = String(href).match(/itemID=(\d+)/i);
         return m ? Number(m[1]) : null;
     }
+    /**
+     * The RW bonus on a traded item, out of the info icon's title attribute.
+     *
+     * Torn's trade window totals items at their BASE market value: a Red Steyr
+     * AUG with 31% Focus counts as $74,731, the price of any Steyr AUG, while
+     * the weapon is worth about a billion. That is the one place in Torn where
+     * a missing price costs real money, because the screen has an Accept button.
+     *
+     * The bonus is not in the row. It is an HTML fragment in the title of
+     * i.networth-info-icon, which Torn renders into its shared tooltip on
+     * hover — but the attribute is present on load, so nothing needs hovering.
+     *
+     *   <div class='t-overflow'><i class='bonus-attachment-quicken'></i>
+     *     <b>Quicken</b><br/>82% increased passive speed while using this weapon
+     *   </div>
+     *   <ul class='bonus-tooltip'>
+     *     <li><i class='...-rarity-bonus'></i><span>144.24% yellow</span></li>
+     *   </ul>
+     *
+     * Read as a string rather than parsed into a document: nothing here is
+     * injected anywhere, and the fragment comes from Torn's own template, so
+     * its shape is fixed.
+     *
+     * The rarity line carries a percentage too — "144.24% yellow" — and it is
+     * the quality, not a roll. Bonuses are read ONLY from inside t-overflow
+     * blocks, which is what keeps the two apart.
+     */
+    function parseTradeBonusTitle(title) {
+        var html = String(title || '');
+        if (!html) return null;
+
+        var bonuses = [];
+        var blockRe = /<div[^>]*class=['"][^'"]*t-overflow[^'"]*['"][^>]*>([\s\S]*?)<\/div>/gi;
+        var block;
+        while ((block = blockRe.exec(html)) !== null) {
+            var nm = block[1].match(/<b>([^<]+)<\/b>/i);
+            if (!nm) continue;
+            var resolved = resolveBonusName(nm[1].trim());
+            if (!resolved) continue;
+            // The first percentage after the name is the roll.
+            var after = block[1].slice(block[1].indexOf(nm[0]) + nm[0].length);
+            var pct = after.match(/(\d+(?:\.\d+)?)\s*%/);
+            if (!pct) continue;
+            bonuses.push({ name: resolved, level: Math.round(parseFloat(pct[1])) });
+        }
+        if (!bonuses.length) return null;
+
+        var quality = null, rarity = null;
+        var rar = html.match(/rarity-bonus[^>]*>\s*<\/i>\s*<span>\s*(\d+(?:\.\d+)?)\s*%\s*([A-Za-z]+)/i);
+        if (rar) {
+            quality = parseFloat(rar[1]);
+            var word = rar[2];
+            if (RARITY_WORD.test(word)) rarity = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        }
+        return { bonuses: bonuses, quality: quality, rarity: rarity };
+    }
+
     function tradeLineValue(line, maps) {
         if (!line) return 0;
         if (line.kind === 'money') return line.amount > 0 ? line.amount : 0;
@@ -3562,6 +3619,22 @@
             else if (!want && el.classList.contains(classes[i])) el.classList.remove(classes[i]);
         }
     }
+    /**
+     * The RW value of a traded row, or 0 if it is not an RW weapon.
+     *
+     * Only weapons carrying a bonus get one: a plain Kodachi in a trade IS
+     * worth its market price, and replacing that with anything would be wrong.
+     */
+    function tradeRwValue(rowLi, name) {
+        if (!rowLi || !name) return 0;
+        var icon = rowLi.querySelector('i.networth-info-icon[title]');
+        if (!icon) return 0;
+        var t = parseTradeBonusTitle(icon.getAttribute('title'));
+        if (!t) return 0;
+        var p = priceForumRow({ name: name, rarity: t.rarity, bonuses: t.bonuses });
+        return (p && p.value > 0) ? p.value : 0;
+    }
+
     function injectTradePrices(maps) {
         var trade = document.querySelector('#trade-container .trade-cont');
         if (!trade) return;
@@ -3583,13 +3656,21 @@
                     var rm = rowLi ? rowLi.querySelector('a[href*="itemID="]') : null;
                     info.itemId = rm ? extractTradeItemId(rm.getAttribute('href')) : null;
                 }
-                entries.push({ nameEl: nameEl, info: info, val: tradeLineValue(info, maps) });
+                var base = tradeLineValue(info, maps);
+                var rw = info.kind === 'item'
+                    ? tradeRwValue(nameEl.parentElement, info.name) * (info.qty > 0 ? info.qty : 1)
+                    : 0;
+                entries.push({ nameEl: nameEl, info: info, val: base, rw: rw });
             }
             if (!entries.length) continue;
-            var maxVal = 0, total = 0;
+            var maxVal = 0, total = 0, rwTotal = 0, anyRw = false;
             for (var j = 0; j < entries.length; j++) {
                 if (entries[j].val > maxVal) maxVal = entries[j].val;
                 total += entries[j].val > 0 ? entries[j].val : 0;
+                // An RW weapon counts at its RW price; everything else at the
+                // market price it is genuinely worth.
+                if (entries[j].rw > 0) { rwTotal += entries[j].rw; anyRw = true; }
+                else rwTotal += entries[j].val > 0 ? entries[j].val : 0;
             }
             for (var k = 0; k < entries.length; k++) {
                 var e = entries[k];
@@ -3597,8 +3678,8 @@
                 if (e.info.kind !== 'item') continue;
                 var row = e.nameEl.parentElement;
                 var badge = row.querySelector('.rwp-trade-val');
-                if (e.val > 0) {
-                    var txt = fmtBigDollar(e.val);
+                if (e.rw > 0 || e.val > 0) {
+                    var txt = fmtBigDollar(e.rw > 0 ? e.rw : e.val);
                     if (!badge) {
                         badge = document.createElement('div');
                         badge.className = 'rwp-trade-val';
@@ -3614,7 +3695,13 @@
                 }
             }
             var totalEl = userEl.querySelector('.rwp-trade-total');
-            var totalTxt = fmtBigDollar(total);
+            // The RW total where it differs, because a side holding one RW
+            // weapon is not worth what Torn says by several orders of
+            // magnitude. Torn's own figure is left alone beside it: a total
+            // that is part market price and part RW price, unlabelled, would
+            // be worse than either on its own.
+            var totalTxt = anyRw ? fmtBigDollar(rwTotal) + "  (Torn: " + fmtBigDollar(total) + ")"
+                                 : fmtBigDollar(total);
             if (!totalEl) {
                 totalEl = document.createElement('div');
                 totalEl.className = 'rwp-trade-total';
