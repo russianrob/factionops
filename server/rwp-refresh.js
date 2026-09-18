@@ -91,6 +91,9 @@ export async function refreshRwpPrices(reason) {
       weaponQualityRanges: wData.qualityRanges,
       // The exact weapon: both bonuses at both rolls, last 365 days only.
       weaponPairLevelPrices: (wData.recent && wData.recent.pairLevelPrices) || {},
+      // Rolls too thin to price from, kept so a badge can say what DID sell
+      // near a roll it cannot price.
+      weaponThinRolls:   (wData.recent && wData.recent.thinRolls) || wData.thinRolls || {},
       armourComboPrices: aData.comboPrices,
       // Per-roll armour medians. The armour side had none, so a 23%
       // Impenetrable Assault Body was quoted the median across every roll --

@@ -302,6 +302,51 @@ function bonusWorth(feed, name, bonus, rarity) {
 }
 
 /**
+ * Why a price could not be pinned to the roll, in terms of what DID sell.
+ *
+ * "This ignores the 50%" says what the pricer failed to do. The reader wants to
+ * know why the number is what it is, and the answer is almost always that
+ * nothing sold at their roll while something sold either side of it — a Red
+ * Glock 17 with Wither has 47% twice and 55% once, neither enough to price
+ * from, both worth knowing.
+ */
+function rollNeighbours(feed, name, bonus, rarity, pct) {
+  const thin = ((feed.weaponThinRolls || {})[name + "|" + bonus] || {})[rarity] || {};
+  const lv = ((table(feed, "levelPrices", "weaponLevelPrices")[name + "|" + bonus] || {})[rarity]) || {};
+  const all = [];
+  for (const src of [thin, lv]) {
+    for (const k of Object.keys(src)) {
+      const e = src[k];
+      const v = Array.isArray(e) ? num(e[0]) : num(e);
+      if (num(k) && v) all.push({ pct: num(k), value: v, n: (Array.isArray(e) && num(e[1])) || 1 });
+    }
+  }
+  if (!all.length) return null;
+  all.sort((a, b) => a.pct - b.pct);
+  const below = all.filter((p) => p.pct < pct).pop() || null;
+  const above = all.filter((p) => p.pct > pct)[0] || null;
+  const at = all.find((p) => p.pct === pct) || null;
+  return { below, above, at };
+}
+
+const salesWord = (n) => n + " sale" + (n === 1 ? "" : "s");
+
+function rollNote(feed, name, bonus, rarity, pct) {
+  const near = rollNeighbours(feed, name, bonus, rarity, pct);
+  const side = (p) => `${p.pct}% went for ${money(p.value)} (${salesWord(p.n)})`;
+  if (near && near.at) {
+    return `Only ${salesWord(near.at.n)} of ${thing(rarity, name)} at ${pct}% ${bonus} — too few to price from on their own, so this is the middle of every ${bonus} sale.`;
+  }
+  const parts = [];
+  if (near && near.below) parts.push(side(near.below));
+  if (near && near.above) parts.push(side(near.above));
+  if (parts.length) {
+    return `Nothing has sold at ${pct}% ${bonus}. The nearest on record: ${parts.join(", and ")}. This is the middle of every ${bonus} sale rather than a price for the ${pct}%.`;
+  }
+  return `Nothing has sold at ${pct}% ${bonus}, so this is the middle price across every ${bonus} one, good or bad.`;
+}
+
+/**
  * What to say when a second bonus could not be priced.
  *
  * Which WAY the number is wrong matters more than the fact that it is. Across
@@ -426,7 +471,7 @@ export function priceItem(feed, item) {
       if (combo) {
         out.basis = `what ${thing(rarity, name)} with ${lead.name} has sold for, at any percentage`;
         out.estimate = medOf(combo); out.low = num(combo[0]); out.high = num(combo[2]); out.samples = cntOf(combo);
-        out.notes.push(`This ignores the ${lead.pct}% — it's the middle price for any ${lead.name} one, good or bad.`);
+        out.notes.push(rollNote(feed, name, lead.name, rarity, num(lead.pct)));
         return out;
       }
     }
@@ -628,7 +673,7 @@ export function priceItem(feed, item) {
     if (arr) {
       out.basis = `what ${thing(rarity, name)} with ${bonuses[0].name} has sold for, at any percentage`;
       out.estimate = medOf(arr); out.low = num(arr[0]); out.high = num(arr[2]); out.samples = cntOf(arr);
-      out.notes.push(`This ignores the ${bonuses[0].pct}% — it's the middle price for any ${bonuses[0].name} one, good or bad.`);
+      out.notes.push(rollNote(feed, name, bonuses[0].name, rarity, num(bonuses[0].pct)));
       // This rung drops the second bonus too, and said nothing about it. The
       // S&W Revolver that exposed this quoted $375m off one bonus; the same
       // revolver, both bonuses, had sold three weeks earlier for $2.14b.

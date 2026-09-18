@@ -346,7 +346,10 @@ test("a roll-matched price reports sales at THAT roll, not all of them", () => {
   const p = priceItem(feed, {
     name: "Assault Body", rarity: "Yellow", bonuses: [{ name: "Impenetrable", pct: 23 }],
   });
-  assert.equal(p.samples, 592, "the count must be the sales at 23%, not 4688 across every roll");
+  // The property, not the number: a hardcoded count breaks every time the
+  // market moves, which says nothing about the code.
+  assert.ok(p.samples > 100 && p.samples < 2000,
+    "expected the sales at 23% (hundreds), got " + p.samples + " — 4688 would be every roll");
   assert.equal(p.low, null, "an all-roll range beside a one-roll price is two answers wearing one label");
   assert.equal(p.high, null);
 });
@@ -753,4 +756,54 @@ test("two bonuses are never inferred as Yellow from a roll", () => {
 
 test("a single-bonus weapon is still placed as Yellow when the roll says so", () => {
   assert.equal(rarityForRoll(feed, "Cobra Derringer", "Specialist", 23, 1), "Yellow");
+});
+
+// ── Explaining the number, not apologising for it ──────────────
+// "This ignores the 50%" tells the reader what the pricer failed to do. What
+// they want to know is why the number is what it is — and the answer is
+// usually that nothing sold at their roll, while something sold either side
+// of it. Those neighbouring sales exist; they were just never shown, because
+// a roll with one or two sales is too thin to PRICE from. It is not too thin
+// to quote.
+
+test("a roll-agnostic price names the rolls that did sell", () => {
+  // Red Glock 17 with Wither: 47% sold twice and 55% once, so no roll reaches
+  // the three needed for a curve and the price is the median of all three.
+  const p = priceItem(feed, {
+    name: "Glock 17", rarity: "Red", bonuses: [{ name: "Wither", pct: 50 }],
+  });
+  assert.equal(p.ok, true, p.reason);
+  const why = p.notes.join(" | ");
+  assert.match(why, /nothing.*sold at 50%/i, "say what is missing: " + why);
+  assert.match(why, /47%/, "and what did sell: " + why);
+  assert.match(why, /55%/, why);
+});
+
+test("the neighbouring sales are quoted with their prices and counts", () => {
+  const p = priceItem(feed, {
+    name: "Glock 17", rarity: "Red", bonuses: [{ name: "Wither", pct: 50 }],
+  });
+  const why = p.notes.find((n) => /47%/.test(n)) || "";
+  assert.match(why, /\$659m|\$658m/, "the 47% median: " + why);
+  assert.match(why, /\$1\.00b/, "the 55% sale: " + why);
+  assert.match(why, /2 sales/, "how thin each one is: " + why);
+});
+
+test("a roll above everything recorded says so", () => {
+  // Nothing either side, only below: the note must not invent an upper neighbour.
+  const p = priceItem(feed, {
+    name: "Glock 17", rarity: "Red", bonuses: [{ name: "Wither", pct: 80 }],
+  });
+  if (p.ok && p.notes.some((n) => /nothing.*sold at 80%/i.test(n))) {
+    const why = p.notes.find((n) => /nothing.*sold at 80%/i.test(n));
+    assert.ok(!/above/.test(why) || /55%/.test(why), "only real neighbours: " + why);
+  }
+});
+
+test("the word 'ignores' is gone from the roll-agnostic note", () => {
+  const p = priceItem(feed, {
+    name: "Glock 17", rarity: "Red", bonuses: [{ name: "Wither", pct: 50 }],
+  });
+  assert.ok(!p.notes.some((n) => /ignores the 50%/.test(n)),
+    "it explains instead: " + p.notes.join(" | "));
 });

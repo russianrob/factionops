@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.7.0
+// @version      3.7.1
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.7.0';
+    var SCRIPT_VERSION = '3.7.1';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -719,7 +719,13 @@
                 }
             }
 
-            // Per-level: single-bonus sales only, keyed by exact bonus %
+            // Per-level: single-bonus sales only, keyed by exact bonus %.
+            // Rolls that fall SHORT of the minimum are kept too, separately:
+            // one or two sales is too thin to price from and not too thin to
+            // quote. A Red Glock 17 with Wither has 47% twice and 55% once, so
+            // it has no curve at all — and "nothing sold at your 50%, but 47%
+            // went for $659m and 55% for $1.00b" is the answer to why its price
+            // is the median of everything.
             if (bn1 && !bn2 && qual1 > 0) {
                 var lgKey = weaponName + '|' + bn1 + '|' + rarityName + '|' + qual1;
                 if (!levelGroups[lgKey]) levelGroups[lgKey] = [];
@@ -827,7 +833,7 @@
         });
 
         // Compute per-level medians (weapon|bonus -> rarity -> level), median-only
-        var newLevelPrices = {};
+        var newLevelPrices = {}, newThinRolls = {};
         Object.keys(levelGroups).forEach(function(key) {
             var parts = key.split('|');
             var weapon = parts[0];
@@ -835,7 +841,15 @@
             var rar = parts[2];
             var lvl = parts[3];
             var arr = levelGroups[key].sort(function(a, b) { return a - b; });
-            if (arr.length < LEVEL_MIN_SAMPLES) return;
+            if (arr.length < LEVEL_MIN_SAMPLES) {
+                // Too thin to price from. Kept so the badge can say what DID
+                // sell near a roll it cannot price.
+                var tk = weapon + '|' + bonus;
+                if (!newThinRolls[tk]) newThinRolls[tk] = {};
+                if (!newThinRolls[tk][rar]) newThinRolls[tk][rar] = {};
+                newThinRolls[tk][rar][lvl] = [Math.round(percentile(arr, 50)), arr.length];
+                return;
+            }
             var wbKey = weapon + '|' + bonus;
             if (!newLevelPrices[wbKey]) newLevelPrices[wbKey] = {};
             if (!newLevelPrices[wbKey][rar]) newLevelPrices[wbKey][rar] = {};
@@ -888,6 +902,7 @@
             comboPrices: newComboPrices,
             pairComboPrices: newPairComboPrices,
             levelPrices: newLevelPrices,
+            thinRolls: newThinRolls,
             pairLevelPrices: newPairLevelPrices,
             qualityRanges: newQualRanges,
             weaponMaxBonus: newMaxBonus
@@ -953,6 +968,9 @@
             // "that very weapon sold for X on this date", and a three-year-old
             // sale of it is a different market, not a better record.
             pairLevelPrices: R.pairLevelPrices || {},
+            // Same window as the price it explains. Quoting a 2023 sale beside
+            // a last-year median would be answering a different question.
+            thinRolls: R.thinRolls || {},
             weaponPrices: pick(R.weaponPrices, all.weaponPrices, false),
             bonusPrices:  pick(R.bonusPrices,  all.bonusPrices,  false),
             classPrices:  pick(R.classPrices,  all.classPrices,  false),
