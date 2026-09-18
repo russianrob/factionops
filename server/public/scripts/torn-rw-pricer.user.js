@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.8.3
+// @version      3.9.0
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.8.3';
+    var SCRIPT_VERSION = '3.9.0';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -2186,6 +2186,18 @@
                 var fromIcon = bonusesFromInfoIcon(el);
                 if (fromIcon && fromIcon.bonuses.length) bonuses = fromIcon.bonuses;
             }
+            // Still nothing, and the page may simply not render them — the
+            // trade add-items picker does not. The row carries the item's uid
+            // and the API knows that exact weapon.
+            if (!bonuses.length) {
+                var fromUid = uidBonusesFor(el);
+                if (fromUid && fromUid.bonuses.length) {
+                    bonuses = fromUid.bonuses;
+                    if (!rarity && fromUid.rarity) {
+                        rarity = fromUid.rarity.charAt(0).toUpperCase() + fromUid.rarity.slice(1);
+                    }
+                }
+            }
             ACTIVE = (weaponKey && recentTables && bonuses.length === 1) ? recentTables : null;
 
             var median, bonusFn, badge;
@@ -3073,9 +3085,87 @@
     // Cached indefinitely keyed by uid since instance properties don't
     // change unless the user re-rolls bonuses (rare). Uses Authorization
     // header + native fetch like the inventory fetch.
+    /**
+     * The uid of the item instance in a row.
+     *
+     * The trade add-items picker renders no bonus at all, but it does render
+     * the uid — twice, in a legacy React id and in a child input — and
+     * /torn/{uid}/itemdetails returns that exact weapon's rarity and bonuses.
+     * The uid is the join between a row that knows nothing and an API that
+     * knows everything.
+     */
+    /**
+     * Bonuses for a row whose page does not render any, via its uid.
+     *
+     * Synchronous by design: it answers from the uid cache or not at all. A
+     * miss fires one fetch and schedules a re-inject, so the second pass finds
+     * it in cache and prices properly. Bonuses never change for a given uid, so
+     * the cache is permanent and a weapon costs one call ever.
+     */
+    var uidAsked = {};
+    function uidBonusesFor(el) {
+        var uid = uidFromRow(el);
+        if (!uid) return null;
+        var cache = safeGet(NW_UID_CACHE_KEY, {}) || {};
+        var hit = cache[uid];
+        if (hit && hit.bonuses) return hit;
+        if (uidAsked[uid]) return null;            // already in flight
+        var key = getEffectiveApiKey();
+        if (!key) return null;                     // no key, no lookup, no badge claim
+        uidAsked[uid] = 1;
+        try {
+            fetchUidDetails(key, uid, function (err) {
+                if (!err) { try { debouncedInject(); } catch (_) {} }
+            });
+        } catch (_) {}
+        return null;
+    }
+
+    function uidFromRow(el) {
+        if (!el) return null;
+        // <input id="undefined-14828585269">
+        var input = el.querySelector ? el.querySelector('input[id^="undefined-"]') : null;
+        if (input && input.id) {
+            var fromInput = String(input.id).slice('undefined-'.length);
+            if (/^\d{6,}$/.test(fromInput)) return fromInput;
+        }
+        // data-reactid=".2.2.1.$=10:0.2:$Primary.$14828585269"
+        var rid = el.getAttribute ? el.getAttribute('data-reactid') : null;
+        if (rid) {
+            var m = String(rid).match(/\$(\d{6,})$/);
+            if (m) return m[1];
+        }
+        return null;
+    }
+
+    /**
+     * One itemdetails response, as the pricing ladder wants it.
+     *
+     * This used to keep only {rarity, bonusCount} and throw the bonus names and
+     * rolls away — which is why the picker could tell a Red weapon from a grey
+     * one and still price it as a bare weapon.
+     */
+    function uidEntryFromDetails(det) {
+        var raw = (det && Array.isArray(det.bonuses)) ? det.bonuses : [];
+        var bonuses = [];
+        for (var i = 0; i < raw.length; i++) {
+            var nm = resolveBonusName(String(raw[i].title || '').trim());
+            var lv = Math.round(parseFloat(raw[i].value));
+            if (nm && lv > 0) bonuses.push({ name: nm, level: lv });
+        }
+        return {
+            rarity: String((det && det.rarity) || '').toLowerCase(),
+            bonusCount: raw.length,
+            bonuses: bonuses,
+        };
+    }
+
     function fetchUidDetails(key, uid, cb) {
         var cache = safeGet(NW_UID_CACHE_KEY, {}) || {};
-        if (cache[uid]) { cb(null, cache[uid]); return; }
+        // An entry written before bonuses were kept has no `bonuses` field. It
+        // is a miss, not a hit: the cache is persistent and would otherwise
+        // serve the old shape forever.
+        if (cache[uid] && cache[uid].bonuses) { cb(null, cache[uid]); return; }
         if (typeof fetch !== 'function') { cb(new Error('fetch unavailable')); return; }
         fetch('https://api.torn.com/v2/torn/' + encodeURIComponent(uid) + '/itemdetails', {
             method: 'GET',
@@ -3083,10 +3173,7 @@
             credentials: 'omit',
         }).then(function (r) { return r.json(); }).then(function (d) {
             if (d.error) { cb(new Error('uid ' + uid + ': code ' + d.error.code + ' ' + d.error.error)); return; }
-            var det = d.itemdetails || d;
-            var rarity = (det.rarity || '').toLowerCase();
-            var bonuses = Array.isArray(det.bonuses) ? det.bonuses : [];
-            var entry = { rarity: rarity, bonusCount: bonuses.length };
+            var entry = uidEntryFromDetails(d.itemdetails || d);
             cache[uid] = entry;
             try { safeSet(NW_UID_CACHE_KEY, cache); } catch (_) {}
             cb(null, entry);

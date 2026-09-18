@@ -250,3 +250,92 @@ test("the label says the bonus is missing rather than implying a price", () => {
   // No colour at all: normal.
   assert.ok(!/bonus/i.test(sandbox.__bl(null, 0, 1, 1)));
 });
+
+// ── The uid route ──────────────────────────────────────────────
+// The picker renders no bonus, but it does render the item's uid, and
+// /torn/{uid}/itemdetails returns rarity and bonuses for that exact instance.
+// The script already fetched that endpoint for rarity and threw the bonuses
+// away.
+
+test("the uid comes out of the row", () => {
+  vm.runInContext([fn("uidFromRow"), "globalThis.__uid = uidFromRow;"].join("\n"), sandbox);
+  // Torn puts it in two places on the same row.
+  const viaInput = {
+    getAttribute: () => null,
+    querySelector: (sel) => (sel.indexOf("undefined-") >= 0 ? { id: "undefined-14828585269" } : null),
+  };
+  assert.equal(sandbox.__uid(viaInput), "14828585269");
+
+  const viaReactId = {
+    getAttribute: (a) => (a === "data-reactid" ? ".2.2.1.$=10:0.2:$Primary.$14828585269" : null),
+    querySelector: () => null,
+  };
+  assert.equal(sandbox.__uid(viaReactId), "14828585269");
+});
+
+test("a row with no uid yields nothing", () => {
+  vm.runInContext([fn("uidFromRow"), "globalThis.__uid2 = uidFromRow;"].join("\n"), sandbox);
+  assert.equal(sandbox.__uid2({ getAttribute: () => null, querySelector: () => null }), null);
+  assert.equal(sandbox.__uid2(null), null);
+  // A reactid with no uid on the end must not yield a fragment of the path.
+  assert.equal(sandbox.__uid2({ getAttribute: () => ".2.2.1.$=10:0.2", querySelector: () => null }), null);
+});
+
+test("the API's bonuses become the ladder's bonuses", () => {
+  vm.runInContext([fn("uidEntryFromDetails"), "globalThis.__ue = uidEntryFromDetails;"].join("\n"), sandbox);
+  // The shape /torn/{uid}/itemdetails actually returns.
+  const e = sandbox.__ue({
+    uid: "14828585269", rarity: "red",
+    bonuses: [{ id: 21, title: "Focus", description: "31% increased hit chance for every miss", value: 31 }],
+  });
+  assert.equal(e.rarity, "red");
+  assert.equal(e.bonusCount, 1);
+  assert.equal(JSON.stringify(e.bonuses), JSON.stringify([{ name: "Focus", level: 31 }]));
+});
+
+test("a bonus Torn titles differently to the feed is resolved", () => {
+  vm.runInContext([fn("uidEntryFromDetails"), "globalThis.__ue2 = uidEntryFromDetails;"].join("\n"), sandbox);
+  const e = sandbox.__ue2({ rarity: "red", bonuses: [{ title: "Double Tap", value: 52 }] });
+  assert.equal(e.bonuses[0].name, "Double-Tap");
+});
+
+test("an item with no bonuses yields an empty list, not a missing one", () => {
+  vm.runInContext([fn("uidEntryFromDetails"), "globalThis.__ue3 = uidEntryFromDetails;"].join("\n"), sandbox);
+  const e = sandbox.__ue3({ rarity: null, bonuses: [] });
+  assert.equal(JSON.stringify(e.bonuses), "[]", "an empty list is an answer; undefined is a cache miss");
+  assert.equal(e.bonusCount, 0);
+});
+
+test("entries cached before bonuses were kept count as misses", () => {
+  // The cache is persistent and full of {rarity, bonusCount} entries written
+  // before this. Treating those as hits would serve the old shape forever.
+  const body = SRC.slice(SRC.indexOf("function fetchUidDetails"),
+                         SRC.indexOf("function fetchUidDetailsBatch"));
+  assert.match(body, /cache\[uid\][\s\S]{0,120}bonuses/,
+    "a cached entry without bonuses must not short-circuit: " + body.slice(0, 300));
+});
+
+test("the uid lookup is the last resort, after the row and the icon", () => {
+  const i = SRC.indexOf("var bonuses = extractBonuses(el);");
+  const body = SRC.slice(i, i + 900);
+  assert.ok(body.indexOf("bonusesFromInfoIcon") < body.indexOf("uidBonusesFor"),
+    "the icon is tried before the API");
+  assert.ok(body.indexOf("uidBonusesFor") > 0, "the API is tried at all");
+});
+
+test("no API key means no claim, not a wrong one", () => {
+  // Without a key the lookup cannot happen, and the badge must fall through to
+  // the "no bonus read" label rather than pretending the median is a price.
+  const i = SRC.indexOf("function uidBonusesFor");
+  const body = SRC.slice(i, i + 700);
+  assert.match(body, /getEffectiveApiKey/);
+  assert.match(body, /if \(!key\) return null/);
+});
+
+test("one uid is asked about once, however many passes run", () => {
+  // injectPriceTags runs on every mutation. Without a guard a single picker
+  // page would fire the same lookup dozens of times.
+  const i = SRC.indexOf("function uidBonusesFor");
+  const body = SRC.slice(i, i + 700);
+  assert.match(body, /uidAsked\[uid\]/);
+});
