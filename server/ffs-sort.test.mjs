@@ -552,11 +552,10 @@ test("a faction with no cache is not retried every cycle", () => {
 // hospital, jail and travel to the top by release time (revive hunting). It ran
 // unconditionally, every paint, so it fought the page's own sorting and won.
 // A release-time order is a WAR tool; the roster is where people read stats.
-// Beta-first: gating the roster is in 2.73.906 and not yet promoted, so this
-// describes the beta's behaviour only. Delete the marker when it lands.
-const betaFirst = { skip: BUILD === "" && "roster gating is beta-only so far" };
-
-test("the roster is left in Torn's order", betaFirst, () => {
+// Both of these landed in stable 2.73.53, so they run against either build —
+// the beta-first markers came out with the promotion, which is what they were
+// for.
+test("the roster is left in Torn's order", () => {
   const got = order(["10", "11", "12"], {
     roster: true,
     now: NOW,
@@ -609,15 +608,15 @@ function ffsOwnList() {
 }
 const inside = (sel) => ({ closest: (s) => (s === sel ? {} : null) });
 
-test("a list inside .your-faction is ours", betaFirst, () => {
+test("a list inside .your-faction is ours", () => {
   assert.equal(ffsOwnList()(inside(".your-faction")), true);
 });
 
-test("a list inside .enemy-faction is not ours", betaFirst, () => {
+test("a list inside .enemy-faction is not ours", () => {
   assert.equal(ffsOwnList()(inside(".enemy-faction")), false);
 });
 
-test("anything we cannot place is left to sort as before", betaFirst, () => {
+test("anything we cannot place is left to sort as before", () => {
   // Positive identification only. An unrecognised container keeps the existing
   // behaviour rather than silently losing the enemy ordering, which is the
   // whole point of the war view.
@@ -627,7 +626,7 @@ test("anything we cannot place is left to sort as before", betaFirst, () => {
   assert.equal(own({}), false);
 });
 
-test("our own list keeps Torn's order on the war page", betaFirst, () => {
+test("our own list keeps Torn's order on the war page", () => {
   // The reported case end to end: score order preserved, no pin to the top.
   const got = order(["10", "11", "12"], {
     now: NOW, ownList: true,
@@ -645,4 +644,14 @@ test("the enemy list still sorts", () => {
     scores: { "10": 900, "11": 800 },
   });
   assert.equal(got[0], "12", "the freshly released enemy must still lead");
+});
+
+test("a list inside BOTH wrappers is not treated as ours", () => {
+  // The skip must not be able to swallow the enemy list. No container diag ever
+  // arrived from the war page while the beta's other diag did, which is what a
+  // skip matching every group would look like — so the enemy wrapper now vetoes
+  // the own-side match outright rather than relying on the DOM nesting being
+  // what I assume it is.
+  const both = { closest: (s) => (s === ".your-faction" || s === ".enemy-faction" ? {} : null) };
+  assert.equal(ffsOwnList()(both), false, "the enemy list could be skipped");
 });

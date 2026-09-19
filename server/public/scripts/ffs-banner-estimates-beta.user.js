@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates Beta
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.907
+// @version      2.73.908
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3236,7 +3236,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.907';
+  const SCRIPT_VERSION = '2.73.908';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3777,7 +3777,7 @@ if (!singleton) {
   // fires on a real war page, this reports what the sorted containers actually
   // are, so the next attempt keys on something real rather than another guess.
   const _ffsListDiagSeen = new Set();
-  function ffs_listDiag(parent, rowCount) {
+  function ffs_listDiag(parent, rowCount, skipped) {
     try {
       if (!parent || _ffsListDiagSeen.size > 6) return;
       const cls = String(parent.className || '').slice(0, 80);
@@ -3788,7 +3788,7 @@ if (!singleton) {
         url: "https://tornwar.com/api/debug/client-log",
         headers: { "Content-Type": "application/json" },
         data: JSON.stringify({ tag: "ffs-sorted-list", data: {
-          href: location.href, rowCount, parentTag: parent.tagName, parentClass: cls,
+          href: location.href, rowCount, skipped: !!skipped, parentTag: parent.tagName, parentClass: cls,
           inYour: !!(parent.closest && parent.closest('.your-faction')),
           inEnemy: !!(parent.closest && parent.closest('.enemy-faction')),
           firstRowClass: String((parent.children && parent.children[0] && parent.children[0].className) || '').slice(0, 80),
@@ -3800,8 +3800,14 @@ if (!singleton) {
 
   function ffs_isOwnFactionList(parent) {
     if (!parent || !parent.closest) return false;
-    if (parent.closest('.your-faction')) return true;
-    return false;
+    // The enemy wrapper vetoes outright. No container diag ever arrived from a
+    // war page while the beta's other diag did, and a skip matching EVERY group
+    // looks exactly like that — so the enemy list is protected by an explicit
+    // check rather than by the DOM nesting being what I assume it is. Losing
+    // the enemy ordering is the expensive direction; leaving our own side
+    // sorted is merely the old annoyance.
+    if (parent.closest('.enemy-faction')) return false;
+    return !!parent.closest('.your-faction');
   }
 
   function ffs_applyWarSort(rowList) {
@@ -3836,8 +3842,8 @@ if (!singleton) {
     for (const [parent, rows] of groups) {
       // beta: our own side is not a target list. Skipped rather than sorted, so
       // whatever the reader chose on that column stays chosen.
+      ffs_listDiag(parent, rows.length, warMode && ffs_isOwnFactionList(parent));
       if (warMode && ffs_isOwnFactionList(parent)) continue;
-      ffs_listDiag(parent, rows.length);
       const metas = rows.map((row, idx) => {
         const a = row.querySelector('a[href*="XID="]');
         const m = a?.href?.match(/XID=(\d+)/);

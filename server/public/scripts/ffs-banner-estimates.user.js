@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.52
+// @version      2.73.53
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -24,6 +24,27 @@
 // =============================================================================
 // Upstream: FF Scouter V2 (GPL-3.0, rDacted/Weav3r/xentac/Glasnost)
 //   https://greasyfork.org/en/scripts/535292
+//
+// 2.73.53 —  Sorting: FFS only orders the lists it is for.
+//              Two reports, the same shape — FFS re-applying its own
+//              order every paint over one the reader had chosen.
+//
+//              (1) Faction members roster. The legacy branch floats
+//              hospital/jail/travel to the top by release time, a
+//              revive-hunting tool. It ran on every paint, so Torn's
+//              Level / Days / Position headers did nothing: click one and
+//              the next tick put release order back. Off the war page the
+//              list is left alone now unless the reader clicks FFS.
+//
+//              (2) Our own side of the war board. Sorted by Torn's Score
+//              column, a member on 43.65 was pulled above one on
+//              1,211.39 — 2.73.50's just-released pin doing its job on
+//              the wrong list. It is a targeting aid, and you do not
+//              target your own faction. Lists identifiable as ours are
+//              skipped, and the enemy wrapper vetoes that match outright
+//              so the enemy ordering cannot be swallowed by it.
+//
+//              The enemy list is untouched and still needs no click.
 //
 // 2.73.50 —  War list: a target who has just left hospital.
 //              Two reports, both about the moment a hospital timer ends.
@@ -2920,7 +2941,6 @@ if (!singleton) {
   }
 
   function ffs_recordMemberTravel(member) {
-
     if (!member || !member.status) return;
     const state = member.status.state;
     if (state === "Traveling") {
@@ -3230,7 +3250,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.52';
+  const SCRIPT_VERSION = '2.73.53';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3721,6 +3741,32 @@ if (!singleton) {
   //     wb48 / "War Stuff Enhanced" behaviour, kept for the faction roster.
   // Signature-guarded + change-checked: an unchanged list is a no-op, so the
   // appendChild can never trigger a re-sort loop.
+  /**
+   * Is this member list OUR faction's side of the war board?
+   *
+   * The war ordering is a targeting aid — attackable first, freshest release
+   * on top — and you do not target your own faction. Applied to our own side it
+   * overrode the reader's explicit column sort: sorted by Torn's Score column, a
+   * member on 43.65 was pulled above one on 1,211.39 because they had just left
+   * hospital.
+   *
+   * Positive identification only. A container we cannot place keeps the
+   * existing behaviour, because guessing wrong in that direction costs the
+   * enemy ordering, which is what the war view is for.
+   */
+  function ffs_isOwnFactionList(parent) {
+    if (!parent || !parent.closest) return false;
+    // The enemy wrapper vetoes outright. While this was being tested, a diag
+    // reporting every sorted container produced NOTHING on a war page even
+    // though a different diag from the same build arrived — which is what a
+    // skip matching every group would look like. So the enemy list is
+    // protected by an explicit check rather than by the DOM nesting being
+    // what I assume it is. Losing the enemy ordering is the expensive
+    // direction; leaving our own side sorted is merely the old annoyance.
+    if (parent.closest('.enemy-faction')) return false;
+    return !!parent.closest('.your-faction');
+  }
+
   function ffs_applyWarSort(rowList) {
     if (!rowList || rowList.length === 0) return;
     // wb62: war ordering is the DEFAULT on any war view — no click required.
@@ -3728,6 +3774,19 @@ if (!singleton) {
     // the war page first loaded showing the legacy hospital-on-top revive-hunt
     // order — the reported bug.) The ↓FFS button now just toggles direction.
     const warMode = ffs_isWarContext();
+    // wb90: off the war page, leave the list in Torn's order unless the reader
+    // has actually asked for ours.
+    //
+    // The legacy branch below floats hospital, jail and travel to the top by
+    // release time — a revive-hunting tool, and the right default on a war
+    // board. On the members roster it ran every paint and fought the page's own
+    // sorting: click Level, or Days, or Position, and the next tick put release
+    // order back, so those headers did nothing. A release-time order is a war
+    // tool; the roster is where people read stats.
+    //
+    // The ↓FFS button still works there — that is the one ordering on that page
+    // somebody explicitly chose.
+    if (!warMode && !_ffsPureStatSort) return;
     const desc = (_ffsAppliedDesc == null) ? true : _ffsAppliedDesc;
     const groups = new Map();
     rowList.forEach((row) => {
@@ -3738,6 +3797,9 @@ if (!singleton) {
     });
 
     for (const [parent, rows] of groups) {
+      // wb90: our own side is not a target list. Skipped rather than sorted, so
+      // whatever the reader chose on that column stays chosen.
+      if (warMode && ffs_isOwnFactionList(parent)) continue;
       const metas = rows.map((row, idx) => {
         const a = row.querySelector('a[href*="XID="]');
         const m = a?.href?.match(/XID=(\d+)/);
