@@ -33,6 +33,16 @@ function fn(name) {
   }
   throw new Error("unbalanced braces in " + name);
 }
+/** Like fn(), but empty when the build does not have it — beta-only helpers. */
+function fnIf(name) {
+  return SRC.indexOf("function " + name + "(") >= 0 ? fn(name) : "";
+}
+/** Like v(), but empty when absent. */
+function vIf(re) {
+  const m = SRC.match(re);
+  return m ? m[0].trim() : "";
+}
+
 function v(name) {
   const m = SRC.match(new RegExp("^[ \\t]*const[ \\t]+" + name + "[ \\t]*=.*$", "m"));
   assert.ok(m, "const not found: " + name);
@@ -58,7 +68,8 @@ function row(pid) {
  */
 function order(pids, state = {}) {
   const rows = pids.map(row);
-  const parent = { children: [], appendChild(f) { this.children = f._kids.slice(); } };
+  const parent = { children: [], appendChild(f) { this.children = f._kids.slice(); },
+                   closest: (sel) => (state.ownList && sel === ".your-faction" ? {} : null) };
   rows.forEach((r) => { r.parentElement = parent; });
   parent.children = rows.slice();
 
@@ -76,13 +87,18 @@ function order(pids, state = {}) {
     _ffsPureStatSort: !!state.pureStat,
     _ffsAppliedDesc: true,
     _ffsSortSignatures: new WeakMap(),
+    Set,
+    GM_xmlhttpRequest: () => {},            // the diag is beta-only noise here
     Date: { now: () => state.now || 1_000_000 },
   };
   vm.createContext(sandbox);
   vm.runInContext([
     v("FFS_JUST_RELEASED_MS"),
     fn("ffs_isWarContext"), fn("ffs_rowGroup"), fn("ffs_hospKey"),
-    fn("ffs_unreachKey"), fn("ffs_applyWarSort"),
+    fn("ffs_unreachKey"),
+    // Beta-only helpers; empty strings on stable, which does not call them.
+    vIf(/^\s*const _ffsListDiagSeen = .*$/m), fnIf("ffs_listDiag"), fnIf("ffs_isOwnFactionList"),
+    fn("ffs_applyWarSort"),
     "ffs_applyWarSort(ROWS);",
   ].join("\n"), Object.assign(sandbox, { ROWS: rows }), { timeout: 5000 });
 
@@ -577,4 +593,56 @@ test("the war page still sorts without anyone asking", () => {
     scores: { "10": 500 },
   });
   assert.deepEqual(got, ["10", "12", "11"]);
+});
+
+// ── Our own side of the war board is not a target list ─────────
+// Reported: on the war page, sorted by Torn's Score column, a member sitting on
+// 43.65 was pulled above one on 1,211.39. That is the just-released pin doing
+// its job on the WRONG list — it is a targeting aid, and you do not target your
+// own faction. The Score column there is for reading your own members, and FFS
+// was overriding the reader's explicit choice.
+function ffsOwnList() {
+  const sandbox = {};
+  vm.createContext(sandbox);
+  vm.runInContext(fn("ffs_isOwnFactionList") + "\nglobalThis.own = ffs_isOwnFactionList;", sandbox);
+  return sandbox.own;
+}
+const inside = (sel) => ({ closest: (s) => (s === sel ? {} : null) });
+
+test("a list inside .your-faction is ours", betaFirst, () => {
+  assert.equal(ffsOwnList()(inside(".your-faction")), true);
+});
+
+test("a list inside .enemy-faction is not ours", betaFirst, () => {
+  assert.equal(ffsOwnList()(inside(".enemy-faction")), false);
+});
+
+test("anything we cannot place is left to sort as before", betaFirst, () => {
+  // Positive identification only. An unrecognised container keeps the existing
+  // behaviour rather than silently losing the enemy ordering, which is the
+  // whole point of the war view.
+  const own = ffsOwnList();
+  assert.equal(own({ closest: () => null }), false);
+  assert.equal(own(null), false);
+  assert.equal(own({}), false);
+});
+
+test("our own list keeps Torn's order on the war page", betaFirst, () => {
+  // The reported case end to end: score order preserved, no pin to the top.
+  const got = order(["10", "11", "12"], {
+    now: NOW, ownList: true,
+    released: { "12": NOW - 2_000 },
+    scores: { "10": 900, "11": 800, "12": 43 },
+  });
+  assert.deepEqual(got, ["10", "11", "12"], "FFS reordered our own side");
+});
+
+test("the enemy list still sorts", () => {
+  // The fix must not cost the war view the thing it is for.
+  const got = order(["10", "11", "12"], {
+    now: NOW,
+    released: { "12": NOW - 2_000 },
+    scores: { "10": 900, "11": 800 },
+  });
+  assert.equal(got[0], "12", "the freshly released enemy must still lead");
 });

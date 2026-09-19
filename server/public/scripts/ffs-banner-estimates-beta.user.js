@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates Beta
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.906
+// @version      2.73.907
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3236,7 +3236,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.906';
+  const SCRIPT_VERSION = '2.73.907';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3760,6 +3760,50 @@ if (!singleton) {
   //     wb48 / "War Stuff Enhanced" behaviour, kept for the faction roster.
   // Signature-guarded + change-checked: an unchanged list is a no-op, so the
   // appendChild can never trigger a re-sort loop.
+  /**
+   * Is this member list OUR faction's side of the war board?
+   *
+   * The war ordering is a targeting aid — attackable first, freshest release
+   * on top — and you do not target your own faction. Applied to our own side it
+   * overrode the reader's explicit column sort: sorted by Torn's Score column, a
+   * member on 43.65 was pulled above one on 1,211.39 because they had just left
+   * hospital.
+   *
+   * Positive identification only. A container we cannot place keeps the
+   * existing behaviour, because guessing wrong in that direction costs the
+   * enemy ordering, which is what the war view is for.
+   */
+  // beta-only, one shot per container shape: if the own-side skip above never
+  // fires on a real war page, this reports what the sorted containers actually
+  // are, so the next attempt keys on something real rather than another guess.
+  const _ffsListDiagSeen = new Set();
+  function ffs_listDiag(parent, rowCount) {
+    try {
+      if (!parent || _ffsListDiagSeen.size > 6) return;
+      const cls = String(parent.className || '').slice(0, 80);
+      if (_ffsListDiagSeen.has(cls)) return;
+      _ffsListDiagSeen.add(cls);
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: "https://tornwar.com/api/debug/client-log",
+        headers: { "Content-Type": "application/json" },
+        data: JSON.stringify({ tag: "ffs-sorted-list", data: {
+          href: location.href, rowCount, parentTag: parent.tagName, parentClass: cls,
+          inYour: !!(parent.closest && parent.closest('.your-faction')),
+          inEnemy: !!(parent.closest && parent.closest('.enemy-faction')),
+          firstRowClass: String((parent.children && parent.children[0] && parent.children[0].className) || '').slice(0, 80),
+        } }),
+        onload: function(){}, onerror: function(){},
+      });
+    } catch (_) {}
+  }
+
+  function ffs_isOwnFactionList(parent) {
+    if (!parent || !parent.closest) return false;
+    if (parent.closest('.your-faction')) return true;
+    return false;
+  }
+
   function ffs_applyWarSort(rowList) {
     if (!rowList || rowList.length === 0) return;
     // wb62: war ordering is the DEFAULT on any war view — no click required.
@@ -3790,6 +3834,10 @@ if (!singleton) {
     });
 
     for (const [parent, rows] of groups) {
+      // beta: our own side is not a target list. Skipped rather than sorted, so
+      // whatever the reader chose on that column stays chosen.
+      if (warMode && ffs_isOwnFactionList(parent)) continue;
+      ffs_listDiag(parent, rows.length);
       const metas = rows.map((row, idx) => {
         const a = row.querySelector('a[href*="XID="]');
         const m = a?.href?.match(/XID=(\d+)/);
