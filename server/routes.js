@@ -1245,7 +1245,10 @@ const PAYOUTS_HTML = `<!doctype html>
       <label style="font-size:11.5px;color:var(--text-mute);">Assist weight <input type="number" id="s-assist" placeholder="0.3" min="0" step="0.05"></label>
       <label style="font-size:11.5px;color:var(--text-mute);">Non-war weight <input type="number" id="s-nonwar" placeholder="0.3" min="0" step="0.05"></label>
       <label style="font-size:11.5px;color:var(--text-mute);">Loss weight <input type="number" id="s-failed" placeholder="0" min="0" step="0.05"></label>
+      <label style="font-size:11.5px;color:var(--text-mute);">Turtle weight <input type="number" id="s-turtleweight" placeholder="0" min="0" step="0.05"></label>
+      <label style="font-size:11.5px;color:var(--text-mute);">Turtle pay (\$/hit) <input type="number" id="s-turtlepay" placeholder="0" min="0" step="1000000"></label>
     </div>
+    <p class="muted" style="font-size:11px;margin:8px 0 0">Turtle = hospitalising our own so the enemy cannot score off them. It earns no respect, so it pays nothing until priced here. A flat rate per hit comes off the top of the pool; a weight shares through it instead. Set one, not both \u2014 the flat rate wins.</p>
     <div class="row" style="margin-top:8px">
       <button id="save-settings">Save & Recompute</button>
       <button class="secondary" id="reset-settings">Reset to defaults</button>
@@ -1309,6 +1312,8 @@ async function loadSettings(warId){
     $('#s-assist').value = s.assistWeight!=null ? s.assistWeight : '';
     $('#s-nonwar').value = s.nonWarWeight!=null ? s.nonWarWeight : '';
     $('#s-failed').value = s.failedWeight!=null ? s.failedWeight : '';
+    $('#s-turtleweight').value = s.turtleWeight!=null ? s.turtleWeight : '';
+    $('#s-turtlepay').value    = s.turtlePay!=null ? s.turtlePay : '';
   }catch(e){ /* leave blanks if 403 etc */ }
 }
 async function saveSettings(warId){
@@ -1322,6 +1327,8 @@ async function saveSettings(warId){
     assistWeight: $('#s-assist').value,
     nonWarWeight: $('#s-nonwar').value,
     failedWeight: $('#s-failed').value,
+    turtleWeight: $('#s-turtleweight').value,
+    turtlePay:    $('#s-turtlepay').value,
   };
   try{
     await api('/api/war/'+encodeURIComponent(warId)+'/payout-settings-admin',{method:'POST',body:payload});
@@ -1389,6 +1396,11 @@ function render(d){
       ['chain_hit',    'Chain hits'],
       ['os_chain',     'Overseas chain'],
       ['non_war',      'Non-war attacks'],
+      // Hospitalising our own so the enemy cannot score off them. Real war
+      // work that earns no respect, so it is worth nothing until a turtle
+      // weight or flat rate is set — but it is counted, and a member who did
+      // it 29 times should be able to see that.
+      ['turtle',       'Turtle hits'],
       ['failed',       'Losses'],
     ];
     for(const m of members){
