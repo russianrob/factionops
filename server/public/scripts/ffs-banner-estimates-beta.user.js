@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates Beta
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.905
+// @version      2.73.906
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3236,7 +3236,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.905';
+  const SCRIPT_VERSION = '2.73.906';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3767,6 +3767,19 @@ if (!singleton) {
     // the war page first loaded showing the legacy hospital-on-top revive-hunt
     // order — the reported bug.) The ↓FFS button now just toggles direction.
     const warMode = ffs_isWarContext();
+    // beta: off the war page, leave the list in Torn's order unless the reader
+    // has actually asked for ours.
+    //
+    // The legacy branch below floats hospital, jail and travel to the top by
+    // release time — a revive-hunting tool, and the right default on a war
+    // board. On the members roster it ran every paint and fought the page's own
+    // sorting: click Level, or Days, or Position, and the next tick put release
+    // order back, so those headers did nothing. A release-time order is a war
+    // tool; the roster is where people read stats.
+    //
+    // The ↓FFS button still works there — that is the one ordering on that page
+    // somebody explicitly chose.
+    if (!warMode && !_ffsPureStatSort) return;
     const desc = (_ffsAppliedDesc == null) ? true : _ffsAppliedDesc;
     const groups = new Map();
     rowList.forEach((row) => {

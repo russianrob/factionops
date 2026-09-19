@@ -63,7 +63,9 @@ function order(pids, state = {}) {
   parent.children = rows.slice();
 
   const sandbox = {
-    location: { search: "?type=1", hash: "" },          // a war view
+    location: state.roster
+      ? { search: "?step=profile&ID=42055", hash: "" }   // the members roster
+      : { search: "?type=1", hash: "" },                 // a war view
     document: { createDocumentFragment: () => ({ _kids: [], appendChild(n) { this._kids.push(n); } }) },
     WeakMap,
     _ffsMemberCountdowns: state.countdowns || {},
@@ -71,7 +73,7 @@ function order(pids, state = {}) {
     _ffsMemberHospitalState: state.hospitalState || {},
     _ffsJustReleasedAt: state.released || {},
     _ffsScoreCache: state.scores || {},
-    _ffsPureStatSort: false,
+    _ffsPureStatSort: !!state.pureStat,
     _ffsAppliedDesc: true,
     _ffsSortSignatures: new WeakMap(),
     Date: { now: () => state.now || 1_000_000 },
@@ -524,4 +526,55 @@ test("a faction with no cache is not retried every cycle", () => {
   s.load("42055");
   s.load("42055");
   assert.equal(reads, 1);
+});
+
+// ── The roster page is not the war page ────────────────────────
+// Reported: on the faction members page, Torn's own Level / Days / Position
+// headers do nothing — click one and the next paint puts hospital order back.
+//
+// ffs_applyWarSort has a legacy branch for non-war member lists that floats
+// hospital, jail and travel to the top by release time (revive hunting). It ran
+// unconditionally, every paint, so it fought the page's own sorting and won.
+// A release-time order is a WAR tool; the roster is where people read stats.
+// Beta-first: gating the roster is in 2.73.906 and not yet promoted, so this
+// describes the beta's behaviour only. Delete the marker when it lands.
+const betaFirst = { skip: BUILD === "" && "roster gating is beta-only so far" };
+
+test("the roster is left in Torn's order", betaFirst, () => {
+  const got = order(["10", "11", "12"], {
+    roster: true,
+    now: NOW,
+    hospital: { "11": 2_000, "12": 1_000 },
+    scores: { "10": 500 },
+  });
+  assert.deepEqual(got, ["10", "11", "12"], "FFS re-sorted a page it does not own");
+});
+
+test("a just-released member does not jump the roster either", () => {
+  const got = order(["10", "11"], {
+    roster: true, now: NOW,
+    released: { "11": NOW - 1_000 },
+    scores: { "10": 900 },
+  });
+  assert.deepEqual(got, ["10", "11"]);
+});
+
+test("clicking the FFS button still sorts the roster", () => {
+  // The button is injected on the roster too, and it is the one thing on that
+  // page the reader explicitly asked for. Stats only, status ignored.
+  const got = order(["10", "11", "12"], {
+    roster: true, now: NOW, pureStat: true,
+    scores: { "10": 100, "11": 900, "12": 500 },
+  });
+  assert.deepEqual(got, ["11", "12", "10"]);
+});
+
+test("the war page still sorts without anyone asking", () => {
+  // The default that must survive: war ordering needs no click.
+  const got = order(["10", "11", "12"], {
+    now: NOW,
+    hospital: { "11": 2_000, "12": 1_000 },
+    scores: { "10": 500 },
+  });
+  assert.deepEqual(got, ["10", "12", "11"]);
 });
