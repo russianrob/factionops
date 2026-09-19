@@ -845,3 +845,26 @@ test("no API key means the fallback is skipped, not attempted", () => {
   const body = SRC.slice(i, i + 700);
   assert.match(body, /getEffectiveApiKey\(\)/);
 });
+
+test("the badge is anchored to the line, not to the container it read", () => {
+  // stockContainerFor climbs up to six ancestors to gather the whole post,
+  // and the badge was being inserted after THAT — which on a real page can be
+  // most of the way up the document, so it landed somewhere the reader never
+  // scrolled to. The server was answering with prices the whole time.
+  //
+  // What is READ and where it is SHOWN are different questions: read the
+  // post, show it against the line that matched.
+  const i = SRC.indexOf("function askServerToRead");
+  const body = SRC.slice(i, i + 2600);
+  assert.match(body, /anchor/i, "the anchor must be its own argument: " + body.slice(0, 200));
+  assert.ok(!/host\.parentNode\.insertBefore\(box, host\.nextSibling\)/.test(body),
+    "it must not insert after the climbed container");
+});
+
+test("the call site passes both the container and the line", () => {
+  const i = SRC.indexOf("stockContainerFor(posts[i])");
+  assert.ok(i > 0, "the climb must still happen");
+  const body = SRC.slice(i, i + 400);
+  assert.match(body, /askServerToRead\([^)]*posts\[i\]/,
+    "the matched line has to reach askServerToRead: " + body);
+});

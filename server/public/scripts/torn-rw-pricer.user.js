@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.9.3
+// @version      3.9.4
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.9.3';
+    var SCRIPT_VERSION = '3.9.4';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -4512,7 +4512,7 @@
      * server-side by its text, so a busy thread costs one read however many
      * people open it.
      */
-    function askServerToRead(host, text, retried) {
+    function askServerToRead(anchor, text, retried) {
         var key = text.slice(0, 200);
         if (!retried) {
             if (textAsked[key]) return;
@@ -4523,14 +4523,14 @@
         // full of weapons reads as the feature being broken, which is exactly
         // how this one was reported.
         if (!getEffectiveApiKey()) {
-            if (host && host.parentNode && !document.getElementById('rwp-needs-key')) {
+            if (anchor && anchor.parentNode && !document.getElementById('rwp-needs-key')) {
                 var n = document.createElement('div');
                 n.id = 'rwp-needs-key';
                 n.className = 'rwp-tbl-cell';
                 n.style.cssText = 'margin-top:8px;padding:6px 8px;border-left:3px solid #e0b357;' +
                                   'background:rgba(0,0,0,.25);font-size:12px;color:#e0b357';
                 n.textContent = 'RW Pricer can read this post, but needs a Torn API key — add one in the RW Pricer settings.';
-                host.parentNode.insertBefore(n, host.nextSibling);
+                anchor.parentNode.insertBefore(n, anchor.nextSibling);
             }
             return;
         }
@@ -4551,7 +4551,7 @@
                 if ((res.status === 401 || (data && data.needsMember)) && !retried) {
                     safeSet(WB_TOKEN_KEY, '');
                     warboardSignIn(function (ok) {
-                        if (ok) askServerToRead(host, text, true);
+                        if (ok) askServerToRead(anchor, text, true);
                     });
                     return;
                 }
@@ -4571,7 +4571,14 @@
                 }
                 box.innerHTML = html + '<span style="color:#9aa0ad">Read from the post\u2019s wording, ' +
                                 'so check it against what is written above.</span>';
-                if (host && host.parentNode) host.parentNode.insertBefore(box, host.nextSibling);
+                // Anchored to the LINE that matched, not to the container the
+                // text came from. stockContainerFor climbs up to six ancestors
+                // to gather a whole post, and putting the badge after THAT put
+                // it most of the way up the document — somewhere the reader
+                // never scrolled to, while the server had been answering with
+                // prices all along. What is read and where it is shown are
+                // different questions.
+                if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(box, anchor.nextSibling);
             },
             onerror: function () {},
             ontimeout: function () {},
@@ -4652,9 +4659,9 @@
                     var t = forumCellText(posts[i]).replace(/\s+/g, ' ').trim();
                     if (!looksLikeStock(t)) continue;
                     // Send the POST, not the one bullet that matched.
-                    var host = stockContainerFor(posts[i]);
-                    var whole = forumCellText(host).replace(/\s+/g, ' ').trim();
-                    askServerToRead(host, looksLikeStock(whole) ? whole : t);
+                    var container = stockContainerFor(posts[i]);
+                    var whole = forumCellText(container).replace(/\s+/g, ' ').trim();
+                    askServerToRead(posts[i], looksLikeStock(whole) ? whole : t);
                     break;
                 }
             } catch (e) {}
