@@ -188,7 +188,10 @@ export function registerSocketHandlers(io, socket) {
     // like a call was stolen. attacks-feed auto-uncall handles the
     // genuine 'caller landed the hit' case (war-status-monitor.js
     // line 425+) with a log line; everything else falls back to the
-    // 5-min server expiry.
+    // server expiry — CALL_EXPIRE_MS, twenty minutes, from
+    // call-timings.js. Do NOT write the number here: the last time a
+    // comment carried its own copy it said five while the server
+    // enforced twenty, and readers believed the comment.
   });
 
   // ── refresh_statuses ────────────────────────────────────────────────

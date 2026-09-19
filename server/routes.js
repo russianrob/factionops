@@ -3578,9 +3578,13 @@ router.post("/api/status", requireAuth, async (req, res) => {
       // SUCCESS_RESULTS attack. That one DOES log
       // '[attacks-feed] auto-uncalled X — <result> by caller Y'.
       //
-      // Regular calls still hit the 5-min server expiry via
-      // scheduleCallExpiry, so a caller who fails to attack within 5
-      // min still releases the slot. Deal calls keep their 2h timer.
+      // Regular calls still hit the server expiry via
+      // scheduleCallExpiry, so a caller who fails to attack in time
+      // still releases the slot. Both windows live in call-timings.js
+      // (CALL_EXPIRE_MS / DEAL_EXPIRE_MS) and are deliberately not
+      // repeated here — this comment used to say five minutes while the
+      // server enforced twenty, which is how the faction came to believe
+      // calls were being dropped at five.
 
       // Push notification: target left hospital (was hospital, now isn't)
       if (wasHospital && !isHospital) {
