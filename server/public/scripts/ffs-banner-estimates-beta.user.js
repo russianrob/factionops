@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates Beta
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.901
+// @version      2.73.902
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2681,6 +2681,12 @@ if (!singleton) {
   // attackable comparator and sinks to the very bottom. Reported as "when
   // people med out and reaches 0 they get sent to the bottom of the list".
   const _ffsJustReleasedAt = {};           // pid → ms when we saw them leave hospital
+  // beta forensics: what the poll last said about each member, verbatim. The
+  // freeze at zero ran 267s in one capture and 2s in another, so the question
+  // is whether Torn's API is still claiming Hospital with an `until` already in
+  // the past — in which case nothing on our side can shorten it — or whether we
+  // simply are not being told. Only the raw answer settles that.
+  const _ffsLastPollStatus = {};           // pid → { state, until, at }
   const FFS_JUST_RELEASED_MS = 90_000;     // how long a fresh release stays pinned on top
 
   // wb44: localStorage cache so countdowns appear instantly on reload
@@ -2897,6 +2903,9 @@ if (!singleton) {
       delete _ffsMemberAbbr[member.id];
       delete _ffsMemberReturning[member.id];
     }
+    _ffsLastPollStatus[member.id] = {
+      state, until: member.status.until == null ? null : parseInt(member.status.until, 10), at: Date.now(),
+    };
     // wb44: hospital / jail release tracking. Independent of travel.
     if (state === "Hospital" || state === "Jail") {
       const until = parseInt(member.status.until, 10);
@@ -3154,7 +3163,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.901';
+  const SCRIPT_VERSION = '2.73.902';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3450,6 +3459,14 @@ if (!singleton) {
               // The other side of the comparison: what Torn puts on the status
               // cell of a member who CAN be attacked. Without it the release
               // rule is inferred from the hospital case alone.
+              // What the poll last said about THIS member, and how long ago.
+              // If Torn is still reporting Hospital with an elapsed `until`,
+              // the chip is right and nothing local can fix it.
+              poll: (function () {
+                const p = _ffsLastPollStatus[uid];
+                if (!p) return null;
+                return { state: p.state, until: p.until, ageMs: Date.now() - p.at };
+              })(),
               okSample: (function () {
                 const out = [];
                 const cells = document.querySelectorAll('[class*="status___"]');

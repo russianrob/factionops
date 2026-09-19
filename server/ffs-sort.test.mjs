@@ -171,6 +171,7 @@ function recorder(state = {}) {
     _ffsMemberHospitalUntil: state.hospital || {},
     _ffsMemberHospitalState: state.hospitalState || {},
     _ffsJustReleasedAt: state.released || {},
+    _ffsLastPollStatus: {},
     ffs_fetchFlightForMember: () => {},
     Date: { now: () => state.now || 1_000_000 },
     isFinite, parseInt, String, Number,
@@ -284,4 +285,22 @@ test("a rendered status cell with nothing blocking it is a release", () => {
 
 test("a missing element is no opinion", () => {
   assert.equal(nativeCheck()(null), false);
+});
+
+test("the poll's own answer is recorded verbatim for the diag", () => {
+  // Instrumentation, but it rides inside ffs_recordMemberTravel, so it is worth
+  // knowing it records what the poll said rather than what we concluded.
+  const s = recorder();
+  s._ffsLastPollStatus = {};
+  s.rec({ id: "3", status: { state: "Hospital", until: 1789811536, description: "In hospital" } });
+  assert.equal(s._ffsLastPollStatus["3"].state, "Hospital");
+  assert.equal(s._ffsLastPollStatus["3"].until, 1789811536);
+});
+
+test("recording the poll does not disturb the release stamp", () => {
+  const s = recorder({ hospital: { "4": 111 }, hospitalState: { "4": "Hospital" } });
+  s._ffsLastPollStatus = {};
+  s.rec({ id: "4", status: { state: "Okay", description: "Okay" } });
+  assert.equal(s._ffsJustReleasedAt["4"], 1_000_000);
+  assert.equal(s._ffsLastPollStatus["4"].state, "Okay");
 });
