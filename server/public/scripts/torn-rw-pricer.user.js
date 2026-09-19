@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.9.7
+// @version      3.9.8
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.9.7';
+    var SCRIPT_VERSION = '3.9.8';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -4318,10 +4318,31 @@
      * own right, but only if no descendant is a better candidate: otherwise the
      * whole post reads as one line and every wrapper up to the page gets a badge.
      */
+    /**
+     * Is this element something this script wrote?
+     *
+     * The pinned card is a div on the body whose text reads "Jackhammer 18%
+     * Expose -> $1.76b ...". That is a catalogue weapon and numbers in the roll
+     * range, which is exactly what the ask loop looks for — so the card
+     * qualified as a post to send to the server, and appending it fired the
+     * observer that runs the loop. An observer writing what it watches. It
+     * settled only because identical text is deduped, and the stale second copy
+     * still installed on a device has its own dedupe and no such luck.
+     *
+     * closest, not classList: the priced ROWS inside the card are its children,
+     * and a check on the candidate alone would let every one of them through.
+     */
+    function isOurs(el) {
+        return !!(el && el.closest && el.closest('.rwp-tbl-cell'));
+    }
+
     function forumLineHosts(root) {
         var out = [], all = (root || document).querySelectorAll('div, p, td, li, blockquote');
         for (var i = 0; i < all.length; i++) {
             var el = all[i];
+            // Our own card is built from <br>-separated rows, so without this
+            // the line parser injects price tags inside it.
+            if (isOurs(el)) continue;
             if (el.getElementsByTagName && el.getElementsByTagName('br').length) { out.push(el); continue; }
             // A container of other candidates is not itself a line.
             if (el.querySelector && el.querySelector('div, p, td, li, blockquote')) continue;
@@ -4701,6 +4722,9 @@
             try {
                 var posts = document.querySelectorAll('div, td, li, blockquote');
                 for (var i = 0; i < posts.length; i++) {
+                    // Our own output is not a post. Without this the pinned
+                    // card is sent to the server as one.
+                    if (isOurs(posts[i])) continue;
                     // Asked for already — this observer fires on every page churn.
                     if (posts[i].getAttribute && posts[i].getAttribute('data-rwp-read')) continue;
                     // Priced by a parser, so there is nothing to ask about.

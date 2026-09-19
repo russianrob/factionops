@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
   textKey, buildTextPrompt, verifyItems, learnableAlias, newAliases,
+  isOwnOutput,
 } from "./rwp-text-read.js";
 
 const feed = JSON.parse(fs.readFileSync(new URL("./data/rwp-prices.json", import.meta.url), "utf8"));
@@ -212,4 +213,20 @@ test("control characters in a post do not change its cache identity", () => {
 test("a post is still distinguished by its actual words", () => {
   // The cleaner must not be so aggressive that different posts collide.
   assert.notEqual(textKey("DBK | 61% Achilles"), textKey("DBK | 62% Achilles"));
+});
+
+test("a post carrying the card's own footer is refused", () => {
+  // The last defence, and the only one that reaches a stale copy of the script
+  // that cannot be updated: if the text handed over contains the footer the
+  // card prints, it is the card being read back, not a post.
+  assert.equal(isOwnOutput("Jackhammer 18% Expose → $1.76b "
+    + "Read from the post’s wording, so check it against what is written above."), true);
+  // A straight apostrophe too — the same sentence with the quote normalised.
+  assert.equal(isOwnOutput("Read from the post's wording, so check it"), true);
+});
+
+test("an ordinary post is not mistaken for the card", () => {
+  assert.equal(isOwnOutput("DBK | orange | 61% Achilles + 35% Bleed | Price: 2.2b"), false);
+  assert.equal(isOwnOutput("Reading the post carefully, prices are firm"), false);
+  assert.equal(isOwnOutput(""), false);
 });

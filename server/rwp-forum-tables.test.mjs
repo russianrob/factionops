@@ -584,7 +584,8 @@ test("every line of this post prices", () => {
 // one block with <br>, and injectForumLines only looked at containers that
 // HAD a <br>. So a post that parses perfectly showed no prices at all.
 test("a line that is its own element is still found", () => {
-  vm.runInContext([fn("forumLineHosts"), "globalThis.__hosts = forumLineHosts;"].join("\n"), sandbox);
+  vm.runInContext([fn("isOurs"), fn("forumLineHosts"),
+                   "globalThis.__hosts = forumLineHosts;"].join("\n"), sandbox);
 
   // A DOM small enough to reason about: elements with children, and the two
   // queries forumLineHosts uses.
@@ -593,11 +594,13 @@ test("a line that is its own element is still found", () => {
     for (const k of n.childNodes || []) if (k.nodeType === 1) { out.push(k); descend(k, out); }
     return out;
   };
-  const el = (tag, kids) => {
-    const n = { nodeType: 1, nodeName: tag, childNodes: kids || [] };
+  const el = (tag, kids, ours) => {
+    const n = { nodeType: 1, nodeName: tag, childNodes: kids || [], _ours: !!ours };
     n.getElementsByTagName = (t) => descend(n).filter((d) => d.nodeName === t.toUpperCase());
     n.querySelectorAll = () => descend(n).filter((d) => BLOCK.includes(d.nodeName));
     n.querySelector = () => n.querySelectorAll()[0] || null;
+    // closest walks upward; these stubs carry the answer directly.
+    n.closest = (sel) => (n._ours && sel === ".rwp-tbl-cell" ? n : null);
     return n;
   };
   const txt = (v) => ({ nodeType: 3, nodeValue: v, textContent: v });
@@ -609,6 +612,15 @@ test("a line that is its own element is still found", () => {
   const hosts = sandbox.__hosts(post);
   assert.ok(hosts.includes(a) && hosts.includes(b), "each line element must be a host");
   assert.ok(!hosts.includes(post), "their container is not itself a line");
+
+  // And the card this script writes is not a line to parse. Its rows are
+  // <br>-separated, so before the guard it was pushed as a host and the line
+  // parser injected price tags inside the pinned card.
+  const card = el("DIV", [txt("Jackhammer 18% Expose \u2192 $1.76b")], true);
+  const withCard = el("DIV", [a, b, card]);
+  const hosts2 = sandbox.__hosts(withCard);
+  assert.ok(!hosts2.includes(card), "our own card must not be a host");
+  assert.ok(hosts2.includes(a), "real lines still are");
 });
 
 test("a block broken by <br> is segmented, not taken whole", () => {
@@ -945,4 +957,36 @@ test("the read carries the script version", () => {
   // installed. The request the script already makes can say so.
   const body = srcFn("askServerToRead");
   assert.match(body, /v:\s*SCRIPT_VERSION/, "the POST body must name the version: " + body);
+});
+
+// ── The card must not be read as a post ────────────────────────
+// The pinned card is a div on the body whose text is "Jackhammer 18% Expose ->
+// $1.76b ...". Walk the ask loop with the card as the candidate: it is a div,
+// it carries no data-rwp-read (that marks the POST), its descendants hold no
+// .rwp-tbl-cell (they are span/b/br), it has no block children so it is a leaf,
+// and its text names a catalogue weapon with numbers in the roll range. Every
+// condition passes. Appending it then fires the observer, which runs the loop,
+// which sends the card to the server as a post — an observer writing what it
+// watches, settling only because textAsked happens to dedupe identical text.
+// The stale second copy still installed has its own textAsked and no such luck.
+test("script output is never treated as a post to read", () => {
+  const body = srcFn("ensureForumTables");
+  assert.match(body, /closest\(['"]\.rwp-tbl-cell['"]\)|isOurs\(/,
+    "the loop must skip its own output: " + body.slice(0, 1100));
+});
+
+test("script output is not treated as a line to parse either", () => {
+  // forumLineHosts pushes ANY element carrying <br> children as a host, and the
+  // card is built from <br>-separated rows — so the line parser would inject
+  // price tags inside the pinned card.
+  const body = srcFn("forumLineHosts");
+  assert.match(body, /isOurs\(|closest\(['"]\.rwp-tbl-cell['"]\)/,
+    "the line walk must skip script output: " + body);
+});
+
+test("the guard catches a descendant, not just the card itself", () => {
+  // The rows inside the card are its children; a classList check on the
+  // candidate alone would let every one of them through.
+  const body = srcFn("isOurs");
+  assert.match(body, /closest/, "must look upward: " + body);
 });

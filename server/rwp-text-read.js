@@ -230,9 +230,27 @@ export function saveAliases(learned) {
 /**
  * Read one post. Cached by its text, so a busy thread costs one read ever.
  */
+/**
+ * Is this text the reader's own card being handed back?
+ *
+ * The priced card names weapons and carries rolls, so it satisfies the client's
+ * own "does this look like a stock list" test — and the client appends it to the
+ * page, which fires the observer that runs that test. The client refuses its own
+ * output now, but a stale copy of the script on somebody's device cannot be
+ * updated and will keep sending it. This is the guard that reaches those: the
+ * footer is a sentence no real sale post writes.
+ *
+ * Either apostrophe. The script emits U+2019, and anything in the chain between
+ * there and here may straighten it.
+ */
+export function isOwnOutput(text) {
+  return /Read from the post.{0,3}s wording/.test(String(text || ""));
+}
+
 export async function readPostText(feed, text, opts = {}) {
   const body = clean(text).slice(0, MAX_TEXT);
   if (body.length < 20) return { ok: false, reason: "not enough text to read" };
+  if (isOwnOutput(body)) return { ok: false, reason: "that is a price card, not a post" };
 
   const hit = readTextCache(body);
   if (hit && !opts.force) return { ok: true, cached: true, items: hit.items };
