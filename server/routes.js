@@ -1843,6 +1843,42 @@ function parseCookie(cookieHeader, name) {
 
 // JWT-auth sibling pair for /api/war/:warId/payout-settings (GET+POST)
 // — same shape, same admin gate, used by the /payouts HTML page.
+/**
+ * May this player use the war admin pages? Returns null, or the 403 body.
+ *
+ * The check lived in three identical copies across payout-settings-admin,
+ * payouts-admin and /api/war/admin-list, all answering "Admin role required"
+ * and none saying what they had seen.
+ *
+ * That wording cost a person-to-person round trip. A faction renamed a
+ * position to "Nihilus"; its holder was refused and went looking for a
+ * permission toggle, because the message described the RULE rather than the
+ * REASON — the position simply was not on the list. It names the position it
+ * rejected and the ones it would accept now, which is the whole distance
+ * between a support conversation and a setting somebody can fix themselves.
+ *
+ * An empty position is a different fault wearing the same symptom: the token
+ * carries Torn's `data.faction?.position ?? ""`, so a key whose scope returns
+ * no faction block yields "" and matches nothing. Calling that a role problem
+ * would send the reader somewhere useless again.
+ *
+ * The owner bypasses all of it, which is why none of this was visible from the
+ * inside. The other admin gates in this file are deliberately untouched — they
+ * guard different features and are not what was reported.
+ */
+function warAdminDenial(user, allowedRoles) {
+  const playerId = user && user.playerId;
+  if (String(playerId) === '137558') return null;
+  const roles = (allowedRoles || []).map(r => String(r).toLowerCase().trim());
+  const raw = String((user && user.factionPosition) || '').trim();
+  const pos = raw.toLowerCase();
+  if (pos && roles.includes(pos)) return null;
+  if (!raw) {
+    return { error: "Your API key does not expose your faction position, so your role cannot be checked. Use a key with faction access and sign in again." };
+  }
+  return { error: `Your faction position "${raw}" is not on this faction's admin list (${roles.join(', ')}). A leader can add it in the FactionOps settings under Custom Admin Roles.` };
+}
+
 function _payoutsAdminGate(req, res) {
   const { factionId, factionPosition, playerId } = req.user;
   // Payout access = the union of the partner-configured adminRoles AND the
@@ -1854,8 +1890,10 @@ function _payoutsAdminGate(req, res) {
   ].map(r => String(r).toLowerCase());
   const isDev = String(playerId) === '137558';
   const myPos = String(factionPosition || '').toLowerCase();
-  if (!isDev && !adminRoles.includes(myPos)) {
-    res.status(403).json({ error: "Admin role required" });
+  const denial = warAdminDenial({ playerId, factionPosition }, adminRoles);
+  if (denial) {
+    console.log(`[war-admin] refused playerId=${playerId} position=${JSON.stringify(String(factionPosition || ''))} allowed=${adminRoles.join('|')}`);
+    res.status(403).json(denial);
     return false;
   }
   return true;
@@ -1915,8 +1953,10 @@ router.get("/api/war/:warId/payouts-admin", requireAuth, async (req, res) => {
   ].map(r => String(r).toLowerCase());
   const isDev = String(playerId) === '137558';
   const myPos = String(factionPosition || '').toLowerCase();
-  if (!isDev && !adminRoles.includes(myPos)) {
-    return res.status(403).json({ error: "Admin role required" });
+  const denial = warAdminDenial({ playerId, factionPosition }, adminRoles);
+  if (denial) {
+    console.log(`[war-admin] refused playerId=${playerId} position=${JSON.stringify(String(factionPosition || ''))} allowed=${adminRoles.join('|')}`);
+    return res.status(403).json(denial);
   }
   const warId = String(req.params.warId);
   const mode = req.query.mode === 'static' ? 'static' : 'dynamic';
@@ -1949,8 +1989,10 @@ router.get("/api/war/admin-list", requireAuth, (req, res) => {
   ].map(r => String(r).toLowerCase());
   const isDev = String(playerId) === '137558';
   const myPos = String(factionPosition || '').toLowerCase();
-  if (!isDev && !adminRoles.includes(myPos)) {
-    return res.status(403).json({ error: "Admin role required" });
+  const denial = warAdminDenial({ playerId, factionPosition }, adminRoles);
+  if (denial) {
+    console.log(`[war-admin] refused playerId=${playerId} position=${JSON.stringify(String(factionPosition || ''))} allowed=${adminRoles.join('|')}`);
+    return res.status(403).json(denial);
   }
   try {
     return res.json({ wars: warPayouts.listEligibleWars(factionId) });
