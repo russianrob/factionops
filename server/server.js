@@ -463,7 +463,10 @@ const _diagHits = new Map(); // ip → { count, firstAt }
 // neighbour empties it: a war-page probe went silent for three rounds of
 // debugging while a sibling script spent all 60 posts on 153 per-banner
 // diagnostics from the same browser.
-const _QUIET_TAGS = new Set(["fo-warlayout"]);
+// Tags that report rarely and are worth reading whole. Each gets its OWN
+// per-tag+IP bucket, so a forensic capture cannot spend the shared 60/min
+// budget that every other script's logging draws on.
+const _QUIET_TAGS = new Set(["fo-warlayout", "ffs-hosp-zero"]);
 app.post("/api/debug/client-log", express.json({ limit: "4kb" }), (req, res) => {
   const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
   const now = Date.now();
@@ -899,6 +902,9 @@ import('./faction-key-health.js').then(m => m.start()).catch(e => {
 // and subtract two of them. Two API calls a day.
 import('./gym-energy-snapshot.js').then(m => m.start()).catch(e => {
   console.error('[gym-energy] failed to start snapshot:', e.message);
+});
+import('./gym-comp.js').then(m => m.start()).catch(e => {
+  console.error('[gym-comp] failed to start:', e.message);
 });
 
 // Per-member chain hits for the slackers report. Every finished chain's report
