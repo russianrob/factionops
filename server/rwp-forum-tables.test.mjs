@@ -14,6 +14,19 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const SRC = fs.readFileSync(new URL("./public/scripts/torn-rw-pricer.user.js", import.meta.url), "utf8");
+
+/** The full body of a named function in the shipping script. */
+function srcFn(name) {
+  const i = SRC.indexOf("function " + name + "(");
+  assert.ok(i >= 0, "not in the shipping script: " + name);
+  const o = SRC.indexOf("{", i);
+  let d = 0;
+  for (let k = o; k < SRC.length; k++) {
+    if (SRC[k] === "{") d++;
+    else if (SRC[k] === "}" && --d === 0) return SRC.slice(i, k + 1);
+  }
+  throw new Error("unbalanced braces in " + name);
+}
 const FEED = JSON.parse(fs.readFileSync(new URL("./data/rwp-prices.json", import.meta.url), "utf8"));
 
 function fn(name) {
@@ -846,25 +859,90 @@ test("no API key means the fallback is skipped, not attempted", () => {
   assert.match(body, /getEffectiveApiKey\(\)/);
 });
 
-test("the badge is anchored to the line, not to the container it read", () => {
-  // stockContainerFor climbs up to six ancestors to gather the whole post,
-  // and the badge was being inserted after THAT — which on a real page can be
-  // most of the way up the document, so it landed somewhere the reader never
-  // scrolled to. The server was answering with prices the whole time.
-  //
-  // What is READ and where it is SHOWN are different questions: read the
-  // post, show it against the line that matched.
-  const i = SRC.indexOf("function askServerToRead");
-  const body = SRC.slice(i, i + 2600);
-  assert.match(body, /anchor/i, "the anchor must be its own argument: " + body.slice(0, 200));
-  assert.ok(!/host\.parentNode\.insertBefore\(box, host\.nextSibling\)/.test(body),
-    "it must not insert after the climbed container");
-});
-
-test("the call site passes both the container and the line", () => {
+// The whole post is what gets READ — stockContainerFor climbs up to six
+// ancestors to gather it — because a single bullet is not a stock list. Where
+// the result is SHOWN is a separate question, and the answer is no longer a
+// node on the page at all.
+test("the whole post is read, not just the line that matched", () => {
   const i = SRC.indexOf("stockContainerFor(posts[i])");
   assert.ok(i > 0, "the climb must still happen");
   const body = SRC.slice(i, i + 400);
-  assert.match(body, /askServerToRead\([^)]*posts\[i\]/,
-    "the matched line has to reach askServerToRead: " + body);
+  assert.match(body, /askServerToRead\(looksLikeStock\(whole\) \? whole : t\)/,
+    "the container's text is what gets sent: " + body);
+});
+
+// ── Inserting into a page that has moved on ────────────────────
+// The server answered every time — nginx logged 9,911 bytes of priced items
+// — and nothing appeared. A vision read takes seconds, and Torn's forum is
+// React: by the time the answer arrives the post has very often been
+// re-rendered, and the element we captured is detached. insertBefore on a
+// detached node SUCCEEDS, silently, into a tree nobody is looking at.
+test("the reply never inserts on a captured node", () => {
+  // The bug: insertBefore on the element captured BEFORE the request. Three
+  // different failures produce the same silent symptom — the node detached by a
+  // re-render, the node inside hidden markup, the node placed far up a long
+  // thread — and insertBefore reports success in all three. The card depends on
+  // no node at all now.
+  const body = srcFn("askServerToRead");
+  assert.match(body, /pinReadCard\(box, 'rwp-read-card'\)/, "the reply must pin its card");
+  assert.ok(!/insertBefore/.test(body), "askServerToRead must not place anything itself");
+  assert.ok(!/\banchor\b/.test(body), "a node captured before the request is not used: " + body.slice(0, 300));
+});
+
+test("the card is pinned, so no page change can lose it", () => {
+  const body = srcFn("pinReadCard");
+  assert.match(body, /position:fixed/, "it has to be pinned: " + body);
+  assert.match(body, /document\.body\.appendChild/, "attached to the body, not to a post");
+});
+
+test("the card can be dismissed", () => {
+  const body = srcFn("pinReadCard");
+  assert.match(body, /\\u2715/, "a close control: " + body);
+  assert.match(body, /removeChild\(box\)/, "and it must actually remove the card");
+  assert.match(body, /aria-label/, "the control needs a name for anyone not seeing the glyph");
+});
+
+test("it clears Torn's own chat bar along the bottom", () => {
+  // A card flush to the bottom edge sits on top of Torn's chat.
+  const body = srcFn("pinReadCard");
+  const m = body.match(/bottom:(\d+)px/);
+  assert.ok(m, "an explicit bottom offset: " + body);
+  assert.ok(Number(m[1]) >= 48, "too close to the chat bar: " + m[1]);
+});
+
+// ── Two copies of the script ───────────────────────────────────
+// The access log caught TWO reads posted in the same second. The call site
+// breaks after one, so one page load asks once — two requests means two copies
+// of RW Pricer are installed and running, which is the duplicate-install fault
+// reported against the app. A pinned card from each would stack.
+test("the pinned card has one identity, so a second copy replaces it", () => {
+  const body = srcFn("pinReadCard");
+  assert.match(SRC, /pinReadCard\(box, 'rwp-read-card'\)/, "the card needs a fixed id");
+  assert.match(body, /getElementById\(id\)/, "an existing card must be found");
+  assert.match(body, /removeChild\(old\)/, "and replaced, not stacked");
+});
+
+// ── The gate that could skip the ask for a whole page ──────────
+// `if (cells > before) return` is a PAGE-level decision taken from a
+// page-level count: one post pricing locally suppressed the read for every
+// other post on the page. The decision belongs to the post.
+test("the read is decided per post, not per page", () => {
+  const body = srcFn("ensureForumTables");
+  assert.ok(!/\.length > before\) return/.test(body),
+    "a page-wide cell count still gates the read: " + body.slice(0, 900));
+  assert.match(body, /data-rwp-read/, "each post must record that it was handled");
+});
+
+test("a post that already priced locally is not sent to the server", () => {
+  // That is what the page gate was for, and it is still needed — just per post.
+  const body = srcFn("ensureForumTables");
+  assert.match(body, /querySelector\(['"]\.rwp-tbl-cell['"]\)/,
+    "a post holding a local price must be skipped: " + body.slice(0, 900));
+});
+
+test("the read carries the script version", () => {
+  // Every diagnosis this round stalled on not knowing which version was
+  // installed. The request the script already makes can say so.
+  const body = srcFn("askServerToRead");
+  assert.match(body, /v:\s*SCRIPT_VERSION/, "the POST body must name the version: " + body);
 });

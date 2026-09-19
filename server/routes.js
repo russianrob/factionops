@@ -12394,6 +12394,16 @@ router.post("/api/rwp/read-text", express.json({ limit: "32kb" }), async (req, r
     ...it,
     price: priceOf({ name: it.name, rarity: it.rarity, bonuses: it.bonuses }),
   }));
+  // Which client version asked, and for which post.
+  //
+  // Four rounds of this went by without knowing what was installed, because a
+  // 200 in the access log says nothing about the script that made it. The text
+  // key also settles a second question the log raised: two reads arrived in the
+  // same second, and the call site only asks once per page — two SAME keys at
+  // one moment means two copies of the script are installed and running.
+  console.log(`[rwp-text] v=${String((req.body && req.body.v) || "?").slice(0, 12)} ` +
+              `key=${rwpText.textKey(text).slice(4, 12)} items=${items.length} ` +
+              `cached=${!!out.cached}`);
   return res.json({ items, cached: !!out.cached, learned: out.learned || null });
 });
 

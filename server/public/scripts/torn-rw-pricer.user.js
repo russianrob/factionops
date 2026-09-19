@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.9.4
+// @version      3.9.7
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.9.4';
+    var SCRIPT_VERSION = '3.9.7';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -4512,7 +4512,50 @@
      * server-side by its text, so a busy thread costs one read however many
      * people open it.
      */
-    function askServerToRead(anchor, text, retried) {
+    /**
+     * Show a read result where it cannot be missed.
+     *
+     * This was an in-post badge inserted after the line the text came from, and
+     * it was reported invisible four times running while the server logs showed
+     * full lists of prices going out. Three different failures produce that one
+     * symptom and all three were possible: the post re-rendered during the
+     * seconds a read takes and the captured node was detached; the node was
+     * still in the document but inside hidden markup, which has text to match
+     * on like anything else; or it was genuinely placed, far up a long thread,
+     * somewhere nobody scrolled. insertBefore reports success in all three.
+     *
+     * Rather than guess which one was live, stop depending on a node at all. A
+     * pinned card has no anchor to lose, and a stock list of nineteen weapons
+     * reads better as a panel you can keep open while scrolling the post than
+     * as nineteen rows wedged into the middle of it.
+     *
+     * The id is fixed and an existing card is REPLACED. The access log caught
+     * two reads posted in the same second, and the call site only asks once per
+     * page — so two copies of this script are installed and running, and
+     * without the id they would stack two cards on top of each other.
+     */
+    function pinReadCard(box, id) {
+        box.id = id;
+        var old = document.getElementById(id);
+        if (old && old.parentNode) old.parentNode.removeChild(old);
+        // Clear of Torn's own chat bar along the bottom.
+        box.style.cssText += ';position:fixed;left:8px;right:8px;bottom:56px;' +
+                             'z-index:2147483600;max-height:45vh;overflow:auto;' +
+                             'background:rgba(14,17,22,.97);border-radius:9px;' +
+                             'box-shadow:0 6px 24px rgba(0,0,0,.5)';
+        var x = document.createElement('span');
+        x.textContent = '\u2715';
+        x.setAttribute('role', 'button');
+        x.setAttribute('aria-label', 'Close');
+        x.style.cssText = 'float:right;cursor:pointer;opacity:.75;padding:0 2px 0 8px';
+        x.addEventListener('click', function () {
+            if (box.parentNode) box.parentNode.removeChild(box);
+        });
+        box.insertBefore(x, box.firstChild);
+        document.body.appendChild(box);
+    }
+
+    function askServerToRead(text, retried) {
         var key = text.slice(0, 200);
         if (!retried) {
             if (textAsked[key]) return;
@@ -4523,14 +4566,14 @@
         // full of weapons reads as the feature being broken, which is exactly
         // how this one was reported.
         if (!getEffectiveApiKey()) {
-            if (anchor && anchor.parentNode && !document.getElementById('rwp-needs-key')) {
+            if (!document.getElementById('rwp-needs-key')) {
                 var n = document.createElement('div');
                 n.id = 'rwp-needs-key';
                 n.className = 'rwp-tbl-cell';
                 n.style.cssText = 'margin-top:8px;padding:6px 8px;border-left:3px solid #e0b357;' +
                                   'background:rgba(0,0,0,.25);font-size:12px;color:#e0b357';
                 n.textContent = 'RW Pricer can read this post, but needs a Torn API key — add one in the RW Pricer settings.';
-                anchor.parentNode.insertBefore(n, anchor.nextSibling);
+                pinReadCard(n, 'rwp-needs-key');
             }
             return;
         }
@@ -4541,7 +4584,7 @@
             method: 'POST',
             url: 'https://tornwar.com/api/rwp/read-text',
             headers: headers,
-            data: JSON.stringify({ text: text.slice(0, 6000) }),
+            data: JSON.stringify({ text: text.slice(0, 6000), v: SCRIPT_VERSION }),
             timeout: 45000,
             onload: function (res) {
                 var data = null;
@@ -4551,7 +4594,7 @@
                 if ((res.status === 401 || (data && data.needsMember)) && !retried) {
                     safeSet(WB_TOKEN_KEY, '');
                     warboardSignIn(function (ok) {
-                        if (ok) askServerToRead(anchor, text, true);
+                        if (ok) askServerToRead(text, true);
                     });
                     return;
                 }
@@ -4578,7 +4621,7 @@
                 // never scrolled to, while the server had been answering with
                 // prices all along. What is read and where it is shown are
                 // different questions.
-                if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(box, anchor.nextSibling);
+                pinReadCard(box, 'rwp-read-card');
             },
             onerror: function () {},
             ontimeout: function () {},
@@ -4645,15 +4688,22 @@
         if (forumInited) return;
         forumInited = true;
         var run = function () {
-            var before = document.querySelectorAll('.rwp-tbl-cell').length;
             try { injectForumTables(); } catch (e) {}
             try { injectForumLines(); } catch (e) {}
-            if (document.querySelectorAll('.rwp-tbl-cell').length > before) return;
-            // Nothing priced. If a post here is plainly selling weapons, it is
-            // in a shape nobody has written a rule for — ask the server once.
+            // A post in a shape nobody has written a rule for gets read by the
+            // server. That decision is made POST BY POST.
+            //
+            // It used to be made for the whole page: count the badges before
+            // the parsers ran, count again after, and if the number had gone up
+            // anywhere, return. So a single recognised post silenced the read
+            // for every other post on the page — the feature reporting as
+            // broken on a thread where it had in fact worked once, at the top.
             try {
                 var posts = document.querySelectorAll('div, td, li, blockquote');
                 for (var i = 0; i < posts.length; i++) {
+                    // Asked for already — this observer fires on every page churn.
+                    if (posts[i].getAttribute && posts[i].getAttribute('data-rwp-read')) continue;
+                    // Priced by a parser, so there is nothing to ask about.
                     if (posts[i].querySelector && posts[i].querySelector('.rwp-tbl-cell')) continue;
                     if (posts[i].querySelector && posts[i].querySelector('div, td, li, blockquote')) continue;
                     var t = forumCellText(posts[i]).replace(/\s+/g, ' ').trim();
@@ -4661,7 +4711,10 @@
                     // Send the POST, not the one bullet that matched.
                     var container = stockContainerFor(posts[i]);
                     var whole = forumCellText(container).replace(/\s+/g, ' ').trim();
-                    askServerToRead(posts[i], looksLikeStock(whole) ? whole : t);
+                    if (posts[i].setAttribute) posts[i].setAttribute('data-rwp-read', '1');
+                    askServerToRead(looksLikeStock(whole) ? whole : t);
+                    // One read per pass. A vision read costs money, and the next
+                    // pass picks up the next unmarked post.
                     break;
                 }
             } catch (e) {}

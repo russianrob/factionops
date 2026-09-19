@@ -198,3 +198,18 @@ test("a square of the wrong colour does not license a different one", () => {
   ]);
   assert.equal(out[0].rarity, null, "the post said yellow, not red");
 });
+
+test("control characters in a post do not change its cache identity", () => {
+  // The cleaner's character class was written with RAW control bytes rather
+  // than escapes, which made the whole module read as a binary file to grep and
+  // silently hid its exports during a diagnosis. Escaped now — and this is the
+  // behaviour that had to survive the rewrite.
+  const plain = "DBK | orange | 61% Achilles + 35% Bleed";
+  const withCtl = "DBK\u0000 | orange | 61%\u001f Achilles + 35% Bleed\u007f";
+  assert.equal(textKey(withCtl), textKey(plain));
+});
+
+test("a post is still distinguished by its actual words", () => {
+  // The cleaner must not be so aggressive that different posts collide.
+  assert.notEqual(textKey("DBK | 61% Achilles"), textKey("DBK | 62% Achilles"));
+});
