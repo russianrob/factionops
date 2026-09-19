@@ -671,3 +671,72 @@ test("a list inside BOTH wrappers is not treated as ours", () => {
   const both = { closest: (s) => (s === ".your-faction" || s === ".enemy-faction" ? {} : null) };
   assert.equal(ffsOwnList()(both), false, "the enemy list could be skipped");
 });
+
+// ── Backing off when Torn says no ──────────────────────────────
+// Reported: hospital timers sometimes do not load. The script's own diag says
+// why — the faction-members poll comes back "Too many requests". That budget is
+// 100/min for the KEY, shared by every userscript the owner runs, not ours
+// alone.
+//
+// What made it worse is ours: ffs_imminentHospRefresh fires a cache-busted
+// refetch every ten seconds while any chip is near release, so we spent the
+// most calls exactly when Torn was already refusing them, and the timers stayed
+// unloaded for longer than the outage.
+function limiter(state = {}) {
+  const calls = [];
+  const sandbox = {
+    Date: { now: () => state.now || 1_000_000 },
+    Set,
+    _ffsTrackedFactionIds: new Set(state.factions || ["42055"]),
+    _ffsLastImminentRefresh: state.lastRefresh || 0,
+    _ffsRateLimitedUntil: state.limitedUntil || 0,
+    ffs_updateFactionTravelData: (fid, bust) => calls.push([fid, bust]),
+    calls,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext([
+    v("FFS_IMMINENT_REFRESH_MS"),
+    vIf(/^\s*const FFS_RATE_LIMIT_BACKOFF_MS = .*$/m),
+    fn("ffs_isRateLimitError"), fn("ffs_imminentHospRefresh"),
+    "globalThis.refresh = ffs_imminentHospRefresh;",
+    "globalThis.isLimited = ffs_isRateLimitError;",
+  ].join("\n"), sandbox);
+  return sandbox;
+}
+
+test("a rate-limit answer is recognised", () => {
+  const s = limiter();
+  assert.equal(s.isLimited({ error: { error: "Too many requests" } }), true);
+  assert.equal(s.isLimited({ error: { code: 5, error: "whatever" } }), true);
+});
+
+test("an ordinary failure is not mistaken for one", () => {
+  // Backing off on every error would stall the fast refresh for reasons that
+  // have nothing to do with the budget.
+  const s = limiter();
+  assert.equal(s.isLimited({ error: { error: "Incorrect key" } }), false);
+  assert.equal(s.isLimited({ error: { code: 2, error: "Incorrect key" } }), false);
+  assert.equal(s.isLimited(null), false);
+  assert.equal(s.isLimited({}), false);
+});
+
+test("the fast refresh stands down while rate limited", () => {
+  const s = limiter({ limitedUntil: 1_000_000 + 30_000 });
+  s.refresh();
+  assert.deepEqual(s.calls, [], "we kept spending calls Torn was refusing");
+});
+
+test("and resumes once the backoff has passed", () => {
+  const s = limiter({ limitedUntil: 1_000_000 - 1 });
+  s.refresh();
+  assert.equal(s.calls.length, 1, "the fast refresh never came back");
+  assert.equal(s.calls[0][1], true, "and it is still the cache-busted one");
+});
+
+test("the ordinary refresh throttle still applies", () => {
+  // The existing 10s gap is untouched — this adds a reason to skip, not a
+  // reason to fire.
+  const s = limiter({ lastRefresh: 1_000_000 - 1_000 });
+  s.refresh();
+  assert.deepEqual(s.calls, []);
+});

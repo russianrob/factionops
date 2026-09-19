@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.54
+// @version      2.73.55
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2720,6 +2720,26 @@ if (!singleton) {
   const _ffsFactionLiveAt = {};            // factionId → ts of last applied cache-busted (live) response
   let _ffsLastImminentRefresh = 0;
 
+  // Torn answers "Too many requests" (code 5) once the key's 100/min budget is
+  // spent — and that budget belongs to the KEY, shared with every other
+  // userscript the owner runs, not to us alone. The script's diag caught the
+  // poll failing that way, which is why hospital timers sometimes did not load.
+  //
+  // What made it worse was ours: the imminent refresh below fires a
+  // cache-busted refetch every ten seconds while any chip is near release, so
+  // we spent the MOST calls exactly when Torn was already refusing them. Under
+  // a refusal we stand down and let the ordinary 30s poll be the way back.
+  const FFS_RATE_LIMIT_BACKOFF_MS = 60_000;
+  let _ffsRateLimitedUntil = 0;
+
+  /** Is this Torn telling us the key's per-minute budget is spent? */
+  function ffs_isRateLimitError(data) {
+    const e = data && data.error;
+    if (!e) return false;
+    if (e.code === 5) return true;
+    return /too many requests/i.test(String(e.error || ""));
+  }
+
   // wb89: a target whose hospital time just ended is the most time-critical row
   // on the page — hittable NOW, and whoever notices first gets the hit. Nothing
   // recorded that, so once the hospital entry was deleted the row sorted purely
@@ -2837,6 +2857,9 @@ if (!singleton) {
   // TravelData is a hoisted declaration below, so it's callable here at runtime.
   function ffs_imminentHospRefresh() {
     const now = Date.now();
+    // Torn is already refusing this key — adding calls only lengthens the
+    // outage, and the 30s poll is the recovery path.
+    if (now < _ffsRateLimitedUntil) return;
     if (now - _ffsLastImminentRefresh < FFS_IMMINENT_REFRESH_MS) return;
     if (_ffsTrackedFactionIds.size === 0) return;
     _ffsLastImminentRefresh = now;
@@ -3191,6 +3214,7 @@ if (!singleton) {
     try {
       const data = await ffs_fetchFactionMembers(factionId, bust);
       if (!data || data.error) {
+        if (ffs_isRateLimitError(data)) _ffsRateLimitedUntil = Date.now() + FFS_RATE_LIMIT_BACKOFF_MS;
         ffs_travelDiag({
           source: "fetch-error",
           factionId,
@@ -3263,7 +3287,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.54';
+  const SCRIPT_VERSION = '2.73.55';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
