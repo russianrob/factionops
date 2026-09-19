@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.53
+// @version      2.73.54
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2931,7 +2931,20 @@ if (!singleton) {
   function ffs_restoreHospCell(statusEl) {
     if (!statusEl) return;
     const chip = statusEl.querySelector && statusEl.querySelector('.ffs-hosp-status');
-    if (chip) {
+    // Rebuild the cell ONLY when Torn agrees they are out.
+    //
+    // Our map having no entry is not evidence a target is free: the poll lags,
+    // and a member can be hospitalised again between polls. Writing "Okay" on
+    // our own authority put that word on a target whose profile read "In
+    // hospital for 23 minutes — Attacked by Sneaky", which sends the reader at
+    // someone they cannot hit. Before this function existed the same path
+    // restored the snapshot — wrong for a freed target, but it never CLAIMED
+    // anyone was free, and that is the direction that costs an attack.
+    //
+    // Same rule the release DETECTION already follows: assert nothing Torn has
+    // not confirmed. If Torn still says hospital, leave the cell alone — our
+    // chip stays, which is at worst the old frozen-timer annoyance.
+    if (chip && ffs_nativeSaysReleased(statusEl)) {
       const tpl = ffs_okayCellTemplate();
       if (tpl) statusEl.innerHTML = tpl;
       else if (chip.parentNode) chip.parentNode.removeChild(chip);
@@ -3250,7 +3263,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.53';
+  const SCRIPT_VERSION = '2.73.54';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.

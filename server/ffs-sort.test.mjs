@@ -389,37 +389,54 @@ function restorer(cells = []) {
   ].join("\n"), sandbox);
   return sandbox.restore;
 }
-function hospCell(withChip) {
+function statusCell(cls, withChip) {
   const el = {
-    className: "status left hospital status___BLAOt not-ok",
+    className: cls,
     innerHTML: withChip ? '<a class="ffs-hosp-status">00:00:00</a>' : "Hospital",
     dataset: { ffsHospOriginal: "Hospital", ffsHospInjected: "1" },
     querySelector: (s) => (withChip && s.includes("ffs-hosp") ? { parentNode: el } : null),
   };
   return el;
 }
+const HOSP_CLS = "status left hospital prevColumn___UOKmY status___BLAOt not-ok";
+const OK_CLS   = "status left okay prevColumn___UOKmY status___BLAOt ok";
 const okCellStub = () => ({
-  className: "status left okay prevColumn___UOKmY status___BLAOt ok",
-  innerHTML: "<span>Okay</span>",
-  querySelector: () => null,
+  className: OK_CLS, innerHTML: "<span>Okay</span>", querySelector: () => null,
 });
 
-test("the word Hospital is never painted back on a released member", () => {
-  const cell = hospCell(true);
-  restorer([okCellStub(), cell])(cell);
-  assert.notEqual(cell.innerHTML, "Hospital", "the stale snapshot was restored");
-});
-
-test("the cell is rebuilt from another row's okay cell", () => {
-  // The page is its own template — no guessing at Torn's markup.
-  const cell = hospCell(true);
+test("a freed member's cell is rebuilt from another row's okay cell", () => {
+  // Torn agrees they are out — its class says ok — but React has not replaced
+  // the innerHTML, which is still our chip. Rebuild it from the page's own
+  // rendering rather than the snapshot, which says "Hospital".
+  const cell = statusCell(OK_CLS, true);
   restorer([okCellStub(), cell])(cell);
   assert.equal(cell.innerHTML, "<span>Okay</span>");
 });
 
+test("the word Okay is NEVER written while Torn still says hospital", () => {
+  // The reported fault, and the dangerous direction. Our map having no entry
+  // is not evidence a target is free — the poll lags, and a member can be
+  // hospitalised again between polls. The profile read "In hospital for 23
+  // minutes — Attacked by Sneaky" while the row read Okay.
+  //
+  // Before 2.73.51 this path restored the snapshot, which was wrong for a
+  // freed target but never CLAIMED anyone was free. Writing "Okay" on our own
+  // authority was the regression.
+  const cell = statusCell(HOSP_CLS, true);
+  restorer([okCellStub(), cell])(cell);
+  assert.ok(!/Okay/.test(cell.innerHTML), "we told the reader a hospitalised target was free");
+});
+
+test("and the stale Hospital snapshot is still not painted back either", () => {
+  // Both directions at once: say nothing rather than guess. The chip stays,
+  // which is at worst the old frozen-timer annoyance.
+  const cell = statusCell(HOSP_CLS, true);
+  restorer([okCellStub(), cell])(cell);
+  assert.notEqual(cell.innerHTML, "Hospital");
+});
+
 test("with no okay row to copy, our chip is removed rather than left", () => {
-  // Better an empty cell than a countdown for someone who is out.
-  const cell = hospCell(true);
+  const cell = statusCell(OK_CLS, true);
   let removed = false;
   cell.querySelector = (s) => (s.includes("ffs-hosp")
     ? { parentNode: { removeChild() { removed = true; } } } : null);
@@ -428,28 +445,27 @@ test("with no okay row to copy, our chip is removed rather than left", () => {
 });
 
 test("a cell React already owns is left alone", () => {
-  // No chip means React has re-rendered it and whatever is there is true.
-  const cell = hospCell(false);
+  const cell = statusCell(OK_CLS, false);
   cell.innerHTML = "Okay";
   restorer([okCellStub()])(cell);
-  assert.equal(cell.innerHTML, "Okay", "React's own content was overwritten");
+  assert.equal(cell.innerHTML, "Okay");
 });
 
-test("our markers are always cleared", () => {
-  const cell = hospCell(true);
-  restorer([okCellStub(), cell])(cell);
-  assert.equal(cell.dataset.ffsHospOriginal, undefined);
-  assert.equal(cell.dataset.ffsHospInjected, undefined);
+test("our markers are always cleared, whichever way it goes", () => {
+  for (const cls of [OK_CLS, HOSP_CLS]) {
+    const cell = statusCell(cls, true);
+    restorer([okCellStub(), cell])(cell);
+    assert.equal(cell.dataset.ffsHospOriginal, undefined, cls);
+    assert.equal(cell.dataset.ffsHospInjected, undefined, cls);
+  }
 });
 
 test("a row still showing our own chip is not used as the template", () => {
-  // Otherwise the "okay" cell we copy is a countdown.
   const chipped = {
-    className: "status left okay status___BLAOt ok",
-    innerHTML: '<a class="ffs-hosp-status">00:00:05</a>',
+    className: OK_CLS, innerHTML: '<a class="ffs-hosp-status">00:00:05</a>',
     querySelector: (s) => (s.includes("ffs-hosp") ? {} : null),
   };
-  const cell = hospCell(true);
+  const cell = statusCell(OK_CLS, true);
   restorer([chipped, okCellStub(), cell])(cell);
   assert.equal(cell.innerHTML, "<span>Okay</span>");
 });
