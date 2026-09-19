@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates Beta
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.902
+// @version      2.73.903
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2824,7 +2824,13 @@ if (!singleton) {
     for (const bad of ['hospital', 'jail', 'traveling', 'travelling', 'abroad', 'federal']) {
       if (t.indexOf(bad) !== -1) return false;
     }
-    return true;
+    // Measured rather than inferred. An attackable member's cell came back as
+    // "status left okay prevColumn___UOKmY status___BLAOt ok" — Torn marks them
+    // with BOTH `okay` and `ok`, and drops `not-ok`. Requiring that positively
+    // also disposes of the other cell in the same capture,
+    // "status left status___BLAOt tab___uGxm5": a tab, not a member's status,
+    // which absence-of-blockers alone would have read as free.
+    return t.indexOf('ok') !== -1 || t.indexOf('okay') !== -1;
   }
 
   // beta-only forensics for the "stays on 00:00:00" report. Dedicated budget
@@ -3163,7 +3169,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.902';
+  const SCRIPT_VERSION = '2.73.903';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.

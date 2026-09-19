@@ -277,10 +277,17 @@ test("a class with no status token is no opinion", () => {
   assert.equal(chk(cell(null)), false);
 });
 
-test("a rendered status cell with nothing blocking it is a release", () => {
+test("a status cell caught mid-render is NOT a release", () => {
+  // The real reason the rule cannot be "nothing is blocking it". React
+  // re-renders these cells constantly — that is why our chip keeps getting
+  // wiped — and a cell caught with only its hashed class carries no blocker
+  // either. Under absence-of-blockers that reads as free, which would release a
+  // hospitalised target: the exact failure the clamp exists to prevent, arrived
+  // by a different road.
   const chk = nativeCheck();
-  assert.equal(chk(cell("status left okay prevColumn___UOKmY status___BLAOt")), true);
-  assert.equal(chk(cell("status left status___BLAOt")), true);
+  assert.equal(chk(cell("status___BLAOt")), false);
+  assert.equal(chk(cell("status left status___BLAOt")), false);
+  assert.equal(chk(cell("status left prevColumn___UOKmY status___BLAOt")), false);
 });
 
 test("a missing element is no opinion", () => {
@@ -303,4 +310,30 @@ test("recording the poll does not disturb the release stamp", () => {
   s.rec({ id: "4", status: { state: "Okay", description: "Okay" } });
   assert.equal(s._ffsJustReleasedAt["4"], 1_000_000);
   assert.equal(s._ffsLastPollStatus["4"].state, "Okay");
+});
+
+// ── Measured, not inferred ─────────────────────────────────────
+// The attackable side finally captured from the war page:
+//   "status left okay prevColumn___UOKmY status___BLAOt ok"
+// So Torn marks a hittable member with BOTH `okay` and `ok`, and drops
+// `not-ok`. That turns the release rule from "nothing is blocking it" into a
+// positive reading, which also disposes of the other sample in the same
+// capture — "status left status___BLAOt tab___uGxm5", a tab rather than a
+// member's status, which absence-of-blockers alone would have read as free.
+const OK_CELL  = "status left okay prevColumn___UOKmY status___BLAOt ok";
+const TAB_CELL = "status left status___BLAOt tab___uGxm5";
+
+test("the captured attackable cell is a release", () => {
+  assert.equal(nativeCheck()(cell(OK_CELL)), true);
+});
+
+test("a status cell that says nothing about okay is not a release", () => {
+  // Captured in the same payload, and it is not a member's status at all.
+  assert.equal(nativeCheck()(cell(TAB_CELL)), false);
+});
+
+test("okay alone and ok alone both count", () => {
+  const chk = nativeCheck();
+  assert.equal(chk(cell("status left okay status___BLAOt")), true);
+  assert.equal(chk(cell("status left ok status___BLAOt")), true);
 });
