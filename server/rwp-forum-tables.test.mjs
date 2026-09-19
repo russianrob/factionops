@@ -1064,3 +1064,37 @@ test("a table whose weapon column is headed Base is read", () => {
   const body = srcFn("forumHeaderMap");
   assert.match(body, /base/, "Base names the weapon column too: " + body);
 });
+
+test("a Base | Bonus | % table prices every row", () => {
+  // The second table on the reported page, verbatim. It showed no RW column at
+  // all, because only weapon/item/gun/name were recognised as naming the
+  // weapon. Asserted end to end — header map, row read, price — rather than
+  // just on the header regex.
+  const map = forumHeaderMap(["Base", "Bonus", "%", "Quality", "Price"]);
+  assert.deepEqual([map.weapon, map.bonus, map.pct], [0, 1, 2]);
+
+  const rows = [
+    ["Jackhammer", "Powerful", "30%", "176.19%", "762m"],
+    ["Benelli M4 Super", "Eviscerate", "22%", "173.38%", "599m"],
+    ["Enfield SA-80", "Penetrate", "29%", "112.94%", "469m"],
+    ["SIG 552", "Penetrate", "25%", "107.80%", "135m"],
+    ["Benelli M1 Tactical", "Warlord", "17%", "114.64%", "224m"],
+    ["Enfield SA-80", "Warlord", "18%", "115.90%", "770m"],
+    ["Thompson", "Warlord", "15%", "108.86%", "158m"],
+  ];
+  for (const r of rows) {
+    const p = priceForumRow(forumRowItem(r, map));
+    assert.ok(p && p.value > 0, "no price for " + r.join(" "));
+    assert.equal(p.name, r[0], "priced under the wrong weapon: " + r.join(" "));
+  }
+});
+
+test("the Type 98 row prices as itself, not as the row above it", () => {
+  // The reported mislabel, at the level the table parser sees it.
+  const map = forumHeaderMap(["Item", "Bonus", "Quality", "Price"]);
+  const p = priceForumRow(forumRowItem(["Type 98 Anti-Tank", "35% Stricken", "124.67%", "989m"], map));
+  assert.ok(p, "the hyphenated name must resolve");
+  assert.equal(p.name, "Type 98 Anti Tank");
+  // And nowhere near the $2.098b it was given as a Milkor MGL.
+  assert.ok(p.value < 1.2e9, "still priced like a Milkor MGL: " + p.value);
+});
