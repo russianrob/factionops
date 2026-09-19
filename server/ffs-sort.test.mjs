@@ -216,77 +216,72 @@ test("coming out of jail earns the pin too", () => {
 });
 
 // ── Who decides a target is out ────────────────────────────────
-// Reported: "it stays on 0 when it should be instant okay". By design, release
-// is decided ONLY by the API poll — the local countdown must never decide it,
-// because a target can extend hospital defensively (ipecac, wrong blood bag)
-// and our cached `until` is then the OLD short time. Releasing on the countdown
-// flashes a still-hospitalised target as attackable, which is worse than a slow
-// chip.
+// A real capture from the war page, hospitalised member, chip in place:
+//   class   = "status left hospital prevColumn___UOKmY status___BLAOt not-ok"
+//   hasChip = true,  text = "00:00:01"
 //
-// Torn's own cell is a third thing, and it is neither of those: it is not our
-// countdown and it cannot be stale. React re-renders the status cell when a
-// member's state changes, which wipes our chip — and a cell with no chip in it
-// is holding Torn's current answer.
+// Two things that settles. React keeps its OWN class on that cell — we only
+// ever replace innerHTML, so the class is untouched by us and stays current —
+// and React does NOT wipe our chip when the member's state changes. So the
+// cell's text is always ours and can never be the signal; the class is always
+// Torn's, and is. The first attempt read the text and could therefore never
+// have fired, which is exactly what the reader saw: still frozen on zero.
 //
-// The rule that keeps this safe: release on a POSITIVE reading only. An empty
-// cell, a cell mid-render, a wording nobody anticipated — all mean "no opinion",
-// and the poll stays in charge. The failure mode is the old slow behaviour,
-// never a false release.
+// Release is still decided on a POSITIVE reading. The local countdown must
+// never decide it — a target can extend hospital defensively (ipecac, a wrong
+// blood bag SETS the timer to 60-90 min) and our cached `until` is then the old
+// short time, so releasing on it flashes a still-hospitalised target as
+// attackable. Torn's class cannot be stale that way.
 function nativeCheck() {
   const sandbox = {};
   vm.createContext(sandbox);
   vm.runInContext(fn("ffs_nativeSaysReleased") + "\nglobalThis.chk = ffs_nativeSaysReleased;", sandbox);
   return sandbox.chk;
 }
-const cell = (text, aria, hasChip) => ({
-  textContent: text,
-  getAttribute: () => aria || null,
-  querySelector: (sel) => (hasChip && sel.includes("ffs-hosp") ? {} : null),
+const cell = (cls) => ({ className: cls });
+const HOSP = "status left hospital prevColumn___UOKmY status___BLAOt not-ok";
+
+test("the captured hospital cell is not a release", () => {
+  assert.equal(nativeCheck()(cell(HOSP)), false);
 });
 
-test("Torn saying the member is okay releases them", () => {
+test("not-ok blocks a release on its own", () => {
+  // Torn's own marker for "cannot be attacked" — whatever else the cell says,
+  // that settles it.
+  assert.equal(nativeCheck()(cell("status left okay status___BLAOt not-ok")), false);
+});
+
+test("not-ok is matched as a class, not as a substring", () => {
+  // "not-ok" CONTAINS "ok". A substring test would read the captured hospital
+  // cell as okay and release a hospitalised target — the precise failure the
+  // clamp exists to prevent.
   const chk = nativeCheck();
-  assert.equal(chk(cell("Okay")), true);
-  assert.equal(chk(cell("", "Okay")), true, "aria alone is enough");
+  assert.equal(chk(cell(HOSP)), false);
+  assert.equal(chk(cell("status left ok status___BLAOt")), true);
 });
 
-test("Torn still saying hospital does not release them", () => {
+test("jail, travel and federal are not releases", () => {
   const chk = nativeCheck();
-  assert.equal(chk(cell("Hospital")), false);
-  assert.equal(chk(cell("In hospital for 10 minutes")), false);
+  for (const s of ["jail", "traveling", "travelling", "abroad", "federal"]) {
+    assert.equal(chk(cell("status left " + s + " status___X not-ok")), false, s);
+  }
 });
 
-test("jail and travel are not releases either", () => {
-  const chk = nativeCheck();
-  assert.equal(chk(cell("Jail")), false);
-  assert.equal(chk(cell("Traveling to Switzerland")), false);
-  assert.equal(chk(cell("In a Swiss hospital")), false);
-});
-
-test("an empty cell is not a release", () => {
-  // A cell caught mid-render says nothing, and "nothing" must never mean "out".
+test("a class with no status token is no opinion", () => {
+  // Mid-render, or an element that is not the status cell. Saying nothing
+  // leaves the poll in charge, which is the safe direction.
   const chk = nativeCheck();
   assert.equal(chk(cell("")), false);
-  assert.equal(chk(cell("   ")), false);
+  assert.equal(chk(cell("prevColumn___UOKmY")), false);
   assert.equal(chk(cell(null)), false);
 });
 
-test("a wording nobody anticipated is not a release", () => {
-  // The whole point of a positive list: an unknown word leaves the poll in
-  // charge rather than guessing the member is free.
+test("a rendered status cell with nothing blocking it is a release", () => {
   const chk = nativeCheck();
-  assert.equal(chk(cell("Federal")), false);
-  assert.equal(chk(cell(" ")), false);
+  assert.equal(chk(cell("status left okay prevColumn___UOKmY status___BLAOt")), true);
+  assert.equal(chk(cell("status left status___BLAOt")), true);
 });
 
-test("our own chip in the cell means Torn has not re-rendered it", () => {
-  // With the chip present the cell is still OURS — Torn has not re-rendered,
-  // so anything else in there is leftover, not an answer. The text is
-  // deliberately "Okay" here: without the chip check this cell would read as a
-  // release, which is the whole point of looking for the chip first.
-  const chk = nativeCheck();
-  assert.equal(chk(cell("Okay", null, true)), false);
-  assert.equal(chk(cell("00:00:00", null, true)), false);
-  // And the same cell WITHOUT our chip is Torn's answer, so it does release.
-  assert.equal(chk(cell("Okay", null, false)), true);
+test("a missing element is no opinion", () => {
+  assert.equal(nativeCheck()(null), false);
 });

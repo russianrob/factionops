@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates Beta
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.900
+// @version      2.73.901
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2783,30 +2783,42 @@ if (!singleton) {
   /**
    * Does Torn's OWN cell say this member is out?
    *
-   * Three different things could decide release and only one of them is safe.
-   * The local countdown must never decide it: a target can extend hospital
-   * defensively (ipecac, a wrong blood bag SETS the timer to 60-90 min) and our
-   * cached `until` is then the OLD short time — releasing on it flashes a still
-   * hospitalised target as attackable, which is far worse than a slow chip. The
-   * API poll is authoritative but lags, which is the "stays on 00:00:00"
-   * complaint. Torn's own markup is neither: not derived, and not stale.
+   * Settled by a capture from the war page rather than by guessing. A
+   * hospitalised member's status cell, with our chip in it, reads:
    *
-   * React re-renders the status cell when a member's state changes, and that
-   * wipes our chip. A cell with no chip in it is therefore holding Torn's
-   * current answer, and reading it there costs nothing.
+   *   class   = "status left hospital prevColumn___UOKmY status___BLAOt not-ok"
+   *   hasChip = true,  text = "00:00:01"
    *
-   * POSITIVE readings only. An empty cell, a cell caught mid-render, or a
-   * wording nobody anticipated all mean "no opinion" — the poll stays in
-   * charge. The failure mode is the old slow behaviour, never a false release.
+   * Two things follow. React keeps its own CLASS on that cell — we only ever
+   * replace innerHTML, so the class is untouched by us and stays current — and
+   * React does NOT wipe our chip when a member's state changes. So the cell's
+   * TEXT is always ours and can never be the signal; the class is always
+   * Torn's, and is. The first attempt at this read the text and could therefore
+   * never fire, which is exactly what came back: still frozen on zero.
+   *
+   * Why this is allowed to decide release when the local countdown is not: a
+   * target can extend hospital defensively — ipecac or a wrong blood bag SETS
+   * the timer to 60-90 minutes — so our cached `until` goes stale and releasing
+   * on it flashes a still-hospitalised target as attackable. Torn's own class
+   * cannot go stale that way.
+   *
+   * Tokens, never substrings: "not-ok" contains "ok", and a substring test
+   * would read the captured hospital cell above as okay.
    */
   function ffs_nativeSaysReleased(statusEl) {
     if (!statusEl) return false;
-    if (statusEl.querySelector && statusEl.querySelector('.ffs-hosp-status')) return false;
-    const aria = (statusEl.getAttribute && statusEl.getAttribute('aria-label')) || '';
-    const txt = (aria + ' ' + (statusEl.textContent || '')).toLowerCase().trim();
-    if (!txt) return false;
-    if (/\b(hospital|jail|traveling|travelling|abroad|federal)\b/.test(txt)) return false;
-    return /\b(okay|ok|online|idle|offline)\b/.test(txt);
+    const cls = String(statusEl.className || '');
+    if (!cls) return false;
+    const t = cls.split(/\s+/);
+    // Not a rendered status cell (or caught mid-render) — no opinion, and the
+    // poll stays in charge.
+    if (!t.some((x) => x === 'status' || x.indexOf('status___') === 0)) return false;
+    // Torn's own "cannot be attacked" marker, and the states behind it.
+    if (t.indexOf('not-ok') !== -1) return false;
+    for (const bad of ['hospital', 'jail', 'traveling', 'travelling', 'abroad', 'federal']) {
+      if (t.indexOf(bad) !== -1) return false;
+    }
+    return true;
   }
 
   // beta-only forensics for the "stays on 00:00:00" report. Dedicated budget
@@ -3142,7 +3154,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.900';
+  const SCRIPT_VERSION = '2.73.901';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3435,6 +3447,19 @@ if (!singleton) {
               hasChip: !!statusEl.querySelector('.ffs-hosp-status'),
               savedOriginal: String(statusEl.dataset.ffsHospOriginal || '').slice(0, 300),
               cellHtml: String(statusEl.innerHTML || '').slice(0, 300),
+              // The other side of the comparison: what Torn puts on the status
+              // cell of a member who CAN be attacked. Without it the release
+              // rule is inferred from the hospital case alone.
+              okSample: (function () {
+                const out = [];
+                const cells = document.querySelectorAll('[class*="status___"]');
+                for (let i = 0; i < cells.length && out.length < 3; i++) {
+                  const c = String(cells[i].className || '');
+                  if (/\b(hospital|jail|traveling|travelling|abroad|federal)\b/.test(c)) continue;
+                  if (out.indexOf(c) === -1) out.push(c.slice(0, 120));
+                }
+                return out;
+              })(),
             });
             // wb79: DON'T release on the local countdown alone. A target can
             // defensively extend hospital (ipecac / wrong blood bag) right
