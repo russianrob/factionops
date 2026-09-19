@@ -18,6 +18,12 @@ import vm from "node:vm";
 
 const SRC = fs.readFileSync(new URL("./public/scripts/torn-rw-pricer.user.js", import.meta.url), "utf8");
 
+function v(name) {
+  const m = SRC.match(new RegExp("^[ \\t]*var[ \\t]+" + name + "[ \\t]*=.*$", "m"));
+  assert.ok(m, "var not found: " + name);
+  return m[0].trim();
+}
+
 function fn(name) {
   const i = SRC.indexOf("function " + name + "(");
   assert.ok(i >= 0, "not in the shipping script: " + name);
@@ -40,7 +46,8 @@ const ITEMS = () => [
 
 const box = {};
 vm.createContext(box);
-vm.runInContext(fn("matchReadItem") + "\nglobalThis.match = matchReadItem;", box);
+vm.runInContext([fn("readItemFits"), fn("matchReadItem"),
+                 "globalThis.match = matchReadItem;"].join("\n"), box);
 const match = box.match;
 
 // ── Which line a price belongs to ──────────────────────────────
@@ -121,7 +128,9 @@ function runPlace(lines, items, passes = 1) {
   vm.createContext(sandbox);
   vm.runInContext([
     fn("fmtBigDollar"), fn("isOurs"), fn("forumLineHosts"), fn("forumLineSegments"),
-    fn("segmentText"), fn("matchReadItem"), fn("readItemTitle"), fn("placeReadItems"),
+    v("MAX_READ_LINE"),
+    fn("segmentText"), fn("readItemFits"), fn("countReadMatches"), fn("matchReadItem"),
+    fn("readItemTitle"), fn("placeReadItems"),
     "globalThis.placed = 0;",
     "for (var p = 0; p < PASSES; p++) globalThis.placed += placeReadItems(FRESH(), null);",
   ].join("\n"), sandbox, { timeout: 5000 });
@@ -168,4 +177,85 @@ test("an item with no price is never tagged", () => {
 test("the read no longer pins anything over the post", () => {
   assert.ok(!/function pinReadCard/.test(SRC), "the pinned card must be gone");
   assert.ok(!/position:fixed;left:8px/.test(SRC), "no fixed overlay may remain");
+});
+
+// ── A block is not a line ──────────────────────────────────────
+// Four prices came out at the BOTTOM of the post, stranded with no weapon
+// beside them: $1,751,508,564 for an ArmaLite 36% Weaken sitting under "Last
+// edited by...", eight lines below the ArmaLite.
+//
+// forumLineHosts pushes any element with a <br> DESCENDANT, so a wrapper around
+// several lines is offered as a line itself, and its segment text is the whole
+// block. That text names the ArmaLite, so it matched — and the badge went where
+// the block ends rather than where the weapon is.
+//
+// A line describes ONE weapon. Text that could be several is a block.
+test("text that could be several weapons is not priced", () => {
+  const items = ITEMS();
+  const block = "Kodachi 10% Bloodlust Price: 250m " +
+                "Jackhammer 2% Deadly Price: 90m " +
+                "Metal Nunchaku 64% Roshambo Price: 50m";
+  const { cells, placed } = runPlace([block], items);
+  assert.equal(placed, 0, "a whole block took a price");
+  assert.deepEqual(cells[0]._tags, []);
+});
+
+test("the wrapper is skipped and the lines inside it are still priced", () => {
+  // Both are offered as hosts, wrapper first — document order. The wrapper must
+  // take nothing and consume nothing, or the line below it loses its price too.
+  const { cells, placed } = runPlace([
+    "Kodachi 10% Bloodlust Jackhammer 2% Deadly",
+    "Kodachi 10% Bloodlust",
+    "Jackhammer 2% Deadly",
+  ], ITEMS());
+  assert.equal(placed, 2);
+  assert.deepEqual(cells[0]._tags, [], "the wrapper must stay bare");
+  assert.match(cells[1]._tags[0].textContent, /205/);
+  assert.match(cells[2]._tags[0].textContent, /60/);
+});
+
+test("a line is still priced when it is the last one left", () => {
+  // The count rule must not refuse a genuine line just because it is the only
+  // match remaining.
+  const { placed } = runPlace(["Metal Nunchaku 64% Roshambo"], ITEMS());
+  assert.equal(placed, 1);
+});
+
+test("text far longer than a line is refused even if only one weapon fits", () => {
+  // The other half of the same failure: a block whose other weapons have
+  // already been priced still ends in the wrong place.
+  const long = "Rules of this thread. ".repeat(40) + " Metal Nunchaku 64% Roshambo";
+  const { placed } = runPlace([long], ITEMS());
+  assert.equal(placed, 0, "a page of text took a price: " + long.length + " chars");
+});
+
+// ── The reported post, with its real read ──────────────────────
+// Ten lines, the nineteen items the server actually returned for them, and the
+// wrapper that forumLineHosts offers alongside them. On 3.9.10 the wrapper took
+// the ArmaLite's price and put it at the end of the block; four such wrappers
+// on the real page stranded four prices at the bottom of the post.
+test("every line of the reported post keeps its own price", () => {
+  const items = JSON.parse(fs.readFileSync(
+    new URL("./data/rwp-text-cache/txt-f8b5a348b7220164044b67b2025155b3.json", import.meta.url), "utf8")).items;
+  items.forEach((it, n) => { it.price = { estimate: (n + 1) * 1000 }; });
+
+  const LINES = [
+    "ArmaLite M-15A4 77.08/62.83 Quality: 149.11% (O) Bonus: Weaken 36% Price: 1.95b (in market)",
+    "BT MP9 73.05/63.73 Quality: 207.73% (O) Bonus: Slow 30% Price: 880m (in market)",
+    "Desert Eagle 74.13/44.49 Quality: 236.17% (R) Bonus: Expose 18% Price: 850m (in market)",
+    "Diamond Bladed Knife 69.89/67.03 Quality: 149.24% (O) Bonus: Frenzy 8% Price: 1.3b (in market)",
+    "Diamond Bladed Knife 70.50/67.63 Quality: 161.29% (O) Bonus: Wither 32% Price: 1.55b (in market)",
+    "Diamond Bladed Knife 73.27/67.81 Quality: 190.76% (O) Bonus: Assassinate 91% Price: 1.5b (in market)",
+    "Diamond Bladed Knife 67.90/65.93 Quality: 118.34% (Y) Bonus: Empower 74% Price: 760m (in market)",
+    "Enfield SA-80 76.63/63.80 Quality: 224.38% (R) Bonus: Conserve 39% Price: 1.5b (in market)",
+    "Kama 50.46/64.26 Quality: 247.25% (R) Bonus: Frenzy 14% Price: 1.2b (in market)",
+    "Lorcin 380 43.36/49.59 Quality: 249.42% (R) Bonus: Wither 53% Price: 750m (in market)",
+  ];
+  // The wrapper comes first, as it does in document order.
+  const { cells, placed } = runPlace([LINES.join(" "), ...LINES], items);
+
+  assert.deepEqual(cells[0]._tags, [], "the wrapper took a price");
+  assert.equal(placed, LINES.length);
+  const bare = LINES.filter((_, i) => cells[i + 1]._tags.length === 0);
+  assert.deepEqual(bare, [], "these lines lost their price");
 });

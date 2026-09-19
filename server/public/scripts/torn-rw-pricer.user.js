@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.9.10
+// @version      3.9.11
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.9.10';
+    var SCRIPT_VERSION = '3.9.11';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -4589,20 +4589,38 @@
      * Each item is handed out once. Two lines that read alike would otherwise
      * both take the first match and the second price would never be shown.
      */
-    function matchReadItem(items, text) {
+    // Longest a single weapon's line runs, in characters. The lines on the
+    // thread this came from are about 95; a block of them is thousands.
+    var MAX_READ_LINE = 500;
+
+    function readItemFits(it, text) {
         var hay = String(text || ''), low = hay.toLowerCase();
+        var label = String((it && (it.readAs || it.name)) || '').toLowerCase();
+        if (!label || low.indexOf(label) === -1) return false;
+        var bs = (it && it.bonuses) || [];
+        if (!bs.length) return false;
+        for (var b = 0; b < bs.length; b++) {
+            var nm = String(bs[b].name || '').toLowerCase();
+            if (!nm || low.indexOf(nm) === -1) return false;
+            if (!new RegExp('(^|[^0-9.])' + bs[b].pct + '([^0-9.]|$)').test(hay)) return false;
+        }
+        return true;
+    }
+
+    /** How many of the unplaced items this text could be. */
+    function countReadMatches(items, text) {
+        var n = 0;
+        for (var i = 0; i < (items || []).length; i++) {
+            if (items[i] && !items[i].__rwpUsed && readItemFits(items[i], text)) n++;
+        }
+        return n;
+    }
+
+    function matchReadItem(items, text) {
         for (var i = 0; i < (items || []).length; i++) {
             var it = items[i];
             if (!it || it.__rwpUsed) continue;
-            var label = String(it.readAs || it.name || '').toLowerCase();
-            if (!label || low.indexOf(label) === -1) continue;
-            var bs = it.bonuses || [], ok = bs.length > 0;
-            for (var b = 0; b < bs.length; b++) {
-                var nm = String(bs[b].name || '').toLowerCase();
-                if (!nm || low.indexOf(nm) === -1) { ok = false; break; }
-                if (!new RegExp('(^|[^0-9.])' + bs[b].pct + '([^0-9.]|$)').test(hay)) { ok = false; break; }
-            }
-            if (!ok) continue;
+            if (!readItemFits(it, text)) continue;
             it.__rwpUsed = 1;
             return it;
         }
@@ -4645,7 +4663,24 @@
             for (var s = 0; s < segs.length; s++) {
                 var nodes = segs[s], last = nodes[nodes.length - 1];
                 if (!last || last.__rwpRead) continue;
-                var it = matchReadItem(items, segmentText(nodes));
+                var text = segmentText(nodes);
+                // A line describes ONE weapon, and this has to be established
+                // before anything is placed.
+                //
+                // forumLineHosts offers any element with a <br> DESCENDANT as a
+                // line, so a wrapper around several lines is offered as one too,
+                // and its text is the whole block. That text names every weapon
+                // in it, so it matched — and four prices came out at the BOTTOM
+                // of the post, stranded under "Last edited by...", the ArmaLite's
+                // $1,751,508,564 eight lines below the ArmaLite.
+                //
+                // Text that could be several items is a block: skip it and let
+                // the elements inside it be the lines. Consuming nothing matters
+                // as much as placing nothing — an item taken here is an item the
+                // real line can no longer claim.
+                if (text.length > MAX_READ_LINE) continue;
+                if (countReadMatches(items, text) !== 1) continue;
+                var it = matchReadItem(items, text);
                 // The caller filters these out, but this is the function that
                 // would throw on a null price, so it is the function that checks.
                 if (!it || !it.price || !it.price.estimate) continue;
