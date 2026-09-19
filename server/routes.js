@@ -1269,8 +1269,22 @@ function setTok(v){try{v?localStorage.setItem(TOK,v):localStorage.removeItem(TOK
 async function api(path,{method='GET',body}={}) {
   const r=await fetch(path,{ method, headers:{'Content-Type':'application/json','Authorization':'Bearer '+getTok()}, body: body?JSON.stringify(body):undefined });
   const j=await r.json().catch(()=>({}));
-  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  // The status is a number on the RESPONSE, not a substring of the server's
+  // prose. A 401 body reads {"error":"Invalid or expired token"}, so anything
+  // downstream matching /401|403/ against the message never fires — which is
+  // how two members ended up staring at that sentence with no way back to the
+  // sign-in form.
+  if(!r.ok){ const err=new Error(j.error||('HTTP '+r.status)); err.status=r.status; throw err; }
   return j;
+}
+
+// Is this the server refusing our token, rather than a genuine failure?
+// Only these two mean "sign in again" — clearing the token on any error would
+// sign the reader out for a missing war or a dropped connection.
+function isAuthError(e){
+  if(!e) return false;
+  if(e.status===401||e.status===403) return true;
+  return /\b(401|403)\b/.test(String(e.message||''));
 }
 
 async function signIn(){
@@ -1453,7 +1467,7 @@ async function boot(){
     await loadSettings(chosen);
     reload();
   }catch(e){
-    if(/401|403/.test(e.message)){ setTok(''); boot(); return; }
+    if(isAuthError(e)){ setTok(''); boot(); return; }
     $('#app').style.display='block';
     $('#report').innerHTML='<div class="card err">'+esc(e.message)+'</div>';
   }
@@ -1577,8 +1591,22 @@ async function api(path,{method='GET',body}={}) {
     body: body?JSON.stringify(body):undefined,
   });
   const j=await r.json().catch(()=>({}));
-  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  // The status is a number on the RESPONSE, not a substring of the server's
+  // prose. A 401 body reads {"error":"Invalid or expired token"}, so anything
+  // downstream matching /401|403/ against the message never fires — which is
+  // how two members ended up staring at that sentence with no way back to the
+  // sign-in form.
+  if(!r.ok){ const err=new Error(j.error||('HTTP '+r.status)); err.status=r.status; throw err; }
   return j;
+}
+
+// Is this the server refusing our token, rather than a genuine failure?
+// Only these two mean "sign in again" — clearing the token on any error would
+// sign the reader out for a missing war or a dropped connection.
+function isAuthError(e){
+  if(!e) return false;
+  if(e.status===401||e.status===403) return true;
+  return /\b(401|403)\b/.test(String(e.message||''));
 }
 
 async function signIn(){
@@ -1780,7 +1808,7 @@ async function boot(){
     loadReport(chosen);
   }catch(e){
     // Probably bad JWT; sign out and retry
-    if(/401|403/.test(e.message)){ setTok(''); boot(); return; }
+    if(isAuthError(e)){ setTok(''); boot(); return; }
     $('#app').style.display='block';
     $('#report').innerHTML='<div class="card err">'+esc(e.message)+'</div>';
   }
