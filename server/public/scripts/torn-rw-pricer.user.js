@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.9.8
+// @version      3.9.9
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.9.8';
+    var SCRIPT_VERSION = '3.9.9';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -119,6 +119,25 @@
     // ─── Reverse lookup: name -> known weapon/armour ───
     var KNOWN_WEAPONS = {};
     Object.keys(WEAPON_CLASS).forEach(function(w) { KNOWN_WEAPONS[w.toLowerCase()] = w; });
+
+    /**
+     * A name with every run of punctuation and space flattened to one space.
+     *
+     * The catalogue spells it "Type 98 Anti Tank"; a shop table wrote "Type 98
+     * Anti-Tank" and it did not resolve, so the line parser fell back to the
+     * weapon named on the row ABOVE and priced it at $2,097,580,147 under a
+     * tooltip reading "Milkor MGL". A hyphen is not a different gun.
+     *
+     * Exact, not fuzzy: both sides are flattened the same way, so this only
+     * ever equates spellings of ONE name. Checked against the catalogue — all
+     * 144 weapon and armour names stay distinct under it — and the test asserts
+     * that rather than trusting the check.
+     */
+    function flattenName(s) {
+        return String(s || '').toLowerCase().replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim();
+    }
+    var FLAT_WEAPONS = {};
+    Object.keys(WEAPON_CLASS).forEach(function (w) { FLAT_WEAPONS[flattenName(w)] = w; });
 
     var KNOWN_ARMOUR = {};
     Object.keys(ARMOUR_SET).forEach(function(a) { KNOWN_ARMOUR[a.toLowerCase()] = a; });
@@ -279,6 +298,9 @@
         if (weaponPrices[name]) return name;
         var lower = name.toLowerCase();
         if (KNOWN_WEAPONS[lower]) return KNOWN_WEAPONS[lower];
+        // Same name, different punctuation.
+        var flat = FLAT_WEAPONS[flattenName(name)];
+        if (flat) return flat;
         var aka = ITEM_ALIASES[lower] || ITEM_ALIASES[lower.replace(/[^a-z0-9]/g, '')];
         if (aka && weaponPrices[aka]) return aka;
         return null;
@@ -3951,7 +3973,7 @@
         var map = { weapon: -1, bonus: -1, pct: -1, rarity: -1 };
         for (var i = 0; i < (cells || []).length; i++) {
             var t = String(cells[i] || '').trim().toLowerCase().replace(/\s+/g, ' ');
-            if (map.weapon < 0 && /^(weapon|item|gun|name)s?$/.test(t)) map.weapon = i;
+            if (map.weapon < 0 && /^(weapon|item|gun|name|base)s?$/.test(t)) map.weapon = i;
             else if (map.bonus < 0 && /^bonus(es)?$/.test(t)) map.bonus = i;
             else if (map.pct < 0 && /^(b ?%|bonus ?%|%|roll|level)$/.test(t)) map.pct = i;
             else if (map.rarity < 0 && /^(rarity|colour|color)$/.test(t)) map.rarity = i;
@@ -4357,10 +4379,29 @@
         // document order across hosts, because each line is often its own
         // element, and dropped after a few lines so a name cannot reach down
         // the page and claim numbers that are nothing to do with it.
-        var carry = null, carryAge = 0;
+        var carry = null, carryAge = 0, lastRow = null;
         for (var h = 0; h < hosts.length; h++) {
             var host = hosts[h];
             if (!host.querySelector) continue;
+
+            // A table row is a hard boundary for a carried name, and it can be
+            // read straight off the DOM rather than guessed at from the text.
+            //
+            // This parser walks leaf cells in document order, so a table looks
+            // to it like a flat run of lines and a name could reach from one
+            // row into the next. It did: a shop table listed a Milkor MGL, then
+            // a Type 98 Anti-Tank whose name did not resolve, and the Type 98's
+            // bonus cell was priced at $2,097,580,147 under a tooltip reading
+            // "Milkor MGL — 35% Stricken". A confident price for the wrong gun
+            // on somebody else's sale thread.
+            var row = host.closest ? host.closest('tr') : null;
+            if (row !== lastRow) { carry = null; carryAge = 0; lastRow = row; }
+
+            // The table parser has its own column for this row and reads it
+            // properly, by header. Pricing it again inline put two estimates on
+            // one row — and the inline one was the one naming the wrong weapon.
+            if (row && row.getAttribute && row.getAttribute('data-rwp-tbl')) continue;
+
             var segs = forumLineSegments(host);
             for (var s = 0; s < segs.length; s++) {
                 var nodes = segs[s];

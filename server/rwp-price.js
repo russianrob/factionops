@@ -219,13 +219,27 @@ export function resolveName(feed, name) {
   const stripped = raw.replace(/^the\s+/i, "").trim();
   if (stripped !== raw && has(stripped)) return stripped;
 
-  // Last resort, case- and article-insensitive. Deliberately not fuzzy: a near
-  // match on a weapon name would price the wrong gun, which is worse than no
-  // price at all.
+  // Last resort, insensitive to case, a leading article, and the punctuation
+  // between words. Deliberately not fuzzy: a near match on a weapon name would
+  // price the wrong gun, which is worse than no price at all.
+  //
+  // Punctuation is not fuzz. The catalogue spells it "Type 98 Anti Tank" and a
+  // shop table wrote "Type 98 Anti-Tank"; that failed to resolve, and the
+  // client's line parser then fell back to the weapon named on the row above
+  // and priced it under the wrong name. Both sides are flattened identically,
+  // so this only ever equates spellings of ONE name — and all 144 catalogue
+  // names stay distinct under it, which the test asserts rather than assumes.
+  const flat = (x) => String(x).toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, " ").trim();
   const want = stripped.toLowerCase();
+  const wantFlat = flat(stripped);
   for (const t of tables) {
     for (const k of Object.keys(t)) {
       if (k.toLowerCase().replace(/^the\s+/, "") === want) return k;
+    }
+  }
+  for (const t of tables) {
+    for (const k of Object.keys(t)) {
+      if (flat(k) === wantFlat) return k;
     }
   }
   return null;

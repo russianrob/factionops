@@ -56,6 +56,10 @@ vm.runInContext([
   "var classPrices = FEED.classPrices, weaponLevelPrices = FEED.weaponLevelPrices;",
   "var recentTables = FEED.recent || null;",
   "var KNOWN_WEAPONS = {}; Object.keys(WEAPON_CLASS).forEach(function(w){ KNOWN_WEAPONS[w.toLowerCase()] = w; });",
+  // Same name, different punctuation — built from the shipping function so the
+  // harness cannot drift from what the script actually indexes.
+  fn("flattenName"),
+  "var FLAT_WEAPONS = {}; Object.keys(WEAPON_CLASS).forEach(function(w){ FLAT_WEAPONS[flattenName(w)] = w; });",
   "var ACTIVE = null;",
   // Learned shorthands arrive in the feed; empty unless a test sets them.
   "var ITEM_ALIASES = {};",
@@ -989,4 +993,74 @@ test("the guard catches a descendant, not just the card itself", () => {
   // candidate alone would let every one of them through.
   const body = srcFn("isOurs");
   assert.match(body, /closest/, "must look upward: " + body);
+});
+
+// ── A name that does not resolve must never borrow another weapon's ────
+// A shop table listed a Milkor MGL and then a Type 98 Anti-Tank. The catalogue
+// spells it "Type 98 Anti Tank" with a space, the post wrote it with a hyphen,
+// so the name did not resolve — and the line parser, walking the table's cells
+// in document order, kept the PREVIOUS row's weapon as its carry. The Type 98's
+// bonus cell was then priced at $2,097,580,147 under a tooltip reading
+// "Milkor MGL — 35% Stricken". A confident price for the wrong gun, on somebody
+// else's public sale thread.
+test("a hyphen where the catalogue has a space still finds the weapon", () => {
+  // Run it, do not grep it: the first version of this test matched a line that
+  // was already there and passed against the unfixed code.
+  const feed = JSON.parse(fs.readFileSync(new URL("./data/rwp-prices.json", import.meta.url), "utf8"));
+  const box = { weaponPrices: feed.weaponPrices, ITEM_ALIASES: feed.itemAliases || {},
+                KNOWN_WEAPONS: {}, WEAPON_CLASS: {} };
+  for (const w of Object.keys(feed.weaponPrices)) {
+    box.KNOWN_WEAPONS[w.toLowerCase()] = w;
+    box.WEAPON_CLASS[w] = 1;
+  }
+  vm.createContext(box);
+  vm.runInContext([srcFn("flattenName"),
+                   "var FLAT_WEAPONS = {}; Object.keys(WEAPON_CLASS).forEach(function(w){ FLAT_WEAPONS[flattenName(w)] = w; });",
+                   srcFn("normalizeWeaponName"), srcFn("lookupWeapon"),
+                   "globalThis.look = (n) => lookupWeapon(normalizeWeaponName(n));"].join("\n"), box);
+
+  assert.equal(box.look("Type 98 Anti-Tank"), "Type 98 Anti Tank", "the reported miss");
+  // The hyphens that are really there must keep working.
+  assert.equal(box.look("Enfield SA-80"), "Enfield SA-80");
+  assert.equal(box.look("ArmaLite M-15A4"), "ArmaLite M-15A4");
+  assert.equal(box.look("Tavor TAR-21"), "Tavor TAR-21");
+  // And it stays exact: a different gun is still a different gun.
+  assert.equal(box.look("Type 98"), null);
+  assert.equal(box.look("Milkor"), null);
+});
+
+test("the separator-insensitive index cannot merge two different weapons", () => {
+  // This is the property that makes it exact rather than fuzzy. Asserted
+  // against the real catalogue, not by eye.
+  const feed = JSON.parse(fs.readFileSync(new URL("./data/rwp-prices.json", import.meta.url), "utf8"));
+  const names = [...Object.keys(feed.weaponPrices), ...Object.keys(feed.armourPrices || {})];
+  const key = (s) => String(s).toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const seen = new Map();
+  for (const n of names) {
+    const k = key(n);
+    assert.ok(!seen.has(k) || seen.get(k) === n,
+      `separator-insensitive collision: ${seen.get(k)} vs ${n}`);
+    seen.set(k, n);
+  }
+  assert.equal(seen.get(key("Type 98 Anti-Tank")), "Type 98 Anti Tank");
+});
+
+// The carry-across-rows guard is NOT asserted here. A source-level version of
+// it passed against code with the guard deleted, because the string it matched
+// also appears on the ageing line below. It is tested by running the parser
+// over a table instead — see rwp-line-carry.test.mjs.
+
+test("a row the table parser already priced is not priced again inline", () => {
+  // The top table came out with BOTH an inline estimate in its bonus cell and a
+  // value in the RW column — the same row priced twice, and the inline one was
+  // the one attributing it to the wrong weapon.
+  const body = srcFn("injectForumLines");
+  assert.match(body, /data-rwp-tbl/, "already-priced rows must be skipped: " + body.slice(0, 1400));
+});
+
+test("a table whose weapon column is headed Base is read", () => {
+  // The PRIMARY table on that page is Base | Bonus | % | Quality | Price and
+  // got no prices at all, because only weapon/item/gun/name were recognised.
+  const body = srcFn("forumHeaderMap");
+  assert.match(body, /base/, "Base names the weapon column too: " + body);
 });

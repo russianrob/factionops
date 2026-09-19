@@ -44,6 +44,10 @@ vm.runInContext([
   "var classPrices = FEED.classPrices, weaponLevelPrices = FEED.weaponLevelPrices;",
   "var recentTables = FEED.recent || null; var ACTIVE = null; var ITEM_ALIASES = {};",
   "var KNOWN_WEAPONS = {}; Object.keys(WEAPON_CLASS).forEach(function(w){ KNOWN_WEAPONS[w.toLowerCase()] = w; });",
+  // Same name, different punctuation. Built from the shipping function so the
+  // harness cannot drift from what the script indexes.
+  fn("flattenName"),
+  "var FLAT_WEAPONS = {}; Object.keys(WEAPON_CLASS).forEach(function(w){ FLAT_WEAPONS[flattenName(w)] = w; });",
   SRC.slice(SRC.indexOf("var BONUS_ALIAS = {};"), SRC.indexOf("function resolveBonusName(")),
   fn("TBL"), fn("levelMedianOf"), fn("lookupWeapon"), fn("normalizeWeaponName"), fn("resolveBonusName"),
   fn("getMedianPrice"), fn("getWeaponComboMedian"), fn("pairKeyFor"), fn("getWeaponPairComboMedian"),
