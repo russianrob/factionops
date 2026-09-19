@@ -846,15 +846,13 @@ test("a lone line with no list above it is sent as itself", () => {
 // session token. It just never asked.
 
 test("the read request carries a session when there is one", () => {
-  const i = SRC.indexOf("function askServerToRead");
-  const body = SRC.slice(i, i + 1400);
+  const body = srcFn("askServerToRead");
   assert.match(body, /Authorization/, "no session is ever sent: " + body.slice(0, 300));
   assert.match(body, /Bearer/);
 });
 
 test("a needsMember answer signs in and tries once more", () => {
-  const i = SRC.indexOf("function askServerToRead");
-  const body = SRC.slice(i, i + 2000);
+  const body = srcFn("askServerToRead");
   assert.match(body, /needsMember/, "the declining answer must be noticed");
   // And exactly once, or a refused key loops.
   assert.match(body, /retried|retry/i);
@@ -870,8 +868,7 @@ test("warboard sign-in uses the key the cog already holds", () => {
 
 test("no API key means the fallback is skipped, not attempted", () => {
   // Posting without a key would be a wasted round trip on every unknown post.
-  const i = SRC.indexOf("function askServerToRead");
-  const body = SRC.slice(i, i + 700);
+  const body = srcFn("askServerToRead");
   assert.match(body, /getEffectiveApiKey\(\)/);
 });
 
@@ -883,8 +880,8 @@ test("the whole post is read, not just the line that matched", () => {
   const i = SRC.indexOf("stockContainerFor(posts[i])");
   assert.ok(i > 0, "the climb must still happen");
   const body = SRC.slice(i, i + 400);
-  assert.match(body, /askServerToRead\(looksLikeStock\(whole\) \? whole : t\)/,
-    "the container's text is what gets sent: " + body);
+  assert.match(body, /askServerToRead\(looksLikeStock\(whole\) \? whole : t, container\)/,
+    "the container's text is what gets sent, and the container with it: " + body);
 });
 
 // ── Inserting into a page that has moved on ────────────────────
@@ -893,37 +890,25 @@ test("the whole post is read, not just the line that matched", () => {
 // React: by the time the answer arrives the post has very often been
 // re-rendered, and the element we captured is detached. insertBefore on a
 // detached node SUCCEEDS, silently, into a tree nobody is looking at.
-test("the reply never inserts on a captured node", () => {
-  // The bug: insertBefore on the element captured BEFORE the request. Three
-  // different failures produce the same silent symptom — the node detached by a
-  // re-render, the node inside hidden markup, the node placed far up a long
-  // thread — and insertBefore reports success in all three. The card depends on
-  // no node at all now.
+test("the reply places each price on its own line", () => {
+  // Three shapes have been tried. One box on one captured element was invisible
+  // four times over; a pinned card was seen but buried the post. Each price now
+  // hangs off the line whose words it was read from — the mechanism the rest of
+  // this script already uses. Behaviour is tested in rwp-read-inline.test.mjs;
+  // what is asserted here is that the reply goes through it and nothing else.
   const body = srcFn("askServerToRead");
-  assert.match(body, /pinReadCard\(box, 'rwp-read-card'\)/, "the reply must pin its card");
-  assert.ok(!/insertBefore/.test(body), "askServerToRead must not place anything itself");
-  assert.ok(!/\banchor\b/.test(body), "a node captured before the request is not used: " + body.slice(0, 300));
+  assert.match(body, /placeReadItems\(priced, host\)/, "the reply must place items inline");
+  assert.ok(!/innerHTML/.test(body), "no block of prices is built any more: " + body);
 });
 
-test("the card is pinned, so no page change can lose it", () => {
-  const body = srcFn("pinReadCard");
-  assert.match(body, /position:fixed/, "it has to be pinned: " + body);
-  assert.match(body, /document\.body\.appendChild/, "attached to the body, not to a post");
-});
-
-test("the card can be dismissed", () => {
-  const body = srcFn("pinReadCard");
-  assert.match(body, /\\u2715/, "a close control: " + body);
-  assert.match(body, /removeChild\(box\)/, "and it must actually remove the card");
-  assert.match(body, /aria-label/, "the control needs a name for anyone not seeing the glyph");
-});
-
-test("it clears Torn's own chat bar along the bottom", () => {
-  // A card flush to the bottom edge sits on top of Torn's chat.
-  const body = srcFn("pinReadCard");
-  const m = body.match(/bottom:(\d+)px/);
-  assert.ok(m, "an explicit bottom offset: " + body);
-  assert.ok(Number(m[1]) >= 48, "too close to the chat bar: " + m[1]);
+test("the read never covers the page", () => {
+  // The reader asked for the overlay to go. RW Pricer's own cog and settings
+  // panel are pinned and always have been — they are chrome the reader opens,
+  // not output that appears over a post — so the assertion is about the READ,
+  // not about the word "fixed".
+  assert.ok(!/function pinReadCard/.test(SRC), "the pinned card is gone");
+  assert.ok(!/rwp-read-card/.test(SRC), "and so is the element it created");
+  assert.ok(!/position:fixed;left:8px/.test(SRC), "no full-width overlay remains");
 });
 
 // ── Two copies of the script ───────────────────────────────────
@@ -931,11 +916,13 @@ test("it clears Torn's own chat bar along the bottom", () => {
 // breaks after one, so one page load asks once — two requests means two copies
 // of RW Pricer are installed and running, which is the duplicate-install fault
 // reported against the app. A pinned card from each would stack.
-test("the pinned card has one identity, so a second copy replaces it", () => {
-  const body = srcFn("pinReadCard");
-  assert.match(SRC, /pinReadCard\(box, 'rwp-read-card'\)/, "the card needs a fixed id");
-  assert.match(body, /getElementById\(id\)/, "an existing card must be found");
-  assert.match(body, /removeChild\(old\)/, "and replaced, not stacked");
+test("two copies of the script do not double up a line", () => {
+  // The access log caught two reads posted in the same second: two copies are
+  // installed and running. With a card that meant two cards; with inline badges
+  // it means two passes over the same lines, and the per-line marker is what
+  // stops the second one adding a duplicate price beside the first.
+  const body = srcFn("placeReadItems");
+  assert.match(body, /__rwpRead/, "each line must record that it was priced: " + body);
 });
 
 // ── The gate that could skip the ask for a whole page ──────────

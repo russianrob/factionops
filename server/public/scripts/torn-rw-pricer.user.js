@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.9.9
+// @version      3.9.10
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.9.9';
+    var SCRIPT_VERSION = '3.9.10';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -4575,49 +4575,94 @@
      * people open it.
      */
     /**
-     * Show a read result where it cannot be missed.
+     * Which read item belongs to this line.
      *
-     * This was an in-post badge inserted after the line the text came from, and
-     * it was reported invisible four times running while the server logs showed
-     * full lists of prices going out. Three different failures produce that one
-     * symptom and all three were possible: the post re-rendered during the
-     * seconds a read takes and the captured node was detached; the node was
-     * still in the document but inside hidden markup, which has text to match
-     * on like anything else; or it was genuinely placed, far up a long thread,
-     * somewhere nobody scrolled. insertBefore reports success in all three.
+     * The server hands back a list; the post is what the reader is looking at.
+     * Pairing them by NAME alone is not enough — a sale post lists the same
+     * weapon several times, and that post had two Kodachis, two Jackhammers and
+     * two Diamond Bladed Knives. The roll is what separates them, so a line has
+     * to show the weapon, the bonus AND the roll before it takes a price.
      *
-     * Rather than guess which one was live, stop depending on a node at all. A
-     * pinned card has no anchor to lose, and a stock list of nineteen weapons
-     * reads better as a panel you can keep open while scrolling the post than
-     * as nineteen rows wedged into the middle of it.
+     * The roll is matched on its own, not as a substring: 10 inside "100%" is a
+     * different weapon's line.
      *
-     * The id is fixed and an existing card is REPLACED. The access log caught
-     * two reads posted in the same second, and the call site only asks once per
-     * page — so two copies of this script are installed and running, and
-     * without the id they would stack two cards on top of each other.
+     * Each item is handed out once. Two lines that read alike would otherwise
+     * both take the first match and the second price would never be shown.
      */
-    function pinReadCard(box, id) {
-        box.id = id;
-        var old = document.getElementById(id);
-        if (old && old.parentNode) old.parentNode.removeChild(old);
-        // Clear of Torn's own chat bar along the bottom.
-        box.style.cssText += ';position:fixed;left:8px;right:8px;bottom:56px;' +
-                             'z-index:2147483600;max-height:45vh;overflow:auto;' +
-                             'background:rgba(14,17,22,.97);border-radius:9px;' +
-                             'box-shadow:0 6px 24px rgba(0,0,0,.5)';
-        var x = document.createElement('span');
-        x.textContent = '\u2715';
-        x.setAttribute('role', 'button');
-        x.setAttribute('aria-label', 'Close');
-        x.style.cssText = 'float:right;cursor:pointer;opacity:.75;padding:0 2px 0 8px';
-        x.addEventListener('click', function () {
-            if (box.parentNode) box.parentNode.removeChild(box);
-        });
-        box.insertBefore(x, box.firstChild);
-        document.body.appendChild(box);
+    function matchReadItem(items, text) {
+        var hay = String(text || ''), low = hay.toLowerCase();
+        for (var i = 0; i < (items || []).length; i++) {
+            var it = items[i];
+            if (!it || it.__rwpUsed) continue;
+            var label = String(it.readAs || it.name || '').toLowerCase();
+            if (!label || low.indexOf(label) === -1) continue;
+            var bs = it.bonuses || [], ok = bs.length > 0;
+            for (var b = 0; b < bs.length; b++) {
+                var nm = String(bs[b].name || '').toLowerCase();
+                if (!nm || low.indexOf(nm) === -1) { ok = false; break; }
+                if (!new RegExp('(^|[^0-9.])' + bs[b].pct + '([^0-9.]|$)').test(hay)) { ok = false; break; }
+            }
+            if (!ok) continue;
+            it.__rwpUsed = 1;
+            return it;
+        }
+        return null;
     }
 
-    function askServerToRead(text, retried) {
+    /** The same tooltip the deterministic badges carry, for a read item. */
+    function readItemTitle(it) {
+        var bs = it.bonuses || [];
+        return it.name + ' — ' + bs.map(function (b) { return b.pct + '% ' + b.name; }).join(' + ') +
+               (it.rarity ? ' — ' + it.rarity : '') +
+               ' — read from the post\u2019s wording, so check it against what is written';
+    }
+
+    /**
+     * Hang each read price on the line it was read from.
+     *
+     * Two earlier shapes failed. Hanging the whole list on one element captured
+     * before the request was invisible four times over: that element can be
+     * detached by a re-render, sit inside hidden markup, or be honestly placed
+     * far up a long thread, and insertBefore reports success in all three.
+     * Pinning the list over the page fixed being seen and broke reading the
+     * post underneath it.
+     *
+     * So use the mechanism the rest of this script already uses and that
+     * visibly works: the same line segments the deterministic parser walks,
+     * with the price inserted beside the words it describes. It is also
+     * self-checking, which neither of the others was — if a line cannot be
+     * found there is nothing to attach to, so nothing is shown, and a price can
+     * never end up somewhere the weapon it describes is not.
+     */
+    function placeReadItems(items, root) {
+        var scope = (root && root.isConnected) ? root : document;
+        var hosts = forumLineHosts(scope);
+        var placed = 0;
+        for (var h = 0; h < hosts.length; h++) {
+            var host = hosts[h];
+            if (isOurs(host)) continue;
+            var segs = forumLineSegments(host);
+            for (var s = 0; s < segs.length; s++) {
+                var nodes = segs[s], last = nodes[nodes.length - 1];
+                if (!last || last.__rwpRead) continue;
+                var it = matchReadItem(items, segmentText(nodes));
+                // The caller filters these out, but this is the function that
+                // would throw on a null price, so it is the function that checks.
+                if (!it || !it.price || !it.price.estimate) continue;
+                last.__rwpRead = 1;
+                var tag = document.createElement('span');
+                tag.className = 'rwp-tbl-cell';
+                tag.style.cssText = 'margin-left:8px;color:#9fe870;font-weight:700;white-space:nowrap';
+                tag.textContent = '\u2248 ' + fmtBigDollar(it.price.estimate);
+                tag.title = readItemTitle(it);
+                if (last.parentNode) last.parentNode.insertBefore(tag, last.nextSibling);
+                placed++;
+            }
+        }
+        return placed;
+    }
+
+    function askServerToRead(text, host, retried) {
         var key = text.slice(0, 200);
         if (!retried) {
             if (textAsked[key]) return;
@@ -4635,7 +4680,9 @@
                 n.style.cssText = 'margin-top:8px;padding:6px 8px;border-left:3px solid #e0b357;' +
                                   'background:rgba(0,0,0,.25);font-size:12px;color:#e0b357';
                 n.textContent = 'RW Pricer can read this post, but needs a Torn API key — add one in the RW Pricer settings.';
-                pinReadCard(n, 'rwp-needs-key');
+                // In the post, in normal flow. It is a note about the post and
+                // belongs with it; nothing this script writes covers the page.
+                if (host && host.isConnected) host.appendChild(n);
             }
             return;
         }
@@ -4656,34 +4703,21 @@
                 if ((res.status === 401 || (data && data.needsMember)) && !retried) {
                     safeSet(WB_TOKEN_KEY, '');
                     warboardSignIn(function (ok) {
-                        if (ok) askServerToRead(text, true);
+                        if (ok) askServerToRead(text, host, true);
                     });
                     return;
                 }
                 if (!data || !data.items || !data.items.length) return;
-                var box = document.createElement('div');
-                box.className = 'rwp-tbl-cell';
-                box.style.cssText = 'margin-top:8px;padding:8px;border-left:3px solid #9fe870;' +
-                                    'background:rgba(0,0,0,.25);font-size:12px;line-height:1.7';
-                var html = '<b style="color:#9fe870">RW Pricer</b><br>';
+                // Only items that actually carry a price. An item read but not
+                // priced has nothing to say, and showing its name alone would
+                // read as a price of nothing.
+                var priced = [];
                 for (var i = 0; i < data.items.length; i++) {
                     var it = data.items[i];
-                    if (!it.price || !it.price.estimate) continue;
-                    html += '<span style="color:#fff">' + it.name + '</span> ' +
-                            '<span style="color:#ff9f2e">' +
-                            it.bonuses.map(function (b) { return b.pct + '% ' + b.name; }).join(' + ') +
-                            '</span> &rarr; <b style="color:#9fe870">' + fmtBigDollar(it.price.estimate) + '</b><br>';
+                    if (it && it.price && it.price.estimate) priced.push(it);
                 }
-                box.innerHTML = html + '<span style="color:#9aa0ad">Read from the post\u2019s wording, ' +
-                                'so check it against what is written above.</span>';
-                // Anchored to the LINE that matched, not to the container the
-                // text came from. stockContainerFor climbs up to six ancestors
-                // to gather a whole post, and putting the badge after THAT put
-                // it most of the way up the document — somewhere the reader
-                // never scrolled to, while the server had been answering with
-                // prices all along. What is read and where it is shown are
-                // different questions.
-                pinReadCard(box, 'rwp-read-card');
+                if (!priced.length) return;
+                placeReadItems(priced, host);
             },
             onerror: function () {},
             ontimeout: function () {},
@@ -4777,7 +4811,7 @@
                     var container = stockContainerFor(posts[i]);
                     var whole = forumCellText(container).replace(/\s+/g, ' ').trim();
                     if (posts[i].setAttribute) posts[i].setAttribute('data-rwp-read', '1');
-                    askServerToRead(looksLikeStock(whole) ? whole : t);
+                    askServerToRead(looksLikeStock(whole) ? whole : t, container);
                     // One read per pass. A vision read costs money, and the next
                     // pass picks up the next unmarked post.
                     break;
