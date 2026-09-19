@@ -1976,8 +1976,22 @@ router.post("/api/admin/xanax/repoll/:warId", requireAuth, async (req, res) => {
 // ── POST /api/auth ──────────────────────────────────────────────────────
 
 const FACTIONOPS_MIN_VERSION = '4.9.74';
+
+// Partner builds that version themselves with a NAME rather than a number.
+//
+// The comparison below reads a version as dot-separated integers, and
+// Number('sidekick') is NaN, which `|| 0` turns into ZERO — so a named build
+// was rated as version 0, declared outdated, and refused with a 426. A partner
+// is not obliged to follow FactionOps's numbering.
+//
+// An allowlist rather than "let anything unparseable through": a genuinely old
+// client with a mangled version string must still be caught, which is the only
+// reason the gate exists.
+const FACTIONOPS_NAMED_VERSIONS = new Set(['sidekick']);
+
 function factionopsVersionTooOld(v) {
   if (!v || typeof v !== 'string') return false; // legacy clients that don't send a version — let them through
+  if (FACTIONOPS_NAMED_VERSIONS.has(v.trim().toLowerCase())) return false;
   const a = v.split('.').map(Number), b = FACTIONOPS_MIN_VERSION.split('.').map(Number);
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
     const ai = a[i] || 0, bi = b[i] || 0;
