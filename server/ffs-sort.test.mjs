@@ -697,6 +697,7 @@ function limiter(state = {}) {
   vm.runInContext([
     v("FFS_IMMINENT_REFRESH_MS"),
     vIf(/^\s*const FFS_RATE_LIMIT_BACKOFF_MS = .*$/m),
+    vIf(/^\s*const FFS_REFUSAL_CODES = .*$/m),
     fn("ffs_isRateLimitError"), fn("ffs_imminentHospRefresh"),
     "globalThis.refresh = ffs_imminentHospRefresh;",
     "globalThis.isLimited = ffs_isRateLimitError;",
@@ -739,4 +740,22 @@ test("the ordinary refresh throttle still applies", () => {
   const s = limiter({ lastRefresh: 1_000_000 - 1_000 });
   s.refresh();
   assert.deepEqual(s.calls, []);
+});
+
+test("every code Torn uses to refuse a key counts as rate limiting", () => {
+  // Read out of War Stuff Enhanced (Greasy Fork 529238), which handles this
+  // properly: isRateLimitError covers [5, 8, 9] — 5 too many requests, 8 IP
+  // block, 9 API temporarily disabled. 2.73.55 only knew about 5, so the other
+  // two kept the fast refresh hammering a key Torn had already shut out.
+  const s = limiter();
+  for (const code of [5, 8, 9]) {
+    assert.equal(s.isLimited({ error: { code, error: "x" } }), true, "code " + code);
+  }
+});
+
+test("and a key that is simply wrong is still not one", () => {
+  const s = limiter();
+  for (const code of [2, 6, 16]) {
+    assert.equal(s.isLimited({ error: { code, error: "x" } }), false, "code " + code);
+  }
 });

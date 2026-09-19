@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates Beta
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.910
+// @version      2.73.911
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2686,11 +2686,23 @@ if (!singleton) {
   const FFS_RATE_LIMIT_BACKOFF_MS = 60_000;
   let _ffsRateLimitedUntil = 0;
 
-  /** Is this Torn telling us the key's per-minute budget is spent? */
+  /**
+   * Is this Torn refusing the key rather than answering?
+   *
+   * Codes read out of War Stuff Enhanced (Greasy Fork 529238), which handles
+   * this properly: 5 too many requests, 8 IP block, 9 API temporarily
+   * disabled. Knowing only about 5 left the fast refresh hammering a key Torn
+   * had already shut out for the other two.
+   *
+   * Deliberately NOT every error: a wrong key (2) or a bad selection (6) is a
+   * problem that backing off does not solve, and standing down for a minute on
+   * those would stall the fast path for reasons unrelated to the budget.
+   */
+  const FFS_REFUSAL_CODES = [5, 8, 9];
   function ffs_isRateLimitError(data) {
     const e = data && data.error;
     if (!e) return false;
-    if (e.code === 5) return true;
+    if (FFS_REFUSAL_CODES.indexOf(e.code) !== -1) return true;
     return /too many requests/i.test(String(e.error || ""));
   }
 
@@ -3273,7 +3285,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.910';
+  const SCRIPT_VERSION = '2.73.911';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
