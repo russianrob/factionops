@@ -14,7 +14,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 
-const SRC = fs.readFileSync(new URL("./public/scripts/ffs-banner-estimates-beta.user.js", import.meta.url), "utf8");
+// Both builds, one suite. The stable script carries the same behaviour as the
+// beta minus its diag, and the only way that stays true is if the same tests
+// run against whichever one is under test. FFS_BUILD picks; the default is
+// stable, because that is the one people have.
+const BUILD = process.env.FFS_BUILD === "beta" ? "-beta" : "";
+const SRC = fs.readFileSync(
+  new URL(`./public/scripts/ffs-banner-estimates${BUILD}.user.js`, import.meta.url), "utf8");
 
 function fn(name) {
   const i = SRC.indexOf("function " + name + "(");
@@ -294,7 +300,10 @@ test("a missing element is no opinion", () => {
   assert.equal(nativeCheck()(null), false);
 });
 
-test("the poll's own answer is recorded verbatim for the diag", () => {
+// Beta-only: the forensics do not ship in the stable build, by design.
+const betaOnly = { skip: BUILD === "" && "stable carries no diag" };
+
+test("the poll's own answer is recorded verbatim for the diag", betaOnly, () => {
   // Instrumentation, but it rides inside ffs_recordMemberTravel, so it is worth
   // knowing it records what the poll said rather than what we concluded.
   const s = recorder();
@@ -304,7 +313,7 @@ test("the poll's own answer is recorded verbatim for the diag", () => {
   assert.equal(s._ffsLastPollStatus["3"].until, 1789811536);
 });
 
-test("recording the poll does not disturb the release stamp", () => {
+test("recording the poll does not disturb the release stamp", betaOnly, () => {
   const s = recorder({ hospital: { "4": 111 }, hospitalState: { "4": "Hospital" } });
   s._ffsLastPollStatus = {};
   s.rec({ id: "4", status: { state: "Okay", description: "Okay" } });

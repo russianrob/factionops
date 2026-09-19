@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.49
+// @version      2.73.50
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -24,6 +24,31 @@
 // =============================================================================
 // Upstream: FF Scouter V2 (GPL-3.0, rDacted/Weav3r/xentac/Glasnost)
 //   https://greasyfork.org/en/scripts/535292
+//
+// 2.73.50 —  War list: a target who has just left hospital.
+//              Two reports, both about the moment a hospital timer ends.
+//
+//              (1) They were sent to the BOTTOM. Once the hospital entry
+//              was deleted the row sorted purely on FFS score, and a
+//              member with no cached score sinks on `return 1` in the
+//              attackable comparator. A release is now stamped and the
+//              row sits in its own group above attackable for 90s,
+//              freshest first. Stamped only on the EDGE out of
+//              hospital/jail — every poll reports every healthy member,
+//              so without that the pinned group would be the faction.
+//
+//              (2) The chip FROZE at 00:00:00. Release was decided only
+//              by the API poll, which lags. Torn's own status cell
+//              carries a live class (`hospital`/`not-ok` vs `okay`/`ok`)
+//              that React keeps current — we only ever replace innerHTML,
+//              so it is untouched by us — and that is now read directly.
+//              Released on a POSITIVE reading only: a cell caught
+//              mid-render carries no `okay` but no `hospital` either, and
+//              treating that as free would release a hospitalised target.
+//              The local countdown still never decides release (wb79).
+//
+//              Verified in a private build against a live war before
+//              landing here; its diag is not included.
 //
 // 2.73.0-wb18 — Travel countdown fixes: wb17 diag on /factions.php?step=your
 //              returned zero faction IDs and zero rows. Two fixes:
@@ -2674,6 +2699,15 @@ if (!singleton) {
   const _ffsFactionLiveAt = {};            // factionId → ts of last applied cache-busted (live) response
   let _ffsLastImminentRefresh = 0;
 
+  // wb89: a target whose hospital time just ended is the most time-critical row
+  // on the page — hittable NOW, and whoever notices first gets the hit. Nothing
+  // recorded that, so once the hospital entry was deleted the row sorted purely
+  // on FFS score, and a member with no cached score hits `return 1` in the
+  // attackable comparator and sinks to the very bottom. Reported as "when
+  // people med out and reaches 0 they get sent to the bottom of the list".
+  const _ffsJustReleasedAt = {};           // pid → ms when we saw them leave hospital
+  const FFS_JUST_RELEASED_MS = 90_000;     // how long a fresh release stays pinned on top
+
   // wb44: localStorage cache so countdowns appear instantly on reload
   // without waiting for the 30s poll. Keyed per-faction so scouting
   // multiple factions doesn't cross-pollute. TTL 5min — older data is
@@ -2771,7 +2805,55 @@ if (!singleton) {
     }
   }
 
+  /**
+   * Does Torn's OWN cell say this member is out?
+   *
+   * Settled by a capture from the war page rather than by guessing. A
+   * hospitalised member's status cell, with our chip in it, reads:
+   *
+   *   class   = "status left hospital prevColumn___UOKmY status___BLAOt not-ok"
+   *   hasChip = true,  text = "00:00:01"
+   *
+   * Two things follow. React keeps its own CLASS on that cell — we only ever
+   * replace innerHTML, so the class is untouched by us and stays current — and
+   * React does NOT wipe our chip when a member's state changes. So the cell's
+   * TEXT is always ours and can never be the signal; the class is always
+   * Torn's, and is. The first attempt at this read the text and could therefore
+   * never fire, which is exactly what came back: still frozen on zero.
+   *
+   * Why this is allowed to decide release when the local countdown is not: a
+   * target can extend hospital defensively — ipecac or a wrong blood bag SETS
+   * the timer to 60-90 minutes — so our cached `until` goes stale and releasing
+   * on it flashes a still-hospitalised target as attackable. Torn's own class
+   * cannot go stale that way.
+   *
+   * Tokens, never substrings: "not-ok" contains "ok", and a substring test
+   * would read the captured hospital cell above as okay.
+   */
+  function ffs_nativeSaysReleased(statusEl) {
+    if (!statusEl) return false;
+    const cls = String(statusEl.className || '');
+    if (!cls) return false;
+    const t = cls.split(/\s+/);
+    // Not a rendered status cell (or caught mid-render) — no opinion, and the
+    // poll stays in charge.
+    if (!t.some((x) => x === 'status' || x.indexOf('status___') === 0)) return false;
+    // Torn's own "cannot be attacked" marker, and the states behind it.
+    if (t.indexOf('not-ok') !== -1) return false;
+    for (const bad of ['hospital', 'jail', 'traveling', 'travelling', 'abroad', 'federal']) {
+      if (t.indexOf(bad) !== -1) return false;
+    }
+    // Measured rather than inferred. An attackable member's cell came back as
+    // "status left okay prevColumn___UOKmY status___BLAOt ok" — Torn marks them
+    // with BOTH `okay` and `ok`, and drops `not-ok`. Requiring that positively
+    // also disposes of the other cell in the same capture,
+    // "status left status___BLAOt tab___uGxm5": a tab, not a member's status,
+    // which absence-of-blockers alone would have read as free.
+    return t.indexOf('ok') !== -1 || t.indexOf('okay') !== -1;
+  }
+
   function ffs_recordMemberTravel(member) {
+
     if (!member || !member.status) return;
     const state = member.status.state;
     if (state === "Traveling") {
@@ -2832,6 +2914,10 @@ if (!singleton) {
         _ffsMemberHospitalState[member.id] = state;
       }
     } else {
+      // wb89: note the moment they became hittable, but only on the EDGE — a
+      // member who was never in hospital must not be pinned, or every ordinary
+      // attackable row claims the top on the first poll.
+      if (_ffsMemberHospitalUntil[member.id]) _ffsJustReleasedAt[member.id] = Date.now();
       delete _ffsMemberHospitalUntil[member.id];
       delete _ffsMemberHospitalState[member.id];
     }
@@ -3077,7 +3163,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.49';
+  const SCRIPT_VERSION = '2.73.50';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3342,6 +3428,21 @@ if (!singleton) {
         const hospUntil = _ffsMemberHospitalUntil[uid];
         const hospState = _ffsMemberHospitalState[uid] || 'Hospital';
         if (hospUntil) {
+          // wb89: Torn's own cell outranks our cached timer. This is reachable
+          // only in the window where React has re-rendered the cell and our
+          // chip is gone — see ffs_nativeSaysReleased for why that is the one
+          // safe signal of the three available.
+          if (ffs_nativeSaysReleased(statusEl)) {
+            _ffsJustReleasedAt[uid] = Date.now();
+            delete _ffsMemberHospitalUntil[uid];
+            delete _ffsMemberHospitalState[uid];
+            // React has ALREADY rendered the right thing here. Restoring the
+            // saved snapshot would put the word "Hospital" back on a member who
+            // just walked out of it, so only our own markers are cleared.
+            delete statusEl.dataset.ffsHospOriginal;
+            delete statusEl.dataset.ffsHospInjected;
+            return;
+          }
           let remaining = Math.round(hospUntil - ffs_nowSecFloat()); // wb78: round, not floor (no ~0.5s bias)
           if (remaining <= 0) {
             // wb79: DON'T release on the local countdown alone. A target can
@@ -3517,6 +3618,11 @@ if (!singleton) {
     if (pid && _ffsMemberHospitalUntil[pid]) {                // hospital/jail (map)
       return _ffsMemberHospitalState[pid] === 'Jail' ? 2 : 1;
     }
+    // wb89: just out of hospital, and still hittable. Checked AFTER travel and
+    // hospital so a member who went straight back in — or straight onto a plane
+    // — is never pinned to the top as a target that cannot be hit.
+    if (pid && _ffsJustReleasedAt[pid] &&
+        Date.now() - _ffsJustReleasedAt[pid] < FFS_JUST_RELEASED_MS) return -1;
     if (row.querySelector('a.ffs-hosp-status.jail')) return 2; // jail BEFORE hospital
     if (row.querySelector('a.ffs-hosp-status'))      return 1; // hospital
     if (row.querySelector('span.ffs-travel-status')) return 2; // traveling
@@ -3586,7 +3692,10 @@ if (!singleton) {
         if (warMode) {
           const ga = ffs_rowGroup(A.row, A.pid);
           const gb = ffs_rowGroup(B.row, B.pid);
-          if (ga !== gb) return ga - gb;                       // 0 atk < 1 hosp < 2 jail/travel
+          if (ga !== gb) return ga - gb;                       // -1 just out < 0 atk < 1 hosp < 2 jail/travel
+          // wb89: freshest release leads — the newest opening is the one nobody
+          // else has taken yet.
+          if (ga === -1) return (_ffsJustReleasedAt[B.pid] || 0) - (_ffsJustReleasedAt[A.pid] || 0);
           if (ga === 1) return ffs_hospKey(A.pid) - ffs_hospKey(B.pid);     // soonest release first
           if (ga === 2) return ffs_unreachKey(A.pid) - ffs_unreachKey(B.pid);
           const sa = _ffsScoreCache[A.pid];                    // attackable: by FFS score
