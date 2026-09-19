@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.51
+// @version      2.73.52
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2733,8 +2733,27 @@ if (!singleton) {
       } catch (_) { /* quota or storage disabled */ }
     }, 2000);
   }
+  // Factions already warmed this page load. The cache is a WARM START, not a
+  // source of truth: it exists so countdowns are on screen before the first
+  // poll lands, and once per faction is all that is for.
+  const _ffsCacheHydrated = new Set();
+
   function ffs_loadStatusCache(factionId) {
     if (!factionId) return;
+    // Once. pollAll calls this every cycle, and ffs_saveStatusCache writes the
+    // WHOLE hospital map into localStorage, so re-loading assigned a snapshot
+    // up to five minutes old straight over live data — then saved it again,
+    // refreshing its own TTL, so a stale entry kept itself alive.
+    //
+    // Reported as: attack a target, their new hospital time appears, and within
+    // thirty seconds the row drops back to 00:00:00 — the pre-attack snapshot.
+    // The same clobber resurrects members the poll has already released, which
+    // is how a freed target kept a timer frozen at zero.
+    //
+    // Marked before the read, so a faction with no cache is not retried on
+    // every poll for the life of the page.
+    if (_ffsCacheHydrated.has(factionId)) return;
+    _ffsCacheHydrated.add(factionId);
     try {
       const raw = localStorage.getItem(_ffsCacheKey(factionId));
       if (!raw) return;
@@ -3211,7 +3230,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.51';
+  const SCRIPT_VERSION = '2.73.52';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.

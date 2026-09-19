@@ -435,3 +435,93 @@ test("a row still showing our own chip is not used as the template", () => {
   restorer([chipped, okCellStub(), cell])(cell);
   assert.equal(cell.innerHTML, "<span>Okay</span>");
 });
+
+// ── The cache must not out-vote the poll ───────────────────────
+// Reported: attack a target, and the row still reads 00:00:00 while their
+// profile says "In hospital for 27 minutes — Attacked by RussianRob".
+//
+// ffs_saveStatusCache writes the WHOLE hospital map into localStorage, and
+// ffs_loadStatusCache Object.assigns that blob straight back over the live map
+// — and pollAll calls it every cycle, before fetching. So a snapshot up to five
+// minutes old is re-asserted over fresh data every thirty seconds, then saved
+// again, refreshing its own TTL. A stale entry keeps itself alive.
+//
+// It is a warm-start cache: it exists so countdowns are on screen before the
+// first poll lands. Once per page load is all it is for.
+function cacheLoader(stored, live) {
+  const store = new Map(Object.entries(stored || {}));
+  const sandbox = {
+    localStorage: {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      removeItem: (k) => store.delete(k),
+      setItem: (k, v) => store.set(k, v),
+    },
+    Date: { now: () => 1_000_000 },
+    JSON,
+    Object,
+    Set,
+    _ffsMemberCountdowns: {}, _ffsMemberAbbr: {}, _ffsMemberReturning: {},
+    _ffsMemberHospitalUntil: live || {},
+    _ffsMemberHospitalState: {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext([
+    v("FFS_CACHE_TTL_MS"),
+    SRC.match(/^\s*const _ffsCacheKey = .*$/m)[0].trim(),
+    SRC.match(/^\s*const _ffsCacheHydrated = .*$/m)[0].trim(),
+    fn("ffs_loadStatusCache"),
+    "globalThis.load = ffs_loadStatusCache;",
+  ].join("\n"), sandbox);
+  return sandbox;
+}
+const snap = (hosp) => JSON.stringify({ ts: 1_000_000 - 60_000, hospitalUntil: hosp });
+
+test("the cache warms an empty map", () => {
+  const s = cacheLoader({ ffs_status_cache_v1_42055: snap({ "1": 111 }) }, {});
+  s.load("42055");
+  assert.equal(s._ffsMemberHospitalUntil["1"], 111, "a cold start should be prefilled");
+});
+
+test("a second load does not re-assert the snapshot over fresh data", () => {
+  // The reported bug. Poll lands with the post-attack time; the next cycle's
+  // cache load must not put the pre-attack one back.
+  const s = cacheLoader({ ffs_status_cache_v1_42055: snap({ "1": 111 }) }, {});
+  s.load("42055");
+  s._ffsMemberHospitalUntil["1"] = 999;       // a fresh poll, mid-war
+  s.load("42055");
+  assert.equal(s._ffsMemberHospitalUntil["1"], 999, "the stale snapshot overwrote the poll");
+});
+
+test("a released member is not resurrected by the cache", () => {
+  // The other half: the poll says Okay and deletes the entry, and the next
+  // cache load puts the old hospital time back — so the row shows a timer for
+  // someone who is free, stuck at zero because the time has already passed.
+  const s = cacheLoader({ ffs_status_cache_v1_42055: snap({ "1": 111 }) }, {});
+  s.load("42055");
+  delete s._ffsMemberHospitalUntil["1"];      // poll reported Okay
+  s.load("42055");
+  assert.equal(s._ffsMemberHospitalUntil["1"], undefined, "a freed member came back hospitalised");
+});
+
+test("each faction still gets its one warm start", () => {
+  const s = cacheLoader({
+    ffs_status_cache_v1_42055: snap({ "1": 111 }),
+    ffs_status_cache_v1_999: snap({ "2": 222 }),
+  }, {});
+  s.load("42055");
+  s.load("999");
+  assert.equal(s._ffsMemberHospitalUntil["1"], 111);
+  assert.equal(s._ffsMemberHospitalUntil["2"], 222);
+});
+
+test("a faction with no cache is not retried every cycle", () => {
+  // Marked hydrated regardless, or a missing cache means a localStorage read
+  // on every poll for the life of the page.
+  let reads = 0;
+  const s = cacheLoader({}, {});
+  const orig = s.localStorage.getItem;
+  s.localStorage.getItem = (k) => { reads++; return orig(k); };
+  s.load("42055");
+  s.load("42055");
+  assert.equal(reads, 1);
+});
