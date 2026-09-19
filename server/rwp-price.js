@@ -242,6 +242,27 @@ export function resolveName(feed, name) {
       if (flat(k) === wantFlat) return k;
     }
   }
+
+  // Sellers drop the model number. A post read "enfield 23% specialist 289m";
+  // Torn writes "Enfield SA-80", so the reader's answer was thrown away and two
+  // weapons the seller was offering vanished from the page.
+  //
+  // A WORD prefix is enough when exactly one item has it — and only then.
+  // "benelli" names two weapons, and picking one would price the wrong gun,
+  // which is the failure this whole ladder exists to avoid. Whole words only:
+  // "jack" is not how anyone writes Jackhammer, and part-words are how a near
+  // match becomes a different weapon.
+  if (wantFlat.length >= 3) {
+    let hit = null;
+    for (const t of tables) {
+      for (const k of Object.keys(t)) {
+        if (!flat(k).startsWith(wantFlat + " ")) continue;
+        if (hit && hit !== k) return null;
+        hit = k;
+      }
+    }
+    if (hit) return hit;
+  }
   return null;
 }
 

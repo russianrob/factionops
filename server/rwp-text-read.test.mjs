@@ -230,3 +230,61 @@ test("an ordinary post is not mistaken for the card", () => {
   assert.equal(isOwnOutput("Reading the post carefully, prices are firm"), false);
   assert.equal(isOwnOutput(""), false);
 });
+
+// ── The shape that lost two weapons ────────────────────────────
+// A post that groups by colour:
+//     orange:
+//     jackhammer 20% eviscerate 612m
+//     yellow:
+//     enfield 23% specialist 289m
+//     enfield 21% specialist 263m
+//     ...
+// came back with four items out of six. Both enfields were dropped — the same
+// weapon with the same bonus at two different rolls — and everything under
+// "yellow:" came back with no colour at all, because the prompt only ever
+// described a colour written ON the item's own line.
+
+test("the prompt says a colour on its own line heads the lines under it", () => {
+  const p = buildTextPrompt("x".repeat(40));
+  assert.match(p, /heading|header|on its own line|above/i,
+    "a grouped post must be readable: " + p);
+});
+
+test("the prompt says the same item can be listed more than once", () => {
+  // Two enfields, same bonus, different rolls, both lost. A model that reads
+  // the second as a repeat of the first drops a weapon the seller is offering.
+  const p = buildTextPrompt("x".repeat(40));
+  assert.match(p, /more than once|twice|again|repeat|separate listing/i,
+    "repeated weapons must survive: " + p);
+});
+
+test("a rarity carried down from a heading is still checked against the post", () => {
+  // The verification does not loosen: "yellow" has to appear SOMEWHERE in the
+  // post for Yellow to be kept, and in a grouped post it does — as the heading.
+  const post = "orange:\njackhammer 20% eviscerate 612m\nyellow:\nsig 552 16% puncture 102m";
+  const out = verifyItems(feed, post, [
+    { name: "SIG 552", readAs: "sig 552", rarity: "Yellow", bonuses: [{ name: "Puncture", pct: 16 }] },
+    { name: "Jackhammer", readAs: "jackhammer", rarity: "Orange", bonuses: [{ name: "Eviscerate", pct: 20 }] },
+  ]);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].rarity, "Yellow");
+  assert.equal(out[1].rarity, "Orange");
+});
+
+test("a colour the post never writes is still refused in a grouped post", () => {
+  const post = "orange:\njackhammer 20% eviscerate 612m";
+  const out = verifyItems(feed, post, [
+    { name: "Jackhammer", readAs: "jackhammer", rarity: "Red", bonuses: [{ name: "Eviscerate", pct: 20 }] },
+  ]);
+  assert.equal(out[0].rarity, null, "the post says orange, not red");
+});
+
+test("two listings of one weapon at different rolls both survive", () => {
+  const post = "yellow:\nenfield 23% specialist 289m\nenfield 21% specialist 263m";
+  const out = verifyItems(feed, post, [
+    { name: "Enfield SA-80", readAs: "enfield", rarity: "Yellow", bonuses: [{ name: "Specialist", pct: 23 }] },
+    { name: "Enfield SA-80", readAs: "enfield", rarity: "Yellow", bonuses: [{ name: "Specialist", pct: 21 }] },
+  ]);
+  assert.equal(out.length, 2, "one of the two listings was dropped");
+  assert.deepEqual(out.map((i) => i.bonuses[0].pct).sort(), [21, 23]);
+});

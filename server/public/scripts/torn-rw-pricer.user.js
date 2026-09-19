@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.9.11
+// @version      3.9.13
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.9.11';
+    var SCRIPT_VERSION = '3.9.13';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -301,6 +301,20 @@
         // Same name, different punctuation.
         var flat = FLAT_WEAPONS[flattenName(name)];
         if (flat) return flat;
+        // Sellers drop the model number — a post writes "enfield", Torn writes
+        // "Enfield SA-80". A WORD prefix is enough when exactly one weapon has
+        // it; "benelli" names two and must stay unresolved, because picking one
+        // prices the wrong gun. Whole words only, so "jack" is not a Jackhammer.
+        var want = flattenName(name);
+        if (want.length >= 3) {
+            var hit = null;
+            for (var k in FLAT_WEAPONS) {
+                if (k.indexOf(want + ' ') !== 0) continue;
+                if (hit && hit !== FLAT_WEAPONS[k]) return null;
+                hit = FLAT_WEAPONS[k];
+            }
+            if (hit) return hit;
+        }
         var aka = ITEM_ALIASES[lower] || ITEM_ALIASES[lower.replace(/[^a-z0-9]/g, '')];
         if (aka && weaponPrices[aka]) return aka;
         return null;
@@ -4655,6 +4669,16 @@
     function placeReadItems(items, root) {
         var scope = (root && root.isConnected) ? root : document;
         var hosts = forumLineHosts(scope);
+        // querySelectorAll returns DESCENDANTS, and a post can perfectly well
+        // have none that matter: this one is a single block of <br>-separated
+        // lines with the weapon names in <b>, no block elements inside it at
+        // all. Scoping the search to that post therefore found nothing and the
+        // whole read went unplaced — the one price on the page had come from
+        // the deterministic parser, which searches the document.
+        //
+        // The post itself is a line host. First, so its own <br> segmentation
+        // gets to claim the lines before anything nested does.
+        if (scope !== document && scope.nodeType === 1) hosts.unshift(scope);
         var placed = 0;
         for (var h = 0; h < hosts.length; h++) {
             var host = hosts[h];

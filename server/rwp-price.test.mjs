@@ -1162,3 +1162,60 @@ test("a bonus with no evidence anywhere says nothing extra", () => {
   const p = priceItem(feed, { name: "Minigun", rarity: "Red", bonuses: [] });
   assert.ok(!p.notes.some((n) => /goes for about/.test(n)), p.notes.join(" | "));
 });
+
+// ── Sellers drop the model number ──────────────────────────────
+// A post read "enfield 23% specialist 289m". The reader returned it correctly
+// — six items, both enfields among them — and verification threw both away,
+// because Torn writes "Enfield SA-80" and "Enfield" resolves to nothing. Two
+// weapons the seller was offering simply vanished from the page.
+//
+// A WORD prefix is enough when exactly one item has it. Ambiguity is refused
+// rather than guessed: "benelli" names two weapons, and picking one would price
+// the wrong gun — the failure this whole ladder is built to avoid.
+test("an item named by its first word alone resolves when only one fits", () => {
+  assert.equal(resolveName(feed, "Enfield"), "Enfield SA-80");
+  assert.equal(resolveName(feed, "enfield"), "Enfield SA-80");
+  assert.equal(resolveName(feed, "Sig"), "SIG 552");
+  assert.equal(resolveName(feed, "Diamond Bladed"), "Diamond Bladed Knife");
+});
+
+test("a prefix shared by two items resolves to neither", () => {
+  assert.equal(resolveName(feed, "Benelli"), null, "Benelli M4 Super or M1 Tactical?");
+  assert.equal(resolveName(feed, "Beretta"), null);
+  assert.equal(resolveName(feed, "Dual"), null);
+});
+
+test("every ambiguous prefix in the catalogue is refused", () => {
+  // Asserted against the real feed rather than a list I wrote out, so a weapon
+  // Torn adds later cannot quietly make an accepted prefix ambiguous.
+  const names = [...Object.keys(feed.weaponPrices), ...Object.keys(feed.armourPrices || {})];
+  const flat = (s) => String(s).toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const byPrefix = new Map();
+  for (const n of names) {
+    const w = flat(n).split(" ");
+    for (let k = 1; k <= w.length; k++) {
+      const pre = w.slice(0, k).join(" ");
+      if (!byPrefix.has(pre)) byPrefix.set(pre, new Set());
+      byPrefix.get(pre).add(n);
+    }
+  }
+  for (const [pre, set] of byPrefix) {
+    if (set.size > 1 && !names.some((n) => flat(n) === pre)) {
+      assert.equal(resolveName(feed, pre), null,
+        `"${pre}" names ${set.size} items and must not resolve to one of them`);
+    }
+  }
+});
+
+test("a prefix that is only part of a word is not a prefix", () => {
+  // "jack" is not how anyone writes Jackhammer, and letting part-words through
+  // is how a near match becomes a wrong gun.
+  assert.equal(resolveName(feed, "Jack"), null);
+  assert.equal(resolveName(feed, "Kod"), null);
+});
+
+test("a short fragment never resolves", () => {
+  assert.equal(resolveName(feed, "M"), null);
+  assert.equal(resolveName(feed, "a"), null);
+  assert.equal(resolveName(feed, ""), null);
+});

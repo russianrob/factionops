@@ -37,7 +37,10 @@ export const MAX_TEXT = 6000;
  * Bump when the prompt changes what a reading CONTAINS, exactly as
  * PROMPT_VERSION does for pictures.
  */
-export const TEXT_PROMPT_VERSION = 2;
+// 3: colour headings, and the same weapon listed more than once. A post
+//    grouped as "orange:" / "yellow:" came back missing both of its enfields
+//    and with no colour on anything under the yellow heading.
+export const TEXT_PROMPT_VERSION = 3;
 
 export const RETAIN_MS = 365 * 86400000;
 
@@ -78,6 +81,10 @@ Return ONE JSON object, nothing else:
 
 Rules:
 - One entry per item offered. A post listing eight weapons returns eight.
+- The SAME weapon can be offered more than once, with a different roll each
+  time. Two lines reading "enfield 23% specialist" and "enfield 21% specialist"
+  are two separate weapons for sale and must both be returned. A second listing
+  is never a repeat of the first.
 - "name" is the item as TORN writes it — "Diamond Bladed Knife", not "DBK".
   "readAs" is just the name as the POST writes it, and nothing else: for the
   line "DBK | orange | 61% Achilles | 2.2b" that is "DBK", not the line. It is
@@ -89,6 +96,10 @@ Rules:
   weapon or what the seller wants, never the bonus.
 - "rarity" is the colour the post states, otherwise null. A post can say it as
   a word or as a coloured square: 🟥 is Red, 🟧 is Orange, 🟨 is Yellow.
+  A colour can also be a HEADING rather than part of a line — a post often reads
+  "orange:" and then lists its orange weapons, "yellow:" and then its yellow
+  ones. A heading applies to every item under it until the next heading, so
+  those weapons carry a colour even though their own line does not name one.
   Never infer it from anything else — not from the quality, not from the price.
 - Return only what the post actually says. Anything not in the text below will
   be discarded, so inventing an item wastes the effort.

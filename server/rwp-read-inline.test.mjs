@@ -259,3 +259,72 @@ test("every line of the reported post keeps its own price", () => {
   const bare = LINES.filter((_, i) => cells[i + 1]._tags.length === 0);
   assert.deepEqual(bare, [], "these lines lost their price");
 });
+
+// ── A post that is one block, not a list of elements ───────────
+// The read came back with four priced weapons and one price appeared. The post
+// is a single block of <br>-separated lines with the weapon names in <b> — no
+// block elements inside it at all — and placeReadItems scopes its search to the
+// post. querySelectorAll returns DESCENDANTS, so it found no hosts and placed
+// nothing. The one price on the page came from the deterministic line parser,
+// which searches the whole document.
+//
+// The post itself is a line host. Scoping to it must not exclude it.
+function brBlock(lines) {
+  const kids = [];
+  for (const L of lines) {
+    const cut = L.indexOf(" ", L.indexOf(" ") + 1);
+    const b = { nodeType: 1, nodeName: "B", childNodes: [], textContent: L.slice(0, cut),
+                classList: { contains: () => false } };
+    kids.push(b,
+      { nodeType: 3, nodeValue: L.slice(cut), textContent: L.slice(cut) },
+      { nodeType: 1, nodeName: "BR", childNodes: [], textContent: "",
+        classList: { contains: () => false } });
+  }
+  const el = {
+    nodeType: 1, nodeName: "DIV", childNodes: kids, textContent: lines.join(" "),
+    _tags: [], isConnected: true,
+    classList: { contains: () => false },
+    closest: () => null, getAttribute: () => null,
+    querySelector: () => null,
+    querySelectorAll: () => [],                       // no block descendants
+    getElementsByTagName: (t) =>
+      (t.toUpperCase() === "BR" ? kids.filter((k) => k.nodeName === "BR") : []),
+    insertBefore(n) { this._tags.push(n); return n; },
+  };
+  kids.forEach((k) => { k.parentNode = el; });
+  return el;
+}
+
+function runScoped(lines, items) {
+  const post = brBlock(lines);
+  const sandbox = {
+    document: {
+      querySelectorAll: () => [post],
+      createElement: () => ({ nodeType: 1, className: "", title: "", textContent: "", style: { cssText: "" } }),
+    },
+    ITEMS: items, SCOPE: post,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext([
+    v("MAX_READ_LINE"), fn("fmtBigDollar"), fn("isOurs"), fn("forumLineHosts"),
+    fn("forumLineSegments"), fn("segmentText"), fn("readItemFits"), fn("countReadMatches"),
+    fn("matchReadItem"), fn("readItemTitle"), fn("placeReadItems"),
+    "globalThis.placed = placeReadItems(ITEMS, SCOPE);",
+  ].join("\n"), sandbox, { timeout: 5000 });
+  return { post, placed: sandbox.placed };
+}
+
+test("a post scoped to itself still has its lines found", () => {
+  const items = JSON.parse(fs.readFileSync(
+    new URL("./data/rwp-text-cache/txt-d7c7fb4b97d94fa9d0b579345a4f7a78.json", import.meta.url), "utf8")).items;
+  items.forEach((it, n) => { it.price = { estimate: (n + 1) * 1000 }; });
+
+  const { placed } = runScoped([
+    "jackhammer 20% eviscerate 612m",
+    "enfield 23% specialist 289m",
+    "sig 552 16% puncture 102m",
+    "samurai sword 16% motivation 102m",
+    "naval cutlass 7% expose 61m",
+  ], items);
+  assert.equal(placed, 4, "the read's four priced weapons must all land");
+});

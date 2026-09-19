@@ -1011,9 +1011,20 @@ test("a hyphen where the catalogue has a space still finds the weapon", () => {
   assert.equal(box.look("Enfield SA-80"), "Enfield SA-80");
   assert.equal(box.look("ArmaLite M-15A4"), "ArmaLite M-15A4");
   assert.equal(box.look("Tavor TAR-21"), "Tavor TAR-21");
-  // And it stays exact: a different gun is still a different gun.
-  assert.equal(box.look("Type 98"), null);
-  assert.equal(box.look("Milkor"), null);
+  // A first word that names exactly one weapon resolves to it — sellers write
+  // "enfield", not "Enfield SA-80".
+  assert.equal(box.look("Type 98"), "Type 98 Anti Tank");
+  assert.equal(box.look("Milkor"), "Milkor MGL");
+  assert.equal(box.look("enfield"), "Enfield SA-80");
+
+  // A first word shared by two weapons resolves to NEITHER. This is the guard
+  // that matters: picking one would price the wrong gun.
+  assert.equal(box.look("Benelli"), null, "Benelli M4 Super or M1 Tactical?");
+  assert.equal(box.look("Beretta"), null);
+
+  // And part of a word is not a word.
+  assert.equal(box.look("Jack"), null);
+  assert.equal(box.look("Mil"), null);
 });
 
 test("the separator-insensitive index cannot merge two different weapons", () => {
