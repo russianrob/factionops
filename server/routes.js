@@ -874,7 +874,7 @@ router.get("/api/circular/shortcut", (req, res) => {
 router.post("/api/agent/message", requireAuth, (req, res, next) => {
   if (_inspectIsOwner(req)) return next();
   return res.status(403).json({ error: "forbidden" });
-}, express.json({ limit: "8mb" }), async (req, res) => {
+}, express.json({ limit: "24mb" }), async (req, res) => {
   const text = (req.body && typeof req.body.text === "string") ? req.body.text : "";
   const sessionId = (req.body && typeof req.body.sessionId === "string") ? req.body.sessionId : null;
   const installed = Array.isArray(req.body && req.body.installedScripts) ? req.body.installedScripts : null;
@@ -916,7 +916,7 @@ const _INSPECT_BLOCK_RE = /\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|Even
 router.post("/api/agent/inspect", requireAuth, (req, res, next) => {
   if (_inspectIsOwner(req)) return next();
   return res.status(403).json({ error: "forbidden" });
-}, express.json({ limit: "8mb" }), async (req, res) => {
+}, express.json({ limit: "24mb" }), async (req, res) => {
   const js = (req.body && typeof req.body.js === "string") ? req.body.js : "";
   const sessionId = (req.body && typeof req.body.sessionId === "string") ? req.body.sessionId : null;
   const installed = Array.isArray(req.body && req.body.installedScripts) ? req.body.installedScripts : null;
