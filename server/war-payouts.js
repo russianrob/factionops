@@ -237,6 +237,30 @@ async function tryFetchLoot(factionId, apiKey, rwId) {
  *   attackCount, generatedAt,
  * }
  */
+/**
+ * May this payout be frozen forever?
+ *
+ * An ended war's ATTACK log is immutable, which is why its payout is cached
+ * with expiresAt: Infinity and written to disk. Its REWARDS are not: Torn
+ * publishes the ranked-war report's caches some time AFTER the war ends.
+ *
+ * A payout computed inside that gap comes back with nothing, and the
+ * forever-cache then made that zero permanent. It happened: war_42055's entry
+ * was generated at 00:56 reading loot=0, source=none, items=0, two minutes
+ * after the war ended at 00:54:38 — while Torn's report for it holds Armor x5,
+ * Medium Arms x9, Melee x6, Small Arms x2 and Heavy Arms x1, about $4.76b at
+ * the market values already on disk. Nothing recomputed it, because "ended"
+ * was read as "finished changing".
+ *
+ * So a payout of NOTHING is never final. It stays on the short TTL and the
+ * next request tries again, which costs one recompute every five minutes until
+ * Torn answers — and then it freezes with the real number.
+ */
+function payoutIsFinal(war, result) {
+  if (!war || !war.warEnded) return false;
+  return Number(result && result.lootTotal) > 0;
+}
+
 /** Drop the disk + memory cache for a war (all modes) — called when
  *  per-war settings change so the next request recomputes. */
 export function invalidateCache(warId) {
@@ -766,7 +790,7 @@ export async function computePayouts(warId, options = {}) {
   // v5.0.66: ended wars are immutable → cache forever + persist to
   // disk. Active wars stay on the 5-min in-memory TTL since their
   // attack log is still growing.
-  if (war.warEnded) {
+  if (payoutIsFinal(war, result)) {
     _cache.set(cacheKey, { result, expiresAt: Infinity });
     persistDiskCache();
     // Snapshot this ended war's per-member activity into durable war history
