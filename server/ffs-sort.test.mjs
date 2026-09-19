@@ -346,3 +346,92 @@ test("okay alone and ok alone both count", () => {
   assert.equal(chk(cell("status left okay status___BLAOt")), true);
   assert.equal(chk(cell("status left ok status___BLAOt")), true);
 });
+
+// ── Handing the cell back when they are out ────────────────────
+// Reported: the row read "Hospital" for a target the mini-profile showed as
+// Okay. The snapshot restored on release is captured ONCE, at injection —
+// which is by definition while the member is in hospital — so it is literally
+// the word "Hospital". A capture confirms it: savedOriginal is "Hospital".
+//
+// Painting that back on release puts the wrong status on a free target, and
+// React does not undo it: it does not know we changed the cell, so its next
+// render is a no-op and the wrong word stays. In a war that reads as "skip
+// this one", which is the opposite of what the row should say.
+//
+// So the snapshot is never restored here. It cannot be right: we only reach
+// this path because the member is OUT.
+function restorer(cells = []) {
+  const sandbox = {
+    document: { querySelectorAll: () => cells },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext([
+    fn("ffs_nativeSaysReleased"), fn("ffs_okayCellTemplate"), fn("ffs_restoreHospCell"),
+    "globalThis.restore = ffs_restoreHospCell;",
+  ].join("\n"), sandbox);
+  return sandbox.restore;
+}
+function hospCell(withChip) {
+  const el = {
+    className: "status left hospital status___BLAOt not-ok",
+    innerHTML: withChip ? '<a class="ffs-hosp-status">00:00:00</a>' : "Hospital",
+    dataset: { ffsHospOriginal: "Hospital", ffsHospInjected: "1" },
+    querySelector: (s) => (withChip && s.includes("ffs-hosp") ? { parentNode: el } : null),
+  };
+  return el;
+}
+const okCellStub = () => ({
+  className: "status left okay prevColumn___UOKmY status___BLAOt ok",
+  innerHTML: "<span>Okay</span>",
+  querySelector: () => null,
+});
+
+test("the word Hospital is never painted back on a released member", () => {
+  const cell = hospCell(true);
+  restorer([okCellStub(), cell])(cell);
+  assert.notEqual(cell.innerHTML, "Hospital", "the stale snapshot was restored");
+});
+
+test("the cell is rebuilt from another row's okay cell", () => {
+  // The page is its own template — no guessing at Torn's markup.
+  const cell = hospCell(true);
+  restorer([okCellStub(), cell])(cell);
+  assert.equal(cell.innerHTML, "<span>Okay</span>");
+});
+
+test("with no okay row to copy, our chip is removed rather than left", () => {
+  // Better an empty cell than a countdown for someone who is out.
+  const cell = hospCell(true);
+  let removed = false;
+  cell.querySelector = (s) => (s.includes("ffs-hosp")
+    ? { parentNode: { removeChild() { removed = true; } } } : null);
+  restorer([])(cell);
+  assert.equal(removed, true);
+});
+
+test("a cell React already owns is left alone", () => {
+  // No chip means React has re-rendered it and whatever is there is true.
+  const cell = hospCell(false);
+  cell.innerHTML = "Okay";
+  restorer([okCellStub()])(cell);
+  assert.equal(cell.innerHTML, "Okay", "React's own content was overwritten");
+});
+
+test("our markers are always cleared", () => {
+  const cell = hospCell(true);
+  restorer([okCellStub(), cell])(cell);
+  assert.equal(cell.dataset.ffsHospOriginal, undefined);
+  assert.equal(cell.dataset.ffsHospInjected, undefined);
+});
+
+test("a row still showing our own chip is not used as the template", () => {
+  // Otherwise the "okay" cell we copy is a countdown.
+  const chipped = {
+    className: "status left okay status___BLAOt ok",
+    innerHTML: '<a class="ffs-hosp-status">00:00:05</a>',
+    querySelector: (s) => (s.includes("ffs-hosp") ? {} : null),
+  };
+  const cell = hospCell(true);
+  restorer([chipped, okCellStub(), cell])(cell);
+  assert.equal(cell.innerHTML, "<span>Okay</span>");
+});

@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates Beta
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.903
+// @version      2.73.904
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2856,6 +2856,54 @@ if (!singleton) {
     } catch (_) {}
   }
 
+  /**
+   * Another row's "okay" cell, used as the template for one we have to rebuild.
+   *
+   * The page is its own reference, so nothing here guesses at Torn's markup for
+   * an attackable member — it copies what Torn has already rendered for one.
+   */
+  function ffs_okayCellTemplate() {
+    const cells = document.querySelectorAll('[class*="status___"]');
+    for (let i = 0; i < cells.length; i++) {
+      const c = cells[i];
+      const t = String(c.className || '').split(/\s+/);
+      if (t.indexOf('ok') === -1 && t.indexOf('okay') === -1) continue;
+      // A row still showing OUR chip would make the template a countdown.
+      if (c.querySelector && c.querySelector('.ffs-hosp-status')) continue;
+      const html = c.innerHTML;
+      if (html && html.trim()) return html;
+    }
+    return null;
+  }
+
+  /**
+   * Hand a released member's status cell back.
+   *
+   * The snapshot taken at injection is NOT restored, and cannot be: it is
+   * captured while the member is in hospital, so it is literally the word
+   * "Hospital" — a capture confirms savedOriginal is exactly that — and this
+   * path only runs because the member is OUT. Painting it back puts the wrong
+   * status on a free target, and React does not undo it: it does not know we
+   * changed the cell, so its next render is a no-op and the wrong word stays.
+   * Reported as a row reading "Hospital" for someone the mini-profile showed as
+   * Okay, which in a war reads as "skip this one".
+   *
+   * With our chip still in the cell there is nothing of Torn's left to fall
+   * back to, so the cell is rebuilt from another row's okay cell. With no chip,
+   * React already owns the cell and whatever is in it is true.
+   */
+  function ffs_restoreHospCell(statusEl) {
+    if (!statusEl) return;
+    const chip = statusEl.querySelector && statusEl.querySelector('.ffs-hosp-status');
+    if (chip) {
+      const tpl = ffs_okayCellTemplate();
+      if (tpl) statusEl.innerHTML = tpl;
+      else if (chip.parentNode) chip.parentNode.removeChild(chip);
+    }
+    delete statusEl.dataset.ffsHospOriginal;
+    delete statusEl.dataset.ffsHospInjected;
+  }
+
   function ffs_recordMemberTravel(member) {
     if (!member || !member.status) return;
     const state = member.status.state;
@@ -3169,7 +3217,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.903';
+  const SCRIPT_VERSION = '2.73.904';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3533,11 +3581,8 @@ if (!singleton) {
           }
           painted++;
         } else if (statusEl.dataset.ffsHospInjected) {
-          // Member no longer hospitalised — restore original.
-          const orig = statusEl.dataset.ffsHospOriginal;
-          if (orig && orig.trim()) statusEl.innerHTML = orig;
-          delete statusEl.dataset.ffsHospOriginal;
-          delete statusEl.dataset.ffsHospInjected;
+          // Member no longer hospitalised — hand the cell back.
+          ffs_restoreHospCell(statusEl);
         } else {
           notTraveling++;
         }
