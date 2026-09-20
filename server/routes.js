@@ -1177,6 +1177,14 @@ const PAYOUTS_HTML = `<!doctype html>
   button{background:var(--accent); color:#0a0d14; border:0; border-radius:8px; padding:9px 14px; font:600 13px inherit; cursor:pointer;}
   button.secondary{background:var(--surface-2); color:var(--text);}
   input,select{background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font:13px inherit; -webkit-appearance:none; appearance:none;}
+  /* The rule above was written for the text and number fields that were the
+     only inputs on this page. appearance:none strips a CHECKBOX of its
+     native rendering, so it draws as an empty rounded box with no tick and
+     no feedback on click — indistinguishable from a control that does not
+     work, which is exactly how it was reported. Checkboxes get their own
+     rendering, and their own size, back. */
+  input[type=checkbox]{-webkit-appearance:auto; appearance:auto; width:auto;
+    margin:0; padding:0; accent-color:var(--accent); cursor:pointer;}
   input:focus,select:focus{outline:none; border-color:var(--accent);}
   .grid{display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:14px;}
   @media (min-width:540px){.grid{grid-template-columns:repeat(4,1fr);}}
