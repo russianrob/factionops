@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
   textKey, buildTextPrompt, verifyItems, learnableAlias, newAliases,
-  isOwnOutput,
+  isOwnOutput, readPostText,
 } from "./rwp-text-read.js";
 
 const feed = JSON.parse(fs.readFileSync(new URL("./data/rwp-prices.json", import.meta.url), "utf8"));
@@ -287,4 +287,36 @@ test("two listings of one weapon at different rolls both survive", () => {
   ]);
   assert.equal(out.length, 2, "one of the two listings was dropped");
   assert.deepEqual(out.map((i) => i.bonuses[0].pct).sort(), [21, 23]);
+});
+
+test("a cached post never spends the budget", () => {
+  // The whole reason opening the readers is affordable: the cache is checked
+  // before mayRead is consulted, so a post somebody has already had read costs
+  // nothing and is not rationed. Passing a FUNCTION proves when it is called.
+  let claims = 0;
+  const mayRead = () => { claims++; return true; };
+  // No cache entry for this text, so the claim must happen exactly once.
+  const unique = "Kodachi " + Math.random() + " 53% Parry 600m Jackhammer 18% Expose";
+  return readPostText(feed, unique, { mayRead, force: false }).then(() => {
+    assert.equal(claims, 1, "an uncached read did not claim budget");
+  });
+});
+
+test("a refused claim reads as needsMember, not as a failure", () => {
+  // The caller distinguishes them; a 500 would make the script show a broken
+  // badge instead of staying quiet.
+  const unique = "Kodachi " + Math.random() + " 53% Parry 600m Jackhammer 18% Expose";
+  return readPostText(feed, unique, { mayRead: () => false }).then((out) => {
+    assert.equal(out.ok, true);
+    assert.equal(out.needsMember, true);
+    assert.equal(out.items, null);
+  });
+});
+
+test("a plain boolean still works", () => {
+  // The image reader and older callers pass one.
+  const unique = "Kodachi " + Math.random() + " 53% Parry 600m Jackhammer 18% Expose";
+  return readPostText(feed, unique, { mayRead: false }).then((out) => {
+    assert.equal(out.needsMember, true);
+  });
 });

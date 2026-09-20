@@ -103,6 +103,7 @@ import * as gymComp from "./gym-comp.js";
 import * as upcomingWar from "./upcoming-war.js";
 import * as rwpImage from "./rwp-image-read.js";
 import * as rwpText from "./rwp-text-read.js";
+import * as readBudget from "./rwp-read-budget.js";
 import { priceItem as rwpPriceItem, weaponByBuyPrice as rwpWeaponByBuyPrice } from "./rwp-price.js";
 import * as chainHits from "./chain-hits.js";
 import { renderSlackersPage } from "./slackers-page.js";
@@ -12463,18 +12464,12 @@ router.post("/api/rwp/read-image", express.json({ limit: "8kb" }), async (req, r
   const cached = rwpImage.readCache(url, hint);
   if (cached) return res.json({ item: cached.item, price: priceOf(cached.item), unknownItem: unknownItem(cached.item), cached: true });
 
-  // No cache entry — this one costs. Require a session for that, and say so
-  // rather than failing silently, so the script can stay quiet instead of
-  // showing a broken badge.
-  // Optional auth: verify a Bearer if one is offered, and simply decline the
-  // paid path when it is not. requireAuth would 401 and the script could not
-  // tell "no session" from "broken".
-  let user = null;
-  try {
-    const h = req.headers.authorization || "";
-    if (h) user = verifyToken(h.startsWith("Bearer ") ? h.slice(7) : h);
-  } catch { user = null; }
-  if (!user) return res.json({ item: null, cached: false, needsMember: true });
+  // No cache entry — this one costs. Open to anyone now, bounded by a budget
+  // rather than by membership: the cache above is keyed by URL alone, so the
+  // first reader of a screenshot pays for it and every reader after is free.
+  // The cost is per distinct picture ever read, not per reader.
+  const spend = readBudget.take(req.ip);
+  if (spend) return res.json({ item: null, cached: false, busy: true, reason: spend.error });
 
   // The reader picks bonus names from the feed's own list rather than
   // transcribing them: "Stricken" came back "Shricken" once, and a bonus that
@@ -12495,21 +12490,28 @@ router.post("/api/rwp/read-text", express.json({ limit: "32kb" }), async (req, r
   const text = String((req.body && req.body.text) || "");
   if (text.trim().length < 20) return res.status(400).json({ error: "not enough text to read" });
 
-  let user = null;
-  try {
-    const h = req.headers.authorization || "";
-    if (h) user = verifyToken(h.startsWith("Bearer ") ? h.slice(7) : h);
-  } catch { user = null; }
+  // Open to anyone, bounded by a budget rather than by membership. mayRead is
+  // a FUNCTION so the budget is spent at the point of the model call and not
+  // before: readPostText consults its cache first, and a cached post must stay
+  // free and unlimited.
+  let refusal = null;
+  const mayRead = () => {
+    const spend = readBudget.take(req.ip);
+    if (spend) { refusal = spend; return false; }
+    return true;
+  };
 
   let out;
   try {
-    out = await rwpText.readPostText(rwpFeed(), text, { mayRead: !!user });
+    out = await rwpText.readPostText(rwpFeed(), text, { mayRead });
   } catch (e) {
     console.warn(`[rwp-text] ${e.message}`);
     return res.status(500).json({ error: "could not read that post" });
   }
   if (!out.ok) return res.status(400).json({ error: out.reason });
-  if (out.needsMember) return res.json({ items: null, needsMember: true });
+  if (out.needsMember) {
+    return res.json({ items: null, busy: true, reason: (refusal && refusal.error) || "busy" });
+  }
 
   // Priced here rather than in the browser, so the badge and the screenshot
   // reader quote one ladder.

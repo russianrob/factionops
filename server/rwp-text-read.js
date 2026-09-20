@@ -265,7 +265,10 @@ export async function readPostText(feed, text, opts = {}) {
 
   const hit = readTextCache(body);
   if (hit && !opts.force) return { ok: true, cached: true, items: hit.items };
-  if (!opts.mayRead) return { ok: true, items: null, needsMember: true };
+  // A FUNCTION here is a budget claim, and it is called only now — after the
+  // cache miss above — so a cached post costs nothing and is never rationed.
+  const may = typeof opts.mayRead === "function" ? opts.mayRead() : opts.mayRead;
+  if (!may) return { ok: true, items: null, needsMember: true };
 
   let reply;
   try {
