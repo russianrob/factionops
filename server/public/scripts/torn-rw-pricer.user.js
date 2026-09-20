@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.11.0
+// @version      3.11.1
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the screenshots and stock lists people post in forum trade threads
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.11.0';
+    var SCRIPT_VERSION = '3.11.1';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -4701,11 +4701,43 @@
     }
 
     /** The same tooltip the deterministic badges carry, for a read item. */
+    /**
+     * Why a read price is the number it is.
+     *
+     * This used to name the item and warn that the reading came from a post's
+     * wording, then stop — while the server had already worked out and sent the
+     * reasoning. An ArmaLite M-15A4 at 36% Specialist comes back with a basis,
+     * 20 sales, a range of $999m to $2.86b, extrapolated: true, and the note
+     * "Nothing this good has ever sold — the best on record is 35%."
+     *
+     * That last part is not decoration. A $2,320,101,947 badge with no hint it
+     * is extrapolated past every recorded sale is the most confident thing on
+     * the page and the least supported, and hiding it made the estimate look
+     * better evidenced than it is.
+     *
+     * Quiet when there is nothing to add: a well-evidenced price states its
+     * basis and stops, rather than padding every badge with caveats that do
+     * not apply to it.
+     */
     function readItemTitle(it) {
         var bs = it.bonuses || [];
-        return it.name + ' — ' + bs.map(function (b) { return b.pct + '% ' + b.name; }).join(' + ') +
-               (it.rarity ? ' — ' + it.rarity : '') +
-               ' — read from the post\u2019s wording, so check it against what is written';
+        var p = it.price || {};
+        var lines = [
+            it.name + ' — ' + bs.map(function (b) { return b.pct + '% ' + b.name; }).join(' + ') +
+              (it.rarity ? ' — ' + it.rarity : ''),
+        ];
+        if (p.basis) {
+            lines.push(p.basis + (p.samples > 0 ? ' (' + p.samples + ' sales)' : ''));
+        } else if (p.samples > 0) {
+            lines.push(p.samples + ' sales on record');
+        }
+        if (p.low > 0 && p.high > 0 && p.high > p.low) {
+            lines.push('Range seen: ' + fmtBigDollar(p.low) + ' – ' + fmtBigDollar(p.high));
+        }
+        var notes = Array.isArray(p.notes) ? p.notes : [];
+        for (var i = 0; i < notes.length; i++) if (notes[i]) lines.push(notes[i]);
+        lines.push('Read from the post\u2019s wording — check it against what is written.');
+        return lines.join('\n');
     }
 
     /**
