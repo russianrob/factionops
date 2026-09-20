@@ -1248,7 +1248,7 @@ const PAYOUTS_HTML = `<!doctype html>
       <label style="font-size:11.5px;color:var(--text-mute);">Turtle weight <input type="number" id="s-turtleweight" placeholder="0" min="0" step="0.05"></label>
       <label style="font-size:11.5px;color:var(--text-mute);">Turtle pay (\$/hit) <input type="number" id="s-turtlepay" placeholder="0" min="0" step="1000000"></label>
       <label style="grid-column:1/-1;font-size:11.5px;color:var(--text-mute);display:flex;align-items:center;gap:8px">
-        <input type="checkbox" id="s-warlord" checked style="width:auto"> Count Warlord weapon respect toward each share
+        <input type="checkbox" id="s-warlord" style="width:auto"> Count Warlord weapon respect toward each share
       </label>
     </div>
     <p class="muted" style="font-size:11px;margin:8px 0 0">Turtle = hospitalising our own so the enemy cannot score off them. It earns no respect, so it pays nothing until priced here. A flat rate per hit comes off the top of the pool; a weight shares through it instead. Set one, not both \u2014 the flat rate wins.</p>
@@ -1317,7 +1317,7 @@ async function loadSettings(warId){
     $('#s-failed').value = s.failedWeight!=null ? s.failedWeight : '';
     $('#s-turtleweight').value = s.turtleWeight!=null ? s.turtleWeight : '';
     $('#s-turtlepay').value    = s.turtlePay!=null ? s.turtlePay : '';
-    $('#s-warlord').checked    = s.includeWarlord !== false;
+    $('#s-warlord').checked    = s.includeWarlord === true;
   }catch(e){ /* leave blanks if 403 etc */ }
 }
 async function saveSettings(warId){
@@ -1935,8 +1935,8 @@ router.post("/api/war/:warId/payout-settings-admin", requireAuth, express.json({
     const n = Number(body.turtleWeight);
     if (Number.isFinite(n) && n >= 0) settings.turtleWeight = n;
   }
-  // Counting a Warlord weapon's respect toward the share. Default ON; stored
-  // only when explicitly turned off, so an untouched war keeps the default.
+  // Counting a Warlord weapon's respect toward the share. Default OFF — it
+  // moves real money, so a war opts in rather than discovering it has.
   if (body.includeWarlord != null && body.includeWarlord !== '') {
     settings.includeWarlord = !(body.includeWarlord === false || body.includeWarlord === 'false');
   }
@@ -10892,8 +10892,8 @@ router.post("/api/war/:warId/payout-settings", express.json({ limit: '4kb' }), a
     const n = Number(body.turtleWeight);
     if (Number.isFinite(n) && n >= 0) settings.turtleWeight = n;
   }
-  // Counting a Warlord weapon's respect toward the share. Default ON; stored
-  // only when explicitly turned off, so an untouched war keeps the default.
+  // Counting a Warlord weapon's respect toward the share. Default OFF — it
+  // moves real money, so a war opts in rather than discovering it has.
   if (body.includeWarlord != null && body.includeWarlord !== '') {
     settings.includeWarlord = !(body.includeWarlord === false || body.includeWarlord === 'false');
   }
