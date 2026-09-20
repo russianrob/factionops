@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.12.0
+// @version      3.13.0
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the screenshots and stock lists people post in forum trade threads
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.12.0';
+    var SCRIPT_VERSION = '3.13.0';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -5023,11 +5023,38 @@
         return best;
     }
 
+    // Which board the readers run on.
+    //
+    // The gate used to be `forums.php` and nothing else, which is every board
+    // Torn has: a weapon name in Fun & Games got a badge, and a screenshot
+    // pasted into General Discussion was sent to the server and paid for. The
+    // readers only ever had a reason to run where people sell things.
+    //
+    // Trading Post is f=10, from Torn's own /v2/forum/categories. Note that
+    // f=67 — Tools & Userscripts, where this script's thread lives — is NOT in
+    // scope: a screenshot posted there is somebody asking why a price looks
+    // wrong, and reading it back at them helps nobody and costs a model call.
+    //
+    // No id means no read. A link that omits f= could be any board, and of the
+    // two ways to guess, the permissive one is the one that spends money.
+    var TRADING_POST_FORUM = 10;
+    function forumAllowsReads(hash) {
+        // Anchored on a separator so f=110 and f=100 cannot match as f=10.
+        // Torn has no such forum today, which is exactly why a substring test
+        // would survive review now and break the day one is added.
+        var m = /(?:^|[#&?/])f=(\d+)/.exec(String(hash == null ? '' : hash));
+        return !!m && Number(m[1]) === TRADING_POST_FORUM;
+    }
+
     var forumInited = false;
     function ensureForumTables() {
         if (forumInited) return;
         forumInited = true;
         var run = function () {
+            // Per pass, not once at startup: Torn's forums are a single-page
+            // app, so moving from a chat thread to Trading Post changes the
+            // hash and never reloads this script.
+            if (!forumAllowsReads(location.hash)) return;
             try { injectForumTables(); } catch (e) {}
             try { injectForumLines(); } catch (e) {}
             // A post in a shape nobody has written a rule for gets read by the
@@ -5536,6 +5563,10 @@
       }
 
       function scan() {
+        // Same per-pass check as the text half, and for the same reason. The
+        // cog is drawn inside this gate deliberately: on a board the reader
+        // does not serve, there is nothing for it to open.
+        if (!forumAllowsReads(location.hash)) return;
         style();
         ensureCog();
         var imgs = document.querySelectorAll("img");
