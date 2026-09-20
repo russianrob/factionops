@@ -1,0 +1,312 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Energy Ladder</title>
+<style>
+  :root{
+    --bg:#0f1116; --panel:#161a22; --raise:#1c2230; --line:#2a2f3a;
+    --ink:#e8e6dc; --mute:#9aa0ad; --faint:#6d7380;
+    --energy:#ff9f2e; --lead:#9fe870; --prize:#a78bfa; --cool:#7fd4e8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.5 ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif}
+  main{max-width:860px;margin:0 auto;padding:16px 14px 60px}
+  .hero{background:linear-gradient(135deg,#7a2f00 0%,#c05a11 45%,#ff9f2e 100%);
+        border-radius:12px;padding:18px 20px;margin-bottom:14px}
+  .eyebrow{font-size:11px;letter-spacing:3px;color:#ffe2bd;font-weight:700}
+  h1{margin:2px 0 4px;font-size:30px;line-height:1.05;color:#fff;letter-spacing:-.01em}
+  .hero p{margin:0;color:#ffe2bd;font-size:13px}
+  .strip{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+  .chip{flex:1 1 190px;background:var(--panel);border:1px solid var(--line);
+        border-radius:10px;padding:10px 12px}
+  .chip .k{font-size:10px;letter-spacing:2px;color:var(--faint);font-weight:700;text-transform:uppercase}
+  .chip .v{font-size:19px;font-weight:800;margin-top:2px;font-variant-numeric:tabular-nums}
+  .chip.time{border-color:#2f9e4f} .chip.time .v{color:var(--lead)}
+  .chip.prize{border-color:#7c3aed} .chip.prize .v{color:var(--prize)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+        padding:14px;margin-bottom:14px}
+  h2{margin:0 0 10px;font-size:12px;letter-spacing:2.5px;color:var(--cool);text-transform:uppercase}
+  .lead{display:flex;align-items:center;gap:14px;background:linear-gradient(90deg,rgba(159,232,112,.14),transparent);
+        border:1px solid #2f9e4f;border-radius:10px;padding:12px 14px}
+  .lead .crown{font-size:30px}
+  .lead .who{font-size:21px;font-weight:800;color:#fff}
+  .lead .num{margin-left:auto;text-align:right}
+  .lead .num b{display:block;font-size:24px;color:var(--lead);font-variant-numeric:tabular-nums}
+  .lead .num span{font-size:11px;color:var(--mute)}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  th{font-size:10px;letter-spacing:1.5px;color:var(--faint);text-transform:uppercase;
+     text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+  td{padding:7px 8px;border-bottom:1px solid rgba(42,47,58,.55);font-size:14px}
+  tr:last-child td{border-bottom:0}
+  td.r,th.r{text-align:right}
+  .rank{color:var(--faint);width:34px}
+  tr.top1 td{background:rgba(159,232,112,.08)}
+  tr.top1 .rank{color:var(--lead);font-weight:800}
+  tr.me td{background:rgba(255,159,46,.10)}
+  .bar{height:4px;border-radius:2px;background:var(--energy);margin-top:4px;min-width:2px}
+  .nm{font-weight:600}
+  .split{font-size:11.5px;color:var(--faint);margin-top:1px}
+  .pill{display:inline-block;font-size:10px;padding:1px 6px;border-radius:999px;
+        background:var(--raise);color:var(--mute);border:1px solid var(--line);margin-left:6px}
+  .hof{display:flex;flex-direction:column;gap:8px}
+  .hof .w{display:flex;align-items:center;gap:10px;background:var(--raise);
+          border:1px solid var(--line);border-radius:9px;padding:9px 12px}
+  .hof .wk{font-size:11px;color:var(--faint);min-width:118px}
+  .hof .nm{color:#fff}
+  .hof .en{margin-left:auto;color:var(--energy);font-weight:700;font-variant-numeric:tabular-nums}
+  .hof details{background:var(--raise);border-radius:8px}
+  .hof details .w{background:none;padding-bottom:6px}
+  .hof summary{list-style:none;cursor:pointer}
+  .hof summary::-webkit-details-marker{display:none}
+  .hof summary .wk::after{content:" \25B8";color:var(--faint)}
+  .hof details[open] summary .wk::after{content:" \25BE"}
+  .hof .tt{width:100%;border-collapse:collapse;margin:0 10px 8px;width:calc(100% - 20px)}
+  .hof .tt td{padding:3px 0;font-size:12.5px;border-top:1px solid rgba(255,255,255,.05)}
+  .hof .tt .rk{color:var(--faint);width:26px}
+  .hof .tt .e{text-align:right;color:var(--energy);font-variant-numeric:tabular-nums}
+  .hof .tt .jt{color:var(--lead);font-weight:800}
+  .empty{color:var(--mute);font-size:13px;padding:6px 2px}
+  .foot{color:var(--faint);font-size:11.5px;margin-top:14px;line-height:1.6}
+  .warn{background:rgba(224,179,87,.12);border:1px solid rgba(224,179,87,.5);
+        color:#e0b357;border-radius:9px;padding:10px 12px;font-size:13px;margin-bottom:14px}
+  .signin{display:none;background:var(--panel);border:1px solid var(--line);
+          border-radius:12px;padding:16px;margin-bottom:14px}
+  .signin.on{display:block}
+  .signin input{width:100%;background:#0c0e13;border:1px solid var(--line);color:var(--ink);
+                border-radius:8px;padding:11px 12px;font:15px inherit;margin:8px 0}
+  .signin button{width:100%;padding:12px;border:0;border-radius:8px;background:var(--energy);
+                 color:#14170f;font-weight:800;font-size:15px;cursor:pointer}
+  .msg{font-size:12.5px;color:var(--mute);min-height:16px;margin-top:6px}
+  .msg.bad{color:#ff8b6a}
+  .hide{display:none}
+</style>
+<main>
+  <div class="hero">
+    <div class="eyebrow">DEAD FRAGMENT &middot; WEEKLY</div>
+    <h1>The Energy Ladder</h1>
+    <p id="sub">Most energy trained in the gym. Sunday 00:00 &rarr; Saturday 23:59 TCT.</p>
+  </div>
+
+  <div class="signin" id="signin">
+    <form id="keyform">
+      <div style="font-size:13px;color:var(--mute)">Enter your API key to validate yourself.</div>
+      <input id="key" type="text" placeholder="Torn API key" autocomplete="off"
+             autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button id="go" type="submit">View the ladder</button>
+      <div class="msg" id="msg"></div>
+    </form>
+  </div>
+
+  <div id="board" class="hide">
+    <div id="stale"></div>
+    <div class="strip">
+      <div class="chip time"><div class="k">Week ends in</div><div class="v" id="left">—</div></div>
+      <div class="chip"><div class="k">This week</div><div class="v" id="win" style="font-size:14px">—</div></div>
+      <div class="chip prize"><div class="k">Prize</div><div class="v">5 &times; Xanax</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Leading</h2>
+      <div id="leadbox"></div>
+    </div>
+
+    <div class="card">
+      <h2>Standings</h2>
+      <div id="tablebox"></div>
+    </div>
+
+    <div class="card">
+      <h2>Previous winners</h2>
+      <div class="hof" id="hof"></div>
+    </div>
+
+    <p class="foot" id="foot"></p>
+  </div>
+</main>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var TOKEN_KEY = "gym_token";
+  function token() { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; } }
+  function setToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
+  var fmt = function (n) { return Number(n || 0).toLocaleString(); };
+
+  /**
+   * The completed weeks, newest first.
+   *
+   * The server has always stored the whole top ten per week —
+   * finaliseWeeks writes `top: rows.filter(r => !r.partial).slice(0, 10)` —
+   * and this block rendered one name out of it.
+   *
+   * Only the newest week is open. A year of this is fifty-two weeks, and ten
+   * rows each would bury the thing anybody came to read; the older weeks keep
+   * their one-line answer and open on a tap.
+   *
+   * Joint winners are marked rather than ranked 1 and 2: winnersOf can return
+   * several, and numbering them would invent an order the tie does not have.
+   */
+  function hofHtml(weeks) {
+    if (!weeks.length) return '<div class="empty">No completed weeks yet — the first winner is crowned Sunday.</div>';
+    return weeks.map(function (w, wi) {
+      var when = new Date(w.weekStart).toLocaleDateString(undefined,
+        { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+      var wins = w.winners || [];
+      var head = '<div class="w"><div class="wk">' + when + '</div>' +
+        '<div class="nm">' + wins.map(function (x) { return esc(x.name); }).join(", ") + '</div>' +
+        '<div class="en">' + fmt((wins[0] || {}).energy) + '</div></div>';
+      var top = w.top || [];
+      // Nothing to open: the stored top is just the winner, or absent on weeks
+      // frozen before it was kept.
+      if (top.length < 2) return head;
+      var tied = {};
+      wins.forEach(function (x) { tied[String(x.id)] = 1; });
+      var rows = top.map(function (r, i) {
+        var joint = tied[String(r.id)];
+        return '<tr><td class="rk' + (joint ? ' jt' : '') + '">' + (joint ? '\u2605' : (i + 1)) + '</td>' +
+          '<td><a style="color:#cfe3ff;text-decoration:none" target="_blank" rel="noopener" ' +
+          'href="https://www.torn.com/profiles.php?XID=' + encodeURIComponent(r.id) + '">' +
+          esc(r.name) + '</a></td>' +
+          '<td class="e">' + fmt(r.energy) + '</td></tr>';
+      }).join("");
+      return '<details' + (wi === 0 ? " open" : "") + '><summary>' + head + '</summary>' +
+        '<table class="tt">' + rows + '</table></details>';
+    }).join("");
+  }
+  var data = null;
+
+  function showSignin(m, bad) {
+    $("signin").className = "signin on";
+    $("board").className = "hide";
+    $("msg").className = "msg" + (bad ? " bad" : "");
+    $("msg").textContent = m || "";
+  }
+  function showBoard() { $("signin").className = "signin"; $("board").className = ""; }
+
+  // TCT is UTC, so the countdown is plain arithmetic — no zone to get wrong.
+  function countdown() {
+    if (!data) return;
+    var left = data.week.end - Date.now();
+    if (left < 0) { $("left").textContent = "scoring…"; return; }
+    var d = Math.floor(left / 86400000), h = Math.floor(left / 3600000) % 24,
+        m = Math.floor(left / 60000) % 60, s = Math.floor(left / 1000) % 60;
+    $("left").textContent = (d ? d + "d " : "") + h + "h " + m + "m " + (d ? "" : s + "s");
+  }
+
+  function render() {
+    var wk = new Date(data.week.start), we = new Date(data.week.end);
+    var opt = { day: "numeric", month: "short", timeZone: "UTC" };
+    $("win").textContent = wk.toLocaleDateString(undefined, opt) + " – " + we.toLocaleDateString(undefined, opt);
+
+    var rows = data.standings || [];
+    var scored = rows.filter(function (r) { return !r.partial; });
+    var top = scored.length ? scored[0] : null;
+
+    $("leadbox").innerHTML = (top && top.energy > 0)
+      ? '<div class="lead"><div class="crown">🏆</div><div><div class="who">' + esc(top.name) +
+        '</div><div style="font-size:12px;color:var(--mute)">' +
+        (data.leaders.length > 1 ? "tied with " + (data.leaders.length - 1) + " other" + (data.leaders.length > 2 ? "s" : "") : "clear of the field") +
+        '</div></div><div class="num"><b>' + fmt(top.energy) + '</b><span>energy this week</span></div></div>'
+      : '<div class="empty">Nobody has trained yet this week. Board opens with the first energy spent.</div>';
+
+    var max = top ? Math.max(1, top.energy) : 1;
+    var body = rows.map(function (r, i) {
+      var pct = Math.round((r.energy / max) * 100);
+      return '<tr class="' + (i === 0 && r.energy > 0 ? "top1" : "") + '">' +
+        '<td class="rank">' + (r.partial ? "–" : i + 1) + '</td>' +
+        '<td><a class="nm" style="color:#cfe3ff;text-decoration:none" target="_blank" rel="noopener" ' +
+        'href="https://www.torn.com/profiles.php?XID=' + encodeURIComponent(r.id) + '">' + esc(r.name) + '</a>' +
+        (r.partial ? '<span class="pill">joined mid-week</span>' : '') +
+        (r.split ? '<div class="split">' + esc(r.split) + '</div>' : '') +
+        (r.energy > 0 ? '<div class="bar" style="width:' + pct + '%"></div>' : '') + '</td>' +
+        '<td class="r">' + (r.partial ? "—" : fmt(r.energy)) + '</td></tr>';
+    }).join("");
+    $("tablebox").innerHTML = rows.length
+      ? '<table><tr><th class="rank">#</th><th>Member</th><th class="r">Energy</th></tr>' + body + "</table>"
+      : '<div class="empty">No readings yet.</div>';
+
+    $("hof").innerHTML = hofHtml(data.history || []);
+
+    // A board fed by a dead poller looks exactly like a board where nobody
+    // trained. Say which it is.
+    var hp = data.health || {};
+    var ageMin = hp.lastReadingAt ? Math.round((Date.now() - hp.lastReadingAt) / 60000) : null;
+    $("stale").innerHTML = (hp.lastError || ageMin === null || ageMin > 90)
+      ? '<div class="warn"><b>Standings are not updating.</b> ' +
+        esc(hp.lastError || "No readings have been taken yet.") +
+        ' Until this is fixed the numbers below are stale.</div>' : "";
+
+    // A week measured from 01:55 is not a week measured from midnight. Saying so
+    // is the difference between a partial result and a wrong one.
+    if (data.lateStart && data.baselineAt) {
+      $("stale").innerHTML += '<div class="warn"><b>Week 1 is measured from ' +
+        new Date(data.baselineAt).toUTCString().replace("GMT", "TCT") + '</b>, not midnight — ' +
+        'that is when the first reading was taken. Energy trained before it is invisible to the board, ' +
+        'for everyone equally — so a personal tracker that started at midnight will read higher than this page, ' +
+        'and both are right. From next Sunday the start line is midnight.</div>';
+    }
+
+    $("foot").innerHTML = "Scored on energy spent in the gym, not stat gains — the difference between a reading " +
+      "taken at the start of the week and the latest one. " +
+      (data.baselineAt ? "Start line " + new Date(data.baselineAt).toUTCString().replace("GMT", "TCT") + ". " : "") +
+      (data.currentAt ? "Last read " + (ageMin !== null ? ageMin + " min ago." : "") : "");
+    countdown();
+  }
+
+  function load() {
+    var t = token();
+    if (!t) return showSignin("");
+    fetch("/api/gym", { headers: { Authorization: "Bearer " + t } })
+      .then(function (r) {
+        if (r.status === 401) { setToken(""); throw new Error("expired"); }
+        if (r.status === 403) throw new Error("forbidden");
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) { data = d; showBoard(); render(); })
+      .catch(function (e) {
+        var m = String(e.message);
+        if (m === "expired") return showSignin("That session expired — sign in again.");
+        if (m === "forbidden") { setToken(""); return showSignin("That key is not in Dead Fragment.", true); }
+        showSignin("Could not load the ladder: " + m, true);
+      });
+  }
+
+  $("keyform").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var key = $("key").value.trim();
+    if (!key) return;
+    $("go").disabled = true;
+    $("msg").className = "msg";
+    $("msg").textContent = "Checking with Torn…";
+    fetch("/api/auth", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: key, scriptName: "gym-ladder", scriptVersion: "1.0.0" })
+    })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        $("go").disabled = false;
+        if (!res.ok || !res.d.token) return showSignin(res.d.error || "Torn would not accept that key.", true);
+        // The key goes no further than that request; only the token is kept.
+        $("key").value = "";
+        setToken(res.d.token);
+        load();
+      })
+      .catch(function (err) { $("go").disabled = false; showSignin(String(err.message), true); });
+  });
+
+  setInterval(countdown, 1000);
+  // Only refresh once signed in, and never while the key field has focus.
+  // Signed out, this fetch could only ever redraw the sign-in form underneath
+  // whoever is trying to type in it — on a phone that closes the keyboard and
+  // cancels the paste callout mid-tap.
+  setInterval(function () {
+    if (!token()) return;
+    if (document.activeElement && document.activeElement.id === "key") return;
+    load();
+  }, 60000);
+  load();
+})();
+</script>
