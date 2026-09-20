@@ -1,0 +1,42 @@
+<div style="text-align:center">
+<h2>Torn RW Pricer — now works in forum threads and trades</h2>
+<p><em>Prices where the trading actually happens</em></p>
+</div>
+
+<p>RW Pricer has put an <strong>RWP EST</strong> badge on RW gear around the game for a while now. The problem was that most RW trading doesn't happen on a page the script could see — it happens here, in forum threads, where people post a screenshot of their stock or type the list out by hand. You'd find a thread with forty weapons in it and still have to price every one of them yourself.</p>
+
+<p>That's what this update fixes.</p>
+
+<h3>Forum threads</h3>
+
+<p>RW Pricer now reads the posts themselves and puts a price next to each item, inline, right where the item is named.</p>
+
+<ul><li><strong>Posted screenshots</strong> — it reads the image and prices what's in it, so a stock screenshot comes back with numbers attached</li><li><strong>Typed stock lists</strong> — tables, bulleted lists, or just lines of text; it doesn't care how the list is formatted</li><li>Names are matched loosely on purpose, so <em>M4A1</em>, <em>M4A1 Colt Carbine</em> and <em>m4a1-colt</em> all land on the same weapon. If a short name could mean two different weapons, it leaves it alone rather than guessing wrong</li><li>Nothing to set up and no API key needed</li></ul>
+
+<p>Each price also explains itself now. Hover it, or read the card under a screenshot, and it tells you what it matched on and how many sales that came from — including when the answer is "not many", so you know how much weight to put on it.</p>
+
+<h3>Trades</h3>
+
+<p>Trade pricing has been in the script for a while, but the number at the top of the trade was still Torn's own value, which badly undervalues RW gear. That number is now the RW price, with Torn's figure kept in brackets next to it so you can see the gap.</p>
+
+<p>In the screenshot below that's a Steyr AUG at just over a billion, against the $74,589 Torn had it down as.</p>
+
+<h3>A note on how it prices</h3>
+
+<p>Estimates are built from auction sales and are rarity- and bonus-aware — and they now match the <em>bonus percentage</em> too, so a 12% Revitalize and a 25% Revitalize don't get the same number.</p>
+
+<p>Pricing uses the <strong>last 12 months</strong> of sales rather than everything on record. RW prices drift down over time, so a sale from 2022 isn't more evidence about today's market, it's evidence about a different one. Where the older sales would have given a noticeably different answer, the card says so and shows you both.</p>
+
+<h3>Screenshots</h3>
+<p><em>A screenshot posted in a thread, read and priced, with the reasoning underneath:</em></p>
+<img src="https://tornwar.com/rw-pricer-forum-read-shot.jpg" alt="Torn RW Pricer pricing an item screenshot posted in a forum thread">
+<p><em>A trade, with the RW price on the item and in the total instead of Torn's value:</em></p>
+<img src="https://tornwar.com/rw-pricer-trade-top-shot.jpg" alt="Torn RW Pricer showing the RW price as the trade total">
+
+<h3>Install</h3>
+<p><a href="https://greasyfork.org/en/scripts/569836-torn-rw-pricer">Install Torn RW Pricer on Greasy Fork</a></p>
+<p>Works on desktop with Tampermonkey and in Torn PDA. If you already have it, it'll update itself.</p>
+
+<p>Credit where it's due: the auction sale data behind these estimates comes from the <a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16530575&b=0&a=0">Full Auction Sale History</a> by Marches.</p>
+
+<p>If a price looks off, or it misses an item in a thread, post the thread here and I'll take a look.</p>
