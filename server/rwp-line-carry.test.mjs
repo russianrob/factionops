@@ -77,6 +77,13 @@ function run(cells) {
       createElement: () => ({
         nodeType: 1, className: "", title: "", textContent: "",
         style: { cssText: "" },
+        // setTip needs the attribute API: the tooltip text lives in
+        // data-rwp-tip now, and the native title is removed rather than kept.
+        _a: {},
+        setAttribute(k, v) { this._a[k] = String(v); },
+        getAttribute(k) { return k in this._a ? this._a[k] : null; },
+        hasAttribute(k) { return k in this._a; },
+        removeAttribute(k) { delete this._a[k]; },
       }),
     },
   };
@@ -98,14 +105,14 @@ function run(cells) {
     fn("getCombinedLevelValue"), fn("forumBonusPairs"), fn("forumRarityIn"),
     fn("rarityFromRoll"), fn("forumBonusWorth"), fn("priceForumRow"),
     fn("forumWeaponOnly"), fn("forumLineItem"), fn("forumLineSegments"), fn("segmentText"),
-    fn("fmtBigDollar"), fn("isOurs"), fn("forumLineHosts"), fn("injectForumLines"),
+    fn("setTip"), fn("fmtBigDollar"), fn("isOurs"), fn("forumLineHosts"), fn("injectForumLines"),
     "injectForumLines();",
   ].join("\n"), sandbox, { timeout: 10000, filename: "rwp-lines.js" });
   return cells;
 }
 
 /** Every tooltip this pass produced, in order. */
-const titles = (cells) => cells.flatMap((c) => c._tags.map((t) => t.title));
+const titles = (cells) => cells.flatMap((c) => c._tags.map((t) => t.getAttribute("data-rwp-tip") || t.title));
 
 test("a bonus cell is never priced as the weapon on the row above", () => {
   // Deliberately a name the catalogue does NOT have. Spelling "Type 98

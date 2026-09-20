@@ -120,14 +120,19 @@ function runPlace(lines, items, passes = 1) {
   const sandbox = {
     document: {
       querySelectorAll: () => cells,
-      createElement: () => ({ nodeType: 1, className: "", title: "", textContent: "", style: { cssText: "" } }),
+      createElement: () => ({ nodeType: 1, className: "", title: "", textContent: "", style: { cssText: "" },
+        _a: {},
+        setAttribute(k, v) { this._a[k] = String(v); },
+        getAttribute(k) { return k in this._a ? this._a[k] : null; },
+        hasAttribute(k) { return k in this._a; },
+        removeAttribute(k) { delete this._a[k]; } }),
     },
     PASSES: passes,
     FRESH: () => JSON.parse(JSON.stringify(items)),
   };
   vm.createContext(sandbox);
   vm.runInContext([
-    fn("fmtBigDollar"), fn("isOurs"), fn("forumLineHosts"), fn("forumLineSegments"),
+    fn("setTip"), fn("fmtBigDollar"), fn("isOurs"), fn("forumLineHosts"), fn("forumLineSegments"),
     v("MAX_READ_LINE"),
     fn("segmentText"), fn("readItemFits"), fn("countReadMatches"), fn("matchReadItem"),
     fn("readItemTitle"), fn("placeReadItems"),
@@ -300,13 +305,18 @@ function runScoped(lines, items) {
   const sandbox = {
     document: {
       querySelectorAll: () => [post],
-      createElement: () => ({ nodeType: 1, className: "", title: "", textContent: "", style: { cssText: "" } }),
+      createElement: () => ({ nodeType: 1, className: "", title: "", textContent: "", style: { cssText: "" },
+        _a: {},
+        setAttribute(k, v) { this._a[k] = String(v); },
+        getAttribute(k) { return k in this._a ? this._a[k] : null; },
+        hasAttribute(k) { return k in this._a; },
+        removeAttribute(k) { delete this._a[k]; } }),
     },
     ITEMS: items, SCOPE: post,
   };
   vm.createContext(sandbox);
   vm.runInContext([
-    v("MAX_READ_LINE"), fn("fmtBigDollar"), fn("isOurs"), fn("forumLineHosts"),
+    v("MAX_READ_LINE"), fn("setTip"), fn("fmtBigDollar"), fn("isOurs"), fn("forumLineHosts"),
     fn("forumLineSegments"), fn("segmentText"), fn("readItemFits"), fn("countReadMatches"),
     fn("matchReadItem"), fn("readItemTitle"), fn("placeReadItems"),
     "globalThis.placed = placeReadItems(ITEMS, SCOPE);",
