@@ -12451,6 +12451,25 @@ function unknownItem(item) {
 // demanding one would make this a Dead Fragment feature — but an open endpoint
 // would spend the owner's money for strangers. Cache-for-all, pay-for-members
 // gives everyone the common images for nothing and keeps the bill attributable.
+/**
+ * Charge a paid read to the signed-in player when there is one, or the address
+ * when there is not. Verifying here is for BILLING, never for access — the
+ * readers answer anyone, and a bad or missing token just means the read is
+ * charged to the address instead.
+ *
+ * An IP is a poor identity for this population: a faction behind one NAT, or
+ * anyone on mobile carrier CGNAT, shares it, and nginx's own rate limit was
+ * raised once for exactly that reason.
+ */
+function readerKey(req) {
+  let pid = null;
+  try {
+    const h = req.headers.authorization || "";
+    if (h) pid = (verifyToken(h.startsWith("Bearer ") ? h.slice(7) : h) || {}).playerId || null;
+  } catch { pid = null; }
+  return readBudget.budgetKey(req.ip, pid);
+}
+
 router.post("/api/rwp/read-image", express.json({ limit: "8kb" }), async (req, res) => {
   const url = String((req.body && req.body.url) || "");
   if (!url) return res.status(400).json({ error: "url is required" });
@@ -12468,7 +12487,7 @@ router.post("/api/rwp/read-image", express.json({ limit: "8kb" }), async (req, r
   // rather than by membership: the cache above is keyed by URL alone, so the
   // first reader of a screenshot pays for it and every reader after is free.
   // The cost is per distinct picture ever read, not per reader.
-  const spend = readBudget.take(req.ip);
+  const spend = readBudget.take(readerKey(req));
   if (spend) return res.json({ item: null, cached: false, busy: true, reason: spend.error });
 
   // The reader picks bonus names from the feed's own list rather than
@@ -12496,7 +12515,7 @@ router.post("/api/rwp/read-text", express.json({ limit: "32kb" }), async (req, r
   // free and unlimited.
   let refusal = null;
   const mayRead = () => {
-    const spend = readBudget.take(req.ip);
+    const spend = readBudget.take(readerKey(req));
     if (spend) { refusal = spend; return false; }
     return true;
   };
