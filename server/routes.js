@@ -1247,9 +1247,6 @@ const PAYOUTS_HTML = `<!doctype html>
       <label style="font-size:11.5px;color:var(--text-mute);">Loss weight <input type="number" id="s-failed" placeholder="0" min="0" step="0.05"></label>
       <label style="font-size:11.5px;color:var(--text-mute);">Turtle weight <input type="number" id="s-turtleweight" placeholder="0" min="0" step="0.05"></label>
       <label style="font-size:11.5px;color:var(--text-mute);">Turtle pay (\$/hit) <input type="number" id="s-turtlepay" placeholder="0" min="0" step="1000000"></label>
-      <label style="grid-column:1/-1;font-size:11.5px;color:var(--text-mute);display:flex;align-items:center;gap:8px">
-        <input type="checkbox" id="s-warlord" checked style="width:auto"> Count Warlord weapon respect toward each share
-      </label>
     </div>
     <p class="muted" style="font-size:11px;margin:8px 0 0">Turtle = hospitalising our own so the enemy cannot score off them. It earns no respect, so it pays nothing until priced here. A flat rate per hit comes off the top of the pool; a weight shares through it instead. Set one, not both \u2014 the flat rate wins.</p>
     <div class="row" style="margin-top:8px">
@@ -1317,7 +1314,6 @@ async function loadSettings(warId){
     $('#s-failed').value = s.failedWeight!=null ? s.failedWeight : '';
     $('#s-turtleweight').value = s.turtleWeight!=null ? s.turtleWeight : '';
     $('#s-turtlepay').value    = s.turtlePay!=null ? s.turtlePay : '';
-    $('#s-warlord').checked    = s.includeWarlord !== false;
   }catch(e){ /* leave blanks if 403 etc */ }
 }
 async function saveSettings(warId){
@@ -1333,7 +1329,6 @@ async function saveSettings(warId){
     failedWeight: $('#s-failed').value,
     turtleWeight: $('#s-turtleweight').value,
     turtlePay:    $('#s-turtlepay').value,
-    includeWarlord: $('#s-warlord').checked,
   };
   try{
     await api('/api/war/'+encodeURIComponent(warId)+'/payout-settings-admin',{method:'POST',body:payload});
@@ -1934,11 +1929,6 @@ router.post("/api/war/:warId/payout-settings-admin", requireAuth, express.json({
   if (body.turtleWeight != null && body.turtleWeight !== '') {
     const n = Number(body.turtleWeight);
     if (Number.isFinite(n) && n >= 0) settings.turtleWeight = n;
-  }
-  // Counting a Warlord weapon's respect toward the share. Default ON; stored
-  // only when explicitly turned off, so an untouched war keeps the default.
-  if (body.includeWarlord != null && body.includeWarlord !== '') {
-    settings.includeWarlord = !(body.includeWarlord === false || body.includeWarlord === 'false');
   }
   if (body.turtlePay != null && body.turtlePay !== '') {
     const n = Number(body.turtlePay);
@@ -10891,11 +10881,6 @@ router.post("/api/war/:warId/payout-settings", express.json({ limit: '4kb' }), a
   if (body.turtleWeight != null && body.turtleWeight !== '') {
     const n = Number(body.turtleWeight);
     if (Number.isFinite(n) && n >= 0) settings.turtleWeight = n;
-  }
-  // Counting a Warlord weapon's respect toward the share. Default ON; stored
-  // only when explicitly turned off, so an untouched war keeps the default.
-  if (body.includeWarlord != null && body.includeWarlord !== '') {
-    settings.includeWarlord = !(body.includeWarlord === false || body.includeWarlord === 'false');
   }
   if (body.turtlePay != null && body.turtlePay !== '') {
     const n = Number(body.turtlePay);

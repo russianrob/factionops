@@ -412,9 +412,7 @@ export function tallyAttacks(attacks, { ourFid, enemyFactionId, mode, settings =
       } else {
         const m2 = atk.modifiers || {};
         const chainMod2 = Number(m2.chain_bonus) || 1;
-        // Same rule as the war branch above, so a non-war hit is not scored
-        // by a different standard than a war one.
-        const warlordMod2 = settings.includeWarlord === false ? (Number(m2.warlord_bonus) || 1) : 1;
+        const warlordMod2 = Number(m2.warlord_bonus) || 1;
         nwScore = (respectGain * NON_WAR_WEIGHT) / (chainMod2 * warlordMod2);
       }
       byAttacker[aid].fairScoreSum += nwScore;
@@ -425,27 +423,18 @@ export function tallyAttacks(attacks, { ourFid, enemyFactionId, mode, settings =
       continue;
     }
 
-    // v5.0.44: 'fair payout score' — strip the bonuses that are nobody's
-    // doing:
-    //   - chain_bonus (where you happened to land in the chain)
+    // v5.0.44: 'fair payout score' — strip the bonuses the user
+    // doesn't want counted toward payouts. Per user direction:
+    //   - chain_bonus (varies by chain timing, not effort)
     //   - war (×2 ranked-war respect tier — circumstantial)
+    //   - warlord_bonus (warlord/load extra respect)
     // What stays: fair_fight (skill-of-fight), retaliation (you went
     // out of your way to retal), group_attack (coordination effort),
     // overseas (effort/inconvenience).
-    //
-    // warlord_bonus used to be stripped alongside them and now counts by
-    // default, per the faction: it is not circumstance, it is a weapon bonus
-    // the member went and got, and paying as though they had not is paying
-    // them for a weaker hit than they landed.
-    //
-    // Measured on the war that ended 2026-09-20 before the switch: of 5,612
-    // attacks 896 carried one, and 31 of 59 members move by at least 0.05pp —
-    // the largest +0.67pp, about $26m of a $3.81b pool. Worth a way back, so
-    // includeWarlord:false restores the old maths per war.
     const m = atk.modifiers || {};
     const warMod = Number(m.war) || 1;
     const chainMod = Number(m.chain_bonus) || 1;
-    const warlordMod = settings.includeWarlord === false ? (Number(m.warlord_bonus) || 1) : 1;
+    const warlordMod = Number(m.warlord_bonus) || 1;
     // fair_score is what respect WOULD have been without the excluded
     // bonuses — divide them out of the final respect_gain.
     const fairScore = respectGain / (warMod * chainMod * warlordMod);
