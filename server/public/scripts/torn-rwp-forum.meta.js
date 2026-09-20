@@ -2,8 +2,8 @@
 // @name         RW Pricer — Forum Screenshots
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      1.5.6
-// @description  Prices the item screenshots people paste in forum trade threads. Reads the card out of the picture and puts the RW Pricer estimate on it.
+// @version      1.5.7
+// @description  MERGED INTO RW PRICER 3.10.0 — install that instead; this stands down when it is present. Prices the item screenshots people paste in forum trade threads. Reads the card out of the picture and puts the RW Pricer estimate on it.
 // @match        https://www.torn.com/forums.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue

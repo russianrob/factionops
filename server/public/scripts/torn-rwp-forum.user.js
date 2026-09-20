@@ -2,8 +2,8 @@
 // @name         RW Pricer — Forum Screenshots
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      1.5.6
-// @description  Prices the item screenshots people paste in forum trade threads. Reads the card out of the picture and puts the RW Pricer estimate on it.
+// @version      1.5.7
+// @description  MERGED INTO RW PRICER 3.10.0 — install that instead; this stands down when it is present. Prices the item screenshots people paste in forum trade threads. Reads the card out of the picture and puts the RW Pricer estimate on it.
 // @match        https://www.torn.com/forums.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -475,7 +475,17 @@
     pump();
   }
 
+  // Folded into the main RW Pricer at 3.10.0. If that script is on the page
+  // it has already done this, and doing it again prices every screenshot
+  // twice. Checked on every pass rather than once at startup: both run at
+  // document-idle and neither is guaranteed to go first.
+  function mergedElsewhere() {
+    try { return document.documentElement.dataset.rwpForumMerged === '1'; }
+    catch (e) { return false; }
+  }
+
   function scan() {
+    if (mergedElsewhere()) return;
     style();
     ensureCog();
     var imgs = document.querySelectorAll("img");
