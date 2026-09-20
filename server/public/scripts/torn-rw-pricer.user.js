@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.11.1
+// @version      3.12.0
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the screenshots and stock lists people post in forum trade threads
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.11.1';
+    var SCRIPT_VERSION = '3.12.0';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -2207,6 +2207,14 @@
             '  color: #cdd3e0; text-align: right;' +
             '}' +
             '.rwp-trade-total .rwp-tt-amt { color: #6ee7b7; margin-left: 6px; }' +
+            '.rwp-tip { position: fixed; z-index: 2147483600; max-width: min(340px, 92vw);' +
+            '  background: #12161f; color: #e6e8ee; border: 1px solid #2a3547;' +
+            '  border-radius: 9px; padding: 9px 11px; font: 12px/1.5 -apple-system, system-ui, sans-serif;' +
+            '  box-shadow: 0 8px 28px rgba(0,0,0,.55); display: none; pointer-events: none; }' +
+            '.rwp-tip.on { display: block; }' +
+            '.rwp-tip-h { font-weight: 700; color: #9fe870; margin-bottom: 4px; }' +
+            '.rwp-tip-l { color: #c3c9d6; margin-top: 3px; }' +
+            '[data-rwp-tip] { cursor: help; }' +
             '.rwp-trade-top { text-align: center; padding: 6px 8px; font-weight: 700;' +
             '  border-bottom: 1px solid rgba(110,231,183,.25); }';
         document.head.appendChild(style);
@@ -4495,14 +4503,14 @@
                 tag.className = 'rwp-tbl-cell';
                 tag.style.cssText = 'margin-left:8px;color:#9fe870;font-weight:700;white-space:nowrap';
                 tag.textContent = '\u2248 ' + fmtBigDollar(p.value);
-                tag.title = p.name + ' — ' + p.bonuses.map(function (b) { return b.level + '% ' + b.name; }).join(' + ') +
+                setTip(tag, p.name + ' — ' + p.bonuses.map(function (b) { return b.level + '% ' + b.name; }).join(' + ') +
                             (p.rarity ? ' — ' + p.rarity + (p.inferred ? ' (worked out from the %)' : '') : '') +
                             (p.count ? ' — ' + p.count + ' sales' : '') +
                             (p.source ? ' — from ' + p.source : '') +
                             (p.bonuses.length > 1 && p.source !== 'sales of this exact pair of bonuses'
                                ? ' — the ' + p.bonuses[1].level + '% ' + p.bonuses[1].name +
                                  ' is NOT priced in: no sale of this exact pair exists'
-                               : '');
+                               : ''));
                 if (last.parentNode) last.parentNode.insertBefore(tag, last.nextSibling);
             }
         }
@@ -4570,7 +4578,7 @@
                     var p = priceForumRow(forumRowItem(forumCellTexts(tr), map));
                     if (p) {
                         cell.textContent = fmtBigDollar(p.value);
-                        cell.title = p.name + ' — ' + p.bonuses.map(function (b) { return b.level + '% ' + b.name; }).join(' + ') +
+                        setTip(cell, p.name + ' — ' + p.bonuses.map(function (b) { return b.level + '% ' + b.name; }).join(' + ') +
                                      (p.rarity ? ' — ' + p.rarity + (p.inferred ? ' (worked out from the %)' : '') : '') +
                                      (p.count ? ' — ' + p.count + ' sales' : '') +
                                      (p.source ? ' — from ' + p.source : '') +
@@ -4580,7 +4588,7 @@
                                      (p.bonuses.length > 1 && p.source !== 'exact pair'
                                         ? ' — the ' + p.bonuses[1].level + '% ' + p.bonuses[1].name +
                                           ' is NOT priced in: no sale of this exact pair exists'
-                                        : '');
+                                        : ''));
                     } else {
                         cell.textContent = '';
                     }
@@ -4719,6 +4727,103 @@
      * basis and stops, rather than padding every badge with caveats that do
      * not apply to it.
      */
+    // ── Styled tooltip ──────────────────────────────────────────────
+    // Every price badge explained itself through a native title attribute,
+    // which does not appear on a TAP. The reasoning was therefore unreachable
+    // on a phone, which is where most of this gets read — and a title is also
+    // the one piece of UI a page cannot style.
+    //
+    // One panel, reused, opened by tap or hover on any badge carrying
+    // data-rwp-tip. The text moves OUT of title: leaving both would have the
+    // native tooltip fighting this one on desktop.
+
+    /**
+     * Where the panel goes, given the badge's rect, the panel's size and the
+     * viewport. Pure, because a panel that opens off-screen is worse than no
+     * panel and a narrow phone is exactly where that happens.
+     */
+    function tipPosition(rect, panel, view) {
+        var gap = 6;
+        var left = rect.left;
+        if (left + panel.w > view.w) left = view.w - panel.w - 4;
+        if (left < 4) left = 4;
+        var top = rect.bottom + gap;
+        if (top + panel.h > view.h) {
+            var above = rect.top - panel.h - gap;
+            top = above >= 4 ? above : Math.max(4, view.h - panel.h - 4);
+        }
+        if (top < 0) top = 4;
+        return { left: Math.round(left), top: Math.round(top) };
+    }
+
+    /** Give an element a styled tooltip, and take the native one away. */
+    function setTip(el, text) {
+        if (!el) return;
+        var t = String(text == null ? '' : text);
+        if (el.getAttribute('data-rwp-tip') !== t) el.setAttribute('data-rwp-tip', t);
+        if (el.hasAttribute('title')) el.removeAttribute('title');
+    }
+
+    var _tipEl = null;
+    function tipPanel() {
+        if (_tipEl && _tipEl.isConnected) return _tipEl;
+        _tipEl = document.createElement('div');
+        _tipEl.className = 'rwp-tip';
+        document.body.appendChild(_tipEl);
+        return _tipEl;
+    }
+    function hideTip() { if (_tipEl) _tipEl.classList.remove('on'); }
+    function showTip(target) {
+        var text = target && target.getAttribute('data-rwp-tip');
+        if (!text) return;
+        var el = tipPanel();
+        el.textContent = '';
+        var lines = text.split('\n');
+        for (var i = 0; i < lines.length; i++) {
+            var row = document.createElement('div');
+            row.className = i === 0 ? 'rwp-tip-h' : 'rwp-tip-l';
+            row.textContent = lines[i];
+            el.appendChild(row);
+        }
+        el.classList.add('on');
+        // Measured after it has content, or the flip-above case uses last
+        // tooltip's height and lands in the wrong place.
+        var r = target.getBoundingClientRect();
+        var pr = el.getBoundingClientRect();
+        var p = tipPosition(r, { w: pr.width, h: pr.height },
+                            { w: window.innerWidth, h: window.innerHeight });
+        el.style.left = p.left + 'px';
+        el.style.top = p.top + 'px';
+    }
+
+    var _tipWired = false;
+    function wireTips() {
+        if (_tipWired) return;
+        _tipWired = true;
+        var find = function (n) {
+            while (n && n !== document.body) {
+                if (n.getAttribute && n.getAttribute('data-rwp-tip')) return n;
+                n = n.parentNode;
+            }
+            return null;
+        };
+        document.addEventListener('click', function (ev) {
+            var t = find(ev.target);
+            if (t) { showTip(t); } else { hideTip(); }
+        }, true);
+        document.addEventListener('mouseover', function (ev) {
+            var t = find(ev.target);
+            if (t) showTip(t);
+        }, true);
+        document.addEventListener('mouseout', function (ev) {
+            if (find(ev.target)) hideTip();
+        }, true);
+        document.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Escape') hideTip();
+        }, true);
+        window.addEventListener('scroll', hideTip, true);
+    }
+
     function readItemTitle(it) {
         var bs = it.bonuses || [];
         var p = it.price || {};
@@ -4804,7 +4909,7 @@
                 tag.className = 'rwp-tbl-cell';
                 tag.style.cssText = 'margin-left:8px;color:#9fe870;font-weight:700;white-space:nowrap';
                 tag.textContent = '\u2248 ' + fmtBigDollar(it.price.estimate);
-                tag.title = readItemTitle(it);
+                setTip(tag, readItemTitle(it));
                 if (last.parentNode) last.parentNode.insertBefore(tag, last.nextSibling);
                 placed++;
             }
@@ -5015,6 +5120,8 @@
     //
     // Gated, because this file matches thirteen page patterns and that script
     // matched one.
+    try { wireTips(); } catch (e) {}
+
     if (location.href.indexOf('forums.php') !== -1) {
     // A DOM marker, not a window flag: two userscripts get two sandboxes but
     // share one document. The standalone 1.5.7+ watches for this and stands
