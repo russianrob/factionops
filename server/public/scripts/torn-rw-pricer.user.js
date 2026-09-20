@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.10.1
+// @version      3.11.0
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the screenshots and stock lists people post in forum trade threads
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.10.1';
+    var SCRIPT_VERSION = '3.11.0';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -2206,7 +2206,9 @@
             '  font: 700 12px -apple-system, system-ui, sans-serif;' +
             '  color: #cdd3e0; text-align: right;' +
             '}' +
-            '.rwp-trade-total .rwp-tt-amt { color: #6ee7b7; margin-left: 6px; }';
+            '.rwp-trade-total .rwp-tt-amt { color: #6ee7b7; margin-left: 6px; }' +
+            '.rwp-trade-top { text-align: center; padding: 6px 8px; font-weight: 700;' +
+            '  border-bottom: 1px solid rgba(110,231,183,.25); }';
         document.head.appendChild(style);
     }
 
@@ -3892,10 +3894,44 @@
         return (p && p.value > 0) ? p.value : 0;
     }
 
+    /**
+     * The line that goes above a trade, or null when there is nothing to add.
+     *
+     * RW Pricer already writes a "Total value" under each side, but the figure
+     * a reader sees FIRST is higher up the page and belongs to TornTools'
+     * Trade Calculator, which values everything at market price — so a Steyr
+     * AUG worth $1,074,482,443 on RW data showed up there inside $74,651.
+     *
+     * That number is not ours to rewrite. TornTools ships hashed per-version
+     * bundles and re-renders on its own schedule, so reaching into it would
+     * break silently on their next update, and would strand a wrong total if
+     * RW Pricer were disabled mid-trade. We state our own figure in our own
+     * element and name theirs beside it, rather than quietly disagreeing.
+     *
+     * Silent when neither side holds an RW weapon: a second opinion that
+     * agrees with the first is just clutter on somebody else's total.
+     */
+    function tradeTopLine(sides) {
+        if (!sides || !sides.length) return null;
+        var anyRw = false;
+        for (var i = 0; i < sides.length; i++) if (sides[i].anyRw) anyRw = true;
+        if (!anyRw) return null;
+        var rw = [], torn = [];
+        for (var j = 0; j < sides.length; j++) {
+            rw.push(fmtBigDollar(sides[j].rwTotal));
+            torn.push(fmtBigDollar(sides[j].total));
+        }
+        return {
+            text: rw.join('  \u21c4  '),
+            title: 'RW Pricer value for each side. Torn market value: ' + torn.join(' \u21c4 '),
+        };
+    }
+
     function injectTradePrices(maps) {
         var trade = document.querySelector('#trade-container .trade-cont');
         if (!trade) return;
         var sides = ['left', 'right'];
+        var sideTotals = [];
         for (var s = 0; s < sides.length; s++) {
             var userEl = trade.querySelector('.user.' + sides[s]);
             if (!userEl) continue;
@@ -3971,6 +4007,29 @@
             }
             var amtEl = totalEl.querySelector('.rwp-tt-amt');
             if (amtEl && amtEl.textContent !== totalTxt) amtEl.textContent = totalTxt;
+            sideTotals.push({ rwTotal: rwTotal, total: total, anyRw: anyRw });
+        }
+
+        // Above the whole trade, where the eye lands first. Its own element,
+        // beside TornTools' rather than over it — see tradeTopLine.
+        var container = document.getElementById('trade-container');
+        var top = container && container.querySelector('.rwp-trade-top');
+        var top_ = tradeTopLine(sideTotals);
+        if (container && top_) {
+            if (!top) {
+                top = document.createElement('div');
+                top.className = 'rwp-trade-total rwp-trade-top';
+                top.appendChild(document.createTextNode('RW value:'));
+                var tamt = document.createElement('span');
+                tamt.className = 'rwp-tt-amt';
+                top.appendChild(tamt);
+                container.insertBefore(top, container.firstChild);
+            }
+            var tEl = top.querySelector('.rwp-tt-amt');
+            if (tEl && tEl.textContent !== top_.text) tEl.textContent = top_.text;
+            if (top.title !== top_.title) top.title = top_.title;
+        } else if (top && top.parentNode) {
+            top.parentNode.removeChild(top);
         }
     }
     // ─── Forum price-list tables ─────────────────────────────
@@ -4727,24 +4786,13 @@
             if (textAsked[key]) return;
             textAsked[key] = 1;
         }
-        // Without a key there is no session to be had, so the round trip would
-        // be wasted. Say so rather than doing nothing: a silent no-op on a post
-        // full of weapons reads as the feature being broken, which is exactly
-        // how this one was reported.
-        if (!getEffectiveApiKey()) {
-            if (!document.getElementById('rwp-needs-key')) {
-                var n = document.createElement('div');
-                n.id = 'rwp-needs-key';
-                n.className = 'rwp-tbl-cell';
-                n.style.cssText = 'margin-top:8px;padding:6px 8px;border-left:3px solid #e0b357;' +
-                                  'background:rgba(0,0,0,.25);font-size:12px;color:#e0b357';
-                n.textContent = 'RW Pricer can read this post, but needs a Torn API key — add one in the RW Pricer settings.';
-                // In the post, in normal flow. It is a note about the post and
-                // belongs with it; nothing this script writes covers the page.
-                if (host && host.isConnected) host.appendChild(n);
-            }
-            return;
-        }
+        // No sign-in check before asking. The reader is open to everyone now —
+        // the server bounds its cost with a per-caller budget instead of a
+        // membership test — so refusing here would be this script enforcing a
+        // rule the server no longer has. A key is still SENT when one is
+        // configured, because that is how the budget tells callers apart, but
+        // its absence stops nothing. The "needs a Torn API key" note that used
+        // to go here is gone with the rule it explained.
         var headers = { 'Content-Type': 'application/json' };
         var tok = warboardToken();
         if (tok) headers.Authorization = 'Bearer ' + tok;

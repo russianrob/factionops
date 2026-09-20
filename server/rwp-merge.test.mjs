@@ -56,7 +56,11 @@ test("the header still needs nothing new", () => {
 });
 
 test("it is a version bump, not a patch", () => {
-  assert.match(HEAD, /@version\s+3\.10\./, "folding a script in is not a patch");
+  // Pinning the literal minor broke on the next feature. What matters is that
+  // folding a whole script in was not shipped as a patch.
+  const [maj, min] = HEAD.match(/@version\s+(\d+)\.(\d+)\./).slice(1).map(Number);
+  assert.equal(maj, 3);
+  assert.ok(min >= 10, "the merge landed at 3.10; this is " + maj + "." + min);
 });
 
 test("the in-file version matches the header", () => {

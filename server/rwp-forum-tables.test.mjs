@@ -866,10 +866,20 @@ test("warboard sign-in uses the key the cog already holds", () => {
   assert.match(body, /api\/auth/);
 });
 
-test("no API key means the fallback is skipped, not attempted", () => {
-  // Posting without a key would be a wasted round trip on every unknown post.
+test("a missing API key no longer stops the fallback", () => {
+  // It used to: without a key there was no session, and without a session the
+  // server refused the paid path, so asking was a wasted round trip. The
+  // server bounds cost with a per-caller budget now and answers anyone, so
+  // refusing here would be this script enforcing a rule that no longer exists.
   const body = srcFn("askServerToRead");
-  assert.match(body, /getEffectiveApiKey\(\)/);
+  assert.ok(!/if \(!getEffectiveApiKey\(\)\)/.test(body),
+    "still refusing to ask without a key: " + body.slice(0, 400));
+});
+
+test("but a key is still SENT when there is one", () => {
+  // It is how the budget tells callers apart, and how a member keeps a session.
+  const body = srcFn("askServerToRead");
+  assert.match(body, /Authorization/);
 });
 
 // The whole post is what gets READ — stockContainerFor climbs up to six
