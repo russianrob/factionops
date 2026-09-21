@@ -24,7 +24,9 @@
 //       own faction? Everything interesting here — reading an opponent's
 //       coverage curve before declaring — rests on this one answer.
 //
-// Roughly 25 calls against a 100/min ceiling, paced below it.
+// The activity endpoints enforce 10 requests/min, not the 100 the spec
+// documents elsewhere. Measured, not read. Paced at 7s, so a full run is a
+// couple of minutes.
 
 const BASE = "https://ffscouter.com/api/v1";
 const HOUR = 3600, DAY = 86400;
@@ -41,25 +43,46 @@ if (!KEY) {
   process.exit(1);
 }
 
-/** Pace below the documented 100 requests/min, per account. */
+// The activity endpoints allow TEN requests per minute, not the hundred the
+// spec documents for player-flights/batch. Measured, not read: at 700ms
+// spacing every call after the first came back code 20. 7s leaves headroom
+// without being slower than it has to be.
+const SPACING_MS = 7000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let calls = 0;
+
+/** A rate-limited answer is not an answer — it must never reach a verdict. */
+const isRateLimited = (r) =>
+  r.status === 429 || (r.body && (r.body.code === 20 || r.body.code === 21));
 
 /**
  * One GET. Returns { ok, status, body } and never throws, because half the
  * point of a probe is to see the refusals clearly — a thrown error at the
  * first 400 would hide every answer after it.
+ *
+ * Rate limits are retried rather than returned. The first version of this
+ * reported "enemy profiling NOT possible" off a code 20, which is precisely
+ * the false conclusion a probe exists to prevent: a throttled call says
+ * nothing whatever about permission.
  */
-async function get(path, params) {
-  await sleep(700);
-  calls++;
+async function get(path, params, tries = 4) {
   const qs = new URLSearchParams({ key: KEY, ...params }).toString();
-  try {
-    const res = await fetch(`${BASE}${path}?${qs}`);
-    const body = await res.json().catch(() => null);
-    return { ok: res.ok, status: res.status, body };
-  } catch (e) {
-    return { ok: false, status: 0, body: { error: String(e.message) } };
+  for (let attempt = 1; ; attempt++) {
+    await sleep(SPACING_MS);
+    calls++;
+    let r;
+    try {
+      const res = await fetch(`${BASE}${path}?${qs}`);
+      const body = await res.json().catch(() => null);
+      r = { ok: res.ok, status: res.status, body };
+    } catch (e) {
+      r = { ok: false, status: 0, body: { error: String(e.message) } };
+    }
+    if (!isRateLimited(r) || attempt >= tries) return r;
+    // Back off a whole window; the limit is per minute, so a short retry
+    // just spends another call to be told the same thing.
+    process.stderr.write(`    (rate limited, waiting ${15 * attempt}s)\n`);
+    await sleep(15000 * attempt);
   }
 }
 
@@ -105,8 +128,21 @@ const other = await activityFaction(THEIRS, win.start, win.end);
 
 console.log(`  own faction   ${OURS}: ${failed(mine) ? "REFUSED — " + why(mine) : "ok, " + (mine.body.buckets || []).length + " buckets"}`);
 console.log(`  other faction ${THEIRS}: ${failed(other) ? "REFUSED — " + why(other) : "ok, " + (other.body.buckets || []).length + " buckets"}`);
+
+// Three outcomes, not two. "Could not tell" is a real result and has to be
+// said out loud rather than collapsed into "not possible".
 const canScout = !failed(other);
-console.log(`  VERDICT: enemy activity profiling is ${canScout ? "POSSIBLE" : "NOT possible — own faction only"}`);
+if (canScout) {
+  console.log("  VERDICT: enemy activity profiling is POSSIBLE");
+} else if (isRateLimited(other) || isRateLimited(mine)) {
+  console.log("  VERDICT: UNKNOWN — still throttled after retries, rerun in a few minutes");
+} else if (!failed(mine)) {
+  // Our own faction read fine and theirs did not, under identical windows.
+  // That is the only shape that actually demonstrates a restriction.
+  console.log("  VERDICT: own faction only — the other faction was refused on its own merits");
+} else {
+  console.log("  VERDICT: UNKNOWN — neither faction was readable, so nothing is proven");
+}
 
 // ── Q1. What is activity_score? ────────────────────────────────
 // Compared against active_players across every bucket we hold. If they never
@@ -158,7 +194,7 @@ const probeAt = async (daysAgo) => {
   return { ok: !failed(r), code: r.body?.code, r };
 };
 
-let lastGood = 0, firstBad = null;
+let lastGood = 0, firstBad = null, aborted = false;
 for (const d of [7, 30, 90, 180, 365, 730]) {
   const p = await probeAt(d);
   console.log(`  ${String(d).padStart(3)}d ago: ${p.ok ? "ok" : "refused (" + why(p.r) + ")"}`);
@@ -167,10 +203,14 @@ for (const d of [7, 30, 90, 180, 365, 730]) {
   // would otherwise be mistaken for "history ends at 90 days".
   if (p.code === 35) { firstBad = d; break; }
   console.log("  stopping: that refusal is not a retention limit");
+  aborted = true;
   break;
 }
 
-if (firstBad == null) {
+if (aborted) {
+  // Saying "at least 0 days" here would read as a finding. It is not one.
+  console.log(`  VERDICT: UNKNOWN — the walk stopped on an unrelated error${lastGood ? `, but ${lastGood}d did read ok` : ""}`);
+} else if (firstBad == null) {
   console.log(`  VERDICT: at least ${lastGood} days available (never hit the edge)`);
 } else {
   let lo = lastGood, hi = firstBad;
@@ -206,7 +246,24 @@ if (canScout && lastGood >= 7) {
     });
     const trough = avg.indexOf(Math.min(...avg.filter((x) => x > 0)));
     console.log(`  thinnest hour: ${String(trough).padStart(2, "0")}:00 UTC`);
+
+    // Their trough only helps if we can field people in it. Same window, same
+    // bucket, our roster — the edge is the GAP, not their low point.
+    const us = await activityFaction(OURS, topOfHour(now - days * DAY), topOfHour(now), HOUR);
+    if (!failed(us)) {
+      const oursByHour = Array.from({ length: 24 }, () => []);
+      for (const b of us.body.buckets || []) {
+        oursByHour[new Date(b.ts * 1000).getUTCHours()].push(b.active_ratio ?? 0);
+      }
+      const ourAvg = oursByHour.map((v) => (v.length ? v.reduce((a, c) => a + c, 0) / v.length : 0));
+      const edge = ourAvg.map((v, h) => ({ h, gap: v - avg[h], us: v, them: avg[h] }))
+        .sort((a, b) => b.gap - a.gap);
+      console.log(`\n  best hours to declare (our ratio minus theirs):`);
+      for (const e of edge.slice(0, 5)) {
+        console.log(`    ${String(e.h).padStart(2, "0")}:00 UTC  us ${(e.us * 100).toFixed(1)}%  them ${(e.them * 100).toFixed(1)}%  edge ${(e.gap * 100 >= 0 ? "+" : "")}${(e.gap * 100).toFixed(1)}pp`);
+      }
+    }
   }
 }
 
-console.log(`\n${calls} calls used (limit 100/min).`);
+console.log(`\n${calls} calls used (measured limit: 10/min on activity endpoints).`);
