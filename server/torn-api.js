@@ -205,9 +205,27 @@ export async function fetchRankedWarReport(factionId, apiKey, warId) {
   }
   if (!rwId) {
     const rwUrl = `https://api.torn.com/faction/${encodeURIComponent(factionId)}?selections=rankedwars&key=${encodeURIComponent(apiKey)}&comment=wb-api`;
-    const rwRes = await fetch(rwUrl);
-    if (rwRes.ok) {
-      const rwData = await rwRes.json();
+    // Retried, and NOT swallowed. A single flaky response used to leave rwId
+    // null and surface as "No ranked war found" — which reads as "your faction
+    // has never had a ranked war" when the truth was a transient 5xx from Torn.
+    // That is the error the client then reports as a network failure.
+    let rwData = null, rwErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const rwRes = await fetch(rwUrl);
+        if (!rwRes.ok) { rwErr = new Error(`ranked-war lookup: Torn returned HTTP ${rwRes.status}`); }
+        else {
+          const body = await rwRes.json();
+          if (body.error) rwErr = new Error(`ranked-war lookup: ${body.error.error} (code ${body.error.code})`);
+          else { rwData = body; rwErr = null; break; }
+        }
+      } catch (e) {
+        rwErr = new Error(`ranked-war lookup: ${e.message}`);
+      }
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    }
+    if (rwErr) throw rwErr;
+    {
       if (rwData.rankedwars) {
         // Find the most recent completed war (winner !== 0)
         let latest = null;
@@ -960,4 +978,26 @@ export async function fetchFactionChainActivity(factionId, apiKey, opts = {}) {
     : { hoursUTC, totalChains: 0, totalHits: 0, warsUsed, wars: [], source: 'none' };
   _chainActivityCache.set(fid, { ts: Date.now(), value });
   return value;
+}
+
+/**
+ * A faction's recent ranked war HISTORY — any faction, not just your own.
+ *
+ * fetchRankedWar above returns only the war currently running, in the v1
+ * shape. Scouting needs the finished ones, and v2 returns them as a clean
+ * array with both sides' scores and the winner already resolved.
+ *
+ * Torn API v2: GET /v2/faction/<factionId>/rankedwars?key=KEY
+ * Verified against faction 26154 while not a member: five wars returned.
+ */
+export async function fetchRankedWarHistory(factionId, apiKey) {
+  const url = `https://api.torn.com/v2/faction/${encodeURIComponent(factionId)}/rankedwars?key=${encodeURIComponent(apiKey)}&comment=wb-prewar`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Torn API returned HTTP ${res.status}`);
+  const data = await res.json();
+  // A v2 error rides along with HTTP 200, so the status alone proves nothing.
+  if (data.error) throw new Error(`Torn API error: ${data.error.error} (code ${data.error.code})`);
+  const wars = Array.isArray(data.rankedwars) ? data.rankedwars : [];
+  // Newest first — a scouting page reads recent form downwards.
+  return wars.slice().sort((a, b) => (Number(b.start) || 0) - (Number(a.start) || 0));
 }

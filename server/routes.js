@@ -83,6 +83,7 @@ function _adminLoginFail(ip) {
 function _adminLoginClear(ip) { _adminLoginAttempts.delete(ip); }
 import * as store from "./store.js";
 import * as prewar from "./prewar-activity.js";
+import * as tornApi from "./torn-api.js";
 import { parseFlight, needsRecentFlights } from "./flight-parse.js";
 import * as chat from "./chat.js";
 import { encrypt as encryptKey, decrypt as decryptKey, isEncrypted as isEncryptedKey } from "./key-encryption.js";
@@ -12682,11 +12683,22 @@ router.get("/api/prewar", async (req, res) => {
   }
 
   try {
+    // War windows first, because they are what the page is actually for. A
+    // faction's baseline curve measured them at rest and turned out to be a
+    // poor guide to how they fight — so the baseline is kept, but demoted.
+    let history = [];
+    try {
+      history = await tornApi.fetchRankedWarHistory(enemy, String(req.query.key || ""));
+    } catch (e) {
+      console.warn(`[prewar] war history for ${enemy} failed: ${e.message}`);
+    }
+    const profile = await prewar.warProfile(ffsKey, history.slice(0, 6), enemy);
+
     const out = await prewar.scout(ffsKey, info.factionId, enemy, days);
     // fromWar tells the page whether it picked the opponent itself, and
     // warEnded whether that war is over — scouting the faction you just beat
     // is a different thing from scouting the one you are fighting.
-    return res.json({ ...out, enemyName, fromWar, warEnded });
+    return res.json({ ...out, enemyName, fromWar, warEnded, profile });
   } catch (e) {
     // Throttling says nothing about the faction or the key, so it must not be
     // reported as "no data" — the caller should simply come back.

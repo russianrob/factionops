@@ -25,6 +25,7 @@
 
 import fs from "fs";
 import path from "path";
+import { summariseWar } from "./war-window.js";
 
 export const HOUR = 3600;
 export const DAY = 86400;
@@ -207,4 +208,67 @@ export async function scout(ffsKey, ourFactionId, enemyFactionId, days = 14, now
     edge: edgeTable(ours.curve, theirs.curve),
     cached: ours.cached && theirs.cached,
   };
+}
+
+// ── War-window activity ────────────────────────────────────────
+// A faction's baseline curve turned out to be a poor guide to how they
+// actually fight: measured on war 49287, both sides ran far above baseline,
+// and the baseline's top-ranked hour was not the war's best. So the useful
+// question is not "when are they usually online" but "what do they do once a
+// war starts" — which the same endpoint answers, given the war's own
+// timestamps and 730 days of retention behind it.
+
+/**
+ * Activity across one war's exact window.
+ *
+ * A finished war never changes, so its entry is cached permanently rather
+ * than per day. An unfinished one still moves, so it is not cached at all.
+ */
+export async function warWindowActivity(ffsKey, factionId, war) {
+  const start = Number(war.start) || 0;
+  const end = Number(war.end) || 0;
+  if (!start || !end) return [];          // still running; nothing settled to cache
+
+  const safe = String(factionId).replace(/[^0-9A-Za-z_-]/g, "");
+  const key = `war-${String(war.id).replace(/[^0-9A-Za-z_-]/g, "")}-${safe}`;
+  const hit = readCache(key);
+  if (hit) return hit.buckets || [];
+
+  const qs = new URLSearchParams({
+    key: ffsKey, faction_id: String(factionId),
+    start: String(start), end: String(end), bucket: String(HOUR),
+  });
+  const res = await paced(() => fetch(`${BASE}/activity/faction?${qs}`));
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body || (body.code != null && body.code !== 0)) {
+    const err = new Error(body?.error || `HTTP ${res.status}`);
+    err.code = body?.code;
+    err.retryable = body?.code === 20 || body?.code === 21 || res.status === 429;
+    throw err;
+  }
+  const buckets = body.buckets || [];
+  writeCache(key, { buckets });
+  return buckets;
+}
+
+/**
+ * Every recent war a faction fought, with how they were covered through it.
+ *
+ * `wars` comes from Torn (fetchRankedWarHistory); the activity for each comes
+ * from FFScouter. One call per war, all cached permanently once the war has
+ * ended — so a faction costs its calls once and never again.
+ */
+export async function warProfile(ffsKey, wars, factionId) {
+  const out = [];
+  for (const w of wars || []) {
+    let buckets = [];
+    try {
+      buckets = await warWindowActivity(ffsKey, factionId, w);
+    } catch (e) {
+      // One unreadable window must not lose the other four wars.
+      if (!e.retryable) console.warn(`[prewar] war ${w.id} activity failed: ${e.message}`);
+    }
+    out.push(summariseWar(w, factionId, buckets));
+  }
+  return out;
 }

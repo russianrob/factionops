@@ -37,9 +37,12 @@
 <div class="card">
   <h1>Pre-war scouting <small>coverage curves from FFScouter activity</small></h1>
   <p class="muted">
-    An opponent's hourly coverage over the last fortnight, next to your own.
-    The hours worth declaring into are the ones with the biggest <em>gap</em> —
-    their trough is no use if you cannot field people in it either.
+    How a faction actually behaves <em>during wars</em> — their own past war
+    windows, hour by hour. A baseline curve measures a faction at rest and
+    nobody fights at rest: checked against war 49287, both sides ran far above
+    baseline and the baseline's top-ranked hour was not the war's best.
+    Note that coverage is <strong>presence, not damage</strong> — Dead Fragment
+    was out-covered in 26 of that war's 34 hours and won 23,048 to 7,923.
   </p>
   <div class="row">
     <label for="key">Torn API key</label>
@@ -53,7 +56,9 @@
   <div class="muted">
     Leave the faction blank to scout whoever you are currently at war with.
     Key stays in this browser. Access is checked server-side against your faction position.
-    FFScouter allows 10 requests a minute across everyone, so results are cached per faction per day.
+    FFScouter allows 10 requests a minute across everyone, so the first scout of a
+    faction takes up to a minute. Finished wars never change and are cached permanently,
+    so it is instant after that.
   </div>
   <div id="err" class="err"></div>
 </div>
@@ -96,8 +101,48 @@
     return h + '</div></div>';
   }
 
+  function pctOrDash(v){ return (v == null) ? "—" : (v * 100).toFixed(0) + "%"; }
+
+  // How a faction fights, war by war. `fade` is the last third of the war
+  // minus the first: negative means they spiked and faded, positive means they
+  // built. Opponent score rides along because four wins over factions that
+  // scored 7, 362, 874 and 6,799 is not the same as four wins.
+  function record(profile, name){
+    if (!profile || !profile.length) return '';
+    var wins = profile.filter(function(w){ return w.won; }).length;
+    var h = '<div class="card"><h2>' + name + ' — war record ' + wins + '-' + (profile.length - wins) + '</h2>' +
+      '<table><tr><th>Ended</th><th>Opponent</th><th>Score</th><th>Opp</th>' +
+      '<th>Hours</th><th>Pts/hr</th><th>Peak</th><th>Mean</th><th>Fade</th><th></th></tr>';
+    profile.forEach(function(w){
+      var a = w.activity || {};
+      var ended = w.end ? new Date(w.end * 1000).toISOString().slice(0,10) : "ongoing";
+      // An all-zero window means FFScouter was not tracking yet, not that the
+      // faction sat the war out. Saying "0%" there would be a lie.
+      var note = a.untracked ? ' <span class="muted">(not tracked yet)</span>' : '';
+      var fade = (a.fade == null) ? "—"
+        : ((a.fade * 100 >= 0 ? "+" : "") + (a.fade * 100).toFixed(0) + "pp");
+      h += '<tr class="' + (w.won ? "best" : "") + '">' +
+           '<td>' + ended + '</td>' +
+           '<td>' + (w.opponentName || w.opponentId || "?") + '</td>' +
+           '<td>' + w.score.toLocaleString() + '</td>' +
+           '<td>' + w.opponentScore.toLocaleString() + '</td>' +
+           '<td>' + (w.hours == null ? "—" : w.hours.toFixed(1)) + '</td>' +
+           '<td>' + (w.scoreRate == null ? "—" : Math.round(w.scoreRate).toLocaleString()) + '</td>' +
+           '<td>' + pctOrDash(a.peak) + note + '</td>' +
+           '<td>' + pctOrDash(a.mean) + '</td>' +
+           '<td class="' + (a.fade != null && a.fade < -0.05 ? "neg" : "") + '">' + fade + '</td>' +
+           '<td>' + (w.won ? "WON" : "lost") + '</td></tr>';
+    });
+    return h + '</table><div class="muted" style="margin-top:8px">' +
+      'Fade = last third of the war minus the first. Negative means they spiked and faded; ' +
+      'positive means they built. "Not tracked yet" means FFScouter had not begun ' +
+      'collecting activity when that war was fought — roughly before April 2026.' +
+      '</div></div>';
+  }
+
   function table(edge){
-    var h = '<div class="card"><h2>Best hours to declare</h2>' +
+    var h = '<div class="card"><h2>Baseline gap by hour <span class="muted" style="text-transform:none;font-weight:400">' +
+      '— at rest, not at war; treat as a hint, not a plan</span></h2>' +
       '<table><tr><th>TCT</th><th>Local</th><th>You</th><th>Them</th><th>Edge</th></tr>';
     edge.forEach(function(e, i){
       var gap = (e.gap * 100);
@@ -131,7 +176,8 @@
         var title = "you [" + d.ours.factionId + "] (" + d.ours.memberCount + ") vs " +
                     them + " (" + d.theirs.memberCount + ") — " + d.days + "d average" + src +
                     (d.cached ? " · cached today" : "");
-        $("out").innerHTML = table(d.edge) + bars(title, d.ours.curve, d.theirs.curve);
+        $("out").innerHTML = record(d.profile, them) +
+                             table(d.edge) + bars(title, d.ours.curve, d.theirs.curve);
       })
       .catch(function(e){ $("err").textContent = String(e.message || e); })
       .finally(function(){ $("go").disabled = false; $("go").textContent = "Scout"; });
