@@ -12,7 +12,7 @@
 // are never presented as a prediction of who wins.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { warWindowStats, scoreRate, summariseWar } from "./war-window.js";
+import { warWindowStats, scoreRate, summariseWar, drawCurve } from "./war-window.js";
 
 const buckets = (ratios) =>
   ratios.map((r, i) => ({ ts: 1789736400 + i * 3600, active_ratio: r, active_players: Math.round(r * 90) }));
@@ -150,4 +150,27 @@ test("a genuinely quiet hour inside a real war still counts", () => {
   assert.equal(s.untracked, false);
   assert.equal(s.peak, 0.5);
   assert.ok(s.mean > 0);
+});
+
+// ── The curve itself, for drawing ──────────────────────────────
+// peak/mean/fade are three numbers ABOUT a shape. The shape is what was
+// actually paid for, and a sparkline shows it in the space a number takes.
+
+test("the curve rides along so it can be drawn", () => {
+  const w = summariseWar(WAR_49287, 26154, buckets([0.7, 0.5, 0.3]));
+  assert.deepEqual(w.curve, [0.7, 0.5, 0.3]);
+});
+
+test("a long war is downsampled, keeping its shape", () => {
+  // 34 hours into a sparkline a thumb-width wide. The peak must survive the
+  // resampling or the drawing contradicts the number printed beside it.
+  const long = buckets(Array.from({ length: 34 }, (_, i) => (i === 20 ? 0.9 : 0.3)));
+  const w = summariseWar(WAR_49287, 26154, long);
+  assert.ok(w.curve.length <= 24, `got ${w.curve.length} points`);
+  assert.ok(Math.max(...w.curve) >= 0.85, "the peak was smoothed away");
+});
+
+test("an untracked war has no curve to draw", () => {
+  const w = summariseWar(WAR_49287, 26154, buckets([0, 0, 0, 0]));
+  assert.deepEqual(w.curve, []);
 });

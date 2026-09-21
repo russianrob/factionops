@@ -68,6 +68,31 @@ export function warWindowStats(buckets) {
 }
 
 /**
+ * The hourly ratios, resampled to at most `max` points for drawing.
+ *
+ * Each output point takes the MAX of the hours it covers, not the mean.
+ * Averaging a 34-hour war down to 24 points would flatten the peak, and a
+ * sparkline that contradicts the "peak 73%" printed beside it is worse than
+ * no sparkline.
+ */
+export function drawCurve(buckets, max = 24) {
+  const rs = (buckets || [])
+    .map((b) => Number(b && b.active_ratio))
+    .filter((n) => Number.isFinite(n));
+  // All-zero means untracked, and there is no shape to show.
+  if (!rs.length || !rs.some((n) => n > 0)) return [];
+  if (rs.length <= max) return rs;
+
+  const out = [];
+  for (let i = 0; i < max; i++) {
+    const from = Math.floor((i * rs.length) / max);
+    const to = Math.max(from + 1, Math.floor(((i + 1) * rs.length) / max));
+    out.push(Math.max(...rs.slice(from, to)));
+  }
+  return out;
+}
+
+/**
  * Points per hour.
  *
  * A 23,503 blowout over 27 hours and a 7,923 loss over 34 are not comparable
@@ -114,5 +139,6 @@ export function summariseWar(war, factionId, buckets) {
     won: Number(war.winner) === fid,
     scoreRate: scoreRate(score, hours),
     activity: warWindowStats(buckets),
+    curve: drawCurve(buckets),
   };
 }

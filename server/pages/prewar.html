@@ -1,187 +1,282 @@
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pre-war scouting — warboard</title>
+<title>War Scout</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
-  :root{color-scheme:dark}
-  body{background:#0a0f12;color:#e5e7eb;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:20px}
-  .card{background:#0f1a2e;border:1px solid #1e3a5f;border-radius:8px;padding:18px;margin-bottom:14px}
-  h1{font-size:18px;margin:0 0 4px;color:#fff}
-  h1 small{font-size:11px;color:#9ca3af;font-weight:400;margin-left:8px}
-  h2{font-size:13px;margin:0 0 10px;color:#9fe870;text-transform:uppercase;letter-spacing:.4px}
-  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
-  label{font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.3px}
-  input{background:#060b12;border:1px solid #1e3a5f;color:#e5e7eb;border-radius:4px;padding:7px 9px;font-family:monospace;font-size:12px;min-width:150px}
-  button{background:#2d6a4f;color:#fff;border:0;border-radius:4px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer}
-  button:hover{background:#3a8862}
-  button:disabled{opacity:.5;cursor:not-allowed}
-  .muted{color:#9ca3af;font-size:12px}
-  .err{color:#fca5a5;font-size:12px;margin-top:8px}
-  table{border-collapse:collapse;width:100%;font-size:12px;font-variant-numeric:tabular-nums}
-  th{text-align:left;color:#9ca3af;font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.3px;padding:0 8px 6px 0}
-  td{padding:3px 8px 3px 0;border-top:1px solid #16243c}
-  .bars{overflow-x:auto}
-  .brow{display:flex;align-items:center;gap:8px;font-family:monospace;font-size:11px;white-space:nowrap}
-  .hr{color:#6b7280;width:104px;flex:0 0 auto}
-  .bar{height:11px;border-radius:2px;flex:0 0 auto}
-  .us{background:#2d6a4f}
-  .them{background:#7f3f4f}
-  .pct{color:#9ca3af;width:46px;flex:0 0 auto}
-  .best td{color:#9fe870}
-  .neg{color:#fca5a5}
-  .legend{display:flex;gap:14px;font-size:11px;color:#9ca3af;margin-bottom:8px}
-  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
-</style>
-</head><body>
+/* A war room inside a dark app: committed to one look rather than tracking a
+   theme, but every colour is painted explicitly so it holds on any ground.
+   The green is warboard's existing accent, inherited rather than chosen. */
+:root{
+  --ink:#070b0f; --panel:#0d141d; --panel2:#111b26; --line:#1c2a38;
+  --text:#dde5ed; --muted:#74889b;        /* blue-biased grey, not a flat neutral */
+  --signal:#9fe870; --win:#5fd39a; --loss:#e8636f; --unknown:#d4a24a;
+  --sans:"IBM Plex Sans",-apple-system,system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ink);color:var(--text);font-family:var(--sans);
+     font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%}
+.wrap{max-width:900px;margin:0 auto;padding:18px 14px 56px}
 
-<div class="card">
-  <h1>Pre-war scouting <small>coverage curves from FFScouter activity</small></h1>
-  <p class="muted">
-    How a faction actually behaves <em>during wars</em> — their own past war
-    windows, hour by hour. A baseline curve measures a faction at rest and
-    nobody fights at rest: checked against war 49287, both sides ran far above
-    baseline and the baseline's top-ranked hour was not the war's best.
-    Note that coverage is <strong>presence, not damage</strong> — Dead Fragment
-    was out-covered in 26 of that war's 34 hours and won 23,048 to 7,923.
-  </p>
-  <div class="row">
-    <label for="key">Torn API key</label>
-    <input id="key" type="text" placeholder="your key" autocomplete="off" spellcheck="false">
-    <label for="enemy">Enemy faction</label>
-    <input id="enemy" type="text" inputmode="numeric" placeholder="current war (auto)">
-    <label for="days">Days</label>
-    <input id="days" type="text" inputmode="numeric" value="14" style="min-width:60px">
-    <button id="go">Scout</button>
-  </div>
-  <div class="muted">
-    Leave the faction blank to scout whoever you are currently at war with.
-    Key stays in this browser. Access is checked server-side against your faction position.
-    FFScouter allows 10 requests a minute across everyone, so the first scout of a
-    faction takes up to a minute. Finished wars never change and are cached permanently,
-    so it is instant after that.
-  </div>
-  <div id="err" class="err"></div>
+/* ── masthead ─────────────────────────────────────── */
+.mast{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.mast h1{font-size:19px;font-weight:600;letter-spacing:-.01em;margin:0}
+.mast .tag{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--signal);border:1px solid var(--line);
+  border-radius:3px;padding:2px 6px}
+.lede{color:var(--muted);font-size:13.5px;margin:0 0 16px;max-width:60ch}
+
+/* ── controls ─────────────────────────────────────── */
+.ctl{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+     padding:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.f{display:flex;flex-direction:column;gap:4px;flex:1 1 150px;min-width:0}
+.f.sm{flex:0 0 74px}
+label{font-family:var(--mono);font-size:9.5px;letter-spacing:.13em;
+      text-transform:uppercase;color:var(--muted)}
+input{background:var(--ink);border:1px solid var(--line);color:var(--text);
+      border-radius:6px;padding:9px 10px;font-family:var(--mono);font-size:13px;width:100%}
+input:focus{outline:none;border-color:var(--signal)}
+button{background:var(--signal);color:#08120a;border:0;border-radius:6px;
+       padding:10px 18px;font-family:var(--sans);font-size:13px;font-weight:600;
+       cursor:pointer;flex:0 0 auto}
+button:disabled{opacity:.45;cursor:progress}
+.err{color:var(--loss);font-size:13px;margin-top:10px;font-family:var(--mono)}
+
+/* ── the verdict: the finding, not the data ───────── */
+.verdict{border:1px solid var(--line);border-left:3px solid var(--signal);
+  background:var(--panel2);border-radius:8px;padding:14px 16px;margin:18px 0 8px}
+.verdict h2{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--signal);margin:0 0 8px;font-weight:500}
+.verdict p{margin:0 0 7px;font-size:14.5px}
+.verdict p:last-child{margin-bottom:0}
+.verdict b{color:#fff;font-weight:600}
+
+/* ── one war = one card; the table was unreadable on a phone ─ */
+.wars{display:flex;flex-direction:column;gap:9px;margin-top:18px}
+.war{display:grid;gap:10px;background:var(--panel);border:1px solid var(--line);
+     border-left:3px solid var(--muted);border-radius:8px;padding:12px 14px;
+     grid-template-columns:1fr;align-items:center}
+.war.won{border-left-color:var(--win)} .war.lost{border-left-color:var(--loss)}
+.who{min-width:0}
+.who .opp{font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.who .when{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:1px}
+
+/* Score as a proportion: a blowout should read as one before you parse digits */
+.score{font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums}
+.score .v{color:var(--text)} .score .o{color:var(--muted)}
+.split{display:flex;height:4px;border-radius:2px;overflow:hidden;margin-top:5px;background:var(--line)}
+.split i{display:block;height:100%}
+.split .mine{background:var(--signal)} .split .theirs{background:#3c4a5a}
+
+/* The shape of the war — what the five API calls actually bought */
+.spark{display:flex;align-items:center;gap:9px;min-width:0}
+.spark svg{display:block;flex:0 0 auto}
+.stats{display:flex;gap:12px;font-family:var(--mono);font-size:11px;
+       font-variant-numeric:tabular-nums;white-space:nowrap}
+.stats div{display:flex;flex-direction:column;line-height:1.35}
+.stats k{color:var(--muted);font-size:9px;letter-spacing:.1em;text-transform:uppercase}
+.stats b{font-weight:500}
+.fade.down{color:var(--loss)} .fade.up{color:var(--win)}
+.untracked{font-family:var(--mono);font-size:11px;color:var(--unknown)}
+
+@media(min-width:720px){
+  .war{grid-template-columns:minmax(0,1.5fr) minmax(0,1.1fr) auto;gap:16px}
+  .wrap{padding:26px 20px 70px}
+}
+
+/* ── demoted panels ───────────────────────────────── */
+details{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+summary{cursor:pointer;padding:12px 14px;font-family:var(--mono);font-size:10px;
+        letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
+.dbody{padding:0 14px 14px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12px;
+      font-variant-numeric:tabular-nums}
+th{text-align:right;color:var(--muted);font-weight:500;font-size:9.5px;
+   letter-spacing:.1em;text-transform:uppercase;padding:0 0 7px 14px;white-space:nowrap}
+td{text-align:right;padding:4px 0 4px 14px;border-top:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left;padding-left:0}
+tr.top td{color:var(--signal)}
+.note{color:var(--muted);font-size:12px;margin-top:10px}
+.pos{color:var(--win)} .negv{color:var(--loss)}
+</style>
+</head><body><div class="wrap">
+
+<div class="mast">
+  <h1>War Scout</h1><span class="tag">FFScouter &times; Torn</span>
 </div>
+<p class="lede">How a faction behaves <em>during</em> wars — their own past war windows, hour by hour.</p>
+
+<div class="ctl">
+  <div class="f"><label for="key">Torn API key</label>
+    <input id="key" type="text" autocomplete="off" spellcheck="false" placeholder="paste key"></div>
+  <div class="f"><label for="enemy">Enemy faction</label>
+    <input id="enemy" type="text" inputmode="numeric" placeholder="current war"></div>
+  <div class="f sm"><label for="days">Days</label>
+    <input id="days" type="text" inputmode="numeric" value="14"></div>
+  <button id="go">Scout</button>
+</div>
+<div id="err" class="err"></div>
 
 <div id="out"></div>
+
+<details id="method"><summary>Method &amp; caveats</summary><div class="dbody">
+  <p class="note">A <em>baseline</em> curve measures a faction at rest, and nobody fights at rest.
+  Checked against war 49287, both sides ran far above baseline and the baseline's top-ranked
+  hour was not the war's best — so war windows lead here and the baseline is kept only as a hint.</p>
+  <p class="note">Coverage is <b>presence, not damage</b>. Dead Fragment was out-covered in 26 of
+  that war's 34 hours and won 23,048 to 7,923. Nothing here predicts a winner; it describes a shape.</p>
+  <p class="note"><b>Fade</b> = last third of the war minus the first. Negative means they spiked and
+  faded, positive means they built. <b>Not tracked</b> means FFScouter had not begun collecting when
+  that war was fought — roughly before April 2026.</p>
+  <p class="note">FFScouter allows 10 requests a minute across all users, so the first scout of a
+  faction takes up to a minute. Finished wars never change and are cached permanently.</p>
+</div></details>
 
 <script>
 (function(){
   "use strict";
-  var KEY_LS = "prewar_key", ENEMY_LS = "prewar_enemy";
-  var $ = function(id){ return document.getElementById(id); };
+  var KEY_LS="prewar_key", ENEMY_LS="prewar_enemy", $=function(i){return document.getElementById(i)};
+  var esc=function(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});};
+  var num=function(n){return (n==null?0:n).toLocaleString();};
+  var pc=function(v){return v==null?"—":Math.round(v*100)+"%";};
 
-  $("key").value = localStorage.getItem(KEY_LS) || "";
-  $("enemy").value = localStorage.getItem(ENEMY_LS) || "";
+  // Masked once entered — a key on screen is a key in the next screenshot, and
+  // this one has already leaked that way. Deliberately NOT type=password: that
+  // invites the password manager to autofill over it.
+  var keyEl=$("key"), realKey=localStorage.getItem(KEY_LS)||"";
+  function mask(){ if(realKey && document.activeElement!==keyEl)
+      keyEl.value = realKey.length>4 ? "•".repeat(Math.max(4,realKey.length-4))+realKey.slice(-4) : realKey; }
+  keyEl.addEventListener("focus",function(){ keyEl.value=realKey; });
+  keyEl.addEventListener("blur",function(){ realKey=keyEl.value.trim()||realKey; mask(); });
+  keyEl.addEventListener("input",function(){ realKey=keyEl.value.trim(); });
+  mask();
+  $("enemy").value=localStorage.getItem(ENEMY_LS)||"";
 
-  // Torn schedules in TCT, which is UTC — so the curve's own hours are already
-  // the ones you declare against. The local column is only there so you know
-  // what time that actually is for you.
-  function localHour(h){
-    var d = new Date(Date.UTC(2026, 0, 1, h, 0, 0));
-    return String(d.getHours()).padStart(2, "0") + ":00";
+  function localHour(h){return String(new Date(Date.UTC(2026,0,1,h)).getHours()).padStart(2,"0")+":00";}
+
+  // The war's shape, drawn. peak/held/fade are three numbers ABOUT this; the
+  // curve is the thing itself, and it fits in the space a number takes.
+  function spark(curve,won){
+    if(!curve||curve.length<2) return "";
+    var W=86,H=26,P=2,max=Math.max.apply(null,curve)||1;
+    var pts=curve.map(function(v,i){
+      var x=P+(i/(curve.length-1))*(W-P*2), y=H-P-(v/max)*(H-P*2);
+      return x.toFixed(1)+","+y.toFixed(1);
+    });
+    var col=won?"var(--win)":"var(--loss)";
+    return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" aria-hidden="true">'+
+      '<polyline points="'+pts.join(" ")+'" fill="none" stroke="'+col+
+      '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity=".9"/></svg>';
   }
-  var pct = function(v){ return (v * 100).toFixed(1) + "%"; };
 
-  function bars(title, ours, theirs){
-    var peak = Math.max.apply(null, ours.concat(theirs).concat([0.0001]));
-    var h = '<div class="card"><h2>' + title + '</h2>' +
-      '<div class="legend">' +
-      '<span><i class="sw us"></i>you</span>' +
-      '<span><i class="sw them"></i>them</span>' +
-      '<span>hours are TCT (= UTC); your local time in brackets</span></div><div class="bars">';
-    for (var i = 0; i < 24; i++){
-      var wu = Math.round((ours[i] / peak) * 190);
-      var wt = Math.round((theirs[i] / peak) * 190);
-      h += '<div class="brow"><span class="hr">' + String(i).padStart(2,"0") + ':00 (' + localHour(i) + ')</span>' +
-           '<span class="bar us" style="width:' + wu + 'px"></span><span class="pct">' + pct(ours[i]) + '</span></div>' +
-           '<div class="brow"><span class="hr"></span>' +
-           '<span class="bar them" style="width:' + wt + 'px"></span><span class="pct">' + pct(theirs[i]) + '</span></div>';
+  function warCard(w){
+    var a=w.activity||{}, won=!!w.won;
+    var total=(w.score||0)+(w.opponentScore||0)||1;
+    var mine=Math.round((w.score/total)*100);
+    var when=w.end?new Date(w.end*1000).toISOString().slice(0,10):"ongoing";
+    var body;
+    if(a.untracked){
+      body='<div class="untracked">not tracked yet</div>';
+    }else{
+      var f=a.fade, fc=f==null?"":(f<-0.05?"down":(f>0.05?"up":""));
+      body='<div class="spark">'+spark(w.curve,won)+
+        '<div class="stats">'+
+          '<div><k>peak</k><b>'+pc(a.peak)+'</b></div>'+
+          '<div><k>held</k><b>'+pc(a.mean)+'</b></div>'+
+          '<div><k>fade</k><b class="fade '+fc+'">'+
+            (f==null?"—":((f>=0?"+":"")+Math.round(f*100)+"pp"))+'</b></div>'+
+        '</div></div>';
     }
-    return h + '</div></div>';
+    return '<div class="war '+(won?"won":"lost")+'">'+
+      '<div class="who"><div class="opp">'+esc(w.opponentName||w.opponentId||"?")+'</div>'+
+        '<div class="when">'+when+' · '+(w.hours==null?"—":w.hours.toFixed(1)+"h")+
+        (w.scoreRate==null?"":' · '+num(Math.round(w.scoreRate))+'/h')+'</div></div>'+
+      '<div><div class="score"><span class="v">'+num(w.score)+'</span>'+
+        '<span class="o"> vs '+num(w.opponentScore)+'</span></div>'+
+        '<div class="split"><i class="mine" style="width:'+mine+'%"></i>'+
+        '<i class="theirs" style="width:'+(100-mine)+'%"></i></div></div>'+
+      body+'</div>';
   }
 
-  function pctOrDash(v){ return (v == null) ? "—" : (v * 100).toFixed(0) + "%"; }
+  // Say what the rows mean. Five rows of numbers is data; one sentence is a
+  // finding, and the finding is the reason anyone opened the page.
+  function verdict(p,name){
+    if(!p||!p.length) return "";
+    var wins=p.filter(function(w){return w.won;}), losses=p.filter(function(w){return !w.won;});
+    var avg=function(a,f){return a.length?a.reduce(function(s,w){return s+f(w);},0)/a.length:null;};
+    var out='<div class="verdict"><h2>Assessment</h2><p><b>'+esc(name)+'</b> — '+
+      wins.length+'&ndash;'+losses.length+' in their last '+p.length+' ranked wars.</p>';
+    var wo=avg(wins,function(w){return w.opponentScore;});
+    if(wins.length&&wo!=null){
+      out+='<p>Their wins came against factions averaging <b>'+num(Math.round(wo))+'</b> points';
+      var lo=avg(losses,function(w){return w.opponentScore;});
+      out+= (losses.length&&lo!=null) ? '; they lost to one scoring <b>'+num(Math.round(lo))+'</b>.</p>'
+                                      : '.</p>';
+    }
+    var rated=p.filter(function(w){return w.scoreRate!=null;});
+    if(rated.length){
+      var best=rated.reduce(function(a,b){return b.scoreRate>a.scoreRate?b:a;});
+      out+='<p>Ceiling <b>'+num(Math.round(best.scoreRate))+' pts/hr</b> (vs '+esc(best.opponentName)+
+           '), over '+best.hours.toFixed(1)+'h.</p>';
+    }
+    // Fade only means something in wars that were actually contested — a
+    // blowout empties out because it is over, not because they broke.
+    var hard=p.filter(function(w){return w.activity&&w.activity.fade!=null&&w.hours>20;});
+    if(hard.length){
+      var mf=avg(hard,function(w){return w.activity.fade;});
+      out+='<p>In wars past 20 hours they '+
+        (mf<-0.08?'<b>fade</b> ('+Math.round(mf*100)+'pp) — a long war favours you'
+                 :'<b>hold</b> ('+(mf>=0?"+":"")+Math.round(mf*100)+'pp) — length alone will not break them')+
+        '.</p>';
+    }
+    return out+'</div>';
+  }
 
-  // How a faction fights, war by war. `fade` is the last third of the war
-  // minus the first: negative means they spiked and faded, positive means they
-  // built. Opponent score rides along because four wins over factions that
-  // scored 7, 362, 874 and 6,799 is not the same as four wins.
-  function record(profile, name){
-    if (!profile || !profile.length) return '';
-    var wins = profile.filter(function(w){ return w.won; }).length;
-    var h = '<div class="card"><h2>' + name + ' — war record ' + wins + '-' + (profile.length - wins) + '</h2>' +
-      '<table><tr><th>Ended</th><th>Opponent</th><th>Score</th><th>Opp</th>' +
-      '<th>Hours</th><th>Pts/hr</th><th>Peak</th><th>Mean</th><th>Fade</th><th></th></tr>';
-    profile.forEach(function(w){
-      var a = w.activity || {};
-      var ended = w.end ? new Date(w.end * 1000).toISOString().slice(0,10) : "ongoing";
-      // An all-zero window means FFScouter was not tracking yet, not that the
-      // faction sat the war out. Saying "0%" there would be a lie.
-      var note = a.untracked ? ' <span class="muted">(not tracked yet)</span>' : '';
-      var fade = (a.fade == null) ? "—"
-        : ((a.fade * 100 >= 0 ? "+" : "") + (a.fade * 100).toFixed(0) + "pp");
-      h += '<tr class="' + (w.won ? "best" : "") + '">' +
-           '<td>' + ended + '</td>' +
-           '<td>' + (w.opponentName || w.opponentId || "?") + '</td>' +
-           '<td>' + w.score.toLocaleString() + '</td>' +
-           '<td>' + w.opponentScore.toLocaleString() + '</td>' +
-           '<td>' + (w.hours == null ? "—" : w.hours.toFixed(1)) + '</td>' +
-           '<td>' + (w.scoreRate == null ? "—" : Math.round(w.scoreRate).toLocaleString()) + '</td>' +
-           '<td>' + pctOrDash(a.peak) + note + '</td>' +
-           '<td>' + pctOrDash(a.mean) + '</td>' +
-           '<td class="' + (a.fade != null && a.fade < -0.05 ? "neg" : "") + '">' + fade + '</td>' +
-           '<td>' + (w.won ? "WON" : "lost") + '</td></tr>';
+  function baseline(d){
+    var h='<details><summary>Baseline gap by hour — at rest, a hint not a plan</summary>'+
+      '<div class="dbody"><div class="scroll"><table><tr><th>TCT</th><th>Local</th>'+
+      '<th>You</th><th>Them</th><th>Edge</th></tr>';
+    d.edge.forEach(function(e,i){
+      var g=e.gap*100;
+      h+='<tr class="'+(i<3?"top":"")+'"><td>'+String(e.hour).padStart(2,"0")+':00</td>'+
+         '<td>'+localHour(e.hour)+'</td><td>'+(e.us*100).toFixed(1)+'%</td>'+
+         '<td>'+(e.them*100).toFixed(1)+'%</td>'+
+         '<td class="'+(g<0?"negv":"pos")+'">'+(g>=0?"+":"")+g.toFixed(1)+'pp</td></tr>';
     });
-    return h + '</table><div class="muted" style="margin-top:8px">' +
-      'Fade = last third of the war minus the first. Negative means they spiked and faded; ' +
-      'positive means they built. "Not tracked yet" means FFScouter had not begun ' +
-      'collecting activity when that war was fought — roughly before April 2026.' +
-      '</div></div>';
+    return h+'</table></div></div></details>';
   }
 
-  function table(edge){
-    var h = '<div class="card"><h2>Baseline gap by hour <span class="muted" style="text-transform:none;font-weight:400">' +
-      '— at rest, not at war; treat as a hint, not a plan</span></h2>' +
-      '<table><tr><th>TCT</th><th>Local</th><th>You</th><th>Them</th><th>Edge</th></tr>';
-    edge.forEach(function(e, i){
-      var gap = (e.gap * 100);
-      h += '<tr class="' + (i < 3 ? "best" : "") + '"><td>' + String(e.hour).padStart(2,"0") + ':00</td>' +
-           '<td class="muted">' + localHour(e.hour) + '</td>' +
-           '<td>' + pct(e.us) + '</td><td>' + pct(e.them) + '</td>' +
-           '<td class="' + (gap < 0 ? "neg" : "") + '">' + (gap >= 0 ? "+" : "") + gap.toFixed(1) + 'pp</td></tr>';
-    });
-    return h + '</table></div>';
-  }
-
-  $("go").addEventListener("click", function(){
-    var key = $("key").value.trim(), enemy = $("enemy").value.replace(/[^0-9]/g, "");
-    var days = $("days").value.replace(/[^0-9]/g, "") || "14";
-    $("err").textContent = "";
-    if (!key){ $("err").textContent = "A Torn API key is required."; return; }
-    localStorage.setItem(KEY_LS, key); localStorage.setItem(ENEMY_LS, enemy);
-    $("go").disabled = true; $("go").textContent = "Scouting…";
-    // Leaving enemy blank lets the server use the current war's opponent.
-    var url = "/api/prewar?key=" + encodeURIComponent(key) +
-              (enemy ? "&enemy=" + encodeURIComponent(enemy) : "") +
-              "&days=" + encodeURIComponent(days);
-    fetch(url).then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); })
+  $("go").addEventListener("click",function(){
+    var key=realKey.trim(), enemy=$("enemy").value.replace(/[^0-9]/g,"");
+    var days=$("days").value.replace(/[^0-9]/g,"")||"14";
+    $("err").textContent="";
+    if(!key){ $("err").textContent="A Torn API key is required."; return; }
+    localStorage.setItem(KEY_LS,key); localStorage.setItem(ENEMY_LS,enemy);
+    $("go").disabled=true; $("go").textContent="Scouting…";
+    $("out").innerHTML='<div class="verdict"><h2>Working</h2><p class="note" style="margin:0">'+
+      'First scout of a faction takes up to a minute — 10 requests/min shared across everyone.</p></div>';
+    fetch("/api/prewar?key="+encodeURIComponent(key)+(enemy?"&enemy="+encodeURIComponent(enemy):"")+
+          "&days="+encodeURIComponent(days))
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
       .then(function(res){
-        if (!res.ok){ $("err").textContent = res.j.error || "Request failed."; $("out").innerHTML = ""; return; }
-        var d = res.j;
-        // Name the opponent when we know it, and say plainly whether this is
-        // the war you are in or the one you just finished.
-        var them = d.enemyName ? (d.enemyName + " [" + d.theirs.factionId + "]") : d.theirs.factionId;
-        var src = d.fromWar ? (d.warEnded ? " · your last war" : " · your CURRENT war") : "";
-        var title = "you [" + d.ours.factionId + "] (" + d.ours.memberCount + ") vs " +
-                    them + " (" + d.theirs.memberCount + ") — " + d.days + "d average" + src +
-                    (d.cached ? " · cached today" : "");
-        $("out").innerHTML = record(d.profile, them) +
-                             table(d.edge) + bars(title, d.ours.curve, d.theirs.curve);
+        if(!res.ok){ $("err").textContent=res.j.error||"Request failed."; $("out").innerHTML=""; return; }
+        var d=res.j, name=d.enemyName||("Faction "+d.theirs.factionId);
+        var src=d.fromWar?(d.warEnded?"your last war":"your CURRENT war"):"manual";
+        $("out").innerHTML = verdict(d.profile,name)+
+          '<div class="wars">'+(d.profile||[]).map(warCard).join("")+'</div>'+
+          '<p class="note">'+esc(name)+' ['+d.theirs.factionId+'] · '+esc(src)+
+          ' · you '+d.ours.memberCount+' vs them '+d.theirs.memberCount+' members</p>'+
+          baseline(d);
       })
-      .catch(function(e){ $("err").textContent = String(e.message || e); })
-      .finally(function(){ $("go").disabled = false; $("go").textContent = "Scout"; });
+      .catch(function(e){ $("err").textContent=String(e.message||e); $("out").innerHTML=""; })
+      .finally(function(){ $("go").disabled=false; $("go").textContent="Scout"; });
   });
 })();
 </script>
-</body></html>
+</div></body></html>
