@@ -44,13 +44,14 @@
   <div class="row">
     <label for="key">Torn API key</label>
     <input id="key" type="text" placeholder="your key" autocomplete="off" spellcheck="false">
-    <label for="enemy">Enemy faction ID</label>
-    <input id="enemy" type="text" inputmode="numeric" placeholder="26154">
+    <label for="enemy">Enemy faction</label>
+    <input id="enemy" type="text" inputmode="numeric" placeholder="current war (auto)">
     <label for="days">Days</label>
     <input id="days" type="text" inputmode="numeric" value="14" style="min-width:60px">
     <button id="go">Scout</button>
   </div>
   <div class="muted">
+    Leave the faction blank to scout whoever you are currently at war with.
     Key stays in this browser. Access is checked server-side against your faction position.
     FFScouter allows 10 requests a minute across everyone, so results are cached per faction per day.
   </div>
@@ -112,17 +113,23 @@
     var key = $("key").value.trim(), enemy = $("enemy").value.replace(/[^0-9]/g, "");
     var days = $("days").value.replace(/[^0-9]/g, "") || "14";
     $("err").textContent = "";
-    if (!key || !enemy){ $("err").textContent = "Key and enemy faction ID are both required."; return; }
+    if (!key){ $("err").textContent = "A Torn API key is required."; return; }
     localStorage.setItem(KEY_LS, key); localStorage.setItem(ENEMY_LS, enemy);
     $("go").disabled = true; $("go").textContent = "Scouting…";
+    // Leaving enemy blank lets the server use the current war's opponent.
     var url = "/api/prewar?key=" + encodeURIComponent(key) +
-              "&enemy=" + encodeURIComponent(enemy) + "&days=" + encodeURIComponent(days);
+              (enemy ? "&enemy=" + encodeURIComponent(enemy) : "") +
+              "&days=" + encodeURIComponent(days);
     fetch(url).then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); })
       .then(function(res){
         if (!res.ok){ $("err").textContent = res.j.error || "Request failed."; $("out").innerHTML = ""; return; }
         var d = res.j;
-        var title = d.ours.factionId + " (you, " + d.ours.memberCount + ") vs " +
-                    d.theirs.factionId + " (" + d.theirs.memberCount + ") — " + d.days + "d average" +
+        // Name the opponent when we know it, and say plainly whether this is
+        // the war you are in or the one you just finished.
+        var them = d.enemyName ? (d.enemyName + " [" + d.theirs.factionId + "]") : d.theirs.factionId;
+        var src = d.fromWar ? (d.warEnded ? " · your last war" : " · your CURRENT war") : "";
+        var title = "you [" + d.ours.factionId + "] (" + d.ours.memberCount + ") vs " +
+                    them + " (" + d.theirs.memberCount + ") — " + d.days + "d average" + src +
                     (d.cached ? " · cached today" : "");
         $("out").innerHTML = table(d.edge) + bars(title, d.ours.curve, d.theirs.curve);
       })

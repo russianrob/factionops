@@ -83,6 +83,7 @@ function _adminLoginFail(ip) {
 function _adminLoginClear(ip) { _adminLoginAttempts.delete(ip); }
 import * as store from "./store.js";
 import * as prewar from "./prewar-activity.js";
+import { parseFlight, needsRecentFlights } from "./flight-parse.js";
 import * as chat from "./chat.js";
 import { encrypt as encryptKey, decrypt as decryptKey, isEncrypted as isEncryptedKey } from "./key-encryption.js";
 import { crimesFingerprint, shouldRecompute as shouldRecomputeEngines } from "./oc-engine-cache.js";
@@ -5029,12 +5030,14 @@ router.get("/api/war/:warId/travel-info", requireAuth, async (req, res) => {
   const apiKey = store.getFactionApiKey(factionId) || store.getApiKeyForFaction(factionId);
   const factionFfsKey = (store.getFactionSettings(factionId)?.oc_ffs_key) || '';
 
-  // fetchFlightInfo is single-target by FFScouter design; fan out
-  // sequentially to keep the call cap predictable. The 5-min in-process
-  // cache inside fetchFlightInfo covers the per-uid hot path.
+  // One request for every traveller, not one per traveller. Anyone actually
+  // in transit is fully answered by the batch; only those already landed
+  // abroad need a follow-up, because batch omits the recent_flights that
+  // distinguishes abroad from home.
   const travels = {};
+  const batch = await fetchFlightsBatch(travelers, factionFfsKey, apiKey);
   for (const uid of travelers) {
-    const info = await fetchFlightInfo(uid, factionFfsKey, apiKey);
+    const info = batch.get(String(uid));
     if (info && (info.landingAt > 0 || info.destination)) {
       travels[uid] = {
         landingAt: info.landingAt || 0,
@@ -9669,6 +9672,70 @@ const FLYER_TAKEOFF_TTL_MS = 5 * 60_000;
 // destination + direction. Caches the complete object so both the
 // takeoff-time path (OC delay attribution) and the new per-member
 // landing countdown in factionops share one upstream call.
+// Flight info for many players in one request.
+//
+// /player-flights/batch takes up to 100 targets at once. The single-target
+// endpoint was being fanned out one call per player — sequentially in the OC
+// delay path, and up to 200 IN PARALLEL in the factionops flight tracker.
+//
+// Batch omits `recent_flights`, and that field is the only thing that tells
+// "landed abroad" from "back home" when `current` is null. So batch answers
+// everyone in transit — the time-critical case and the common one mid-war —
+// and only the stationary remainder falls back to a single call each.
+async function fetchFlightsBatch(uids, preferredKey, factionKey) {
+  const now = Date.now();
+  const out = new Map();
+  const need = [];
+  for (const raw of uids || []) {
+    const uid = String(raw);
+    if (!uid || out.has(uid)) continue;
+    const c = _flyerTakeoffCache.get(uid);
+    if (c && (now - c.ts) < FLYER_TAKEOFF_TTL_MS) { out.set(uid, c.data || null); continue; }
+    need.push(uid);
+  }
+  if (!need.length) return out;
+
+  const keys = [preferredKey, factionKey].filter((k) => typeof k === 'string' && k.length >= 10);
+  if (!keys.length) { for (const uid of need) out.set(uid, null); return out; }
+
+  const stationary = [];
+  // 100 per request is the documented ceiling; more returns code 23.
+  for (let i = 0; i < need.length; i += 100) {
+    const chunk = need.slice(i, i + 100);
+    let rows = null;
+    for (const key of keys) {
+      try {
+        const r = await fetch(`https://ffscouter.com/api/v1/player-flights/batch?key=${encodeURIComponent(key)}&targets=${chunk.join(',')}`);
+        if (!r.ok) continue;
+        const d = await r.json();
+        if (d?.error) continue;
+        rows = Array.isArray(d?.flights) ? d.flights : [];
+        break;
+      } catch (_) { /* try next key */ }
+    }
+    if (!rows) { for (const uid of chunk) out.set(uid, null); continue; }
+
+    const seen = new Set();
+    for (const row of rows) {
+      const uid = String(row?.player_id ?? '');
+      if (!uid) continue;
+      seen.add(uid);
+      if (needsRecentFlights(row.current)) { stationary.push(uid); continue; }
+      const info = parseFlight(row.current, []);
+      _flyerTakeoffCache.set(uid, { data: info, ts: Date.now() });
+      out.set(uid, info);
+    }
+    // A target the batch did not answer for is not resolved, so it still gets
+    // its own lookup rather than being silently reported as home.
+    for (const uid of chunk) if (!seen.has(uid)) stationary.push(uid);
+  }
+
+  for (const uid of stationary) {
+    out.set(uid, await fetchFlightInfo(uid, preferredKey, factionKey));
+  }
+  return out;
+}
+
 async function fetchFlightInfo(uid, preferredKey, factionKey) {
   const now = Date.now();
   const cached = _flyerTakeoffCache.get(uid);
@@ -9793,12 +9860,9 @@ router.post("/api/flights/batch", async (req, res) => {
   const uids = Array.isArray(req.body?.uids) ? req.body.uids.slice(0, 200) : [];
   if (!uids.length) return res.json({ flights: {} });
   const factionFfsKey = (store.getFactionSettings(info.factionId)?.oc_ffs_key) || '';
-  const results = await Promise.all(
-    uids.map(async (uid) => {
-      const fi = await fetchFlightInfo(String(uid), callerKey, factionFfsKey);
-      return [String(uid), fi];
-    })
-  );
+  // Was up to 200 concurrent single-target calls. Batched into requests of
+  // 100, with a follow-up only for players who are not in transit.
+  const results = await fetchFlightsBatch(uids, callerKey, factionFfsKey);
   const flights = {};
   for (const [uid, fi] of results) {
     if (!fi) continue;
@@ -12586,8 +12650,26 @@ router.get("/api/prewar", async (req, res) => {
     { playerId: info.playerId, factionPosition: info.factionPosition }, adminRoles);
   if (denial) return res.status(403).json(denial);
 
-  const enemy = String(req.query.enemy || "").replace(/[^0-9]/g, "");
-  if (!enemy) return res.status(400).json({ error: "enemy faction id is required" });
+  // Default to whoever we are actually at war with. The live war is stored
+  // under the reused key war_<factionId>, and it already carries the enemy's
+  // id and name — so the page does not have to ask for something warboard
+  // already knows.
+  let enemy = String(req.query.enemy || "").replace(/[^0-9]/g, "");
+  let enemyName = "", fromWar = false, warEnded = false;
+  if (!enemy) {
+    const war = store.getWar ? store.getWar(`war_${info.factionId}`) : null;
+    if (war && war.enemyFactionId) {
+      enemy = String(war.enemyFactionId).replace(/[^0-9]/g, "");
+      enemyName = war.enemyFactionName || "";
+      warEnded = !!war.warEnded;
+      fromWar = true;
+    }
+  }
+  if (!enemy) {
+    return res.status(400).json({
+      error: "No war found for your faction, so there is nobody to scout. Enter an enemy faction ID.",
+    });
+  }
   // 730 days of history exist, but averaging much beyond a fortnight blends in
   // rosters that have since changed.
   const days = Math.min(30, Math.max(3, Number(req.query.days) || 14));
@@ -12601,7 +12683,10 @@ router.get("/api/prewar", async (req, res) => {
 
   try {
     const out = await prewar.scout(ffsKey, info.factionId, enemy, days);
-    return res.json(out);
+    // fromWar tells the page whether it picked the opponent itself, and
+    // warEnded whether that war is over — scouting the faction you just beat
+    // is a different thing from scouting the one you are fighting.
+    return res.json({ ...out, enemyName, fromWar, warEnded });
   } catch (e) {
     // Throttling says nothing about the faction or the key, so it must not be
     // reported as "no data" — the caller should simply come back.
