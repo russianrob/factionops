@@ -29,9 +29,15 @@
 const BASE = "https://ffscouter.com/api/v1";
 const HOUR = 3600, DAY = 86400;
 
-const [, , KEY, OURS = "42055", THEIRS = "26154"] = process.argv;
+// The key may come from the environment instead of argv. argv is visible to
+// anyone who can run `ps`, and it lands in shell history; FFS_KEY=... in front
+// of the command does neither.
+const argv = process.argv.slice(2);
+const KEY = process.env.FFS_KEY || argv.shift();
+const [OURS = "42055", THEIRS = "26154"] = argv;
 if (!KEY) {
-  console.error("usage: node ffs-activity-probe.mjs <ffscouter-key> [ourFaction] [theirFaction]");
+  console.error("usage: FFS_KEY=<key> node ffs-activity-probe.mjs [ourFaction] [theirFaction]");
+  console.error("   or: node ffs-activity-probe.mjs <ffscouter-key> [ourFaction] [theirFaction]");
   process.exit(1);
 }
 
