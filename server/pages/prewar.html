@@ -107,9 +107,9 @@ button:disabled{opacity:.45;cursor:progress}
 }
 
 /* ── demoted panels ───────────────────────────────── */
-details{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
-summary{cursor:pointer;padding:12px 14px;font-family:var(--mono);font-size:10px;
-        letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
+details:not(.war){margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+details:not(.war)>summary{cursor:pointer;padding:12px 14px;font-family:var(--mono);
+        font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
 .dbody{padding:0 14px 14px}
 .scroll{overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12px;
@@ -198,11 +198,14 @@ tr.top td{color:var(--signal)}
   }
 
   // The hour-by-hour readout: them against us, for the war's own hours.
-  function hourly(rows){
+  // Name both sides. "us" is only true on the card for the war we fought;
+  // on their other wars the lower bar is Arcadia or Suits, and calling that
+  // "us" invites reading somebody else's coverage as our own.
+  function hourly(rows,subject,opponent){
     if(!rows||!rows.length) return "";
     var h='<div class="hrs"><div class="key">'+
-      '<span><i style="background:#7a8fa6"></i>them</span>'+
-      '<span><i style="background:var(--signal)"></i>us</span>'+
+      '<span><i style="background:#7a8fa6"></i>'+esc(subject)+'</span>'+
+      '<span><i style="background:var(--signal)"></i>'+esc(opponent)+'</span>'+
       '<span>hours are TCT</span></div>';
     rows.forEach(function(r){
       var g=r.gap*100, cls=g>1?"up":(g<-1?"down":"");
@@ -216,6 +219,7 @@ tr.top td{color:var(--signal)}
     return h+'</div>';
   }
 
+  var SUBJECT="them";
   function warCard(w){
     var a=w.activity||{}, won=!!w.won;
     var total=(w.score||0)+(w.opponentScore||0)||1;
@@ -243,7 +247,7 @@ tr.top td{color:var(--signal)}
         '<span class="o"> vs '+num(w.opponentScore)+'</span></div>'+
         '<div class="split"><i class="mine" style="width:'+mine+'%"></i>'+
         '<i class="theirs" style="width:'+(100-mine)+'%"></i></div></div>'+
-      body+'</div>';
+      body+'</summary>'+hourly(rows,SUBJECT,w.opponentName||("faction "+w.opponentId))+'</details>';
   }
 
   // Say what the rows mean. Five rows of numbers is data; one sentence is a
@@ -309,6 +313,7 @@ tr.top td{color:var(--signal)}
       .then(function(res){
         if(!res.ok){ $("err").textContent=res.j.error||"Request failed."; $("out").innerHTML=""; return; }
         var d=res.j, name=d.enemyName||("Faction "+d.theirs.factionId);
+        SUBJECT=name;
         var src=d.fromWar?(d.warEnded?"your last war":"your CURRENT war"):"manual";
         $("out").innerHTML = verdict(d.profile,name)+
           '<div class="wars">'+(d.profile||[]).map(warCard).join("")+'</div>'+
