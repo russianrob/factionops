@@ -12709,7 +12709,11 @@ router.get("/api/prewar", async (req, res) => {
   }
 });
 
-router.get("/prewar", (_req, res) => {
+// NOT "/prewar": public/prewar.html already exists — an enemy dossier from
+// August — and express.static runs ahead of this router (server.js:263,
+// extensions:["html"]), so a route on that path is dead code. The static file
+// wins silently, which is exactly how this shipped invisible the first time.
+router.get("/prewar/scout", (_req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
   res.set("Cache-Control", "no-store");
   return res.sendFile(new URL("./pages/prewar.html", import.meta.url).pathname);
