@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GM XHR Probe
 // @namespace    RussianRob
-// @version      1.2.0
+// @version      1.3.0
 // @description  Diagnoses why a userscript's cross-origin calls fail in a given runtime — reports whether GM_xmlhttpRequest exists at injection time, then races it against a page-context fetch to the same host
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    var SCRIPT_VERSION = '1.2.0';
+    var SCRIPT_VERSION = '1.3.0';
 
     // ── The measurement that has to happen FIRST ──────────────────
     //
@@ -66,6 +66,16 @@
     // reaching Torn and without touching any real key's rate limit.
     var POST_URL = 'https://api.kalends.dev/script/register';
     var POST_BODY = JSON.stringify({ version: 'gmxhr-probe' });
+    // The same POST again, but carrying KAL's FULL payload shape — a
+    // well-formed 16-character key it has never seen. That reaches the branch
+    // the validation-only probe stops short of: the server looks the key up
+    // with Torn and answers 422 code 15. A deliberately fake key so nothing is
+    // registered and no real key's cooldown is touched.
+    var POST_BODY_FULL = JSON.stringify({
+        key: 'zzzzzzzzzzzzzzzz',
+        version: '1.2.9',
+        agree_to_api_policy_and_tos: true
+    });
 
     var results = [];
     var clipCache = '';   // pre-warmed: see the copy button below
@@ -127,6 +137,27 @@
                 }
             });
         } catch (err) { record(label, 'THREW ' + (err && err.message) + '  <-- POST IS BROKEN'); }
+    }
+
+    // KAL's exact request, end to end, minus a real key.
+    function viaGMPostFull(label) {
+        if (typeof GM_xmlhttpRequest !== 'function') { record(label, 'no GM_xhr'); return; }
+        var t = Date.now();
+        GM_xmlhttpRequest({
+            method: 'POST', url: POST_URL,
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            data: POST_BODY_FULL, timeout: 15000,
+            onload: function (r) {
+                record(label, 'onload status=' + r.status + ' in ' + (Date.now() - t) + 'ms' +
+                    '  <-- FULL PAYLOAD WORKS  body=' + (r.responseText || '').slice(0, 80));
+            },
+            onerror: function (e) {
+                record(label, 'onerror ' + safeJson(e) + '  <-- FULL PAYLOAD FAILS');
+            },
+            ontimeout: function () {
+                record(label, 'TIMEOUT after ' + (Date.now() - t) + 'ms  <-- FULL PAYLOAD FAILS');
+            }
+        });
     }
 
     // ── The four ways a script might make the same call ───────────
@@ -273,8 +304,8 @@
             d.style.cssText = head ? 'color:#74889b;margin:7px 0 3px' :
                 (/FIXED BRIDGE/.test(l) ? 'color:#5fd39a;font-weight:700' :
                 (/OLD BRIDGE/.test(l) ? 'color:#e8636f;font-weight:700' :
-                (/\bOK\b|correct|POST WORKS/.test(l) ? 'color:#5fd39a' :
-                (/(ERROR|BLOCKED|TIMEOUT|THREW|not a function|absent|the bug|POST IS BROKEN)/.test(l) ? 'color:#e8636f' : ''))));
+                (/\bOK\b|correct|POST WORKS|PAYLOAD WORKS/.test(l) ? 'color:#5fd39a' :
+                (/(ERROR|BLOCKED|TIMEOUT|THREW|not a function|absent|the bug|POST IS BROKEN|PAYLOAD FAILS/.test(l) ? 'color:#e8636f' : ''))));
             body.appendChild(d);
         });
     }
@@ -289,7 +320,8 @@
         viaFetch('fetch    → kalends', SUBJECT);
         viaXHR('XHR      → kalends', SUBJECT);
         checkBridgeBuild();
-        viaGMPost('GM_xhr   → POST /script/register');
+        viaGMPost('GM_xhr   → POST validation-only');
+        viaGMPostFull('GM_xhr   → POST full payload');
         viaGM('GM_xhr   → ffscouter (control)', CONTROL);
         viaFetch('fetch    → ffscouter (control)', CONTROL);
     }
