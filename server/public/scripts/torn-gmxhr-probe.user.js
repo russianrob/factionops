@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GM XHR Probe
 // @namespace    RussianRob
-// @version      1.1.0
+// @version      1.2.0
 // @description  Diagnoses why a userscript's cross-origin calls fail in a given runtime — reports whether GM_xmlhttpRequest exists at injection time, then races it against a page-context fetch to the same host
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    var SCRIPT_VERSION = '1.1.0';
+    var SCRIPT_VERSION = '1.2.0';
 
     // ── The measurement that has to happen FIRST ──────────────────
     //
@@ -59,6 +59,13 @@
     // an ordinary 401 reached KAL as its own failure value, status 0.
     var NON2XX_401 = 'https://ffscouter.com/api/v1/get-stats?key=0000000000000000&targets=1';
     var NON2XX_404 = 'https://ffscouter.com/api/v1/nope';
+    // KAL's connect is a POST with a JSON body; 1.0/1.1 only ever tested GET,
+    // which is why they reported a healthy bridge while connect still failed.
+    // This mirrors KAL's own request exactly — same endpoint, same headers —
+    // but omits the key field, so it fails validation with 422 without
+    // reaching Torn and without touching any real key's rate limit.
+    var POST_URL = 'https://api.kalends.dev/script/register';
+    var POST_BODY = JSON.stringify({ version: 'gmxhr-probe' });
 
     var results = [];
     var clipCache = '';   // pre-warmed: see the copy button below
@@ -93,6 +100,33 @@
             onload: function (r) { record('GM_xhr   → 404 endpoint', 'onload status=' + r.status + '  <-- correct'); },
             onerror: function (e) { record('GM_xhr   → 404 endpoint', 'onerror ' + safeJson(e) + '  <-- the bug'); }
         });
+    }
+
+    // A POST through the bridge, shaped like the one that is failing.
+    function viaGMPost(label) {
+        if (typeof GM_xmlhttpRequest !== 'function') {
+            record(label, 'GM_xmlhttpRequest is not a function'); return;
+        }
+        var t = Date.now();
+        try {
+            GM_xmlhttpRequest({
+                method: 'POST', url: POST_URL,
+                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                data: POST_BODY, timeout: 15000,
+                onload: function (r) {
+                    record(label, 'onload status=' + r.status + ' in ' + (Date.now() - t) + 'ms' +
+                        (r.status === 422 ? '  <-- POST WORKS' : '') +
+                        ' body=' + (r.responseText || '').slice(0, 70));
+                },
+                onerror: function (e) {
+                    record(label, 'onerror ' + safeJson(e) + ' after ' + (Date.now() - t) +
+                        'ms  <-- POST IS BROKEN');
+                },
+                ontimeout: function () {
+                    record(label, 'TIMEOUT after ' + (Date.now() - t) + 'ms  <-- POST IS BROKEN');
+                }
+            });
+        } catch (err) { record(label, 'THREW ' + (err && err.message) + '  <-- POST IS BROKEN'); }
     }
 
     // ── The four ways a script might make the same call ───────────
@@ -239,8 +273,8 @@
             d.style.cssText = head ? 'color:#74889b;margin:7px 0 3px' :
                 (/FIXED BRIDGE/.test(l) ? 'color:#5fd39a;font-weight:700' :
                 (/OLD BRIDGE/.test(l) ? 'color:#e8636f;font-weight:700' :
-                (/\bOK\b|correct/.test(l) ? 'color:#5fd39a' :
-                (/(ERROR|BLOCKED|TIMEOUT|THREW|not a function|absent|the bug)/.test(l) ? 'color:#e8636f' : ''))));
+                (/\bOK\b|correct|POST WORKS/.test(l) ? 'color:#5fd39a' :
+                (/(ERROR|BLOCKED|TIMEOUT|THREW|not a function|absent|the bug|POST IS BROKEN)/.test(l) ? 'color:#e8636f' : ''))));
             body.appendChild(d);
         });
     }
@@ -255,6 +289,7 @@
         viaFetch('fetch    → kalends', SUBJECT);
         viaXHR('XHR      → kalends', SUBJECT);
         checkBridgeBuild();
+        viaGMPost('GM_xhr   → POST /script/register');
         viaGM('GM_xhr   → ffscouter (control)', CONTROL);
         viaFetch('fetch    → ffscouter (control)', CONTROL);
     }
