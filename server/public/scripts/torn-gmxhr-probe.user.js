@@ -305,7 +305,7 @@
                 (/FIXED BRIDGE/.test(l) ? 'color:#5fd39a;font-weight:700' :
                 (/OLD BRIDGE/.test(l) ? 'color:#e8636f;font-weight:700' :
                 (/\bOK\b|correct|POST WORKS|PAYLOAD WORKS/.test(l) ? 'color:#5fd39a' :
-                (/(ERROR|BLOCKED|TIMEOUT|THREW|not a function|absent|the bug|POST IS BROKEN|PAYLOAD FAILS/.test(l) ? 'color:#e8636f' : ''))));
+                (/(ERROR|BLOCKED|TIMEOUT|THREW|not a function|absent|the bug|POST IS BROKEN|PAYLOAD FAILS)/.test(l) ? 'color:#e8636f' : ''))));
             body.appendChild(d);
         });
     }
