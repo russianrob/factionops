@@ -82,6 +82,7 @@ function _adminLoginFail(ip) {
 }
 function _adminLoginClear(ip) { _adminLoginAttempts.delete(ip); }
 import * as store from "./store.js";
+import * as prewar from "./prewar-activity.js";
 import * as chat from "./chat.js";
 import { encrypt as encryptKey, decrypt as decryptKey, isEncrypted as isEncryptedKey } from "./key-encryption.js";
 import { crimesFingerprint, shouldRecompute as shouldRecomputeEngines } from "./oc-engine-cache.js";
@@ -12561,6 +12562,60 @@ router.get("/gym", (_req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
   res.set("Cache-Control", "no-store");
   return res.sendFile(new URL("./pages/gym.html", import.meta.url).pathname);
+});
+
+// ── Pre-war scouting ───────────────────────────────────────────────────
+// FFScouter reports any faction's activity, not just your own, so an
+// opponent's coverage curve is readable before a declare. What matters is the
+// GAP against our own curve: an hour they cannot cover is worth nothing if we
+// cannot field people in it either.
+//
+// Same access model as /admin/payouts — the HTML is a shell and the gate is
+// on the API, against a pasted Torn key. The FFScouter call uses the FACTION
+// key from settings, never a personal one.
+router.get("/api/prewar", async (req, res) => {
+  const ctx = await resolveVaultCaller(req, res);
+  if (!ctx) return;
+  const { info } = ctx;
+
+  const adminRoles = [
+    ...(store.getAdminRoles ? (store.getAdminRoles(info.factionId) || []) : []),
+    ...(store.getAllowedBroadcastRoles ? (store.getAllowedBroadcastRoles(info.factionId) || []) : []),
+  ].map((r) => String(r).toLowerCase());
+  const denial = warAdminDenial(
+    { playerId: info.playerId, factionPosition: info.factionPosition }, adminRoles);
+  if (denial) return res.status(403).json(denial);
+
+  const enemy = String(req.query.enemy || "").replace(/[^0-9]/g, "");
+  if (!enemy) return res.status(400).json({ error: "enemy faction id is required" });
+  // 730 days of history exist, but averaging much beyond a fortnight blends in
+  // rosters that have since changed.
+  const days = Math.min(30, Math.max(3, Number(req.query.days) || 14));
+
+  const ffsKey = (store.getFactionSettings(info.factionId)?.oc_ffs_key) || "";
+  if (!ffsKey) {
+    return res.status(400).json({
+      error: "No FFScouter key is set for this faction. A leader can add one in FactionOps settings.",
+    });
+  }
+
+  try {
+    const out = await prewar.scout(ffsKey, info.factionId, enemy, days);
+    return res.json(out);
+  } catch (e) {
+    // Throttling says nothing about the faction or the key, so it must not be
+    // reported as "no data" — the caller should simply come back.
+    if (e.retryable) {
+      return res.status(429).json({ error: "FFScouter is rate limiting (10/min shared). Try again shortly." });
+    }
+    return res.status(502).json({ error: e.message });
+  }
+});
+
+router.get("/prewar", (_req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.set("Cache-Control", "no-store");
+  return res.sendFile(new URL("./pages/prewar.html", import.meta.url).pathname);
 });
 
 router.get("/slackers", (_req, res) => {

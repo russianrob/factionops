@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pre-war scouting — warboard</title>
+<style>
+  :root{color-scheme:dark}
+  body{background:#0a0f12;color:#e5e7eb;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:20px}
+  .card{background:#0f1a2e;border:1px solid #1e3a5f;border-radius:8px;padding:18px;margin-bottom:14px}
+  h1{font-size:18px;margin:0 0 4px;color:#fff}
+  h1 small{font-size:11px;color:#9ca3af;font-weight:400;margin-left:8px}
+  h2{font-size:13px;margin:0 0 10px;color:#9fe870;text-transform:uppercase;letter-spacing:.4px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+  label{font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.3px}
+  input{background:#060b12;border:1px solid #1e3a5f;color:#e5e7eb;border-radius:4px;padding:7px 9px;font-family:monospace;font-size:12px;min-width:150px}
+  button{background:#2d6a4f;color:#fff;border:0;border-radius:4px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer}
+  button:hover{background:#3a8862}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .muted{color:#9ca3af;font-size:12px}
+  .err{color:#fca5a5;font-size:12px;margin-top:8px}
+  table{border-collapse:collapse;width:100%;font-size:12px;font-variant-numeric:tabular-nums}
+  th{text-align:left;color:#9ca3af;font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.3px;padding:0 8px 6px 0}
+  td{padding:3px 8px 3px 0;border-top:1px solid #16243c}
+  .bars{overflow-x:auto}
+  .brow{display:flex;align-items:center;gap:8px;font-family:monospace;font-size:11px;white-space:nowrap}
+  .hr{color:#6b7280;width:104px;flex:0 0 auto}
+  .bar{height:11px;border-radius:2px;flex:0 0 auto}
+  .us{background:#2d6a4f}
+  .them{background:#7f3f4f}
+  .pct{color:#9ca3af;width:46px;flex:0 0 auto}
+  .best td{color:#9fe870}
+  .neg{color:#fca5a5}
+  .legend{display:flex;gap:14px;font-size:11px;color:#9ca3af;margin-bottom:8px}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+</style>
+</head><body>
+
+<div class="card">
+  <h1>Pre-war scouting <small>coverage curves from FFScouter activity</small></h1>
+  <p class="muted">
+    An opponent's hourly coverage over the last fortnight, next to your own.
+    The hours worth declaring into are the ones with the biggest <em>gap</em> —
+    their trough is no use if you cannot field people in it either.
+  </p>
+  <div class="row">
+    <label for="key">Torn API key</label>
+    <input id="key" type="text" placeholder="your key" autocomplete="off" spellcheck="false">
+    <label for="enemy">Enemy faction ID</label>
+    <input id="enemy" type="text" inputmode="numeric" placeholder="26154">
+    <label for="days">Days</label>
+    <input id="days" type="text" inputmode="numeric" value="14" style="min-width:60px">
+    <button id="go">Scout</button>
+  </div>
+  <div class="muted">
+    Key stays in this browser. Access is checked server-side against your faction position.
+    FFScouter allows 10 requests a minute across everyone, so results are cached per faction per day.
+  </div>
+  <div id="err" class="err"></div>
+</div>
+
+<div id="out"></div>
+
+<script>
+(function(){
+  "use strict";
+  var KEY_LS = "prewar_key", ENEMY_LS = "prewar_enemy";
+  var $ = function(id){ return document.getElementById(id); };
+
+  $("key").value = localStorage.getItem(KEY_LS) || "";
+  $("enemy").value = localStorage.getItem(ENEMY_LS) || "";
+
+  // Torn schedules in TCT, which is UTC — so the curve's own hours are already
+  // the ones you declare against. The local column is only there so you know
+  // what time that actually is for you.
+  function localHour(h){
+    var d = new Date(Date.UTC(2026, 0, 1, h, 0, 0));
+    return String(d.getHours()).padStart(2, "0") + ":00";
+  }
+  var pct = function(v){ return (v * 100).toFixed(1) + "%"; };
+
+  function bars(title, ours, theirs){
+    var peak = Math.max.apply(null, ours.concat(theirs).concat([0.0001]));
+    var h = '<div class="card"><h2>' + title + '</h2>' +
+      '<div class="legend">' +
+      '<span><i class="sw us"></i>you</span>' +
+      '<span><i class="sw them"></i>them</span>' +
+      '<span>hours are TCT (= UTC); your local time in brackets</span></div><div class="bars">';
+    for (var i = 0; i < 24; i++){
+      var wu = Math.round((ours[i] / peak) * 190);
+      var wt = Math.round((theirs[i] / peak) * 190);
+      h += '<div class="brow"><span class="hr">' + String(i).padStart(2,"0") + ':00 (' + localHour(i) + ')</span>' +
+           '<span class="bar us" style="width:' + wu + 'px"></span><span class="pct">' + pct(ours[i]) + '</span></div>' +
+           '<div class="brow"><span class="hr"></span>' +
+           '<span class="bar them" style="width:' + wt + 'px"></span><span class="pct">' + pct(theirs[i]) + '</span></div>';
+    }
+    return h + '</div></div>';
+  }
+
+  function table(edge){
+    var h = '<div class="card"><h2>Best hours to declare</h2>' +
+      '<table><tr><th>TCT</th><th>Local</th><th>You</th><th>Them</th><th>Edge</th></tr>';
+    edge.forEach(function(e, i){
+      var gap = (e.gap * 100);
+      h += '<tr class="' + (i < 3 ? "best" : "") + '"><td>' + String(e.hour).padStart(2,"0") + ':00</td>' +
+           '<td class="muted">' + localHour(e.hour) + '</td>' +
+           '<td>' + pct(e.us) + '</td><td>' + pct(e.them) + '</td>' +
+           '<td class="' + (gap < 0 ? "neg" : "") + '">' + (gap >= 0 ? "+" : "") + gap.toFixed(1) + 'pp</td></tr>';
+    });
+    return h + '</table></div>';
+  }
+
+  $("go").addEventListener("click", function(){
+    var key = $("key").value.trim(), enemy = $("enemy").value.replace(/[^0-9]/g, "");
+    var days = $("days").value.replace(/[^0-9]/g, "") || "14";
+    $("err").textContent = "";
+    if (!key || !enemy){ $("err").textContent = "Key and enemy faction ID are both required."; return; }
+    localStorage.setItem(KEY_LS, key); localStorage.setItem(ENEMY_LS, enemy);
+    $("go").disabled = true; $("go").textContent = "Scouting…";
+    var url = "/api/prewar?key=" + encodeURIComponent(key) +
+              "&enemy=" + encodeURIComponent(enemy) + "&days=" + encodeURIComponent(days);
+    fetch(url).then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); })
+      .then(function(res){
+        if (!res.ok){ $("err").textContent = res.j.error || "Request failed."; $("out").innerHTML = ""; return; }
+        var d = res.j;
+        var title = d.ours.factionId + " (you, " + d.ours.memberCount + ") vs " +
+                    d.theirs.factionId + " (" + d.theirs.memberCount + ") — " + d.days + "d average" +
+                    (d.cached ? " · cached today" : "");
+        $("out").innerHTML = table(d.edge) + bars(title, d.ours.curve, d.theirs.curve);
+      })
+      .catch(function(e){ $("err").textContent = String(e.message || e); })
+      .finally(function(){ $("go").disabled = false; $("go").textContent = "Scout"; });
+  });
+})();
+</script>
+</body></html>
