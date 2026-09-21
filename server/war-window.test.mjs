@@ -174,3 +174,51 @@ test("an untracked war has no curve to draw", () => {
   const w = summariseWar(WAR_49287, 26154, buckets([0, 0, 0, 0]));
   assert.deepEqual(w.curve, []);
 });
+
+// ── Both sides of the same window ──────────────────────────────
+// A faction's own curve says how many of them showed up. It cannot say whether
+// that was more or fewer than the people they were fighting, and that
+// comparison is the whole question: war 49287 had Dead Fragment out-covered in
+// 26 of 34 hours and winning 3:1.
+
+test("the opponent's curve is carried alongside", () => {
+  const w = summariseWar(WAR_49287, 26154, buckets([0.7, 0.5, 0.3]), buckets([0.4, 0.4, 0.6]));
+  assert.deepEqual(w.curve, [0.7, 0.5, 0.3]);
+  assert.deepEqual(w.opponentCurve, [0.4, 0.4, 0.6]);
+});
+
+test("hourly gaps line up with the war's own hours", () => {
+  const w = summariseWar(WAR_49287, 26154, buckets([0.7, 0.5]), buckets([0.4, 0.6]));
+  assert.equal(w.hourly.length, 2);
+  assert.equal(w.hourly[0].them, 0.7, "subject faction is 'them' from our side of the page");
+  assert.equal(w.hourly[0].us, 0.4);
+  assert.ok(Math.abs(w.hourly[0].gap - (0.4 - 0.7)) < 1e-9);
+});
+
+test("no opponent data leaves gaps null rather than inventing zeroes", () => {
+  // Claiming a +70pp advantage because the other side is unknown would be the
+  // most flattering possible lie.
+  const w = summariseWar(WAR_49287, 26154, buckets([0.7, 0.5]), []);
+  assert.deepEqual(w.opponentCurve, []);
+  assert.equal(w.hourly.length, 0);
+});
+
+test("hours the two sides do not share are dropped", () => {
+  // Mismatched lengths mean one side has a hole. Pairing by index past the
+  // shorter run would compare different hours to each other.
+  const w = summariseWar(WAR_49287, 26154, buckets([0.7, 0.5, 0.3]), buckets([0.4, 0.6]));
+  assert.equal(w.hourly.length, 2);
+});
+
+test("an untracked window produces no hourly rows", () => {
+  // Zero is a finite number, so a naive filter keeps it and renders a row of
+  // empty bars with a 0pp gap — the same lie warWindowStats already rejects,
+  // arriving through a different door. Leafy's Tree came back 13 such rows.
+  const w = summariseWar(WAR_49287, 26154, buckets([0, 0, 0]), buckets([0, 0, 0]));
+  assert.deepEqual(w.hourly, []);
+});
+
+test("one untracked side is still no comparison", () => {
+  const w = summariseWar(WAR_49287, 26154, buckets([0.5, 0.4]), buckets([0, 0]));
+  assert.deepEqual(w.hourly, []);
+});

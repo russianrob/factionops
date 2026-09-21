@@ -61,6 +61,24 @@ button:disabled{opacity:.45;cursor:progress}
      border-left:3px solid var(--muted);border-radius:8px;padding:12px 14px;
      grid-template-columns:1fr;align-items:center}
 .war.won{border-left-color:var(--win)} .war.lost{border-left-color:var(--loss)}
+.war>summary{display:grid;grid-template-columns:1fr;gap:10px;align-items:center;
+  cursor:pointer;list-style:none}
+.war>summary::-webkit-details-marker{display:none}
+.war[open]>summary{margin-bottom:12px}
+/* Hour by hour, both sides. Two stacked bars per hour reads faster than two
+   columns of percentages — the shape is the point. */
+.hrs{border-top:1px solid var(--line);padding-top:10px}
+.hrs .h{display:grid;grid-template-columns:52px 1fr 46px;gap:8px;align-items:center;
+  font-family:var(--mono);font-size:10px;color:var(--muted);padding:1px 0}
+.hrs .pair{display:flex;flex-direction:column;gap:2px}
+.hrs .b{height:5px;border-radius:2px;background:var(--line);overflow:hidden}
+.hrs .b i{display:block;height:100%}
+.hrs .b.them i{background:#7a8fa6}
+.hrs .b.us i{background:var(--signal)}
+.hrs .g{text-align:right;font-variant-numeric:tabular-nums}
+.hrs .g.up{color:var(--win)} .hrs .g.down{color:var(--loss)}
+.hrs .key{display:flex;gap:14px;margin-bottom:8px;font-family:var(--mono);font-size:10px;color:var(--muted)}
+.hrs .key i{display:inline-block;width:9px;height:5px;border-radius:2px;margin-right:5px;vertical-align:1px}
 .who{min-width:0}
 .who .opp{font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .who .when{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:1px}
@@ -158,21 +176,44 @@ tr.top td{color:var(--signal)}
   mask();
   $("enemy").value=localStorage.getItem(ENEMY_LS)||"";
 
-  function localHour(h){return String(new Date(Date.UTC(2026,0,1,h)).getHours()).padStart(2,"0")+":00";}
-
   // The war's shape, drawn. peak/held/fade are three numbers ABOUT this; the
   // curve is the thing itself, and it fits in the space a number takes.
-  function spark(curve,won){
+  function spark(curve,opp,won){
     if(!curve||curve.length<2) return "";
-    var W=86,H=26,P=2,max=Math.max.apply(null,curve)||1;
-    var pts=curve.map(function(v,i){
-      var x=P+(i/(curve.length-1))*(W-P*2), y=H-P-(v/max)*(H-P*2);
-      return x.toFixed(1)+","+y.toFixed(1);
-    });
-    var col=won?"var(--win)":"var(--loss)";
+    var W=86,H=26,P=2;
+    // ONE scale for both lines. Normalising each to its own peak would draw
+    // two curves that look equal while one side was half the other.
+    var max=Math.max(Math.max.apply(null,curve), opp&&opp.length?Math.max.apply(null,opp):0)||1;
+    var line=function(c,col,w,o){
+      if(!c||c.length<2) return "";
+      var pts=c.map(function(v,i){
+        return (P+(i/(c.length-1))*(W-P*2)).toFixed(1)+","+(H-P-(v/max)*(H-P*2)).toFixed(1);
+      });
+      return '<polyline points="'+pts.join(" ")+'" fill="none" stroke="'+col+'" stroke-width="'+w+
+             '" stroke-linejoin="round" stroke-linecap="round" opacity="'+o+'"/>';
+    };
     return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" aria-hidden="true">'+
-      '<polyline points="'+pts.join(" ")+'" fill="none" stroke="'+col+
-      '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity=".9"/></svg>';
+      line(opp,"#7a8fa6",1,".55")+
+      line(curve,won?"var(--win)":"var(--loss)",1.5,".95")+'</svg>';
+  }
+
+  // The hour-by-hour readout: them against us, for the war's own hours.
+  function hourly(rows){
+    if(!rows||!rows.length) return "";
+    var h='<div class="hrs"><div class="key">'+
+      '<span><i style="background:#7a8fa6"></i>them</span>'+
+      '<span><i style="background:var(--signal)"></i>us</span>'+
+      '<span>hours are TCT</span></div>';
+    rows.forEach(function(r){
+      var g=r.gap*100, cls=g>1?"up":(g<-1?"down":"");
+      h+='<div class="h"><span>'+String(r.hour).padStart(2,"0")+':00</span>'+
+         '<span class="pair">'+
+           '<span class="b them"><i style="width:'+Math.round(r.them*100)+'%"></i></span>'+
+           '<span class="b us"><i style="width:'+Math.round(r.us*100)+'%"></i></span>'+
+         '</span>'+
+         '<span class="g '+cls+'">'+(g>=0?"+":"")+Math.round(g)+'</span></div>';
+    });
+    return h+'</div>';
   }
 
   function warCard(w){
@@ -185,7 +226,7 @@ tr.top td{color:var(--signal)}
       body='<div class="untracked">not tracked yet</div>';
     }else{
       var f=a.fade, fc=f==null?"":(f<-0.05?"down":(f>0.05?"up":""));
-      body='<div class="spark">'+spark(w.curve,won)+
+      body='<div class="spark">'+spark(w.curve,w.opponentCurve,won)+
         '<div class="stats">'+
           '<div><k>peak</k><b>'+pc(a.peak)+'</b></div>'+
           '<div><k>held</k><b>'+pc(a.mean)+'</b></div>'+
@@ -193,7 +234,8 @@ tr.top td{color:var(--signal)}
             (f==null?"—":((f>=0?"+":"")+Math.round(f*100)+"pp"))+'</b></div>'+
         '</div></div>';
     }
-    return '<div class="war '+(won?"won":"lost")+'">'+
+    var rows=w.hourly||[];
+    return '<details class="war '+(won?"won":"lost")+'"><summary>'+
       '<div class="who"><div class="opp">'+esc(w.opponentName||w.opponentId||"?")+'</div>'+
         '<div class="when">'+when+' · '+(w.hours==null?"—":w.hours.toFixed(1)+"h")+
         (w.scoreRate==null?"":' · '+num(Math.round(w.scoreRate))+'/h')+'</div></div>'+
@@ -240,12 +282,12 @@ tr.top td{color:var(--signal)}
 
   function baseline(d){
     var h='<details><summary>Baseline gap by hour — at rest, a hint not a plan</summary>'+
-      '<div class="dbody"><div class="scroll"><table><tr><th>TCT</th><th>Local</th>'+
+      '<div class="dbody"><div class="scroll"><table><tr><th>TCT</th>'+
       '<th>You</th><th>Them</th><th>Edge</th></tr>';
     d.edge.forEach(function(e,i){
       var g=e.gap*100;
       h+='<tr class="'+(i<3?"top":"")+'"><td>'+String(e.hour).padStart(2,"0")+':00</td>'+
-         '<td>'+localHour(e.hour)+'</td><td>'+(e.us*100).toFixed(1)+'%</td>'+
+         '<td>'+(e.us*100).toFixed(1)+'%</td>'+
          '<td>'+(e.them*100).toFixed(1)+'%</td>'+
          '<td class="'+(g<0?"negv":"pos")+'">'+(g>=0?"+":"")+g.toFixed(1)+'pp</td></tr>';
     });

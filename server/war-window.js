@@ -93,6 +93,42 @@ export function drawCurve(buckets, max = 24) {
 }
 
 /**
+ * The two sides of one war window, hour by hour.
+ *
+ * `them` is the faction being scouted and `us` is who they were fighting —
+ * named from the reader's side of the page, since the page exists to scout
+ * somebody else.
+ *
+ * Pairs strictly by index up to the SHORTER run. Mismatched lengths mean one
+ * side has a hole, and pairing past that point would compare different hours
+ * to each other. An absent opponent yields nothing at all rather than zeroes:
+ * a +70pp advantage invented out of missing data is the most flattering
+ * possible lie.
+ */
+export function hourlyGaps(buckets, oppBuckets) {
+  const a = (buckets || []).map((b) => Number(b && b.active_ratio)).filter(Number.isFinite);
+  const b = (oppBuckets || []).map((x) => Number(x && x.active_ratio)).filter(Number.isFinite);
+  // Zero is finite, so an all-zero side survives the filter above and would
+  // render as rows of empty bars with a 0pp gap. That is the untracked case,
+  // not a war both factions sat out.
+  if (!a.length || !b.length) return [];
+  if (!a.some((n) => n > 0) || !b.some((n) => n > 0)) return [];
+  const n = Math.min(a.length, b.length);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const ts = Number((buckets[i] || {}).ts) || 0;
+    out.push({
+      ts,
+      hour: ts ? new Date(ts * 1000).getUTCHours() : null,
+      them: a[i],
+      us: b[i],
+      gap: b[i] - a[i],
+    });
+  }
+  return out;
+}
+
+/**
  * Points per hour.
  *
  * A 23,503 blowout over 27 hours and a 7,923 loss over 34 are not comparable
@@ -111,7 +147,7 @@ export function scoreRate(score, hours) {
  * factions that scored 7, 362, 874 and 6,799 is not the same as four wins,
  * and without the opponent's number a record flatters everybody.
  */
-export function summariseWar(war, factionId, buckets) {
+export function summariseWar(war, factionId, buckets, oppBuckets) {
   const fid = Number(factionId);
   const sides = Array.isArray(war.factions) ? war.factions : [];
   const me = sides.find((f) => Number(f.id) === fid) || {};
@@ -140,5 +176,7 @@ export function summariseWar(war, factionId, buckets) {
     scoreRate: scoreRate(score, hours),
     activity: warWindowStats(buckets),
     curve: drawCurve(buckets),
+    opponentCurve: drawCurve(oppBuckets),
+    hourly: hourlyGaps(buckets, oppBuckets),
   };
 }

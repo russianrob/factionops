@@ -261,14 +261,28 @@ export async function warWindowActivity(ffsKey, factionId, war) {
 export async function warProfile(ffsKey, wars, factionId) {
   const out = [];
   for (const w of wars || []) {
-    let buckets = [];
+    // Both sides of the window. A faction's own curve says how many showed up;
+    // it cannot say whether that was more than the people opposite, and that
+    // comparison is the question — war 49287 had Dead Fragment out-covered in
+    // 26 of 34 hours and winning three to one.
+    const sides = Array.isArray(w.factions) ? w.factions : [];
+    const opp = sides.find((f) => String(f.id) !== String(factionId));
+
+    let buckets = [], oppBuckets = [];
     try {
       buckets = await warWindowActivity(ffsKey, factionId, w);
     } catch (e) {
       // One unreadable window must not lose the other four wars.
       if (!e.retryable) console.warn(`[prewar] war ${w.id} activity failed: ${e.message}`);
     }
-    out.push(summariseWar(w, factionId, buckets));
+    if (opp && opp.id != null) {
+      try {
+        oppBuckets = await warWindowActivity(ffsKey, opp.id, w);
+      } catch (e) {
+        if (!e.retryable) console.warn(`[prewar] war ${w.id} opponent activity failed: ${e.message}`);
+      }
+    }
+    out.push(summariseWar(w, factionId, buckets, oppBuckets));
   }
   return out;
 }
