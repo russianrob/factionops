@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GM XHR Probe
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.1.0
 // @description  Diagnoses why a userscript's cross-origin calls fail in a given runtime — reports whether GM_xmlhttpRequest exists at injection time, then races it against a page-context fetch to the same host
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    var SCRIPT_VERSION = '1.0.0';
+    var SCRIPT_VERSION = '1.1.0';
 
     // ── The measurement that has to happen FIRST ──────────────────
     //
@@ -50,13 +50,49 @@
     // alone could not.
     var SUBJECT = 'https://api.kalends.dev/';
     var CONTROL = 'https://ffscouter.com/api/v1/check-key?key=0000000000000000';
+    // A URL that reliably answers 401, and another that answers 404. These are
+    // the only requests here that can distinguish the builds: every other test
+    // gets a 200, and a 200 behaved identically before and after the fix.
+    //
+    // Tampermonkey hands ANY completed response to onload with its status. The
+    // old bridge sent anything outside 200-399 to onerror instead, which is why
+    // an ordinary 401 reached KAL as its own failure value, status 0.
+    var NON2XX_401 = 'https://ffscouter.com/api/v1/get-stats?key=0000000000000000&targets=1';
+    var NON2XX_404 = 'https://ffscouter.com/api/v1/nope';
 
     var results = [];
     var clipCache = '';   // pre-warmed: see the copy button below
 
+    var VERDICT = 'testing…';
     function record(name, detail) {
         results.push({ name: name, detail: detail });
         render();
+    }
+
+    // Which build is on this device, decided by where a 401 lands.
+    function checkBridgeBuild() {
+        if (typeof GM_xmlhttpRequest !== 'function') {
+            VERDICT = 'UNKNOWN — GM_xmlhttpRequest missing'; render(); return;
+        }
+        GM_xmlhttpRequest({
+            method: 'GET', url: NON2XX_401, timeout: 15000,
+            onload: function (r) {
+                VERDICT = (r.status === 401)
+                    ? 'FIXED BRIDGE — a 401 reached onload with its status (0.11.305+)'
+                    : 'onload fired with status ' + r.status + ' (expected 401)';
+                record('GM_xhr   → 401 endpoint', 'onload status=' + r.status + '  <-- correct');
+            },
+            onerror: function (e) {
+                VERDICT = 'OLD BRIDGE — a 401 was routed to onerror; update to 0.11.305+';
+                record('GM_xhr   → 401 endpoint', 'onerror ' + safeJson(e) + '  <-- the bug');
+            },
+            ontimeout: function () { record('GM_xhr   → 401 endpoint', 'TIMEOUT'); }
+        });
+        GM_xmlhttpRequest({
+            method: 'GET', url: NON2XX_404, timeout: 15000,
+            onload: function (r) { record('GM_xhr   → 404 endpoint', 'onload status=' + r.status + '  <-- correct'); },
+            onerror: function (e) { record('GM_xhr   → 404 endpoint', 'onerror ' + safeJson(e) + '  <-- the bug'); }
+        });
     }
 
     // ── The four ways a script might make the same call ───────────
@@ -189,7 +225,7 @@
 
     function render() {
         if (!body) return;
-        var lines = ['— at injection time —'];
+        var lines = ['— bridge build —', '  ' + VERDICT, '— at injection time —'];
         for (var k in AT_INIT) lines.push('  ' + k + ': ' + AT_INIT[k]);
         lines.push('— requests —');
         results.forEach(function (r) { lines.push('  ' + r.name + ': ' + r.detail); });
@@ -201,8 +237,10 @@
             var head = l.charAt(0) === '—';
             d.textContent = l;
             d.style.cssText = head ? 'color:#74889b;margin:7px 0 3px' :
-                (/\bOK\b/.test(l) ? 'color:#5fd39a' :
-                (/(ERROR|BLOCKED|TIMEOUT|THREW|not a function|absent)/.test(l) ? 'color:#e8636f' : ''));
+                (/FIXED BRIDGE/.test(l) ? 'color:#5fd39a;font-weight:700' :
+                (/OLD BRIDGE/.test(l) ? 'color:#e8636f;font-weight:700' :
+                (/\bOK\b|correct/.test(l) ? 'color:#5fd39a' :
+                (/(ERROR|BLOCKED|TIMEOUT|THREW|not a function|absent|the bug)/.test(l) ? 'color:#e8636f' : ''))));
             body.appendChild(d);
         });
     }
@@ -216,6 +254,7 @@
         viaGMObject('GM.xhr   → kalends', SUBJECT);
         viaFetch('fetch    → kalends', SUBJECT);
         viaXHR('XHR      → kalends', SUBJECT);
+        checkBridgeBuild();
         viaGM('GM_xhr   → ffscouter (control)', CONTROL);
         viaFetch('fetch    → ffscouter (control)', CONTROL);
     }
