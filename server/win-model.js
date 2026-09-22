@@ -23,15 +23,36 @@
 /**
  * How sharply the curve responds to a firepower ratio.
  *
- * Named rather than inlined because it is the one tunable in the whole model.
- * Set from the single real observation available: 2.55x firepower produced a
- * 2.91x score, and 80% leaves deliberate room for the participation factors to
- * pull the number back down — a faction that does not turn out loses whatever
- * its stats say.
+ * BACKTESTED, not guessed. The first value here was 1.5, fitted to a single
+ * observation — 2.55x firepower produced a 2.91x score in war 49287 — which
+ * turned out to be twice too steep.
  *
- *   1.0x -> 50    2.0x -> 74    2.55x -> 80    5.0x -> 92
+ * Against 155 decided ranked wars (2026-09-22, 158 factions reached by walking
+ * outward from our own history), the Brier-optimal value is 0.75:
+ *
+ *   k      0.50    0.75    1.00    1.25    1.50
+ *   Brier  .2188   .2164   .2179   .2214   .2258
+ *
+ * Two things that sample taught, and both belong here rather than in a
+ * changelog nobody reads:
+ *
+ *   * FIREPOWER PREDICTS, BUT WEAKLY. Brier 0.2164 against 0.25 for always
+ *     saying 50%, and the direction is right 67% of the time — 71% when one
+ *     side has a 2x lead, 62% in close matchups. It beats a coin and not much
+ *     more, so the curve is deliberately shallow: 1.8x reads 60%, not 71%.
+ *
+ *   * THE OLD CURVE WAS OVERCONFIDENT AT BOTH ENDS. Wars it called at 92%
+ *     were won 79% of the time; wars it called at 13% were won 36% of the
+ *     time. Steepness is the knob that caused it.
+ *
+ * Restricting to recent wars does NOT fit better (30 days: Brier 0.2381), so
+ * this is not an artefact of comparing today's stats to yesterday's wars. The
+ * ceiling is real: wars are decided by turnout and coordination as much as by
+ * stats, and this factor cannot see either.
+ *
+ *   1.0x -> 50    1.8x -> 60    2.5x -> 67    4.0x -> 74    10x -> 85
  */
-export const STEEPNESS = 1.5;
+export const STEEPNESS = 0.75;
 
 /** Upsets happen. Neither end of the scale is ever certainty. */
 export const FLOOR = 5;

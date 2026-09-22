@@ -55,12 +55,19 @@ test("equal firepower is an even fight", () => {
   assert.equal(baseFromStats(100, 100), 50);
 });
 
-test("calibrated so a 2.55x advantage reads about 80", () => {
-  // The one real data point: 2.55x stats produced a 2.91x score. 80 leaves
-  // deliberate room for the participation factors to pull it back — a faction
-  // that does not turn out loses regardless of stats.
+test("calibrated against 155 real wars, not one", () => {
+  // 1.5 was fitted to a single war and read 80% here. Backtested over 155
+  // decided wars the Brier-optimal steepness is 0.75, which reads 67 — and
+  // that is the honest number: firepower calls the winner 67% of the time.
   const p = baseFromStats(134.4, 52.8);
-  assert.ok(p > 78 && p < 83, `got ${p}`);
+  assert.ok(p > 64 && p < 70, `got ${p}`);
+});
+
+test("a 2x lead is a lean, not a lock", () => {
+  // The old curve said 74 here and wars it called at 92 were won 79% of the
+  // time. Overconfidence at the top end was the specific failure.
+  const p = baseFromStats(2, 1);
+  assert.ok(p > 58 && p < 65, `got ${p}`);
 });
 
 test("the curve is symmetric", () => {
@@ -89,7 +96,7 @@ const THEIRS = { estimates: [{ bs_estimate: 52.8e9 }], size: 1 };
 
 test("war 49287 is no longer a coin flip", () => {
   const out = winProbability({ ours: OURS, theirs: THEIRS });
-  assert.ok(out.probability > 75,
+  assert.ok(out.probability > 60,
     `a 2.55x firepower lead should not read ${out.probability}%`);
 });
 
@@ -110,7 +117,7 @@ test("adjustments move the number without overturning firepower", () => {
     ours: OURS, theirs: THEIRS,
     adjustments: [{ factor: "Active roster", us: 10, them: 40, delta: -10 }],
   });
-  assert.ok(out.probability > 60, `got ${out.probability}`);
+  assert.ok(out.probability > 50, `got ${out.probability}`);
   assert.ok(out.probability < winProbability({ ours: OURS, theirs: THEIRS }).probability);
 });
 
@@ -138,5 +145,5 @@ test("low coverage is flagged so the number can be discounted", () => {
 });
 
 test("steepness is a stated constant, not a magic number in a formula", () => {
-  assert.ok(STEEPNESS > 1 && STEEPNESS < 3);
+  assert.ok(STEEPNESS > 0.4 && STEEPNESS < 2, `got ${STEEPNESS}`);
 });
