@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.4.0
+// @version      5.4.1
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -21,6 +21,7 @@
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // @grant        GM_setClipboard
+// @grant        GM_registerMenuCommand
 // @grant        unsafeWindow
 // @connect      tornwar.com
 // @connect      localhost
