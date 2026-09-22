@@ -1001,3 +1001,40 @@ export async function fetchRankedWarHistory(factionId, apiKey) {
   // Newest first — a scouting page reads recent form downwards.
   return wars.slice().sort((a, b) => (Number(b.start) || 0) - (Number(a.start) || 0));
 }
+
+/**
+ * A faction's CURRENT roster — any faction, not just your own.
+ *
+ * A target sheet is built from a war report, and a war report is a snapshot of
+ * who fought. People leave. Listing somebody who has gone is worse than a
+ * short sheet: it sends a caller at a name that is not there.
+ *
+ * Torn API v2: GET /v2/faction/<factionId>/members?key=KEY
+ */
+export async function fetchFactionRoster(factionId, apiKey) {
+  const url = `https://api.torn.com/v2/faction/${encodeURIComponent(factionId)}/members?key=${encodeURIComponent(apiKey)}&comment=wb-prewar`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Torn API returned HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.error) throw new Error(`Torn API error: ${data.error.error} (code ${data.error.code})`);
+  return Array.isArray(data.members) ? data.members : [];
+}
+
+/**
+ * Per-member results for one ranked war — readable for any faction.
+ *
+ * fetchRankedWarReport above takes a factionId and hunts for the war; this
+ * asks for the war directly, which is what scouting needs since the war ids
+ * come from fetchRankedWarHistory.
+ *
+ * Torn API v2: GET /v2/faction/rankedwarreport?id=<warId>&key=KEY
+ */
+export async function fetchWarReportById(warId, apiKey) {
+  const url = `https://api.torn.com/v2/faction/rankedwarreport?id=${encodeURIComponent(warId)}&key=${encodeURIComponent(apiKey)}&comment=wb-prewar`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Torn API returned HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.error) throw new Error(`Torn API error: ${data.error.error} (code ${data.error.code})`);
+  const r = data.rankedwarreport || data;
+  return Array.isArray(r.factions) ? r.factions : [];
+}

@@ -84,6 +84,7 @@ function _adminLoginClear(ip) { _adminLoginAttempts.delete(ip); }
 import * as store from "./store.js";
 import * as prewar from "./prewar-activity.js";
 import * as warWindow from "./war-window.js";
+import * as threatSheet from "./threat-sheet.js";
 import * as tornApi from "./torn-api.js";
 import { parseFlight, needsRecentFlights } from "./flight-parse.js";
 import * as chat from "./chat.js";
@@ -12724,11 +12725,49 @@ router.get("/api/prewar", async (req, res) => {
       console.warn(`[prewar] war-hour comparison failed: ${e.message}`);
     }
 
+    // The threat sheet: who does their damage, and how hard each of them is.
+    // Score alone is a bad threat signal — their #2 scorer last war had 4.38m
+    // estimated stats and was farming, while the man on 2.83b sat fourth.
+    let threat = null;
+    try {
+      const latest = history.find((w) => Number(w.end) > 0);
+      if (latest) {
+        const sides = await tornApi.fetchWarReportById(latest.id, String(req.query.key || ""));
+        const theirs = sides.find((f) => String(f.id) === String(enemy));
+        const members = (theirs && theirs.members) || [];
+        if (members.length) {
+          // Current roster, so the sheet cannot name somebody who has left.
+          let currentIds = null;
+          try {
+            const roster = await tornApi.fetchFactionRoster(enemy, String(req.query.key || ""));
+            if (roster.length) currentIds = new Set(roster.map((m) => Number(m.id)));
+          } catch (e) { console.warn(`[prewar] roster ${enemy}: ${e.message}`); }
+
+          const stats = await prewar.statsFor(ffsKey, members.map((m) => m.id));
+          const joined = members.map((m) => {
+            const e = stats.get(Number(m.id)) || {};
+            return {
+              id: Number(m.id), name: m.name, level: m.level,
+              score: m.score, attacks: m.attacks,
+              bs: e.bs_estimate, bsHuman: e.bs_estimate_human, ff: e.fair_fight,
+              distribution: (e.distribution || {}).distribution_human || null,
+            };
+          });
+          threat = threatSheet.classifyRoster(joined, { currentIds });
+          threat.warId = latest.id;
+          threat.warEndedAt = latest.end;
+          threat.rosterChecked = !!currentIds;
+        }
+      }
+    } catch (e) {
+      console.warn(`[prewar] threat sheet failed: ${e.message}`);
+    }
+
     const out = await prewar.scout(ffsKey, info.factionId, enemy, days);
     // fromWar tells the page whether it picked the opponent itself, and
     // warEnded whether that war is over — scouting the faction you just beat
     // is a different thing from scouting the one you are fighting.
-    return res.json({ ...out, enemyName, fromWar, warEnded, profile, warCompare });
+    return res.json({ ...out, enemyName, fromWar, warEnded, profile, warCompare, threat });
   } catch (e) {
     // Throttling says nothing about the faction or the key, so it must not be
     // reported as "no data" — the caller should simply come back.

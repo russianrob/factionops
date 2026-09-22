@@ -101,6 +101,24 @@ button:disabled{opacity:.45;cursor:progress}
 .fade.down{color:var(--loss)} .fade.up{color:var(--win)}
 .untracked{font-family:var(--mono);font-size:11px;color:var(--unknown)}
 
+/* ── threat sheet ─────────────────────────────────── */
+.sheet{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:18px}
+.sheet h2{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--signal);margin:0 0 3px;font-weight:500}
+.sheet h3{font-size:13px;margin:16px 0 2px;font-weight:600}
+.sheet h3.warn{color:var(--loss)} .sheet h3.deny{color:var(--unknown)}
+.sheet .sub{color:var(--muted);font-size:12px;margin:0}
+.tr{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:7px 0;
+  border-top:1px solid var(--line);align-items:baseline}
+.tr .nm{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tr .st{font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right}
+.tr .meta{grid-column:1/-1;font-family:var(--mono);font-size:10.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.tr .st.hard{color:var(--loss)} .tr .st.soft{color:var(--unknown)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.chip{font-family:var(--mono);font-size:10px;color:var(--muted);border:1px solid var(--line);
+  border-radius:4px;padding:3px 7px}
+
 /* ── the declare-hour graph ───────────────────────── */
 .graph{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:18px}
 .graph h2{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
@@ -239,6 +257,60 @@ tr.top td{color:var(--signal)}
   }
 
   var SUBJECT="them";
+  // The threat sheet. Two questions, kept apart on purpose: who will hurt us,
+  // and who is scoring off targets we could deny them. Score alone answers
+  // neither — their #2 scorer last war had 4.38m stats.
+  function threatRow(r, kind){
+    var cls = kind === 'hard' ? 'hard' : (kind === 'soft' ? 'soft' : '');
+    var bits = ['score ' + Math.round(r.score)];
+    if (r.attacks) bits.push(r.attacks + ' hits');
+    if (r.spa != null) bits.push(r.spa.toFixed(1) + '/hit');
+    if (r.ff != null) bits.push('FF ' + r.ff.toFixed(2));
+    if (r.level) bits.push('L' + r.level);
+    if (r.distribution) bits.push(r.distribution);
+    return '<div class="tr"><div class="nm">' + esc(r.name) + '</div>' +
+      '<div class="st ' + cls + '">' + esc(r.bsHuman || '?') + '</div>' +
+      '<div class="meta">' + esc(bits.join(' · ')) + '</div></div>';
+  }
+
+  function sheet(t, name){
+    if (!t || !t.rows || !t.rows.length) return '';
+    var hard = t.rows.filter(function(r){ return r.band === 'heavy' && r.attacks > 0; })
+                     .sort(function(a,b){ return b.score - a.score; });
+    var farm = t.rows.filter(function(r){ return r.farming; })
+                     .sort(function(a,b){ return b.score - a.score; });
+    var absent = t.rows.filter(function(r){ return r.band === 'heavy' && !r.attacks; });
+
+    var h = '<div class="sheet"><h2>Threat sheet</h2>' +
+      '<p class="sub">From ' + esc(name) + '&rsquo;s war ' + t.warId +
+      ', cross-checked against their roster now. Stats are FFScouter estimates; ' +
+      'FF is relative to the faction key&rsquo;s owner, not to you.</p>' +
+      '<div class="chips">' +
+        '<span class="chip">median ' + (t.medianBs ? (t.medianBs/1e9).toFixed(2) + 'b' : '—') + '</span>' +
+        '<span class="chip">top 5 = ' + (t.concentration != null ?
+            Math.round(t.concentration*100) + '% of score' : '—') + '</span>' +
+        (t.departed ? '<span class="chip">' + t.departed + ' since left</span>' : '') +
+      '</div>';
+
+    if (hard.length) {
+      h += '<h3 class="warn">Will hurt you &mdash; and turned up</h3>' +
+        '<p class="sub">Above their roster&rsquo;s middle on stats, and actually fought last war.</p>' +
+        hard.slice(0, 10).map(function(r){ return threatRow(r, 'hard'); }).join('');
+    }
+    if (farm.length) {
+      h += '<h3 class="deny">Scoring off soft targets</h3>' +
+        '<p class="sub">Low stats, high score. They keep producing unless somebody denies them.</p>' +
+        farm.slice(0, 8).map(function(r){ return threatRow(r, 'soft'); }).join('');
+    }
+    if (absent.length) {
+      h += '<h3>Heavy, but sat out</h3><p class="sub">' + absent.length +
+        ' hard member' + (absent.length > 1 ? 's' : '') + ' made no attacks last war: ' +
+        esc(absent.slice(0, 6).map(function(r){ return r.name; }).join(', ')) +
+        '. Still on the roster, so do not plan as if they are absent again.</p>';
+    }
+    return h + '</div>';
+  }
+
   // The graph: our war-time coverage against theirs, by hour of day.
   // Averaged across war windows, so it answers "what do we each do in a war"
   // rather than "who happened to be online last Tuesday".
@@ -398,7 +470,7 @@ tr.top td{color:var(--signal)}
         var d=res.j, name=d.enemyName||("Faction "+d.theirs.factionId);
         SUBJECT=name;
         var src=d.fromWar?(d.warEnded?"your last war":"your CURRENT war"):"manual";
-        $("out").innerHTML = verdict(d.profile,name)+graph(d.warCompare)+
+        $("out").innerHTML = verdict(d.profile,name)+graph(d.warCompare)+sheet(d.threat,name)+
           '<div class="wars">'+(d.profile||[]).map(warCard).join("")+'</div>'+
           '<p class="note">'+esc(name)+' ['+d.theirs.factionId+'] · '+esc(src)+
           ' · you '+d.ours.memberCount+' vs them '+d.theirs.memberCount+' members</p>'+

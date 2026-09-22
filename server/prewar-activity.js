@@ -306,3 +306,28 @@ export async function warHourProfile(ffsKey, wars, factionId) {
   }
   return aggregateByHour(sets, true);
 }
+
+/**
+ * FFScouter stat estimates for a list of players, keyed by id.
+ *
+ * get-stats takes up to 205 targets in ONE request, so a whole war roster is a
+ * single call. Chunked at 200 for headroom and paced like everything else.
+ */
+export async function statsFor(ffsKey, playerIds) {
+  const ids = Array.from(new Set((playerIds || []).map(String).filter(Boolean)));
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const qs = new URLSearchParams({ key: ffsKey, targets: chunk.join(",") });
+    const res = await paced(() => fetch(`${BASE}/get-stats?${qs}`));
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !Array.isArray(body)) {
+      const err = new Error((body && body.error) || `HTTP ${res.status}`);
+      err.code = body && body.code;
+      err.retryable = err.code === 20 || err.code === 21 || res.status === 429;
+      throw err;
+    }
+    for (const e of body) if (e && e.player_id != null) out.set(Number(e.player_id), e);
+  }
+  return out;
+}
