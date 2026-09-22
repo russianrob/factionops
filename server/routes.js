@@ -85,6 +85,7 @@ import * as store from "./store.js";
 import * as prewar from "./prewar-activity.js";
 import * as warWindow from "./war-window.js";
 import * as threatSheet from "./threat-sheet.js";
+import * as winModel from "./win-model.js";
 import * as tornApi from "./torn-api.js";
 import { parseFlight, needsRecentFlights } from "./flight-parse.js";
 import * as chat from "./chat.js";
@@ -4743,82 +4744,102 @@ function analyzeWarReport(ourData, enemyData, estimates, warScores, warEffort) {
   };
 
   // ── Win probability ──
-  // winBreakdown records each factor's point delta + running total so the
-  // client can render a waterfall of exactly this computation (no model
-  // duplication client-side). label/us/them are for the graph rows.
-  let winScore = 50;
-  const winBreakdown = [{ factor: 'Base (even odds)', us: null, them: null, delta: 0, running: 50 }];
-  const addFactor = (factor, us, them, delta) => {
-    winScore += delta;
-    winBreakdown.push({ factor, us: us == null ? null : String(us), them: them == null ? null : String(them), delta, running: winScore });
-  };
+  // Measured firepower, not threshold comparisons. The previous model started
+  // at 50 and awarded points for winning coarse tests, and against war 49287
+  // it called a rout a coin flip: 134.4b estimated stats to 52.8b, five 5B+
+  // members to zero, and it scored 48% — the war finished 23,048 to 7,923.
+  //
+  // Two factors caused that. "A-tier (1-5B)" compared HEADCOUNT INSIDE A BAND,
+  // so 20 members at ~1.1b beat 15 at ~4b while the five above the band were
+  // not counted at all — a faction could lose by being too strong, its heavies
+  // promoted out of the tier being measured. And average level voted against
+  // the side the stat estimates favoured, a proxy outvoting the thing itself.
+  //
+  // Member count is gone as a separate factor: total firepower already embeds
+  // roster size, and counting both would double it. What remains as
+  // adjustments is only what firepower cannot see.
+  const ourRosterCount = ourAnalysis.overview.memberCount;
+  const enemyRosterCount = enemyAnalysis.overview.memberCount;
 
-  // Member advantage
-  const ourMemberCount = ourAnalysis.overview.memberCount;
-  const enemyMemberCount = enemyAnalysis.overview.memberCount;
-  let dMembers = 0;
-  if (ourMemberCount > enemyMemberCount * 1.2) dMembers = 5;
-  else if (enemyMemberCount > ourMemberCount * 1.2) dMembers = -5;
-  addFactor('Members', ourMemberCount, enemyMemberCount, dMembers);
-
-  // Level advantage
-  const ourLvl = ourAnalysis.strength.avgLevel, enemyLvl = enemyAnalysis.strength.avgLevel;
-  let dLevel = 0;
-  if (ourLvl > enemyLvl + 10) dLevel = 10;
-  else if (enemyLvl > ourLvl + 10) dLevel = -10;
-  else if (ourLvl > enemyLvl + 3) dLevel = 5;
-  else if (enemyLvl > ourLvl + 3) dLevel = -5;
-  addFactor('Avg level', ourLvl, enemyLvl, dLevel);
-
-  // Active roster. Prefer the war-effort roster (members who actually fought,
-  // averaged over recent finished wars) — it's time-of-day independent, unlike
-  // the live "active in last 30 min" snapshot. Fall back to the snapshot when a
-  // faction has no readable war history.
+  // Active roster. Prefer the war-effort figure (members who actually fought,
+  // averaged over recent finished wars) — it is time-of-day independent,
+  // unlike the live "active in the last 30 min" snapshot.
   const ourWE = warEffort.our && warEffort.our.avg != null ? warEffort.our.avg : null;
   const enemyWE = warEffort.enemy && warEffort.enemy.avg != null ? warEffort.enemy.avg : null;
   const rosterFromWarEffort = ourWE != null && enemyWE != null;
   const ourRoster = ourWE != null ? ourWE : ourAnalysis.activityPatterns.activeCombatRoster;
   const enemyRoster = enemyWE != null ? enemyWE : enemyAnalysis.activityPatterns.activeCombatRoster;
+
+  const winAdjustments = [];
+
+  // Turnout. Firepower nobody brings to the war scores nothing, so this is the
+  // one adjustment that can meaningfully move a stats verdict.
   let dRoster = 0;
   if (ourRoster > enemyRoster * 1.5) dRoster = 10;
   else if (enemyRoster > ourRoster * 1.5) dRoster = -10;
-  addFactor(rosterFromWarEffort ? 'Active roster (war effort)' : 'Active roster (live)', ourRoster, enemyRoster, dRoster);
+  winAdjustments.push({
+    factor: rosterFromWarEffort ? 'Active roster (war effort)' : 'Active roster (live)',
+    us: ourRoster, them: enemyRoster, delta: dRoster,
+  });
 
-  // Stat tier advantage
-  let dTierS = 0;
-  if (ourTiers.S > enemyTiers.S) dTierS = 8;
-  else if (enemyTiers.S > ourTiers.S) dTierS = -8;
-  addFactor('S-tier (5B+)', ourTiers.S, enemyTiers.S, dTierS);
-  let dTierA = 0;
-  if (ourTiers.A > enemyTiers.A) dTierA = 5;
-  else if (enemyTiers.A > ourTiers.A) dTierA = -5;
-  addFactor('A-tier (1–5B)', ourTiers.A, enemyTiers.A, dTierA);
-
-  // Chain capability
+  // Chain capability — coordination, which stats do not describe.
   const ourChain = ourAnalysis.overview.bestChain, enemyChain = enemyAnalysis.overview.bestChain;
   let dChain = 0;
   if (ourChain > enemyChain * 1.5) dChain = 5;
   else if (enemyChain > ourChain * 1.5) dChain = -5;
-  addFactor('Best chain', ourChain, enemyChain, dChain);
+  winAdjustments.push({ factor: 'Best chain', us: ourChain, them: enemyChain, delta: dChain });
 
-  // Enemy vulnerabilities
-  const enemyHospPct = enemyMemberCount > 0 ? enemyAnalysis.vulnerabilities.hospitalized.length / enemyMemberCount : 0;
+  // A temporary state, worth a little and no more: they heal.
+  const enemyHospPct = enemyRosterCount > 0
+    ? enemyAnalysis.vulnerabilities.hospitalized.length / enemyRosterCount : 0;
   let dHosp = 0;
   if (enemyHospPct > 0.3) dHosp = 8;
   else if (enemyHospPct > 0.15) dHosp = 4;
-  addFactor('Enemy hospitalized', null, Math.round(enemyHospPct * 100) + '%', dHosp);
+  winAdjustments.push({
+    factor: 'Enemy hospitalized', us: null,
+    them: Math.round(enemyHospPct * 100) + '%', delta: dHosp,
+  });
 
-  const rawWinScore = winScore;
-  winScore = Math.max(5, Math.min(95, winScore));
-  // Final row for the waterfall: the clamped result. Flag whether the [5,95]
-  // clamp actually bound (so the graph can note it) — usually it doesn't.
-  winBreakdown.push({ factor: 'Win probability', us: null, them: null, delta: null, running: winScore, clamped: winScore !== rawWinScore, raw: rawWinScore, final: true });
+  // `stats` is the FFScouter estimate per member; absent ones are extrapolated
+  // from the rest rather than counted as zero.
+  const toEstimates = (a) => a.rankedMembers.map((m) => ({ bs_estimate: m.stats }));
+  let win = winModel.winProbability({
+    ours: { estimates: toEstimates(ourAnalysis), size: ourRosterCount },
+    theirs: { estimates: toEstimates(enemyAnalysis), size: enemyRosterCount },
+    adjustments: winAdjustments,
+  });
+
+  // With no estimates at all there is no firepower to compare. Level is a poor
+  // proxy — it is exactly what got the old model wrong — but it beats
+  // returning null to a client that renders null as "low", i.e. as losing.
+  let winBasis = 'stats';
+  if (win.probability == null) {
+    winBasis = 'level';
+    const lvlPower = (a) => a.rankedMembers.reduce((t, m) => t + Math.pow(Number(m.level) || 1, 2), 0);
+    win = winModel.winProbability({
+      ours: { estimates: [{ bs_estimate: lvlPower(ourAnalysis) }], size: 1 },
+      theirs: { estimates: [{ bs_estimate: lvlPower(enemyAnalysis) }], size: 1 },
+      adjustments: winAdjustments,
+    });
+  }
+
+  const winScore = win.probability;
+  const winBreakdown = win.breakdown;
 
   let winReasoning = [];
   if (winScore >= 70) winReasoning.push("Strong overall advantage");
   else if (winScore <= 30) winReasoning.push("Significant disadvantage — careful coordination needed");
   else winReasoning.push("Competitive matchup — execution matters");
 
+  // Lead with the thing the number is actually built on.
+  if (win.stats && win.stats.ratio != null && Number.isFinite(win.stats.ratio)) {
+    const r = win.stats.ratio;
+    if (r >= 1.15) winReasoning.push("Firepower advantage (" + r.toFixed(1) + "x estimated battle stats)");
+    else if (r <= 0.87) winReasoning.push("Firepower disadvantage (" + (1 / r).toFixed(1) + "x against us)");
+    else winReasoning.push("Firepower is close (" + r.toFixed(2) + "x)");
+  }
+  if (winBasis === 'level') winReasoning.push("No battle stat estimates available — this is a level-based guess");
+  else if (win.reason) winReasoning.push(win.reason);
   if (ourTiers.S > enemyTiers.S) winReasoning.push("Top-end advantage (" + ourTiers.S + " vs " + enemyTiers.S + " S-tier)");
   else if (enemyTiers.S > ourTiers.S) winReasoning.push("Enemy has top-end advantage (" + enemyTiers.S + " vs " + ourTiers.S + " S-tier)");
   if (ourRoster > enemyRoster)
@@ -4839,6 +4860,8 @@ function analyzeWarReport(ourData, enemyData, estimates, warScores, warEffort) {
     composition,
     battlePlan,
     winProbability: winScore,
+    winConfidence: win.confidence,
+    winBasis,
     winBreakdown,
     winReasoning,
     strengthsWeaknesses,
