@@ -12790,6 +12790,12 @@ router.get("/api/prewar", async (req, res) => {
     // fromWar tells the page whether it picked the opponent itself, and
     // warEnded whether that war is over — scouting the faction you just beat
     // is a different thing from scouting the one you are fighting.
+    // Roster sizes, so the page can express coverage as fighters rather than
+    // percentage points — a unit that needed explaining every time it was read.
+    if (warCompare) {
+      warCompare.ourMembers = out.ours.memberCount;
+      warCompare.theirMembers = out.theirs.memberCount;
+    }
     return res.json({ ...out, enemyName, fromWar, warEnded, profile, warCompare, threat });
   } catch (e) {
     // Throttling says nothing about the faction or the key, so it must not be

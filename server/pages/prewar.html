@@ -179,9 +179,9 @@ tr.top td{color:var(--signal)}
   hour was not the war's best — so war windows lead here and the baseline is kept only as a hint.</p>
   <p class="note">Coverage is <b>presence, not damage</b>. Dead Fragment was out-covered in 26 of
   that war's 34 hours and won 23,048 to 7,923. Nothing here predicts a winner; it describes a shape.</p>
-  <p class="note"><b>pp</b> = percentage points. Every figure here is a percentage of a
-  roster, so the gap between two of them is quoted in points: 41% against 31% is
-  <b>+10pp</b>. "10% better" would be ambiguous — 10% of 31% is barely 3 points.</p>
+  <p class="note">Coverage is shown as <b>people</b> wherever a roster size is known — a
+  share of 41% against 84 members is about 35 fighters. Percentages are still used for a
+  faction's own curve, where there is only one roster and no gap to quote.</p>
   <p class="note"><b>Fade</b> = last third of the war minus the first. Negative means they spiked and
   faded, positive means they built. A large negative fade in a SHORT war usually
   means the war was already decided and people stopped bothering, not that the faction
@@ -361,10 +361,19 @@ tr.top td{color:var(--signal)}
     });
     g += '</svg>';
 
+    // Fighters, not percentage points. The ratios are shares of each roster,
+    // so multiplying back through the member counts gives the thing a war
+    // leader actually reasons about — how many more of us are on — and needs
+    // no unit explained.
+    var nUs = wc.ourMembers || 0, nThem = wc.theirMembers || 0;
     var picks = wc.edge.slice(0, 3).map(function(e){
+      var mine = Math.round(e.us * nUs), theirs = Math.round(e.them * nThem);
+      var more = mine - theirs;
       return '<div class="pick"><b>' + String(e.hour).padStart(2,'0') + ':00 TCT</b>' +
-        '<span>us ' + (e.us*100).toFixed(0) + '% vs ' + (e.them*100).toFixed(0) + '% · ' +
-        (e.gap >= 0 ? '+' : '') + (e.gap*100).toFixed(1) + 'pp</span></div>';
+        '<span>' + (nUs ? ('~' + mine + ' of us vs ~' + theirs + ' of them · ' +
+          (more > 0 ? more + ' more' : (more < 0 ? (-more) + ' fewer' : 'even')))
+          : ((e.us*100).toFixed(0) + '% vs ' + (e.them*100).toFixed(0) + '%')) +
+        '</span></div>';
     }).join('');
 
     return '<div class="graph"><h2>When to declare</h2>' +
@@ -384,13 +393,19 @@ tr.top td{color:var(--signal)}
     if(a.untracked){
       body='<div class="untracked">not tracked yet</div>';
     }else{
+      // start -> held -> end reads as a shape on its own. A single derived
+      // "fade" number in points needed explaining every time it was seen.
       var f=a.fade, fc=f==null?"":(f<-0.05?"down":(f>0.05?"up":""));
+      var word = f==null ? "—" : (f < -0.05 ? "faded" : (f > 0.05 ? "built" : "held"));
+      // "best hour / early / late" says what each number is without a key.
+      // The trend word carries no label at all — "faded" describes itself,
+      // and a label over it was just a word asking what the word meant.
       body='<div class="spark">'+spark(w.curve,w.opponentCurve,won)+
         '<div class="stats">'+
-          '<div><k>peak</k><b>'+pc(a.peak)+'</b></div>'+
-          '<div><k>held</k><b>'+pc(a.mean)+'</b></div>'+
-          '<div><k>fade</k><b class="fade '+fc+'">'+
-            (f==null?"—":((f>=0?"+":"")+Math.round(f*100)+"pp"))+'</b></div>'+
+          '<div><k>best hour</k><b>'+pc(a.peak)+'</b></div>'+
+          '<div><k>early</k><b>'+pc(a.firstThird)+'</b></div>'+
+          '<div><k>late</k><b>'+pc(a.lastThird)+'</b></div>'+
+          '<div><k>&nbsp;</k><b class="fade '+fc+'">'+word+'</b></div>'+
         '</div></div>';
     }
     var rows=w.hourly||[];
@@ -442,13 +457,14 @@ tr.top td{color:var(--signal)}
   function baseline(d){
     var h='<details><summary>Baseline gap by hour — at rest, a hint not a plan</summary>'+
       '<div class="dbody"><div class="scroll"><table><tr><th>TCT</th>'+
-      '<th>You</th><th>Them</th><th>Edge</th></tr>';
+      '<th>You</th><th>Them</th><th>Difference</th></tr>';
+    var bn = d.ours.memberCount || 0, bt = d.theirs.memberCount || 0;
     d.edge.forEach(function(e,i){
-      var g=e.gap*100;
+      var mine=Math.round(e.us*bn), theirs=Math.round(e.them*bt), diff=mine-theirs;
       h+='<tr class="'+(i<3?"top":"")+'"><td>'+String(e.hour).padStart(2,"0")+':00</td>'+
-         '<td>'+(e.us*100).toFixed(1)+'%</td>'+
-         '<td>'+(e.them*100).toFixed(1)+'%</td>'+
-         '<td class="'+(g<0?"negv":"pos")+'">'+(g>=0?"+":"")+g.toFixed(1)+'pp</td></tr>';
+         '<td>'+(bn?('~'+mine):((e.us*100).toFixed(1)+'%'))+'</td>'+
+         '<td>'+(bt?('~'+theirs):((e.them*100).toFixed(1)+'%'))+'</td>'+
+         '<td class="'+(diff<0?"negv":"pos")+'">'+(diff>0?"+":"")+diff+'</td></tr>';
     });
     return h+'</table></div></div></details>';
   }
