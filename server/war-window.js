@@ -180,3 +180,68 @@ export function summariseWar(war, factionId, buckets, oppBuckets) {
     hourly: hourlyGaps(buckets, oppBuckets),
   };
 }
+
+// ── Across wars, by hour of day ────────────────────────────────
+//
+// A single war's curve says what happened in that war. Choosing a declare
+// time needs the other question — what a faction does in wars generally, hour
+// by hour — for them AND for us, because an hour they cannot cover is worth
+// nothing if we cannot field people in it either.
+//
+// This is the question the baseline table was answering with the wrong data.
+// Baseline measures factions at rest; measured on war 49287 both sides ran far
+// above baseline and the baseline's top-ranked hour was not the war's best.
+
+/**
+ * Mean `active_ratio` per UTC hour across several war windows.
+ *
+ * @param bucketSets  one array of raw buckets per war
+ * @param withSamples when true, also returns how many wars fed each hour
+ *
+ * An hour no war covered is `null`, never 0: zero says "they never turn out
+ * then", which is a claim about the faction, where null is a claim about our
+ * sample. Untracked wars — all-zero, from before FFScouter was collecting —
+ * are dropped entirely rather than averaged in, or they would halve every hour
+ * they touch.
+ */
+export function aggregateByHour(bucketSets, withSamples = false) {
+  const sums = new Array(24).fill(0);
+  const counts = new Array(24).fill(0);
+
+  for (const set of bucketSets || []) {
+    const rows = (set || []).filter((b) => b && typeof b.ts === "number" &&
+      Number.isFinite(Number(b.active_ratio)));
+    // A window of nothing but zeroes is missing data, not a faction that sat
+    // out a ranked war. A real zero INSIDE a tracked window still counts.
+    if (!rows.length || !rows.some((b) => Number(b.active_ratio) > 0)) continue;
+    for (const b of rows) {
+      const h = new Date(b.ts * 1000).getUTCHours();
+      sums[h] += Number(b.active_ratio);
+      counts[h] += 1;
+    }
+  }
+
+  const curve = sums.map((v, h) => (counts[h] ? v / counts[h] : null));
+  if (!withSamples) return curve;
+  const out = curve.slice();
+  out.samples = counts;
+  return out;
+}
+
+/**
+ * Hours ranked by how much better covered we are than they are, in wars.
+ *
+ * An hour either side has no war data for is omitted rather than defaulted:
+ * treating an unknown as zero manufactures a large advantage out of ignorance,
+ * which is the most flattering possible error.
+ */
+export function warEdgeTable(ourCurve, theirCurve) {
+  const rows = [];
+  for (let h = 0; h < 24; h++) {
+    const us = ourCurve && ourCurve[h];
+    const them = theirCurve && theirCurve[h];
+    if (us == null || them == null) continue;
+    rows.push({ hour: h, us, them, gap: us - them });
+  }
+  return rows.sort((a, b) => b.gap - a.gap);
+}

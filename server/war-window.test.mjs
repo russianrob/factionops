@@ -12,7 +12,7 @@
 // are never presented as a prediction of who wins.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { warWindowStats, scoreRate, summariseWar, drawCurve } from "./war-window.js";
+import { warWindowStats, scoreRate, summariseWar, drawCurve, aggregateByHour, warEdgeTable } from "./war-window.js";
 
 const buckets = (ratios) =>
   ratios.map((r, i) => ({ ts: 1789736400 + i * 3600, active_ratio: r, active_players: Math.round(r * 90) }));
@@ -221,4 +221,75 @@ test("an untracked window produces no hourly rows", () => {
 test("one untracked side is still no comparison", () => {
   const w = summariseWar(WAR_49287, 26154, buckets([0.5, 0.4]), buckets([0, 0]));
   assert.deepEqual(w.hourly, []);
+});
+
+// ── Aggregating across war windows ─────────────────────────────
+// Per-war curves answer "what did they do in that war". The question a declare
+// time needs is "what do they do in wars, by hour of day" — and the same for
+// us. That is the baseline table's question, answered with war data instead of
+// data from factions sitting at rest.
+
+test("averages a faction's war hours by hour of day", () => {
+  // 07:00 appears in two different wars at 0.4 and 0.6 -> 0.5
+  const warA = buckets([0.4]);              // ts 1789736400 = 13:00 UTC
+  const shifted = (h, v) => [{ ts: Date.UTC(2026, 8, 1, h) / 1000, active_ratio: v }];
+  const c = aggregateByHour([shifted(7, 0.4), shifted(7, 0.6)]);
+  assert.ok(Math.abs(c[7] - 0.5) < 1e-9);
+  assert.ok(warA.length);
+});
+
+test("hours with no war data are null, not zero", () => {
+  // Zero would read as "they never turn out at 03:00". The truth is that no
+  // war in the sample covered 03:00, which is a different claim.
+  const shifted = (h, v) => [{ ts: Date.UTC(2026, 8, 1, h) / 1000, active_ratio: v }];
+  const c = aggregateByHour([shifted(9, 0.5)]);
+  assert.equal(c[9], 0.5);
+  assert.equal(c[3], null);
+});
+
+test("untracked wars are excluded, not averaged in as zeroes", () => {
+  // The Feb 2026 war returns 13 buckets of zeroes because FFScouter was not
+  // collecting yet. Averaging those in would halve every hour it touches.
+  const shifted = (h, v) => [{ ts: Date.UTC(2026, 8, 1, h) / 1000, active_ratio: v }];
+  const dead = [0, 1, 2].map((h) => ({ ts: Date.UTC(2026, 8, 1, h) / 1000, active_ratio: 0 }));
+  const c = aggregateByHour([shifted(1, 0.6), dead]);
+  assert.ok(Math.abs(c[1] - 0.6) < 1e-9, `got ${c[1]}`);
+});
+
+test("a genuinely quiet hour inside a tracked war still counts", () => {
+  const set = [
+    { ts: Date.UTC(2026, 8, 1, 4) / 1000, active_ratio: 0.5 },
+    { ts: Date.UTC(2026, 8, 1, 5) / 1000, active_ratio: 0 },
+  ];
+  const c = aggregateByHour([set]);
+  assert.equal(c[5], 0, "a real zero inside a tracked war is data");
+});
+
+test("no data at all gives 24 nulls", () => {
+  const c = aggregateByHour([]);
+  assert.equal(c.length, 24);
+  assert.ok(c.every((v) => v === null));
+});
+
+// ── The comparison that answers "when do we declare" ───────────
+
+test("ranks hours where we out-turn them, skipping hours either side lacks", () => {
+  const ours = new Array(24).fill(null);
+  const theirs = new Array(24).fill(null);
+  ours[7] = 0.50; theirs[7] = 0.30;   // +20pp
+  ours[9] = 0.40; theirs[9] = 0.35;   // +5pp
+  ours[11] = 0.60; theirs[11] = null; // unknown for them -> excluded
+  const t = warEdgeTable(ours, theirs);
+  assert.equal(t.length, 2, "an hour missing from either side is not a comparison");
+  assert.equal(t[0].hour, 7);
+  assert.ok(Math.abs(t[0].gap - 0.20) < 1e-9);
+  assert.equal(t[1].hour, 9);
+});
+
+test("the sample size rides along so a one-war hour is not read as a pattern", () => {
+  const shifted = (h, v) => [{ ts: Date.UTC(2026, 8, 1, h) / 1000, active_ratio: v }];
+  const c = aggregateByHour([shifted(7, 0.4), shifted(7, 0.6), shifted(8, 0.2)], true);
+  assert.equal(c.samples[7], 2);
+  assert.equal(c.samples[8], 1);
+  assert.equal(c.samples[3], 0);
 });

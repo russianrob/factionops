@@ -101,6 +101,19 @@ button:disabled{opacity:.45;cursor:progress}
 .fade.down{color:var(--loss)} .fade.up{color:var(--win)}
 .untracked{font-family:var(--mono);font-size:11px;color:var(--unknown)}
 
+/* ── the declare-hour graph ───────────────────────── */
+.graph{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:18px}
+.graph h2{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--signal);margin:0 0 3px;font-weight:500}
+.graph .sub{color:var(--muted);font-size:12px;margin:0 0 12px}
+.graph .chart{width:100%}
+.graph svg{display:block}
+.picks{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.pick{border:1px solid var(--line);border-left:2px solid var(--signal);border-radius:6px;
+  padding:7px 10px;font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums}
+.pick b{color:var(--signal);font-size:13px}
+.pick span{color:var(--muted);display:block;margin-top:2px}
+
 @media(min-width:720px){
   .war{grid-template-columns:minmax(0,1.5fr) minmax(0,1.1fr) auto;gap:16px}
   .wrap{padding:26px 20px 70px}
@@ -220,6 +233,70 @@ tr.top td{color:var(--signal)}
   }
 
   var SUBJECT="them";
+  // The graph: our war-time coverage against theirs, by hour of day.
+  // Averaged across war windows, so it answers "what do we each do in a war"
+  // rather than "who happened to be online last Tuesday".
+  function graph(wc){
+    if (!wc || !wc.edge || !wc.edge.length) return '';
+    // The viewBox is fixed and the SVG scales to its container, so the whole
+    // 24 hours is always visible — a graph you have to scroll sideways to read
+    // hides exactly the hours it exists to compare. Type and strokes are sized
+    // in viewBox units to stay legible at a phone's scale factor (~0.6).
+    var W = 660, H = 210, L = 44, B = 30, T = 10, R = 10;
+    var iw = W - L - R, ih = H - T - B;
+    var vals = wc.edge.map(function(e){ return Math.max(e.us, e.them); });
+    var max = Math.max.apply(null, vals.concat([0.1])) * 1.12;
+    var x = function(h){ return L + (h / 23) * iw; };
+    var y = function(v){ return T + ih - (v / max) * ih; };
+
+    // Only hours both sides have war data for are drawn; a line that bridges a
+    // gap invents coverage nobody measured.
+    var pts = function(side){
+      return wc.edge.slice().sort(function(a,b){ return a.hour - b.hour; })
+        .map(function(e){ return x(e.hour).toFixed(1) + ',' + y(e[side]).toFixed(1); }).join(' ');
+    };
+
+    var g = '<svg width="100%" height="auto" viewBox="0 0 ' + W + ' ' + H + '" ' +
+            'preserveAspectRatio="xMidYMid meet" style="max-height:230px">';
+    // Faint grid + axis labels, enough to read a value off without a tooltip.
+    [0, 0.25, 0.5, 0.75, 1].forEach(function(f){
+      var v = max * f, yy = y(v);
+      g += '<line x1="' + L + '" y1="' + yy.toFixed(1) + '" x2="' + (W - R) +
+           '" y2="' + yy.toFixed(1) + '" stroke="#1c2a38" stroke-width="1"/>' +
+           '<text x="' + (L - 8) + '" y="' + (yy + 5).toFixed(1) + '" fill="#74889b" ' +
+           'font-size="14" text-anchor="end" font-family="monospace">' +
+           Math.round(v * 100) + '%</text>';
+    });
+    for (var h = 0; h < 24; h += 2) {
+      g += '<text x="' + x(h).toFixed(1) + '" y="' + (H - 8) + '" fill="#74889b" font-size="14" ' +
+           'text-anchor="middle" font-family="monospace">' + String(h).padStart(2,'0') + '</text>';
+    }
+    g += '<polyline points="' + pts('them') + '" fill="none" stroke="#7a8fa6" stroke-width="2.6" ' +
+         'stroke-linejoin="round"/>';
+    g += '<polyline points="' + pts('us') + '" fill="none" stroke="var(--signal)" stroke-width="3" ' +
+         'stroke-linejoin="round"/>';
+    // Mark the best hours on the line itself, so the callouts below and the
+    // graph cannot disagree.
+    wc.edge.slice(0, 3).forEach(function(e){
+      g += '<circle cx="' + x(e.hour).toFixed(1) + '" cy="' + y(e.us).toFixed(1) +
+           '" r="5" fill="var(--signal)"/>';
+    });
+    g += '</svg>';
+
+    var picks = wc.edge.slice(0, 3).map(function(e){
+      return '<div class="pick"><b>' + String(e.hour).padStart(2,'0') + ':00 TCT</b>' +
+        '<span>us ' + (e.us*100).toFixed(0) + '% vs ' + (e.them*100).toFixed(0) + '% · ' +
+        (e.gap >= 0 ? '+' : '') + (e.gap*100).toFixed(1) + 'pp</span></div>';
+    }).join('');
+
+    return '<div class="graph"><h2>When to declare</h2>' +
+      '<p class="sub">War-time coverage by hour, averaged over ' + wc.ourWars +
+      ' of our wars and ' + wc.theirWars + ' of theirs. ' +
+      '<span style="color:var(--signal)">us</span> vs <span style="color:#7a8fa6">them</span>.</p>' +
+      '<div class="chart">' + g + '</div>' +
+      '<div class="picks">' + picks + '</div></div>';
+  }
+
   function warCard(w){
     var a=w.activity||{}, won=!!w.won;
     var total=(w.score||0)+(w.opponentScore||0)||1;
@@ -315,7 +392,7 @@ tr.top td{color:var(--signal)}
         var d=res.j, name=d.enemyName||("Faction "+d.theirs.factionId);
         SUBJECT=name;
         var src=d.fromWar?(d.warEnded?"your last war":"your CURRENT war"):"manual";
-        $("out").innerHTML = verdict(d.profile,name)+
+        $("out").innerHTML = verdict(d.profile,name)+graph(d.warCompare)+
           '<div class="wars">'+(d.profile||[]).map(warCard).join("")+'</div>'+
           '<p class="note">'+esc(name)+' ['+d.theirs.factionId+'] · '+esc(src)+
           ' · you '+d.ours.memberCount+' vs them '+d.theirs.memberCount+' members</p>'+

@@ -83,6 +83,7 @@ function _adminLoginFail(ip) {
 function _adminLoginClear(ip) { _adminLoginAttempts.delete(ip); }
 import * as store from "./store.js";
 import * as prewar from "./prewar-activity.js";
+import * as warWindow from "./war-window.js";
 import * as tornApi from "./torn-api.js";
 import { parseFlight, needsRecentFlights } from "./flight-parse.js";
 import * as chat from "./chat.js";
@@ -12694,11 +12695,40 @@ router.get("/api/prewar", async (req, res) => {
     }
     const profile = await prewar.warProfile(ffsKey, history.slice(0, 6), enemy);
 
+    // Their war-time curve against ours, by hour of day. This is what the
+    // baseline panel was trying to answer with the wrong data — baseline
+    // measures factions at rest, and on war 49287 both sides ran far above it
+    // while the baseline's top-ranked hour was not the war's best.
+    //
+    // Their windows are already cached by warProfile above, so the only new
+    // cost here is our own — paid once ever and shared by every scout.
+    let warCompare = null;
+    try {
+      // Six wars each. Torn hands back up to a hundred for an old faction, and
+      // a curve built from 2024 is a curve for a roster that no longer exists.
+      const WARS = 6;
+      const theirRecent = history.slice(0, WARS);
+      const theirCurve = await prewar.warHourProfile(ffsKey, theirRecent, enemy);
+      const ourWars = await tornApi.fetchRankedWarHistory(info.factionId, String(req.query.key || ""));
+      const ourRecent = ourWars.slice(0, WARS);
+      const ourCurve = await prewar.warHourProfile(ffsKey, ourRecent, info.factionId);
+      warCompare = {
+        ours: Array.from(ourCurve), theirs: Array.from(theirCurve),
+        ourSamples: ourCurve.samples, theirSamples: theirCurve.samples,
+        edge: warWindow.warEdgeTable(ourCurve, theirCurve),
+        // How many wars FED the curves, not how many exist. Reporting the
+        // latter overstates the sample by a factor of sixteen here.
+        ourWars: ourRecent.length, theirWars: theirRecent.length,
+      };
+    } catch (e) {
+      console.warn(`[prewar] war-hour comparison failed: ${e.message}`);
+    }
+
     const out = await prewar.scout(ffsKey, info.factionId, enemy, days);
     // fromWar tells the page whether it picked the opponent itself, and
     // warEnded whether that war is over — scouting the faction you just beat
     // is a different thing from scouting the one you are fighting.
-    return res.json({ ...out, enemyName, fromWar, warEnded, profile });
+    return res.json({ ...out, enemyName, fromWar, warEnded, profile, warCompare });
   } catch (e) {
     // Throttling says nothing about the faction or the key, so it must not be
     // reported as "no data" — the caller should simply come back.

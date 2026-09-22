@@ -25,7 +25,7 @@
 
 import fs from "fs";
 import path from "path";
-import { summariseWar } from "./war-window.js";
+import { summariseWar, aggregateByHour } from "./war-window.js";
 
 export const HOUR = 3600;
 export const DAY = 86400;
@@ -285,4 +285,24 @@ export async function warProfile(ffsKey, wars, factionId) {
     out.push(summariseWar(w, factionId, buckets, oppBuckets));
   }
   return out;
+}
+
+/**
+ * A faction's war-time activity by hour of day, across the wars given.
+ *
+ * Reuses the same per-war cache as warProfile, so for a faction already
+ * profiled this costs nothing. Our OWN windows are shared by every scout, so
+ * they are paid for once ever and are warm from then on.
+ */
+export async function warHourProfile(ffsKey, wars, factionId) {
+  const sets = [];
+  for (const w of wars || []) {
+    try {
+      sets.push(await warWindowActivity(ffsKey, factionId, w));
+    } catch (e) {
+      // One unreadable window must not cost the whole curve.
+      if (!e.retryable) console.warn(`[prewar] hour profile ${w.id}/${factionId}: ${e.message}`);
+    }
+  }
+  return aggregateByHour(sets, true);
 }
