@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.4.2
+// @version      5.4.3
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -21,6 +21,7 @@
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // @grant        GM_setClipboard
+// @grant        GM_registerMenuCommand
 // @grant        unsafeWindow
 // @connect      tornwar.com
 // @connect      localhost
@@ -99,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.2';
+    const SCRIPT_VERSION = '5.4.3';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -1566,32 +1567,6 @@ body.wb-chain-active {
 }
 .fo-next-up-call:hover {
     background: rgba(0,184,148,0.15);
-}
-
-/* ── Activate FactionOps button (compact pill, left-aligned) ── */
-#fo-activate-btn {
-    position: fixed !important;
-    top: 38px !important;
-    left: 10px !important;
-    z-index: 99999 !important;
-    display: flex !important; align-items: center !important; gap: 4px !important;
-    padding: 4px 10px !important;
-    font-family: Arial, sans-serif !important;
-    font-size: 11px !important; font-weight: 600 !important;
-    border: 1px solid #555 !important;
-    border-radius: 12px !important;
-    background: rgba(30,30,30,0.9) !important; color: #e0e0e0 !important;
-    cursor: pointer !important; transition: all 0.2s ease !important;
-    white-space: nowrap !important;
-    box-sizing: border-box !important;
-}
-#fo-activate-btn:hover {
-    background: rgba(50,50,50,0.95) !important;
-    border-color: #777 !important;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
-}
-#fo-activate-btn .fo-activate-icon {
-    font-size: 12px; line-height: 1;
 }
 
 /* ── Sort bar (above col headers) ── v5.0.14, v5.1.2 wrap-on-narrow ── */
@@ -10200,22 +10175,6 @@ body.wb-chain-active {
     // SECTION 12B: FULL OVERLAY — WAR PAGE REPLACEMENT
     // =========================================================================
 
-    /** Show an "Activate FactionOps" button on any faction/war page. */
-    function showActivateButton() {
-        if (document.getElementById('fo-activate-btn')) return;
-
-        const btn = document.createElement('button');
-        btn.id = 'fo-activate-btn';
-        btn.innerHTML = '<span class="fo-activate-icon">&#x2694;</span> Activate FactionOps';
-        btn.addEventListener('click', () => {
-            btn.remove();
-            initWarOverlay();
-        });
-
-        // Fixed-position banner — append to body to avoid Torn layout interference
-        document.body.appendChild(btn);
-    }
-
     // ── Move / restore Torn's native chain bar ──
     let tornChainOriginalParent = null; // remember where #barChain came from
     let tornChainOriginalNext = null;   // sibling reference for restore
@@ -10369,8 +10328,8 @@ body.wb-chain-active {
         // rebuild the banner instead of silently skipping it.
         warEndedBannerShown = false;
 
-        // Re-offer the activate pill so the user can re-open on demand.
-        showActivateButton();
+        // Nothing to re-offer: the pill is gone. Re-open from the userscript
+        // menu if the full overlay is wanted again.
     }
 
     // Track whether we're using DOM-based chain reading (no API calls)
@@ -12458,6 +12417,22 @@ body.wb-chain-active {
         markCalledRows();   // repaint with real call state now that it can arrive
     }
 
+    // The activate pill is gone from the war page, but the full overlay it
+    // opened still exists. This is how to reach it — registered once, guarded
+    // because Torn PDA has no GM_registerMenuCommand and an unguarded call
+    // there aborts the script before any UI is built.
+    let overlayMenuRegistered = false;
+    function registerOverlayMenuCommand() {
+        if (overlayMenuRegistered) return;
+        if (typeof GM_registerMenuCommand !== 'function') return;
+        try {
+            GM_registerMenuCommand('Open FactionOps war overlay', () => {
+                try { initWarOverlay(); } catch (e) { log('overlay open failed: ' + (e && e.message)); }
+            });
+            overlayMenuRegistered = true;
+        } catch (e) { /* menu is a convenience, never a dependency */ }
+    }
+
     function detectPageAndInit() {
         const url = window.location.href;
 
@@ -12465,12 +12440,16 @@ body.wb-chain-active {
             log('Page: Attack');
             initAttackPage();
         } else if (url.includes('factions.php') || url.includes('war.php')) {
-            log('Page: Faction/War — showing activate button');
-            showActivateButton();
-            // Calls-only mode runs alongside the activate button: it marks
-            // called rows on Torn's own war page, so the one thing a member
-            // needs mid-war -- has somebody already got this target -- is
-            // visible without opening the overlay at all.
+            log('Page: Faction/War — calls-only mode');
+            registerOverlayMenuCommand();
+            // No activate pill: what it opened is now on the war page itself.
+            // Calls-only mode marks called rows on Torn's own war page, so the
+            // one thing a member needs mid-war -- has somebody already got
+            // this target -- is visible without any overlay at all.
+            //
+            // The full overlay is still reachable from the userscript menu,
+            // because deleting the only door to a feature is not the same as
+            // deleting a button.
             startCallsOnlyMode();
         } else {
             log('Page: Unknown — running in passive mode');
@@ -12486,10 +12465,6 @@ body.wb-chain-active {
         const foOverlay = document.getElementById('fo-overlay');
         if (foOverlay) {
             foOverlay.remove();
-        }
-        const foActivateBtn = document.getElementById('fo-activate-btn');
-        if (foActivateBtn) {
-            foActivateBtn.remove();
         }
         // Remove settings gear and heatmap button from attack pages
         const settingsGear = document.querySelector('.wb-settings-gear');
@@ -15535,9 +15510,7 @@ body.wb-chain-active {
         // Restore Torn's chain bar to its original position before removing overlay
         restoreTornChainBar();
 
-        // Remove FactionOps activate button and war overlay, restore hidden Torn elements
-        const foBtn = document.getElementById('fo-activate-btn');
-        if (foBtn) foBtn.remove();
+        // Remove the war overlay, restore hidden Torn elements
         const foOverlay = document.getElementById('fo-overlay');
         if (foOverlay) foOverlay.remove();
 
