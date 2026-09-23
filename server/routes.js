@@ -87,6 +87,7 @@ import * as warWindow from "./war-window.js";
 import * as threatSheet from "./threat-sheet.js";
 import * as winModel from "./win-model.js";
 import * as loadoutStore from "./loadout-store.js";
+import * as badKeyGate from "./bad-key-gate.js";
 import * as tornApi from "./torn-api.js";
 import { parseFlight, needsRecentFlights } from "./flight-parse.js";
 import * as chat from "./chat.js";
@@ -2110,6 +2111,15 @@ function factionopsVersionTooOld(v) {
 }
 
 router.post("/api/auth", async (req, res) => {
+  // Answer a key Torn has already refused without asking it again. The block
+  // follows the bad STRING, so pasting a corrected key works on the first try.
+  const _preKey = (req.body && typeof req.body.apiKey === "string") ? req.body.apiKey : "";
+  const _bad = badKeyGate.blocked(_preKey);
+  if (_bad.blocked) {
+    console.warn(`[auth] refusing known-bad key …${_preKey.slice(-4)} (${_bad.count} refusals) ip=${req.ip || "?"}`);
+    return res.status(401).json({ error: _bad.reason });
+  }
+
   const { apiKey, scriptVersion, scriptName } = (req.body || {});
   if (!apiKey || typeof apiKey !== "string") {
     return res.status(400).json({ error: "apiKey is required" });
@@ -2194,6 +2204,9 @@ router.post("/api/auth", async (req, res) => {
       }
     }
 
+    // A working key is not a wrong one: clear any accumulated refusals.
+    badKeyGate.note(apiKey, 0);
+
     console.log(`[auth] Player ${info.playerName} (${info.playerId}) authenticated (FactionOps v${scriptVersion || 'unknown'})`);
 
     return res.json({
@@ -2222,8 +2235,16 @@ router.post("/api/auth", async (req, res) => {
     const _b = req.body || {};
     const _k = typeof _b.apiKey === "string" ? _b.apiKey : "";
     const _fp = _k ? `…${_k.slice(-4)} (len ${_k.length})` : "(empty)";
+
+    // Torn's code 2 means the key string is wrong; retrying cannot fix it.
+    // Remember it so the next attempt is answered here instead of costing
+    // another Torn request and another log line — one key managed 945 of both.
+    const _code = Number((err && err.tornCode) || (/\(code (\d+)\)/.exec(err.message || "") || [])[1]) || 0;
+    badKeyGate.note(_k, _code);
+
     console.error("[auth] Authentication failed:", err.message,
-      `| script=${_b.scriptName || "?"} v=${_b.scriptVersion || "?"} key=${_fp}`);
+      `| script=${_b.scriptName || "?"} v=${_b.scriptVersion || "?"} key=${_fp}`,
+      `ip=${req.ip || "?"}`);
     return res.status(401).json({ error: err.message });
   }
 });
