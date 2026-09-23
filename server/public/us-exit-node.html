@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lend Rob a US connection</title>
+<style>
+:root{color-scheme:dark}
+body{margin:0;background:#0b0f14;color:#e6edf3;font:16px/1.6 -apple-system,system-ui,sans-serif;padding:20px}
+.w{max-width:640px;margin:0 auto}
+h1{font-size:21px;margin:0 0 6px}
+h2{font-size:15px;margin:26px 0 6px;color:#9fe870}
+p{margin:0 0 12px}
+.lede{color:#9aa8b8}
+ol{padding-left:22px} li{margin-bottom:10px}
+code{background:#161c24;padding:2px 6px;border-radius:4px;font-size:14px}
+.box{background:#111820;border:1px solid #223041;border-left:3px solid #9fe870;border-radius:8px;padding:14px;margin:18px 0}
+.warn{border-left-color:#e8a33d}
+a{color:#9fe870}
+</style>
+</head><body><div class="w">
+
+<h1>Lend Rob a US connection</h1>
+<p class="lede">He's in Italy and his US streaming won't play from there. You can fix it
+in about ten minutes by letting his phone borrow your internet connection. No cost,
+nothing to configure, and you can switch it off whenever you like.</p>
+
+<h2>What you'd be doing</h2>
+<p>Installing a free app called <b>Tailscale</b> on something at your home that stays
+on — a computer, or an Apple TV. His devices then route through your connection, so
+the streaming service sees an American address instead of an Italian one.</p>
+
+<div class="box warn">
+<b>What this does and doesn't mean.</b> His traffic passes through your internet
+connection, so it counts toward your data and uses a little of your bandwidth while
+he's watching. You can't see what he's browsing — it stays encrypted. He can't see
+anything of yours, and he has no access to your files or your network. Turn it off
+any time and nothing of yours changes.
+</div>
+
+<h2>Best device to use</h2>
+<p><b>An Apple TV</b> is ideal — always on, always plugged in, nothing to remember.
+A <b>desktop computer</b> that stays on works just as well. A laptop works if you
+stop it sleeping. Avoid a phone; it'll drop off.</p>
+
+<h2>Setting it up</h2>
+<ol>
+  <li>Rob sends you an invite link to his Tailscale network. Open it and sign in
+      (Google or Microsoft account is fine — no new password).</li>
+  <li>Install Tailscale on the device you picked:
+      <br>• <b>Apple TV</b> — App Store, search "Tailscale"
+      <br>• <b>Mac / Windows</b> — <code>tailscale.com/download</code></li>
+  <li>Sign in with the same account you used for the invite.</li>
+  <li>Turn on the sharing bit:
+      <br>• <b>Apple TV</b> — open Tailscale, go to <b>Exit Node</b>, choose
+          <b>Run as Exit Node</b>
+      <br>• <b>Mac</b> — menu bar Tailscale icon → <b>Exit Node</b> →
+          <b>Run as Exit Node</b>
+      <br>• <b>Windows</b> — right-click the tray icon → <b>Exit Node</b> →
+          <b>Run as Exit Node</b></li>
+  <li>Tell Rob it's on. He approves it from his side and that's it.</li>
+</ol>
+
+<div class="box">
+<b>That's everything.</b> Leave the device on and plugged in. Nothing else to do,
+no settings to maintain, and it keeps working without you touching it.
+</div>
+
+<h2>If you want to stop</h2>
+<p>Open Tailscale, turn off <b>Run as Exit Node</b>, or quit the app entirely.
+It stops immediately and nothing else on your machine is affected.</p>
+
+<h2>Something not working?</h2>
+<p>Tell Rob which step you got stuck on and what you saw on screen. Almost always it's
+either not signed into the same account, or the exit-node switch not saved.</p>
+
+</div></body></html>
