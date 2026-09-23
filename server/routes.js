@@ -86,6 +86,7 @@ import * as prewar from "./prewar-activity.js";
 import * as warWindow from "./war-window.js";
 import * as threatSheet from "./threat-sheet.js";
 import * as winModel from "./win-model.js";
+import * as loadoutStore from "./loadout-store.js";
 import * as tornApi from "./torn-api.js";
 import { parseFlight, needsRecentFlights } from "./flight-parse.js";
 import * as chat from "./chat.js";
@@ -12815,6 +12816,46 @@ router.get("/prewar/scout", (_req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
   res.set("Cache-Control", "no-store");
   return res.sendFile(new URL("./pages/prewar.html", import.meta.url).pathname);
+});
+
+// ── Loadout sightings ──────────────────────────────────────────────────
+// What a player was last seen carrying, pooled across the faction. Capture
+// happens on attack pages where Torn reveals an opponent's items; the script
+// sends RAW facts and the classification lives here, so what counts as EOD can
+// change without asking everyone to update a userscript.
+//
+// AUTH IS DELIBERATELY ABSENT while this is a measurement. Open and
+// rate-limited is adequate for observational data that nothing yet acts on,
+// and every row records who reported it so bad data can be traced. It is NOT
+// adequate once flags are displayed — somebody could mark a whole faction as
+// EOD. Solve it before building the UI.
+router.post("/api/loadout/seen", express.json({ limit: "24kb" }), (req, res) => {
+  const b = req.body || {};
+  const spend = readBudget.take(readerKey(req));
+  if (spend) return res.status(429).json({ error: spend.error });
+  try {
+    const row = loadoutStore.record(b.playerId, b.items, b.by);
+    // No sighting is the COMMON case — Torn reveals items only sometimes — so
+    // it answers 200 with recorded:false rather than treating it as an error.
+    return res.json({ recorded: !!row, eod: row ? row.eod : false });
+  } catch (e) {
+    console.warn(`[loadout] record failed: ${e.message}`);
+    return res.status(500).json({ error: "could not record" });
+  }
+});
+
+router.get("/api/loadout/flags", (req, res) => {
+  // Batched: a faction list is ninety names, and ninety requests to draw one
+  // page is how a script gets banned.
+  const ids = String(req.query.ids || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 200);
+  if (!ids.length) return res.json({ flags: {} });
+  return res.json({ flags: loadoutStore.flagsFor(ids), windowDays: loadoutStore.WINDOW_DAYS });
+});
+
+router.get("/api/loadout/coverage", (_req, res) => {
+  // The number the feature waits on: if almost nobody carries a sighting, the
+  // display is decoration and should not be built.
+  return res.json(loadoutStore.coverage());
 });
 
 router.get("/slackers", (_req, res) => {

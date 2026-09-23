@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.56
+// @version      2.73.57
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -12,6 +12,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_addStyle
+// @grant        unsafeWindow
 // @connect      ffscouter.com
 // @connect      tornwar.com
 // @license      GPL-3.0
@@ -3299,7 +3300,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.56';
+  const SCRIPT_VERSION = '2.73.57';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -6039,3 +6040,104 @@ if (!singleton) {
     }
   });
 }
+
+// ─── Loadout sightings: capture ──────────────────────────────────────────
+//
+// Torn reveals an opponent's equipped items during some fights. When it does,
+// the data arrives in the page's own `sid=attackData` response. This watches
+// for it and reports what was visible, so the faction pools sightings nobody
+// could collect alone.
+//
+// OBSERVE ONLY. The original response is never altered, never delayed and
+// never consumed — it is cloned and read afterwards. This script runs on every
+// Torn page for the whole faction, and a fetch patch that can break an attack
+// is not worth any feature.
+//
+// Raw facts only: item names, rarities, bonus titles. What counts as EOD is
+// decided server-side, because userscript updates reach people slowly and a
+// classification baked in here would be frozen until everyone updated.
+(function ffsLoadoutCapture() {
+  "use strict";
+
+  if (!/[?&]sid=attack\b/.test(location.search)) return;
+
+  var HOST = (typeof unsafeWindow !== "undefined" && unsafeWindow) ? unsafeWindow : window;
+  if (!HOST || typeof HOST.fetch !== "function") return;
+  if (HOST.__ffsLoadoutPatched) return;
+  HOST.__ffsLoadoutPatched = true;
+
+  var SLOTS = ["primary", "secondary", "melee", "temporary",
+               "helmet", "body_armor", "pants", "boots", "gloves"];
+  var posted = Object.create(null);   // fight+target -> already reported
+
+  function slimItems(defenderItems) {
+    if (!defenderItems || typeof defenderItems !== "object") return null;
+    var out = null;
+    for (var i = 0; i < SLOTS.length; i++) {
+      var c = defenderItems[SLOTS[i]];
+      var it = c && Array.isArray(c.item) ? c.item[0] : null;
+      if (!it || !it.name) continue;
+      var bonuses = [];
+      if (it.currentBonuses && typeof it.currentBonuses === "object") {
+        var vals = Object.keys(it.currentBonuses);
+        for (var b = 0; b < vals.length && b < 4; b++) {
+          var bo = it.currentBonuses[vals[b]];
+          if (bo && bo.title) bonuses.push(String(bo.title));
+        }
+      }
+      (out = out || {})[SLOTS[i]] = { item: [{
+        name: String(it.name).slice(0, 64),
+        rarity: it.rarity ? String(it.rarity).slice(0, 16) : null,
+        currentBonuses: bonuses.map(function (t) { return { title: t }; })
+      }] };
+    }
+    return out;
+  }
+
+  function report(db) {
+    try {
+      // Only what Torn actually showed. No inferring from anything else.
+      if (db.showEnemyItems !== true) return;
+      var targetId = Number(db.defenderUser && db.defenderUser.userID) || 0;
+      if (!targetId) return;
+
+      var key = targetId + ":" + (db.fightID || db.fightId || "");
+      if (posted[key]) return;
+
+      var items = slimItems(db.defenderItems);
+      if (!items) return;
+      posted[key] = 1;
+
+      var me = Number(db.attackerUser && db.attackerUser.userID) || null;
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: "https://tornwar.com/api/loadout/seen",
+        headers: { "Content-Type": "application/json" },
+        data: JSON.stringify({ playerId: targetId, by: me, items: items }),
+        onload: function () {}, onerror: function () {}
+      });
+    } catch (e) { /* a sighting is never worth an exception on an attack page */ }
+  }
+
+  var original = HOST.fetch;
+  HOST.fetch = function (input, init) {
+    var p = original.apply(this, arguments);
+    try {
+      var url = typeof input === "string" ? input : (input && input.url) || "";
+      if (url.indexOf("sid=attackData") !== -1) {
+        p.then(function (res) {
+          // Torn's page must get an untouched, unread body. Clone first.
+          if (!res || !res.clone) return;
+          // Not while the tab is in the background: Torn prohibits acting on
+          // an unfocused page, and this is acting on one.
+          if (!document.hasFocus()) return;
+          res.clone().json().then(function (data) {
+            var db = (data && data.DB) ? data.DB : data;
+            if (db && typeof db === "object") report(db);
+          }).catch(function () {});
+        }).catch(function () {});
+      }
+    } catch (e) { /* never interfere with the request itself */ }
+    return p;
+  };
+})();
