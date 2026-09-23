@@ -43,22 +43,24 @@ From the attack payload, per equipped item:
 reaches a state that shows them. So a single player's sightings are sparse —
 which is the whole reason a crowd-sourced service exists for it.
 
-**Warboard is already faction-wide, and that is the answer.** Pool sightings
-across all 86 members and the coverage problem mostly dissolves for the targets
-that matter: the faction we are currently at war with, which everybody is
-hitting at once.
+**Warboard is already faction-wide, and that is the answer.** Eighty-six people
+attacking produce eighty-six times the sightings one person does. Wars help most
+— everybody hits the same roster at once, so an enemy faction gets covered
+quickly — but the sightings outlive the war, which is the point of keying them
+to the player.
 
 ## Shape
 
 ```
-attack page  ──capture──▶  POST /api/loadout/seen  ──▶  per-player store
-                                                            │
-war page     ◀──flags────  GET /api/loadout/flags?ids=…  ───┘
+attack page   ──capture──▶  POST /api/loadout/seen  ──▶  per-player store
+                                                             │
+any page with  ◀──flags───  GET /api/loadout/flags?ids=…  ───┘
+player names
 ```
 
 **Capture** (FFS, attack pages). Read the equipped items already present in the
-page's attack data. Emit one record per sighting: `targetId`, `seenAt`,
-`redPrimary` (bool), `eod` (bool), plus the item names behind them so a flag can
+page's attack data. Emit one record per sighting: `playerId`, `seenAt`,
+`eod` (bool), `redPrimary` (bool), plus the item names behind them so a flag can
 explain itself rather than being an unexplained icon.
 
 Only when the page is **focused**. Torn's rules prohibit acting on an unfocused
