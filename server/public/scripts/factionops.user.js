@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.4.3
+// @version      5.4.4
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.3';
+    const SCRIPT_VERSION = '5.4.4';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -7160,12 +7160,39 @@ body.wb-chain-active {
             '.mini-profile-wrapper:not(.fo-retal-injected)'
         );
         if (!card) return;
+
+        // Never touch a card that is showing a FORM. Torn re-uses the
+        // mini-profile wrapper for its send-money popover, and writing into a
+        // React-managed form makes React reconcile the subtree — which drops
+        // the focus and whatever was half-typed. Reported as "I click the
+        // input box and it removes it, won't let me type".
+        //
+        // A profile card has no text inputs; the money form does. That is the
+        // discriminator, and it costs nothing when the card is a real profile.
+        if (card.querySelector('input:not([type="checkbox"]):not([type="radio"]), textarea')) return;
+
         card.classList.add('fo-retal-injected'); // dedup flag — one-time per card
 
         let attempts = 0;
         const MAX = 25; // 25 × 200ms = 5s total before giving up
         const timer = setInterval(() => {
             attempts += 1;
+            // The form can appear mid-poll — the card was a profile when the
+            // interval started and is a money form by the time it fires. Stop
+            // rather than skip: this card is no longer ours to decorate.
+            if (card.querySelector('input:not([type="checkbox"]):not([type="radio"]), textarea')) {
+                clearInterval(timer);
+                return;
+            }
+            // Never write into a container while the user is typing in it,
+            // whatever it is.
+            const active = document.activeElement;
+            if (active && card.contains(active) &&
+                /^(INPUT|TEXTAREA)$/.test(active.tagName || '')) {
+                clearInterval(timer);
+                return;
+            }
+
             const buttonsList = card.querySelector('.buttons-list');
             const nameLink = card.querySelector('a[href*="profiles.php?XID="]');
             if (!buttonsList || !nameLink) {
