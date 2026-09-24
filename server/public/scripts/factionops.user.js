@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.4.4
+// @version      5.4.5
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.4';
+    const SCRIPT_VERSION = '5.4.5';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -10530,6 +10530,10 @@ body.wb-chain-active {
                         GM_setValue(notifiedKey, true);
                         postAction('/api/war-target-reached', { warId: deriveWarId(), lead: effectiveScore }).catch(() => {});
                         firePdaNotification('war_target', '🎯 War Target Reached!', `Faction hit ${effectiveScore.toLocaleString()} / ${goal.toLocaleString()} respect — hold the line!`);
+                        // On screen too: a push notification is missed by
+                        // anyone who has them off, and this is the message
+                        // that must actually land.
+                        try { showStopAttacksBanner(effectiveScore, goal); } catch (e) { log('stop-banner failed: ' + (e && e.message)); }
                         postAction('/api/set-war-target', { warId: deriveWarId(), value: null }).catch(() => {});
                         state.warTarget = null;
                     }
@@ -13955,6 +13959,63 @@ body.wb-chain-active {
         // Update position dynamically in case UI shifted
         toastContainer.style.top = state.ui && state.ui.chainBar ? '52px' : '10px';
         return toastContainer;
+    }
+
+    /**
+     * The war target has been hit — stop attacking.
+     *
+     * Deliberately NOT a toast. Toasts stack in a corner and time out, and
+     * this is the one message where missing it costs the faction: attacks
+     * past the target raise it for the next war. So it takes the top of the
+     * screen, stays until dismissed, and is the loudest thing on the page.
+     *
+     * Dismissible, because a banner that cannot be closed becomes a banner
+     * people close by leaving the page.
+     */
+    function showStopAttacksBanner(score, goal) {
+        const EXISTING = 'fo-stop-attacks';
+        if (document.getElementById(EXISTING)) return; // one is enough
+
+        const el = document.createElement('div');
+        el.id = EXISTING;
+        el.setAttribute('role', 'alert');
+        el.style.cssText = [
+            'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:2147483647',
+            'background:#c0392b', 'color:#fff',
+            'font:700 16px/1.35 Arial, sans-serif', 'text-align:center',
+            'padding:14px 44px 14px 16px', 'box-shadow:0 2px 14px rgba(0,0,0,.5)',
+            'border-bottom:3px solid #7f1d1d', 'letter-spacing:.3px',
+        ].join(';');
+
+        const line1 = document.createElement('div');
+        line1.style.cssText = 'font-size:19px;margin-bottom:3px';
+        line1.textContent = '\u26D4 STOP ATTACKING \u2014 WAR TARGET REACHED';
+        const line2 = document.createElement('div');
+        line2.style.cssText = 'font-weight:400;font-size:13px;opacity:.95';
+        line2.textContent = `${Number(score).toLocaleString()} / ${Number(goal).toLocaleString()} respect. `
+            + 'Hold all attacks for 5 minutes.';
+
+        const close = document.createElement('button');
+        close.textContent = '\u00D7';
+        close.setAttribute('aria-label', 'Dismiss');
+        close.style.cssText = [
+            'position:absolute', 'top:8px', 'right:10px', 'background:transparent',
+            'border:0', 'color:#fff', 'font-size:24px', 'line-height:1',
+            'cursor:pointer', 'padding:0 6px', 'opacity:.85',
+        ].join(';');
+        close.addEventListener('click', () => el.remove());
+
+        el.appendChild(line1);
+        el.appendChild(line2);
+        el.appendChild(close);
+        document.body.appendChild(el);
+
+        // Torn's own header sits at the top; nudge the page down so the banner
+        // covers nothing the reader needs while it is up.
+        const prevPad = document.body.style.paddingTop;
+        document.body.style.paddingTop = (el.offsetHeight || 60) + 'px';
+        const restore = () => { document.body.style.paddingTop = prevPad; };
+        close.addEventListener('click', restore);
     }
 
     function showToast(message, type = 'info') {
