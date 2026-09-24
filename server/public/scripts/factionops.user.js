@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.4.5
+// @version      5.4.6
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.5';
+    const SCRIPT_VERSION = '5.4.6';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -3362,6 +3362,24 @@ body.wb-chain-active {
         5000, 10000, 25000, 50000, 100000,
     ];
 
+    /**
+     * How many hits out to start warning.
+     *
+     * Five, not three. Chain counts arrive as snapshots, and across a war day
+     * they step 3+ hits apart about a third of the time — most often during a
+     * fast chain, which is exactly when the warning is worth having. A window
+     * narrower than the step size is invisible precisely when it matters.
+     *
+     * The server applies the same rule in chain-bonus.js for push. Both
+     * copies exist because each side decides from the sequence IT observed:
+     * the server from its poll, the client from its own SSE cadence. Same
+     * rule, two different streams of observations.
+     */
+    const BONUS_APPROACH = 5;
+
+    /** The bonus already announced for this chain, so it announces once. */
+    let lastBonusShown = null;
+
     /** Return the next bonus milestone at or after `count`, or null. */
     function nextBonusMilestone(count) {
         for (const m of BONUS_MILESTONES) {
@@ -5851,16 +5869,34 @@ body.wb-chain-active {
             updateChainBar();
 
             if (data.chainData.current && chainChanged) {
-                const next = nextBonusMilestone(data.chainData.current + 1);
-                const hitsToBonus = next ? next - data.chainData.current : null;
+                const nowCount = data.chainData.current;
+                const next = nextBonusMilestone(nowCount + 1);
+                const hitsToBonus = next ? next - nowCount : null;
                 const isCoolingDown = state.chain.cooldown > 0;
-                // Only notify for bonuses above 10 (skip the first bonus at 10 since chain hasn't 'started' yet)
-                // Also only fire when already past the first bonus or very close to a meaningful one
-                if (!isCoolingDown && hitsToBonus !== null && hitsToBonus <= 3 && hitsToBonus > 0 && data.chainData.current >= 10) {
+
+                // A chain never shrinks; a snapshot arriving late can make it
+                // look as though it has. Reset so the next bonus announces.
+                if (nowCount < oldCurrent) lastBonusShown = null;
+
+                // The bonus has been taken — drop its banner rather than leave
+                // "bonus in 2" on screen at chain 260, which reads as an
+                // instruction to keep hitting a bonus that already landed.
+                if (lastBonusShown !== null && nowCount >= lastBonusShown) {
+                    try { hideWarBanner('bonus'); } catch (e) { /* no banner up */ }
+                    lastBonusShown = null;
+                }
+
+                // Skip the bonus at 10: the chain has not really started yet.
+                if (!isCoolingDown && hitsToBonus !== null && hitsToBonus > 0
+                    && hitsToBonus <= BONUS_APPROACH && nowCount >= 10
+                    && next !== lastBonusShown) {
+                    lastBonusShown = next;
                     showToast(`BONUS HIT in ${hitsToBonus}! Target: ${next}`, 'error');
                     firePdaNotification('bonus_imminent',
-                        '\uD83D\uDCA5 Bonus Hit Imminent',
-                        `Chain at ${data.chainData.current}/${next} \u2014 ${hitsToBonus} hit${hitsToBonus > 1 ? 's' : ''} to bonus!`);
+                        '💥 Bonus Hit Imminent',
+                        `Chain at ${nowCount}/${next} — ${hitsToBonus} hit${hitsToBonus > 1 ? 's' : ''} to bonus!`);
+                    try { showBonusBanner(nowCount, next); }
+                    catch (e) { log('bonus-banner failed: ' + (e && e.message)); }
                 }
             }
         }
@@ -13961,49 +13997,101 @@ body.wb-chain-active {
         return toastContainer;
     }
 
+    // ── Full-width alert banners ──────────────────────────────────────────
+    //
+    // Two messages must not be missed: the war target being reached, and a
+    // chain bonus coming up. Both are deliberately NOT toasts — toasts sit in
+    // a corner and time out in seconds, and these are the moments where
+    // missing the message costs the faction real ground.
+    //
+    // ONE SLOT, NOT A STACK. The two messages give OPPOSITE instructions:
+    // "stop attacking" and "keep hitting, bonus in two". On screen together
+    // they cancel out and the reader does whichever they saw first, so a
+    // higher-priority banner replaces a lower one, and a lower one is refused
+    // while a higher is up. Stopping outranks the bonus: attacking past the
+    // war target raises it for the next war, and no bonus is worth that.
+
+    /** How long a banner stays up on its own. Dismissing it is always faster. */
+    const BANNER_TTL_MS = 5 * 60 * 1000;
+
+    const BANNER_RANK = { bonus: 1, stop: 2 };
+
+    let activeBanner = null;   // { kind, token, el, timer, tick, prevPad }
+
     /**
-     * The war target has been hit — stop attacking.
+     * Take the banner down.
      *
-     * Deliberately NOT a toast. Toasts stack in a corner and time out, and
-     * this is the one message where missing it costs the faction: attacks
-     * past the target raise it for the next war. So it takes the top of the
-     * screen, stays until dismissed, and is the loudest thing on the page.
+     * @param kind  only remove a banner of this kind; omit to remove any.
      *
-     * Dismissible, because a banner that cannot be closed becomes a banner
-     * people close by leaving the page.
+     * Every exit path — timeout, click, replacement, the chain passing the
+     * bonus — comes through here, because each one has to clear BOTH timers
+     * and put the page padding back. Three call sites doing that by hand is
+     * three chances to leave a stray interval running on a war page that
+     * stays open for hours.
      */
-    function showStopAttacksBanner(score, goal) {
-        const EXISTING = 'fo-stop-attacks';
-        if (document.getElementById(EXISTING)) return; // one is enough
+    function hideWarBanner(kind) {
+        if (!activeBanner) return;
+        if (kind && activeBanner.kind !== kind) return;
+        clearTimeout(activeBanner.timer);
+        clearInterval(activeBanner.tick);
+        document.body.style.paddingTop = activeBanner.prevPad;
+        activeBanner.el.remove();
+        activeBanner = null;
+    }
+
+    /**
+     * Put a banner across the top of the page.
+     *
+     * @param kind      'stop' | 'bonus' — sets priority against what is up.
+     * @param token     identifies THIS instance (the goal, the bonus number).
+     *                  Same kind and same token means it is already showing;
+     *                  same kind and a new token replaces it, so the next
+     *                  bonus up the chain gets its own banner.
+     * @param countdown show the time left, live. Only meaningful where the
+     *                  duration is the instruction rather than a timeout.
+     */
+    function showWarBanner({ kind, token, headline, detail, colour, edge, countdown }) {
+        const rank = BANNER_RANK[kind] || 0;
+        if (activeBanner) {
+            if ((BANNER_RANK[activeBanner.kind] || 0) > rank) return;
+            if (activeBanner.kind === kind && activeBanner.token === token) return;
+            hideWarBanner();
+        }
 
         const el = document.createElement('div');
-        el.id = EXISTING;
+        el.id = 'fo-banner';
         el.setAttribute('role', 'alert');
         el.style.cssText = [
             'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:2147483647',
-            'background:#c0392b', 'color:#fff',
+            `background:${colour}`, 'color:#fff',
             'font:700 16px/1.35 Arial, sans-serif', 'text-align:center',
             'padding:14px 44px 14px 16px', 'box-shadow:0 2px 14px rgba(0,0,0,.5)',
-            'border-bottom:3px solid #7f1d1d', 'letter-spacing:.3px',
+            `border-bottom:3px solid ${edge}`, 'letter-spacing:.3px',
         ].join(';');
 
         const line1 = document.createElement('div');
         line1.style.cssText = 'font-size:19px;margin-bottom:3px';
-        line1.textContent = '\u26D4 STOP ATTACKING \u2014 WAR TARGET REACHED';
+        line1.textContent = headline;
+
         const line2 = document.createElement('div');
         line2.style.cssText = 'font-weight:400;font-size:13px;opacity:.95';
-        line2.textContent = `${Number(score).toLocaleString()} / ${Number(goal).toLocaleString()} respect. `
-            + 'Hold all attacks for 5 minutes.';
+        line2.textContent = detail;
+
+        const clock = document.createElement('span');
+        if (countdown) {
+            clock.style.cssText = 'font-weight:700;font-variant-numeric:tabular-nums';
+            line2.appendChild(clock);
+        }
 
         const close = document.createElement('button');
-        close.textContent = '\u00D7';
+        close.textContent = '×';
         close.setAttribute('aria-label', 'Dismiss');
         close.style.cssText = [
             'position:absolute', 'top:8px', 'right:10px', 'background:transparent',
             'border:0', 'color:#fff', 'font-size:24px', 'line-height:1',
             'cursor:pointer', 'padding:0 6px', 'opacity:.85',
         ].join(';');
-        close.addEventListener('click', () => el.remove());
+        close.addEventListener('click', () => hideWarBanner());
 
         el.appendChild(line1);
         el.appendChild(line2);
@@ -14014,10 +14102,47 @@ body.wb-chain-active {
         // covers nothing the reader needs while it is up.
         const prevPad = document.body.style.paddingTop;
         document.body.style.paddingTop = (el.offsetHeight || 60) + 'px';
-        const restore = () => { document.body.style.paddingTop = prevPad; };
-        close.addEventListener('click', restore);
+
+        const until = Date.now() + BANNER_TTL_MS;
+        activeBanner = {
+            kind, token, el, prevPad,
+            timer: setTimeout(() => hideWarBanner(kind), BANNER_TTL_MS),
+            // The countdown is information, not decoration: on the stop banner
+            // the five minutes IS the instruction, so this says when attacking
+            // may resume instead of leaving people guessing.
+            tick: countdown ? setInterval(() => {
+                const left = Math.max(0, Math.round((until - Date.now()) / 1000));
+                clock.textContent = ` ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+            }, 1000) : null,
+        };
+        if (countdown) {
+            const left = Math.round(BANNER_TTL_MS / 1000);
+            clock.textContent = ` ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+        }
     }
 
+    /** The war target has been hit — stop attacking. */
+    function showStopAttacksBanner(score, goal) {
+        showWarBanner({
+            kind: 'stop', token: String(goal),
+            colour: '#c0392b', edge: '#7f1d1d', countdown: true,
+            headline: '⛔ STOP ATTACKING — WAR TARGET REACHED',
+            detail: `${Number(score).toLocaleString()} / ${Number(goal).toLocaleString()} respect. `
+                + 'Hold all attacks for',
+        });
+    }
+
+    /** A chain bonus is a few hits away — line it up. */
+    function showBonusBanner(current, bonus) {
+        const togo = bonus - current;
+        showWarBanner({
+            kind: 'bonus', token: String(bonus),
+            colour: '#b8620e', edge: '#7a3d05', countdown: false,
+            headline: `💥 BONUS HIT IN ${togo} — CHAIN ${bonus.toLocaleString()}`,
+            detail: `Chain at ${Number(current).toLocaleString()}. `
+                + 'Hold the hit for whoever is taking the bonus.',
+        });
+    }
     function showToast(message, type = 'info') {
         const container = getToastContainer();
         const toast = document.createElement('div');
