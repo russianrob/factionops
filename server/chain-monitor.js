@@ -10,6 +10,7 @@
  * - No client has reported chain data in the last CLIENT_STALE_MS
  */
 
+import { bonusToAnnounce } from "./chain-bonus.js";
 import * as store from "./store.js";
 import { fetchFactionChain, fetchRankedWar } from "./torn-api.js";
 import * as push from "./push-notifications.js";
@@ -81,10 +82,8 @@ export function warScoreCheckInterval(war) {
   }
 }
 
-/** Bonus hit thresholds in Torn chain mechanics. */
-const BONUS_HITS = [
-  10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 25_000, 50_000, 100_000,
-];
+/** Last bonus announced per war, so one bonus yields one notification. */
+const lastBonusAnnounced = new Map();
 
 /** Active polling timeout IDs per warId so we can clean them up. */
 const timeouts = new Map();
@@ -179,12 +178,21 @@ async function _processChain(warId, war, chain, io, source) {
     }
   }
   if (!isCoolingDown && chain.current >= CHAIN_MIN_HITS) {
-    const nextBonus = BONUS_HITS.find((b) => b > chain.current);
-    if (nextBonus && nextBonus - chain.current <= 2 && (prevChain.current || 0) < chain.current) {
+    const already = lastBonusAnnounced.get(warId);
+    const bonus = bonusToAnnounce(prevChain.current || 0, chain.current || 0, already);
+    if (bonus) {
+      lastBonusAnnounced.set(warId, bonus);
       const warPlayers = pushAudience(war);
-      push.notifyBonusImminent(warPlayers, warId, chain.current, nextBonus);
+      push.notifyBonusImminent(warPlayers, warId, chain.current, bonus);
+      // Logged like the panic and warning branches. This was the only alert
+      // with no log line, which is why "am I getting bonus notifications?"
+      // could not be answered from the logs at all.
+      console.log(`[chain] Bonus alert: chain ${chain.current}/${bonus} (${source})`);
     }
   }
+  // A broken or reset chain starts the announcements over: the next chain
+  // deserves its own warning at the same milestone.
+  if ((chain.current || 0) < (prevChain.current || 0)) lastBonusAnnounced.delete(warId);
 }
 
 /**
@@ -479,6 +487,7 @@ export function stopChainMonitor(warId) {
   lastAlertSent.delete(warId);
   lastPanicSent.delete(warId);
   lastChainIncreaseAt.delete(warId);
+  lastBonusAnnounced.delete(warId);
   lastScoreCheck.delete(warId);
   warTargetNotified.delete(warId);
   console.log(`[chain] Stopped monitoring for war ${warId}`);
