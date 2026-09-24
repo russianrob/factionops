@@ -12,9 +12,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { shouldClearCall, SUCCESS_RESULTS } from "./call-autoclear.js";
 
-const call = (byId) => ({ calledBy: { id: byId, name: "Caller" } });
+// Both fixtures carry timestamps: the rule requires the hit to postdate the
+// call, so a fixture without them tests the timestamp guard instead of the
+// thing the test is named for.
+const CALLED_MS = 1790266283938;
+const call = (byId) => ({ calledBy: { id: byId, name: "Caller" }, timestamp: CALLED_MS });
 const atk = (o = {}) => ({
-  attacker_id: 100, defender_id: 200, attacker_faction: 42055, result: "Attacked", ...o,
+  attacker_id: 100, defender_id: 200, attacker_faction: 42055, result: "Attacked",
+  timestamp_ended: Math.floor(CALLED_MS / 1000) + 60, ...o,
 });
 
 test("the caller landing a hit frees the slot", () => {
@@ -68,7 +73,8 @@ test("a malformed attack clears nothing", () => {
 test("Torn's alternate defender key is accepted", () => {
   // The poll path already tolerated defenderID; the extracted rule must too,
   // or moving it would quietly change behaviour.
-  const a = { attacker_id: 100, defenderID: 200, attacker_faction: 42055, result: "Mugged" };
+  const a = { attacker_id: 100, defenderID: 200, attacker_faction: 42055, result: "Mugged",
+              timestamp_ended: Math.floor(CALLED_MS / 1000) + 60 };
   assert.equal(shouldClearCall(a, call(100), "42055"), true);
 });
 
@@ -87,4 +93,47 @@ test("a missing attacker faction clears nothing", () => {
   // simply omits the field free a call.
   const noFaction = { attacker_id: 100, defender_id: 200, result: "Attacked" };
   assert.equal(shouldClearCall(noFaction, call(100), "42055"), false);
+});
+
+// ── The hit must come AFTER the call ───────────────────────────
+// Clients re-report their last ~100 fights on every cycle, not just new ones.
+// So calling a target you hit earlier meant the stale attack was still in the
+// buffer and cleared the fresh call instantly — Deathy called 2713731 at
+// 12:10:49 and it dropped at 12:10:52, four seconds later, with no new attack.
+//
+// The poll this logic came from never had the problem: it carried a cursor and
+// only ever saw attacks newer than the last poll. Moving it to the client feed
+// dropped that protection, and nothing here replaced it.
+
+const CALL_AT = CALLED_MS;   // ms
+const call_t = (byId, ts = CALL_AT) => ({ calledBy: { id: byId }, timestamp: ts });
+const atkAt = (sec, o = {}) => atk({ timestamp_ended: sec, ...o });
+
+test("a hit after the call frees it", () => {
+  assert.equal(shouldClearCall(atkAt(CALL_AT / 1000 + 30), call_t(100), "42055"), true);
+});
+
+test("a hit from BEFORE the call does not", () => {
+  // The exact shape of the bug: re-called a target hit ten minutes ago.
+  assert.equal(shouldClearCall(atkAt(CALL_AT / 1000 - 600), call_t(100), "42055"), false);
+});
+
+test("a hit seconds before the call does not either", () => {
+  assert.equal(shouldClearCall(atkAt(CALL_AT / 1000 - 4), call_t(100), "42055"), false);
+});
+
+test("timestamp_started is accepted when ended is absent", () => {
+  const a = { attacker_id: 100, defender_id: 200, attacker_faction: 42055,
+              result: "Attacked", timestamp_started: CALL_AT / 1000 + 30 };
+  assert.equal(shouldClearCall(a, call_t(100), "42055"), true);
+});
+
+test("an unorderable pair clears nothing", () => {
+  // Dropping somebody's fresh call is worse than leaving a stale one — the
+  // stale one expires on its own in twenty minutes. So when the ordering
+  // cannot be established, do nothing.
+  const noTs = { attacker_id: 100, defender_id: 200, attacker_faction: 42055, result: "Attacked" };
+  assert.equal(shouldClearCall(noTs, call_t(100), "42055"), false, "attack has no timestamp");
+  assert.equal(shouldClearCall(atkAt(CALL_AT / 1000 + 30), { calledBy: { id: 100 } }, "42055"),
+    false, "call has no timestamp");
 });

@@ -57,7 +57,26 @@ export function shouldClearCall(attack, call, ourFactionId) {
   if (!SUCCESS_RESULTS.has(String(attack.result || ""))) return false;
 
   const callerId = call.calledBy && call.calledBy.id;
-  return sameId(callerId, attackerId);
+  if (!sameId(callerId, attackerId)) return false;
+
+  // The hit must have happened AFTER the call was placed.
+  //
+  // Clients re-report their last ~100 fights every cycle, not just new ones,
+  // so calling a target you hit earlier left the old attack sitting in the
+  // buffer — and it cleared the fresh call instantly. Deathy called 2713731 at
+  // 12:10:49 and it dropped four seconds later on a hit from minutes before.
+  //
+  // The poll this came from never had the problem: it carried a cursor and
+  // only saw attacks newer than the last poll. Moving the rule to the client
+  // feed dropped that guarantee, so the ordering is checked explicitly here.
+  //
+  // When the ordering cannot be established, clear nothing: dropping a fresh
+  // call is worse than leaving a stale one, which expires on its own.
+  const endedSec = Number(attack.timestamp_ended) || Number(attack.timestamp_started)
+    || Number(attack.ended) || 0;
+  const calledMs = Number(call.timestamp) || 0;
+  if (!endedSec || !calledMs) return false;
+  return endedSec * 1000 > calledMs;
 }
 
 /**
