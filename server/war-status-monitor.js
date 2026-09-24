@@ -5,6 +5,7 @@
  * broadcasts updates to the appropriate war room via socket.io.
  */
 
+import { shouldClearCall } from "./call-autoclear.js";
 import * as store from "./store.js";
 import { fetchFactionMembers, fetchRecentFactionAttacks } from "./torn-api.js";
 import { recordSample } from "./activity-heatmap.js";
@@ -462,15 +463,10 @@ function startAttacksFeedMonitor(io, warId) {
         const attackerId = String(atk.attacker_id ?? '');
         const attackerFid = String(atk.attacker_faction ?? atk.attacker_faction_id ?? '');
         const dId = String(atk.defender_id ?? atk.defenderID ?? '');
-        if (
-          attackerFid === ourFid &&
-          attackerId &&
-          dId &&
-          war.calls && war.calls[dId] &&
-          SUCCESS_RESULTS.has(atk.result)
-        ) {
-          const callerId = String(war.calls[dId].calledBy?.id ?? '');
-          if (callerId === attackerId) {
+        // Same rule as the client-reported path, from one module — two
+        // copies is two chances to fix only one of them.
+        if (war.calls && war.calls[dId] && shouldClearCall(atk, war.calls[dId], ourFid)) {
+          {
             delete war.calls[dId];
             callsCleared++;
             try {

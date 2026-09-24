@@ -88,6 +88,7 @@ import * as threatSheet from "./threat-sheet.js";
 import * as winModel from "./win-model.js";
 import * as loadoutStore from "./loadout-store.js";
 import * as badKeyGate from "./bad-key-gate.js";
+import * as callAutoclear from "./call-autoclear.js";
 import * as tornApi from "./torn-api.js";
 import { parseFlight, needsRecentFlights } from "./flight-parse.js";
 import * as chat from "./chat.js";
@@ -3003,6 +3004,34 @@ router.post("/api/me/attacks", requireAuth, (req, res) => {
     }
     if (Object.keys(buf).length === 0) continue;
     totalAdded += attackLedger.ingestForWar(war.warId, war.factionId, buf);
+
+    // Free any call whose own caller just landed a hit. This used to live only
+    // in the attacks-feed poll, which is skipped whenever client status data
+    // is under 30s old — during a live war that is always, so it never ran.
+    // These reports arrive continuously and carry the same attacker, defender
+    // and result, so the rule runs here and costs no Torn call.
+    try {
+      // `war` here is a PROJECTION built above — { warId, factionId,
+      // enemyFactionId, startSec, endSec } — and carries no calls. Reading
+      // war.calls off it yielded undefined and silently cleared nothing,
+      // which looks exactly like the feature being switched off. Fetch the
+      // real stored war to mutate.
+      const stored = store.getWar(war.warId);
+      const clear = stored
+        ? callAutoclear.callsToClear(Object.values(buf), stored.calls, war.factionId)
+        : [];
+      for (const targetId of clear) {
+        delete stored.calls[targetId];
+        try {
+          io.to(`war_${war.warId}`).emit("target_uncalled", { targetId, reason: "attacked" });
+          broadcastSSE(war.warId, { calls: stored.calls });
+        } catch (e) { /* broadcast best-effort */ }
+        console.log(`[attacks] auto-uncalled ${targetId} — hit by caller ${playerId} (war ${war.warId})`);
+      }
+      if (clear.length) store.saveState();
+    } catch (e) {
+      console.warn(`[attacks] auto-uncall failed for ${war.warId}: ${e.message}`);
+    }
   }
 
   if (totalAdded > 0) {
