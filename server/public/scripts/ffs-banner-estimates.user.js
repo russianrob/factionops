@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.57
+// @version      2.73.58
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3300,7 +3300,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.57';
+  const SCRIPT_VERSION = '2.73.58';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3696,6 +3696,7 @@ if (!singleton) {
   // wb63: hide online/offline activity filter (war page). Persisted across loads.
   let _ffsHideOnline  = ffs_parseBool(rD_getValue('ffs_hide_online', false));
   let _ffsHideOffline = ffs_parseBool(rD_getValue('ffs_hide_offline', false));
+  let _ffsHideFederal = ffs_parseBool(rD_getValue('ffs_hide_federal', false));
   let _ffsActivityDiagOnce = false; // wb64: one-shot detection diag per page load
 
   // wb61/wb64: are we on the ranked-war VIEW? Detect by URL ONLY. We used to
@@ -3926,6 +3927,32 @@ if (!singleton) {
   // hide-offline hides everything NOT online (Idle + Offline) — idle counts as
   // offline. Unknown status is never hidden. Hidden rows just get display:none,
   // so this composes with the sort.
+  /**
+   * Is this row someone sitting in federal jail?
+   *
+   * Federal is not a short hospital stay — it runs for days, and there is no
+   * point carrying those rows down a war list you are scanning for targets.
+   *
+   * Class token first, text only as a fallback: Torn's React classes are the
+   * reliable signal and the visible text is localised furniture. The token is
+   * already trusted by ffs_nativeSaysReleased, which treats 'federal' as one
+   * of the states that means "not attackable".
+   */
+  function ffs_isFederal(row) {
+    if (!row) return false;
+    const statusEl = row.querySelector('.status') || row.querySelector('[class*="status" i]');
+    if (statusEl) {
+      const t = String(statusEl.className || '').split(/\s+/);
+      if (t.indexOf('federal') !== -1) return true;
+      // Only fall through to text when the cell is a rendered status cell —
+      // otherwise a stray element containing the word would hide a real target.
+      if (t.some((x) => x === 'status' || x.indexOf('status___') === 0)) {
+        if (/\bfederal\b/i.test(statusEl.textContent || '')) return true;
+      }
+    }
+    return false;
+  }
+
   function ffs_shouldHide(alt, hideOnline, hideOffline) {
     if (!alt) return false;
     if (hideOnline && alt === 'Online') return true;
@@ -4026,6 +4053,10 @@ if (!singleton) {
       // ffs_activityOf misread it (the War-Stuff hospital chip can clobber the
       // status cell). Only applies when we're not explicitly hiding online.
       if (hide && !_ffsHideOnline && onlineN > 0) { hide = false; protectedOnline++; }
+      // Federal overrides the online guard: that guard exists so a misread
+      // status never hides an attackable member, and federal is the one state
+      // where "online" says nothing — they are unreachable for days either way.
+      if (_ffsHideFederal && ffs_isFederal(row)) hide = true;
       row.classList.toggle('ffs-hidden', hide);
       if (hide) {
         hidden++;
@@ -4082,6 +4113,7 @@ if (!singleton) {
     };
     const on = mk('Hide online', _ffsHideOnline);
     const off = mk('Hide offline', _ffsHideOffline);
+    const fed = mk('Hide federal', _ffsHideFederal);
     const count = document.createElement('span');
     count.className = 'ffs-hide-count';
     on.cb.addEventListener('change', () => {
@@ -4094,8 +4126,14 @@ if (!singleton) {
       rD_setValue('ffs_hide_offline', _ffsHideOffline ? '1' : '0');
       ffs_applyActivityFilter();
     });
+    fed.cb.addEventListener('change', () => {
+      _ffsHideFederal = fed.cb.checked;
+      rD_setValue('ffs_hide_federal', _ffsHideFederal ? '1' : '0'); // string round-trips on PDA
+      ffs_applyActivityFilter();
+    });
     bar.appendChild(on.label);
     bar.appendChild(off.label);
+    bar.appendChild(fed.label);
     bar.appendChild(count);
     list.parentNode.insertBefore(bar, list);
     ffs_applyActivityFilter();
