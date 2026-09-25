@@ -2149,6 +2149,13 @@ router.post("/api/auth", async (req, res) => {
   // without inheriting factionops's minimum.
   const isVersionedClient = !scriptName || scriptName === 'factionops' || scriptName === 'commandcenter';
   if (isVersionedClient && factionopsVersionTooOld(scriptVersion)) {
+    // Say so. This refusal wrote nothing for months, so a partner client
+    // whose version string carried a name ('sidekick-1.2.26') was rated
+    // version zero and turned away every time, invisibly — and the absence
+    // of any log line then read as evidence the gate was refusing nobody.
+    // A gate that can reject a real user must leave a trace when it does.
+    console.warn(`[auth] REFUSED as outdated: version=${JSON.stringify(scriptVersion)} `
+      + `name=${JSON.stringify(scriptName || null)} min=${FACTIONOPS_MIN_VERSION} ip=${req.ip || "?"}`);
     return res.status(426).json({
       error: `FactionOps ${scriptVersion} is outdated — please update to v${FACTIONOPS_MIN_VERSION} or newer.`,
       updateUrl: 'https://tornwar.com/scripts/factionops.user.js',
@@ -2161,7 +2168,19 @@ router.post("/api/auth", async (req, res) => {
     // Faction lock — owner faction OR a partner explicitly granted
     // the "factionops" service via the admin UI. OC-Spawn-only partners
     // still get rejected here; their gate is in the OC routes.
-    if (!isFactionAllowed(info.factionId) && !isPartnerFor(info.factionId, "factionops")) {
+    // FactionOps is OWNER FACTION ONLY, by the owner's instruction
+    // (2026-09-25: "dont allow this script in other factions").
+    //
+    // A partner grant no longer opens it. The check is still made so that an
+    // ignored grant is LOUD rather than a silent no-op — the admin UI can
+    // still record 'factionops' against a partner, and whoever grants it next
+    // needs to find out here instead of wondering why nothing happened.
+    // OC Spawn is unaffected; its partner gate lives in the OC routes.
+    if (!isFactionAllowed(info.factionId)) {
+      if (isPartnerFor(info.factionId, "factionops")) {
+        console.warn(`[auth] Partner grant for faction ${info.factionId} IGNORED — `
+          + `FactionOps is owner-faction only`);
+      }
       console.log(`[auth] Rejected ${info.playerName} (${info.playerId}) — faction ${info.factionId} not subscribed (FactionOps v${scriptVersion || 'unknown'})`);
       return res.status(403).json({ error: getSubscriptionRejectionMessage() });
     }
