@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.4.6
+// @version      5.4.7
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.6';
+    const SCRIPT_VERSION = '5.4.7';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -8843,6 +8843,104 @@ body.wb-chain-active {
     const ATTACKS_POLL_MS = 10 * 60 * 1000;
     let attacksPollInterval = null;
 
+    // ── Fast auto-uncall: report the fight on the way back ────────────────
+    //
+    // The server frees a call when the caller's OWN hit turns up in their
+    // attack report. That report is posted by pollAttacks() below, which runs
+    // every ten minutes — so a call that should have dropped the moment the
+    // fight ended sat there for a median of SIXTEEN minutes, measured across
+    // Deathy's sixteen auto-uncalls (fastest 5m12s, slowest 2h21m). From the
+    // caller's seat that is indistinguishable from the feature not working,
+    // and the report that it wasn't working was correct.
+    //
+    // Moving the rule onto this feed was mine, and the comment justifying it
+    // claimed these reports "arrive continuously rather than every fifteen
+    // seconds". They arrive every ten minutes. I never checked before
+    // asserting it, and swapped a fifteen-second path for one 40x slower.
+    //
+    // Torn is a multi-page app and this script re-runs on every navigation,
+    // so the most reliable signal that a fight is finished is the attacker
+    // LEAVING the attack page. Marking on the way in and reporting on the
+    // next page load needs no DOM scraping, no response interception and no
+    // visibility API — all three of which behave differently across Firefox,
+    // the PDA and the iOS app, and the reporter here is on Firefox. The
+    // ten-minute poll stays exactly as it is, as the backstop for anyone who
+    // sits on the attack page for a whole chain.
+
+    const PENDING_ATTACK_MAX_AGE_MS = 30 * 60 * 1000;
+
+    /**
+     * Whether a stored mark still justifies an out-of-band report.
+     *
+     * Past the age limit the slow poll has already carried the fight, so
+     * spending a Torn call on it buys nothing. Split out from the storage so
+     * the rule can be exercised without a browser.
+     */
+    function shouldFlushAttack(raw, nowMs) {
+        if (!raw) return false;
+        let mark = raw;
+        if (typeof raw === 'string') {
+            // PDA storage hands back strings, including ones we never wrote.
+            try { mark = JSON.parse(raw); } catch (e) { return false; }
+        }
+        if (!mark || !mark.at) return false;
+        const age = nowMs - Number(mark.at);
+        // A negative age is a clock that disagrees with itself, not a fight.
+        if (!Number.isFinite(age) || age < 0) return false;
+        return age <= PENDING_ATTACK_MAX_AGE_MS;
+    }
+
+    const PENDING_ATTACK_KEY = 'fo_pending_attack';
+
+    /** Remember that a fight with this target is underway. */
+    function markAttackPending(targetId) {
+        try {
+            GM_setValue(PENDING_ATTACK_KEY,
+                JSON.stringify({ t: String(targetId), at: Date.now() }));
+        } catch (e) { /* the ten-minute poll still covers it */ }
+    }
+
+    /**
+     * Report a finished fight now instead of at the next ten-minute tick.
+     *
+     * @param opts.attempt retry counter — authentication is asynchronous, so
+     *        the first look on a fresh page load often lands before there is a
+     *        token to post with. The mark survives, so this just looks again
+     *        rather than dropping the report on the floor.
+     * @param opts.retry  off when called from the attack page: a retry there
+     *        would fire after the NEXT fight's mark was written and report a
+     *        fight that has not happened yet.
+     */
+    function flushPendingAttack(opts) {
+        const { attempt = 0, retry = true } = opts || {};
+        let raw = null;
+        try { raw = GM_getValue(PENDING_ATTACK_KEY, null); } catch (e) { return false; }
+
+        if (!shouldFlushAttack(raw, Date.now())) {
+            if (raw) { try { GM_setValue(PENDING_ATTACK_KEY, ''); } catch (e) {} }
+            return false;
+        }
+        if (!CONFIG.API_KEY || !state.jwtToken) {
+            if (retry && attempt < 6) {
+                setTimeout(() => flushPendingAttack({ attempt: attempt + 1, retry }), 3000);
+            }
+            return false;
+        }
+
+        // Clear BEFORE polling: a failed poll must not leave a mark that
+        // re-fires a Torn call on every page load for the next half hour.
+        try { GM_setValue(PENDING_ATTACK_KEY, ''); } catch (e) {}
+
+        // Torn's own attack log trails the fight by a beat; give it one
+        // before asking, or the report comes back without the fight in it.
+        setTimeout(() => {
+            try { pollAttacks(); }
+            catch (e) { log('early attack report failed: ' + (e && e.message)); }
+        }, 4000);
+        log('Fight finished — reporting now so the call drops in seconds, not minutes');
+        return true;
+    }
+
     function pollAttacks() {
         if (!CONFIG.API_KEY || !state.jwtToken) return;
         const url = `https://api.torn.com/user/?selections=attacks&key=${encodeURIComponent(CONFIG.API_KEY)}&comment=warboard-attacks`;
@@ -12508,6 +12606,8 @@ body.wb-chain-active {
             initAttackPage();
         } else if (url.includes('factions.php') || url.includes('war.php')) {
             log('Page: Faction/War — calls-only mode');
+            // Back from a fight: report it now so the call drops in seconds.
+            flushPendingAttack();
             registerOverlayMenuCommand();
             // No activate pill: what it opened is now on the war page itself.
             // Calls-only mode marks called rows on Torn's own war page, so the
@@ -12562,6 +12662,11 @@ body.wb-chain-active {
         const targetId = getAttackTargetId();
         if (targetId) {
             reportViewing(targetId);
+            // Arriving at a NEW attack page also means the previous fight is
+            // over, which is the one case that never passes through the war
+            // page. Close that one out before marking this one.
+            flushPendingAttack({ retry: false });
+            markAttackPending(targetId);
         }
 
         // Show the floating Assist button
