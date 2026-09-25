@@ -2099,9 +2099,26 @@ const FACTIONOPS_MIN_VERSION = '4.9.74';
 // reason the gate exists.
 const FACTIONOPS_NAMED_VERSIONS = new Set(['sidekick']);
 
+/**
+ * The client NAME at the front of a version string, or '' for a plain number.
+ *
+ * The allowlist used to demand the bare word, so 'sidekick' passed but
+ * 'Sidekick 2.1' did not — the suffix put it back on the numeric path, where
+ * Number('sidekick 2') is NaN, `|| 0` makes it zero, and a current build is
+ * refused as ancient. A partner numbering their own build is the normal case,
+ * not an edge case, so the name is matched and the suffix ignored.
+ *
+ * Splitting on the first digit or separator keeps this from becoming "let
+ * anything through": 'bogus 9.9' still reduces to 'bogus', which is not on
+ * the list and is still refused.
+ */
+function factionopsClientName(v) {
+  return String(v).trim().toLowerCase().split(/[\s\-_/]|\d/)[0];
+}
+
 function factionopsVersionTooOld(v) {
   if (!v || typeof v !== 'string') return false; // legacy clients that don't send a version — let them through
-  if (FACTIONOPS_NAMED_VERSIONS.has(v.trim().toLowerCase())) return false;
+  if (FACTIONOPS_NAMED_VERSIONS.has(factionopsClientName(v))) return false;
   const a = v.split('.').map(Number), b = FACTIONOPS_MIN_VERSION.split('.').map(Number);
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
     const ai = a[i] || 0, bi = b[i] || 0;
