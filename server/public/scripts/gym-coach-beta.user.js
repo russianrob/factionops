@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.89
+// @version      0.9.90
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,13 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.90 - War stack sits with the advice it changes, not under it.
+*
+*         It was the second-to-last card on Now, so turning it on mid-war meant
+*         scrolling past Live, Gym perks and the faction board to find it. It
+*         is the one control that changes what every card above it says, so it
+*         now sits directly beneath "Do this".
+*
 * 0.9.89 - The faction board line reads like English, and reads itself out of chat.
 *
 *         The line was GCB1|2959|137558|RussianRob|10075|10075|0|0|0|1550|-|
@@ -2182,7 +2189,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.89";
+  var GC_VERSION = "0.9.90";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -11023,6 +11030,14 @@
       (c.steps && c.steps.length
         ? '<div class="gc-card"><h3>Do this</h3>' + stepsHtml(c.steps) + "</div>"
         : "") +
+      // Directly under the advice, not at the foot of the tab.
+      //
+      // It was the second-to-last card, so switching it on during a war meant
+      // scrolling past Live, Gym perks and the faction board to reach it --
+      // and it is the one control that changes what every card above it says.
+      // A setting that governs the advice belongs beside the advice.
+      '<div class="gc-card toggle"><div><h3 style="margin:0">War stack</h3><div class="muted">Hold energy. Mute training and Xanax pings.</div></div>' +
+      '<div class="sw' + (state.warStack ? " on" : "") + '" id="stackSw"><i></i></div></div>'  +
       '<div class="gc-card"><h3>Live</h3><div class="grid three">' +
       '<div class="stat"><label>Energy' +
       (state.energyDom ? ' <span style="opacity:.6;font-weight:400">live</span>' : ' <span style="opacity:.6;font-weight:400">api</span>') +
@@ -11055,8 +11070,6 @@
         .filter(Boolean)
         .join("<br>") || "No gym perks found in what Torn sent.") +
       "</p></div>" +
-      '<div class="gc-card toggle"><div><h3 style="margin:0">War stack</h3><div class="muted">Hold energy. Mute training and Xanax pings.</div></div>' +
-      '<div class="sw' + (state.warStack ? " on" : "") + '" id="stackSw"><i></i></div></div>'  +
       pasteCardHtml();
 
     var boostOk = boosterOpen(state.boosterCd);
