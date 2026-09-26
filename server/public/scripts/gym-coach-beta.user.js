@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.85
+// @version      0.9.89
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,82 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.9.89 - The faction board line reads like English, and reads itself out of chat.
+*
+*         The line was GCB1|2959|137558|RussianRob|10075|10075|0|0|0|1550|-|
+*         1790429491|1540. "GCB1" and "week 2959" told a human nothing, and
+*         "2959" is only weeks-since-1970. It now says:
+*
+*           Gym week of Sep 20 - RussianRob - 10,075e gym (Str 10,075)
+*           - 1,550e attacks - xanax n/a - copied Wed 15:31 [137558 #5073]
+*
+*         and everything left of the bracket is meant to be read. Stats nobody
+*         trained are left out, so a pure-Strength week is shorter than a split
+*         one. Unknown xanax and none still say different things.
+*
+*         The paste box is gone. The card reads the faction channel itself, so
+*         nobody selects a block of chat and pastes it in any more. It reads the
+*         channel's TEXT rather than walking message nodes: Torn's chat classes
+*         are hash-suffixed and change on every rebuild, and a walker keyed to
+*         content___ would one day stop finding messages with nothing to say
+*         why. The line is anchored and checksummed, so a blob of text is no
+*         less safe. It only ever reads -- nothing is typed, nothing is sent.
+*
+*         The line could stop being one whitespace-free token precisely BECAUSE
+*         of that: the old rule existed so a pasted block could be split on
+*         spaces, and a chat message is already its own unit.
+*
+*         The copy time stayed, as "copied Wed 15:31" instead of an epoch. A
+*         board of pasted lines is a pile of snapshots taken at different
+*         moments, and a row that looks live but was copied on Tuesday is the
+*         one way this can mislead.
+*
+*         0.9.88 lines still parse, so the changeover does not lose a week.
+*
+* 0.9.88 - Stop refusing a better gym because it costs more energy per train.
+*
+*         Reported by Eddie877 [2693357]: Balboas open, in range, and the coach
+*         sent him to Cha Cha's for Dexterity. betterGym() skipped any gym whose
+*         Energy-per-train exceeded the current one, so Balboas (25e, 7.5 dex)
+*         could never beat Cha Cha's (10e, 7.0 dex).
+*
+*         Energy per train is not a cost. Gain is dots x energy-per-train, and a
+*         fixed bar buys bar/energy-per-train trains, so the term cancels: over
+*         250 energy only the dots matter. Measured with the script's own
+*         gainOne, Balboas is 7.1% better for Dexterity at every stat size and
+*         happy level tested. The guard threw that away on every single train.
+*
+*         Ranking is now by dots, with lower energy only as a tie-break -- more,
+*         smaller trains compound very slightly better.
+*
+* 0.9.87 - What training at low happiness is costing you, in the stat you are
+*         actually training.
+*
+*         Happy enters Vladar's formula twice -- it multiplies the whole stat
+*         term AND contributes 8*H^1.05 on its own -- so the loss is not a flat
+*         percentage of anything and cannot be eyeballed. Both gains are
+*         computed with the same stat, gym, energy and perk, so happy is the
+*         only thing that differs between them.
+*
+*         Shown only below 80% of full, and never as a suggestion to take an
+*         item: the script already lists those, and a measurement that turns
+*         into a prompt to consume stops being read.
+*
+* 0.9.86 - "Energy full" no longer fires on a bar you just emptied.
+*
+*         The PDA notification is scheduled NATIVELY for a fill time worked out
+*         when it was armed, and armNotifications() ran in exactly two places:
+*         after an API refresh, and on the war-stack toggle. Training spends
+*         energy through syncEnergyFromDom, which never re-armed -- so the ping
+*         stayed pointed at the old, far too early, fill moment. Empty your bar
+*         and travel, and it fires hours early on an energy of 35.
+*
+*         Any local energy change now re-arms. Regen moves time-to-full down by
+*         exactly the time that passed, so the ABSOLUTE fill moment does not
+*         move while you merely wait -- which is why a 60-second drift guard
+*         re-schedules only when energy was really spent or a can was drunk, and
+*         not on every tick.
+*
 * 0.9.85 - The regen rate is read from Torn, not inferred from it.
  *
  *         Every missed-energy figure is a multiplication by seconds-per-energy,
@@ -2106,7 +2182,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.85";
+  var GC_VERSION = "0.9.89";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -2575,6 +2651,8 @@
     energy: 0,
     energyMax: 150,
     energyFulltime: 0,
+    // The fill moment the pending notification is scheduled for.
+    armedFullAt: 0,
     energySecPerE: 0,
     lastSeen: null,
     energyKnown: false,
@@ -2645,7 +2723,6 @@
   // What is currently typed into the paste box. renderPanel() rebuilds the
   // panel's markup on every poll tick, so anything in an unbacked field is gone
   // a second after it is pasted.
-  var draftPaste = "";
   var keyBoxFocused = false;
 
   function pdaGlobal(name) {
@@ -3744,6 +3821,12 @@
       state.energyMax = d.max;
       changed = true;
     }
+    // Re-arm on a LOCAL change, not only after an API refresh. This is the path
+    // that sees you train: the bar drops here, the fill moment moves out by the
+    // energy just spent, and until now the already-scheduled notification kept
+    // pointing at the old one. The drift guard in armNotifications stops this
+    // re-scheduling on every regen tick.
+    if (changed) { try { armNotifications(); } catch (_) {} }
     return changed;
   }
 
@@ -4069,6 +4152,38 @@
       energyP *
       perk
     );
+  }
+
+/**
+ * What a train at `happy` gives up against the same train at `happyMax`.
+ *
+ * Pure, and takes everything explicitly, because the interesting cases are the
+ * ones state rarely holds: happy already at max, a gym that cannot train the
+ * stat, a stat of zero on a fresh account.
+ *
+ * Compounding across a stack is deliberately NOT modelled: each train raises
+ * the stat a little, so the real loss over 250 energy is marginally larger than
+ * this. Understating it is the safe direction for a number meant to prompt a
+ * decision.
+ */
+  function happyLoss(stat, happy, happyMax, dots, energyP, perk, typ) {
+    if (!stat || !dots || !energyP) return null;
+    var h = Number(happy) || 0;
+    var hm = Number(happyMax) || 0;
+    if (!hm || h >= hm) return null;
+    var now = gainOne(stat, h, dots, energyP, perk || 1, typ);
+    var full = gainOne(stat, hm, dots, energyP, perk || 1, typ);
+    if (!(full > now)) return null;
+    return {
+      now: now,
+      full: full,
+      lost: full - now,
+      // Of the gain you WOULD have had. "You are getting 71% of the train" is
+      // the number that means something, not happy as a percentage of its cap.
+      keptPct: now / full,
+      happy: h,
+      happyMax: hm,
+    };
   }
 
   function projectDays(days, energyPerDay, typ) {
@@ -6669,6 +6784,28 @@
   // One line on the front page saying what the plan is and where to change it.
   // Everything it names lived behind a settings icon, so someone who never
   // tapped a cog never learned there was a plan to make at all.
+  // Below this the line is not worth the space, and a note that shows on every
+  // single visit is a note nobody reads by the third day.
+  var HAPPY_SHOW_BELOW = 0.8;
+
+  function happyStripHtml() {
+    var k = state.focus;
+    if (!k || !state.stats || !state.stats[k]) return "";
+    var l = happyLoss(state.stats[k], state.happy, state.happyMax,
+                      gymDots(k), perTrainEnergy(), (state.perks && state.perks[k]) || 1, k);
+    if (!l || l.keptPct > HAPPY_SHOW_BELOW) return "";
+    var e = perTrainEnergy() || 10;
+    var trains = Math.max(1, Math.round(250 / e));
+    var stack = l.lost * trains;
+    return '<div class="gcb-happy">' +
+      "<b>" + Math.round(l.keptPct * 100) + "% of a full-happy train.</b> " +
+      "At " + fmt(l.happy) + " happy you gain " + fmt(Math.round(l.now)) +
+      " where full would give " + fmt(Math.round(l.full)) + " \u2014 " +
+      "<b>" + fmt(Math.round(l.lost)) + " " + (STAT_LABEL[k] || k) + "</b> per train, " +
+      "about <b>" + fmt(Math.round(stack)) + "</b> over a 250-energy stack." +
+      "</div>";
+  }
+
   function planStripHtml() {
     if (!hasGoals()) {
       return (
@@ -6863,7 +7000,14 @@
         ? "Change gym to " + b.gym.Gym + " first \u2014 " + state.gymName + " cannot train " +
           STAT_LABEL[k] + " at all" + prov + "."
         : "Change gym to " + b.gym.Gym + " first \u2014 it trains " + STAT_LABEL[k] + " " +
-          b.pct + "% faster for the same " + fmt(e) + "e a train" + prov + "."
+          b.pct + "% faster" +
+          // Only claim "the same" when it IS the same. A 25e gym and a 10e
+          // gym still give the same total for the same bar, and saying so
+          // stops the advice looking wrong to anyone who checks the dots.
+          (Number(b.gym.Energy) === e
+            ? " for the same " + fmt(e) + "e a train"
+            : " per point of energy (" + fmt(Number(b.gym.Energy)) + "e a train against " +
+              fmt(e) + "e \u2014 same bar, same total)") + prov + "."
     };
   }
 
@@ -7148,7 +7292,12 @@
       if (!g || g.Gym === cur.Gym) return;
       var d = Number(g[DOT]) || 0;
       var e = Number(g.Energy) || 25;
-      if (e > curE || d <= curDots) return;
+      // Energy per train is NOT a cost. Gain is dots x energyPerTrain, and a
+      // fixed bar buys (bar / energyPerTrain) trains, so the term cancels
+      // exactly: over the same energy, only the dots decide. Excluding the
+      // bigger gym for its bigger trains is how Balboas, at 7.5 dex, lost to
+      // Cha Cha's at 7.0.
+      if (d <= curDots) return;
       if (!best) { best = g; return; }
       var bd = Number(best[DOT]) || 0;
       if (d > bd || (d === bd && e < (Number(best.Energy) || 25))) best = g;
@@ -8282,41 +8431,201 @@
     return n;
   }
 
-  // The line is one whitespace-free token so faction chat cannot break it into
-  // pieces, and so a paste can be scanned by splitting on whitespace and
-  // ignoring everything that is not one of these.
+  // The line a member pastes into faction chat.
+  //
+  // Everything left of the bracket is written to be READ. The week is a date,
+  // not the internal week counter -- "week 2959" told a human nothing, and
+  // neither did the "GCB1" tag that used to lead the line. Numbers carry their
+  // units, and stats nobody trained are left out, so a pure-Strength week is
+  // shorter than a split one.
+  //
+  // The bracket at the end is the only part meant for the machine: the player
+  // id, because a member who renames would otherwise appear as two rows, and
+  // four check digits.
+  //
+  // It no longer has to be one whitespace-free token. That rule existed because
+  // the board used to be fed by pasting a whole block of chat and splitting it
+  // on spaces; now that the card reads chat messages directly, each message is
+  // already its own unit and the line is free to contain spaces.
+  var LINE_HEAD = "Gym week of ";
+
+  // The OLD pipe format, still recognised so a member who has not updated yet
+  // is not silently missing from the board for a week.
   var LINE_TAG = "GCB1";
 
   // Chat truncates long messages, and people edit things. Four digits over the
-  // whole payload is enough that a cut tail or a changed digit fails to verify
-  // rather than parsing as a smaller week.
+  // payload is enough that a cut tail or a changed digit fails to verify rather
+  // than parsing as a smaller week.
   function pasteCk(s) {
     var n = 0;
     for (var i = 0; i < s.length; i++) n = (n * 31 + s.charCodeAt(i)) % 9973;
     return ("000" + n).slice(-4);
   }
 
-  function pasteLine(o) {
-    // Torn usernames are letters, digits, underscore and hyphen; anything else
-    // arrived by accident and would break the delimiter.
-    var name = String((o && o.name) || "").replace(/[^A-Za-z0-9_-]/g, "");
-    var body = [LINE_TAG, o.week, o.id, name, o.gymE, o.str, o.def, o.spe, o.dex,
-                o.atkE, (o.xan == null ? "-" : o.xan), o.at].join("|");
-    return body + "|" + pasteCk(body);
+  // What the check digits are computed over.
+  //
+  // The DATA, not the rendered line: a wording change must not invalidate every
+  // line already sitting in chat, and a line damaged in transit still yields
+  // different data and so fails to verify.
+  function pasteCanon(o, name) {
+    var v = function (x) { return Math.max(0, Number(x) || 0); };
+    return [Number(o.week), Number(o.id), name, v(o.gymE), v(o.str), v(o.def),
+            v(o.spe), v(o.dex), v(o.atkE), (o.xan == null ? "-" : v(o.xan))].join("|");
   }
 
-  function pasteParse(text) {
+  var PASTE_STATS = [["str", "Str"], ["def", "Def"], ["spe", "Spe"], ["dex", "Dex"]];
+
+  // getUTC*, because the gym week boundary is TCT. Local getters name the day
+  // wrong west of Greenwich, and the line would disagree with the board that
+  // reads it.
+  var PASTE_DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  function pasteStamp(atSec) {
+    var ms = Number(atSec) * 1000;
+    if (!isFinite(ms) || ms <= 0) return "";
+    var d = new Date(ms);
+    return PASTE_DOW[d.getUTCDay()] + " " +
+      ("0" + d.getUTCHours()).slice(-2) + ":" + ("0" + d.getUTCMinutes()).slice(-2);
+  }
+
+  /**
+   * Turn "Wed 15:31" back into a real instant.
+   *
+   * Exact, not approximate: the week is already known from the line, so the
+   * weekday is an offset from that week's start rather than a guess at which
+   * Wednesday was meant.
+   */
+  function pasteStampParse(stamp, week) {
+    var m = /^([A-Z][a-z]{2}) (\d{2}):(\d{2})$/.exec(String(stamp || ""));
+    if (!m) return null;
+    var day = PASTE_DOW.indexOf(m[1]);
+    if (day < 0 || week == null) return null;
+    return Math.floor(
+      (weekStartMs(week) + day * DAY_MS + Number(m[2]) * 3600000 + Number(m[3]) * 60000) / 1000
+    );
+  }
+
+  function pasteLine(o) {
+    // Torn usernames are letters, digits, underscore and hyphen; anything else
+    // arrived by accident and would break the parse.
+    var name = String((o && o.name) || "").replace(/[^A-Za-z0-9_-]/g, "");
+    var split = PASTE_STATS
+      .filter(function (k) { return Number(o[k[0]]) > 0; })
+      .map(function (k) { return k[1] + " " + fmt(o[k[0]]); })
+      .join(" · ");
+
+    var bits = [fmt(o.gymE) + "e gym" + (split ? " (" + split + ")" : "")];
+    if (Number(o.atkE) > 0) bits.push(fmt(o.atkE) + "e attacks");
+    // "no figure" and "took none" are different statements about a person, and
+    // the faction xanax board shipped the first as the second once already.
+    bits.push(o.xan == null ? "xanax n/a"
+      : (Number(o.xan) === 0 ? "no xanax" : fmt(o.xan) + " xanax"));
+
+    // When it was copied, said plainly.
+    //
+    // A board built from pasted lines is a pile of snapshots taken at
+    // different moments, and a row that looks live but was copied on Tuesday
+    // is the one way this can mislead. The old line carried a raw epoch for
+    // this; a weekday and a clock time say the same thing to a person, and
+    // are exact rather than approximate because the week it belongs to is
+    // already in the line.
+    var stamp = pasteStamp(o.at);
+    if (stamp) bits.push("copied " + stamp);
+
+    return LINE_HEAD + boardWeekLabel(weekStartMs(o.week)) + " — " + name +
+      " · " + bits.join(" · ") +
+      " [" + Number(o.id) + " #" + pasteCk(pasteCanon(o, name)) + "]";
+  }
+
+  /**
+   * Turn a week label like "Sep 20" back into the week number it came from.
+   *
+   * Searched outward from the current week so the NEAREST match wins, which is
+   * what makes "Jan 3" unambiguous either side of New Year. The window stops
+   * well short of a year: labels repeat every 52 weeks, and a wider search
+   * could match the same date twice.
+   */
+  function weekFromLabel(label, nowMs) {
+    var cur = weekKey(Number(nowMs) || Date.now());
+    if (boardWeekLabel(weekStartMs(cur)) === label) return cur;
+    for (var d = 1; d <= 20; d++) {
+      if (boardWeekLabel(weekStartMs(cur - d)) === label) return cur - d;
+      if (boardWeekLabel(weekStartMs(cur + d)) === label) return cur + d;
+    }
+    return null;
+  }
+
+  var PASTE_RE = /Gym week of ([A-Z][a-z]{2}) (\d{1,2})\s*—\s*([A-Za-z0-9_-]+)([^\[\]]*)\[(\d+)\s+#(\d{4})\]/g;
+
+  var pasteNum = function (m) { return m ? Number(String(m[1]).replace(/,/g, "")) : 0; };
+
+  /**
+   * Read every line in a blob of text.
+   *
+   * @param atSec when the text was SEEN -- a chat message's own timestamp. The
+   *        readable line carries no clock of its own, because the message it
+   *        arrives in already has one. Falls back to now, which is right for a
+   *        line read the moment it is posted and the best available otherwise.
+   */
+  function pasteParse(text, nowMs, atSec) {
+    var now = Number(nowMs) || Date.now();
+    var at = Number(atSec) || Math.floor(now / 1000);
+    var out = [], m;
+
+    PASTE_RE.lastIndex = 0;
+    while ((m = PASTE_RE.exec(String(text || "")))) {
+      var week = weekFromLabel(m[1] + " " + Number(m[2]), now);
+      if (week === null) continue;
+
+      var mid = m[4];
+      var row = { week: week, id: Number(m[5]), name: m[3], at: at,
+                  gymE: pasteNum(mid.match(/([\d,]+)e gym/)),
+                  str: 0, def: 0, spe: 0, dex: 0,
+                  atkE: pasteNum(mid.match(/([\d,]+)e attacks/)),
+                  xan: null };
+
+      var paren = mid.match(/\(([^)]*)\)/);
+      if (paren) {
+        PASTE_STATS.forEach(function (k) {
+          var hit = paren[1].match(new RegExp(k[1] + "\\s+([\\d,]+)"));
+          if (hit) row[k[0]] = Number(hit[1].replace(/,/g, ""));
+        });
+      }
+      var st = mid.match(/copied ([A-Z][a-z]{2} \d{2}:\d{2})/);
+      if (st) row.at = pasteStampParse(st[1], week) || row.at;
+
+      if (/no xanax/.test(mid)) row.xan = 0;
+      else {
+        var xn = mid.match(/([\d,]+) xanax/);
+        if (xn) row.xan = Number(xn[1].replace(/,/g, ""));
+      }
+
+      // Verify last, against the data we just read back. A line that was cut
+      // short or edited reconstructs to something else and is dropped, rather
+      // than being believed as a smaller week.
+      if (pasteCk(pasteCanon(row, row.name)) !== m[6]) continue;
+      out.push(row);
+    }
+
+    return out.concat(pasteParseLegacy(text));
+  }
+
+  /** The 0.9.88 pipe format. Kept so the changeover does not lose a week. */
+  function pasteParseLegacy(text) {
     var out = [];
     String(text || "").split(/\s+/).forEach(function (tok) {
       if (tok.slice(0, LINE_TAG.length + 1) !== LINE_TAG + "|") return;
       var f = tok.split("|");
       if (f.length !== 13) return;
       var ck = f.pop();
-      if (pasteCk(f.join("|")) !== ck) return;
-      var n = function (i) { var v = Number(f[i]); return f[i] !== "" && isFinite(v) ? v : null; };
-      var row = { week: n(1), id: n(2), name: f[3], gymE: n(4), str: n(5), def: n(6),
-                  spe: n(7), dex: n(8), atkE: n(9),
-                  xan: f[10] === "-" ? null : n(10), at: n(11) };
+      var n = 0;
+      var body = f.join("|");
+      for (var i = 0; i < body.length; i++) n = (n * 31 + body.charCodeAt(i)) % 9973;
+      if (("000" + n).slice(-4) !== ck) return;
+      var num = function (i) { var v = Number(f[i]); return f[i] !== "" && isFinite(v) ? v : null; };
+      var row = { week: num(1), id: num(2), name: f[3], gymE: num(4), str: num(5), def: num(6),
+                  spe: num(7), dex: num(8), atkE: num(9),
+                  xan: f[10] === "-" ? null : num(10), at: num(11) };
       // Half a row is worse than none: a member listed with a plausible-looking
       // week they did not do is exactly the kind of wrong this board must not
       // produce.
@@ -8361,6 +8670,60 @@
     return { rows: rows, added: added, otherWeek: other, read: mine.length };
   }
 
+  // ---- Reading the board out of faction chat --------------------------------
+  //
+  // The card used to ask somebody to select the whole chat, copy it, and paste
+  // it into a box. The box is gone: this reads the faction channel itself.
+  //
+  // It reads the channel's TEXT rather than walking its message nodes. Torn's
+  // chat is React and every class name is hash-suffixed and changes on each
+  // Torn rebuild, so a walker keyed to `content___` would quietly stop finding
+  // messages one day and the board would simply go empty with nothing to
+  // explain it. The line is anchored and checksummed, so scanning a blob of
+  // text is no less safe and survives any rebuild.
+  //
+  // READ ONLY. Nothing is typed and nothing is sent. A script posting in your
+  // faction's chat is a different thing entirely and is not this feature.
+  function factionChatBox() {
+    var root = document.getElementById("chatRoot");
+    // You are in one faction, so there is one faction channel. Matched by
+    // prefix because the id carries the faction number, which this script has
+    // never needed to know and still does not.
+    return root ? root.querySelector('div[id^="faction-"]') : null;
+  }
+
+  // What the merged board says, for deciding whether anything actually moved.
+  // Row count alone misses the common case: a member re-posting an updated
+  // line for a week they were already on the board for.
+  function pasteSig(rows) {
+    return (rows || []).map(function (r) {
+      return [r.id, r.gymE, r.atkE, r.str, r.def, r.spe, r.dex, r.xan, r.at].join(":");
+    }).join("|");
+  }
+
+  var lastChatText = "";
+
+  function scanFactionChat() {
+    var box = factionChatBox();
+    if (!box) return;
+    var text = box.textContent || "";
+    // Chat is re-rendered constantly. Re-parsing only when the text actually
+    // changed keeps this to a string compare on almost every tick.
+    if (!text || text === lastChatText) return;
+    lastChatText = text;
+
+    var wkNow = weekKey(Date.now());
+    var have = state.pasted && state.pasted.week === wkNow && Array.isArray(state.pasted.rows)
+      ? state.pasted.rows : [];
+    var res = pasteCollect(have, text, wkNow);
+    if (!res.read) return;
+    if (pasteSig(res.rows) === pasteSig(have)) return;
+
+    state.pasted = { week: wkNow, rows: res.rows, at: Date.now() };
+    storeSet("pasted", state.pasted);
+    if (state.open) renderPanel();
+  }
+
   // Your own week, in the shape a line is made from. Every figure comes off
   // this device's own ledger -- the gym counters are not in personalstats at
   // all, so there is nothing to ask Torn for and nothing that needs a key.
@@ -8388,8 +8751,8 @@
     return '<div class="gc-card"><h3>Faction board by paste</h3>' +
       '<p class="muted" style="margin:0 0 9px">Torn will only tell one person the whole faction\u2019s gym energy, ' +
       'and only if their <b>position</b> grants faction API access. This does not ask Torn anything: your line is ' +
-      'built from the training this script has already watched on this device. Copy it into faction chat, and ' +
-      'whoever is keeping the board pastes everybody\u2019s in below.</p>' +
+      'built from the training this script has already watched on this device. Copy it into faction chat \u2014 ' +
+      'everybody else\u2019s lines are read out of chat for you.</p>' +
 
       '<div class="row"><div><b>Your week</b><div class="muted">' +
       fmt(mine.gymE) + "e into the gym" +
@@ -8402,13 +8765,10 @@
         : '<span class="chip wait">KEY</span>') +
       "</div>" +
 
-      '<textarea id="gcbPaste" rows="3" placeholder="Paste the lines from faction chat here" ' +
-      'style="width:100%;margin-top:9px;box-sizing:border-box;background:rgba(0,0,0,.25);' +
-      'border:1px solid rgba(255,255,255,.14);border-radius:8px;color:inherit;padding:7px;' +
-      'font:11px/1.4 ui-monospace,Menlo,monospace;resize:vertical"></textarea>' +
-      '<div class="actions" style="margin-top:7px">' +
-      (have.length ? '<button class="gc-btn secondary" data-act="pasteclear">Clear board</button>' : "") +
-      '<button class="gc-btn" data-act="pasteread">Read pasted lines</button></div>' +
+      (have.length
+        ? '<div class="actions" style="margin-top:7px">'
+          + '<button class="gc-btn secondary" data-act="pasteclear">Clear board</button></div>'
+        : "") +
 
       (have.length
         ? '<div class="gcb-brow head" style="margin-top:10px"><span class="gcb-brank">#</span>' +
@@ -8417,8 +8777,10 @@
           have.map(function (r, i) { return pasteRowHtml(r, i, mine.id); }).join("") +
           '<p class="muted gc-cap">Week of ' + boardWeekLabel(weekStartMs(wk)) +
           ' \u00b7 ' + have.length + (have.length === 1 ? " member" : " members") +
-          ' \u00b7 each line is as fresh as the moment that member copied it.</p>'
-        : '<p class="muted" style="margin:9px 0 0">Nothing collected yet.</p>') +
+          ' \u00b7 read from faction chat \u00b7 each line is as fresh as the moment that member copied it.</p>'
+        : '<p class="muted" style="margin:9px 0 0">Nothing collected yet. Lines appear here as ' +
+          'members paste them into faction chat' +
+          (factionChatBox() ? "" : " \u2014 open faction chat so they can be read") + '.</p>') +
       "</div>";
   }
 
@@ -10138,6 +10500,10 @@
       cancelPing(PING_ENERGY);
       cancelPing(PING_XAN_FULL);
       cancelPing(PING_TICK);
+      // Forget what was armed as well. Leaving it set means that when war stack
+      // comes back off, the drift guard compares against a moment from before
+      // the stack and can decide nothing changed — so no ping is re-armed at all.
+      state.armedFullAt = 0;
       return;
     }
     var now = Date.now();
@@ -10146,8 +10512,20 @@
     // at 149 scheduled no "energy full" ping at all — the last two points were
     // treated as already arrived.
     var fullSoon = toFull > 5 && !barFull();
-    if (fullSoon) pingAt(PING_ENERGY, "Energy full — train " + focusLabel(), now + toFull * 1000);
-    else cancelPing(PING_ENERGY);
+    if (fullSoon) {
+      var fullAtMs = now + toFull * 1000;
+      // Regen moves `toFull` down by exactly the time that has passed, so the
+      // ABSOLUTE fill moment does not move while you simply wait. It moves only
+      // when energy is spent or a can is drunk — so a drift this large means the
+      // scheduled ping is now wrong, and anything smaller is just the clock.
+      if (!state.armedFullAt || Math.abs(fullAtMs - state.armedFullAt) > 60000) {
+        pingAt(PING_ENERGY, "Energy full — train " + focusLabel(), fullAtMs);
+        state.armedFullAt = fullAtMs;
+      }
+    } else {
+      cancelPing(PING_ENERGY);
+      state.armedFullAt = 0;
+    }
 
     if (state.mode === "jump") {
       pingAt(PING_TICK, "Happy tick — jump window", now + nextTickSec() * 1000);
@@ -10370,6 +10748,10 @@
       "#" + PANEL_ID + " .gcb-icon.on{background:#f2a03d;border-color:#f2a03d;color:#12161b}" +
       "#" + PANEL_ID + " .gcb-icon:active{transform:scale(.94)}" +
 
+      "#" + PANEL_ID + " .gcb-happy{margin:6px 0 0;padding:7px 9px;border-radius:8px;" +
+      "font-size:11.5px;line-height:1.45;background:rgba(224,179,87,.10);" +
+      "border:1px solid rgba(224,179,87,.38);color:#e7d3a8}" +
+      "#" + PANEL_ID + " .gcb-happy b{color:#ffd98a}" +
       "#" + PANEL_ID + " .gcb-verdict{flex:0 0 auto;padding:11px 13px 9px;" +
       "background:radial-gradient(120% 100% at 0% 0%,rgba(242,160,61,.10),transparent 60%)}" +
       "#" + PANEL_ID + " .gcb-verdict.go{background:radial-gradient(120% 100% at 0% 0%,rgba(63,191,127,.12),transparent 60%)}" +
@@ -10939,6 +11321,7 @@
           (c.waste ? '<div class="gcb-waste">' + c.waste + "</div>" : "") +
           "</div>" +
           '<div class="gcb-meters">' + energyMeterHtml() + "</div>" +
+          happyStripHtml() +
           planStripHtml()
         : tab === "now"
         // Folded, on Now: the same compact bar, but it expands rather than
@@ -10985,8 +11368,6 @@
       var body2 = panel.querySelector(".gc-body");
       if (body2) body2.scrollTop = bodyY;
     }
-    var box = panel.querySelector("#gcbPaste");
-    if (box) box.value = draftPaste;
     var key2 = panel.querySelector("#gcKey");
     if (key2) {
       key2.value = keyVal || draftKey || "";
@@ -11302,10 +11683,6 @@
     panel.addEventListener(
       "input",
       function (e) {
-        if (e.target && e.target.id === "gcbPaste") {
-          draftPaste = String(e.target.value || "");
-          return;
-        }
         if (!isKey(e.target)) return;
         draftKey = String(e.target.value || "");
         trySaveKey(draftKey);
@@ -11726,29 +12103,6 @@
       }
       copyText(pasteLine(mineNow));
       showToast("Copied", "Paste it into faction chat.");
-      renderPanel();
-      return;
-    }
-    if (t.dataset.act === "pasteread") {
-      var boxEl = document.getElementById("gcbPaste");
-      var text = boxEl ? String(boxEl.value || "") : draftPaste;
-      var wkNow = weekKey(Date.now());
-      var haveNow = state.pasted && state.pasted.week === wkNow && Array.isArray(state.pasted.rows)
-        ? state.pasted.rows : [];
-      var res = pasteCollect(haveNow, text, wkNow);
-      state.pasted = { week: wkNow, rows: res.rows, at: Date.now() };
-      storeSet("pasted", state.pasted);
-      draftPaste = "";
-      if (boxEl) boxEl.value = "";
-      showToast(
-        res.read ? "Read " + res.read + (res.read === 1 ? " line" : " lines") : "No lines found",
-        res.read
-          ? res.added + " new, " + (res.read - res.added) + " updated" +
-            (res.otherWeek ? " \u00b7 " + res.otherWeek + " from another week ignored" : "")
-          : (res.otherWeek
-              ? res.otherWeek + " line(s) were from another gym week."
-              : "Nothing in that paste looked like a line from this script.")
-      );
       renderPanel();
       return;
     }
@@ -12242,6 +12596,12 @@
         }
         dockInGym();
       }, 1500);
+      // Faction chat, for board lines. Its own slower tick: chat re-renders
+      // constantly and there is no hurry, so this is a string compare on
+      // almost every pass and a parse only when the text actually changed.
+      setInterval(function () {
+        try { scanFactionChat(); } catch (_) { /* chat is optional furniture */ }
+      }, 6000);
       // The item page fills its rows in after load, so keep looking for a while.
       if (/item\.php/i.test(location.href)) {
         var scanTries = 0;
