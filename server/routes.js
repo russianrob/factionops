@@ -639,11 +639,17 @@ router.delete(/^\/api\/shot\/([a-f0-9]{8,64})$/, (req, res) => {
 const _SD_CARDS = pathResolve("/opt/warboard/server/public/showdown/cards");
 const _SD_IDS = pathResolve("/opt/warboard/server/public/showdown/card-ids.json");
 
-let _sdIds = null;
+// Re-read when the file changes: deploying a larger pool writes a new
+// card-ids.json, and a set cached for the process lifetime would 404 every
+// new slot until somebody happened to restart warboard.
+let _sdIds = null, _sdIdsMtime = 0;
 function _sdSlotExists(key) {
-  if (!_sdIds) {
+  let mtime = 0;
+  try { mtime = statSync(_SD_IDS).mtimeMs; } catch { mtime = 0; }
+  if (!_sdIds || mtime !== _sdIdsMtime) {
     try { _sdIds = new Set(JSON.parse(readFileSync(_SD_IDS, "utf8"))); }
     catch { _sdIds = new Set(); }
+    _sdIdsMtime = mtime;
   }
   return _sdIds.has(key);
 }
@@ -679,7 +685,11 @@ router.post(
     if (!key) return res.status(400).json({ error: "bad card id" });
     if (!_sdSlotExists(key)) return res.status(404).json({ error: "no such card" });
 
-    const ip = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim();
+    // The LAST element, not the first. nginx uses $proxy_add_x_forwarded_for,
+    // which APPENDS the real peer to whatever the client sent — so the first
+    // element is attacker-written and gives a fresh bucket per made-up value.
+    const fwd = String(req.headers["x-forwarded-for"] || "").split(",").map((x) => x.trim()).filter(Boolean);
+    const ip = fwd.length ? fwd[fwd.length - 1] : String(req.ip || "");
     if (!_sdRateOk(ip)) {
       return res.status(429).json({ error: "Too many uploads for now — try again later." });
     }
