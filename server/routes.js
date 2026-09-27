@@ -14,6 +14,7 @@ import { verifyTornApiKey, issueToken, verifyToken, requireAuth, isPoolEligible 
 import { handleStakeoutSync, resolveOwnerId } from "./stakeout-store.js";
 import { runAgentTurn, runAgentTurnResolvingSources, isValidUserscriptName, isValidInstructionsName, stubProposalError, sanitizeDeployName } from "./agent-service.js";
 import { runJsOnDevice } from "./agent-relay-client.js";
+import { playerKey as sdPlayerKey, imageKind as sdImageKind, MAX_BYTES as SD_MAX_BYTES } from "./showdown-card-upload.js";
 import { TOTP as _OTPAuthTOTP, Secret as _OTPAuthSecret } from "otpauth";
 import { readFileSync as _totpReadFile } from "node:fs";
 
@@ -623,6 +624,96 @@ router.delete(/^\/api\/shot\/([a-f0-9]{8,64})$/, (req, res) => {
   if (!removed) return res.status(404).json({ error: "not found" });
   return res.json({ ok: true, id, removed });
 });
+
+// ── Showdown card art ───────────────────────────────────────────────────────
+// The Showdown game ships no card images (licensed player photography), so a
+// card with no art falls back to a drawn face. This lets a player supply the
+// missing image from the phone they are playing on.
+//
+// Chosen OPEN by the owner, so the constraints that auth would normally carry
+// live in the checks below and in showdown-card-upload.js. See that file for
+// why each one is there. The short version: the write surface is the 3,276
+// card slots the page ships and nothing else, a filled slot is never
+// overwritten, and the magic bytes decide the extension because a global
+// nosniff header makes a mislabelled image fail to render.
+const _SD_CARDS = pathResolve("/opt/warboard/server/public/showdown/cards");
+const _SD_IDS = pathResolve("/opt/warboard/server/public/showdown/card-ids.json");
+
+let _sdIds = null;
+function _sdSlotExists(key) {
+  if (!_sdIds) {
+    try { _sdIds = new Set(JSON.parse(readFileSync(_SD_IDS, "utf8"))); }
+    catch { _sdIds = new Set(); }
+  }
+  return _sdIds.has(key);
+}
+
+// 20 an hour per address. A person filling in their own team's cards never
+// notices; a script filling 3,276 slots takes a week and trips the disk
+// guard first.
+const _sdRate = new Map();
+function _sdRateOk(ip, nowMs = Date.now()) {
+  const rec = _sdRate.get(ip);
+  if (!rec || nowMs >= rec.resetAt) { _sdRate.set(ip, { n: 1, resetAt: nowMs + 3600_000 }); return true; }
+  rec.n += 1;
+  return rec.n <= 20;
+}
+
+/** Bytes already stored. A hard ceiling on what an open route can cost. */
+const _SD_DIR_CAP = 400 * 1024 * 1024;
+function _sdDirBytes() {
+  let total = 0;
+  try {
+    for (const f of readdirSync(_SD_CARDS)) {
+      try { total += statSync(pathJoin(_SD_CARDS, f)).size; } catch {}
+    }
+  } catch {}
+  return total;
+}
+
+router.post(
+  "/api/showdown/card/:id",
+  express.raw({ type: ["image/png", "image/jpeg"], limit: SD_MAX_BYTES }),
+  (req, res) => {
+    const key = sdPlayerKey(req.params.id);
+    if (!key) return res.status(400).json({ error: "bad card id" });
+    if (!_sdSlotExists(key)) return res.status(404).json({ error: "no such card" });
+
+    const ip = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim();
+    if (!_sdRateOk(ip)) {
+      return res.status(429).json({ error: "Too many uploads for now — try again later." });
+    }
+
+    const body = Buffer.isBuffer(req.body) ? req.body : null;
+    if (!body || !body.length) return res.status(400).json({ error: "no image sent" });
+    if (body.length > SD_MAX_BYTES) return res.status(413).json({ error: "image too large" });
+
+    // Content-Type is a claim. This is not.
+    const kind = sdImageKind(body);
+    if (!kind) return res.status(415).json({ error: "not a PNG or JPEG" });
+    const ext = kind === "png" ? ".png" : ".jpg";
+
+    // A filled slot is never overwritten: the worst an open route can do is
+    // fill an empty one, which is the feature.
+    for (const e of [".png", ".jpg"]) {
+      if (existsSync(pathJoin(_SD_CARDS, key + e))) {
+        return res.status(409).json({ error: "that card already has an image" });
+      }
+    }
+    if (_sdDirBytes() + body.length > _SD_DIR_CAP) {
+      return res.status(507).json({ error: "card art storage is full" });
+    }
+
+    try {
+      mkdirSync(_SD_CARDS, { recursive: true });
+      writeFileSync(pathJoin(_SD_CARDS, key + ext), body);
+    } catch (e) {
+      console.warn(`[showdown] could not store card art for ${key}: ${e.message}`);
+      return res.status(500).json({ error: "could not save" });
+    }
+    return res.json({ ok: true, url: `cards/${key}${ext}` });
+  }
+);
 
 // ── Weekly grocery circular ─────────────────────────────────────────────────
 // A phone Shortcut POSTs the week's circular PDF URL; the server fetches it,
