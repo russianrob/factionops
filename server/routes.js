@@ -12884,6 +12884,24 @@ router.get("/api/prewar", async (req, res) => {
       error: "No war found for your faction, so there is nobody to scout. Enter an enemy faction ID.",
     });
   }
+
+  // Name the faction being scouted. Previously this came ONLY off the live
+  // war record, whose enemyFactionName is never written — so the header read
+  // "Faction 8795" while the same report named past opponents fine. And on
+  // the hand-typed-id path there is no war record at all, so it could never
+  // produce a name. Warboard's own war history knows these factions; ask it.
+  if (!enemyName) {
+    try {
+      enemyName = prewar.enemyNameFrom({
+        war: null,
+        history: warHistory.listWars(info.factionId) || [],
+        id: enemy,
+      });
+    } catch (e) {
+      // A missing name is cosmetic; it must never fail the scout.
+      console.warn(`[prewar] name lookup for ${enemy} failed: ${e.message}`);
+    }
+  }
   // 730 days of history exist, but averaging much beyond a fortnight blends in
   // rosters that have since changed.
   const days = Math.min(30, Math.max(3, Number(req.query.days) || 14));

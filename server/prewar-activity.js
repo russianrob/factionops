@@ -50,6 +50,37 @@ const CACHE_DIR = new URL("./data/prewar-cache/", import.meta.url).pathname;
  * Averaging is what makes the curve trustworthy: a single dead Tuesday at
  * 03:00 should not read as a permanent hole in their coverage.
  */
+/**
+ * The best name warboard already knows for a faction, or ''.
+ *
+ * The scout header read "Faction 8795" while the same report named a past
+ * opponent "Helvete X" two lines below. Two gaps: the live war record
+ * carries enemyFactionId but nothing ever writes enemyFactionName, and a
+ * hand-typed id has no war record at all — so the single source the
+ * endpoint consulted was empty on both paths. The answer was already on
+ * disk: warboard's own war history had 8795 as "The Brotherhood of Battle".
+ *
+ * Returns '' rather than a "Faction N" placeholder, so a caller that can
+ * reach the API knows there is still something worth asking for.
+ */
+export function enemyNameFrom({ war, history, id } = {}) {
+  const clean = (v) => String(v == null ? '' : v).trim();
+  const onWar = clean(war && war.enemyFactionName);
+  if (onWar) return onWar;
+
+  const want = clean(id);
+  if (!want) return '';
+  // Most recent naming wins — factions rename themselves, and the latest
+  // war we recorded is the closest thing to what they are called today.
+  let best = null;
+  for (const w of (history || [])) {
+    if (!w || clean(w.enemyFactionId) !== want) continue;
+    if (!clean(w.enemyFactionName)) continue;
+    if (!best || Number(w.warStart || 0) > Number(best.warStart || 0)) best = w;
+  }
+  return best ? clean(best.enemyFactionName) : '';
+}
+
 export function hourCurve(buckets) {
   const sums = new Array(24).fill(0);
   const counts = new Array(24).fill(0);

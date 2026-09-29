@@ -6,8 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  hourCurve, edgeTable, cacheKeyFor, nextDelay, HOUR, SPACING_MS,
-} from "./prewar-activity.js";
+  hourCurve, edgeTable, cacheKeyFor, nextDelay, HOUR, SPACING_MS, enemyNameFrom } from "./prewar-activity.js";
 
 /** A bucket as FFScouter returns it. */
 const b = (isoHour, ratio) => ({
@@ -150,4 +149,82 @@ test("spacing stays under ten per minute", () => {
   // trip intermittently, which is how the first probe run failed.
   assert.ok(SPACING_MS > 6000, `spacing ${SPACING_MS}ms is not under 10/min`);
   assert.equal(HOUR, 3600);
+});
+
+// ── naming the faction being scouted ───────────────────────────────────
+//
+// The scout header read "Faction 8795" while, two lines below, the same
+// report named a past opponent as "Helvete X". Names worked for everyone
+// except the subject.
+//
+// Two gaps caused it. The live war record carries enemyFactionId but its
+// enemyFactionName is never written, so the only source the endpoint
+// consulted was empty; and when an id is typed in by hand there is no war
+// record at all, so that path could never produce a name. Warboard
+// already knew the answer — its own war history had 8795 down as
+// "The Brotherhood of Battle" from a war it recorded.
+
+test("prefers the name on the live war record", () => {
+  const got = enemyNameFrom({
+    war: { enemyFactionId: "8795", enemyFactionName: "The Brotherhood of Battle" },
+    history: [],
+    id: "8795",
+  });
+  assert.equal(got, "The Brotherhood of Battle");
+});
+
+test("falls back to war history when the live record has no name", () => {
+  const got = enemyNameFrom({
+    war: { enemyFactionId: "8795", enemyFactionName: null },
+    history: [{ enemyFactionId: "8795", enemyFactionName: "The Brotherhood of Battle", warStart: 10 }],
+    id: "8795",
+  });
+  assert.equal(got, "The Brotherhood of Battle");
+});
+
+test("works with no war record at all — the typed-in-id case", () => {
+  const got = enemyNameFrom({
+    war: null,
+    history: [{ enemyFactionId: "8795", enemyFactionName: "The Brotherhood of Battle", warStart: 10 }],
+    id: "8795",
+  });
+  assert.equal(got, "The Brotherhood of Battle");
+});
+
+test("takes the most recent naming when a faction has renamed itself", () => {
+  const got = enemyNameFrom({
+    war: null,
+    id: "8795",
+    history: [
+      { enemyFactionId: "8795", enemyFactionName: "Old Name", warStart: 10 },
+      { enemyFactionId: "8795", enemyFactionName: "New Name", warStart: 999 },
+      { enemyFactionId: "8795", enemyFactionName: "Middle Name", warStart: 500 },
+    ],
+  });
+  assert.equal(got, "New Name");
+});
+
+test("never returns another faction's name", () => {
+  const got = enemyNameFrom({
+    war: null,
+    id: "8795",
+    history: [{ enemyFactionId: "26154", enemyFactionName: "The Rifle Medics", warStart: 10 }],
+  });
+  assert.equal(got, "");
+});
+
+test("ids compare loosely — history stores them as strings, wars as numbers", () => {
+  const got = enemyNameFrom({
+    war: null, id: 8795,
+    history: [{ enemyFactionId: "8795", enemyFactionName: "The Brotherhood of Battle", warStart: 1 }],
+  });
+  assert.equal(got, "The Brotherhood of Battle");
+});
+
+test("returns empty rather than a placeholder, so the caller can try the API", () => {
+  assert.equal(enemyNameFrom({ war: null, history: [], id: "999" }), "");
+  assert.equal(enemyNameFrom({ war: null, history: null, id: null }), "");
+  assert.equal(enemyNameFrom({}), "");
+  // A blank or whitespace name is not a name.
+  assert.equal(enemyNameFrom({ war: { enemyFactionName: "   " }, id: "1", history: [] }), "");
 });
