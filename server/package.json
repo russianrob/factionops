@@ -27,5 +27,8 @@
     "socket.io": "^4.8.1",
     "web-push": "^3.6.7",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "linkedom": "^0.18.0"
   }
 }

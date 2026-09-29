@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.76
+// @version      3.2.77
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -28,6 +28,13 @@
 // v3.1.70 — Banker-claim optimistic clear on vault-request Send. Hitting Send now POSTs to /api/oc/vault-request/:id/claim before opening the Controls tab. Server marks the request as claimed-by-this-banker and hides it from listRequests() for every viewer immediately, so all admins see it disappear without waiting for the 20s fundsnews poll → 15s client poll cycle (previously took ~3 manual refreshes to clear). If the matching fundsnews event arrives within the 90s claim TTL, the request is fully deleted as before. If the banker bails (closes Torn tab, never sends the money), the claim expires and the request reappears on every client's next list fetch — no orphaned requests. Two bankers clicking the same Send near-simultaneously: the second gets a 409 Conflict with "Already claimed by X" and their UI shows that message instead of removing the row.
 // v3.1.69 — Scope DOM reader now rejects elements nested inside a completed-crime reward block. Torn's Completed tab shows per-OC "+N scope" chips (e.g. Pet Project +2 scope) whose wrapper class also contains the word "scope", so strategies 1 and 2 were scraping those per-OC rewards and pushing them as if they were the faction's current scope balance. That's the source of the 16 → 2 → 5 oscillation in v3.1.68's stability window logs. New insideCompletedContext() walks up ancestors and bails on any node whose className matches completed|executed|ended|reward|payout|result|history. Both strategy 1 (class-match) and strategy 2 (text-match) honor the guard.
 // v3.1.68 — Scope stability window: Torn's React re-renders the scope badge during OC state transitions and the DOM class-match strategy sometimes catches intermediate values. Observed 04-24 05:00:24-05:00:41 EDT: 16 → 2 → 5 → 2 pushed in 20s, all class:container___THb7U scope_, when real scope was 16. Delay the commit + push by 2.5s; if a different value arrives inside the window, reset the timer and drop the transient. Legitimate scope changes settle well inside 2.5s so real edits feel ~live. Also moves CONFIG.SCOPE and GM_setValue inside the timer (previously they committed immediately; only the push was debounced).
+// v3.2.77 — Fix: the chip vanished in 3.2.76. That edit replaced a block of
+//           ocWeakSlots() whose range also swallowed the weight lookup, leaving
+//           `weight` an undeclared reference — every slot threw, the one
+//           try/catch around the whole loop ate it, and the scan returned an
+//           empty list, which renders as no chip. A syntax check cannot catch
+//           that. The per-slot body now has its own try/catch, so one bad slot
+//           costs one row instead of the entire list.
 // v3.2.76 — Weak-slot chip names the PLAYER and links the crime. 3.2.75 read
 //           .honor-text only, which a COLLAPSED card does not render, so every
 //           row fell back to the role and the chip said "Enforcer 61%" — true,
@@ -317,7 +324,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.76';
+    const SCRIPT_VERSION = '3.2.77';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -3273,6 +3280,7 @@
         const out = [];
         try {
             for (const header of document.querySelectorAll('[class*="slotHeader"]')) {
+              try {
                 const scEl = header.querySelector('[class*="successChance"]');
                 if (!scEl) continue;
                 const m = (scEl.textContent || '').match(/(\d+(?:\.\d+)?)/);
@@ -3336,7 +3344,25 @@
                     nScope = nScope.parentElement; nHops++;
                 }
 
+                // Weight lives in a tile below the slot, under a literal
+                // "WEIGHT" label. Finding it by label survives the class
+                // churn that finding it by class would not.
+                let weight = null;
+                let wScope = header.parentElement, wHops = 0;
+                while (wScope && wHops < 4 && weight == null) {
+                    for (const el of wScope.querySelectorAll('div,span')) {
+                        if (!/^\s*weight\s*$/i.test(el.textContent || '')) continue;
+                        const host = el.parentElement;
+                        const wm = host && (host.textContent || '').match(/(\d+(?:\.\d+)?)\s*%/);
+                        if (wm) { weight = parseFloat(wm[1]); break; }
+                    }
+                    wScope = wScope.parentElement; wHops++;
+                }
+
                 out.push({ name, role, pct, weight, crimeId, crimeName });
+              } catch (slotErr) {
+                console.warn('[OC Spawn] weak-slot: skipping one slot:', slotErr && slotErr.message);
+              }
             }
         } catch (e) {
             console.warn('[OC Spawn] weak-slot scan failed:', e && e.message);
