@@ -89,11 +89,123 @@ function _persistSeen(factionId) {
   }
 }
 
+// factionId -> Set<crimeId> already warned about a weak slot.
+// Separate file from the completions set: different lifecycle, and mixing
+// them would make one feature's cap evict the other's history.
+const _lowSeen = new Map();
+// factionId -> ms of the last evaluation. The poller ticks every minute;
+// this check is deliberately hourly, which also debounces a crime whose
+// slots are still being filled from firing on a half-staffed roster.
+const _lowLastRun = new Map();
+const LOW_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const LOW_SEEN_CAP = 2000;
+
+function _lowSeenFile(factionId) {
+  try { mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+  return pathJoin(DATA_DIR, `oc-low-success-seen-${factionId}.json`);
+}
+
+function _facLowSeen(factionId) {
+  const k = String(factionId);
+  if (_lowSeen.has(k)) return _lowSeen.get(k);
+  let set = new Set();
+  try {
+    const f = _lowSeenFile(k);
+    if (existsSync(f)) {
+      const raw = JSON.parse(readFileSync(f, 'utf-8'));
+      if (Array.isArray(raw.ids)) set = new Set(raw.ids.map(String));
+    }
+  } catch (e) {
+    console.warn(`[oc-low] load seen set for ${k}: ${e.message}`);
+  }
+  _lowSeen.set(k, set);
+  return set;
+}
+
+function _persistLowSeen(factionId) {
+  const k = String(factionId);
+  const set = _lowSeen.get(k);
+  if (!set) return;
+  try {
+    writeFileSync(_lowSeenFile(k), JSON.stringify({ ids: Array.from(set), savedAt: Date.now() }));
+  } catch (e) {
+    // A write that fails silently is how a seen-set resets and re-fires
+    // the whole backlog after a restart. Say so.
+    console.warn(`[oc-low] persist seen set for ${k}: ${e.message}`);
+  }
+}
+
 function _filledCount(slots) {
   if (!Array.isArray(slots)) return 0;
   let n = 0;
   for (const s of slots) if (s && (s.user_id != null || s.user != null)) n++;
   return n;
+}
+
+// ── Low success chance detection ───────────────────────────────────────
+//
+// Torn renders a per-slot success chance on the OC page (the number in
+// `successChance___*`). The API exposes the SAME number as each slot's
+// `checkpoint_pass_rate` — verified against 81 filled slots in faction
+// 42055, every one an exact match. That matters: it means this check runs
+// server-side on a timer and never needs anybody to have the page open.
+//
+// `success_chance` does NOT exist on /v2/faction/crimes?cat=available.
+// Reaching for that name silently yields undefined and the check goes dead
+// without failing, so the field read here is deliberate.
+
+/** Below this, a slot is worth waking an admin for. */
+export const LOW_SUCCESS_THRESHOLD = 65;
+
+/**
+ * Crimes carrying at least one filled slot below the threshold.
+ *
+ * THE TRAP: Torn reports `checkpoint_pass_rate: 0` for UNFILLED slots.
+ * Read without checking occupancy, every recruiting crime looks like a
+ * 0% catastrophe and alerts forever. Occupancy is checked first, always.
+ *
+ * Absent or non-numeric rates are skipped rather than coerced — unknown
+ * is not the same as terrible, and coercing it cries wolf whenever Torn
+ * omits a field.
+ *
+ * @param seen  crime ids already notified; those are omitted entirely
+ * @param names uid -> member name. The crimes endpoint returns slot.user
+ *              as an id and progression only, with NO name — a live run
+ *              printed "Enforcer 61%", which says a slot is weak but not
+ *              who to go and talk to.
+ */
+export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRESHOLD, seen, names } = {}) {
+  const out = [];
+  for (const c of (availableCrimes || [])) {
+    if (!c || c.id == null) continue;
+    const cid = String(c.id);
+    if (seen && seen.has(cid)) continue;
+
+    const weak = [];
+    for (const s of (c.slots || [])) {
+      if (!s) continue;
+      // Occupancy first. See THE TRAP above.
+      const uid = s.user_id ?? s.user?.id ?? null;
+      if (uid == null) continue;
+      const pct = typeof s.checkpoint_pass_rate === 'number' ? s.checkpoint_pass_rate : null;
+      if (pct == null || !Number.isFinite(pct)) continue;
+      if (pct >= threshold) continue;
+      weak.push({
+        userId: String(uid),
+        // Slot name first if Torn ever supplies one, roster second.
+        name: String(s.user?.name || (names && names[String(uid)]) || ''),
+        // 'Muscle #2' -> 'Muscle', matching how slots are keyed elsewhere.
+        position: String(s.position || '').replace(/\s*#\d+$/, ''),
+        pct,
+      });
+    }
+    if (weak.length) {
+      // Weakest first: the one to fix is the one that reads first.
+      weak.sort((a, b) => a.pct - b.pct);
+      out.push({ crimeId: cid, name: String(c.name || 'OC'), weak });
+    }
+  }
+  return out;
 }
 
 function _resolveAdmins(factionId, members) {
@@ -373,10 +485,88 @@ async function _checkCompletions(factionId, completedCrimes, members) {
   _persistSeen(fid);
 }
 
+/**
+ * Warn faction admins about OC slots unlikely to pass.
+ *
+ * Fires ONCE PER CRIME, ever — the owner's choice. One notification lists
+ * every weak slot on that crime and the crime is never mentioned again,
+ * even if another member later drops below the line. The alternative,
+ * re-alerting hourly while a crime sits in planning for days, is the
+ * fastest way to get the whole channel muted.
+ *
+ * Unlike the completions check there is NO silent first-run seeding: a
+ * crime already sitting weak is a live problem, and seeding would mean it
+ * is never reported at all.
+ */
+async function _checkLowSuccess(factionId, availableCrimes, members) {
+  if (!Array.isArray(availableCrimes) || availableCrimes.length === 0) return;
+  const fid = String(factionId);
+
+  const now = Date.now();
+  const last = _lowLastRun.get(fid) || 0;
+  if (now - last < LOW_CHECK_INTERVAL_MS) return;
+  _lowLastRun.set(fid, now);
+
+  const seen = _facLowSeen(fid);
+  // The crimes endpoint carries slot.user as an id with no name, so the
+  // roster supplies it. Without this an admin is told "Enforcer 61%" and
+  // has to go and work out which Enforcer.
+  const names = {};
+  for (const m of (members || [])) {
+    if (m && m.id != null && m.name) names[String(m.id)] = String(m.name);
+  }
+  const flagged = lowSuccessCrimes(availableCrimes, { seen, names });
+  if (!flagged.length) return;
+
+  const { adminIds } = _resolveAdmins(fid, members);
+  if (!adminIds.length) {
+    // No audience yet — do NOT mark these as seen, or they become
+    // permanently unreportable the moment an admin does show up.
+    console.log(`[oc-low] faction ${fid}: ${flagged.length} weak crime(s) but no admins resolved — holding`);
+    _lowLastRun.set(fid, 0);
+    return;
+  }
+
+  for (const c of flagged) {
+    const who = c.weak
+      .map(w => `${w.name || w.position} ${w.pct}%`)
+      .slice(0, 4)
+      .join(' · ');
+    const more = c.weak.length > 4 ? ` +${c.weak.length - 4} more` : '';
+    const payload = {
+      title: `Weak OC slot: ${c.name}`,
+      body: `Below ${LOW_SUCCESS_THRESHOLD}% — ${who}${more}`,
+      tag: `oc-low-${c.crimeId}`,
+      data: {
+        type: 'oc_low_success',
+        crimeId: c.crimeId,
+        factionId: fid,
+        // Tap-through lives on data.url; a top-level url is ignored by
+        // all three delivery channels.
+        url: 'https://www.torn.com/factions.php?step=your#/tab=crimes',
+      },
+    };
+    try {
+      await push.sendToPlayers(adminIds, payload, 'oc_low_success');
+      seen.add(c.crimeId);
+      console.log(`[oc-low] faction ${fid}: fired "${c.name}" (${c.weak.length} weak) to ${adminIds.length} admin(s)`);
+    } catch (e) {
+      // Not marked seen — a failed send should retry next hour, not vanish.
+      console.warn(`[oc-low] faction ${fid} push failed for ${c.crimeId}:`, e.message);
+    }
+  }
+
+  if (seen.size > LOW_SEEN_CAP) {
+    _lowSeen.set(fid, new Set(Array.from(seen).slice(-LOW_SEEN_CAP)));
+  }
+  _persistLowSeen(fid);
+}
+
 // ── Public API ─────────────────────────────────────────────────────────
 export async function checkAndNotify(factionId, availableCrimes, members, completedCrimes, cprCache) {
   await _checkReadyToSpawn(factionId, availableCrimes, members, cprCache);
   if (completedCrimes) await _checkCompletions(factionId, completedCrimes, members);
+  await _checkLowSuccess(factionId, availableCrimes, members);
 }
 
 export function checkAndNotifyAsync(factionId, availableCrimes, members, completedCrimes, cprCache) {
