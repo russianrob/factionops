@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.78
+// @version      3.2.79
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -28,6 +28,12 @@
 // v3.1.70 — Banker-claim optimistic clear on vault-request Send. Hitting Send now POSTs to /api/oc/vault-request/:id/claim before opening the Controls tab. Server marks the request as claimed-by-this-banker and hides it from listRequests() for every viewer immediately, so all admins see it disappear without waiting for the 20s fundsnews poll → 15s client poll cycle (previously took ~3 manual refreshes to clear). If the matching fundsnews event arrives within the 90s claim TTL, the request is fully deleted as before. If the banker bails (closes Torn tab, never sends the money), the claim expires and the request reappears on every client's next list fetch — no orphaned requests. Two bankers clicking the same Send near-simultaneously: the second gets a 409 Conflict with "Already claimed by X" and their UI shows that message instead of removing the row.
 // v3.1.69 — Scope DOM reader now rejects elements nested inside a completed-crime reward block. Torn's Completed tab shows per-OC "+N scope" chips (e.g. Pet Project +2 scope) whose wrapper class also contains the word "scope", so strategies 1 and 2 were scraping those per-OC rewards and pushing them as if they were the faction's current scope balance. That's the source of the 16 → 2 → 5 oscillation in v3.1.68's stability window logs. New insideCompletedContext() walks up ancestors and bails on any node whose className matches completed|executed|ended|reward|payout|result|history. Both strategy 1 (class-match) and strategy 2 (text-match) honor the guard.
 // v3.1.68 — Scope stability window: Torn's React re-renders the scope badge during OC state transitions and the DOM class-match strategy sometimes catches intermediate values. Observed 04-24 05:00:24-05:00:41 EDT: 16 → 2 → 5 → 2 pushed in 20s, all class:container___THb7U scope_, when real scope was 16. Delay the commit + push by 2.5s; if a different value arrives inside the window, reset the timer and drop the transient. Legitimate scope changes settle well inside 2.5s so real edits feel ~live. Also moves CONFIG.SCOPE and GM_setValue inside the timer (previously they committed immediately; only the push was debounced).
+// v3.2.79 — Weak-slot chip stays inside the page. The rows were nowrap with no
+//           width cap while docked, so four columns plus a View crime button ran
+//           past the container and pushed the whole PAGE sideways on a phone.
+//           Closed it is still a small chip beside the Spawn button; OPEN it
+//           becomes a full-width block below, rows wrap, and View crime sits at
+//           the right edge and is free to drop to its own line.
 // v3.2.78 — Weak-slot chip reads /api/oc/weak instead of the page, and every row
 //           gets a "View crime" link. Scraping it never worked: a COLLAPSED crime
 //           card carries the role and the percentage but not the player and not
@@ -332,7 +338,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.78';
+    const SCRIPT_VERSION = '3.2.79';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -2910,15 +2916,26 @@
         }
         #oc-weak-chip.oc-spawn-docked {
             position: static !important; display: inline-block;
-            margin: 10px 0 6px 8px; vertical-align: top; max-width: none;
+            margin: 10px 0 6px 8px; vertical-align: top;
+            /* Never wider than the column it sits in. Without this the rows
+               pushed the whole PAGE sideways on a phone. */
+            max-width: calc(100% - 8px); box-sizing: border-box;
+        }
+        /* Open, the list needs the full width — four columns and a button
+           do not fit beside the Spawn button on a phone, so it drops below. */
+        #oc-weak-chip.ocw-open {
+            display: block; width: 100%; margin-left: 0; margin-top: 6px;
         }
         #oc-weak-chip .ocw-head { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+        #oc-weak-chip .ocw-crime { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
         #oc-weak-chip .ocw-caret { color: #b0884f; font-size: 10px; }
         #oc-weak-chip .ocw-list { margin-top: 7px; border-top: 1px solid #6b3f22; padding-top: 6px; }
         #oc-weak-chip .ocw-row {
-            display: flex; align-items: baseline; gap: 8px;
-            font-weight: 400; padding: 2px 0; white-space: nowrap;
+            display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px;
+            font-weight: 400; padding: 5px 0; white-space: normal;
+            border-bottom: 1px solid rgba(107,63,34,.45);
         }
+        #oc-weak-chip .ocw-row:last-child { border-bottom: 0; }
         #oc-weak-chip .ocw-row b { color: #fff; font-weight: 600; }
         a.ocw-row { text-decoration: none; }
         a.ocw-row:hover { background: rgba(240,200,143,.08); border-radius: 4px; }
@@ -2926,7 +2943,10 @@
         #oc-weak-chip .ocw-crime { color: #b0884f; font-size: 11px; font-style: italic; }
         #oc-weak-chip .ocw-go {
             color: #f0c88f; font-size: 11px; font-weight: 600; text-decoration: none;
-            border: 1px solid #6b3f22; border-radius: 4px; padding: 1px 6px; margin-left: 4px;
+            border: 1px solid #6b3f22; border-radius: 4px; padding: 1px 7px;
+            /* Pushed to the right edge, and free to drop to its own line
+               rather than widening the row past the container. */
+            margin-left: auto; flex: none; white-space: nowrap;
         }
         #oc-weak-chip .ocw-go:hover { background: rgba(240,200,143,.14); }
         #oc-weak-chip .ocw-pct { color: #f5a97f; }
@@ -3360,6 +3380,7 @@
                    (r.crimeName ? '<span class="ocw-crime">' + r.crimeName + '</span>' : '') +
                    go + '</div>';
         }).join('') + '</div>';
+        weakChip.classList.toggle('ocw-open', weakOpen);
         weakChip.innerHTML = '<div class="ocw-head">' + head + '</div>' + list;
     }
 
