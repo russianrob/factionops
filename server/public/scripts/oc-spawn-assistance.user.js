@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.74
+// @version      3.2.75
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -28,6 +28,14 @@
 // v3.1.70 — Banker-claim optimistic clear on vault-request Send. Hitting Send now POSTs to /api/oc/vault-request/:id/claim before opening the Controls tab. Server marks the request as claimed-by-this-banker and hides it from listRequests() for every viewer immediately, so all admins see it disappear without waiting for the 20s fundsnews poll → 15s client poll cycle (previously took ~3 manual refreshes to clear). If the matching fundsnews event arrives within the 90s claim TTL, the request is fully deleted as before. If the banker bails (closes Torn tab, never sends the money), the claim expires and the request reappears on every client's next list fetch — no orphaned requests. Two bankers clicking the same Send near-simultaneously: the second gets a 409 Conflict with "Already claimed by X" and their UI shows that message instead of removing the row.
 // v3.1.69 — Scope DOM reader now rejects elements nested inside a completed-crime reward block. Torn's Completed tab shows per-OC "+N scope" chips (e.g. Pet Project +2 scope) whose wrapper class also contains the word "scope", so strategies 1 and 2 were scraping those per-OC rewards and pushing them as if they were the faction's current scope balance. That's the source of the 16 → 2 → 5 oscillation in v3.1.68's stability window logs. New insideCompletedContext() walks up ancestors and bails on any node whose className matches completed|executed|ended|reward|payout|result|history. Both strategy 1 (class-match) and strategy 2 (text-match) honor the guard.
 // v3.1.68 — Scope stability window: Torn's React re-renders the scope badge during OC state transitions and the DOM class-match strategy sometimes catches intermediate values. Observed 04-24 05:00:24-05:00:41 EDT: 16 → 2 → 5 → 2 pushed in 20s, all class:container___THb7U scope_, when real scope was 16. Delay the commit + push by 2.5s; if a different value arrives inside the window, reset the timer and drop the transient. Legitimate scope changes settle well inside 2.5s so real edits feel ~live. Also moves CONFIG.SCOPE and GM_setValue inside the timer (previously they committed immediately; only the push was debounced).
+// v3.2.75 — Weak-slot chip beside the OC Spawn button: how many placed members
+//           sit under 65% success chance, tap to list them with their slot WEIGHT,
+//           heaviest first. The numbers were already on screen, one per slot and
+//           spread across every expanded card, so finding the weak one meant
+//           reading all of them. Empty slots report 0 and are skipped — they are
+//           unfilled, not weak. Name comes from .honor-text (it is not beside the
+//           number), and WEIGHT is located by its printed label rather than a
+//           class, because Torn rehashes class names every build.
 // v3.1.67 — Fix Request button on vault-request form rendering as black text on a black background. The button was using class="w3b-btn" but that class never existed in the panel stylesheet — browsers fell back to UA default (which ends up ~invisible on the dark panel). Replaced with explicit inline styles matching the rest of the OC Spawn UI: green #2d6a4f background, white text, 1px green border, same padding/font-weight as Refresh.
 // v3.1.66 — Drop the "= $X" preview line under the vault-request amount input. Now that the input live-translates "1k" → "1000" directly, the separate preview strip (v3.1.43) duplicates the same information and just adds noise. Removed the DOM element and the updatePreview() function; kept the input listener that does the translation.
 // v3.1.65 — Vault-request amount input now live-translates shorthand. The moment the value ends in k/m/b and parses cleanly, the input text is overwritten with the expanded number — "1k" instantly becomes "1000", "10m" becomes "10000000". Works because people type the digits first and the suffix last, so by the time the k/m/b lands the digits are already fixed. The "1.5m" workflow still works: "1" → "1.5" stays as-is (no trailing suffix), and once the m arrives "1.5m" → "1500000" expands. v3.1.64's blur-only handler is replaced by this input-driven version.
@@ -302,7 +310,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.74';
+    const SCRIPT_VERSION = '3.2.75';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -2870,6 +2878,28 @@
             box-shadow: 0 2px 8px rgba(0,0,0,.4);
         }
         #oc-spawn-toggle:hover { background: #1b4332; }
+        /* Weak-slot chip — sits in the gap beside the OC Spawn button */
+        #oc-weak-chip {
+            position: fixed; bottom: 80px; right: 140px; z-index: 9999;
+            background: #3a2318; color: #f0c88f; border: 1px solid #6b3f22;
+            border-radius: 6px; padding: 6px 10px; font-size: 12px;
+            font-weight: bold; cursor: pointer; max-width: calc(100vw - 180px);
+            box-shadow: 0 2px 8px rgba(0,0,0,.4);
+        }
+        #oc-weak-chip.oc-spawn-docked {
+            position: static !important; display: inline-block;
+            margin: 10px 0 6px 8px; vertical-align: top; max-width: none;
+        }
+        #oc-weak-chip .ocw-head { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+        #oc-weak-chip .ocw-caret { color: #b0884f; font-size: 10px; }
+        #oc-weak-chip .ocw-list { margin-top: 7px; border-top: 1px solid #6b3f22; padding-top: 6px; }
+        #oc-weak-chip .ocw-row {
+            display: flex; align-items: baseline; gap: 8px;
+            font-weight: 400; padding: 2px 0; white-space: nowrap;
+        }
+        #oc-weak-chip .ocw-row b { color: #fff; font-weight: 600; }
+        #oc-weak-chip .ocw-pct { color: #f5a97f; }
+        #oc-weak-chip .ocw-wt { color: #9a7b55; font-size: 11px; }
         #oc-spawn-panel {
             position: fixed; bottom: 115px; right: 16px; z-index: 9998;
             width: min(560px, calc(100vw - 48px)); max-height: 72vh; overflow-y: auto;
@@ -3215,10 +3245,90 @@
 
     //  DOM SETUP
     // ═══════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════
+    //  WEAK-SLOT CHIP  (v3.2.75)
+    //  Who on the board is under the success-chance threshold, shown in the
+    //  dead space beside the OC Spawn button. The numbers are already on
+    //  screen — one per slot — but spread across every expanded card, so
+    //  spotting the weak one means reading all of them.
+    // ═══════════════════════════════════════════════════════════════════
+    const WEAK_PCT = 65;
+
+    // Torn hashes its class names per build, so every selector here is a
+    // PREFIX match and the weight is found by its printed label rather than
+    // by a class. `honor-text` is the exception — it is a stable Torn class,
+    // and the name lives there, NOT beside the number.
+    function ocWeakSlots() {
+        const out = [];
+        try {
+            for (const header of document.querySelectorAll('[class*="slotHeader"]')) {
+                const scEl = header.querySelector('[class*="successChance"]');
+                if (!scEl) continue;
+                const m = (scEl.textContent || '').match(/(\d+(?:\.\d+)?)/);
+                if (!m) continue;
+                const pct = parseFloat(m[1]);
+                // An EMPTY slot reports 0 and is not a weak member, it is an
+                // unfilled one. Without this every recruiting card lists.
+                if (!pct) continue;
+                if (pct >= WEAK_PCT) continue;
+
+                const nameEl = header.querySelector('.honor-text');
+                const name = (nameEl && nameEl.textContent.trim()) || '';
+                const roleEl = header.querySelector('[class*="title"]');
+                const role = (roleEl && roleEl.textContent.trim()) || '';
+
+                // Weight lives in a tile below the slot, under a literal
+                // "WEIGHT" label. Finding it by label survives the class
+                // churn that finding it by class would not.
+                let weight = null;
+                let scope = header.parentElement, hops = 0;
+                while (scope && hops < 4 && weight == null) {
+                    for (const el of scope.querySelectorAll('div,span')) {
+                        if (!/^\s*weight\s*$/i.test(el.textContent || '')) continue;
+                        const host = el.parentElement;
+                        const wm = host && (host.textContent || '').match(/(\d+(?:\.\d+)?)\s*%/);
+                        if (wm) { weight = parseFloat(wm[1]); break; }
+                    }
+                    scope = scope.parentElement; hops++;
+                }
+                out.push({ name, role, pct, weight });
+            }
+        } catch (e) {
+            console.warn('[OC Spawn] weak-slot scan failed:', e && e.message);
+        }
+        // Heaviest first: a 63% on a 31.7% slot matters more than a 61% on
+        // a 12.7% one, and the list is read top-down.
+        out.sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1));
+        return out;
+    }
+
+    const weakChip = document.createElement('div');
+    weakChip.id = 'oc-weak-chip';
+    weakChip.style.display = 'none';
+    let weakOpen = false;
+
+    function renderWeakChip() {
+        const rows = ocWeakSlots();
+        if (!rows.length) { weakChip.style.display = 'none'; return; }
+        weakChip.style.display = 'inline-block';
+        const head = '<span class="ocw-count">' + rows.length + ' under ' + WEAK_PCT + '%</span>' +
+                     '<span class="ocw-caret">' + (weakOpen ? '\u25be' : '\u25b8') + '</span>';
+        const list = !weakOpen ? '' : '<div class="ocw-list">' + rows.map(function (r) {
+            return '<div class="ocw-row"><b>' + (r.name || r.role || '?') + '</b>' +
+                   '<span class="ocw-pct">' + r.pct + '%</span>' +
+                   (r.weight != null ? '<span class="ocw-wt">' + r.weight + '% wt</span>' : '') +
+                   '</div>';
+        }).join('') + '</div>';
+        weakChip.innerHTML = '<div class="ocw-head">' + head + '</div>' + list;
+    }
+
+    weakChip.addEventListener('click', function () { weakOpen = !weakOpen; renderWeakChip(); });
+
     const toggleBtn = document.createElement('button');
     toggleBtn.id = 'oc-spawn-toggle';
     toggleBtn.textContent = '⚔ OC Spawn';
     document.body.appendChild(toggleBtn);
+    document.body.appendChild(weakChip);
 
     const panel = document.createElement('div');
     panel.id = 'oc-spawn-panel';
@@ -3472,7 +3582,9 @@
             const onCrimes = !onArmoury && (/tab=crimes/.test(hash) || !!document.getElementById('faction-crimes-root'));
             if (!onCrimes && !onArmoury) {
                 toggleBtn.classList.remove('oc-spawn-docked');
+                weakChip.classList.remove('oc-spawn-docked');
                 toggleBtn.style.display = 'none'; panel.style.display = 'none';
+                weakChip.style.display = 'none';
                 return;
             }
             // Panel is always a floating overlay; keep its open/closed state so
@@ -3493,7 +3605,18 @@
                     const parent = tgt.el.parentNode;
                     if (tgt.el.nextElementSibling !== toggleBtn) parent.insertBefore(toggleBtn, tgt.el.nextElementSibling);
                 }
+                // The chip rides immediately after the button, which is what
+                // puts it in the empty space beside it rather than on a line
+                // of its own.
+                weakChip.classList.add('oc-spawn-docked');
+                if (toggleBtn.nextElementSibling !== weakChip) {
+                    toggleBtn.parentNode.insertBefore(weakChip, toggleBtn.nextElementSibling);
+                }
+                renderWeakChip();
             } else {
+                weakChip.classList.remove('oc-spawn-docked');
+                if (weakChip.parentElement !== document.body) document.body.appendChild(weakChip);
+                renderWeakChip();
                 // Armoury tab (or strip not yet rendered): float the button
                 // bottom-right so the panel + Loan Item stay reachable.
                 if (toggleBtn.classList.contains('oc-spawn-docked')) toggleBtn.classList.remove('oc-spawn-docked');
