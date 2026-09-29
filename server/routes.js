@@ -134,6 +134,7 @@ import { getHeatmap, resetHeatmap } from "./activity-heatmap.js";
 import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName } from "./oc-spawn.js";
 import { createFlyerDelayPoller } from "./flyer-delay-poll.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
+import { lowSuccessCrimes, LOW_SUCCESS_THRESHOLD } from "./oc-ready-notifier.js";
 import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById, getItemCatalog, getAllBuyPricesByName } from "./item-values.js";
 import { getLowestListing, trackItem, getListingsById, getListingsByName, fetchNow as itemMarketFetchNow } from "./item-market.js";
 import * as vaultRequests from "./vault-requests.js";
@@ -10540,6 +10541,57 @@ router.get("/api/oc/engines/update", async (req, res) => {
 //   key       — Torn API key (validated + faction-bound)
 //   scenario  — OC name matching GetSupportedScenarios (e.g. "Blast from the Past")
 //   cprs      — comma-separated CPRs in slot order, e.g. "70,65,80,72,68,75"
+// ── Weak OC slots ──────────────────────────────────────────────────────
+// The same set the hourly admin alert fires on, for the userscript's chip
+// beside the OC Spawn button.
+//
+// This exists because scraping it from the page did not work. Torn's
+// collapsed crime cards carry the role and the percentage but NOT the
+// player — three attempts produced, in turn, the role, then the literal
+// string "View Profile" (the XID link's own text), then no crime id to
+// link to. The API has all three: the member's name from the roster, the
+// crime id, and the slot weight. Read it from there and stop guessing at
+// markup that rehashes every build.
+router.get("/api/oc/weak", async (req, res) => {
+  const key = req.query.key;
+  if (!key || key.length < 10) return res.status(400).json({ error: "Invalid key" });
+  let info;
+  try {
+    info = await verifyTornApiKey(key);
+  } catch (err) { return res.status(401).json({ error: err.message }); }
+  if (!info || !info.factionId) return res.status(401).json({ error: "No faction" });
+
+  // No admin gate: this names members of YOUR OWN faction and their slot
+  // odds, which every member can already read off the crimes page. The
+  // alert is admin-only because it pushes; this only answers.
+  try {
+    const data = await getOcSpawnData(info.factionId, key);
+    const names = {};
+    for (const m of (data.members || [])) {
+      if (m && m.id != null && m.name) names[String(m.id)] = String(m.name);
+    }
+    let weights = null;
+    try { weights = await getRoleWeights(); } catch { /* weights are a bonus */ }
+    const flagged = lowSuccessCrimes(data.availableCrimes || [], { names, weights });
+    // Flattened to slots, because the chip lists PEOPLE, not crimes.
+    const slots = [];
+    for (const c of flagged) {
+      for (const w of c.weak) {
+        slots.push({
+          crimeId: c.crimeId, crimeName: c.name,
+          userId: w.userId, name: w.name, position: w.position,
+          pct: w.pct, weight: w.weight,
+        });
+      }
+    }
+    slots.sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1));
+    return res.json({ threshold: LOW_SUCCESS_THRESHOLD, slots });
+  } catch (e) {
+    console.warn(`[oc/weak] ${info.factionId}: ${e.message}`);
+    return res.status(502).json({ error: e.message });
+  }
+});
+
 router.get("/api/oc/outcome", async (req, res) => {
   const key = req.query.key;
   if (!key || key.length < 10) return res.status(400).json({ error: "Invalid key" });

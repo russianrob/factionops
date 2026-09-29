@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.77
+// @version      3.2.78
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -28,6 +28,14 @@
 // v3.1.70 — Banker-claim optimistic clear on vault-request Send. Hitting Send now POSTs to /api/oc/vault-request/:id/claim before opening the Controls tab. Server marks the request as claimed-by-this-banker and hides it from listRequests() for every viewer immediately, so all admins see it disappear without waiting for the 20s fundsnews poll → 15s client poll cycle (previously took ~3 manual refreshes to clear). If the matching fundsnews event arrives within the 90s claim TTL, the request is fully deleted as before. If the banker bails (closes Torn tab, never sends the money), the claim expires and the request reappears on every client's next list fetch — no orphaned requests. Two bankers clicking the same Send near-simultaneously: the second gets a 409 Conflict with "Already claimed by X" and their UI shows that message instead of removing the row.
 // v3.1.69 — Scope DOM reader now rejects elements nested inside a completed-crime reward block. Torn's Completed tab shows per-OC "+N scope" chips (e.g. Pet Project +2 scope) whose wrapper class also contains the word "scope", so strategies 1 and 2 were scraping those per-OC rewards and pushing them as if they were the faction's current scope balance. That's the source of the 16 → 2 → 5 oscillation in v3.1.68's stability window logs. New insideCompletedContext() walks up ancestors and bails on any node whose className matches completed|executed|ended|reward|payout|result|history. Both strategy 1 (class-match) and strategy 2 (text-match) honor the guard.
 // v3.1.68 — Scope stability window: Torn's React re-renders the scope badge during OC state transitions and the DOM class-match strategy sometimes catches intermediate values. Observed 04-24 05:00:24-05:00:41 EDT: 16 → 2 → 5 → 2 pushed in 20s, all class:container___THb7U scope_, when real scope was 16. Delay the commit + push by 2.5s; if a different value arrives inside the window, reset the timer and drop the transient. Legitimate scope changes settle well inside 2.5s so real edits feel ~live. Also moves CONFIG.SCOPE and GM_setValue inside the timer (previously they committed immediately; only the push was debounced).
+// v3.2.78 — Weak-slot chip reads /api/oc/weak instead of the page, and every row
+//           gets a "View crime" link. Scraping it never worked: a COLLAPSED crime
+//           card carries the role and the percentage but not the player and not
+//           the crime id, so three attempts produced the role, then the literal
+//           string "View Profile" (that is the XID link's own text), then rows
+//           with nothing to link to. The server already had all three — the
+//           roster for names, the crime id, and the slot weight — because the
+//           hourly admin alert computes exactly this set. Same data, one source.
 // v3.2.77 — Fix: the chip vanished in 3.2.76. That edit replaced a block of
 //           ocWeakSlots() whose range also swallowed the weight lookup, leaving
 //           `weight` an undeclared reference — every slot threw, the one
@@ -324,7 +332,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.77';
+    const SCRIPT_VERSION = '3.2.78';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -2916,6 +2924,11 @@
         a.ocw-row:hover { background: rgba(240,200,143,.08); border-radius: 4px; }
         #oc-weak-chip .ocw-role { color: #9a7b55; font-size: 11px; }
         #oc-weak-chip .ocw-crime { color: #b0884f; font-size: 11px; font-style: italic; }
+        #oc-weak-chip .ocw-go {
+            color: #f0c88f; font-size: 11px; font-weight: 600; text-decoration: none;
+            border: 1px solid #6b3f22; border-radius: 4px; padding: 1px 6px; margin-left: 4px;
+        }
+        #oc-weak-chip .ocw-go:hover { background: rgba(240,200,143,.14); }
         #oc-weak-chip .ocw-pct { color: #f5a97f; }
         #oc-weak-chip .ocw-wt { color: #9a7b55; font-size: 11px; }
         #oc-spawn-panel {
@@ -3264,113 +3277,52 @@
     //  DOM SETUP
     // ═══════════════════════════════════════════════════════════════════════
     // ═══════════════════════════════════════════════════════════════════
-    //  WEAK-SLOT CHIP  (v3.2.75)
-    //  Who on the board is under the success-chance threshold, shown in the
-    //  dead space beside the OC Spawn button. The numbers are already on
-    //  screen — one per slot — but spread across every expanded card, so
-    //  spotting the weak one means reading all of them.
+    //  WEAK-SLOT CHIP  (v3.2.78 — server-driven)
+    //  Who on the board is under the success-chance threshold, in the dead
+    //  space beside the OC Spawn button.
+    //
+    //  Read from /api/oc/weak, NOT from the page. Three attempts at
+    //  scraping it produced the role instead of the player, then the
+    //  literal text "View Profile" (a collapsed card's XID link says that,
+    //  not a name), then rows with no crime to link to — because a
+    //  collapsed card simply does not carry the name or the crime id. The
+    //  API has the roster, the crime id and the slot weight.
     // ═══════════════════════════════════════════════════════════════════
-    const WEAK_PCT = 65;
+    let weakRows = null;        // null = not loaded, [] = loaded and clear
+    let weakThreshold = 65;
+    let weakError = null;
+    let weakLastFetch = 0;
+    const WEAK_TTL_MS = 120_000;
 
-    // Torn hashes its class names per build, so every selector here is a
-    // PREFIX match and the weight is found by its printed label rather than
-    // by a class. `honor-text` is the exception — it is a stable Torn class,
-    // and the name lives there, NOT beside the number.
-    function ocWeakSlots() {
-        const out = [];
+    function fetchWeakSlots(force) {
+        const key = getApiKey();
+        if (!key) { weakError = 'no API key'; renderWeakChip(); return; }
+        if (!force && Date.now() - weakLastFetch < WEAK_TTL_MS) return;
+        weakLastFetch = Date.now();
         try {
-            for (const header of document.querySelectorAll('[class*="slotHeader"]')) {
-              try {
-                const scEl = header.querySelector('[class*="successChance"]');
-                if (!scEl) continue;
-                const m = (scEl.textContent || '').match(/(\d+(?:\.\d+)?)/);
-                if (!m) continue;
-                const pct = parseFloat(m[1]);
-                // An EMPTY slot reports 0 and is not a weak member, it is an
-                // unfilled one. Without this every recruiting card lists.
-                if (!pct) continue;
-                if (pct >= WEAK_PCT) continue;
-
-                // The name is not beside the number. .honor-text is the
-                // usual home, but on a COLLAPSED card the honour badge is
-                // not rendered at all — which is why 3.2.75 fell back to
-                // the role and the chip read "Enforcer" instead of a
-                // person. Each fallback below is a different card state.
-                const roleEl = header.querySelector('[class*="title"]');
-                const role = (roleEl && roleEl.textContent.trim()) || '';
-                let name = '';
-                const nameEl = header.querySelector('.honor-text');
-                if (nameEl) name = nameEl.textContent.trim();
-                let slotScope = header, sHops = 0;
-                while (slotScope && sHops < 5 && !name) {
-                    const honor = slotScope.querySelector('.honor-text');
-                    if (honor && honor.textContent.trim()) { name = honor.textContent.trim(); break; }
-                    // Collapsed cards still carry the profile link, and the
-                    // honour bar's alt text names the owner.
-                    const link = slotScope.querySelector('a[href*="XID="]');
-                    if (link) {
-                        const t = (link.textContent || '').trim();
-                        const img = link.querySelector('img');
-                        const alt = img && (img.getAttribute('alt') || '').trim();
-                        if (t) { name = t; break; }
-                        if (alt) { name = alt; break; }
-                    }
-                    slotScope = slotScope.parentElement; sHops++;
-                }
-
-                // The crime this slot belongs to, so the row can link to it.
-                // Torn's router reads the crime out of the HASH, so the id
-                // must land after the '#'.
-                let crimeId = null, crimeName = '';
-                let cScope = header, cHops = 0;
-                while (cScope && cHops < 8 && !crimeId) {
-                    const a = cScope.querySelector('a[href*="crimeId="]');
-                    if (a) {
-                        const cm = a.getAttribute('href').match(/crimeId=(\d+)/);
-                        if (cm) crimeId = cm[1];
-                    }
-                    cScope = cScope.parentElement; cHops++;
-                }
-                if (!crimeId) {
-                    const hm = (location.hash || '').match(/crimeId=(\d+)/);
-                    if (hm) crimeId = hm[1];
-                }
-                // Crime name: the card's heading, found by walking out to a
-                // container that holds both this slot and a title.
-                let nScope = header, nHops = 0;
-                while (nScope && nHops < 8 && !crimeName) {
-                    const h = nScope.querySelector('[class*="crimeName"], [class*="titleText"], h3, h4');
-                    if (h && h.textContent.trim() && h !== roleEl) crimeName = h.textContent.trim();
-                    nScope = nScope.parentElement; nHops++;
-                }
-
-                // Weight lives in a tile below the slot, under a literal
-                // "WEIGHT" label. Finding it by label survives the class
-                // churn that finding it by class would not.
-                let weight = null;
-                let wScope = header.parentElement, wHops = 0;
-                while (wScope && wHops < 4 && weight == null) {
-                    for (const el of wScope.querySelectorAll('div,span')) {
-                        if (!/^\s*weight\s*$/i.test(el.textContent || '')) continue;
-                        const host = el.parentElement;
-                        const wm = host && (host.textContent || '').match(/(\d+(?:\.\d+)?)\s*%/);
-                        if (wm) { weight = parseFloat(wm[1]); break; }
-                    }
-                    wScope = wScope.parentElement; wHops++;
-                }
-
-                out.push({ name, role, pct, weight, crimeId, crimeName });
-              } catch (slotErr) {
-                console.warn('[OC Spawn] weak-slot: skipping one slot:', slotErr && slotErr.message);
-              }
-            }
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: `${SERVER}/api/oc/weak?key=${encodeURIComponent(key)}`,
+                onload(r) {
+                    try {
+                        const d = JSON.parse(r.responseText);
+                        if (r.status >= 200 && r.status < 300) {
+                            weakRows = Array.isArray(d.slots) ? d.slots : [];
+                            weakThreshold = d.threshold || 65;
+                            weakError = null;
+                        } else {
+                            weakError = d.error || ('HTTP ' + r.status);
+                        }
+                    } catch (e) { weakError = 'bad response'; }
+                    renderWeakChip();
+                },
+                onerror() { weakError = 'server unreachable'; renderWeakChip(); },
+                ontimeout() { weakError = 'timed out'; renderWeakChip(); },
+                timeout: 12000,
+            });
         } catch (e) {
-            console.warn('[OC Spawn] weak-slot scan failed:', e && e.message);
+            weakError = e && e.message; renderWeakChip();
         }
-        // Heaviest first: a 63% on a 31.7% slot matters more than a 61% on
-        // a 12.7% one, and the list is read top-down.
-        out.sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1));
-        return out;
     }
 
     const weakChip = document.createElement('div');
@@ -3379,33 +3331,41 @@
     let weakOpen = false;
 
     function renderWeakChip() {
-        const rows = ocWeakSlots();
-        if (!rows.length) { weakChip.style.display = 'none'; return; }
+        // Nothing loaded yet, or loaded and nobody is weak: say nothing.
+        if (weakError) {
+            weakChip.style.display = 'inline-block';
+            weakChip.innerHTML = '<div class="ocw-head"><span class="ocw-count">' +
+                'weak slots unavailable</span></div>' +
+                '<div class="ocw-list"><div class="ocw-row">' + weakError + '</div></div>';
+            return;
+        }
+        if (!weakRows || !weakRows.length) { weakChip.style.display = 'none'; return; }
+
         weakChip.style.display = 'inline-block';
-        const head = '<span class="ocw-count">' + rows.length + ' under ' + WEAK_PCT + '%</span>' +
+        const head = '<span class="ocw-count">' + weakRows.length + ' under ' + weakThreshold + '%</span>' +
                      '<span class="ocw-caret">' + (weakOpen ? '\u25be' : '\u25b8') + '</span>';
-        const list = !weakOpen ? '' : '<div class="ocw-list">' + rows.map(function (r) {
-            const who = r.name || r.role || '?';
-            // Show the role alongside the name rather than instead of it —
-            // "Bingoboyo · Saboteur #1" says who to talk to AND which seat.
-            const sub = (r.name && r.role) ? '<span class="ocw-role">' + r.role + '</span>' : '';
-            const where = r.crimeName ? '<span class="ocw-crime">' + r.crimeName + '</span>' : '';
-            const body = '<b>' + who + '</b>' + sub +
-                   '<span class="ocw-pct">' + r.pct + '%</span>' +
-                   (r.weight != null ? '<span class="ocw-wt">' + r.weight + '% wt</span>' : '') +
-                   where;
-            // A LINK the player clicks, never a programmatic navigation.
-            // The crime id must sit after the '#' or Torn's router ignores it.
-            return r.crimeId
-                ? '<a class="ocw-row" href="/factions.php?step=your#/tab=crimes&crimeId=' + r.crimeId + '">' + body + '</a>'
-                : '<div class="ocw-row">' + body + '</div>';
+        const list = !weakOpen ? '' : '<div class="ocw-list">' + weakRows.map(function (r) {
+            const who = r.name || r.position || '?';
+            const sub = (r.name && r.position) ? '<span class="ocw-role">' + r.position + '</span>' : '';
+            const wt = (r.weight != null) ? '<span class="ocw-wt">' + r.weight.toFixed(1) + '% wt</span>' : '';
+            // A LINK the player taps — never a programmatic navigation. The
+            // crime id must sit after the '#', which is where Torn's router
+            // reads it; on the query string the SPA ignores it entirely.
+            const go = r.crimeId
+                ? '<a class="ocw-go" href="/factions.php?step=your#/tab=crimes&crimeId=' +
+                  r.crimeId + '">View crime \u2192</a>'
+                : '';
+            return '<div class="ocw-row"><b>' + who + '</b>' + sub +
+                   '<span class="ocw-pct">' + r.pct + '%</span>' + wt +
+                   (r.crimeName ? '<span class="ocw-crime">' + r.crimeName + '</span>' : '') +
+                   go + '</div>';
         }).join('') + '</div>';
         weakChip.innerHTML = '<div class="ocw-head">' + head + '</div>' + list;
     }
 
     weakChip.addEventListener('click', function (e) {
         // Let a row's link do its job; only the header toggles.
-        if (e.target.closest && e.target.closest('a.ocw-row')) return;
+        if (e.target.closest && e.target.closest('a.ocw-go')) return;
         weakOpen = !weakOpen;
         renderWeakChip();
     });
@@ -3698,10 +3658,12 @@
                 if (toggleBtn.nextElementSibling !== weakChip) {
                     toggleBtn.parentNode.insertBefore(weakChip, toggleBtn.nextElementSibling);
                 }
+                fetchWeakSlots();
                 renderWeakChip();
             } else {
                 weakChip.classList.remove('oc-spawn-docked');
                 if (weakChip.parentElement !== document.body) document.body.appendChild(weakChip);
+                fetchWeakSlots();
                 renderWeakChip();
                 // Armoury tab (or strip not yet rendered): float the button
                 // bottom-right so the panel + Loan Item stay reachable.
