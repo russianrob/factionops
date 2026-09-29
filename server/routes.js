@@ -13005,7 +13005,10 @@ router.get("/api/prewar", async (req, res) => {
     // scout with it — the block simply does not render.
     let loadouts = null;
     try {
-      const kalKey = store.getFactionSettings(info.factionId)?.kal_key || "";
+      // Stored encrypted. The neighbouring oc_ffs_key is plaintext in a
+      // mode-644 file, which is not a standard worth copying for a Torn key.
+      const _kalRaw = store.getFactionSettings(info.factionId)?.kal_key || "";
+      const kalKey = _kalRaw && isEncryptedKey(_kalRaw) ? decryptKey(_kalRaw) : _kalRaw;
       const top = kal.topThreats((threat && threat.rows) || []);
       if (top.length) {
         const pack = await kal.factionLoadouts(kalKey, enemy);
