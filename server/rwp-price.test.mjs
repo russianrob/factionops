@@ -1089,19 +1089,50 @@ test("a clean reading says nothing about unread bonuses", () => {
 //
 // It wins on 67% of them.
 
+// The subject is FOUND, not named. These two used to hardcode a Red SIG 552
+// with Penetrate, chosen because that combo had no Red sales. It has one now
+// — a single 38% sale — so the premise expired and both tests failed while
+// the code was behaving correctly. Anything hardcoded here is a fact about
+// this week's market, not about the rule.
+function findLoneBonusNeedingBridge() {
+  const combos = feed.weaponComboPrices || {};
+  for (const key of Object.keys(combos)) {
+    const [weapon, bonus] = key.split("|");
+    if (!weapon || !bonus) continue;
+    const byRarity = combos[key] || {};
+    const weaponRarities = feed.weaponPrices?.[weapon] || {};
+    for (const rarity of Object.keys(weaponRarities)) {
+      // Wanted: this weapon is sold in this rarity, the bonus is priced on
+      // OTHER weapons, and this weapon+bonus has never sold in this rarity.
+      if (byRarity[rarity]) continue;
+      if (!Object.keys(byRarity).length) continue;
+      if (!feed.bonusPrices?.[bonus]) continue;
+      return { weapon, bonus, rarity };
+    }
+  }
+  return null;
+}
+
 test("a lone bonus with no sale on this weapon is bridged", () => {
+  const subject = findLoneBonusNeedingBridge();
+  assert.ok(subject, "no weapon+bonus in the feed lacks a rarity — cannot exercise the bridge");
   const p = priceItem(feed, {
-    name: "SIG 552", rarity: "Red", quality: 249.83,
-    bonuses: [{ name: "Penetrate", pct: 38 }],
+    name: subject.weapon, rarity: subject.rarity,
+    bonuses: [{ name: subject.bonus, pct: 38 }],
   });
-  assert.equal(p.ok, true, p.reason);
-  assert.match(p.basis, /other weapons/i, p.basis);
-  assert.ok(!/whatever bonus it had/.test(p.basis), "it must not fall to the weapon alone: " + p.basis);
+  const where = `${subject.rarity} ${subject.weapon} + ${subject.bonus}`;
+  assert.equal(p.ok, true, `${where}: ${p.reason}`);
+  assert.match(p.basis, /other weapons/i, `${where}: ${p.basis}`);
+  assert.ok(!/whatever bonus it had/.test(p.basis),
+    `${where}: must not fall to the weapon alone: ${p.basis}`);
 });
 
 test("a bridged lone bonus says so, with its sample size", () => {
+  const subject = findLoneBonusNeedingBridge();
+  assert.ok(subject, "no weapon+bonus in the feed lacks a rarity — cannot exercise the bridge");
   const p = priceItem(feed, {
-    name: "SIG 552", rarity: "Red", bonuses: [{ name: "Penetrate", pct: 38 }],
+    name: subject.weapon, rarity: subject.rarity,
+    bonuses: [{ name: subject.bonus, pct: 38 }],
   });
   const why = p.notes.join(" | ");
   assert.match(why, /other weapons/i, why);

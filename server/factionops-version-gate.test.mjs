@@ -38,6 +38,10 @@ vm.createContext(box);
 vm.runInContext([
   line(/^const FACTIONOPS_MIN_VERSION = .*$/m),
   line(/^const FACTIONOPS_NAMED_VERSIONS = [\s\S]*?;$/m),
+  // factionopsVersionTooOld delegates the name match to this. Omitting it
+  // fails every test here with "factionopsClientName is not defined",
+  // which reads like a broken gate rather than a half-built sandbox.
+  fn("factionopsClientName"),
   fn("factionopsVersionTooOld"),
   "globalThis.tooOld = factionopsVersionTooOld;",
 ].join("\n"), box);
