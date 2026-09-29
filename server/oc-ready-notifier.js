@@ -21,6 +21,7 @@
 
 import * as push from './push-notifications.js';
 import * as store from './store.js';
+import { normalizeOcName, getRoleWeights } from './oc-spawn.js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join as pathJoin } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -173,8 +174,13 @@ export const LOW_SUCCESS_THRESHOLD = 65;
  *              as an id and progression only, with NO name — a live run
  *              printed "Enforcer 61%", which says a slot is weak but not
  *              who to go and talk to.
+ * @param weights crimeKey -> roleKey -> pct, from getRoleWeights(). The
+ *              WEIGHT Torn renders under each slot: that position's share
+ *              of the crime's outcome. Not in the API at all. 63% on an
+ *              8.9% slot is noise; 63% on a 37.3% slot decides the crime,
+ *              so when this is supplied the heaviest slot leads.
  */
-export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRESHOLD, seen, names } = {}) {
+export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRESHOLD, seen, names, weights } = {}) {
   const out = [];
   for (const c of (availableCrimes || [])) {
     if (!c || c.id == null) continue;
@@ -182,6 +188,7 @@ export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRE
     if (seen && seen.has(cid)) continue;
 
     const weak = [];
+    const roleWeights = weights ? weights[normalizeOcName(c.name)] : null;
     for (const s of (c.slots || [])) {
       if (!s) continue;
       // Occupancy first. See THE TRAP above.
@@ -197,11 +204,22 @@ export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRE
         // 'Muscle #2' -> 'Muscle', matching how slots are keyed elsewhere.
         position: String(s.position || '').replace(/\s*#\d+$/, ''),
         pct,
+        // Keyed off position_info.label ('Saboteur #1'), NOT the bare role:
+        // Saboteur #1 carries 14.6% and Saboteur #2 carries 8.9% on the same
+        // crime, so the bare name would report the wrong slot as the one
+        // that matters. Null when the table has never seen this crime.
+        weight: roleWeights
+          ? (roleWeights[normalizeOcName(s.position_info?.label || s.position)] ?? null)
+          : null,
       });
     }
     if (weak.length) {
-      // Weakest first: the one to fix is the one that reads first.
-      weak.sort((a, b) => a.pct - b.pct);
+      // Heaviest first when weights are known — the slot that decides the
+      // crime leads, which is not always the lowest percentage. Falls back
+      // to weakest-first when the table has nothing for this crime.
+      const haveWeights = weak.some((w) => w.weight != null);
+      if (haveWeights) weak.sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1));
+      else weak.sort((a, b) => a.pct - b.pct);
       out.push({ crimeId: cid, name: String(c.name || 'OC'), weak });
     }
   }
@@ -515,7 +533,15 @@ async function _checkLowSuccess(factionId, availableCrimes, members) {
   for (const m of (members || [])) {
     if (m && m.id != null && m.name) names[String(m.id)] = String(m.name);
   }
-  const flagged = lowSuccessCrimes(availableCrimes, { seen, names });
+  // Torn's per-slot WEIGHT is not in the crimes API; getRoleWeights()
+  // already fetches the same table (12h cache, serves stale on failure),
+  // so this costs nothing and degrades to no-weights rather than to no
+  // alert.
+  let weights = null;
+  try { weights = await getRoleWeights(); }
+  catch (e) { console.warn(`[oc-low] role weights unavailable: ${e.message}`); }
+
+  const flagged = lowSuccessCrimes(availableCrimes, { seen, names, weights });
   if (!flagged.length) return;
 
   const { adminIds } = _resolveAdmins(fid, members);
@@ -529,10 +555,13 @@ async function _checkLowSuccess(factionId, availableCrimes, members) {
 
   for (const c of flagged) {
     const who = c.weak
-      .map(w => `${w.name || w.position} ${w.pct}%`)
-      .slice(0, 4)
+      .map(w => {
+        const wt = w.weight == null ? '' : ` (${w.weight.toFixed(1)}% wt)`;
+        return `${w.name || w.position} ${w.pct}%${wt}`;
+      })
+      .slice(0, 3)
       .join(' · ');
-    const more = c.weak.length > 4 ? ` +${c.weak.length - 4} more` : '';
+    const more = c.weak.length > 3 ? ` +${c.weak.length - 3} more` : '';
     const payload = {
       title: `Weak OC slot: ${c.name}`,
       body: `Below ${LOW_SUCCESS_THRESHOLD}% — ${who}${more}`,

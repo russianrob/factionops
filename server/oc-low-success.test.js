@@ -119,3 +119,75 @@ test('an unknown member still reports, named by position', () => {
   assert.equal(out[0].weak[0].name, '');
   assert.equal(out[0].weak[0].position, 'Enforcer');
 });
+
+// ── slot weight ────────────────────────────────────────────────────────
+//
+// Torn renders a WEIGHT under each slot: that position's share of the
+// crime's outcome, summing to 100% across the crime. It is NOT in the API
+// — slots carry only position, position_info, item_requirement, user and
+// checkpoint_pass_rate — but the server already fetches the same table
+// from tornprobability.com via getRoleWeights(), matching Torn's rendering
+// exactly (Dish It Out: assassin 37.3, muscle 25.2, saboteur1 14.6,
+// saboteur2 8.9, engineer 13.9).
+//
+// Why it belongs in the alert: 63% on an 8.9% slot is noise; 63% on a
+// 37.3% slot decides the crime.
+
+const WEIGHTS = {
+  dishitout: { assassin: 37.3380808914086, muscle: 25.243817634035594,
+               saboteur1: 14.639223669899579, saboteur2: 8.911747057590532,
+               engineer: 13.867130747065687 },
+};
+const wslot = (label, pct, id) => ({
+  position: label.replace(/\s*#\d+$/, ''),
+  position_info: { label },
+  checkpoint_pass_rate: pct,
+  user: { id },
+});
+
+test('attaches the slot weight when the table has it', () => {
+  const out = lowSuccessCrimes(
+    [{ id: 9, name: 'Dish It Out', slots: [wslot('Saboteur #1', 63, 1)] }],
+    { weights: WEIGHTS },
+  );
+  assert.equal(Math.round(out[0].weak[0].weight * 10) / 10, 14.6);
+});
+
+test('numbered positions get their OWN weight, not a shared one', () => {
+  // Saboteur #1 is 14.6% and Saboteur #2 is 8.9% on the same crime.
+  // Keying on the bare role name would give both the same number and
+  // quietly misreport which slot actually matters.
+  const out = lowSuccessCrimes(
+    [{ id: 9, name: 'Dish It Out', slots: [wslot('Saboteur #1', 60, 1), wslot('Saboteur #2', 61, 2)] }],
+    { weights: WEIGHTS },
+  );
+  const byId = Object.fromEntries(out[0].weak.map(w => [w.userId, Math.round(w.weight * 10) / 10]));
+  assert.equal(byId['1'], 14.6);
+  assert.equal(byId['2'], 8.9);
+});
+
+test('the heaviest slot is listed first, not the lowest percentage', () => {
+  // 63% carrying 37.3% of the crime outranks 60% carrying 8.9%.
+  const out = lowSuccessCrimes(
+    [{ id: 9, name: 'Dish It Out', slots: [wslot('Saboteur #2', 60, 1), wslot('Assassin', 63, 2)] }],
+    { weights: WEIGHTS },
+  );
+  assert.deepEqual(out[0].weak.map(w => w.userId), ['2', '1']);
+});
+
+test('an unknown crime still reports, just without weights', () => {
+  const out = lowSuccessCrimes(
+    [{ id: 9, name: 'Some New Heist', slots: [wslot('Muscle', 60, 1)] }],
+    { weights: WEIGHTS },
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].weak[0].weight, null);
+});
+
+test('with no weight table at all, it falls back to weakest-first', () => {
+  const out = lowSuccessCrimes(
+    [{ id: 9, name: 'Dish It Out', slots: [wslot('Assassin', 63, 2), wslot('Saboteur #2', 60, 1)] }],
+  );
+  assert.deepEqual(out[0].weak.map(w => w.userId), ['1', '2']);
+  assert.equal(out[0].weak[0].weight, null);
+});
