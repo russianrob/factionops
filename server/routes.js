@@ -86,6 +86,7 @@ import * as store from "./store.js";
 import * as prewar from "./prewar-activity.js";
 import * as warWindow from "./war-window.js";
 import * as threatSheet from "./threat-sheet.js";
+import * as kal from "./kal-loadouts.js";
 import * as winModel from "./win-model.js";
 import * as loadoutStore from "./loadout-store.js";
 import * as badKeyGate from "./bad-key-gate.js";
@@ -12998,6 +12999,34 @@ router.get("/api/prewar", async (req, res) => {
       console.warn(`[prewar] threat sheet failed: ${e.message}`);
     }
 
+    // Enemy loadouts for the hardest opponents, from KAL's archive. One
+    // call covers their whole roster, so widening the report costs nothing
+    // extra. Never throws: a third party being down must not take the
+    // scout with it — the block simply does not render.
+    let loadouts = null;
+    try {
+      const kalKey = store.getFactionSettings(info.factionId)?.kal_key || "";
+      const top = kal.topThreats((threat && threat.rows) || []);
+      if (top.length) {
+        const pack = await kal.factionLoadouts(kalKey, enemy);
+        const byId = new Map(
+          (pack.members || []).map((m) => [String(m.user_id), m.loadout]));
+        loadouts = {
+          error: pack.error || null,
+          cached: !!pack.cached,
+          fetchedAt: pack.fetchedAt || null,
+          rows: top.map((r) => ({
+            id: r.id, name: r.name, bsHuman: r.bsHuman, band: r.band,
+            // null means KAL has never seen them — rendered as unknown,
+            // never as "carries nothing".
+            loadout: kal.summarise(byId.get(String(r.id)) || null),
+          })),
+        };
+      }
+    } catch (e) {
+      console.warn(`[prewar] KAL loadouts failed: ${e.message}`);
+    }
+
     const out = await prewar.scout(ffsKey, info.factionId, enemy, days);
     // fromWar tells the page whether it picked the opponent itself, and
     // warEnded whether that war is over — scouting the faction you just beat
@@ -13008,7 +13037,7 @@ router.get("/api/prewar", async (req, res) => {
       warCompare.ourMembers = out.ours.memberCount;
       warCompare.theirMembers = out.theirs.memberCount;
     }
-    return res.json({ ...out, enemyName, fromWar, warEnded, profile, warCompare, threat });
+    return res.json({ ...out, enemyName, fromWar, warEnded, profile, warCompare, threat, loadouts });
   } catch (e) {
     // Throttling says nothing about the faction or the key, so it must not be
     // reported as "no data" — the caller should simply come back.

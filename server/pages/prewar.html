@@ -152,6 +152,23 @@ th:first-child,td:first-child{text-align:left;padding-left:0}
 tr.top td{color:var(--signal)}
 .note{color:var(--muted);font-size:12px;margin-top:10px}
 .pos{color:var(--win)} .negv{color:var(--loss)}
+
+/* KAL loadouts */
+.kit{display:grid; gap:8px}
+.kit-row{background:#12171d; border:1px solid #232c36; border-left:3px solid #3b4a5a;
+  border-radius:8px; padding:9px 11px}
+.kit-row.unseen{border-left-color:#4a3b22; opacity:.75}
+.kit-who{font-size:14px; margin-bottom:5px}
+.kit-who .muted{font-weight:400; font-size:12px}
+.kit-none{font-size:12.5px; color:#b08a4a}
+.kit-wpn{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:4px}
+.kit-arm{font-size:12px; color:#8fa0ad; margin-bottom:4px}
+.kit-bon{display:flex; flex-wrap:wrap; gap:5px}
+.wpn,.bon{font-size:12px; padding:2px 7px; border-radius:11px; border:1px solid #2c3742; background:#182029}
+.bon{font-size:11px}
+.wpn.r-red,.bon.r-red{border-color:#8f2f2f; background:#2a1414; color:#f3b0b0}
+.wpn.r-orange,.bon.r-orange{border-color:#8a5a1f; background:#271b0e; color:#f0c88f}
+.wpn.r-yellow,.bon.r-yellow{border-color:#8a7d1f; background:#24220e; color:#ece3a0}
 </style>
 </head><body><div class="wrap">
 
@@ -271,6 +288,51 @@ tr.top td{color:var(--signal)}
     return '<div class="tr"><div class="nm">' + esc(r.name) + '</div>' +
       '<div class="st ' + cls + '">' + esc(r.bsHuman || '?') + '</div>' +
       '<div class="meta">' + esc(bits.join(' · ')) + '</div></div>';
+  }
+
+  // What their hardest hitters are carrying, from KAL's crowd-sourced
+  // archive. A member KAL has never captured is shown as "not captured",
+  // never as an empty loadout — reading unseen as unarmed is how somebody
+  // walks into a red primary.
+  function kit(L, name){
+    if (!L || !L.rows || !L.rows.length) return '';
+    var seen = L.rows.filter(function(r){ return r.loadout; }).length;
+    var note = '';
+    if (L.error === 'no-key') note = 'No KAL key set — a leader can add one in faction settings.';
+    else if (L.error === 'key-not-registered') note = 'The KAL key is not registered at kalends.dev, so no loadouts could be read.';
+    else if (L.error) note = 'KAL was unreachable (' + esc(L.error) + '); showing whatever was cached.';
+
+    var h = '<div class="sheet"><h2>What they carry</h2>' +
+      '<p class="sub">' + esc(name) + '&rsquo;s ' + L.rows.length + ' hardest, from KAL&rsquo;s archive' +
+      (L.cached ? ' (cached)' : '') + ' &middot; ' + seen + ' of ' + L.rows.length + ' captured.' +
+      (note ? ' <b>' + esc(note) + '</b>' : '') + '</p>';
+
+    h += '<div class="kit">' + L.rows.map(function(r){
+      var head = '<div class="kit-who"><b>' + esc(r.name || ('Player ' + r.id)) + '</b>' +
+        (r.bsHuman ? ' <span class="muted">' + esc(r.bsHuman) + '</span>' : '') + '</div>';
+      if (!r.loadout) {
+        return '<div class="kit-row unseen">' + head +
+          '<div class="kit-none">Not captured &mdash; assume nothing</div></div>';
+      }
+      var lo = r.loadout, parts = [];
+      ['primary','secondary','melee'].forEach(function(slot){
+        var w = lo[slot];
+        if (!w || !w.name) return;
+        parts.push('<span class="wpn r-' + esc(w.rarity || 'none') + '">' + esc(w.name) + '</span>');
+      });
+      var arm = (lo.armour || []).filter(function(a){ return a.name; });
+      var bon = (lo.notable || []).slice(0, 4).map(function(b){
+        return '<span class="bon r-' + esc(b.rarity) + '">' + esc(b.title || '?') +
+          (b.value != null ? ' ' + b.value + '%' : '') + '</span>';
+      }).join('');
+      return '<div class="kit-row">' + head +
+        '<div class="kit-wpn">' + (parts.join('') || '<span class="muted">no weapons seen</span>') + '</div>' +
+        (arm.length ? '<div class="kit-arm">' + arm.length + ' armour: ' +
+           esc(arm.map(function(a){ return a.name; }).join(', ')) + '</div>' : '') +
+        (bon ? '<div class="kit-bon">' + bon + '</div>' : '') +
+        '</div>';
+    }).join('') + '</div></div>';
+    return h;
   }
 
   function sheet(t, name){
@@ -486,7 +548,7 @@ tr.top td{color:var(--signal)}
         var d=res.j, name=d.enemyName||("Faction "+d.theirs.factionId);
         SUBJECT=name;
         var src=d.fromWar?(d.warEnded?"your last war":"your CURRENT war"):"manual";
-        $("out").innerHTML = verdict(d.profile,name)+graph(d.warCompare)+sheet(d.threat,name)+
+        $("out").innerHTML = verdict(d.profile,name)+graph(d.warCompare)+sheet(d.threat,name)+kit(d.loadouts,name)+
           '<div class="wars">'+(d.profile||[]).map(warCard).join("")+'</div>'+
           '<p class="note">'+esc(name)+' ['+d.theirs.factionId+'] · '+esc(src)+
           ' · you '+d.ours.memberCount+' vs them '+d.theirs.memberCount+' members</p>'+
