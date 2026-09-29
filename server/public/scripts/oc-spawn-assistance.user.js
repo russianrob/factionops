@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.79
+// @version      3.2.80
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -28,6 +28,14 @@
 // v3.1.70 — Banker-claim optimistic clear on vault-request Send. Hitting Send now POSTs to /api/oc/vault-request/:id/claim before opening the Controls tab. Server marks the request as claimed-by-this-banker and hides it from listRequests() for every viewer immediately, so all admins see it disappear without waiting for the 20s fundsnews poll → 15s client poll cycle (previously took ~3 manual refreshes to clear). If the matching fundsnews event arrives within the 90s claim TTL, the request is fully deleted as before. If the banker bails (closes Torn tab, never sends the money), the claim expires and the request reappears on every client's next list fetch — no orphaned requests. Two bankers clicking the same Send near-simultaneously: the second gets a 409 Conflict with "Already claimed by X" and their UI shows that message instead of removing the row.
 // v3.1.69 — Scope DOM reader now rejects elements nested inside a completed-crime reward block. Torn's Completed tab shows per-OC "+N scope" chips (e.g. Pet Project +2 scope) whose wrapper class also contains the word "scope", so strategies 1 and 2 were scraping those per-OC rewards and pushing them as if they were the faction's current scope balance. That's the source of the 16 → 2 → 5 oscillation in v3.1.68's stability window logs. New insideCompletedContext() walks up ancestors and bails on any node whose className matches completed|executed|ended|reward|payout|result|history. Both strategy 1 (class-match) and strategy 2 (text-match) honor the guard.
 // v3.1.68 — Scope stability window: Torn's React re-renders the scope badge during OC state transitions and the DOM class-match strategy sometimes catches intermediate values. Observed 04-24 05:00:24-05:00:41 EDT: 16 → 2 → 5 → 2 pushed in 20s, all class:container___THb7U scope_, when real scope was 16. Delay the commit + push by 2.5s; if a different value arrives inside the window, reset the timer and drop the transient. Legitimate scope changes settle well inside 2.5s so real edits feel ~live. Also moves CONFIG.SCOPE and GM_setValue inside the timer (previously they committed immediately; only the push was debounced).
+// v3.2.80 — Weak-slot chip follows the OC Spawn button on every crimes sub-tab,
+//           Recruiting included. When the dock anchor did not resolve, the button
+//           floated bottom-right while the chip floated SEPARATELY at bottom:80px
+//           right:140px — behind Torn's bottom nav bar on a phone. Present in the
+//           DOM, invisible on screen, and indistinguishable from the chip simply
+//           not working on that tab. It is now inserted beside the button in BOTH
+//           branches, so wherever the button is the chip is, and the floating
+//           position sits above the button clear of the nav bar.
 // v3.2.79 — Weak-slot chip stays inside the page. The rows were nowrap with no
 //           width cap while docked, so four columns plus a View crime button ran
 //           past the container and pushed the whole PAGE sideways on a phone.
@@ -338,7 +346,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.79';
+    const SCRIPT_VERSION = '3.2.80';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -2908,10 +2916,13 @@
         #oc-spawn-toggle:hover { background: #1b4332; }
         /* Weak-slot chip — sits in the gap beside the OC Spawn button */
         #oc-weak-chip {
-            position: fixed; bottom: 80px; right: 140px; z-index: 9999;
+            /* Stacked ABOVE the floating Spawn button, not beside it: at
+               bottom:80px right:140px it sat behind Torn's bottom nav bar. */
+            position: fixed; bottom: 124px; right: 16px; z-index: 9999;
             background: #3a2318; color: #f0c88f; border: 1px solid #6b3f22;
             border-radius: 6px; padding: 6px 10px; font-size: 12px;
-            font-weight: bold; cursor: pointer; max-width: calc(100vw - 180px);
+            font-weight: bold; cursor: pointer;
+            max-width: calc(100vw - 32px); box-sizing: border-box;
             box-shadow: 0 2px 8px rgba(0,0,0,.4);
         }
         #oc-weak-chip.oc-spawn-docked {
@@ -3682,14 +3693,21 @@
                 fetchWeakSlots();
                 renderWeakChip();
             } else {
-                weakChip.classList.remove('oc-spawn-docked');
-                if (weakChip.parentElement !== document.body) document.body.appendChild(weakChip);
-                fetchWeakSlots();
-                renderWeakChip();
                 // Armoury tab (or strip not yet rendered): float the button
                 // bottom-right so the panel + Loan Item stay reachable.
                 if (toggleBtn.classList.contains('oc-spawn-docked')) toggleBtn.classList.remove('oc-spawn-docked');
                 if (toggleBtn.parentElement !== document.body) document.body.appendChild(toggleBtn);
+                // The chip FOLLOWS the button rather than being placed on its
+                // own. Floating it independently put it at bottom:80px
+                // right:140px, which on a phone is behind Torn's bottom nav
+                // bar — present in the DOM, invisible on screen, and
+                // indistinguishable from "the chip does not work on this tab".
+                weakChip.classList.remove('oc-spawn-docked');
+                if (toggleBtn.parentNode && toggleBtn.nextElementSibling !== weakChip) {
+                    toggleBtn.parentNode.insertBefore(weakChip, toggleBtn.nextElementSibling);
+                }
+                fetchWeakSlots();
+                renderWeakChip();
             }
         } catch (_) {}
     }
