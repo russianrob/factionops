@@ -155,6 +155,25 @@ function _filledCount(slots) {
 // Reaching for that name silently yields undefined and the check goes dead
 // without failing, so the field read here is deliberate.
 
+/**
+ * Tap-through for one specific crime.
+ *
+ * Torn's crimes page is a single-page app whose router reads the crime out
+ * of the HASH, so `?crimeId=` on the query string is silently ignored —
+ * the SPA never sees it. `#/tab=crimes&crimeId=<id>` expands that card on
+ * arrival; oc-spawn-assistance has linked this way since v3.1.36.
+ *
+ * This matters most exactly when the alert is ambiguous: two crimes called
+ * "Market Forces" fired together, and a link to the crimes LIST told the
+ * admin neither which one was weak nor where to look.
+ */
+export function ocCrimeUrl(crimeId) {
+  const base = 'https://www.torn.com/factions.php?step=your#/tab=crimes';
+  const id = String(crimeId ?? '').trim();
+  // No id is not a reason to ship a broken link — fall back to the list.
+  return id ? `${base}&crimeId=${encodeURIComponent(id)}` : base;
+}
+
 /** Below this, a slot is worth waking an admin for. */
 export const LOW_SUCCESS_THRESHOLD = 65;
 
@@ -572,7 +591,7 @@ async function _checkLowSuccess(factionId, availableCrimes, members) {
         factionId: fid,
         // Tap-through lives on data.url; a top-level url is ignored by
         // all three delivery channels.
-        url: 'https://www.torn.com/factions.php?step=your#/tab=crimes',
+        url: ocCrimeUrl(c.crimeId),
       },
     };
     try {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lowSuccessCrimes, LOW_SUCCESS_THRESHOLD } from './oc-ready-notifier.js';
+import { lowSuccessCrimes, LOW_SUCCESS_THRESHOLD, ocCrimeUrl } from './oc-ready-notifier.js';
 
 const slot = (pct, opts = {}) => ({
   position: opts.position || 'Muscle',
@@ -190,4 +190,34 @@ test('with no weight table at all, it falls back to weakest-first', () => {
   );
   assert.deepEqual(out[0].weak.map(w => w.userId), ['1', '2']);
   assert.equal(out[0].weak[0].weight, null);
+});
+
+// ── tap-through ────────────────────────────────────────────────────────
+//
+// Two "Market Forces" alerts arrived at once, identical but for the
+// member. Both linked to the crimes LIST, so neither told you which of
+// the two to open. Torn's router expands a specific card from the hash,
+// which oc-spawn-assistance has used since v3.1.36.
+
+test('the link opens the exact crime, not the list', () => {
+  const u = ocCrimeUrl('2205045');
+  assert.match(u, /crimeId=2205045/);
+  assert.match(u, /tab=crimes/);
+  assert.ok(u.startsWith('https://www.torn.com/factions.php'), u);
+});
+
+test('two crimes give two different links', () => {
+  assert.notEqual(ocCrimeUrl('2222624'), ocCrimeUrl('2222622'));
+});
+
+test('the crime id goes in the HASH, where Torn router reads it', () => {
+  // ?crimeId= on the query string is ignored — the SPA never sees it.
+  const u = ocCrimeUrl('2205045');
+  assert.ok(u.indexOf('crimeId') > u.indexOf('#'), 'crimeId must be after the #: ' + u);
+});
+
+test('a missing id falls back to the list rather than a broken link', () => {
+  const u = ocCrimeUrl(null);
+  assert.match(u, /tab=crimes/);
+  assert.ok(!/crimeId/.test(u), u);
 });
