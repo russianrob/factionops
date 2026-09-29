@@ -33,6 +33,8 @@ import * as vaultRequests from "./vault-requests.js";
 import { startSubscriptionManager, stopSubscriptionManager } from "./subscription-manager.js";
 import * as store from "./store.js";
 import * as warHistory from "./war-history.js";
+import { enemyNameFrom } from "./prewar-activity.js";
+import { decodeEntities } from "./torn-api.js";
 import { computePayouts, backfillWarScores } from "./war-payouts.js";
 import { maybeRefreshItemValues, onItemValuesRefreshed, getItemMarketValue } from "./item-values.js";
 import * as priceWatcher from "./price-watcher.js";
@@ -865,6 +867,51 @@ async function detectNewWars() {
     console.error('[war-detect] Detection failed:', err.message);
   }
 }
+
+// Repair war records that carry an enemy id but no name.
+//
+// Once a war ends, fetchRankedWar returns nothing, so the detection loop's
+// own self-heal can never run again and a record left unnamed stays that
+// way for good — which is how war_42055 sat on id 8795 with name null
+// while warboard's war history had it down as The Brotherhood of Battle
+// all along. The War Scout printed "Faction 8795" as a result.
+//
+// Runs once at boot, reads only from data already on disk, and touches
+// nothing that already has a name.
+function backfillEnemyNames() {
+  let fixed = 0;
+  try {
+    for (const [warId, war] of store.getAllWars()) {
+      if (!war || !war.enemyFactionId) continue;
+      // Names captured before decoding was applied still carry v1's HTML
+      // entities — "Howler&#039;s Haven" — which render sites then escape
+      // again and print literally. Repair those in place.
+      if (war.enemyFactionName) {
+        const clean = decodeEntities(war.enemyFactionName);
+        if (clean && clean !== war.enemyFactionName) {
+          console.log(`[war-detect] Decoded name for ${warId}: ${war.enemyFactionName} -> ${clean}`);
+          war.enemyFactionName = clean;
+          fixed++;
+        }
+        continue;
+      }
+      const name = enemyNameFrom({
+        war: null,
+        history: warHistory.listWars(war.factionId) || [],
+        id: war.enemyFactionId,
+      });
+      if (!name) continue;
+      war.enemyFactionName = name;
+      fixed++;
+      console.log(`[war-detect] Backfilled name for ${warId}: ${war.enemyFactionId} -> ${name}`);
+    }
+    if (fixed) store.saveState();
+  } catch (e) {
+    // Cosmetic repair; never let it stop the server coming up.
+    console.warn(`[war-detect] name backfill failed: ${e.message}`);
+  }
+}
+setTimeout(backfillEnemyNames, 5000);
 
 // Run detection on startup (after a short delay) and every 5 minutes
 setTimeout(detectNewWars, 10000);

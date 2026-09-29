@@ -202,6 +202,11 @@ export function getOrCreateWar(warId, factionId, enemyFactionId = null) {
       }
 
       war.enemyFactionId = enemyFactionId;
+      // The name belongs to the enemy we just replaced. Leaving it attached
+      // to a new id is worse than leaving it blank: consumers then name the
+      // wrong faction with full confidence. Callers that know the new name
+      // set it immediately after; the boot-time backfill catches the rest.
+      war.enemyFactionName = null;
       war.calls = {};
       war.priorities = {};
       war.enemyStatuses = {};

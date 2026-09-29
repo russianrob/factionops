@@ -81,6 +81,31 @@ export function enemyNameFrom({ war, history, id } = {}) {
   return best ? clean(best.enemyFactionName) : '';
 }
 
+/**
+ * The enemy fields to write when a war record adopts an enemy id.
+ *
+ * The client-driven path in /api/war set enemyFactionId and left
+ * enemyFactionName untouched. Missing was how war_42055 ended up named
+ * null — but the dangerous direction is the other one: an old name left
+ * beside a new id makes every consumer confidently report the WRONG
+ * faction. Blank is a gap you can see; stale is a lie you cannot.
+ *
+ * So a genuine change of opponent drops the old name unconditionally,
+ * then re-derives from history. Re-adopting the SAME id keeps whatever
+ * name is already there, which preserves a good API-sourced value.
+ */
+export function reassignEnemy(war, newId, history) {
+  const id = String(newId == null ? '' : newId).trim();
+  const had = String((war && war.enemyFactionId) ?? '').trim();
+  if (id && had && id === had) {
+    return { enemyFactionId: id, enemyFactionName: (war && war.enemyFactionName) || null };
+  }
+  return {
+    enemyFactionId: id,
+    enemyFactionName: enemyNameFrom({ war: null, history, id }) || null,
+  };
+}
+
 export function hourCurve(buckets) {
   const sums = new Array(24).fill(0);
   const counts = new Array(24).fill(0);

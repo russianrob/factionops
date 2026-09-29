@@ -9,6 +9,33 @@ const maskKey = (key) => key ? `****${String(key).slice(-4)}` : '****';
  * Fetch faction member statuses from the Torn API.
  * Returns a map of memberId → { status, until, lastAction, online, level, name }.
  */
+/**
+ * Undo the HTML escaping Torn's v1 API applies to names.
+ *
+ * v1 returns "Howler&#039;s Haven" where v2 returns "Howler's Haven".
+ * fetchRankedWar reads v1, so the escaped form was being STORED — and the
+ * War Scout, which correctly escapes at render, then printed the entity
+ * itself. Same rule this file already states for attack rows: the escaped
+ * form is a rendering artefact, not the datum.
+ *
+ * The OUTPUT IS DATA, not markup. Every render site must still escape it;
+ * decoding here does not make a name safe to interpolate.
+ */
+export function decodeEntities(value) {
+  if (value == null) return '';
+  let out = String(value);
+  // Ampersand LAST. Doing it first turns "&amp;#039;" into "&#039;" and
+  // then into an apostrophe the name never contained.
+  out = out
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+  return out;
+}
+
 export async function fetchFactionMembers(factionId, apiKey) {
   const url = `https://api.torn.com/faction/${encodeURIComponent(factionId)}?selections=basic&key=${encodeURIComponent(apiKey)}&comment=wb-api`;
 
@@ -178,7 +205,8 @@ export async function fetchRankedWar(factionId, apiKey) {
     return {
       warId: String(warId),
       enemyFactionId: enemyFid,
-      enemyFactionName: factions[enemyFid]?.name || null,
+      // v1 escapes this; store the real name (render sites escape).
+      enemyFactionName: factions[enemyFid]?.name ? decodeEntities(factions[enemyFid].name) : null,
       myScore: factions[myFid]?.score || 0,
       enemyScore: factions[enemyFid]?.score || 0,
       warStart: warData.war?.start || 0,

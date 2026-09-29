@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  hourCurve, edgeTable, cacheKeyFor, nextDelay, HOUR, SPACING_MS, enemyNameFrom } from "./prewar-activity.js";
+  hourCurve, edgeTable, cacheKeyFor, nextDelay, HOUR, SPACING_MS, enemyNameFrom, reassignEnemy } from "./prewar-activity.js";
 
 /** A bucket as FFScouter returns it. */
 const b = (isoHour, ratio) => ({
@@ -227,4 +227,52 @@ test("returns empty rather than a placeholder, so the caller can try the API", (
   assert.equal(enemyNameFrom({}), "");
   // A blank or whitespace name is not a name.
   assert.equal(enemyNameFrom({ war: { enemyFactionName: "   " }, id: "1", history: [] }), "");
+});
+
+// ── changing who we are at war with ────────────────────────────────────
+//
+// The client-driven path in /api/war set war.enemyFactionId and left
+// enemyFactionName alone. That is how war_42055 ended up with id '8795'
+// and name null — but the worse failure is the other direction: keep the
+// old name beside a new id and every consumer confidently reports the
+// WRONG faction. Blank is a gap; stale is a lie.
+
+test("adopting a new enemy never keeps the previous name", () => {
+  const out = reassignEnemy(
+    { enemyFactionId: "26154", enemyFactionName: "The Rifle Medics" },
+    "8795",
+    [],
+  );
+  assert.equal(out.enemyFactionId, "8795");
+  assert.equal(out.enemyFactionName, null);
+});
+
+test("it names the new enemy when history knows them", () => {
+  const out = reassignEnemy(
+    { enemyFactionId: "26154", enemyFactionName: "The Rifle Medics" },
+    "8795",
+    [{ enemyFactionId: "8795", enemyFactionName: "The Brotherhood of Battle", warStart: 5 }],
+  );
+  assert.equal(out.enemyFactionName, "The Brotherhood of Battle");
+});
+
+test("re-adopting the SAME enemy keeps the name we already had", () => {
+  // Not a change of opponent, so there is nothing to invalidate — and
+  // throwing the name away would undo a good API-sourced value.
+  const out = reassignEnemy(
+    { enemyFactionId: "8795", enemyFactionName: "The Brotherhood of Battle" },
+    "8795",
+    [],
+  );
+  assert.equal(out.enemyFactionName, "The Brotherhood of Battle");
+});
+
+test("ids compare loosely — the client sends strings, the store holds numbers", () => {
+  const out = reassignEnemy({ enemyFactionId: 8795, enemyFactionName: "Kept" }, "8795", []);
+  assert.equal(out.enemyFactionName, "Kept");
+});
+
+test("an unknown new enemy is left unnamed rather than mislabelled", () => {
+  const out = reassignEnemy({ enemyFactionId: "1", enemyFactionName: "Old" }, "99999", []);
+  assert.equal(out.enemyFactionName, null);
 });

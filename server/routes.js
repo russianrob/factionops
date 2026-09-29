@@ -2728,7 +2728,13 @@ router.get("/api/poll", (req, res, next) => {
   // WIPE STALE WAR DATA if enemy faction ID changed (bug fix)
   if (enemyFactionId && war.enemyFactionId !== enemyFactionId) {
     console.log(`[api] War ${warId} enemy changed from ${war.enemyFactionId} to ${enemyFactionId}. Wiping stale state.`);
-    war.enemyFactionId = enemyFactionId;
+    // The NAME is stale state too. This path used to set the id and leave
+    // enemyFactionName untouched, so the record kept the previous faction's
+    // name beside the new id — worse than the blank it also produced, since
+    // every consumer then reports the wrong faction with confidence.
+    const _ident = prewar.reassignEnemy(war, enemyFactionId, warHistory.listWars(factionId) || []);
+    war.enemyFactionId = _ident.enemyFactionId;
+    war.enemyFactionName = _ident.enemyFactionName;
     war.enemyStatuses = {};
     war.calls = {};
     war.priorities = {};
