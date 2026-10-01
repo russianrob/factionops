@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.13.0
+// @version      3.13.1
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the screenshots and stock lists people post in forum trade threads
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.13.0';
+    var SCRIPT_VERSION = '3.13.1';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1737,6 +1737,33 @@
         return bonuses;
     }
 
+    // The expanded inventory panel is a SIBLING, not a child.
+    //
+    // Measured on the live page (item.php, remote-inspect): the row RWP
+    // badges is `LI.…item-info-active…`, and the bonus text lives in
+    // `LI.show-item-info` — the row's IMMEDIATE next sibling. Their nearest
+    // common ancestor is UL.all-items, nine levels above the bonus node, so
+    // el.querySelector() from the row can never see it and the row was
+    // priced "no bonus read" for every ranked item in the inventory.
+    //
+    // Scoped to the immediate sibling ONLY. Torn opens one panel at a time
+    // and it always sits directly after its own row, so this cannot pick up
+    // a neighbouring item's bonus — which would be far worse than the
+    // honest warning, because it would price the row confidently wrong.
+    function adjacentDetailPanel(el) {
+        if (!el || !el.nextElementSibling) return null;
+        var nxt = el.nextElementSibling;
+        return /\bshow-item-info\b/.test(nxt.className || '') ? nxt : null;
+    }
+
+    // Bonuses for a row, including its open detail panel if it has one.
+    function extractBonusesDeep(el) {
+        var found = extractBonuses(el);
+        if (found && found.length) return found;
+        var panel = adjacentDetailPanel(el);
+        return panel ? extractBonuses(panel) : found;
+    }
+
     // ─── Weapon name extraction ──────────────────────────────
 
     function extractWeaponName(el) {
@@ -2285,7 +2312,7 @@
             // so the row matches the expanded "RWP Est" instead of showing two prices.
             if (el.getAttribute('data-rwp-priced') === '1' || el.querySelector('.rwp-price-tag')) {
                 if (el.getAttribute('data-rwp-nobonus') !== '1') continue;
-                if (extractBonuses(el).length === 0) continue;
+                if (extractBonusesDeep(el).length === 0) continue;
                 var staleTag = el.querySelector('.rwp-price-tag');
                 if (staleTag && staleTag.parentNode) staleTag.parentNode.removeChild(staleTag);
                 el.removeAttribute('data-rwp-priced');
@@ -2306,7 +2333,7 @@
             // has plenty of fresh comparables and takes the recent set; a
             // double-bonus one is data-starved and keeps its full history.
             // Armour has no recent set and is unaffected.
-            var bonuses = extractBonuses(el);
+            var bonuses = extractBonusesDeep(el);
             // The row is the better source where it has one: it is what the page
             // actually shows. The icon is a fallback for the lists that do not
             // render bonuses at all, never a replacement.
