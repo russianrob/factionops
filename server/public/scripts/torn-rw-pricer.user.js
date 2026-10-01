@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.13.2
+// @version      3.13.3
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the screenshots and stock lists people post in forum trade threads
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.13.2';
+    var SCRIPT_VERSION = '3.13.3';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1671,10 +1671,27 @@
                 // resort, used only where nothing else names the bonus.
                 var biTitleAttr = bonusIcons[bi2].getAttribute('title') || '';
                 var biTitleBold = biTitleAttr.match(/<b>\s*([^<]+?)\s*<\/b>/i);
-                var biName = biTitleBold ? resolveBonusName(biTitleBold[1]) : null;
                 var biLabel = bonusIcons[bi2].getAttribute('aria-label') || '';
+                var biDataTitle = bonusIcons[bi2].getAttribute('data-bonus-attachment-title') || '';
+                var biDataDesc = bonusIcons[bi2].getAttribute('data-bonus-attachment-description') || '';
+                // Every source that NAMES the bonus, in order of authority.
+                // The class is last on purpose: it names a sprite, and the
+                // same sprite serves more than one bonus. Measured —
+                // bonus-attachment-fury is "Fury" on item-market listings
+                // and "Double Tap" in the inventory, two bonuses with two
+                // price tables sharing one animation.
+                //
+                // Which attribute carries the name also varies by surface:
+                // the inventory puts it in title="<b>…</b>", the item market
+                // in data-bonus-attachment-title and aria-label. Trying the
+                // class before those would quietly re-introduce the bug.
+                var biName = biTitleBold ? resolveBonusName(biTitleBold[1]) : null;
+                if (!biName && biDataTitle) biName = resolveBonusName(biDataTitle);
+                if (!biName && biLabel) biName = resolveBonusName(biLabel.replace(/\s*bonus\b.*$/i, ''));
+                if (!biName && biLabel) biName = resolveBonusName(biLabel);
                 if (!biName) biName = resolveBonusName(biMatch[1].replace(/-/g, ' '));
-                var biLevel = parseLevelFromText(biTitleAttr) || parseLevelFromText(biLabel);
+                var biLevel = parseLevelFromText(biTitleAttr) || parseLevelFromText(biDataDesc)
+                           || parseLevelFromText(biLabel);
                 // Also try data-bonus-attachment-description for level (item market tiles)
                 if (!biLevel) {
                     var biDesc = bonusIcons[bi2].getAttribute('data-bonus-attachment-description') || '';
