@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.13.1
+// @version      3.13.2
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the screenshots and stock lists people post in forum trade threads
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.13.1';
+    var SCRIPT_VERSION = '3.13.2';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -1658,9 +1658,23 @@
             var biClass = bonusIcons[bi2].className || '';
             var biMatch = biClass.match(/bonus-attachment-(\w[\w-]*)/i);
             if (biMatch) {
-                var biName = resolveBonusName(biMatch[1].replace(/-/g, ' '));
+                // THE CLASS IS THE SPRITE, NOT THE BONUS. Measured on a live
+                // inventory: bonus-attachment-fury carries title "<b>Double
+                // Tap</b> 26%", bonus-attachment-poisoned is "Poison", and
+                // bonus-attachment-burning is "Burn". Others (powerful,
+                // shock) do agree, which is what made this look safe.
+                //
+                // Trusting the class does not fail loudly — "Fury" is itself
+                // a real bonus with its own price table, so a Double Tap
+                // weapon was priced confidently as a Fury. The title is
+                // Torn's own label and is authoritative; the class is a last
+                // resort, used only where nothing else names the bonus.
+                var biTitleAttr = bonusIcons[bi2].getAttribute('title') || '';
+                var biTitleBold = biTitleAttr.match(/<b>\s*([^<]+?)\s*<\/b>/i);
+                var biName = biTitleBold ? resolveBonusName(biTitleBold[1]) : null;
                 var biLabel = bonusIcons[bi2].getAttribute('aria-label') || '';
-                var biLevel = parseLevelFromText(biLabel) || parseLevelFromText(bonusIcons[bi2].getAttribute('title') || '');
+                if (!biName) biName = resolveBonusName(biMatch[1].replace(/-/g, ' '));
+                var biLevel = parseLevelFromText(biTitleAttr) || parseLevelFromText(biLabel);
                 // Also try data-bonus-attachment-description for level (item market tiles)
                 if (!biLevel) {
                     var biDesc = bonusIcons[bi2].getAttribute('data-bonus-attachment-description') || '';
