@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.90
+// @version      0.9.91
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -2189,7 +2189,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.90";
+  var GC_VERSION = "0.9.91";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -10865,6 +10865,11 @@
   // spent re-reading things that do not move that fast -- and it is what left
   // no headroom when anything else asked a question. The bar is read from the
   // page DOM once a second regardless, so nothing on screen got slower.
+  // Minimum spacing between the two gym MutationObservers' API refreshes.
+  // They share this: see the note at the observer for why per-observer state
+  // does not work.
+  var ENERGY_OBS_MIN_MS = 45000;
+  var lastEnergyObsAt = 0;
   var POLL_GYM_MS = 60000;
   // Off-gym was 20s, which made every other Torn page poll three times harder
   // than the gym itself. Same rate now.
@@ -12377,6 +12382,26 @@
         if (!/gym\.php/i.test(location.href)) return;
         clearTimeout(obs._t);
         obs._t = setTimeout(function () {
+          // THROTTLED, and the throttle is SHARED.
+          //
+          // Two roots are observed -- #gymroot and the energy bar -- each with
+          // its own observer and its own 500ms debounce. The bar mutates
+          // continuously as it fills, so every quiet gap scheduled another
+          // full API call, from each observer independently. Measured on a
+          // live device: 29 calls a minute from this script, 20 of them v1
+          // /user, against Torn's 100-a-minute key budget -- while the actual
+          // POLL sits at a well-behaved 60s.
+          //
+          // The floor lives at module scope on purpose. Per-observer state
+          // would let two observers alternate straight through it.
+          //
+          // Nothing on screen slows down: syncEnergyFromDom() reads the bar
+          // off the page every second regardless, so energy stays live. This
+          // call only exists to pick up what the DOM does not show, and that
+          // does not move in under a minute.
+          var now = Date.now();
+          if (now - lastEnergyObsAt < ENERGY_OBS_MIN_MS) return;
+          lastEnergyObsAt = now;
           refresh("energy");
         }, 500);
       });
