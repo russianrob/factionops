@@ -148,7 +148,18 @@ test("still prices when the feed carries no recent slice", () => {
     name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
   });
   assert.equal(p.ok, true, p.reason);
-  assert.equal(p.estimate, 101000001, "must fall straight back to the history");
+  // Asserts the FALLBACK, not a figure. The exact number was hardcoded from
+  // one afternoon's feed and the daily rebuild moved it (101000001 ->
+  // 101059251) while the fallback kept working perfectly. What has to hold
+  // is that dropping the recent slice still prices, off the longer history,
+  // and does not silently return the recent-weighted answer.
+  assert.ok(p.estimate > 0, "no estimate at all from the history path");
+  const withRecent = priceItem(feed, {
+    name: "SIG 552", rarity: "Yellow", bonuses: [{ name: "Expose", pct: 9 }],
+  });
+  assert.equal(withRecent.ok, true, withRecent.reason);
+  assert.notEqual(p.estimate, withRecent.estimate,
+    "history-only priced identically to the recent-weighted view — the recent slice was not actually dropped");
 });
 
 // ── Invented names ─────────────────────────────────────────────

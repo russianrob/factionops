@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.4.1
+// @version      5.4.2
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -16,6 +16,11 @@
 // @match        https://www.torn.com/profiles.php?XID=*
 // @match        https://torn.com/profiles.php?XID=*
 // @match        https://www.torn.com/war.php*
+// War chat lives in Torn's chat dock, which is on EVERY page — so the script
+// has to run everywhere to put a button there. detectPageAndInit's existing
+// "unknown page" branch already handles this safely; see the gate in it.
+// @match        https://www.torn.com/*
+// @match        https://torn.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -100,7 +105,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.1';
+    const SCRIPT_VERSION = '5.4.2';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -6282,6 +6287,8 @@ body.wb-chain-active {
                                     `${data.playerName} needs help attacking ${data.targetName}!`,
                                     data.attackUrl);
                             }
+                        } else if (data && data.type === 'chat_message') {
+                            wcOnMessage(data);
                         } else if (data && data.type === 'enemy_surge') {
                             const msg = `🚨 +${data.delta} enemies came online in ${data.windowSec}s — ${data.online} now active`;
                             showToast(msg, 'warning');
@@ -12414,10 +12421,20 @@ body.wb-chain-active {
             // visible to somebody who never presses it.
             startCallsOnlyMode();
         } else {
-            log('Page: Unknown — running in passive mode');
-            // Re-create settings/heatmap if they were removed on an attack page
-            if (!document.querySelector('.wb-settings-gear')) createSettingsGear();
-            if (!document.getElementById('wb-heatmap-toggle')) createHeatmapButton();
+            // 5.4.2 widened @match to all of Torn so the war-chat dock button
+            // can exist everywhere. That makes this branch reachable on pages
+            // it never used to see — the gym, the market, travel — and the
+            // gear and heatmap button have no business on those. Restricted
+            // to the pages this script was originally matched on, so widening
+            // the match adds a chat button and nothing else.
+            const onOriginalPage = /factions\.php|war\.php|sid=attack|profiles\.php/i.test(url);
+            if (onOriginalPage) {
+                log('Page: Unknown — running in passive mode');
+                if (!document.querySelector('.wb-settings-gear')) createSettingsGear();
+                if (!document.getElementById('wb-heatmap-toggle')) createHeatmapButton();
+            } else {
+                log('Page: off-war — war chat only');
+            }
         }
     }
 
@@ -15503,8 +15520,211 @@ body.wb-chain-active {
         usingChainDOM = false;
 
         // Re-detect page and init
-        setTimeout(() => detectPageAndInit(), 500);
+        setTimeout(() => { detectPageAndInit(); wcEnsureButton(); }, 500);
     }
+
+    // =========================================================================
+    // SECTION 25b: WAR CHAT DOCK  (private 5.4.2)
+    // =========================================================================
+    //
+    // The server side has existed since April and had no client at all:
+    //   GET    /api/chat/:warId        full history, faction-gated
+    //   POST   /api/chat/:warId        rate limited 5 per 5s, fans out on SSE
+    //   DELETE /api/chat/:warId/:msgId admins only
+    // Messages already arrive on the SSE stream this script holds open, so
+    // nothing new is polled and no second connection is opened.
+    //
+    // The button is injected into Torn's own chat dock beside the W, which is
+    // how TornW3B does it. Torn hashes the dock's class names per build, so
+    // they are COPIED OFF A LIVE SIBLING rather than written down — hardcoding
+    // root___zZRe1 would work until the next deploy and then silently stop.
+
+    const WC_BTN_ID   = 'fo-warchat-btn';
+    const WC_PANEL_ID = 'fo-warchat-panel';
+    const WC_MAX_RENDER = 200;
+
+    let wcMessages = [];
+    let wcUnread   = 0;
+    let wcOpen     = false;
+    let wcLoaded   = false;
+
+    function wcEscape(t) {
+        return String(t == null ? '' : t)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    /** Where in Torn's dock the button belongs, or null if there is no dock. */
+    function wcDockSlot() {
+        if (!document.getElementById('chatRoot')) return null;
+        const gear   = document.getElementById('notes_settings_button');
+        const people = document.getElementById('people_panel_button');
+        const sample = gear || people;
+        if (!sample || !sample.parentElement) return null;
+        // Sit to the LEFT of the settings gear, which is where every other
+        // injected button lives.
+        return { parent: sample.parentElement, before: gear || null, sample };
+    }
+
+    function wcEnsureButton() {
+        if (document.getElementById(WC_BTN_ID)) return;
+        const slot = wcDockSlot();
+        if (!slot) return;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.id = WC_BTN_ID;
+        b.className = slot.sample.className;   // build-hashed; copied, never typed
+        b.title = 'War chat';
+        b.setAttribute('aria-label', 'War chat');
+        b.setAttribute('data-prevent-flyout-swipe', 'true');
+        b.style.position = 'relative';
+        b.innerHTML = '<span style="font-size:18px;line-height:1;display:block">⚔</span>' +
+            '<span id="fo-warchat-badge" style="display:none;position:absolute;top:2px;right:2px;' +
+            'min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#c0392b;color:#fff;' +
+            'font-size:10px;font-weight:700;line-height:16px;text-align:center"></span>';
+        b.addEventListener('click', function (e) { e.stopPropagation(); wcToggle(); });
+        slot.parent.insertBefore(b, slot.before);
+    }
+
+    function wcSetBadge(n) {
+        const el = document.getElementById('fo-warchat-badge');
+        if (!el) return;
+        if (n > 0) { el.textContent = n > 99 ? '99+' : String(n); el.style.display = 'block'; }
+        else el.style.display = 'none';
+    }
+
+    function wcToggle() {
+        wcOpen = !wcOpen;
+        if (wcOpen) {
+            wcUnread = 0; wcSetBadge(0);
+            wcEnsurePanel();
+            if (!wcLoaded) wcLoadHistory();
+            wcRender();
+        } else {
+            const p = document.getElementById(WC_PANEL_ID);
+            if (p) p.remove();
+        }
+    }
+
+    function wcEnsurePanel() {
+        if (document.getElementById(WC_PANEL_ID)) return;
+        const p = document.createElement('div');
+        p.id = WC_PANEL_ID;
+        p.style.cssText = [
+            'position:fixed', 'right:12px', 'bottom:58px', 'z-index:100000',
+            'width:min(340px, calc(100vw - 24px))', 'max-height:min(60vh, 460px)',
+            'display:flex', 'flex-direction:column',
+            'background:#0f1a14', 'color:#d1d5db', 'border:1px solid #2a3f30',
+            'border-radius:10px', 'box-shadow:0 6px 28px rgba(0,0,0,.7)',
+            'font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif'
+        ].join(';');
+        p.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:space-between;' +
+            'padding:9px 11px;border-bottom:1px solid #1a2e20;font-weight:700;color:#74c69d">' +
+            '<span>⚔ War chat</span>' +
+            '<span id="fo-wc-close" style="cursor:pointer;color:#6b7280;font-weight:400">✕</span></div>' +
+            '<div id="fo-wc-list" style="flex:1;overflow-y:auto;padding:8px 11px"></div>' +
+            '<div style="display:flex;gap:6px;padding:8px;border-top:1px solid #1a2e20">' +
+            '<input id="fo-wc-input" maxlength="300" placeholder="Message the faction…" ' +
+            'style="flex:1;min-width:0;background:#12211a;border:1px solid #2a3f30;border-radius:6px;' +
+            'color:#e5e7eb;padding:7px 9px;font-size:13px">' +
+            '<button id="fo-wc-send" style="background:#2d6a4f;border:none;border-radius:6px;' +
+            'color:#fff;font-weight:700;padding:7px 12px;cursor:pointer">Send</button></div>';
+        document.body.appendChild(p);
+        p.querySelector('#fo-wc-close').addEventListener('click', wcToggle);
+        p.querySelector('#fo-wc-send').addEventListener('click', wcSend);
+        p.querySelector('#fo-wc-input').addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); wcSend(); }
+        });
+    }
+
+    function wcRender() {
+        const list = document.getElementById('fo-wc-list');
+        if (!list) return;
+        if (!wcMessages.length) {
+            list.innerHTML = '<div style="color:#6b7280;padding:14px 0;text-align:center">No messages yet.</div>';
+            return;
+        }
+        const rows = wcMessages.slice(-WC_MAX_RENDER).map(function (m) {
+            const t = new Date(m.ts || Date.now());
+            const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+            const mine = String(m.playerId) === String(state.myPlayerId || '');
+            return '<div style="margin-bottom:7px">' +
+                '<span style="color:' + (mine ? '#74c69d' : '#9aa8b8') + ';font-weight:600">' +
+                wcEscape(m.playerName || m.playerId) + '</span> ' +
+                '<span style="color:#4b5563;font-size:11px">' + hh + '</span><br>' +
+                '<span style="color:#e5e7eb">' + wcEscape(m.text) + '</span></div>';
+        }).join('');
+        list.innerHTML = rows;
+        list.scrollTop = list.scrollHeight;
+    }
+
+    function wcLoadHistory() {
+        const warId = deriveWarId();
+        if (!warId || !state.jwtToken) return;
+        wcLoaded = true;
+        // GM_xmlhttpRequest, not fetch: every page-context request to
+        // tornwar.com fails under Torn's connect-src CSP on warboard-iOS.
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: CONFIG.SERVER_URL + '/api/chat/' + encodeURIComponent(warId),
+            headers: { 'Authorization': 'Bearer ' + state.jwtToken },
+            onload(res) {
+                const body = safeParse(res.responseText);
+                if (res.status === 200 && body && Array.isArray(body.messages)) {
+                    wcMessages = body.messages;
+                    wcRender();
+                } else {
+                    wcLoaded = false;   // let the next open retry
+                }
+            },
+            onerror() { wcLoaded = false; }
+        });
+    }
+
+    function wcSend() {
+        const input = document.getElementById('fo-wc-input');
+        if (!input) return;
+        const text = String(input.value || '').trim();
+        if (!text) return;
+        const warId = deriveWarId();
+        if (!warId || !state.jwtToken) { showToast('Not connected to warboard yet', 'warning'); return; }
+        input.value = '';
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: CONFIG.SERVER_URL + '/api/chat/' + encodeURIComponent(warId),
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.jwtToken },
+            data: JSON.stringify({ text }),
+            onload(res) {
+                if (res.status === 429) { showToast('Slow down — too many messages', 'warning'); return; }
+                if (res.status !== 200) {
+                    const body = safeParse(res.responseText);
+                    showToast((body && body.error) || ('Send failed (' + res.status + ')'), 'error');
+                    input.value = text;    // give it back rather than lose it
+                }
+                // The sent message arrives back over SSE like everyone else's,
+                // so there is no local echo to de-duplicate.
+            },
+            onerror() { showToast('Send failed — network', 'error'); input.value = text; }
+        });
+    }
+
+    /** A message off the SSE stream. */
+    function wcOnMessage(msg) {
+        if (!msg || !msg.text) return;
+        if (wcMessages.some(function (m) { return m.id && m.id === msg.id; })) return;
+        wcMessages.push(msg);
+        if (wcOpen) { wcRender(); return; }
+        // Do not count your own words as unread.
+        if (String(msg.playerId) !== String(state.myPlayerId || '')) {
+            wcUnread += 1;
+            wcSetBadge(wcUnread);
+        }
+    }
+
+    // Torn re-renders the dock on navigation, so the button is re-asserted
+    // rather than placed once. Cheap: a getElementById hit when it is present.
+    setInterval(wcEnsureButton, 2000);
 
     // =========================================================================
     // SECTION 26: STARTUP

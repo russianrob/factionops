@@ -189,11 +189,19 @@ test("a row with no icon yields nothing, and claims nothing", () => {
   assert.equal(sandbox.__bi(null), null);
 });
 
+test("the call site the two ordering tests anchor on still exists", () => {
+  // Guards the two tests below: both slice the source from this call. When
+  // 3.13.1 renamed it, indexOf returned -1, the slice came back empty, and
+  // they failed as if the ORDER were wrong rather than the anchor missing.
+  assert.ok(SRC.includes("var bonuses = extractBonusesDeep(el);"),
+    "bonus-extraction call site renamed — update the anchor in this file");
+});
+
 test("the item page asks the icon only when the row gave nothing", () => {
   // The row's own markup is the better source where it exists — it is what the
   // page actually shows. The icon is a fallback, not a replacement.
-  const body = SRC.slice(SRC.indexOf("var bonuses = extractBonuses(el);"),
-                         SRC.indexOf("var bonuses = extractBonuses(el);") + 500);
+  const body = SRC.slice(SRC.indexOf("var bonuses = extractBonusesDeep(el);"),
+                         SRC.indexOf("var bonuses = extractBonusesDeep(el);") + 500);
   assert.match(body, /bonuses\.length/, "gated on the row yielding nothing: " + body.slice(0, 200));
   assert.match(body, /bonusesFromInfoIcon/);
 });
@@ -320,7 +328,7 @@ test("entries cached before bonuses were kept count as misses", () => {
 });
 
 test("the uid lookup is the last resort, after the row and the icon", () => {
-  const i = SRC.indexOf("var bonuses = extractBonuses(el);");
+  const i = SRC.indexOf("var bonuses = extractBonusesDeep(el);");
   const body = SRC.slice(i, i + 900);
   assert.ok(body.indexOf("bonusesFromInfoIcon") < body.indexOf("uidBonusesFor"),
     "the icon is tried before the API");
