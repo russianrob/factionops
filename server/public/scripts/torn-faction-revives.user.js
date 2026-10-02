@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Revive Check
 // @namespace    russianrob.faction.revives
-// @version      2.3.1
+// @version      2.4.0
 // @description  Badges every faction member by their revive setting (Everyone / Friends & faction / off) in the position column, with a grouped copy-and-compose list. Originally built on AaronPMC's Elimination Revives.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-faction-revives.user.js
@@ -16,6 +16,11 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 2.4.0 - Works on any faction's page, not just your own.
+ *         /v2/faction/{id}/members answers for anyone; Torn masks
+ *         revive_setting to "Unknown" there but is_revivable comes
+ *         through, so that is what the badges and groups use, labelled
+ *         honestly as Revivable / Not revivable.
  * 2.3.1 - Dropped the Compose button from the list panel. Copy is what
  *         that panel is for; the pre-filled mail lives on the badges.
  * 2.3.0 - The status bar docks under Faction Description instead of
@@ -108,9 +113,55 @@
     // stable fact, and marks who is actually in hospital separately.
     let nextTryAt = 0;
     let factionFetching = false;
+    let fetchedFor = null;      // which faction the cached roster belongs to
+
+    /**
+     * The faction whose roster this page is showing, or null for your own.
+     *
+     * Torn puts the id in the query on another faction's page
+     * (factions.php?step=profile&ID=38761) and in the hash on some routes
+     * (#/tab=info&ID=...). Your own faction page carries no id at all.
+     */
+    function pageFactionId() {
+        const m = String(location.href || '').match(/[?&#][^?&#]*?\bID=(\d+)/i);
+        return m ? m[1] : null;
+    }
+
+    /**
+     * What one roster row tells us about reviving that member.
+     *
+     * Torn answers differently depending on whose faction you are looking at,
+     * measured live across three factions:
+     *
+     *   your own     revive_setting is REAL ("No one" / "Everyone" /
+     *                "Friends & faction"), and is_revivable is almost always
+     *                false, because it means "can be revived right this
+     *                second" and that needs them to be in hospital.
+     *   anyone else  revive_setting is masked to "Unknown" for every single
+     *                member -- 98/98 and 99/99 on the two factions checked --
+     *                but is_revivable comes through populated and mixed
+     *                (42/98, 38/99 true).
+     *
+     * So the setting is the better answer when we can have it, and the
+     * boolean is the only answer when we cannot. Taking the setting first
+     * keeps your own faction's three-way grouping intact.
+     */
+    function reviveStateOf(m) {
+        const set = (m && m.revive_setting) || 'Unknown';
+        if (set === 'Everyone' || set === 'Friends & faction') return { revivable: 1, setting: set };
+        if (set === 'No one') return { revivable: 0, setting: set };
+        if (typeof m.is_revivable === 'boolean') {
+            return { revivable: m.is_revivable ? 1 : 0, setting: set, fromFlag: true };
+        }
+        return { revivable: null, setting: set };
+    }
 
     function fetchFactionRoster(force) {
         if (factionFetching) return;
+        // Navigating to a different faction invalidates the TTL: the roster we
+        // are holding is somebody else's.
+        const fid = pageFactionId();
+        if (fid !== fetchedFor) { roster.clear(); nextTryAt = 0; }
         if (!force && Date.now() < nextTryAt) return;
         const key = resolveKey();
         if (!key) { setText('Set API key → tap 🔑'); return; }
@@ -122,7 +173,11 @@
         // on a key factionops and gym coach share, worst exactly when Torn is
         // already throttling us. Success pushes it out to the full TTL.
         nextTryAt = Date.now() + FAIL_RETRY_MS;
-        fetch('https://api.torn.com/v2/faction/members?striptags=true&comment=FactionRevive&key=' + encodeURIComponent(key))
+        // /v2/faction/{id}/members works for ANY faction, not just your own.
+        // Verified live against three factions.
+        const path = fid ? ('/v2/faction/' + encodeURIComponent(fid) + '/members')
+                         : '/v2/faction/members';
+        fetch('https://api.torn.com' + path + '?striptags=true&comment=FactionRevive&key=' + encodeURIComponent(key))
             .then(function (r) { return r.json().catch(function () { return null; }); })
             .then(function (data) {
                 factionFetching = false;
@@ -138,15 +193,13 @@
                 if (!list.length) return;
                 for (const m of list) {
                     const uid = String(m.id);
-                    const set = m.revive_setting || 'Unknown';
-                    results.set(uid, {
-                        revivable: set === 'No one' ? 0 : set === 'Unknown' ? null : 1,
-                        setting: set,
+                    results.set(uid, Object.assign(reviveStateOf(m), {
                         name: m.name || null,
                         at: Date.now()
-                    });
+                    }));
                     if (m.name) roster.set(uid, m.name);
                 }
+                fetchedFor = fid;
                 nextTryAt = Date.now() + FACTION_TTL_MS;
                 saveCacheSoon();
                 scan();
@@ -188,6 +241,7 @@
                     results.set(String(uid), {
                         revivable: e.revivable,
                         setting: e.setting || null,
+                        fromFlag: !!e.fromFlag,
                         name: e.name || null,
                         at: e.at
                     });
@@ -359,6 +413,33 @@
         { key: 'none',     label: 'Not revivable',     cls: 'er-g-none',     on: false }
     ];
 
+    /**
+     * True when this page's roster carries no real revive settings — i.e. we
+     * are looking at someone else's faction, where Torn returns "Unknown" for
+     * every member and only is_revivable comes through.
+     *
+     * It changes what the groups MEAN. On your own roster "Everyone" is a
+     * preference; here the only thing we know is whether they can be revived,
+     * so calling that group "Everyone" would be a straight misreading.
+     */
+    function settingsMasked() {
+        let real = 0, flagged = 0;
+        roster.forEach(function (_n, uid) {
+            const e = results.get(uid);
+            if (!e) return;
+            if (e.fromFlag) flagged++;
+            else if (e.setting && e.setting !== 'Unknown') real++;
+        });
+        return flagged > 0 && real === 0;
+    }
+
+    function groupLabelFor(g, masked) {
+        if (!masked) return g.label;
+        return g.key === 'everyone' ? 'Revivable'
+             : g.key === 'none' ? 'Not revivable'
+             : g.label;
+    }
+
     function groupOf(entry) {
         if (!entry) return null;
         if (entry.setting === 'Everyone') return 'everyone';
@@ -398,7 +479,7 @@
         return out;
     }
 
-    function renderList(groups, picked) {
+    function renderList(groups, picked, masked) {
         // Label the sections only when more than one is in play -- a single
         // selected group should paste as a bare list.
         const live = GROUPS.filter((g) => picked[g.key] && groups[g.key].length);
@@ -406,7 +487,7 @@
         const chunks = [];
         for (const g of live) {
             const rows = groups[g.key];
-            if (multi) chunks.push(g.label + ' (' + rows.length + '):');
+            if (multi) chunks.push(groupLabelFor(g, masked) + ' (' + rows.length + '):');
             chunks.push(rows.map((r) => (r.hosp ? '* ' : '') + r.name + ' [' + r.uid + ']').join('\n'));
             if (multi) chunks.push('');
         }
@@ -417,6 +498,7 @@
         const old = document.getElementById('er-copy');
         if (old) old.remove();
         const groups = buildGroups(hospitalUids());
+        const masked = settingsMasked();
         const picked = {};
         for (const g of GROUPS) picked[g.key] = g.on;
         const panel = document.createElement('div');
@@ -424,9 +506,10 @@
         panel.innerHTML =
             '<h4 id="er-copy-h">Revivable</h4>' +
             '<div class="er-groups">' +
-                GROUPS.map((g) =>
+                GROUPS.filter((g) => !(masked && g.key === 'faction'))
+                    .map((g) =>
                     '<span class="er-chip ' + g.cls + '" data-g="' + g.key + '" data-on="' + (g.on ? '1' : '0') + '">' +
-                    g.label + ' · ' + groups[g.key].length + '</span>').join('') +
+                    groupLabelFor(g, masked) + ' · ' + groups[g.key].length + '</span>').join('') +
             '</div>' +
             '<textarea readonly></textarea>' +
             '<div class="er-row">' +
@@ -438,7 +521,7 @@
         const ta = panel.querySelector('textarea');
 
         function repaint() {
-            const txt = renderList(groups, picked);
+            const txt = renderList(groups, picked, masked);
             ta.value = txt || '(nothing in the selected groups yet)';
             let n = 0;
             for (const g of GROUPS) if (picked[g.key]) n += groups[g.key].length;
@@ -644,7 +727,7 @@
         return m ? m[1] : null;
     }
 
-    function badgeFor(rev, setting, uid) {
+    function badgeFor(rev, setting, uid, fromFlag) {
         // Revives-on members get a real anchor, not a span with a click
         // handler: a genuine href works in the PDA webview, opens in a new
         // tab by itself, and is a user-clicked navigation rather than
@@ -671,7 +754,11 @@
         // reading that gets somebody killed.
         b.textContent = tone === 'er-on' ? '✙' : tone === 'er-fac' ? '✘'
                       : tone === 'er-off' ? '·' : '…';
-        b.title = setting ? ('Revives: ' + setting)
+        // On another faction's roster the setting is masked, so claiming
+        // "Revives: Unknown" would be worse than useless -- we DO know whether
+        // they can be revived, just not what they chose.
+        b.title = fromFlag ? (rev === 1 ? 'Revivable' : 'Not revivable')
+                : setting && setting !== 'Unknown' ? ('Revives: ' + setting)
                 : rev === 1 ? 'Revives ON' : rev === 0 ? 'Revives off' : 'Not checked yet';
         if (askable) {
             b.title += ' \u2014 tap to ask them to turn revives off';
@@ -698,7 +785,8 @@
         const cell = row.querySelector('[class*="positionCol"], .table-cell.position');
         if (!cell) return;
         const fresh = badgeFor(entry ? entry.revivable : undefined,
-                               entry ? entry.setting : null, uid);
+                               entry ? entry.setting : null, uid,
+                               entry ? entry.fromFlag : false);
         const old = cell.querySelector('[data-er="1"]');
         // scan() runs every 2s. Replacing an identical badge each time churns
         // the DOM for nothing and can swallow a tap that is already in flight.

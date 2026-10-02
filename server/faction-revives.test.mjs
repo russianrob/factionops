@@ -38,10 +38,12 @@ function mount(html, href) {
     CONST('GROUPS'),
     fn('listRoot'), fn('isHospitalRow'), fn('badgeFor'),
     fn('placeFactionBadge'), fn('groupOf'), fn('buildGroups'), fn('renderList'),
-    fn('uidFromAnchor'), fn('hospitalUids'),
+    fn('uidFromAnchor'), fn('hospitalUids'), fn('settingsMasked'), fn('groupLabelFor'),
+    fn('reviveStateOf'),
     // buildGroups reads the module-level roster/results maps; the test owns them.
     'globalThis.API={listRoot,isHospitalRow,badgeFor,placeFactionBadge,',
-    '  groupOf,buildGroups,renderList,hospitalUids,uidFromAnchor,GROUPS,roster,results};'
+    '  groupOf,buildGroups,renderList,hospitalUids,uidFromAnchor,GROUPS,roster,results,',
+    '  settingsMasked,groupLabelFor,reviveStateOf};'
   ].join('\n');
   const f = new Function('document', 'location', 'roster', 'results',
     src + '; return API;');
@@ -215,25 +217,28 @@ const V2 = {
   ]
 };
 
-function roster_api(payload, { key = 'abc', reject = false } = {}) {
+function roster_api(payload, { key = 'abc', reject = false, href = 'https://www.torn.com/factions.php?step=your' } = {}) {
   const results = new Map(), roster = new Map();
   const calls = [];
   const src = [
-    'let factionFetching = false, nextTryAt = 0;',
-    fn('fetchFactionRoster'),
-    'globalThis.API={fetchFactionRoster};'
+    'let factionFetching = false, nextTryAt = 0, fetchedFor = null;',
+    fn('pageFactionId'), fn('reviveStateOf'), fn('fetchFactionRoster'),
+    'globalThis.API={fetchFactionRoster,pageFactionId,reviveStateOf};'
   ].join('\n');
   const f = new Function(
     'results', 'roster', 'FACTION_TTL_MS', 'FAIL_RETRY_MS', 'resolveKey',
     'setText', 'fetch', 'saveCacheSoon', 'scan', 'updateStatus', 'encodeURIComponent',
-    'Date',
+    'Date', 'location',
     src + '; return API;');
   const clock = { t: 1_000_000, now: () => clock.t, tick: (ms) => { clock.t += ms; } };
+  // Mutable, so a test can actually NAVIGATE rather than build a second
+  // instance -- which shares no state and proves nothing about switching.
+  const loc = { href };
   const api = f(results, roster, 300000, 60000, () => key, (t) => calls.push(t),
     (url) => { calls.push(url); return reject ? Promise.reject(new Error('net'))
                                              : Promise.resolve({ json: () => Promise.resolve(payload) }); },
-    () => {}, () => {}, () => {}, encodeURIComponent, clock);
-  return { api, results, roster, calls, clock };
+    () => {}, () => {}, () => {}, encodeURIComponent, clock, loc);
+  return { api, results, roster, calls, clock, loc };
 }
 
 test('one call fills the whole roster with settings and names', async () => {
@@ -249,12 +254,25 @@ test('one call fills the whole roster with settings and names', async () => {
   assert.equal(results.get('13').revivable, 0);
 });
 
-test('Unknown is left unresolved rather than counted as a No', async () => {
+test('Unknown with NO boolean is left unresolved', async () => {
+  // Unknown means we do not know -- not that revives are off.
+  const { api, results } = roster_api({
+    members: [{ id: 14, name: 'Mystery', revive_setting: 'Unknown' }]
+  });
+  api.fetchFactionRoster(true);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(results.get('14').revivable, null);
+});
+
+test('Unknown WITH a boolean uses the boolean', async () => {
+  // Another faction's roster: Torn masks revive_setting to "Unknown" for every
+  // member (98/98 and 99/99 measured live) but is_revivable comes through
+  // populated. That flag is then the only answer available.
   const { api, results } = roster_api(V2);
   api.fetchFactionRoster(true);
   await new Promise((r) => setImmediate(r));
-  assert.equal(results.get('14').revivable, null,
-    'Unknown means we do not know -- not that revives are off');
+  assert.equal(results.get('14').revivable, 0);
+  assert.equal(results.get('14').fromFlag, true, 'the source has to be recorded');
 });
 
 test('the keyed-object form of members parses too', async () => {
@@ -987,4 +1005,135 @@ test('the bar cannot widen its column', () => {
   assert.match(rule[1], /width:0/);
   assert.match(rule[1], /min-width:100%/);
   assert.match(rule[1], /box-sizing:border-box/);
+});
+
+// --- other factions --------------------------------------------------------
+//
+// Measured live 2026-10-02 against three factions:
+//   own (42055)   revive_setting real {No one:84, Friends & faction:3},
+//                 is_revivable almost all false -- it means "right now",
+//                 which needs them to be in hospital.
+//   38761, 16628  revive_setting "Unknown" for 98/98 and 99/99, but
+//                 is_revivable populated and mixed (42 and 38 true).
+
+test('the page\'s faction id is read from the URL', () => {
+  const { api } = roster_api(V2);
+  const at = (href) => {
+    const { api: a } = roster_api(V2, { href });
+    return a.pageFactionId();
+  };
+  assert.equal(at('https://www.torn.com/factions.php?step=your'), null, 'own faction has no id');
+  assert.equal(at('https://www.torn.com/factions.php?step=profile&ID=38761'), '38761');
+  assert.equal(at('https://www.torn.com/factions.php?ID=16628#/tab=members'), '16628');
+  assert.equal(at('https://www.torn.com/factions.php#/p=info&ID=99'), '99');
+  assert.equal(api.pageFactionId(), null);
+});
+
+test('a faction id is not mistaken for a member id', () => {
+  // XID=, warID=, and friends all end in "ID=" -- matching loosely would
+  // fetch the wrong faction, or a member id as a faction.
+  const { api } = roster_api(V2, { href: 'https://www.torn.com/factions.php?step=your&XID=12345' });
+  assert.equal(api.pageFactionId(), null, 'XID is a player, not a faction');
+});
+
+test('another faction is fetched by id, your own by the bare endpoint', async () => {
+  const own = roster_api(V2);
+  own.api.fetchFactionRoster(true);
+  await new Promise((r) => setImmediate(r));
+  assert.match(String(own.calls.find((c) => String(c).startsWith('https://'))),
+    /\/v2\/faction\/members\?/, 'own faction should not need an id');
+
+  const other = roster_api(V2, { href: 'https://www.torn.com/factions.php?step=profile&ID=38761' });
+  other.api.fetchFactionRoster(true);
+  await new Promise((r) => setImmediate(r));
+  assert.match(String(other.calls.find((c) => String(c).startsWith('https://'))),
+    /\/v2\/faction\/38761\/members\?/);
+});
+
+test('reviveStateOf prefers the real setting over the flag', () => {
+  // On your own roster is_revivable is false for almost everyone, because it
+  // means "revivable this second". Letting it win would report a faction that
+  // has revives ON as having them off.
+  const { api } = roster_api(V2);
+  assert.deepEqual(api.reviveStateOf({ revive_setting: 'Everyone', is_revivable: false }),
+    { revivable: 1, setting: 'Everyone' });
+  assert.deepEqual(api.reviveStateOf({ revive_setting: 'Friends & faction', is_revivable: false }),
+    { revivable: 1, setting: 'Friends & faction' });
+  assert.deepEqual(api.reviveStateOf({ revive_setting: 'No one', is_revivable: true }),
+    { revivable: 0, setting: 'No one' });
+});
+
+test('reviveStateOf falls back to the flag only when the setting is masked', () => {
+  const { api } = roster_api(V2);
+  assert.deepEqual(api.reviveStateOf({ revive_setting: 'Unknown', is_revivable: true }),
+    { revivable: 1, setting: 'Unknown', fromFlag: true });
+  assert.deepEqual(api.reviveStateOf({ revive_setting: 'Unknown' }),
+    { revivable: null, setting: 'Unknown' });
+  assert.deepEqual(api.reviveStateOf({}), { revivable: null, setting: 'Unknown' });
+});
+
+test('navigating to another faction refetches instead of waiting out the TTL', async () => {
+  // Same instance, href changed -- a real navigation. The TTL is five minutes,
+  // so without invalidating it the enemy page would badge your own faction's
+  // members for the rest of it.
+  const r = roster_api(V2);
+  const hits = () => r.calls.filter((c) => String(c).startsWith('https://')).length;
+  r.api.fetchFactionRoster(true);
+  await new Promise((res) => setImmediate(res));
+  assert.equal(hits(), 1);
+  assert.equal(r.roster.size, 4);
+
+  r.api.fetchFactionRoster(false);
+  await new Promise((res) => setImmediate(res));
+  assert.equal(hits(), 1, 'same faction inside the TTL must not refetch');
+
+  r.loc.href = 'https://www.torn.com/factions.php?step=profile&ID=38761';
+  r.api.fetchFactionRoster(false);
+  await new Promise((res) => setImmediate(res));
+  assert.equal(hits(), 2, 'a different faction must refetch, TTL or no TTL');
+  assert.match(String(r.calls.filter((c) => String(c).startsWith('https://'))[1]),
+    /\/v2\/faction\/38761\/members/);
+});
+
+test('the groups are relabelled when the settings are masked', () => {
+  // "Everyone" is a preference. On another faction all we know is whether
+  // they can be revived, so that label would be a straight misreading.
+  const { api, roster, results } = mount(FACTION, 'https://www.torn.com/factions.php?ID=38761');
+  roster.set('1', 'A'); roster.set('2', 'B');
+  results.set('1', { revivable: 1, setting: 'Unknown', fromFlag: true });
+  results.set('2', { revivable: 0, setting: 'Unknown', fromFlag: true });
+  assert.equal(api.settingsMasked(), true);
+  const g = api.GROUPS;
+  assert.equal(api.groupLabelFor(g[0], true), 'Revivable');
+  assert.equal(api.groupLabelFor(g[2], true), 'Not revivable');
+  assert.equal(api.groupLabelFor(g[0], false), 'Everyone', 'your own faction keeps its labels');
+});
+
+test('one real setting is enough to keep the normal labels', () => {
+  const { api, roster, results } = mount(FACTION, 'https://www.torn.com/factions.php');
+  roster.set('1', 'A'); roster.set('2', 'B');
+  results.set('1', { revivable: 1, setting: 'Everyone' });
+  results.set('2', { revivable: 0, setting: 'Unknown', fromFlag: true });
+  assert.equal(api.settingsMasked(), false);
+});
+
+test('an empty roster is not reported as masked', () => {
+  const { api } = mount(FACTION, 'https://www.torn.com/factions.php?ID=38761');
+  assert.equal(api.settingsMasked(), false, 'nothing loaded yet is not the same as masked');
+});
+
+test('a flag-sourced badge does not claim a setting it never saw', () => {
+  const { api } = mount(FACTION, 'https://www.torn.com/factions.php?ID=38761');
+  assert.equal(api.badgeFor(1, 'Unknown', '5', true).title, 'Revivable');
+  assert.equal(api.badgeFor(0, 'Unknown', '5', true).title, 'Not revivable');
+  assert.ok(!/Unknown/.test(api.badgeFor(1, 'Unknown', '5', true).title));
+});
+
+test('an enemy badge is not a mail-them-about-it link', () => {
+  // The nudge asks someone to turn their revives off. On another faction's
+  // roster that is 42 strangers, and the setting is masked anyway.
+  const { api } = mount(FACTION, 'https://www.torn.com/factions.php?ID=38761');
+  const b = api.badgeFor(1, 'Unknown', '5', true);
+  assert.equal(b.tagName, 'SPAN');
+  assert.equal(b.getAttribute('data-er-ask'), null);
 });
