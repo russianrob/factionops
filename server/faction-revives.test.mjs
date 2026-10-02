@@ -465,14 +465,22 @@ const COMPOSE = `
   <h4>Send a Message</h4>
   <div class="input-row"><input type="text" name="player" placeholder="Name"></div>
   <div class="input-row"><input type="text" name="title" placeholder="Subject"></div>
-  <div class="input-row"><textarea name="message" placeholder="Type your message here..."></textarea></div>
+  <div class="input-row">
+    <div id="mce_0" contenteditable="true" class="editor-content mce-content-body editorContent___fi"></div>
+    <textarea class="sourceArea___lGrOt hidden___xSXji"></textarea>
+  </div>
 </div>`;
+
+// A hypothetical plain-textarea Torn, for the fallback path only.
+const COMPOSE_PLAIN = COMPOSE
+  .replace('<div id="mce_0" contenteditable="true" class="editor-content mce-content-body editorContent___fi"></div>', '')
+  .replace('class="sourceArea___lGrOt hidden___xSXji"', 'name="message"');
 
 function composeApi(html) {
   const { document, window } = parseHTML(`<html><body>${html}</body></html>`);
   // linkedom gives offsetParent/offsetWidth no values, so stand them in: the
   // production code uses them only to skip hidden and rank by area.
-  for (const el of document.querySelectorAll('textarea, input')) {
+  for (const el of document.querySelectorAll('textarea, input, [contenteditable]')) {
     Object.defineProperty(el, 'offsetParent', { get: () => el.parentElement });
     Object.defineProperty(el, 'offsetWidth', { get: () => (el.closest('#chatRoot') ? 300 : 280) });
     Object.defineProperty(el, 'offsetHeight', { get: () => (el.closest('#chatRoot') ? 90 : 160) });
@@ -480,9 +488,9 @@ function composeApi(html) {
   const store = {};
   const src = [
     'const COMPOSE_MAX_AGE = 3*60*1000;',
-    fn('findComposeFields'), fn('setNativeValue'), fn('toast'), fn('fillCompose'),
-    fn('stashCompose'), fn('takeCompose'),
-    'globalThis.API={findComposeFields,setNativeValue,fillCompose,stashCompose,takeCompose};'
+    fn('findComposeFields'), fn('setNativeValue'), fn('setRichValue'), fn('escapeHtml'),
+    fn('toast'), fn('fillCompose'), fn('stashCompose'), fn('takeCompose'),
+    'globalThis.API={findComposeFields,setNativeValue,setRichValue,fillCompose,stashCompose,takeCompose};'
   ].join('\n');
   const api = new Function('document', 'window', 'Event', 'GM_getValue', 'GM_setValue',
     'COMPOSE_STORE', 'setTimeout', src + '; return API;')(
@@ -492,34 +500,67 @@ function composeApi(html) {
   return { document, api, store };
 }
 
-test('the body is the compose textarea, NOT the faction chat box', () => {
-  // textarea[placeholder*="message"] matches the chat box on every Torn page,
-  // so the obvious selector types the list into chat instead.
+test('the body is the TinyMCE editor, NOT its hidden source buffer', () => {
+  // This is the 2.1.0 bug exactly: the write landed in
+  // textarea.sourceArea___lGrOt.hidden___xSXji, the subject filled, and the
+  // visible body stayed blank. Confirmed live on the device.
   const { api } = composeApi(COMPOSE);
   const f = api.findComposeFields();
   assert.ok(f.body, 'no body found');
-  assert.equal(f.body.getAttribute('name'), 'message');
-  assert.ok(!f.body.closest('#chatRoot'), 'picked the chat box');
+  assert.equal(f.rich, true, 'the editor is contenteditable, not a textarea');
+  assert.equal(f.body.id, 'mce_0');
+  assert.ok(!/sourceArea/.test(f.body.className || ''), 'picked the hidden buffer');
   assert.equal(f.subject.placeholder, 'Subject');
 });
 
-test('with no Subject anchor it still avoids the chat box', () => {
-  // If Torn relabels the field, the fallback ranks by area among textareas
-  // outside the chat root -- it must not fall back INTO chat.
+test('the body is never the faction chat box', () => {
+  // textarea[placeholder*="message"] matches the chat box on every Torn page.
+  const { api } = composeApi(COMPOSE);
+  assert.ok(!api.findComposeFields().body.closest('#chatRoot'));
+});
+
+test('with no Subject anchor it still avoids chat and the source buffer', () => {
   const html = COMPOSE.replace('placeholder="Subject"', 'placeholder="Betreff"');
   const { api } = composeApi(html);
   const f = api.findComposeFields();
-  assert.ok(f.body, 'no body found');
-  assert.ok(!f.body.closest('#chatRoot'), 'fell back into chat');
-  assert.equal(f.body.getAttribute('name'), 'message');
+  assert.equal(f.body.id, 'mce_0', 'the editor is found without the subject anchor');
 });
 
-test('filling writes the list into the body and a count into the subject', () => {
+test('a plain-textarea compose page still works', () => {
+  const { api, document } = composeApi(COMPOSE_PLAIN);
+  const f = api.findComposeFields();
+  assert.equal(f.rich, false);
+  assert.equal(f.body.getAttribute('name'), 'message');
+  api.fillCompose({ text: 'Alice [2]', n: 1 });
+  assert.equal(document.querySelector('textarea[name="message"]').value, 'Alice [2]');
+});
+
+test('filling writes the list into the editor and a count into the subject', () => {
   const { api, document } = composeApi(COMPOSE);
   const ok = api.fillCompose({ text: 'Alice [2]\nBob [3]', n: 2 });
   assert.equal(ok, true);
-  assert.equal(document.querySelector('textarea[name="message"]').value, 'Alice [2]\nBob [3]');
+  const ed = document.getElementById('mce_0');
+  assert.equal(ed.innerHTML, 'Alice [2]<br>Bob [3]', 'newlines must become <br> in a contenteditable');
+  assert.equal(ed.textContent, 'Alice [2]Bob [3]');
   assert.match(document.querySelector('input[name="title"]').value, /Revivable \(2\)/);
+});
+
+test('the editor write is announced, so TinyMCE syncs its model', () => {
+  const { api, document } = composeApi(COMPOSE);
+  const ed = document.getElementById('mce_0');
+  const seen = [];
+  ed.addEventListener('input', () => seen.push('input'));
+  ed.addEventListener('change', () => seen.push('change'));
+  api.setRichValue(ed, 'x');
+  assert.deepEqual(seen, ['input', 'change'], 'TinyMCE never heard about it');
+});
+
+test('a name with angle brackets cannot inject markup into the editor', () => {
+  const { api, document } = composeApi(COMPOSE);
+  api.fillCompose({ text: '<img src=x onerror=1> [9]', n: 1 });
+  const ed = document.getElementById('mce_0');
+  assert.equal(ed.querySelectorAll('img').length, 0, 'raw HTML reached the editor');
+  assert.match(ed.innerHTML, /&lt;img/);
 });
 
 test('a subject the user already typed is left alone', () => {
@@ -572,7 +613,7 @@ test('setNativeValue bypasses React\'s value tracker, as React requires', () => 
   // changed and throws the text away on the next render. The only way in is
   // the prototype setter. Model that shadow here, or the test cannot tell the
   // two apart -- a plain assignment passes a naive DOM shim perfectly.
-  const { api, document } = composeApi(COMPOSE);
+  const { api, document } = composeApi(COMPOSE_PLAIN);
   const ta = document.querySelector('textarea[name="message"]');
   const proto = Object.getOwnPropertyDescriptor(
     Object.getPrototypeOf(ta).constructor.prototype, 'value');
@@ -600,4 +641,26 @@ test('messages.php is routed to the compose fill, not the roster scan', () => {
   assert.match(boot, /messages\\\.php/, 'boot must branch on the page');
   assert.ok(boot.indexOf('runComposeFill') < boot.indexOf('setInterval(scan'),
     'the mail page must not start the 2s roster scan');
+});
+
+test('if TinyMCE fails to init, the real textarea wins over its source buffer', () => {
+  // The editor div is absent but its hidden sourceArea is still in the DOM.
+  // Writing that buffer is the 2.1.0 bug in another costume: the text lands
+  // somewhere invisible and the mail goes out empty.
+  const html = `
+    <div id="chatRoot"><textarea class="textarea___JRbO5" placeholder="Type your message here..."></textarea></div>
+    <div class="sendMessage">
+      <input type="text" name="title" placeholder="Subject">
+      <textarea class="sourceArea___lGrOt hidden___xSXji"></textarea>
+      <textarea name="message"></textarea>
+    </div>`;
+  const { api, document } = composeApi(html);
+  const f = api.findComposeFields();
+  assert.equal(f.rich, false);
+  assert.ok(!/sourceArea/.test(f.body.className || ''), 'picked the hidden buffer');
+  assert.equal(f.body.getAttribute('name'), 'message');
+  api.fillCompose({ text: 'Alice [2]', n: 1 });
+  assert.equal(document.querySelector('textarea[name="message"]').value, 'Alice [2]');
+  assert.equal(document.querySelector('textarea[class*="sourceArea"]').value, '',
+    'the source buffer must be left alone');
 });

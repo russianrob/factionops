@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Revive Check
 // @namespace    russianrob.faction.revives
-// @version      2.1.0
+// @version      2.1.1
 // @description  Badges every faction member by their revive setting (Everyone / Friends & faction / off) in the position column, with a grouped copy-and-compose list. Originally built on AaronPMC's Elimination Revives.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-faction-revives.user.js
@@ -16,6 +16,10 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 2.1.1 - The mail body is TinyMCE inline (contenteditable div), not a
+ *         textarea. 2.1.0 wrote into its hidden sourceArea___ buffer, so
+ *         the subject filled and the body stayed blank. Writes the visible
+ *         editor now.
  * 2.1.0 - Compose actually fills the mail now. The list is handed to
  *         messages.php through GM storage (stamped, one shot) and written
  *         into the body with React's native setter; the subject gets a
@@ -452,11 +456,16 @@
     /**
      * Find the message body on the compose page.
      *
-     * NOT `textarea[placeholder*="message"]` — the faction chat box carries
-     * exactly that placeholder and is present on every Torn page, so the
-     * obvious selector would type the list into chat. Anchor on the Subject
-     * field instead and take the textarea that shares its container; fall
-     * back to the biggest visible textarea that is not inside the chat root.
+     * Torn's mail body is TinyMCE running INLINE — a contenteditable
+     * `div.mce-content-body`, measured live as `DIV#mce_0.editor-content
+     * .mce-content-body.editorContent___fi`, 386x160. It keeps a hidden
+     * `textarea.sourceArea___` beside it, and writing to that textarea is
+     * exactly the failure this replaces: the text lands, the editor never
+     * shows it, and the mail sends empty. The visible editor is the truth.
+     *
+     * Also NOT `textarea[placeholder*="message"]` — the faction chat box
+     * carries exactly that placeholder and is present on every Torn page
+     * including this one, so the obvious selector types the list into chat.
      */
     function findComposeFields(doc) {
         const d = doc || document;
@@ -465,21 +474,48 @@
             /subject/i.test(i.placeholder || '') || /subject/i.test(i.name || '') ||
             /subject/i.test(i.id || '')) || null;
 
+        const rich = [].slice.call(d.querySelectorAll(
+            '[contenteditable="true"], [contenteditable=""]')).find((c) =>
+                !c.closest('#chatRoot, [class*="chat-app" i]') &&
+                (/mce-content-body/.test(c.className || '') ||
+                 /editorContent/.test(c.className || '') ||
+                 /^mce_/.test(c.id || ''))) || null;
+        if (rich) return { subject: subject, body: rich, rich: true };
+
+        // No rich editor (plain-textarea Torn, or a future redesign): fall
+        // back to a real textarea, never the editor's hidden source buffer.
+        const usable = (t) => t.offsetParent !== null &&
+            !t.closest('#chatRoot, [class*="chat-app" i]') &&
+            !/sourceArea|hidden___/.test(t.className || '');
         let body = null;
         if (subject) {
             let node = subject;
             for (let up = 0; up < 6 && node && !body; up++) {
                 node = node.parentElement;
-                if (node) body = node.querySelector('textarea');
+                if (node) body = [].slice.call(node.querySelectorAll('textarea')).find(usable) || null;
             }
         }
         if (!body) {
-            const cands = [].slice.call(d.querySelectorAll('textarea')).filter((t) =>
-                t.offsetParent !== null && !t.closest('#chatRoot, [class*="chat-app" i]'));
+            const cands = [].slice.call(d.querySelectorAll('textarea')).filter(usable);
             cands.sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight));
             body = cands[0] || null;
         }
-        return { subject: subject, body: body };
+        return { subject: subject, body: body, rich: false };
+    }
+
+    function escapeHtml(t) {
+        return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // TinyMCE reads its own DOM, so write the element and tell it we did.
+    // `tinymce` itself is unreachable from the userscript sandbox (no
+    // @grant unsafeWindow, and tinymce.editors reads empty from here), which
+    // is fine — the editor syncs from its element on input.
+    function setRichValue(el, text) {
+        el.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
     // React owns these inputs, so assigning .value is thrown away on the next
@@ -509,7 +545,8 @@
     function fillCompose(entry) {
         const f = findComposeFields();
         if (!f.body) return false;
-        setNativeValue(f.body, entry.text);
+        if (f.rich) setRichValue(f.body, entry.text);
+        else setNativeValue(f.body, entry.text);
         // Only touch the subject if the user has not typed one.
         if (f.subject && !f.subject.value) {
             setNativeValue(f.subject, 'Revivable (' + (entry.n || 0) + ')');
