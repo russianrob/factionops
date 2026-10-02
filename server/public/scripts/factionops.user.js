@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.4.8
+// @version      5.4.9
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.8';
+    const SCRIPT_VERSION = '5.4.9';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -352,6 +352,33 @@ html.wb-theme-light {
 }
 
 /* ----- Settings gear icon (bottom-right FAB) ----- */
+/* ── Activate FactionOps button (compact pill, left-aligned) ──
+   Restored in 5.4.9, but gated: see activatePillAllowed(). */
+#fo-activate-btn {
+    position: fixed !important;
+    top: 38px !important;
+    left: 10px !important;
+    z-index: 99999 !important;
+    display: flex !important; align-items: center !important; gap: 4px !important;
+    padding: 4px 10px !important;
+    font-family: Arial, sans-serif !important;
+    font-size: 11px !important; font-weight: 600 !important;
+    border: 1px solid #555 !important;
+    border-radius: 12px !important;
+    background: rgba(30,30,30,0.9) !important; color: #e0e0e0 !important;
+    cursor: pointer !important; transition: all 0.2s ease !important;
+    white-space: nowrap !important;
+    box-sizing: border-box !important;
+}
+#fo-activate-btn:hover {
+    background: rgba(50,50,50,0.95) !important;
+    border-color: #777 !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
+}
+#fo-activate-btn .fo-activate-icon {
+    font-size: 12px; line-height: 1;
+}
+
 .wb-settings-gear {
     position: fixed;
     bottom: 20px;
@@ -10518,8 +10545,10 @@ body.wb-chain-active {
         // rebuild the banner instead of silently skipping it.
         warEndedBannerShown = false;
 
-        // Nothing to re-offer: the pill is gone. Re-open from the userscript
-        // menu if the full overlay is wanted again.
+        // Re-offer the pill to whoever is allowed one, so closing the overlay
+        // is not a one-way door. Everyone else re-opens from the userscript
+        // menu.
+        maybeShowActivateButton();
     }
 
     // Track whether we're using DOM-based chain reading (no API calls)
@@ -12611,10 +12640,64 @@ body.wb-chain-active {
         markCalledRows();   // repaint with real call state now that it can arrive
     }
 
-    // The activate pill is gone from the war page, but the full overlay it
-    // opened still exists. This is how to reach it — registered once, guarded
-    // because Torn PDA has no GM_registerMenuCommand and an unguarded call
-    // there aborts the script before any UI is built.
+    // ── Activate FactionOps pill ─────────────────────────────────────────
+    //
+    // Dropped in 5.4.3 because what it opened is on the war page itself, and
+    // restored in 5.4.9 for the owner only. The overlay is still reachable
+    // from the userscript menu for everyone else — and NOT on PDA, which has
+    // no GM_registerMenuCommand, which is the gap this pill closes.
+    const ACTIVATE_PILL_UIDS = ['137558'];
+
+    /// `factionops_dev` is the escape hatch: set it to '1' in GM storage to
+    /// get the pill on an account that is not in the list, without a rebuild.
+    function activatePillAllowed() {
+        try {
+            if (String(GM_getValue('factionops_dev', '0')) === '1') return true;
+        } catch (_) { /* no GM storage here — fall through to the id check */ }
+        const me = String(state.myPlayerId || '');
+        return !!me && ACTIVATE_PILL_UIDS.indexOf(me) !== -1;
+    }
+
+    /** Show an "Activate FactionOps" button on any faction/war page. */
+    function showActivateButton() {
+        if (document.getElementById('fo-activate-btn')) return;
+
+        const btn = document.createElement('button');
+        btn.id = 'fo-activate-btn';
+        btn.innerHTML = '<span class="fo-activate-icon">&#x2694;</span> Activate FactionOps';
+        btn.addEventListener('click', () => {
+            btn.remove();
+            initWarOverlay();
+        });
+
+        // Fixed-position banner — append to body to avoid Torn layout interference
+        document.body.appendChild(btn);
+    }
+
+    /**
+     * Gated, and patient about it.
+     *
+     * authenticate() is async and detectPageAndInit() can run before the
+     * player id lands, so deciding once on an empty id would mean the pill
+     * never appears for the one person meant to see it. Poll until the id is
+     * known, then decide once and stop. An id that IS known and not allowed
+     * ends it immediately — nobody else pays for this.
+     */
+    function maybeShowActivateButton() {
+        let tries = 0;
+        const tick = () => {
+            if (document.getElementById('fo-activate-btn')) return;
+            if (activatePillAllowed()) { showActivateButton(); return; }
+            if (String(state.myPlayerId || '')) return;   // known, not allowed
+            if (++tries > 40) return;                     // ~10s, then give up
+            setTimeout(tick, 250);
+        };
+        tick();
+    }
+
+    // The full overlay is also reachable from the userscript menu — registered
+    // once, guarded because Torn PDA has no GM_registerMenuCommand and an
+    // unguarded call there aborts the script before any UI is built.
     let overlayMenuRegistered = false;
     function registerOverlayMenuCommand() {
         if (overlayMenuRegistered) return;
@@ -12638,10 +12721,12 @@ body.wb-chain-active {
             // Back from a fight: report it now so the call drops in seconds.
             flushPendingAttack();
             registerOverlayMenuCommand();
-            // No activate pill: what it opened is now on the war page itself.
-            // Calls-only mode marks called rows on Torn's own war page, so the
-            // one thing a member needs mid-war -- has somebody already got
-            // this target -- is visible without any overlay at all.
+            maybeShowActivateButton();
+            // For everyone else there is no pill: what it opened is now on the
+            // war page itself. Calls-only mode marks called rows on Torn's own
+            // war page, so the one thing a member needs mid-war -- has
+            // somebody already got this target -- is visible without any
+            // overlay at all.
             //
             // The full overlay is still reachable from the userscript menu,
             // because deleting the only door to a feature is not the same as
@@ -12662,6 +12747,9 @@ body.wb-chain-active {
         if (foOverlay) {
             foOverlay.remove();
         }
+        // The pill belongs on faction/war pages only.
+        const foBtn = document.getElementById('fo-activate-btn');
+        if (foBtn) foBtn.remove();
         // Remove settings gear and heatmap button from attack pages
         const settingsGear = document.querySelector('.wb-settings-gear');
         if (settingsGear) settingsGear.remove();
