@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Profile Link Formatter
 // @namespace    GNSC4 [268863]
-// @version      3.6.54
+// @version      3.6.61
 // @description  Copy formatted Torn profile/faction links. Uses BSP prediction TBS when available, falls back to FF Scouter V2 estimated stats. Strips BSP TBS prefixes from copied names, dedupes lines by ID, and uses war JSON faction IDs so your faction (Dead Fragment 42055) is always separated from the enemy in ranked wars. Faction copy includes member level and Xanax taken (via API or Xanax Viewer cache).
 // @author       GNSC4
 // @match        https://www.torn.com/profiles.php?XID=*
@@ -21,6 +21,49 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v3.6.61 - Cog moves to the faction header — the black title bar carrying the
+//           faction name and respect. Those classes are Torn's own rather than
+//           the hashed ___XXXX kind, so they can be matched literally. The war
+//           -page mount stays as a fallback for the war view, where that header
+//           does not exist; one shared guard means only ever one cog per page.
+// v3.6.60 - Keep the war-page settings panel on the screen. It opened downward
+//           from the cog at a fixed 260px and ran off the bottom of a phone,
+//           which left "Compare both factions" — the setting the cog was added
+//           for — below the fold and unreachable. It now measures itself, flips
+//           above the cog when there is no room below, clamps to the viewport,
+//           scrolls if it still does not fit, and narrows on a small screen.
+// v3.6.59 - Tighten the side-by-side table. cellpadding 4 and default font size
+//           made a 25v25 taller than a phone screen; 2 and 12px cut the height
+//           by roughly a third without dropping a single figure. The name cell
+//           also stops the [id] wrapping onto its own line, which was costing a
+//           second line on most rows.
+// v3.6.58 - Drop the faction-name row from the side-by-side table. It named the
+//           two factions above their columns, but the table is pasted into your
+//           own faction's chat, where everyone already knows which side is
+//           which — it was a row of vertical space buying nothing.
+// v3.6.57 - Stop paying for the rate limit instead of avoiding it. The copy
+//           loop fired every 150ms — 400 requests a minute against Torn's 100
+//           — hit the wall, and every call then sat out a 30s cooldown. That
+//           cooldown OUTLIVED the copy, so the first member of the next one
+//           inherited it: the twenty seconds of apparently-frozen 0/N. A
+//           rolling-window throttle now keeps requests under the cap, which is
+//           strictly faster than recovering from it, and any wait that does
+//           happen is named in the progress label rather than looking hung.
+// v3.6.56 - Settings cog on the ranked war page, beside the copy buttons. The
+//           faction-copy settings were only reachable from a player's PROFILE,
+//           which is not where anyone is standing when they want them. One
+//           panel, two homes -- the war-page copy is position:fixed because the
+//           war layout floats the two factions inside a 784px wrapper and an
+//           absolutely positioned panel is clipped by its own column.
+// v3.6.55 - Faction copy can put BOTH factions in one table, side by side, for
+//           comparison. Off by default; "Compare both factions" in settings.
+//           Rows are paired by ESTIMATED STATS, strongest first -- their best
+//           beside your best -- not by list position, which means nothing once
+//           the two lists are different lengths. The shorter side gets blank
+//           cells, so who has the numbers is visible too. Needs the ranked-war
+//           header to know which side is yours; anywhere else it falls back to
+//           the ordinary one-faction copy. Boosters is dropped in this layout
+//           to keep the table narrow enough to read.
 // v3.6.54 - Mini-profile copy button sits INSIDE the card's top-right corner.
 //           It was anchored just outside the card's right edge and read as a
 //           loose icon floating beside it. Still a body-level overlay, so the
@@ -310,6 +353,28 @@
         return false;
     }
 
+    // The cog belongs where the faction does. These are Torn's own literal
+    // classes, not the hashed ___XXXX kind, so they can be matched exactly and
+    // will survive a re-render.
+    function initFactionHeaderCog() {
+        // One cog per page. initRankedWarPage checks the same class, so
+        // whichever runs first wins and the other stands down.
+        if (document.querySelector('.gnsc-war-settings')) return true;
+        const header = document.querySelector('.faction-info-wrap.own-faction-profile .title-black')
+                    || document.querySelector('.faction-info-wrap .title-black')
+                    || document.querySelector('.title-black.hospital-dark.top-round');
+        if (!header) return false;
+        const cog = createSettingsCog({ factionUrl: true, companyUrl: true }, { fixed: true });
+        cog.classList.add('gnsc-war-settings');
+        cog.style.marginLeft = '8px';
+        cog.style.verticalAlign = 'middle';
+        // Appended to the heading, after the respect span. The heading's own
+        // DIRECT text node is the faction name — it is never touched, so the
+        // name keeps rendering exactly as Torn wrote it.
+        header.appendChild(cog);
+        return true;
+    }
+
     function initRankedWarPage() {
         const factionNames = document.querySelectorAll('div[class*="factionNames"] div[class*="name_"], .faction-names [class*="name_"]');
         factionNames.forEach((nameDiv, index) => {
@@ -328,6 +393,18 @@
                 nameDiv.appendChild(button);
             }
         });
+
+        // One cog for the page, next to the first faction's copy button. The
+        // options are global, so a second one would only be another thing to
+        // keep in sync. factionUrl/companyUrl are asserted because those two
+        // settings govern PROFILE copies — they are still worth being able to
+        // change from here, and the copy itself checks whether the player
+        // actually has a faction or a job.
+        if (factionNames.length && !document.querySelector('.gnsc-war-settings')) {
+            const cog = createSettingsCog({ factionUrl: true, companyUrl: true }, { fixed: true });
+            cog.classList.add('gnsc-war-settings');
+            factionNames[0].appendChild(cog);
+        }
     }
 
     let _tplfMiniBtn = null;
@@ -467,18 +544,70 @@
         copyButton.innerHTML = '<span>Copy</span>';
         copyButton.addEventListener('click', (e) => handleCopyClick(e, copyButton, userInfo));
 
-        const settingsContainer = document.createElement('div');
+        const settingsContainer = createSettingsCog(userInfo);
+        container.appendChild(copyButton);
+        container.appendChild(settingsContainer);
+        targetElement.insertAdjacentElement('afterend', container);
+    }
+
+    // One settings panel, two homes. These options govern the FACTION copy, and
+    // until v3.6.56 the only way to reach them was a player's profile page —
+    // nowhere near where they are used.
+    function createSettingsCog(userInfo, opts) {
+        const fixed = !!(opts && opts.fixed);
+        const settingsContainer = document.createElement(fixed ? 'span' : 'div');
         settingsContainer.className = 'gnsc-settings-container';
+        if (fixed) settingsContainer.style.cssText = 'position:relative;display:inline-block';
 
         const settingsButton = document.createElement('a');
         settingsButton.href = "#";
-        settingsButton.className = 'gnsc-btn';
+        settingsButton.className = fixed ? 'gnsc-faction-copy-btn' : 'gnsc-btn';
         settingsButton.innerHTML = '⚙️';
+        settingsButton.title = 'Copy settings';
 
         const settingsPanel = createSettingsPanel(userInfo);
+        if (fixed) {
+            // The war page floats the two factions inside a 784px wrapper, so a
+            // panel positioned against its own column is clipped by it. Fixed
+            // escapes that — and being out of flow it cannot widen the column
+            // and drop the other faction, which is how this layout breaks.
+            settingsPanel.style.position = 'fixed';
+        }
+
         settingsButton.addEventListener('click', (e) => {
             e.preventDefault();
-            settingsPanel.style.display = settingsPanel.style.display === 'block' ? 'none' : 'block';
+            e.stopPropagation();
+            const wasOpen = settingsPanel.style.display === 'block';
+            settingsPanel.style.display = wasOpen ? 'none' : 'block';
+            if (!wasOpen && fixed) {
+                // Measured on open rather than on injection: the war header
+                // moves as Torn finishes rendering, and on a phone the cog can
+                // be anywhere in the viewport by the time it is tapped.
+                const margin = 8;
+                const vw = window.innerWidth, vh = window.innerHeight;
+                const width = Math.min(260, vw - margin * 2);
+                settingsPanel.style.minWidth = '0px';
+                settingsPanel.style.width = width + 'px';
+                settingsPanel.style.padding = '12px';
+                // Cap the height BEFORE measuring, so what we measure is what
+                // will actually be drawn.
+                settingsPanel.style.maxHeight = Math.max(160, vh - margin * 2) + 'px';
+                settingsPanel.style.overflowY = 'auto';
+
+                const r = settingsButton.getBoundingClientRect();
+                const h = settingsPanel.offsetHeight;
+
+                // Below the cog by preference; above it when that would run off
+                // the bottom — which is what put the setting this cog exists for
+                // below the fold. Clamped either way, so it can never open
+                // somewhere you cannot reach.
+                let top = r.bottom + 6;
+                if (top + h > vh - margin) top = r.top - 6 - h;
+                if (top < margin) top = margin;
+                if (top + h > vh - margin) top = Math.max(margin, vh - margin - h);
+                settingsPanel.style.top = top + 'px';
+                settingsPanel.style.left = Math.max(margin, Math.min(r.left, vw - width - margin)) + 'px';
+            }
         });
 
         document.addEventListener('click', (e) => {
@@ -489,9 +618,7 @@
 
         settingsContainer.appendChild(settingsButton);
         settingsContainer.appendChild(settingsPanel);
-        container.appendChild(copyButton);
-        container.appendChild(settingsContainer);
-        targetElement.insertAdjacentElement('afterend', container);
+        return settingsContainer;
     }
 
     function createSettingsPanel(userInfo) {
@@ -511,7 +638,8 @@
             { key: 'company',      label: 'Company Link',                available: !!userInfo.companyUrl },
             { key: 'timeRemaining',label: 'Hospital Time',               available: true },
             { key: 'releaseTime',  label: 'Release Time (TCT)',          available: true },
-            { key: 'battlestats',  label: 'Battle Stats (BSP/FF)',       available: true }
+            { key: 'battlestats',  label: 'Battle Stats (BSP/FF)',       available: true },
+            { key: 'compareBoth',  label: 'Compare both factions',       available: true }
         ];
 
         options.forEach(option => {
@@ -618,6 +746,34 @@
     let _rateLimitedUntil = 0;
     const sleepMs = ms => new Promise(r => setTimeout(r, ms));
 
+    // Torn allows 100 requests a minute. The copy loop paced itself at 150ms,
+    // which is 400 a minute — so on any faction past ~25 members it was not a
+    // question of WHETHER it hit the wall. Staying under the cap is strictly
+    // faster than recovering from it: a 50-member copy paced correctly runs
+    // about 30s, where sprinting and stalling ran 7s and then 30s at a time.
+    //
+    // The window is rolling rather than a fixed delay so small copies pay
+    // nothing: under the cap, this returns immediately.
+    const API_WINDOW_MS = 60_000;
+    const API_MAX_IN_WINDOW = 90;      // 100, less headroom for other scripts on the same key
+    let _apiCalls = [];
+
+    function apiCooldownRemaining() {
+        return Math.max(0, _rateLimitedUntil - Date.now());
+    }
+
+    async function throttleApi() {
+        for (;;) {
+            const now = Date.now();
+            _apiCalls = _apiCalls.filter((t) => now - t < API_WINDOW_MS);
+            const cooling = _rateLimitedUntil - now;
+            if (cooling > 0) { await sleepMs(Math.min(cooling, 1000)); continue; }
+            if (_apiCalls.length < API_MAX_IN_WINDOW) { _apiCalls.push(now); return; }
+            // Wait exactly until the oldest call ages out of the window.
+            await sleepMs(Math.max(250, API_WINDOW_MS - (now - _apiCalls[0])));
+        }
+    }
+
     function fetchPersonalStatsFromApi(userId) {
         const apiKey = getApiKey();
         if (!apiKey) return Promise.resolve(null);
@@ -627,10 +783,12 @@
 
         const fetchAttempt = (attempt) => new Promise((resolve) => {
             const url = `https://api.torn.com/user/${userId}?selections=personalstats&key=${apiKey}&stat=xantaken,boostersused,attackswon,attackslost&comment=GNSC_LinkFormatter`;
-            // Respect the shared cooldown BEFORE firing anything.
-            const waitFor = Math.max(0, _rateLimitedUntil - Date.now());
             const kickoff = async () => {
-            if (waitFor > 0) await sleepMs(waitFor);
+            // Take a slot in the rolling window. This also absorbs any cooldown
+            // still in force, so the old one-shot `waitFor` — which made the
+            // first member of a copy pay for the previous copy's limit — is
+            // gone.
+            await throttleApi();
             try {
                 const handleResponse = (data) => {
                     if (data.error) {
@@ -1072,6 +1230,8 @@
 
             let leftFactionId = null;
             let rightFactionId = null;
+            let leftFactionName = null;
+            let rightFactionName = null;
 
             if (headerFactionLinks.length >= 2) {
                 const leftHref = headerFactionLinks[0].href;
@@ -1080,6 +1240,10 @@
                 const rightMatch = rightHref.match(/(?:ID|factionID)=(\d+)/);
                 leftFactionId = leftMatch ? leftMatch[1] : null;
                 rightFactionId = rightMatch ? rightMatch[1] : null;
+                // Names, for the side-by-side header. A table headed "Left" and
+                // "Right" is useless once it is pasted somewhere else.
+                leftFactionName = (headerFactionLinks[0].textContent || '').trim() || null;
+                rightFactionName = (headerFactionLinks[1].textContent || '').trim() || null;
             }
 
             if (debug) console.log('[Faction Copy BSP/FF] header faction IDs:', { leftFactionId, rightFactionId });
@@ -1113,72 +1277,93 @@
 
             if (debug) console.log('[Faction Copy BSP/FF] targetFactionId:', targetFactionId);
 
-            const sideSelector = (isLeftFactionButton
-                ? '.left-side, .leftFaction, [class*="leftSide"], [data-side="left"]'
-                : '.right-side, .rightFaction, [class*="rightSide"], [data-side="right"]');
+            const settings = loadSettings();
 
-            const sideRoot = warRoot.querySelector(sideSelector) || warRoot;
+            // v3.6.55: side-by-side comparison. It needs to know which side is
+            // MINE, and only the ranked-war header can say — anywhere else
+            // there is nothing to compare against, so it quietly falls back to
+            // the ordinary one-faction copy instead of guessing.
+            const bothSides = !!(settings.compareBoth && mySide && enemySide);
+
+            const rootForSide = (isLeft) => warRoot.querySelector(isLeft
+                ? '.left-side, .leftFaction, [class*="leftSide"], [data-side="left"]'
+                : '.right-side, .rightFaction, [class*="rightSide"], [data-side="right"]') || warRoot;
+
+            const nameForSide = (side) => (side === 'left'
+                ? (leftFactionName || 'Left faction')
+                : (rightFactionName || 'Right faction'));
 
             // v3.6.29: revert to v3.6.22's row selector — it worked. The
             // v3.6.25 link-walker rewrite was overcomplicated and the
             // chained fallbacks in v3.6.26-28 kept misclassifying status
             // icons / labels as names. Only behavioral change vs v3.6.22:
             // getCleanLinkText() strips the FFS-injected stat pill.
-            const memberRows = sideRoot.querySelectorAll(
-                'li.member, li.enemy, li.your, li.table-row, li[class*="memberRow"], li[class*="member-row"]'
-            );
+            const validRowsIn = (sideRoot, factionId, sideSelector) => {
+                const memberRows = sideRoot.querySelectorAll(
+                    'li.member, li.enemy, li.your, li.table-row, li[class*="memberRow"], li[class*="member-row"]'
+                );
 
-            // v3.6.32: diagnostic when row count is 0. Tells us whether
-            // the side selector or the row selector is the problem so we
-            // can update the literal classes (or pivot to a walker) without
-            // guessing.
-            if (!memberRows.length) {
-                try {
-                    // eslint-disable-next-line no-console
-                    console.warn('[GNSC] copy: 0 member rows. sideSelector=', sideSelector,
-                                 'sideRoot=', sideRoot && sideRoot.tagName, sideRoot && sideRoot.className,
-                                 'allXidLinks=', sideRoot ? sideRoot.querySelectorAll('a[href*="profiles.php"][href*="XID="]').length : 'no-side-root');
-                    if (sideRoot) {
-                        // Sample the first <li> classes so we can see what
-                        // Torn is actually rendering.
-                        const _lis = sideRoot.querySelectorAll('li');
-                        const _classes = Array.from(_lis).slice(0, 10).map(li => li.className || '(no-class)');
-                        console.warn('[GNSC] copy: first 10 <li> classes in side root:', _classes);
-                    }
-                } catch (_e) {}
-            }
-
-            const settings = loadSettings();
-            const rows = [];
-            const seenIds = new Set();
-
-            // First pass: collect valid members to get total count
-            const validRows = [];
-            for (const row of memberRows) {
-                const xidLinks = row.querySelectorAll('a[href*="profiles.php"][href*="XID="]');
-                if (!xidLinks.length) continue;
-                // v3.6.30: Torn added a leading icon-only XID link in
-                // each row at some point after v3.6.22 was last tested.
-                // Prefer the link with usable cleaned text so the main
-                // loop's link.textContent extraction sees the player
-                // name, not an empty icon link.
-                let link = null;
-                for (const _c of xidLinks) {
-                    if (getCleanLinkText(_c)) { link = _c; break; }
+                // v3.6.32: diagnostic when row count is 0. Tells us whether
+                // the side selector or the row selector is the problem so we
+                // can update the literal classes (or pivot to a walker) without
+                // guessing.
+                if (!memberRows.length) {
+                    try {
+                        // eslint-disable-next-line no-console
+                        console.warn('[GNSC] copy: 0 member rows. sideSelector=', sideSelector,
+                                     'sideRoot=', sideRoot && sideRoot.tagName, sideRoot && sideRoot.className,
+                                     'allXidLinks=', sideRoot ? sideRoot.querySelectorAll('a[href*="profiles.php"][href*="XID="]').length : 'no-side-root');
+                        if (sideRoot) {
+                            const _lis = sideRoot.querySelectorAll('li');
+                            const _classes = Array.from(_lis).slice(0, 10).map(li => li.className || '(no-class)');
+                            console.warn('[GNSC] copy: first 10 <li> classes in side root:', _classes);
+                        }
+                    } catch (_e) {}
                 }
-                if (!link) link = xidLinks[0];
-                const href = link.getAttribute('href') || '';
-                const idMatch = href.match(/XID=(\d+)/);
-                if (!idMatch) continue;
-                const id = idMatch[1];
-                const memberFactionId = warMemberFaction[id];
-                if (targetFactionId && memberFactionId && memberFactionId.toString() !== targetFactionId.toString()) continue;
-                if (seenIds.has(id)) continue;
-                seenIds.add(id);
-                validRows.push({ row, link, id });
+
+                const seenIds = new Set();
+                const out = [];
+                for (const row of memberRows) {
+                    const xidLinks = row.querySelectorAll('a[href*="profiles.php"][href*="XID="]');
+                    if (!xidLinks.length) continue;
+                    // v3.6.30: Torn added a leading icon-only XID link in
+                    // each row at some point after v3.6.22 was last tested.
+                    // Prefer the link with usable cleaned text so the main
+                    // loop's link.textContent extraction sees the player
+                    // name, not an empty icon link.
+                    let link = null;
+                    for (const _c of xidLinks) {
+                        if (getCleanLinkText(_c)) { link = _c; break; }
+                    }
+                    if (!link) link = xidLinks[0];
+                    const href = link.getAttribute('href') || '';
+                    const idMatch = href.match(/XID=(\d+)/);
+                    if (!idMatch) continue;
+                    const id = idMatch[1];
+                    const memberFactionId = warMemberFaction[id];
+                    if (factionId && memberFactionId && memberFactionId.toString() !== factionId.toString()) continue;
+                    if (seenIds.has(id)) continue;
+                    seenIds.add(id);
+                    out.push({ row, link, id });
+                }
+                return out;
+            };
+
+            const sides = bothSides
+                ? [
+                    { label: nameForSide(enemySide), sel: enemySide, factionId: enemyFactionId },
+                    { label: nameForSide(mySide),    sel: mySide,    factionId: MY_FACTION_ID }
+                  ]
+                : [
+                    { label: null, sel: (isLeftFactionButton ? 'left' : 'right'), factionId: targetFactionId }
+                  ];
+
+            for (const side of sides) {
+                const isLeft = side.sel === 'left';
+                side.valid = validRowsIn(rootForSide(isLeft), side.factionId, side.sel + '-side');
             }
 
-            const totalMembers = validRows.length;
+            const totalMembers = sides.reduce((n, side) => n + side.valid.length, 0);
             let processed = 0;
             button.textContent = `0/${totalMembers}`;
 
@@ -1188,19 +1373,19 @@
                 progressBarContainer = document.createElement('div');
                 progressBarContainer.id = 'gnsc-fixed-progress-container';
                 progressBarContainer.style.cssText = 'position: fixed; bottom: 30px; right: 30px; width: 250px; background-color: rgba(20,20,30,0.95); border: 1px solid #4CAF50; border-radius: 6px; z-index: 999999; padding: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.7); font-family: sans-serif;';
-                
+
                 const label = document.createElement('div');
                 label.id = 'gnsc-progress-label';
                 label.style.cssText = 'color: #eee; font-size: 12px; margin-bottom: 6px; font-weight: bold; text-align: center;';
                 label.textContent = 'Faction Copy Progress...';
-                
+
                 const barOuter = document.createElement('div');
                 barOuter.style.cssText = 'width: 100%; height: 12px; background-color: #333; border-radius: 6px; overflow: hidden; position: relative;';
-                
+
                 const progressBar = document.createElement('div');
                 progressBar.id = 'gnsc-fixed-progress-bar';
                 progressBar.style.cssText = 'height: 100%; width: 0%; background-color: #4CAF50; transition: width 0.1s linear;';
-                
+
                 barOuter.appendChild(progressBar);
                 progressBarContainer.appendChild(label);
                 progressBarContainer.appendChild(barOuter);
@@ -1213,71 +1398,77 @@
             progressLabel.textContent = `Copying: 0/${totalMembers}`;
             // ----------------------------------------------------------------
 
-            for (const { row, link, id } of validRows) {
-                // v3.6.31: v3.6.23's clean link.textContent extraction
-                // (getCleanLinkText strips the FFS pill) PLUS v3.6.28's
-                // User_<id> safety net so the copy never ends in ❓.
-                // No other fallbacks — earlier versions tried name-class
-                // / img-alt / row-text scrapes and kept misclassifying
-                // status icons/labels as names.
-                let name = getCleanLinkText(link);
-                name = stripBspPrefix(name);
-                if (!name) name = `User_${id}`;
+            for (const side of sides) {
+                side.rows = [];
+                for (const { row, link, id } of side.valid) {
+                    // v3.6.31: v3.6.23's clean link.textContent extraction
+                    // (getCleanLinkText strips the FFS pill) PLUS v3.6.28's
+                    // User_<id> safety net so the copy never ends in ❓.
+                    let name = getCleanLinkText(link);
+                    name = stripBspPrefix(name);
+                    if (!name) name = `User_${id}`;
 
-                const profileLabel = name;
-                let statsString = "(Stats: N/A)";
-                let level = null, pStats = null;
+                    const profileLabel = name;
+                    let statsString = "(Stats: N/A)";
+                    let statValue = null;
+                    let level = null, pStats = null;
 
-                try {
-                    // Faction copy: pull BOTH BSP and FFS and show them
-                    // side-by-side so any reader of the pasted output can
-                    // see the spread. Profile/single-target copies still
-                    // use the original prefer-BSP-then-FFS fallback above
-                    // since those are 1 line and meant for quick glances.
-                    if (settings.battlestats) {
-                        const predOnly = getBspPredictionOrFf(id);
-                        const pred = predOnly?.type === 'prediction' ? predOnly.prediction : null;
-                        const ff   = await getFfScouterEstimate(id);
-                        statsString = formatDualStats(pred, ff);
+                    try {
+                        if (settings.battlestats) {
+                            const predOnly = getBspPredictionOrFf(id);
+                            const pred = predOnly?.type === 'prediction' ? predOnly.prediction : null;
+                            const ff   = await getFfScouterEstimate(id);
+                            statsString = formatDualStats(pred, ff);
+                            statValue = statSortValue(pred, ff);
+                        }
+                    } catch (statErr) {
+                        if (debug) console.error('GNSC faction copy: stat error for', id, statErr);
+                        statsString = "(Stats: Error)";
                     }
-                } catch (statErr) {
-                    if (debug) console.error('GNSC faction copy: stat error for', id, statErr);
-                    statsString = "(Stats: Error)";
+
+                    try {
+                        level = getMemberLevel(id, row);
+                        // A pause here is nearly always Torn's rate limit. Say
+                        // so: a counter frozen at 0/48 with no explanation is
+                        // indistinguishable from a script that has crashed.
+                        const _coolMs = apiCooldownRemaining();
+                        if (_coolMs > 1000) {
+                            progressLabel.textContent =
+                                `Torn rate limit — resuming in ${Math.ceil(_coolMs / 1000)}s`;
+                        }
+                        pStats = await getPersonalStats(id);
+                    } catch (apiErr) {
+                        if (debug) console.error('GNSC faction copy: API/Personal stats error for', id, apiErr);
+                    }
+
+                    side.rows.push({
+                        id: id,
+                        name: profileLabel,
+                        stats: statsString.replace(/^\(Stats:\s*/, '').replace(/\)\s*$/, '').trim(),
+                        statValue: statValue,
+                        level: (level != null) ? String(level) : '',
+                        xanax: (pStats && pStats.xantaken != null) ? pStats.xantaken.toLocaleString() : '',
+                        boosters: (pStats && pStats.boostersused != null) ? pStats.boostersused.toLocaleString() : '',
+                    });
+
+                    processed++;
+                    if (button.isConnected) button.textContent = `${processed}/${totalMembers}`;
+                    progressBar.style.width = `${(processed / totalMembers) * 100}%`;
+                    progressLabel.textContent = `Copying: ${processed}/${totalMembers}`;
+
+                    // 150ms delay between members to avoid Torn API rate limit (100 req/min)
+                    // Also yields to UI so the counter and progress bar visually update
+                    await new Promise(r => setTimeout(r, 150));
                 }
-
-                try {
-                    level = getMemberLevel(id, row);
-                    pStats = await getPersonalStats(id);
-                } catch (apiErr) {
-                    if (debug) console.error('GNSC faction copy: API/Personal stats error for', id, apiErr);
-                }
-
-                rows.push({
-                    id: id,
-                    name: profileLabel,
-                    stats: statsString.replace(/^\(Stats:\s*/, '').replace(/\)\s*$/, '').trim(),
-                    level: (level != null) ? String(level) : '',
-                    xanax: (pStats && pStats.xantaken != null) ? pStats.xantaken.toLocaleString() : '',
-                    boosters: (pStats && pStats.boostersused != null) ? pStats.boostersused.toLocaleString() : '',
-                });
-
-                processed++;
-                if (button.isConnected) button.textContent = `${processed}/${totalMembers}`;
-                progressBar.style.width = `${(processed / totalMembers) * 100}%`;
-                progressLabel.textContent = `Copying: ${processed}/${totalMembers}`;
-                
-                // 150ms delay between members to avoid Torn API rate limit (100 req/min)
-                // Also yields to UI so the counter and progress bar visually update
-                await new Promise(r => setTimeout(r, 150));
             }
-            
+
             // Hide progress bar on completion after a delay so it stays visible at 100%
             setTimeout(() => {
                 if (progressBarContainer) progressBarContainer.style.display = 'none';
             }, 2500);
 
-            if (!rows.length) {
-                if (debug) console.error('GNSC faction copy: no member rows parsed for side selector', sideSelector, 'targetFactionId', targetFactionId);
+            if (!totalMembers) {
+                if (debug) console.error('GNSC faction copy: no member rows parsed, targetFactionId', targetFactionId);
                 button.textContent = '❓';
                 setTimeout(() => {
                     button.textContent = '📋';
@@ -1286,12 +1477,63 @@
             }
 
             const _esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            const _header = '<tr><th>Name</th><th>Stats</th><th>Lvl</th><th>Xanax</th><th>Boosters</th></tr>';
-            const _body = rows.map((r) =>
-                `<tr><td><a href="https://www.torn.com/profiles.php?XID=${r.id}">${_esc(r.name)} [${r.id}]</a></td>` +
-                `<td>${_esc(r.stats)}</td><td>${_esc(r.level)}</td><td>${_esc(r.xanax)}</td><td>${_esc(r.boosters)}</td></tr>`
-            ).join('');
-            copyToClipboard(`<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse">${_header}${_body}</table>`);
+            const _open = '<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse">';
+            // The comparison table carries twice the columns, so it gets a
+            // tighter box: at cellpadding 4 and default type a 25v25 was taller
+            // than the phone screen it is read on.
+            const _openTight = '<table border="1" cellpadding="2" cellspacing="0" ' +
+                'style="border-collapse:collapse;font-size:12px;line-height:1.25">';
+            let _html;
+
+            if (bothSides) {
+                // Paired by ESTIMATED STATS, strongest first: their best beside
+                // your best. Pairing by list position would say nothing — the
+                // two lists are different lengths and Torn does not order them
+                // the same way — whereas this answers the question a war
+                // actually asks, which is who out-guns whom.
+                //
+                // Unknown stats sort last rather than first: a member nobody has
+                // scouted is not evidence of weakness, but putting him at the
+                // top would read as though he were the strongest.
+                const byStat = (list) => list.slice().sort((a, b) => {
+                    const av = (a.statValue == null) ? -Infinity : a.statValue;
+                    const bv = (b.statValue == null) ? -Infinity : b.statValue;
+                    return bv - av;
+                });
+                const A = byStat(sides[0].rows);
+                const B = byStat(sides[1].rows);
+                // nowrap on the name: "Lordevo [1672824]" wrapped the id onto its
+                // own line on nearly every row, which is where most of the
+                // height went. The id stays — it is what makes the paste useful
+                // to anyone reading it without the links.
+                const _cell = (r) => r
+                    ? `<td style="white-space:nowrap"><a href="https://www.torn.com/profiles.php?XID=${r.id}">${_esc(r.name)} [${r.id}]</a></td>` +
+                      `<td>${_esc(r.stats)}</td><td>${_esc(r.level)}</td><td>${_esc(r.xanax)}</td>`
+                    : '<td></td><td></td><td></td><td></td>';
+                const _gap = '<td style="background:#e8e8e8;width:6px"></td>';
+                const _gapH = '<th style="background:#e8e8e8;width:6px"></th>';
+                // No faction-name row: this gets pasted into your own faction's
+                // chat, where nobody needs telling which column is theirs. The
+                // labels are still computed — they cost nothing and the single
+                // faction copy may want them later.
+                const _head =
+                    `<tr><th>#</th><th>Name</th><th>Stats</th><th>Lvl</th><th>Xanax</th>${_gapH}` +
+                    `<th>Name</th><th>Stats</th><th>Lvl</th><th>Xanax</th></tr>`;
+                const _n = Math.max(A.length, B.length);
+                let _body = '';
+                for (let i = 0; i < _n; i++) {
+                    _body += `<tr><td>${i + 1}</td>${_cell(A[i])}${_gap}${_cell(B[i])}</tr>`;
+                }
+                _html = `${_openTight}${_head}${_body}</table>`;
+            } else {
+                const _header = '<tr><th>Name</th><th>Stats</th><th>Lvl</th><th>Xanax</th><th>Boosters</th></tr>';
+                const _body = sides[0].rows.map((r) =>
+                    `<tr><td><a href="https://www.torn.com/profiles.php?XID=${r.id}">${_esc(r.name)} [${r.id}]</a></td>` +
+                    `<td>${_esc(r.stats)}</td><td>${_esc(r.level)}</td><td>${_esc(r.xanax)}</td><td>${_esc(r.boosters)}</td></tr>`
+                ).join('');
+                _html = `${_open}${_header}${_body}</table>`;
+            }
+            copyToClipboard(_html);
 
             progressLabel.textContent = `✅ Copied ${totalMembers} members!`;
             if (button.isConnected) {
@@ -1367,6 +1609,21 @@
     // available, so downstream readers (pasted into chat) can eyeball the
     // spread themselves. When only one source has data, falls back to the
     // single-source format.
+    // The number BEHIND the printed stat string, used only for ordering the
+    // side-by-side table. formatDualStats prefers FFS, so this must prefer it
+    // too: sorting by one source while displaying another would put a row above
+    // another whose printed figure is plainly larger, which reads as a bug.
+    function statSortValue(pred, ff) {
+        const num = (v) => {
+            if (v == null) return null;
+            let n = v;
+            if (typeof n === 'string') n = parseFloat(n.replace(/,/g, ''));
+            return isFinite(n) ? n : null;
+        };
+        const f = num(ff && ff.total);
+        return (f != null) ? f : num(pred && pred.TBS);
+    }
+
     function formatDualStats(pred, ff) {
         try {
             const fmtTbs = (tbs) => {
@@ -1458,6 +1715,7 @@
             releaseTime: true,
             battlestats: false,
             activity: true,
+            compareBoth: false,
             battleStatsFormat: 'all'
         });
     }
@@ -1478,6 +1736,7 @@
             releaseTime: document.getElementById('gnsc-check-releaseTime')?.checked || false,
             activity: document.getElementById('gnsc-check-activity').checked,
             battlestats: document.getElementById('gnsc-check-battlestats')?.checked || false,
+            compareBoth: document.getElementById('gnsc-check-compareBoth')?.checked || false,
             battleStatsFormat: document.getElementById('gnsc-select-battlestats-format')?.value || 'all'
         };
         GNSC_setValue('tornProfileFormatterSettings', settings);
@@ -1588,6 +1847,9 @@
         if (window.location.href.includes('profiles.php')) {
             initProfilePage();
         } else if (window.location.href.includes('factions.php')) {
+            // Header first: it is the preferred home, and it claims the shared
+            // guard so the war-page mount does not add a second one.
+            initFactionHeaderCog();
             initFactionPage();
             initRankedWarPage();
         }

@@ -1,11 +1,11 @@
-// Runs the SHIPPED row-finding and badge code against both page shapes,
-// built from markup read live off Torn via remote-inspect.
+// Runs the SHIPPED row-finding and badge code against the faction members
+// markup, read live off Torn via remote-inspect.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseHTML } from 'linkedom';
 
-const SRC = readFileSync('/opt/warboard/server/public/scripts/torn-elim-revives.user.js', 'utf8');
+const SRC = readFileSync('/opt/warboard/server/public/scripts/torn-faction-revives.user.js', 'utf8');
 function fn(name) {
   const i = SRC.indexOf('function ' + name + '(');
   assert.ok(i >= 0, 'not found: ' + name);
@@ -31,18 +31,17 @@ const FACTION = `<div class="f-war-list members-list m-top10"><ul class="table-b
   <li class="table-row"><div class="table-cell membersCol___a1"><a href="/profiles.php?XID=2">Deathy55.2b</a></div><div class="table-cell positionCol___svL9F">Member</div><span>10:28:50</span></li>
   <li class="table-row"><div class="table-cell membersCol___a1"><a href="/profiles.php?XID=3">ZgiR1.12b</a></div><div class="table-cell positionCol___svL9F">Member</div><span>Okay</span></li>
 </ul></div>`;
-const ELIM = `<div class="teamPageWrapper___x">
-  <a href="/profiles.php?XID=9">Someone</a></div>`;
 
 function mount(html, href) {
   const { document } = parseHTML(`<html><body>${html}</body></html>`);
   const src = [
     CONST('GROUPS'),
-    fn('pageMode'), fn('listRoot'), fn('isHospitalRow'), fn('badgeFor'),
+    fn('listRoot'), fn('isHospitalRow'), fn('badgeFor'),
     fn('placeFactionBadge'), fn('groupOf'), fn('buildGroups'), fn('renderList'),
+    fn('uidFromAnchor'), fn('hospitalUids'),
     // buildGroups reads the module-level roster/results maps; the test owns them.
-    'globalThis.API={pageMode,listRoot,isHospitalRow,badgeFor,placeFactionBadge,',
-    '  groupOf,buildGroups,renderList,GROUPS,roster,results};'
+    'globalThis.API={listRoot,isHospitalRow,badgeFor,placeFactionBadge,',
+    '  groupOf,buildGroups,renderList,hospitalUids,uidFromAnchor,GROUPS,roster,results};'
   ].join('\n');
   const f = new Function('document', 'location', 'roster', 'results',
     src + '; return API;');
@@ -50,19 +49,7 @@ function mount(html, href) {
   return { document, roster, results, api: f(document, { href }, roster, results) };
 }
 
-test('the faction members list is found by its own markup', () => {
-  const { api } = mount(FACTION, 'https://www.torn.com/factions.php?step=your#/tab=members');
-  assert.equal(api.pageMode(), 'faction');
-  const root = api.listRoot();
-  assert.ok(root, 'members list not found');
-  assert.equal(root.querySelectorAll('a[href*="profiles.php?XID="]').length, 3);
-});
 
-test('the elimination page still works, unchanged', () => {
-  const { api } = mount(ELIM, 'https://www.torn.com/page.php?sid=elimination#/team/5');
-  assert.equal(api.pageMode(), 'elim');
-  assert.ok(api.listRoot(), 'team wrapper not found');
-});
 
 test('a hospitalised row is recognised by its countdown', () => {
   const { document, api } = mount(FACTION, 'https://www.torn.com/factions.php');
@@ -71,19 +58,15 @@ test('a hospitalised row is recognised by its countdown', () => {
   assert.equal(api.isHospitalRow(anchors[0]), false, 'an Okay row is not');
 });
 
-test('the faction badge is a glyph, not a word that would wrap the column', () => {
+test('the badge is a glyph, not a word that would wrap the column', () => {
+  // The position cell is 71px. A word per row would widen it, and in a
+  // float-column layout widening one column drops the other.
   const { api } = mount(FACTION, 'https://www.torn.com/factions.php');
   const on = api.badgeFor(1);
-  assert.ok(on.className.includes('er-compact'));
   assert.ok(on.textContent.length <= 2, 'badge text was ' + JSON.stringify(on.textContent));
   assert.match(on.title, /Revives ON/i);
 });
 
-test('the elimination badge keeps its words', () => {
-  const { api } = mount(ELIM, 'https://www.torn.com/page.php?sid=elimination');
-  assert.match(api.badgeFor(1).textContent, /REVIVES ON/);
-  assert.ok(!api.badgeFor(1).className.includes('er-compact'));
-});
 
 test('checked-and-off is distinguishable from not-yet-checked', () => {
   // "No badge for off" would make an unchecked member look safe to leave.
@@ -151,7 +134,7 @@ test('buildGroups splits the roster and sorts each group by name', () => {
   results.set('2', { revivable: 1, setting: 'Everyone' });
   results.set('3', { revivable: 1, setting: 'Friends & faction' });
   results.set('4', { revivable: 0, setting: 'No one' });
-  const g = api.buildGroups();
+  const g = api.buildGroups(new Set());
   assert.deepEqual(g.everyone.map((x) => x.name), ['Alice', 'Zed']);
   assert.deepEqual(g.faction.map((x) => x.name), ['Bob']);
   assert.deepEqual(g.none.map((x) => x.name), ['Carl']);
@@ -163,7 +146,7 @@ test('an unresolved member is in no group at all', () => {
   const { api, roster, results } = mount(FACTION, 'https://www.torn.com/factions.php');
   roster.set('1', 'Pending');
   results.set('1', { revivable: null, setting: 'Unknown' });
-  const g = api.buildGroups();
+  const g = api.buildGroups(new Set());
   assert.equal(g.everyone.length + g.faction.length + g.none.length, 0);
 });
 
@@ -209,11 +192,12 @@ test('the cache round-trips revive_setting, not just the boolean', () => {
   const results = new Map();
   const store = {};
   const src = [fn('loadCache'), 'globalThis.API={loadCache};'].join('\n');
-  const f = new Function('results', 'GM_getValue', 'CACHE_TTL_MS', src + '; return API;');
+  const f = new Function('results', 'GM_getValue', 'CACHE_TTL_MS', 'CACHE_STORE',
+    src + '; return API;');
   const cached = JSON.stringify({
     7: { revivable: 1, setting: 'Friends & faction', name: 'Bob', at: Date.now() }
   });
-  f(results, () => cached, 3 * 3600 * 1000).loadCache();
+  f(results, () => cached, 3 * 3600 * 1000, 'faction_revive_cache').loadCache();
   assert.equal(results.get('7').setting, 'Friends & faction');
   assert.equal(store.unused, undefined);
 });
@@ -302,4 +286,82 @@ test('a second call inside the TTL does not re-request', async () => {
   await new Promise((r) => setImmediate(r));
   assert.equal(calls.filter((c) => String(c).startsWith('https://')).length, 1,
     'scan() runs every 2s -- without the TTL that is 30 calls a minute');
+});
+
+// --- the whole chain ------------------------------------------------------
+
+test('scan() badges every faction row from cached results', () => {
+  // The unit tests cover each piece; this one covers the wiring, which is
+  // where "87 badges exist and none are visible" actually lived.
+  const { document } = parseHTML(`<html><body>${FACTION}</body></html>`);
+  const results = new Map(), roster = new Map();
+  results.set('1', { revivable: 1, setting: 'Everyone', name: 'RobinHood' });
+  results.set('2', { revivable: 1, setting: 'Friends & faction', name: 'Deathy' });
+  results.set('3', { revivable: 0, setting: 'No one', name: 'ZgiR' });
+
+  const order = [];   // scan order is DOM order now; the list does the sorting
+  const src = [
+    fn('listRoot'), fn('isHospitalRow'),
+    fn('badgeFor'), fn('placeFactionBadge'), fn('uidFromAnchor'),
+    fn('applyToAnchor'), fn('scan'),
+    'globalThis.API={scan};'
+  ].join('\n');
+  const f = new Function('document', 'location', 'results', 'roster',
+    'fetchFactionRoster', 'updateStatus', 'order',
+    src.replace('placeFactionBadge(a, results.get(uid));',
+                'order.push(uid); placeFactionBadge(a, results.get(uid));') +
+    '; return API;');
+  f(document, { href: 'https://www.torn.com/factions.php#/tab=members', hash: '#/tab=members' },
+    results, roster, () => {}, () => {}, order).scan();
+
+  const badges = [...document.querySelectorAll('[data-er="1"]')];
+  assert.equal(badges.length, 3, 'one badge per row');
+  for (const b of badges) {
+    assert.ok(/positionCol/.test(b.parentElement.className),
+      'badge rendered into ' + b.parentElement.className + ' -- that cell clips');
+  }
+  assert.deepEqual(order, ['1', '2', '3'], 'every row gets visited');
+
+  const tone = (uid) => document.querySelector(`a[href*="XID=${uid}"]`)
+    .closest('li').querySelector('[data-er="1"]').className;
+  assert.ok(tone('1').includes('er-on'));
+  assert.ok(tone('2').includes('er-fac'), 'Friends & faction got ' + tone('2'));
+  assert.ok(tone('3').includes('er-off'));
+});
+
+test('scan() is idempotent -- 2s re-runs do not stack badges', () => {
+  const { document } = parseHTML(`<html><body>${FACTION}</body></html>`);
+  const results = new Map([['1', { revivable: 1, setting: 'Everyone' }]]);
+  const src = [
+    fn('listRoot'), fn('isHospitalRow'),
+    fn('badgeFor'), fn('placeFactionBadge'), fn('uidFromAnchor'),
+    fn('applyToAnchor'), fn('scan'), 'globalThis.API={scan};'
+  ].join('\n');
+  const api = new Function('document', 'location', 'results', 'roster',
+    'fetchFactionRoster', 'updateStatus', src + '; return API;')(
+    document, { href: 'https://www.torn.com/factions.php', hash: '' },
+    results, new Map(), () => {}, () => {});
+  api.scan(); api.scan(); api.scan();
+  assert.equal(document.querySelectorAll('[data-er="1"]').length, 3);
+});
+
+test('hospitalised members sort to the top of their group, and are marked', () => {
+  // A revivable member who is not in hospital does not need reviving, so
+  // the ones who are belong at the top of the message.
+  const { api, roster, results } = mount(FACTION, 'https://www.torn.com/factions.php');
+  roster.set('1', 'Alice'); roster.set('2', 'Deathy'); roster.set('3', 'Zed');
+  for (const u of ['1', '2', '3']) results.set(u, { revivable: 1, setting: 'Everyone' });
+  const g = api.buildGroups(new Set(['3']));
+  assert.deepEqual(g.everyone.map((x) => x.name), ['Zed', 'Alice', 'Deathy'],
+    'the hospitalised one jumps the alphabet');
+  const txt = api.renderList(g, { everyone: true, faction: false, none: false });
+  assert.match(txt.split('\n')[0], /^\* Zed \[3\]$/, 'first line was ' + txt.split('\n')[0]);
+  assert.ok(!/^\* Alice/m.test(txt), 'an Okay member must not be marked');
+});
+
+test('hospitalUids reads the countdown off the live rows', () => {
+  // "Deathy10:28:50" -- the row text concatenates, so a \\b-anchored
+  // countdown regex matches nothing at all.
+  const { api } = mount(FACTION, 'https://www.torn.com/factions.php');
+  assert.deepEqual([...api.hospitalUids()], ['2']);
 });
