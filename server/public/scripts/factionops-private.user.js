@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.4.3
+// @version      5.4.4
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -105,7 +105,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.3';
+    const SCRIPT_VERSION = '5.4.4';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -15566,6 +15566,37 @@ body.wb-chain-active {
     let wcUnread   = 0;
     let wcOpen     = false;
     let wcLoaded   = false;
+    let wcLoading  = false;
+
+    // Last messages kept locally per war.
+    //
+    // The panel used to open empty and fill in when the GET came back, so
+    // every open flashed "No messages yet." at somebody who had a hundred
+    // messages — an empty state that was not empty, just early. The cache
+    // makes a reopen instant and the fetch becomes a refresh behind it.
+    const WC_CACHE_KEY = 'fo_warchat_cache_v1';
+    const WC_CACHE_MAX = 60;
+
+    function wcCacheAll() {
+        try {
+            const raw = GM_getValue(WC_CACHE_KEY, '');
+            if (!raw) return {};
+            return typeof raw === 'string' ? (JSON.parse(raw) || {}) : raw;
+        } catch (_) { return {}; }
+    }
+    function wcCacheRead(warId) {
+        const all = wcCacheAll();
+        return Array.isArray(all[warId]) ? all[warId] : [];
+    }
+    function wcCacheWrite(warId, msgs) {
+        try {
+            const all = wcCacheAll();
+            all[warId] = (msgs || []).slice(-WC_CACHE_MAX);
+            // Stringify explicitly: GM_getValue hands back whatever the host
+            // stored, and the PDA polyfill round-trips through localStorage.
+            GM_setValue(WC_CACHE_KEY, JSON.stringify(all));
+        } catch (_) { /* a cache that cannot be written is slow, not broken */ }
+    }
 
     function wcEscape(t) {
         return String(t == null ? '' : t)
@@ -15585,7 +15616,18 @@ body.wb-chain-active {
         return { parent: sample.parentElement, before: gear || null, sample };
     }
 
+    let wcSeeded = false;
+    function wcSeedFromCache() {
+        if (wcSeeded) return;
+        const warId = deriveWarId();
+        if (!warId) return;              // no faction id yet; try again next tick
+        wcSeeded = true;
+        const cached = wcCacheRead(warId);
+        if (cached.length && !wcMessages.length) wcMessages = cached;
+    }
+
     function wcEnsureButton() {
+        wcSeedFromCache();
         if (document.getElementById(WC_BTN_ID)) return;
         const slot = wcDockSlot();
         if (!slot) return;
@@ -15661,7 +15703,10 @@ body.wb-chain-active {
         const list = document.getElementById('fo-wc-list');
         if (!list) return;
         if (!wcMessages.length) {
-            list.innerHTML = '<div style="color:#6b7280;padding:14px 0;text-align:center">No messages yet.</div>';
+            // "No messages yet" is a CLAIM. Only make it once the history has
+            // actually come back; until then this is still loading.
+            const msg = wcLoading ? 'Loading…' : 'No messages yet.';
+            list.innerHTML = '<div style="color:#6b7280;padding:14px 0;text-align:center">' + msg + '</div>';
             return;
         }
         const rows = wcMessages.slice(-WC_MAX_RENDER).map(function (m) {
@@ -15682,6 +15727,8 @@ body.wb-chain-active {
         const warId = deriveWarId();
         if (!warId || !state.jwtToken) return;
         wcLoaded = true;
+        wcLoading = true;
+        wcRender();
         // GM_xmlhttpRequest, not fetch: every page-context request to
         // tornwar.com fails under Torn's connect-src CSP on warboard-iOS.
         GM_xmlhttpRequest({
@@ -15689,15 +15736,18 @@ body.wb-chain-active {
             url: CONFIG.SERVER_URL + '/api/chat/' + encodeURIComponent(warId),
             headers: { 'Authorization': 'Bearer ' + state.jwtToken },
             onload(res) {
+                wcLoading = false;
                 const body = safeParse(res.responseText);
                 if (res.status === 200 && body && Array.isArray(body.messages)) {
                     wcMessages = body.messages;
+                    wcCacheWrite(warId, wcMessages);
                     wcRender();
                 } else {
                     wcLoaded = false;   // let the next open retry
+                    wcRender();
                 }
             },
-            onerror() { wcLoaded = false; }
+            onerror() { wcLoading = false; wcLoaded = false; wcRender(); }
         });
     }
 
@@ -15733,6 +15783,7 @@ body.wb-chain-active {
         if (!msg || !msg.text) return;
         if (wcMessages.some(function (m) { return m.id && m.id === msg.id; })) return;
         wcMessages.push(msg);
+        try { wcCacheWrite(deriveWarId(), wcMessages); } catch (_) {}
         if (wcOpen) { wcRender(); return; }
         // Do not count your own words as unread.
         if (String(msg.playerId) !== String(state.myPlayerId || '')) {

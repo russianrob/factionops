@@ -33,7 +33,13 @@ function mount(html = DOCK, msgs = [], myId = '137558') {
   const box = { document, state: { myPlayerId: myId }, wcMessages: msgs, console };
   const src = [
     'var WC_BTN_ID="fo-warchat-btn", WC_PANEL_ID="fo-warchat-panel", WC_MAX_RENDER=200;',
-    'var wcUnread=0, wcOpen=false, wcLoaded=false;',
+    'var wcUnread=0, wcOpen=false, wcLoaded=false, wcLoading=false, wcSeeded=true;',
+    // Dependencies wcEnsureButton picked up in 5.4.4 (cache seeding). Stubbed
+    // rather than exercised here; the cache has its own tests below.
+    'var WC_CACHE_KEY="k", WC_CACHE_MAX=60;',
+    'function deriveWarId(){ return "war_test"; }',
+    'function GM_getValue(k,d){ return d; } function GM_setValue(){}',
+    fn('wcCacheAll'), fn('wcCacheRead'), fn('wcCacheWrite'), fn('wcSeedFromCache'),
     fn('wcEscape'), fn('wcDockSlot'), fn('wcEnsureButton'), fn('wcSetBadge'), fn('wcRender'),
     'globalThis.API={wcEscape:wcEscape,wcDockSlot:wcDockSlot,wcEnsureButton:wcEnsureButton,' +
       'wcSetBadge:wcSetBadge,wcRender:wcRender};'
@@ -166,4 +172,85 @@ test('main() will not build the furniture off the original pages', () => {
   assert.match(body, /isOriginallyMatchedPage/);
   assert.match(body, /createSettingsGear/);
   assert.match(body, /createHeatmapButton/);
+});
+
+// ── loading vs empty ───────────────────────────────────────────────────
+//
+// The panel rendered "No messages yet." the instant it opened, then filled
+// in when the GET returned — so a room with a hundred messages still
+// flashed an empty state at you. "Empty" is a claim; it can only be made
+// once the history has actually come back.
+
+function mountRender({ loading, msgs }) {
+  const { document } = parseHTML('<html><body><div id="fo-wc-list"></div></body></html>');
+  const src = [
+    'var WC_MAX_RENDER=200;',
+    'var wcLoading=' + JSON.stringify(loading) + ';',
+    fn('wcEscape'), fn('wcRender'),
+    'globalThis.R=wcRender;'
+  ].join('\n');
+  const f = new Function('document', 'state', 'wcMessages', 'console', src + '; return R;');
+  f(document, { myPlayerId: '1' }, msgs, console)();
+  return document.getElementById('fo-wc-list').textContent;
+}
+
+test('an empty room while still fetching says Loading, not No messages', () => {
+  assert.match(mountRender({ loading: true, msgs: [] }), /Loading/);
+});
+
+test('an empty room that has finished fetching says No messages', () => {
+  assert.match(mountRender({ loading: false, msgs: [] }), /No messages yet/i);
+});
+
+test('messages win over both states', () => {
+  const out = mountRender({ loading: true, msgs: [{ id: '1', ts: Date.now(), playerId: '2', playerName: 'A', text: 'hello' }] });
+  assert.match(out, /hello/);
+  assert.ok(!/Loading/.test(out));
+});
+
+// ── the local cache ────────────────────────────────────────────────────
+
+function cacheHarness(initial) {
+  let store = initial === undefined ? '' : JSON.stringify(initial);
+  const src = [
+    "var WC_CACHE_KEY='k', WC_CACHE_MAX=60;",
+    'function GM_getValue(k, d){ return store === "" ? d : store; }',
+    'function GM_setValue(k, v){ store = v; }',
+    fn('wcCacheAll'), fn('wcCacheRead'), fn('wcCacheWrite'),
+    'globalThis.C={read:wcCacheRead, write:wcCacheWrite, peek:function(){return store;}};'
+  ].join('\n');
+  return new Function('store', src + '; return C;')(store);
+}
+
+test('a cold cache reads as empty rather than throwing', () => {
+  assert.deepEqual(cacheHarness().read('war_1'), []);
+});
+
+test('corrupt cache contents do not take the panel down', () => {
+  const c = new Function('', [
+    "var WC_CACHE_KEY='k', WC_CACHE_MAX=60;",
+    'var store = "{not json";',
+    'function GM_getValue(k,d){ return store; }',
+    'function GM_setValue(k,v){ store = v; }',
+    fn('wcCacheAll'), fn('wcCacheRead'),
+    'return { read: wcCacheRead };'
+  ].join('\n'))();
+  assert.deepEqual(c.read('war_1'), []);
+});
+
+test('the cache is bounded, so it cannot grow without limit', () => {
+  const big = Array.from({ length: 500 }, (_, i) => ({ id: String(i), text: 'm' + i }));
+  const c = cacheHarness({});
+  c.write('war_1', big);
+  const kept = JSON.parse(c.peek())['war_1'];
+  assert.equal(kept.length, 60);
+  assert.equal(kept[kept.length - 1].id, '499', 'kept the oldest instead of the newest');
+});
+
+test('two wars keep separate histories', () => {
+  const c = cacheHarness({});
+  c.write('war_1', [{ id: 'a', text: 'one' }]);
+  c.write('war_2', [{ id: 'b', text: 'two' }]);
+  assert.equal(c.read('war_1')[0].text, 'one');
+  assert.equal(c.read('war_2')[0].text, 'two');
 });
