@@ -758,3 +758,94 @@ test('the nudge text is what was asked for, verbatim', () => {
   assert.match(src, /NUDGE_SUBJECT\s*=\s*'Revives off'/);
   assert.match(src, /NUDGE_BODY\s*=\s*'please turn your revives off :\)'/);
 });
+
+// --- runComposeFill: the retry must not slander a fill that worked --------
+
+function fillRunner(html, { fillOnFirstTry = true } = {}) {
+  const { document, window } = parseHTML(`<html><body>${html}</body></html>`);
+  for (const el of document.querySelectorAll('textarea, input, [contenteditable]')) {
+    Object.defineProperty(el, 'offsetParent', { get: () => el.parentElement });
+    Object.defineProperty(el, 'offsetWidth', { get: () => 280 });
+    Object.defineProperty(el, 'offsetHeight', { get: () => 160 });
+  }
+  const store = { faction_revive_compose: JSON.stringify(
+    { text: 'please turn your revives off :)', n: 0, subject: 'Revives off', at: Date.now() }) };
+  const timers = [];
+  const observers = [];
+  class FakeObserver {
+    constructor(cb) { this.cb = cb; observers.push(this); this.live = false; }
+    observe() { this.live = true; }
+    disconnect() { this.live = false; }
+  }
+  const toasts = [];
+  const src = [
+    'const COMPOSE_MAX_AGE = 3*60*1000, COMPOSE_WAIT_MS = 15000;',
+    fn('findComposeFields'), fn('escapeHtml'), fn('setRichValue'), fn('setNativeValue'),
+    fn('fillCompose'), fn('takeCompose'), fn('runComposeFill'),
+    'globalThis.API={runComposeFill};'
+  ].join('\n');
+  const api = new Function('document', 'window', 'Event', 'GM_getValue', 'GM_setValue',
+    'COMPOSE_STORE', 'setTimeout', 'MutationObserver', 'toast',
+    src + '; return API;')(
+    document, window, window.Event,
+    (k, d) => (k in store ? store[k] : d), (k, v) => { store[k] = v; },
+    'faction_revive_compose',
+    (fn2, ms) => { timers.push({ fn: fn2, ms }); return timers.length; },
+    FakeObserver,
+    (msg, bad) => toasts.push({ msg, bad }));
+  return { document, api, timers, observers, toasts };
+}
+
+const FORM_HTML = COMPOSE;
+const EMPTY_HTML = '<div id="chatRoot"><textarea></textarea></div>';
+
+test('a fill that succeeded on the first try never schedules a complaint', () => {
+  const { api, timers, toasts, document } = fillRunner(FORM_HTML);
+  api.runComposeFill();
+  assert.equal(document.getElementById('mce_0').textContent, 'please turn your revives off :)');
+  timers.forEach((t) => t.fn());
+  assert.deepEqual(toasts, [], 'it filled the mail and then complained: ' + JSON.stringify(toasts));
+});
+
+test('a fill that succeeded on RETRY never complains either', () => {
+  // This is the bug in the screenshot. The old guard asked the DOM whether a
+  // toast was on screen; the success toast had already expired by the 15s
+  // timeout, so a perfectly filled mail announced a failure.
+  const { api, observers, timers, toasts, document } = fillRunner(EMPTY_HTML);
+  api.runComposeFill();
+  assert.equal(observers.length, 1, 'it should have started watching for the form');
+
+  // the form renders late
+  document.body.innerHTML += FORM_HTML;
+  for (const el of document.querySelectorAll('textarea, input, [contenteditable]')) {
+    Object.defineProperty(el, 'offsetParent', { get: () => el.parentElement });
+    Object.defineProperty(el, 'offsetWidth', { get: () => 280 });
+    Object.defineProperty(el, 'offsetHeight', { get: () => 160 });
+  }
+  observers[0].cb();
+  assert.equal(document.getElementById('mce_0').textContent, 'please turn your revives off :)');
+  assert.equal(observers[0].live, false, 'the observer should have stopped');
+
+  timers.forEach((t) => t.fn());          // the 15s timeout still fires
+  assert.deepEqual(toasts, [], 'complained about a fill that worked: ' + JSON.stringify(toasts));
+});
+
+test('a fill that never finds the form DOES say so', () => {
+  const { api, timers, toasts } = fillRunner(EMPTY_HTML);
+  api.runComposeFill();
+  timers.forEach((t) => t.fn());
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].bad, true);
+  assert.match(toasts[0].msg, /clipboard/);
+});
+
+test('with nothing stashed it does nothing at all', () => {
+  const { api, timers, observers, toasts, document } = fillRunner(FORM_HTML);
+  api.runComposeFill();        // drains the stash
+  const before = document.getElementById('mce_0').innerHTML;
+  api.runComposeFill();        // second arrival: stash is empty
+  timers.forEach((t) => t.fn());
+  assert.equal(observers.length, 0 + observers.length, 'no extra watchers');
+  assert.deepEqual(toasts, []);
+  assert.equal(document.getElementById('mce_0').innerHTML, before);
+});

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Revive Check
 // @namespace    russianrob.faction.revives
-// @version      2.2.0
+// @version      2.2.1
 // @description  Badges every faction member by their revive setting (Everyone / Friends & faction / off) in the position column, with a grouped copy-and-compose list. Originally built on AaronPMC's Elimination Revives.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-faction-revives.user.js
@@ -16,6 +16,10 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 2.2.1 - Stop announcing a failure after a successful fill. The retry's
+ *         timeout asked the DOM whether a toast was showing, and the
+ *         success toast had already expired, so a filled mail complained
+ *         15s later. Success is silent now -- the filled fields say it.
  * 2.2.0 - A revives-on badge is now a link: tap it to open a mail to that
  *         member, subject "Revives off", body "please turn your revives
  *         off :)". Opens filled in; you press Send. Badges that have not
@@ -566,7 +570,9 @@
         }
         // The recipient is deliberately left alone: a Torn mail takes one
         // name, and the list is many people.
-        toast('Revivable list filled in — pick a recipient and send.');
+        //
+        // No success toast: the filled fields ARE the confirmation, and a
+        // banner sitting over the conversation below is just noise.
         return true;
     }
 
@@ -576,18 +582,19 @@
         if (fillCompose(entry)) return;
         // The form renders after the page does, so wait for it rather than
         // giving up on the first miss.
-        const started = Date.now();
+        let done = false;
         const obs = new MutationObserver(() => {
-            if (fillCompose(entry)) { obs.disconnect(); return; }
-            if (Date.now() - started > COMPOSE_WAIT_MS) {
-                obs.disconnect();
-                toast('Could not find the message box — the list is on your clipboard, paste it.', true);
-            }
+            if (done) return;
+            if (fillCompose(entry)) { done = true; obs.disconnect(); }
         });
         obs.observe(document.body, { childList: true, subtree: true });
         setTimeout(() => {
             obs.disconnect();
-            if (!document.getElementById('er-toast')) {
+            // Track completion in a variable, not by asking the DOM whether a
+            // toast is showing. The old guard did the latter, and a toast
+            // clears itself after 6s -- so a mail filled on retry announced
+            // "could not find the message box" 15 seconds after it worked.
+            if (!done) {
                 toast('Could not find the message box — the list is on your clipboard, paste it.', true);
             }
         }, COMPOSE_WAIT_MS);
