@@ -3559,8 +3559,54 @@ router.post("/api/chat/:warId", requireAuth, (req, res) => {
   // Fan out — Socket.IO + SSE to every client in this war's room.
   if (io) io.to(`war_${warId}`).emit("chat_message", msg);
   broadcastSSE(warId, { type: "chat_message", ...msg });
+  notifyWarChat(warId, war, msg);
   return res.json({ message: msg });
 });
+
+// Push a war-chat message to the faction.
+//
+// Audience is war.ourMemberIds — the roster already cached on the war record,
+// so this costs no Torn call — minus the sender, who does not need telling
+// what they just typed.
+//
+// Banners COLLAPSE rather than stack: every message shares one tag per war,
+// so a burst replaces the banner instead of filling the lock screen. On top
+// of that a short per-war floor stops a fast exchange becoming a push
+// firehose — the messages still arrive live in the panel either way, this
+// only governs how often the phone lights up.
+const WAR_CHAT_PUSH_FLOOR_MS = 12_000;
+const _warChatPushAt = new Map();   // warId -> ms of last push
+
+function notifyWarChat(warId, war, msg) {
+  try {
+    const now = Date.now();
+    if (now - (_warChatPushAt.get(warId) || 0) < WAR_CHAT_PUSH_FLOOR_MS) return;
+    const roster = Array.isArray(war && war.ourMemberIds) ? war.ourMemberIds : [];
+    if (!roster.length) return;
+    const audience = roster.map(String).filter((id) => id !== String(msg.playerId));
+    if (!audience.length) return;
+    _warChatPushAt.set(warId, now);
+    const body = String(msg.text || "");
+    push.sendToPlayers(audience, {
+      title: `⚔ ${msg.playerName || "War chat"}`,
+      body: body.length > 120 ? body.slice(0, 117) + "…" : body,
+      tag: `war-chat-${warId}`,
+      data: {
+        type: "war_chat",
+        warId,
+        messageId: msg.id,
+        // Tap-through lives on data.url; a top-level url is ignored by all
+        // three delivery channels. Any Torn page would do now the chat dock
+        // is on all of them, but the faction page is where a war conversation
+        // is most likely to be about something.
+        url: "https://www.torn.com/factions.php?step=your",
+      },
+    }, "war_chat").catch((e) => console.warn(`[war-chat] push failed: ${e.message}`));
+  } catch (e) {
+    // A chat message must never fail because a notification did.
+    console.warn(`[war-chat] notify error: ${e.message}`);
+  }
+}
 
 router.delete("/api/chat/:warId/:msgId", requireAuth, (req, res) => {
   const { warId, msgId } = req.params;

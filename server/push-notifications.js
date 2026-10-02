@@ -43,6 +43,7 @@ export const NOTIFICATION_TYPES = {
   call_stolen:     { label: "Call Contested",        description: "When someone else views a target you called",       default: true  },
   war_target:      { label: "War Target Reached",    description: "When faction hits the custom war target",           default: true  },
   enemy_surge:     { label: "Enemy Online Surge",     description: "When the enemy faction's online count jumps sharply (rallying)", default: false },
+  war_chat:        { label: "War Chat",             description: "When a faction member posts in war chat",           default: true  },
   stakeout_alert:  { label: "Stakeout Alerts",        description: "A watched player/faction hit a trigger (online, out of hospital, landed, revivable…)", default: true },
   torn_event: {
     label: "Torn Events",
@@ -57,6 +58,11 @@ export const NOTIFICATION_TYPES = {
   vault_request:     { label: "Vault Requests",      description: "When a faction member requests money from the vault",          default: true, oc: true },
   oc_ready_to_spawn: { label: "OC Ready to Spawn",   description: "When an organized crime is fully filled and ready to spawn",   default: true, oc: true },
   oc_completed:      { label: "OC Completed",        description: "When an organized crime finishes (success or failure)",        default: true, oc: true },
+  // Registered because isTypeEnabled falls back to `?? true` for an UNKNOWN
+  // type — so an unregistered notifType fires for everyone AND cannot be
+  // switched off, because the settings UI is built from this table. Shipped
+  // unregistered on 2026-10-01 and was briefly unsilenceable.
+  oc_low_success:    { label: "Weak OC Slots",       description: "When a placed member's OC success chance is under 65%",        default: true, oc: true },
 };
 
 // ── Subscription Storage ────────────────────────────────────────────────
