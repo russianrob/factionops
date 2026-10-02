@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Revive Check
 // @namespace    russianrob.faction.revives
-// @version      2.1.1
+// @version      2.2.0
 // @description  Badges every faction member by their revive setting (Everyone / Friends & faction / off) in the position column, with a grouped copy-and-compose list. Originally built on AaronPMC's Elimination Revives.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-faction-revives.user.js
@@ -16,6 +16,10 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 2.2.0 - A revives-on badge is now a link: tap it to open a mail to that
+ *         member, subject "Revives off", body "please turn your revives
+ *         off :)". Opens filled in; you press Send. Badges that have not
+ *         changed are also left in place rather than replaced every 2s.
  * 2.1.1 - The mail body is TinyMCE inline (contenteditable div), not a
  *         textarea. 2.1.0 wrote into its hidden sourceArea___ buffer, so
  *         the subject filled and the body stayed blank. Writes the visible
@@ -50,6 +54,10 @@
     const OWN_KEY_STORE   = 'faction_revive_apikey';
     const CACHE_STORE     = 'faction_revive_cache';
     const COMPOSE_STORE   = 'faction_revive_compose';
+    // The nudge a tapped badge sends. Nothing is ever sent for you -- the
+    // mail opens filled in and you press Send.
+    const NUDGE_SUBJECT   = 'Revives off';
+    const NUDGE_BODY      = 'please turn your revives off :)';
     const COMPOSE_MAX_AGE = 3 * 60 * 1000;      // a stale hand-off must not ambush a later mail
     const COMPOSE_WAIT_MS = 15000;              // messages.php renders the form after load
 
@@ -205,6 +213,9 @@
         .er-fac{background:transparent;color:#fdcb6e;border-color:rgba(253,203,110,.5);}
         .er-off{background:transparent;color:#636e72;border-color:rgba(99,110,114,.35);}
         .er-unk{background:transparent;color:#4a5356;border-color:transparent;}
+        a.er-badge{text-decoration:none;}
+        .er-ask{cursor:pointer;}
+        .er-ask:hover,.er-ask:active{filter:brightness(1.5);}
         #er-status{position:fixed;left:10px;bottom:10px;z-index:2147483000;
             background:#14100e;color:#ffd9c9;border:1px solid rgba(225,112,85,.5);
             border-radius:6px;padding:6px 8px;font:600 11px/1.3 Arial,sans-serif;
@@ -436,9 +447,11 @@
     // that never reached the mail page must not silently paste itself into
     // some unrelated message an hour later.
 
-    function stashCompose(text, n) {
+    function stashCompose(text, n, subject) {
         try {
-            GM_setValue(COMPOSE_STORE, JSON.stringify({ text: text, n: n, at: Date.now() }));
+            GM_setValue(COMPOSE_STORE, JSON.stringify({
+                text: text, n: n, subject: subject || null, at: Date.now()
+            }));
         } catch (_) {}
     }
     function takeCompose() {
@@ -549,7 +562,7 @@
         else setNativeValue(f.body, entry.text);
         // Only touch the subject if the user has not typed one.
         if (f.subject && !f.subject.value) {
-            setNativeValue(f.subject, 'Revivable (' + (entry.n || 0) + ')');
+            setNativeValue(f.subject, entry.subject || ('Revivable (' + (entry.n || 0) + ')'));
         }
         // The recipient is deliberately left alone: a Torn mail takes one
         // name, and the list is many people.
@@ -586,8 +599,19 @@
         return m ? m[1] : null;
     }
 
-    function badgeFor(rev, setting) {
-        const b = document.createElement('span');
+    function badgeFor(rev, setting, uid) {
+        // Revives-on members get a real anchor, not a span with a click
+        // handler: a genuine href works in the PDA webview, opens in a new
+        // tab by itself, and is a user-clicked navigation rather than
+        // anything synthetic. Nothing is auto-sent.
+        const askable = uid && (setting === 'Everyone' || setting === 'Friends & faction');
+        const b = document.createElement(askable ? 'a' : 'span');
+        if (askable) {
+            b.href = 'https://www.torn.com/messages.php#/p=compose&XID=' + encodeURIComponent(uid);
+            b.target = '_blank';
+            b.rel = 'noopener';
+            b.setAttribute('data-er-ask', uid);
+        }
         // A known revive_setting is a finer answer than the boolean, so it
         // wins when we have one: "Friends & faction" is revivable, but not by
         // an outsider, and that distinction needs its own colour.
@@ -604,6 +628,13 @@
                       : tone === 'er-off' ? '·' : '…';
         b.title = setting ? ('Revives: ' + setting)
                 : rev === 1 ? 'Revives ON' : rev === 0 ? 'Revives off' : 'Not checked yet';
+        if (askable) {
+            b.title += ' \u2014 tap to ask them to turn revives off';
+            b.classList.add('er-ask');
+        }
+        // The tone is the badge's identity; placeFactionBadge uses it to leave
+        // an unchanged badge alone instead of replacing it every 2s.
+        b.setAttribute('data-tone', tone);
         return b;
     }
 
@@ -616,22 +647,39 @@
      * position cell is 71px and its text is already truncated, so a glyph
      * costs nothing.
      */
-    function placeFactionBadge(a, entry) {
+    function placeFactionBadge(a, entry, uid) {
         const row = a.closest('li');
         if (!row) return;
         const cell = row.querySelector('[class*="positionCol"], .table-cell.position');
         if (!cell) return;
+        const fresh = badgeFor(entry ? entry.revivable : undefined,
+                               entry ? entry.setting : null, uid);
         const old = cell.querySelector('[data-er="1"]');
+        // scan() runs every 2s. Replacing an identical badge each time churns
+        // the DOM for nothing and can swallow a tap that is already in flight.
+        if (old && old.getAttribute('data-tone') === fresh.getAttribute('data-tone') &&
+            old.getAttribute('data-er-ask') === fresh.getAttribute('data-er-ask')) return;
         if (old) old.remove();
-        cell.insertAdjacentElement('afterbegin',
-            badgeFor(entry ? entry.revivable : undefined, entry ? entry.setting : null));
+        cell.insertAdjacentElement('afterbegin', fresh);
     }
 
     function applyToAnchor(a) {
         const uid = uidFromAnchor(a);
         if (!uid) return;
         if (!roster.has(uid)) roster.set(uid, (a.textContent || '').trim());
-        placeFactionBadge(a, results.get(uid));
+        placeFactionBadge(a, results.get(uid), uid);
+    }
+
+    // One delegated listener, attached once: the badges themselves come and go.
+    // The anchor's own href does the navigating -- this only loads the message
+    // into the hand-off on the way out.
+    function wireNudge() {
+        document.addEventListener('click', function (ev) {
+            const link = ev.target && ev.target.closest && ev.target.closest('[data-er-ask]');
+            if (!link) return;
+            stashCompose(NUDGE_BODY, 0, NUDGE_SUBJECT);
+            ev.stopPropagation();   // do not let the row's own handler fire too
+        }, true);
     }
 
     function scan() {
@@ -650,6 +698,7 @@
     if (/\/messages\.php/i.test(location.pathname)) { runComposeFill(); return; }
 
     loadCache();
+    wireNudge();
     setInterval(scan, RESCAN_MS);
     scan();
 })();

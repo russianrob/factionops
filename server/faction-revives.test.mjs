@@ -311,8 +311,8 @@ test('scan() badges every faction row from cached results', () => {
   ].join('\n');
   const f = new Function('document', 'location', 'results', 'roster',
     'fetchFactionRoster', 'updateStatus', 'order',
-    src.replace('placeFactionBadge(a, results.get(uid));',
-                'order.push(uid); placeFactionBadge(a, results.get(uid));') +
+    instrument(src, 'placeFactionBadge(a, results.get(uid), uid);',
+                'order.push(uid); placeFactionBadge(a, results.get(uid), uid);') +
     '; return API;');
   f(document, { href: 'https://www.torn.com/factions.php#/tab=members', hash: '#/tab=members' },
     results, roster, () => {}, () => {}, order).scan();
@@ -475,6 +475,13 @@ const COMPOSE = `
 const COMPOSE_PLAIN = COMPOSE
   .replace('<div id="mce_0" contenteditable="true" class="editor-content mce-content-body editorContent___fi"></div>', '')
   .replace('class="sourceArea___lGrOt hidden___xSXji"', 'name="message"');
+
+// A source rewrite that matches nothing records nothing, which then reads as
+// a production failure. Fail on the rewrite instead.
+function instrument(src, from, to) {
+  assert.ok(src.includes(from), 'instrumentation anchor is stale: ' + from);
+  return src.replace(from, to);
+}
 
 function composeApi(html) {
   const { document, window } = parseHTML(`<html><body>${html}</body></html>`);
@@ -663,4 +670,91 @@ test('if TinyMCE fails to init, the real textarea wins over its source buffer', 
   assert.equal(document.querySelector('textarea[name="message"]').value, 'Alice [2]');
   assert.equal(document.querySelector('textarea[class*="sourceArea"]').value, '',
     'the source buffer must be left alone');
+});
+
+// --- the tappable nudge ---------------------------------------------------
+
+test('a revives-ON badge is a real link to that member\'s compose page', () => {
+  // A real href (not a synthetic click) is what works in the PDA webview and
+  // what keeps this a user-clicked navigation.
+  const { api } = mount(FACTION, 'https://www.torn.com/factions.php');
+  const b = api.badgeFor(1, 'Everyone', '3606647');
+  assert.equal(b.tagName, 'A');
+  assert.equal(b.getAttribute('href'),
+    'https://www.torn.com/messages.php#/p=compose&XID=3606647');
+  assert.equal(b.getAttribute('target'), '_blank');
+  assert.equal(b.getAttribute('data-er-ask'), '3606647');
+  assert.match(b.title, /tap to ask them to turn revives off/);
+});
+
+test('Friends & faction is askable too', () => {
+  const { api } = mount(FACTION, 'https://www.torn.com/factions.php');
+  assert.equal(api.badgeFor(1, 'Friends & faction', '7').tagName, 'A');
+});
+
+test('a revives-OFF badge is NOT a link', () => {
+  // Asking someone whose revives are already off to turn them off is noise.
+  const { api } = mount(FACTION, 'https://www.torn.com/factions.php');
+  for (const [rev, set] of [[0, 'No one'], [null, 'Unknown'], [undefined, null]]) {
+    const b = api.badgeFor(rev, set, '9');
+    assert.equal(b.tagName, 'SPAN', 'tone ' + set + ' should not be tappable');
+    assert.equal(b.getAttribute('data-er-ask'), null);
+  }
+});
+
+test('without a uid the badge stays a span', () => {
+  const { api } = mount(FACTION, 'https://www.torn.com/factions.php');
+  assert.equal(api.badgeFor(1, 'Everyone', undefined).tagName, 'SPAN');
+});
+
+test('an unchanged badge is left in place, not replaced every 2s', () => {
+  // scan() re-runs every 2s; swapping the element out from under a tap in
+  // flight is how a link stops working on a phone.
+  const { document, api } = mount(FACTION, 'https://www.torn.com/factions.php');
+  const a = document.querySelector('a[href*="XID=1"]');
+  api.placeFactionBadge(a, { revivable: 1, setting: 'Everyone' }, '1');
+  const first = a.closest('li').querySelector('[data-er="1"]');
+  api.placeFactionBadge(a, { revivable: 1, setting: 'Everyone' }, '1');
+  api.placeFactionBadge(a, { revivable: 1, setting: 'Everyone' }, '1');
+  assert.equal(a.closest('li').querySelector('[data-er="1"]'), first,
+    'the badge element was swapped for an identical one');
+});
+
+test('a badge whose setting changed IS replaced', () => {
+  const { document, api } = mount(FACTION, 'https://www.torn.com/factions.php');
+  const a = document.querySelector('a[href*="XID=1"]');
+  api.placeFactionBadge(a, { revivable: 1, setting: 'Everyone' }, '1');
+  api.placeFactionBadge(a, { revivable: 0, setting: 'No one' }, '1');
+  const b = a.closest('li').querySelectorAll('[data-er="1"]');
+  assert.equal(b.length, 1);
+  assert.equal(b[0].tagName, 'SPAN', 'it should have stopped being a link');
+  assert.ok(b[0].className.includes('er-off'));
+});
+
+test('the nudge stashes the fixed subject and body', () => {
+  const { api } = composeApi(COMPOSE);
+  api.stashCompose('please turn your revives off :)', 0, 'Revives off');
+  const got = api.takeCompose();
+  assert.equal(got.subject, 'Revives off');
+  assert.equal(got.text, 'please turn your revives off :)');
+});
+
+test('a stashed subject beats the revivable-count default', () => {
+  const { api, document } = composeApi(COMPOSE);
+  api.fillCompose({ text: 'please turn your revives off :)', n: 0, subject: 'Revives off' });
+  assert.equal(document.querySelector('input[name="title"]').value, 'Revives off');
+  assert.equal(document.getElementById('mce_0').textContent,
+    'please turn your revives off :)');
+});
+
+test('the list hand-off still gets its counted subject', () => {
+  const { api, document } = composeApi(COMPOSE);
+  api.fillCompose({ text: 'Alice [2]', n: 1 });
+  assert.match(document.querySelector('input[name="title"]').value, /Revivable \(1\)/);
+});
+
+test('the nudge text is what was asked for, verbatim', () => {
+  const src = readFileSync('/opt/warboard/server/public/scripts/torn-faction-revives.user.js', 'utf8');
+  assert.match(src, /NUDGE_SUBJECT\s*=\s*'Revives off'/);
+  assert.match(src, /NUDGE_BODY\s*=\s*'please turn your revives off :\)'/);
 });
