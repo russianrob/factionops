@@ -88,3 +88,32 @@ test('a push failure never breaks the message', () => {
   const call = fn(push, { warn() {} }, new Map(), FLOOR);
   assert.doesNotThrow(() => call('war_42055', war, msg()));
 });
+
+// ── ?since on the history route ────────────────────────────────────────
+//
+// warboard-iOS reports sse:false, longpoll:true — the long-poll carries war
+// state, not chat — so the panel polls while it is open. Sending the whole
+// history every few seconds to deliver one line is not a thing to do to a
+// phone, so the route filters.
+
+test('the history route filters on ?since', () => {
+  const i = SRC.indexOf('const all = chat.getHistory(warId) || [];');
+  assert.ok(i > 0, 'history route body not found — update this anchor');
+  const body = SRC.slice(i, i + 420);
+  assert.match(body, /Number\(req\.query\.since\)/, 'since is not read from the query');
+  assert.match(body, /Number\(m\.ts\) > since/, 'filtered on the wrong comparison');
+});
+
+test('no since returns the full history, not an empty list', () => {
+  // since=0 must mean "everything" — a first open with no cache depends on it.
+  const i = SRC.indexOf('const all = chat.getHistory(warId) || [];');
+  const body = SRC.slice(i, i + 420);
+  assert.match(body, /since > 0 \? all\.filter/, 'the zero case does not fall through to all');
+});
+
+test('the filter is strictly newer, so the last message is not resent forever', () => {
+  const since = 1000;
+  const all = [{ ts: 999 }, { ts: 1000 }, { ts: 1001 }];
+  const out = all.filter((m) => Number(m.ts) > since);
+  assert.deepEqual(out, [{ ts: 1001 }]);
+});

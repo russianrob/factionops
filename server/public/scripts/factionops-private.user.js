@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.4.4
+// @version      5.4.5
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -105,7 +105,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.4';
+    const SCRIPT_VERSION = '5.4.5';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -15661,7 +15661,9 @@ body.wb-chain-active {
             wcEnsurePanel();
             if (!wcLoaded) wcLoadHistory();
             wcRender();
+            wcStartPoll();
         } else {
+            wcStopPoll();
             const p = document.getElementById(WC_PANEL_ID);
             if (p) p.remove();
         }
@@ -15751,6 +15753,53 @@ body.wb-chain-active {
         });
     }
 
+    // Deliver other people's messages where SSE cannot.
+    //
+    // Only while the panel is OPEN and the tab is visible: closed, the push
+    // notification is the delivery path and polling would be a background
+    // request for a window nobody is looking at. ?since keeps each poll to
+    // what is actually new rather than the whole history.
+    const WC_POLL_MS = 5000;
+    let wcPollTimer = null;
+
+    function wcLastTs() {
+        for (let i = wcMessages.length - 1; i >= 0; i--) {
+            const t = Number(wcMessages[i] && wcMessages[i].ts);
+            if (t) return t;
+        }
+        return 0;
+    }
+
+    function wcPollOnce() {
+        const warId = deriveWarId();
+        if (!warId || !state.jwtToken || !wcOpen) return;
+        if (!isPda() && document.visibilityState !== 'visible') return;
+        const since = wcLastTs();
+        if (!since) return;                  // history has not landed yet
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: CONFIG.SERVER_URL + '/api/chat/' + encodeURIComponent(warId) + '?since=' + since,
+            headers: { 'Authorization': 'Bearer ' + state.jwtToken },
+            onload(res) {
+                if (res.status !== 200) return;
+                const body = safeParse(res.responseText);
+                if (!body || !Array.isArray(body.messages)) return;
+                for (const m of body.messages) wcOnMessage(m);
+            },
+            onerror() { /* a missed poll is a later poll, not an error worth saying */ }
+        });
+    }
+
+    function wcStartPoll() {
+        if (wcPollTimer) return;
+        wcPollTimer = setInterval(wcPollOnce, WC_POLL_MS);
+    }
+    function wcStopPoll() {
+        if (!wcPollTimer) return;
+        clearInterval(wcPollTimer);
+        wcPollTimer = null;
+    }
+
     function wcSend() {
         const input = document.getElementById('fo-wc-input');
         if (!input) return;
@@ -15770,9 +15819,18 @@ body.wb-chain-active {
                     const body = safeParse(res.responseText);
                     showToast((body && body.error) || ('Send failed (' + res.status + ')'), 'error');
                     input.value = text;    // give it back rather than lose it
+                    return;
                 }
-                // The sent message arrives back over SSE like everyone else's,
-                // so there is no local echo to de-duplicate.
+                // Show it NOW, from the server's own accepted copy.
+                //
+                // This used to wait for the message to come back over SSE —
+                // which never arrives on warboard-iOS, where the transport
+                // report says sse:false, longpoll:true, and the long-poll
+                // carries war state rather than chat. So your own message sat
+                // invisible until the panel refetched. wcOnMessage de-dupes on
+                // id, so the SSE copy is a no-op where SSE does work.
+                const body = safeParse(res.responseText);
+                if (body && body.message) wcOnMessage(body.message);
             },
             onerror() { showToast('Send failed — network', 'error'); input.value = text; }
         });

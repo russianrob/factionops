@@ -3536,7 +3536,15 @@ router.get("/api/chat/:warId", requireAuth, (req, res) => {
   }
   // No limit — return the full persisted history. Clients can window
   // locally if they want a tail-only view.
-  return res.json({ messages: chat.getHistory(warId) });
+  //
+  // ?since=<ms> returns only what is newer. Clients on devices where SSE is
+  // blocked (warboard-iOS reports sse:false, longpoll:true) poll this while
+  // the panel is open, and sending the whole history every few seconds to
+  // deliver one new line is not a thing to do to a phone.
+  const all = chat.getHistory(warId) || [];
+  const since = Number(req.query.since) || 0;
+  const messages = since > 0 ? all.filter((m) => Number(m.ts) > since) : all;
+  return res.json({ messages, since, full: since <= 0 });
 });
 
 router.post("/api/chat/:warId", requireAuth, (req, res) => {
