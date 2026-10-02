@@ -215,22 +215,25 @@ const V2 = {
   ]
 };
 
-function roster_api(payload, { key = 'abc' } = {}) {
+function roster_api(payload, { key = 'abc', reject = false } = {}) {
   const results = new Map(), roster = new Map();
   const calls = [];
   const src = [
-    'let factionFetching = false, factionFetchedAt = 0;',
+    'let factionFetching = false, nextTryAt = 0;',
     fn('fetchFactionRoster'),
     'globalThis.API={fetchFactionRoster};'
   ].join('\n');
   const f = new Function(
-    'results', 'roster', 'FACTION_TTL_MS', 'resolveKey', 'setText', 'fetch',
-    'saveCacheSoon', 'scan', 'updateStatus', 'encodeURIComponent',
+    'results', 'roster', 'FACTION_TTL_MS', 'FAIL_RETRY_MS', 'resolveKey',
+    'setText', 'fetch', 'saveCacheSoon', 'scan', 'updateStatus', 'encodeURIComponent',
+    'Date',
     src + '; return API;');
-  const api = f(results, roster, 300000, () => key, (t) => calls.push(t),
-    (url) => { calls.push(url); return Promise.resolve({ json: () => Promise.resolve(payload) }); },
-    () => {}, () => {}, () => {}, encodeURIComponent);
-  return { api, results, roster, calls };
+  const clock = { t: 1_000_000, now: () => clock.t, tick: (ms) => { clock.t += ms; } };
+  const api = f(results, roster, 300000, 60000, () => key, (t) => calls.push(t),
+    (url) => { calls.push(url); return reject ? Promise.reject(new Error('net'))
+                                             : Promise.resolve({ json: () => Promise.resolve(payload) }); },
+    () => {}, () => {}, () => {}, encodeURIComponent, clock);
+  return { api, results, roster, calls, clock };
 }
 
 test('one call fills the whole roster with settings and names', async () => {
@@ -364,4 +367,88 @@ test('hospitalUids reads the countdown off the live rows', () => {
   // countdown regex matches nothing at all.
   const { api } = mount(FACTION, 'https://www.torn.com/factions.php');
   assert.deepEqual([...api.hospitalUids()], ['2']);
+});
+
+// --- backoff --------------------------------------------------------------
+//
+// scan() fires every 2s. The old per-member queue had an explicit 60s pause
+// for throttles and network failures; deleting the queue deleted that, and a
+// failure path that does not stamp a retry time means 30 requests a minute
+// against a key factionops and gym coach also use -- worst exactly when Torn
+// is already throttling us.
+
+const hits = (calls) => calls.filter((c) => String(c).startsWith('https://')).length;
+
+test('an API error does not re-request on the very next scan', async () => {
+  const { api, calls } = roster_api({ error: { code: 5, error: 'Too many requests' } });
+  api.fetchFactionRoster(true);
+  await new Promise((r) => setImmediate(r));
+  for (let i = 0; i < 5; i++) { api.fetchFactionRoster(false); await new Promise((r) => setImmediate(r)); }
+  assert.equal(hits(calls), 1, 'code 5 must back off, not hammer');
+});
+
+test('a non-JSON body (block page) backs off too', async () => {
+  const { api, calls } = roster_api(null);
+  api.fetchFactionRoster(true);
+  await new Promise((r) => setImmediate(r));
+  for (let i = 0; i < 5; i++) { api.fetchFactionRoster(false); await new Promise((r) => setImmediate(r)); }
+  assert.equal(hits(calls), 1, 'an HTML block page means throttled, so stop');
+});
+
+test('a rejected fetch backs off and does not wedge the fetching flag', async () => {
+  const { api, calls } = roster_api(V2, { reject: true });
+  api.fetchFactionRoster(true);
+  await new Promise((r) => setImmediate(r));
+  for (let i = 0; i < 5; i++) { api.fetchFactionRoster(false); await new Promise((r) => setImmediate(r)); }
+  assert.equal(hits(calls), 1, 'network failure must back off');
+  // ...but a forced retry (the key button) must still work.
+  api.fetchFactionRoster(true);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(hits(calls), 2, 'the key button has to be able to retry');
+});
+
+test('the backoff is shorter than the success TTL', () => {
+  // A failure should be retried sooner than a good answer is refreshed,
+  // otherwise one blip costs five minutes of blank badges.
+  const src = readFileSync('/opt/warboard/server/public/scripts/torn-faction-revives.user.js', 'utf8');
+  const fail = /const FAIL_RETRY_MS\s*=\s*([\d *]+)/.exec(src);
+  const ttl = /const FACTION_TTL_MS\s*=\s*([\d *]+)/.exec(src);
+  assert.ok(fail && ttl, 'both intervals must be named constants');
+  const val = (m) => m[1].split('*').reduce((a, b) => a * Number(b.trim()), 1);
+  assert.ok(val(fail) < val(ttl), fail[1] + ' should be under ' + ttl[1]);
+  assert.ok(val(fail) >= 30000, 'and at least 30s, or it is not a backoff');
+});
+
+test('a success holds for the full TTL, not just the failure backoff', async () => {
+  // Without the success stamp the gate stays at the 60s backoff, so a
+  // perfectly good roster gets re-fetched every minute instead of every
+  // five -- five times the traffic on a shared key, invisibly.
+  const { api, calls, clock } = roster_api(V2);
+  api.fetchFactionRoster(true);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(hits(calls), 1);
+
+  clock.tick(90_000);                       // past the 60s backoff...
+  api.fetchFactionRoster(false);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(hits(calls), 1, '...but well inside the 5-minute TTL');
+
+  clock.tick(5 * 60_000);
+  api.fetchFactionRoster(false);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(hits(calls), 2, 'past the TTL it refreshes');
+});
+
+test('a failure is retried after the backoff, not held for the full TTL', async () => {
+  const { api, calls, clock } = roster_api({ error: { code: 5 } });
+  api.fetchFactionRoster(true);
+  await new Promise((r) => setImmediate(r));
+  clock.tick(30_000);
+  api.fetchFactionRoster(false);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(hits(calls), 1, '30s is still inside the backoff');
+  clock.tick(45_000);
+  api.fetchFactionRoster(false);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(hits(calls), 2, 'past 60s it tries again');
 });

@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         Faction Revive Check
 // @namespace    russianrob.faction.revives
-// @version      2.0.0
+// @version      2.0.1
 // @description  Badges every faction member by their revive setting (Everyone / Friends & faction / off) in the position column, with a grouped copy-and-compose list. Originally built on AaronPMC's Elimination Revives.
 // @author       RussianRob
+// @downloadURL  https://tornwar.com/scripts/torn-faction-revives.user.js
+// @updateURL    https://tornwar.com/scripts/torn-faction-revives.meta.js
 // @match        https://www.torn.com/factions.php*
 // @match        https://torn.com/factions.php*
 // @grant        GM_getValue
@@ -12,6 +14,9 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 2.0.1 - Back off on throttles, block pages and dropped connections. The
+ *         deleted queue owned that; without it a failure re-requested on
+ *         every 2s scan. Added @updateURL/@downloadURL.
  * 2.0.0 - Faction pages only; the Elimination half is gone, and with it the
  *         per-member fetch queue it existed for. Renamed to Faction Revive
  *         Check. Hospitalised members now sort to the top of each group in
@@ -29,6 +34,7 @@
     // --- config ---
     const CACHE_TTL_MS    = 3 * 60 * 60 * 1000; // 3h — a revive setting rarely changes
     const FACTION_TTL_MS  = 5 * 60 * 1000;      // scan() runs every 2s; this is what stops 30 calls/min
+    const FAIL_RETRY_MS   = 60 * 1000;          // throttle/block/network backoff — shorter than the TTL
     const RESCAN_MS       = 2000;               // re-apply badges React may have wiped
     const OWN_KEY_STORE   = 'faction_revive_apikey';
     const CACHE_STORE     = 'faction_revive_cache';
@@ -67,15 +73,22 @@
     // revive_setting is their PREFERENCE; is_revivable is whether they can
     // be revived right now. The list groups on the setting, which is the
     // stable fact, and marks who is actually in hospital separately.
-    let factionFetchedAt = 0;
+    let nextTryAt = 0;
     let factionFetching = false;
 
     function fetchFactionRoster(force) {
         if (factionFetching) return;
-        if (!force && Date.now() - factionFetchedAt < FACTION_TTL_MS) return;
+        if (!force && Date.now() < nextTryAt) return;
         const key = resolveKey();
         if (!key) { setText('Set API key → tap 🔑'); return; }
         factionFetching = true;
+        // Arm the backoff BEFORE the request resolves, so every exit path --
+        // a throttle, an HTML block page, a thrown handler, a dropped
+        // connection -- already has a retry time. scan() fires every 2s, and
+        // a failure path that forgets to stamp one means 30 requests a minute
+        // on a key factionops and gym coach share, worst exactly when Torn is
+        // already throttling us. Success pushes it out to the full TTL.
+        nextTryAt = Date.now() + FAIL_RETRY_MS;
         fetch('https://api.torn.com/v2/faction/members?striptags=true&comment=FactionRevive&key=' + encodeURIComponent(key))
             .then(function (r) { return r.json().catch(function () { return null; }); })
             .then(function (data) {
@@ -101,7 +114,7 @@
                     });
                     if (m.name) roster.set(uid, m.name);
                 }
-                factionFetchedAt = Date.now();
+                nextTryAt = Date.now() + FACTION_TTL_MS;
                 saveCacheSoon();
                 scan();
                 updateStatus();
