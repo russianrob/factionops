@@ -1,19 +1,26 @@
 // ==UserScript==
 // @name         Faction Revive Check
 // @namespace    russianrob.faction.revives
-// @version      2.0.1
+// @version      2.1.0
 // @description  Badges every faction member by their revive setting (Everyone / Friends & faction / off) in the position column, with a grouped copy-and-compose list. Originally built on AaronPMC's Elimination Revives.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-faction-revives.user.js
 // @updateURL    https://tornwar.com/scripts/torn-faction-revives.meta.js
 // @match        https://www.torn.com/factions.php*
 // @match        https://torn.com/factions.php*
+// @match        https://www.torn.com/messages.php*
+// @match        https://torn.com/messages.php*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @run-at       document-idle
 // ==/UserScript==
 
 /* CHANGELOG
+ * 2.1.0 - Compose actually fills the mail now. The list is handed to
+ *         messages.php through GM storage (stamped, one shot) and written
+ *         into the body with React's native setter; the subject gets a
+ *         count if it is empty. The recipient is left alone -- a Torn mail
+ *         takes one name. Clipboard copy stays as the fallback.
  * 2.0.1 - Back off on throttles, block pages and dropped connections. The
  *         deleted queue owned that; without it a failure re-requested on
  *         every 2s scan. Added @updateURL/@downloadURL.
@@ -38,6 +45,9 @@
     const RESCAN_MS       = 2000;               // re-apply badges React may have wiped
     const OWN_KEY_STORE   = 'faction_revive_apikey';
     const CACHE_STORE     = 'faction_revive_cache';
+    const COMPOSE_STORE   = 'faction_revive_compose';
+    const COMPOSE_MAX_AGE = 3 * 60 * 1000;      // a stale hand-off must not ambush a later mail
+    const COMPOSE_WAIT_MS = 15000;              // messages.php renders the form after load
 
     // uid -> { revivable: 0|1|null, setting: string|null, name: string|null, at: ts }
     const results = new Map();
@@ -215,7 +225,12 @@
         #er-copy .er-chip[data-on="1"].er-g-everyone{border-color:rgba(0,184,148,.6);color:#00b894;background:rgba(0,184,148,.14);}
         #er-copy .er-chip[data-on="1"].er-g-faction{border-color:rgba(253,203,110,.6);color:#fdcb6e;background:rgba(253,203,110,.14);}
         #er-copy .er-chip[data-on="1"].er-g-none{border-color:rgba(225,112,85,.6);color:#e17055;background:rgba(225,112,85,.14);}
-        #er-copy .er-hint{margin:6px 0 0;font:600 10px/1.35 Arial,sans-serif;color:#8d9699;}`;
+        #er-copy .er-hint{margin:6px 0 0;font:600 10px/1.35 Arial,sans-serif;color:#8d9699;}
+        #er-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:2147483002;
+            max-width:92vw;background:#14100e;color:#ffd9c9;border:1px solid rgba(0,184,148,.6);
+            border-radius:8px;padding:9px 12px;font:600 12px/1.35 Arial,sans-serif;
+            box-shadow:0 8px 26px rgba(0,0,0,.6);}
+        #er-toast.er-bad{border-color:rgba(225,112,85,.7);color:#ffb59c;}`;
         const s = document.createElement('style');
         s.textContent = css;
         (document.head || document.documentElement).appendChild(s);
@@ -373,6 +388,11 @@
         // page for the user to paste into. Nothing auto-fills Torn's form.
         panel.querySelector('#er-compose').addEventListener('click', () => {
             const txt = ta.value;
+            let n = 0;
+            for (const g of GROUPS) if (picked[g.key]) n += groups[g.key].length;
+            stashCompose(txt, n);
+            // The clipboard copy stays as the belt to the braces: if the mail
+            // page changes shape under us, a paste still works.
             try {
                 if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt);
                 else { ta.focus(); ta.select(); document.execCommand('copy'); }
@@ -400,6 +420,127 @@
             } catch (_) {}
             try { document.execCommand('copy'); done(); } catch (_) {}
         });
+    }
+
+    // ---- compose hand-off ----------------------------------------------------
+    //
+    // The Compose button opens messages.php, which is a different page load,
+    // so nothing from the faction page survives into it. The list is stashed
+    // in GM storage on the way out and written into the form on the way in.
+    //
+    // It is stamped, and the stamp is checked: a stash left behind by a tap
+    // that never reached the mail page must not silently paste itself into
+    // some unrelated message an hour later.
+
+    function stashCompose(text, n) {
+        try {
+            GM_setValue(COMPOSE_STORE, JSON.stringify({ text: text, n: n, at: Date.now() }));
+        } catch (_) {}
+    }
+    function takeCompose() {
+        let raw = '';
+        try { raw = GM_getValue(COMPOSE_STORE, ''); } catch (_) {}
+        if (!raw) return null;
+        try { GM_setValue(COMPOSE_STORE, ''); } catch (_) {}   // one shot, whatever happens next
+        let v = null;
+        try { v = JSON.parse(raw); } catch (_) { return null; }
+        if (!v || !v.text) return null;
+        if (!(typeof v.at === 'number') || Date.now() - v.at > COMPOSE_MAX_AGE) return null;
+        return v;
+    }
+
+    /**
+     * Find the message body on the compose page.
+     *
+     * NOT `textarea[placeholder*="message"]` — the faction chat box carries
+     * exactly that placeholder and is present on every Torn page, so the
+     * obvious selector would type the list into chat. Anchor on the Subject
+     * field instead and take the textarea that shares its container; fall
+     * back to the biggest visible textarea that is not inside the chat root.
+     */
+    function findComposeFields(doc) {
+        const d = doc || document;
+        const inputs = [].slice.call(d.querySelectorAll('input[type="text"], input:not([type])'));
+        const subject = inputs.find((i) =>
+            /subject/i.test(i.placeholder || '') || /subject/i.test(i.name || '') ||
+            /subject/i.test(i.id || '')) || null;
+
+        let body = null;
+        if (subject) {
+            let node = subject;
+            for (let up = 0; up < 6 && node && !body; up++) {
+                node = node.parentElement;
+                if (node) body = node.querySelector('textarea');
+            }
+        }
+        if (!body) {
+            const cands = [].slice.call(d.querySelectorAll('textarea')).filter((t) =>
+                t.offsetParent !== null && !t.closest('#chatRoot, [class*="chat-app" i]'));
+            cands.sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight));
+            body = cands[0] || null;
+        }
+        return { subject: subject, body: body };
+    }
+
+    // React owns these inputs, so assigning .value is thrown away on the next
+    // render. Go through the prototype setter and announce it.
+    function setNativeValue(el, value) {
+        const proto = el instanceof window.HTMLTextAreaElement
+            ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value');
+        if (setter && setter.set) setter.set.call(el, value);
+        else el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function toast(msg, bad) {
+        let el = document.getElementById('er-toast');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'er-toast';
+            document.body.appendChild(el);
+        }
+        el.className = bad ? 'er-bad' : '';
+        el.textContent = msg;
+        setTimeout(() => { if (el.parentNode) el.remove(); }, 6000);
+    }
+
+    function fillCompose(entry) {
+        const f = findComposeFields();
+        if (!f.body) return false;
+        setNativeValue(f.body, entry.text);
+        // Only touch the subject if the user has not typed one.
+        if (f.subject && !f.subject.value) {
+            setNativeValue(f.subject, 'Revivable (' + (entry.n || 0) + ')');
+        }
+        // The recipient is deliberately left alone: a Torn mail takes one
+        // name, and the list is many people.
+        toast('Revivable list filled in — pick a recipient and send.');
+        return true;
+    }
+
+    function runComposeFill() {
+        const entry = takeCompose();
+        if (!entry) return;
+        if (fillCompose(entry)) return;
+        // The form renders after the page does, so wait for it rather than
+        // giving up on the first miss.
+        const started = Date.now();
+        const obs = new MutationObserver(() => {
+            if (fillCompose(entry)) { obs.disconnect(); return; }
+            if (Date.now() - started > COMPOSE_WAIT_MS) {
+                obs.disconnect();
+                toast('Could not find the message box — the list is on your clipboard, paste it.', true);
+            }
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+        setTimeout(() => {
+            obs.disconnect();
+            if (!document.getElementById('er-toast')) {
+                toast('Could not find the message box — the list is on your clipboard, paste it.', true);
+            }
+        }, COMPOSE_WAIT_MS);
     }
 
     // ---- DOM badging ---------------------------------------------------------
@@ -467,6 +608,10 @@
     }
 
     // ---- boot ----------------------------------------------------------------
+    // On messages.php there is no roster to badge; the only job is to drop the
+    // list into the mail the Compose button opened.
+    if (/\/messages\.php/i.test(location.pathname)) { runComposeFill(); return; }
+
     loadCache();
     setInterval(scan, RESCAN_MS);
     scan();

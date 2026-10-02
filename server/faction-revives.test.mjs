@@ -452,3 +452,152 @@ test('a failure is retried after the backoff, not held for the full TTL', async 
   await new Promise((r) => setImmediate(r));
   assert.equal(hits(calls), 2, 'past 60s it tries again');
 });
+
+// --- compose hand-off -----------------------------------------------------
+//
+// Torn's compose page, as the screenshot shows it: a "Name" recipient box, a
+// "Subject" box, then the body. The chat textarea is REAL and was confirmed
+// live on index.php -- class textarea___JRbO5, placeholder "Type your message
+// here..." -- and it is present on every Torn page including this one.
+const COMPOSE = `
+<div id="chatRoot"><div><textarea class="textarea___JRbO5" placeholder="Type your message here..."></textarea></div></div>
+<div class="sendMessage">
+  <h4>Send a Message</h4>
+  <div class="input-row"><input type="text" name="player" placeholder="Name"></div>
+  <div class="input-row"><input type="text" name="title" placeholder="Subject"></div>
+  <div class="input-row"><textarea name="message" placeholder="Type your message here..."></textarea></div>
+</div>`;
+
+function composeApi(html) {
+  const { document, window } = parseHTML(`<html><body>${html}</body></html>`);
+  // linkedom gives offsetParent/offsetWidth no values, so stand them in: the
+  // production code uses them only to skip hidden and rank by area.
+  for (const el of document.querySelectorAll('textarea, input')) {
+    Object.defineProperty(el, 'offsetParent', { get: () => el.parentElement });
+    Object.defineProperty(el, 'offsetWidth', { get: () => (el.closest('#chatRoot') ? 300 : 280) });
+    Object.defineProperty(el, 'offsetHeight', { get: () => (el.closest('#chatRoot') ? 90 : 160) });
+  }
+  const store = {};
+  const src = [
+    'const COMPOSE_MAX_AGE = 3*60*1000;',
+    fn('findComposeFields'), fn('setNativeValue'), fn('toast'), fn('fillCompose'),
+    fn('stashCompose'), fn('takeCompose'),
+    'globalThis.API={findComposeFields,setNativeValue,fillCompose,stashCompose,takeCompose};'
+  ].join('\n');
+  const api = new Function('document', 'window', 'Event', 'GM_getValue', 'GM_setValue',
+    'COMPOSE_STORE', 'setTimeout', src + '; return API;')(
+    document, window, window.Event,
+    (k, d) => (k in store ? store[k] : d), (k, v) => { store[k] = v; },
+    'faction_revive_compose', () => {});
+  return { document, api, store };
+}
+
+test('the body is the compose textarea, NOT the faction chat box', () => {
+  // textarea[placeholder*="message"] matches the chat box on every Torn page,
+  // so the obvious selector types the list into chat instead.
+  const { api } = composeApi(COMPOSE);
+  const f = api.findComposeFields();
+  assert.ok(f.body, 'no body found');
+  assert.equal(f.body.getAttribute('name'), 'message');
+  assert.ok(!f.body.closest('#chatRoot'), 'picked the chat box');
+  assert.equal(f.subject.placeholder, 'Subject');
+});
+
+test('with no Subject anchor it still avoids the chat box', () => {
+  // If Torn relabels the field, the fallback ranks by area among textareas
+  // outside the chat root -- it must not fall back INTO chat.
+  const html = COMPOSE.replace('placeholder="Subject"', 'placeholder="Betreff"');
+  const { api } = composeApi(html);
+  const f = api.findComposeFields();
+  assert.ok(f.body, 'no body found');
+  assert.ok(!f.body.closest('#chatRoot'), 'fell back into chat');
+  assert.equal(f.body.getAttribute('name'), 'message');
+});
+
+test('filling writes the list into the body and a count into the subject', () => {
+  const { api, document } = composeApi(COMPOSE);
+  const ok = api.fillCompose({ text: 'Alice [2]\nBob [3]', n: 2 });
+  assert.equal(ok, true);
+  assert.equal(document.querySelector('textarea[name="message"]').value, 'Alice [2]\nBob [3]');
+  assert.match(document.querySelector('input[name="title"]').value, /Revivable \(2\)/);
+});
+
+test('a subject the user already typed is left alone', () => {
+  const { api, document } = composeApi(COMPOSE);
+  document.querySelector('input[name="title"]').value = 'Mine';
+  api.fillCompose({ text: 'x', n: 1 });
+  assert.equal(document.querySelector('input[name="title"]').value, 'Mine');
+});
+
+test('the recipient is never touched', () => {
+  // A Torn mail takes one name and the list is many people; guessing one
+  // would mail the wrong person.
+  const { api, document } = composeApi(COMPOSE);
+  api.fillCompose({ text: 'x', n: 1 });
+  assert.equal(document.querySelector('input[name="player"]').value, '');
+});
+
+test('filling reports failure instead of pretending, when there is no form', () => {
+  const { api } = composeApi('<div id="chatRoot"><textarea></textarea></div>');
+  assert.equal(api.fillCompose({ text: 'x', n: 1 }), false,
+    'the only textarea is the chat box, so there is nothing to fill');
+});
+
+test('the hand-off is one shot', () => {
+  // A stash that survives its own use would paste itself into the next mail.
+  const { api } = composeApi(COMPOSE);
+  api.stashCompose('Alice [2]', 1);
+  assert.equal(api.takeCompose().text, 'Alice [2]');
+  assert.equal(api.takeCompose(), null, 'second read must be empty');
+});
+
+test('a stale hand-off is discarded, not pasted', () => {
+  const { api, store } = composeApi(COMPOSE);
+  store['faction_revive_compose'] =
+    JSON.stringify({ text: 'old', n: 1, at: Date.now() - 10 * 60 * 1000 });
+  assert.equal(api.takeCompose(), null, '10 minutes later is not this compose');
+});
+
+test('garbage in storage does not throw', () => {
+  const { api, store } = composeApi(COMPOSE);
+  store['faction_revive_compose'] = 'not json';
+  assert.equal(api.takeCompose(), null);
+  store['faction_revive_compose'] = JSON.stringify({ text: 'x' });   // no stamp
+  assert.equal(api.takeCompose(), null);
+});
+
+test('setNativeValue bypasses React\'s value tracker, as React requires', () => {
+  // React shadows `value` with an INSTANCE property wired to its own tracker.
+  // A plain `el.value = x` hits that shadow, so React believes nothing
+  // changed and throws the text away on the next render. The only way in is
+  // the prototype setter. Model that shadow here, or the test cannot tell the
+  // two apart -- a plain assignment passes a naive DOM shim perfectly.
+  const { api, document } = composeApi(COMPOSE);
+  const ta = document.querySelector('textarea[name="message"]');
+  const proto = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(ta).constructor.prototype, 'value');
+  let swallowed = 0;
+  Object.defineProperty(ta, 'value', {
+    configurable: true,
+    get: () => proto.get.call(ta),
+    set: () => { swallowed++; }          // React's shadow: ignores the write
+  });
+
+  const seen = [];
+  ta.addEventListener('input', () => seen.push('input'));
+  ta.addEventListener('change', () => seen.push('change'));
+  api.setNativeValue(ta, 'hello');
+
+  assert.equal(swallowed, 0, 'went through React\'s shadow -- the text is lost');
+  assert.equal(proto.get.call(ta), 'hello');
+  assert.deepEqual(seen, ['input', 'change'], 'React never heard about it');
+});
+
+test('messages.php is routed to the compose fill, not the roster scan', () => {
+  const src = readFileSync('/opt/warboard/server/public/scripts/torn-faction-revives.user.js', 'utf8');
+  assert.match(src, /@match\s+https:\/\/www\.torn\.com\/messages\.php\*/);
+  const boot = src.slice(src.indexOf('// ---- boot'));
+  assert.match(boot, /messages\\\.php/, 'boot must branch on the page');
+  assert.ok(boot.indexOf('runComposeFill') < boot.indexOf('setInterval(scan'),
+    'the mail page must not start the 2s roster scan');
+});
