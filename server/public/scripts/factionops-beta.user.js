@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.1.904
+// @version      5.1.905
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -80,7 +80,7 @@
     const IS_WARBOARD = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
     const PDA_API_KEY = '###PDA-APIKEY###';
 
-    const SCRIPT_VERSION = '5.1.904';
+    const SCRIPT_VERSION = '5.1.905';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -6570,19 +6570,48 @@ body.wb-chain-active {
     /// here. The id contains a ':' so it is not a valid bare CSS #id;
     /// getElementById is required (a bare selector throws and kills the handler).
     function factionChatToggleButton() {
+        // Chat 3.1 renamed this. Measured live 2026-10-02:
+        //   before  channel_panel_button:faction-<factionId>
+        //   after   chat_panel_button:faction        (no id suffix)
+        // The old id is gone — getElementById returns null for it — which is
+        // why every call since has logged 'no-channel-button' and nothing has
+        // reached chat.
+        //
+        // Dropping the faction id also drops the reason this was ever scoped
+        // to state.myFactionId: there is one faction channel because you are
+        // in one faction, and its title is your faction's name. Provenance is
+        // still checked against #chatRoot so a stray page element with a
+        // guessable id can never be mistaken for the chat control.
+        // Searched INSIDE #chatRoot, not via getElementById. These ids are
+        // generic enough that other page markup could carry one, and
+        // getElementById returns whichever comes first in document order — so
+        // a decoy earlier in the page would shadow the real control and the
+        // feature would go quiet again. An attribute selector also sidesteps
+        // the ':' in the id, which is not valid in a bare #id selector.
+        const root = document.getElementById('chatRoot');
+        if (!root) return null;
+        const fresh = root.querySelector('[id="chat_panel_button:faction"]');
+        if (fresh) return fresh;
+        // Pre-3.1 builds, and anyone still served a cached bundle.
         const fid = state.myFactionId;
         if (!fid || String(fid) === '0') return null;   // auth stores '0' for factionless
-        return document.getElementById('channel_panel_button:faction-' + fid);
+        return root.querySelector('[id="channel_panel_button:faction-' + fid + '"]');
     }
 
     /// The channel content box. `faction-<id>` is generic enough that other
     /// page markup could use it, so provenance is checked against #chatRoot
     /// rather than trusting the first match in document order.
     function factionChatBox() {
+        // Chat 3.1 renamed this too: `faction-<factionId>` became plain
+        // `faction`. Bare `faction` is generic enough that other page markup
+        // could use it, so the #chatRoot check matters more than ever.
+        const root = document.getElementById('chatRoot');
+        if (!root) return null;
+        const fresh = root.querySelector('[id="faction"]');
+        if (fresh) return fresh;
         const fid = state.myFactionId;
         if (!fid || String(fid) === '0') return null;
-        const el = document.getElementById('faction-' + fid);
-        return (el && el.closest && el.closest('#chatRoot')) ? el : null;
+        return root.querySelector('[id="faction-' + fid + '"]');
     }
 
     // One send in flight at a time. Two calls in quick succession would other-
