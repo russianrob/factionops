@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Revive Check
 // @namespace    russianrob.faction.revives
-// @version      2.2.1
+// @version      2.3.0
 // @description  Badges every faction member by their revive setting (Everyone / Friends & faction / off) in the position column, with a grouped copy-and-compose list. Originally built on AaronPMC's Elimination Revives.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-faction-revives.user.js
@@ -16,6 +16,11 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 2.3.0 - The status bar docks under Faction Description instead of
+ *         floating over the bottom of the member list, where it covered
+ *         three rows and crowded the other scripts' buttons. The list
+ *         panel is centred now that its button moved. Falls back to the
+ *         floating pill only if no anchor exists.
  * 2.2.1 - Stop announcing a failure after a successful fill. The retry's
  *         timeout asked the DOM whether a toast was showing, and the
  *         success toast had already expired, so a filled mail complained
@@ -220,16 +225,29 @@
         a.er-badge{text-decoration:none;}
         .er-ask{cursor:pointer;}
         .er-ask:hover,.er-ask:active{filter:brightness(1.5);}
-        #er-status{position:fixed;left:10px;bottom:10px;z-index:2147483000;
+        /* Docked in the faction info column by default. width:0 + min-width:100%
+           so the bar contributes NOTHING to the column's preferred width --
+           this page family lays its columns out as floats, and a child wider
+           than the column drops the next one thousands of pixels down the
+           page. See the war-page float-column notes. */
+        #er-status{width:0;min-width:100%;box-sizing:border-box;margin:6px 0;
+            z-index:2147483000;
             background:#14100e;color:#ffd9c9;border:1px solid rgba(225,112,85,.5);
             border-radius:6px;padding:6px 8px;font:600 11px/1.3 Arial,sans-serif;
-            box-shadow:0 6px 20px rgba(0,0,0,.5);display:flex;align-items:center;gap:8px;}
+            display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+        /* Only when no anchor exists on the page -- better a floating pill
+           than no status at all. */
+        #er-status.er-float{position:fixed;left:10px;bottom:10px;width:auto;
+            min-width:0;margin:0;box-shadow:0 6px 20px rgba(0,0,0,.5);}
         #er-status b{color:#00b894;}
         .er-btn{cursor:pointer;border:1px solid rgba(225,112,85,.5);border-radius:4px;
             background:rgba(0,0,0,.35);color:#ff9a72;font:700 11px/1 Arial,sans-serif;
             padding:5px 7px;white-space:nowrap;}
         .er-btn:hover{background:#241a15;}
-        #er-copy{position:fixed;left:10px;bottom:52px;z-index:2147483001;width:280px;max-width:92vw;
+        /* Centred rather than pinned above the old bottom-left dock: the
+           button that opens it now lives at the top of the page. */
+        #er-copy{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+            z-index:2147483001;width:280px;max-width:92vw;
             background:#14100e;color:#ffd9c9;border:1px solid rgba(225,112,85,.6);border-radius:8px;
             padding:10px;box-shadow:0 8px 26px rgba(0,0,0,.6);font:600 11px/1.3 Arial,sans-serif;}
         #er-copy h4{margin:0 0 6px;font-size:12px;color:#00b894;}
@@ -255,7 +273,27 @@
         (document.head || document.documentElement).appendChild(s);
     })();
 
-    // ---- status pill ---------------------------------------------------------
+    // ---- status bar ----------------------------------------------------------
+    //
+    // It lives under the Faction Description heading, in the page's own
+    // column, rather than floating over the member rows at the bottom of the
+    // screen where it covered three of them and crowded the other scripts'
+    // buttons.
+    //
+    // Measured on-device: DIV.title-black.m-top10.titleToggle___HASH
+    // .faction-title ("Faction Description", 386x34), then
+    // DIV.faction-info-wrap holding the stat-report bar, the hide bar and
+    // DIV.f-war-list.members-list. Anchor on the UNHASHED tokens only.
+    function statusHome() {
+        const title = document.querySelector('.faction-title');
+        if (title && title.parentElement) return { el: title, how: 'afterend' };
+        const wrap = document.querySelector('.faction-info-wrap');
+        if (wrap) return { el: wrap, how: 'afterbegin' };
+        const list = listRoot();
+        if (list) return { el: list, how: 'beforebegin' };
+        return null;
+    }
+
     function ensureStatus() {
         let el = document.getElementById('er-status');
         if (!el) {
@@ -265,11 +303,27 @@
                 '<span id="er-text">Revives: …</span>' +
                 '<button class="er-btn" id="er-copy-btn" title="Revivable list — copy or compose">📋 List</button>' +
                 '<button class="er-btn" id="er-key-btn" title="Set / replace API key">🔑</button>';
-            document.body.appendChild(el);
             el.querySelector('#er-key-btn').addEventListener('click', () => {
                 if (promptForKey()) fetchFactionRoster(true);
             });
             el.querySelector('#er-copy-btn').addEventListener('click', openCopyPanel);
+        }
+        // Re-checked every scan, because React re-renders drop injected nodes.
+        // Only MOVE it when it is not already in place: re-inserting an
+        // element that is already correct every 2s makes the buttons
+        // untappable on a phone, since each insert kills the touch in flight.
+        const home = statusHome();
+        if (home) {
+            const occupant = home.how === 'afterend' ? home.el.nextElementSibling
+                           : home.how === 'afterbegin' ? home.el.firstElementChild
+                           : home.el.previousElementSibling;
+            if (occupant !== el) {
+                el.classList.remove('er-float');
+                home.el.insertAdjacentElement(home.how, el);
+            }
+        } else if (!el.parentNode) {
+            el.classList.add('er-float');
+            document.body.appendChild(el);
         }
         return el;
     }

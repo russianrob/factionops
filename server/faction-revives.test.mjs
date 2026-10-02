@@ -849,3 +849,114 @@ test('with nothing stashed it does nothing at all', () => {
   assert.deepEqual(toasts, []);
   assert.equal(document.getElementById('mce_0').innerHTML, before);
 });
+
+// --- where the status bar lives -------------------------------------------
+//
+// Page structure measured on-device 2026-10-02:
+//   DIV.title-black.m-top10.titleToggle___S_IVi.faction-title  "Faction Description"
+//   DIV.faction-info-wrap.restyle
+//     DIV.wsr-inline            (another script's stat-report bar)
+//     DIV.ffs-hide-bar          (another script's filter bar)
+//     DIV.f-war-list.members-list
+const INFO_PAGE = `
+<div class="title-black m-top10 titleToggle___S_IVi faction-title">Faction Description</div>
+<div class="faction-desc">   </div>
+<div class="faction-info-wrap restyle">
+  <div class="wsr-inline">Enemy Stat Report</div>
+  <div class="ffs-hide-bar">Hide online</div>
+  ${FACTION}
+</div>`;
+
+function statusApi(html) {
+  const { document } = parseHTML(`<html><body>${html}</body></html>`);
+  const src = [
+    fn('listRoot'), fn('statusHome'), fn('ensureStatus'),
+    'globalThis.API={statusHome,ensureStatus};'
+  ].join('\n');
+  const api = new Function('document', 'location', 'promptForKey', 'fetchFactionRoster',
+    'openCopyPanel', src + '; return API;')(
+    document, { href: 'https://www.torn.com/factions.php#/tab=info' },
+    () => '', () => {}, () => {});
+  return { document, api };
+}
+
+test('the bar docks directly under the Faction Description heading', () => {
+  const { document, api } = statusApi(INFO_PAGE);
+  api.ensureStatus();
+  const bar = document.getElementById('er-status');
+  assert.ok(bar, 'no status bar');
+  const title = document.querySelector('.faction-title');
+  assert.equal(title.nextElementSibling, bar, 'it is not under the heading');
+  assert.ok(!bar.classList.contains('er-float'), 'it should not be floating');
+  assert.equal(bar.parentElement.tagName, 'BODY');   // same level as the heading
+});
+
+test('the heading is matched on its unhashed token, not the build hash', () => {
+  // titleToggle___S_IVi changes every Torn build.
+  const src = readFileSync('/opt/warboard/server/public/scripts/torn-faction-revives.user.js', 'utf8');
+  const home = src.slice(src.indexOf('function statusHome'), src.indexOf('function ensureStatus'));
+  assert.ok(!/titleToggle___[A-Za-z0-9]/.test(home), 'a build hash was hardcoded');
+  assert.match(home, /\.faction-title/);
+});
+
+test('with no heading it falls back INTO the info wrap', () => {
+  const html = INFO_PAGE.replace('faction-title', 'faction-title-renamed');
+  const { document, api } = statusApi(html);
+  api.ensureStatus();
+  const wrap = document.querySelector('.faction-info-wrap');
+  assert.equal(wrap.firstElementChild.id, 'er-status');
+});
+
+test('with neither, it sits just above the member list', () => {
+  const html = INFO_PAGE
+    .replace('faction-title', 'x1').replace('faction-info-wrap', 'x2');
+  const { document, api } = statusApi(html);
+  api.ensureStatus();
+  const list = document.querySelector('.members-list');
+  assert.equal(list.previousElementSibling.id, 'er-status');
+});
+
+test('with no anchor at all it still shows, as a floating pill', () => {
+  // Better a pill over the page than no status and no key button.
+  const { document, api } = statusApi('<div>nothing familiar here</div>');
+  api.ensureStatus();
+  const bar = document.getElementById('er-status');
+  assert.ok(bar, 'the bar vanished when the page was unfamiliar');
+  assert.ok(bar.classList.contains('er-float'));
+  assert.equal(bar.parentElement.tagName, 'BODY');
+});
+
+test('an already-placed bar is not re-inserted on every scan', () => {
+  // scan() calls updateStatus() every 2s. Re-inserting a correctly placed
+  // element kills any tap in flight, which reads as "the button does nothing".
+  const { document, api } = statusApi(INFO_PAGE);
+  const first = api.ensureStatus();
+  let inserts = 0;
+  const title = document.querySelector('.faction-title');
+  const real = title.insertAdjacentElement.bind(title);
+  title.insertAdjacentElement = (pos, el) => { inserts++; return real(pos, el); };
+  api.ensureStatus(); api.ensureStatus(); api.ensureStatus();
+  assert.equal(inserts, 0, 're-inserted ' + inserts + ' times for no reason');
+  assert.equal(document.getElementById('er-status'), first);
+});
+
+test('a bar React tore out is put back', () => {
+  const { document, api } = statusApi(INFO_PAGE);
+  api.ensureStatus();
+  document.getElementById('er-status').remove();
+  api.ensureStatus();
+  assert.equal(document.querySelector('.faction-title').nextElementSibling.id, 'er-status');
+  assert.equal(document.querySelectorAll('#er-status').length, 1, 'duplicated');
+});
+
+test('the bar cannot widen its column', () => {
+  // These float columns drop the next one if a child prefers more width than
+  // the column has -- flex-wrap does not help, since a float uses the
+  // PREFERRED width. width:0 + min-width:100% contributes nothing.
+  const src = readFileSync('/opt/warboard/server/public/scripts/torn-faction-revives.user.js', 'utf8');
+  const rule = /#er-status\{([^}]*)\}/.exec(src);
+  assert.ok(rule, 'no #er-status rule');
+  assert.match(rule[1], /width:0/);
+  assert.match(rule[1], /min-width:100%/);
+  assert.match(rule[1], /box-sizing:border-box/);
+});
