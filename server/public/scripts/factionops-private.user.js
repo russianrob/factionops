@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps Private — war-page call markers
 // @namespace    RussianRob.factionops.private
-// @version      5.4.2
+// @version      5.4.3
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -105,7 +105,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.2';
+    const SCRIPT_VERSION = '5.4.3';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12402,6 +12402,23 @@ body.wb-chain-active {
         } catch (e) { /* menu is a convenience, never a dependency */ }
     }
 
+    /**
+     * Pages this script was originally @match'd for.
+     *
+     * 5.4.2 widened @match to all of Torn so the war-chat dock button could
+     * exist everywhere. Everything that is NOT chat has to be gated back to
+     * the original set, or the overlay's furniture turns up on the gym and
+     * the crimes page.
+     *
+     * ONE definition, used by both gates. 5.4.2 gated detectPageAndInit and
+     * missed main(), which creates the gear and heatmap on its own — so the
+     * two round buttons kept appearing. Two copies of a rule is two chances
+     * to update only one.
+     */
+    function isOriginallyMatchedPage(href) {
+        return /factions\.php|war\.php|sid=attack|profiles\.php/i.test(String(href || ''));
+    }
+
     function detectPageAndInit() {
         const url = window.location.href;
 
@@ -12427,8 +12444,7 @@ body.wb-chain-active {
             // gear and heatmap button have no business on those. Restricted
             // to the pages this script was originally matched on, so widening
             // the match adds a chat button and nothing else.
-            const onOriginalPage = /factions\.php|war\.php|sid=attack|profiles\.php/i.test(url);
-            if (onOriginalPage) {
+            if (isOriginallyMatchedPage(url)) {
                 log('Page: Unknown — running in passive mode');
                 if (!document.querySelector('.wb-settings-gear')) createSettingsGear();
                 if (!document.getElementById('wb-heatmap-toggle')) createHeatmapButton();
@@ -15371,15 +15387,18 @@ body.wb-chain-active {
         // 2. Apply theme
         applyTheme();
 
-        // 3. Create settings gear (only on non-war, non-attack pages)
+        // 3. Settings gear + heatmap toggle.
+        //
+        // Two conditions, not one. "Not a war or attack page" used to mean
+        // profiles.php, because that was the only other page matched; after
+        // 5.4.2 widened @match it means ALL of Torn, and both round buttons
+        // started appearing over the crimes page, the gym and everywhere
+        // else. They belong only on pages this script was built for.
         const url = window.location.href;
         const isWarOrAttack = url.includes('factions.php') || url.includes('war.php') || url.includes('sid=attack');
-        if (!isWarOrAttack) {
+        const wantsFurniture = !isWarOrAttack && isOriginallyMatchedPage(url);
+        if (wantsFurniture) {
             createSettingsGear();
-        }
-
-        // 3b. Create heatmap toggle button (only on non-war, non-attack pages)
-        if (!isWarOrAttack) {
             createHeatmapButton();
         }
 

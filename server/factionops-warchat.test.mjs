@@ -112,3 +112,58 @@ test('the unread badge shows a count and hides at zero', () => {
   api.wcSetBadge(250);
   assert.equal(badge.textContent, '99+');
 });
+
+// ── where the overlay's furniture is allowed to appear ─────────────────
+//
+// 5.4.2 widened @match to all of Torn for the chat dock. The settings gear
+// and heatmap toggle are created in TWO places — detectPageAndInit and
+// main() — and 5.4.2 gated only the first, so both round buttons kept
+// turning up over the crimes page. One rule now, used by both.
+
+const pageRule = (() => {
+  const src = fn('isOriginallyMatchedPage');
+  return new Function(src + '; return isOriginallyMatchedPage;')();
+})();
+
+test('the pages this script was built for are recognised', () => {
+  for (const u of [
+    'https://www.torn.com/factions.php?step=your#/tab=crimes',
+    'https://www.torn.com/war.php',
+    'https://www.torn.com/loader.php?sid=attack&user2ID=1',
+    'https://www.torn.com/profiles.php?XID=137558',
+  ]) assert.equal(pageRule(u), true, u);
+});
+
+test('the rest of Torn is not', () => {
+  for (const u of [
+    'https://www.torn.com/crimes.php',
+    'https://www.torn.com/gym.php',
+    'https://www.torn.com/item.php',
+    'https://www.torn.com/page.php?sid=ItemMarket',
+    'https://www.torn.com/index.php',
+  ]) assert.equal(pageRule(u), false, u);
+});
+
+test('rubbish input is not a matched page', () => {
+  assert.equal(pageRule(''), false);
+  assert.equal(pageRule(null), false);
+  assert.equal(pageRule(undefined), false);
+});
+
+test('both creators are gated on the SAME rule, not two copies', () => {
+  // The whole bug: two gates, one updated. If either stops calling the
+  // shared helper, this fails.
+  const uses = (SRC.match(/isOriginallyMatchedPage\(/g) || []).length;
+  assert.ok(uses >= 3, 'expected the definition plus both gates, found ' + uses);
+  assert.ok(!/const onOriginalPage = \/factions/.test(SRC),
+    'a second inline copy of the page rule has reappeared');
+});
+
+test('main() will not build the furniture off the original pages', () => {
+  const i = SRC.indexOf('const wantsFurniture');
+  assert.ok(i > 0, 'main() gate missing — update this anchor');
+  const body = SRC.slice(i, i + 320);
+  assert.match(body, /isOriginallyMatchedPage/);
+  assert.match(body, /createSettingsGear/);
+  assert.match(body, /createHeatmapButton/);
+});
