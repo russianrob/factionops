@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import { decodeEntities } from "./torn-api.js";
 import axios from 'axios';
 import { startHeatmapScraper } from './heatmap-scraper.js';
 import * as store from './store.js';
@@ -44,7 +45,13 @@ async function scanFactions() {
                         const enemyId = participantIds.find(id => String(id) !== factionIdStr);
 
                         if (enemyId) {
-                            const enemyName = warData.factions[enemyId]?.name || 'Unknown';
+                            // v1 HTML-escapes faction names ("Howler&#039;s
+                            // Haven"). Decoded here because this is a WRITER of
+                            // war.enemyFactionName: the boot-time repair kept
+                            // fixing the record and this kept putting the entity
+                            // back on the scanner's next pass, so the name
+                            // oscillated and the War Scout rendered the entity.
+                            const enemyName = decodeEntities(warData.factions[enemyId]?.name) || 'Unknown';
                             console.log(`[WarScanner] Active Ranked War detected! WarID: ${warId}, Enemy: ${enemyName} (${enemyId})`);
                             startHeatmapScraper(warId, enemyId, factionIdStr, faction.apiKey, enemyName);
 
