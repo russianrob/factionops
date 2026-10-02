@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.59
+// @version      2.73.60
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -2697,6 +2697,10 @@ if (!singleton) {
   const FFS_TRAVEL_POLL_MS = 30_000;
   const _ffsMemberCountdowns = {};     // userID → unix landing time
   const _ffsMemberAbbr = {};           // userID → country abbrev
+  // wb91: userID → country for members who have LANDED and are staying
+  // abroad. Separate from _ffsMemberAbbr, which is "where this flight is
+  // headed" and is also used for in-flight chips.
+  const _ffsMemberAbroad = {};
   const _ffsMemberReturning = {};      // userID → bool
   const _ffsOriginalStatusHtml = {};   // liElement reference → original innerHTML
   // wb44: hospital / jail release-time tracking (ported from Torn War Stuff
@@ -3055,10 +3059,23 @@ if (!singleton) {
         // on war/rank pages).
         ffs_fetchFlightForMember(String(member.id));
       }
+    } else if (state === "Abroad") {
+      // wb91: landed and staying. No countdown — they are not in the air —
+      // but the country still matters, and it is exactly the destination we
+      // watched them fly to, so DON'T wipe _ffsMemberAbbr the way the
+      // not-travelling branch below does.
+      delete _ffsMemberCountdowns[member.id];
+      const _ab = ffs_parseAbroadCountry(member.status) || _ffsMemberAbbr[member.id] || "";
+      if (_ab) {
+        _ffsMemberAbroad[member.id] = _ab;
+        _ffsMemberAbbr[member.id] = _ab;
+      }
+      _ffsMemberReturning[member.id] = false;
     } else {
       delete _ffsMemberCountdowns[member.id];
       delete _ffsMemberAbbr[member.id];
       delete _ffsMemberReturning[member.id];
+      delete _ffsMemberAbroad[member.id];
       // wb90: a new flight must be allowed to resolve its own destination.
       _ffsFlightNoCountryAt.delete(String(member.id));
       _ffsFlightFetchFailures.delete(String(member.id));
@@ -3159,6 +3176,59 @@ if (!singleton) {
       }
     }
     return null;
+  }
+
+  /**
+   * Country for a member who is ABROAD (landed, not in flight).
+   *
+   * wb91: Torn's status on the ranked-war roster is the bare word "Abroad",
+   * with the country nowhere in the cell — the same shape that hid the
+   * destination for travelling members. The v2 description usually carries
+   * it ("In Mexico"), so read that; the caller falls back to the destination
+   * we already watched them fly to.
+   *
+   * Returns "" when nothing is known. Never returns "Torn" — being in Torn
+   * is not being abroad.
+   */
+  /**
+   * The country to show for an abroad member, or "" to leave Torn's cell be.
+   *
+   * wb91: three sources, because no single one covers every arrival. The poll
+   * knows the state; the cell sometimes spells it out on non-war pages
+   * ("In Mexico"); and if we watched the flight, the destination is already
+   * cached. Returns "" when none of them knows — injecting a chip that says
+   * nothing would be worse than Torn's own word.
+   */
+  function ffs_abroadCountryFor(uid, statusEl) {
+    const cached = _ffsMemberAbroad[uid];
+    if (cached) return cached;
+    if (!statusEl) return "";
+    // Only trust the live cell when it is actually describing being abroad;
+    // our own injected chip must never be re-read as if it were Torn's text.
+    if (statusEl.querySelector(".ffs-travel-status")) return "";
+    const txt = (statusEl.textContent || "").trim();
+    const m = txt.match(/^in\s+(.+?)\s*$/i);
+    if (m) {
+      const c = m[1].trim();
+      if (c && !/^torn$/i.test(c)) { _ffsMemberAbroad[uid] = c; return c; }
+    }
+    return "";
+  }
+
+  function ffs_parseAbroadCountry(status) {
+    if (!status) return "";
+    const d = String(status.description || "").trim();
+    let c = "";
+    const m = d.match(/^(?:currently\s+)?(?:abroad\s+)?in\s+(.+?)\s*$/i)
+           || d.match(/^abroad\s*[-:,]\s*(.+?)\s*$/i)
+           || d.match(/^returning\s+to\s+torn\s+from\s+(.+?)\s*$/i);
+    if (m) c = m[1].trim();
+    if (!c) {
+      const det = (status.details && typeof status.details === "object") ? status.details : {};
+      c = String(det.country || det.location || det.destination || "").trim();
+    }
+    if (!c || /^torn$/i.test(c) || /^abroad$/i.test(c)) return "";
+    return c;
   }
 
   function ffs_flightFetchNeeded(uid, now) {
@@ -3403,7 +3473,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.59';
+  const SCRIPT_VERSION = '2.73.60';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3652,6 +3722,50 @@ if (!singleton) {
             + `title="Click to toggle country / time">`
             + `${FFS_PLANE_SVG}`
             + `<span class="ffs-mq-value">${countdownText}</span>`
+            + `</span>`;
+        }
+      } else if (ffs_abroadCountryFor(uid, statusEl)) {
+        // wb91: landed and staying abroad. No countdown, so the 250ms ticker
+        // must not adopt this chip — it selects
+        // '.ffs-travel-status[data-ffs-land]', so simply omitting that
+        // attribute keeps it out while the class still buys us the existing
+        // CSS and the existing click handler.
+        //
+        // It opens showing the COUNTRY (data-ffs-show-country="1"): the whole
+        // point is that Torn's cell says only "Abroad". A click toggles back
+        // to that word, which is the same gesture the travel chip uses.
+        const abroadCountry = ffs_abroadCountryFor(uid, statusEl);
+        const abroadLabel = `in ${abroadCountry}`;
+        let statusSpan = statusEl.querySelector(".ffs-travel-status");
+        const valueSpan = statusEl.querySelector(".ffs-mq-value");
+        if (statusSpan && valueSpan) {
+          if (statusSpan.dataset.ffsCountry !== abroadLabel) statusSpan.dataset.ffsCountry = abroadLabel;
+          if (statusSpan.dataset.ffsUid !== uid) statusSpan.dataset.ffsUid = uid;
+          if (statusSpan.dataset.ffsTime !== "Abroad") statusSpan.dataset.ffsTime = "Abroad";
+          // A chip left over from the flight still carries its landing time;
+          // drop it or the ticker keeps counting down a finished journey.
+          if (statusSpan.hasAttribute("data-ffs-land")) statusSpan.removeAttribute("data-ffs-land");
+          statusSpan.classList.remove("returning");
+          const showCountry = statusSpan.dataset.ffsShowCountry !== "0";
+          const desired = showCountry ? abroadLabel : "Abroad";
+          if (valueSpan.textContent !== desired) valueSpan.textContent = desired;
+        } else {
+          if (!statusEl.dataset.ffsTravelInjected) {
+            const snapshot = statusEl.innerHTML;
+            if (!snapshot || !snapshot.trim()) return;   // mid-render; try next tick
+            statusEl.dataset.ffsTravelOriginal = snapshot;
+            statusEl.dataset.ffsTravelInjected = "1";
+          }
+          const escAbroad = abroadLabel.replace(/"/g, "&quot;");
+          statusEl.innerHTML =
+            `<span class="ffs-travel-status" `
+            + `data-ffs-time="Abroad" `
+            + `data-ffs-country="${escAbroad}" `
+            + `data-ffs-uid="${uid}" `
+            + `data-ffs-show-country="1" `
+            + `title="Click to toggle country / status">`
+            + `${FFS_PLANE_SVG}`
+            + `<span class="ffs-mq-value">${escAbroad}</span>`
             + `</span>`;
         }
       } else if (statusEl.dataset.ffsTravelInjected) {

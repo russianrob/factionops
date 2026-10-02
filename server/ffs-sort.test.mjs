@@ -199,6 +199,7 @@ function recorder(state = {}) {
     // wb90: the recorder now clears the flight-lookup cooldowns when a
     // member lands, so the sandbox has to carry them. Harmless on the beta
     // build, which does not reference them yet.
+    _ffsMemberAbroad: state.abroad || {},
     _ffsFlightNoCountryAt: state.noCountry || new Map(),
     _ffsFlightFetchFailures: state.failures || new Map(),
     ffs_fetchFlightForMember: state.onFetch || (() => {}),
@@ -206,7 +207,9 @@ function recorder(state = {}) {
     isFinite, parseInt, String, Number,
   };
   vm.createContext(sandbox);
-  vm.runInContext(fn("ffs_recordMemberTravel") + "\nglobalThis.rec = ffs_recordMemberTravel;", sandbox);
+  // wb91: the recorder now asks ffs_parseAbroadCountry about landed members.
+  vm.runInContext(fnIf("ffs_parseAbroadCountry") + "\n"
+    + fn("ffs_recordMemberTravel") + "\nglobalThis.rec = ffs_recordMemberTravel;", sandbox);
   return sandbox;
 }
 

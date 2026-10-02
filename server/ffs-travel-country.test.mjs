@@ -136,15 +136,18 @@ function recordApi(state = {}) {
   const s = {
     countdowns: {}, abbr: {}, returning: {}, hospUntil: {}, hospState: {},
     released: {}, noCountry: new Map(), failures: new Map(), fetched: [],
+    abroad: {},
     ...state
   };
   const api = new Function(
     '_ffsMemberCountdowns', '_ffsMemberAbbr', '_ffsMemberReturning',
     '_ffsMemberHospitalUntil', '_ffsMemberHospitalState', '_ffsJustReleasedAt',
     '_ffsFlightNoCountryAt', '_ffsFlightFetchFailures', 'ffs_fetchFlightForMember',
+    '_ffsMemberAbroad',
+    fn('ffs_parseAbroadCountry') + '\n' +
     fn('ffs_recordMemberTravel') + '; return ffs_recordMemberTravel;')(
     s.countdowns, s.abbr, s.returning, s.hospUntil, s.hospState, s.released,
-    s.noCountry, s.failures, (uid) => s.fetched.push(uid));
+    s.noCountry, s.failures, (uid) => s.fetched.push(uid), s.abroad);
   return { api, s };
 }
 
@@ -207,4 +210,82 @@ test('landing clears the caches so the next flight resolves fresh', () => {
   assert.equal(s.abbr[7], undefined);
   assert.equal(s.noCountry.has('7'), false, 'a new flight would inherit the cooldown');
   assert.equal(s.failures.has('7'), false, 'a new flight would inherit the backoff');
+});
+
+// --- Abroad: landed and staying --------------------------------------------
+//
+// Reported: "when i click on abroad it wont change it to what country theyre
+// in". Abroad was never handled at all -- ffs_recordMemberTravel treated every
+// non-Traveling state the same and DELETED the cached country, and the painter
+// only draws a chip when there is a landing time. So an abroad member had no
+// chip to click: the tap was landing on Torn's own bare word "Abroad".
+
+const parseAbroad = new Function(fn('ffs_parseAbroadCountry') + '; return ffs_parseAbroadCountry;')();
+
+test('the v2 description names the country', () => {
+  assert.equal(parseAbroad({ description: 'In Mexico' }), 'Mexico');
+  assert.equal(parseAbroad({ description: 'Currently in South Africa' }), 'South Africa');
+  assert.equal(parseAbroad({ description: 'Abroad in Japan' }), 'Japan');
+  assert.equal(parseAbroad({ description: 'Abroad: Switzerland' }), 'Switzerland');
+});
+
+test('structured details are read when the prose has nothing', () => {
+  assert.equal(parseAbroad({ description: 'Abroad', details: { country: 'Canada' } }), 'Canada');
+});
+
+test('an unknown country is "" — never a guess', () => {
+  // "" is what tells the painter to leave Torn's own cell alone. A chip that
+  // says nothing is worse than the word Abroad.
+  for (const st of [null, {}, { description: 'Abroad' }, { description: '' },
+                    { description: 'In Torn' }, { details: { country: 'Torn' } }]) {
+    assert.equal(parseAbroad(st), '', JSON.stringify(st) + ' should not resolve');
+  }
+});
+
+test('an abroad member keeps the country we watched them fly to', () => {
+  // The flight resolved "Mexico"; they land; the poll reports Abroad with a
+  // bare description. The old code deleted _ffsMemberAbbr on every non-
+  // Traveling state, throwing away the one country we actually knew.
+  const { api, s } = recordApi({ abbr: { 7: 'Mexico' } });
+  api({ id: 7, status: { state: 'Abroad', description: 'Abroad' } });
+  // _ffsMemberAbroad is what the painter reads -- asserting on _ffsMemberAbbr
+  // proves nothing here, since the Abroad branch never deletes that one.
+  assert.equal(s.abroad[7], 'Mexico', 'the landing threw the country away');
+  assert.equal(s.abbr[7], 'Mexico');
+  assert.equal(s.countdowns[7], undefined, 'they are not in the air any more');
+});
+
+test('the description wins over a stale flight memory', () => {
+  const { api, s } = recordApi({ abbr: { 7: 'Mexico' } });
+  api({ id: 7, status: { state: 'Abroad', description: 'In Japan' } });
+  assert.equal(s.abroad[7], 'Japan');
+  assert.equal(s.abbr[7], 'Japan');
+});
+
+test('coming home clears the abroad country', () => {
+  const { api, s } = recordApi({ abbr: { 7: 'Mexico' } });
+  api({ id: 7, status: { state: 'Abroad', description: 'In Mexico' } });
+  assert.equal(s.abroad[7], 'Mexico');
+  api({ id: 7, status: { state: 'Okay', description: 'Okay' } });
+  assert.equal(s.abroad[7], undefined, 'still thinks they are in Mexico');
+  assert.equal(s.abbr[7], undefined);
+});
+
+test('an abroad member is never left mid-flight', () => {
+  const { api, s } = recordApi({ countdowns: { 7: 1700000123 }, abbr: { 7: 'Mexico' } });
+  api({ id: 7, status: { state: 'Abroad', description: 'In Mexico' } });
+  assert.equal(s.countdowns[7], undefined,
+    'a leftover landing time keeps the ticker counting down a finished trip');
+});
+
+test('the abroad chip is kept out of the 250ms ticker', () => {
+  // The ticker selects '.ffs-travel-status[data-ffs-land]'. An abroad chip has
+  // no landing time, so it must not carry that attribute -- and a chip left
+  // over from the flight has to have it removed.
+  const paint = SRC.slice(SRC.indexOf('} else if (ffs_abroadCountryFor(uid, statusEl)) {'),
+                          SRC.indexOf('} else if (statusEl.dataset.ffsTravelInjected) {'));
+  assert.ok(paint.length > 200, 'abroad paint branch not found');
+  assert.ok(!/data-ffs-land="/.test(paint), 'the abroad chip claims a landing time');
+  assert.match(paint, /removeAttribute\("data-ffs-land"\)/);
+  assert.match(paint, /data-ffs-show-country="1"/, 'it should open showing the country');
 });
