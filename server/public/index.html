@@ -1975,6 +1975,19 @@ img { max-width: 100%; display: block; }
             <p class="notif-hint">For iOS: add this page to your Home Screen first, then open it from there.</p>
           </div>
 
+          <!-- Inside the warboard app. iOS gives WKWebView no PushManager, so
+               the capability test above is correct and its advice is useless:
+               you cannot add a page to the Home Screen from inside an app, and
+               the app's notifications are native and already running. -->
+          <div id="notif-in-app" class="notif-panel" style="display:none">
+            <div class="notif-active">
+              <span class="notif-active-dot"></span>
+              <span>Notifications are handled by the warboard app</span>
+            </div>
+            <p class="notif-hint">This page sets up <em>web</em> push, which iOS only offers in Safari and Home&nbsp;Screen web apps &mdash; not inside an app. The app delivers its own notifications natively, so there is nothing to enable here.</p>
+            <p class="notif-hint">To change which alerts you get, use the app's own notification settings. To set up web push as well, open <strong>tornwar.com</strong> in Safari.</p>
+          </div>
+
           <div id="notif-need-auth" class="notif-panel" style="display:none">
             <p class="notif-msg">Enter your Torn API key to enable push notifications.</p>
             <div class="notif-auth-form">
@@ -2360,6 +2373,7 @@ img { max-width: 100%; display: block; }
     var needAuthEl = document.getElementById('notif-need-auth');
     var subscribedEl = document.getElementById('notif-subscribed');
     var deniedEl = document.getElementById('notif-denied');
+    var inAppEl = document.getElementById('notif-in-app');
     var pwaHintEl = document.getElementById('notif-pwa-hint');
     var playerNameEl = document.getElementById('notif-player-name');
     var apiKeyInput = document.getElementById('notif-api-key');
@@ -2379,6 +2393,7 @@ img { max-width: 100%; display: block; }
       needAuthEl.style.display = 'none';
       subscribedEl.style.display = 'none';
       deniedEl.style.display = 'none';
+      if (inAppEl) inAppEl.style.display = 'none';
     }
 
     function show(el) {
@@ -2390,12 +2405,34 @@ img { max-width: 100%; display: block; }
     var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     var isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
 
+    // Inside the warboard app's web view. Same bridge factionops reads for
+    // IS_WARBOARD, so the two agree about where they are running.
+    var isWarboardApp = !!(window.webkit && window.webkit.messageHandlers
+                           && window.webkit.messageHandlers.gmBridge);
+
     // Check if push is supported
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      // iOS withholds PushManager from every WKWebView, so this branch is
+      // where the app ALWAYS lands. "Your browser doesn't support push" is
+      // true of the web view and beside the point: the app's notifications
+      // are native and already running, and "add to Home Screen" is not
+      // something you can do from inside an app.
+      if (isWarboardApp && inAppEl) {
+        show(inAppEl);
+        return;
+      }
       show(unsupportedEl);
       if (isIOS && !isStandalone) {
         pwaHintEl.style.display = 'flex';
       }
+      return;
+    }
+
+    // Supported, but still inside the app: whatever this page subscribes
+    // would be a second, separate pipeline. Say so rather than implying the
+    // app's notifications run through here.
+    if (isWarboardApp && inAppEl) {
+      show(inAppEl);
       return;
     }
 
