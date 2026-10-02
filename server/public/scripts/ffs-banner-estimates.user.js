@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.58
+// @version      2.73.59
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -3004,8 +3004,20 @@ if (!singleton) {
       // wb35: store FULL country name (no abbreviation) to match the
       // DOM-derived cache in ffs_detectAndFetchTravellersFromDom, so the
       // click-to-toggle UX always sees the same string regardless of source.
-      _ffsMemberAbbr[member.id] = loc.trim();
-      _ffsMemberReturning[member.id] = returning;
+      //
+      // wb90: assign ONLY when we actually parsed one. On the ranked-war
+      // roster this description is bare ("Traveling", no destination), and
+      // the old unconditional write wiped a country the flight fetch had
+      // already resolved — every 30s poll, forever, so the toggle could
+      // never settle on a country even once it was known.
+      const _loc = loc.trim();
+      if (_loc) {
+        _ffsMemberAbbr[member.id] = _loc;
+        _ffsMemberReturning[member.id] = returning;
+      } else if (_ffsMemberAbbr[member.id] == null) {
+        _ffsMemberAbbr[member.id] = "";
+        _ffsMemberReturning[member.id] = false;
+      }
       // wb24: fix TypeError — `typeof null === "object"` in JS, so the
       // old guard didn't prevent d.until from throwing when details=null.
       // Also: the last-action unix timestamp (member.last_action.timestamp)
@@ -3030,6 +3042,12 @@ if (!singleton) {
       }
       if (until) {
         _ffsMemberCountdowns[member.id] = until;
+        // wb90: the time is known but the description carried no country.
+        // Torn's v2 members endpoint now returns status.until on this page,
+        // so this branch runs instead of the one below -- and the flight
+        // fetch (the ONLY source of the destination here) was never kicked.
+        // That is why the chip's click-to-show-country did nothing.
+        if (!_ffsMemberAbbr[member.id]) ffs_fetchFlightForMember(String(member.id));
       } else {
         // wb35: Torn v2 returns status.until=null for travelling members,
         // so ask FFScouter for the landing time directly instead of waiting
@@ -3041,6 +3059,9 @@ if (!singleton) {
       delete _ffsMemberCountdowns[member.id];
       delete _ffsMemberAbbr[member.id];
       delete _ffsMemberReturning[member.id];
+      // wb90: a new flight must be allowed to resolve its own destination.
+      _ffsFlightNoCountryAt.delete(String(member.id));
+      _ffsFlightFetchFailures.delete(String(member.id));
     }
     // wb44: hospital / jail release tracking. Independent of travel.
     if (state === "Hospital" || state === "Jail") {
@@ -3066,12 +3087,94 @@ if (!singleton) {
   // page countdowns).
   const _ffsFlightFetchInflight = new Set();
   const _ffsFlightFetchFailures = new Map(); // uid → lastFailTs
+  // wb90: uid → ts of a fetch that SUCCEEDED but carried no destination.
+  // Distinct from a failure: nothing went wrong, FFScouter simply had no
+  // country for that flight, and retrying immediately will not change that.
+  const _ffsFlightNoCountryAt = new Map();
+  const FFS_NO_COUNTRY_RETRY_MS = 10 * 60_000;
   let _ffsFlightDiagCount = 0;
+
+  /**
+   * Should we ask FFScouter about this member right now?
+   *
+   * wb90: the old answer was "only if we have no landing time", which is why
+   * the destination never arrived — Torn's members endpoint supplies the time
+   * on this page, so the fetch bailed before it could learn the country.
+   *
+   * Relaxing that needs care. Both of the hot callers run on timers —
+   * ffs_detectAndFetchTravellersFromDom every 1.5s, ffs_paintMiniProfileCountdowns
+   * every 1s — and a fetch that returns no country is a SUCCESS, so it records
+   * no failure and triggers no backoff. "Retry until the country is known"
+   * alone would therefore be ~40 requests a minute PER TRAVELLING MEMBER,
+   * indefinitely, against a key that is shared with the rest of the script.
+   * Hence the separate no-country cooldown.
+   */
+  /**
+   * Pull the destination out of an FFScouter flight record.
+   *
+   * wb81 read only "from X to Y", which is what FFScouter itself emits
+   * ("Traveling from Torn to Mexico", "... from UAE to Torn"). wb90 widens
+   * it, because that one shape is a single upstream wording change away from
+   * blanking the country again — and Torn's OWN phrasing, "Returning to Torn
+   * from Mexico", does not match it at all: the regex needs " to " AFTER the
+   * "from", and in that sentence the "to" comes first.
+   *
+   * Returns {country, returning} or null. Never returns an empty country —
+   * "" is the caller's signal that nothing is known yet.
+   */
+  function ffs_parseFlightDestination(f) {
+    if (!f) return null;
+    const sd = String(f.status_description || "").trim();
+    const isTorn = (v) => /^torn$/i.test(String(v || "").trim());
+    const done = (country, returning) => {
+      const c = String(country || "").trim();
+      return c && !isTorn(c) ? { country: c, returning: !!returning } : null;
+    };
+
+    // "Traveling from Torn to Mexico" / "Returning from UAE to Torn"
+    const pair = sd.match(/from\s+(.+?)\s+to\s+(.+?)\s*$/i);
+    if (pair) {
+      const from = pair[1].trim(), to = pair[2].trim();
+      const hit = isTorn(to) ? done(from, true) : done(to, false);
+      if (hit) return hit;
+    }
+    // Torn's own wording: "Returning to Torn from Mexico"
+    const ret = sd.match(/returning\s+to\s+torn\s+from\s+(.+?)\s*$/i);
+    if (ret) { const hit = done(ret[1], true); if (hit) return hit; }
+    // "Traveling to Mexico" / "In Mexico"
+    const out = sd.match(/^(?:traveling|travelling|flying)\s+to\s+(.+?)\s*$/i)
+             || sd.match(/^in\s+(.+?)\s*$/i);
+    if (out) { const hit = done(out[1], false); if (hit) return hit; }
+
+    // Structured fields, if FFScouter ever supplies them instead of prose.
+    const to = f.destination || f.country || f.to || f.arrival_country;
+    if (to) {
+      const hit = done(to, false);
+      if (hit) return hit;
+      // destination IS Torn → they are on their way home; the country we
+      // want is where they left from.
+      if (isTorn(to)) {
+        const back = done(f.origin || f.from || f.departure_country, true);
+        if (back) return back;
+      }
+    }
+    return null;
+  }
+
+  function ffs_flightFetchNeeded(uid, now) {
+    const t = now || Date.now();
+    const haveTime = !!_ffsMemberCountdowns[uid];
+    const haveCountry = !!_ffsMemberAbbr[uid];
+    if (haveTime && haveCountry) return false;
+    if (_ffsFlightFetchInflight.has(uid)) return false;
+    if (t - (_ffsFlightFetchFailures.get(uid) || 0) < 60_000) return false;
+    // Only the destination is still missing, and we already asked recently.
+    if (haveTime && t - (_ffsFlightNoCountryAt.get(uid) || 0) < FFS_NO_COUNTRY_RETRY_MS) return false;
+    return true;
+  }
+
   async function ffs_fetchFlightForMember(uid) {
-    if (_ffsMemberCountdowns[uid]) return;
-    if (_ffsFlightFetchInflight.has(uid)) return;
-    const lastFail = _ffsFlightFetchFailures.get(uid) || 0;
-    if (Date.now() - lastFail < 60_000) return;
+    if (!ffs_flightFetchNeeded(uid)) return;
     _ffsFlightFetchInflight.add(uid);
     try {
       const url = `${BASE_URL}/api/v1/player-flights?key=${key}&target=${uid}`;
@@ -3123,15 +3226,15 @@ if (!singleton) {
                 // click-to-show-country toggle works on the war/ranked page,
                 // where the native status is just a flag (no parseable
                 // "Traveling to X" text for the DOM fallback to read).
-                const _sd = String(f.status_description || "");
-                const _mm = _sd.match(/from\s+(.+?)\s+to\s+(.+?)\s*$/i);
-                if (_mm) {
-                  const _from = _mm[1].trim(), _to = _mm[2].trim();
-                  if (/^torn$/i.test(_to)) {
-                    _ffsMemberAbbr[uid] = _from; _ffsMemberReturning[uid] = true;
-                  } else {
-                    _ffsMemberAbbr[uid] = _to; _ffsMemberReturning[uid] = false;
-                  }
+                const _dest = ffs_parseFlightDestination(f);
+                if (_dest) {
+                  _ffsMemberAbbr[uid] = _dest.country;
+                  _ffsMemberReturning[uid] = _dest.returning;
+                  _ffsFlightNoCountryAt.delete(uid);
+                } else if (!_ffsMemberAbbr[uid]) {
+                  // wb90: a clean response that simply has no destination.
+                  // Record it so the 1s/1.5s timers do not re-ask forever.
+                  _ffsFlightNoCountryAt.set(uid, Date.now());
                 }
               } else {
                 throw new Error("current present but no arrival timestamps");
@@ -3300,7 +3403,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.58';
+  const SCRIPT_VERSION = '2.73.59';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -3510,6 +3613,9 @@ if (!singleton) {
           // fires observers (TornTools watches these lists too) even when the
           // value is identical, and 12 chips x 3 writes/paint was pure noise.
           if (statusSpan.dataset.ffsCountry !== countryLabel) statusSpan.dataset.ffsCountry = countryLabel;
+          // wb90: the click handler needs to know WHO this chip is, so a tap
+          // on a chip with no country can go and ask for one.
+          if (statusSpan.dataset.ffsUid !== uid) statusSpan.dataset.ffsUid = uid;
           if (statusSpan.dataset.ffsTime !== countdownText) statusSpan.dataset.ffsTime = countdownText;
           if (statusSpan.dataset.ffsLand !== String(until)) statusSpan.dataset.ffsLand = String(until); // wb72: for the 250ms ticker
           const showCountry = statusSpan.dataset.ffsShowCountry === "1";
@@ -4406,6 +4512,14 @@ if (!singleton) {
       const was = span.dataset.ffsShowCountry === "1";
       span.dataset.ffsShowCountry = was ? "0" : "1";
       const v = span.querySelector(".ffs-mq-value");
+      // wb90: toggling TO the country with no country to show is the dead tap
+      // the user reported. Use the tap as the trigger: ask for the
+      // destination now, and the 1s painter writes it in when it lands.
+      // ffs_flightFetchNeeded still owns the rate limiting, so a mashed chip
+      // cannot turn into a request per press.
+      if (!was && !span.dataset.ffsCountry && span.dataset.ffsUid) {
+        ffs_fetchFlightForMember(span.dataset.ffsUid);
+      }
       const target = was ? span.dataset.ffsTime : (span.dataset.ffsCountry || span.dataset.ffsTime);
       // Diag: capture the click state before mutation so we can see
       // what the user actually toggled to.

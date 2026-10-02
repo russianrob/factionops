@@ -196,7 +196,12 @@ function recorder(state = {}) {
     _ffsMemberHospitalState: state.hospitalState || {},
     _ffsJustReleasedAt: state.released || {},
     _ffsLastPollStatus: {},
-    ffs_fetchFlightForMember: () => {},
+    // wb90: the recorder now clears the flight-lookup cooldowns when a
+    // member lands, so the sandbox has to carry them. Harmless on the beta
+    // build, which does not reference them yet.
+    _ffsFlightNoCountryAt: state.noCountry || new Map(),
+    _ffsFlightFetchFailures: state.failures || new Map(),
+    ffs_fetchFlightForMember: state.onFetch || (() => {}),
     Date: { now: () => state.now || 1_000_000 },
     isFinite, parseInt, String, Number,
   };
