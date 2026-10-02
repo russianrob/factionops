@@ -542,9 +542,9 @@ test('a plain-textarea compose page still works', () => {
   assert.equal(document.querySelector('textarea[name="message"]').value, 'Alice [2]');
 });
 
-test('filling writes the list into the editor and a count into the subject', () => {
+test('filling writes the list into the editor and the given subject', () => {
   const { api, document } = composeApi(COMPOSE);
-  const ok = api.fillCompose({ text: 'Alice [2]\nBob [3]', n: 2 });
+  const ok = api.fillCompose({ text: 'Alice [2]\nBob [3]', subject: 'Revivable (2)' });
   assert.equal(ok, true);
   const ed = document.getElementById('mce_0');
   assert.equal(ed.innerHTML, 'Alice [2]<br>Bob [3]', 'newlines must become <br> in a contenteditable');
@@ -594,7 +594,7 @@ test('filling reports failure instead of pretending, when there is no form', () 
 test('the hand-off is one shot', () => {
   // A stash that survives its own use would paste itself into the next mail.
   const { api } = composeApi(COMPOSE);
-  api.stashCompose('Alice [2]', 1);
+  api.stashCompose('Alice [2]');
   assert.equal(api.takeCompose().text, 'Alice [2]');
   assert.equal(api.takeCompose(), null, 'second read must be empty');
 });
@@ -733,7 +733,7 @@ test('a badge whose setting changed IS replaced', () => {
 
 test('the nudge stashes the fixed subject and body', () => {
   const { api } = composeApi(COMPOSE);
-  api.stashCompose('please turn your revives off :)', 0, 'Revives off');
+  api.stashCompose('please turn your revives off :)', 'Revives off');
   const got = api.takeCompose();
   assert.equal(got.subject, 'Revives off');
   assert.equal(got.text, 'please turn your revives off :)');
@@ -747,10 +747,38 @@ test('a stashed subject beats the revivable-count default', () => {
     'please turn your revives off :)');
 });
 
-test('the list hand-off still gets its counted subject', () => {
+test('a hand-off with no subject leaves the subject alone', () => {
+  // Every hand-off names its own subject now that the list panel's Compose
+  // button is gone. An unnamed one must not invent a title.
   const { api, document } = composeApi(COMPOSE);
-  api.fillCompose({ text: 'Alice [2]', n: 1 });
-  assert.match(document.querySelector('input[name="title"]').value, /Revivable \(1\)/);
+  const subj = document.querySelector('input[name="title"]');
+  // Assert the field is never WRITTEN, not just that it ends up empty:
+  // `el.value = undefined` yields the string "undefined" in a real browser,
+  // and linkedom quietly gives '' instead -- so a value check alone passes
+  // against a version that would print "undefined" in the Subject box.
+  let wrote = 0;
+  subj.addEventListener('input', () => wrote++);
+  api.fillCompose({ text: 'Alice [2]' });
+  assert.equal(wrote, 0, 'the subject field was written to with nothing to write');
+  assert.equal(subj.value, '');
+  assert.equal(document.getElementById('mce_0').textContent, 'Alice [2]',
+    'the body must still be filled');
+});
+
+test('the list panel has no Compose button', () => {
+  // Removed on request: Copy is what that panel is for, and the pre-filled
+  // mail lives on the badges.
+  const src = readFileSync('/opt/warboard/server/public/scripts/torn-faction-revives.user.js', 'utf8');
+  // openCopyPanel ONLY -- the hand-off helpers below it are named
+  // *Compose and are still in use by the badge nudge.
+  const from = src.indexOf('function openCopyPanel');
+  const to = src.indexOf('// ---- compose hand-off', from);
+  assert.ok(from >= 0 && to > from, 'could not isolate the panel');
+  const panel = src.slice(from, to);
+  assert.ok(!/er-compose/.test(panel), 'the Compose button is back');
+  assert.ok(!/Compose/.test(panel), 'the panel still mentions Compose');
+  assert.match(panel, /er-copy-do/, 'Copy must survive');
+  assert.match(panel, /er-copy-close/, 'Close must survive');
 });
 
 test('the nudge text is what was asked for, verbatim', () => {

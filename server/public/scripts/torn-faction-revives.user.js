@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Revive Check
 // @namespace    russianrob.faction.revives
-// @version      2.3.0
+// @version      2.3.1
 // @description  Badges every faction member by their revive setting (Everyone / Friends & faction / off) in the position column, with a grouped copy-and-compose list. Originally built on AaronPMC's Elimination Revives.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-faction-revives.user.js
@@ -16,6 +16,8 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 2.3.1 - Dropped the Compose button from the list panel. Copy is what
+ *         that panel is for; the pre-filled mail lives on the badges.
  * 2.3.0 - The status bar docks under Faction Description instead of
  *         floating over the bottom of the member list, where it covered
  *         three rows and crowded the other scripts' buttons. The list
@@ -429,10 +431,9 @@
             '<textarea readonly></textarea>' +
             '<div class="er-row">' +
                 '<button class="er-btn" id="er-copy-do" style="flex:1;">Copy</button>' +
-                '<button class="er-btn" id="er-compose">✉ Compose</button>' +
                 '<button class="er-btn" id="er-copy-close">Close</button>' +
             '</div>' +
-            '<p class="er-hint">* = in hospital now. Compose copies the list and opens Torn mail — paste it in.</p>';
+            '<p class="er-hint">* = in hospital now.</p>';
         document.body.appendChild(panel);
         const ta = panel.querySelector('textarea');
 
@@ -453,26 +454,6 @@
             picked[k] = !picked[k];
             chip.setAttribute('data-on', picked[k] ? '1' : '0');
             repaint();
-        });
-
-        // Torn's compose takes no body parameter, so the honest version is:
-        // put the text on the clipboard inside the same tap -- iOS and the PDA
-        // refuse a write that happens after the gesture -- then open the mail
-        // page for the user to paste into. Nothing auto-fills Torn's form.
-        panel.querySelector('#er-compose').addEventListener('click', () => {
-            const txt = ta.value;
-            let n = 0;
-            for (const g of GROUPS) if (picked[g.key]) n += groups[g.key].length;
-            stashCompose(txt, n);
-            // The clipboard copy stays as the belt to the braces: if the mail
-            // page changes shape under us, a paste still works.
-            try {
-                if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt);
-                else { ta.focus(); ta.select(); document.execCommand('copy'); }
-            } catch (_) {
-                try { ta.focus(); ta.select(); document.execCommand('copy'); } catch (_e) {}
-            }
-            window.open('https://www.torn.com/messages.php#/p=compose', '_blank');
         });
 
         panel.querySelector('#er-copy-close').addEventListener('click', () => panel.remove());
@@ -497,18 +478,19 @@
 
     // ---- compose hand-off ----------------------------------------------------
     //
-    // The Compose button opens messages.php, which is a different page load,
-    // so nothing from the faction page survives into it. The list is stashed
-    // in GM storage on the way out and written into the form on the way in.
+    // Tapping a revives-on badge opens messages.php, which is a different page
+    // load, so nothing from the faction page survives into it. The message is
+    // stashed in GM storage on the way out and written into the form on the
+    // way in.
     //
     // It is stamped, and the stamp is checked: a stash left behind by a tap
     // that never reached the mail page must not silently paste itself into
     // some unrelated message an hour later.
 
-    function stashCompose(text, n, subject) {
+    function stashCompose(text, subject) {
         try {
             GM_setValue(COMPOSE_STORE, JSON.stringify({
-                text: text, n: n, subject: subject || null, at: Date.now()
+                text: text, subject: subject || null, at: Date.now()
             }));
         } catch (_) {}
     }
@@ -618,9 +600,11 @@
         if (!f.body) return false;
         if (f.rich) setRichValue(f.body, entry.text);
         else setNativeValue(f.body, entry.text);
-        // Only touch the subject if the user has not typed one.
-        if (f.subject && !f.subject.value) {
-            setNativeValue(f.subject, entry.subject || ('Revivable (' + (entry.n || 0) + ')'));
+        // Only touch the subject if we were given one AND the user has not
+        // typed their own. The counted "Revivable (N)" default went with the
+        // list panel's Compose button -- every hand-off now names its subject.
+        if (entry.subject && f.subject && !f.subject.value) {
+            setNativeValue(f.subject, entry.subject);
         }
         // The recipient is deliberately left alone: a Torn mail takes one
         // name, and the list is many people.
@@ -738,7 +722,7 @@
         document.addEventListener('click', function (ev) {
             const link = ev.target && ev.target.closest && ev.target.closest('[data-er-ask]');
             if (!link) return;
-            stashCompose(NUDGE_BODY, 0, NUDGE_SUBJECT);
+            stashCompose(NUDGE_BODY, NUDGE_SUBJECT);
             ev.stopPropagation();   // do not let the row's own handler fire too
         }, true);
     }
@@ -755,7 +739,7 @@
 
     // ---- boot ----------------------------------------------------------------
     // On messages.php there is no roster to badge; the only job is to drop the
-    // list into the mail the Compose button opened.
+    // message into the mail a tapped badge opened.
     if (/\/messages\.php/i.test(location.pathname)) { runComposeFill(); return; }
 
     loadCache();
