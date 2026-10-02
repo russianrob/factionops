@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         Torn Elimination Revives
 // @namespace    aaronpmc.elim.revives
-// @version      1.0.2
-// @description  Shows which Elimination team members have revives on (API revivable flag), badged per row, with a copy-paste list.
+// @version      1.1.0
+// @description  Shows which Elimination team OR faction members have revives on (API revivable flag), badged per row, with a copy-paste list.
 // @author       AaronPMC
 // @match        https://www.torn.com/page.php?sid=elimination*
 // @match        https://torn.com/page.php?sid=elimination*
+// @match        https://www.torn.com/factions.php*
+// @match        https://torn.com/factions.php*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @run-at       document-idle
@@ -29,6 +31,36 @@
     const queue   = [];
     let draining  = false;
     let pauseUntil = 0;          // wall-clock; queue is idle until then
+
+    // Which list we are decorating. The elimination page and the faction
+    // members tab hold the same thing — a roster of people you might need to
+    // revive — behind different markup, so the row finder is the only part
+    // that differs.
+    //
+    // Faction list, read live off the page: DIV.f-war-list.members-list >
+    // UL.table-body > LI.table-row, 87 rows, with the profile link in the
+    // name cell (FFScouter appends its BSP figure to that same anchor, so the
+    // badge goes AFTER the anchor and never inside it).
+    function pageMode() {
+        return /factions\.php/i.test(location.href) ? 'faction' : 'elim';
+    }
+    function listRoot() {
+        return pageMode() === 'faction'
+            ? document.querySelector('.members-list, ul.table-body')
+            : document.querySelector('[class*="teamPageWrapper"]');
+    }
+    /** Hospitalised members first — they are the ones you can actually revive. */
+    function isHospitalRow(a) {
+        const row = a.closest('li');
+        if (!row) return false;
+        if (/hospital/i.test(row.className || '')) return true;
+        if (row.querySelector('[class*="hospital" i], [title*="hospital" i]')) return true;
+        // NO \b around the timer. Torn's row text concatenates with no
+        // separators — "Deathy10:28:50" — so a word boundary before the
+        // digits never matches and every hospitalised member was silently
+        // deprioritised. A HH:MM:SS is the only clock in this row.
+        return /\d{1,2}:\d{2}:\d{2}/.test(row.textContent || '');
+    }
 
     function currentTeamId() {
         const m = String(location.hash || '').match(/team\/(\d+)/);
@@ -90,6 +122,13 @@
         .er-on{background:rgba(0,184,148,.18);color:#00b894;border:1px solid rgba(0,184,148,.45);}
         .er-off{background:rgba(225,112,85,.16);color:#e17055;border:1px solid rgba(225,112,85,.4);}
         .er-unk{background:rgba(99,110,114,.18);color:#b2bec3;border:1px solid rgba(99,110,114,.4);}
+        /* Faction members table. It is a float-column layout already cramped
+           on a phone, so the badge must not widen its cell: fixed box, no
+           flex growth, and it never wraps. */
+        .er-badge.er-compact{margin-left:4px;padding:0;width:13px;height:13px;min-width:13px;
+            flex:0 0 auto;justify-content:center;border-radius:50%;font-size:10px;line-height:13px;}
+        .er-badge.er-compact.er-off{background:transparent;border-color:rgba(99,110,114,.35);color:#636e72;}
+        .er-badge.er-compact.er-unk{background:transparent;border-color:transparent;color:#4a5356;}
         #er-status{position:fixed;left:10px;bottom:10px;z-index:2147483000;
             background:#14100e;color:#ffd9c9;border:1px solid rgba(225,112,85,.5);
             border-radius:6px;padding:6px 8px;font:600 11px/1.3 Arial,sans-serif;
@@ -254,8 +293,19 @@
     function badgeFor(rev) {
         const b = document.createElement('span');
         b.className = 'er-badge ' + (rev === 1 ? 'er-on' : rev === 0 ? 'er-off' : 'er-unk');
-        b.textContent = rev === 1 ? 'REVIVES ON' : rev === 0 ? 'revives off' : 'revive ?';
         b.setAttribute('data-er', '1');
+        if (pageMode() === 'faction') {
+            // 87 rows in a table that is already cramped on a phone. A word
+            // per row would wrap the name column and push the rest off; a
+            // glyph does not. Still THREE states though — "no badge" would
+            // make "checked, revives off" and "not checked yet" look
+            // identical, which is the one reading that gets somebody killed.
+            b.classList.add('er-compact');
+            b.textContent = rev === 1 ? '\u2719' : rev === 0 ? '\u00b7' : '\u2026';
+            b.title = rev === 1 ? 'Revives ON' : rev === 0 ? 'Revives off' : 'Not checked yet';
+        } else {
+            b.textContent = rev === 1 ? 'REVIVES ON' : rev === 0 ? 'revives off' : 'revive ?';
+        }
         return b;
     }
     function applyToAnchor(a) {
@@ -274,17 +324,24 @@
         }
     }
     function applyForUid(uid) {
-        const rows = document.querySelectorAll('[class*="teamPageWrapper"] a[href*="profiles.php?XID=' + uid + '"]');
+        const wrap = listRoot();
+        if (!wrap) return;
+        const rows = wrap.querySelectorAll('a[href*="profiles.php?XID=' + uid + '"]');
         rows.forEach(applyToAnchor);
     }
     function scan() {
         const tid = currentTeamId();
         if (tid !== teamId) { teamId = tid; roster.clear(); }
-        const wrap = document.querySelector('[class*="teamPageWrapper"]');
+        const wrap = listRoot();
         if (!wrap) return;
-        const anchors = wrap.querySelectorAll('a[href*="profiles.php?XID="]');
+        const anchors = [].slice.call(wrap.querySelectorAll('a[href*="profiles.php?XID="]'));
         if (!anchors.length) return;
-        anchors.forEach(applyToAnchor);
+        // Hospitalised first. A faction list is 87 people and the queue is
+        // paced at 1.5s, so the order decides whether the useful answers
+        // arrive in ten seconds or two minutes.
+        const hurt = anchors.filter(isHospitalRow);
+        const rest = anchors.filter(function (a) { return hurt.indexOf(a) === -1; });
+        hurt.concat(rest).forEach(applyToAnchor);
         updateStatus();
     }
 
