@@ -94,7 +94,8 @@ test('a Torn-hospital member is parsed and still shown', () => {
 });
 
 test('the parser survives a member with no status at all', () => {
-  assert.equal(parse({ name: 'X' }).description, '');
+  // Omitted now, not '' -- see "the parser never emits an empty description".
+  assert.ok(!parse({ name: 'X' }).description);
   assert.equal(parse(null), null);
 });
 
@@ -143,4 +144,81 @@ test('the controls keep an accessible name', () => {
                         SRC.indexOf("list.parentElement.insertBefore(bar, list)"));
   assert.match(bar, /id="fo-wp-clear"[^>]*aria-label="Clear"/);
   assert.match(bar, /aria-label="FactionOps settings"/);
+});
+
+// --- the flap: an empty description must not wipe a real one -------------
+//
+// Measured live while Hide abroad was ticked: the 21 Traveling/Abroad rows
+// hid rock-steady, and ALL 8 foreign-hospital rows flipped in and out every
+// few seconds (29 -> 22 -> 21 -> 29). Only those 8 depend on the description,
+// and statuses arrive relayed through the server from every teammate's
+// client — most of the faction still runs a build that sends description:''
+// for a hospital member.
+
+const merge = new Function(
+  'state', 'isOwnFactionMember', 'rebaseStatusUntil', 'maybeAutoUncallOnHospital',
+  'normalizeStatus', 'UNTIL_JUMP_SEC', '_nowSec',
+  fn('mergeStatusesMonotonic') + '; return mergeStatusesMonotonic;');
+
+function merger(seed = {}) {
+  const state = { statuses: JSON.parse(JSON.stringify(seed)) };
+  const fnm = merge(state, () => false, () => {}, () => {},
+    (x) => String(x || '').toLowerCase(), 5, () => Math.floor(Date.now() / 1000));
+  return { state, merge: fnm };
+}
+
+const HOSP = { status: 'hospital', until: 600, description: 'In a Canadian hospital for 11 mins ' };
+
+test('a peer push with no description leaves the real one alone', () => {
+  // The exact wipe: an older client relays {status,until} with no
+  // description, the spread blanks the field, the row reappears.
+  const m = merger({ '2254219': { ...HOSP } });
+  m.merge({ '2254219': { status: 'hospital', until: 590 } });
+  assert.equal(m.state.statuses['2254219'].description, HOSP.description,
+    'the description was wiped by a push that never carried one');
+});
+
+test('an explicitly EMPTY description is also ignored', () => {
+  // Older builds send description:'' rather than omitting it.
+  const m = merger({ '2254219': { ...HOSP } });
+  m.merge({ '2254219': { status: 'hospital', until: 590, description: '' } });
+  assert.equal(m.state.statuses['2254219'].description, HOSP.description);
+});
+
+test('a REAL new description still wins', () => {
+  // Returning to Torn and being re-hospitalised there must update the text,
+  // or Hide abroad would keep hiding somebody who is now hittable.
+  const m = merger({ '2254219': { ...HOSP } });
+  m.merge({ '2254219': { status: 'hospital', until: 300, description: 'In hospital for 5 mins ' } });
+  assert.equal(m.state.statuses['2254219'].description, 'In hospital for 5 mins ');
+  assert.equal(away('hospital', m.state.statuses['2254219'].description), false,
+    'still hidden after coming home');
+});
+
+test('a status CHANGE clears the stale sentence', () => {
+  // Out of hospital entirely — the old "In a Canadian hospital" is no longer
+  // true of them and must not be preserved.
+  const m = merger({ '2254219': { ...HOSP } });
+  m.merge({ '2254219': { status: 'ok', until: 0 } });
+  assert.equal(m.state.statuses['2254219'].status, 'ok');
+  assert.ok(!m.state.statuses['2254219'].description,
+    'kept a hospital description on somebody who left hospital');
+});
+
+test('the parser never emits an empty description', () => {
+  // Every consumer merges by spread, so '' is indistinguishable from
+  // "clear this" — the parser must omit the key instead.
+  const r = parse({ name: 'X', status: { state: 'Okay', description: '' } });
+  assert.ok(!('description' in r), 'returned an empty description that will wipe a good one');
+  const h = parse({ name: 'Y', status: LIVE.foreignHosp });
+  assert.equal(h.description, LIVE.foreignHosp.description);
+});
+
+test('the war-page intercept carries the country instead of dropping it', () => {
+  // getwarusers is the one source that sees every enemy at once; it had the
+  // sentence and normalised it away to 'hospital'.
+  const block = SRC.slice(SRC.indexOf("const entry = { status: normalized };"),
+                          SRC.indexOf("batch[uid] = entry;\n                                    count++;"));
+  assert.ok(block.length > 50, 'getwarusers entry block not found');
+  assert.match(block, /entry\.description\s*=\s*text/);
 });

@@ -3930,6 +3930,19 @@ router.post("/api/status", requireAuth, async (req, res) => {
         ...statusData,
       };
 
+      // An EMPTY description must not overwrite a real one. This store is fed
+      // by every client in the faction and broadcast back to all of them, so
+      // one teammate on an older build pushing description:"" blanked the
+      // field for everybody — which is what made Hide abroad flap between 29
+      // and 21 hidden rows, the 8 foreign-hospital targets reappearing every
+      // few seconds. "" is absence of information, not information. Guarded
+      // here as well as client-side because the server is the one place that
+      // sees every build at once.
+      if (!war.enemyStatuses[targetId].description && existing.description) {
+        const sameStatus = String(statusData.status || "") === String(existing.status || "");
+        if (sameStatus) war.enemyStatuses[targetId].description = existing.description;
+      }
+
       const st = statusData.status || "";
       const isHospital = st.toLowerCase().includes("hospital");
 

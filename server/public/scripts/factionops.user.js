@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.4.10
+// @version      5.4.11
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.10';
+    const SCRIPT_VERSION = '5.4.11';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -3730,6 +3730,32 @@ body.wb-chain-active {
                 ...newData,
             };
 
+            // 5.4.11: an EMPTY description must not overwrite a real one.
+            //
+            // Measured on the live war page: the 21 Traveling/Abroad rows hid
+            // rock-steady while all 8 foreign-hospital rows flipped in and out
+            // of hiding every few seconds, 29 -> 22 -> 21 -> 29. Only those 8
+            // depend on the description ("In a Canadian hospital"), and the
+            // spread above let any source that omits the field blank it.
+            //
+            // The sources are not all ours to fix: statuses arrive relayed
+            // through the server from every teammate's client, and most of the
+            // faction is still on a build that sends description:'' for a
+            // hospital member. One of their pushes wiped the field, the row
+            // came back, our next intercept restored it, and round again.
+            //
+            // '' is absence of information, not information. Only a status
+            // CHANGE may clear it -- then the old sentence really is stale.
+            const mergedRec = state.statuses[targetId];
+            if (statusChanged) {
+                // They moved. "In a Canadian hospital" is no longer true of
+                // somebody who just left hospital, and the spread above would
+                // otherwise carry it forward forever.
+                if (!newData.description) delete mergedRec.description;
+            } else if (!mergedRec.description && existing.description) {
+                mergedRec.description = existing.description;
+            }
+
             if (statusChanged) {
                 maybeAutoUncallOnHospital(targetId, oldStatus, newStatus);
             }
@@ -4268,6 +4294,13 @@ body.wb-chain-active {
                                     if (!text) continue;
                                     const normalized = _normalizeStatusText(text);
                                     const entry = { status: normalized };
+                                    // The status line IS the description Hide
+                                    // abroad reads -- "In a Canadian hospital
+                                    // for 11 mins". Normalising it to
+                                    // 'hospital' and dropping the rest threw
+                                    // the country away at the one source that
+                                    // sees every enemy at once.
+                                    if (text) entry.description = text;
                                     if (m.playername) entry.name = String(m.playername);
                                     if (m.level != null) entry.level = Number(m.level);
                                     if (st.until) entry.until = Number(st.until);
@@ -12441,7 +12474,11 @@ body.wb-chain-active {
             }
         }
 
-        return { status, until, description, activity, name, level };
+        // Omit an empty description rather than sending one: every consumer
+        // merges by spread, so '' is indistinguishable from "clear this".
+        const out = { status, until, activity, name, level };
+        if (description) out.description = description;
+        return out;
     }
 
     // =========================================================================
