@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.5.1
+// @version      5.5.2
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.5.1';
+    const SCRIPT_VERSION = '5.5.2';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -10143,7 +10143,15 @@ body.wb-chain-active {
                            : 'failed';
             // The short form fits the chip; the whole message is in the log.
             if (String(r).startsWith('failed')) el.title = String(r);
-            if (r !== 'connecting') reportSSEForceDiag({ reason: r });
+            // EVERY tap, including the ones that work. Reporting only failures
+            // made silence ambiguous -- "no entry in the log" read the same as
+            // "nobody pressed it", which is exactly the question being asked.
+            reportSSEForceDiag({ reason: r });
+            // And what it settled on, since 'connecting' is a hope, not a
+            // result: the startup watchdog has 12s to disagree.
+            setTimeout(() => {
+                try { reportSSEForceDiag({ reason: 'settled', sseNow: !!sseConnected }); } catch (_) {}
+            }, 14000);
             // Long enough to outlast the 12s startup watchdog, so the chip
             // settles on the real answer rather than an optimistic one.
             setTimeout(() => { delete el.dataset.busy; paintTransportChip(); },
