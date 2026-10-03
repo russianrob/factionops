@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.4.11
+// @version      5.5.0
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.11';
+    const SCRIPT_VERSION = '5.5.0';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -890,6 +890,14 @@ html.wb-theme-light {
 .fo-wp-filter-gear:hover { background: #241a15; }
 .fo-wp-filter-count + .fo-wp-filter-gear { margin-left: 6px; }
 .fo-wp-filter-count { margin-left: auto; font-weight: 700; color: #8a6a5e; }
+.fo-wp-rt {
+    margin-left: 6px; padding: 2px 7px; border-radius: 9px; cursor: pointer;
+    font: 700 10px/1.5 Arial, sans-serif; white-space: nowrap;
+    border: 1px solid rgba(99,110,114,.45); background: rgba(0,0,0,.3); color: #8d9699;
+}
+.fo-wp-rt.is-sse { border-color: rgba(0,184,148,.6); color: #00b894; background: rgba(0,184,148,.14); }
+.fo-wp-rt.is-poll { border-color: rgba(253,203,110,.5); color: #fdcb6e; background: rgba(253,203,110,.12); }
+.fo-wp-rt:hover { filter: brightness(1.25); }
 .fo-wp-filter-count.is-on { color: #ffd166; }
 .fo-wp-call.fo-wp-call-taken {
     border-color: rgba(225,112,85,.45); background: #171310;
@@ -6197,6 +6205,41 @@ body.wb-chain-active {
         }, 20000);
     }
 
+    /**
+     * Force a fresh SSE connect, on demand.
+     *
+     * The startup watchdog gives SSE three tries and then hands the session to
+     * polling for good — deliberately, because a host whose GM shim cannot
+     * stream at all would otherwise retry a doomed request forever on battery.
+     * The cost is that one unlucky first connect (slow launch, network change,
+     * app resume) pins a host that CAN stream to polling until the page is
+     * reloaded by hand. The warboard log shows exactly that: 769 sse:true
+     * reports today, and the same app alternating sse:true / sse:false between
+     * page loads.
+     *
+     * This is the reload, without the reload. It clears the evidence that made
+     * us give up, because the user pressing a button IS new evidence.
+     */
+    function forceSSEReconnect() {
+        if (!canUseSSEStream()) return 'unavailable';
+        if (!state.jwtToken) return 'no-auth';
+        if (sseRetryTimer) { clearTimeout(sseRetryTimer); sseRetryTimer = null; }
+        sseStartFailures = 0;
+        try { if (sseAbort && typeof sseAbort.abort === 'function') sseAbort.abort(); } catch (_) {}
+        sseAbort = null;
+        sseConnected = false;
+        stopSSEStaleWatch();
+        try { connectSSEStream(); } catch (_) { return 'failed'; }
+        return 'connecting';
+    }
+
+    /** Current transport, for the chip. */
+    function transportLabel() {
+        if (sseConnected) return { text: '\u26a1 SSE', cls: 'is-sse' };
+        if (!canUseSSEStream()) return { text: '\u27f3 poll', cls: 'is-poll' };
+        return { text: '\u27f3 poll', cls: 'is-poll' };
+    }
+
     /** Disconnect Socket.IO. */
     function disconnectRealtime() {
         if (realtimeSocket) {
@@ -9753,6 +9796,10 @@ body.wb-chain-active {
             '<label class="fo-wp-filter-chk">' +
                 '<input type="checkbox" id="fo-wp-hide-abroad">Hide abroad</label>' +
             '<span class="fo-wp-filter-count" id="fo-wp-count"></span>' +
+            // Which transport is actually carrying events, and a way to
+            // change it. Answers "why am I polling" without reading a log.
+            '<button type="button" class="fo-wp-rt" id="fo-wp-rt" ' +
+                   'aria-label="Realtime transport - tap to reconnect">\u27f3 poll</button>' +
             // Settings without opening the overlay. The gear used to live only
             // in the overlay header, so reaching it from the war page meant
             // activating the whole thing -- which is the one surface we keep
@@ -9972,6 +10019,7 @@ body.wb-chain-active {
         let rows;
         try { rows = findMemberRows(); } catch (_) { return; }
         try { ensureWarFilterBar(); } catch (_) {}
+        try { setupTransportChip(); } catch (_) {}
         let hidden = 0, total = 0;
         // Sorted at the end of this 5s pass, never on the 1s tick: a row that
         // jumped the moment its timer expired would move under a thumb that is
@@ -10012,6 +10060,49 @@ body.wb-chain-active {
             countEl.textContent = hidden ? ('hiding ' + hidden + ' of ' + total) : '';
             countEl.classList.toggle('is-on', hidden > 0);
         }
+        try { paintTransportChip(); } catch (_) {}
+    }
+
+    /** Repaint the transport chip from the live transport state. */
+    function paintTransportChip() {
+        const el = document.getElementById('fo-wp-rt');
+        if (!el) return;
+        if (el.dataset.busy === '1') return;   // leave "connecting..." alone
+        const t = transportLabel();
+        if (el.textContent !== t.text) el.textContent = t.text;
+        el.classList.toggle('is-sse', t.cls === 'is-sse');
+        el.classList.toggle('is-poll', t.cls === 'is-poll');
+    }
+
+    // One delegated listener. The bar is rebuilt whenever Torn re-renders the
+    // list, so a handler bound to the button itself would go with it.
+    function setupTransportChip() {
+        if (window.__foRtChipBound) return;
+        window.__foRtChipBound = true;
+        document.addEventListener('click', (e) => {
+            const el = e.target.closest && e.target.closest('#fo-wp-rt');
+            if (!el) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (sseConnected) {
+                // Already streaming. Say so rather than tearing down a working
+                // connection because somebody tapped to see what it does.
+                el.dataset.busy = '1';
+                el.textContent = '\u26a1 already live';
+                setTimeout(() => { delete el.dataset.busy; paintTransportChip(); }, 1600);
+                return;
+            }
+            const r = forceSSEReconnect();
+            el.dataset.busy = '1';
+            el.textContent = r === 'connecting' ? '\u2026 connecting'
+                           : r === 'no-auth' ? 'not signed in'
+                           : r === 'unavailable' ? 'no SSE here'
+                           : 'failed';
+            // Long enough to outlast the 12s startup watchdog, so the chip
+            // settles on the real answer rather than an optimistic one.
+            setTimeout(() => { delete el.dataset.busy; paintTransportChip(); },
+                       r === 'connecting' ? 13000 : 2000);
+        }, true);
     }
 
     /**
