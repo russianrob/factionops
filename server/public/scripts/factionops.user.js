@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.4.9
+// @version      5.4.10
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.4.9';
+    const SCRIPT_VERSION = '5.4.10';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -4147,7 +4147,16 @@ body.wb-chain-active {
                             || 0;
                         const batch = {};
                         const entry = { status: normalized, until };
-                        if (st.details) entry.description = String(st.details);
+                        // NOT st.details. Torn's two fields say different
+                        // things: description is WHERE they are ("In a
+                        // Canadian hospital for 1 mins"), details is WHY
+                        // ("Attacked by LFCxAaronn"). Hide abroad reads the
+                        // former, so feeding it the latter meant the foreign-
+                        // hospital test was run against a sentence that can
+                        // never contain a country. `text` is the same status
+                        // line when description is absent from the WS frame.
+                        const descText = String(st.description || text || '');
+                        if (descText) entry.description = descText;
                         batch[uid] = entry;
                         try { mergeStatusesMonotonic(batch); } catch (_) {}
                         try { queuePeerRelay(batch); } catch (_) {}
@@ -9700,11 +9709,15 @@ body.wb-chain-active {
             '<span class="fo-wp-filter-dash">\u2013</span>' +
             '<input class="fo-wp-filter-in" id="fo-wp-max" placeholder="max" ' +
                    'spellcheck="false" autocomplete="off" autocapitalize="off" inputmode="text">' +
-            '<button type="button" class="fo-wp-filter-clear" id="fo-wp-clear" title="Clear">\u2715</button>' +
+            '<button type="button" class="fo-wp-filter-clear" id="fo-wp-clear" aria-label="Clear">\u2715</button>' +
             '<label class="fo-wp-filter-chk"><input type="checkbox" id="fo-wp-hide-online">Hide online</label>' +
-            '<label class="fo-wp-filter-chk" title="Last action 5+ min ago -- Torn\'s idle and offline both">' +
+            // No `title` on these. Something on the page renders title
+            // attributes as a tap-through callout, and on a phone that box
+            // lands on top of the filter row you are trying to use -- the
+            // explanation costs more than it gives. The labels say enough.
+            '<label class="fo-wp-filter-chk">' +
                 '<input type="checkbox" id="fo-wp-hide-offline">Hide offline</label>' +
-            '<label class="fo-wp-filter-chk" title="Abroad, flying, or in a foreign hospital -- nobody you can hit from Torn">' +
+            '<label class="fo-wp-filter-chk">' +
                 '<input type="checkbox" id="fo-wp-hide-abroad">Hide abroad</label>' +
             '<span class="fo-wp-filter-count" id="fo-wp-count"></span>' +
             // Settings without opening the overlay. The gear used to live only
@@ -9712,7 +9725,7 @@ body.wb-chain-active {
             // activating the whole thing -- which is the one surface we keep
             // deliberately unbuilt here.
             '<button type="button" class="fo-wp-filter-gear" id="fo-wp-settings" ' +
-                   'title="FactionOps settings" aria-label="FactionOps settings">\u2699</button>';
+                   'aria-label="FactionOps settings">\u2699</button>';
         list.parentElement.insertBefore(bar, list);
 
         const minEl = bar.querySelector('#fo-wp-min');
@@ -12393,6 +12406,14 @@ body.wb-chain-active {
         if (member.status) {
             const s = member.status;
             const state_str = (s.state || '').toLowerCase();
+            // 5.4.10: carry the description for EVERY state, not just
+            // travel. It used to be set only in the traveling/abroad branch,
+            // so a member in a foreign hospital arrived with description ''
+            // and isAwayFromTorn's "In a <country> hospital" test had an
+            // empty string to look at -- Hide abroad left all nine of them on
+            // the list. Torn says "In a Canadian hospital for 1 mins" here;
+            // that sentence IS the thing the filter reads.
+            description = s.description || '';
             // Use Date.now()/1000 (not Math.floor) for sub-second precision —
             // avoids rounding that causes timers to jump up by ~1s.
             const nowSec = Date.now() / 1000;
@@ -12406,7 +12427,6 @@ body.wb-chain-active {
                 until = s.until ? Math.max(0, s.until - nowSec) : 0;
             } else if (state_str === 'traveling' || state_str === 'abroad') {
                 status = state_str;
-                description = s.description || '';
                 until = s.until ? Math.max(0, s.until - nowSec) : 0;
             } else {
                 status = 'ok';
