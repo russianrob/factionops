@@ -468,7 +468,7 @@ const _diagHits = new Map(); // ip → { count, firstAt }
 // Tags that report rarely and are worth reading whole. Each gets its OWN
 // per-tag+IP bucket, so a forensic capture cannot spend the shared 60/min
 // budget that every other script's logging draws on.
-const _QUIET_TAGS = new Set(["fo-warlayout", "ffs-hosp-zero", "ffs-sorted-list"]);
+const _QUIET_TAGS = new Set(["fo-warlayout", "ffs-hosp-zero", "ffs-sorted-list", "fo-sse-force"]);
 app.post("/api/debug/client-log", express.json({ limit: "4kb" }), (req, res) => {
   const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
   const now = Date.now();

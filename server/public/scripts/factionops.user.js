@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.5.0
+// @version      5.5.1
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.5.0';
+    const SCRIPT_VERSION = '5.5.1';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -6224,13 +6224,46 @@ body.wb-chain-active {
         if (!canUseSSEStream()) return 'unavailable';
         if (!state.jwtToken) return 'no-auth';
         if (sseRetryTimer) { clearTimeout(sseRetryTimer); sseRetryTimer = null; }
+        // The previous attempt's watchdog, or it fires in 12s and aborts the
+        // stream this tap is about to open.
+        clearTimeout(sseWatchdogTimer);
+        sseWatchdogTimer = null;
         sseStartFailures = 0;
         try { if (sseAbort && typeof sseAbort.abort === 'function') sseAbort.abort(); } catch (_) {}
         sseAbort = null;
         sseConnected = false;
         stopSSEStaleWatch();
-        try { connectSSEStream(); } catch (_) { return 'failed'; }
+        // No war to stream is the one benign "failure", and it is worth saying
+        // out loud rather than reporting as a fault.
+        if (!deriveWarId() || !state.myFactionId) return 'no-war';
+        try {
+            connectSSEStream();
+        } catch (e) {
+            const msg = String((e && e.message) || e);
+            reportSSEForceDiag({ reason: 'threw', err: msg });
+            return 'failed:' + msg.slice(0, 40);
+        }
         return 'connecting';
+    }
+
+    /// One line per tap, so a failure the user reports as "it failed" arrives
+    /// with the exception attached. Its own quiet tag, because the shared
+    /// client-log budget is 60/min per IP and a sibling script can empty it.
+    function reportSSEForceDiag(data) {
+        try {
+            const body = JSON.stringify({ tag: 'fo-sse-force', data: Object.assign({
+                v: SCRIPT_VERSION, warboard: IS_WARBOARD, pda: IS_PDA,
+                sse: !!sseConnected, hasToken: !!state.jwtToken,
+                warId: deriveWarId() || null, fid: state.myFactionId || null,
+                gmx: (typeof GM_xmlhttpRequest === 'function'),
+            }, data) });
+            const url = CONFIG.SERVER_URL + '/api/debug/client-log';
+            if (typeof GM_xmlhttpRequest === 'function') {
+                GM_xmlhttpRequest({ method: 'POST', url, data: body,
+                    headers: { 'Content-Type': 'application/json' },
+                    onload: function () {}, onerror: function () {} });
+            }
+        } catch (_) { /* a diagnostic must never break the button */ }
     }
 
     /** Current transport, for the chip. */
@@ -6289,6 +6322,14 @@ body.wb-chain-active {
     // slow beat or one throttled timer tick can't trigger a false reconnect.
     let sseLastMessageAt = 0;
     let sseStaleTimer = null;
+    // 5.5.1: module scope, not a local inside connectSSEStream.
+    //
+    // As a local, nothing outside that call could cancel it. Forcing a
+    // reconnect left the PREVIOUS attempt's watchdog armed, and 12s later it
+    // ran against whatever sseAbort then pointed at -- the new stream -- and
+    // aborted it, incremented sseStartFailures and restarted polling. Two taps
+    // armed two of them. The button could not win.
+    let sseWatchdogTimer = null;
     const SSE_STALE_MS = 20000;
 
     /**
@@ -6340,7 +6381,8 @@ body.wb-chain-active {
         // 0.11.276) leaves this request open forever, silently delivering
         // nothing. Give it 12s to report a start, then abort so the connection
         // isn't left dangling and long-poll owns the transport cleanly.
-        const sseWatchdog = setTimeout(() => {
+        clearTimeout(sseWatchdogTimer);
+        sseWatchdogTimer = setTimeout(() => {
             if (sseConnected) return;
             warn('SSE never started after 12s — aborting; host GM shim likely has no onprogress');
             try { if (sseAbort && typeof sseAbort.abort === 'function') sseAbort.abort(); } catch (e) {}
@@ -6375,14 +6417,14 @@ body.wb-chain-active {
             method: 'GET',
             url: url,
             responseType: 'text',
-            onloadstart: () => { clearTimeout(sseWatchdog); sseStartFailures = 0; sseConnected = true; sseLastMessageAt = Date.now(); log("SSE stream started"); updateRtBadge("sse"); if (pollTimer) stopPolling(true); },
+            onloadstart: () => { clearTimeout(sseWatchdogTimer); sseStartFailures = 0; sseConnected = true; sseLastMessageAt = Date.now(); log("SSE stream started"); updateRtBadge("sse"); if (pollTimer) stopPolling(true); },
             timeout: 0,
             onprogress: (resp) => {
                 if (!resp || resp.responseText === undefined || resp.responseText === null) {
                     return;
                 }
                 if (!sseConnected) {
-                    clearTimeout(sseWatchdog);
+                    clearTimeout(sseWatchdogTimer);
                     sseConnected = true;
                     log('SSE stream connected');
                     updateRtBadge('sse');
@@ -10097,7 +10139,11 @@ body.wb-chain-active {
             el.textContent = r === 'connecting' ? '\u2026 connecting'
                            : r === 'no-auth' ? 'not signed in'
                            : r === 'unavailable' ? 'no SSE here'
+                           : r === 'no-war' ? 'no active war'
                            : 'failed';
+            // The short form fits the chip; the whole message is in the log.
+            if (String(r).startsWith('failed')) el.title = String(r);
+            if (r !== 'connecting') reportSSEForceDiag({ reason: r });
             // Long enough to outlast the 12s startup watchdog, so the chip
             // settles on the real answer rather than an optimistic one.
             setTimeout(() => { delete el.dataset.busy; paintTransportChip(); },

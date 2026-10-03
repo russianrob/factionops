@@ -24,27 +24,32 @@ function fn(name) {
   throw new Error('unbalanced: ' + name);
 }
 
-function rig({ canSSE = true, token = 'jwt', connected = false, failures = 3 } = {}) {
-  const calls = { connect: 0, abort: 0, stopStale: 0, cleared: 0 };
+function rig({ canSSE = true, token = 'jwt', connected = false, failures = 3,
+               warId = 'war_42055', fid = '42055', throws = false } = {}) {
+  const calls = { connect: 0, abort: 0, stopStale: 0, cleared: 0, clearedHandles: [], diag: [] };
   const env = {
     sseConnected: connected,
     sseStartFailures: failures,
     sseRetryTimer: 1,
+    sseWatchdogTimer: 99,
     sseAbort: { abort: () => { calls.abort++; } },
   };
   const src = [
     'let sseConnected = env.sseConnected, sseStartFailures = env.sseStartFailures;',
     'let sseRetryTimer = env.sseRetryTimer, sseAbort = env.sseAbort;',
+    'let sseWatchdogTimer = env.sseWatchdogTimer;',
     fn('forceSSEReconnect'), fn('transportLabel'),
     'globalThis.API={forceSSEReconnect,transportLabel,',
-    '  peek:()=>({sseConnected,sseStartFailures,sseRetryTimer,sseAbort})};'
+    '  peek:()=>({sseConnected,sseStartFailures,sseRetryTimer,sseAbort,sseWatchdogTimer})};'
   ].join('\n');
   const api = new Function('env', 'state', 'canUseSSEStream', 'connectSSEStream',
-    'stopSSEStaleWatch', 'clearTimeout', 'calls',
+    'stopSSEStaleWatch', 'clearTimeout', 'calls', 'deriveWarId', 'reportSSEForceDiag',
     src + '; return API;')(
-    env, { jwtToken: token }, () => canSSE,
-    () => { calls.connect++; }, () => { calls.stopStale++; },
-    () => { calls.cleared++; }, calls);
+    env, { jwtToken: token, myFactionId: fid }, () => canSSE,
+    () => { calls.connect++; if (throws) throw new Error('shim says no'); },
+    () => { calls.stopStale++; },
+    (t) => { calls.cleared++; if (t) calls.clearedHandles.push(t); },
+    calls, () => warId, (d) => { calls.diag.push(d); });
   return { api, calls };
 }
 
@@ -61,7 +66,8 @@ test('a tap clears the three strikes that made it give up', () => {
 test('it cancels a pending retry instead of racing it', () => {
   const r = rig();
   r.api.forceSSEReconnect();
-  assert.equal(r.calls.cleared, 1, 'a queued retry would fire a second stream');
+  // By handle, not by count -- the watchdog is cleared on this path too.
+  assert.ok(r.calls.clearedHandles.includes(1), 'a queued retry would fire a second stream');
   assert.equal(r.api.peek().sseRetryTimer, null);
 });
 
@@ -144,4 +150,54 @@ test('the chip is in the filter bar and has an accessible name', () => {
 test('it is styled for both states', () => {
   assert.match(SRC, /\.fo-wp-rt\.is-sse\s*\{/);
   assert.match(SRC, /\.fo-wp-rt\.is-poll\s*\{/);
+});
+
+// --- the bug that made two taps fail -------------------------------------
+
+test('a forced reconnect cancels the PREVIOUS attempt\'s watchdog', () => {
+  // The 12s watchdog used to be a local inside connectSSEStream, so nothing
+  // outside could cancel it. A forced reconnect left it armed; 12s later it
+  // ran against whatever sseAbort then pointed at — the NEW stream — aborted
+  // it, bumped sseStartFailures and restarted polling. Two taps armed two.
+  const r = rig();
+  r.api.forceSSEReconnect();
+  assert.ok(r.calls.clearedHandles.includes(99),
+    'the old watchdog is still armed and will abort the new stream in 12s');
+  assert.equal(r.api.peek().sseWatchdogTimer, null);
+});
+
+test('two taps in a row both reconnect cleanly', () => {
+  const r = rig();
+  assert.equal(r.api.forceSSEReconnect(), 'connecting');
+  assert.equal(r.api.forceSSEReconnect(), 'connecting', 'the second tap failed');
+  assert.equal(r.calls.connect, 2);
+  assert.equal(r.api.peek().sseStartFailures, 0);
+});
+
+test('no active war is reported as such, not as a fault', () => {
+  assert.equal(rig({ warId: null }).api.forceSSEReconnect(), 'no-war');
+  assert.equal(rig({ fid: '' }).api.forceSSEReconnect(), 'no-war');
+  assert.equal(rig({ warId: null }).calls.connect, 0);
+});
+
+test('a throwing shim returns the message instead of a bare "failed"', () => {
+  // "it failed" with nothing attached is what sent me reading source instead
+  // of reading the cause.
+  const r = rig({ throws: true });
+  const out = r.api.forceSSEReconnect();
+  assert.match(out, /^failed:/);
+  assert.match(out, /shim says no/);
+  assert.equal(r.calls.diag.length, 1, 'the exception was never reported');
+  assert.equal(r.calls.diag[0].reason, 'threw');
+  assert.match(r.calls.diag[0].err, /shim says no/);
+});
+
+test('the watchdog handle is module scope, not a local', () => {
+  assert.match(SRC, /let sseWatchdogTimer = null;/);
+  const body = fn('connectSSEStream');
+  assert.ok(!/const sseWatchdog\b/.test(body), 'still a local — nothing outside can cancel it');
+  assert.match(body, /sseWatchdogTimer = setTimeout/);
+  // And it must CLEAR before arming: the retry path re-enters this function,
+  // so without that each attempt leaves its predecessor's watchdog running.
+  assert.match(body, /clearTimeout\(sseWatchdogTimer\);\s*\n\s*sseWatchdogTimer = setTimeout/);
 });
