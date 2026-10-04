@@ -514,8 +514,9 @@ function composeApi(html) {
   const src = [
     'const COMPOSE_MAX_AGE = 3*60*1000;',
     fn('findComposeFields'), fn('setNativeValue'), fn('setRichValue'), fn('escapeHtml'),
+    fn('linkify'),
     fn('toast'), fn('fillCompose'), fn('stashCompose'), fn('takeCompose'),
-    'globalThis.API={findComposeFields,setNativeValue,setRichValue,fillCompose,stashCompose,takeCompose};'
+    'globalThis.API={findComposeFields,setNativeValue,setRichValue,linkify,escapeHtml,fillCompose,stashCompose,takeCompose};'
   ].join('\n');
   const api = new Function('document', 'window', 'Event', 'GM_getValue', 'GM_setValue',
     'COMPOSE_STORE', 'setTimeout', src + '; return API;')(
@@ -856,7 +857,7 @@ function fillRunner(html, { fillOnFirstTry = true } = {}) {
   const toasts = [];
   const src = [
     'const COMPOSE_MAX_AGE = 3*60*1000, COMPOSE_WAIT_MS = 15000;',
-    fn('findComposeFields'), fn('escapeHtml'), fn('setRichValue'), fn('setNativeValue'),
+    fn('findComposeFields'), fn('escapeHtml'), fn('linkify'), fn('setRichValue'), fn('setNativeValue'),
     fn('fillCompose'), fn('takeCompose'), fn('runComposeFill'),
     'globalThis.API={runComposeFill};'
   ].join('\n');
@@ -1166,4 +1167,64 @@ test('an enemy badge is not a mail-them-about-it link', () => {
   const b = api.badgeFor(1, 'Unknown', '5', true);
   assert.equal(b.tagName, 'SPAN');
   assert.equal(b.getAttribute('data-er-ask'), null);
+});
+
+// --- the link has to be clickable ----------------------------------------
+
+test('the preferences URL arrives as a real anchor', () => {
+  const { api, document } = composeApi(COMPOSE);
+  const src = readFileSync('/opt/warboard/server/public/scripts/torn-faction-revives.user.js', 'utf8');
+  const m = /const NUDGE_BODY\s*=\s*([\s\S]*?);\n/.exec(src);
+  api.fillCompose({ text: new Function('return (' + m[1] + ')')(), subject: 'Revives off' });
+  const a = document.getElementById('mce_0').querySelector('a');
+  assert.ok(a, 'the URL went in as plain text, not a link');
+  assert.equal(a.getAttribute('href'), 'https://www.torn.com/preferences.php');
+  assert.equal(a.textContent, 'https://www.torn.com/preferences.php');
+});
+
+test('linkify runs AFTER escaping, so a body cannot smuggle in markup', () => {
+  // The order is the entire safety argument. Linkifying first would leave a
+  // crafted body's tags intact; escaping after would destroy the anchors.
+  const { api, document } = composeApi(COMPOSE);
+  api.fillCompose({ text: '<img src=x onerror=alert(1)> https://www.torn.com/preferences.php' });
+  const ed = document.getElementById('mce_0');
+  assert.equal(ed.querySelectorAll('img').length, 0, 'raw markup survived');
+  assert.equal(ed.querySelectorAll('a').length, 1, 'the real URL should still be a link');
+  assert.match(ed.innerHTML, /&lt;img/);
+});
+
+test('a trailing full stop is not swallowed into the href', () => {
+  const { api, document } = composeApi(COMPOSE);
+  api.fillCompose({ text: 'see https://www.torn.com/preferences.php.' });
+  const a = document.getElementById('mce_0').querySelector('a');
+  assert.equal(a.getAttribute('href'), 'https://www.torn.com/preferences.php');
+  assert.ok(document.getElementById('mce_0').textContent.endsWith('.'),
+    'the sentence lost its full stop');
+});
+
+test('a URL with query params keeps them, correctly escaped', () => {
+  // escapeHtml turns & into &amp;, which is the correct form INSIDE an href --
+  // the browser decodes it back to & when the link is followed.
+  const { api, document } = composeApi(COMPOSE);
+  api.fillCompose({ text: 'https://www.torn.com/preferences.php?tab=a&x=1' });
+  const a = document.getElementById('mce_0').querySelector('a');
+  assert.equal(a.getAttribute('href'), 'https://www.torn.com/preferences.php?tab=a&x=1');
+});
+
+test('text with no URL is untouched', () => {
+  const { api, document } = composeApi(COMPOSE);
+  api.fillCompose({ text: 'Alice [2]\nBob [3]' });
+  const ed = document.getElementById('mce_0');
+  assert.equal(ed.querySelectorAll('a').length, 0);
+  assert.equal(ed.innerHTML, 'Alice [2]<br>Bob [3]');
+});
+
+test('the plain-textarea path stays plain', () => {
+  // No editor means no HTML. Pushing an anchor into a textarea would put the
+  // literal tag in the message.
+  const { api, document } = composeApi(COMPOSE_PLAIN);
+  api.fillCompose({ text: 'go to https://www.torn.com/preferences.php now' });
+  const v = document.querySelector('textarea[name="message"]').value;
+  assert.equal(v, 'go to https://www.torn.com/preferences.php now');
+  assert.ok(!/</.test(v), 'markup leaked into the plain textarea');
 });

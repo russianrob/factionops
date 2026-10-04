@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Revive Check
 // @namespace    russianrob.faction.revives
-// @version      2.4.1
+// @version      2.4.2
 // @description  Badges every faction member by their revive setting (Everyone / Friends & faction / off) in the position column, with a grouped copy-and-compose list. Originally built on AaronPMC's Elimination Revives.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-faction-revives.user.js
@@ -16,6 +16,9 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 2.4.2 - That link is a real anchor now, not text Torn may or may not
+ *         linkify. Escape first, then linkify -- the only markup in the
+ *         body is the markup we put there.
  * 2.4.1 - The nudge mail now tells them WHERE: a preferences.php link
  *         under the ask.
  * 2.4.0 - Works on any faction's page, not just your own.
@@ -654,8 +657,26 @@
     // `tinymce` itself is unreachable from the userscript sandbox (no
     // @grant unsafeWindow, and tinymce.editors reads empty from here), which
     // is fine — the editor syncs from its element on input.
+    /**
+     * Turn bare URLs into anchors.
+     *
+     * Runs on ALREADY-ESCAPED text, which is the whole safety argument: by the
+     * time this sees the string every < > & " is an entity, so the only markup
+     * in the result is the markup this function puts there. Escaping after
+     * linkifying would destroy the anchors; linkifying before escaping would
+     * let a crafted body smuggle in tags.
+     *
+     * The trailing-character class stops a sentence's full stop or closing
+     * bracket being swallowed into the href.
+     */
+    function linkify(escaped) {
+        return String(escaped).replace(
+            /https?:\/\/[^\s<]*[^\s<.,:;!?)\]]/g,
+            function (u) { return '<a href="' + u + '">' + u + '</a>'; });
+    }
+
     function setRichValue(el, text) {
-        el.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
+        el.innerHTML = linkify(escapeHtml(text)).replace(/\n/g, '<br>');
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
     }
