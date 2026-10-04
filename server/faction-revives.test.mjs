@@ -800,9 +800,39 @@ test('the list panel has no Compose button', () => {
 });
 
 test('the nudge text is what was asked for, verbatim', () => {
+  // Evaluated, not pattern-matched against the source: the body is built from
+  // concatenated parts now, and a regex over the literal would pass on a
+  // string that never reaches the mail.
   const src = readFileSync('/opt/warboard/server/public/scripts/torn-faction-revives.user.js', 'utf8');
-  assert.match(src, /NUDGE_SUBJECT\s*=\s*'Revives off'/);
-  assert.match(src, /NUDGE_BODY\s*=\s*'please turn your revives off :\)'/);
+  const pick = (name) => {
+    const m = new RegExp('const ' + name + '\\s*=\\s*([\\s\\S]*?);\\n').exec(src);
+    assert.ok(m, 'could not find ' + name);
+    return new Function('return (' + m[1] + ')')();
+  };
+  assert.equal(pick('NUDGE_SUBJECT'), 'Revives off');
+
+  const body = pick('NUDGE_BODY');
+  assert.match(body, /^please turn your revives off :\)/);
+  assert.match(body, /Please go to this https:\/\/www\.torn\.com\/preferences\.php link to turn revives off/);
+  assert.ok(body.includes('\n\n'), 'the link should sit on its own line, not run into the ask');
+});
+
+test('the nudge body survives the editor as readable text', () => {
+  // It goes through escapeHtml before TinyMCE. A bare URL has nothing to
+  // escape, but a stray < or & in future wording would arrive as an entity,
+  // and newlines must become <br> or the whole mail is one run-on line.
+  const { api, document } = composeApi(COMPOSE);
+  const src = readFileSync('/opt/warboard/server/public/scripts/torn-faction-revives.user.js', 'utf8');
+  const m = /const NUDGE_BODY\s*=\s*([\s\S]*?);\n/.exec(src);
+  const body = new Function('return (' + m[1] + ')')();
+
+  api.fillCompose({ text: body, subject: 'Revives off' });
+  const ed = document.getElementById('mce_0');
+  assert.match(ed.innerHTML, /<br><br>/, 'the blank line was flattened');
+  assert.ok(ed.textContent.includes('https://www.torn.com/preferences.php'),
+    'the link text did not survive');
+  assert.ok(!/&lt;|&amp;amp;/.test(ed.innerHTML), 'something got double-escaped');
+  assert.equal(document.querySelector('input[name="title"]').value, 'Revives off');
 });
 
 // --- runComposeFill: the retry must not slander a fill that worked --------

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Revive Check
 // @namespace    russianrob.faction.revives
-// @version      2.4.0
+// @version      2.4.1
 // @description  Badges every faction member by their revive setting (Everyone / Friends & faction / off) in the position column, with a grouped copy-and-compose list. Originally built on AaronPMC's Elimination Revives.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-faction-revives.user.js
@@ -16,6 +16,8 @@
 // ==/UserScript==
 
 /* CHANGELOG
+ * 2.4.1 - The nudge mail now tells them WHERE: a preferences.php link
+ *         under the ask.
  * 2.4.0 - Works on any faction's page, not just your own.
  *         /v2/faction/{id}/members answers for anyone; Torn masks
  *         revive_setting to "Unknown" there but is_revivable comes
@@ -73,7 +75,11 @@
     // The nudge a tapped badge sends. Nothing is ever sent for you -- the
     // mail opens filled in and you press Send.
     const NUDGE_SUBJECT   = 'Revives off';
-    const NUDGE_BODY      = 'please turn your revives off :)';
+    // Two lines: the ask, then where to do it. Plain text, not an <a> tag --
+    // setRichValue escapes the body before it reaches TinyMCE, so markup would
+    // arrive as literal angle brackets. Torn linkifies a bare URL on render.
+    const NUDGE_BODY      = 'please turn your revives off :)\n\n'
+        + 'Please go to this https://www.torn.com/preferences.php link to turn revives off';
     const COMPOSE_MAX_AGE = 3 * 60 * 1000;      // a stale hand-off must not ambush a later mail
     const COMPOSE_WAIT_MS = 15000;              // messages.php renders the form after load
 
