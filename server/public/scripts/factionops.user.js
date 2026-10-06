@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.5.2
+// @version      5.5.3
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.5.2';
+    const SCRIPT_VERSION = '5.5.3';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -6626,6 +6626,18 @@ body.wb-chain-active {
                 onload(res) {
                     log('Auth response status:', res.status);
                     const body = safeParse(res.responseText);
+                    if (res.status === 403) {
+                        // Faction not allowed. Say so once, then strip the
+                        // overlay -- a dead CALL button is worse than no
+                        // button, because it reads as a tool that is merely
+                        // broken rather than one that was never yours.
+                        const msg = (body && body.error) || 'FactionOps is not available for your faction.';
+                        warn('Auth refused:', msg);
+                        _authRejected = true;
+                        try { teardownWarPageUi(); } catch (_) {}
+                        try { showToast(msg, 'error'); } catch (_) {}
+                        return reject(new Error(msg));
+                    }
                     if (res.status === 426) {
                         const msg = (body && body.error) || 'FactionOps is outdated — please update.';
                         warn('Auth blocked: outdated script.', msg);
@@ -10043,7 +10055,40 @@ body.wb-chain-active {
         }, 0);
     }
 
+    // The server told us this faction may not use FactionOps.
+    //
+    // startCallsOnlyMode draws the row furniture BEFORE authenticating, on
+    // purpose -- none of it needs a token and waiting on a round trip left the
+    // page looking dead for ten seconds. The cost is that a refused faction
+    // gets a drawn overlay a moment before the refusal lands, and it used to
+    // stay there: buttons that look live, coordinate nothing, and never say
+    // why. Pressing one just 401s in silence.
+    //
+    // So the refusal has to UNDO the draw, not merely stop the next one.
+    let _authRejected = false;
+
+    function teardownWarPageUi() {
+        try {
+            const bar = document.getElementById('fo-wp-filter');
+            if (bar) bar.remove();
+            document.querySelectorAll('.fo-wp-call').forEach(function (b) { b.remove(); });
+            document.querySelectorAll('.fo-call-host').forEach(function (c) { c.classList.remove('fo-call-host'); });
+            document.querySelectorAll('.fo-called-row').forEach(function (r) {
+                r.classList.remove('fo-called-row', 'fo-called-mine');
+            });
+            // The stats/activity filter hides rows inline. Leaving that behind
+            // would silently shorten the enemy list on a page we are otherwise
+            // walking away from -- the worst way to fail.
+            document.querySelectorAll('li.enemy').forEach(function (r) {
+                if (r.style && r.style.display === 'none') r.style.display = '';
+            });
+        } catch (_) { /* teardown must never throw */ }
+    }
+
     function markCalledRows() {
+        // Refused factions get nothing. Checked first so the 2s observer and
+        // the 5s pass cannot redraw what the refusal just removed.
+        if (_authRejected) { teardownWarPageUi(); return; }
         // Everything below is WAR-VIEW furniture, and findMemberRows falls back
         // to a bare `.members-list li` -- which the faction page's own roster
         // matches. The sort that once flexed that list is gone (5.3.0), but the
