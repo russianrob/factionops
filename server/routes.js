@@ -305,6 +305,29 @@ function clearExistingTimer(timerKey) {
  * Faction gate — verify the authenticated player belongs to the war's faction.
  * Returns the war object if OK, or sends a 403 and returns null.
  */
+/**
+ * A war token must name a faction.
+ *
+ * The three realtime entry points call getOrCreateWar, which CREATES the war
+ * when it does not exist, and then compare war.factionId with the caller's.
+ * For a token carrying no factionId claim both sides are undefined, the
+ * comparison passes, and the caller gets a freshly minted war under any id
+ * they care to name -- unbounded store growth from a valid signature.
+ *
+ * Two kinds of token have no factionId: the /gate cookie, which a partner
+ * faction can obtain, and admin tokens. Neither should reach the war store at
+ * all, so the claim is checked BEFORE it is touched rather than after.
+ *
+ * The real war is not exposed by this -- war_42055 already exists, so the
+ * comparison runs against "42055" and a claimless token is refused. This
+ * closes the creation path, not a disclosure.
+ */
+function requireFactionClaim(req, res) {
+  if (req.user && req.user.factionId) return true;
+  res.status(403).json({ error: "This token carries no faction" });
+  return false;
+}
+
 function requireWarMember(req, res, warId) {
   const war = store.getWar(warId);
   if (!war) return null; // let caller handle 404
@@ -2588,6 +2611,7 @@ router.get("/api/stream", (req, res, next) => {
     return res.status(400).json({ error: "warId query parameter is required" });
   }
 
+  if (!requireFactionClaim(req, res)) return;
   const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null);
   if (war.factionId !== factionId) {
     return res.status(403).json({ error: "Not a member of this war's faction" });
@@ -2718,6 +2742,7 @@ router.get("/api/poll", (req, res, next) => {
   }
 
   // Ensure war exists (join_war equivalent)
+  if (!requireFactionClaim(req, res)) return;
   const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null);
 
   // Faction gate — if this war already belongs to another faction, reject
@@ -2954,6 +2979,7 @@ router.get("/api/poll-long", (req, res, next) => {
   const { playerId, factionId } = req.user;
   const { warId, enemyFactionId } = req.query;
   if (!warId) return res.status(400).json({ error: "warId query parameter is required" });
+  if (!requireFactionClaim(req, res)) return;
   const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null);
   if (war.factionId !== factionId) return res.status(403).json({ error: "You are not a member of this war's faction" });
   war.lastClientPollAt = Date.now();
