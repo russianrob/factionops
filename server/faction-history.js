@@ -689,6 +689,172 @@ export function parseMembershipNews(rows = []) {
   return { events, leadership, monthly, unparsed, ignored };
 }
 
+// ── Member name cache ──────────────────────────────────────────────────
+// Chain reports carry ids, never names, and a lifetime table is mostly
+// people who have LEFT — so the roster cannot name them and nothing else on
+// file does either. Names are resolved one call at a time, cached forever
+// (they change rarely), highest-respect first so the visible top of the
+// leaderboard fills in on the first run.
+
+const namesFile = (factionId) => join(DATA_DIR, `faction-names-${factionId}.json`);
+
+export function loadNames(factionId) {
+  try {
+    const f = namesFile(factionId);
+    if (existsSync(f)) return JSON.parse(readFileSync(f, "utf-8"));
+  } catch (e) { console.warn(`[fachist] could not read names: ${e.message}`); }
+  return {};
+}
+
+export function saveNames(factionId, names) {
+  try {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(namesFile(factionId), JSON.stringify(names));
+  } catch (e) { console.error(`[fachist] could not persist names: ${e.message}`); }
+}
+
+export async function resolveNames(key, factionId, ids, { budget = 150 } = {}) {
+  const names = loadNames(factionId);
+  const todo = ids.map(String).filter((id) => !names[id]).slice(0, budget);
+  let done = 0;
+  for (const id of todo) {
+    try {
+      const u = await tornGet(`https://api.torn.com/v2/user/${encodeURIComponent(id)}`
+        + `?selections=basic&key=${encodeURIComponent(key)}&comment=wb-fachist`);
+      const n = (u.basic || u.profile || {}).name;
+      if (n) names[id] = n;
+    } catch (e) {
+      // A deleted account cannot be named; remember that so it is not retried
+      // on every build forever.
+      names[id] = null;
+    }
+    if (++done % 25 === 0) saveNames(factionId, names);
+  }
+  saveNames(factionId, names);
+  return { names, resolved: done, remaining: Math.max(0, ids.length - Object.keys(names).length) };
+}
+
+// ── Chain reports: lifetime respect per member ─────────────────────────
+// The only route to per-member respect that reaches past Torn's one-year
+// attack window. /faction/chainreport?id= gives every attacker's respect for
+// that chain and reconciles exactly against the chain record. Chains run back
+// to the faction's first weeks, and a finished chain never changes — so each
+// report is fetched once and kept forever.
+//
+// It covers CHAIN respect, which is the dominant source and the one the
+// respect panel counts; attacks made outside a chain are not in it.
+
+const chainFile = (factionId) => join(DATA_DIR, `faction-chainreports-${factionId}.json`);
+
+export function loadChainReports(factionId) {
+  try {
+    const f = chainFile(factionId);
+    if (existsSync(f)) return JSON.parse(readFileSync(f, "utf-8"));
+  } catch (e) {
+    console.warn(`[fachist] could not read chain reports: ${e.message}`);
+  }
+  return { chains: {} };
+}
+
+export function saveChainReports(factionId, store) {
+  try {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(chainFile(factionId), JSON.stringify(store));
+  } catch (e) {
+    console.error(`[fachist] could not persist chain reports: ${e.message}`);
+  }
+}
+
+/**
+ * Fold one report in. Keyed by chain id and REPLACED rather than added, so
+ * re-fetching immutable data is idempotent — adding would inflate everybody
+ * on any re-run.
+ */
+export function foldChainReport(store, report, startTs) {
+  store.chains ||= {};
+  const m = {};
+  for (const a of report.attackers || []) {
+    const r = Math.round(((a.respect || {}).total || 0) * 100) / 100;
+    m[a.id] = [r, (a.attacks || {}).total || 0];
+  }
+  store.chains[String(report.id)] = { t: startTs, m };
+  return store;
+}
+
+/**
+ * Lifetime respect per member, optionally also bucketed by period.
+ *
+ * Names are not in the reports — only ids — so a lookup is passed in and an
+ * unknown id renders as the id rather than vanishing. Members who left years
+ * ago are exactly the ones a lifetime table should still show.
+ */
+export function lifetimeChainRespect(store, names = {}, { period = null } = {}) {
+  const totals = new Map();
+  const periods = new Map();
+  let chains = 0;
+
+  for (const [, rec] of Object.entries(store.chains || {})) {
+    chains++;
+    const pk = period && rec.t ? periodKey(rec.t, period) : null;
+    for (const [id, [respect, attacks]] of Object.entries(rec.m || {})) {
+      if (!totals.has(id)) totals.set(id, { id, respect: 0, attacks: 0 });
+      const t = totals.get(id);
+      t.respect += respect;
+      t.attacks += attacks;
+      if (pk) {
+        if (!periods.has(pk)) periods.set(pk, { key: pk, total: 0, m: new Map() });
+        const p = periods.get(pk);
+        p.total += respect;
+        p.m.set(id, (p.m.get(id) || 0) + respect);
+      }
+    }
+  }
+
+  const name = (id) => names[id] || String(id);
+  const members = [...totals.values()].map((t) => ({
+    id: t.id, name: name(t.id),
+    respect: Math.round(t.respect * 100) / 100,
+    attacks: t.attacks,
+    avg: t.attacks ? Math.round((t.respect / t.attacks) * 100) / 100 : 0,
+  })).sort((a, b) => b.respect - a.respect);
+
+  return {
+    chains, members,
+    total: Math.round(members.reduce((a, m) => a + m.respect, 0) * 100) / 100,
+    periods: [...periods.values()].sort((a, b) => a.key.localeCompare(b.key))
+      .map((p) => ({
+        key: p.key, total: Math.round(p.total * 100) / 100,
+        members: [...p.m.entries()].map(([id, r]) => ({
+          id, name: name(id), respect: Math.round(r * 100) / 100,
+        })).sort((a, b) => b.respect - a.respect),
+      })),
+  };
+}
+
+/**
+ * Fetch reports for chains we do not have yet, newest first, on a budget.
+ * One call per chain and never repeated, so the cost falls to near zero once
+ * the history is in.
+ */
+export async function captureChainReports(key, factionId, chains, { budget = 300, onProgress } = {}) {
+  const store = loadChainReports(factionId);
+  store.chains ||= {};
+  const todo = chains.filter((c) => !store.chains[String(c.id)]);
+  let done = 0;
+  for (const c of todo.slice(0, budget)) {
+    try {
+      const r = (await v2(`chainreport?id=${encodeURIComponent(c.id)}`, key)).chainreport;
+      if (r) foldChainReport(store, { id: c.id, attackers: r.attackers }, c.start);
+    } catch (e) {
+      console.warn(`[fachist] chainreport ${c.id}: ${e.message}`);
+    }
+    done++;
+    if (done % 25 === 0) { saveChainReports(factionId, store); if (onProgress) onProgress({ done, todo: todo.length }); }
+  }
+  saveChainReports(factionId, store);
+  return { store, fetched: done, remaining: Math.max(0, todo.length - done) };
+}
+
 // ── Captured attacks ───────────────────────────────────────────────────
 // Torn keeps roughly one YEAR of attacks and the window rolls, so the same
 // argument as the news applies: anything not copied out is gone. Stored
@@ -847,6 +1013,10 @@ export async function captureAttacks(key, factionId, { maxBackfillPages = 120, o
       if (!oldest || oldest === cursor) { store.backfillDone = true; break; }
       cursor = oldest;
       store.coveredFrom = cursor;          // advance only as far as actually read
+      // Persist as we go. A full backfill is ~2,470 pages and three quarters
+      // of an hour; saving only at the end means a restart, a crash or a
+      // rate-limit give-up throws the lot away and starts again tomorrow.
+      if (i % 50 === 49) saveCapturedAttacks(factionId, store);
     }
   }
 
@@ -919,6 +1089,7 @@ export async function buildAll({ key, factionId, onUpdate = () => {} }) {
   phase("wars", { wars: buildWarRecord({ wars, reports: {}, factionId }) });
 
   const chains = await fetchAllChains(key);
+  payload._chains = chains;
   let respectInput = { chains, warRespect: [], crimeRespect: [],
                        currentTotal: Number(basic.respect) || 0 };
   phase("chains", { respect: buildRespectSeries(respectInput), chainCount: chains.length });
@@ -1009,7 +1180,44 @@ export async function buildAll({ key, factionId, onUpdate = () => {} }) {
     console.warn(`[fachist] attacks: ${e.message}`);
     degraded.push(`attack history unavailable: ${e.message}`);
   }
+  // Lifetime respect per member. The only source that reaches past Torn's
+  // one-year attack window, because a chain report is immutable and chains
+  // run back to 2019 — so this is fetched once per chain, forever.
+  // Names come from three places, cheapest first: the persistent cache, then
+  // anyone seen attacking recently, then the current roster. Only ids none of
+  // them know cost an API call.
+  const nameMap = { ...loadNames(factionId) };
+  for (const m of (attackStore.days ? Object.values(attackStore.days) : [])) {
+    for (const [id, v] of Object.entries(m)) nameMap[id] ||= v.n;
+  }
+  for (const m of (payload.lifetime || {}).members || []) nameMap[String(m.id)] ||= m.username;
+  let chainRespect = null;
+  try {
+    const cr = await captureChainReports(key, factionId, chains, {
+      budget: 300,
+      onProgress: (p2) => { payload.chainReportProgress = p2; onUpdate(payload); },
+    });
+    // Resolve a few unknown ids per build, richest first, so the top of the
+    // table is named even on a faction whose history is mostly ex-members.
+    const ranked = lifetimeChainRespect(cr.store, nameMap);
+    const unknown = ranked.members.filter((m) => m.name === String(m.id)).map((m) => m.id);
+    if (unknown.length) {
+      const { names } = await resolveNames(key, factionId, unknown, { budget: 60 });
+      Object.assign(nameMap, names);
+    }
+    chainRespect = {
+      ...lifetimeChainRespect(cr.store, nameMap),
+      remaining: cr.remaining,
+      totalChains: chains.length,
+      unnamed: unknown.length,
+    };
+  } catch (e) {
+    console.warn(`[fachist] chain reports: ${e.message}`);
+    degraded.push(`lifetime respect per member unavailable: ${e.message}`);
+  }
+
   phase("attacks", {
+    chainRespect,
     attacks: {
       floor: attackStore.floor || null,
       backfillDone: !!attackStore.backfillDone,
@@ -1020,6 +1228,7 @@ export async function buildAll({ key, factionId, onUpdate = () => {} }) {
     },
   });
 
+  delete payload._chains;
   payload.phase = "done";
   payload.builtAt = Date.now();
   saveBuilt(factionId, payload);

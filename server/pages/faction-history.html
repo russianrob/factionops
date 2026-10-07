@@ -502,6 +502,38 @@ function render(d) {
     </section>`);
   }
 
+  const CR = d.chainRespect;
+  if (CR && CR.members && CR.members.length) {
+    const max = Math.max(1, ...CR.members.map((m) => m.respect));
+    const rows = CR.members.map((m, i) => `<tr>
+      <td class="n">${i + 1}</td><td>${esc(m.name)}</td>
+      <td class="n">${fmt(Math.round(m.respect))}</td>
+      <td style="width:26%"><span class="minibar" style="width:${(m.respect / max) * 100}%"></span></td>
+      <td class="n">${fmt(m.attacks)}</td><td class="n">${fmt1(m.avg)}</td></tr>`).join('');
+    out.push(`<section><h2>Lifetime respect per member</h2>
+      <div class="grid">
+        ${stat('Respect', fmt(Math.round(CR.total)))}
+        ${stat('Members', fmt(CR.members.length))}
+        ${stat('Chains read', fmt(CR.chains))}
+      </div>
+      <div class="scroll cap" style="margin-top:12px"><table>
+        <thead><tr><th>#</th><th>Member</th><th class="n">Respect</th><th></th>
+          <th class="n">Chain attacks</th><th class="n">Avg</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      <p class="note">Summed from every chain report held — ${fmt(CR.chains)} of
+        ${fmt(CR.totalChains || CR.chains)} chains${CR.remaining
+          ? `, ${fmt(CR.remaining)} still to read` : ''}. Torn rejects
+        <code>stat=respect</code> on the contributors endpoint, so this is the only
+        route to per-member respect that reaches past the one-year attack window:
+        a chain report names each attacker's share, reconciles exactly against the
+        chain record, and chains run back to 2019.</p>
+      <p class="note">Chain respect only — attacks made outside a chain are not in
+        a chain report. Members who have since left are included, which is the point
+        of a lifetime table; an id shown instead of a name is somebody gone long
+        enough that nothing left on file knows who they were.</p>
+    </section>`);
+  }
+
   const A = d.attacks;
   if (A && A.all) {
     out.push(`<section><h2>Respect from attacks</h2>

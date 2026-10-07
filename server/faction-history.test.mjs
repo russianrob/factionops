@@ -450,3 +450,51 @@ test('a day is only complete when the covered interval spans all of it', () => {
 test('with no interval recorded, no day can be claimed complete', () => {
   assert.equal(dayIsCovered({ days: { '2026-10-02': {} } }, '2026-10-02'), false);
 });
+
+// ── chain reports: the real lifetime respect-per-member source ─────────
+// /faction/chainreport?id= returns each attacker's respect for that chain,
+// and it reconciles exactly against the chain record (26,391.9 vs 26,391.93
+// on a 2,504-hit chain). Chains go back to 2019 and a finished one never
+// changes, so each report is fetched once and kept forever — which is how
+// "lifetime respect per member" exists at all, given Torn rejects
+// stat=respect and caps the attack log at a year.
+import { foldChainReport, lifetimeChainRespect } from './faction-history.js';
+
+const report = (id, attackers) => ({
+  id, attackers: attackers.map(([pid, respect, attacks]) =>
+    ({ id: pid, respect: { total: respect }, attacks: { total: attacks } })),
+});
+
+test('a report folds to per-member respect for that chain', () => {
+  const store = foldChainReport({ chains: {} }, report(7, [[1, 10.5, 3], [2, 4.5, 2]]), 1000);
+  assert.deepEqual(store.chains['7'], { t: 1000, m: { 1: [10.5, 3], 2: [4.5, 2] } });
+});
+
+test('re-folding the same chain does not double count', () => {
+  // Immutable data fetched twice must be idempotent, or a re-run inflates
+  // everybody.
+  let s = foldChainReport({ chains: {} }, report(7, [[1, 10, 3]]), 1000);
+  s = foldChainReport(s, report(7, [[1, 10, 3]]), 1000);
+  assert.equal(lifetimeChainRespect(s).members[0].respect, 10);
+});
+
+test('lifetime totals sum every chain held, newest name wins', () => {
+  let s = foldChainReport({ chains: {} }, report(1, [[1, 10, 2], [2, 5, 1]]), 1000);
+  s = foldChainReport(s, report(2, [[1, 20, 4]]), 2000);
+  const r = lifetimeChainRespect(s, { 1: 'Alice', 2: 'Bob' });
+  assert.deepEqual(r.members.map((m) => [m.name, m.respect, m.attacks]),
+    [['Alice', 30, 6], ['Bob', 5, 1]]);
+  assert.equal(r.chains, 2);
+});
+
+test('an unknown id shows as the id rather than being dropped', () => {
+  const s = foldChainReport({ chains: {} }, report(1, [[999, 7, 1]]), 1000);
+  assert.equal(lifetimeChainRespect(s, {}).members[0].name, '999');
+});
+
+test('lifetime respect buckets by period from each chain\'s own timestamp', () => {
+  let s = foldChainReport({ chains: {} }, report(1, [[1, 10, 2]]), Date.parse('2024-03-01T12:00:00Z') / 1000);
+  s = foldChainReport(s, report(2, [[1, 20, 4]]), Date.parse('2025-03-01T12:00:00Z') / 1000);
+  const r = lifetimeChainRespect(s, { 1: 'Alice' }, { period: 'year' });
+  assert.deepEqual(r.periods.map((p) => [p.key, p.total]), [['2024', 10], ['2025', 20]]);
+});
