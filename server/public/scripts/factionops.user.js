@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.5.3
+// @version      5.6.0
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.5.3';
+    const SCRIPT_VERSION = '5.6.0';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -3414,6 +3414,15 @@ body.wb-chain-active {
 
     /** The bonus already announced for this chain, so it announces once. */
     let lastBonusShown = null;
+
+    /**
+     * The milestone already reported as LANDED.
+     *
+     * Separate from lastBonusShown: the approach warning and the "it landed"
+     * message are different events about the same number, and one firing must
+     * not suppress the other.
+     */
+    let lastBonusLanded = null;
 
     /** Return the next bonus milestone at or after `count`, or null. */
     function nextBonusMilestone(count) {
@@ -8901,18 +8910,61 @@ body.wb-chain-active {
                             updateChainBar();
 
                             if (chain.current !== oldCurrent) {
-                                // Bonus-imminent alert. The original lived in the now-dead
-                                // !CHAIN_POLL_ONLY block, so under poll-only it never fired.
-                                // Fire on each hit within 3 of the next bonus milestone.
+                                // Bonus alerts. The original lived in the now-dead
+                                // !CHAIN_POLL_ONLY block, so under poll-only it never fired;
+                                // this is the live copy.
                                 const nextBonus = nextBonusMilestone(chain.current + 1);
                                 const hitsToBonus = nextBonus ? nextBonus - chain.current : null;
                                 const coolingDown = (chain.cooldown || 0) > 0;
                                 const focusOK = IS_PDA || (typeof document.hasFocus === 'function' ? document.hasFocus() : !document.hidden);
-                                if (CONFIG.CHAIN_ALERT && focusOK && !coolingDown && hitsToBonus !== null && hitsToBonus > 0 && hitsToBonus <= 3 && chain.current >= 10) {
+
+                                // A chain never shrinks; a late snapshot can make it look as
+                                // though it has. Reset so the milestone announces again.
+                                // Both latches, because a stale snapshot is the one way the
+                                // same milestone can be reached twice. oldCurrent otherwise
+                                // only ever advances, which is why the two !== latch checks
+                                // below have no reachable failing case on their own -- they
+                                // are guards against a non-monotonic sequence, not dedupes
+                                // for an observed one.
+                                if (chain.current < oldCurrent) { lastBonusShown = null; lastBonusLanded = null; }
+
+                                // Did a milestone land BETWEEN two polls?
+                                //
+                                // This poll is every 30s, and measured across 425 stored
+                                // chains the count steps 0.7 hits per poll at the median but
+                                // 4-5 on the fastest ones -- which clears the whole approach
+                                // window without ever being observed inside it. Those are
+                                // precisely the chains where somebody is pushing for a bonus,
+                                // so the one case that most needs saying was the one case
+                                // that said nothing. "250 hit" after the fact beats silence.
+                                const landed = BONUS_MILESTONES
+                                    .filter((m) => m > oldCurrent && m <= chain.current && m >= 10)
+                                    .pop() || null;
+
+                                if (CONFIG.CHAIN_ALERT && focusOK && landed !== null
+                                    && landed !== lastBonusLanded) {
+                                    lastBonusLanded = landed;
+                                    lastBonusShown = null;   // its approach warning is moot now
+                                    showToast(`BONUS HIT — chain ${landed}!`, 'success');
+                                    playChainAlert();
+                                    firePdaNotification('bonus_imminent',
+                                        '\uD83D\uDCA5 Bonus Hit',
+                                        `Chain reached ${landed}.`);
+                                } else if (CONFIG.CHAIN_ALERT && focusOK && !coolingDown
+                                    && hitsToBonus !== null && hitsToBonus > 0
+                                    && hitsToBonus <= BONUS_APPROACH && chain.current >= 10
+                                    && nextBonus !== lastBonusShown) {
+                                    // BONUS_APPROACH, not a hardcoded 3. The constant is five
+                                    // for the reason documented beside it: a window narrower
+                                    // than the step size is invisible exactly when it matters.
+                                    //
+                                    // Latched per milestone, not per hit: five hits out, an
+                                    // unlatched test is five toasts for one bonus.
+                                    lastBonusShown = nextBonus;
                                     showToast(`BONUS HIT in ${hitsToBonus}! Target: ${nextBonus}`, 'error');
                                     playChainAlert();
                                     firePdaNotification('bonus_imminent',
-                                        '💥 Bonus Hit Imminent',
+                                        '\uD83D\uDCA5 Bonus Hit Imminent',
                                         `Chain at ${chain.current}/${nextBonus} — ${hitsToBonus} hit${hitsToBonus > 1 ? 's' : ''} to bonus!`);
                                 }
                             }
