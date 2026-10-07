@@ -117,8 +117,10 @@ const warTargetNotified = new Map();
  * (which by definition has no live session), so gating the audience on "online"
  * silently dropped exactly the people who needed it — the reported symptom that
  * chain alerts only arrived while factionops was open. The push layer filters
- * this list to members with a registered subscription (isSubscribed), so
- * non-subscribed / departed members are still skipped.
+ * this list to members reachable on any transport (hasAnyPushChannel — web
+ * push OR a registered warboard app device), so unreachable / departed
+ * members are still skipped. It deliberately does NOT filter on web push
+ * alone: that dropped every app-only member from a whole war's alerts.
  */
 function pushAudience(war) {
   return war && war.factionId
