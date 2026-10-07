@@ -144,6 +144,29 @@ export async function fetchCrimeRespect(key, sinceTs) {
   return out;
 }
 
+/**
+ * Attacks back to `sinceTs`, paged by timestamp cursor.
+ *
+ * The `next` link is null here and only `prev` carries a cursor, so offset
+ * paging does not work — walk backwards with `to=<oldest seen>`. At ~100 rows
+ * per 14 hours of activity a month costs roughly 50 calls, which is why the
+ * window is bounded and the page says what it covers.
+ */
+export async function fetchAttacks(key, sinceTs, onProgress) {
+  const out = [];
+  let to = null;
+  for (let page = 0; page < 400; page++) {
+    const rows = (await v2(`attacks?limit=100${to ? `&to=${to}` : ""}`, key)).attacks || [];
+    if (!rows.length) break;
+    out.push(...rows.filter((a) => (a.started || 0) >= sinceTs));
+    const oldest = Math.min(...rows.map((a) => a.started || 0));
+    if (onProgress) onProgress(out.length);
+    if (!oldest || oldest < sinceTs || oldest === to) break;
+    to = oldest;
+  }
+  return out;
+}
+
 /** Per-member lifetime energy for one gym stat. */
 export async function fetchContributors(key, stat) {
   return (await v2(`contributors?stat=gym${stat}`, key)).contributors || [];
@@ -329,6 +352,72 @@ export function buildRespectSeries({ chains = [], warRespect = [], crimeRespect 
     points, tracked, currentTotal,
     unaccounted: Math.round((currentTotal - tracked) * 100) / 100,
     earliest: points.length ? points[0].t : null,
+  };
+}
+
+/**
+ * Who earned the faction's respect by attacking, over a bounded window.
+ *
+ * Three traps in the raw feed, each of which silently inflates somebody:
+ *
+ *   - it carries BOTH directions, and `respect_gain` on an incoming attack is
+ *     the ENEMY'S gain. Summing unfiltered credits our members with respect
+ *     our opponents took off us.
+ *   - a stealthed attack has `attacker: null` — about 7 in every 100. Dropping
+ *     those makes the leaderboard disagree with the faction total for no
+ *     visible reason, so they are reported as unattributed instead.
+ *   - this is a WINDOW, never a lifetime. The attack log reaches back about a
+ *     year but a year is 600+ calls at 100 rows per page, so the caller picks
+ *     a span and the page says which.
+ */
+export function buildAttackRespect(attacks = [], factionId) {
+  const me = String(factionId);
+  const by = new Map();
+  const unattributed = { attacks: 0, respect: 0 };
+  let totalRespect = 0, considered = 0;
+
+  for (const a of attacks) {
+    const atkr = a.attacker;
+    // An incoming attack still names its attacker, so the faction check is
+    // what decides direction — not the presence of the field.
+    const theirFaction = atkr && atkr.faction ? String(atkr.faction.id) : null;
+    const gain = Number(a.respect_gain) || 0;
+
+    if (!atkr) {
+      // No attacker at all: can only be one of ours if we are reading our own
+      // feed and the row is outgoing, which a stealthed row does not say. It
+      // is counted so the totals reconcile, and attributed to nobody.
+      unattributed.attacks++;
+      unattributed.respect += gain;
+      totalRespect += gain;
+      considered++;
+      continue;
+    }
+    if (theirFaction !== me) continue;
+
+    const key = String(atkr.id || atkr.name);
+    if (!by.has(key)) {
+      by.set(key, { id: atkr.id, name: atkr.name, respect: 0, attacks: 0, results: {} });
+    }
+    const m = by.get(key);
+    m.respect += gain;
+    m.attacks++;
+    m.results[a.result] = (m.results[a.result] || 0) + 1;
+    totalRespect += gain;
+    considered++;
+  }
+
+  const members = [...by.values()].map((m) => ({
+    ...m,
+    respect: Math.round(m.respect * 100) / 100,
+    avg: m.attacks ? Math.round((m.respect / m.attacks) * 100) / 100 : 0,
+  })).sort((a, b) => b.respect - a.respect);
+
+  return {
+    members,
+    unattributed: { ...unattributed, respect: Math.round(unattributed.respect * 100) / 100 },
+    totalRespect: Math.round(totalRespect * 100) / 100,
+    considered,
   };
 }
 
@@ -716,6 +805,22 @@ export async function buildAll({ key, factionId, onUpdate = () => {} }) {
     respect: buildRespectSeries(respectInput),
     reportsRaw: reports,
     reportProgress: { done: wars.length, total: wars.length },
+  });
+
+  // Attack respect last: it is the only phase whose cost scales with how
+  // busy the faction has been rather than with how old it is.
+  const attackDays = 30;
+  const since = Math.floor(Date.now() / 1000) - attackDays * 86400;
+  const attacks = await fetchAttacks(key, since, (n) => {
+    payload.attackProgress = { fetched: n };
+    onUpdate(payload);
+  }).catch((e) => {
+    console.warn(`[fachist] attacks: ${e.message}`);
+    degraded.push(`attack respect unavailable: ${e.message}`);
+    return [];
+  });
+  phase("attacks", {
+    attackRespect: { ...buildAttackRespect(attacks, factionId), days: attackDays, since },
   });
 
   payload.phase = "done";

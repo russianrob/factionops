@@ -332,3 +332,48 @@ test('a bucket counts awards per source, not just their value', () => {
   assert.deepEqual(b[0].countBySource, { chain: 2, war: 1, oc: 0 });
   assert.equal(b[0].count, 3);
 });
+
+// ── buildAttackRespect ─────────────────────────────────────────────────
+// /faction/attacks returns BOTH directions, and respect_gain on an incoming
+// attack is the enemy's. Summing the feed unfiltered credits our members with
+// respect our opponents took off us.
+import { buildAttackRespect } from './faction-history.js';
+
+const atk = (name, gain, result = 'Attacked', fid = 42055) => ({
+  // Distinct id per name: name.length collapsed 'A' and 'B' into one member
+  // and the merge looked like an aggregation bug in the code under test.
+  attacker: name == null ? null : { id: name.charCodeAt(0), name, faction: { id: fid } },
+  defender: { faction: { id: fid === 42055 ? 999 : 42055 } },
+  respect_gain: gain, result, started: 1000,
+});
+
+test('only our own faction\'s attackers are counted', () => {
+  const r = buildAttackRespect([atk('Us', 10), atk('Them', 99, 'Attacked', 999)], 42055);
+  assert.deepEqual(r.members.map((m) => m.name), ['Us']);
+  assert.equal(r.members[0].respect, 10);
+});
+
+test('respect and attack count accumulate per member, with an average', () => {
+  const r = buildAttackRespect([atk('A', 10), atk('A', 20), atk('B', 5)], 42055);
+  const a = r.members.find((m) => m.name === 'A');
+  assert.deepEqual([a.respect, a.attacks, a.avg], [30, 2, 15]);
+});
+
+test('members are ranked by respect gained', () => {
+  const r = buildAttackRespect([atk('Low', 1), atk('High', 100)], 42055);
+  assert.deepEqual(r.members.map((m) => m.name), ['High', 'Low']);
+});
+
+test('a stealthed attack is reported as unattributed, not dropped', () => {
+  // 7 of every 100 rows hide the attacker. Silently dropping them makes the
+  // leaderboard total disagree with the faction total for no visible reason.
+  const r = buildAttackRespect([atk('A', 10), atk(null, 25)], 42055);
+  assert.equal(r.unattributed.attacks, 1);
+  assert.equal(r.unattributed.respect, 25);
+  assert.equal(r.totalRespect, 35);
+});
+
+test('each member keeps the spread of outcomes behind their number', () => {
+  const r = buildAttackRespect([atk('A', 10, 'Mugged'), atk('A', 0, 'Lost')], 42055);
+  assert.deepEqual(r.members[0].results, { Mugged: 1, Lost: 1 });
+});
