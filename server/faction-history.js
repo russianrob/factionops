@@ -719,69 +719,92 @@ export function foldAttacks(store, attacks, factionId) {
 }
 
 /**
- * Bring the attack store up to date, in two passes with a budget.
+ * Was this whole UTC day read, or only clipped by the covered interval?
  *
- * Measured on 42055: a week is ~4,700 attacks, so Torn's full ~1 year of log
- * is about 2,470 pages — 45 minutes of continuous calls. Spending that in one
- * go would hold ~54 of the faction's 100 calls/minute for three quarters of
- * an hour and starve warboard's own pollers, so it is not spent in one go.
+ * The distinction that the day-key gap check missed: a day can be present in
+ * the store and hold a fraction of its attacks, which reads as a quiet day
+ * rather than an unread one.
+ */
+export function dayIsCovered(store, day) {
+  if (!store || !store.coveredFrom || !store.coveredTo) return false;
+  const start = Date.parse(`${day}T00:00:00Z`) / 1000;
+  return start >= store.coveredFrom && start + 86400 <= store.coveredTo;
+}
+
+/**
+ * Bring the attack store up to date, tracking a CONTIGUOUS covered interval.
  *
- *   forward   everything newer than the last capture. Cheap, always runs,
- *             and keeps today's numbers correct.
- *   backfill  up to `maxBackfillPages` older than the oldest row held,
- *             resuming from a stored cursor.
+ * The earlier version tracked which calendar days it had seen, which is not
+ * the same thing and quietly lost data: a day can be present and incomplete.
+ * It recorded 69 of ~900 attacks on 2026-10-02 — a 9,200-respect chain nearly
+ * all missing — while a gap check over day KEYS reported no holes at all.
+ * The leaderboard looked plausible and was wrong.
  *
- * So the year fills in over a couple of weeks of daily builds instead of one
- * long stall, and the page says how far back it has reached so far. Once the
- * backfill runs dry, Torn's floor has been reached and only the forward pass
- * costs anything.
+ * So coverage is an interval [coveredFrom, coveredTo] in seconds, extended
+ * only from its own edges and never jumped:
+ *
+ *   forward   from now back until it REACHES coveredTo. If it cannot get
+ *             there within the safety cap it leaves coveredTo alone, because
+ *             claiming the new rows without the rows between them is how the
+ *             hole got there in the first place.
+ *   backfill  from coveredFrom backwards, on a page budget, since Torn's full
+ *             year is ~2,470 pages and taking it in one run would hold half
+ *             the faction's API budget for 45 minutes.
  */
 export async function captureAttacks(key, factionId, { maxBackfillPages = 120, onProgress } = {}) {
   const store = loadCapturedAttacks(factionId);
   store.days ||= {};
   store.unattributed ||= {};
 
-  let pages = 0, rows = 0;
+  const now = Math.floor(Date.now() / 1000);
+  let pages = 0, rows = 0, phaseName = "recent";
   const page = async (to) => {
     const batch = (await v2(`attacks?limit=100${to ? `&to=${to}` : ""}`, key)).attacks || [];
     if (batch.length) {
       foldAttacks(store, batch, factionId);
       pages++; rows += batch.length;
-      if (onProgress) onProgress({ rows, pages, phase: store._p });
+      if (onProgress) onProgress({ rows, pages, phase: phaseName });
     }
     return batch;
   };
 
-  // ── forward: newer than what we hold ──────────────────────────────────
-  // On a FIRST run there is nothing to catch up to, so `stopAt` is 0 and this
-  // loop has no natural end — it ran its full page limit, about seven
-  // minutes, before the budgeted backfill got a turn. A fresh store takes a
-  // small recent slice here and lets the backfill do the depth, which is the
-  // pass that was designed to be paced.
-  store._p = "recent";
-  const stopAt = store.capturedThrough ? store.capturedThrough - 86400 : 0;
-  const forwardCap = store.capturedThrough ? 400 : 30;
-  let to = null;
+  // ── forward ───────────────────────────────────────────────────────────
+  const cold = !store.coveredTo;
+  // A cold store has nothing to join up to, so it just takes a recent slice
+  // and lets the budgeted backfill do the depth. A warm store MUST reach its
+  // own edge, and the gap is normally hours, so the cap is only a backstop.
+  const forwardCap = cold ? 30 : 600;
+  let to = null, reached = cold, oldestSeen = now;
   for (let i = 0; i < forwardCap; i++) {
     let batch;
     try { batch = await page(to); } catch (e) {
       console.warn(`[fachist] attacks forward: ${e.message}`); break;
     }
-    if (!batch.length) break;
+    if (!batch.length) { reached = true; break; }
     const oldest = Math.min(...batch.map((x) => x.started || 0));
-    if (!oldest || oldest === to || oldest <= stopAt) break;
+    oldestSeen = Math.min(oldestSeen, oldest);
+    if (!oldest || oldest === to) { reached = true; break; }
+    if (!cold && oldest <= store.coveredTo) { reached = true; break; }
     to = oldest;
   }
-  store.capturedThrough = Math.floor(Date.now() / 1000);
 
-  // ── backfill: older than the oldest row held, on a budget ─────────────
-  if (!store.backfillDone) {
-    store._p = "backfill";
-    let cursor = store.backfillCursor || null;
-    if (!cursor) {
-      const dates = Object.keys(store.days).sort();
-      cursor = dates.length ? Math.floor(Date.parse(`${dates[0]}T00:00:00Z`) / 1000) : null;
-    }
+  if (cold) {
+    store.coveredTo = now;
+    store.coveredFrom = oldestSeen;
+  } else if (reached) {
+    store.coveredTo = now;                 // the interval is joined up
+  } else {
+    // Ran out of pages before meeting the old edge. The new rows are kept —
+    // they are real — but coverage is NOT claimed across the gap, so the next
+    // run tries again from the same edge rather than stranding a hole.
+    console.warn(`[fachist] attacks: forward pass did not reach the covered edge; `
+      + `coverage left at ${store.coveredTo}`);
+  }
+
+  // ── backfill ──────────────────────────────────────────────────────────
+  if (!store.backfillDone && store.coveredFrom) {
+    phaseName = "backfill";
+    let cursor = store.coveredFrom;
     for (let i = 0; i < maxBackfillPages && cursor; i++) {
       let batch;
       try { batch = await page(cursor); } catch (e) {
@@ -791,13 +814,13 @@ export async function captureAttacks(key, factionId, { maxBackfillPages = 120, o
       const oldest = Math.min(...batch.map((x) => x.started || 0));
       if (!oldest || oldest === cursor) { store.backfillDone = true; break; }
       cursor = oldest;
+      store.coveredFrom = cursor;          // advance only as far as actually read
     }
-    store.backfillCursor = cursor;
   }
 
-  delete store._p;
-  const dates = Object.keys(store.days).sort();
-  if (dates.length) store.floor = dates[0];
+  store.capturedThrough = store.coveredTo || now;
+  store.floor = store.coveredFrom
+    ? new Date(store.coveredFrom * 1000).toISOString().slice(0, 10) : null;
   saveCapturedAttacks(factionId, store);
   return { store, pages, rows };
 }

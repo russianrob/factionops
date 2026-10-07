@@ -428,3 +428,25 @@ test('unattributed stealth respect rides along per period', () => {
   const b = bucketAttacks({ days: DAYS, unattributed: { '2026-09-28': { r: 7, a: 3 } } }, 'month');
   assert.deepEqual(b.find((x) => x.key === '2026-09').unattributed, { respect: 7, attacks: 3 });
 });
+
+// ── coverage is an interval, not a set of day keys ─────────────────────
+import { dayIsCovered } from './faction-history.js';
+
+test('a day is only complete when the covered interval spans all of it', () => {
+  // The bug this guards: the store held 69 of ~900 attacks on 2026-10-02 — a
+  // 9,800-respect chain almost entirely missing — while a gap check over day
+  // KEYS reported no holes, because the key existed. Presence is not
+  // completeness, and only the interval can tell them apart.
+  const store = {
+    coveredFrom: Date.parse('2026-10-02T22:00:00Z') / 1000,
+    coveredTo: Date.parse('2026-10-05T00:00:00Z') / 1000,
+    days: { '2026-10-02': { 1: { n: 'A', r: 5, a: 1 } }, '2026-10-03': {} },
+  };
+  assert.equal(dayIsCovered(store, '2026-10-02'), false, 'only the last 2h was read');
+  assert.equal(dayIsCovered(store, '2026-10-03'), true);
+  assert.equal(dayIsCovered(store, '2026-10-05'), false, 'past the covered edge');
+});
+
+test('with no interval recorded, no day can be claimed complete', () => {
+  assert.equal(dayIsCovered({ days: { '2026-10-02': {} } }, '2026-10-02'), false);
+});
