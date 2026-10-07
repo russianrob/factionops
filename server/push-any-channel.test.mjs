@@ -19,7 +19,8 @@
 // for the fan-out filters.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 const SRC = readFileSync('/opt/warboard/server/push-notifications.js', 'utf8');
 
@@ -102,4 +103,22 @@ test('no war sender narrows its audience with the web-only predicate', () => {
 test('the fan-out filters use the any-channel predicate', () => {
   const sites = SRC.match(/hasAnyPushChannel\(id\)/g) || [];
   assert.ok(sites.length >= 9, `expected >=9 filter sites, found ${sites.length}`);
+});
+
+// ── The bug class, guarded across the whole server ────────────────────────
+//
+// isSubscribed has a plural sibling, getSubscribedPlayerIds, which is the
+// same web-only question asked of every player at once. Deriving a watch
+// list or a send audience from it reintroduces exactly this bug one module
+// over — which is how personal-monitor.js came to poll only web-push
+// subscribers. Status routes may ask the web-only question; audiences may
+// not.
+test('no module builds a notification audience from the web-only roster', () => {
+  const dir = '/opt/warboard/server';
+  const offenders = readdirSync(dir)
+    .filter((f) => f.endsWith('.js') && f !== 'push-notifications.js')
+    .filter((f) => !f.includes('.test.'))
+    .filter((f) => /getSubscribedPlayerIds/.test(readFileSync(join(dir, f), 'utf8')));
+  assert.deepEqual(offenders, [],
+    'these modules select players by web-push subscription alone');
 });
