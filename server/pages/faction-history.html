@@ -344,7 +344,7 @@ function drawPeriod(p) {
 /* One period's attack leaderboard. No outcomes column: the spread of
    Attacked/Mugged/Hospitalized is noise next to the three numbers that
    matter, and it pushed the table into horizontal scroll on a phone. */
-function attackTable(b) {
+function attackTable(b, span) {
   if (!b || !b.members.length) return '<p class="note">Nothing recorded in this period.</p>';
   const max = Math.max(1, ...b.members.map((m) => m.respect));
   const rows = b.members.map((m, i) => `<tr>
@@ -353,7 +353,9 @@ function attackTable(b) {
     <td style="width:26%"><span class="minibar" style="width:${(m.respect / max) * 100}%"></span></td>
     <td class="n">${fmt(m.attacks)}</td><td class="n">${fmt1(m.avg)}</td></tr>`).join('');
   const u = b.unattributed || { respect: 0, attacks: 0 };
-  return `<div class="grid">
+  return `${span ? `<p class="note" style="margin-top:0">Covering <b>${esc(span)}</b>
+      &mdash; everything captured so far, not the faction's lifetime.</p>` : ''}
+    <div class="grid">
       ${stat('Respect', fmt1(b.total))}
       ${stat('Attacks', fmt(b.attacks))}
       ${stat('Members', fmt(b.members.length))}
@@ -386,7 +388,9 @@ function drawAttacks(p) {
   const edgeNote = (b && b.key === edge)
     ? `<p class="note">&hellip; this is the oldest period captured so far, so it is
        cut off rather than quiet — the backfill is still reading further back.</p>` : '';
-  $('attackBody').innerHTML = pick + `<div id="atkOne">${attackTable(b)}${edgeNote}</div>`;
+  const span = p === 'all' && _attacks.floor
+    ? `${_attacks.floor} to today` : null;
+  $('attackBody').innerHTML = pick + `<div id="atkOne">${attackTable(b, span)}${edgeNote}</div>`;
   for (const btn of document.querySelectorAll('#aseg button')) btn.classList.toggle('on', btn.dataset.p === p);
   _attackPeriod = p;
 }
@@ -488,16 +492,20 @@ function render(d) {
         <button data-p="week">Week</button>
         <button data-p="month" class="on">Month</button>
         <button data-p="year">Year</button>
-        <button data-p="all">All time</button>
+        <button data-p="all">All held</button>
       </div>
       <div id="attackBody"></div>
-      <p class="note">Torn keeps about a year of attack log and the window rolls,
-        so warboard copies it out and keeps it${A.floor ? ` — held from ${esc(A.floor)}` : ''}.
+      <p class="note"><b>&ldquo;All held&rdquo; is not lifetime.</b> Torn serves about a
+        year of attack log and the window rolls, so warboard copies it out and keeps
+        what it has seen${A.floor ? ` — currently back to <b>${esc(A.floor)}</b>` : ''}.
         ${A.backfillDone
-          ? 'The backfill has reached Torn\'s floor; everything it still serves is here.'
-          : 'Still reading backwards a few hundred pages per build — a full year is ~2,500 '
-            + 'calls and taking it in one go would starve the rest of warboard, so it '
-            + 'fills in over a few days.'}
+          ? 'The backfill has reached Torn\'s floor, so this is everything Torn still serves.'
+          : 'It is still reading backwards ~120 pages per build: a full year is ~2,500 '
+            + 'calls, and taking that in one go would hold half the faction\'s API budget '
+            + 'for 45 minutes, so it fills in over a couple of weeks.'}</p>
+      <p class="note"><b>Do not add this to the respect panel.</b> Attacks are what build
+        chains, so this is largely the same respect counted from the other end — per
+        member instead of per chain. It is an attribution of effort, not an extra source.
         Incoming attacks are excluded: their respect belongs to the other faction.</p>
     </section>`);
   }
