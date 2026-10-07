@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Gym Coach
+// @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.11.1
-// @description  Torn gym coach — verdict-first overlay, three tabs, cooldown rail, training advice and a progression chart. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
+// @version      0.12.0
+// @description  Beta lane for Gym Coach — new work lands here first. Torn gym coach — verdict-first overlay, three tabs, cooldown rail, training advice and a progression chart. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
 // @match        https://www.torn.com/*
@@ -20,8 +20,8 @@
 // @connect      www.torn.com
 // @connect      torn.com
 // @run-at       document-end
-// @downloadURL  https://tornwar.com/scripts/gym-coach.user.js
-// @updateURL    https://tornwar.com/scripts/gym-coach.meta.js
+// @downloadURL  https://tornwar.com/scripts/gym-coach-beta.user.js
+// @updateURL    https://tornwar.com/scripts/gym-coach-beta.meta.js
 // ==/UserScript==
 
 /*
@@ -29,13 +29,21 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
-* 0.11.1 - The gym dock stopped calling itself BETA.
+* 0.12.0 - The beta lane is open again.
 *
-*         0.11.0 promoted the beta body verbatim, which carried the dock
-*         button's own label with it, so the script everybody runs announced
-*         itself as "GYM COACH · BETA" on gym.php. The id stays gcb-gym-dock:
-*         that string is element identity, not a label, and renaming it would
-*         orphan the dock the running script is already holding.
+*         0.10.0 closed it: a stub that did nothing but ask you to uninstall,
+*         on the assumption everybody wanted the one script. People were still
+*         running the beta, so the lane is back, and this is NOT the old 0.9.91
+*         it replaced -- it is the current Gym Coach body, so reopening costs
+*         you none of the work that landed while the lane was shut.
+*
+*         Storage is still gcb_v1, the same prefix the beta always used and the
+*         one 0.10.0 deliberately left alone, so your key, ledger and history
+*         are exactly where you left them. Nothing to re-enter.
+*
+*         Running this AND Gym Coach together is not recommended: they share
+*         gcb_v1 and both poll, so you get double API calls against one ledger.
+*         The gym dock is idempotent, so it will not double-draw, but keep one.
 *
 * 0.9.90 - War stack sits with the advice it changes, not under it.
 *
@@ -2197,7 +2205,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.11.1";
+  var GC_VERSION = "0.12.0";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -11666,7 +11674,7 @@
       b = document.createElement("button");
       b.id = "gcb-gym-dock";
       b.type = "button";
-      b.textContent = "GYM COACH";
+      b.textContent = "GYM COACH · BETA";
       b.setAttribute(
         "style",
         "display:block;width:100%;box-sizing:border-box;margin:8px 0;min-height:48px;border:2px solid #f2a03d;border-radius:10px;background:#121418;color:#f2a03d;font:800 16px/1 -apple-system,sans-serif;letter-spacing:.08em;-webkit-appearance:none;appearance:none;touch-action:manipulation;"
