@@ -12,6 +12,10 @@ import webPush from "web-push";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+// Sync token lookup for the audience filter. fcm-subscriptions holds its
+// store in memory from its own import-time read, so this needs no await —
+// unlike the send path below, which stays lazy.
+import { listForPlayer as fcmListForPlayer } from "./fcm-subscriptions.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -229,6 +233,30 @@ export function isSubscribed(playerId) {
 }
 
 /**
+ * Is this player reachable on ANY push transport — web push, or a
+ * registered warboard app device (FCM/APNs)?
+ *
+ * This is the predicate for narrowing a notification audience.
+ * `isSubscribed` above answers a different question — "is this BROWSER
+ * web-push subscribed?" — which the /api/*\/push/status routes need to
+ * decide whether to offer "Enable on this device". Filtering a send on
+ * that one drops every player whose only transport is the app, which is
+ * what silently withheld a whole war's chain and bonus alerts from
+ * app-only members.
+ * @param {string} playerId
+ * @returns {boolean}
+ */
+export function hasAnyPushChannel(playerId) {
+  if (subscriptions[playerId] && subscriptions[playerId].length > 0) return true;
+  // A broken token store must not take down the whole send.
+  try {
+    return fcmListForPlayer(playerId).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Get all player IDs that have active push subscriptions.
  * @returns {string[]}
  */
@@ -393,7 +421,7 @@ export async function sendToWar(getPlayersForWar, warId, payload, notifType, exc
 
   const targets = warPlayers
     .map((p) => p.playerId || p.id)
-    .filter((id) => id !== excludePlayerId && isSubscribed(id));
+    .filter((id) => id !== excludePlayerId && hasAnyPushChannel(id));
 
   if (targets.length > 0) {
     await sendToPlayers(targets, payload, notifType, pushOptions);
@@ -453,7 +481,7 @@ export async function notifyChainAlert(warPlayers, warId, current, timeout, time
   if (await hasWarEnded(warId)) return;
   const playerIds = warPlayers.map((p) => p.playerId || p.id);
   await sendToPlayers(
-    playerIds.filter((id) => isSubscribed(id)),
+    playerIds.filter((id) => hasAnyPushChannel(id)),
     {
       title: "🚨 CHAIN BREAKING!",
       body: `Chain ${current} — ${timeLeft}s remaining! Attack now!`,
@@ -474,7 +502,7 @@ export async function notifyChainPanic(warPlayers, warId, current, timeLeft) {
   if (await hasWarEnded(warId)) return;
   const playerIds = warPlayers.map((p) => p.playerId || p.id);
   await sendToPlayers(
-    playerIds.filter((id) => isSubscribed(id)),
+    playerIds.filter((id) => hasAnyPushChannel(id)),
     {
       title: `🔴 CHAIN DYING! ${timeLeft}s!`,
       body: `Chain ${current} is about to break! ${timeLeft}s left — HIT NOW!`,
@@ -508,7 +536,7 @@ export async function notifyBonusImminent(warPlayers, warId, current, nextBonus)
   if (!(await hasWarStarted(warId))) return;
   const playerIds = warPlayers.map((p) => p.playerId || p.id);
   await sendToPlayers(
-    playerIds.filter((id) => isSubscribed(id)),
+    playerIds.filter((id) => hasAnyPushChannel(id)),
     {
       title: "💥 Bonus Hit Imminent",
       body: `Chain at ${current}/${nextBonus} — bonus hit incoming!`,
@@ -540,7 +568,7 @@ export async function notifyClearChainAlerts(warPlayers, warId, warResult) {
                 : warResult === 'defeat'  ? '💀 Defeat'
                 : '⚖️ Draw';
   await sendToPlayers(
-    playerIds.filter((id) => isSubscribed(id)),
+    playerIds.filter((id) => hasAnyPushChannel(id)),
     {
       title: `${subtitle} — chain alerts cleared`,
       body: "War ended. Sticky chain notifications dismissed.",
@@ -565,7 +593,7 @@ export async function notifyEnemySurge(warPlayers, warId, online, delta, windowS
   if (await hasWarEnded(warId)) return;
   const playerIds = warPlayers.map((p) => p.playerId || p.id);
   await sendToPlayers(
-    playerIds.filter((id) => isSubscribed(id)),
+    playerIds.filter((id) => hasAnyPushChannel(id)),
     {
       title: "🚨 Enemy Online Surge",
       body: `+${delta} enemies came online in the last ${windowSec}s — ${online} now active`,
@@ -597,7 +625,7 @@ export async function notifyCallStolen(playerId, viewerName, targetName, targetI
 export async function notifyWarTargetReached(warPlayers, warId, targetValue, currentLead) {
   const playerIds = warPlayers.map((p) => p.playerId || p.id);
   await sendToPlayers(
-    playerIds.filter((id) => isSubscribed(id)),
+    playerIds.filter((id) => hasAnyPushChannel(id)),
     {
       title: "🎯 War Target Reached!",
       body: `Faction hit ${currentLead.toLocaleString()} / ${targetValue.toLocaleString()} respect — hold the line!`,
@@ -619,7 +647,7 @@ export async function notifyWarTargetReached(warPlayers, warId, targetValue, cur
 export async function notifyAssistRequest(playerIds, warId, playerName, targetName, targetId, mode) {
   const isRetal = mode === "retal";
   await sendToPlayers(
-    playerIds.filter((id) => isSubscribed(id)),
+    playerIds.filter((id) => hasAnyPushChannel(id)),
     {
       title: isRetal ? `⚠️ Retal Requested!` : `⚔️ Assist Needed!`,
       body: isRetal
@@ -644,7 +672,7 @@ export async function notifyAssistRequest(playerIds, warId, playerName, targetNa
  */
 export async function notifyBroadcast(playerIds, warId, senderName, message) {
   await sendToPlayers(
-    playerIds.filter((id) => isSubscribed(id)),
+    playerIds.filter((id) => hasAnyPushChannel(id)),
     {
       title: `📣 Broadcast from ${senderName}`,
       body: message,

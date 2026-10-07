@@ -4529,7 +4529,11 @@ router.post("/api/push/test", requireAuth, async (req, res) => {
   const { playerId } = req.user;
   const { type } = (req.body || {});
 
-  if (!push.isSubscribed(playerId)) {
+  // Any transport counts here — this asks "can we reach this player at
+  // all?", not "is this browser web-push subscribed?". Gating on the
+  // latter refused the self-test to app-only players, the very people
+  // who most needed to check whether their alerts work.
+  if (!push.hasAnyPushChannel(playerId)) {
     return res.status(400).json({ error: "No push subscription found" });
   }
 
