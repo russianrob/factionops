@@ -2975,7 +2975,14 @@
   // data is all still there, under a prefix this code no longer reads.
   //
   // Nine of the old build's ten keys have identical names here, so this is a
-  // copy rather than a translation. adultNov has no counterpart and is dropped.
+  // copy rather than a translation.
+  //
+  // The tenth, adultNov, is deliberately NOT carried. It is still used — but
+  // it stopped being a setting. The old build made you flip a switch to say
+  // you had the Adult Novelties perk; this one reads it off your perk list in
+  // parsePerks. Carrying the old flag over would plant a remembered answer on
+  // top of a measured one, and a switch somebody set wrong in August would
+  // quietly outrank what Torn actually says today.
   //
   // Guarded PER KEY, not once globally: somebody who ran both scripts has data
   // on both sides and the beta's is the newer. Never overwrite what is already
