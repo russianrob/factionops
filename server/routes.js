@@ -8523,6 +8523,7 @@ function removeFactionKey(fid, key) {
 // empty) so git diffs elsewhere are minimal; all gates go through
 // isPartnerFaction() which reads the persisted state.
 import { isPartnerFaction, isPartnerFor, listPartnerFactions, addPartnerFaction, removePartnerFaction, VALID_SERVICES } from "./partner-factions.js";
+import * as facHist from "./faction-history.js";
 const PARTNER_FACTIONS = []; // deprecated — use isPartnerFaction()
 const OWNER_PLAYER_ID = 137558; // RussianRob — receives Xanax payments // Factions with permanent free access
 
@@ -12990,6 +12991,92 @@ router.get("/random", (_req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
   res.set("Cache-Control", "no-store");
   return res.sendFile(new URL("./pages/random.html", import.meta.url).pathname);
+});
+
+// ── Faction history ────────────────────────────────────────────────────
+// Lifetime totals, respect over time, war record and roster churn.
+//
+// Same access model as /prewar: the HTML is a shell and the gate is on the
+// API. Torn refuses chains, rankedwars, stats and news for any faction but
+// the key owner's, so this is always the CALLER'S faction read with the
+// CALLER'S key — it cannot be aimed at a rival, and warboard's own key is
+// never used here.
+//
+// A first build is ~370 paced Torn calls, so it runs in the background and
+// the endpoint answers immediately with whatever is finished. The page polls.
+const _facHistCache = new Map();   // factionId -> { data, building, error, at }
+const FACHIST_TTL_MS = 24 * 60 * 60 * 1000;
+
+function startFactionHistoryBuild(factionId, key) {
+  const slot = _facHistCache.get(factionId) || {};
+  if (slot.building) return;
+  slot.building = true;
+  slot.error = null;
+  _facHistCache.set(factionId, slot);
+  facHist.buildAll({
+    key, factionId,
+    onUpdate: (payload) => {
+      const cur = _facHistCache.get(factionId) || {};
+      // Clone-free: buildAll mutates one object across phases, so holding the
+      // reference is enough and copying it 400 times would not be.
+      cur.data = payload;
+      _facHistCache.set(factionId, cur);
+    },
+  }).then((payload) => {
+    _facHistCache.set(factionId, { data: payload, building: false, at: Date.now() });
+    console.log(`[fachist] ${factionId} built: ${payload.chainCount || 0} chains, `
+      + `${(payload.wars || {}).total || 0} wars`);
+  }).catch((e) => {
+    const cur = _facHistCache.get(factionId) || {};
+    _facHistCache.set(factionId, { ...cur, building: false, error: e.message });
+    console.error(`[fachist] ${factionId} build failed: ${e.message}`);
+  });
+}
+
+router.get("/factionhistory", (_req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.set("Cache-Control", "no-store");
+  return res.sendFile(new URL("./pages/faction-history.html", import.meta.url).pathname);
+});
+
+router.get("/api/faction-history", async (req, res) => {
+  const ctx = await resolveVaultCaller(req, res);
+  if (!ctx) return;
+  const { info, key } = ctx;
+  const factionId = String(info.factionId);
+
+  let slot = _facHistCache.get(factionId);
+  // Survive a restart: the payload on disk is worth more than 370 fresh calls.
+  if (!slot) {
+    const onDisk = facHist.loadBuilt(factionId);
+    if (onDisk) {
+      slot = { data: onDisk, building: false, at: onDisk.builtAt || 0 };
+      _facHistCache.set(factionId, slot);
+    }
+  }
+
+  const stale = !slot || !slot.at || (Date.now() - slot.at) > FACHIST_TTL_MS;
+  if ((stale || req.query.refresh === "1") && !(slot && slot.building)) {
+    startFactionHistoryBuild(factionId, key);
+    slot = _facHistCache.get(factionId);
+  }
+
+  const data = (slot && slot.data) || {};
+  return res.json({
+    ...data,
+    reportsRaw: undefined,            // internal cache, megabytes, never shipped
+    faction: { id: factionId },
+    build: {
+      ready: !!(slot && !slot.building && slot.at),
+      building: !!(slot && slot.building),
+      phase: data.phase || null,
+      phases: data.phases || [],
+      newsProgress: data.newsProgress || null,
+      reportProgress: data.reportProgress || null,
+      builtAt: (slot && slot.at) || null,
+      error: (slot && slot.error) || null,
+    },
+  });
 });
 
 router.get("/gym", (_req, res) => {

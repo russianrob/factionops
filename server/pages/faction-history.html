@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Faction History</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Sibling of the War Scout page — same tokens, same dark committed look, so
+   the two read as one app rather than two projects. */
+:root{
+  --ink:#070b0f; --panel:#0d141d; --panel2:#111b26; --line:#1c2a38;
+  --text:#dde5ed; --muted:#74889b;
+  --signal:#9fe870; --win:#5fd39a; --loss:#e8636f; --unknown:#d4a24a;
+  --sans:"IBM Plex Sans",-apple-system,system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ink);color:var(--text);font-family:var(--sans);
+     font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%}
+.wrap{max-width:900px;margin:0 auto;padding:18px 14px 56px}
+.mast{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.mast h1{font-size:19px;font-weight:600;letter-spacing:-.01em;margin:0}
+.mast .tag{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--signal);border:1px solid var(--line);
+  border-radius:3px;padding:2px 6px}
+.lede{color:var(--muted);font-size:13.5px;margin:0 0 16px;max-width:62ch}
+
+.ctl{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+     padding:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.f{display:flex;flex-direction:column;gap:4px;flex:1 1 220px;min-width:0}
+label{font-family:var(--mono);font-size:9.5px;letter-spacing:.13em;
+      text-transform:uppercase;color:var(--muted)}
+input{background:var(--ink);border:1px solid var(--line);color:var(--text);
+      border-radius:6px;padding:9px 10px;font-family:var(--mono);font-size:13px;width:100%}
+input:focus{outline:none;border-color:var(--signal)}
+button{background:var(--signal);color:#07120a;border:0;border-radius:6px;
+       padding:10px 16px;font-weight:600;font-size:13.5px;cursor:pointer;font-family:var(--sans)}
+button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:not-allowed}
+
+.note{font-size:12.5px;color:var(--muted);margin:10px 0 0}
+.err{color:var(--loss)}
+.bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;background:var(--signal);transition:width .4s}
+
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:14px;margin-top:14px}
+section h2{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--signal);margin:0 0 12px;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}
+.stat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px}
+.stat b{display:block;font-size:19px;font-weight:600;font-variant-numeric:tabular-nums;
+        letter-spacing:-.01em}
+.stat span{display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+           text-transform:uppercase;color:var(--muted);margin-top:3px}
+.stat.win b{color:var(--win)} .stat.loss b{color:var(--loss)}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line)}
+th{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+   color:var(--muted);font-weight:500}
+td.n{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono)}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.cap{max-height:300px;overflow-y:auto}
+.gone{color:var(--muted)}
+.gone::after{content:" · left";font-family:var(--mono);font-size:9px;letter-spacing:.1em;
+             text-transform:uppercase}
+svg{display:block;width:100%;height:auto}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;
+        letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:8px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;
+          vertical-align:-1px}
+.gone2{color:var(--muted);font-style:italic}
+.hidden{display:none}
+</style></head><body>
+<div class="wrap">
+  <div class="mast"><h1>Faction History</h1><span class="tag" id="fname">—</span></div>
+  <p class="lede">Lifetime totals, respect since the faction began, every ranked war,
+     and roster churn. Reads your own faction with your own key — Torn does not
+     serve this for anybody else's.</p>
+
+  <div class="ctl">
+    <div class="f">
+      <label for="k">Torn API key</label>
+      <input id="k" type="text" autocomplete="off" autocapitalize="off"
+             autocorrect="off" spellcheck="false" placeholder="your Torn API key">
+    </div>
+    <button id="go">Load</button>
+    <button id="refresh" class="ghost" title="Rebuild from Torn, ignoring the 24h cache">Rebuild</button>
+  </div>
+  <p class="note" id="status"></p>
+  <div class="bar hidden" id="progress"><i style="width:0"></i></div>
+
+  <div id="panels"></div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US'));
+const fmt1 = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US', { maximumFractionDigits: 1 }));
+const day = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g,
+  (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+$('k').value = localStorage.getItem('fh_key') || '';
+let polling = null;
+
+function stat(label, value, cls) {
+  return `<div class="stat ${cls || ''}"><b>${value}</b><span>${esc(label)}</span></div>`;
+}
+
+/* A cumulative curve of several thousand points does not need several
+   thousand pixels of path. Keep the last point of each bucket so the line
+   still ENDS where the data ends — averaging would pull the final value down
+   and make the total disagree with the figure printed beside it. */
+function downsample(points, target) {
+  if (points.length <= target) return points;
+  const step = Math.ceil(points.length / target);
+  const out = [];
+  for (let i = 0; i < points.length; i += step) {
+    out.push(points[Math.min(i + step - 1, points.length - 1)]);
+  }
+  return out;
+}
+
+function lineChart(points, { height = 190 } = {}) {
+  if (!points.length) return '<p class="note">No data yet.</p>';
+  const W = 900, H = height, PAD = { l: 52, r: 8, t: 8, b: 20 };
+  const xs = points.map((p) => p.t), ys = points.map((p) => p.cumulative);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y1 = Math.max(...ys);
+  const sx = (t) => PAD.l + ((t - x0) / Math.max(1, x1 - x0)) * (W - PAD.l - PAD.r);
+  const sy = (v) => H - PAD.b - (v / Math.max(1, y1)) * (H - PAD.t - PAD.b);
+  const d = points.map((p, i) => `${i ? 'L' : 'M'}${sx(p.t).toFixed(1)},${sy(p.cumulative).toFixed(1)}`).join('');
+  const area = `${d}L${sx(x1).toFixed(1)},${H - PAD.b}L${sx(x0).toFixed(1)},${H - PAD.b}Z`;
+  const ticks = [0, 0.5, 1].map((f) => {
+    const v = y1 * f, y = sy(v);
+    return `<line x1="${PAD.l}" x2="${W - PAD.r}" y1="${y}" y2="${y}" stroke="#1c2a38"/>`
+      + `<text x="${PAD.l - 6}" y="${y + 3.5}" text-anchor="end" fill="#74889b"
+          font-family="IBM Plex Mono,monospace" font-size="10">${fmt(Math.round(v))}</text>`;
+  }).join('');
+  const years = [];
+  for (let y = new Date(x0 * 1000).getUTCFullYear(); y <= new Date(x1 * 1000).getUTCFullYear(); y++) {
+    const t = Date.UTC(y, 0, 1) / 1000;
+    if (t < x0 || t > x1) continue;
+    years.push(`<line x1="${sx(t)}" x2="${sx(t)}" y1="${PAD.t}" y2="${H - PAD.b}" stroke="#1c2a38"/>`
+      + `<text x="${sx(t)}" y="${H - 6}" text-anchor="middle" fill="#74889b"
+          font-family="IBM Plex Mono,monospace" font-size="10">${y}</text>`);
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative respect over time">
+    ${ticks}${years.join('')}
+    <path d="${area}" fill="#9fe87018"/>
+    <path d="${d}" fill="none" stroke="#9fe870" stroke-width="1.6"
+          stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>`;
+}
+
+function churnChart(monthly) {
+  if (!monthly.length) return '<p class="note">No roster events captured yet.</p>';
+  const W = 900, H = 170, PAD = { l: 34, r: 8, t: 8, b: 26 };
+  const max = Math.max(1, ...monthly.map((m) => Math.max(m.joined, m.left + m.kicked)));
+  const bw = (W - PAD.l - PAD.r) / monthly.length;
+  const bars = monthly.map((m, i) => {
+    const x = PAD.l + i * bw, mid = (H - PAD.b + PAD.t) / 2;
+    const up = ((m.joined / max) * (mid - PAD.t));
+    const dn = (((m.left + m.kicked) / max) * (H - PAD.b - mid));
+    const kick = m.left + m.kicked ? (m.kicked / (m.left + m.kicked)) * dn : 0;
+    return `<rect x="${x + bw * 0.12}" y="${mid - up}" width="${bw * 0.76}" height="${up}" fill="#5fd39a"/>`
+      + `<rect x="${x + bw * 0.12}" y="${mid}" width="${bw * 0.76}" height="${dn - kick}" fill="#e8636f"/>`
+      + `<rect x="${x + bw * 0.12}" y="${mid + dn - kick}" width="${bw * 0.76}" height="${kick}" fill="#d4a24a"/>`;
+  }).join('');
+  const labels = monthly.map((m, i) => (m.month.endsWith('-01')
+    ? `<text x="${PAD.l + i * bw + bw / 2}" y="${H - 8}" text-anchor="middle" fill="#74889b"
+         font-family="IBM Plex Mono,monospace" font-size="10">${m.month.slice(0, 4)}</text>` : '')).join('');
+  const mid = (H - PAD.b + PAD.t) / 2;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Members joined and left per month">
+    <line x1="${PAD.l}" x2="${W - PAD.r}" y1="${mid}" y2="${mid}" stroke="#1c2a38"/>
+    ${bars}${labels}</svg>
+    <div class="legend">
+      <span><i style="background:#5fd39a"></i>joined</span>
+      <span><i style="background:#e8636f"></i>left</span>
+      <span><i style="background:#d4a24a"></i>kicked</span>
+    </div>`;
+}
+
+function render(d) {
+  const L = d.lifetime, R = d.respect, W = d.wars, C = d.churn;
+  const out = [];
+
+  // A page that quietly drops a failed phase is worse than one that says so:
+  // the numbers still look authoritative while being wrong.
+  if (d.degraded && d.degraded.length) {
+    out.push(`<section style="border-color:#d4a24a">
+      <h2 style="color:#d4a24a">Incomplete</h2>
+      <ul style="margin:0;padding-left:18px;font-size:13px">
+        ${d.degraded.map((x) => `<li>${esc(x)}</li>`).join('')}
+      </ul>
+      <p class="note">Press Rebuild to retry the parts that failed — captured
+         history is kept, so a retry only re-fetches the gaps.</p></section>`);
+  }
+
+  if (L) {
+    const E = L.trainedEnergy;
+    out.push(`<section><h2>Lifetime</h2><div class="grid">
+      ${stat('Founded', esc(L.createdAt))}
+      ${stat('Days old', fmt(L.daysOld))}
+      ${stat('Respect', fmt(L.respect.total))}
+      ${stat('Energy trained', fmt(E.total))}
+      ${stat('Attacks won', fmt(L.attacks.won), 'win')}
+      ${stat('Attacks lost', fmt(L.attacks.lost), 'loss')}
+      ${stat('Ranked wins', fmt(L.rankedWins))}
+      ${stat('Best chain', fmt(L.bestChain))}
+    </div>
+    <div class="grid" style="margin-top:10px">
+      ${stat('Str energy', fmt(E.byStat.strength))}
+      ${stat('Spd energy', fmt(E.byStat.speed))}
+      ${stat('Def energy', fmt(E.byStat.defense))}
+      ${stat('Dex energy', fmt(E.byStat.dexterity))}
+      ${stat('Trains', fmt(E.trains))}
+      ${stat('E per train', fmt1(E.perTrain))}
+      ${stat('Mugs', fmt(L.attacks.mugs))}
+      ${stat('Hospitalised', fmt(L.attacks.hospitalised))}
+    </div>
+    <p class="note">Respect splits into ${fmt(L.respect.organisedCrime)} from organised crime
+      and ${fmt(L.respect.territory)} from territory. Energy figures are energy
+      <em>spent</em> per stat, which is what Torn's upgrade challenges count.
+      Current roster holds ${fmt(L.memberEnergy.current)} E;
+      ${fmt(L.memberEnergy.departed)} E belongs to members who have since left.</p>
+    </section>`);
+
+    if (L.members && L.members.length) {
+      out.push(`<section><h2>Energy by member</h2><div class="scroll cap"><table>
+        <thead><tr><th>#</th><th>Member</th><th class="n">Total E</th>
+          <th class="n">Str</th><th class="n">Spd</th><th class="n">Def</th><th class="n">Dex</th></tr></thead>
+        <tbody>${L.members.map((m, i) => `<tr>
+          <td class="n">${i + 1}</td>
+          <td class="${m.inFaction ? '' : 'gone'}">${esc(m.username)}</td>
+          <td class="n">${fmt(m.total)}</td><td class="n">${fmt(m.byStat.strength)}</td>
+          <td class="n">${fmt(m.byStat.speed)}</td><td class="n">${fmt(m.byStat.defense)}</td>
+          <td class="n">${fmt(m.byStat.dexterity)}</td></tr>`).join('')}</tbody>
+      </table></div></section>`);
+    }
+  }
+
+  if (R && R.points && R.points.length) {
+    out.push(`<section><h2>Respect over time</h2>
+      ${lineChart(downsample(R.points, 700))}
+      <p class="note">Rebuilt from ${fmt(R.points.length)} timestamped awards since
+        ${esc(day(R.earliest))} — chains, ranked wars and organised crimes.
+        Torn never stored a historical respect figure, so this is a reconstruction:
+        it accounts for ${fmt(Math.round(R.tracked))} of the current
+        ${fmt(R.currentTotal)}, leaving ${fmt(Math.round(R.unaccounted))} unexplained.
+        OC respect only exists from OC 2.0 onward, so the early years read low.</p>
+    </section>`);
+  }
+
+  if (W) {
+    out.push(`<section><h2>Ranked wars</h2><div class="grid">
+      ${stat('Wars', fmt(W.total))}
+      ${stat('Won', fmt(W.won), 'win')}
+      ${stat('Lost', fmt(W.lost), 'loss')}
+      ${stat('Ongoing', fmt(W.ongoing))}
+    </div>
+    ${W.rankTimeline && W.rankTimeline.length ? `<div class="scroll cap" style="margin-top:12px"><table>
+      <thead><tr><th>Date</th><th>Rank before</th><th>Rank after</th></tr></thead>
+      <tbody>${W.rankTimeline.slice().reverse().filter((r) => r.before !== r.after).map((r) => `<tr>
+        <td>${esc(day(r.t))}</td><td>${esc(r.before)}</td><td>${esc(r.after)}</td></tr>`).join('')}</tbody>
+    </table></div><p class="note">Only wars that moved the rank are listed.</p>`
+      : '<p class="note">Rank timeline still building — one call per war.</p>'}
+    </section>`);
+  }
+
+  if (C) {
+    out.push(`<section><h2>Roster churn</h2>
+      ${churnChart(C.monthly || [])}
+      <p class="note">${fmt(C.eventCount)} membership events captured
+        ${C.floor ? `back to ${esc(day(C.floor))}` : ''}. Torn only serves faction news for
+        roughly the last seven years, so this floor creeps forward — warboard keeps
+        a permanent copy of everything it has seen, which is why this reaches further
+        back than Torn will serve today.
+        ${C.unparsedCount ? `${fmt(C.unparsedCount)} sentences did not match a known
+        pattern and were skipped.` : ''}</p>
+    </section>`);
+
+    if (C.leaders && C.leaders.length) {
+      const span = (l) => `${esc(day(l.from))} &nbsp;&rarr;&nbsp; `
+        + (l.current ? '<b style="color:#9fe870">current</b>' : esc(day(l.to)));
+      const rows = (role) => C.leaders.filter((l) => l.role === role).slice().reverse()
+        .map((l) => `<tr><td>${esc(l.who)}</td><td>${span(l)}</td></tr>`).join('');
+      out.push(`<section><h2>Leaders</h2>
+        <div class="scroll cap"><table>
+          <thead><tr><th>Leader</th><th>Held</th></tr></thead>
+          <tbody>${rows('Leader')}</tbody></table></div></section>
+        <section><h2>Co-leaders</h2>
+        <div class="scroll cap"><table>
+          <thead><tr><th>Co-leader</th><th>Held</th></tr></thead>
+          <tbody>${rows('Co-leader')}</tbody></table></div>
+        <p class="note">Newest first, from Torn's own
+          &ldquo;leadership was transferred&rdquo; records${C.floor
+            ? `, which begin ${esc(day(C.floor))}` : ''}. The faction is older than
+          that log, so whoever founded it cannot be recovered from the API.</p>
+        </section>`);
+    }
+
+    if (C.names && C.names.length) {
+      out.push(`<section><h2>Faction names</h2>
+        <div class="scroll cap"><table>
+          <thead><tr><th>Date</th><th>Renamed to</th><th>By</th></tr></thead>
+          <tbody>${C.names.slice().reverse().map((n) => `<tr>
+            <td>${esc(day(n.t))}</td><td>${esc(n.name)}</td><td>${esc(n.by)}</td>
+          </tr>`).join('')}</tbody></table></div>
+        <p class="note">${fmt(C.names.length)} renames on record. The faction has
+          changed hands repeatedly, so its earlier identities are not really this
+          faction's history so much as its predecessors'.</p></section>`);
+    }
+  }
+
+  $('panels').innerHTML = out.join('') || '<p class="note">Nothing built yet.</p>';
+}
+
+async function load(refresh) {
+  const key = $('k').value.trim();
+  if (key.length < 10) { $('status').innerHTML = '<span class="err">Enter your Torn API key.</span>'; return; }
+  localStorage.setItem('fh_key', key);
+  $('go').disabled = true;
+  try {
+    const r = await fetch(`/api/faction-history?key=${encodeURIComponent(key)}${refresh ? '&refresh=1' : ''}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    $('fname').textContent = d.faction ? d.faction.id : '—';
+    render(d);
+
+    const b = d.build || {};
+    if (b.error) {
+      $('status').innerHTML = `<span class="err">${esc(b.error)}</span>`;
+      $('progress').classList.add('hidden');
+    } else if (b.building) {
+      const p = b.reportProgress || b.newsProgress;
+      $('status').textContent = `Building — ${b.phase || 'starting'}`
+        + (p ? ` (${p.done}/${p.total})` : '') + '. Panels fill in as they finish.';
+      $('progress').classList.remove('hidden');
+      $('progress').firstElementChild.style.width = p ? `${(p.done / Math.max(1, p.total)) * 100}%` : '8%';
+      // The first build walks years of history; poll rather than hang a request.
+      clearTimeout(polling);
+      polling = setTimeout(() => load(false), 4000);
+    } else {
+      $('status').textContent = b.builtAt
+        ? `Built ${new Date(b.builtAt).toLocaleString()} — cached 24h.` : '';
+      $('progress').classList.add('hidden');
+    }
+  } catch (e) {
+    $('status').innerHTML = `<span class="err">${esc(e.message)}</span>`;
+  } finally {
+    $('go').disabled = false;
+  }
+}
+
+$('go').addEventListener('click', () => load(false));
+$('refresh').addEventListener('click', () => load(true));
+$('k').addEventListener('keydown', (e) => { if (e.key === 'Enter') load(false); });
+if ($('k').value) load(false);
+</script></body></html>
