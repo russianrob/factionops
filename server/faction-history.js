@@ -384,13 +384,17 @@ export function bucketRespect(points = [], period = "month", now = Date.now() / 
     const k = periodKey(p.t, period);
     if (!acc.has(k)) {
       acc.set(k, { key: k, total: 0, count: 0,
-                   bySource: Object.fromEntries(SOURCES.map((s) => [s, 0])) });
+                   bySource: Object.fromEntries(SOURCES.map((s) => [s, 0])),
+                   countBySource: Object.fromEntries(SOURCES.map((s) => [s, 0])) });
     }
     const b = acc.get(k);
     const v = Number(p.delta) || 0;
     b.total += v;
     b.count++;
-    if (b.bySource[p.source] !== undefined) b.bySource[p.source] += v;
+    if (b.bySource[p.source] !== undefined) {
+      b.bySource[p.source] += v;
+      b.countBySource[p.source]++;
+    }
   }
 
   // Walk from the first key to the last, minting empty buckets as we go.
@@ -399,7 +403,8 @@ export function bucketRespect(points = [], period = "month", now = Date.now() / 
   const out = [];
   for (let k = first; ; k = nextKey(k, period)) {
     out.push(acc.get(k) || { key: k, total: 0, count: 0,
-                             bySource: Object.fromEntries(SOURCES.map((s) => [s, 0])) });
+                             bySource: Object.fromEntries(SOURCES.map((s) => [s, 0])),
+                             countBySource: Object.fromEntries(SOURCES.map((s) => [s, 0])) });
     if (k === last || out.length > 5000) break;
   }
 

@@ -77,6 +77,20 @@ svg{display:block;width:100%;height:auto}
   padding:7px 16px;font-size:12.5px;font-weight:500;border-radius:0}
 .seg button:last-child{border-right:0}
 .seg button.on{background:var(--signal);color:#07120a;font-weight:600}
+.bk{cursor:pointer}
+.bk rect:last-child{transition:opacity .12s}
+.bk:hover rect:last-child,.bk:focus rect:last-child{opacity:.72}
+.bk.sel rect:last-child{fill:#cdfca2;stroke:#cdfca2}
+.bk:focus{outline:none}
+.bk:focus-visible rect:first-child{outline:2px solid var(--signal)}
+tbody tr{cursor:pointer}
+tbody tr.sel{background:var(--panel2)}
+.detail{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+        padding:12px;margin:12px 0}
+.detail .dhead{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;
+               align-items:baseline;margin-bottom:8px}
+.detail .dhead b{font-size:15px}
+.detail .dhead span{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .gone2{color:var(--muted);font-style:italic}
 .hidden{display:none}
 </style></head><body>
@@ -200,10 +214,16 @@ function periodChart(buckets) {
   const bars = show.map((b, i) => {
     const h = (b.total / max) * (H - PAD.t - PAD.b);
     const x = PAD.l + i * bw + bw * 0.14, w = bw * 0.72, y = H - PAD.b - h;
-    return b.partial
+    const vis = b.partial
       ? `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none"
            stroke="#9fe870" stroke-width="1.2" stroke-dasharray="3 2"/>`
       : `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#9fe870"/>`;
+    // A full-height transparent target: a quiet week is two pixels tall and
+    // would be untappable on a phone if the bar itself were the hit area.
+    return `<g class="bk" data-k="${esc(b.key)}" tabindex="0" role="button"
+      aria-label="${esc(b.key)}: ${fmt(Math.round(b.total))} respect">
+      <rect x="${PAD.l + i * bw}" y="${PAD.t}" width="${bw}" height="${H - PAD.t - PAD.b}"
+        fill="transparent"/>${vis}</g>`;
   }).join('');
   const ticks = [0, 0.5, 1].map((f) => {
     const y = H - PAD.b - f * (H - PAD.t - PAD.b);
@@ -228,7 +248,7 @@ function periodTable(buckets) {
           b.changePct >= 0 ? '+' : ''}${b.changePct.toFixed(1)}%</b>`;
     const warn = b.comparable === false
       ? ' <span class="gone2" title="different respect sources than the period before">&#9888;</span>' : '';
-    return `<tr><td>${esc(b.key)}</td><td class="n">${fmt(Math.round(b.total))}</td>
+    return `<tr data-k="${esc(b.key)}"><td>${esc(b.key)}</td><td class="n">${fmt(Math.round(b.total))}</td>
       <td class="n">${ch}${warn}</td><td class="n">${fmt(b.count)}</td><td>${esc(src)}</td></tr>`;
   }).join('');
   return `<div class="scroll cap"><table>
@@ -237,12 +257,59 @@ function periodTable(buckets) {
     <tbody>${rows}</tbody></table></div>`;
 }
 
-let _periods = null;
+/* What a period was actually made of. The chart answers "how much"; this
+   answers "from what", which is the difference between a good war month and
+   a good chaining month at the same total. */
+function breakdown(b, period) {
+  const label = { week: 'Week of', month: 'Month', year: 'Year' }[period] || '';
+  const rows = [['chain', 'Chains', '#9fe870'], ['war', 'Ranked wars', '#5fd39a'],
+                ['oc', 'Organised crime', '#d4a24a']]
+    .filter(([k]) => b.bySource[k] > 0)
+    .map(([k, name, col]) => {
+      const pctOf = b.total > 0 ? (b.bySource[k] / b.total) * 100 : 0;
+      const n = (b.countBySource || {})[k] || 0;
+      return `<tr>
+        <td><i style="display:inline-block;width:9px;height:9px;border-radius:2px;
+             background:${col};margin-right:7px"></i>${name}</td>
+        <td class="n">${fmt(Math.round(b.bySource[k]))}</td>
+        <td class="n">${pctOf.toFixed(0)}%</td>
+        <td class="n">${fmt(n)}</td></tr>`;
+    }).join('');
+  const change = b.partial
+    ? '<span class="gone2">still in progress — no comparison yet</span>'
+    : b.changePct == null ? '<span class="gone2">nothing before it to compare</span>'
+    : `<b style="color:${b.changePct >= 0 ? '#5fd39a' : '#e8636f'}">${
+        b.changePct >= 0 ? '+' : ''}${b.changePct.toFixed(1)}%</b> on the period before`;
+  return `<div class="detail">
+    <div class="dhead"><b>${label} ${esc(b.key)}</b>
+      <span>${fmt(Math.round(b.total))} respect from ${fmt(b.count)} award${b.count === 1 ? '' : 's'}</span></div>
+    ${rows ? `<table><thead><tr><th>Source</th><th class="n">Respect</th>
+      <th class="n">Share</th><th class="n">Awards</th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<p class="note">No respect recorded in this period.</p>'}
+    <p class="note">${change}${b.comparable === false
+      ? ' &mdash; though it drew on different sources than the period before, so that figure is not like-for-like.'
+      : ''}</p></div>`;
+}
+
+let _periods = null, _period = 'month';
+function selectBucket(key) {
+  const b = (_periods[_period] || []).find((x) => x.key === key);
+  if (!b) return;
+  $('detail').innerHTML = breakdown(b, _period);
+  for (const g of document.querySelectorAll('#periodBody .bk')) {
+    g.classList.toggle('sel', g.dataset.k === key);
+  }
+  for (const tr of document.querySelectorAll('#periodBody tbody tr')) {
+    tr.classList.toggle('sel', tr.dataset.k === key);
+  }
+}
+
 function drawPeriod(p) {
   if (!_periods) return;
+  _period = p;
   const b = _periods[p] || [];
   const flagged = b.filter((x) => x.comparable === false).length;
-  $('periodBody').innerHTML = periodChart(b) + periodTable(b)
+  $('periodBody').innerHTML = periodChart(b) + '<div id="detail"></div>' + periodTable(b)
     + `<p class="note">Newest first. A dashed bar is the period still in progress
        and carries no change figure.${flagged ? ` &#9888; marks ${flagged} period(s)
        measured from different sources than the one before — war respect only
@@ -251,6 +318,10 @@ function drawPeriod(p) {
   for (const btn of document.querySelectorAll('#seg button')) {
     btn.classList.toggle('on', btn.dataset.p === p);
   }
+  // Open on the newest COMPLETE period: the one in progress is the least
+  // informative thing to greet someone with.
+  const opening = [...b].reverse().find((x) => !x.partial && x.total > 0) || b[b.length - 1];
+  if (opening) selectBucket(opening.key);
 }
 
 function render(d) {
@@ -400,6 +471,17 @@ function render(d) {
     if (seg) {
       seg.addEventListener('click', (e) => {
         if (e.target.dataset && e.target.dataset.p) drawPeriod(e.target.dataset.p);
+      });
+      // Delegated from the container, which survives every redraw — listeners
+      // bound to the bars themselves would be lost on each period switch.
+      const body = $('periodBody');
+      const pick = (e) => {
+        const hit = e.target.closest('.bk, tbody tr');
+        if (hit && hit.dataset.k) selectBucket(hit.dataset.k);
+      };
+      body.addEventListener('click', pick);
+      body.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(e); }
       });
       drawPeriod('month');
     }

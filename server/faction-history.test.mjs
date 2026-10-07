@@ -322,3 +322,13 @@ test('a completed period is not marked partial', () => {
   assert.equal(b[1].partial, false);
   assert.equal(b[1].changePct, 100);
 });
+
+test('a bucket counts awards per source, not just their value', () => {
+  // "47,000 from chains" is less use than "47,000 from 12 chains" — one big
+  // chain and twelve small ones are different weeks.
+  const b = bucketRespect([
+    P('2024-03-01', 10, 'chain'), P('2024-03-02', 20, 'chain'), P('2024-03-03', 5, 'war'),
+  ], 'month');
+  assert.deepEqual(b[0].countBySource, { chain: 2, war: 1, oc: 0 });
+  assert.equal(b[0].count, 3);
+});
