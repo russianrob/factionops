@@ -332,6 +332,97 @@ export function buildRespectSeries({ chains = [], warRespect = [], crimeRespect 
   };
 }
 
+/**
+ * Respect grouped into weeks, months or years — "how are we doing lately",
+ * which the cumulative curve cannot answer because it only ever goes up.
+ *
+ * Every bucket carries its SOURCE SPLIT and a `comparable` flag, because the
+ * honest obstacle here is coverage, not arithmetic: war respect only exists
+ * from Mar 2022 and OC respect only from OC 2.0, so 2020 is chains-only. A
+ * year-on-year chart drawn from totals alone shows coverage arriving and
+ * calls it the faction improving. `comparable: false` means the two periods
+ * were not even measuring the same things.
+ *
+ * Empty periods are emitted as zeroes rather than skipped: a missing bar
+ * silently shifts every later bar left and turns a quiet month into a
+ * continuous run.
+ *
+ * All bucketing is UTC — local getters file an event near midnight into the
+ * wrong period depending on where the server happens to be.
+ */
+const SOURCES = ["chain", "war", "oc"];
+
+function periodKey(ts, period) {
+  const d = new Date(ts * 1000);
+  const y = d.getUTCFullYear();
+  if (period === "year") return String(y);
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  if (period === "month") return `${y}-${m}`;
+  // Monday-based week, named by that Monday.
+  const monday = new Date(Date.UTC(y, d.getUTCMonth(), d.getUTCDate()));
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+  return monday.toISOString().slice(0, 10);
+}
+
+function nextKey(key, period) {
+  if (period === "year") return String(Number(key) + 1);
+  if (period === "month") {
+    const [y, m] = key.split("-").map(Number);
+    return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  }
+  const d = new Date(`${key}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 7);
+  return d.toISOString().slice(0, 10);
+}
+
+export function bucketRespect(points = [], period = "month", now = Date.now() / 1000) {
+  const valid = points.filter((p) => p && p.t);
+  if (!valid.length) return [];
+
+  const acc = new Map();
+  for (const p of valid) {
+    const k = periodKey(p.t, period);
+    if (!acc.has(k)) {
+      acc.set(k, { key: k, total: 0, count: 0,
+                   bySource: Object.fromEntries(SOURCES.map((s) => [s, 0])) });
+    }
+    const b = acc.get(k);
+    const v = Number(p.delta) || 0;
+    b.total += v;
+    b.count++;
+    if (b.bySource[p.source] !== undefined) b.bySource[p.source] += v;
+  }
+
+  // Walk from the first key to the last, minting empty buckets as we go.
+  const first = periodKey(Math.min(...valid.map((p) => p.t)), period);
+  const last = periodKey(Math.max(...valid.map((p) => p.t)), period);
+  const out = [];
+  for (let k = first; ; k = nextKey(k, period)) {
+    out.push(acc.get(k) || { key: k, total: 0, count: 0,
+                             bySource: Object.fromEntries(SOURCES.map((s) => [s, 0])) });
+    if (k === last || out.length > 5000) break;
+  }
+
+  const live = (b) => SOURCES.filter((s) => b.bySource[s] > 0).join(",");
+  const nowKey = periodKey(now, period);
+  for (let i = 0; i < out.length; i++) {
+    const b = out[i];
+    b.total = Math.round(b.total * 100) / 100;
+    // The period containing "now" has not finished. Seven days into October
+    // reads as a 72% collapse against September; it is a month that has not
+    // happened yet, and it is the most misleading figure a progress chart can
+    // print. It gets no percentage at all.
+    b.partial = b.key === nowKey;
+    const prev = i ? out[i - 1] : null;
+    b.changePct = prev && prev.total > 0 && !b.partial
+      ? Math.round(((b.total - prev.total) / prev.total) * 1000) / 10
+      : null;
+    // Only meaningful against something: the first bucket compares to nothing.
+    b.comparable = prev ? live(b) === live(prev) : null;
+  }
+  return out;
+}
+
 export function buildWarRecord({ wars = [], reports = {}, factionId }) {
   const me = String(factionId);
   let won = 0, lost = 0, ongoing = 0;

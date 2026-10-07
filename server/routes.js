@@ -13062,8 +13062,23 @@ router.get("/api/faction-history", async (req, res) => {
   }
 
   const data = (slot && slot.data) || {};
+
+  // Bucket at request time rather than at build time: it is a pure transform
+  // over points the payload already holds, so changing how periods are cut
+  // does not cost a 370-call rebuild.
+  let respect = data.respect;
+  if (respect && respect.points && respect.points.length) {
+    respect = {
+      ...respect,
+      byWeek: facHist.bucketRespect(respect.points, "week"),
+      byMonth: facHist.bucketRespect(respect.points, "month"),
+      byYear: facHist.bucketRespect(respect.points, "year"),
+    };
+  }
+
   return res.json({
     ...data,
+    respect,
     reportsRaw: undefined,            // internal cache, megabytes, never shipped
     faction: { id: factionId },
     build: {

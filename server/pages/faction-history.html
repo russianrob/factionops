@@ -72,6 +72,11 @@ svg{display:block;width:100%;height:auto}
         letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:8px}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;
           vertical-align:-1px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;margin-bottom:12px}
+.seg button{background:transparent;color:var(--muted);border:0;border-right:1px solid var(--line);
+  padding:7px 16px;font-size:12.5px;font-weight:500;border-radius:0}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--signal);color:#07120a;font-weight:600}
 .gone2{color:var(--muted);font-style:italic}
 .hidden{display:none}
 </style></head><body>
@@ -183,6 +188,71 @@ function churnChart(monthly) {
     </div>`;
 }
 
+/* Bars for one period, newest at the right. Partial periods are drawn hollow
+   because a month that is three days old is not a collapse, and a solid bar
+   next to solid bars reads as one. */
+function periodChart(buckets) {
+  if (!buckets.length) return '';
+  const show = buckets.slice(-60);
+  const W = 900, H = 180, PAD = { l: 56, r: 8, t: 10, b: 24 };
+  const max = Math.max(1, ...show.map((b) => b.total));
+  const bw = (W - PAD.l - PAD.r) / show.length;
+  const bars = show.map((b, i) => {
+    const h = (b.total / max) * (H - PAD.t - PAD.b);
+    const x = PAD.l + i * bw + bw * 0.14, w = bw * 0.72, y = H - PAD.b - h;
+    return b.partial
+      ? `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none"
+           stroke="#9fe870" stroke-width="1.2" stroke-dasharray="3 2"/>`
+      : `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#9fe870"/>`;
+  }).join('');
+  const ticks = [0, 0.5, 1].map((f) => {
+    const y = H - PAD.b - f * (H - PAD.t - PAD.b);
+    return `<line x1="${PAD.l}" x2="${W - PAD.r}" y1="${y}" y2="${y}" stroke="#1c2a38"/>`
+      + `<text x="${PAD.l - 6}" y="${y + 3.5}" text-anchor="end" fill="#74889b"
+          font-family="IBM Plex Mono,monospace" font-size="10">${fmt(Math.round(max * f))}</text>`;
+  }).join('');
+  const every = Math.ceil(show.length / 10);
+  const labels = show.map((b, i) => (i % every === 0
+    ? `<text x="${PAD.l + i * bw + bw / 2}" y="${H - 7}" text-anchor="middle" fill="#74889b"
+         font-family="IBM Plex Mono,monospace" font-size="9">${esc(b.key)}</text>` : '')).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Respect gained per period">
+    ${ticks}${bars}${labels}</svg>`;
+}
+
+function periodTable(buckets) {
+  const rows = buckets.slice().reverse().slice(0, 40).map((b) => {
+    const src = ['chain', 'war', 'oc'].filter((s) => b.bySource[s] > 0).join(', ') || '—';
+    const ch = b.partial ? '<span class="gone2">in progress</span>'
+      : b.changePct == null ? '—'
+      : `<b style="color:${b.changePct >= 0 ? '#5fd39a' : '#e8636f'}">${
+          b.changePct >= 0 ? '+' : ''}${b.changePct.toFixed(1)}%</b>`;
+    const warn = b.comparable === false
+      ? ' <span class="gone2" title="different respect sources than the period before">&#9888;</span>' : '';
+    return `<tr><td>${esc(b.key)}</td><td class="n">${fmt(Math.round(b.total))}</td>
+      <td class="n">${ch}${warn}</td><td class="n">${fmt(b.count)}</td><td>${esc(src)}</td></tr>`;
+  }).join('');
+  return `<div class="scroll cap"><table>
+    <thead><tr><th>Period</th><th class="n">Respect</th><th class="n">Change</th>
+      <th class="n">Awards</th><th>Sources</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+let _periods = null;
+function drawPeriod(p) {
+  if (!_periods) return;
+  const b = _periods[p] || [];
+  const flagged = b.filter((x) => x.comparable === false).length;
+  $('periodBody').innerHTML = periodChart(b) + periodTable(b)
+    + `<p class="note">Newest first. A dashed bar is the period still in progress
+       and carries no change figure.${flagged ? ` &#9888; marks ${flagged} period(s)
+       measured from different sources than the one before — war respect only
+       exists from Mar 2022 and organised-crime respect from OC 2.0, so those
+       jumps are coverage arriving, not the faction improving.` : ''}</p>`;
+  for (const btn of document.querySelectorAll('#seg button')) {
+    btn.classList.toggle('on', btn.dataset.p === p);
+  }
+}
+
 function render(d) {
   const L = d.lifetime, R = d.respect, W = d.wars, C = d.churn;
   const out = [];
@@ -249,8 +319,15 @@ function render(d) {
         ${esc(day(R.earliest))} — chains, ranked wars and organised crimes.
         Torn never stored a historical respect figure, so this is a reconstruction:
         it accounts for ${fmt(Math.round(R.tracked))} of the current
-        ${fmt(R.currentTotal)}, leaving ${fmt(Math.round(R.unaccounted))} unexplained.
-        OC respect only exists from OC 2.0 onward, so the early years read low.</p>
+        ${fmt(R.currentTotal)}, leaving ${fmt(Math.round(R.unaccounted))} unexplained.</p>
+    </section>
+    <section><h2>Respect gained per period</h2>
+      <div class="seg" id="seg">
+        <button data-p="week">Week</button>
+        <button data-p="month" class="on">Month</button>
+        <button data-p="year">Year</button>
+      </div>
+      <div id="periodBody"></div>
     </section>`);
   }
 
@@ -316,6 +393,17 @@ function render(d) {
   }
 
   $('panels').innerHTML = out.join('') || '<p class="note">Nothing built yet.</p>';
+
+  if (R && R.byMonth) {
+    _periods = { week: R.byWeek || [], month: R.byMonth || [], year: R.byYear || [] };
+    const seg = $('seg');
+    if (seg) {
+      seg.addEventListener('click', (e) => {
+        if (e.target.dataset && e.target.dataset.p) drawPeriod(e.target.dataset.p);
+      });
+      drawPeriod('month');
+    }
+  }
 }
 
 async function load(refresh) {

@@ -249,3 +249,76 @@ test('faction housekeeping is ignored, not reported as unparsed', () => {
   assert.equal(ignored, 2);
   assert.deepEqual(unparsed, ['Something genuinely new happened']);
 });
+
+// ── bucketRespect ──────────────────────────────────────────────────────
+// "How much respect did we make last month, and how does that compare to the
+// year before?" The trap is that early periods are INCOMPLETE rather than
+// small: war respect starts Mar 2022 and OC respect only exists from OC 2.0,
+// so a year-on-year chart drawn from totals alone shows coverage growing and
+// calls it the faction improving. Every bucket therefore carries its source
+// split, and comparisons are flagged when the sources differ.
+import { bucketRespect } from './faction-history.js';
+
+const P = (iso, delta, source) => ({ t: Date.parse(iso + 'T12:00:00Z') / 1000, delta, source, cumulative: 0 });
+
+test('buckets by UTC year with a per-source split', () => {
+  const b = bucketRespect([
+    P('2024-03-01', 10, 'chain'), P('2024-07-01', 5, 'war'), P('2025-01-02', 7, 'oc'),
+  ], 'year');
+  assert.deepEqual(b.map((x) => [x.key, x.total]), [['2024', 15], ['2025', 7]]);
+  assert.deepEqual(b[0].bySource, { chain: 10, war: 5, oc: 0 });
+});
+
+test('buckets by month, and a month with no respect is still reported', () => {
+  // A silent gap must read as a zero bar, not vanish and shift the chart.
+  const b = bucketRespect([P('2024-01-10', 4, 'chain'), P('2024-03-10', 6, 'chain')], 'month');
+  assert.deepEqual(b.map((x) => [x.key, x.total]), [['2024-01', 4], ['2024-02', 0], ['2024-03', 6]]);
+});
+
+test('weeks start Monday in UTC', () => {
+  // 2024-03-07 is a Thursday; its week is the Monday before it.
+  const b = bucketRespect([P('2024-03-07', 3, 'chain')], 'week');
+  assert.equal(b[0].key, '2024-03-04');
+});
+
+test('a local-midnight event does not land in the wrong bucket', () => {
+  // Bucketing with local getters files this under 2023 west of UTC.
+  const b = bucketRespect([{ t: Date.parse('2024-01-01T00:30:00Z') / 1000, delta: 1, source: 'chain' }], 'year');
+  assert.equal(b[0].key, '2024');
+});
+
+test('each bucket carries the change on the one before it', () => {
+  const b = bucketRespect([P('2024-01-10', 100, 'chain'), P('2025-01-10', 150, 'chain')], 'year');
+  assert.equal(b[1].changePct, 50);
+  assert.equal(b[0].changePct, null);
+});
+
+test('a comparison across different sources is flagged as not like-for-like', () => {
+  // 2021 is chains only; 2024 has war respect too. Same number, different
+  // meaning — the page must be able to say so.
+  const b = bucketRespect([P('2021-06-01', 50, 'chain'), P('2024-06-01', 50, 'war')], 'year');
+  assert.equal(b[1].comparable, false);
+  assert.equal(b[0].comparable, null);
+});
+
+test('the period still in progress is marked partial', () => {
+  // 7 days into October reads as a 72% collapse against September. It is not
+  // a collapse, it is a month that has not happened yet — and that is the
+  // single most misleading number a "progress" chart can show.
+  const now = Date.parse('2026-10-07T00:00:00Z') / 1000;
+  const b = bucketRespect(
+    [P('2026-09-10', 100, 'chain'), P('2026-10-03', 20, 'chain')], 'month', now);
+  assert.equal(b[0].partial, false);
+  assert.equal(b[1].partial, true);
+  // A partial period gets no change figure — comparing part of a month to a
+  // whole one is the same error wearing a percentage sign.
+  assert.equal(b[1].changePct, null);
+});
+
+test('a completed period is not marked partial', () => {
+  const now = Date.parse('2026-10-07T00:00:00Z') / 1000;
+  const b = bucketRespect([P('2026-08-10', 10, 'chain'), P('2026-09-10', 20, 'chain')], 'month', now);
+  assert.equal(b[0].partial, false);
+  assert.equal(b[1].partial, false);
+  assert.equal(b[1].changePct, 100);
+});

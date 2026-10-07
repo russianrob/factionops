@@ -1,10 +1,18 @@
-// Promoting the beta to stable.
+// The Gym Coach lanes.
 //
-// The two builds kept separate GM namespaces on purpose — gc_v1 for the script
-// people ran, gcb_v1 for the beta — so a bad beta could never corrupt the
-// settings of the copy you relied on. Promoting the beta body under the stable
-// identity turns that safety into data loss: the API key and the ledger sit in
-// gc_v1, and the promoted code reads gcb_v1.
+// History, because the direction has reversed once and these tests only make
+// sense against the current intent: the beta was promoted into `gym-coach`,
+// then the beta was UNRETIRED (people were still running it), and finally the
+// regular lane was retired INTO the beta. So today `gym-coach.user.js` is a
+// migration pointer — it serves the beta body so an installed Gym Coach
+// updates once and thereafter tracks `gym-coach-beta` directly.
+//
+// Deleting the path instead would stand every install still: Tampermonkey can
+// only replace what it can still fetch, and a 404 is not an update.
+//
+// The namespaces still matter. gc_v1 was the old stable's, gcb_v1 the beta's,
+// and the body reads gcb_v1 — so migrateFromStableOnce, tested at the bottom,
+// is what stops a promoted user finding an empty ledger and no API key.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -17,11 +25,12 @@ const tag = (s, k) => (new RegExp('// @' + k + '\\s+(.+)').exec(head(s)) || [])[
 
 // --- identity -------------------------------------------------------------
 
-test('it updates the existing install rather than registering a new script', () => {
-  // Tampermonkey identity is (name, namespace). "Gym Coach Beta" would not
-  // match what people already have.
-  assert.equal(tag(STABLE, 'name'), 'Gym Coach');
+test('the gym-coach path serves the beta, so installs migrate in place', () => {
+  // The retirement mechanism: whoever still has "Gym Coach" installed polls
+  // this path, is handed the beta body, and becomes a Gym Coach Beta install.
+  assert.equal(tag(STABLE, 'name'), 'Gym Coach Beta');
   assert.equal(tag(STABLE, 'namespace'), 'RussianRob');
+  assert.equal(tag(STABLE, 'name'), tag(BETA, 'name'), 'the two paths must agree');
 });
 
 test('the version goes FORWARD from the build people are running', () => {
@@ -35,22 +44,33 @@ test('the version goes FORWARD from the build people are running', () => {
     }
     return 0;
   };
-  assert.ok(cmp(tag(STABLE, 'version'), '0.10.12') > 0,
-    tag(STABLE, 'version') + ' is not newer than the shipped 0.10.12');
-  assert.ok(cmp(tag(STABLE, 'version'), tag(BETA, 'version')) > 0,
-    'must also outrank the beta it came from');
+  // Must outrank BOTH shipped builds or the update is never offered: the old
+  // stable 0.11.1 on this path, and the 0.10.0 retirement stub on the beta
+  // path. Segment-wise numeric, so 0.12.0 > 0.10.0 despite the shorter digit.
+  assert.ok(cmp(tag(STABLE, 'version'), '0.11.1') > 0,
+    tag(STABLE, 'version') + ' is not newer than the shipped stable 0.11.1');
+  assert.ok(cmp(tag(BETA, 'version'), '0.10.0') > 0,
+    tag(BETA, 'version') + ' would leave stub users stranded on 0.10.0');
+  assert.equal(tag(STABLE, 'version'), tag(BETA, 'version'),
+    'both paths serve one build, so they must carry one version');
 });
 
 test('the in-file version matches the header', () => {
   assert.match(STABLE, new RegExp('GC_VERSION = "' + tag(STABLE, 'version') + '"'));
 });
 
-test('it points at the stable channel, and polls the meta file', () => {
-  // Left on the beta URLs, every updated user would be pinned to the beta
-  // channel for good. And the beta polled its own 638KB body on each check.
-  assert.equal(tag(STABLE, 'downloadURL'), 'https://tornwar.com/scripts/gym-coach.user.js');
-  assert.equal(tag(STABLE, 'updateURL'), 'https://tornwar.com/scripts/gym-coach.meta.js');
-  assert.ok(!/gym-coach-beta/.test(head(STABLE)), 'a beta URL survived in the header');
+test('both paths hand the reader on to the beta channel', () => {
+  // This is what makes the migration one hop rather than permanent: the body
+  // served at the gym-coach path points its own updates at the beta, so after
+  // one update the old path stops being consulted at all.
+  for (const [label, src] of [['stable path', STABLE], ['beta path', BETA]]) {
+    assert.equal(tag(src, 'downloadURL'),
+      'https://tornwar.com/scripts/gym-coach-beta.user.js', label);
+    // @updateURL must be the META file — pointing it at the body makes every
+    // install poll 640KB on each check.
+    assert.equal(tag(src, 'updateURL'),
+      'https://tornwar.com/scripts/gym-coach-beta.meta.js', label);
+  }
 });
 
 test('it keeps the grants and connects the beta body actually uses', () => {
@@ -60,10 +80,12 @@ test('it keeps the grants and connects the beta body actually uses', () => {
   assert.match(head(STABLE), /@connect\s+weav3r\.dev/, 'the board fetch host was dropped');
 });
 
-test('the description no longer calls itself a beta running alongside', () => {
-  const d = tag(STABLE, 'description');
-  assert.ok(!/beta lane/i.test(d), d);
-  assert.ok(!/alongside/i.test(d), d);
+test('the retirement stub is gone from the beta path', () => {
+  // 0.10.0 served a do-nothing stub asking testers to uninstall. Unretiring
+  // means the body is the real script again, not a politer stub.
+  assert.ok(BETA.length > 100_000, 'the beta path is serving something far too small to be the script');
+  assert.ok(!/please uninstall|retired/i.test(head(BETA)), 'stub wording survives in the header');
+  assert.match(BETA, /var NS = "gcb_v1"/, 'the beta must still read its own storage');
 });
 
 // --- the migration --------------------------------------------------------
