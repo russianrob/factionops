@@ -253,7 +253,7 @@ function periodTable(buckets) {
   }).join('');
   return `<div class="scroll cap"><table>
     <thead><tr><th>Period</th><th class="n">Respect</th><th class="n">Change</th>
-      <th class="n">Awards</th><th>Sources</th></tr></thead>
+      <th class="n">Chains + wars + crimes</th><th>Sources</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
 
@@ -280,11 +280,23 @@ function breakdown(b, period) {
     : b.changePct == null ? '<span class="gone2">nothing before it to compare</span>'
     : `<b style="color:${b.changePct >= 0 ? '#5fd39a' : '#e8636f'}">${
         b.changePct >= 0 ? '+' : ''}${b.changePct.toFixed(1)}%</b> on the period before`;
+  // "31 awards" was my own coinage and meant nothing to a reader. Name the
+  // things: 7 chains, 1 war, 23 crimes.
+  const mix = [['chain', 'chain', 'chains'], ['war', 'war', 'wars'],
+               ['oc', 'crime', 'crimes']]
+    .map(([k, one, many]) => {
+      const n = (b.countBySource || {})[k] || 0;
+      return n ? `${fmt(n)} ${n === 1 ? one : many}` : null;
+    }).filter(Boolean);
+  const mixText = mix.length
+    ? mix.slice(0, -1).join(', ') + (mix.length > 1 ? ' and ' : '') + mix[mix.length - 1]
+    : 'nothing';
+
   return `<div class="detail">
     <div class="dhead"><b>${label} ${esc(b.key)}</b>
-      <span>${fmt(Math.round(b.total))} respect from ${fmt(b.count)} award${b.count === 1 ? '' : 's'}</span></div>
+      <span>${fmt(Math.round(b.total))} respect from ${mixText}</span></div>
     ${rows ? `<table><thead><tr><th>Source</th><th class="n">Respect</th>
-      <th class="n">Share</th><th class="n">Awards</th></tr></thead><tbody>${rows}</tbody></table>`
+      <th class="n">Share</th><th class="n">How many</th></tr></thead><tbody>${rows}</tbody></table>`
       : '<p class="note">No respect recorded in this period.</p>'}
     <p class="note">${change}${b.comparable === false
       ? ' &mdash; though it drew on different sources than the period before, so that figure is not like-for-like.'
@@ -386,7 +398,7 @@ function render(d) {
   if (R && R.points && R.points.length) {
     out.push(`<section><h2>Respect over time</h2>
       ${lineChart(downsample(R.points, 700))}
-      <p class="note">Rebuilt from ${fmt(R.points.length)} timestamped awards since
+      <p class="note">Rebuilt from ${fmt(R.points.length)} timestamped chains, wars and crimes since
         ${esc(day(R.earliest))} — chains, ranked wars and organised crimes.
         Torn never stored a historical respect figure, so this is a reconstruction:
         it accounts for ${fmt(Math.round(R.tracked))} of the current
