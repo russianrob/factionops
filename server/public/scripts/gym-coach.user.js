@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach
 // @namespace    RussianRob
-// @version      0.11.0
+// @version      0.11.1
 // @description  Torn gym coach — verdict-first overlay, three tabs, cooldown rail, training advice and a progression chart. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,14 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.11.1 - The gym dock stopped calling itself BETA.
+*
+*         0.11.0 promoted the beta body verbatim, which carried the dock
+*         button's own label with it, so the script everybody runs announced
+*         itself as "GYM COACH · BETA" on gym.php. The id stays gcb-gym-dock:
+*         that string is element identity, not a label, and renaming it would
+*         orphan the dock the running script is already holding.
+*
 * 0.9.90 - War stack sits with the advice it changes, not under it.
 *
 *         It was the second-to-last card on Now, so turning it on mid-war meant
@@ -2189,7 +2197,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.11.0";
+  var GC_VERSION = "0.11.1";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -11658,7 +11666,7 @@
       b = document.createElement("button");
       b.id = "gcb-gym-dock";
       b.type = "button";
-      b.textContent = "GYM COACH · BETA";
+      b.textContent = "GYM COACH";
       b.setAttribute(
         "style",
         "display:block;width:100%;box-sizing:border-box;margin:8px 0;min-height:48px;border:2px solid #f2a03d;border-radius:10px;background:#121418;color:#f2a03d;font:800 16px/1 -apple-system,sans-serif;letter-spacing:.08em;-webkit-appearance:none;appearance:none;touch-action:manipulation;"

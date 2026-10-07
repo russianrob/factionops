@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach
 // @namespace    RussianRob
-// @version      0.11.0
+// @version      0.11.1
 // @description  Torn gym coach — verdict-first overlay, three tabs, cooldown rail, training advice and a progression chart. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
