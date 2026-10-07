@@ -1,0 +1,1319 @@
+[
+  {
+    "name": "First Aid and Abet",
+    "difficulty": 1,
+    "spawn_level": 1,
+    "players": 3,
+    "prerequisite": null,
+    "scope_cost": 1,
+    "scope_return": 2,
+    "break_even_pct": 50.0,
+    "roles": [
+      {
+        "role": "Picklock",
+        "position": "P1",
+        "required_item": "Lockpicks",
+        "consumed": false
+      },
+      {
+        "role": "Decoy",
+        "position": "P2",
+        "required_item": "Shaving Foam",
+        "consumed": true
+      },
+      {
+        "role": "Pickpocket",
+        "position": "P3",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Mob Mentality",
+    "difficulty": 1,
+    "spawn_level": 1,
+    "players": 4,
+    "prerequisite": null,
+    "scope_cost": 1,
+    "scope_return": 2,
+    "break_even_pct": 50.0,
+    "roles": [
+      {
+        "role": "Looter",
+        "position": "P1",
+        "required_item": "Jemmy",
+        "consumed": false
+      },
+      {
+        "role": "Looter",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Looter",
+        "position": "P3",
+        "required_item": "Jemmy",
+        "consumed": false
+      },
+      {
+        "role": "Looter",
+        "position": "P4",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Pet Project",
+    "difficulty": 1,
+    "spawn_level": 1,
+    "players": 3,
+    "prerequisite": null,
+    "scope_cost": 1,
+    "scope_return": 2,
+    "break_even_pct": 50.0,
+    "roles": [
+      {
+        "role": "Kidnapper",
+        "position": "P1",
+        "required_item": "Dog Treats",
+        "consumed": true
+      },
+      {
+        "role": "Muscle",
+        "position": "P2",
+        "required_item": "Net",
+        "consumed": false
+      },
+      {
+        "role": "Picklock",
+        "position": "P3",
+        "required_item": "Lockpicks",
+        "consumed": false
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Best of the Lot",
+    "difficulty": 2,
+    "spawn_level": 1,
+    "players": 4,
+    "prerequisite": null,
+    "scope_cost": 1,
+    "scope_return": 2,
+    "break_even_pct": 50.0,
+    "roles": [
+      {
+        "role": "Picklock",
+        "position": "P1",
+        "required_item": "Lockpicks",
+        "consumed": false
+      },
+      {
+        "role": "Car Thief",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Muscle",
+        "position": "P3",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Imitator",
+        "position": "P4",
+        "required_item": "Police Badge",
+        "consumed": false
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Cash Me if You Can",
+    "difficulty": 2,
+    "spawn_level": 1,
+    "players": 3,
+    "prerequisite": null,
+    "scope_cost": 1,
+    "scope_return": 2,
+    "break_even_pct": 50.0,
+    "roles": [
+      {
+        "role": "Thief",
+        "position": "P1",
+        "required_item": "ID Badge",
+        "consumed": true
+      },
+      {
+        "role": "Thief",
+        "position": "P2",
+        "required_item": "ATM Key",
+        "consumed": true
+      },
+      {
+        "role": "Lookout",
+        "position": "P3",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Thou Shalt Not Steal",
+    "difficulty": 2,
+    "spawn_level": 1,
+    "players": 3,
+    "prerequisite": null,
+    "scope_cost": 1,
+    "scope_return": 2,
+    "break_even_pct": 50.0,
+    "roles": [
+      {
+        "role": "Picklock",
+        "position": "P1",
+        "required_item": "Lockpicks",
+        "consumed": false
+      },
+      {
+        "role": "Thief",
+        "position": "P2",
+        "required_item": "Cassock",
+        "consumed": false
+      },
+      {
+        "role": "Pickpocket",
+        "position": "P3",
+        "required_item": "Cell Phone",
+        "consumed": true
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Gaslight the Way",
+    "difficulty": 3,
+    "spawn_level": 2,
+    "players": 6,
+    "prerequisite": null,
+    "scope_cost": 2,
+    "scope_return": 3,
+    "break_even_pct": 66.7,
+    "roles": [
+      {
+        "role": "Imitator",
+        "position": "P1",
+        "required_item": "Construction Helmet",
+        "consumed": false
+      },
+      {
+        "role": "Looter",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Imitator",
+        "position": "P3",
+        "required_item": "ID Badge",
+        "consumed": true
+      },
+      {
+        "role": "Looter",
+        "position": "P4",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Imitator",
+        "position": "P5",
+        "required_item": "ID Badge",
+        "consumed": true
+      },
+      {
+        "role": "Looter",
+        "position": "P6",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Market Forces",
+    "difficulty": 3,
+    "spawn_level": 2,
+    "players": 5,
+    "prerequisite": null,
+    "scope_cost": 2,
+    "scope_return": 3,
+    "break_even_pct": 66.7,
+    "roles": [
+      {
+        "role": "Enforcer",
+        "position": "P1",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Negotiator",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Lookout",
+        "position": "P3",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Arsonist",
+        "position": "P4",
+        "required_item": "Gasoline",
+        "consumed": true
+      },
+      {
+        "role": "Muscle",
+        "position": "P5",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Smoke and Wing Mirrors",
+    "difficulty": 3,
+    "spawn_level": 2,
+    "players": 4,
+    "prerequisite": null,
+    "scope_cost": 2,
+    "scope_return": 3,
+    "break_even_pct": 66.7,
+    "roles": [
+      {
+        "role": "Car Thief",
+        "position": "P1",
+        "required_item": "RF Detector",
+        "consumed": false
+      },
+      {
+        "role": "Imitator",
+        "position": "P2",
+        "required_item": "DSLR Camera",
+        "consumed": false
+      },
+      {
+        "role": "Hustler",
+        "position": "P3",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Hustler",
+        "position": "P4",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Plucking the Lotus Petal",
+    "difficulty": 4,
+    "spawn_level": 2,
+    "players": 4,
+    "prerequisite": null,
+    "scope_cost": 2,
+    "scope_return": 3,
+    "break_even_pct": 66.7,
+    "roles": [
+      {
+        "role": "Robber",
+        "position": "P1",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Hustler",
+        "position": "P2",
+        "required_item": "Blank Casino Chips",
+        "consumed": true
+      },
+      {
+        "role": "Robber",
+        "position": "P3",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Muscle",
+        "position": "P4",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Snow Blind",
+    "difficulty": 4,
+    "spawn_level": 2,
+    "players": 4,
+    "prerequisite": null,
+    "scope_cost": 2,
+    "scope_return": 3,
+    "break_even_pct": 66.7,
+    "roles": [
+      {
+        "role": "Hustler",
+        "position": "P1",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Imitator",
+        "position": "P2",
+        "required_item": "PCP",
+        "consumed": true
+      },
+      {
+        "role": "Muscle",
+        "position": "P3",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Muscle",
+        "position": "P4",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Stage Fright",
+    "difficulty": 4,
+    "spawn_level": 2,
+    "players": 6,
+    "prerequisite": null,
+    "scope_cost": 2,
+    "scope_return": 3,
+    "break_even_pct": 66.7,
+    "roles": [
+      {
+        "role": "Enforcer",
+        "position": "P1",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Muscle",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Muscle",
+        "position": "P3",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Muscle",
+        "position": "P4",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Lookout",
+        "position": "P5",
+        "required_item": "Binoculars",
+        "consumed": false
+      },
+      {
+        "role": "Sniper",
+        "position": "P6",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Counter Offer",
+    "difficulty": 5,
+    "spawn_level": 3,
+    "players": 5,
+    "prerequisite": null,
+    "scope_cost": 3,
+    "scope_return": 4,
+    "break_even_pct": 75.0,
+    "roles": [
+      {
+        "role": "Robber",
+        "position": "P1",
+        "required_item": "Zip Ties",
+        "consumed": true
+      },
+      {
+        "role": "Looter",
+        "position": "P2",
+        "required_item": "Zip Ties",
+        "consumed": true
+      },
+      {
+        "role": "Hacker",
+        "position": "P3",
+        "required_item": "Polymorphic Virus",
+        "consumed": true
+      },
+      {
+        "role": "Picklock",
+        "position": "P4",
+        "required_item": "Lockpicks",
+        "consumed": false
+      },
+      {
+        "role": "Engineer",
+        "position": "P5",
+        "required_item": "Wire Cutters",
+        "consumed": false
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Guardian \u00c1ngels",
+    "difficulty": 5,
+    "spawn_level": 3,
+    "players": 3,
+    "prerequisite": null,
+    "scope_cost": 3,
+    "scope_return": 4,
+    "break_even_pct": 75.0,
+    "roles": [
+      {
+        "role": "Enforcer",
+        "position": "P1",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Hustler",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Engineer",
+        "position": "P3",
+        "required_item": "Hand Drill",
+        "consumed": false
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Honey Trap",
+    "difficulty": 5,
+    "spawn_level": 3,
+    "players": 3,
+    "prerequisite": null,
+    "scope_cost": 3,
+    "scope_return": 4,
+    "break_even_pct": 75.0,
+    "roles": [
+      {
+        "role": "Enforcer",
+        "position": "P1",
+        "required_item": "Billfold",
+        "consumed": false
+      },
+      {
+        "role": "Muscle",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Muscle",
+        "position": "P3",
+        "required_item": "Billfold",
+        "consumed": false
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "No Reserve",
+    "difficulty": 5,
+    "spawn_level": 3,
+    "players": 3,
+    "prerequisite": null,
+    "scope_cost": 3,
+    "scope_return": 4,
+    "break_even_pct": 75.0,
+    "roles": [
+      {
+        "role": "Car Thief",
+        "position": "P1",
+        "required_item": "Bolt Cutters",
+        "consumed": false
+      },
+      {
+        "role": "Techie",
+        "position": "P2",
+        "required_item": "Spray Paint : Black",
+        "consumed": true
+      },
+      {
+        "role": "Engineer",
+        "position": "P3",
+        "required_item": "Chloroform",
+        "consumed": true
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Bidding War",
+    "difficulty": 6,
+    "spawn_level": 3,
+    "players": 6,
+    "prerequisite": "No Reserve",
+    "scope_cost": 3,
+    "scope_return": 4,
+    "break_even_pct": 75.0,
+    "roles": [
+      {
+        "role": "Robber",
+        "position": "P1",
+        "required_item": "Jemmy",
+        "consumed": false
+      },
+      {
+        "role": "Driver",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Robber",
+        "position": "P3",
+        "required_item": "Flash Grenade",
+        "consumed": true
+      },
+      {
+        "role": "Robber",
+        "position": "P4",
+        "required_item": "Dental Mirror",
+        "consumed": false
+      },
+      {
+        "role": "Bomber",
+        "position": "P5",
+        "required_item": "C4 Explosive",
+        "consumed": true
+      },
+      {
+        "role": "Bomber",
+        "position": "P6",
+        "required_item": "C4 Explosive",
+        "consumed": true
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Dish It Out",
+    "difficulty": 6,
+    "spawn_level": 3,
+    "players": 5,
+    "prerequisite": null,
+    "scope_cost": 3,
+    "scope_return": 4,
+    "break_even_pct": 75.0,
+    "roles": [
+      {
+        "role": "Assassin",
+        "position": "P1",
+        "required_item": "Ipecac Syrup",
+        "consumed": true
+      },
+      {
+        "role": "Muscle",
+        "position": "P2",
+        "required_item": "Bolt Cutters",
+        "consumed": false
+      },
+      {
+        "role": "Saboteur",
+        "position": "P3",
+        "required_item": "Thermite",
+        "consumed": true
+      },
+      {
+        "role": "Saboteur",
+        "position": "P4",
+        "required_item": "Thermite",
+        "consumed": true
+      },
+      {
+        "role": "Engineer",
+        "position": "P5",
+        "required_item": "Wire Cutters",
+        "consumed": false
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Leave No Trace",
+    "difficulty": 6,
+    "spawn_level": 3,
+    "players": 3,
+    "prerequisite": null,
+    "scope_cost": 3,
+    "scope_return": 4,
+    "break_even_pct": 75.0,
+    "roles": [
+      {
+        "role": "Techie",
+        "position": "P1",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Negotiator",
+        "position": "P2",
+        "required_item": "Police Badge",
+        "consumed": false
+      },
+      {
+        "role": "Imitator",
+        "position": "P3",
+        "required_item": "Police Badge",
+        "consumed": false
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Sneaky Git Grab",
+    "difficulty": 6,
+    "spawn_level": 3,
+    "players": 4,
+    "prerequisite": null,
+    "scope_cost": 3,
+    "scope_return": 4,
+    "break_even_pct": 75.0,
+    "roles": [
+      {
+        "role": "Imitator",
+        "position": "P1",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Pickpocket",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Hacker",
+        "position": "P3",
+        "required_item": "Tunneling Virus",
+        "consumed": true
+      },
+      {
+        "role": "Techie",
+        "position": "P4",
+        "required_item": "Wireless Dongle",
+        "consumed": false
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Blast from the Past",
+    "difficulty": 7,
+    "spawn_level": 4,
+    "players": 6,
+    "prerequisite": null,
+    "scope_cost": 4,
+    "scope_return": 5,
+    "break_even_pct": 80.0,
+    "roles": [
+      {
+        "role": "Picklock",
+        "position": "P1",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Hacker",
+        "position": "P2",
+        "required_item": "Firewalk Virus",
+        "consumed": true
+      },
+      {
+        "role": "Engineer",
+        "position": "P3",
+        "required_item": "Core Drill",
+        "consumed": false
+      },
+      {
+        "role": "Bomber",
+        "position": "P4",
+        "required_item": "Shaped Charge",
+        "consumed": true
+      },
+      {
+        "role": "Muscle",
+        "position": "P5",
+        "required_item": "Zip Ties",
+        "consumed": true
+      },
+      {
+        "role": "Picklock",
+        "position": "P6",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Cleared for Takeoff",
+    "difficulty": 7,
+    "spawn_level": 4,
+    "players": 6,
+    "prerequisite": null,
+    "scope_cost": 4,
+    "scope_return": 5,
+    "break_even_pct": 80.0,
+    "roles": [
+      {
+        "role": "Imitator",
+        "position": "P1",
+        "required_item": "Large Suitcase",
+        "consumed": false
+      },
+      {
+        "role": "Techie",
+        "position": "P2",
+        "required_item": "Hand Drill",
+        "consumed": false
+      },
+      {
+        "role": "Pickpocket",
+        "position": "P3",
+        "required_item": "Tracking Device",
+        "consumed": false
+      },
+      {
+        "role": "Lookout",
+        "position": "P4",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Assassin",
+        "position": "P5",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Interrogator",
+        "position": "P6",
+        "required_item": "Bone Saw",
+        "consumed": false
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Window of Opportunity",
+    "difficulty": 7,
+    "spawn_level": 4,
+    "players": 5,
+    "prerequisite": null,
+    "scope_cost": 4,
+    "scope_return": 5,
+    "break_even_pct": 80.0,
+    "roles": [
+      {
+        "role": "Engineer",
+        "position": "P1",
+        "required_item": "Wire Cutters",
+        "consumed": false
+      },
+      {
+        "role": "Looter",
+        "position": "P2",
+        "required_item": "Ladder",
+        "consumed": false
+      },
+      {
+        "role": "Looter",
+        "position": "P3",
+        "required_item": "Angle Grinder",
+        "consumed": false
+      },
+      {
+        "role": "Muscle",
+        "position": "P4",
+        "required_item": "Razor Wire",
+        "consumed": true
+      },
+      {
+        "role": "Muscle",
+        "position": "P5",
+        "required_item": "Floor Cleaner",
+        "consumed": true
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Break the Bank",
+    "difficulty": 8,
+    "spawn_level": 4,
+    "players": 6,
+    "prerequisite": null,
+    "scope_cost": 4,
+    "scope_return": 5,
+    "break_even_pct": 80.0,
+    "roles": [
+      {
+        "role": "Robber",
+        "position": "P1",
+        "required_item": "Hand Drill",
+        "consumed": false
+      },
+      {
+        "role": "Muscle",
+        "position": "P2",
+        "required_item": "Hand Drill",
+        "consumed": false
+      },
+      {
+        "role": "Muscle",
+        "position": "P3",
+        "required_item": "Zip Ties",
+        "consumed": true
+      },
+      {
+        "role": "Thief",
+        "position": "P4",
+        "required_item": "Hand Drill",
+        "consumed": false
+      },
+      {
+        "role": "Muscle",
+        "position": "P5",
+        "required_item": "Hand Drill",
+        "consumed": false
+      },
+      {
+        "role": "Thief",
+        "position": "P6",
+        "required_item": "Hand Drill",
+        "consumed": false
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Clinical Precision",
+    "difficulty": 8,
+    "spawn_level": 4,
+    "players": 4,
+    "prerequisite": null,
+    "scope_cost": 4,
+    "scope_return": 5,
+    "break_even_pct": 80.0,
+    "roles": [
+      {
+        "role": "Imitator",
+        "position": "P1",
+        "required_item": "Syringe",
+        "consumed": true
+      },
+      {
+        "role": "Cat Burglar",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Assassin",
+        "position": "P3",
+        "required_item": "Chloroform",
+        "consumed": true
+      },
+      {
+        "role": "Cleaner",
+        "position": "P4",
+        "required_item": "Blood Bag : Irradiated",
+        "consumed": true
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Lock Stock",
+    "difficulty": 8,
+    "spawn_level": 5,
+    "players": 5,
+    "prerequisite": null,
+    "scope_cost": 5,
+    "scope_return": 6,
+    "break_even_pct": 83.3,
+    "roles": [
+      {
+        "role": "Assassin",
+        "position": "P1",
+        "required_item": "Ecstasy",
+        "consumed": true
+      },
+      {
+        "role": "Smuggler",
+        "position": "P2",
+        "required_item": "Lubricant",
+        "consumed": true
+      },
+      {
+        "role": "Hacker",
+        "position": "P3",
+        "required_item": "Armored Virus",
+        "consumed": true
+      },
+      {
+        "role": "Muscle",
+        "position": "P4",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Muscle",
+        "position": "P5",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Manifest Cruelty",
+    "difficulty": 8,
+    "spawn_level": 5,
+    "players": 4,
+    "prerequisite": null,
+    "scope_cost": 5,
+    "scope_return": 6,
+    "break_even_pct": 83.3,
+    "roles": [
+      {
+        "role": "Hacker",
+        "position": "P1",
+        "required_item": "Stealth Virus",
+        "consumed": true
+      },
+      {
+        "role": "Interrogator",
+        "position": "P2",
+        "required_item": "Cigar Cutter",
+        "consumed": false
+      },
+      {
+        "role": "Reviver",
+        "position": "P3",
+        "required_item": "Car Battery",
+        "consumed": false
+      },
+      {
+        "role": "Cat Burglar",
+        "position": "P4",
+        "required_item": "Zip Ties",
+        "consumed": true
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Ship Happens",
+    "difficulty": 8,
+    "spawn_level": 4,
+    "players": 5,
+    "prerequisite": null,
+    "scope_cost": 4,
+    "scope_return": 5,
+    "break_even_pct": 80.0,
+    "roles": [
+      {
+        "role": "Engineer",
+        "position": "P1",
+        "required_item": "Core Drill",
+        "consumed": false
+      },
+      {
+        "role": "Assassin",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Hustler",
+        "position": "P3",
+        "required_item": "Single Red Rose",
+        "consumed": true
+      },
+      {
+        "role": "Spy",
+        "position": "P4",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Interrogator",
+        "position": "P5",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Stacking the Deck",
+    "difficulty": 8,
+    "spawn_level": 5,
+    "players": 4,
+    "prerequisite": null,
+    "scope_cost": 5,
+    "scope_return": 6,
+    "break_even_pct": 83.3,
+    "roles": [
+      {
+        "role": "Cat Burglar",
+        "position": "P1",
+        "required_item": "Jemmy",
+        "consumed": false
+      },
+      {
+        "role": "Driver",
+        "position": "P2",
+        "required_item": "Smoke Grenade",
+        "consumed": true
+      },
+      {
+        "role": "Hacker",
+        "position": "P3",
+        "required_item": "Stealth Virus",
+        "consumed": true
+      },
+      {
+        "role": "Imitator",
+        "position": "P4",
+        "required_item": "ID Badge",
+        "consumed": true
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Ace in the Hole",
+    "difficulty": 9,
+    "spawn_level": 5,
+    "players": 5,
+    "prerequisite": "Stacking the Deck",
+    "scope_cost": 5,
+    "scope_return": 6,
+    "break_even_pct": 83.3,
+    "roles": [
+      {
+        "role": "Imitator",
+        "position": "P1",
+        "required_item": "ID Badge",
+        "consumed": true
+      },
+      {
+        "role": "Muscle",
+        "position": "P2",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Muscle",
+        "position": "P3",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Hacker",
+        "position": "P4",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Driver",
+        "position": "P5",
+        "required_item": null,
+        "consumed": null
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Gone Fission",
+    "difficulty": 9,
+    "spawn_level": 5,
+    "players": 5,
+    "prerequisite": "Manifest Cruelty",
+    "scope_cost": 5,
+    "scope_return": 6,
+    "break_even_pct": 83.3,
+    "roles": [
+      {
+        "role": "Hijacker",
+        "position": "P1",
+        "required_item": "Zip Ties",
+        "consumed": true
+      },
+      {
+        "role": "Engineer",
+        "position": "P2",
+        "required_item": "Thermite",
+        "consumed": true
+      },
+      {
+        "role": "Pickpocket",
+        "position": "P3",
+        "required_item": "Cut-Throat Razor",
+        "consumed": false
+      },
+      {
+        "role": "Imitator",
+        "position": "P4",
+        "required_item": "DSLR Camera",
+        "consumed": false
+      },
+      {
+        "role": "Bomber",
+        "position": "P5",
+        "required_item": "C4 Explosive",
+        "consumed": true
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Hostile Takeover",
+    "difficulty": 9,
+    "spawn_level": 5,
+    "players": 6,
+    "prerequisite": "Lock Stock",
+    "scope_cost": 5,
+    "scope_return": 6,
+    "break_even_pct": 83.3,
+    "roles": [
+      {
+        "role": "Hacker",
+        "position": "P1",
+        "required_item": "Tunneling Virus",
+        "consumed": true
+      },
+      {
+        "role": "Engineer",
+        "position": "P2",
+        "required_item": "PSU",
+        "consumed": true
+      },
+      {
+        "role": "Cat Burglar",
+        "position": "P3",
+        "required_item": "Hard Drive",
+        "consumed": true
+      },
+      {
+        "role": "Kidnapper",
+        "position": "P4",
+        "required_item": "Igniter Cord",
+        "consumed": true
+      },
+      {
+        "role": "Negotiator",
+        "position": "P5",
+        "required_item": "Nail Bomb",
+        "consumed": true
+      },
+      {
+        "role": "Muscle",
+        "position": "P6",
+        "required_item": "China Lake",
+        "consumed": false
+      }
+    ],
+    "stat_requirements": null
+  },
+  {
+    "name": "Crane Reaction",
+    "difficulty": 10,
+    "spawn_level": 5,
+    "players": 6,
+    "prerequisite": "Gone Fission",
+    "scope_cost": 5,
+    "scope_return": 6,
+    "break_even_pct": 83.3,
+    "roles": [
+      {
+        "role": "Sniper",
+        "position": "P1",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Lookout",
+        "position": "P2",
+        "required_item": "Binoculars",
+        "consumed": false
+      },
+      {
+        "role": "Engineer",
+        "position": "P3",
+        "required_item": "Shaped Charge",
+        "consumed": true
+      },
+      {
+        "role": "Bomber",
+        "position": "P4",
+        "required_item": "Remote Detonator",
+        "consumed": false
+      },
+      {
+        "role": "Muscle",
+        "position": "P5",
+        "required_item": null,
+        "consumed": null
+      },
+      {
+        "role": "Muscle",
+        "position": "P6",
+        "required_item": "Tear Gas",
+        "consumed": true
+      }
+    ],
+    "stat_requirements": null
+  }
+]
