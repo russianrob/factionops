@@ -333,47 +333,98 @@ test('a bucket counts awards per source, not just their value', () => {
   assert.equal(b[0].count, 3);
 });
 
-// ── buildAttackRespect ─────────────────────────────────────────────────
-// /faction/attacks returns BOTH directions, and respect_gain on an incoming
-// attack is the enemy's. Summing the feed unfiltered credits our members with
-// respect our opponents took off us.
-import { buildAttackRespect } from './faction-history.js';
+// ── foldAttacks ────────────────────────────────────────────────────────
+// Folding a page of the raw feed into the per-day store is where the three
+// traps live, so they are tested here rather than on the rollup.
+import { foldAttacks } from './faction-history.js';
 
-const atk = (name, gain, result = 'Attacked', fid = 42055) => ({
-  // Distinct id per name: name.length collapsed 'A' and 'B' into one member
-  // and the merge looked like an aggregation bug in the code under test.
+const atk = (name, gain, started = Date.parse('2026-09-28T12:00:00Z') / 1000, fid = 42055) => ({
   attacker: name == null ? null : { id: name.charCodeAt(0), name, faction: { id: fid } },
   defender: { faction: { id: fid === 42055 ? 999 : 42055 } },
-  respect_gain: gain, result, started: 1000,
+  respect_gain: gain, result: 'Attacked', started,
+});
+const fresh = () => ({ days: {}, unattributed: {} });
+
+test('an incoming attack is not credited to us', () => {
+  // respect_gain on an incoming row is the ENEMY'S. Summing the feed
+  // unfiltered hands our members respect our opponents took off us.
+  const st = foldAttacks(fresh(), [atk('Us', 10), atk('Them', 99, undefined, 999)], 42055);
+  assert.deepEqual(Object.values(st.days['2026-09-28']).map((m) => m.n), ['Us']);
 });
 
-test('only our own faction\'s attackers are counted', () => {
-  const r = buildAttackRespect([atk('Us', 10), atk('Them', 99, 'Attacked', 999)], 42055);
-  assert.deepEqual(r.members.map((m) => m.name), ['Us']);
-  assert.equal(r.members[0].respect, 10);
+test('a stealthed attack is kept as unattributed, not dropped', () => {
+  const st = foldAttacks(fresh(), [atk('A', 10), atk(null, 25)], 42055);
+  assert.deepEqual(st.unattributed['2026-09-28'], { r: 25, a: 1 });
+  assert.equal(st.days['2026-09-28'][String('A'.charCodeAt(0))].r, 10);
 });
 
-test('respect and attack count accumulate per member, with an average', () => {
-  const r = buildAttackRespect([atk('A', 10), atk('A', 20), atk('B', 5)], 42055);
-  const a = r.members.find((m) => m.name === 'A');
-  assert.deepEqual([a.respect, a.attacks, a.avg], [30, 2, 15]);
+test('respect and attacks accumulate across pages into one day', () => {
+  let st = foldAttacks(fresh(), [atk('A', 10)], 42055);
+  st = foldAttacks(st, [atk('A', 20)], 42055);
+  const m = st.days['2026-09-28'][String('A'.charCodeAt(0))];
+  assert.deepEqual([m.r, m.a], [30, 2]);
 });
 
-test('members are ranked by respect gained', () => {
-  const r = buildAttackRespect([atk('Low', 1), atk('High', 100)], 42055);
-  assert.deepEqual(r.members.map((m) => m.name), ['High', 'Low']);
+test('attacks are filed by UTC date', () => {
+  // 00:30 UTC belongs to that day, not the one before it west of UTC.
+  const st = foldAttacks(fresh(), [atk('A', 1, Date.parse('2026-09-29T00:30:00Z') / 1000)], 42055);
+  assert.deepEqual(Object.keys(st.days), ['2026-09-29']);
 });
 
-test('a stealthed attack is reported as unattributed, not dropped', () => {
-  // 7 of every 100 rows hide the attacker. Silently dropping them makes the
-  // leaderboard total disagree with the faction total for no visible reason.
-  const r = buildAttackRespect([atk('A', 10), atk(null, 25)], 42055);
-  assert.equal(r.unattributed.attacks, 1);
-  assert.equal(r.unattributed.respect, 25);
-  assert.equal(r.totalRespect, 35);
+// ── bucketAttacks ──────────────────────────────────────────────────────
+// Attacks are stored aggregated PER DAY PER MEMBER, not as raw rows: a year
+// is ~76,000 attacks and warboard only ever needs them rolled up. Days roll
+// into weeks, months, years and all-time from that one store.
+import { bucketAttacks } from './faction-history.js';
+
+const DAYS = {
+  '2026-09-28': { '1': { n: 'A', r: 100, a: 10 }, '2': { n: 'B', r: 50, a: 20 } },
+  '2026-09-29': { '1': { n: 'A', r: 40, a: 4 } },
+  '2026-10-05': { '2': { n: 'B', r: 10, a: 1 } },
+};
+
+test('days roll into months with per-member totals', () => {
+  const b = bucketAttacks({ days: DAYS }, 'month');
+  const sep = b.find((x) => x.key === '2026-09');
+  assert.equal(sep.total, 190);
+  assert.deepEqual(sep.members.map((m) => [m.name, m.respect, m.attacks]),
+    [['A', 140, 14], ['B', 50, 20]]);
 });
 
-test('each member keeps the spread of outcomes behind their number', () => {
-  const r = buildAttackRespect([atk('A', 10, 'Mugged'), atk('A', 0, 'Lost')], 42055);
-  assert.deepEqual(r.members[0].results, { Mugged: 1, Lost: 1 });
+test('the average exposes target quality, not effort', () => {
+  // B made more attacks than A and earned less: that gap is the whole point.
+  const b = bucketAttacks({ days: DAYS }, 'month');
+  const [a, bb] = b.find((x) => x.key === '2026-09').members;
+  assert.equal(a.avg, 10);
+  assert.equal(bb.avg, 2.5);
+});
+
+test('weeks roll from the same days, Monday-based', () => {
+  const b = bucketAttacks({ days: DAYS }, 'week');
+  assert.deepEqual(b.map((x) => x.key), ['2026-09-28', '2026-10-05']);
+  assert.equal(b[0].total, 190);
+});
+
+test('all-time is one bucket over everything held', () => {
+  const b = bucketAttacks({ days: DAYS }, 'all');
+  assert.equal(b.length, 1);
+  assert.equal(b[0].total, 200);
+  assert.deepEqual(b[0].members.map((m) => m.name), ['A', 'B']);
+});
+
+test('a member is one row even when their name changed mid-window', () => {
+  // Torn names are editable; the id is the identity. Keying on the name
+  // would split one person into two rows and halve their standing.
+  const b = bucketAttacks({ days: {
+    '2026-09-28': { '1': { n: 'OldName', r: 10, a: 1 } },
+    '2026-09-29': { '1': { n: 'NewName', r: 20, a: 2 } },
+  } }, 'month');
+  assert.equal(b[0].members.length, 1);
+  assert.equal(b[0].members[0].name, 'NewName');   // most recent wins
+  assert.equal(b[0].members[0].respect, 30);
+});
+
+test('unattributed stealth respect rides along per period', () => {
+  const b = bucketAttacks({ days: DAYS, unattributed: { '2026-09-28': { r: 7, a: 3 } } }, 'month');
+  assert.deepEqual(b.find((x) => x.key === '2026-09').unattributed, { respect: 7, attacks: 3 });
 });

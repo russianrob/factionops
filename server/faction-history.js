@@ -144,29 +144,6 @@ export async function fetchCrimeRespect(key, sinceTs) {
   return out;
 }
 
-/**
- * Attacks back to `sinceTs`, paged by timestamp cursor.
- *
- * The `next` link is null here and only `prev` carries a cursor, so offset
- * paging does not work — walk backwards with `to=<oldest seen>`. At ~100 rows
- * per 14 hours of activity a month costs roughly 50 calls, which is why the
- * window is bounded and the page says what it covers.
- */
-export async function fetchAttacks(key, sinceTs, onProgress) {
-  const out = [];
-  let to = null;
-  for (let page = 0; page < 400; page++) {
-    const rows = (await v2(`attacks?limit=100${to ? `&to=${to}` : ""}`, key)).attacks || [];
-    if (!rows.length) break;
-    out.push(...rows.filter((a) => (a.started || 0) >= sinceTs));
-    const oldest = Math.min(...rows.map((a) => a.started || 0));
-    if (onProgress) onProgress(out.length);
-    if (!oldest || oldest < sinceTs || oldest === to) break;
-    to = oldest;
-  }
-  return out;
-}
-
 /** Per-member lifetime energy for one gym stat. */
 export async function fetchContributors(key, stat) {
   return (await v2(`contributors?stat=gym${stat}`, key)).contributors || [];
@@ -356,69 +333,69 @@ export function buildRespectSeries({ chains = [], warRespect = [], crimeRespect 
 }
 
 /**
- * Who earned the faction's respect by attacking, over a bounded window.
+ * Attack respect rolled up from the per-day store into weeks, months, years
+ * or all-time.
  *
- * Three traps in the raw feed, each of which silently inflates somebody:
+ * Attacks are kept aggregated PER DAY PER MEMBER rather than as raw rows: a
+ * year is roughly 76,000 of them and nothing here ever needs an individual
+ * attack back. Days are the finest grain anything asks for, so they are the
+ * grain stored, and every other period rolls out of them.
  *
- *   - it carries BOTH directions, and `respect_gain` on an incoming attack is
- *     the ENEMY'S gain. Summing unfiltered credits our members with respect
- *     our opponents took off us.
- *   - a stealthed attack has `attacker: null` — about 7 in every 100. Dropping
- *     those makes the leaderboard disagree with the faction total for no
- *     visible reason, so they are reported as unattributed instead.
- *   - this is a WINDOW, never a lifetime. The attack log reaches back about a
- *     year but a year is 600+ calls at 100 rows per page, so the caller picks
- *     a span and the page says which.
+ * Members are keyed by ID, never by name. Torn names are editable, and keying
+ * on the name splits one person into two rows and halves their standing; the
+ * most recently seen name is the one displayed.
  */
-export function buildAttackRespect(attacks = [], factionId) {
-  const me = String(factionId);
-  const by = new Map();
-  const unattributed = { attacks: 0, respect: 0 };
-  let totalRespect = 0, considered = 0;
+export function bucketAttacks({ days = {}, unattributed = {} } = {}, period = "month") {
+  const keyFor = (date) => (period === "all"
+    ? "all"
+    : periodKey(Date.parse(`${date}T12:00:00Z`) / 1000, period));
 
-  for (const a of attacks) {
-    const atkr = a.attacker;
-    // An incoming attack still names its attacker, so the faction check is
-    // what decides direction — not the presence of the field.
-    const theirFaction = atkr && atkr.faction ? String(atkr.faction.id) : null;
-    const gain = Number(a.respect_gain) || 0;
-
-    if (!atkr) {
-      // No attacker at all: can only be one of ours if we are reading our own
-      // feed and the row is outgoing, which a stealthed row does not say. It
-      // is counted so the totals reconcile, and attributed to nobody.
-      unattributed.attacks++;
-      unattributed.respect += gain;
-      totalRespect += gain;
-      considered++;
-      continue;
+  const buckets = new Map();
+  const touch = (k) => {
+    if (!buckets.has(k)) {
+      buckets.set(k, { key: k, total: 0, attacks: 0, _m: new Map(),
+                       unattributed: { respect: 0, attacks: 0 } });
     }
-    if (theirFaction !== me) continue;
+    return buckets.get(k);
+  };
 
-    const key = String(atkr.id || atkr.name);
-    if (!by.has(key)) {
-      by.set(key, { id: atkr.id, name: atkr.name, respect: 0, attacks: 0, results: {} });
+  for (const [date, members] of Object.entries(days)) {
+    const b = touch(keyFor(date));
+    for (const [id, v] of Object.entries(members)) {
+      if (!b._m.has(id)) b._m.set(id, { id, name: v.n, respect: 0, attacks: 0, _last: "" });
+      const m = b._m.get(id);
+      m.respect += Number(v.r) || 0;
+      m.attacks += Number(v.a) || 0;
+      // Latest day wins the display name.
+      if (date >= m._last) { m.name = v.n; m._last = date; }
+      b.total += Number(v.r) || 0;
+      b.attacks += Number(v.a) || 0;
     }
-    const m = by.get(key);
-    m.respect += gain;
-    m.attacks++;
-    m.results[a.result] = (m.results[a.result] || 0) + 1;
-    totalRespect += gain;
-    considered++;
+  }
+  for (const [date, u] of Object.entries(unattributed)) {
+    const b = touch(keyFor(date));
+    b.unattributed.respect += Number(u.r) || 0;
+    b.unattributed.attacks += Number(u.a) || 0;
+    b.total += Number(u.r) || 0;
   }
 
-  const members = [...by.values()].map((m) => ({
-    ...m,
-    respect: Math.round(m.respect * 100) / 100,
-    avg: m.attacks ? Math.round((m.respect / m.attacks) * 100) / 100 : 0,
-  })).sort((a, b) => b.respect - a.respect);
-
-  return {
-    members,
-    unattributed: { ...unattributed, respect: Math.round(unattributed.respect * 100) / 100 },
-    totalRespect: Math.round(totalRespect * 100) / 100,
-    considered,
-  };
+  return [...buckets.values()]
+    .map((b) => ({
+      key: b.key,
+      total: Math.round(b.total * 100) / 100,
+      attacks: b.attacks,
+      unattributed: {
+        respect: Math.round(b.unattributed.respect * 100) / 100,
+        attacks: b.unattributed.attacks,
+      },
+      members: [...b._m.values()].map((m) => ({
+        id: m.id, name: m.name,
+        respect: Math.round(m.respect * 100) / 100,
+        attacks: m.attacks,
+        avg: m.attacks ? Math.round((m.respect / m.attacks) * 100) / 100 : 0,
+      })).sort((a, b2) => b2.respect - a.respect),
+    }))
+    .sort((a, b2) => a.key.localeCompare(b2.key));
 }
 
 /**
@@ -680,6 +657,151 @@ export function parseMembershipNews(rows = []) {
   return { events, leadership, monthly, unparsed, ignored };
 }
 
+// ── Captured attacks ───────────────────────────────────────────────────
+// Torn keeps roughly one YEAR of attacks and the window rolls, so the same
+// argument as the news applies: anything not copied out is gone. Stored
+// aggregated per day per member — a year of raw rows is ~76,000 records and
+// nothing needs an individual attack back.
+
+const attackFile = (factionId) => join(DATA_DIR, `faction-attacks-${factionId}.json`);
+
+export function loadCapturedAttacks(factionId) {
+  try {
+    const f = attackFile(factionId);
+    if (existsSync(f)) return JSON.parse(readFileSync(f, "utf-8"));
+  } catch (e) {
+    console.warn(`[fachist] could not read captured attacks: ${e.message}`);
+  }
+  return { days: {}, unattributed: {}, capturedThrough: 0, floor: null };
+}
+
+export function saveCapturedAttacks(factionId, store) {
+  try {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(attackFile(factionId), JSON.stringify(store));
+  } catch (e) {
+    console.error(`[fachist] could not persist captured attacks: ${e.message}`);
+  }
+}
+
+/**
+ * Fold a page of attacks into the per-day store.
+ *
+ * Direction matters: the feed carries incoming attacks too, and their
+ * respect_gain belongs to the OTHER faction. A stealthed attack has no
+ * attacker at all (about one in eight) and is kept as unattributed so the
+ * totals still reconcile.
+ */
+export function foldAttacks(store, attacks, factionId) {
+  const me = String(factionId);
+  for (const a of attacks) {
+    const t = a.started || 0;
+    if (!t) continue;
+    const date = new Date(t * 1000).toISOString().slice(0, 10);
+    const gain = Number(a.respect_gain) || 0;
+    const atkr = a.attacker;
+
+    if (!atkr) {
+      const u = (store.unattributed[date] ||= { r: 0, a: 0 });
+      u.r += gain; u.a++;
+      continue;
+    }
+    if (!atkr.faction || String(atkr.faction.id) !== me) continue;
+
+    const day = (store.days[date] ||= {});
+    const id = String(atkr.id);
+    const m = (day[id] ||= { n: atkr.name, r: 0, a: 0 });
+    m.n = atkr.name;
+    m.r = Math.round((m.r + gain) * 100) / 100;
+    m.a++;
+  }
+  return store;
+}
+
+/**
+ * Bring the attack store up to date, in two passes with a budget.
+ *
+ * Measured on 42055: a week is ~4,700 attacks, so Torn's full ~1 year of log
+ * is about 2,470 pages — 45 minutes of continuous calls. Spending that in one
+ * go would hold ~54 of the faction's 100 calls/minute for three quarters of
+ * an hour and starve warboard's own pollers, so it is not spent in one go.
+ *
+ *   forward   everything newer than the last capture. Cheap, always runs,
+ *             and keeps today's numbers correct.
+ *   backfill  up to `maxBackfillPages` older than the oldest row held,
+ *             resuming from a stored cursor.
+ *
+ * So the year fills in over a couple of weeks of daily builds instead of one
+ * long stall, and the page says how far back it has reached so far. Once the
+ * backfill runs dry, Torn's floor has been reached and only the forward pass
+ * costs anything.
+ */
+export async function captureAttacks(key, factionId, { maxBackfillPages = 120, onProgress } = {}) {
+  const store = loadCapturedAttacks(factionId);
+  store.days ||= {};
+  store.unattributed ||= {};
+
+  let pages = 0, rows = 0;
+  const page = async (to) => {
+    const batch = (await v2(`attacks?limit=100${to ? `&to=${to}` : ""}`, key)).attacks || [];
+    if (batch.length) {
+      foldAttacks(store, batch, factionId);
+      pages++; rows += batch.length;
+      if (onProgress) onProgress({ rows, pages, phase: store._p });
+    }
+    return batch;
+  };
+
+  // ── forward: newer than what we hold ──────────────────────────────────
+  // On a FIRST run there is nothing to catch up to, so `stopAt` is 0 and this
+  // loop has no natural end — it ran its full page limit, about seven
+  // minutes, before the budgeted backfill got a turn. A fresh store takes a
+  // small recent slice here and lets the backfill do the depth, which is the
+  // pass that was designed to be paced.
+  store._p = "recent";
+  const stopAt = store.capturedThrough ? store.capturedThrough - 86400 : 0;
+  const forwardCap = store.capturedThrough ? 400 : 30;
+  let to = null;
+  for (let i = 0; i < forwardCap; i++) {
+    let batch;
+    try { batch = await page(to); } catch (e) {
+      console.warn(`[fachist] attacks forward: ${e.message}`); break;
+    }
+    if (!batch.length) break;
+    const oldest = Math.min(...batch.map((x) => x.started || 0));
+    if (!oldest || oldest === to || oldest <= stopAt) break;
+    to = oldest;
+  }
+  store.capturedThrough = Math.floor(Date.now() / 1000);
+
+  // ── backfill: older than the oldest row held, on a budget ─────────────
+  if (!store.backfillDone) {
+    store._p = "backfill";
+    let cursor = store.backfillCursor || null;
+    if (!cursor) {
+      const dates = Object.keys(store.days).sort();
+      cursor = dates.length ? Math.floor(Date.parse(`${dates[0]}T00:00:00Z`) / 1000) : null;
+    }
+    for (let i = 0; i < maxBackfillPages && cursor; i++) {
+      let batch;
+      try { batch = await page(cursor); } catch (e) {
+        console.warn(`[fachist] attacks backfill: ${e.message}`); break;
+      }
+      if (!batch.length) { store.backfillDone = true; break; }
+      const oldest = Math.min(...batch.map((x) => x.started || 0));
+      if (!oldest || oldest === cursor) { store.backfillDone = true; break; }
+      cursor = oldest;
+    }
+    store.backfillCursor = cursor;
+  }
+
+  delete store._p;
+  const dates = Object.keys(store.days).sort();
+  if (dates.length) store.floor = dates[0];
+  saveCapturedAttacks(factionId, store);
+  return { store, pages, rows };
+}
+
 // ── Built-payload cache ────────────────────────────────────────────────
 // A full first build is ~370 paced calls (~4.5 min). Persisting it means a
 // restart does not pay that again, and the daily refresh is cheap because the
@@ -807,20 +929,33 @@ export async function buildAll({ key, factionId, onUpdate = () => {} }) {
     reportProgress: { done: wars.length, total: wars.length },
   });
 
-  // Attack respect last: it is the only phase whose cost scales with how
-  // busy the faction has been rather than with how old it is.
-  const attackDays = 30;
-  const since = Math.floor(Date.now() / 1000) - attackDays * 86400;
-  const attacks = await fetchAttacks(key, since, (n) => {
-    payload.attackProgress = { fetched: n };
-    onUpdate(payload);
-  }).catch((e) => {
+  // Attacks last: the first capture walks Torn's whole ~1 year of log, which
+  // is the single most expensive thing here, and everything above is useful
+  // without it. Later runs stop at what is already stored.
+  let attackStore = { days: {}, unattributed: {} };
+  try {
+    const res = await captureAttacks(key, factionId, {
+      // captureAttacks reports a single object, not (rows, pages) — the
+      // two-arg form silently nested it and the phase showed no progress.
+      onProgress: (p) => {
+        payload.attackProgress = p;
+        onUpdate(payload);
+      },
+    });
+    attackStore = res.store;
+  } catch (e) {
     console.warn(`[fachist] attacks: ${e.message}`);
-    degraded.push(`attack respect unavailable: ${e.message}`);
-    return [];
-  });
+    degraded.push(`attack history unavailable: ${e.message}`);
+  }
   phase("attacks", {
-    attackRespect: { ...buildAttackRespect(attacks, factionId), days: attackDays, since },
+    attacks: {
+      floor: attackStore.floor || null,
+      backfillDone: !!attackStore.backfillDone,
+      byWeek: bucketAttacks(attackStore, "week"),
+      byMonth: bucketAttacks(attackStore, "month"),
+      byYear: bucketAttacks(attackStore, "year"),
+      all: bucketAttacks(attackStore, "all")[0] || null,
+    },
   });
 
   payload.phase = "done";
