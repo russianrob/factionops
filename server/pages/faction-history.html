@@ -453,16 +453,33 @@ function render(d) {
     </section>`);
 
     if (L.members && L.members.length) {
-      out.push(`<section><h2>Energy by member</h2><div class="scroll cap"><table>
-        <thead><tr><th>#</th><th>Member</th><th class="n">Total E</th>
-          <th class="n">Str</th><th class="n">Spd</th><th class="n">Def</th><th class="n">Dex</th></tr></thead>
-        <tbody>${L.members.map((m, i) => `<tr>
-          <td class="n">${i + 1}</td>
-          <td class="${m.inFaction ? '' : 'gone'}">${esc(m.username)}</td>
-          <td class="n">${fmt(m.total)}</td><td class="n">${fmt(m.byStat.strength)}</td>
-          <td class="n">${fmt(m.byStat.speed)}</td><td class="n">${fmt(m.byStat.defense)}</td>
-          <td class="n">${fmt(m.byStat.dexterity)}</td></tr>`).join('')}</tbody>
-      </table></div></section>`);
+      const c = (m, k) => fmt((m.combat || {})[k] || 0);
+      const byWon = L.members.slice().sort((a, b) =>
+        ((b.combat || {}).attackswon || 0) - ((a.combat || {}).attackswon || 0));
+      out.push(`<section><h2>Lifetime by member</h2>
+        <div class="scroll cap"><table>
+          <thead><tr><th>#</th><th>Member</th><th class="n">Attacks won</th>
+            <th class="n">Hosps</th><th class="n">Mugs</th><th class="n">Busts</th>
+            <th class="n">Revives</th><th class="n">Energy trained</th></tr></thead>
+          <tbody>${byWon.map((m, i) => `<tr>
+            <td class="n">${i + 1}</td>
+            <td class="${m.inFaction ? '' : 'gone'}">${esc(m.username)}</td>
+            <td class="n">${c(m, 'attackswon')}</td><td class="n">${c(m, 'attackshosp')}</td>
+            <td class="n">${c(m, 'attacksmug')}</td><td class="n">${c(m, 'busts')}</td>
+            <td class="n">${c(m, 'revives')}</td><td class="n">${fmt(m.total)}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+        <p class="note"><b>These are lifetime, counted while in this faction.</b>
+          There is no lifetime respect-per-member figure to show beside them:
+          Torn rejects <code>stat=respect</code> outright, because respect is tracked
+          per faction and per chain, never per person. The only way to attribute
+          respect to a member is to sum the attack log, which Torn caps at about a
+          year — that is the panel below, and why it starts where it does rather
+          than at the faction's founding.</p>
+        <p class="note">Combat totals cover current members only, so they sum to
+          roughly half the faction's lifetime attacks; the rest belongs to people
+          who have left. Energy figures do include departed members.</p>
+      </section>`);
     }
   }
 

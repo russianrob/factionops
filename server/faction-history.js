@@ -144,9 +144,21 @@ export async function fetchCrimeRespect(key, sinceTs) {
   return out;
 }
 
-/** Per-member lifetime energy for one gym stat. */
+/**
+ * Per-member LIFETIME totals for one faction stat, for current members.
+ *
+ * This is the only lifetime per-member data Torn offers, and it does not
+ * include respect: `stat=respect` is rejected outright (code 25). Respect is
+ * tracked per faction and per chain, never per person, which is why a
+ * per-member respect figure can only ever be summed out of the attack log
+ * and is therefore capped at Torn's ~1 year of it.
+ *
+ * Unlike the gym stats, the combat stats return CURRENT members only — the
+ * 97 rows here sum to 45% of the faction's lifetime attacks won, the rest
+ * belonging to people who have left.
+ */
 export async function fetchContributors(key, stat) {
-  return (await v2(`contributors?stat=gym${stat}`, key)).contributors || [];
+  return (await v2(`contributors?stat=${encodeURIComponent(stat)}`, key)).contributors || [];
 }
 
 /**
@@ -243,8 +255,11 @@ export async function captureNews(key, factionId, { earliest, onProgress } = {})
 // ── Pure aggregation ───────────────────────────────────────────────────
 
 const GYM_STATS = ["strength", "speed", "defense", "dexterity"];
+// Lifetime per-member combat contributions. `respect` is NOT among them —
+// the API rejects it, because Torn does not track respect per person.
+const COMBAT_STATS = ["attackswon", "attackshosp", "attacksmug", "busts", "revives"];
 
-export function buildLifetime({ stats = {}, basic = {}, contributors = {}, now = Date.now() }) {
+export function buildLifetime({ stats = {}, basic = {}, contributors = {}, combat = {}, now = Date.now() }) {
   const num = (k) => Number(stats[k]) || 0;
 
   // The four gym counters are ENERGY SPENT on that stat, not points gained —
@@ -272,6 +287,23 @@ export function buildLifetime({ stats = {}, basic = {}, contributors = {}, now =
       m.byStat[stat] = v;
       m.total += v;
       if (row.in_faction) current += v; else departed += v;
+    }
+  }
+
+  // Fold the combat contributions onto the same member rows. A member who
+  // has trained but never attacked (or vice versa) still gets one row.
+  for (const stat of COMBAT_STATS) {
+    for (const row of combat[stat] || []) {
+      const id = String(row.id);
+      if (!members.has(id)) {
+        members.set(id, {
+          id: row.id, username: row.username, inFaction: !!row.in_faction,
+          byStat: Object.fromEntries(GYM_STATS.map((s) => [s, 0])), total: 0,
+        });
+      }
+      const m = members.get(id);
+      m.combat ||= {};
+      m.combat[stat] = Number(row.value) || 0;
     }
   }
 
@@ -871,10 +903,17 @@ export async function buildAll({ key, factionId, onUpdate = () => {} }) {
   const [stats, basic] = [await fetchStats(key), await fetchBasic(key)];
   const contributors = {};
   for (const s of GYM_STATS) {
-    try { contributors[s] = await fetchContributors(key, s); }
-    catch (e) { console.warn(`[fachist] contributors ${s}: ${e.message}`); contributors[s] = []; }
+    try { contributors[s] = await fetchContributors(key, `gym${s}`); }
+    catch (e) { console.warn(`[fachist] contributors gym${s}: ${e.message}`); contributors[s] = []; }
   }
-  phase("lifetime", { lifetime: buildLifetime({ stats, basic, contributors }) });
+  // The combat side of the same endpoint. These ARE lifetime per member,
+  // which the attack-log leaderboard can never be.
+  const combat = {};
+  for (const s of COMBAT_STATS) {
+    try { combat[s] = await fetchContributors(key, s); }
+    catch (e) { console.warn(`[fachist] contributors ${s}: ${e.message}`); combat[s] = []; }
+  }
+  phase("lifetime", { lifetime: buildLifetime({ stats, basic, contributors, combat }) });
 
   const wars = await fetchAllRankedWars(key);
   phase("wars", { wars: buildWarRecord({ wars, reports: {}, factionId }) });
