@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.3
+// @version      0.12.4
 // @description  Beta lane for Gym Coach — new work lands here first. Torn gym coach — verdict-first overlay, three tabs, cooldown rail, training advice and a progression chart. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,21 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.12.4 - When the coach cannot say WHY a goal has no ETA, it shows its working.
+*
+*         Reported from Gun Shop, which trains Strength at 6.6 dots, is not a
+*         specialist gym, and whose owner's stat split leaves Strength a
+*         ceiling well above where they are — so none of the three causes
+*         named in 0.12.3 fit, and the row fell through to "not reachable at
+*         this rate" again. Two rounds of reasoning from screenshots had
+*         already produced two wrong answers.
+*
+*         The fallback now prints the three numbers that decide it: the share
+*         ceiling at the top milestone, the gain still needed, and what one
+*         train actually gives at this gym, plus the gym lock if one is set.
+*         Whichever is wrong is then visible in the next screenshot instead
+*         of being inferred from the outside.
+*
 * 0.12.3 - "Not reachable at this rate" was four different problems.
 *
 *         Reported again from Gun Shop, which trains Strength at 6.6 dots —
@@ -2246,7 +2261,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.3";
+  var GC_VERSION = "0.12.4";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -5678,7 +5693,19 @@
             note = "your stat split caps " + STAT_LABEL[k] + " at "
               + Math.round(scap).toLocaleString() + " \u2014 raise its share";
           } else {
-            note = "not reachable at this rate";
+            // None of the known causes fit. Rather than a third round of
+            // guessing from a screenshot, the row carries the numbers that
+            // decide it: the share ceiling at the top milestone, what the
+            // stat needs, and what one train gives. Whichever of those is
+            // wrong is visible at a glance in the next report.
+            var topCap = isFinite(scap) ? Math.round(scap) : target;
+            var per = gainOne(cur, state.happyMax || state.happy || 5000,
+                              dotsFor(k), (gymFor().Energy || 25),
+                              (state.perks && state.perks[k]) || 1, k);
+            note = "no ETA \u2014 cap " + topCap.toLocaleString()
+              + ", need " + Math.round(target - cur).toLocaleString()
+              + ", " + (per >= 1 ? Math.round(per).toLocaleString() : per.toFixed(2))
+              + "/train" + (state.gymLock ? ", lock " + state.gymLock : "");
           }
         }
         else note = fmtDays(row.days) + " of training" +
