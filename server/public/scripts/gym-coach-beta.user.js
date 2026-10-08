@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.5
-// @description  Beta lane for Gym Coach — new work lands here first. Torn gym coach — verdict-first overlay, three tabs, cooldown rail, training advice and a progression chart. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
+// @version      0.12.6
+// @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
 // @match        https://www.torn.com/*
@@ -21,7 +21,7 @@
 // @connect      torn.com
 // @run-at       document-end
 // @downloadURL  https://tornwar.com/scripts/gym-coach-beta.user.js
-// @updateURL    https://tornwar.com/scripts/gym-coach-beta.meta.js
+// @updateURL    https://tornwar.com/scripts/gym-coach-beta.user.js
 // ==/UserScript==
 
 /*
@@ -29,34 +29,19 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
-* 0.12.5 - Back to the 0.12.0 goal rows.
+* 0.12.6 - Back to the 0.9.90 body, as asked.
 *
-*         0.12.1 through 0.12.4 rewrote what a goal with no finish date says,
-*         chasing a Strength row that showed none. Three explanations, none of
-*         which fit the account that reported it, and the owner asked for the
-*         wording back. This is the 0.12.0 body exactly; the version only goes
-*         up because an update cannot go down.
+*         0.12.5 restored 0.12.0; the request was to go further back, to the
+*         build before the lane was stubbed and unretired. This is 0.9.90
+*         verbatim. The version only rises because an update cannot go down.
 *
-*         Nothing about the planner changes either way: goalSegments,
-*         shareCap, orderedGoalKeys, goalPlan and gainOne were never touched
-*         by any of those four, so a row that had no ETA still has none. It
-*         simply says "not reachable at this rate" again.
-*
-* 0.12.0 - The beta lane is open again.
-*
-*         0.10.0 closed it: a stub that did nothing but ask you to uninstall,
-*         on the assumption everybody wanted the one script. People were still
-*         running the beta, so the lane is back, and this is NOT the old 0.9.91
-*         it replaced -- it is the current Gym Coach body, so reopening costs
-*         you none of the work that landed while the lane was shut.
-*
-*         Storage is still gcb_v1, the same prefix the beta always used and the
-*         one 0.10.0 deliberately left alone, so your key, ledger and history
-*         are exactly where you left them. Nothing to re-enter.
-*
-*         Running this AND Gym Coach together is not recommended: they share
-*         gcb_v1 and both poll, so you get double API calls against one ledger.
-*         The gym dock is idempotent, so it will not double-draw, but keep one.
+*         Two things this drops, neither of them the goal rows: the 0.9.91
+*         throttle on the mutation-driven energy refresh, and
+*         migrateFromStableOnce, which was added in 0.11.0 to carry a key and
+*         ledger from the old gc_v1 namespace into gcb_v1. Anyone who has
+*         already updated today has had that migration run and their data is
+*         in gcb_v1 for good; anyone still sitting on the old 0.10.12 build
+*         will now land here without it.
 *
 * 0.9.90 - War stack sits with the advice it changes, not under it.
 *
@@ -2218,7 +2203,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.5";
+  var GC_VERSION = "0.12.6";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -2992,50 +2977,6 @@
       try { return JSON.parse(raw); } catch (e) { return raw; }
     } catch (_) {}
     return fallback;
-  }
-
-  // One-time adoption of the previous build's data.
-  //
-  // 0.11.0 IS the old beta, promoted. The two deliberately kept separate
-  // namespaces -- gc_v1 for the script people ran, gcb_v1 for the beta -- so a
-  // beta that went wrong could never corrupt the settings of the copy you
-  // relied on. That separation is now the problem: without this, a user
-  // updating into 0.11.0 finds their API key gone and their ledger empty. The
-  // data is all still there, under a prefix this code no longer reads.
-  //
-  // Nine of the old build's ten keys have identical names here, so this is a
-  // copy rather than a translation.
-  //
-  // The tenth, adultNov, is deliberately NOT carried. It is still used — but
-  // it stopped being a setting. The old build made you flip a switch to say
-  // you had the Adult Novelties perk; this one reads it off your perk list in
-  // parsePerks. Carrying the old flag over would plant a remembered answer on
-  // top of a measured one, and a switch somebody set wrong in August would
-  // quietly outrank what Torn actually says today.
-  //
-  // Guarded PER KEY, not once globally: somebody who ran both scripts has data
-  // on both sides and the beta's is the newer. Never overwrite what is already
-  // here -- only fill what is missing.
-  var STABLE_MIGRATE_KEYS = ["api_key", "focus", "focus2", "hist", "histRange",
-                             "log", "mode", "user_tucked", "warStack"];
-  function migrateFromStableOnce() {
-    try {
-      if (storeGet("migratedFromStable", false) === true) return;
-      var moved = [];
-      for (var i = 0; i < STABLE_MIGRATE_KEYS.length; i++) {
-        var k = STABLE_MIGRATE_KEYS[i];
-        var mine = storeGet(k, undefined);
-        if (mine !== undefined && mine !== null && mine !== "") continue;
-        var theirs = stableGet(k, undefined);
-        if (theirs === undefined || theirs === null || theirs === "") continue;
-        storeSet(k, theirs);
-        moved.push(k);
-      }
-      storeSet("migratedFromStable", true);
-      if (moved.length) {
-        try { console.log("[Gym Coach] carried over from the previous build: " + moved.join(", ")); } catch (_) {}
-      }
-    } catch (_) { /* a failed migration must never stop the script loading */ }
   }
 
   // Torn PDA hands stored values back as STRINGS, so !!"false" is true and
@@ -10938,11 +10879,6 @@
   // spent re-reading things that do not move that fast -- and it is what left
   // no headroom when anything else asked a question. The bar is read from the
   // page DOM once a second regardless, so nothing on screen got slower.
-  // Minimum spacing between the two gym MutationObservers' API refreshes.
-  // They share this: see the note at the observer for why per-observer state
-  // does not work.
-  var ENERGY_OBS_MIN_MS = 45000;
-  var lastEnergyObsAt = 0;
   var POLL_GYM_MS = 60000;
   // Off-gym was 20s, which made every other Torn page poll three times harder
   // than the gym itself. Same rate now.
@@ -12455,26 +12391,6 @@
         if (!/gym\.php/i.test(location.href)) return;
         clearTimeout(obs._t);
         obs._t = setTimeout(function () {
-          // THROTTLED, and the throttle is SHARED.
-          //
-          // Two roots are observed -- #gymroot and the energy bar -- each with
-          // its own observer and its own 500ms debounce. The bar mutates
-          // continuously as it fills, so every quiet gap scheduled another
-          // full API call, from each observer independently. Measured on a
-          // live device: 29 calls a minute from this script, 20 of them v1
-          // /user, against Torn's 100-a-minute key budget -- while the actual
-          // POLL sits at a well-behaved 60s.
-          //
-          // The floor lives at module scope on purpose. Per-observer state
-          // would let two observers alternate straight through it.
-          //
-          // Nothing on screen slows down: syncEnergyFromDom() reads the bar
-          // off the page every second regardless, so energy stays live. This
-          // call only exists to pick up what the DOM does not show, and that
-          // does not move in under a minute.
-          var now = Date.now();
-          if (now - lastEnergyObsAt < ENERGY_OBS_MIN_MS) return;
-          lastEnergyObsAt = now;
           refresh("energy");
         }, 500);
       });
@@ -12791,11 +12707,6 @@
       startUi();
     }
   }
-
-  // Before startUi: the UI reads mode, focus and the key straight out of
-  // storage, so adopting after it has drawn would show an empty coach for one
-  // render and then change under the user.
-  migrateFromStableOnce();
 
   startUi();
   bindKeyInputPasteShield();
