@@ -13323,6 +13323,23 @@ router.get("/prewar/scout", (_req, res) => {
 // and every row records who reported it so bad data can be traced. It is NOT
 // adequate once flags are displayed — somebody could mark a whole faction as
 // EOD. Solve it before building the UI.
+// One player's KAL loadout for the mini-profile, read from the faction packs
+// a pre-war scout already fetched.
+//
+// Deliberately cache-ONLY: it never calls KAL. The mini-profile opens on
+// hover, and a call per hover is the opposite of the "cache responses
+// appropriately" their terms ask for. During a war the coverage is right
+// anyway — every enemy on the list is in the pack the scout pulled in a
+// single call — and outside one it answers found:false and the row stays
+// absent rather than empty.
+router.get("/api/loadout/kal", requireAuth, (req, res) => {
+  const playerId = String(req.query.playerId || "").replace(/[^0-9]/g, "");
+  if (!playerId) return res.status(400).json({ error: "playerId required" });
+  const hit = kal.cachedLoadoutFor(playerId);
+  if (!hit) return res.json({ found: false });
+  return res.json({ found: true, ...hit });
+});
+
 router.post("/api/loadout/seen", express.json({ limit: "24kb" }), (req, res) => {
   const b = req.body || {};
   const spend = readBudget.take(readerKey(req));

@@ -22,7 +22,7 @@
 // returns is_registered:false and every read 401s. That is a person's
 // action on kalends.dev, not something warboard can arrange.
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join as pathJoin } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -114,6 +114,41 @@ export function summarise(loadout) {
     notable,
     observedAt: loadout.observed_at ?? null,
   };
+}
+
+/**
+ * One player's loadout, from the faction packs ALREADY on disk.
+ *
+ * Never calls KAL. The mini-profile opens on hover, and a call per hover is
+ * the opposite of the "cache responses appropriately" their terms ask for —
+ * so this reads only what a pre-war scout has already fetched and stays
+ * silent otherwise. During a war that is exactly the right coverage: every
+ * enemy in the list is in the pack the scout pulled, in one call, for free.
+ *
+ * Returns null for a player with no pack and for a member whose pack holds
+ * no sighting, which are different misses and look the same to a caller
+ * that only wants a line of text.
+ */
+export function cachedLoadoutFor(playerId, nowMs = Date.now()) {
+  const want = String(playerId);
+  let files = [];
+  try { files = readdirSync(CACHE_DIR).filter((f) => f.startsWith("faction-")); } catch { return null; }
+  for (const f of files) {
+    let pack;
+    try { pack = JSON.parse(readFileSync(pathJoin(CACHE_DIR, f), "utf-8")); } catch { continue; }
+    const hit = (pack.members || []).find((m) => String(m.user_id) === want);
+    if (!hit) continue;
+    const summary = summarise(hit.loadout);
+    if (!summary) return null;              // in the pack, never seen
+    return {
+      factionId: f.replace(/^faction-|\.json$/g, ""),
+      factionName: pack.factionName || null,
+      name: hit.name || null,
+      summary,
+      packAgeMs: Math.max(0, nowMs - (pack.fetchedAt || 0)),
+    };
+  }
+  return null;
 }
 
 function cacheFile(factionId) {

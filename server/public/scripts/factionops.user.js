@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.0
+// @version      5.6.1
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.0';
+    const SCRIPT_VERSION = '5.6.1';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -3115,6 +3115,11 @@ body.wb-chain-active {
     margin: 6px 0 0 0;
     border-top: 1px solid rgba(255,255,255,0.08);
 }
+.fo-kal-line{font-size:11px;line-height:1.35;color:#c8d2dc;background:rgba(0,0,0,.28);
+  border-top:1px solid rgba(255,255,255,.08);padding:4px 8px;word-break:break-word}
+.fo-kal-line b{color:#9fe870;font-weight:700;letter-spacing:.04em;margin-right:4px}
+.fo-kal-line i{color:#8894a0;font-style:normal;opacity:.75}
+.fo-kal-hot{color:#ffb44d;font-weight:600}
 .fo-card-retal-btn {
     /* v5.0.35: REVERTED v5.0.29 absolute positioning + the
        .fo-retal-injected position-relative rule. That CSS broke
@@ -7293,6 +7298,63 @@ body.wb-chain-active {
      * Clicks are handled via document-level capture-phase delegation so
      * injected buttons survive re-renders or DOM replacement.
      */
+    // ── KAL loadout in the mini-profile ────────────────────────────────
+    // Warboard answers from the faction pack a pre-war scout already pulled,
+    // so this never reaches KAL and costs them nothing. A miss is the normal
+    // case for anyone outside the current opponent, and renders no row at all
+    // rather than an empty one.
+    const _kalCache = new Map();           // id -> summary | null (null = miss)
+
+    function loadKalLoadout(targetId, cb) {
+        const id = String(targetId);
+        if (_kalCache.has(id)) { cb(_kalCache.get(id)); return; }
+        if (!state.jwtToken) { cb(null); return; }
+        httpRequest({
+            method: 'GET',
+            url: CONFIG.SERVER_URL + '/api/loadout/kal?playerId=' + encodeURIComponent(id),
+            headers: { Authorization: 'Bearer ' + state.jwtToken },
+            onload(res) {
+                let hit = null;
+                try {
+                    if (res.status === 200) {
+                        const d = JSON.parse(res.responseText);
+                        if (d && d.found) hit = d;
+                    }
+                } catch (_) { /* a decoration must never throw */ }
+                _kalCache.set(id, hit);
+                cb(hit);
+            },
+            onerror() { _kalCache.set(id, null); cb(null); },
+        });
+    }
+
+    function kalLineHtml(hit) {
+        const s = hit.summary || {};
+        const nm = (x) => (x && x.name ? x.name : null);
+        const guns = [nm(s.primary), nm(s.secondary), nm(s.melee)].filter(Boolean);
+        if (!guns.length && !(s.armour || []).length) return '';
+        const bits = [];
+        if (guns.length) bits.push(guns.join(' \u00b7 '));
+        if ((s.armour || []).length) bits.push(s.armour.length + ' armour');
+        // Only the rarities worth reacting to; a full bonus list is a data
+        // dump inside a hover card.
+        const hot = (s.notable || []).filter((b) => b.rarity === 'red' || b.rarity === 'orange');
+        const warn = hot.length
+            ? '<span class="fo-kal-hot">' + hot.slice(0, 2).map((b) =>
+                foEsc(b.title || '?') + (b.value != null ? ' ' + foEsc(String(b.value)) : '')).join(', ')
+              + (hot.length > 2 ? ' +' + (hot.length - 2) : '') + '</span>'
+            : '';
+        const days = Math.floor((hit.packAgeMs || 0) / 86400000);
+        return '<div class="fo-kal-line"><b>KAL</b> ' + foEsc(bits.join(' \u00b7 '))
+            + (warn ? ' ' + warn : '')
+            + (days >= 1 ? '<i> ' + days + 'd old</i>' : '') + '</div>';
+    }
+
+    function foEsc(v) {
+        return String(v == null ? '' : v).replace(/[&<>"]/g, (c) =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    }
+
     function setupRetalCardInjection() {
         if (window.__foRetalCardInjection) return;
         window.__foRetalCardInjection = true;
@@ -7463,6 +7525,20 @@ body.wb-chain-active {
             // location). Note: the draggable PROFILE-PAGE retal button
             // (#wb-assist-btn) is a separate feature and is untouched.
             buttonsList.appendChild(btn);
+
+            // The loadout arrives async; the card may be gone by then, and
+            // re-entering the same card must not stack a second row.
+            loadKalLoadout(targetId, (hit) => {
+                if (!hit || !card.isConnected) return;
+                if (card.querySelector('.fo-kal-line')) return;
+                const html = kalLineHtml(hit);
+                if (!html) return;
+                const host = card.querySelector('.buttons-list');
+                if (!host || !host.parentNode) return;
+                const wrap = document.createElement('div');
+                wrap.innerHTML = html;
+                host.parentNode.insertBefore(wrap.firstChild, host);
+            });
 
             clearInterval(timer);
         }, 200);
