@@ -713,6 +713,27 @@ export function saveNames(factionId, names) {
   } catch (e) { console.error(`[fachist] could not persist names: ${e.message}`); }
 }
 
+/**
+ * Names harvested from war reports already on disk.
+ *
+ * Each report lists our side's members with id AND name, and 167 of them are
+ * cached from the war phase — so 278 of 335 otherwise-unknown historical
+ * members can be named for nothing. Always run this before spending calls on
+ * /user: paying to look up somebody whose name is sitting in a file is the
+ * sort of waste that only shows up as a slow build.
+ */
+export function namesFromWarReports(reports = {}, factionId) {
+  const me = String(factionId);
+  const out = {};
+  for (const sides of Object.values(reports)) {
+    for (const f of sides || []) {
+      if (String(f.id) !== me) continue;
+      for (const m of f.members || []) if (m.name) out[String(m.id)] = m.name;
+    }
+  }
+  return out;
+}
+
 export async function resolveNames(key, factionId, ids, { budget = 150 } = {}) {
   const names = loadNames(factionId);
   const todo = ids.map(String).filter((id) => !names[id]).slice(0, budget);
@@ -1186,7 +1207,8 @@ export async function buildAll({ key, factionId, onUpdate = () => {} }) {
   // Names come from three places, cheapest first: the persistent cache, then
   // anyone seen attacking recently, then the current roster. Only ids none of
   // them know cost an API call.
-  const nameMap = { ...loadNames(factionId) };
+  // Free sources first, paid lookups only for what is left.
+  const nameMap = { ...namesFromWarReports(reports, factionId), ...loadNames(factionId) };
   for (const m of (attackStore.days ? Object.values(attackStore.days) : [])) {
     for (const [id, v] of Object.entries(m)) nameMap[id] ||= v.n;
   }
@@ -1202,6 +1224,8 @@ export async function buildAll({ key, factionId, onUpdate = () => {} }) {
     const ranked = lifetimeChainRespect(cr.store, nameMap);
     const unknown = ranked.members.filter((m) => m.name === String(m.id)).map((m) => m.id);
     if (unknown.length) {
+      // Persist the free ones too, so a later build never re-derives them.
+      saveNames(factionId, { ...namesFromWarReports(reports, factionId), ...loadNames(factionId) });
       const { names } = await resolveNames(key, factionId, unknown, { budget: 60 });
       Object.assign(nameMap, names);
     }
