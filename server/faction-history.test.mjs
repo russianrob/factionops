@@ -498,3 +498,44 @@ test('lifetime respect buckets by period from each chain\'s own timestamp', () =
   const r = lifetimeChainRespect(s, { 1: 'Alice' }, { period: 'year' });
   assert.deepEqual(r.periods.map((p) => [p.key, p.total]), [['2024', 10], ['2025', 20]]);
 });
+
+// ── war respect per member (APPORTIONED, not measured) ─────────────────
+// Chain reports cover 53% of the faction's respect. Ranked wars are another
+// 33% and no report attributes them per person — but each report carries a
+// member's SCORE, and the war pays a known lump of respect. Splitting that
+// lump by score share is a derived number and is labelled as one everywhere
+// it appears; it must never be added into the measured chain column.
+import { warRespectByMember } from './faction-history.js';
+
+const warReport = (id, respect, members) => ([
+  { id: 42055, rewards: { respect }, members: members.map(([mid, name, score, attacks]) =>
+      ({ id: mid, name, score, attacks })) },
+  { id: 999, rewards: { respect: 1 }, members: [{ id: 7, name: 'Enemy', score: 500, attacks: 9 }] },
+]);
+
+test('a war\'s respect splits across our side by score share', () => {
+  const r = warRespectByMember({ 1: warReport(1, 1000, [[10, 'A', 75, 8], [11, 'B', 25, 4]]) }, 42055);
+  assert.deepEqual(r.members.map((m) => [m.name, m.respect, m.attacks]),
+    [['A', 750, 8], ['B', 250, 4]]);
+});
+
+test('the enemy side is never credited', () => {
+  const r = warRespectByMember({ 1: warReport(1, 100, [[10, 'A', 10, 1]]) }, 42055);
+  assert.deepEqual(r.members.map((m) => m.name), ['A']);
+});
+
+test('totals accumulate across wars for one member', () => {
+  const r = warRespectByMember({
+    1: warReport(1, 100, [[10, 'A', 100, 5]]),
+    2: warReport(2, 300, [[10, 'A', 50, 3], [11, 'B', 50, 2]]),
+  }, 42055);
+  const a = r.members.find((m) => m.name === 'A');
+  assert.equal(a.respect, 250);   // all of war 1, half of war 2
+  assert.equal(a.attacks, 8);
+});
+
+test('a war with no score recorded is skipped, not divided by zero', () => {
+  const r = warRespectByMember({ 1: warReport(1, 500, [[10, 'A', 0, 0]]) }, 42055);
+  assert.deepEqual(r.members, []);
+  assert.equal(r.skipped, 1);
+});

@@ -526,6 +526,55 @@ export function bucketRespect(points = [], period = "month", now = Date.now() / 
   return out;
 }
 
+/**
+ * Ranked-war respect APPORTIONED per member by score share.
+ *
+ * Chain reports attribute 53% of the faction's respect and ranked wars are
+ * another 33%, which no endpoint breaks down per person — the report gives
+ * each member a SCORE and the war pays the faction a known lump of respect.
+ * Splitting the lump by score share is the obvious reading, and score is the
+ * war's own contribution metric, so it is a reasonable attribution.
+ *
+ * It is still DERIVED. Everywhere it surfaces it is labelled as apportioned
+ * and kept in its own column: mixing an estimate into a column of measured
+ * chain respect would make the whole table look exact when half of it is not.
+ */
+export function warRespectByMember(reports = {}, factionId) {
+  const me = String(factionId);
+  const by = new Map();
+  let skipped = 0, wars = 0, pot = 0;
+
+  for (const sides of Object.values(reports)) {
+    const mine = (sides || []).find((f) => String(f.id) === me);
+    if (!mine) continue;
+    const respect = ((mine.rewards || {}).respect) || 0;
+    const members = mine.members || [];
+    const totalScore = members.reduce((a, m) => a + (Number(m.score) || 0), 0);
+    if (!respect || !totalScore) { skipped++; continue; }
+    wars++; pot += respect;
+    for (const m of members) {
+      const score = Number(m.score) || 0;
+      if (!score) continue;
+      const id = String(m.id);
+      if (!by.has(id)) by.set(id, { id: m.id, name: m.name, respect: 0, attacks: 0, score: 0 });
+      const e = by.get(id);
+      e.respect += respect * (score / totalScore);
+      e.attacks += Number(m.attacks) || 0;
+      e.score += score;
+      if (m.name) e.name = m.name;
+    }
+  }
+
+  return {
+    wars, skipped, pot: Math.round(pot),
+    members: [...by.values()].map((m) => ({
+      ...m,
+      respect: Math.round(m.respect * 100) / 100,
+      score: Math.round(m.score * 100) / 100,
+    })).sort((a, b) => b.respect - a.respect),
+  };
+}
+
 export function buildWarRecord({ wars = [], reports = {}, factionId }) {
   const me = String(factionId);
   let won = 0, lost = 0, ongoing = 0;
@@ -1247,11 +1296,33 @@ export async function buildAll({ key, factionId, onUpdate = () => {} }) {
       const { names } = await resolveNames(key, factionId, unknown, { budget: 60 });
       Object.assign(nameMap, names);
     }
+    const war = warRespectByMember(reports, factionId);
+    const chainPart = lifetimeChainRespect(cr.store, nameMap);
+    // One row per member, the two sources kept apart: chain respect is
+    // measured, war respect is apportioned by score share.
+    const rows = new Map();
+    for (const m of chainPart.members) {
+      rows.set(String(m.id), { id: m.id, name: m.name, chain: m.respect,
+                               chainAttacks: m.attacks, war: 0, warAttacks: 0 });
+    }
+    for (const m of war.members) {
+      const k = String(m.id);
+      if (!rows.has(k)) rows.set(k, { id: m.id, name: nameMap[k] || m.name || k,
+                                      chain: 0, chainAttacks: 0, war: 0, warAttacks: 0 });
+      const r = rows.get(k);
+      r.war = m.respect;
+      r.warAttacks = m.attacks;
+      if (m.name) r.name = m.name;
+    }
     chainRespect = {
-      ...lifetimeChainRespect(cr.store, nameMap),
+      ...chainPart,
       remaining: cr.remaining,
       totalChains: chains.length,
       unnamed: unknown.length,
+      war: { total: war.pot, wars: war.wars, skipped: war.skipped },
+      combined: [...rows.values()]
+        .map((r) => ({ ...r, total: Math.round((r.chain + r.war) * 100) / 100 }))
+        .sort((a, b) => b.total - a.total),
     };
   } catch (e) {
     console.warn(`[fachist] chain reports: ${e.message}`);

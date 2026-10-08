@@ -503,34 +503,37 @@ function render(d) {
   }
 
   const CR = d.chainRespect;
-  if (CR && CR.members && CR.members.length) {
-    const max = Math.max(1, ...CR.members.map((m) => m.respect));
-    const rows = CR.members.map((m, i) => `<tr>
+  if (CR && CR.combined && CR.combined.length) {
+    const rows = CR.combined.map((m, i) => `<tr>
       <td class="n">${i + 1}</td><td>${esc(m.name)}</td>
-      <td class="n">${fmt(Math.round(m.respect))}</td>
-      <td style="width:26%"><span class="minibar" style="width:${(m.respect / max) * 100}%"></span></td>
-      <td class="n">${fmt(m.attacks)}</td><td class="n">${fmt1(m.avg)}</td></tr>`).join('');
+      <td class="n">${fmt(Math.round(m.total))}</td>
+      <td class="n">${fmt(Math.round(m.chain))}</td>
+      <td class="n gone2">${fmt(Math.round(m.war))}</td>
+      <td class="n">${fmt(m.chainAttacks + m.warAttacks)}</td></tr>`).join('');
+    const w = CR.war || {};
+    const measured = CR.total, est = (w.total || 0);
     out.push(`<section><h2>Lifetime respect per member</h2>
       <div class="grid">
-        ${stat('Respect', fmt(Math.round(CR.total)))}
-        ${stat('Members', fmt(CR.members.length))}
-        ${stat('Chains read', fmt(CR.chains))}
+        ${stat('Chain (measured)', fmt(Math.round(measured)))}
+        ${stat('War (apportioned)', fmt(Math.round(est)))}
+        ${stat('Members', fmt(CR.combined.length))}
       </div>
       <div class="scroll cap" style="margin-top:12px"><table>
-        <thead><tr><th>#</th><th>Member</th><th class="n">Respect</th><th></th>
-          <th class="n">Chain attacks</th><th class="n">Avg</th></tr></thead>
+        <thead><tr><th>#</th><th>Member</th><th class="n">Total</th>
+          <th class="n">Chain</th><th class="n">War*</th><th class="n">Attacks</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
-      <p class="note">Summed from every chain report held — ${fmt(CR.chains)} of
-        ${fmt(CR.totalChains || CR.chains)} chains${CR.remaining
-          ? `, ${fmt(CR.remaining)} still to read` : ''}. Torn rejects
-        <code>stat=respect</code> on the contributors endpoint, so this is the only
-        route to per-member respect that reaches past the one-year attack window:
-        a chain report names each attacker's share, reconciles exactly against the
-        chain record, and chains run back to 2019.</p>
-      <p class="note">Chain respect only — attacks made outside a chain are not in
-        a chain report. Members who have since left are included, which is the point
-        of a lifetime table; an id shown instead of a name is somebody gone long
-        enough that nothing left on file knows who they were.</p>
+      <p class="note"><b>This does not add up to the faction's respect, and should not.</b>
+        Of ${fmt(L ? L.respect.total : 0)} lifetime respect, chains are about 53% and
+        ranked wars 33%; organised crime, territory and pre-2022 chains make up the
+        rest and <em>no endpoint attributes them to a person</em>.</p>
+      <p class="note"><b>Chain</b> is measured — summed from ${fmt(CR.chains)} chain
+        reports, each reconciling exactly against its chain record, covering 98.1%
+        of all chain respect back to Feb 2022.
+        <b>War*</b> is <em>apportioned</em>, not measured: a war report gives each
+        member a score and the war pays the faction a lump of respect, so the lump
+        is split by score share across ${fmt(w.wars || 0)} wars. It is the obvious
+        reading of the data, but it is an estimate and is kept in its own column
+        for that reason.</p>
     </section>`);
   }
 
