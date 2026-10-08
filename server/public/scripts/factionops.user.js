@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.4
+// @version      5.6.5
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.4';
+    const SCRIPT_VERSION = '5.6.5';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -3063,8 +3063,12 @@ body.wb-chain-active {
   border-top:1px solid rgba(255,255,255,.08);padding:4px 8px;word-break:break-word}
 .fo-kal-line b{color:#9fe870;font-weight:700;letter-spacing:.04em;margin-right:4px}
 .fo-kal-line i{color:#8894a0;font-style:normal;opacity:.75}
-.fo-kal-hot{color:#ffb44d;font-weight:600}
-.fo-kal-bon{color:#9bb0c4}
+/* Torn's bonus rarities, in its own order of severity. Red and orange were
+   both amber before, so the two that matter most looked the same. */
+.fo-kal-red{color:#ff5f56;font-weight:700}
+.fo-kal-orange{color:#ff9f43;font-weight:600}
+.fo-kal-yellow{color:#f5d76e}
+.fo-kal-plain{color:#9bb0c4}
 .fo-kal-arm{color:#9aa7b4}
 /* Faction cooldowns dashboard (Option B — self-reported bars). */
 .fo-bars-section {
@@ -7257,12 +7261,17 @@ body.wb-chain-active {
             // already said Enfield SA-80.
             rows.push(weapons.map((w) => {
                 const on = (s.bonuses || []).filter((b) => b.on === w.name);
-                const txt = on.map((b) => (b.title || '?') + (b.value != null ? ' ' + b.value : ''));
-                const hot = on.some((b) => b.rarity === 'red' || b.rarity === 'orange');
-                return foEsc(w.name) + (txt.length
-                    ? ' <span class="' + (hot ? 'fo-kal-hot' : 'fo-kal-bon') + '">('
-                      + foEsc(txt.join(', ')) + ')</span>'
-                    : '');
+                // Coloured PER BONUS, not per weapon. Torn's rarities are
+                // yellow, orange and red in ascending order of "mind this
+                // one", and a weapon can carry more than one — painting the
+                // whole bracket by its loudest hid the difference.
+                const txt = on.map((b) => {
+                    const r = ['red', 'orange', 'yellow'].indexOf(b.rarity) >= 0 ? b.rarity : 'plain';
+                    return '<span class="fo-kal-' + r + '">'
+                        + foEsc((b.title || '?') + (b.value != null ? ' ' + b.value : ''))
+                        + '</span>';
+                });
+                return foEsc(w.name) + (txt.length ? ' (' + txt.join(', ') + ')' : '');
             }).join(' \u00b7 '));
         }
 
