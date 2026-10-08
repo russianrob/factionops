@@ -41,6 +41,7 @@ import * as priceWatcher from "./price-watcher.js";
 import * as stakeoutStore from "./stakeout-store.js";
 import { startWatcher as startStakeoutWatcher, stopWatcher as stopStakeoutWatcher } from "./stakeout-watcher.js";
 import { startRwpRefresh } from "./rwp-refresh.js";
+import { startFactionHistorySchedule } from "./faction-history-schedule.js";
 import { startRestockTracker } from "./restock-tracker.js";
 import { startPersonalWatcher } from "./personal-watcher.js";
 import * as itemMarket from "./item-market.js";
@@ -662,6 +663,7 @@ else console.log("[stakeout-watcher] disabled (set STAKEOUT_WATCHER=1 to enable 
 // Torn RW Pricer: regenerate data/rwp-prices.json daily from the marches.cafe
 // auction CSVs so the PDA path (which can't gunzip the CDN) gets fresh prices.
 startRwpRefresh();
+startFactionHistorySchedule();
 startRestockTracker();
 startPersonalWatcher();
 // Item-market lowest-listing cache: value OC reward artifacts (e.g. Priceless

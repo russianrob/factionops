@@ -689,6 +689,23 @@ export function parseMembershipNews(rows = []) {
   return { events, leadership, monthly, unparsed, ignored };
 }
 
+// ── Store lock ─────────────────────────────────────────────────────────
+// The daily job and a page-triggered build advance the SAME stores, and both
+// are async: each loads the store, spends minutes fetching, then writes. If
+// they overlap, the second write is based on a copy taken before the first
+// one landed and silently drops its additions.
+//
+// It is self-healing — coverage is read back off the store, so the next run
+// re-fetches what was lost — but re-fetching an hour of pages for nothing is
+// worth one promise chain to avoid. Everything that mutates a store on disk
+// goes through here.
+let _storeChain = Promise.resolve();
+export function withStoreLock(fn) {
+  const run = _storeChain.then(fn, fn);
+  _storeChain = run.then(() => {}, () => {});
+  return run;
+}
+
 // ── Member name cache ──────────────────────────────────────────────────
 // Chain reports carry ids, never names, and a lifetime table is mostly
 // people who have LEFT — so the roster cannot name them and nothing else on
@@ -1188,14 +1205,15 @@ export async function buildAll({ key, factionId, onUpdate = () => {} }) {
   // without it. Later runs stop at what is already stored.
   let attackStore = { days: {}, unattributed: {} };
   try {
-    const res = await captureAttacks(key, factionId, {
+    // Through the lock: the daily job advances the same store.
+    const res = await withStoreLock(() => captureAttacks(key, factionId, {
       // captureAttacks reports a single object, not (rows, pages) — the
       // two-arg form silently nested it and the phase showed no progress.
       onProgress: (p) => {
         payload.attackProgress = p;
         onUpdate(payload);
       },
-    });
+    }));
     attackStore = res.store;
   } catch (e) {
     console.warn(`[fachist] attacks: ${e.message}`);
@@ -1215,10 +1233,10 @@ export async function buildAll({ key, factionId, onUpdate = () => {} }) {
   for (const m of (payload.lifetime || {}).members || []) nameMap[String(m.id)] ||= m.username;
   let chainRespect = null;
   try {
-    const cr = await captureChainReports(key, factionId, chains, {
+    const cr = await withStoreLock(() => captureChainReports(key, factionId, chains, {
       budget: 300,
       onProgress: (p2) => { payload.chainReportProgress = p2; onUpdate(payload); },
-    });
+    }));
     // Resolve a few unknown ids per build, richest first, so the top of the
     // table is named even on a faction whose history is mostly ex-members.
     const ranked = lifetimeChainRespect(cr.store, nameMap);
