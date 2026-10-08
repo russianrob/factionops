@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.0
+// @version      0.12.1
 // @description  Beta lane for Gym Coach — new work lands here first. Torn gym coach — verdict-first overlay, three tabs, cooldown rail, training advice and a progression chart. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,16 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.12.1 - A goal your gym cannot train said "not reachable at this rate".
+*
+*         It is reachable; you are just standing in the wrong gym. The planner
+*         costs every goal against the gym you are CURRENTLY in, so on Legs
+*         Bums and Tums (Speed, Defense and Dexterity, no Strength) a Strength
+*         goal came back with no finish date at all — while being the cheapest
+*         of the four at 894 trains. The row now names the gym and the stat
+*         and tells you to switch, and keeps the old wording for a goal that
+*         really is too slow.
+*
 * 0.12.0 - The beta lane is open again.
 *
 *         0.10.0 closed it: a stub that did nothing but ask you to uninstall,
@@ -2205,7 +2215,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.0";
+  var GC_VERSION = "0.12.1";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -5566,7 +5576,19 @@
       var note = "";
       if (row) {
         if (row.done) note = "reached";
-        else if (!isFinite(row.days)) note = "not reachable at this rate";
+        else if (!isFinite(row.days)) {
+          // Two very different reasons a goal has no finish date, and saying
+          // "at this rate" for both is wrong in the common case. The planner
+          // only ever costs the gym you are STANDING IN (gymFor), so a stat
+          // that gym cannot train reads as impossible when all it needs is a
+          // walk to another gym. Reported on Legs Bums and Tums, which trains
+          // Speed, Defense and Dexterity but not Strength: the Strength goal
+          // was 894 trains away, the cheapest of the four.
+          note = dotsFor(k) === 0
+            ? (state.gymName || "this gym") + " doesn't train " + STAT_LABEL[k]
+              + " \u2014 switch gym"
+            : "not reachable at this rate";
+        }
         else note = fmtDays(row.days) + " of training" +
           (row.startsIn > 0 ? ", starting in " + fmtDays(row.startsIn) : "") +
           " \u00b7 done in " + fmtDays(row.doneIn);
