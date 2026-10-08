@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.8
+// @version      0.12.9
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,24 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.12.9 - A hidden diagnostic for goals that report no finish date.
+*
+*         Eddie is at Gun Shop, which trains Strength at 6.6 dots, so the
+*         zero-dots cause fixed in 0.12.8 is not his. Four rounds of guessing
+*         from screenshots produced four wrong answers, because the three
+*         things that decide it are none of them on screen: the milestone
+*         list, the share ceiling at each milestone, and the gain per train.
+*
+*         Five taps on the GYM COACH brand, within three seconds, toggles it.
+*         No visible control — this is a tool for chasing one report, not a
+*         feature, and the panel is other people's screen. A row with no ETA
+*         then prints the gym and its dots, the perk, the calibration
+*         multiplier, gain per train, the gain still needed, the goal step,
+*         any pending book, the gym lock, and the first eight milestones with
+*         their computed cap and whether the stat was skipped there.
+*
+*         Whichever of those is wrong will be in the screenshot.
+*
 * 0.12.8 - A stat this gym cannot train gets an ETA at a gym that can.
 *
 *         Confirmed on two accounts. rcexyz at Legs Bums and Tums, which has
@@ -2223,7 +2241,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.8";
+  var GC_VERSION = "0.12.9";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4536,6 +4554,45 @@
   var STAT_LABEL = { str: "Strength", spe: "Speed", def: "Defense", dex: "Dexterity" };
 
   /**
+   * Why a goal has no finish date, in the planner's own numbers.
+   *
+   * Four rounds of inference from screenshots produced four wrong answers,
+   * because the three inputs that decide it — the milestone list, the share
+   * ceiling at each milestone, and the gain per train — are none of them on
+   * screen. This prints them. Off unless the owner turns it on.
+   */
+  function diagFor(k, cur, target, plan) {
+    try {
+      var g = gymFor();
+      var dots = dotsFor(k, g);
+      var sh = state.shares || null, maxShare = 0;
+      if (sh) HIST_KEYS.forEach(function (x) { if ((sh[x] || 0) > maxShare) maxShare = sh[x] || 0; });
+      var targets = {};
+      HIST_KEYS.forEach(function (x) { targets[x] = Number((state.goals || {})[x]) || 0; });
+      var levels = goalLevels(Number(state.goalStep) || 0, targets);
+      var mf = (plan.cal && plan.cal.ok) ? plan.cal.model : 1;
+      var per = dots ? gainOne(cur, state.happyMax || state.happy || 5000, dots,
+                               g.Energy || 25, (state.perks && state.perks[k]) || 1, k) * mf : 0;
+      var lines = levels.slice(0, 8).map(function (L) {
+        var cap = shareCap(k, L, targets[k], sh, maxShare);
+        var lc = lockCap(state.stats || {}, state.gymLock || "", k);
+        if (lc < cap) cap = lc;
+        return "L" + Math.round(L / 1000) + "k cap " + Math.round(cap / 1000) + "k"
+          + (cur >= cap ? " SKIP" : " ok");
+      });
+      return "gym " + (g.Gym || "?") + " dots " + dots
+        + " | perk " + (((state.perks || {})[k]) || 1)
+        + " | mf " + mf.toFixed(3)
+        + " | gain/train " + (per >= 1 ? Math.round(per) : per.toFixed(3))
+        + " | need " + Math.round(target - cur).toLocaleString()
+        + " | step " + (Number(state.goalStep) || 0)
+        + " | book " + (pendingBookAward(k) || 0)
+        + " | lock " + (state.gymLock || "none")
+        + " | levels: " + lines.join(", ");
+    } catch (e) { return "diag failed: " + e.message; }
+  }
+
+  /**
    * The best gym you OWN for one stat, or null if none of them trains it.
    *
    * Only the dots decide: gain is dots x energyPerTrain and a fixed bar buys
@@ -5591,7 +5648,10 @@
             : (state.gymName || "this gym") + " doesn't train " + STAT_LABEL[k]
               + (alt ? " \u2014 best is " + alt.Gym : " \u2014 switch gym");
         }
-        else if (!isFinite(row.days)) note = "not reachable at this rate";
+        else if (!isFinite(row.days)) {
+          note = "not reachable at this rate";
+          if (state.diag) note += " \u2014 " + diagFor(k, cur, target, plan);
+        }
         else note = fmtDays(row.days) + " of training" +
           (row.startsIn > 0 ? ", starting in " + fmtDays(row.startsIn) : "") +
           " \u00b7 done in " + fmtDays(row.doneIn);
@@ -11397,7 +11457,7 @@
     panel.innerHTML =
       ownerBannerHtml() +
       '<div class="gcb-bar"><div class="gcb-brand"><i class="gcb-dot' + (live ? "" : " off") + '"></i>' +
-      "<b>GYM COACH</b><span>" +
+      '<b data-diag="1">GYM COACH</b><span>' +
       (live ? 'beta · <span class="gc-ago">' + ago() + "</span>" : esc(state.statusText)) +
       "</span></div>" +
       '<div class="gcb-icons">' +
@@ -12038,6 +12098,8 @@
     renderPanel();
   }
 
+  var _diagTaps = 0, _diagTapAt = 0;
+
   function onPanelClick(e) {
     var t = e.target;
     if (!t) return;
@@ -12045,8 +12107,23 @@
     if (!t || typeof t.closest !== "function") return;
     // Every clickable attribute has to be listed here or the handler below it is
     // dead code -- closest() returns null and this returns before reaching it.
-    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],[data-board],#stackSw,#novSw,#boardSw");
+    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],[data-board],[data-diag],#stackSw,#novSw,#boardSw");
     if (!t) return;
+    if (t.dataset.diag) {
+      // Deliberately undiscoverable: this is a tool for chasing one report,
+      // not a feature, and the panel is other people's screen. Five taps on
+      // the brand inside three seconds, which nothing does by accident.
+      var now = Date.now();
+      if (now - (_diagTapAt || 0) > 3000) _diagTaps = 0;
+      _diagTapAt = now;
+      if (++_diagTaps < 5) return;
+      _diagTaps = 0;
+      state.diag = !state.diag;
+      storeSet("diag", state.diag);
+      resetPlanCaches();
+      renderPanel();
+      return;
+    }
     if (t.dataset.board) {
       onBoardClick(t.dataset.board);
       return;
@@ -12651,6 +12728,7 @@
       state.goalOrder = state.goalOrder.filter(function (k) { return HIST_KEYS.indexOf(k) !== -1; });
       var stepSaved = Number(storeGet("goalStep", GOAL_STEP_DEFAULT));
       state.goalStep = GOAL_STEPS.indexOf(stepSaved) !== -1 ? stepSaved : GOAL_STEP_DEFAULT;
+      state.diag = storeGet("diag", false) === true;
       // Validated against the list rather than trusted: a stored name that is
       // not one of the six would be a lock nothing can satisfy, and every goal
       // would sit on hold with no way to see why.
