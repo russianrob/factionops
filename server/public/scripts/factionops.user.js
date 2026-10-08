@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.3
+// @version      5.6.4
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.3';
+    const SCRIPT_VERSION = '5.6.4';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -7244,47 +7244,33 @@ body.wb-chain-active {
     function kalLineHtml(hit) {
         const s = hit.summary || {};
         const nm = (x) => (x && x.name ? x.name : null);
-        const guns = [nm(s.primary), nm(s.secondary), nm(s.melee)].filter(Boolean);
+        const weapons = [s.primary, s.secondary, s.melee].filter((w) => w && w.name);
         const armour = (s.armour || []).map((a) => a.name).filter(Boolean);
-        const bonuses = s.bonuses || [];
-        if (!guns.length && !armour.length) return '';
+        if (!weapons.length && !armour.length) return '';
 
+        const armourNames = new Set(armour);
         const rows = [];
-        if (guns.length) rows.push(foEsc(guns.join(' \u00b7 ')));
-        // Named, not counted. "5 armour" cannot tell Combat from Dune, and
-        // which set somebody is wearing is the point of looking.
-        if (armour.length) rows.push('<span class="fo-kal-arm">' + foEsc(armour.join(' \u00b7 ')) + '</span>');
 
-        // Every bonus, with the item it is on. Filtering to red+orange hid
-        // 208 of 238 in a real pack, so a plain weapon and a yellow-bonus one
-        // looked the same.
-        if (bonuses.length) {
-            // A full armour set carries the SAME bonus five times — listing
-            // each is five lines saying one thing. Repeats collapse to a
-            // range and a count; singles keep the item name, which is the
-            // part worth reading on a weapon.
-            const byTitle = new Map();
-            bonuses.forEach((b) => {
-                const t = b.title || '?';
-                if (!byTitle.has(t)) byTitle.set(t, []);
-                byTitle.get(t).push(b);
-            });
-            rows.push([...byTitle.entries()].map(([title, list]) => {
-                const hot = list.some((b) => b.rarity === 'red' || b.rarity === 'orange');
-                const vals = list.map((b) => b.value).filter((v) => v != null);
-                const lo = vals.length ? Math.min(...vals) : null;
-                const hi = vals.length ? Math.max(...vals) : null;
-                let txt = title;
-                if (lo != null) txt += ' ' + (lo === hi ? lo : lo + '\u2013' + hi);
-                txt += list.length > 1
-                    ? ' \u00d7' + list.length
-                    : (list[0].on ? ' (' + list[0].on + ')' : '');
-                return '<span class="' + (hot ? 'fo-kal-hot' : 'fo-kal-bon') + '">'
-                    + foEsc(txt) + '</span>';
+        if (weapons.length) {
+            // The bonus sits WITH its weapon. Listing it separately meant
+            // printing "Specialist 21 (Enfield SA-80)" under a line that
+            // already said Enfield SA-80.
+            rows.push(weapons.map((w) => {
+                const on = (s.bonuses || []).filter((b) => b.on === w.name);
+                const txt = on.map((b) => (b.title || '?') + (b.value != null ? ' ' + b.value : ''));
+                const hot = on.some((b) => b.rarity === 'red' || b.rarity === 'orange');
+                return foEsc(w.name) + (txt.length
+                    ? ' <span class="' + (hot ? 'fo-kal-hot' : 'fo-kal-bon') + '">('
+                      + foEsc(txt.join(', ')) + ')</span>'
+                    : '');
             }).join(' \u00b7 '));
-        } else {
-            // Said out loud, because silence used to mean "filtered out".
-            rows.push('<i>no bonuses</i>');
+        }
+
+        // Armour: which set is being worn, nothing else. Its bonuses are five
+        // near-identical defensive rolls and were three lines of noise for a
+        // fact already carried by the piece names.
+        if (armour.length) {
+            rows.push('<span class="fo-kal-arm">' + foEsc(armour.join(' \u00b7 ')) + '</span>');
         }
 
         const days = Math.floor((hit.packAgeMs || 0) / 86400000);
