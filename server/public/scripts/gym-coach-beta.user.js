@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.4
+// @version      0.12.5
 // @description  Beta lane for Gym Coach — new work lands here first. Torn gym coach — verdict-first overlay, three tabs, cooldown rail, training advice and a progression chart. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,61 +29,18 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
-* 0.12.4 - When the coach cannot say WHY a goal has no ETA, it shows its working.
+* 0.12.5 - Back to the 0.12.0 goal rows.
 *
-*         Reported from Gun Shop, which trains Strength at 6.6 dots, is not a
-*         specialist gym, and whose owner's stat split leaves Strength a
-*         ceiling well above where they are — so none of the three causes
-*         named in 0.12.3 fit, and the row fell through to "not reachable at
-*         this rate" again. Two rounds of reasoning from screenshots had
-*         already produced two wrong answers.
+*         0.12.1 through 0.12.4 rewrote what a goal with no finish date says,
+*         chasing a Strength row that showed none. Three explanations, none of
+*         which fit the account that reported it, and the owner asked for the
+*         wording back. This is the 0.12.0 body exactly; the version only goes
+*         up because an update cannot go down.
 *
-*         The fallback now prints the three numbers that decide it: the share
-*         ceiling at the top milestone, the gain still needed, and what one
-*         train actually gives at this gym, plus the gym lock if one is set.
-*         Whichever is wrong is then visible in the next screenshot instead
-*         of being inferred from the outside.
-*
-* 0.12.3 - "Not reachable at this rate" was four different problems.
-*
-*         Reported again from Gun Shop, which trains Strength at 6.6 dots —
-*         so the gym fix in 0.12.1/0.12.2 had nothing to do with it. A goal
-*         gets no finish date when the gym cannot train the stat, when a gym
-*         LOCK caps it, when your own stat split caps it below where you
-*         already are, or when it genuinely is too slow. Only the last is
-*         about the rate; two of the others are settings you can change in a
-*         second once you know which one it is.
-*
-*         A 5% Strength share against a 95% Speed share caps Strength at
-*         175,439 — below a 2.26m stat — so it was never scheduled at all.
-*         The row now names the cap and says to raise the share. The gym lock
-*         case reads "held by the <gym> lock at <cap>"; the row had carried
-*         heldByLock all along and the note never looked at it.
-*
-* 0.12.2 - A goal your gym cannot train now gets an ETA at a gym that can.
-*
-*         0.12.1 told you to switch gyms, which was true and not much use.
-*         The planner costs every goal at the gym you are STANDING IN, so a
-*         stat that gym cannot train had no number at all. It now prices the
-*         goal at the best gym you OWN for that stat and names it: "8 days of
-*         training at Frontline Fitness - Legs Bums and Tums doesn't train
-*         Strength". Only the dots decide which gym is best, because gain is
-*         dots x energyPerTrain and a fixed bar buys bar/energyPerTrain
-*         trains, so the energy cancels.
-*
-*         A gym you have LOCKED is left alone: the plan does not get to send
-*         you somewhere you have told it you are not going. Without a gym
-*         scan there is nothing to choose from, so the 0.12.1 wording stands.
-*
-* 0.12.1 - A goal your gym cannot train said "not reachable at this rate".
-*
-*         It is reachable; you are just standing in the wrong gym. The planner
-*         costs every goal against the gym you are CURRENTLY in, so on Legs
-*         Bums and Tums (Speed, Defense and Dexterity, no Strength) a Strength
-*         goal came back with no finish date at all — while being the cheapest
-*         of the four at 894 trains. The row now names the gym and the stat
-*         and tells you to switch, and keeps the old wording for a goal that
-*         really is too slow.
+*         Nothing about the planner changes either way: goalSegments,
+*         shareCap, orderedGoalKeys, goalPlan and gainOne were never touched
+*         by any of those four, so a row that had no ETA still has none. It
+*         simply says "not reachable at this rate" again.
 *
 * 0.12.0 - The beta lane is open again.
 *
@@ -2261,7 +2218,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.4";
+  var GC_VERSION = "0.12.5";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4615,38 +4572,9 @@
     return Number((gym || gymFor())[{ str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[k]]) || 0;
   }
 
-  /**
-   * The best gym you OWN for one stat, or null if none of them trains it.
-   *
-   * Gain is dots x energyPerTrain and a fixed bar buys bar/energyPerTrain
-   * trains, so the energy term cancels and only the dots decide — the same
-   * reasoning betterGym() already documents. A gym you have locked yourself
-   * to is honoured: the plan does not get to send you somewhere you have
-   * told it you are not going.
-   */
-  function bestOwnedGymFor(k) {
-    if (state.gymLock) return null;
-    var owned = state.gymsOwned;
-    if (!owned || !owned.length) return null;
-    var DOT = { str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[k];
-    var best = null, bd = 0;
-    owned.forEach(function (i) {
-      var g = GYMS[i];
-      if (!g) return;
-      var d = Number(g[DOT]) || 0;
-      if (d <= 0) return;
-      if (d > bd || (d === bd && (Number(g.Energy) || 25) < (Number(best.Energy) || 25))) {
-        best = g; bd = d;
-      }
-    });
-    return best;
-  }
-
   // Trains to take a stat from one value to another, and where it lands.
-  // `atGym` prices the leg somewhere other than the gym you are standing in,
-  // which is how a stat your current gym cannot train still gets an ETA.
-  function trainsTo(k, from, to, mf, atGym) {
-    var gym = atGym || gymFor();
+  function trainsTo(k, from, to, mf) {
+    var gym = gymFor();
     var dots = dotsFor(k, gym);
     if (!dots || !(to > from)) return null;
     var energyP = gym.Energy || 25;
@@ -5651,63 +5579,7 @@
       var note = "";
       if (row) {
         if (row.done) note = "reached";
-        else if (!isFinite(row.days)) {
-          // FOUR different reasons a goal has no finish date, and "at this
-          // rate" was printed for all of them. It is the right answer for
-          // exactly one, and actively wrong for the rest: the first three are
-          // not about the rate at all, and two of them are settings the owner
-          // can change in a second once they know which one it is.
-          //
-          // Reported twice on the same message — once at Legs Bums and Tums
-          // (no Strength dots) and once at Gun Shop, which trains Strength at
-          // 6.6 and so had nothing to do with the gym at all.
-          var alt = dotsFor(k) === 0 ? bestOwnedGymFor(k) : null;
-          var sh = state.shares || null;
-          var maxShare = 0;
-          if (sh) HIST_KEYS.forEach(function (x) { if ((sh[x] || 0) > maxShare) maxShare = sh[x] || 0; });
-          var scap = (sh && maxShare > 0) ? target * ((sh[k] || 0) / maxShare) : Infinity;
-
-          if (alt) {
-            // Priced where it CAN be trained, rather than shrugging.
-            var r2 = trainsTo(k, cur, target, (plan.cal && plan.cal.ok) ? plan.cal.model : 1, alt);
-            var eDay = plan.energy || 0;
-            var d2 = (r2 && eDay > 0) ? (r2.trains * (Number(alt.Energy) || 25)) / eDay : Infinity;
-            note = isFinite(d2)
-              ? fmtDays(d2) + " of training at " + alt.Gym + " \u00b7 "
-                + (state.gymName || "this gym") + " doesn't train " + STAT_LABEL[k]
-              : (state.gymName || "this gym") + " doesn't train " + STAT_LABEL[k]
-                + " \u2014 best is " + alt.Gym;
-          } else if (dotsFor(k) === 0) {
-            note = (state.gymName || "this gym") + " doesn't train " + STAT_LABEL[k]
-              + " \u2014 switch gym";
-          } else if (row.heldByLock) {
-            // Held, not unreachable: the gating stat can grow and hand this
-            // one its room back. The row already carried this flag and the
-            // note never looked at it.
-            note = "held by the " + (state.gymLock || "gym") + " lock"
-              + (isFinite(row.lockCap) ? " at " + Math.round(row.lockCap).toLocaleString() : "");
-          } else if (isFinite(scap) && cur >= scap) {
-            // The owner's own stat split. At a 5% share against a 95% stat the
-            // ceiling lands below where they already are, so the goal is never
-            // scheduled — nothing to do with the rate, and a one-click fix.
-            note = "your stat split caps " + STAT_LABEL[k] + " at "
-              + Math.round(scap).toLocaleString() + " \u2014 raise its share";
-          } else {
-            // None of the known causes fit. Rather than a third round of
-            // guessing from a screenshot, the row carries the numbers that
-            // decide it: the share ceiling at the top milestone, what the
-            // stat needs, and what one train gives. Whichever of those is
-            // wrong is visible at a glance in the next report.
-            var topCap = isFinite(scap) ? Math.round(scap) : target;
-            var per = gainOne(cur, state.happyMax || state.happy || 5000,
-                              dotsFor(k), (gymFor().Energy || 25),
-                              (state.perks && state.perks[k]) || 1, k);
-            note = "no ETA \u2014 cap " + topCap.toLocaleString()
-              + ", need " + Math.round(target - cur).toLocaleString()
-              + ", " + (per >= 1 ? Math.round(per).toLocaleString() : per.toFixed(2))
-              + "/train" + (state.gymLock ? ", lock " + state.gymLock : "");
-          }
-        }
+        else if (!isFinite(row.days)) note = "not reachable at this rate";
         else note = fmtDays(row.days) + " of training" +
           (row.startsIn > 0 ? ", starting in " + fmtDays(row.startsIn) : "") +
           " \u00b7 done in " + fmtDays(row.doneIn);
