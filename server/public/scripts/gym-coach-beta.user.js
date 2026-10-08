@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.1
+// @version      0.12.2
 // @description  Beta lane for Gym Coach — new work lands here first. Torn gym coach — verdict-first overlay, three tabs, cooldown rail, training advice and a progression chart. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,21 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.12.2 - A goal your gym cannot train now gets an ETA at a gym that can.
+*
+*         0.12.1 told you to switch gyms, which was true and not much use.
+*         The planner costs every goal at the gym you are STANDING IN, so a
+*         stat that gym cannot train had no number at all. It now prices the
+*         goal at the best gym you OWN for that stat and names it: "8 days of
+*         training at Frontline Fitness - Legs Bums and Tums doesn't train
+*         Strength". Only the dots decide which gym is best, because gain is
+*         dots x energyPerTrain and a fixed bar buys bar/energyPerTrain
+*         trains, so the energy cancels.
+*
+*         A gym you have LOCKED is left alone: the plan does not get to send
+*         you somewhere you have told it you are not going. Without a gym
+*         scan there is nothing to choose from, so the 0.12.1 wording stands.
+*
 * 0.12.1 - A goal your gym cannot train said "not reachable at this rate".
 *
 *         It is reachable; you are just standing in the wrong gym. The planner
@@ -2215,7 +2230,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.1";
+  var GC_VERSION = "0.12.2";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4569,9 +4584,38 @@
     return Number((gym || gymFor())[{ str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[k]]) || 0;
   }
 
+  /**
+   * The best gym you OWN for one stat, or null if none of them trains it.
+   *
+   * Gain is dots x energyPerTrain and a fixed bar buys bar/energyPerTrain
+   * trains, so the energy term cancels and only the dots decide — the same
+   * reasoning betterGym() already documents. A gym you have locked yourself
+   * to is honoured: the plan does not get to send you somewhere you have
+   * told it you are not going.
+   */
+  function bestOwnedGymFor(k) {
+    if (state.gymLock) return null;
+    var owned = state.gymsOwned;
+    if (!owned || !owned.length) return null;
+    var DOT = { str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[k];
+    var best = null, bd = 0;
+    owned.forEach(function (i) {
+      var g = GYMS[i];
+      if (!g) return;
+      var d = Number(g[DOT]) || 0;
+      if (d <= 0) return;
+      if (d > bd || (d === bd && (Number(g.Energy) || 25) < (Number(best.Energy) || 25))) {
+        best = g; bd = d;
+      }
+    });
+    return best;
+  }
+
   // Trains to take a stat from one value to another, and where it lands.
-  function trainsTo(k, from, to, mf) {
-    var gym = gymFor();
+  // `atGym` prices the leg somewhere other than the gym you are standing in,
+  // which is how a stat your current gym cannot train still gets an ETA.
+  function trainsTo(k, from, to, mf, atGym) {
+    var gym = atGym || gymFor();
     var dots = dotsFor(k, gym);
     if (!dots || !(to > from)) return null;
     var energyP = gym.Energy || 25;
@@ -5576,6 +5620,21 @@
       var note = "";
       if (row) {
         if (row.done) note = "reached";
+        else if (!isFinite(row.days) && dotsFor(k) === 0 && bestOwnedGymFor(k)) {
+          // The planner costs everything at the gym you are standing in, so a
+          // stat this gym cannot train had no finish date at all — reported as
+          // "not reachable" on a Strength goal that was the CHEAPEST of four.
+          // It is reachable; it is somewhere else. Price it there and say so.
+          var alt = bestOwnedGymFor(k);
+          var r2 = trainsTo(k, cur, target, (plan.cal && plan.cal.ok) ? plan.cal.model : 1, alt);
+          var eDay = plan.energy || 0;
+          var d2 = (r2 && eDay > 0) ? (r2.trains * (Number(alt.Energy) || 25)) / eDay : Infinity;
+          note = isFinite(d2)
+            ? fmtDays(d2) + " of training at " + alt.Gym
+              + " \u00b7 " + (state.gymName || "this gym") + " doesn't train " + STAT_LABEL[k]
+            : (state.gymName || "this gym") + " doesn't train " + STAT_LABEL[k]
+              + " \u2014 best is " + alt.Gym;
+        }
         else if (!isFinite(row.days)) {
           // Two very different reasons a goal has no finish date, and saying
           // "at this rate" for both is wrong in the common case. The planner
