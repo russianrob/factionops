@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.7
+// @version      0.12.8
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,24 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.12.8 - A stat this gym cannot train gets an ETA at a gym that can.
+*
+*         Confirmed on two accounts. rcexyz at Legs Bums and Tums, which has
+*         no Strength; the owner at Frontline Fitness, which has no Dexterity
+*         and is the only gym training Strength AND Speed but not Dexterity,
+*         which is what pinned it. In both cases the "unreachable" stat was
+*         among the cheapest left: 894 trains for one, 293m of gain against a
+*         1.7bn goal that was fine for the other.
+*
+*         The planner costs every goal at the gym you are standing in, so zero
+*         dots means no finish date. The row now prices the goal at the best
+*         gym you OWN for that stat and names both: "4.2 months of training at
+*         George's - Frontline Fitness doesn't train Dexterity".
+*
+*         This is the only change on top of 0.12.7. The three other causes and
+*         the diagnostic dump that 0.12.3 and 0.12.4 added are not back, and
+*         the planner itself is untouched as it has been throughout.
+*
 * 0.12.7 - The 0.9.91 body: the build immediately before the lane was stubbed.
 *
 *         Asked for whatever came before 0.10.0, and that is 0.9.91. Body
@@ -2205,7 +2223,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.7";
+  var GC_VERSION = "0.12.8";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4515,9 +4533,40 @@
     return Number((gym || gymFor())[{ str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[k]]) || 0;
   }
 
+  var STAT_LABEL = { str: "Strength", spe: "Speed", def: "Defense", dex: "Dexterity" };
+
+  /**
+   * The best gym you OWN for one stat, or null if none of them trains it.
+   *
+   * Only the dots decide: gain is dots x energyPerTrain and a fixed bar buys
+   * bar/energyPerTrain trains, so the energy term cancels — the same
+   * reasoning betterGym() already carries. A gym you have locked yourself to
+   * is honoured, because the plan does not get to send you somewhere you have
+   * said you are not going.
+   */
+  function bestOwnedGymFor(k) {
+    if (state.gymLock) return null;
+    var owned = state.gymsOwned;
+    if (!owned || !owned.length) return null;
+    var DOT = { str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[k];
+    var best = null, bd = 0;
+    owned.forEach(function (i) {
+      var g = GYMS[i];
+      if (!g) return;
+      var d = Number(g[DOT]) || 0;
+      if (d <= 0) return;
+      if (d > bd || (d === bd && (Number(g.Energy) || 25) < (Number(best.Energy) || 25))) {
+        best = g; bd = d;
+      }
+    });
+    return best;
+  }
+
   // Trains to take a stat from one value to another, and where it lands.
-  function trainsTo(k, from, to, mf) {
-    var gym = gymFor();
+  // `atGym` prices the leg somewhere other than the gym you are standing in,
+  // which is how a stat this gym cannot train still gets an ETA.
+  function trainsTo(k, from, to, mf, atGym) {
+    var gym = atGym || gymFor();
     var dots = dotsFor(k, gym);
     if (!dots || !(to > from)) return null;
     var energyP = gym.Energy || 25;
@@ -5522,6 +5571,26 @@
       var note = "";
       if (row) {
         if (row.done) note = "reached";
+        else if (!isFinite(row.days) && dotsFor(k) === 0) {
+          // The planner costs every goal at the gym you are STANDING IN, so a
+          // stat this gym cannot train came back with no finish date — which
+          // reads as impossible when the goal is fine and the gym is not.
+          // Confirmed twice: Legs Bums and Tums has no Strength, Frontline
+          // Fitness no Dexterity, and in both cases the "unreachable" stat
+          // was among the cheapest the owner had left.
+          var alt = bestOwnedGymFor(k);
+          var d2 = Infinity;
+          if (alt) {
+            var r2 = trainsTo(k, cur, target, (plan.cal && plan.cal.ok) ? plan.cal.model : 1, alt);
+            var eDay = plan.energy || 0;
+            if (r2 && eDay > 0) d2 = (r2.trains * (Number(alt.Energy) || 25)) / eDay;
+          }
+          note = isFinite(d2)
+            ? fmtDays(d2) + " of training at " + alt.Gym + " \u00b7 "
+              + (state.gymName || "this gym") + " doesn't train " + STAT_LABEL[k]
+            : (state.gymName || "this gym") + " doesn't train " + STAT_LABEL[k]
+              + (alt ? " \u2014 best is " + alt.Gym : " \u2014 switch gym");
+        }
         else if (!isFinite(row.days)) note = "not reachable at this rate";
         else note = fmtDays(row.days) + " of training" +
           (row.startsIn > 0 ? ", starting in " + fmtDays(row.startsIn) : "") +
