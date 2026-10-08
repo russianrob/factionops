@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.1
+// @version      5.6.2
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.1';
+    const SCRIPT_VERSION = '5.6.2';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -1175,55 +1175,6 @@ html.wb-theme-light {
     align-items: center;
     justify-content: space-between;
     margin-bottom: 6px;
-}
-#wb-assist-btn {
-    position: fixed;
-    bottom: 72px;
-    right: 14px;
-    z-index: 9999999 !important;
-    background: linear-gradient(135deg, #ff6b52, #e03a3a);
-    color: #fff;
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Open Sans", Arial, sans-serif;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    line-height: 1;
-    cursor: pointer;
-    box-shadow: 0 2px 8px rgba(214, 48, 49, 0.35), inset 0 1px 0 rgba(255,255,255,0.12);
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
-    -webkit-tap-highlight-color: transparent;
-    user-select: none;
-}
-#wb-assist-btn .wb-assist-icon {
-    width: 12px;
-    height: 12px;
-    display: inline-block;
-    vertical-align: middle;
-    flex-shrink: 0;
-    filter: drop-shadow(0 1px 0 rgba(0,0,0,0.25));
-}
-#wb-assist-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(214, 48, 49, 0.5), inset 0 1px 0 rgba(255,255,255,0.18);
-}
-#wb-assist-btn:active {
-    transform: translateY(0);
-    box-shadow: 0 1px 4px rgba(214, 48, 49, 0.4), inset 0 1px 0 rgba(0,0,0,0.12);
-}
-#wb-assist-btn:disabled {
-    background: linear-gradient(135deg, #4a5258, #2d3436);
-    color: #b0b8bc;
-    border-color: rgba(255,255,255,0.04);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-    cursor: not-allowed;
-    transform: none;
 }
 
 /* ----- Animations ----- */
@@ -3108,51 +3059,11 @@ body.wb-chain-active {
 }
 
 /* Retal action row injected into Torn's native mini profile card */
-.fo-card-retal-row {
-    display: flex;
-    justify-content: center;
-    padding: 6px 8px;
-    margin: 6px 0 0 0;
-    border-top: 1px solid rgba(255,255,255,0.08);
-}
 .fo-kal-line{font-size:11px;line-height:1.35;color:#c8d2dc;background:rgba(0,0,0,.28);
   border-top:1px solid rgba(255,255,255,.08);padding:4px 8px;word-break:break-word}
 .fo-kal-line b{color:#9fe870;font-weight:700;letter-spacing:.04em;margin-right:4px}
 .fo-kal-line i{color:#8894a0;font-style:normal;opacity:.75}
 .fo-kal-hot{color:#ffb44d;font-weight:600}
-.fo-card-retal-btn {
-    /* v5.0.35: REVERTED v5.0.29 absolute positioning + the
-       .fo-retal-injected position-relative rule. That CSS broke
-       Torn mini-profile invocation because Torn relies on the
-       wrapper own positioning to render the popup at the right
-       spot — forcing it to relative made hold-to-show mini-profile
-       silently fail on faction pages and inside FactionOps. Back
-       to inline-flex inside .buttons-list. */
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    background: linear-gradient(135deg, #ff6b52, #e03a3a);
-    color: #fff;
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 2px;
-    padding: 1px 5px;
-    font: 700 8px/1 Arial, "Open Sans", sans-serif;
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: transform 0.12s ease, box-shadow 0.12s ease;
-    box-shadow: 0 1px 2px rgba(214,48,49,0.3);
-    pointer-events: auto !important;
-    touch-action: manipulation;
-    user-select: none;
-}
-.fo-card-retal-btn:hover { transform: translateY(-1px); box-shadow: 0 1px 4px rgba(214,48,49,0.45); }
-.fo-card-retal-btn:active { transform: translateY(0); }
-.fo-card-retal-btn:disabled { background: #636e72; color: #b0b8bc; cursor: not-allowed; transform: none; }
-.fo-card-retal-icon { font-size: 9px; }
-/* v5.0.74 .fo-card-retal-btn-upper class removed in v5.0.76 (mini-
-   profile injection reverted to bottom .buttons-list). */
-
 /* Faction cooldowns dashboard (Option B — self-reported bars). */
 .fo-bars-section {
     border-bottom: 1px solid var(--wb-border);
@@ -7285,8 +7196,8 @@ body.wb-chain-active {
 
     /** Check if current user has an elevated faction role (leader, co-leader, war leader, banker). */
     /**
-     * Watch for Torn's native mini profile card and inject a Retal
-     * button into its existing `.buttons-list` row. The card root is
+     * Watch for Torn's native mini profile card and inject the KAL loadout
+     * line above its `.buttons-list` row. The card root is
      * reliably identified by its Emotion CSS class prefix
      * `profile-mini-_wrapper` (or legacy `.mini-profile-wrapper`), so
      * we don't need the size/text heuristic we were using before.
@@ -7355,111 +7266,34 @@ body.wb-chain-active {
             ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     }
 
-    function setupRetalCardInjection() {
-        if (window.__foRetalCardInjection) return;
-        window.__foRetalCardInjection = true;
+    function setupMiniProfileInjection() {
+        if (window.__foMiniProfileInjection) return;
+        window.__foMiniProfileInjection = true;
 
-        let _retalInjectTimer = null;
+        let _miniInjectTimer = null;
         const observer = new MutationObserver(() => {
-            if (_retalInjectTimer) return; // debounce: don't re-scan on every mutation
-            _retalInjectTimer = setTimeout(() => { _retalInjectTimer = null; tryInjectRetalCard(); }, 300);
+            if (_miniInjectTimer) return; // debounce: don't re-scan on every mutation
+            _miniInjectTimer = setTimeout(() => { _miniInjectTimer = null; tryInjectMiniProfile(); }, 300);
         });
         observer.observe(document.body, { childList: true, subtree: true });
         // Also attempt once now in case the card is already on-screen.
-        tryInjectRetalCard();
+        tryInjectMiniProfile();
 
         // Delegated click — capture phase, immune to re-renders.
-        document.addEventListener('click', async (e) => {
-            const btn = e.target && e.target.closest && e.target.closest('.fo-card-retal-btn');
-            if (!btn || btn.disabled) return;
-            e.preventDefault();
-            e.stopPropagation();
-
-            const targetId = btn.dataset.targetId;
-            const targetName = btn.dataset.targetName || `Player [${targetId}]`;
-            if (!targetId) return;
-
-            btn.disabled = true;
-            const origHtml = btn.innerHTML;
-            btn.innerHTML = '<span class="fo-card-retal-icon">\u23F3</span>Sending…';
-            try {
-                await postAction('/api/assist-request', {
-                    warId: deriveWarId() || null,
-                    targetId,
-                    targetName,
-                    mode: 'retal',
-                });
-                btn.innerHTML = '<span class="fo-card-retal-icon">\u2713</span>Sent!';
-                showToast(`Retal request sent for ${targetName}`, 'success');
-            } catch (err) {
-                btn.innerHTML = '<span class="fo-card-retal-icon">\u26A0</span>Failed';
-                showToast(`Retal failed: ${(err && err.message) || 'server error'}`, 'error');
-            }
-            setTimeout(() => {
-                btn.disabled = false;
-                btn.innerHTML = origHtml;
-            }, 3000);
-        }, true);
 
         log('[retal-card] mini-profile observer installed');
     }
 
-    /**
-     * v5.0.37: pull a real player name out of the mini-profile card.
-     * The first <a href*="profiles.php?XID="> in the card is often an
-     * icon-only link with empty textContent — using it directly was
-     * sending "Player [<id>]" to the server, which surfaced as the
-     * bare user ID in push notifications. Try named selectors first,
-     * then scan profile links for non-numeric text, then fall back to
-     * FactionOps state (enemy onlinePlayers / our memberBars).
-     */
-    function extractMiniProfileName(card, targetId) {
-        const candidates = [
-            '[class*="profile-mini-_username"]',
-            '[class*="profile-mini-_name"]',
-            '[class*="mini-profile-name"]',
-            '.profile-mini-name',
-            '.honor-text-wrap .honor-text',
-            '.honor-text',
-        ];
-        for (const sel of candidates) {
-            try {
-                const el = card.querySelector(sel);
-                const txt = el && (el.textContent || '').trim();
-                if (txt && !/^\s*\[?\d+\]?\s*$/.test(txt) && txt.length < 40) {
-                    return txt;
-                }
-            } catch (_) { /* invalid selector — keep going */ }
-        }
-        const links = card.querySelectorAll('a[href*="profiles.php?XID="]');
-        for (const link of links) {
-            const txt = (link.textContent || '').trim();
-            if (txt && !/^\s*\[?\d+\]?\s*$/.test(txt) && txt.length < 40) {
-                return txt;
-            }
-        }
-        if (targetId) {
-            const id = String(targetId);
-            if (Array.isArray(state.onlinePlayers)) {
-                const m = state.onlinePlayers.find(p => String(p.id) === id);
-                if (m && m.name) return m.name;
-            }
-            if (state.memberBars && state.memberBars[id] && state.memberBars[id].name) {
-                return state.memberBars[id].name;
-            }
-        }
-        return null;
-    }
 
     /**
      * Find an un-injected mini profile card and add our Retal button.
      * The `.buttons-list` inside the card is populated a beat after the
      * wrapper appears, so we poll briefly until it shows up.
      */
-    function tryInjectRetalCard() {
+    function tryInjectMiniProfile() {
         const card = document.querySelector(
-            '[class*="profile-mini-_wrapper"]:not(.fo-retal-injected), ' +
-            '.mini-profile-wrapper:not(.fo-retal-injected)'
+            '[class*="profile-mini-_wrapper"]:not(.fo-mini-injected), ' +
+            '.mini-profile-wrapper:not(.fo-mini-injected)'
         );
         if (!card) return;
 
@@ -7473,7 +7307,7 @@ body.wb-chain-active {
         // discriminator, and it costs nothing when the card is a real profile.
         if (card.querySelector('input:not([type="checkbox"]):not([type="radio"]), textarea')) return;
 
-        card.classList.add('fo-retal-injected'); // dedup flag — one-time per card
+        card.classList.add('fo-mini-injected'); // dedup flag — one-time per card
 
         let attempts = 0;
         const MAX = 25; // 25 × 200ms = 5s total before giving up
@@ -7501,30 +7335,10 @@ body.wb-chain-active {
                 if (attempts >= MAX) clearInterval(timer);
                 return;
             }
-            if (buttonsList.querySelector('.fo-card-retal-btn')) {
-                clearInterval(timer);
-                return;
-            }
 
             const m = (nameLink.getAttribute('href') || '').match(/XID=(\d+)/i);
             if (!m) { clearInterval(timer); return; }
             const targetId = m[1];
-            const realName = extractMiniProfileName(card, targetId);
-            const targetName = realName || `Player [${targetId}]`;
-
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'fo-card-retal-btn';
-            btn.dataset.targetId = targetId;
-            btn.dataset.targetName = targetName;
-            btn.innerHTML = '<span class="fo-card-retal-icon">\u26A0</span>Retal';
-
-            // v5.0.76: REVERTED v5.0.74/75 upper-row injection per user
-            // request \u2014 'was fine where it was'. Back to the simple
-            // inline-flex append into .buttons-list (the original v5.0.35
-            // location). Note: the draggable PROFILE-PAGE retal button
-            // (#wb-assist-btn) is a separate feature and is untouched.
-            buttonsList.appendChild(btn);
 
             // The loadout arrives async; the card may be gone by then, and
             // re-entering the same card must not stack a second row.
@@ -12348,144 +12162,6 @@ body.wb-chain-active {
         document.addEventListener('touchcancel', onUp);
     }
 
-    function createAssistButton() {
-        if (document.getElementById('wb-assist-btn')) return;
-
-        const targetId = getAttackTargetId();
-        if (!targetId) {
-            // Torn React takes a moment to render the DOM, retry a few times
-            if (window.location.href.includes('sid=attack') || window.location.href.includes('profiles.php')) {
-                setTimeout(createAssistButton, 1000);
-            }
-            return;
-        }
-
-        // Retal mode on standalone profile pages (profiles.php?XID=...);
-        // classic Assist on attack pages. Same backend endpoint, different
-        // mode / wording / icon.
-        const isProfilePage = window.location.href.includes('profiles.php');
-        const mode = isProfilePage ? 'retal' : 'assist';
-        const label = isProfilePage ? 'Retal' : 'Assist';
-        const svgPath = isProfilePage
-            ? 'M12 5V1L5 8l7 7v-4a6 6 0 0 1 6 6 6 6 0 0 1-6 6 6 6 0 0 1-6-6H4a8 8 0 0 0 8 8 8 8 0 0 0 8-8 8 8 0 0 0-8-8Z'
-            : 'M6.92 5 5 6.92l6.31 6.31-2.18 2.18a2.4 2.4 0 1 0 1.06 1.06l2.18-2.18 2.17 2.17a2.4 2.4 0 1 0 1.06-1.06L13.43 13.3 19.74 7 17.82 5.08l-5.51 5.51-5.39-5.59Z';
-
-        const btn = document.createElement('button');
-        btn.id = 'wb-assist-btn';
-        btn.dataset.mode = mode;
-        btn.innerHTML = `
-            <svg class="wb-assist-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <path d="${svgPath}"/>
-            </svg>
-            <span>${label}</span>
-        `;
-
-        // v5.0.75: make the profile-page Retal button draggable. Persists
-        // position per-mode (retal vs assist save separately) via
-        // GM_setValue. CSS default is bottom-right; first drag overrides
-        // and sticks. Click suppressed if we actually moved (>3px) so
-        // drag-to-reposition doesn't fire the retal request.
-        makeAssistBtnDraggable(btn, mode);
-
-        let cooldownTimer = null;
-
-        btn.addEventListener('click', async () => {
-            if (btn.disabled) return;
-
-            // Retal mode allows a missing warId — the server picks any
-            // active war for the caller's faction as the broadcast room.
-            const warId = deriveWarId();
-            if (!warId && mode === 'assist') {
-                showToast('Not connected to a war', 'warning');
-                return;
-            }
-
-            // v5.0.40: extract target name. Profile pages (profiles.php)
-            // don't have any of the attack-page selectors, so retal
-            // notifications were falling back to "Player [<id>]" / bare
-            // user ID. Try a wider net plus document.title and the
-            // FactionOps state lookup before falling back.
-            let targetName = null;
-            const nameSelectors = [
-                // Attack page (defender side)
-                '.defender .username',
-                '[class*="defender"] [class*="userName"]',
-                '.playersModelWrap .right .username',
-                '[class*="user-information"] [class*="username"]',
-                // Profile page (top header — multiple Torn variants)
-                '[class*="profile-_username"]',
-                '[class*="user-information-name"]',
-                '.user-info-name',
-                'h4[class*="title"]',
-            ];
-            for (const sel of nameSelectors) {
-                try {
-                    const el = document.querySelector(sel);
-                    const txt = el && (el.textContent || '').trim();
-                    if (txt && !/^\s*\[?\d+\]?\s*$/.test(txt) && txt.length < 40) {
-                        targetName = txt;
-                        break;
-                    }
-                } catch (_) { /* invalid selector — keep going */ }
-            }
-            // document.title fallback — Torn profile pages set it to
-            // something like "PlayerName | TORN" or "PlayerName [123456] - TORN".
-            if (!targetName && isProfilePage) {
-                const title = (document.title || '').trim();
-                const m = title.match(/^([^|\-\[]+?)(?:\s*[\[|-]|\s*$)/);
-                const candidate = m && m[1] && m[1].trim();
-                if (candidate && !/^\s*\[?\d+\]?\s*$/.test(candidate) && candidate.length < 40) {
-                    targetName = candidate;
-                }
-            }
-            // FactionOps state lookup (war enemies / our faction members).
-            if (!targetName && targetId) {
-                const id = String(targetId);
-                if (Array.isArray(state.onlinePlayers)) {
-                    const m = state.onlinePlayers.find(p => String(p.id) === id);
-                    if (m && m.name) targetName = m.name;
-                }
-                if (!targetName && state.memberBars && state.memberBars[id] && state.memberBars[id].name) {
-                    targetName = state.memberBars[id].name;
-                }
-            }
-
-            try {
-                await postAction('/api/assist-request', {
-                    warId: warId || null,
-                    targetId,
-                    targetName: targetName || `Player [${targetId}]`,
-                    mode,
-                });
-                showToast(mode === 'retal' ? 'Retal request sent!' : 'Assist request sent!', 'success');
-            } catch (err) {
-                showToast(`Failed to send ${mode} request`, 'error');
-                return;
-            }
-
-            // Disable for 30 seconds to prevent spam. Snapshot the
-            // original label/icon HTML so the cooldown reset restores
-            // mode-appropriate content (e.g. "Retal" on profile pages
-            // instead of the old hardcoded "Assist").
-            const originalHtml = btn.innerHTML;
-            btn.disabled = true;
-            let remaining = 30;
-            btn.innerHTML = `⏳ ${remaining}s`;
-            cooldownTimer = setInterval(() => {
-                remaining--;
-                if (remaining <= 0) {
-                    clearInterval(cooldownTimer);
-                    cooldownTimer = null;
-                    btn.disabled = false;
-                    btn.innerHTML = originalHtml;
-                } else {
-                    btn.innerHTML = `⏳ ${remaining}s`;
-                }
-            }, 1000);
-        });
-
-        document.body.appendChild(btn);
-    }
 
     // =========================================================================
     // SECTION 15: FETCH / XHR INTERCEPTION
@@ -13161,8 +12837,6 @@ body.wb-chain-active {
             markAttackPending(targetId);
         }
 
-        // Show the floating Assist button
-        createAssistButton();
 
         // Scrape the attack-page DOM for the target's visible status. Torn
         // populates this sidebar text lazily, so retry a handful of times
@@ -16236,7 +15910,7 @@ body.wb-chain-active {
 
         // 6d. Watch for Torn's native mini profile card and inject a
         //     Retal action button into it.
-        setupRetalCardInjection();
+        setupMiniProfileInjection();
 
         // 7. Authenticate, start polling + Socket.IO
         if (CONFIG.API_KEY) {
@@ -16314,9 +15988,6 @@ body.wb-chain-active {
             attackOverlay.remove();
             clearViewing(); // Tell server we left the attack page
         }
-        const assistBtn = document.getElementById('wb-assist-btn');
-        if (assistBtn) assistBtn.remove();
-
         // Restore Torn's chain bar to its original position before removing overlay
         restoreTornChainBar();
 
