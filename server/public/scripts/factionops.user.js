@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.2
+// @version      5.6.3
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.2';
+    const SCRIPT_VERSION = '5.6.3';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -3064,6 +3064,8 @@ body.wb-chain-active {
 .fo-kal-line b{color:#9fe870;font-weight:700;letter-spacing:.04em;margin-right:4px}
 .fo-kal-line i{color:#8894a0;font-style:normal;opacity:.75}
 .fo-kal-hot{color:#ffb44d;font-weight:600}
+.fo-kal-bon{color:#9bb0c4}
+.fo-kal-arm{color:#9aa7b4}
 /* Faction cooldowns dashboard (Option B — self-reported bars). */
 .fo-bars-section {
     border-bottom: 1px solid var(--wb-border);
@@ -7243,22 +7245,51 @@ body.wb-chain-active {
         const s = hit.summary || {};
         const nm = (x) => (x && x.name ? x.name : null);
         const guns = [nm(s.primary), nm(s.secondary), nm(s.melee)].filter(Boolean);
-        if (!guns.length && !(s.armour || []).length) return '';
-        const bits = [];
-        if (guns.length) bits.push(guns.join(' \u00b7 '));
-        if ((s.armour || []).length) bits.push(s.armour.length + ' armour');
-        // Only the rarities worth reacting to; a full bonus list is a data
-        // dump inside a hover card.
-        const hot = (s.notable || []).filter((b) => b.rarity === 'red' || b.rarity === 'orange');
-        const warn = hot.length
-            ? '<span class="fo-kal-hot">' + hot.slice(0, 2).map((b) =>
-                foEsc(b.title || '?') + (b.value != null ? ' ' + foEsc(String(b.value)) : '')).join(', ')
-              + (hot.length > 2 ? ' +' + (hot.length - 2) : '') + '</span>'
-            : '';
+        const armour = (s.armour || []).map((a) => a.name).filter(Boolean);
+        const bonuses = s.bonuses || [];
+        if (!guns.length && !armour.length) return '';
+
+        const rows = [];
+        if (guns.length) rows.push(foEsc(guns.join(' \u00b7 ')));
+        // Named, not counted. "5 armour" cannot tell Combat from Dune, and
+        // which set somebody is wearing is the point of looking.
+        if (armour.length) rows.push('<span class="fo-kal-arm">' + foEsc(armour.join(' \u00b7 ')) + '</span>');
+
+        // Every bonus, with the item it is on. Filtering to red+orange hid
+        // 208 of 238 in a real pack, so a plain weapon and a yellow-bonus one
+        // looked the same.
+        if (bonuses.length) {
+            // A full armour set carries the SAME bonus five times — listing
+            // each is five lines saying one thing. Repeats collapse to a
+            // range and a count; singles keep the item name, which is the
+            // part worth reading on a weapon.
+            const byTitle = new Map();
+            bonuses.forEach((b) => {
+                const t = b.title || '?';
+                if (!byTitle.has(t)) byTitle.set(t, []);
+                byTitle.get(t).push(b);
+            });
+            rows.push([...byTitle.entries()].map(([title, list]) => {
+                const hot = list.some((b) => b.rarity === 'red' || b.rarity === 'orange');
+                const vals = list.map((b) => b.value).filter((v) => v != null);
+                const lo = vals.length ? Math.min(...vals) : null;
+                const hi = vals.length ? Math.max(...vals) : null;
+                let txt = title;
+                if (lo != null) txt += ' ' + (lo === hi ? lo : lo + '\u2013' + hi);
+                txt += list.length > 1
+                    ? ' \u00d7' + list.length
+                    : (list[0].on ? ' (' + list[0].on + ')' : '');
+                return '<span class="' + (hot ? 'fo-kal-hot' : 'fo-kal-bon') + '">'
+                    + foEsc(txt) + '</span>';
+            }).join(' \u00b7 '));
+        } else {
+            // Said out loud, because silence used to mean "filtered out".
+            rows.push('<i>no bonuses</i>');
+        }
+
         const days = Math.floor((hit.packAgeMs || 0) / 86400000);
-        return '<div class="fo-kal-line"><b>KAL</b> ' + foEsc(bits.join(' \u00b7 '))
-            + (warn ? ' ' + warn : '')
-            + (days >= 1 ? '<i> ' + days + 'd old</i>' : '') + '</div>';
+        if (days >= 1) rows.push('<i>' + days + 'd old</i>');
+        return '<div class="fo-kal-line"><b>KAL</b> ' + rows.join('<br>') + '</div>';
     }
 
     function foEsc(v) {

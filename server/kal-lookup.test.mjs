@@ -60,3 +60,39 @@ test('the pack age comes back, so stale data can be labelled', () => {
   const hit = kal.cachedLoadoutFor(111);
   assert.ok(typeof hit.packAgeMs === 'number' && hit.packAgeMs >= 0);
 });
+
+// ── every bonus, not just the loud ones ───────────────────────────────
+// 208 of the 238 bonuses in one real faction pack are YELLOW. Filtering to
+// red+orange hid almost all of them, which made "no bonus shown" and "no
+// bonus" look identical on a card. `notable` stays red+orange for the
+// pre-war report, which lists ten players at once; `bonuses` carries the
+// lot for a card showing one.
+test('summarise keeps every bonus, and still flags the loud ones apart', async () => {
+  const kal2 = await import('./kal-loadouts.js');
+  const s = kal2.summarise({ equipment: [
+    { name: 'Blowgun', type: 'Primary', slot_name: 'primary',
+      bonuses: [{ title: 'Poison', value: 91, rarity: 'red' }] },
+    { name: 'Combat Helmet', type: 'Armor', slot_name: 'head',
+      bonuses: [{ title: 'Impenetrable', value: 8, rarity: 'yellow' }] },
+  ] });
+  assert.deepEqual(s.notable.map((b) => b.rarity), ['red']);
+  assert.deepEqual(s.bonuses.map((b) => [b.rarity, b.title, b.on]),
+    [['red', 'Poison', 'Blowgun'], ['yellow', 'Impenetrable', 'Combat Helmet']]);
+});
+
+test('a bonus knows which item it is on, so a card can name it', async () => {
+  const kal2 = await import('./kal-loadouts.js');
+  const s = kal2.summarise({ equipment: [
+    { name: 'Taser', type: 'Secondary', slot_name: 'secondary',
+      bonuses: [{ title: 'Shock', value: 100, rarity: 'orange' }] },
+  ] });
+  assert.equal(s.bonuses[0].on, 'Taser');
+});
+
+test('no bonuses at all is an empty list, not a missing field', async () => {
+  const kal2 = await import('./kal-loadouts.js');
+  const s = kal2.summarise({ equipment: [
+    { name: 'Jackhammer', type: 'Primary', slot_name: 'primary', bonuses: [] },
+  ] });
+  assert.deepEqual(s.bonuses, []);
+});

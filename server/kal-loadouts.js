@@ -88,19 +88,25 @@ export function summarise(loadout) {
   const equipment = loadout && Array.isArray(loadout.equipment) ? loadout.equipment : null;
   if (!equipment || equipment.length === 0) return null;
 
-  const notable = [];
+  // EVERY bonus, each knowing the item it sits on. A real faction pack held
+  // 208 yellow against 22 orange and 8 red, so filtering to the loud ones hid
+  // seven bonuses in eight — and made "none shown" indistinguishable from
+  // "none". `notable` keeps the old red+orange cut for the pre-war report,
+  // which lists ten players at once and cannot afford the rest.
+  const bonuses = [];
   for (const e of equipment) {
     for (const b of (e && Array.isArray(e.bonuses) ? e.bonuses : [])) {
-      if (!b || !NOTABLE.has(String(b.rarity || "").toLowerCase())) continue;
-      notable.push({
+      if (!b) continue;
+      bonuses.push({
         title: b.title || null,
         value: b.value ?? null,
-        rarity: String(b.rarity).toLowerCase(),
-        on: (equipment.find((x) => x === e) || {}).name || null,
+        rarity: String(b.rarity || "").toLowerCase() || null,
+        on: e.name || null,
       });
     }
   }
-  notable.sort((a, b) => rank(a.rarity) - rank(b.rarity));
+  bonuses.sort((a, b) => rank(a.rarity) - rank(b.rarity));
+  const notable = bonuses.filter((b) => NOTABLE.has(b.rarity));
 
   return {
     primary: pickSlot(equipment, "primary"),
@@ -112,6 +118,7 @@ export function summarise(loadout) {
       .filter((e) => e && String(e.type || "").toLowerCase() === "armor")
       .map((e) => ({ name: e.name || null, rarity: e.rarity || null, slot: e.slot_name || null })),
     notable,
+    bonuses,
     observedAt: loadout.observed_at ?? null,
   };
 }
