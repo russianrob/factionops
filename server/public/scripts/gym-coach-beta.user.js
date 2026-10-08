@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.6
+// @version      0.12.7
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -21,7 +21,7 @@
 // @connect      torn.com
 // @run-at       document-end
 // @downloadURL  https://tornwar.com/scripts/gym-coach-beta.user.js
-// @updateURL    https://tornwar.com/scripts/gym-coach-beta.user.js
+// @updateURL    https://tornwar.com/scripts/gym-coach-beta.meta.js
 // ==/UserScript==
 
 /*
@@ -29,19 +29,21 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
-* 0.12.6 - Back to the 0.9.90 body, as asked.
+* 0.12.7 - The 0.9.91 body: the build immediately before the lane was stubbed.
 *
-*         0.12.5 restored 0.12.0; the request was to go further back, to the
-*         build before the lane was stubbed and unretired. This is 0.9.90
-*         verbatim. The version only rises because an update cannot go down.
+*         Asked for whatever came before 0.10.0, and that is 0.9.91. Body
+*         verbatim; the version only rises because an update cannot go down.
 *
-*         Two things this drops, neither of them the goal rows: the 0.9.91
-*         throttle on the mutation-driven energy refresh, and
-*         migrateFromStableOnce, which was added in 0.11.0 to carry a key and
-*         ledger from the old gc_v1 namespace into gcb_v1. Anyone who has
-*         already updated today has had that migration run and their data is
-*         in gcb_v1 for good; anyone still sitting on the old 0.10.12 build
-*         will now land here without it.
+*         One header correction kept: 0.9.91 pointed @updateURL at its own
+*         638KB body, so every install downloaded the whole script on every
+*         update check. It points at the meta file, which is what that field
+*         is for and costs nothing else.
+*
+*         migrateFromStableOnce is gone with this, since it arrived in 0.11.0.
+*         It carried an API key and ledger from the old gc_v1 namespace into
+*         gcb_v1. Everyone who updated today has already had it run and their
+*         data is in gcb_v1 for good; anyone still on the old 0.10.12 build
+*         will arrive here without it.
 *
 * 0.9.90 - War stack sits with the advice it changes, not under it.
 *
@@ -2203,7 +2205,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.6";
+  var GC_VERSION = "0.12.7";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -10879,6 +10881,11 @@
   // spent re-reading things that do not move that fast -- and it is what left
   // no headroom when anything else asked a question. The bar is read from the
   // page DOM once a second regardless, so nothing on screen got slower.
+  // Minimum spacing between the two gym MutationObservers' API refreshes.
+  // They share this: see the note at the observer for why per-observer state
+  // does not work.
+  var ENERGY_OBS_MIN_MS = 45000;
+  var lastEnergyObsAt = 0;
   var POLL_GYM_MS = 60000;
   // Off-gym was 20s, which made every other Torn page poll three times harder
   // than the gym itself. Same rate now.
@@ -12391,6 +12398,26 @@
         if (!/gym\.php/i.test(location.href)) return;
         clearTimeout(obs._t);
         obs._t = setTimeout(function () {
+          // THROTTLED, and the throttle is SHARED.
+          //
+          // Two roots are observed -- #gymroot and the energy bar -- each with
+          // its own observer and its own 500ms debounce. The bar mutates
+          // continuously as it fills, so every quiet gap scheduled another
+          // full API call, from each observer independently. Measured on a
+          // live device: 29 calls a minute from this script, 20 of them v1
+          // /user, against Torn's 100-a-minute key budget -- while the actual
+          // POLL sits at a well-behaved 60s.
+          //
+          // The floor lives at module scope on purpose. Per-observer state
+          // would let two observers alternate straight through it.
+          //
+          // Nothing on screen slows down: syncEnergyFromDom() reads the bar
+          // off the page every second regardless, so energy stays live. This
+          // call only exists to pick up what the DOM does not show, and that
+          // does not move in under a minute.
+          var now = Date.now();
+          if (now - lastEnergyObsAt < ENERGY_OBS_MIN_MS) return;
+          lastEnergyObsAt = now;
           refresh("energy");
         }, 500);
       });

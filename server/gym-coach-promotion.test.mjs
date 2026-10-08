@@ -60,6 +60,9 @@ test('the in-file version matches the header', () => {
 });
 
 test('both paths hand the reader on to the beta channel', () => {
+  // 0.9.91 shipped @updateURL pointing at its own 638KB body, so every
+  // install downloaded the whole script on each check. The rollback keeps the
+  // meta file, which is the one header change made on top of that body.
   // This is what makes the migration one hop rather than permanent: the body
   // served at the gym-coach path points its own updates at the beta, so after
   // one update the old path stops being consulted at all.
@@ -88,78 +91,16 @@ test('the retirement stub is gone from the beta path', () => {
   assert.match(BETA, /var NS = "gcb_v1"/, 'the beta must still read its own storage');
 });
 
-// --- the migration --------------------------------------------------------
-
-function rig({ stable = {}, beta = {} } = {}) {
-  const i = STABLE.indexOf('var STABLE_MIGRATE_KEYS');
-  const j = STABLE.indexOf('// Torn PDA hands stored values back as STRINGS', i);
-  assert.ok(i > 0 && j > i, 'migration block not found');
-  const logged = [];
-  const api = new Function('storeGet', 'storeSet', 'stableGet', 'console',
-    STABLE.slice(i, j) + '; return { migrateFromStableOnce, STABLE_MIGRATE_KEYS };')(
-    (k, d) => (k in beta ? beta[k] : d),
-    (k, v) => { beta[k] = v; },
-    (k, d) => (k in stable ? stable[k] : d),
-    { log: (m) => logged.push(m) });
-  return { api, stable, beta, logged };
-}
-
-test('a user of the old build keeps their key and ledger', () => {
-  const r = rig({ stable: { api_key: 'ABC123', log: ['a', 'b'], hist: { x: 1 }, mode: 'str' } });
-  r.api.migrateFromStableOnce();
-  assert.equal(r.beta.api_key, 'ABC123', 'they would have had to re-paste their key');
-  assert.deepEqual(r.beta.log, ['a', 'b'], 'the ledger is device-only and unrecoverable');
-  assert.deepEqual(r.beta.hist, { x: 1 });
-  assert.equal(r.beta.mode, 'str');
-});
-
-test('a beta tester loses nothing — their newer data wins', () => {
-  // Guarded per key, not once globally: somebody who ran both has data on
-  // both sides, and the beta's is the newer.
-  const r = rig({ stable: { api_key: 'OLD', log: ['old'] }, beta: { api_key: 'NEW', log: ['new'] } });
-  r.api.migrateFromStableOnce();
-  assert.equal(r.beta.api_key, 'NEW');
-  assert.deepEqual(r.beta.log, ['new']);
-});
-
-test('it fills only the gaps, per key', () => {
-  const r = rig({ stable: { api_key: 'OLD', mode: 'def' }, beta: { api_key: 'NEW' } });
-  r.api.migrateFromStableOnce();
-  assert.equal(r.beta.api_key, 'NEW', 'kept');
-  assert.equal(r.beta.mode, 'def', 'filled');
-});
-
-test('it runs once, not on every page load', () => {
-  const r = rig({ stable: { api_key: 'OLD' } });
-  r.api.migrateFromStableOnce();
-  r.beta.api_key = '';                       // user clears it deliberately
-  r.api.migrateFromStableOnce();
-  assert.equal(r.beta.api_key, '', 'a cleared key came back from the dead');
-  assert.equal(r.beta.migratedFromStable, true);
-});
-
-test('empty strings do not count as data in either direction', () => {
-  const r = rig({ stable: { api_key: '', mode: 'str' }, beta: { mode: '' } });
-  r.api.migrateFromStableOnce();
-  assert.ok(!r.beta.api_key, 'copied an empty key over');
-  assert.equal(r.beta.mode, 'str', 'an empty value should not block the fill');
-});
-
-test('nothing to migrate is not an error', () => {
-  const r = rig();
-  assert.doesNotThrow(() => r.api.migrateFromStableOnce());
-  assert.equal(r.logged.length, 0, 'announced a migration that did not happen');
-});
-
-test('it covers every key the old build persisted, except the dropped one', () => {
-  const old = ['api_key', 'focus', 'focus2', 'hist', 'histRange', 'log', 'mode', 'user_tucked', 'warStack'];
-  const r = rig();
-  assert.deepEqual([...r.api.STABLE_MIGRATE_KEYS].sort(), [...old].sort());
-  // adultNov has no counterpart in this build and is deliberately not carried.
-  assert.ok(!r.api.STABLE_MIGRATE_KEYS.includes('adultNov'));
-});
-
-test('migration runs before the UI reads storage', () => {
-  const m = STABLE.indexOf('migrateFromStableOnce();\n\n  startUi();');
-  assert.ok(m > 0, 'not called immediately before startUi');
-});
+// --- the migration, REMOVED 2026-10-08 ---------------------------------
+//
+// migrateFromStableOnce arrived in 0.11.0 to carry an API key and ledger from
+// the old gc_v1 namespace into gcb_v1, and its tests lived here. The owner
+// rolled the script back to the 0.9.91 body, which predates it, so the code
+// is gone and tests asserting it would be asserting a fiction.
+//
+// What that costs, for whoever reads this next: the migration already ran for
+// everyone who updated during 2026-10-08, and their data sits in gcb_v1
+// permanently. Anyone still on the old 0.10.12 build arrives without it — an
+// empty ledger and no API key, with their data intact but unread under gc_v1.
+// Re-adding the block is a ~40 line additive change and touches nothing the
+// rollback was about; git has it at 99a7e494.
