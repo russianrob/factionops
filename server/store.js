@@ -13,6 +13,9 @@ const DATA_DIR = process.env.DATA_DIR || "./data";
 const WARS_FILE = path.join(DATA_DIR, "wars.json");
 const PLAYER_KEYS_FILE = path.join(DATA_DIR, "player-keys.json");
 const FACTION_KEYS_FILE = path.join(DATA_DIR, "faction-keys.json");
+// Which faction keys Torn is currently rejecting. Separate file so the key
+// store's encrypted format is untouched, and so this holds no key material.
+const FACTION_KEY_QUARANTINE_FILE = path.join(DATA_DIR, "faction-key-quarantine.json");
 const FACTION_SETTINGS_FILE = path.join(DATA_DIR, "faction-settings.json");
 const KEY_POOL_FILE = path.join(DATA_DIR, "key-pool.json");
 const PLAYER_FACTIONS_FILE = path.join(DATA_DIR, "player-factions.json");
@@ -588,15 +591,105 @@ export function listFactionApiKeyIds() {
 
 export function storeFactionApiKey(factionId, apiKey) {
   factionApiKeys.set(factionId, apiKey);
+  // A freshly supplied key is healthy until proven otherwise. Without this,
+  // re-adding a key after a break would hand back a key nothing would use.
+  unquarantineFactionKey(factionId);
   saveFactionKeys();
 }
 
+// ── Faction key quarantine ──────────────────────────────────────────────
+//
+// A key that Torn rejects with a persistent code is worse than no key at all.
+// Around fifteen call sites read
+//
+//     store.getFactionApiKey(fid) || store.getApiKeyForFaction(fid)
+//
+// which is a TRUTHINESS fallback, not a health one: a dead-but-present key is
+// still a non-empty string, so the pooled player keys are never reached and
+// every one of those sites keeps hammering a key that cannot work.
+//
+// Quarantining makes getFactionApiKey report null, so all of those sites start
+// falling back on their own with no edits. Deliberately NOT a delete: the key
+// is a credential someone had to go and fetch, and a Torn-side blip must not
+// destroy it. Quarantine is reversible and lifts itself the moment a probe
+// succeeds.
+//
+// Persisted, because an in-memory flag would clear on restart and the server
+// would go straight back to hammering the dead key.
+const quarantinedFactionKeys = new Map(); // factionId → { reason, code, at }
+
+export function loadFactionKeyQuarantine() {
+  ensureDataDir();
+  if (!fs.existsSync(FACTION_KEY_QUARANTINE_FILE)) return;
+  try {
+    const data = JSON.parse(fs.readFileSync(FACTION_KEY_QUARANTINE_FILE, "utf-8"));
+    for (const [factionId, info] of Object.entries(data || {})) {
+      quarantinedFactionKeys.set(String(factionId), info);
+    }
+    if (quarantinedFactionKeys.size) {
+      console.log(`[store] ${quarantinedFactionKeys.size} faction key(s) still quarantined: ${[...quarantinedFactionKeys.keys()].join(", ")}`);
+    }
+  } catch (err) {
+    console.error("[store] Failed to load faction key quarantine:", err.message);
+  }
+}
+
+function saveFactionKeyQuarantine() {
+  ensureDataDir();
+  try {
+    fs.writeFileSync(
+      FACTION_KEY_QUARANTINE_FILE,
+      JSON.stringify(Object.fromEntries(quarantinedFactionKeys), null, 2),
+    );
+  } catch (err) {
+    console.error("[store] Failed to persist faction key quarantine:", err.message);
+  }
+}
+
+export function quarantineFactionKey(factionId, info = {}) {
+  const id = String(factionId);
+  if (quarantinedFactionKeys.has(id)) return false; // already out of service
+  quarantinedFactionKeys.set(id, { ...info, at: Date.now() });
+  saveFactionKeyQuarantine();
+  return true;
+}
+
+export function unquarantineFactionKey(factionId) {
+  const id = String(factionId);
+  if (!quarantinedFactionKeys.delete(id)) return false;
+  saveFactionKeyQuarantine();
+  return true;
+}
+
+export function isFactionKeyQuarantined(factionId) {
+  return quarantinedFactionKeys.has(String(factionId));
+}
+
+export function getFactionKeyQuarantineInfo(factionId) {
+  return quarantinedFactionKeys.get(String(factionId)) ?? null;
+}
+
+/**
+ * The faction key for normal use. Returns null while the key is quarantined so
+ * callers fall through to a pooled key instead of retrying a dead one.
+ */
 export function getFactionApiKey(factionId) {
+  if (isFactionKeyQuarantined(factionId)) return null;
+  return factionApiKeys.get(factionId) ?? null;
+}
+
+/**
+ * The stored key regardless of quarantine. Only for the health monitor, which
+ * has to keep probing a quarantined key to notice it start working again, and
+ * for status endpoints reporting what is on file.
+ */
+export function getFactionApiKeyRaw(factionId) {
   return factionApiKeys.get(factionId) ?? null;
 }
 
 export function removeFactionApiKey(factionId) {
   factionApiKeys.delete(factionId);
+  unquarantineFactionKey(factionId);
   saveFactionKeys();
 }
 

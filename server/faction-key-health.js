@@ -52,11 +52,27 @@ const TRANSIENT_CODES = new Set([
   17, // Backend error, please try again
 ]);
 
+/**
+ * What a Torn error code means for the key itself.
+ *
+ * "broken" is the only verdict that takes a credential out of service, so it
+ * stays deliberately narrow: a known persistent code, or no code at all (a
+ * decrypt failure, which will not fix itself). An unrecognised code is treated
+ * as transient — Torn adds codes, and inventing a reason to quarantine on one
+ * we have never seen would disable a working key.
+ */
+export function classifyKeyError(code) {
+  if (code != null && TRANSIENT_CODES.has(code)) return "transient";
+  if (code == null || PERSISTENT_BROKEN_CODES.has(code)) return "broken";
+  return "unknown";
+}
+
 let _timer = null;
 let _running = false;
 
 async function probeKey(factionId) {
-  const enc = store.getFactionApiKey(String(factionId));
+  // Raw: a quarantined key must stay probeable or it could never recover.
+  const enc = store.getFactionApiKeyRaw(String(factionId));
   if (!enc) return { factionId, healthy: null, reason: "no-key-stored" };
   let plaintext;
   try { plaintext = decrypt(enc); }
@@ -102,14 +118,22 @@ async function tick() {
         // Only notify on persistent / key-actually-broken codes.
         // Transient Torn-side codes (17 etc.) get a log warning but
         // don't wake the admin — they fix themselves on the next tick.
-        if (code != null && TRANSIENT_CODES.has(code)) {
+        const verdict = classifyKeyError(code);
+        if (verdict === "transient") {
           console.warn(`[key-health] faction ${fid} transient Torn error (${result.reason}, code ${code}) — not notifying`);
-        } else if (code == null || PERSISTENT_BROKEN_CODES.has(code)) {
+        } else if (verdict === "broken") {
           console.warn(`[key-health] faction ${fid} key BROKEN (${result.reason}, code ${code ?? "?"})`);
+          // Take it out of service so the ~15 `getFactionApiKey() || pooled`
+          // call sites stop retrying it and fall back to a working key. Not a
+          // delete — see the quarantine note in store.js.
+          if (store.quarantineFactionKey(fid, { reason: result.reason, code: code ?? null })) {
+            console.warn(`[key-health] faction ${fid} key QUARANTINED — consumers will fall back to a pooled key until it recovers`);
+          }
           await notifyBroken(fid, `${result.reason}${code != null ? ` (code ${code})` : ""}`);
         } else {
           // Unknown code — treat as transient by default to avoid
           // alert spam from new Torn API additions, but log loudly.
+          // Never quarantine on a code we do not recognise.
           console.warn(`[key-health] faction ${fid} unclassified error (${result.reason}, code ${code}) — treating as transient`);
         }
       } else if (result.healthy === true) {
@@ -117,6 +141,11 @@ async function tick() {
         if (lastNotifyAt.has(String(fid))) {
           lastNotifyAt.delete(String(fid));
           console.log(`[key-health] faction ${fid} key recovered`);
+        }
+        // Back in service. Quarantine lifts itself so a replaced or
+        // un-revoked key needs no manual step.
+        if (store.unquarantineFactionKey(fid)) {
+          console.log(`[key-health] faction ${fid} key out of quarantine — back in use`);
         }
       }
     }

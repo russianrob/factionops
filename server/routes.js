@@ -4044,10 +4044,18 @@ router.post("/api/faction-key/remove", requireAuth, handleRemoveFactionKey);
 
 router.get("/api/faction-key/status", requireAuth, (req, res) => {
   const { factionId } = req.user;
-  const key = store.getFactionApiKey(factionId);
+  // Raw: a quarantined key IS still on file, and the UI should say so rather
+  // than claim nothing is stored — otherwise the fix looks like "add a key"
+  // when it is actually "replace the one Torn is rejecting".
+  const key = store.getFactionApiKeyRaw(factionId);
+  const quarantine = store.getFactionKeyQuarantineInfo(factionId);
   return res.json({
     stored: !!key,
     last4: key ? String(key).slice(-4) : null,
+    quarantined: !!quarantine,
+    quarantineReason: quarantine ? quarantine.reason || null : null,
+    quarantineCode: quarantine ? quarantine.code ?? null : null,
+    quarantinedAt: quarantine ? quarantine.at || null : null,
   });
 });
 

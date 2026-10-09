@@ -601,6 +601,9 @@ io.on("connection", (socket) => {
 
 store.loadState();
 store.loadFactionKeys();
+// Which of those keys Torn is currently rejecting. Loaded right after the keys
+// themselves so a restart does not resume hammering a key already known dead.
+store.loadFactionKeyQuarantine();
 store.loadPlayerKeys();
 store.loadFactionSettings();
 store.loadKeyPoolingOpt();
