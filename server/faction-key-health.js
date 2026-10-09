@@ -136,6 +136,13 @@ async function tick() {
           // Never quarantine on a code we do not recognise.
           console.warn(`[key-health] faction ${fid} unclassified error (${result.reason}, code ${code}) — treating as transient`);
         }
+      } else if (result.healthy === null) {
+        // Neither healthy nor broken: the probe itself never got an answer
+        // (timeout, DNS, no key on file). This branch used to log nothing at
+        // all, which made a silent tick indistinguishable from one that never
+        // ran — exactly the ambiguity that cost an investigation. Say so, but
+        // never quarantine on it: we have learned nothing about the key.
+        console.warn(`[key-health] faction ${fid} probe inconclusive (${result.reason}) — key left as-is`);
       } else if (result.healthy === true) {
         // Reset de-dup so a future break re-notifies.
         if (lastNotifyAt.has(String(fid))) {
