@@ -148,7 +148,7 @@ import * as restockTracker from "./restock-tracker.js";
 import { applyNerveReading, buildResponse, hasPerkData, parseMaxNervePerks } from "./nerve-tracker.js";
 import { normalizeChainData, chainWithLiveTimeout, chainHashKey } from "./chain-data.js";
 import { isFactionAllowed, getAllSubscriptions, getOwnerFactionId, getSubscriptionRejectionMessage } from "./subscription-manager.js";
-import { CALL_EXPIRE_MS, DEAL_EXPIRE_MS, expiryFor } from "./call-timings.js";
+import { CALL_EXPIRE_MS, DEAL_EXPIRE_MS, expiryFor, remainingFor } from "./call-timings.js";
 
 const router = Router();
 
@@ -359,7 +359,7 @@ function uncallTarget(warId, targetId) {
  * uncall — the original "stale after N minutes" behavior, but now only
  * triggers when nobody's around to claim it.
  */
-function scheduleCallExpiry(warId, targetId) {
+function scheduleCallExpiry(warId, targetId, delayMs) {
   const war = store.getWar(warId);
   if (!war || !war.calls[targetId]) return;
   const call = war.calls[targetId];
@@ -367,7 +367,11 @@ function scheduleCallExpiry(warId, targetId) {
   const timerKey = `${warId}:${targetId}`;
   clearExistingTimer(timerKey);
 
-  const expireMs = expiryFor(call);
+  // `delayMs` is only passed by the boot rehydrate, which must schedule the
+  // REMAINDER of a call's life rather than a fresh full term. Every other
+  // caller omits it and gets the full term, including the viewer-extension
+  // re-schedule below — being on the target is supposed to renew the claim.
+  const expireMs = Number.isFinite(delayMs) ? Math.max(0, delayMs) : expiryFor(call);
   callTimers.set(
     timerKey,
     setTimeout(() => {
@@ -386,6 +390,43 @@ function scheduleCallExpiry(warId, targetId) {
       uncallTarget(warId, targetId);
     }, expireMs),
   );
+}
+
+/**
+ * Re-arm every live call's expiry after a restart.
+ *
+ * `callTimers` is a plain in-memory Map and `scheduleCallExpiry` only ever ran
+ * when a call was PLACED or when a viewer renewed it. Nothing re-armed anything
+ * at boot, so every restart silently orphaned every call that was open at the
+ * time: the twenty-minute timeout could never fire again, leaving a manual
+ * uncall or the caller's own confirmed hit as the only ways out. With 256
+ * restarts on this process — several of them mid-war — that is most of the
+ * "some calls just never drop" reports.
+ *
+ * Scheduling the REMAINDER rather than a fresh term matters: a restart must not
+ * hand every open call another full twenty minutes.
+ */
+export function rehydrateCallExpiries() {
+  const now = Date.now();
+  let armed = 0, expired = 0;
+  for (const [warId, war] of store.getAllWars()) {
+    if (!war || !war.calls) continue;
+    for (const [targetId, call] of Object.entries(war.calls)) {
+      if (!call) continue;
+      const remaining = remainingFor(call, now);
+      if (remaining <= 0) {
+        uncallTarget(warId, targetId); // broadcasts inside
+        expired++;
+      } else {
+        scheduleCallExpiry(warId, targetId, remaining);
+        armed++;
+      }
+    }
+  }
+  if (armed || expired) {
+    console.log(`[call] rehydrated expiries — ${armed} re-armed, ${expired} already overdue and released`);
+  }
+  return { armed, expired };
 }
 
 // ── GET /api/health ──────────────────────────────────────────────────────

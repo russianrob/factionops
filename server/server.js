@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync, existsSync, appendFileSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 
-import routes, { setIO, gateMiddleware } from "./routes.js";
+import routes, { setIO, gateMiddleware, rehydrateCallExpiries } from "./routes.js";
 import "./war-scanner.js";
 import { socketAuth } from "./auth.js";
 import { registerSocketHandlers } from "./socket-handlers.js";
@@ -605,6 +605,11 @@ store.loadPlayerKeys();
 store.loadFactionSettings();
 store.loadKeyPoolingOpt();
 store.loadPlayerFactions();
+
+// Calls loaded from disk have no expiry timer — those live in memory and die
+// with the process. Re-arm them for whatever is left of their term, or release
+// the ones that went overdue while we were down.
+rehydrateCallExpiries();
 
 // Verify pooled keys' access levels (Torn key/info) so the per-purpose key
 // router skips keys that can't serve a call (e.g. a Custom key without `chain`)

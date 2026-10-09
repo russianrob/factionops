@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.5
+// @version      5.6.6
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.5';
+    const SCRIPT_VERSION = '5.6.6';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -9083,6 +9083,40 @@ body.wb-chain-active {
             if (raw) { try { GM_setValue(PENDING_ATTACK_KEY, ''); } catch (e) {} }
             return false;
         }
+
+        // The fight is over, so the call has done its job — drop it from this
+        // local signal rather than waiting for Torn's attack feed to confirm.
+        //
+        // Neither existing path can be relied on here. The feed path below
+        // needs the member's own API key (pollAttacks returns early without
+        // one), needs the report to actually arrive, and the server only
+        // clears on a result in its success set — so Lost, Stalemate and
+        // Interrupted always left the call standing. maybeAutoUncallOnHospital
+        // does not cover it either: that needs this client to WITNESS the
+        // hospital transition with the page open. Fight-end needs none of
+        // that, only the JWT, so it runs before the API-key gate.
+        //
+        // Deal calls are deliberately left alone. They exist to hold a target
+        // across attack windows and keep their full two hours, which is why
+        // maybeAutoUncallOnHospital skips them too.
+        if (state.jwtToken) {
+            let pendingTarget = '';
+            try { pendingTarget = String((JSON.parse(raw) || {}).t || ''); } catch (e) {}
+            const call = pendingTarget && state.calls && state.calls[pendingTarget];
+            const mine = call && call.calledBy
+                && String(call.calledBy.id) === String(state.myPlayerId || '');
+            if (mine && !call.isDeal) {
+                // emitUncallTarget clears state.calls optimistically, so the
+                // retry below cannot fire a second uncall for the same fight.
+                try {
+                    emitUncallTarget(pendingTarget);
+                    log('[fight-end] #' + pendingTarget + ' fight over → cleared my call');
+                } catch (e) {
+                    warn('[fight-end] uncall failed for #' + pendingTarget + ':', e);
+                }
+            }
+        }
+
         if (!CONFIG.API_KEY || !state.jwtToken) {
             if (retry && attempt < 6) {
                 setTimeout(() => flushPendingAttack({ attempt: attempt + 1, retry }), 3000);
