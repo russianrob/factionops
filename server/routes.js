@@ -87,6 +87,7 @@ import * as prewar from "./prewar-activity.js";
 import * as warWindow from "./war-window.js";
 import * as threatSheet from "./threat-sheet.js";
 import * as kal from "./kal-loadouts.js";
+import * as agentTurns from "./agent-turns.js";
 import * as winModel from "./win-model.js";
 import * as loadoutStore from "./loadout-store.js";
 import * as badKeyGate from "./bad-key-gate.js";
@@ -1017,23 +1018,105 @@ router.post("/api/agent/message", requireAuth, (req, res, next) => {
   if (!text.trim()) return res.status(400).json({ error: "empty message" });
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
   res.write(": preamble " + ".".repeat(1024) + "\n\n");
-  const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); if (typeof res.flush === "function") res.flush(); } catch {} };
-  const ac = new AbortController();
-  // Abort on the RESPONSE closing (real client disconnect), NOT req 'close':
-  // IncomingMessage fires 'close' as soon as the request body is fully read, so
-  // req.on('close') aborted the turn the instant the body was parsed. (Latent
-  // since the global body-parser used to consume the body before this handler
-  // ran; surfaced when the agent routes got their own route-level parser.)
+
+  // The turn is a SERVER-SIDE object now, not the lifetime of this socket.
+  // iOS suspends a backgrounded app after ~30s; this response dying used to
+  // abort the run, so putting the phone down destroyed the turn mid-flight.
+  // It now keeps going and the app replays from a cursor when it returns.
+  const turnId = agentTurns.start({ sessionId });
+  const turn = agentTurns.get(turnId);
+
+  const write = (obj) => {
+    try {
+      res.write(`data: ${JSON.stringify(obj)}\n\n`);
+      if (typeof res.flush === "function") res.flush();
+    } catch { /* the listener left; the turn does not care */ }
+  };
+  // Every event is recorded before it is written, so a listener that arrives
+  // late — or comes back — sees the whole turn and not just the tail.
+  const send = (obj) => { agentTurns.append(turnId, obj); write(obj); };
+
+  // First, so a client that supports resuming knows what to ask for. Older
+  // builds ignore an unknown event type, which is why the stream contract is
+  // unchanged otherwise.
+  write({ t: "turn", id: turnId, from: 0 });
+
   const ka = setInterval(() => { try { res.write(": ka\n\n"); if (typeof res.flush === "function") res.flush(); } catch {} }, 15000);
-  res.on("close", () => { clearInterval(ka); if (!res.writableEnded) ac.abort(); });
+  // A disconnect detaches the listener. It no longer aborts: that one line
+  // could not tell "backgrounded for twenty seconds" from "cancel this", and
+  // always chose cancel. Explicit cancellation is POST /api/agent/turn/:id/cancel.
+  res.on("close", () => { clearInterval(ka); agentTurns.detach(turnId); });
+
   try {
-    const { sessionId: sid } = await runAgentTurnResolvingSources({ text, sessionId, signal: ac.signal, onEvent: send, installed });
+    const { sessionId: sid } = await runAgentTurnResolvingSources({
+      text, sessionId, signal: turn.signal, onEvent: send, installed,
+    });
     send({ t: "session", id: sid });
     send({ t: "end" });
+    agentTurns.finish(turnId, { sessionId: sid });
   } catch (e) {
-    send({ t: "error", message: String((e && e.message) || e) });
+    const cancelled = turn.signal.aborted;
+    send({ t: cancelled ? "cancelled" : "error", message: String((e && e.message) || e) });
+    agentTurns.finish(turnId, { status: cancelled ? "cancelled" : "error" });
   }
+  clearInterval(ka);
   res.end();
+});
+
+// Rejoin a turn already in flight, or collect one that finished while the app
+// was asleep. `from` is the cursor the client last saw; everything after it is
+// replayed, then the stream follows live until the turn ends.
+router.get("/api/agent/turn/:id", requireAuth, (req, res, next) => {
+  if (_inspectIsOwner(req)) return next();
+  return res.status(403).json({ error: "forbidden" });
+}, (req, res) => {
+  const id = String(req.params.id || "");
+  const from = Number(req.query.from) || 0;
+  const snap = agentTurns.since(id, from);
+  if (!snap) return res.status(404).json({ error: "unknown or expired turn" });
+
+  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
+  res.write(": preamble " + ".".repeat(1024) + "\n\n");
+  const write = (obj) => {
+    try { res.write(`data: ${JSON.stringify(obj)}\n\n`); if (typeof res.flush === "function") res.flush(); } catch {}
+  };
+
+  let cursor = from;
+  const pump = () => {
+    const s = agentTurns.since(id, cursor);
+    if (!s) return;
+    for (const ev of s.events) write(ev);
+    cursor = s.next;
+    if (s.status !== "running") { write({ t: "end", status: s.status }); cleanup(); res.end(); }
+  };
+
+  const stop = agentTurns.listen(id, pump);
+  const ka = setInterval(() => { try { res.write(": ka\n\n"); if (typeof res.flush === "function") res.flush(); } catch {} }, 15000);
+  function cleanup() { clearInterval(ka); stop(); }
+  res.on("close", cleanup);
+
+  write({ t: "turn", id, from: cursor });
+  pump();                               // replay what was missed, then follow
+});
+
+// The turn's newest id for a session, for an app that relaunched and lost it.
+router.get("/api/agent/session/:sid/turn", requireAuth, (req, res, next) => {
+  if (_inspectIsOwner(req)) return next();
+  return res.status(403).json({ error: "forbidden" });
+}, (req, res) => {
+  const id = agentTurns.latestForSession(String(req.params.sid || ""));
+  if (!id) return res.json({ found: false });
+  const s = agentTurns.since(id, 0);
+  return res.json({ found: true, turnId: id, status: s.status, events: s.events.length });
+});
+
+// The ONLY thing that stops a turn early. Losing the socket is not consent.
+router.post("/api/agent/turn/:id/cancel", requireAuth, (req, res, next) => {
+  if (_inspectIsOwner(req)) return next();
+  return res.status(403).json({ error: "forbidden" });
+}, (req, res) => {
+  const ok = agentTurns.cancel(String(req.params.id || ""));
+  return res.json({ cancelled: ok });
 });
 
 // Server-side read-only guard for inspect queries: defense-in-depth (the owner
