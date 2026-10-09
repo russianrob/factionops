@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.9
+// @version      0.12.10
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,31 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.12.10 - "Not reachable at this rate" is fixed, not reworded.
+*
+*         shareCap holds a stat to `milestone x its share / the largest
+*         share` so the ratios converge as the plan runs. That is pacing. It
+*         was also, accidentally, a CEILING: a stat sitting AHEAD of its
+*         ratio has that cap below its own current value at every milestone
+*         — the best it ever reaches is maxTarget x share/maxShare — so it
+*         was skipped every time, produced no segment, and reported no ETA
+*         for a goal that was perfectly reachable.
+*
+*         Found by Eddie877 [2693357], who also found the trigger: raising
+*         his total goal made the ETA reappear. That lifts every milestone,
+*         which lifts the ceiling clear of him. He pointed out it made no
+*         sense because he had not hit that stat's own goal, and he was
+*         right — he had outrun a ceiling derived from another stat's share.
+*
+*         goalSegments now ends with a sweep that is not share-capped, so
+*         every goal above its current value gets scheduled. Pacing still
+*         applies above it, so a stat ahead of its share is scheduled LAST,
+*         which is what waiting for the others to catch up should look like.
+*         The gym lock is a real ceiling and still holds.
+*
+*         Nine versions of this were spent rewording the message. The
+*         message was the symptom.
+*
 * 0.12.9 - A hidden diagnostic for goals that report no finish date.
 *
 *         Eddie is at Gun Shop, which trains Strength at 6.6 dots, so the
@@ -2241,7 +2266,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.9";
+  var GC_VERSION = "0.12.10";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4826,6 +4851,40 @@
         simStats[k] = r.end;
       });
     });
+
+    // Final sweep, uncapped by the share ratio.
+    //
+    // shareCap is a PACING device: it holds a stat to `milestone x its share
+    // / the largest share` so the ratios converge as the plan runs. It was
+    // also, accidentally, a CEILING. A stat sitting ahead of its ratio has
+    // that cap below its own current value at EVERY milestone — the best it
+    // ever reaches is maxTarget x share/maxShare — so it was skipped every
+    // time, produced no segment, and the row reported "not reachable at this
+    // rate" for a goal that was perfectly reachable.
+    //
+    // Reported by Eddie877 [2693357], who also found the trigger: raising his
+    // total goal made it reappear. That lifts every milestone, which lifts the
+    // ceiling clear of him. He never hit the stat's own goal, which is why it
+    // never made sense as a completion.
+    //
+    // Pacing still applies above — this only runs once the ratio-paced levels
+    // are exhausted, so a stat ahead of its share is scheduled LAST, which is
+    // what waiting for the others to catch up should look like. The gym lock
+    // is a real ceiling and is still honoured.
+    keys.forEach(function (k) {
+      if (cur[k] >= targets[k]) return;
+      var lc2 = lockCap(simStats, lock, k);
+      var cap2 = Math.min(targets[k], lc2);
+      if (cur[k] >= cap2) return;
+      var r2 = trainsTo(k, cur[k], cap2, mf);
+      if (!r2 || !r2.trains) return;
+      segs.push({ k: k, from: cur[k], to: r2.end, cap: cap2, target: targets[k],
+                  trains: r2.trains, at: at, lockCap: lc2 });
+      at += r2.trains;
+      cur[k] = r2.end;
+      simStats[k] = r2.end;
+    });
+
     return segs;
   }
 
