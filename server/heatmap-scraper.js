@@ -11,6 +11,32 @@ const activeScrapers = new Set();
 const HEATMAP_API_KEY = process.env.HEATMAP_API_KEY || '';
 
 /**
+ * A Torn API key: exactly sixteen letters and digits, no separators.
+ * Faction names in practice contain spaces or punctuation, so this shape is a
+ * reliable "that is a credential, not a name" test.
+ */
+export const KEY_SHAPED = /^[A-Za-z0-9]{16}$/;
+
+/**
+ * Something safe to put in a log line as a faction's name.
+ *
+ * A mis-ordered call once put an API key in the `enemyName` slot, and every
+ * log line here printed it in plaintext. Fixing the caller fixed that instance;
+ * this makes the next mis-wiring harmless rather than a credential disclosure,
+ * because a log is the one place a key must never reach.
+ */
+export function safeName(name, fallbackId) {
+    if (!name) return fallbackId;
+    const s = String(name);
+    return KEY_SHAPED.test(s) ? fallbackId : s;
+}
+
+/** Strip anything key-shaped out of text that came from a library. */
+export function redactKeys(text) {
+    return String(text ?? '').replace(/\b[A-Za-z0-9]{16}\b/g, '***redacted***');
+}
+
+/**
  * Starts an hourly scraper to monitor enemy faction activity.
  * @param {string|number} warId - The ID of the ranked war.
  * @param {string|number} enemyId - The Torn faction ID of the enemy.
@@ -24,12 +50,12 @@ export function startHeatmapScraper(warId, enemyId, apiKeyFallback, enemyName = 
     let currentName = enemyName;
 
     if (activeScrapers.has(enemyIdStr)) {
-        console.log(`[HeatmapScraper] Scraper already active for enemy faction ${currentName || enemyIdStr} (War: ${warId})`);
+        console.log(`[HeatmapScraper] Scraper already active for enemy faction ${safeName(currentName, enemyIdStr)} (War: ${warId})`);
         return null;
     }
 
     activeScrapers.add(enemyIdStr);
-    console.log(`[HeatmapScraper] Starting activity scraper for war ${warId}, enemy ${currentName || enemyIdStr}`);
+    console.log(`[HeatmapScraper] Starting activity scraper for war ${warId}, enemy ${safeName(currentName, enemyIdStr)}`);
 
     const scrape = async () => {
         try {
@@ -38,7 +64,7 @@ export function startHeatmapScraper(warId, enemyId, apiKeyFallback, enemyName = 
             const data = response.data;
 
             if (data.error) {
-                console.error(`[HeatmapScraper] Torn API Error for faction ${currentName || enemyIdStr}:`, data.error);
+                console.error(`[HeatmapScraper] Torn API Error for faction ${safeName(currentName, enemyIdStr)}:`, data.error);
                 return;
             }
 
@@ -61,10 +87,10 @@ export function startHeatmapScraper(warId, enemyId, apiKeyFallback, enemyName = 
             }
 
             recordSample(enemyIdStr, activeCount, totalMembers);
-            console.log(`[HeatmapScraper] Recorded ${activeCount} active members for enemy faction ${currentName} (${enemyIdStr}) (Total: ${totalMembers})`);
+            console.log(`[HeatmapScraper] Recorded ${activeCount} active members for enemy faction ${safeName(currentName, enemyIdStr)} (${enemyIdStr}) (Total: ${totalMembers})`);
 
         } catch (error) {
-            console.error(`[HeatmapScraper] Network/Request failed for faction ${currentName || enemyIdStr}:`, error.message);
+            console.error(`[HeatmapScraper] Network/Request failed for faction ${safeName(currentName, enemyIdStr)}:`, redactKeys(error.message));
         }
     };
 

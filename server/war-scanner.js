@@ -5,13 +5,18 @@ import { startHeatmapScraper } from './heatmap-scraper.js';
 import * as store from './store.js';
 import { startChainMonitor } from './chain-monitor.js';
 
-// Dummy database service structure
+// Faction list for the scan sweep, read from the key store.
+//
+// This used to be a "dummy database" stub holding one faction and a LITERAL
+// API key, which meant a live credential sat in the repo (and in git history
+// from 2026-04-03) and, because of the argument shift below, got printed into
+// the logs 812 times. The store already holds faction keys encrypted at rest
+// and hands back plaintext in memory, so there was never a reason to inline
+// one. Reading from it also means a key change or a second faction registering
+// needs no code edit.
 const db = {
-    getAllRegisteredFactions: async () => {
-        return [
-            { id: '42055', apiKey: '63CZ7jTvDghXLKDl' }
-        ];
-    }
+    getAllRegisteredFactions: async () =>
+        store.getAllFactionKeys().map(([id, apiKey]) => ({ id, apiKey })),
 };
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -53,7 +58,12 @@ async function scanFactions() {
                             // oscillated and the War Scout rendered the entity.
                             const enemyName = decodeEntities(warData.factions[enemyId]?.name) || 'Unknown';
                             console.log(`[WarScanner] Active Ranked War detected! WarID: ${warId}, Enemy: ${enemyName} (${enemyId})`);
-                            startHeatmapScraper(warId, enemyId, factionIdStr, faction.apiKey, enemyName);
+                            // Four parameters, not five. Passing factionIdStr here
+                            // shifted every argument right: the key landed in
+                            // `enemyName` and got printed in plaintext on every
+                            // scraper start and every API error, while
+                            // `apiKeyFallback` received a faction id.
+                            startHeatmapScraper(warId, enemyId, faction.apiKey, enemyName);
 
                             // 2026-05-19: previously the scanner only kicked
                             // off the heatmap scraper, leaving war record
