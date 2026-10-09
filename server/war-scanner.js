@@ -119,4 +119,10 @@ cron.schedule('0 */4 * * *', scanFactions, {
 });
 
 console.log('[WarScanner] Scheduled cron jobs: Tuesdays 14:00 UTC & Every 4 hours fallback.');
-scanFactions();
+
+// Deferred, not immediate. server.js imports this module near the top but
+// loads the key store ~12ms later, so a sweep at import time read an empty
+// faction list and did nothing. The hardcoded key hid that ordering
+// dependency; now that the list genuinely comes from the store, boot has to
+// finish first. Same reasoning as key-health's delayed first probe.
+setTimeout(scanFactions, 10_000);
