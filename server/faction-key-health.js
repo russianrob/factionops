@@ -17,7 +17,6 @@
  * a future break re-notifies.
  */
 
-import { decrypt } from "./key-encryption.js";
 import * as store from "./store.js";
 import * as push from "./push-notifications.js";
 
@@ -56,10 +55,12 @@ const TRANSIENT_CODES = new Set([
  * What a Torn error code means for the key itself.
  *
  * "broken" is the only verdict that takes a credential out of service, so it
- * stays deliberately narrow: a known persistent code, or no code at all (a
- * decrypt failure, which will not fix itself). An unrecognised code is treated
- * as transient — Torn adds codes, and inventing a reason to quarantine on one
- * we have never seen would disable a working key.
+ * stays deliberately narrow: a known persistent code, or no code at all. An
+ * unrecognised code is treated as transient — Torn adds codes, and inventing a
+ * reason to quarantine on one we have never seen would disable a working key.
+ * That caution is not theoretical: a double-decrypt in probeKey made Torn
+ * answer "Incorrect key" for a key that was perfectly good, and a broader
+ * classifier would have quarantined it.
  */
 export function classifyKeyError(code) {
   if (code != null && TRANSIENT_CODES.has(code)) return "transient";
@@ -72,11 +73,15 @@ let _running = false;
 
 async function probeKey(factionId) {
   // Raw: a quarantined key must stay probeable or it could never recover.
-  const enc = store.getFactionApiKeyRaw(String(factionId));
-  if (!enc) return { factionId, healthy: null, reason: "no-key-stored" };
-  let plaintext;
-  try { plaintext = decrypt(enc); }
-  catch (e) { return { factionId, healthy: false, reason: `decrypt-failed: ${e.message}` }; }
+  //
+  // NOT decrypted here. loadFactionKeys() decrypts on the way in, so the store
+  // already hands back plaintext — and decrypt() of a plaintext key does not
+  // throw, it returns a DIFFERENT sixteen-character string. So this probe was
+  // asking Torn about a key nobody had ever issued, getting "Incorrect key
+  // (code 2)", and reporting healthy faction keys as broken. Faction 42055's
+  // key was fine the whole time; verified directly against Torn.
+  const plaintext = store.getFactionApiKeyRaw(String(factionId));
+  if (!plaintext) return { factionId, healthy: null, reason: "no-key-stored" };
   try {
     const url = `https://api.torn.com/user?selections=basic&key=${encodeURIComponent(plaintext)}&comment=wb-keyhealth`;
     const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
