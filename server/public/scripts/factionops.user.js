@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.8
+// @version      5.6.9
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.8';
+    const SCRIPT_VERSION = '5.6.9';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -10071,19 +10071,19 @@ body.wb-chain-active {
         offEl.checked = _hideOffline;
         onEl.addEventListener('change', function () {
             _hideOnline = onEl.checked;
-            try { GM_setValue('factionops_hide_online', _hideOnline); } catch (_) {}
+            writeBoolSetting('factionops_hide_online', _hideOnline);
             try { markCalledRows(); } catch (_) {}
         });
         offEl.addEventListener('change', function () {
             _hideOffline = offEl.checked;
-            try { GM_setValue('factionops_hide_offline', _hideOffline); } catch (_) {}
+            writeBoolSetting('factionops_hide_offline', _hideOffline);
             try { markCalledRows(); } catch (_) {}
         });
         const abEl = bar.querySelector('#fo-wp-hide-abroad');
         abEl.checked = _hideAbroad;
         abEl.addEventListener('change', function () {
             _hideAbroad = abEl.checked;
-            try { GM_setValue('factionops_hide_abroad', _hideAbroad); } catch (_) {}
+            writeBoolSetting('factionops_hide_abroad', _hideAbroad);
             try { markCalledRows(); } catch (_) {}
         });
 
@@ -11656,7 +11656,7 @@ body.wb-chain-active {
             hideOnlineEl.checked = _hideOnline;
             hideOnlineEl.addEventListener('change', () => {
                 _hideOnline = hideOnlineEl.checked;
-                try { GM_setValue('factionops_hide_online', _hideOnline); } catch (_) {}
+                writeBoolSetting('factionops_hide_online', _hideOnline);
             });
         }
         // v5.1.12: hide-offline checkbox handler. 'Offline' = activity
@@ -11666,7 +11666,7 @@ body.wb-chain-active {
             hideOfflineEl.checked = _hideOffline;
             hideOfflineEl.addEventListener('change', () => {
                 _hideOffline = hideOfflineEl.checked;
-                try { GM_setValue('factionops_hide_offline', _hideOffline); } catch (_) {}
+                writeBoolSetting('factionops_hide_offline', _hideOffline);
             });
         }
 
@@ -11930,6 +11930,38 @@ body.wb-chain-active {
         }
     }
 
+    /**
+     * Read a stored boolean back as a boolean.
+     *
+     * GM_getValue hands back a STRING on PDA, so `!!GM_getValue(k, false)` —
+     * what this file used to do — evaluated `!!"false"`, which is true. The
+     * three hide toggles therefore came back ON after every PDA reload no
+     * matter how they were left, and could not be turned off persistently.
+     *
+     * Tolerant on purpose. Values already on disk may be a real boolean
+     * (desktop), the string "true"/"false" (PDA's coercion of one), or the
+     * "1"/"0" written below, and a reader that understood only the new form
+     * would silently reset everyone's toggles once.
+     */
+    function readBoolSetting(key, dflt) {
+        let raw;
+        try { raw = GM_getValue(key, undefined); } catch (_) { return dflt; }
+        if (raw === undefined || raw === null || raw === '') return dflt;
+        if (typeof raw === 'boolean') return raw;
+        const t = String(raw).trim().toLowerCase();
+        if (t === 'true' || t === '1') return true;
+        if (t === 'false' || t === '0') return false;
+        return dflt;
+    }
+
+    /**
+     * Write a boolean in the one shape that survives PDA's string coercion.
+     * "1"/"0" read back correctly as strings AND as booleans; `false` does not.
+     */
+    function writeBoolSetting(key, val) {
+        try { GM_setValue(key, val ? '1' : '0'); } catch (_) {}
+    }
+
     // v5.1.1: stats range filter state. Both bounds optional; null
     // means unbounded. Persisted via GM_setValue so it survives
     // page reload / refresh.
@@ -11950,9 +11982,9 @@ body.wb-chain-active {
         if (Number.isFinite(m) && m > 0) _statsFilterMin = m;
         const x = Number(GM_getValue('factionops_stats_filter_max', 0));
         if (Number.isFinite(x) && x > 0) _statsFilterMax = x;
-        _hideOnline = !!GM_getValue('factionops_hide_online', false);
-        _hideOffline = !!GM_getValue('factionops_hide_offline', false);
-        _hideAbroad = !!GM_getValue('factionops_hide_abroad', false);
+        _hideOnline = readBoolSetting('factionops_hide_online', false);
+        _hideOffline = readBoolSetting('factionops_hide_offline', false);
+        _hideAbroad = readBoolSetting('factionops_hide_abroad', false);
     } catch (_) {}
 
     // Online / idle / offline, from the server's enemyStatuses -- the same
