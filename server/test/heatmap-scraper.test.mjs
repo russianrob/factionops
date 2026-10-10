@@ -7,8 +7,9 @@ import { safeName, redactKeys, KEY_SHAPED } from "../heatmap-scraper.js";
 // so the next mis-wiring is a cosmetic bug instead of a credential disclosure.
 
 test("a key-shaped value is never used as a name", () => {
-  // The exact string that leaked, 812 times.
-  assert.equal(safeName("63CZ7jTvDghXLKDl", "42055"), "42055");
+  // A key-shaped string. Deliberately NOT the one that leaked: writing a real
+  // credential into a test is how it got into the repo the first time.
+  assert.equal(safeName("A1b2C3d4E5f6G7h8", "42055"), "42055");
   // Any 16-char alphanumeric is refused, whatever it is.
   assert.equal(safeName("abcdefghijklmnop", "7227"), "7227");
   assert.equal(safeName("0123456789ABCDEF", "7227"), "7227");
@@ -33,9 +34,9 @@ test("a missing name falls back to the faction id", () => {
 test("redactKeys strips key-shaped tokens out of library error text", () => {
   // axios sometimes puts the request URL in error.message, and the URL carries
   // the key as a query parameter.
-  const msg = "connect ETIMEDOUT https://api.torn.com/faction/7227?selections=basic&key=63CZ7jTvDghXLKDl";
+  const msg = "connect ETIMEDOUT https://api.torn.com/faction/7227?selections=basic&key=A1b2C3d4E5f6G7h8";
   const out = redactKeys(msg);
-  assert.doesNotMatch(out, /63CZ7jTvDghXLKDl/);
+  assert.doesNotMatch(out, /A1b2C3d4E5f6G7h8/);
   assert.match(out, /\*\*\*redacted\*\*\*/);
   // Ordinary messages are left readable.
   assert.equal(redactKeys("Request failed with status code 500"), "Request failed with status code 500");
@@ -43,8 +44,8 @@ test("redactKeys strips key-shaped tokens out of library error text", () => {
 });
 
 test("the key shape is exactly 16 alphanumerics, anchored", () => {
-  assert.ok(KEY_SHAPED.test("63CZ7jTvDghXLKDl"));
-  assert.ok(!KEY_SHAPED.test("63CZ7jTvDghXLKD"));   // 15
-  assert.ok(!KEY_SHAPED.test("63CZ7jTvDghXLKDlX")); // 17
-  assert.ok(!KEY_SHAPED.test("63CZ7jTv-ghXLKDl")); // punctuation
+  assert.ok(KEY_SHAPED.test("A1b2C3d4E5f6G7h8"));
+  assert.ok(!KEY_SHAPED.test("A1b2C3d4E5f6G7h"));   // 15
+  assert.ok(!KEY_SHAPED.test("A1b2C3d4E5f6G7h8X")); // 17
+  assert.ok(!KEY_SHAPED.test("A1b2C3d4-5f6G7h8")); // punctuation
 });
