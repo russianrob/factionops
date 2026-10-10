@@ -64,6 +64,29 @@ const app = express();
 // Trust Nginx proxy for correct IP detection (needed for rate limiting)
 app.set("trust proxy", 1);
 
+// No ETags on generated responses.
+//
+// Express sends a weak ETag with every res.json, so a client that repeats a
+// request sends If-None-Match and gets back 304 with a ZERO-BYTE body. A page
+// never notices — the browser's HTTP cache answers the 304 by handing the
+// cached body to JS as a 200. GM_xmlhttpRequest and the app's WebExt runtime
+// do not do that. They surface the raw bodyless 304, so the userscript runs
+// JSON.parse("") and throws "Unexpected end of JSON input" — which oc-spawn
+// reported as "server unreachable".
+//
+// It was never one endpoint. The access log showed 11,353 of these on
+// /api/war/:id/enemy-stats alone, plus /api/poll-long, /api/oc/settings and
+// /api/broadcast/roles. And it is intermittent by nature: the body only
+// matches the previous one when the data has not changed, so the same call
+// works all day and then fails exactly when nothing is happening.
+//
+// Costs a few KB per poll on payloads this size. Worth it to never hand a
+// userscript an empty body again.
+//
+// Static files are NOT affected: express.static has its own ETag handling,
+// which this setting does not reach, so the userscripts stay cacheable.
+app.set("etag", false);
+
 // Enable CORS for all API routes. ONE invocation only — registering
 // the cors middleware twice was emitting Access-Control-Allow-Origin
 // twice on every response, which Chrome's WebView rejects as
