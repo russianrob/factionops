@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.9
+// @version      5.6.10
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.9';
+    const SCRIPT_VERSION = '5.6.10';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -4634,11 +4634,30 @@ body.wb-chain-active {
     function getFfScouterEstimate(userId) {
         return new Promise((resolve) => {
             try {
-                const req = window.indexedDB.open('ffscouter-cache', 1);
+                // No version, and an onupgradeneeded guard: open(name, 1) CREATES
+                // the database when it is absent, and this function had no
+                // upgrade handler at all — so on any device that had not run
+                // FFScouter it left an empty, store-less v1 behind. FFScouter
+                // builds its store inside ITS onupgradeneeded, which then never
+                // fires, so its cache could never work again. Confirmed on a
+                // real device: ffscouter-cache present, version 1, zero stores.
+                const req = window.indexedDB.open('ffscouter-cache');
+                let madeIt = false;
+                req.onupgradeneeded = () => { madeIt = true; };
                 req.onerror = () => resolve(null);
                 req.onsuccess = () => {
                     try {
                         const db = req.result;
+                        if (madeIt) {
+                            try { db.close(); } catch (_) {}
+                            try { window.indexedDB.deleteDatabase('ffscouter-cache'); } catch (_) {}
+                            resolve(null);
+                            return;
+                        }
+                        if (!db.objectStoreNames || !db.objectStoreNames.contains('cache')) {
+                            resolve(null);
+                            return;
+                        }
                         const tx = db.transaction('cache', 'readonly');
                         const store = tx.objectStore('cache');
                         const get = store.get(parseInt(userId, 10));
@@ -4707,9 +4726,15 @@ body.wb-chain-active {
         _ffsWarmStarted = true;
         try {
             if (!window.indexedDB) return;
-            const req = window.indexedDB.open('ffscouter-cache', 1);
+            // NO version argument on purpose. Passing 1, as getFfScouterEstimate
+            // does, throws VersionError whenever the existing database is at a
+            // higher version — so the day FFScouter bumps its schema this warm
+            // would fail silently and the filter would quietly go back to
+            // taking minutes. Opening without a version attaches to whatever
+            // version is there and never requests an upgrade.
+            const req = window.indexedDB.open('ffscouter-cache');
             req.onerror = () => { /* no cache yet — the per-row path still fills it */ };
-            // Opening at version 1 CREATES the database when it does not exist.
+            // Opening a database that does not exist still CREATES it (at v1).
             // That matters: FFScouter builds its own object store inside its
             // onupgradeneeded, and that event only fires on a version bump. If
             // we got there first and left an empty v1 behind, FFScouter would
@@ -4726,7 +4751,20 @@ body.wb-chain-active {
                         try { window.indexedDB.deleteDatabase('ffscouter-cache'); } catch (_) {}
                         return;
                     }
-                    if (!db.objectStoreNames || !db.objectStoreNames.contains('cache')) return;
+                    if (!db.objectStoreNames || !db.objectStoreNames.contains('cache')) {
+                        // A database with NO stores at all is the wreck the old
+                        // open(name, 1) left behind — useless to everyone, and it
+                        // blocks FFScouter from ever creating its own. Clear it so
+                        // FFScouter can build it properly next run. Only when it is
+                        // completely empty: a future FFScouter schema with other
+                        // stores is its business, not ours.
+                        if (db.objectStoreNames && db.objectStoreNames.length === 0) {
+                            try { db.close(); } catch (_) {}
+                            try { window.indexedDB.deleteDatabase('ffscouter-cache'); } catch (_) {}
+                            log('[ffs-warm] cleared an empty ffscouter-cache so FFScouter can rebuild it');
+                        }
+                        return;
+                    }
                     const tx = db.transaction('cache', 'readonly');
                     const cur = tx.objectStore('cache').openCursor();
                     let warmed = 0;
@@ -12054,6 +12092,69 @@ body.wb-chain-active {
     // Returns the best stats estimate for a target, or null if unknown.
     // Same chain as renderInlineBsp / sort: BSP TBS → FFS bs_estimate
     // → ffCache bsHuman midpoint. Used by the range filter.
+    /**
+     * The stat estimate already printed in the target's own war row.
+     *
+     * FFS Banner Estimates is a SEPARATE userscript with its own FFScouter
+     * key, and it paints a figure into every enemy row. factionops'
+     * fetchFairFightBatch calls ffscouter.com with factionops' OWN key, so on
+     * a device where that key is not set it returns nothing: the number is on
+     * screen, and getTargetStatsEstimate has nothing. The range filter then
+     * takes its "unknown -> show" branch for all 93 rows and sits there inert
+     * while the user looks straight at the numbers it claims it cannot find.
+     *
+     * So read what is rendered. Matched by SHAPE, not by class: a leaf element
+     * whose entire text is a magnitude like "2.67b" / "917.3m" / "428k". A
+     * level is a bare integer and a name has no K/M/B suffix, so neither can
+     * be mistaken for one — and shape survives the class churn that a pinned
+     * selector would not.
+     *
+     * Our own injected nodes are skipped, or the filter would start reading
+     * badges factionops itself drew.
+     */
+    const _rowStatMemo = new Map(); // targetId -> { n, at }
+    const ROW_STAT_TTL_MS = 10000;
+    // A magnitude, optionally a range ("10M-50M" is FFScouter's own bsHuman
+    // shape). The K/M/B suffix is REQUIRED on both halves, which is what keeps
+    // a bare level like "85" from ever being mistaken for a stat estimate.
+    const ROW_STAT_SHAPE = /^[\d.,]+\s*[kmb](\s*-\s*[\d.,]+\s*[kmb])?$/i;
+
+    function readRowStatBadge(targetId) {
+        const id = String(targetId);
+        const now = Date.now();
+        const memo = _rowStatMemo.get(id);
+        if (memo && (now - memo.at) < ROW_STAT_TTL_MS) return memo.n;
+
+        let n = null;
+        try {
+            const link = document.querySelector('a[href*="XID=' + id + '"]');
+            const row = link && link.closest('li');
+            if (row) {
+                const leaves = row.querySelectorAll('*');
+                for (let i = 0; i < leaves.length; i++) {
+                    const el = leaves[i];
+                    if (el.children.length) continue;            // leaf text only
+                    const cls = String(el.className || '');
+                    const eid = String(el.id || '');
+                    if (cls.indexOf('fo-') === 0 || cls.indexOf('wb-') === 0
+                        || eid.indexOf('fo-') === 0 || eid.indexOf('wb-') === 0) continue;
+                    const t = (el.textContent || '').trim();
+                    if (!t || t.length > 12 || !ROW_STAT_SHAPE.test(t)) continue;
+                    const parsed = parseBsHumanMid(t.replace(/,/g, ''));
+                    if (parsed != null && Number.isFinite(parsed) && parsed > 0) { n = parsed; break; }
+                }
+            }
+        } catch (_) { n = null; }
+
+        _rowStatMemo.set(id, { n, at: now });
+        if (n != null && !_rowStatLogged) {
+            _rowStatLogged = true;
+            log('[stats-filter] reading estimates from the row badge (no BSP/FFScouter data of our own)');
+        }
+        return n;
+    }
+    let _rowStatLogged = false;
+
     function getTargetStatsEstimate(targetId) {
         try {
             const bsp = fetchBspPrediction(targetId);
@@ -12069,6 +12170,10 @@ body.wb-chain-active {
             const mid = parseBsHumanMid(cc.bsHuman);
             if (mid !== null) return mid;
         }
+        // Last resort: the figure another userscript already drew on the row.
+        // Deliberately last — our own sources are authoritative when present.
+        const shown = readRowStatBadge(targetId);
+        if (shown != null) return shown;
         return null;
     }
 
