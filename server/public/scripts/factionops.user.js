@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.6
+// @version      5.6.7
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.6';
+    const SCRIPT_VERSION = '5.6.7';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -3337,6 +3337,67 @@ body.wb-chain-active {
     /** The bonus already announced for this chain, so it announces once. */
     let lastBonusShown = null;
 
+    /** The chain count the SERVER last told us, so we can spot a change. */
+    let lastServerChainSeen = null;
+
+    /**
+     * Announce an approaching bonus straight from server chain data.
+     *
+     * Why this exists separately from the block in applyServerData: that whole
+     * branch is behind `!CHAIN_POLL_ONLY`, which is `true`, so it is dead code.
+     * The only live bonus alert lived inside startDirectChainPoll(), and that
+     * poll is started solely by moveTornChainBar()/watchForLateChainBar() --
+     * the overlay's chain-bar hooks. So a member who never pressed "Activate
+     * FactionOps" got call toasts (those ride applyServerData, ungated) but
+     * never a bonus toast. This puts the bonus alert on the same ungated path
+     * the calls already use.
+     *
+     * Deliberately does NOT touch state.chain or updateChainBar. Those writes
+     * are what CHAIN_POLL_ONLY switched off, because more than one writer on
+     * the chain clock is what made the countdown flap. A milestone warning
+     * needs the count and nothing else, so it can run without rejoining that.
+     *
+     * Shares lastBonusShown with the direct-poll copy, so when both are live
+     * after activation the second one to see a milestone stays quiet.
+     */
+    function announceBonusFromServer(rawCount, rawCooldown) {
+        const nowCount = Number(rawCount) || 0;
+        if (nowCount <= 0) return;
+
+        const prev = lastServerChainSeen;
+        lastServerChainSeen = nowCount;
+        // First payload is a baseline, not an event: announcing off it would
+        // fire on every page load for a chain already past the milestone.
+        if (prev === null || nowCount === prev) return;
+
+        // A chain never shrinks; a late snapshot can look as though it has.
+        if (nowCount < prev) lastBonusShown = null;
+
+        // The bonus has been taken -- drop the banner rather than leave
+        // "bonus in 2" up, which reads as an instruction to keep hitting.
+        if (lastBonusShown !== null && nowCount >= lastBonusShown) {
+            try { hideWarBanner('bonus'); } catch (e) { /* no banner up */ }
+            lastBonusShown = null;
+        }
+
+        if ((Number(rawCooldown) || 0) > 0) return;
+
+        const next = nextBonusMilestone(nowCount + 1);
+        const hitsToBonus = next ? next - nowCount : null;
+        // Skip the bonus at 10: the chain has not really started yet.
+        if (hitsToBonus === null || hitsToBonus <= 0) return;
+        if (hitsToBonus > BONUS_APPROACH || nowCount < 10) return;
+        if (next === lastBonusShown) return;
+
+        lastBonusShown = next;
+        showToast(`BONUS HIT in ${hitsToBonus}! Target: ${next}`, 'error');
+        firePdaNotification('bonus_imminent',
+            '\u{1F4A5} Bonus Hit Imminent',
+            `Chain at ${nowCount}/${next} — ${hitsToBonus} hit${hitsToBonus > 1 ? 's' : ''} to bonus!`);
+        try { showBonusBanner(nowCount, next); }
+        catch (e) { log('bonus-banner failed: ' + (e && e.message)); }
+    }
+
     /**
      * The milestone already reported as LANDED.
      *
@@ -5851,6 +5912,12 @@ body.wb-chain-active {
         }
 
         // ── Chain ──
+        // Bonus alerts ride the server payload regardless of CHAIN_POLL_ONLY --
+        // same ungated path the call toasts use, so this reaches members who
+        // never pressed "Activate FactionOps".
+        if (data.chainData) {
+            announceBonusFromServer(data.chainData.current, data.chainData.cooldown);
+        }
         if (data.chainData && !CHAIN_POLL_ONLY) {
             const oldCurrent = state.chain.current;
             const chainChanged = data.chainData.current !== oldCurrent;
@@ -13066,7 +13133,15 @@ body.wb-chain-active {
                         if (msg.warScores) state.warScores = msg.warScores;
                         if (msg.warEta) state.warEta = msg.warEta;
 
-                        if ((msg.chain || msg.chainData) && !CHAIN_POLL_ONLY) {                            const c = msg.chain || msg.chainData;
+                        // Bonus alerts are not gated on CHAIN_POLL_ONLY: they need the
+                        // count and nothing else, so they reach members who never
+                        // pressed "Activate FactionOps".
+                        if (msg.chain || msg.chainData) {
+                            const bc = msg.chain || msg.chainData;
+                            announceBonusFromServer(bc && bc.current, bc && bc.cooldown);
+                        }
+                        if ((msg.chain || msg.chainData) && !CHAIN_POLL_ONLY) {
+                            const c = msg.chain || msg.chainData;
                             const { timeout, cooldown, ...rest } = c;
                             Object.assign(state.chain, rest);
                             if (timeout != null) {
