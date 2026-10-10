@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.7
+// @version      5.6.8
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.7';
+    const SCRIPT_VERSION = '5.6.8';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -4674,6 +4674,118 @@ body.wb-chain-active {
                 resolve(null);
             }
         });
+    }
+
+    /**
+     * Fill _ffsStatsCache from the FFScouter IndexedDB in ONE pass.
+     *
+     * getFfScouterEstimate() reads a SINGLE uid and is async, and the only
+     * thing that calls it is row rendering. passesStatsFilter(), by contrast,
+     * is synchronous and consults _ffsStatsCache — an in-memory Map that is
+     * empty on every page load. So after a refresh the filter asked about 93
+     * enemies, got null for all of them, took the "unknown -> show" branch for
+     * all of them, and hid nobody. It then came right slowly, one uid per
+     * render-driven IndexedDB open, which is the "takes a few minutes to
+     * remember the filter" report.
+     *
+     * The data was never lost — it was in IndexedDB the whole time, behind an
+     * async door the filter cannot open. One cursor over the store fixes that:
+     * 93 opens become 1, and the filter is correct about a second after load.
+     *
+     * A cursor rather than getAll(): the uid is the record's KEY, and getAll()
+     * returns values only. Pairing getAllKeys() with getAll() would work but
+     * leans on the two arrays agreeing; a cursor hands over both and leans on
+     * nothing.
+     *
+     * Members with BSP Predictor never saw this bug — fetchBspPrediction reads
+     * localStorage synchronously, so their estimates are there on the first
+     * paint. This brings FFScouter-only members up to the same footing.
+     */
+    let _ffsWarmStarted = false;
+    function warmFfsStatsCache() {
+        if (_ffsWarmStarted) return;
+        _ffsWarmStarted = true;
+        try {
+            if (!window.indexedDB) return;
+            const req = window.indexedDB.open('ffscouter-cache', 1);
+            req.onerror = () => { /* no cache yet — the per-row path still fills it */ };
+            // Opening at version 1 CREATES the database when it does not exist.
+            // That matters: FFScouter builds its own object store inside its
+            // onupgradeneeded, and that event only fires on a version bump. If
+            // we got there first and left an empty v1 behind, FFScouter would
+            // open it, skip the upgrade, and find no store to write to — we
+            // would have broken the very script we are reading from. So if WE
+            // are the ones creating it, put it back exactly as we found it.
+            let createdByUs = false;
+            req.onupgradeneeded = () => { createdByUs = true; };
+            req.onsuccess = () => {
+                try {
+                    const db = req.result;
+                    if (createdByUs) {
+                        try { db.close(); } catch (_) {}
+                        try { window.indexedDB.deleteDatabase('ffscouter-cache'); } catch (_) {}
+                        return;
+                    }
+                    if (!db.objectStoreNames || !db.objectStoreNames.contains('cache')) return;
+                    const tx = db.transaction('cache', 'readonly');
+                    const cur = tx.objectStore('cache').openCursor();
+                    let warmed = 0;
+                    cur.onerror = () => { /* leave the Map to the per-row path */ };
+                    cur.onsuccess = (ev) => {
+                        const c = ev.target && ev.target.result;
+                        if (!c) {
+                            if (warmed) {
+                                log('[ffs-warm] ' + warmed + ' stat estimate(s) restored from IndexedDB');
+                                // Repaint so a filter restored at load applies now
+                                // instead of waiting out the 5s tick.
+                                try { markCalledRows(); } catch (_) {}
+                            }
+                            return;
+                        }
+                        const r = c.value;
+                        // Same shape test getFfScouterEstimate uses, and the same
+                        // null-marking: a uid FFScouter has no data for must be
+                        // cached as null, or the stats sort re-requests it forever.
+                        if (!r || r.no_data || typeof r.bs_estimate === 'undefined') {
+                            try { _ffsStatsCache.set(String(c.key), null); } catch (_) {}
+                        } else {
+                            try { _ffsStatsCache.set(String(c.key), Number(r.bs_estimate) || 0); warmed++; } catch (_) {}
+                        }
+                        c.continue();
+                    };
+                } catch (_) { /* fall back to the per-row path */ }
+            };
+        } catch (_) { /* fall back to the per-row path */ }
+    }
+    warmFfsStatsCache();
+
+    /**
+     * Which stat source can actually answer the filter right now.
+     *
+     * Worth surfacing because passesStatsFilter treats an unknown stat as
+     * "show". That is the right call — hiding enemies you cannot assess would
+     * make war coverage unreliable — but it means a filter with NO data behind
+     * it is indistinguishable from a filter that is simply not working. Saying
+     * which source is live turns "hiding 0 of 93" from a mystery into a fact.
+     */
+    function activeStatSource() {
+        let ffs = false;
+        try {
+            for (const v of _ffsStatsCache.values()) {
+                if (typeof v === 'number') { ffs = true; break; }
+            }
+        } catch (_) {}
+        let bsp = false;
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                if (k && k.indexOf('tdup.battleStatsPredictor.cache.prediction.') === 0) { bsp = true; break; }
+            }
+        } catch (_) {}
+        if (bsp && ffs) return 'BSP + FFScouter';
+        if (bsp) return 'BSP';
+        if (ffs) return 'FFScouter';
+        return null;
     }
 
     /**
@@ -10213,7 +10325,17 @@ body.wb-chain-active {
         // would otherwise look like a short enemy faction.
         const countEl = document.getElementById('fo-wp-count');
         if (countEl) {
-            countEl.textContent = hidden ? ('hiding ' + hidden + ' of ' + total) : '';
+            // A set filter that hides nobody has two very different causes:
+            // everyone genuinely matches, or nothing can answer the question.
+            // Only the second is worth a word.
+            const statFilterOn = (_statsFilterMin != null || _statsFilterMax != null);
+            if (hidden) {
+                countEl.textContent = 'hiding ' + hidden + ' of ' + total;
+            } else if (statFilterOn && !activeStatSource()) {
+                countEl.textContent = 'stats filter idle \u2014 no BSP or FFScouter data';
+            } else {
+                countEl.textContent = '';
+            }
             countEl.classList.toggle('is-on', hidden > 0);
         }
         try { paintTransportChip(); } catch (_) {}
