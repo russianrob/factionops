@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.10
+// @version      5.6.11
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.10';
+    const SCRIPT_VERSION = '5.6.11';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -12112,8 +12112,86 @@ body.wb-chain-active {
      * Our own injected nodes are skipped, or the filter would start reading
      * badges factionops itself drew.
      */
+    /**
+     * Last-known row estimates, kept across reloads.
+     *
+     * The fallback can only read a badge FFS Banner Estimates has already
+     * painted, and that script has to fetch ffscouter.com for all 93 targets
+     * first — so on a refresh the filter sat inert for about a minute waiting
+     * on someone else's network round-trip. Nothing here can make that fetch
+     * faster. What it can do is not need it: remember what each target was
+     * worth last time, apply the band on the FIRST paint, and correct silently
+     * as the real badges land.
+     *
+     * A flat uid -> number map, about 2KB for a 93-man faction. Deliberately
+     * unlike the gym-coach case where sharing payloads through localStorage
+     * was refused: that was whole inventory responses, this is one number per
+     * player.
+     *
+     * Seven days, because battle stats drift slowly and a band only cares
+     * which side of a line someone is on. A live badge always wins over a
+     * remembered one.
+     */
+    const ROW_STAT_STORE_KEY = 'factionops_row_stats';
+    const ROW_STAT_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+    let _rowStatStore = null;          // Map uid -> { n, at }
+    let _rowStatDirty = false;
+    let _rowStatFlushTimer = null;
+
+    function loadPersistedRowStats() {
+        if (_rowStatStore) return _rowStatStore;
+        _rowStatStore = new Map();
+        try {
+            const raw = localStorage.getItem(ROW_STAT_STORE_KEY);
+            if (raw) {
+                const obj = JSON.parse(raw) || {};
+                const cutoff = Date.now() - ROW_STAT_MAX_AGE_MS;
+                for (const k of Object.keys(obj)) {
+                    const rec = obj[k];
+                    if (!Array.isArray(rec)) continue;
+                    const n = Number(rec[0]);
+                    const at = Number(rec[1]) || 0;
+                    if (Number.isFinite(n) && n > 0 && at > cutoff) _rowStatStore.set(String(k), { n: n, at: at });
+                }
+            }
+        } catch (_) { /* disabled or corrupt — live reads still work */ }
+        return _rowStatStore;
+    }
+
+    function rememberRowStat(id, n) {
+        const store = loadPersistedRowStats();
+        const prev = store.get(id);
+        if (prev && prev.n === n) return;        // nothing changed, no write
+        store.set(id, { n: n, at: Date.now() });
+        _rowStatDirty = true;
+        // Debounced: a paint reads 93 rows, and 93 synchronous localStorage
+        // writes per repaint is exactly the kind of thing that makes a phone
+        // warm. One write a few seconds after the last change instead.
+        if (!_rowStatFlushTimer) _rowStatFlushTimer = setTimeout(flushRowStats, 3000);
+    }
+
+    function flushRowStats() {
+        _rowStatFlushTimer = null;
+        if (!_rowStatDirty) return;
+        _rowStatDirty = false;
+        try {
+            const out = {};
+            for (const [k, v] of loadPersistedRowStats()) out[k] = [v.n, v.at];
+            localStorage.setItem(ROW_STAT_STORE_KEY, JSON.stringify(out));
+        } catch (_) { /* quota or disabled — not worth failing a paint over */ }
+    }
+
     const _rowStatMemo = new Map(); // targetId -> { n, at }
+    // A HIT is cached for a while: re-scanning 93 rows' descendants on every
+    // repaint is the cost this memo exists to avoid, and an estimate does not
+    // change minute to minute.
+    //
+    // A MISS must expire almost at once. Measured on a real reload: the badges
+    // are all painted by ~4s, but the first paint happens before any exist, so
+    // a ten-second negative cache pinned every row at "unknown" and the band
+    // did not apply until ~13s. That delay was ours, not FFS Banner's.
     const ROW_STAT_TTL_MS = 10000;
+    const ROW_STAT_MISS_TTL_MS = 1000;
     // A magnitude, optionally a range ("10M-50M" is FFScouter's own bsHuman
     // shape). The K/M/B suffix is REQUIRED on both halves, which is what keeps
     // a bare level like "85" from ever being mistaken for a stat estimate.
@@ -12123,7 +12201,7 @@ body.wb-chain-active {
         const id = String(targetId);
         const now = Date.now();
         const memo = _rowStatMemo.get(id);
-        if (memo && (now - memo.at) < ROW_STAT_TTL_MS) return memo.n;
+        if (memo && (now - memo.at) < (memo.n == null ? ROW_STAT_MISS_TTL_MS : ROW_STAT_TTL_MS)) return memo.n;
 
         let n = null;
         try {
@@ -12145,6 +12223,15 @@ body.wb-chain-active {
                 }
             }
         } catch (_) { n = null; }
+
+        if (n != null) {
+            rememberRowStat(id, n);
+        } else {
+            // No badge painted yet. Use what this target was worth last time
+            // so the band applies on the first paint instead of a minute in.
+            const remembered = loadPersistedRowStats().get(id);
+            if (remembered) n = remembered.n;
+        }
 
         _rowStatMemo.set(id, { n, at: now });
         if (n != null && !_rowStatLogged) {
