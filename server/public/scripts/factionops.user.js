@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.12
+// @version      5.6.13
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.12';
+    const SCRIPT_VERSION = '5.6.13';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -7506,12 +7506,27 @@ body.wb-chain-active {
             const bs = n.querySelectorAll('[data-bonusid]');
             for (let j = 0; j < bs.length; j++) {
                 const b = bs[j];
-                const tip = b.getAttribute('data-tooltipText') || b.getAttribute('data-tooltiptext') || '';
+                // dataset, NOT getAttribute. The live probe came back with
+                // value:null and title falling through to the slug on every
+                // bonus of every player, because the attribute is
+                // `data-tooltip-text` — HTML lowercases attribute names and a
+                // camelCase dataset key hyphenates. getAttribute('data-tooltipText')
+                // matched nothing and failed silently, which is the whole
+                // reason this shipped as a probe before it shipped as a write.
+                const bd = b.dataset || {};
+                let tip = bd.tooltipText || '';
+                if (!tip && bd.tooltipHtml) tip = String(bd.tooltipHtml).replace(/<[^>]*>/g, ' ');
                 const cls = String(b.className || '').match(/bonus-attachment-([a-z0-9-]+)/i);
-                const val = tip.match(/:\s*([\d.]+)\s*%/);
+                // First number after the colon. Not %-only: Torn states some
+                // bonuses in turns, and "Disarm: 5 turns" is as real a value
+                // as "Assassinate: 56%".
+                const val = tip.match(/:\s*([\d.]+)/);
                 rec.bonuses.push({
                     id: b.getAttribute('data-bonusid'),
-                    title: (tip.split(':')[0] || '').trim() || (cls ? cls[1] : null),
+                    // The tooltip carries the DISPLAY name ("Impenetrable");
+                    // the class carries a slug ("bullets-protection"). Prefer
+                    // the one a human would recognise.
+                    title: (tip.split(':')[0] || '').replace(/\s+/g, ' ').trim() || (cls ? cls[1] : null),
                     value: val ? Number(val[1]) : null,
                     slug: cls ? cls[1] : null,
                 });
@@ -7545,7 +7560,7 @@ body.wb-chain-active {
                     // One raw tooltip, so the value regex can be checked
                     // against what KAL actually wrote rather than my memory
                     // of one example.
-                    rawTip: first ? (first.getAttribute('data-tooltipText') || '').slice(0, 90) : null,
+                    rawTip: first ? String((first.dataset || {}).tooltipText || '').slice(0, 90) : null,
                 },
             });
             const url = CONFIG.SERVER_URL + '/api/debug/client-log';
