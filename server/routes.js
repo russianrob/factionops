@@ -87,6 +87,7 @@ import * as prewar from "./prewar-activity.js";
 import * as warWindow from "./war-window.js";
 import * as threatSheet from "./threat-sheet.js";
 import * as kal from "./kal-loadouts.js";
+import * as kalHarvest from "./kal-harvest.js";
 import * as agentTurns from "./agent-turns.js";
 import * as winModel from "./win-model.js";
 import * as loadoutStore from "./loadout-store.js";
@@ -13467,9 +13468,58 @@ router.get("/prewar/scout", (_req, res) => {
 router.get("/api/loadout/kal", requireAuth, (req, res) => {
   const playerId = String(req.query.playerId || "").replace(/[^0-9]/g, "");
   if (!playerId) return res.status(400).json({ error: "playerId required" });
-  const hit = kal.cachedLoadoutFor(playerId);
+
+  // Two sources, and neither is reliably the fresher one. A pre-war pack is
+  // one call for a whole roster but ages between scouts — Howler's Haven sat
+  // at eleven days. A harvested row is whatever KAL had when a member last
+  // opened that profile, which can be hours old or months. So compare what
+  // each actually SAW rather than preferring a source.
+  const pack = kal.cachedLoadoutFor(playerId);
+  const grown = kalHarvest.harvestedFor(playerId);
+  const seenAt = (h) => Number(h && h.summary && h.summary.observedAt) || 0;
+
+  let hit = null, source = null;
+  if (pack && grown) {
+    const useHarvest = seenAt(grown) > seenAt(pack);
+    hit = useHarvest ? grown : pack;
+    source = useHarvest ? "harvest" : "pack";
+  } else if (pack) { hit = pack; source = "pack"; }
+  else if (grown) { hit = grown; source = "harvest"; }
+
   if (!hit) return res.json({ found: false });
-  return res.json({ found: true, ...hit });
+  return res.json({ found: true, source, ...hit });
+});
+
+// ── POST /api/loadout/kal/harvest ────────────────────────────────────────
+// A member opened a profile and KAL had already resolved the loadout. Relay
+// the RAW object so the server summarises it exactly as it does a pack — see
+// kal-harvest.js for why this is reading rather than fetching.
+router.post("/api/loadout/kal/harvest", requireAuth, express.json({ limit: "24kb" }), (req, res) => {
+  const b = req.body || {};
+  const playerId = String(b.playerId || "").replace(/[^0-9]/g, "");
+  if (!playerId) return res.status(400).json({ error: "playerId required" });
+
+  let row;
+  try {
+    row = kalHarvest.record(playerId, b.loadout, {
+      name: b.name,
+      factionId: b.factionId,
+      factionName: b.factionName,
+      observedAt: b.observedAt,
+      by: req.user && req.user.playerId,
+    });
+  } catch (e) {
+    console.warn(`[kal-harvest] record failed for ${playerId}: ${e.message}`);
+    return res.status(500).json({ error: "could not record" });
+  }
+
+  // recorded:false is the NORMAL answer — KAL renders a card for players it
+  // has never seen equipped, and that summarises to nothing worth keeping.
+  return res.json({ recorded: !!row, observedAt: row ? row.observedAt : null });
+});
+
+router.get("/api/loadout/kal/stats", requireAuth, (_req, res) => {
+  return res.json(kalHarvest.stats());
 });
 
 router.post("/api/loadout/seen", express.json({ limit: "24kb" }), (req, res) => {
