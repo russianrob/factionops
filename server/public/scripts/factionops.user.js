@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.13
+// @version      5.6.14
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.13';
+    const SCRIPT_VERSION = '5.6.14';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -7517,16 +7517,38 @@ body.wb-chain-active {
                 let tip = bd.tooltipText || '';
                 if (!tip && bd.tooltipHtml) tip = String(bd.tooltipHtml).replace(/<[^>]*>/g, ' ');
                 const cls = String(b.className || '').match(/bonus-attachment-([a-z0-9-]+)/i);
-                // First number after the colon. Not %-only: Torn states some
-                // bonuses in turns, and "Disarm: 5 turns" is as real a value
-                // as "Assassinate: 56%".
-                const val = tip.match(/:\s*([\d.]+)/);
+                // The value is the first PERCENTAGE after the colon, not the
+                // first number. Captured tooltips say why:
+                //
+                //   Powerful: 23% increased damage              -> 23
+                //   Execute: Instantly defeats a target if
+                //            they're below 16% life             -> 16
+                //   Spray: 22% chance of expending an entire
+                //          magazine for x2 damage               -> 22, not 2
+                //
+                // Execute puts its number mid-sentence, so "number adjacent to
+                // the colon" misses it — that was the null in the 5.6.13
+                // report. Spray puts a bare "x2" after its real value, so
+                // "first number anywhere" would be wrong for a different
+                // reason. Anchoring on the % satisfies both.
+                const colon = tip.indexOf(':');
+                const tail = colon >= 0 ? tip.slice(colon + 1) : '';
+                // Torn states a few bonuses in turns rather than percent, and
+                // those carry no % at all.
+                const val = tail.match(/([\d.]+)\s*%/) || tail.match(/([\d.]+)\s*turn/i);
                 rec.bonuses.push({
                     id: b.getAttribute('data-bonusid'),
                     // The tooltip carries the DISPLAY name ("Impenetrable");
                     // the class carries a slug ("bullets-protection"). Prefer
                     // the one a human would recognise.
-                    title: (tip.split(':')[0] || '').replace(/\s+/g, ' ').trim() || (cls ? cls[1] : null),
+                    // Only the part before a colon is a NAME. Some tooltips
+                    // are a bare sentence with no colon at all — "Decrease
+                    // Opponent's Dex to 1/3rd for 120-180s" — and splitting
+                    // that on ':' hands back the whole sentence as the bonus
+                    // title, which the mini-profile would then try to render.
+                    // No colon means no name here, so fall back to the slug.
+                    title: (colon >= 0 ? tip.slice(0, colon).replace(/\s+/g, ' ').trim().slice(0, 32) : '')
+                           || (cls ? cls[1] : null),
                     value: val ? Number(val[1]) : null,
                     slug: cls ? cls[1] : null,
                 });
