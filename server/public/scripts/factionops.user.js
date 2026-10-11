@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.11
+// @version      5.6.12
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.11';
+    const SCRIPT_VERSION = '5.6.12';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -7460,6 +7460,117 @@ body.wb-chain-active {
             },
             onerror() { _kalCache.set(id, null); cb(null); },
         });
+    }
+
+    // ── KAL loadout probe (report-only) ───────────────────────────────────
+    //
+    // Groundwork for harvesting KAL's own render so the mini-profile can show
+    // a loadout for players no pre-war pack covers. Reports what a candidate
+    // parser WOULD have extracted, and stores nothing — the parser gets
+    // proven against real profiles before it is allowed to write.
+    //
+    // KAL exposes no object to read: nothing in page scope, nothing in any
+    // content world, nothing cached in GM storage. What it does leave is a
+    // well-attributed DOM, so this reads ATTRIBUTES rather than text:
+    //
+    //   .kal-profile-item          one equipped item
+    //   data-kal-profile-slot      which slot it sits in
+    //   .kal-profile-item-name     the item's name
+    //   [class*="glow-"]           the item's rarity
+    //   [data-bonusid]             a bonus, by Torn's own bonus id
+    //   data-tooltipText           "Impenetrable: 23% decreased incoming..."
+    //
+    // Reading position in innerText would have been the fragile version: the
+    // rendered line is "Cobra Derringer 56% Assassinate 70.39 59.86", where
+    // the percentage sits BEFORE the bonus it belongs to and two unlabelled
+    // numbers follow. The tooltip states the same fact unambiguously.
+    function parseKalSection(sec) {
+        const txt = (el) => (el ? (el.textContent || '').replace(/\s+/g, ' ').trim() : null);
+        const glow = (el) => {
+            const p = el.querySelector('[class*="glow-"]');
+            const m = p && String(p.className || '').match(/glow-([a-z]+)/i);
+            return m ? m[1].toLowerCase() : null;
+        };
+        const out = { items: [], skipped: 0 };
+        const nodes = sec.querySelectorAll('.kal-profile-item');
+        for (let i = 0; i < nodes.length; i++) {
+            const n = nodes[i];
+            if (/kal-profile-placeholder/.test(String(n.className || ''))) { out.skipped++; continue; }
+            const ds = n.dataset || {};
+            const rec = {
+                slot: ds.kalProfileSlot || ds.kalprofileslot || null,
+                name: txt(n.querySelector('.kal-profile-item-name')),
+                rarity: glow(n),
+                bonuses: [],
+            };
+            const bs = n.querySelectorAll('[data-bonusid]');
+            for (let j = 0; j < bs.length; j++) {
+                const b = bs[j];
+                const tip = b.getAttribute('data-tooltipText') || b.getAttribute('data-tooltiptext') || '';
+                const cls = String(b.className || '').match(/bonus-attachment-([a-z0-9-]+)/i);
+                const val = tip.match(/:\s*([\d.]+)\s*%/);
+                rec.bonuses.push({
+                    id: b.getAttribute('data-bonusid'),
+                    title: (tip.split(':')[0] || '').trim() || (cls ? cls[1] : null),
+                    value: val ? Number(val[1]) : null,
+                    slug: cls ? cls[1] : null,
+                });
+            }
+            // An item with neither a name nor a slot is not something we
+            // understood — count it rather than guessing at it.
+            if (!rec.name && !rec.slot) { out.skipped++; continue; }
+            out.items.push(rec);
+        }
+        return out;
+    }
+
+    let _kalProbeSent = false;
+    function probeKalLoadout() {
+        if (_kalProbeSent) return true;
+        const sec = document.getElementById('kal-profile-loadout');
+        if (!sec) return false;
+        _kalProbeSent = true;
+        try {
+            const parsed = parseKalSection(sec);
+            const first = sec.querySelector('.kal-profile-item:not(.kal-profile-placeholder) [data-bonusid]');
+            const body = JSON.stringify({
+                tag: 'fo-kal-probe',
+                data: {
+                    v: SCRIPT_VERSION,
+                    pid: (location.search.match(/XID=(\d+)/) || [])[1] || null,
+                    age: (document.querySelector('.kal-profile-age') || {}).textContent || null,
+                    items: parsed.items.slice(0, 12),
+                    skipped: parsed.skipped,
+                    total: sec.querySelectorAll('.kal-profile-item').length,
+                    // One raw tooltip, so the value regex can be checked
+                    // against what KAL actually wrote rather than my memory
+                    // of one example.
+                    rawTip: first ? (first.getAttribute('data-tooltipText') || '').slice(0, 90) : null,
+                },
+            });
+            const url = CONFIG.SERVER_URL + '/api/debug/client-log';
+            if (typeof GM_xmlhttpRequest === 'function') {
+                GM_xmlhttpRequest({ method: 'POST', url, data: body,
+                    headers: { 'Content-Type': 'application/json' },
+                    onload() {}, onerror() {} });
+            } else {
+                fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => {});
+            }
+        } catch (e) { /* a probe must never break the page */ }
+        return true;
+    }
+
+    // KAL renders after its own fetch, so one look at load time finds nothing.
+    // Bounded on purpose: twelve tries at 1.5s and then it gives up, because
+    // an unbounded watcher for a card that is never coming is a timer that
+    // runs for the life of the tab.
+    function watchForKalSection() {
+        if (!/profiles\.php/.test(location.pathname + location.search)) return;
+        let tries = 0;
+        const t = setInterval(() => {
+            tries += 1;
+            if (probeKalLoadout() || tries >= 12) clearInterval(t);
+        }, 1500);
     }
 
     function kalLineHtml(hit) {
@@ -16392,6 +16503,10 @@ body.wb-chain-active {
         // 6d. Watch for Torn's native mini profile card and inject a
         //     Retal action button into it.
         setupMiniProfileInjection();
+
+        // 6e. Report what a KAL harvest parser would see on a profile page.
+        //     Report-only: see parseKalSection.
+        try { watchForKalSection(); } catch (e) { /* never block boot */ }
 
         // 7. Authenticate, start polling + Socket.IO
         if (CONFIG.API_KEY) {
