@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.10
+// @version      0.12.11
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -2266,7 +2266,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.10";
+  var GC_VERSION = "0.12.11";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -10557,6 +10557,62 @@
     storeSet("log", state.log);
   }
 
+  // ── Device-wide lease on the expensive half of a round ────────────────
+  //
+  // Every fetcher below refresh()'s first call carries its own TTL, but those
+  // TTLs live in this page's `state`. Two tabs (or a phone and a desktop
+  // browser) therefore keep two independent clocks and each pays full price:
+  // the key log shows the giveaway, three `inventory` calls inside 52 seconds
+  // when INV_TTL is 90.
+  //
+  // `state.fetchInFlight` cannot help — it is per-page by construction. This
+  // lease is in localStorage, which every tab of an origin shares and reads
+  // synchronously, so whichever tab gets there first does the extras and the
+  // others skip them for one lease.
+  //
+  // Three deliberate properties:
+  //   - Time-based, never released explicitly. A tab that crashes or is closed
+  //     mid-round cannot wedge the others; the lease just expires.
+  //   - Any storage failure returns true, i.e. fetch anyway. A browser with
+  //     localStorage blocked behaves exactly as it does today rather than
+  //     quietly never refreshing, which would be a far worse bug than a
+  //     duplicate call.
+  //   - NOT storeGet/storeSet: those prefer GM storage, which some managers
+  //     serve from a per-tab cache. A lock has to read what the other tab
+  //     actually wrote, so this talks to localStorage directly.
+  //
+  // Not shared: the fetched payloads. Putting an inventory response in
+  // localStorage is how you earn a QuotaExceededError, so a tab that skips
+  // simply keeps its previous numbers until it next wins the lease — which is
+  // no staler than the TTLs already allow.
+  var EXTRAS_LEASE_MS = 45000; // half of INV_TTL — long enough to cover a round
+  var LEASE_KEY = NS + "_extras_lease";
+  // Identifies THIS page among the tabs sharing the origin. Re-generated per
+  // load, which is what we want: a reloaded tab is a new claimant.
+  var INSTANCE_ID = String(Date.now()) + "_" + Math.random().toString(36).slice(2, 10);
+
+  function claimExtrasLease() {
+    try {
+      var raw = localStorage.getItem(LEASE_KEY);
+      var rec = raw ? JSON.parse(raw) : null;
+      var at = rec ? Number(rec.at) || 0 : 0;
+      var by = rec ? rec.by : null;
+      var now = Date.now();
+      // Blocks only on a FRESH lease held by a DIFFERENT tab. The holder keeps
+      // running on its own TTLs, so a single-tab user is affected by none of
+      // this — the lease deduplicates across tabs, it does not add throttling
+      // within one.
+      //
+      // `at <= now` guards a clock that disagrees with itself: a future-dated
+      // lease reads as expired rather than locking every tab out forever.
+      if (by && by !== INSTANCE_ID && at <= now && now - at < EXTRAS_LEASE_MS) return false;
+      localStorage.setItem(LEASE_KEY, JSON.stringify({ at: now, by: INSTANCE_ID }));
+      return true;
+    } catch (e) {
+      return true;
+    }
+  }
+
   function refresh(kind) {
     var key = resolveKey();
     if (!key) {
@@ -10571,6 +10627,11 @@
     var invAge = Date.now() - (state.invAt || 0);
     var invForce = kind === "boot" || kind === "manual" || !state.lastFetch;
     var wantInv = invForce || ((kind === "open" || kind === "stock" || kind === "train" || state.tab === "stock") && invAge > INV_TTL);
+    // Claimed once per round, before the first await, so two tabs waking
+    // together cannot both pass. boot and manual bypass it: an explicit
+    // refresh the user asked for must never be silently swallowed by a lease
+    // another tab happens to hold.
+    var mayRunExtras = invForce || claimExtrasLease();
     // `basic` is PUBLIC access, so appending it cannot fail a call the rest of
     // which already works -- and it carries player_id, which is what lets the
     // attack log tell your hits from hits on you.
@@ -10589,16 +10650,20 @@
         // was most of a 100-a-minute budget during an ordinary session. The
         // live `since` figure already keeps "Spent today" moving without
         // asking Torn at all, which is what makes this safe to drop.
-        fetchTrainLog(kind === "boot" || kind === "manual");
-        fetchRefills(kind === "boot" || kind === "manual");
-        // The referee on cans drunk where the bar could not be watched. Same
-        // three-minute TTL as refills, and it rides the poll that is already
-        // happening rather than adding one of its own.
-        fetchCansUsed(kind === "boot" || kind === "manual");
-        fetchStocks(kind === "boot" || kind === "manual");
-        fetchAttacksToday(kind === "boot" || kind === "manual" || kind === "train");
-        fetchKeyLevel(kind === "boot" || kind === "manual");
-        if (!wantInv) return null;
+        // The cheap combined call above runs in every tab, so the energy bar
+        // never goes stale. Only the expensive tail is leased.
+        if (mayRunExtras) {
+          fetchTrainLog(kind === "boot" || kind === "manual");
+          fetchRefills(kind === "boot" || kind === "manual");
+          // The referee on cans drunk where the bar could not be watched. Same
+          // three-minute TTL as refills, and it rides the poll that is already
+          // happening rather than adding one of its own.
+          fetchCansUsed(kind === "boot" || kind === "manual");
+          fetchStocks(kind === "boot" || kind === "manual");
+          fetchAttacksToday(kind === "boot" || kind === "manual" || kind === "train");
+          fetchKeyLevel(kind === "boot" || kind === "manual");
+        }
+        if (!wantInv || !mayRunExtras) return null;
         return fetchInventoryV2().then(
           function (rows) {
             var tal0 = state.invTally || {};
