@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.14
+// @version      5.6.15
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.14';
+    const SCRIPT_VERSION = '5.6.15';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -2001,32 +2001,6 @@ body.wb-chain-active {
     .fo-col-headers > :nth-child(6) { text-align: center; }
 }
 
-/* ----- Heatmap toggle button (fixed bottom-right, next to settings gear) ----- */
-.wb-heatmap-btn {
-    position: fixed;
-    bottom: 20px;
-    right: 70px;
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    background: var(--wb-accent);
-    color: var(--wb-text);
-    border: 2px solid var(--wb-border);
-    cursor: pointer;
-    z-index: 999999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.4);
-    transition: transform 0.2s ease, background 0.2s ease;
-    font-family: Arial, sans-serif;
-}
-.wb-heatmap-btn:hover {
-    transform: scale(1.1);
-    background: var(--wb-call-green);
-}
-
 /* ────────── Combined Heatmap modal tabs — v5.0.30 ────────── */
 .wb-htm-tabs {
     display: flex; gap: 2px; padding: 0 16px;
@@ -2043,23 +2017,6 @@ body.wb-chain-active {
 .wb-htm-tab.active { color: #74c69d; border-bottom-color: #74c69d; }
 .wb-htm-pane { display: none; }
 .wb-htm-pane.active { display: block; }
-.wb-htm-activity-grid {
-    display: grid;
-    grid-template-columns: 30px repeat(24, minmax(14px, 1fr));
-    gap: 1px;
-    padding: 8px;
-    background: #0f1a14; border: 1px solid #1a2e20; border-radius: 6px;
-}
-.wb-htm-activity-cell {
-    aspect-ratio: 1 / 1;
-    border-radius: 2px;
-    min-height: 14px;
-}
-.wb-htm-activity-label {
-    font-size: 9px; color: #9ca3af; text-align: center;
-    align-self: center;
-}
-.wb-htm-activity-day { font-weight: 600; color: #d1d5db; }
 
 /* ────────── War Payouts modal — v5.0.28 ────────── */
 .wb-payouts-backdrop {
@@ -2336,83 +2293,6 @@ body.wb-chain-active {
     margin-left: 6px;
 }
 
-/* ----- Heatmap floating panel ----- */
-.wb-heatmap-panel {
-    position: fixed;
-    top: 100px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--wb-bg);
-    border: 1px solid var(--wb-border);
-    border-radius: 8px;
-    z-index: 1000000;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    color: var(--wb-text);
-    font-family: monospace;
-    /* v5.0.39: dropped min-width 420 → 360 and shrunk cell/label sizes
-       below so 7×24 + day labels actually fit on a 360-wide phone
-       without the left-side day labels getting clipped. */
-    min-width: 360px;
-    max-width: 95vw;
-}
-.wb-heatmap-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    cursor: grab;
-    border-bottom: 1px solid var(--wb-border);
-    font-size: 14px;
-    font-weight: bold;
-    color: var(--wb-call-green);
-    user-select: none;
-}
-.wb-heatmap-close {
-    background: none;
-    border: none;
-    color: var(--wb-text);
-    font-size: 20px;
-    cursor: pointer;
-    opacity: 0.6;
-    padding: 0 4px;
-}
-.wb-heatmap-close:hover { opacity: 1; }
-
-.wb-heatmap-grid {
-    display: grid;
-    /* v5.0.39: 36+24*16+gaps was ~494px wide and clipped on phones —
-       shrunk to ~328px (28+24*12+gaps) so the panel actually fits in
-       a 360vw viewport with the day labels staying visible. */
-    grid-template-columns: 28px repeat(24, 12px);
-    gap: 1px;
-    padding: 8px 10px;
-    justify-content: center;
-}
-.wb-heatmap-label {
-    font-size: 9px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0.6;
-}
-.wb-heatmap-day {
-    justify-content: flex-end;
-    padding-right: 3px;
-}
-.wb-heatmap-cell {
-    /* v5.0.39: 16→12px to fit the panel on narrow viewports. */
-    width: 12px;
-    height: 12px;
-    border-radius: 2px;
-    cursor: default;
-}
-.wb-heatmap-footer {
-    padding: 8px 14px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-top: 1px solid var(--wb-border);
-}
 /* ----- Scout Report modal ----- */
 .wb-scout-overlay {
     position: fixed;
@@ -11652,7 +11532,6 @@ body.wb-chain-active {
                         <span class="fo-war-timer-value" id="fo-war-timer-value">--:--</span>
                         <div class="fo-war-timer-detail" id="fo-war-timer-detail"></div>
                     </div>
-                    <button class="fo-settings-btn" id="fo-enemy-heatmap-btn" title="Activity Heatmap (us vs enemy, divergent)">&#x1F4C8;</button>
                     <button class="fo-settings-btn" id="fo-scout-btn" title="War Analysis">&#x1F50D;</button>
                     <button class="fo-settings-btn" id="fo-postwar-btn" title="Post-War Report">&#x1F4CB;</button>
                     <div class="fo-online-badge"><span class="fo-dot"></span><span id="fo-online-count">${state.ourFactionOnline ? state.ourFactionOnline.online : state.onlinePlayers.length} us</span> · <span id="fo-enemy-online-count">0 enemy</span></div>
@@ -11898,35 +11777,15 @@ body.wb-chain-active {
         // hydration without a separate Torn API call from our key.
         try { installTornFetchInterceptor(); } catch (_) {}
 
-        // v5.0.30: combined heatmap modal — single 📊 button opens a
-        // tabbed modal with Activity + Payouts heatmaps. Was two separate
-        // buttons (📊 + 💰) before; user requested one combined entry
-        // point matching the APK pattern.
+        // The 💰 button opens the War Payouts modal. It was briefly a
+        // two-tab modal (Activity + Payouts); the Activity tab was stripped
+        // in v5.0.32 and the activity feature removed entirely in 5.6.15,
+        // so this is payouts-only now despite the historical id.
         const heatmapHeaderBtn = document.getElementById('fo-heatmap-header-btn');
         if (heatmapHeaderBtn) {
             heatmapHeaderBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 openCombinedHeatmapModal();
-            });
-        }
-
-        // v5.0.33: 📈 button now opens a COMBINED activity heatmap
-        // (our faction + enemy, APK-style divergent green/red), not the
-        // enemy-only view it had before. Falls back to single-faction
-        // render if there's no current war / no enemy faction known.
-        const enemyHeatmapBtn = document.getElementById('fo-enemy-heatmap-btn');
-        if (enemyHeatmapBtn) {
-            enemyHeatmapBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (state.enemyFactionId) {
-                    toggleCombinedHeatmapPanel(
-                        state.myFactionId, state.myFactionName,
-                        state.enemyFactionId, state.enemyFactionName,
-                    );
-                } else {
-                    // No active war — just show our own heatmap.
-                    toggleHeatmapPanel(state.myFactionId, state.myFactionName);
-                }
             });
         }
 
@@ -11957,11 +11816,9 @@ body.wb-chain-active {
             });
         }
 
-        // Hide the floating gear and heatmap FABs when overlay is active
+        // Hide the floating settings gear when the overlay is active
         const fab = document.querySelector('.wb-settings-gear');
         if (fab) fab.style.display = 'none';
-        const heatmapFab = document.getElementById('wb-heatmap-toggle');
-        if (heatmapFab) heatmapFab.style.display = 'none';
 
         // Faction cooldowns panel — fetch initial snapshot + render,
         // then wire the collapse toggle on the section header.
@@ -13406,9 +13263,8 @@ body.wb-chain-active {
             startCallsOnlyMode();
         } else {
             log('Page: Unknown — running in passive mode');
-            // Re-create settings/heatmap if they were removed on an attack page
+            // Re-create the settings gear if it was removed on an attack page
             if (!document.querySelector('.wb-settings-gear')) createSettingsGear();
-            if (!document.getElementById('wb-heatmap-toggle')) createHeatmapButton();
         }
     }
 
@@ -13422,13 +13278,9 @@ body.wb-chain-active {
         // The pill belongs on faction/war pages only.
         const foBtn = document.getElementById('fo-activate-btn');
         if (foBtn) foBtn.remove();
-        // Remove settings gear and heatmap button from attack pages
+        // Remove the settings gear from attack pages
         const settingsGear = document.querySelector('.wb-settings-gear');
         if (settingsGear) settingsGear.remove();
-        const heatmapBtn = document.getElementById('wb-heatmap-toggle');
-        if (heatmapBtn) heatmapBtn.remove();
-        const heatmapPanel = document.getElementById('wb-heatmap-panel');
-        if (heatmapPanel) heatmapPanel.remove();
         // Restore Torn's main content if it was hidden
         const mainContent = document.getElementById('mainContainer')
             || document.querySelector('.content-wrapper');
@@ -15252,102 +15104,17 @@ body.wb-chain-active {
 
     // Notifications are now driven by the polling diff logic in pollOnce() (Section 6).
 
-    // =========================================================================
-    // SECTION 23: MEMBER ACTIVITY HEATMAP
-    // =========================================================================
-
-    const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-    /** Fetch heatmap data from the server. Returns the heatmap object or {}. */
-    async function fetchHeatmapData(factionId = null) {
-        try {
-            const qs = factionId ? `?factionId=${encodeURIComponent(factionId)}` : '';
-            const url = `${CONFIG.SERVER_URL}/api/heatmap${qs}`;
-            const res = await new Promise((resolve, reject) => {
-                httpRequest({
-                    method: 'GET',
-                    url,
-                    headers: { 'Authorization': `Bearer ${state.jwtToken}` },
-                    onload(r) {
-                        const d = safeParse(r.responseText);
-                        if (r.status >= 200 && r.status < 300) resolve(d);
-                        else reject(new Error((d && d.error) || `HTTP ${r.status}`));
-                    },
-                    onerror() { reject(new Error('Network error')); },
-                });
-            });
-            return (res && res.heatmap) || {};
-        } catch (e) {
-            warn('Failed to fetch heatmap:', e.message);
-            return {};
-        }
-    }
-
-    /** Ask the server to reset heatmap data. */
-    async function resetServerHeatmap(factionId = null) {
-        try {
-            const body = factionId ? { factionId } : {};
-            await postAction('/api/heatmap/remove', body);
-        } catch (e) {
-            warn('Failed to reset heatmap:', e.message);
-            showToast('Failed to reset heatmap: ' + e.message, 'error');
-        }
-    }
-
-    /**
-     * Convert server UTC heatmap data to the user's local timezone.
-     * Shifts day/hour buckets by the local UTC offset.
-     */
-    function utcHeatmapToLocal(utcData) {
-        const localData = {};
-        const offsetHours = -(new Date().getTimezoneOffset() / 60); // e.g. EDT = -4 → offset = -4
-
-        for (let d = 0; d < 7; d++) {
-            for (let h = 0; h < 24; h++) {
-                const bucket = (utcData[d] && utcData[d][h]) || null;
-                if (!bucket || bucket.samples === 0) continue;
-
-                let localH = h + offsetHours;
-                let localD = d;
-                if (localH >= 24) { localH -= 24; localD = (localD + 1) % 7; }
-                if (localH < 0) { localH += 24; localD = (localD + 6) % 7; }
-
-                if (!localData[localD]) localData[localD] = {};
-                if (!localData[localD][localH]) localData[localD][localH] = { total: 0, samples: 0 };
-                localData[localD][localH].total += bucket.total;
-                localData[localD][localH].samples += bucket.samples;
-            }
-        }
-        return localData;
-    }
-
-    function createHeatmapButton() {
-        if (document.getElementById('wb-heatmap-toggle')) return;
-        const btn = document.createElement('button');
-        btn.id = 'wb-heatmap-toggle';
-        btn.className = 'wb-heatmap-btn';
-        btn.textContent = '\uD83D\uDCCA';
-        btn.title = 'Member Activity Heatmap';
-        btn.style.display = 'block';
-        btn.addEventListener('click', () => toggleHeatmapPanel());
-        document.body.appendChild(btn);
-    }
-
     // ═══════════════════════════════════════════════════════════════════════
-    //  COMBINED HEATMAP MODAL — v5.0.30
+    //  WAR PAYOUTS MODAL — v5.0.30, payouts-only since v5.0.32
     //
-    //  Single 📊 button opens this modal. Two tabs: Activity (day×hour
-    //  grid of online %) and Payouts (member×war contribution heatmap).
-    //  Replaces the previous split where 📊 opened a draggable activity
-    //  panel and a separate 💰 button opened the payouts modal — user
-    //  asked for one combined entry point.
+    //  Opened by the 💰 header button. Once carried a second "Activity"
+    //  tab (a day×hour grid of online %) fed by /api/heatmap; that tab
+    //  went in v5.0.32 and the whole activity-heatmap feature — panel,
+    //  FAB, server routes and scraper — was removed in 5.6.15, because
+    //  the prewar report already gives enemy chain times. The function
+    //  name and the fo-heatmap-header-btn id are kept as-is rather than
+    //  renamed, so the GM keys and any muscle memory still line up.
     // ═══════════════════════════════════════════════════════════════════════
-    let _htmModalState = {
-        activeTab: GM_getValue('factionops_htm_tab', 'activity'),
-        activityData: null,
-        activityFetchedAt: 0,
-    };
-
     function openCombinedHeatmapModal() {
         const existing = document.getElementById('wb-payouts-backdrop');
         if (existing) { existing.remove(); return; }
@@ -15383,87 +15150,6 @@ body.wb-chain-active {
         document.getElementById('wb-payouts-close').addEventListener('click', close);
         // Straight to payouts.
         loadHtmPayouts();
-    }
-
-    async function loadHtmActivity() {
-        const pane = document.getElementById('wb-htm-pane-activity');
-        const meta = document.getElementById('wb-htm-meta');
-        if (!pane) return;
-        pane.innerHTML = '<div style="padding:24px;color:#9ca3af;font-size:13px;text-align:center;">Loading activity heatmap…</div>';
-        if (meta) meta.textContent = 'activity · loading';
-        try {
-            // Reuse cached data within 60s — heatmap aggregates slowly so
-            // a fresh fetch on every tab-switch is wasteful.
-            let raw;
-            if (_htmModalState.activityData && (Date.now() - _htmModalState.activityFetchedAt) < 60_000) {
-                raw = _htmModalState.activityData;
-            } else {
-                raw = await fetchHeatmapData(state.myFactionId);
-                _htmModalState.activityData = raw;
-                _htmModalState.activityFetchedAt = Date.now();
-            }
-            const data = utcHeatmapToLocal(raw); // shift to local TZ
-            renderHtmActivity(pane, data);
-            if (meta) meta.textContent = `activity · ${state.myFactionName || ''}`;
-        } catch (e) {
-            pane.innerHTML = `<div style="padding:24px;color:#ef4444;font-size:13px;text-align:center;">Activity heatmap failed: ${escapeHtml(e.message)}</div>`;
-            if (meta) meta.textContent = 'activity · failed';
-        }
-    }
-
-    function renderHtmActivity(pane, data) {
-        let totalSamples = 0, maxPct = 0;
-        for (let d = 0; d < 7; d++) {
-            for (let h = 0; h < 24; h++) {
-                const b = (data[d] && data[d][h]) || { total: 0, samples: 0, membersTotal: 0 };
-                totalSamples += b.samples;
-                if (b.samples > 0) {
-                    if (b.membersTotal > 0) {
-                        const pct = (b.total / b.membersTotal) * 100;
-                        if (pct > maxPct) maxPct = pct;
-                    } else {
-                        const avg = b.total / b.samples;
-                        if (avg > maxPct) maxPct = avg;
-                    }
-                }
-            }
-        }
-        if (totalSamples === 0) {
-            pane.innerHTML = '<div style="padding:24px;color:#9ca3af;font-size:13px;text-align:center;">No activity data yet — server collects it as members are seen online.</div>';
-            return;
-        }
-        let html = `<div class="wb-payouts-section-label">Hour-of-week activity (your local time) — based on ${totalSamples.toLocaleString()} samples</div>`;
-        html += '<div class="wb-htm-activity-grid">';
-        // Corner spacer + hour labels row
-        html += '<div></div>';
-        for (let h = 0; h < 24; h++) {
-            html += `<div class="wb-htm-activity-label">${h % 3 === 0 ? h : ''}</div>`;
-        }
-        // Day rows
-        const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-        for (let d = 0; d < 7; d++) {
-            html += `<div class="wb-htm-activity-label wb-htm-activity-day">${DAYS[d]}</div>`;
-            for (let h = 0; h < 24; h++) {
-                const b = (data[d] && data[d][h]) || { total: 0, samples: 0, membersTotal: 0 };
-                if (b.samples === 0) {
-                    html += '<div class="wb-htm-activity-cell" style="background:rgba(255,255,255,0.04);"></div>';
-                    continue;
-                }
-                const avg = b.total / b.samples;
-                const avgMembers = b.membersTotal > 0 ? b.membersTotal / b.samples : 0;
-                const pct = avgMembers > 0 ? (avg / avgMembers) * 100 : avg;
-                const intensity = maxPct > 0 ? pct / maxPct : 0;
-                let bg;
-                if (intensity >= 0.95) bg = `rgba(255,118,117,${(intensity*0.9+0.1).toFixed(2)})`;
-                else if (intensity >= 0.8) bg = `rgba(253,203,110,${(intensity*0.9+0.1).toFixed(2)})`;
-                else bg = `rgba(0,184,148,${(intensity*0.9+0.1).toFixed(2)})`;
-                const tip = `${DAYS[d]} ${String(h).padStart(2,'0')}:00 — avg ${avg.toFixed(1)}${avgMembers>0?` of ${Math.round(avgMembers)} (${pct.toFixed(0)}%)`:''} · ${b.samples} samples`;
-                html += `<div class="wb-htm-activity-cell" style="background:${bg};" title="${escapeHtml(tip)}"></div>`;
-            }
-        }
-        html += '</div>';
-        html += `<div style="font-size:10px;color:#6b7280;margin-top:6px;text-align:center;">Green → orange → red as activity climbs. Hover any cell for the exact %.</div>`;
-        pane.innerHTML = html;
     }
 
     async function loadHtmPayouts() {
@@ -16047,445 +15733,6 @@ body.wb-chain-active {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  COMBINED ACTIVITY HEATMAP — v5.0.34
-    //
-    //  Mirrors the warboard-native APK's HeatmapTab: ONE day×hour grid
-    //  showing both factions' activity simultaneously. Each cell is
-    //  diverging-colored: green if WE're more active that hour, red if
-    //  THEY are, neutral grey when even / no data. Intensity scales
-    //  with |delta| / max-abs-delta across the matrix.
-    // ═══════════════════════════════════════════════════════════════════════
-    function toggleCombinedHeatmapPanel(ourId, ourName, enemyId, enemyName) {
-        const existing = document.getElementById('wb-heatmap-panel');
-        if (existing) {
-            // Toggle off if it's already showing the combined view for
-            // the same matchup; otherwise re-render with the new pair.
-            const sig = `${ourId}-vs-${enemyId}`;
-            if (existing.dataset.combinedSig === sig) {
-                existing.remove();
-                return;
-            }
-            existing.remove();
-        }
-        renderCombinedHeatmapPanel(ourId, ourName, enemyId, enemyName);
-    }
-
-    async function renderCombinedHeatmapPanel(ourId, ourName, enemyId, enemyName) {
-        const [oursRaw, theirsRaw] = await Promise.all([
-            fetchHeatmapData(ourId).catch(() => ({})),
-            fetchHeatmapData(enemyId).catch(() => ({})),
-        ]);
-        const ours = utcHeatmapToLocal(oursRaw);
-        const theirs = utcHeatmapToLocal(theirsRaw);
-
-        // Per-cell pct (active members / total members), then delta.
-        const cellPct = (data, d, h) => {
-            const b = (data[d] && data[d][h]) || null;
-            if (!b || b.samples === 0) return null;
-            const avg = b.total / b.samples;
-            const avgMembers = b.membersTotal > 0 ? b.membersTotal / b.samples : 0;
-            return avgMembers > 0 ? (avg / avgMembers) * 100 : avg;
-        };
-
-        // Find max absolute delta for normalization.
-        let maxAbsDelta = 0;
-        let totalSamples = 0;
-        for (let d = 0; d < 7; d++) {
-            for (let h = 0; h < 24; h++) {
-                const o = cellPct(ours, d, h);
-                const t = cellPct(theirs, d, h);
-                const ob = (ours[d] && ours[d][h]) || null;
-                const tb = (theirs[d] && theirs[d][h]) || null;
-                if (ob) totalSamples += ob.samples;
-                if (tb) totalSamples += tb.samples;
-                if (o == null && t == null) continue;
-                const delta = (o || 0) - (t || 0);
-                if (Math.abs(delta) > maxAbsDelta) maxAbsDelta = Math.abs(delta);
-            }
-        }
-        if (maxAbsDelta < 1) maxAbsDelta = 1;
-
-        const panel = document.createElement('div');
-        panel.id = 'wb-heatmap-panel';
-        panel.className = 'wb-heatmap-panel';
-        panel.dataset.combinedSig = `${ourId}-vs-${enemyId}`;
-
-        // Restore saved position. Match renderHeatmapPanel exactly:
-        // set left/top WITHOUT touching transform — the CSS keeps
-        // translateX(-50%) so offsetLeft / saved-left stays consistent
-        // with how the single-faction panel persists position.
-        const savedPos = GM_getValue('factionops_heatmap_pos', null);
-        if (savedPos) {
-            try {
-                const pos = typeof savedPos === 'string' ? JSON.parse(savedPos) : savedPos;
-                if (pos && Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
-                    panel.style.left = pos.left + 'px';
-                    panel.style.top = pos.top + 'px';
-                }
-            } catch (_) {}
-        }
-
-        // Header (draggable)
-        const header = document.createElement('div');
-        header.className = 'wb-heatmap-header';
-        header.style.cursor = 'move';
-        header.innerHTML = `
-            <div style="display:flex;align-items:center;gap:8px;">
-                <span style="font-size:13px;font-weight:600;">📈 Activity — combined</span>
-                <span style="font-size:10px;color:#22c55e;font-weight:700;">${escapeHtml(ourName || 'Us')}</span>
-                <span style="font-size:10px;color:#9ca3af;">vs</span>
-                <span style="font-size:10px;color:#ef4444;font-weight:700;">${escapeHtml(enemyName || 'Enemy')}</span>
-            </div>
-            <button class="wb-heatmap-close" title="Close">✕</button>
-        `;
-        panel.appendChild(header);
-        header.querySelector('.wb-heatmap-close').addEventListener('click', () => panel.remove());
-
-        // Drag handlers — mirror the single-faction panel exactly so
-        // both panels round-trip position the same way (offsetLeft/Top
-        // is the un-translated value; CSS translateX(-50%) handles the
-        // visual centering offset).
-        let isDragging = false, dragOffsetX = 0, dragOffsetY = 0;
-        header.addEventListener('mousedown', (e) => {
-            if (e.target.closest('.wb-heatmap-close')) return;
-            isDragging = true;
-            dragOffsetX = e.clientX - panel.offsetLeft;
-            dragOffsetY = e.clientY - panel.offsetTop;
-            e.preventDefault();
-        });
-        document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            panel.style.left = (e.clientX - dragOffsetX) + 'px';
-            panel.style.top = (e.clientY - dragOffsetY) + 'px';
-        });
-        document.addEventListener('mouseup', () => {
-            if (isDragging) {
-                isDragging = false;
-                GM_setValue('factionops_heatmap_pos', JSON.stringify({
-                    left: panel.offsetLeft, top: panel.offsetTop,
-                }));
-            }
-        });
-
-        if (totalSamples === 0) {
-            const msg = document.createElement('div');
-            msg.style.cssText = 'padding:16px;font-size:12px;opacity:0.7;text-align:center;';
-            msg.textContent = 'No activity data yet for either faction.';
-            panel.appendChild(msg);
-            document.body.appendChild(panel);
-            return;
-        }
-
-        // Diverging-color legend
-        const legend = document.createElement('div');
-        legend.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 12px 4px;font-size:10px;color:#9ca3af;';
-        legend.innerHTML = `
-            <span style="color:#ef4444;font-weight:700;">Enemy</span>
-            <div style="flex:1;height:8px;border-radius:2px;background:linear-gradient(to right,#ef4444,rgba(255,255,255,0.2),#22c55e);"></div>
-            <span style="color:#22c55e;font-weight:700;">Us</span>
-        `;
-        panel.appendChild(legend);
-
-        // Grid
-        const grid = document.createElement('div');
-        grid.className = 'wb-heatmap-grid';
-        grid.appendChild(document.createElement('div')); // corner spacer
-        for (let h = 0; h < 24; h++) {
-            const lbl = document.createElement('div');
-            lbl.className = 'wb-heatmap-label wb-heatmap-hour';
-            lbl.textContent = h % 3 === 0 ? h : '';
-            grid.appendChild(lbl);
-        }
-        const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-        for (let d = 0; d < 7; d++) {
-            const dayLbl = document.createElement('div');
-            dayLbl.className = 'wb-heatmap-label wb-heatmap-day';
-            dayLbl.textContent = DAYS[d];
-            grid.appendChild(dayLbl);
-            for (let h = 0; h < 24; h++) {
-                const cell = document.createElement('div');
-                cell.className = 'wb-heatmap-cell';
-                const o = cellPct(ours, d, h);
-                const t = cellPct(theirs, d, h);
-                if (o == null && t == null) {
-                    cell.style.backgroundColor = 'rgba(255,255,255,0.04)';
-                    cell.title = `${DAYS[d]} ${String(h).padStart(2, '0')}:00 — no data`;
-                } else {
-                    const op = o || 0, tp = t || 0;
-                    const delta = op - tp; // + = us more active
-                    const intensity = Math.min(1, Math.abs(delta) / maxAbsDelta);
-                    const alpha = (0.18 + intensity * 0.72).toFixed(2);
-                    if (delta > 0.5) {
-                        cell.style.backgroundColor = `rgba(34,197,94,${alpha})`;
-                    } else if (delta < -0.5) {
-                        cell.style.backgroundColor = `rgba(239,68,68,${alpha})`;
-                    } else {
-                        cell.style.backgroundColor = 'rgba(255,255,255,0.10)';
-                    }
-                    cell.title = `${DAYS[d]} ${String(h).padStart(2, '0')}:00\n` +
-                        `Us: ${op.toFixed(1)}%  ·  Enemy: ${tp.toFixed(1)}%\n` +
-                        `Δ: ${delta > 0 ? '+' : ''}${delta.toFixed(1)} pts`;
-                }
-                grid.appendChild(cell);
-            }
-        }
-        panel.appendChild(grid);
-
-        // Footer
-        const footer = document.createElement('div');
-        footer.className = 'wb-heatmap-footer';
-        footer.innerHTML = `<span style="font-size:11px;opacity:0.6;">${totalSamples.toLocaleString()} total samples · max Δ ${maxAbsDelta.toFixed(1)} pts</span>`;
-        panel.appendChild(footer);
-
-        document.body.appendChild(panel);
-    }
-
-    function toggleHeatmapPanel(factionId = null, factionName = null) {
-        const existing = document.getElementById('wb-heatmap-panel');
-        if (existing) {
-            const currentId = existing.dataset.factionId || '';
-            const targetId = factionId ? String(factionId) : '';
-            existing.remove();
-            if (currentId === targetId) return;
-        }
-        renderHeatmapPanel(factionId, factionName);
-    }
-
-    async function renderHeatmapPanel(factionId = null, factionName = null) {
-        const existing = document.getElementById('wb-heatmap-panel');
-        if (existing) existing.remove();
-
-        const data = await fetchHeatmapData(factionId); // Already in UTC = TCT
-
-        // Find max average percentage for color scaling
-        let maxPct = 0;
-        let totalSamples = 0;
-        for (let d = 0; d < 7; d++) {
-            for (let h = 0; h < 24; h++) {
-                const bucket = (data[d] && data[d][h]) || { total: 0, samples: 0, membersTotal: 0 };
-                totalSamples += bucket.samples;
-                if (bucket.samples > 0) {
-                    // Use stored membersTotal if available, fallback to 1 to avoid div by zero
-                    const membersTotal = bucket.membersTotal || 0;
-                    if (membersTotal > 0) {
-                        const pct = (bucket.total / membersTotal) * 100;
-                        if (pct > maxPct) maxPct = pct;
-                    } else {
-                        // Compatibility for old data: use raw count for maxAvg (we'll handle scaling below)
-                        const avg = bucket.total / bucket.samples;
-                        if (avg > maxPct) maxPct = avg;
-                    }
-                }
-            }
-        }
-
-        const panel = document.createElement('div');
-        panel.id = 'wb-heatmap-panel';
-        panel.className = 'wb-heatmap-panel';
-        if (factionId) panel.dataset.factionId = factionId;
-
-        // Restore saved position
-        const savedPos = GM_getValue('factionops_heatmap_pos', null);
-        if (savedPos) {
-            try {
-                const pos = typeof savedPos === 'string' ? JSON.parse(savedPos) : savedPos;
-                panel.style.left = pos.left + 'px';
-                panel.style.top = pos.top + 'px';
-            } catch (e) { /* ignore */ }
-        }
-
-        // Header
-        const header = document.createElement('div');
-        header.className = 'wb-heatmap-header';
-        const title = factionName ? `Activity: ${factionName}` : 'Member Activity Heatmap';
-        header.innerHTML = `<span>${title} <span style="font-size:10px;opacity:0.5;">(TCT)</span></span>`;
-        const closeBtn = document.createElement('button');
-        closeBtn.textContent = '\u00D7';
-        closeBtn.className = 'wb-heatmap-close';
-        closeBtn.addEventListener('click', () => panel.remove());
-        header.appendChild(closeBtn);
-        panel.appendChild(header);
-
-        // Make panel draggable by header
-        let isDragging = false, dragOffsetX = 0, dragOffsetY = 0;
-        header.addEventListener('mousedown', (e) => {
-            if (e.target === closeBtn) return;
-            isDragging = true;
-            dragOffsetX = e.clientX - panel.offsetLeft;
-            dragOffsetY = e.clientY - panel.offsetTop;
-            e.preventDefault();
-        });
-        document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            panel.style.left = (e.clientX - dragOffsetX) + 'px';
-            panel.style.top = (e.clientY - dragOffsetY) + 'px';
-        });
-        document.addEventListener('mouseup', () => {
-            if (isDragging) {
-                isDragging = false;
-                GM_setValue('factionops_heatmap_pos', JSON.stringify({
-                    left: panel.offsetLeft,
-                    top: panel.offsetTop,
-                }));
-            }
-        });
-
-        if (totalSamples === 0) {
-            const msg = document.createElement('div');
-            msg.style.cssText = 'padding:16px;font-size:12px;opacity:0.7;text-align:center;';
-            msg.textContent = 'No activity data yet. The server collects data automatically when a faction API key is set.';
-            panel.appendChild(msg);
-            document.body.appendChild(panel);
-            return;
-        }
-
-        // Grid container
-        const grid = document.createElement('div');
-        grid.className = 'wb-heatmap-grid';
-
-        // Corner spacer
-        const spacer = document.createElement('div');
-        spacer.className = 'wb-heatmap-label';
-        grid.appendChild(spacer);
-
-        // Hour labels (every 3rd hour)
-        for (let h = 0; h < 24; h++) {
-            const lbl = document.createElement('div');
-            lbl.className = 'wb-heatmap-label wb-heatmap-hour';
-            lbl.textContent = h % 3 === 0 ? h : '';
-            grid.appendChild(lbl);
-        }
-
-        // Rows
-        for (let d = 0; d < 7; d++) {
-            // Day label
-            const dayLbl = document.createElement('div');
-            dayLbl.className = 'wb-heatmap-label wb-heatmap-day';
-            dayLbl.textContent = DAY_LABELS[d];
-            grid.appendChild(dayLbl);
-
-            for (let h = 0; h < 24; h++) {
-                const cell = document.createElement('div');
-                cell.className = 'wb-heatmap-cell';
-                const bucket = (data[d] && data[d][h]) || { total: 0, samples: 0, membersTotal: 0 };
-                
-                const avg = bucket.samples > 0 ? bucket.total / bucket.samples : 0;
-                const avgMembers = (bucket.membersTotal && bucket.samples > 0) ? bucket.membersTotal / bucket.samples : 0;
-                const pct = avgMembers > 0 ? (avg / avgMembers) * 100 : 0;
-                
-                // Color intensity logic: scale based on percentage relative to maxPct
-                // If no member data (old records), fallback to raw count intensity
-                let intensity = 0;
-                if (avgMembers > 0) {
-                    intensity = maxPct > 0 ? pct / maxPct : 0;
-                } else {
-                    intensity = maxPct > 0 ? avg / maxPct : 0;
-                }
-
-                if (bucket.samples === 0) {
-                    cell.style.backgroundColor = 'rgba(255,255,255,0.05)';
-                } else if (intensity >= 0.95) {
-                    // Top 5% peak activity - High contrast Red/Pink
-                    cell.style.backgroundColor = `rgba(255, 118, 117, ${(intensity * 0.9 + 0.1).toFixed(2)})`;
-                    cell.style.boxShadow = '0 0 8px rgba(255, 118, 117, 0.4)';
-                    cell.style.zIndex = '1';
-                } else if (intensity >= 0.8) {
-                    // Very high activity - Yellow/Orange
-                    cell.style.backgroundColor = `rgba(253, 203, 110, ${(intensity * 0.9 + 0.1).toFixed(2)})`;
-                } else {
-                    // Normal activity - Green gradient
-                    cell.style.backgroundColor = `rgba(0, 184, 148, ${(intensity * 0.9 + 0.1).toFixed(2)})`;
-                }
-                
-                let tooltip = `${DAY_LABELS[d]} ${String(h).padStart(2, '0')}:00 TCT\n`;
-                tooltip += `Avg Active: ${avg.toFixed(1)}`;
-                if (avgMembers > 0) {
-                    tooltip += ` / ${Math.round(avgMembers)} (${pct.toFixed(1)}%)`;
-                }
-                tooltip += `\nTotal Samples: ${bucket.samples}`;
-                
-                cell.title = tooltip;
-                grid.appendChild(cell);
-            }
-        }
-        panel.appendChild(grid);
-
-        // Legend
-        const legend = document.createElement('div');
-        legend.style.cssText = 'display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 12px; padding: 10px 16px 2px; font-size: 11px; color: var(--wb-text-muted); border-top: 1px solid rgba(255,255,255,0.05); margin-top: 8px;';
-        
-        const p25 = (maxPct * 0.25).toFixed(0);
-        const p50 = (maxPct * 0.50).toFixed(0);
-        const p80 = (maxPct * 0.80).toFixed(0);
-        const p95 = (maxPct * 0.95).toFixed(0);
-
-        legend.innerHTML = `
-            <div style="display:flex; align-items:center; gap:4px;">
-                <div style="width:10px;height:10px;background:rgba(255,255,255,0.05);border-radius:2px;"></div>
-                <span>No Data</span>
-            </div>
-            <div style="display:flex; align-items:center; gap:12px; margin-left: 8px;">
-                <div style="display:flex; align-items:center; gap:4px;">
-                    <div style="width:10px;height:10px;background:rgba(0,184,148,0.2);border-radius:2px;"></div>
-                    <span>&gt;0%</span>
-                </div>
-                <div style="display:flex; align-items:center; gap:4px;">
-                    <div style="width:10px;height:10px;background:rgba(0,184,148,0.6);border-radius:2px;"></div>
-                    <span>~${p25}%</span>
-                </div>
-                <div style="display:flex; align-items:center; gap:4px;">
-                    <div style="width:10px;height:10px;background:rgba(0,184,148,1.0);border-radius:2px;"></div>
-                    <span>~${p50}%</span>
-                </div>
-                <div style="display:flex; align-items:center; gap:4px;">
-                    <div style="width:10px;height:10px;background:rgba(253,203,110,0.9);border-radius:2px;"></div>
-                    <span>~${p80}%+</span>
-                </div>
-                <div style="display:flex; align-items:center; gap:4px;">
-                    <div style="width:10px;height:10px;background:rgba(255,118,117,1.0);box-shadow:0 0 4px rgba(255,118,117,0.5);border-radius:2px;"></div>
-                    <span>Peak (${p95}%+)</span>
-                </div>
-            </div>
-        `;
-        panel.appendChild(legend);
-
-        // Footer
-        const footer = document.createElement('div');
-        footer.className = 'wb-heatmap-footer';
-        footer.innerHTML = `<span style="font-size:11px;opacity:0.6;">Based on ${totalSamples} total samples</span>`;
-        
-        // Only show reset if viewing our own faction heatmap, or we are a leader viewing the current enemy's heatmap
-        const isOwnFaction = !factionId || String(factionId) === String(state.myFactionId);
-        const isCurrentEnemy = String(factionId) === String(state.enemyFactionId);
-        const canReset = isLeader() && (isOwnFaction || isCurrentEnemy);
-        
-        const resetBtn = document.createElement('button');
-        if (canReset) {
-            resetBtn.className = 'wb-btn wb-btn-sm wb-btn-danger';
-            resetBtn.textContent = 'Reset Data';
-            resetBtn.addEventListener('click', async () => {
-                if (!confirm('Are you sure you want to permanently reset this heatmap data?')) return;
-                await resetServerHeatmap(factionId);
-                panel.remove();
-                renderHeatmapPanel(factionId, factionName);
-            });
-        }
-
-        const refreshBtn = document.createElement('button');
-        refreshBtn.className = 'wb-btn wb-btn-sm';
-        refreshBtn.textContent = 'Refresh';
-        refreshBtn.addEventListener('click', () => {
-            panel.remove();
-            renderHeatmapPanel(factionId, factionName);
-        });
-        footer.appendChild(refreshBtn);
-        if (canReset) footer.appendChild(resetBtn);
-        panel.appendChild(footer);
-
-        document.body.appendChild(panel);
-    }
-
     // =========================================================================
     // SECTION 27: MINI PROFILE CARDS (CommandCenter) — REMOVED
     // Using Torn's native profile card instead; see rebindTornProfileCards().
@@ -16510,11 +15757,6 @@ body.wb-chain-active {
         const isWarOrAttack = url.includes('factions.php') || url.includes('war.php') || url.includes('sid=attack');
         if (!isWarOrAttack) {
             createSettingsGear();
-        }
-
-        // 3b. Create heatmap toggle button (only on non-war, non-attack pages)
-        if (!isWarOrAttack) {
-            createHeatmapButton();
         }
 
         // 4. Set up keyboard shortcuts
