@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.11
+// @version      0.12.12
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,37 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.12.12 - Calibration stops going blank, and the projections finally use it.
+*
+*         Nothing ever reset it. calibration() is recomputed every render over
+*         a rolling 14 complete days and reported NOTHING unless 7 of them
+*         qualified, so a war week — which deletes qualifying days — looked
+*         exactly like a wipe. Four changes:
+*
+*         The two factors are gated separately. `model` needs a day a stat
+*         moved; `usage` needs only a day the ledger ran, which includes war
+*         days, stack days and days you never trained. Gating them together
+*         threw away a spend measurement sitting in a full 14-day ledger.
+*
+*         A factor that stops qualifying now keeps its last measured value,
+*         labelled with its age, instead of snapping to a flat 1.0.
+*
+*         A day that went multi-stat only because attacking moved a stat you
+*         did not train is no longer discarded. The unlogged stat is excluded
+*         from both sides and the trained stats are still measured; the
+*         energy reconciliation still rejects the day if gym energy is
+*         genuinely unaccounted for.
+*
+*         The 7/30/90 projections were the one forward-looking number taking
+*         raw energy while the goal and gym ETAs were corrected — and the
+*         calibration card claimed to govern them. Now they are scaled by
+*         both factors, the uncorrected 90d is shown beside them, and the
+*         card says which number each factor actually touches.
+*
+*         Also: stats are no longer stored through `| 0`, which wrapped at
+*         2,147,483,648 and permanently excluded a stat past that from the
+*         model.
+*
 * 0.12.10 - "Not reachable at this rate" is fixed, not reworded.
 *
 *         shareCap holds a stat to `milestone x its share / the largest
@@ -2266,7 +2297,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.11";
+  var GC_VERSION = "0.12.12";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -2740,6 +2771,9 @@
     energySecPerE: 0,
     lastSeen: null,
     energyKnown: false,
+    // Last calibration values that actually qualified, so a failed quorum
+    // degrades to a stale number instead of silently becoming 1.0.
+    calLast: {},
     ledger: [],
     prices: {},
     gymsOwned: [],
@@ -4445,7 +4479,8 @@
   }
 
   function calibration() {
-    var out = { ok: false, days: 0, looked: 0, model: 1, usage: 1,
+    var out = { ok: false, modelOk: false, usageOk: false,
+                days: 0, looked: 0, model: 1, usage: 1,
                 actual: 0, predicted: 0, used: 0, wasted: 0, off: 0, uDays: 0,
                 // How many of the measured days needed the log's per-stat
                 // split. Shown, because a day measured that way rests on one
@@ -4506,14 +4541,20 @@
       // a measured one, never a measured day into a wrong one.
       var split = mixedDayEnergy(byStat[d], moved.map(function (m) { return m.k; }), e);
       if (!split) continue;
-      var pSum = 0, gSum = 0, bad = false;
+      // Only the stats the log actually has energy for. A stat that moved
+      // without gym energy behind it (attacked up mid-war) is excluded from
+      // BOTH sides -- counting its gain against a prediction that never
+      // included it would read as the model under-predicting.
+      var pSum = 0, gSum = 0, bad = false, counted = 0;
       moved.forEach(function (m) {
+        if (!(split[m.k] > 0)) return;
         var pm = predictDay(m.from, split[m.k], m.k, state.gymName);
         if (!(pm > 0)) { bad = true; return; }
         pSum += pm;
         gSum += m.g;
+        counted += 1;
       });
-      if (bad || !(pSum > 0)) continue;
+      if (bad || !counted || !(pSum > 0)) continue;
       out.actual += gSum;
       out.predicted += pSum;
       out.days += 1;
@@ -4532,21 +4573,74 @@
       out.off += byDay[d].off || 0;
     }
 
-    if (out.days < CAL_MIN_DAYS) {
-      out.reason = out.days + " of " + CAL_MIN_DAYS + " days measured";
-      return out;
-    }
-    if (!(out.predicted > 0) || !(out.used + out.wasted + out.off > 0)) {
-      out.reason = "not enough recorded energy yet";
-      return out;
-    }
-    out.model = calClamp(out.actual / out.predicted, CAL_MODEL_LO, CAL_MODEL_HI);
+    // The two factors are gated SEPARATELY, and this is the whole point.
+    //
+    // `model` asks "is the gain arithmetic right?", so it needs days where a
+    // stat actually moved. `usage` asks "do you spend what you generate?", and
+    // the ledger answers that on every day the script ran -- including war
+    // days, stack days and days you never touched the gym, which are exactly
+    // the days it most wants to see.
+    //
+    // Gating them together meant a war week, which deletes GAIN days, also
+    // threw away a SPEND measurement that was sitting right there in a full
+    // 14-day ledger. The card went dark all at once instead of keeping the
+    // half it still knew.
+    var spend = out.used + out.wasted + out.off;
+    out.modelOk = out.days >= CAL_MIN_DAYS && out.predicted > 0;
+    out.usageOk = out.uDays >= CAL_MIN_DAYS && spend > 0;
+
+    if (out.modelOk) out.model = calClamp(out.actual / out.predicted, CAL_MODEL_LO, CAL_MODEL_HI);
     // Energy spent attacking counts against you here exactly like a full bar:
     // it is energy that did not reach the gym, and a gym ETA built as though it
     // had is optimistic on precisely the days you warred hardest.
-    out.usage = calClamp(out.used / (out.used + out.wasted + out.off), CAL_USAGE_LO, CAL_USAGE_HI);
-    out.ok = true;
+    if (out.usageOk) out.usage = calClamp(out.used / (out.used + out.wasted + out.off), CAL_USAGE_LO, CAL_USAGE_HI);
+
+    calRemember(out, today);
+
+    // `ok` keeps its old meaning -- both factors live and freshly measured --
+    // because callers that show "calibrated" wording still mean that.
+    out.ok = out.modelOk && out.usageOk;
+    if (!out.modelOk) out.reason = out.days + " of " + CAL_MIN_DAYS + " days measured";
+    else if (!out.usageOk) out.reason = "not enough recorded energy yet";
     return out;
+  }
+
+  // Calibration is recomputed from scratch on every render and never stored,
+  // so a factor that stops qualifying used to snap back to a flat 1 -- the
+  // "it reset itself" the user sees. Nothing was ever erased; the quorum just
+  // failed. So: keep the last value that DID qualify and keep using it,
+  // labelled with its age. Stale and honest beats silently pretending the
+  // correction is 1.0.
+  function calRemember(out, today) {
+    var mem = state.calLast || {};
+    var dirty = false;
+
+    function keep(name, dayCount) {
+      if (out[name + "Ok"]) {
+        var prev = mem[name];
+        // Written at most once a day, or when the value really moves. This
+        // runs inside render(); it must not touch storage on every paint.
+        if (!prev || prev.at !== today || Math.abs(prev.v - out[name]) > 0.005) {
+          mem[name] = { v: out[name], at: today, days: dayCount };
+          dirty = true;
+        }
+        return;
+      }
+      var held = mem[name];
+      if (!held || !(held.v > 0)) return;
+      out[name] = held.v;
+      out[name + "Stale"] = Math.max(0, today - held.at);
+      out[name + "Held"] = true;
+      out[name + "HeldDays"] = held.days || 0;
+    }
+
+    keep("model", out.days);
+    keep("usage", out.uDays);
+
+    if (dirty) {
+      state.calLast = mem;
+      storeSet("calLast", mem);
+    }
   }
 
   // --- schedule --------------------------------------------------------------
@@ -5924,8 +6018,25 @@
           fmtDays(cost) + " to " + STAT_LABEL[plan.next.k] + "."
           + "</p>"
         : "") +
-      '<p class="muted" style="margin:8px 0 0">Projections are scaled by both figures, measured over ' +
-      cal.days + " day" + (cal.days === 1 ? "" : "s") + " of the last " + CAL_WINDOW +
+      // The two factors now carry their own day counts, because they are
+      // measured over different days: the gain model needs a day a stat moved,
+      // the usage figure needs only a day the ledger ran. Printing one count
+      // for both was why a war week looked like the whole card had reset.
+      '<p class="muted" style="margin:8px 0 0">Gain model from ' + cal.days + " day" +
+      (cal.days === 1 ? "" : "s") + ", energy use from " + cal.uDays + " day" +
+      (cal.uDays === 1 ? "" : "s") + ", both out of the last " + CAL_WINDOW + ". " +
+      (cal.modelHeld
+        ? "Gain model is last measured, " + cal.modelStale + "d ago — held rather than discarded. "
+        : "") +
+      (cal.usageHeld
+        ? "Energy use is last measured, " + cal.usageStale + "d ago — held rather than discarded. "
+        : "") +
+      "</p>" +
+      // Exact about WHICH number each factor touches. The old wording claimed
+      // both scaled "projections" when the 7/30/90 figures used neither, which
+      // is what sent the reader looking for a bug that was in the sentence.
+      '<p class="muted" style="margin:8px 0 0">Both figures scale the 7/30/90 projections ' +
+      "and the goal ETAs. The next-gym ETA uses energy use only" +
       ". Every point that leaves your bar counts as spent, so attacks land here too." +
       "</p></div>"
     );
@@ -6360,11 +6471,21 @@
       if (moved.indexOf(keys[i]) === -1) return null;
       total += split[keys[i]];
     }
-    // A stat that moved with nothing logged against it gained from somewhere
-    // the log cannot see, so any split would be invented.
+    // A stat that moved with NOTHING logged against it did not get there on
+    // gym energy -- overwhelmingly it was attacked up during a war. That used
+    // to void the whole day, so a day you trained perfectly well was thrown
+    // away BECAUSE you also fought. Now the unlogged stat is simply left out
+    // of the comparison and the trained stats are still measured.
+    //
+    // The energy reconciliation below is what makes this safe: every point of
+    // gym energy must still be accounted for by the logged stats. If a stat
+    // moved on gym energy whose log entry is missing, `total` falls short of
+    // `used` and the day is rejected here exactly as before.
+    var logged = 0;
     for (i = 0; i < moved.length; i++) {
-      if (!(split[moved[i]] > 0)) return null;
+      if (split[moved[i]] > 0) logged += 1;
     }
+    if (!logged) return null;
     if (Math.abs(total - (Number(used) || 0)) > MIXED_SLACK) return null;
     return split;
   }
@@ -8086,7 +8207,12 @@
   function recordHistory() {
     var st = state.stats;
     if (!st) return;
-    var v = [st.str | 0, st.def | 0, st.spe | 0, st.dex | 0];
+    // NOT `| 0`. That is an int32 coercion and it wraps at 2,147,483,648:
+    // past that the stored value goes negative, predictDay bails on
+    // `!(startStat > 0)`, and the stat is excluded from the model FOREVER --
+    // no number of good days can recover it.
+    var v = [Math.round(st.str) || 0, Math.round(st.def) || 0,
+             Math.round(st.spe) || 0, Math.round(st.dex) || 0];
     if (!(v[0] || v[1] || v[2] || v[3])) return; // never record a failed read as a real zero
     var d = dayKey(Date.now());
     var last = state.hist.length ? state.hist[state.hist.length - 1] : null;
@@ -11287,9 +11413,21 @@
     applyGoalFocus();
     var c = coach();
     var e = dailyEnergy();
-    var g7 = projectDays(7, e.total, state.focus);
-    var g30 = projectDays(30, e.total, state.focus);
-    var g90 = projectDays(90, e.total, state.focus);
+    // Calibrated, like every other forward-looking number on the panel. These
+    // were the one holdout: they took raw e.total while the goal ETAs and the
+    // gym-unlock ETA were already corrected, so the same panel showed two
+    // different futures and the calibration card claimed to govern both.
+    // `usage` scales the energy that reaches the gym; `model` scales the gain
+    // that energy actually produced.
+    var calP = calibration();
+    var eProj = e.total * calP.usage;
+    var g7 = projectDays(7, eProj, state.focus) * calP.model;
+    var g30 = projectDays(30, eProj, state.focus) * calP.model;
+    var g90 = projectDays(90, eProj, state.focus) * calP.model;
+    // Kept so the card can show what the uncorrected figure would have been.
+    // A reader who sees only the corrected number cannot tell how big the
+    // correction is, and this one is routinely 20-30%.
+    var g90Raw = projectDays(90, e.total, state.focus);
     var tot = state.stats.str + state.stats.def + state.stats.spe + state.stats.dex;
     var live = state.status === "live";
     // Not gated on war stack any more: stacking is exactly when you want to be
@@ -11460,7 +11598,14 @@
       '<div class="proj"><span>7d</span><div class="bar"><i style="width:' + Math.min(100, (g7 / maxP) * 100) + '%"></i></div><b>+' + fmt(g7) + "</b></div>" +
       '<div class="proj"><span>30d</span><div class="bar"><i style="width:' + Math.min(100, (g30 / maxP) * 100) + '%"></i></div><b>+' + fmt(g30) + "</b></div>" +
       '<div class="proj"><span>90d</span><div class="bar"><i style="width:100%"></i></div><b>+' + fmt(g90) + "</b></div>" +
-      '<div class="muted" style="margin-top:8px">Now ' + fmt(tot) + "</div></div>";
+      '<div class="muted" style="margin-top:8px">Now ' + fmt(tot) +
+      // Showing the uncorrected figure alongside is what stops the 90-day
+      // number appearing to jump for no reason the day a factor goes live or
+      // stale. The size of the gap IS the information.
+      (Math.abs(g90Raw - g90) > Math.max(1, g90 * 0.02)
+        ? ' · 90d uncalibrated +' + fmt(g90Raw)
+        : "") +
+      "</div></div>";
 
     var progRange = state.histRange || 30;
     // Only built for the visible tab. histChart -> histProjection runs the gain
@@ -12866,6 +13011,16 @@
       if (typeof state.ledger === "string") { try { state.ledger = JSON.parse(state.ledger); } catch (_) { state.ledger = []; } }
       if (!Array.isArray(state.ledger)) state.ledger = [];
       state.ledger = state.ledger.filter(function (e) { return e && typeof e.d === "number"; });
+      var cl = storeGet("calLast", null);
+      if (typeof cl === "string") { try { cl = JSON.parse(cl); } catch (_) { cl = null; } }
+      state.calLast = (cl && typeof cl === "object" && !Array.isArray(cl)) ? cl : {};
+      // A held factor outside its clamp would be worse than no factor at all.
+      ["model", "usage"].forEach(function (n) {
+        var h = state.calLast[n];
+        var lo = n === "model" ? CAL_MODEL_LO : CAL_USAGE_LO;
+        var hi = n === "model" ? CAL_MODEL_HI : CAL_USAGE_HI;
+        if (!h || typeof h.v !== "number" || !(h.v >= lo && h.v <= hi) || typeof h.at !== "number") delete state.calLast[n];
+      });
       var sv = storeGet("src", null);
       if (typeof sv === "string") { try { sv = JSON.parse(sv); } catch (_) { sv = null; } }
       if (sv && typeof sv === "object") {
