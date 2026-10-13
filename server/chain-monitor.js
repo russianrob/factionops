@@ -232,6 +232,44 @@ export function startChainMonitor(io, warId) {
     const war = store.getWar(warId);
     if (!war || !war.factionId) { scheduleNext(nextChain(war)); return; }
 
+    // STOP once the war is over. This loop had no warEnded gate at all, and
+    // stopChainMonitor was only ever reachable from shutdown — so an ended
+    // war kept a 10-20s chain poll running until the next matchup, days
+    // later. Worse, it SPED UP: warScoreCheckInterval drops to the 30s
+    // endgame cadence once |my - enemy| >= 0.9 * target, and a ranked war
+    // ends precisely when the lead reaches the target, so that condition is
+    // true by definition from the final whistle onward.
+    //
+    // Safe to stop here because the war-end branch below has already run on
+    // the tick that detected it, and a NEW war gets a fresh monitor from
+    // war-scanner's crons, server boot, or a client loading the war page.
+    if (war.warEnded) {
+      // Clear the scores that pinned the endgame cadence. Belt and braces:
+      // if a restart ever resurrects this record, the stop above fires
+      // first, but leaving a 30s-forever trap in the data is not worth it.
+      if (war.warScores) { delete war.warScores; store.saveState(); }
+      stopChainMonitor(warId);
+      // The heatmap scraper for this enemy also runs forever otherwise —
+      // war-scanner starts one per detected war and nothing stopped them.
+      if (war.enemyFactionId) {
+        import("./heatmap-scraper.js")
+          .then((m) => m.stopHeatmapScraper(war.enemyFactionId))
+          .catch(() => {});
+      }
+      console.log(`[chain] war ${warId} ended — monitor stopped`);
+      return;
+    }
+
+    // DON'T POLL BEFORE KICKOFF. war records are created as soon as Torn
+    // lists the matchup, which is days early, and the chain poll ran at full
+    // speed that whole time against a chain nobody is building yet.
+    //
+    // The war-score check still runs at its normal 300s cadence: it is what
+    // keeps warStart fresh and what notices a matchup being cancelled. Only
+    // the 10-20s chain fetch is suppressed.
+    const startSec = Number(war.warStart) || 0;
+    const preWar = startSec > 0 && Date.now() / 1000 < startSec;
+
     // Round-robin across pool keys. Needed up-front for both the
     // chain fetch (when not gated) AND the war-score check.
     _chainPollCursor = (_chainPollCursor + 1) | 0;
@@ -245,7 +283,10 @@ export function startChainMonitor(io, warId) {
     // path on this tick. War-score check still runs.
     const updatedAt = Number(war.chainDataUpdatedAt) || 0;
     const ageMs = Date.now() - updatedAt;
-    const skipChainFetch = ageMs < CLIENT_CHAIN_FRESH_MS;
+    // `preWar` joins the existing client-freshness gate rather than getting
+    // its own branch, so the war-score check keeps running underneath it
+    // exactly as it does when a client is pushing chain data.
+    const skipChainFetch = preWar || ageMs < CLIENT_CHAIN_FRESH_MS;
 
     try {
       // Deferred, not handled here: the war-score check below is the only
@@ -256,7 +297,12 @@ export function startChainMonitor(io, warId) {
       let chainErr = null;
       try {
         if (skipChainFetch) {
-          console.log(`[chain/skip] war=${warId} client data is ${Math.round(ageMs / 1000)}s old (gate=${CLIENT_CHAIN_FRESH_MS / 1000}s)`);
+          // Say WHICH gate fired. Both suppress the fetch, but "client data
+          // is 13s old" printed 66 hours before kickoff is a lie that would
+          // send the next reader looking for a client that isn't there.
+          console.log(preWar
+            ? `[chain/skip] war=${warId} pre-war, kickoff in ${Math.round((startSec * 1000 - Date.now()) / 3600000)}h`
+            : `[chain/skip] war=${warId} client data is ${Math.round(ageMs / 1000)}s old (gate=${CLIENT_CHAIN_FRESH_MS / 1000}s)`);
           backoffs.set(warId, POLL_INTERVAL_MS);
         } else {
           const chain = await fetchFactionChain(war.factionId, apiKey);
@@ -446,7 +492,16 @@ export function startChainMonitor(io, warId) {
       }
 
       if (chainErr) throw chainErr;
-      scheduleNext(nextChain(war));
+      // Before kickoff there is no chain to watch, so there is no reason to
+      // wake every 10-20s: the only work left on a pre-war tick is the
+      // 300s war-score check. Wake on that cadence instead, and never
+      // sleep past kickoff itself.
+      if (preWar) {
+        const msToStart = Math.max(0, startSec * 1000 - Date.now());
+        scheduleNext(Math.max(5_000, Math.min(warScoreCheckInterval(war), msToStart)));
+      } else {
+        scheduleNext(nextChain(war));
+      }
     } catch (err) {
       if (/Incorrect ID-entity relation/i.test(err.message)) {
         store.quarantinePoolKey(apiKey, war.factionId, 'chain code 7');

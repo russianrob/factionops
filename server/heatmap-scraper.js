@@ -2,7 +2,11 @@ import axios from 'axios';
 import { recordSample } from './activity-heatmap.js';
 
 // Track active scrapers to prevent duplicate intervals for the same enemy faction
-const activeScrapers = new Set();
+// enemyId -> intervalId. Was a Set of ids with the interval handle thrown
+// away by the caller, so nothing could ever stop a scraper: every enemy
+// faction seen since the last restart kept making one call an hour forever,
+// and with weekly wars the hourly load grew by one call per war.
+const activeScrapers = new Map();
 
 // Dedicated key for heatmap scraping — keeps OWNER_API_KEY free from
 // this poller's load. Set via HEATMAP_API_KEY env var. Falls back to
@@ -54,7 +58,6 @@ export function startHeatmapScraper(warId, enemyId, apiKeyFallback, enemyName = 
         return null;
     }
 
-    activeScrapers.add(enemyIdStr);
     console.log(`[HeatmapScraper] Starting activity scraper for war ${warId}, enemy ${safeName(currentName, enemyIdStr)}`);
 
     const scrape = async () => {
@@ -96,5 +99,33 @@ export function startHeatmapScraper(warId, enemyId, apiKeyFallback, enemyName = 
 
     scrape();
     const intervalId = setInterval(scrape, 3600000);
+    // Registered so it can actually be stopped. Callers are free to ignore
+    // the return value -- that is what used to leak -- because
+    // stopHeatmapScraper(enemyId) can now find it.
+    activeScrapers.set(enemyIdStr, intervalId);
     return intervalId;
+}
+
+/** Stop the scraper for one enemy faction. Safe to call when none is running. */
+export function stopHeatmapScraper(enemyId) {
+    const key = String(enemyId);
+    const intervalId = activeScrapers.get(key);
+    if (intervalId === undefined) return false;
+    clearInterval(intervalId);
+    activeScrapers.delete(key);
+    console.log(`[HeatmapScraper] Stopped scraper for enemy faction ${key}`);
+    return true;
+}
+
+/** Every scraper currently running, for shutdown and for diagnostics. */
+export function activeHeatmapScraperIds() {
+    return [...activeScrapers.keys()];
+}
+
+export function stopAllHeatmapScrapers() {
+    const n = activeScrapers.size;
+    for (const intervalId of activeScrapers.values()) clearInterval(intervalId);
+    activeScrapers.clear();
+    if (n) console.log(`[HeatmapScraper] Stopped ${n} scraper(s)`);
+    return n;
 }
