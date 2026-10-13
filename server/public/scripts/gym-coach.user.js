@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.12
+// @version      0.12.13
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,18 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.12.13 - Finish the job 0.12.12 started.
+*
+*         Splitting the two calibration gates did nothing at the point of
+*         use: unlockHtml, goalPlan and valuePlan all read
+*         `cal.ok ? cal.usage : 1`, and `ok` means BOTH factors qualified.
+*         So a war week still killed the gain days, still flipped ok false,
+*         and still stopped applying a spend measurement sitting in a full
+*         14-day ledger — the exact failure 0.12.12 claimed to fix.
+*         All four consumers now use cal.usage directly. The field is 1 when
+*         unknown and the last measured value when stale, so it is always
+*         safe to multiply by.
+*
 * 0.12.12 - Calibration stops going blank, and the projections finally use it.
 *
 *         Nothing ever reset it. calibration() is recomputed every render over
@@ -2297,7 +2309,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.12";
+  var GC_VERSION = "0.12.13";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -5011,7 +5023,13 @@
     if (!est || !est.gym) return "";
 
     var cal = calibration();
-    var eff = dailyEnergy().total * (cal.ok ? cal.usage : 1);
+    // cal.usage directly, NOT behind cal.ok. `ok` means both factors
+    // qualified, so gating usage on it re-coupled what 0.12.12 split apart:
+    // a war week kills the gain days, cal.ok goes false, and the spend
+    // measurement sitting in a full ledger stops being applied. The field is
+    // 1 when unknown and the last measured value when stale, so it is always
+    // safe to multiply by.
+    var eff = dailyEnergy().total * cal.usage;
     var days = eff > 0 ? Math.ceil(est.remainMax / eff) : 0;
     var perk = state.gymExpMult > 1
       ? ' · ' + perkPct(state.gymExpMult) + ' gym exp applied'
@@ -5038,7 +5056,8 @@
     // The plan's energy is what you INTEND to spend. The usage factor turns it
     // into what you have actually been spending, which is what an honest ETA
     // has to be built on.
-    var eff = cal.ok ? e * cal.usage : e;
+    // Direct, not behind cal.ok — see the note in unlockHtml.
+    var eff = e * cal.usage;
     var st = state.stats || {};
     var g = state.goals || {};
     // Perks and shares BELONG in this key. Both decide the rotation order, and
@@ -5306,7 +5325,7 @@
     valueCandidates().forEach(function (c) {
       // The added energy goes through the same usage factor the baseline did,
       // or the two ETAs are not measured the same way and the diff is fiction.
-      var per = c.e * (cal && cal.ok ? cal.usage : 1);
+      var per = c.e * (cal ? cal.usage : 1);
       var room = c.room != null ? c.room : Infinity;
       var steps = (base <= VALUE_STEP_MAX_DAYS ? VALUE_STEPS : [1])
         .filter(function (n) { return n <= room; });
@@ -5358,7 +5377,7 @@
     // gets the same smallest-count-that-matters treatment as the consumables —
     // but it is capital you keep, not money you spend, so it is not ranked
     // alongside them.
-    var mcsPer = (100 / 7) * (cal && cal.ok ? cal.usage : 1);
+    var mcsPer = (100 / 7) * (cal ? cal.usage : 1);
     var mcs = { n: 0, days: base, saved: 0 };
     for (var mi = 1; mi <= MCS_MAX_EXTRA; mi++) {
       var md = scheduleDays(plan.totalTrains, (plan.energy || 0) + mcsPer * mi);
