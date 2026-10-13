@@ -1,7 +1,6 @@
 import cron from 'node-cron';
 import { decodeEntities } from "./torn-api.js";
 import axios from 'axios';
-import { startHeatmapScraper } from './heatmap-scraper.js';
 import * as store from './store.js';
 import { startChainMonitor } from './chain-monitor.js';
 
@@ -58,17 +57,9 @@ async function scanFactions() {
                             // oscillated and the War Scout rendered the entity.
                             const enemyName = decodeEntities(warData.factions[enemyId]?.name) || 'Unknown';
                             console.log(`[WarScanner] Active Ranked War detected! WarID: ${warId}, Enemy: ${enemyName} (${enemyId})`);
-                            // Four parameters, not five. Passing factionIdStr here
-                            // shifted every argument right: the key landed in
-                            // `enemyName` and got printed in plaintext on every
-                            // scraper start and every API error, while
-                            // `apiKeyFallback` received a faction id.
-                            startHeatmapScraper(warId, enemyId, faction.apiKey, enemyName);
-
-                            // 2026-05-19: previously the scanner only kicked
-                            // off the heatmap scraper, leaving war record
-                            // creation to whoever happened to load the war
-                            // page next. If nobody did, the new war was
+                            // 2026-05-19: previously the scanner left war
+                            // record creation to whoever happened to load the
+                            // war page next. If nobody did, the new war was
                             // invisible to FactionOps until a client triggered
                             // it. Now we also create/refresh the war record
                             // and start chain-monitor immediately, so the

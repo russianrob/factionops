@@ -4,7 +4,7 @@
  * Background loop probes every faction's stored API key against Torn's
  * /user?selections=basic endpoint. When a key returns code 2
  * ("Incorrect key"), it's been regenerated/revoked by its owner and is
- * silently failing every scout report + heatmap call that uses it.
+ * silently failing every scout report that uses it.
  *
  * Notification gate: pushes a warning ONLY to the configured admin
  * playerId (env WB_KEY_HEALTH_ADMIN_PLAYER_ID), defaulting to 137558

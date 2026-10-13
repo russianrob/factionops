@@ -199,11 +199,6 @@ export function getOrCreateWar(warId, factionId, enemyFactionId = null) {
         }
       }
 
-      // Attempt to clear previous enemy's heatmap to prevent ghost data
-      if (war.enemyFactionId) {
-          import('./activity-heatmap.js').then(hm => hm.resetHeatmap(war.enemyFactionId)).catch(() => {});
-      }
-
       war.enemyFactionId = enemyFactionId;
       // The name belongs to the enemy we just replaced. Leaving it attached
       // to a new id is worse than leaving it blank: consumers then name the

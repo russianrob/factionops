@@ -132,7 +132,6 @@ import { fetchFactionMembers, fetchFactionChain, fetchRankedWar, fetchFactionBas
 
 /** Mask an API key for safe logging — shows only last 4 chars. */
 const maskKey = (key) => key ? `****${String(key).slice(-4)}` : '****';
-import { getHeatmap, resetHeatmap } from "./activity-heatmap.js";
 import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName } from "./oc-spawn.js";
 import { createFlyerDelayPoller } from "./flyer-delay-poll.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
@@ -4230,54 +4229,6 @@ router.post("/api/viewing", requireAuth, (req, res) => {
   return res.json({ ok: true });
 });
 
-// ── GET /api/heatmap ─────────────────────────────────────────────────────
-// Returns the activity heatmap data for the authenticated player's faction.
-
-router.get("/api/heatmap", requireAuth, (req, res) => {
-  const callerFactionId = req.user.factionId;
-  const targetFactionId = req.query.factionId || callerFactionId;
-  // Cross-faction read must be your current enemy. Same gate as the
-  // reset path below — previously GET trusted the query param blindly,
-  // letting any authenticated user read any faction's heatmap.
-  if (String(targetFactionId) !== String(callerFactionId)) {
-    const activeWars = Array.from(store.getAllWars().values())
-      .filter(w => String(w.factionId) === String(callerFactionId));
-    const isEnemy = activeWars.some(w => String(w.enemyFactionId) === String(targetFactionId));
-    if (!isEnemy) {
-      return res.status(403).json({ error: "You can only read your own faction's heatmap or your current enemy's." });
-    }
-  }
-  return res.json({ heatmap: getHeatmap(targetFactionId) });
-});
-
-// ── DELETE /api/heatmap ──────────────────────────────────────────────────
-// Reset the activity heatmap for the faction. Leader/co-leader only.
-
-function handleResetHeatmap(req, res) {
-  const { factionId, factionPosition } = req.user;
-  const targetFactionId = req.query.factionId || req.body?.factionId || factionId;
-
-  const pos = (factionPosition || "").toLowerCase();
-  if (!LEADER_POSITIONS.includes(pos)) {
-    return res.status(403).json({ error: "Only leaders and co-leaders can reset the heatmap" });
-  }
-
-  // Only allow resetting your own faction OR your current enemy faction
-  if (String(targetFactionId) !== String(factionId)) {
-      const activeWars = Array.from(store.getAllWars().values()).filter(w => String(w.factionId) === String(factionId));
-      const isEnemy = activeWars.some(w => String(w.enemyFactionId) === String(targetFactionId));
-      if (!isEnemy) {
-          return res.status(403).json({ error: "You can only reset your own faction's heatmap or your current enemy's heatmap." });
-      }
-  }
-
-  resetHeatmap(targetFactionId);
-  return res.json({ ok: true });
-}
-
-router.delete("/api/heatmap", requireAuth, handleResetHeatmap);
-// POST alias for PDA compatibility (PDA's WebView only supports GET/POST)
-router.post("/api/heatmap/remove", requireAuth, handleResetHeatmap);
 
 // ── Push notification auth ─────────────────────────────────────────────
 // Landing page is ungated, so push endpoints authenticate via Bearer JWT

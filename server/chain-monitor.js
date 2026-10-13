@@ -249,13 +249,6 @@ export function startChainMonitor(io, warId) {
       // first, but leaving a 30s-forever trap in the data is not worth it.
       if (war.warScores) { delete war.warScores; store.saveState(); }
       stopChainMonitor(warId);
-      // The heatmap scraper for this enemy also runs forever otherwise —
-      // war-scanner starts one per detected war and nothing stopped them.
-      if (war.enemyFactionId) {
-        import("./heatmap-scraper.js")
-          .then((m) => m.stopHeatmapScraper(war.enemyFactionId))
-          .catch(() => {});
-      }
       console.log(`[chain] war ${warId} ended — monitor stopped`);
       return;
     }

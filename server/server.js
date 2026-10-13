@@ -25,9 +25,7 @@ import { socketAuth } from "./auth.js";
 import { registerSocketHandlers } from "./socket-handlers.js";
 import { startChainMonitor, stopAll as stopAllChainMonitors } from "./chain-monitor.js";
 import { startWarStatusMonitor, stopAll as stopAllWarStatusMonitors } from "./war-status-monitor.js";
-import { stopAllHeatmapScrapers } from "./heatmap-scraper.js";
 import { verifyPoolKeyAccess } from "./key-verify.js";
-import { loadHeatmaps, stopFlush as stopHeatmapFlush } from "./activity-heatmap.js";
 import { startMembershipSchedule, stopMembershipSchedule } from "./membership-check.js";
 import { startXanaxSubscriptions, stopXanaxSubscriptions, getActiveSubscribedFactionIds } from "./xanax-subscriptions.js";
 import * as vaultRequests from "./vault-requests.js";
@@ -258,7 +256,6 @@ const warRoomPerJwtLimiter = rateLimit({
 // underlying bug fires fetchPoll + 2× fetchHeatmap + fetchTravelInfo +
 // fetchWars together, so capping any one of them breaks the wave.
 app.use('/api/poll',                   warRoomPerJwtLimiter);
-app.use('/api/heatmap',                warRoomPerJwtLimiter);
 app.use(/^\/api\/faction\/[^/]+\/war/, warRoomPerJwtLimiter);
 app.use(/^\/api\/war\/[^/]+\/travel-info/, warRoomPerJwtLimiter);
 
@@ -705,7 +702,6 @@ itemMarket.seedFromOcHistory(getItemMarketValue);
 const _imKey = () => store.getFactionApiKey('42055') || store.getPollingKey('42055', 'items');
 setTimeout(() => { itemMarket.refreshTracked(_imKey()).catch(() => {}); }, 20_000);
 setInterval(() => { itemMarket.refreshTracked(_imKey()).catch(() => {}); }, 12 * 60_000);
-loadHeatmaps();
 loadSubscriptions();
 
 // Resume war status monitors for any persisted wars (skip ended wars)
@@ -1001,12 +997,8 @@ function shutdown(signal) {
   console.log(`\n[server] Received ${signal}, shutting down...`);
   stopAllChainMonitors();
   stopAllWarStatusMonitors();
-  // Heatmap scrapers are per-enemy hourly intervals; without this they were
-  // only ever reclaimed by the process dying.
-  try { stopAllHeatmapScrapers(); } catch (_) {}
   if (warDetectTimer) { clearInterval(warDetectTimer); warDetectTimer = null; }
   try { stopPersonalMonitor(); } catch (_) {}
-  stopHeatmapFlush();
   try { stopStakeoutWatcher(); } catch (_) {}
   stopMembershipSchedule();
   stopSubscriptionManager();

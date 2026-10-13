@@ -8,7 +8,6 @@
 import { shouldClearCall } from "./call-autoclear.js";
 import * as store from "./store.js";
 import { fetchFactionMembers, fetchRecentFactionAttacks } from "./torn-api.js";
-import { recordSample } from "./activity-heatmap.js";
 import { broadcastSSE } from "./routes.js";
 import * as push from "./push-notifications.js";
 import { enemyProfilePrewarDelay } from "./enemy-profile-gate.js";
@@ -199,7 +198,7 @@ export function startWarStatusMonitor(io, warId) {
         }
       } catch (_) { /* non-critical */ }
 
-      // Our own faction: online-count for the header/heatmap + the overdose
+      // Our own faction: online-count for the header + the overdose
       // watch, throttled to OUR_FACTION_INTERVAL_MS (10 min) independent of the
       // 30s enemy cadence. One fetch feeds both — the OD watch adds no API call.
       const lastOur = lastOurFactionPoll.get(warId) || 0;
@@ -214,7 +213,6 @@ export function startWarStatusMonitor(io, warId) {
             (m) => m.activity === "idle",
           ).length;
           const ourTotal = Object.keys(ourMembers).length;
-          recordSample(war.factionId, ourOnline + ourIdle, ourTotal);
           // Store on war for poll response
           war.ourFactionOnline = { online: ourOnline, idle: ourIdle, total: ourTotal };
           // The IDS, not just the counts.
