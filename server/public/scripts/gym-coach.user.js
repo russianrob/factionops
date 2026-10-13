@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.13
+// @version      0.12.14
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      MIT
@@ -29,6 +29,29 @@
  * Built for rcexyz [2598755] by AaronPMC [4431836]
  *
  * CHANGELOG
+* 0.12.14 - Estimate what reaches the gym, for people the ledger cannot
+*         measure yet.
+*
+*         cal.usage already measures this from your own ledger, and an
+*         adjustable natural-regen figure would have discounted the same
+*         hours twice -- usage multiplies the daily total in every ETA.
+*         But it needs 7 qualifying days, so it reads a flat 1.0 for the
+*         first week after install, on a Limited key whose gym log is empty,
+*         and for anyone who trains on a different device from the one
+*         showing the panel. Those projections were overstated.
+*
+*         New "Longest gap" stepper in Energy sources, and the loss is
+*         derived rather than typed. The loss is NOT proportional to time
+*         away: energy caps, so a gap only costs the part that overflows.
+*         At 120s/e a 150 bar refills in five hours, so a five-hour night
+*         costs nothing and an eight-hour night costs about 90e -- not the
+*         240e that "eight hours x thirty an hour" suggests.
+*
+*         Strict precedence, one slot, one meaning: measured this window
+*         wins, then a measured figure gone stale, then this estimate. The
+*         stepper only appears when nothing has been measured, and the row
+*         always says which of the three you are looking at.
+*
 * 0.12.13 - Finish the job 0.12.12 started.
 *
 *         Splitting the two calibration gates did nothing at the point of
@@ -2309,7 +2332,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.13";
+  var GC_VERSION = "0.12.14";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -2786,6 +2809,9 @@
     // Last calibration values that actually qualified, so a failed quorum
     // degrades to a stale number instead of silently becoming 1.0.
     calLast: {},
+    // Longest gap between training sessions, in hours. 0 = not set, and the
+    // estimate stays out of the way entirely.
+    gapHours: 0,
     ledger: [],
     prices: {},
     gymsOwned: [],
@@ -4609,6 +4635,24 @@
 
     calRemember(out, today);
 
+    // Lowest-priority stand-in, and only ever for `usage`. A gap length says
+    // nothing about whether the gain arithmetic is right, so it can never
+    // substitute for `model`.
+    //
+    // Order is strict: a figure measured this window wins, then a measured
+    // one that has gone stale, then this estimate. A guess never displaces
+    // real data — it only fills the hole left when the ledger cannot answer,
+    // which is the first week after install, a Limited key whose gym log is
+    // empty, or training on a device that is not the one reading this.
+    if (!out.usageOk && !out.usageHeld) {
+      var gl = gapLoss();
+      if (gl && gl.pct < 1) {
+        out.usage = calClamp(gl.pct, CAL_USAGE_LO, CAL_USAGE_HI);
+        out.usageEst = true;
+        out.usageEstLost = gl.lost;
+      }
+    }
+
     // `ok` keeps its old meaning -- both factors live and freshly measured --
     // because callers that show "calibrated" wording still mean that.
     out.ok = out.modelOk && out.usageOk;
@@ -5556,6 +5600,38 @@
     }
   }
 
+  // What a long gap between sessions actually costs, for people whose ledger
+  // cannot measure it yet.
+  //
+  // The loss is NOT proportional to time away. Energy caps, so a gap only
+  // costs you the part that overflows: at 120s/e a 150 bar refills in five
+  // hours, and a five-hour night costs nothing at all. An eight-hour night
+  // costs the three hours past the cap, about 90e — not eight hours of regen.
+  //
+  // Only the longest gap is charged. Shorter gaps in a waking day rarely
+  // reach the cap, and charging every gap would double-count the same bar.
+  //
+  // Returns null when there is nothing to say: no gap set, or a gap short
+  // enough that the bar never fills.
+  function gapLoss() {
+    var hours = Number(state.gapHours) || 0;
+    if (!(hours > 0)) return null;
+    var secPerE = energyRate();
+    var max = state.energyMax || 150;
+    if (!(secPerE > 0) || !(max > 0)) return null;
+    var fillSec = max * secPerE;
+    var overSec = hours * 3600 - fillSec;
+    var out = { hours: hours, fillSec: fillSec, lost: 0, pct: 1 };
+    if (overSec <= 0) return out;           // bar never fills: nothing wasted
+    out.lost = Math.round(overSec / secPerE);
+    // Measured against everything the day makes available, because that is
+    // what cal.usage is measured against and what it multiplies.
+    var total = dailyEnergy().total;
+    if (!(total > 0)) return out;
+    out.pct = Math.max(0, (total - out.lost) / total);
+    return out;
+  }
+
   function dailyEnergy() {
     var natural = Math.round(86400 / energyRate());
     var out = { natural: natural, xan: 0, refill: 0, fhc: 0, cans: 0, mcs: 0, total: 0 };
@@ -6107,6 +6183,55 @@
       "projections are describing a cupboard you do not have.</div>";
   }
 
+  // One slot, one meaning. When the ledger can measure how much of the day's
+  // energy reaches the gym, it shows that and offers no control — a typed
+  // number competing with a measurement is how you end up discounting the
+  // same eight hours twice. The stepper appears only when nothing has been
+  // measured: the first week after install, a Limited key whose gym log is
+  // empty, or when training happens on a different device from this one.
+  function captureRowHtml() {
+    var cal = calibration();
+    var pct = Math.round(cal.usage * 100);
+
+    if (cal.usageOk) {
+      return '<div class="row"><span>Reaches the gym</span><b class="' + (pct >= 90 ? "ok" : "warn") + '">' +
+        pct + "% measured</b></div>";
+    }
+    if (cal.usageHeld) {
+      return '<div class="row"><span>Reaches the gym</span><b class="' + (pct >= 90 ? "ok" : "warn") + '">' +
+        pct + "% measured, " + cal.usageStale + "d ago</b></div>";
+    }
+
+    var gl = gapLoss();
+    var hrs = Number(state.gapHours) || 0;
+    var fillH = gl ? gl.fillSec / 3600 : (state.energyMax || 150) * energyRate() / 3600;
+    var note;
+    if (!hrs) {
+      note = "Not measured yet. Set your longest gap between sessions and this is estimated instead.";
+    } else if (!gl || !(gl.lost > 0)) {
+      // The point most people get wrong, so it is worth saying outright.
+      note = "Nothing wasted — your bar takes " + fillH.toFixed(1) +
+        "h to fill, so a " + hrs + "h gap never reaches the cap.";
+    } else {
+      note = "About " + fmt(gl.lost) + "e a day overflows: your bar is full after " +
+        fillH.toFixed(1) + "h, and the remaining " + (hrs - fillH).toFixed(1) + "h of regen has nowhere to go.";
+    }
+
+    return (
+      '<div class="row"><span>Longest gap</span>' +
+      '<span class="gcb-step">' +
+      '<button data-gap="-1"' + (hrs <= 0 ? " disabled" : "") + ">−</button>" +
+      "<i>" + (hrs ? hrs + "h" : "off") + "</i>" +
+      '<button data-gap="1"' + (hrs >= 24 ? " disabled" : "") + ">+</button>" +
+      "</span></div>" +
+      (hrs
+        ? '<div class="row"><span>Reaches the gym</span><b class="' + (pct >= 90 ? "ok" : "warn") + '">' +
+          pct + "% estimated</b></div>"
+        : "") +
+      '<p class="muted" style="margin:6px 0 0">' + note + "</p>"
+    );
+  }
+
   function srcHtml() {
     var e = dailyEnergy();
     function rowHtml(r) {
@@ -6154,6 +6279,7 @@
       (e.mcs ? '<div class="row"><span>Mc Smoogle Corp</span><b>' + fmt(e.mcs) + "e</b></div>" : "") +
       (e.cans ? '<div class="row"><span>Cans</span><b>' + fmt(e.cans) + "e</b></div>" : "") +
       '<div class="row"><span>Total per day</span><b class="ok">' + fmt(e.total) + "e</b></div>" +
+      captureRowHtml() +
       (state.warStack ? '<p class="muted" style="margin:8px 0 0">War stack is on, so Xanax is banked rather than spent \u2014 it is left out of the total.</p>' : "") +
       "</div>"
     );
@@ -12395,7 +12521,7 @@
     if (!t || typeof t.closest !== "function") return;
     // Every clickable attribute has to be listed here or the handler below it is
     // dead code -- closest() returns null and this returns before reaching it.
-    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],[data-board],[data-diag],#stackSw,#novSw,#boardSw");
+    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],[data-board],[data-diag],[data-gap],#stackSw,#novSw,#boardSw");
     if (!t) return;
     if (t.dataset.diag) {
       // Deliberately undiscoverable: this is a tool for chasing one report,
@@ -12433,6 +12559,15 @@
       if (!state.src) state.src = {};
       state.src[tk] = srcCount(tk) > 0 ? 0 : (trow ? trow.def : 1);
       storeSet("src", state.src);
+      renderPanel();
+      return;
+    }
+    if (t.dataset.gap) {
+      var gh = (Number(state.gapHours) || 0) + (Number(t.dataset.gap) || 0);
+      if (gh < 0) gh = 0;
+      if (gh > 24) gh = 24;
+      state.gapHours = gh;
+      storeSet("gapHours", gh);
       renderPanel();
       return;
     }
@@ -13030,6 +13165,7 @@
       if (typeof state.ledger === "string") { try { state.ledger = JSON.parse(state.ledger); } catch (_) { state.ledger = []; } }
       if (!Array.isArray(state.ledger)) state.ledger = [];
       state.ledger = state.ledger.filter(function (e) { return e && typeof e.d === "number"; });
+      state.gapHours = Math.max(0, Math.min(24, Number(storeGet("gapHours", 0)) || 0));
       var cl = storeGet("calLast", null);
       if (typeof cl === "string") { try { cl = JSON.parse(cl); } catch (_) { cl = null; } }
       state.calLast = (cl && typeof cl === "object" && !Array.isArray(cl)) ? cl : {};
