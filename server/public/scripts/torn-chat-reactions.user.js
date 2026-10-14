@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.6
+// @version      1.2.7
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -35,7 +35,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.6';
+    const SCRIPT_VERSION = '1.2.7';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -197,6 +197,47 @@
     // messageId -> emoji -> Set(sender). Rebuilt from the DOM every pass, so
     // the virtual list recycling rows cannot lose anything.
 
+    // Reactions REMEMBERED, not re-derived each pass.
+    //
+    // The list is virtualised: only ~15 rows are mounted. Rebuilding the
+    // registry from what is rendered meant that scrolling a reaction line out
+    // of the window while its target stayed on screen removed the chip, and
+    // scrolling back put it there again -- chips popping in and out. Once a
+    // reaction has been seen it is kept, so the chip is stable.
+    const seen = new Map();          // key -> Map(emoji -> Set(sender))
+    const SEEN_CAP = 800;
+    const winIds = new WeakMap();
+    const winOther = new Map();   // for a null/non-element window
+    let winSeq = 0;
+
+    // Torn gives public messages a stable id. A PM has none, so fall back to
+    // channel plus text, which is stable for the life of the message and is
+    // the same thing the quote already matches on.
+    function keyFor(m) {
+        if (m.id) return m.id;
+        // m.win is normally the chat window ELEMENT, but windowFor() returns
+        // null when it cannot identify a composer -- and WeakMap.set(null)
+        // throws, which would take down the whole pass. Elements go in the
+        // WeakMap so detached windows can be collected; anything else goes in
+        // a plain Map, which is tiny and bounded by the number of channels.
+        const w = (m.win && typeof m.win === 'object')
+            ? (winIds.get(m.win) ?? (winIds.set(m.win, ++winSeq), winSeq))
+            : (winOther.get(m.win) ?? (winOther.set(m.win, ++winSeq), winSeq));
+        return w + '|' + (m.text || '').slice(0, 120);
+    }
+
+    function remember(targetKey, emoji, sender) {
+        let byEmoji = seen.get(targetKey);
+        if (!byEmoji) {
+            if (seen.size >= SEEN_CAP) seen.delete(seen.keys().next().value);
+            byEmoji = new Map();
+            seen.set(targetKey, byEmoji);
+        }
+        if (!byEmoji.has(emoji)) byEmoji.set(emoji, new Set());
+        byEmoji.get(emoji).add(sender);
+        return byEmoji;
+    }
+
     function collect(all) {
         const reg = new Map();
         const hide = [];
@@ -217,10 +258,7 @@
             // visible as an ordinary message -- swallowing something we cannot
             // attribute is worse than not converting it.
             if (!target) return;
-            if (!reg.has(target)) reg.set(target, new Map());
-            const byEmoji = reg.get(target);
-            if (!byEmoji.has(emoji)) byEmoji.set(emoji, new Set());
-            byEmoji.get(emoji).add(m.sender);
+            reg.set(target, remember(keyFor(target), emoji, m.sender));
             hide.push(m);
         });
         return { reg, hide };
@@ -279,7 +317,9 @@
         for (const m of all) {
             const existing = m.bubble.parentElement
                 && m.bubble.parentElement.querySelector(':scope > .tcr-chips');
-            const byEmoji = reg.get(m);
+            // From the durable store, so a chip survives its reaction line
+            // being recycled out of the virtual window.
+            const byEmoji = seen.get(keyFor(m));
             if (!byEmoji || !byEmoji.size) { if (existing) existing.remove(); continue; }
             const want = [...byEmoji.entries()]
                 .map(([e, who]) => e + (who.size > 1 ? ' ' + who.size : ''))

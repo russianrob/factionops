@@ -5,11 +5,29 @@ function grab(sig){const i=src.indexOf(sig);assert.ok(i>0,sig);let d=0;
   for(let k=src.indexOf('{',i);k<src.length;k++){if(src[k]==='{')d++;else if(src[k]==='}'){d--;if(!d)return src.slice(i,k+1);}}}
 const REACTION = /^(\S+)\s+"([\s\S]+)"$/u;
 const QUOTE_LEN = 24;
-const fns = new Function('REACTION','QUOTE_LEN',
-  `${grab('function quoteFor(')}\n${grab('function collect(')}\nreturn {quoteFor,collect};`)(REACTION,QUOTE_LEN);
+// collect() now writes into a DURABLE store so chips survive the virtual
+// list recycling their reaction line, so the harness has to carry that state
+// the same way the script does.
+const PRELUDE = `
+  const seen = new Map();
+  const SEEN_CAP = 800;
+  const winIds = new WeakMap();
+  const winOther = new Map();
+  let winSeq = 0;
+`;
+const mkFns = () => new Function('REACTION','QUOTE_LEN',
+  `${PRELUDE}
+   ${grab('function keyFor(')}
+   ${grab('function remember(')}
+   ${grab('function quoteFor(')}
+   ${grab('function collect(')}
+   return {quoteFor, collect, keyFor, seen};`)(REACTION,QUOTE_LEN);
+// Fresh state per test: the store persists by design, so sharing it across
+// tests would let one test's reactions leak into the next.
+let fns = mkFns();
 
 const msg = (id, sender, text, win='faction') => ({ id, sender, text, win, bubble:null, row:{style:{}} });
-let f=0; const t=(n,fn)=>{try{fn();console.log('  ok   '+n)}catch(e){f++;console.log('  FAIL '+n+'\n       '+e.message)}};
+let f=0; const t=(n,fn)=>{try{fns=mkFns();fn();console.log('  ok   '+n)}catch(e){f++;console.log('  FAIL '+n+'\n       '+e.message)}};
 
 console.log('quoteFor — the fragment that aims a reaction:');
 t('QUOTE_LEN is a FLOOR: words are added until it is passed, never cut mid-word', () => {
@@ -172,5 +190,35 @@ t('and a later message in the SAME channel does make it hideable', () => {
   assert.equal(newestOf(all,hide).length,1);
 });
 
+
+console.log('\nchips must survive the virtual list recycling their reaction line:');
+
+t('a chip persists after its reaction line scrolls out of the window', () => {
+  const target = msg('m1:1','A','ima need to get a 99k boost');
+  const react  = msg('r1:2','B','X "ima need to get a 99k"');
+  fns.collect([target, react]);
+  // Pass 2: the virtualiser recycled the reaction row away, the target is
+  // still on screen. Before the durable store this dropped the chip, and
+  // scrolling back brought it back -- chips popping in and out.
+  fns.collect([target]);
+  const still = fns.seen.get(fns.keyFor(target));
+  assert.ok(still && still.get('X'), 'the chip must still be known');
+  assert.equal(still.get('X').size, 1);
+});
+
+t('a message nobody reacted to still has nothing', () => {
+  const plain = msg('m9:9','A','nobody reacted to this');
+  fns.collect([plain]);
+  assert.equal(fns.seen.get(fns.keyFor(plain)), undefined);
+});
+
+t('an id-less message with a NULL window does not throw', () => {
+  // windowFor() returns null when it cannot find a composer, and
+  // WeakMap.set(null) throws -- which used to take the whole pass down.
+  const target = {id:null,sender:'Them',text:'hey there',win:null,bubble:null,row:{style:{}}};
+  const react  = {id:null,sender:'You', text:'X "hey there"',win:null,bubble:null,row:{style:{}}};
+  assert.doesNotThrow(() => fns.collect([target, react]));
+  assert.ok(fns.seen.get(fns.keyFor(target)));
+});
+
 console.log(f?`\n${f} FAILED`:'\nall passed');
-process.exit(f?1:0);
