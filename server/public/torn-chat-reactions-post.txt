@@ -1,0 +1,37 @@
+<div style="text-align:center">
+<h2>Torn Chat Reactions</h2>
+<p><em>React to chat messages with an emoji, the way every other chat app lets you</em></p>
+</div>
+
+<p>Someone says something funny in faction chat and you want to laugh at it without adding another line to a conversation that's already moving. Every other chat app solved this years ago. Torn hasn't.</p>
+
+<p>This adds emoji reactions to Torn chat. Click a message, pick an emoji, done.</p>
+
+<ul><li>Works in <strong>every</strong> chat: faction, company, global, trade, and private conversations</li><li>Six quick picks (&#128514; &#128077; &#10084;&#65039; &#128293; &#128128; &#128558;) plus a grid of common ones, and a box to type any emoji you like</li><li>Reactions stack — three people reacting gives you one chip with a count, and their names on hover</li><li>No API key. No account. Nothing to configure</li></ul>
+
+<h3>The part worth explaining</h3>
+
+<p>There's no server behind this and nothing gets stored anywhere. A reaction <em>is</em> an ordinary chat message. When you react, the script posts something like:</p>
+
+<p><code>&#128514; "ima need to get a 99k"</code></p>
+
+<p>If you have the script, you see a &#128514; chip sitting on the quoted message and that line disappears. If you don't have the script, you see someone reacting to a message in a perfectly normal way — which is what people already do by hand.</p>
+
+<p>That's the whole trick, and it's why I didn't build a server for it. Torn carries the data. None of your chat goes anywhere except Torn, because there is nowhere else for it to go — the script makes no network requests at all.</p>
+
+<h3>Honest about the limits</h3>
+
+<ul><li>Chips only appear for people running the script. Everyone else sees the plain message, which reads fine, but they won't see the pretty version</li><li>Reactions are real chat messages, so you can't take one back</li><li>It quotes a few words of the message it's reacting to. That's how a reaction finds its target instead of just meaning "the one above", which falls apart the moment you react to something further up the window</li></ul>
+
+<p>Works on desktop with Tampermonkey and in Torn PDA.</p>
+
+<h3>Screenshots</h3>
+<p><em>A reaction on a faction chat message:</em></p>
+<img src="https://tornwar.com/chat-reactions-shot.png" alt="An emoji reaction chip on a Torn faction chat message">
+<p><em>The picker, opened by clicking a message:</em></p>
+<img src="https://tornwar.com/chat-reactions-picker-shot.png" alt="The emoji picker open over Torn chat">
+
+<h3>Install</h3>
+<p><a href="https://greasyfork.org/en/scripts/600153-torn-chat-reactions">Install Torn Chat Reactions on Greasy Fork</a></p>
+
+<p>Get a couple of faction mates on it and the chips show up for all of you. If something doesn't render or a reaction lands on the wrong message, post it here with a screenshot and I'll sort it.</p>
