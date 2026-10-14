@@ -1118,6 +1118,21 @@ function findLoneBonusNeedingBridge() {
       if (byRarity[rarity]) continue;
       if (!Object.keys(byRarity).length) continue;
       if (!feed.bonusPrices?.[bonus]) continue;
+      // Verify the premise instead of assuming it. "No combo entry for this
+      // rarity" is not the same question priceItem asks -- it matches on the
+      // ROLL too, so it can still find a direct sale and never bridge. The
+      // first structural candidate today is a Red Wooden Nunchaku + Slow,
+      // which prices straight off its own sales, and both tests failed on it
+      // while the pricer was behaving correctly. Same shape as the hardcoded
+      // SIG 552 that expired before: a fact about this week's market, not
+      // about the rule.
+      const probe = priceItem(feed, {
+        name: weapon, rarity,
+        bonuses: [{ name: bonus, pct: 38 }],
+      });
+      const bridged = probe.ok && (/other weapons/i.test(probe.basis || '')
+        || /other weapons/i.test((probe.notes || []).join(' ')));
+      if (!bridged) continue;
       return { weapon, bonus, rarity };
     }
   }
