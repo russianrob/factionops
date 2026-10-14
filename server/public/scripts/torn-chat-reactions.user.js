@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.5
+// @version      1.2.6
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -35,7 +35,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.5';
+    const SCRIPT_VERSION = '1.2.6';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -232,13 +232,28 @@
     const hideTries = new WeakMap();
     function hideRow(row) {
         if (!row || row.style.display === 'none') return;
+        row.style.visibility = '';          // no longer newest: collapse it
         const n = (hideTries.get(row) || 0) + 1;
         hideTries.set(row, n);
         if (n > 3) return;                   // it keeps coming back: leave it
         row.style.display = 'none';
     }
-    function reveal(row) {
-        if (row && row.style.display === 'none') row.style.display = '';
+    // The NEWEST reaction is made invisible rather than removed.
+    //
+    // display:none COLLAPSES the row, and on the newest message that changes
+    // the list height while the virtualiser is pinning you to the bottom --
+    // it re-renders, we re-hide, and the chat shakes. visibility:hidden
+    // collapses nothing: the row keeps its exact box, so there is nothing to
+    // re-measure, and it is still laid out so Torn can see it and clear the
+    // unread badge.
+    //
+    // The cost is a blank gap the height of one message, for the few seconds
+    // until the next message arrives and it collapses properly. That beats
+    // showing the raw quoted text, which is what was actually objected to.
+    function blankRow(row) {
+        if (!row || row.style.visibility === 'hidden') return;
+        row.style.display = '';
+        row.style.visibility = 'hidden';
     }
 
     function paint(all, reg, hide) {
@@ -258,8 +273,8 @@
         const newest = new Map();            // win -> last message in it
         for (const m of all) newest.set(m.win, m);
         for (const m of hide) {
-            if (newest.get(m.win) === m) { reveal(m.row); continue; }
-            hideRow(m.row);
+            if (newest.get(m.win) === m) blankRow(m.row);   // invisible, same size
+            else hideRow(m.row);                            // gone entirely
         }
         for (const m of all) {
             const existing = m.bubble.parentElement
