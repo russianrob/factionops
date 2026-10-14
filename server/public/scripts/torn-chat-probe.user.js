@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Probe
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.3
 // @description  One-shot diagnostic: reports the STRUCTURE of Torn chat messages so we can tell whether a message carries a stable id worth anchoring an emoji reaction to. Reports no message text at all.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -18,6 +18,19 @@
 
 /*
  * CHANGELOG
+ * 1.0.3 - Answers whether the message id is STABLE across a reload, which is
+ *         the only thing that matters now one exists. Remembers the ids it
+ *         saw and counts how many survive the next load.
+ *
+ * 1.0.2 - A throw inside the probe now reports instead of vanishing, and the
+ *         attribute selector built from a live class string is guarded.
+ *
+ * 1.0.1 - Census instead of selector guessing. 1.0.0 matched nothing: it
+ *         tried four likely class patterns and Torn uses none of them. The
+ *         message row is now found structurally - the class that repeats
+ *         most often, deepest, while still carrying text - which works
+ *         whatever Torn renames things to.
+ *
  * 1.0.0 - First cut. Answers one question: does a Torn chat message carry an
  *         id that two different browsers would independently agree on?
  *
@@ -31,12 +44,12 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.0.0';
+    const SCRIPT_VERSION = '1.0.3';
     const TAG = 'torn-chat-probe';
     const ENDPOINT = 'https://tornwar.com/api/debug/client-log';
     // One report per device per hour. The probe answers a fixed question, so
     // repeating it on every page load is pure noise in the log.
-    const REPORT_EVERY_MS = 60 * 60 * 1000;
+    const REPORT_EVERY_MS = 60 * 1000;   // 1.0.1: short while we iterate
 
     // Every GM_* is typeof-guarded: GMforPDA defines only a subset, and an
     // unguarded reference aborts the whole script before anything runs.
@@ -92,58 +105,72 @@
         return out;
     }
 
+    // v1.0.1: stop guessing selectors. Take a CENSUS instead -- in a list of
+    // messages, the message row is simply whatever class repeats most often at
+    // the deepest level that still has text. That finds the row whatever Torn
+    // decides to call it this week.
+    function census(root) {
+        const byClass = new Map();
+        const ids = [];
+        const all = root.querySelectorAll('*');
+        for (const el of all) {
+            if (el.id) ids.push(el.id);
+            const c = el.className && typeof el.className === 'string' ? el.className.trim() : '';
+            if (!c) continue;
+            const rec = byClass.get(c) || { n: 0, depth: 0, textLen: 0, tag: el.tagName.toLowerCase() };
+            rec.n += 1;
+            let d = 0, cur = el;
+            while (cur && cur !== root) { d += 1; cur = cur.parentElement; }
+            rec.depth = d;
+            rec.textLen = Math.max(rec.textLen, (el.textContent || '').length);
+            byClass.set(c, rec);
+        }
+        // Repeated, deep, and carrying text: that is a message row.
+        const ranked = [...byClass.entries()]
+            .filter(([, r]) => r.n >= 3 && r.textLen > 0)
+            .sort((a, b) => (b[1].n * b[1].depth) - (a[1].n * a[1].depth))
+            .slice(0, 10)
+            .map(([cls, r]) => ({ cls, n: r.n, depth: r.depth, tag: r.tag, maxTextLen: r.textLen }));
+        return { total: all.length, ids: ids.slice(0, 25), ranked };
+    }
+
     function probe() {
         const root = document.getElementById('chatRoot');
         if (!root) return { chatRoot: false };
+        const c = census(root);
 
-        // The faction channel box, by the same selectors factionops uses.
-        const box = root.querySelector('[id="faction"]')
-            || root.querySelector('[id^="faction-"]')
-            || null;
-
-        // A message row is not reliably classed, so try the likely shapes and
-        // report which one matched rather than assuming.
-        const CANDIDATES = [
-            '[class*="message" i]',
-            '[class*="chat-box-message" i]',
-            '[class*="messageWrapper" i]',
-            'li',
-        ];
-        let rows = [], matched = null;
-        const scope = box || root;
-        for (const sel of CANDIDATES) {
-            const found = scope.querySelectorAll(sel);
-            if (found.length >= 2) { rows = [...found]; matched = sel; break; }
+        // Best guess at the row: top of the census. Describe it and a sibling
+        // so I can see what DIFFERS between two messages.
+        let sample = null, prev = null, usedClass = null;
+        for (const cand of c.ranked) {
+            let els = [];
+            // A class string straight off the page can contain anything; an
+            // attribute selector built from it may throw, and a throw here
+            // used to mean the probe reported nothing at all.
+            try { els = root.querySelectorAll('[class="' + cand.cls.replace(/"/g, '\\"') + '"]'); }
+            catch (_) { continue; }
+            if (els.length >= 2) { sample = els[els.length - 1]; prev = els[els.length - 2]; usedClass = cand.cls; break; }
         }
 
-        const sample = rows.length ? rows[rows.length - 1] : null;
-        // Two rows, because the question is whether anything DIFFERS between
-        // them in a way that identifies the message.
-        const prev = rows.length > 1 ? rows[rows.length - 2] : null;
-
-        // Does anything inside a row look like a per-message timestamp? Without
-        // one, author+text is not unique: the same person posting "k" twice
-        // collides, and the fallback hash scheme dies here.
         let timeish = null;
         if (sample) {
-            const t = sample.querySelector('time, [class*="time" i], [datetime], [title*=":"]');
+            const t = sample.querySelector('time, [class*="time" i], [datetime], [title]');
             if (t) timeish = describe(t);
         }
 
         return {
             v: SCRIPT_VERSION,
             chatRoot: true,
-            boxFound: Boolean(box),
-            matchedSelector: matched,
-            rowCount: rows.length,
+            nodes: c.total,
+            ids: c.ids,
+            ranked: c.ranked,
+            usedClass,
             sample: describe(sample),
             prevSample: describe(prev),
-            sampleAncestors: sample ? chain(sample.parentElement, 3) : null,
+            sampleAncestors: sample ? chain(sample.parentElement, 2) : null,
             perMessageTime: timeish,
-            // The actual verdict, computed here so the log line is readable
-            // without me re-deriving it.
             verdict: !sample
-                ? 'NO ROWS MATCHED - selectors need widening'
+                ? 'NO REPEATED TEXT ROW FOUND - chat may be collapsed; open the faction channel'
                 : (Object.keys(describe(sample).attrs).some((n) => VALUE_SAFE.test(n))
                     ? 'ROW CARRIES AN ID-LIKE ATTRIBUTE'
                     : (timeish ? 'NO ROW ID, but a per-message time exists (hash fallback viable)'
@@ -151,12 +178,57 @@
         };
     }
 
+    // 1.0.3: the ONLY question left. The id is <uuid>:<senderId> and it is
+    // unique per message -- but that is worth nothing unless two browsers
+    // agree on it. A React-generated uuid would be re-rolled on every mount,
+    // so the same message would carry a different id after a reload and a
+    // shared reaction could never land.
+    //
+    // Cheap decisive test: remember the ids seen last time and count how many
+    // are still present now. High overlap after a reload means the id came
+    // down the wire from Torn. Zero overlap means it is minted locally.
+    function stabilityCheck(ids) {
+        const msgIds = ids.filter((i) => /^[0-9a-f-]{36}:\d+$/i.test(i));
+        let prior = [];
+        try { prior = JSON.parse(gmGet('tcp_ids', '[]')) || []; } catch (_) { prior = []; }
+        gmSet('tcp_ids', JSON.stringify(msgIds.slice(0, 40)));
+
+        if (!prior.length) return { first: true, seen: msgIds.length };
+        const now = new Set(msgIds);
+        const overlap = prior.filter((i) => now.has(i)).length;
+        return {
+            first: false,
+            priorCount: prior.length,
+            seen: msgIds.length,
+            overlap,
+            // Chat moves, so some of the old ids will legitimately have
+            // scrolled out of the virtualized list. Any overlap at all is the
+            // signal; zero across two runs with overlapping messages is the
+            // damning one.
+            readsAs: overlap > 0
+                ? 'STABLE - ids survive a reload, so they come from Torn'
+                : 'NO OVERLAP - either the id is client-minted, or chat turned over completely',
+        };
+    }
+
     function run() {
         const last = Number(gmGet('tcp_last', 0)) || 0;
         if (Date.now() - last < REPORT_EVERY_MS) return;
 
-        const out = probe();
+        let out;
+        try { out = probe(); }
+        catch (e) {
+            // Silence is the worst outcome for a diagnostic: it is
+            // indistinguishable from "not installed". Report the throw.
+            post({ v: SCRIPT_VERSION, threw: String(e && e.message).slice(0, 300) });
+            gmSet('tcp_last', String(Date.now()));
+            return;
+        }
         if (!out.chatRoot) return;        // chat not on this page; say nothing
+        out.stability = stabilityCheck(out.ids || []);
+        // The census is big and the body cap is 4kb; once the structure is
+        // known the ranked list is just noise.
+        out.ranked = (out.ranked || []).slice(0, 3);
         gmSet('tcp_last', String(Date.now()));
         post(out);
 
