@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.14
+// @version      1.2.15
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -37,15 +37,13 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.14';
+    const SCRIPT_VERSION = '1.2.15';
 
     // Default six, plus a '+' that opens a picker for anything else.
     // The row a fresh install starts with. Once you have used anything it is
     // ranked out of the way -- see quickRow().
     const QUICK_DEFAULT = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
     const QUICK_SLOTS = 6;
-    const HOLD_MS = 450;        // how long a press has to last to count as a hold
-    const HOLD_SLOP = 10;      // px of finger travel still counted as a hold, not a scroll
     const USE_KEY = 'tcr-emoji-use';
     const USE_CAP = 40;          // bound the stored map
     const PICKER = [
@@ -530,25 +528,19 @@
 
     // ── the add-reaction button ────────────────────────────────────────────
 
-    // HOLD a message to react to it. A tap does nothing.
+    // A plain click on the message opens the picker. No corner button, and
+    // CLICK ONLY -- no long press and no contextmenu handler.
     //
-    // This reverses the earlier call that a plain tap should open the picker.
-    // Tapping is also how you work Torn's own chat, so the picker kept opening
-    // when nobody asked for it -- and on a phone there is no hover, so a tap is
-    // the one gesture that has to stay ordinary.
-    //
-    // Right-click is kept for desktop, and Android fires `contextmenu` for its
-    // own long press, so the timer below is really for iOS and the PDA webview
-    // where it does not.
+    // 1.2.14 moved this to a hold and it was reverted. Worth keeping the reason
+    // written down: on a phone, a long press is also how you select text and
+    // how the browser raises its own menu, so the gesture is already spoken
+    // for. `contextmenu` is deliberately not bound either -- Android fires it
+    // for its own long press, so keeping it would quietly leave half the
+    // reverted behaviour in place.
     function wire(m) {
         if (m.bubble.getAttribute(MARK)) return;
         m.bubble.setAttribute(MARK, '1');
-        // No pointer cursor: a tap no longer does anything, and advertising one
-        // would be a lie.
-        m.bubble.style.cursor = '';
-        // Stops iOS stacking its own callout menu on top of the picker. Text
-        // selection is deliberately left alone so chat can still be copied.
-        try { m.bubble.style.webkitTouchCallout = 'none'; } catch (_) {}
+        m.bubble.style.cursor = 'pointer';
 
         const open = (ev) => {
             // Never hijack a real control. The sender name is a profile link
@@ -569,50 +561,7 @@
             setTimeout(() => openPicker(m, { getBoundingClientRect: () => ({ left: x, top: y }) }), 0);
         };
 
-        let timer = null, fired = false, sx = 0, sy = 0;
-        const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
-
-        // passive: these listeners never preventDefault, so the browser must not
-        // be made to wait on them before it scrolls the chat.
-        m.bubble.addEventListener('touchstart', (ev) => {
-            const t = ev.touches && ev.touches[0];
-            sx = t ? t.clientX : 0;
-            sy = t ? t.clientY : 0;
-            fired = false;
-            cancel();
-            timer = setTimeout(() => {
-                timer = null;
-                fired = true;
-                // `open` only reads target and coordinates.
-                open({ target: ev.target, clientX: sx, clientY: sy });
-            }, HOLD_MS);
-        }, { passive: true });
-
-        // Finger travelled: that is a scroll through the chat, not a hold.
-        m.bubble.addEventListener('touchmove', (ev) => {
-            const t = ev.touches && ev.touches[0];
-            if (!t) { cancel(); return; }
-            if (Math.abs(t.clientX - sx) > HOLD_SLOP || Math.abs(t.clientY - sy) > HOLD_SLOP) cancel();
-        }, { passive: true });
-        m.bubble.addEventListener('touchend', cancel, { passive: true });
-        m.bubble.addEventListener('touchcancel', cancel, { passive: true });
-
-        // Swallow the click the browser synthesises after a long press. Capture
-        // phase, so it never reaches the document listener that closes the menu
-        // -- otherwise the hold would open the picker and immediately shut it.
-        m.bubble.addEventListener('click', (ev) => {
-            if (!fired) return;              // an ordinary tap: leave it alone
-            fired = false;
-            ev.preventDefault();
-            ev.stopPropagation();
-        }, true);
-
-        m.bubble.addEventListener('contextmenu', (ev) => {
-            ev.preventDefault();
-            cancel();
-            if (fired) return;               // the timer already opened it
-            open(ev);
-        });
+        m.bubble.addEventListener('click', open);
     }
 
     // -- the quick row, ranked by what you actually use ----------------------
