@@ -398,4 +398,67 @@ t('corrupt storage degrades to the defaults instead of throwing', () => {
   assert.deepEqual(broken.quickRow(), ['d1','d2','d3','d4','d5','d6']);
 });
 
+console.log('\nwindowFor — a composer must belong to the message\'s own channel:');
+// Minimal DOM shim: just enough for chatRoot(), channelOf() and windowFor().
+// `flat` models channel boxes as direct children of #chatRoot; `wrapped` puts a
+// wrapper in between, which is the layout that defeats a root-bail fix.
+const mkDom = (wrapped) => {
+  const mkEl = (id, kids) => {
+    const el = {
+      id: id || '', className: '', children: kids || [], parentElement: null,
+      querySelectorAll(sel) {
+        const out = [];
+        (function walk(n) {
+          for (const c of n.children) {
+            if (c.isTextarea && /textarea/.test(sel)) out.push(c);
+            walk(c);
+          }
+        })(el);
+        return out;
+      },
+    };
+    for (const k of (kids || [])) k.parentElement = el;
+    return el;
+  };
+  const ta = { isTextarea: true, id: '', className: '', children: [], parentElement: null,
+               querySelectorAll: () => [] };
+  const facBubble = mkEl('', []);
+  const facBox = mkEl('faction', [facBubble, ta]);
+  const pmBubble = mkEl('', []);
+  const pmBox = mkEl('2862329', [pmBubble]);          // collapsed: no composer
+  const root = wrapped
+    ? mkEl('chatRoot', [mkEl('', [facBox, pmBox])])
+    : mkEl('chatRoot', [facBox, pmBox]);
+  const document = { body: {}, getElementById: (x) => (x === 'chatRoot' ? root : null) };
+  const fns = new Function('document',
+    `${grab('function chatRoot(')}
+     ${grab('function channelOf(')}
+     ${grab('function windowFor(')}
+     return {chatRoot, channelOf, windowFor};`)(document);
+  return { fns, facBubble, pmBubble, ta };
+};
+
+for (const wrapped of [false, true]) {
+  const label = wrapped ? 'boxes under a WRAPPER' : 'boxes DIRECT under #chatRoot';
+  t(`the open channel still resolves its own composer (${label})`, () => {
+    const d = mkDom(wrapped);
+    const w = d.fns.windowFor(d.facBubble);
+    assert.ok(w, 'the open channel lost its composer');
+    assert.equal(w.ta, d.ta);
+  });
+  t(`THE LEAK: a collapsed channel must NOT borrow it (${label})`, () => {
+    // Before this, windowFor walked past the composer-less PM box and handed
+    // back the faction composer -- so reacting to a private message would have
+    // typed a quote of it into faction chat.
+    const d = mkDom(wrapped);
+    assert.equal(d.fns.windowFor(d.pmBubble), null,
+      'a collapsed channel was handed another channel\'s composer');
+  });
+}
+t('channelOf names each box, and differs between them', () => {
+  const d = mkDom(false);
+  assert.equal(d.fns.channelOf(d.facBubble), 'c:faction');
+  assert.equal(d.fns.channelOf(d.pmBubble), 'c:2862329');
+});
+
 console.log(f?`\n${f} FAILED`:'\nall passed');

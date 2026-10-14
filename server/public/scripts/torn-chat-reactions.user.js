@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.12
+// @version      1.2.13
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -37,7 +37,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.12';
+    const SCRIPT_VERSION = '1.2.13';
 
     // Default six, plus a '+' that opens a picker for anything else.
     // The row a fresh install starts with. Once you have used anything it is
@@ -79,10 +79,33 @@
      *  send into whichever channel happened to be first in the DOM. */
     function windowFor(el) {
         const root = chatRoot();
+        // The channel this message is actually in. Every composer we find has
+        // to belong to it.
+        //
+        // Walking up until exactly one composer is in scope is not enough. A
+        // COLLAPSED channel renders no composer but keeps its bubbles, so the
+        // walk sailed past it and found the one open channel's composer
+        // instead -- and then sendMessage() would have typed a quote of a
+        // PRIVATE message into faction chat, which is verbatim the failure
+        // windowFor exists to prevent.
+        //
+        // Checking the channel rather than the DOM depth is what makes this
+        // layout-independent: bailing at #chatRoot only helps when the channel
+        // boxes are its direct children, and any wrapper between them puts a
+        // single composer in scope one level earlier, where the bail never
+        // runs.
+        const chan = channelOf(el);
         let cur = el;
         while (cur && cur !== document.body) {
             const tas = cur.querySelectorAll ? cur.querySelectorAll('textarea[class*="textarea___"]') : [];
-            if (tas.length === 1) return { scope: cur, ta: tas[0] };
+            if (tas.length === 1) {
+                // Refuse when either side is unnameable. A visible "could not
+                // find that channel composer" is the right failure; posting
+                // into the wrong channel is not.
+                const taChan = channelOf(tas[0]);
+                if (!chan || !taChan || taChan !== chan) return null;
+                return { scope: cur, ta: tas[0] };
+            }
             if (tas.length > 1) return null;      // ambiguous, refuse to guess
             if (cur === root) return null;
             cur = cur.parentElement;
@@ -432,9 +455,13 @@
         // So the newest reaction shows its raw line until another message
         // arrives, then tidies itself away.
         const newest = new Map();            // win -> last message in it
-        for (const m of all) newest.set(m.win, m);
+        // By resolved channel, not the window element: several composer-less
+        // boxes share one window object, so all but one of them lost its
+        // newest-row entry and got display:none where it needed
+        // visibility:hidden.
+        for (const m of all) newest.set(winIdOf(m), m);
         for (const m of hide) {
-            if (newest.get(m.win) === m) blankRow(m.row);   // invisible, same size
+            if (newest.get(winIdOf(m)) === m) blankRow(m.row);   // invisible, same size
             else hideRow(m.row);                            // gone entirely
         }
         for (const m of all) {
@@ -611,7 +638,7 @@
         noteUse(emoji);
         // Uniqueness is judged within the message's OWN channel. A fragment
         // competing with text in some other open window is not ambiguous.
-        const frag = quoteFor(m, messages().filter((x) => x.win === m.win));
+        const frag = quoteFor(m, messages().filter((x) => winIdOf(x) === winIdOf(m)));
         if (!frag) { toast('Nothing to quote in that message'); return; }
         sendMessage(emoji + ' "' + frag + '"', m.bubble);
     }
