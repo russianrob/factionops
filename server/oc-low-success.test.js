@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lowSuccessCrimes, LOW_SUCCESS_THRESHOLD, ocCrimeUrl } from './oc-ready-notifier.js';
+import { lowSuccessCrimes, LOW_SUCCESS_THRESHOLD, WEAK_MIN_WEIGHT, WEAK_MIN_LEVEL, ocCrimeUrl } from './oc-ready-notifier.js';
 
 const slot = (pct, opts = {}) => ({
   position: opts.position || 'Muscle',
@@ -345,4 +345,36 @@ test('the two floors compose: both pass', () => {
   assert.equal(out.length, 1);
   assert.equal(out[0].weak[0].weight, 37.3);
   assert.equal(out[0].difficulty, 8);
+});
+
+// ── the push notifier and the chip must agree ──────────────────────────────
+
+test('the shared floors are 10% weight and level 5', () => {
+  // These are what the user asked for. The push notifier and /api/oc/weak
+  // both read them, so a change here silently changes what wakes people up.
+  assert.equal(WEAK_MIN_WEIGHT, 10);
+  assert.equal(WEAK_MIN_LEVEL, 5);
+});
+
+test('a slot that fails either shared floor would not alert', () => {
+  const light = lowSuccessCrimes(
+    [lvlCrime(1, 8, [weightedSlot(63, 'Saboteur #2')])],
+    { weights: WEIGHT_TABLE, minWeight: WEAK_MIN_WEIGHT, minDifficulty: WEAK_MIN_LEVEL },
+  );
+  assert.deepEqual(light, [], 'heavy enough OC, but the weak slot is light');
+
+  const lowLevel = lowSuccessCrimes(
+    [lvlCrime(1, 3, [weightedSlot(63, 'Saboteur #1')])],
+    { weights: WEIGHT_TABLE, minWeight: WEAK_MIN_WEIGHT, minDifficulty: WEAK_MIN_LEVEL },
+  );
+  assert.deepEqual(lowLevel, [], 'heavy slot, but the OC is below level 5');
+});
+
+test('and one that passes both does alert', () => {
+  const out = lowSuccessCrimes(
+    [lvlCrime(1, 5, [weightedSlot(61, 'Saboteur #1', { name: 'Machiacelli' })])],
+    { weights: WEIGHT_TABLE, minWeight: WEAK_MIN_WEIGHT, minDifficulty: WEAK_MIN_LEVEL },
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].weak[0].name, 'Machiacelli');
 });

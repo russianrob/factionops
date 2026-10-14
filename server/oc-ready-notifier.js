@@ -176,6 +176,16 @@ export function ocCrimeUrl(crimeId) {
 
 /** Below this, a slot is worth waking an admin for. */
 export const LOW_SUCCESS_THRESHOLD = 65;
+// Floors shared by the push notifier and /api/oc/weak, so the alert and the
+// chip can never disagree about what counts as worth chasing.
+//   WEIGHT: a 63% member on an 8.9% slot is noise; the same member on a
+//           37.3% slot decides the crime.
+//   LEVEL:  a weak slot on a level-2 OC is not worth waking anyone for when
+//           a level-8 one is also short.
+// Both fail OPEN: an unknown weight or a missing difficulty is KEPT, because
+// a gap in our own lookup must not hide a real problem.
+export const WEAK_MIN_WEIGHT = 10;
+export const WEAK_MIN_LEVEL = 5;
 
 /**
  * Crimes carrying at least one filled slot below the threshold.
@@ -579,7 +589,10 @@ async function _checkLowSuccess(factionId, availableCrimes, members) {
   try { weights = await getRoleWeights(); }
   catch (e) { console.warn(`[oc-low] role weights unavailable: ${e.message}`); }
 
-  const flagged = lowSuccessCrimes(availableCrimes, { seen, names, weights });
+  const flagged = lowSuccessCrimes(availableCrimes, {
+    seen, names, weights,
+    minWeight: WEAK_MIN_WEIGHT, minDifficulty: WEAK_MIN_LEVEL,
+  });
   if (!flagged.length) return;
 
   const { adminIds } = _resolveAdmins(fid, members);

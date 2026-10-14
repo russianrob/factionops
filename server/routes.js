@@ -135,7 +135,7 @@ const maskKey = (key) => key ? `****${String(key).slice(-4)}` : '****';
 import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName } from "./oc-spawn.js";
 import { createFlyerDelayPoller } from "./flyer-delay-poll.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
-import { lowSuccessCrimes, LOW_SUCCESS_THRESHOLD } from "./oc-ready-notifier.js";
+import { lowSuccessCrimes, LOW_SUCCESS_THRESHOLD, WEAK_MIN_WEIGHT, WEAK_MIN_LEVEL } from "./oc-ready-notifier.js";
 import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById, getItemCatalog, getAllBuyPricesByName } from "./item-values.js";
 import { getLowestListing, trackItem, getListingsById, getListingsByName, fetchNow as itemMarketFetchNow } from "./item-market.js";
 import * as vaultRequests from "./vault-requests.js";
@@ -10758,12 +10758,12 @@ router.get("/api/oc/weak", async (req, res) => {
     // on a 37.3% slot decides the crime. Default 10 hides the noise; pass
     // ?minWeight=0 to see everything, which is what the push notifier does.
     const minWeight = req.query.minWeight == null
-      ? 10
+      ? WEAK_MIN_WEIGHT
       : Math.min(100, Math.max(0, Number(req.query.minWeight) || 0));
     // Level floor. A weak slot on a level-2 OC is not worth chasing when a
     // level-8 one is also short. ?minLevel=0 shows every level.
     const minDifficulty = req.query.minLevel == null
-      ? 5
+      ? WEAK_MIN_LEVEL
       : Math.min(10, Math.max(0, Number(req.query.minLevel) || 0));
     const flagged = lowSuccessCrimes(data.availableCrimes || [], { names, weights, minWeight, minDifficulty });
     // Flattened to slots, because the chip lists PEOPLE, not crimes.
