@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.1.0
-// @description  Emoji reactions on Torn faction chat. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
+// @version      1.1.1
+// @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
@@ -19,6 +19,10 @@
 
 /*
  * CHANGELOG
+ * 1.1.1 - Description only: it still said 'faction chat', which is what
+ *         people read before installing. Behaviour was already every
+ *         channel as of 1.1.0.
+ *
  * 1.1.0 - Works in every channel: private conversations, company, anything
  *         Torn adds. Rendering already did, because it scans all of
  *         #chatRoot; sending did not, so a reaction in a PM would have been
@@ -77,7 +81,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.1.0';
+    const SCRIPT_VERSION = '1.1.1';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
