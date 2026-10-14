@@ -14,77 +14,22 @@
 // ==/UserScript==
 
 /*
- * CHANGELOG
- * 1.2.1 - Took the diagnostic back out. It found the PM problem, which is
- *         what it was there for. The script now talks to no server at all,
- *         and the only grant left is unsafeWindow.
+ * A reaction is just a chat message:
  *
- * 1.2.0 - PMs work. They have no message id at all, which threw me for a
- *         while. A private chat is one to one, so Torn never prints a sender
- *         name, and the uuid lives on the sender link. No link, no id, so the
- *         script found nothing there.
+ *     (emoji) "ima need to get a 99k"
  *
- *         The id was never doing the matching anyway. The quote does that.
- *         The id was only a map key, and the map is rebuilt from the DOM on
- *         every pass, so it just has to be unique for that one pass. Keyed by
- *         the message object now, and messages are found by their bubble
- *         instead of their sender link.
+ * With the script you see a chip on the quoted message and the raw line
+ * disappears. Without it you see someone reacting normally. Torn carries the
+ * data, so there is no server and no chat content anywhere but Torn.
  *
- * 1.1.2 - Diagnostic for PMs, because I had no idea what a PM bubble carried.
- *         Redacts every attribute value unless the name looks like an id, so
- *         nobody's private messages end up in a log.
+ * The quote is how a reaction finds its message. A bare emoji can only mean
+ * "the one above", which falls apart as soon as you react to something
+ * further up.
  *
- * 1.1.1 - Description still said "faction chat". Has not been faction only
- *         since 1.1.0.
- *
- * 1.1.0 - Every channel, not just faction. Rendering already worked anywhere
- *         because it scans all of #chatRoot, but sending was pinned to the
- *         faction composer, so reacting in a PM would have posted the emoji
- *         into faction chat quoting the private message. Glad nobody tried
- *         it. The composer is found by walking up from the message now.
- *
- *         Reactions also stay inside their own channel. With faction and a PM
- *         open at once, the same words in both let a reaction in one land on
- *         a message in the other. Found that writing the test, not in chat.
- *
- * 1.0.4 - The diagnostic was reporting the first pass, which runs before chat
- *         has rendered. So it logged "no messages" and then went quiet for
- *         the pass that actually worked. Reports the first pass that finds
- *         something now.
- *
- * 1.0.3 - Tapping + popped the phone keyboard straight over the emoji grid,
- *         because I was focusing the text field as soon as it opened. The
- *         menu is wider and scrolls now, and it repositions after the grid
- *         swaps in rather than keeping the size it had with six icons.
- *
- * 1.0.2 - Click a message to react, replacing the corner button and the long
- *         press. Leaves links, buttons and text selections alone, and does
- *         not stopPropagation, since Torn has its own click handling on those
- *         rows.
- *
- * 1.0.1 - Button is visible instead of hover only, and holding a message
- *         opens the picker. Added a diagnostic, because "nothing pops up"
- *         gave me nothing to work with.
- *
- * 1.0.0 - First cut.
- *
- *         A reaction is just a chat message:
- *
- *             (emoji) "ima need to get a 99k"
- *
- *         With the script you see a chip on the quoted message and the raw
- *         line disappears. Without it you see someone reacting normally.
- *         Torn carries the data, so there is no server and no chat content
- *         anywhere but Torn.
- *
- *         The quote is how a reaction finds its message. A bare emoji can
- *         only mean "the one above", which falls apart as soon as you react
- *         to something further up.
- *
- *         Every public message has id="<uuid>:<senderId>" on its sender link.
- *         Torn assigns it and it survives a reload, 10 of 10 ids identical
- *         across two page loads, so everyone's browser agrees on which
- *         message is which.
+ * Every public message has id="<uuid>:<senderId>" on its sender link, which
+ * Torn assigns and which survives a reload. Private chats have no id at all
+ * (one to one, so no sender name, so no link), which is why messages are
+ * found by their bubble and the chips map is keyed by the message object.
  */
 
 (function () {
@@ -311,9 +256,9 @@
 
     // ── the add-reaction button ────────────────────────────────────────────
 
-    // 1.0.2: a plain CLICK on the message opens the picker. Replaces both the
-    // corner button and the long-press -- clicking is what was asked for and
-    // it needs no affordance to discover.
+    // A plain click on the message opens the picker. No corner button and no
+    // long press: clicking is what people try, and it needs no affordance to
+    // discover.
     function wire(m) {
         if (m.bubble.getAttribute(MARK)) return;
         m.bubble.setAttribute(MARK, '1');
