@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.2
 // @description  Emoji reactions on Torn faction chat. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -10,6 +10,8 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        unsafeWindow
+// @grant        GM_xmlhttpRequest
+// @connect      tornwar.com
 // @run-at       document-idle
 // @downloadURL  https://tornwar.com/scripts/torn-chat-reactions.user.js
 // @updateURL    https://tornwar.com/scripts/torn-chat-reactions.meta.js
@@ -17,6 +19,17 @@
 
 /*
  * CHANGELOG
+ * 1.0.2 - Click the message to react, replacing the corner button and the
+ *         long-press. Guards against hijacking links, buttons and an active
+ *         text selection, and deliberately does not stopPropagation so
+ *         Torn's own click handling on the row still runs.
+ *
+ * 1.0.1 - The react button is visible by default instead of hover-only, and
+ *         holding the MESSAGE opens the picker (right-click on desktop) --
+ *         the gesture everybody tries first. Adds a one-shot diagnostic,
+ *         because 'nothing pops up' had no way to tell me whether the script
+ *         found any messages at all.
+ *
  * 1.0.0 - First cut.
  *
  *         HOW IT WORKS, and why there is no server. Tapping a reaction sends
@@ -43,7 +56,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.0.0';
+    const SCRIPT_VERSION = '1.0.2';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -233,32 +246,35 @@
 
     // ── the add-reaction button ────────────────────────────────────────────
 
-    function addButton(m, all) {
+    // 1.0.2: a plain CLICK on the message opens the picker. Replaces both the
+    // corner button and the long-press -- clicking is what was asked for and
+    // it needs no affordance to discover.
+    function wire(m) {
         if (m.bubble.getAttribute(MARK)) return;
         m.bubble.setAttribute(MARK, '1');
-        if (getComputedStyle(m.bubble).position === 'static') m.bubble.style.position = 'relative';
+        m.bubble.style.cursor = 'pointer';
 
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'tcr-add';
-        btn.textContent = '\u{1F642}';
-        btn.title = 'React';
-        // Shown on hover for a mouse, and always faintly visible for touch --
-        // a PDA has no hover, so a hover-only control is an invisible control.
-        btn.style.cssText = 'position:absolute;top:-8px;right:-4px;z-index:5;border:0;border-radius:10px;'
-            + 'background:rgba(0,0,0,.55);color:#fff;font-size:11px;line-height:1;padding:3px 5px;'
-            + 'cursor:pointer;opacity:0;transition:opacity .12s';
-        m.bubble.addEventListener('mouseenter', () => { btn.style.opacity = '1'; });
-        m.bubble.addEventListener('mouseleave', () => { btn.style.opacity = '0'; });
-        // Touch devices get it permanently, at low opacity so it is unobtrusive.
-        if (matchMedia('(hover: none)').matches) btn.style.opacity = '.45';
+        const open = (ev) => {
+            // Never hijack a real control. The sender name is a profile link
+            // and messages can carry item/user links; swallowing those would
+            // break chat to add an emoji to it.
+            if (ev.target.closest && ev.target.closest('a, button, input, textarea, select')) return;
+            // Nor a selection in progress -- the user is copying text, not
+            // reacting.
+            const sel = W.getSelection && W.getSelection();
+            if (sel && String(sel).length > 0 && !sel.isCollapsed) return;
+            // Deliberately NOT stopPropagation: Torn has its own click
+            // handling on these rows (the bubble carries
+            // data-is-tooltip-opened) and suppressing it would break whatever
+            // that does. Opening on the next tick instead lets the document
+            // click handler close any previous menu BEFORE this one opens,
+            // which is the only reason stopPropagation was tempting.
+            const x = ev.clientX, y = ev.clientY;
+            setTimeout(() => openPicker(m, { getBoundingClientRect: () => ({ left: x, top: y }) }), 0);
+        };
 
-        btn.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            ev.preventDefault();
-            openPicker(m, btn);
-        });
-        m.bubble.appendChild(btn);
+        m.bubble.addEventListener('click', open);
+        m.bubble.addEventListener('contextmenu', (ev) => { ev.preventDefault(); open(ev); });
     }
 
     let openMenu = null;
@@ -328,12 +344,34 @@
     let observer = null;
     let queued = false;
 
+    let diagSent = false;
+    function diag(data) {
+        if (diagSent) return;
+        diagSent = true;
+        try {
+            if (typeof GM_xmlhttpRequest === 'function') {
+                GM_xmlhttpRequest({
+                    method: 'POST', url: 'https://tornwar.com/api/debug/client-log',
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ tag: 'tcr', data: Object.assign({ v: SCRIPT_VERSION }, data) }),
+                });
+            }
+        } catch (_) {}
+    }
+
     function pass() {
         queued = false;
         const root = chatRoot();
-        if (!root) return;
+        if (!root) { diag({ reason: 'no-chatRoot' }); return; }
         const all = messages();
-        if (!all.length) return;
+        if (!all.length) {
+            // The probe proved these ids exist, so zero here means the shape
+            // changed or we are looking at the wrong subtree -- worth a line
+            // rather than a silent no-op.
+            diag({ reason: 'no-messages', anchors: root.querySelectorAll('a[id]').length,
+                   boxes: root.querySelectorAll('[class*="box___"]').length });
+            return;
+        }
         // Disconnected across the write. This writes into the very subtree it
         // watches, and an observer reacting to its own writes is a runaway
         // loop that warms the phone in your hand.
@@ -341,7 +379,11 @@
         try {
             const { reg, hide } = collect(all);
             paint(all, reg, hide);
-            for (const m of all) if (!REACTION.test(m.text)) addButton(m, all);
+            let added = 0;
+            for (const m of all) if (!REACTION.test(m.text)) { if (!m.bubble.getAttribute(MARK)) added += 1; wire(m); }
+            diag({ reason: 'ok', messages: all.length, buttonsAdded: added,
+                   reactions: reg.size, hidden: hide.length,
+                   touch: matchMedia('(hover: none)').matches });
         } finally { observe(); }
     }
 
