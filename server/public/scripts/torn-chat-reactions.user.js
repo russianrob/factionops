@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.1.1
+// @version      1.2.0
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -19,6 +19,24 @@
 
 /*
  * CHANGELOG
+ * 1.2.0 - Private conversations work. They carry NO message id: a PM is
+ *         one-to-one so Torn prints no sender name, and the uuid lives on
+ *         the sender link. Confirmed by diagnostic -- a PM bubble has only
+ *         class and data-is-tooltip-opened, and there is no data-id anywhere.
+ *
+ *         The id was never doing the matching though; the quote is. It was
+ *         only a key for the chips map, and that map is rebuilt from the DOM
+ *         every pass, so it only has to be unique WITHIN a pass. Keyed by
+ *         the message object now, and messages are discovered by bubble
+ *         rather than by sender link.
+ *
+ * 1.1.2 - Diagnostic for private conversations. A PM is one-to-one so it
+ *         prints no sender name, and the id this whole scheme anchors on
+ *         lives on the sender link -- so a PM has bubbles and no anchors and
+ *         the script finds nothing. Reports what a PM bubble actually
+ *         carries, with values redacted unless the attribute name could hold
+ *         an identity, so no private message reaches the log.
+ *
  * 1.1.1 - Description only: it still said 'faction chat', which is what
  *         people read before installing. Behaviour was already every
  *         channel as of 1.1.0.
@@ -81,7 +99,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.1.1';
+    const SCRIPT_VERSION = '1.2.0';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -139,18 +157,28 @@
         const root = chatRoot();
         if (!root) return [];
         const out = [];
-        for (const a of root.querySelectorAll('a[id]')) {
-            if (!MSG_ID.test(a.id)) continue;
-            const bubble = a.closest('[class*="box___"]');
-            if (!bubble) continue;
+        // Anchored on the BUBBLE, not the sender link. A private conversation
+        // is one-to-one so Torn prints no sender name, which means no link and
+        // no id -- the whole reason PMs found nothing. The bubble exists in
+        // every channel (box___eWW6m in faction, box___ijzC5 in a PM; the hash
+        // differs per component, the prefix does not).
+        for (const bubble of root.querySelectorAll('[class*="box___"]')) {
+            const a = bubble.querySelector('a[id]');
+            const id = a && MSG_ID.test(a.id) ? a.id : null;
+            // Public channels put the text in its own span alongside the
+            // sender; a PM bubble IS the text.
             const textEl = bubble.querySelector('[class*="message___"]');
+            const row = bubble.closest('[class*="virtualItem___"]') || bubble;
+            // `self___` on the wrapper marks your own side of a conversation.
+            // It is the only sender information a PM offers.
+            const mine = /\bself___/.test(String((bubble.parentElement || row).className || ''));
             const win = windowFor(bubble);
             out.push({
-                id: a.id,
-                sender: (a.textContent || '').trim(),
-                text: textEl ? (textEl.textContent || '').trim() : '',
+                id,
+                sender: a ? (a.textContent || '').trim() : (mine ? 'You' : 'Them'),
+                text: (textEl ? textEl.textContent : bubble.textContent || '').trim(),
                 bubble,
-                row: bubble.closest('[class*="virtualItem___"]') || bubble,
+                row,
                 // Which chat window this message is in. Reactions must resolve
                 // within one channel: with faction and a PM both open, the same
                 // words in each would otherwise let a reaction in one land on a
@@ -256,8 +284,8 @@
             // visible as an ordinary message -- swallowing something we cannot
             // attribute is worse than not converting it.
             if (!target) return;
-            if (!reg.has(target.id)) reg.set(target.id, new Map());
-            const byEmoji = reg.get(target.id);
+            if (!reg.has(target)) reg.set(target, new Map());
+            const byEmoji = reg.get(target);
             if (!byEmoji.has(emoji)) byEmoji.set(emoji, new Set());
             byEmoji.get(emoji).add(m.sender);
             hide.push(m.row);
@@ -270,7 +298,7 @@
         for (const m of all) {
             const existing = m.bubble.parentElement
                 && m.bubble.parentElement.querySelector(':scope > .tcr-chips');
-            const byEmoji = reg.get(m.id);
+            const byEmoji = reg.get(m);
             if (!byEmoji || !byEmoji.size) { if (existing) existing.remove(); continue; }
             const want = [...byEmoji.entries()]
                 .map(([e, who]) => e + (who.size > 1 ? ' ' + who.size : ''))
@@ -433,12 +461,34 @@
         if (!root) { diag({ reason: 'no-chatRoot' }); return; }
         const all = messages();
         if (!all.length) {
-            // NOT reported here any more. Chat renders well after the script
-            // starts, so the first few passes legitimately find nothing -- and
-            // a one-shot diagnostic spent its only report on them, logging
-            // 'anchors:0' and then falling silent for the pass that actually
-            // worked. Only a pass that found messages is worth a line; if none
-            // ever does, the timeout below says so instead.
+            // Chat renders well after the script starts, so the first few
+            // passes legitimately find nothing and are not worth a line.
+            //
+            // But a window with BUBBLES and no anchors is a different animal:
+            // that is a private conversation, which has no sender name because
+            // it is one-to-one, so the id the whole scheme hangs on is absent.
+            // Report what a PM bubble does carry, once, so the anchor can be
+            // found instead of guessed at.
+            const boxes = root.querySelectorAll('[class*="box___"]');
+            if (boxes.length >= 2 && root.querySelectorAll('a[id]').length === 0) {
+                const b = boxes[boxes.length - 1];
+                // Attribute VALUES only where the name could carry identity.
+                // A PM bubble's title/aria-label can hold the message, and a
+                // diagnostic must not ship private conversation to a log.
+                const SAFE = /(^|[-_])(id|key|uid|guid|hash|seq|index|time|ts|date|at)([-_]|$)/i;
+                const desc = (el) => el && ({
+                    tag: el.tagName.toLowerCase(),
+                    cls: String(el.className || ''),
+                    attrs: Object.fromEntries([...el.attributes].map((a) =>
+                        [a.name, SAFE.test(a.name) ? String(a.value).slice(0, 60) : '<redacted>'])),
+                });
+                const anc = [];
+                let cur = b.parentElement;
+                for (let i = 0; i < 4 && cur; i++) { anc.push(desc(cur)); cur = cur.parentElement; }
+                diag({ reason: 'bubbles-without-anchors', boxes: boxes.length,
+                       bubble: desc(b), ancestors: anc,
+                       anyDataAttrs: [...root.querySelectorAll('[data-id],[data-message-id],[data-key]')].length });
+            }
             return;
         }
         // Disconnected across the write. This writes into the very subtree it

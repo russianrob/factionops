@@ -43,7 +43,7 @@ t('a reaction lands on the quoted message, not the one above it', () => {
              msg('m3:3','Rob',Q('X','ima need to get a 99k'))];
   const {reg,hide}=fns.collect(all);
   assert.equal(reg.size,1);
-  assert.ok(reg.has('m1:1'), 'must attach to m1, not the adjacent m2');
+  assert.ok(reg.has(all[0]), 'must attach to m1, not the adjacent m2');
   assert.equal(hide.length,1,'the reaction line itself is hidden');
 });
 t('several people reacting aggregate under one emoji', () => {
@@ -51,7 +51,7 @@ t('several people reacting aggregate under one emoji', () => {
              msg('r1:2','B',Q('X','ima need to get a 99k')),
              msg('r2:3','C',Q('X','ima need to get a 99k'))];
   const {reg}=fns.collect(all);
-  assert.equal(reg.get('m1:1').get('X').size,2);
+  assert.equal(reg.get(all[0]).get('X').size,2);
 });
 t('FAIL OPEN: an unmatched quote stays a visible message', () => {
   const all=[msg('m1:1','A','something else entirely'),
@@ -66,7 +66,7 @@ t('a reaction never targets another reaction', () => {
              msg('r2:3','C',Q('Y','ima need to get a 99k'))];
   const {reg}=fns.collect(all);
   assert.equal(reg.size,1);
-  assert.equal(reg.get('m1:1').size,2,'both emoji land on the original');
+  assert.equal(reg.get(all[0]).size,2,'both emoji land on the original');
 });
 t('an ordinary message with a quote in it is left alone', () => {
   const all=[msg('m1:1','A','he said "hello" to me')];
@@ -79,7 +79,7 @@ t('the most RECENT preceding match wins when text repeats', () => {
              msg('m2:2','B','same text here'),
              msg('r1:3','C',Q('X','same text here'))];
   const {reg}=fns.collect(all);
-  assert.ok(reg.has('m2:2'), 'should attach to the nearer one');
+  assert.ok(reg.has(all[1]), 'should attach to the nearer one');
 });
 
 console.log('\nchannel scoping — faction and a PM open at once:');
@@ -91,14 +91,14 @@ t('a reaction NEVER attaches across channels', () => {
              msg('r1:3','C','X "can i do med out partner"','pm')];
   const {reg}=fns.collect(all);
   assert.equal(reg.size,1);
-  assert.ok(reg.has('p1:2'), 'must land on the PM message, not the faction one');
+  assert.ok(reg.has(all[1]), 'must land on the PM message, not the faction one');
 });
 t('and the faction reaction stays in faction', () => {
   const all=[msg('p1:1','A','same words here','pm'),
              msg('f1:2','B','same words here','faction'),
              msg('r1:3','C','X "same words here"','faction')];
   const {reg}=fns.collect(all);
-  assert.ok(reg.has('f1:2'));
+  assert.ok(reg.has(all[1]));
 });
 t('a reaction with no match in its OWN channel fails open', () => {
   const all=[msg('f1:1','A','only in faction','faction'),
@@ -106,6 +106,30 @@ t('a reaction with no match in its OWN channel fails open', () => {
   const {reg,hide}=fns.collect(all);
   assert.equal(reg.size,0,'must not reach into the other channel');
   assert.equal(hide.length,0,'and the line stays visible');
+});
+
+
+console.log('\nprivate conversations — no message id exists at all:');
+t('reactions work with id === null throughout', () => {
+  // A PM bubble carries no uuid. The quote is what matches; the id was only
+  // ever a map key, and the map is rebuilt from the DOM every pass.
+  const all=[{id:null,sender:'Them',text:'hey there, how are you doing?',win:'pm',bubble:null,row:{style:{}}},
+             {id:null,sender:'You', text:'X "hey there, how are you doing?"',win:'pm',bubble:null,row:{style:{}}}];
+  const {reg,hide}=fns.collect(all);
+  assert.equal(reg.size,1,'a null id must not collapse every message into one bucket');
+  assert.ok(reg.has(all[0]));
+  assert.equal(hide.length,1);
+});
+t('two ID-LESS messages stay distinct', () => {
+  // Keying by id would have merged these, since both ids are null.
+  const all=[{id:null,sender:'Them',text:'first message here',win:'pm',bubble:null,row:{style:{}}},
+             {id:null,sender:'Them',text:'second message here',win:'pm',bubble:null,row:{style:{}}},
+             {id:null,sender:'You', text:'X "first message here"',win:'pm',bubble:null,row:{style:{}}},
+             {id:null,sender:'You', text:'Y "second message here"',win:'pm',bubble:null,row:{style:{}}}];
+  const {reg}=fns.collect(all);
+  assert.equal(reg.size,2,'two separate targets, not one');
+  assert.equal(reg.get(all[0]).has('X'),true);
+  assert.equal(reg.get(all[1]).has('Y'),true);
 });
 
 console.log(f?`\n${f} FAILED`:'\nall passed');
