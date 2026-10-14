@@ -7767,7 +7767,23 @@ async function runFailureRisk(factionId, data) {
 
     // Find weakest link: highest risk score
     slotRisks.sort((a, b) => b.riskScore - a.riskScore);
-    const weakestLink = slotRisks[0] || null;
+    const weakestRaw = slotRisks[0] || null;
+    // ...but only NAME them if they are actually weak. slotRisks[0] is the
+    // relatively weakest slot, which on a strong crime is still someone at
+    // 79% -- calling that out reads as a problem when there isn't one, and
+    // buries the crimes that do have one. Same 65% line the low-success
+    // alerts use, so the two features agree on what "weak" means.
+    //
+    // A new member is kept regardless: no history is unknown risk, not low
+    // risk, and that is worth seeing.
+    const weakestPct = weakestRaw
+      ? (weakestRaw.successProb != null
+          ? Math.round(weakestRaw.successProb * 100)
+          : Math.round(weakestRaw.cpr || 0))
+      : null;
+    const weakestLink = weakestRaw
+      && (weakestRaw.isNewMember || weakestPct < LOW_SUCCESS_THRESHOLD)
+      ? weakestRaw : null;
 
     // Flag high-weight + low CPR combos (below 60% MINCPR threshold)
     const dangerSlots = slotRisks.filter(s => s.weight >= 20 && s.cpr < 60);
