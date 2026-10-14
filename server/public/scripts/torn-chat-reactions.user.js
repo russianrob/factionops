@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.11
+// @version      1.2.12
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
 // @noframes
 // @grant        unsafeWindow
+// @grant        GM_setValue
+// @grant        GM_getValue
 // @run-at       document-idle
 // @downloadURL  https://update.greasyfork.org/scripts/600153/Torn%20Chat%20Reactions.user.js
 // @updateURL    https://update.greasyfork.org/scripts/600153/Torn%20Chat%20Reactions.meta.js
@@ -35,10 +37,15 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.11';
+    const SCRIPT_VERSION = '1.2.12';
 
     // Default six, plus a '+' that opens a picker for anything else.
-    const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
+    // The row a fresh install starts with. Once you have used anything it is
+    // ranked out of the way -- see quickRow().
+    const QUICK_DEFAULT = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
+    const QUICK_SLOTS = 6;
+    const USE_KEY = 'tcr-emoji-use';
+    const USE_CAP = 40;          // bound the stored map
     const PICKER = [
         '\u{1F602}','\u{1F923}','\u{1F605}','\u{1F600}','\u{1F609}','\u{1F60E}','\u{1F970}','\u{1F618}',
         '\u{1F44D}','\u{1F44E}','\u{1F44F}','\u{1F64C}','\u{1F4AA}','\u{1F91D}','\u{1F64F}','\u{1F44A}',
@@ -525,12 +532,83 @@
         m.bubble.addEventListener('contextmenu', (ev) => { ev.preventDefault(); open(ev); });
     }
 
+    // -- the quick row, ranked by what you actually use ----------------------
+    //
+    // Every GM_* call is typeof-guarded. An unguarded one throws on PDA before
+    // any UI exists, which kills the whole script rather than one feature.
+
+    function gmGet(key, fallback) {
+        try {
+            if (typeof GM_getValue !== 'function') return fallback;
+            const v = GM_getValue(key, null);
+            return v == null ? fallback : v;
+        } catch (_) { return fallback; }
+    }
+    function gmSet(key, value) {
+        try { if (typeof GM_setValue === 'function') GM_setValue(key, value); } catch (_) {}
+    }
+
+    /** { emoji: [useCount, lastUsedMs] } */
+    function loadUse() {
+        const raw = gmGet(USE_KEY, null);
+        if (!raw) return {};
+        try {
+            const o = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            return (o && typeof o === 'object') ? o : {};
+        } catch (_) { return {}; }
+    }
+
+    function noteUse(emoji) {
+        if (!emoji) return;
+        const use = loadUse();
+        const prev = use[emoji];
+        use[emoji] = [(prev && prev[0] ? prev[0] : 0) + 1, Date.now()];
+        // Keep the map bounded: drop the least used, oldest first on a tie.
+        const keys = Object.keys(use);
+        if (keys.length > USE_CAP) {
+            keys.sort((a, b) => (use[b][0] - use[a][0]) || (use[b][1] - use[a][1]));
+            const kept = {};
+            for (const k of keys.slice(0, USE_CAP)) kept[k] = use[k];
+            gmSet(USE_KEY, JSON.stringify(kept));
+            return;
+        }
+        gmSet(USE_KEY, JSON.stringify(use));
+    }
+
+    /** The six on the quick row.
+     *
+     *  Ranked by use COUNT, so the row is stable and your regulars stay put --
+     *  pure recency would let six novelty emoji push your thumbs-up off it.
+     *  But the most recently used one is always included even when its count is
+     *  low, so something picked out of the grid is one tap away immediately
+     *  instead of having to out-rank everything you have ever used first.
+     *  Padded from the defaults until you have used six different things. */
+    function quickRow() {
+        const use = loadUse();
+        const used = Object.keys(use);
+        if (!used.length) return QUICK_DEFAULT.slice();
+        used.sort((a, b) => (use[b][0] - use[a][0]) || (use[b][1] - use[a][1]));
+        const row = used.slice(0, QUICK_SLOTS);
+        // The one used most recently, wherever it ranks.
+        let recent = used[0];
+        for (const e of used) if (use[e][1] > use[recent][1]) recent = e;
+        if (row.indexOf(recent) < 0) row[QUICK_SLOTS - 1] = recent;
+        for (const e of QUICK_DEFAULT) {
+            if (row.length >= QUICK_SLOTS) break;
+            if (row.indexOf(e) < 0) row.push(e);
+        }
+        return row;
+    }
+
     let openMenu = null;
     function closeMenu() { if (openMenu) { openMenu.remove(); openMenu = null; } }
     document.addEventListener('click', closeMenu);
 
     function react(m, emoji) {
         closeMenu();
+        // Counted on send, not on open, so merely browsing the grid does not
+        // reorder your row.
+        noteUse(emoji);
         // Uniqueness is judged within the message's OWN channel. A fragment
         // competing with text in some other open window is not ambiguous.
         const frag = quoteFor(m, messages().filter((x) => x.win === m.win));
@@ -557,7 +635,7 @@
             b.addEventListener('click', fn);
             return b;
         };
-        for (const e of QUICK) menu.appendChild(mk(e, () => react(m, e)));
+        for (const e of quickRow()) menu.appendChild(mk(e, () => react(m, e)));
         menu.appendChild(mk('+', () => {
             menu.textContent = '';
             for (const e of PICKER) menu.appendChild(mk(e, () => react(m, e)));

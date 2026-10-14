@@ -330,4 +330,72 @@ t('with no channel id at all it still falls back rather than throwing', () => {
   assert.ok(String(fns.keyFor(a)).endsWith('|hi'));
 });
 
+console.log('\nquickRow — the six slots follow what you actually use:');
+// Fake GM store and a monotonic clock, so ordering is deterministic rather than
+// depending on two sends landing in different milliseconds.
+const mkQuick = () => {
+  const store = {};
+  let clock = 1000;
+  return new Function('GM_getValue','GM_setValue','Date','QUICK_DEFAULT','QUICK_SLOTS','USE_KEY','USE_CAP',
+    `${grab('function gmGet(')}
+     ${grab('function gmSet(')}
+     ${grab('function loadUse(')}
+     ${grab('function noteUse(')}
+     ${grab('function quickRow(')}
+     return {loadUse, noteUse, quickRow};`
+  )((k, d) => (k in store ? store[k] : d), (k, v) => { store[k] = v; },
+    { now: () => ++clock }, ['d1','d2','d3','d4','d5','d6'], 6, 'tcr-emoji-use', 40);
+};
+
+t('a fresh install shows the defaults', () => {
+  const q = mkQuick();
+  assert.deepEqual(q.quickRow(), ['d1','d2','d3','d4','d5','d6']);
+});
+t('something used once appears, and the row stays six long', () => {
+  const q = mkQuick();
+  q.noteUse('\u{1F680}');
+  const row = q.quickRow();
+  assert.ok(row.includes('\u{1F680}'), 'the emoji just used is not on the row');
+  assert.equal(row.length, 6);
+});
+t('ranked by use count, most used first', () => {
+  const q = mkQuick();
+  for (let i = 0; i < 5; i++) q.noteUse('A');
+  for (let i = 0; i < 3; i++) q.noteUse('B');
+  q.noteUse('C');
+  const row = q.quickRow();
+  assert.equal(row[0], 'A');
+  assert.equal(row[1], 'B');
+});
+t('THE POINT: a brand new emoji shows up WITHOUT out-ranking the regulars', () => {
+  const q = mkQuick();
+  // Six well-established favourites.
+  const reg = ['A','B','C','D','E','F'];
+  reg.forEach((e, i) => { for (let n = 0; n < 10 - i; n++) q.noteUse(e); });
+  assert.deepEqual(q.quickRow(), reg, 'precondition: the row is full of regulars');
+  // One use of something new has to be enough to reach the row.
+  q.noteUse('\u{1F984}');
+  const row = q.quickRow();
+  assert.ok(row.includes('\u{1F984}'), 'a newly used emoji never reached the row');
+  assert.equal(row.length, 6);
+  assert.equal(row[0], 'A', 'it must not disturb the top of the row');
+});
+t('the stored map stays bounded', () => {
+  const q = mkQuick();
+  for (let i = 0; i < 60; i++) q.noteUse('e' + i);
+  assert.ok(Object.keys(q.loadUse()).length <= 40, 'use map grew past its cap');
+});
+t('corrupt storage degrades to the defaults instead of throwing', () => {
+  const q = mkQuick();
+  q.noteUse('A');
+  // Simulate a half-written value.
+  const broken = new Function('GM_getValue','GM_setValue','Date','QUICK_DEFAULT','QUICK_SLOTS','USE_KEY','USE_CAP',
+    `${grab('function gmGet(')}
+     ${grab('function gmSet(')}
+     ${grab('function loadUse(')}
+     ${grab('function quickRow(')}
+     return {quickRow};`)(() => '{not json', () => {}, Date, ['d1','d2','d3','d4','d5','d6'], 6, 'k', 40);
+  assert.deepEqual(broken.quickRow(), ['d1','d2','d3','d4','d5','d6']);
+});
+
 console.log(f?`\n${f} FAILED`:'\nall passed');
