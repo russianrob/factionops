@@ -4,7 +4,7 @@
 // @version      1.0.21
 // @description  Stake out players and factions with status alerts (online, hospital, landing, life, chain, war...) — forked from TornTools
 // @author       RussianRob
-// @license      All Rights Reserved
+// @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
 // @connect      api.torn.com
 // @connect      tornwar.com
