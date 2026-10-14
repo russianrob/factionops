@@ -41,7 +41,7 @@ t('a reaction lands on the quoted message, not the one above it', () => {
   const all=[msg('m1:1','POOPEATER','ima need to get a 99k boost'),
              msg('m2:2','Yukarii','Anyone working on amusement?'),
              msg('m3:3','Rob',Q('X','ima need to get a 99k'))];
-  const {reg}=fns.collect(all);
+  const {reg,hide}=fns.collect(all);
   assert.equal(reg.size,1);
   assert.ok(reg.has(all[0]), 'must attach to m1, not the adjacent m2');
 });
@@ -49,13 +49,13 @@ t('several people reacting aggregate under one emoji', () => {
   const all=[msg('m1:1','A','ima need to get a 99k boost'),
              msg('r1:2','B',Q('X','ima need to get a 99k')),
              msg('r2:3','C',Q('X','ima need to get a 99k'))];
-  const {reg}=fns.collect(all);
+  const {reg,hide}=fns.collect(all);
   assert.equal(reg.get(all[0]).get('X').size,2);
 });
 t('FAIL OPEN: an unmatched quote stays a visible message', () => {
   const all=[msg('m1:1','A','something else entirely'),
              msg('r1:2','B',Q('X','a message that scrolled away'))];
-  const {reg}=fns.collect(all);
+  const {reg,hide}=fns.collect(all);
   assert.equal(reg.size,0);
   // The line stays visible either way now; what matters is that an
   // unmatched quote produces NO chip rather than a wrong one.
@@ -64,20 +64,20 @@ t('a reaction never targets another reaction', () => {
   const all=[msg('m1:1','A','ima need to get a 99k boost'),
              msg('r1:2','B',Q('X','ima need to get a 99k')),
              msg('r2:3','C',Q('Y','ima need to get a 99k'))];
-  const {reg}=fns.collect(all);
+  const {reg,hide}=fns.collect(all);
   assert.equal(reg.size,1);
   assert.equal(reg.get(all[0]).size,2,'both emoji land on the original');
 });
 t('an ordinary message with a quote in it is left alone', () => {
   const all=[msg('m1:1','A','he said "hello" to me')];
-  const {reg}=fns.collect(all);
+  const {reg,hide}=fns.collect(all);
   assert.equal(reg.size,0);
 });
 t('the most RECENT preceding match wins when text repeats', () => {
   const all=[msg('m1:1','A','same text here'),
              msg('m2:2','B','same text here'),
              msg('r1:3','C',Q('X','same text here'))];
-  const {reg}=fns.collect(all);
+  const {reg,hide}=fns.collect(all);
   assert.ok(reg.has(all[1]), 'should attach to the nearer one');
 });
 
@@ -88,7 +88,7 @@ t('a reaction NEVER attaches across channels', () => {
   const all=[msg('f1:1','A','can i do med out partner','faction'),
              msg('p1:2','B','can i do med out partner','pm'),
              msg('r1:3','C','X "can i do med out partner"','pm')];
-  const {reg}=fns.collect(all);
+  const {reg,hide}=fns.collect(all);
   assert.equal(reg.size,1);
   assert.ok(reg.has(all[1]), 'must land on the PM message, not the faction one');
 });
@@ -96,13 +96,13 @@ t('and the faction reaction stays in faction', () => {
   const all=[msg('p1:1','A','same words here','pm'),
              msg('f1:2','B','same words here','faction'),
              msg('r1:3','C','X "same words here"','faction')];
-  const {reg}=fns.collect(all);
+  const {reg,hide}=fns.collect(all);
   assert.ok(reg.has(all[1]));
 });
 t('a reaction with no match in its OWN channel fails open', () => {
   const all=[msg('f1:1','A','only in faction','faction'),
              msg('r1:2','B','X "only in faction"','pm')];
-  const {reg}=fns.collect(all);
+  const {reg,hide}=fns.collect(all);
   assert.equal(reg.size,0,'must not reach into the other channel');
 });
 
@@ -113,7 +113,7 @@ t('reactions work with id === null throughout', () => {
   // ever a map key, and the map is rebuilt from the DOM every pass.
   const all=[{id:null,sender:'Them',text:'hey there, how are you doing?',win:'pm',bubble:null,row:{style:{}}},
              {id:null,sender:'You', text:'X "hey there, how are you doing?"',win:'pm',bubble:null,row:{style:{}}}];
-  const {reg}=fns.collect(all);
+  const {reg,hide}=fns.collect(all);
   assert.equal(reg.size,1,'a null id must not collapse every message into one bucket');
   assert.ok(reg.has(all[0]));
 });
@@ -123,10 +123,53 @@ t('two ID-LESS messages stay distinct', () => {
              {id:null,sender:'Them',text:'second message here',win:'pm',bubble:null,row:{style:{}}},
              {id:null,sender:'You', text:'X "first message here"',win:'pm',bubble:null,row:{style:{}}},
              {id:null,sender:'You', text:'Y "second message here"',win:'pm',bubble:null,row:{style:{}}}];
-  const {reg}=fns.collect(all);
+  const {reg,hide}=fns.collect(all);
   assert.equal(reg.size,2,'two separate targets, not one');
   assert.equal(reg.get(all[0]).has('X'),true);
   assert.equal(reg.get(all[1]).has('Y'),true);
+});
+
+
+console.log('\nhiding — never the newest message:');
+// display:none on the NEWEST virtualItem row fights the virtualiser's
+// scroll-to-bottom AND stops Torn marking it read. Older rows drive neither.
+const newestOf = (all, hide) => {
+  const newest = new Map();
+  for (const m of all) newest.set(m.win, m);
+  return hide.filter((m) => newest.get(m.win) !== m);
+};
+t('a reaction that is the LAST message is left visible', () => {
+  const all=[msg('m1:1','A','ima need to get a 99k boost'),
+             msg('r1:2','B','X "ima need to get a 99k"')];
+  const {hide}=fns.collect(all);
+  assert.equal(hide.length,1,'it is still a reaction');
+  assert.equal(newestOf(all,hide).length,0,'but must NOT be hidden');
+});
+t('once another message arrives, it is hidden', () => {
+  const all=[msg('m1:1','A','ima need to get a 99k boost'),
+             msg('r1:2','B','X "ima need to get a 99k"'),
+             msg('m2:3','C','anything after it')];
+  const {hide}=fns.collect(all);
+  assert.equal(newestOf(all,hide).length,1,'no longer newest, so hide it');
+});
+t('newest is per CHANNEL, not global', () => {
+  // A later message in ANOTHER channel must not make a faction reaction
+  // hideable: it is still the newest thing in faction, so hiding it would
+  // fight that channel's scroll and its unread badge.
+  const all=[msg('f1:1','A','faction message','faction'),
+             msg('fr:2','B','X "faction message"','faction'),
+             msg('p1:3','C','a later PM','pm')];
+  const {hide}=fns.collect(all);
+  assert.equal(newestOf(all,hide).length,0,'still newest in faction -> stays visible');
+});
+
+t('and a later message in the SAME channel does make it hideable', () => {
+  const all=[msg('f1:1','A','faction message','faction'),
+             msg('fr:2','B','X "faction message"','faction'),
+             msg('f2:3','C','a later faction message','faction'),
+             msg('p1:4','D','a PM too','pm')];
+  const {hide}=fns.collect(all);
+  assert.equal(newestOf(all,hide).length,1);
 });
 
 console.log(f?`\n${f} FAILED`:'\nall passed');

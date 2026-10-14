@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.4
+// @version      1.2.5
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -35,7 +35,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.4';
+    const SCRIPT_VERSION = '1.2.5';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -199,6 +199,7 @@
 
     function collect(all) {
         const reg = new Map();
+        const hide = [];
         all.forEach((m, idx) => {
             const hit = REACTION.exec(m.text);
             if (!hit) return;
@@ -220,25 +221,46 @@
             const byEmoji = reg.get(target);
             if (!byEmoji.has(emoji)) byEmoji.set(emoji, new Set());
             byEmoji.get(emoji).add(m.sender);
+            hide.push(m);
         });
-        return { reg };
+        return { reg, hide };
     }
 
-    function paint(all, reg) {
-        // The reaction line is deliberately left visible.
+    // Belt and braces against a shake from some OTHER cause. If a row we
+    // hid comes back visible, something else is re-rendering it; after a few
+    // rounds of that, stop touching it. A visible line beats a flickering one.
+    const hideTries = new WeakMap();
+    function hideRow(row) {
+        if (!row || row.style.display === 'none') return;
+        const n = (hideTries.get(row) || 0) + 1;
+        hideTries.set(row, n);
+        if (n > 3) return;                   // it keeps coming back: leave it
+        row.style.display = 'none';
+    }
+    function reveal(row) {
+        if (row && row.style.display === 'none') row.style.display = '';
+    }
+
+    function paint(all, reg, hide) {
+        // Hide the reaction lines -- but NEVER the newest message in a
+        // channel, which is where this went wrong before.
         //
-        // This used to set display:none on the virtualItem___ row -- the very
-        // element the list virtualiser positions and measures. When the
-        // reaction was the NEWEST message, hiding it changed the list's
-        // scroll height, the virtualiser re-rendered to compensate, this
-        // observer fired and hid it again: a visible shake, reported from a
-        // faction chat. The channel also stayed green, because Torn marks a
-        // message read when it is seen and a display:none message never is.
+        // display:none on a virtualItem___ row changes the list's measured
+        // height. On the NEWEST row that fights the virtualiser's scroll-to-
+        // bottom: it re-renders to compensate, this observer fires, the row
+        // is hidden again, and the chat visibly shakes. The same row is also
+        // the one Torn needs you to SEE to clear the unread badge, which is
+        // why the channel stayed green. Older rows are already scrolled past
+        // and drive neither.
         //
-        // Any hide has the same problem: the virtualiser owns that row's
-        // geometry and its read state, and anything that changes either is a
-        // fight it will win. So the line stays. It reads as an ordinary
-        // reaction to everyone anyway, which is the whole design.
+        // So the newest reaction shows its raw line until another message
+        // arrives, then tidies itself away.
+        const newest = new Map();            // win -> last message in it
+        for (const m of all) newest.set(m.win, m);
+        for (const m of hide) {
+            if (newest.get(m.win) === m) { reveal(m.row); continue; }
+            hideRow(m.row);
+        }
         for (const m of all) {
             const existing = m.bubble.parentElement
                 && m.bubble.parentElement.querySelector(':scope > .tcr-chips');
@@ -397,8 +419,8 @@
         // loop that warms the phone in your hand.
         if (observer) observer.disconnect();
         try {
-            const { reg } = collect(all);
-            paint(all, reg);
+            const { reg, hide } = collect(all);
+            paint(all, reg, hide);
             for (const m of all) if (!REACTION.test(m.text)) wire(m);
         } finally { observe(); }
     }
