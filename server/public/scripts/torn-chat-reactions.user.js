@@ -1,17 +1,13 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.0
+// @version      1.2.1
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
 // @match        https://www.torn.com/*
 // @noframes
-// @grant        GM_getValue
-// @grant        GM_setValue
 // @grant        unsafeWindow
-// @grant        GM_xmlhttpRequest
-// @connect      tornwar.com
 // @run-at       document-idle
 // @downloadURL  https://tornwar.com/scripts/torn-chat-reactions.user.js
 // @updateURL    https://tornwar.com/scripts/torn-chat-reactions.meta.js
@@ -19,87 +15,82 @@
 
 /*
  * CHANGELOG
- * 1.2.0 - Private conversations work. They carry NO message id: a PM is
- *         one-to-one so Torn prints no sender name, and the uuid lives on
- *         the sender link. Confirmed by diagnostic -- a PM bubble has only
- *         class and data-is-tooltip-opened, and there is no data-id anywhere.
+ * 1.2.1 - Took the diagnostic back out. It found the PM problem, which is
+ *         what it was there for. The script now talks to no server at all,
+ *         and the only grant left is unsafeWindow.
  *
- *         The id was never doing the matching though; the quote is. It was
- *         only a key for the chips map, and that map is rebuilt from the DOM
- *         every pass, so it only has to be unique WITHIN a pass. Keyed by
- *         the message object now, and messages are discovered by bubble
- *         rather than by sender link.
+ * 1.2.0 - PMs work. They have no message id at all, which threw me for a
+ *         while. A private chat is one to one, so Torn never prints a sender
+ *         name, and the uuid lives on the sender link. No link, no id, so the
+ *         script found nothing there.
  *
- * 1.1.2 - Diagnostic for private conversations. A PM is one-to-one so it
- *         prints no sender name, and the id this whole scheme anchors on
- *         lives on the sender link -- so a PM has bubbles and no anchors and
- *         the script finds nothing. Reports what a PM bubble actually
- *         carries, with values redacted unless the attribute name could hold
- *         an identity, so no private message reaches the log.
+ *         The id was never doing the matching anyway. The quote does that.
+ *         The id was only a map key, and the map is rebuilt from the DOM on
+ *         every pass, so it just has to be unique for that one pass. Keyed by
+ *         the message object now, and messages are found by their bubble
+ *         instead of their sender link.
  *
- * 1.1.1 - Description only: it still said 'faction chat', which is what
- *         people read before installing. Behaviour was already every
- *         channel as of 1.1.0.
+ * 1.1.2 - Diagnostic for PMs, because I had no idea what a PM bubble carried.
+ *         Redacts every attribute value unless the name looks like an id, so
+ *         nobody's private messages end up in a log.
  *
- * 1.1.0 - Works in every channel: private conversations, company, anything
- *         Torn adds. Rendering already did, because it scans all of
- *         #chatRoot; sending did not, so a reaction in a PM would have been
- *         posted to faction chat quoting the private message. The composer
- *         is now found by walking up from the message itself.
+ * 1.1.1 - Description still said "faction chat". Has not been faction only
+ *         since 1.1.0.
  *
- *         Reactions also resolve WITHIN a channel now. With two windows open
- *         the same words in each could let a reaction in one attach to a
- *         message in the other.
+ * 1.1.0 - Every channel, not just faction. Rendering already worked anywhere
+ *         because it scans all of #chatRoot, but sending was pinned to the
+ *         faction composer, so reacting in a PM would have posted the emoji
+ *         into faction chat quoting the private message. Glad nobody tried
+ *         it. The composer is found by walking up from the message now.
  *
- * 1.0.4 - The diagnostic reports the first SUCCESSFUL pass instead of the
- *         first pass. Chat renders long after the script starts, so the
- *         one-shot report was being spent on an empty DOM and then falling
- *         silent for the pass that worked. A 45s timeout covers the case
- *         where nothing is ever found.
+ *         Reactions also stay inside their own channel. With faction and a PM
+ *         open at once, the same words in both let a reaction in one land on
+ *         a message in the other. Found that writing the test, not in chat.
  *
- * 1.0.3 - The '+' grid no longer summons the keyboard over itself. The free
- *         text field is no longer auto-focused, the menu is wider and
- *         scrollable on a phone, and it repositions after expanding instead
- *         of keeping a size measured before the grid appeared.
+ * 1.0.4 - The diagnostic was reporting the first pass, which runs before chat
+ *         has rendered. So it logged "no messages" and then went quiet for
+ *         the pass that actually worked. Reports the first pass that finds
+ *         something now.
  *
- * 1.0.2 - Click the message to react, replacing the corner button and the
- *         long-press. Guards against hijacking links, buttons and an active
- *         text selection, and deliberately does not stopPropagation so
- *         Torn's own click handling on the row still runs.
+ * 1.0.3 - Tapping + popped the phone keyboard straight over the emoji grid,
+ *         because I was focusing the text field as soon as it opened. The
+ *         menu is wider and scrolls now, and it repositions after the grid
+ *         swaps in rather than keeping the size it had with six icons.
  *
- * 1.0.1 - The react button is visible by default instead of hover-only, and
- *         holding the MESSAGE opens the picker (right-click on desktop) --
- *         the gesture everybody tries first. Adds a one-shot diagnostic,
- *         because 'nothing pops up' had no way to tell me whether the script
- *         found any messages at all.
+ * 1.0.2 - Click a message to react, replacing the corner button and the long
+ *         press. Leaves links, buttons and text selections alone, and does
+ *         not stopPropagation, since Torn has its own click handling on those
+ *         rows.
+ *
+ * 1.0.1 - Button is visible instead of hover only, and holding a message
+ *         opens the picker. Added a diagnostic, because "nothing pops up"
+ *         gave me nothing to work with.
  *
  * 1.0.0 - First cut.
  *
- *         HOW IT WORKS, and why there is no server. Tapping a reaction sends
- *         an ordinary chat message:
+ *         A reaction is just a chat message:
  *
  *             (emoji) "ima need to get a 99k"
  *
- *         Anyone running this script sees it parsed into a chip on the quoted
- *         message and the raw line hidden. Anyone NOT running it sees a
- *         perfectly normal human reaction. Torn carries the data, so nothing
- *         is stored anywhere and no chat content ever leaves the site.
+ *         With the script you see a chip on the quoted message and the raw
+ *         line disappears. Without it you see someone reacting normally.
+ *         Torn carries the data, so there is no server and no chat content
+ *         anywhere but Torn.
  *
- *         The quote is how a reaction finds its target. A bare emoji would
- *         only ever mean "the message above", which breaks the moment you
- *         react to something further up.
+ *         The quote is how a reaction finds its message. A bare emoji can
+ *         only mean "the one above", which falls apart as soon as you react
+ *         to something further up.
  *
- *         Message identity comes from Torn itself: every chat message carries
- *         id="<uuid>:<senderId>" on its sender link, server-assigned and
- *         stable across reloads (verified: 10 of 10 ids survived two separate
- *         page loads). That is what makes a chip stick to the right message
- *         through the list's virtual recycling.
+ *         Every public message has id="<uuid>:<senderId>" on its sender link.
+ *         Torn assigns it and it survives a reload, 10 of 10 ids identical
+ *         across two page loads, so everyone's browser agrees on which
+ *         message is which.
  */
 
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.0';
+    const SCRIPT_VERSION = '1.2.1';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -119,9 +110,6 @@
     const REACTION = /^(\S+)\s+"([\s\S]+)"$/u;
     const QUOTE_LEN = 24;
     const MARK = 'data-tcr';
-
-    function gmGet(k, d) { try { return typeof GM_getValue === 'function' ? GM_getValue(k, d) : d; } catch (_) { return d; } }
-    function gmSet(k, v) { try { if (typeof GM_setValue === 'function') GM_setValue(k, v); } catch (_) {} }
 
     const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
 
@@ -440,57 +428,14 @@
     let observer = null;
     let queued = false;
 
-    let diagSent = false;
-    function diag(data) {
-        if (diagSent) return;
-        diagSent = true;
-        try {
-            if (typeof GM_xmlhttpRequest === 'function') {
-                GM_xmlhttpRequest({
-                    method: 'POST', url: 'https://tornwar.com/api/debug/client-log',
-                    headers: { 'Content-Type': 'application/json' },
-                    data: JSON.stringify({ tag: 'tcr', data: Object.assign({ v: SCRIPT_VERSION }, data) }),
-                });
-            }
-        } catch (_) {}
-    }
-
     function pass() {
         queued = false;
         const root = chatRoot();
-        if (!root) { diag({ reason: 'no-chatRoot' }); return; }
+        if (!root) return;
         const all = messages();
-        if (!all.length) {
-            // Chat renders well after the script starts, so the first few
-            // passes legitimately find nothing and are not worth a line.
-            //
-            // But a window with BUBBLES and no anchors is a different animal:
-            // that is a private conversation, which has no sender name because
-            // it is one-to-one, so the id the whole scheme hangs on is absent.
-            // Report what a PM bubble does carry, once, so the anchor can be
-            // found instead of guessed at.
-            const boxes = root.querySelectorAll('[class*="box___"]');
-            if (boxes.length >= 2 && root.querySelectorAll('a[id]').length === 0) {
-                const b = boxes[boxes.length - 1];
-                // Attribute VALUES only where the name could carry identity.
-                // A PM bubble's title/aria-label can hold the message, and a
-                // diagnostic must not ship private conversation to a log.
-                const SAFE = /(^|[-_])(id|key|uid|guid|hash|seq|index|time|ts|date|at)([-_]|$)/i;
-                const desc = (el) => el && ({
-                    tag: el.tagName.toLowerCase(),
-                    cls: String(el.className || ''),
-                    attrs: Object.fromEntries([...el.attributes].map((a) =>
-                        [a.name, SAFE.test(a.name) ? String(a.value).slice(0, 60) : '<redacted>'])),
-                });
-                const anc = [];
-                let cur = b.parentElement;
-                for (let i = 0; i < 4 && cur; i++) { anc.push(desc(cur)); cur = cur.parentElement; }
-                diag({ reason: 'bubbles-without-anchors', boxes: boxes.length,
-                       bubble: desc(b), ancestors: anc,
-                       anyDataAttrs: [...root.querySelectorAll('[data-id],[data-message-id],[data-key]')].length });
-            }
-            return;
-        }
+        // Chat renders well after the script starts, so the first few
+        // passes legitimately find nothing. Not an error.
+        if (!all.length) return;
         // Disconnected across the write. This writes into the very subtree it
         // watches, and an observer reacting to its own writes is a runaway
         // loop that warms the phone in your hand.
@@ -498,11 +443,7 @@
         try {
             const { reg, hide } = collect(all);
             paint(all, reg, hide);
-            let added = 0;
-            for (const m of all) if (!REACTION.test(m.text)) { if (!m.bubble.getAttribute(MARK)) added += 1; wire(m); }
-            diag({ reason: 'ok', messages: all.length, buttonsAdded: added,
-                   reactions: reg.size, hidden: hide.length,
-                   touch: matchMedia('(hover: none)').matches });
+            for (const m of all) if (!REACTION.test(m.text)) wire(m);
         } finally { observe(); }
     }
 
@@ -521,19 +462,8 @@
     const boot = setInterval(() => {
         tries += 1;
         if (chatRoot()) { clearInterval(boot); observe(); queue(); }
-        else if (tries > 40) { clearInterval(boot); diag({ reason: 'no-chatRoot-after-60s' }); }
+        else if (tries > 40) clearInterval(boot);
     }, 1500);
 
-    // If no pass ever finds a message, say so once -- that is the genuinely
-    // broken case, and silence is how it used to look.
-    setTimeout(() => {
-        if (diagSent) return;
-        const root = chatRoot();
-        diag({ reason: 'never-found-messages',
-               chatRoot: Boolean(root),
-               anchors: root ? root.querySelectorAll('a[id]').length : 0,
-               boxes: root ? root.querySelectorAll('[class*="box___"]').length : 0 });
-    }, 45000);
-
-    void SCRIPT_VERSION; void gmGet; void gmSet;
+    void SCRIPT_VERSION;
 })();
