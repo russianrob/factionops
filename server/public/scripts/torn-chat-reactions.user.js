@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.8
+// @version      1.2.9
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -35,7 +35,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.8';
+    const SCRIPT_VERSION = '1.2.9';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -83,6 +83,25 @@
         return null;
     }
 
+    /** A message's own text, with our chip strip excluded.
+     *
+     *  The strip is now a CHILD of the bubble so it can hang off the bubble's
+     *  bottom edge, and a PM bubble has no inner message element -- its text is
+     *  read from the bubble itself. Without this filter the chip emoji would
+     *  become part of the message text, and in a PM the text IS the registry
+     *  key, so every reaction would change the key of the very message it
+     *  decorates and the chip would detach from it on the next pass.
+     */
+    function bubbleText(bubble, textEl) {
+        if (textEl) return (textEl.textContent || '').trim();
+        let t = '';
+        for (const n of bubble.childNodes) {
+            if (n.nodeType === 1 && n.classList && n.classList.contains('tcr-chips')) continue;
+            t += n.textContent || '';
+        }
+        return t.trim();
+    }
+
     /** Every rendered message, newest last. Anchored on Torn's id, not on a
      *  hashed CSS class: the id is data and survives a restyle, the class is
      *  regenerated on every Torn build. */
@@ -109,7 +128,7 @@
             out.push({
                 id,
                 sender: a ? (a.textContent || '').trim() : (mine ? 'You' : 'Them'),
-                text: (textEl ? textEl.textContent : bubble.textContent || '').trim(),
+                text: bubbleText(bubble, textEl),
                 bubble,
                 row,
                 // Which chat window this message is in. Reactions must resolve
@@ -370,8 +389,12 @@
             else hideRow(m.row);                            // gone entirely
         }
         for (const m of all) {
-            const existing = m.bubble.parentElement
-                && m.bubble.parentElement.querySelector(':scope > .tcr-chips');
+            // INSIDE the bubble, not after it. As a sibling the strip was laid
+            // out by the bubble's parent, and that parent arranges its children
+            // in a row -- so the strip was squeezed to one chip per line and
+            // became a vertical column down the right-hand side, making the
+            // message a line taller for every reaction on it.
+            const existing = m.bubble.querySelector(':scope > .tcr-chips');
             // From the durable store, so a chip survives its reaction line
             // being recycled out of the virtual window.
             const byEmoji = seen.get(keyFor(m));
@@ -384,16 +407,39 @@
             chips.className = 'tcr-chips';
             chips.dataset.tcrWant = want;
             chips.textContent = '';
-            chips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;margin:2px 0 0 4px';
+            const bs = getComputedStyle(m.bubble);
+            // The bubble is the positioning context, so the strip hangs off the
+            // bubble's own bottom edge rather than its wrapper's -- the wrapper
+            // is taller than the bubble by a margin we do not control.
+            if (bs.position === 'static') m.bubble.style.position = 'relative';
+            // The strip deliberately overhangs, so a bubble that clips would
+            // slice it in half.
+            if (bs.overflow !== 'visible') m.bubble.style.overflow = 'visible';
+            // Out of flow and overhanging the 5px gap below the message. An
+            // absolutely positioned strip contributes NO height, so the row the
+            // virtualiser already measured does not change and it never
+            // re-measures -- the same hazard behind the shake bug. nowrap
+            // because wrapping is what stacked them.
+            chips.style.cssText = 'position:absolute;left:6px;bottom:-11px;z-index:5;'
+                + 'display:flex;gap:4px;flex-wrap:nowrap;white-space:nowrap;'
+                // Taps fall through: to the bubble beneath (which opens the
+                // picker) and to the message below, which the strip now covers.
+                + 'pointer-events:none';
+            // Opaque, borrowed from the message it belongs to. Translucent chips
+            // read as mud where they cross onto the next bubble, and borrowing
+            // means this follows whichever theme Torn is rendering.
+            let bg = bs.backgroundColor || '';
+            if (!bg || bg === 'transparent' || /rgba\(0, 0, 0, 0\)/.test(bg)) bg = '#2b2f36';
             for (const [e, who] of byEmoji) {
                 const chip = document.createElement('span');
                 chip.textContent = e + (who.size > 1 ? ' ' + who.size : '');
                 chip.title = [...who].join(', ');
-                chip.style.cssText = 'background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);'
-                    + 'border-radius:10px;padding:1px 6px;font-size:11px;line-height:1.5;cursor:default';
+                chip.style.cssText = 'background:' + bg + ';border:1px solid rgba(255,255,255,.22);'
+                    + 'border-radius:10px;padding:0 6px;font-size:11px;line-height:17px;'
+                    + 'box-shadow:0 1px 2px rgba(0,0,0,.45);cursor:default';
                 chips.appendChild(chip);
             }
-            if (!existing) m.bubble.insertAdjacentElement('afterend', chips);
+            if (!existing) m.bubble.appendChild(chips);
         }
     }
 

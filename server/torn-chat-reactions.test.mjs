@@ -18,6 +18,7 @@ const PRELUDE = `
 `;
 const mkFns = () => new Function('REACTION','QUOTE_LEN',
   `${PRELUDE}
+   ${grab('function bubbleText(')}
    ${grab('function keyFor(')}
    ${grab('function winIdOf(')}
    ${grab('function note(')}
@@ -25,7 +26,7 @@ const mkFns = () => new Function('REACTION','QUOTE_LEN',
    ${grab('function remember(')}
    ${grab('function quoteFor(')}
    ${grab('function collect(')}
-   return {quoteFor, collect, keyFor, seen, texts};`)(REACTION,QUOTE_LEN);
+   return {quoteFor, collect, keyFor, seen, texts, bubbleText};`)(REACTION,QUOTE_LEN);
 // Fresh state per test: the store persists by design, so sharing it across
 // tests would let one test's reactions leak into the next.
 let fns = mkFns();
@@ -257,6 +258,33 @@ t('a reaction is never itself indexed as a target', () => {
   fns.collect([msg('r1:1','A','X "the original"')]);
   const {hide} = fns.collect([msg('r2:2','B','Y "the original"')]);
   assert.equal(hide.length, 0, 'the only candidate was a reaction, so no match');
+});
+
+console.log('\nbubbleText — the chip strip must not become part of the message:');
+// Minimal stand-ins for the only DOM surface bubbleText touches.
+const tnode = (s) => ({ nodeType: 3, textContent: s });
+const enode = (cls, text) => ({ nodeType: 1, textContent: text,
+  classList: { contains: (c) => String(cls).split(' ').includes(c) } });
+
+t('a PM bubble reads its own text, not the chips hanging off it', () => {
+  const chips = enode('tcr-chips', '\u{1F480} 2\u{1F525}');
+  const bubble = { childNodes: [tnode('Clarifying, not an issue'), chips] };
+  assert.equal(fns.bubbleText(bubble, null), 'Clarifying, not an issue');
+});
+t('THE SILENT ONE: a PM key is its text, so chips must not change it', () => {
+  // The strip lives inside the bubble now. If its emoji leaked into the text,
+  // every reaction would rewrite the key of the message it decorates and the
+  // chip would detach from its own target on the very next pass.
+  const plain  = { childNodes: [tnode('ima need to get a 99k')] };
+  const reacted = { childNodes: [tnode('ima need to get a 99k'),
+                                 enode('tcr-chips', '\u{1F44D} 3')] };
+  const before = fns.keyFor({ id:null, win:'pm', text: fns.bubbleText(plain, null) });
+  const after  = fns.keyFor({ id:null, win:'pm', text: fns.bubbleText(reacted, null) });
+  assert.equal(after, before, 'the key moved when a reaction was added');
+});
+t('a public bubble takes the inner message element and ignores the rest', () => {
+  const bubble = { childNodes: [tnode('SenderName'), enode('tcr-chips', '\u{1F525}')] };
+  assert.equal(fns.bubbleText(bubble, { textContent: '  the actual message  ' }), 'the actual message');
 });
 
 console.log(f?`\n${f} FAILED`:'\nall passed');
