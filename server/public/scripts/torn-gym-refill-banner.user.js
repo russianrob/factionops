@@ -4,6 +4,7 @@
 // @version      1.1.0
 // @description  Shows a banner next to the Gym title reminding you to use your daily energy refill if it's still available. Live re-checks and clears itself once used.
 // @author       you
+// @license      All Rights Reserved
 // @match        https://www.torn.com/gym.php*
 // @grant        GM_getValue
 // @grant        GM_setValue

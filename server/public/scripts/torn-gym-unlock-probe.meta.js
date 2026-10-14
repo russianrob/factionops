@@ -4,7 +4,7 @@
 // @version      1.2.0
 // @description  One-shot diagnostic: dumps whatever gym.php knows about gym unlock progress, so a "how much energy until the next gym" estimate can be built on real fields instead of guesses. Read-only, no network of its own.
 // @author       RussianRob
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @match        https://www.torn.com/gym.php*
 // @match        https://www.torn.com/page.php?sid=gym*
 // @grant        GM_getValue

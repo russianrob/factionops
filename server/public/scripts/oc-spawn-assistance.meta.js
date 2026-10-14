@@ -4,7 +4,7 @@
 // @version      3.2.80
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
-// @license      MIT (code) — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
+// @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
 // @match        https://www.torn.com/*
 // @grant        GM_addStyle
 // @grant        GM_setValue

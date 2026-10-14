@@ -3,7 +3,7 @@
 // @version      1.7.2
 // @author       RussianRob
 // @description  Timer for Ranked Wars
-// @license      MIT
+// @license      All Rights Reserved
 // @match        https://www.torn.com/factions.php*
 
 // @downloadURL  https://update.greasyfork.org/scripts/562468/Torn%20Ranked%20War%20Timer.user.js

@@ -7,7 +7,7 @@
 // @match        https://www.torn.com/*
 // @grant        GM_setValue
 // @grant        GM_getValue
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @downloadURL  https://tornwar.com/scripts/torn-localstorage-usage.user.js
 // @updateURL    https://tornwar.com/scripts/torn-localstorage-usage.meta.js
 // ==/UserScript==

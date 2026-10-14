@@ -6,7 +6,7 @@
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout.user.js
 // @updateURL    https://tornwar.com/scripts/torn-dual-flyout.user.js
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @match        https://www.torn.com/*
 // @run-at       document-start
 // @grant        none

@@ -4,6 +4,7 @@
 // @version      1.9.4
 // @description  Highlights faction members red who have been offline for over 24 hours on the faction member list. Shows OC inactivity badges in chat globally. Configurable threshold. PDA compatible.
 // @author       RussianRob
+// @license      All Rights Reserved
 // @match        https://www.torn.com/*
 // @run-at       document-end
 // @downloadURL  https://tornwar.com/scripts/torn-faction-offline-highlight.user.js

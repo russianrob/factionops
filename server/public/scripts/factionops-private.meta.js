@@ -4,7 +4,7 @@
 // @version      5.4.7
 // @description  Private build: marks war-page rows whose target is already called, without opening the overlay. Run this OR the public FactionOps, not both.
 // @author       RussianRob
-// @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
+// @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
 // @downloadURL  https://tornwar.com/scripts/factionops-private.user.js
 // @updateURL    https://tornwar.com/scripts/factionops-private.meta.js
 // @match        https://www.torn.com/factions.php?step=your*

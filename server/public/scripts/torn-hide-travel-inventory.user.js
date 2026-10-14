@@ -7,7 +7,7 @@
 // @match        https://www.torn.com/page.php*
 // @match        https://www.torn.com/travelagency.php*
 // @run-at       document-start
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @grant        none
 // ==/UserScript==
 (function () {

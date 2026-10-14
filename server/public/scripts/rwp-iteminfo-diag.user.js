@@ -4,6 +4,7 @@
 // @version      1.0.0
 // @description  Temporary diagnostic — reports why RW Pricer shows two/wrong RWP EST badges on the item info page. Safe to remove after.
 // @author       RussianRob
+// @license      All Rights Reserved
 // @match        https://www.torn.com/item*
 // @match        https://www.torn.com/page.php?sid=ItemMarket*
 // @grant        GM_xmlhttpRequest

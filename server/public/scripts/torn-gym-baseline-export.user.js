@@ -8,7 +8,7 @@
 // @grant        GM_getValue
 // @grant        GM_listValues
 // @run-at       document-idle
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @updateURL    https://tornwar.com/scripts/torn-gym-baseline-export.meta.js
 // @downloadURL  https://tornwar.com/scripts/torn-gym-baseline-export.user.js
 // ==/UserScript==

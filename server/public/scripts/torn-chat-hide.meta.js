@@ -6,7 +6,7 @@
 // @author       RussianRob
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
-// @license      GNU GPLv3
+// @license      All Rights Reserved
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle

@@ -4,6 +4,7 @@
 // @version      2.0.0
 // @description  Temporary diagnostic — reports the DESKTOP travel page (page.php?sid=travel) DOM (map + country markers + container) so Foreign Stock can support desktop. Safe to remove after.
 // @author       RussianRob
+// @license      All Rights Reserved
 // @match        https://www.torn.com/page.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand

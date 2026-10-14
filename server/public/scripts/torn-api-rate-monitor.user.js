@@ -4,6 +4,7 @@
 // @version      1.0.0
 // @description  Counts your api.torn.com calls (fetch/XHR/beacon) and logs a rolling 60s rate to the console, attributed by comment tag and endpoint.
 // @author       you
+// @license      All Rights Reserved
 // @match        https://www.torn.com/*
 // @run-at       document-start
 // @grant        none

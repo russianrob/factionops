@@ -3,6 +3,7 @@
 // @namespace    torn-gym-stat-percentages
 // @version      2.1.2
 // @author       RussianRob
+// @license      All Rights Reserved
 // @description  Shows each gym battle stat as a percentage of your total next to the stat name, plus a compact summary line and your faction's Steadfast gym-gain bonus per stat.
 // @match        https://www.torn.com/gym.php*
 // @match        https://www.torn.com/loader.php?sid=gym*

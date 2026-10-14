@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Torn Foreign Stock
 // @namespace    RussianRob
-// @version      0.9.32
+// @version      0.9.33
 // @description  Live abroad item stock, restock countdown timers & travel profit on Torn's travel page — mobile panels + desktop table.
 // @author       RussianRob
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @match        https://www.torn.com/page.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue

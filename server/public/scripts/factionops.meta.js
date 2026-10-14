@@ -4,7 +4,7 @@
 // @version      5.6.15
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
-// @license      MIT (code) — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
+// @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
 // @downloadURL  https://tornwar.com/scripts/factionops.user.js
 // @updateURL    https://tornwar.com/scripts/factionops.meta.js
 // @match        https://www.torn.com/factions.php?step=your*

@@ -4,7 +4,7 @@
 // @version      1.0.3
 // @description  One-shot diagnostic: reports the STRUCTURE of Torn chat messages so we can tell whether a message carries a stable id worth anchoring an emoji reaction to. Reports no message text at all.
 // @author       RussianRob
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @match        https://www.torn.com/*
 // @noframes
 // @grant        GM_getValue

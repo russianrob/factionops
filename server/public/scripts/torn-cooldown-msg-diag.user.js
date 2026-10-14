@@ -4,7 +4,7 @@
 // @version      1.0.1
 // @author       RussianRob
 // @description  Temporary diagnostic — reports how Torn renders the cooldown duration in the item-use message, which shows up blank on mobile. Safe to remove once the cause is found.
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @match        https://www.torn.com/item.php*
 // @match        https://pda.torn.com/item.php*
 // @grant        GM_xmlhttpRequest

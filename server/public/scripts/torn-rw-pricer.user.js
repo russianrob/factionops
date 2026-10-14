@@ -4,7 +4,7 @@
 // @version      3.13.3
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the screenshots and stock lists people post in forum trade threads
 // @author       RussianRob
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @match        https://www.torn.com/item*
 // @match        https://www.torn.com/bazaar*
 // @match        https://www.torn.com/displaycase.php*

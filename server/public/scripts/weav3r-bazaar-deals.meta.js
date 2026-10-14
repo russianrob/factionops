@@ -4,6 +4,7 @@
 // @version      2.4.3
 // @description  Find real below-market bazaar deals — solo build, fetches weav3r.dev directly, no warboard proxy
 // @author       RussianRob
+// @license      All Rights Reserved
 // @match        https://www.torn.com/*
 // @updateURL    https://tornwar.com/scripts/weav3r-bazaar-deals.user.js
 // @downloadURL  https://tornwar.com/scripts/weav3r-bazaar-deals.user.js

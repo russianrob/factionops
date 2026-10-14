@@ -4,6 +4,7 @@
 // @version      1.1.0
 // @description  Temporary diagnostic — reports the faction armoury item DOM (container, name, rarity, bonus) so RW Pricer can badge the collapsed armoury rows. Safe to remove after.
 // @author       RussianRob
+// @license      All Rights Reserved
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand

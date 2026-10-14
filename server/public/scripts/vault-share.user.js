@@ -4,7 +4,7 @@
 // @version      0.1.4
 // @description  Shows your share vs your spouse's share of the shared property vault, tracking each person's deposits/withdrawals. Set your share once; it auto-tracks from there.
 // @author       RussianRob
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @match        https://www.torn.com/properties.php*
 // @grant        GM_setValue
 // @grant        GM_getValue

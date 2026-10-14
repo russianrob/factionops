@@ -4,7 +4,7 @@
 // @author       RussianRob
 // @version      3.2.1
 // @description  Loot Rangers NPC attack info in a compact floating box. Based on the script by IceBlueFire, with the drag handler fixed so an interrupted touch can no longer leave the page unscrollable.
-// @license      MIT
+// @license      All Rights Reserved
 // @match        https://www.torn.com/*
 // @exclude      https://www.torn.com/newspaper.php
 // @exclude      https://www.torn.com/item.php

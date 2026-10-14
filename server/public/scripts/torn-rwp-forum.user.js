@@ -10,7 +10,7 @@
 // @grant        GM_getValue
 // @connect      tornwar.com
 // @run-at       document-idle
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @updateURL    https://tornwar.com/scripts/torn-rwp-forum.meta.js
 // @downloadURL  https://tornwar.com/scripts/torn-rwp-forum.user.js
 // ==/UserScript==

@@ -4,7 +4,7 @@
 // @version      1.0.7
 // @description  Recolours Torn's active area-nav highlight (icon + label + dot) from the new blue back to green. Leaves other blue UI alone.
 // @author       RussianRob
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @grant        none

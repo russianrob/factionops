@@ -4,7 +4,7 @@
 // @version      1.0.1
 // @description  One-shot diagnostic: works out whether Torn records which stat book you are reading, and where. Answers it from Torn's own log index rather than a guessed log id, so a wrong guess cannot fail silently. Read-only.
 // @author       RussianRob
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @match        https://www.torn.com/gym.php*
 // @match        https://www.torn.com/page.php?sid=gym*
 // @match        https://www.torn.com/item.php*

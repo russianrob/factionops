@@ -4,6 +4,7 @@
 // @version      1.1.0
 // @description  Temporary diagnostic — reports the trade.php DOM (active-trade view) so RW Pricer can price trade items. Safe to remove after.
 // @author       RussianRob
+// @license      All Rights Reserved
 // @match        https://www.torn.com/trade.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand

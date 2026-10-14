@@ -4,7 +4,7 @@
 // @author       RussianRob
 // @version      1.2.2
 // @description  Shows energy per can and nerve per alcohol inline on the items page (perk-adjusted; forked from TornTools)
-// @license      GPL-3.0-or-later
+// @license      All Rights Reserved
 // @match        https://www.torn.com/item.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
