@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.0.2
+// @version      1.0.3
 // @description  Emoji reactions on Torn faction chat. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -19,6 +19,11 @@
 
 /*
  * CHANGELOG
+ * 1.0.3 - The '+' grid no longer summons the keyboard over itself. The free
+ *         text field is no longer auto-focused, the menu is wider and
+ *         scrollable on a phone, and it repositions after expanding instead
+ *         of keeping a size measured before the grid appeared.
+ *
  * 1.0.2 - Click the message to react, replacing the corner button and the
  *         long-press. Guards against hijacking links, buttons and an active
  *         text selection, and deliberately does not stopPropagation so
@@ -56,7 +61,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.0.2';
+    const SCRIPT_VERSION = '1.0.3';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -291,8 +296,11 @@
     function openPicker(m, anchor) {
         closeMenu();
         const menu = document.createElement('div');
+        // Wider and scrollable on a phone: 48 emoji in a 240px column is a
+        // very tall menu, and a tall fixed menu runs off the screen.
         menu.style.cssText = 'position:fixed;z-index:2147483647;background:#0f1a2e;border:1px solid #1e3a5f;'
-            + 'border-radius:8px;padding:6px;display:flex;gap:4px;flex-wrap:wrap;max-width:240px;'
+            + 'border-radius:8px;padding:6px;display:flex;gap:4px;flex-wrap:wrap;'
+            + 'max-width:min(320px,92vw);max-height:50vh;overflow-y:auto;'
             + 'box-shadow:0 8px 24px rgba(0,0,0,.5)';
         menu.addEventListener('click', (e) => e.stopPropagation());
 
@@ -319,13 +327,27 @@
                 if (e.key === 'Enter' && inp.value.trim()) react(m, inp.value.trim().slice(0, 8));
             });
             menu.appendChild(inp);
-            inp.focus();
+            // NOT focused. Auto-focusing summoned the phone keyboard on top of
+            // the grid that had just opened, so the only way to see the emoji
+            // was to dismiss the keyboard first. The field is there for anyone
+            // who wants their own emoji; tapping it raises the keyboard then.
+            place();
         }));
 
         document.body.appendChild(menu);
-        const r = anchor.getBoundingClientRect();
-        menu.style.left = Math.max(4, Math.min(r.left - 100, innerWidth - menu.offsetWidth - 8)) + 'px';
-        menu.style.top = Math.max(4, r.top - menu.offsetHeight - 6) + 'px';
+        // Re-run after the '+' swap too: the menu changes size when the full
+        // grid replaces the six quick picks, and a position measured before
+        // that leaves it hanging off the screen.
+        function place() {
+            const r = anchor.getBoundingClientRect();
+            const w = menu.offsetWidth, h = menu.offsetHeight;
+            menu.style.left = Math.max(4, Math.min(r.left - w / 2, innerWidth - w - 8)) + 'px';
+            // Above the tap by preference so a finger does not cover it, below
+            // when there is no room above.
+            const above = r.top - h - 8;
+            menu.style.top = (above >= 4 ? above : Math.min(r.top + 24, innerHeight - h - 8)) + 'px';
+        }
+        place();
         openMenu = menu;
     }
 
