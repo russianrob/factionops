@@ -10760,20 +10760,25 @@ router.get("/api/oc/weak", async (req, res) => {
     const minWeight = req.query.minWeight == null
       ? 10
       : Math.min(100, Math.max(0, Number(req.query.minWeight) || 0));
-    const flagged = lowSuccessCrimes(data.availableCrimes || [], { names, weights, minWeight });
+    // Level floor. A weak slot on a level-2 OC is not worth chasing when a
+    // level-8 one is also short. ?minLevel=0 shows every level.
+    const minDifficulty = req.query.minLevel == null
+      ? 5
+      : Math.min(10, Math.max(0, Number(req.query.minLevel) || 0));
+    const flagged = lowSuccessCrimes(data.availableCrimes || [], { names, weights, minWeight, minDifficulty });
     // Flattened to slots, because the chip lists PEOPLE, not crimes.
     const slots = [];
     for (const c of flagged) {
       for (const w of c.weak) {
         slots.push({
-          crimeId: c.crimeId, crimeName: c.name,
+          crimeId: c.crimeId, crimeName: c.name, level: c.difficulty,
           userId: w.userId, name: w.name, position: w.position,
           pct: w.pct, weight: w.weight,
         });
       }
     }
     slots.sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1));
-    return res.json({ threshold: LOW_SUCCESS_THRESHOLD, minWeight, slots });
+    return res.json({ threshold: LOW_SUCCESS_THRESHOLD, minWeight, minLevel: minDifficulty, slots });
   } catch (e) {
     console.warn(`[oc/weak] ${info.factionId}: ${e.message}`);
     return res.status(502).json({ error: e.message });

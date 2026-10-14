@@ -204,13 +204,21 @@ export const LOW_SUCCESS_THRESHOLD = 65;
  *              not that the slot is light, and silently hiding a genuinely
  *              weak member because of a gap in our own lookup table is the
  *              worse failure. Default 0 keeps every slot.
+ * @param minDifficulty skip crimes below this OC level entirely. A level-2
+ *              OC with a weak slot is not worth anyone's attention next to a
+ *              level-8 one. Difficulty 0 means the field was MISSING, not
+ *              that the crime is trivial, so an unknown level is KEPT —
+ *              same fail-open rule as minWeight. Default 0 keeps every crime.
  */
-export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRESHOLD, seen, names, weights, minWeight = 0 } = {}) {
+export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRESHOLD, seen, names, weights, minWeight = 0, minDifficulty = 0 } = {}) {
   const out = [];
   for (const c of (availableCrimes || [])) {
     if (!c || c.id == null) continue;
     const cid = String(c.id);
     if (seen && seen.has(cid)) continue;
+    // Level gate before any slot work: a whole crime is in or out.
+    const difficulty = Number(c.difficulty) || 0;
+    if (minDifficulty > 0 && difficulty > 0 && difficulty < minDifficulty) continue;
 
     const weak = [];
     const roleWeights = weights ? weights[normalizeOcName(c.name)] : null;
@@ -250,7 +258,7 @@ export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRE
       const haveWeights = weak.some((w) => w.weight != null);
       if (haveWeights) weak.sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1));
       else weak.sort((a, b) => a.pct - b.pct);
-      out.push({ crimeId: cid, name: String(c.name || 'OC'), weak });
+      out.push({ crimeId: cid, name: String(c.name || 'OC'), difficulty, weak });
     }
   }
   return out;

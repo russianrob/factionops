@@ -296,3 +296,53 @@ test('minWeight does not disturb the pass-rate threshold', () => {
   );
   assert.deepEqual(out, [], 'a 90% member is not weak however heavy the slot');
 });
+
+// ── minDifficulty: only OCs worth chasing ──────────────────────────────────
+
+const lvlCrime = (id, difficulty, slots, name = 'Cash Me if You Can') =>
+  ({ id, name, difficulty, status: 'Planning', slots });
+
+test('minDifficulty drops a low-level crime entirely', () => {
+  const out = lowSuccessCrimes([lvlCrime(1, 2, [slot(63)])], { minDifficulty: 5 });
+  assert.deepEqual(out, []);
+});
+
+test('and keeps one at or above the floor', () => {
+  assert.equal(lowSuccessCrimes([lvlCrime(1, 5, [slot(63)])], { minDifficulty: 5 }).length, 1,
+    'the floor is inclusive');
+  assert.equal(lowSuccessCrimes([lvlCrime(1, 8, [slot(63)])], { minDifficulty: 5 }).length, 1);
+});
+
+test('an UNKNOWN level is kept, same fail-open rule as the weight floor', () => {
+  // difficulty 0 means the field was missing, not that the OC is trivial.
+  assert.equal(lowSuccessCrimes([lvlCrime(1, 0, [slot(63)])], { minDifficulty: 5 }).length, 1);
+  assert.equal(lowSuccessCrimes([crime(1, [slot(63)])], { minDifficulty: 5 }).length, 1,
+    'no difficulty field at all is also unknown');
+});
+
+test('the level reaches the caller so the chip can show it', () => {
+  const out = lowSuccessCrimes([lvlCrime(1, 7, [slot(63)])], { minDifficulty: 5 });
+  assert.equal(out[0].difficulty, 7);
+});
+
+test('minDifficulty defaults to 0 — the notifier still sees every level', () => {
+  assert.equal(lowSuccessCrimes([lvlCrime(1, 1, [slot(63)])]).length, 1);
+});
+
+test('the two floors compose: level passes, weight does not', () => {
+  const out = lowSuccessCrimes(
+    [lvlCrime(1, 8, [weightedSlot(63, 'Saboteur #2')])],
+    { weights: WEIGHT_TABLE, minWeight: 10, minDifficulty: 5 },
+  );
+  assert.deepEqual(out, [], 'a heavy-enough OC still drops when its only weak slot is light');
+});
+
+test('the two floors compose: both pass', () => {
+  const out = lowSuccessCrimes(
+    [lvlCrime(1, 8, [weightedSlot(63, 'Saboteur #1')])],
+    { weights: WEIGHT_TABLE, minWeight: 10, minDifficulty: 5 },
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].weak[0].weight, 37.3);
+  assert.equal(out[0].difficulty, 8);
+});
