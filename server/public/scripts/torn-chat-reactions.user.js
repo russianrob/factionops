@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.0.4
+// @version      1.1.0
 // @description  Emoji reactions on Torn faction chat. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -19,6 +19,16 @@
 
 /*
  * CHANGELOG
+ * 1.1.0 - Works in every channel: private conversations, company, anything
+ *         Torn adds. Rendering already did, because it scans all of
+ *         #chatRoot; sending did not, so a reaction in a PM would have been
+ *         posted to faction chat quoting the private message. The composer
+ *         is now found by walking up from the message itself.
+ *
+ *         Reactions also resolve WITHIN a channel now. With two windows open
+ *         the same words in each could let a reaction in one attach to a
+ *         message in the other.
+ *
  * 1.0.4 - The diagnostic reports the first SUCCESSFUL pass instead of the
  *         first pass. Chat renders long after the script starts, so the
  *         one-shot report was being spent on an empty DOM and then falling
@@ -67,7 +77,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.0.4';
+    const SCRIPT_VERSION = '1.1.0';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -97,10 +107,25 @@
 
     function chatRoot() { return document.getElementById('chatRoot'); }
 
-    function factionBox() {
+    /** The chat window a message belongs to, found structurally: walk up until
+     *  an ancestor contains a composer. That identifies faction, company, a
+     *  private conversation or anything else Torn adds, without knowing a
+     *  single channel id.
+     *
+     *  Bails if it reaches #chatRoot with more than one composer in scope --
+     *  that means the message's own window has none and we would otherwise
+     *  send into whichever channel happened to be first in the DOM. */
+    function windowFor(el) {
         const root = chatRoot();
-        if (!root) return null;
-        return root.querySelector('[id="faction"]') || root.querySelector('[id^="faction-"]');
+        let cur = el;
+        while (cur && cur !== document.body) {
+            const tas = cur.querySelectorAll ? cur.querySelectorAll('textarea[class*="textarea___"]') : [];
+            if (tas.length === 1) return { scope: cur, ta: tas[0] };
+            if (tas.length > 1) return null;      // ambiguous, refuse to guess
+            if (cur === root) return null;
+            cur = cur.parentElement;
+        }
+        return null;
     }
 
     /** Every rendered message, newest last. Anchored on Torn's id, not on a
@@ -115,12 +140,18 @@
             const bubble = a.closest('[class*="box___"]');
             if (!bubble) continue;
             const textEl = bubble.querySelector('[class*="message___"]');
+            const win = windowFor(bubble);
             out.push({
                 id: a.id,
                 sender: (a.textContent || '').trim(),
                 text: textEl ? (textEl.textContent || '').trim() : '',
                 bubble,
                 row: bubble.closest('[class*="virtualItem___"]') || bubble,
+                // Which chat window this message is in. Reactions must resolve
+                // within one channel: with faction and a PM both open, the same
+                // words in each would otherwise let a reaction in one land on a
+                // message in the other.
+                win: win ? win.scope : null,
             });
         }
         return out;
@@ -137,11 +168,15 @@
 
     let busy = false;
 
-    function sendMessage(text) {
+    function sendMessage(text, fromEl) {
         if (!text || busy) return;
-        const box = factionBox();
-        const ta = box && box.querySelector('textarea[class*="textarea___"]');
-        if (!ta) { toast('Open faction chat first'); return; }
+        // The composer of the window the message is in. Sending every reaction
+        // to the faction channel was the whole reason this only worked there --
+        // react in a PM and the emoji would have landed in faction chat, in
+        // front of everyone, quoting a private message.
+        const win = windowFor(fromEl);
+        const ta = win && win.ta;
+        if (!ta) { toast('Could not find that channel composer'); return; }
         // Never type over a draft. The send button is enabled whenever the box
         // is non-empty, so with a draft present an enabled button proves
         // nothing about whether React took OUR text -- and we would post the
@@ -163,9 +198,7 @@
 
         const deadline = Date.now() + 2500;
         const tick = () => {
-            const b = factionBox();
-            const t = b && b.querySelector('textarea[class*="textarea___"]');
-            const scope = t ? (t.parentElement || b) : b;
+            const scope = ta.parentElement || win.scope;
             const btn = scope && scope.querySelector('button:not([disabled])');
             if (btn) { try { btn.click(); } catch (_) {} busy = false; return; }
             if (Date.now() > deadline) { busy = false; toast('Chat send button never enabled'); return; }
@@ -211,6 +244,7 @@
             // the quoted fragment.
             let target = null;
             for (let j = idx - 1; j >= 0; j--) {
+                if (all[j].win !== m.win) continue;     // never across channels
                 if (all[j].text.includes(frag) && !REACTION.test(all[j].text)) { target = all[j]; break; }
             }
             // FAIL OPEN. No match means the message scrolled out of the
@@ -294,9 +328,11 @@
 
     function react(m, emoji) {
         closeMenu();
-        const frag = quoteFor(m, messages());
+        // Uniqueness is judged within the message's OWN channel. A fragment
+        // competing with text in some other open window is not ambiguous.
+        const frag = quoteFor(m, messages().filter((x) => x.win === m.win));
         if (!frag) { toast('Nothing to quote in that message'); return; }
-        sendMessage(emoji + ' "' + frag + '"');
+        sendMessage(emoji + ' "' + frag + '"', m.bubble);
     }
 
     function openPicker(m, anchor) {

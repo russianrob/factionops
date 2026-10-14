@@ -8,7 +8,7 @@ const QUOTE_LEN = 24;
 const fns = new Function('REACTION','QUOTE_LEN',
   `${grab('function quoteFor(')}\n${grab('function collect(')}\nreturn {quoteFor,collect};`)(REACTION,QUOTE_LEN);
 
-const msg = (id, sender, text) => ({ id, sender, text, bubble:null, row:{style:{}} });
+const msg = (id, sender, text, win='faction') => ({ id, sender, text, win, bubble:null, row:{style:{}} });
 let f=0; const t=(n,fn)=>{try{fn();console.log('  ok   '+n)}catch(e){f++;console.log('  FAIL '+n+'\n       '+e.message)}};
 
 console.log('quoteFor — the fragment that aims a reaction:');
@@ -81,5 +81,32 @@ t('the most RECENT preceding match wins when text repeats', () => {
   const {reg}=fns.collect(all);
   assert.ok(reg.has('m2:2'), 'should attach to the nearer one');
 });
+
+console.log('\nchannel scoping — faction and a PM open at once:');
+t('a reaction NEVER attaches across channels', () => {
+  // The same words in two windows. Without scoping, the PM reaction walks
+  // back past its own channel and lands on the faction message.
+  const all=[msg('f1:1','A','can i do med out partner','faction'),
+             msg('p1:2','B','can i do med out partner','pm'),
+             msg('r1:3','C','X "can i do med out partner"','pm')];
+  const {reg}=fns.collect(all);
+  assert.equal(reg.size,1);
+  assert.ok(reg.has('p1:2'), 'must land on the PM message, not the faction one');
+});
+t('and the faction reaction stays in faction', () => {
+  const all=[msg('p1:1','A','same words here','pm'),
+             msg('f1:2','B','same words here','faction'),
+             msg('r1:3','C','X "same words here"','faction')];
+  const {reg}=fns.collect(all);
+  assert.ok(reg.has('f1:2'));
+});
+t('a reaction with no match in its OWN channel fails open', () => {
+  const all=[msg('f1:1','A','only in faction','faction'),
+             msg('r1:2','B','X "only in faction"','pm')];
+  const {reg,hide}=fns.collect(all);
+  assert.equal(reg.size,0,'must not reach into the other channel');
+  assert.equal(hide.length,0,'and the line stays visible');
+});
+
 console.log(f?`\n${f} FAILED`:'\nall passed');
 process.exit(f?1:0);
