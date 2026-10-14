@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.10
+// @version      1.2.11
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -35,7 +35,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.10';
+    const SCRIPT_VERSION = '1.2.11';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -83,6 +83,17 @@
         return null;
     }
 
+    /** Does this className mark the viewer's own side of a conversation?
+     *
+     *  Matched as a whole CLASS TOKEN, never with /\bself___/: `-` is a word
+     *  boundary, so that pattern also fires on a class like
+     *  `position-self___hash`, and Torn uses that shape elsewhere in the
+     *  product. A false positive here reads somebody else's message as your
+     *  own, which is the dangerous direction. */
+    function isSelf(className) {
+        return String(className || '').split(/\s+/).some((c) => c.indexOf('self___') === 0);
+    }
+
     /** A message's own text, with our chip strip excluded.
      *
      *  The strip is now a CHILD of the bubble so it can hang off the bubble's
@@ -123,10 +134,13 @@
             const row = bubble.closest('[class*="virtualItem___"]') || bubble;
             // `self___` on the wrapper marks your own side of a conversation.
             // It is the only sender information a PM offers.
-            const mine = /\bself___/.test(String((bubble.parentElement || row).className || ''));
+            const mine = isSelf((bubble.parentElement || row).className);
             const win = windowFor(bubble);
             out.push({
                 id,
+                // Torn's channel name, resolved once per message: every key and
+                // every cross-channel comparison goes through this.
+                chan: channelOf(bubble),
                 sender: a ? (a.textContent || '').trim() : (mine ? 'You' : 'Them'),
                 text: bubbleText(bubble, textEl),
                 bubble,
@@ -235,6 +249,31 @@
     const winOther = new Map();   // for a null/non-element window
     let winSeq = 0;
 
+    /** Torn's own name for the channel a message is in.
+     *
+     *  `windowFor()` can only name a window that HAS a composer, and a
+     *  collapsed channel has none -- so every window it could not name fell
+     *  into one shared bucket, and two different conversations containing the
+     *  same words got the same key. A reaction in one then decorated a message
+     *  in the other.
+     *
+     *  The channel container carries an id whether or not it is open:
+     *  `faction`, `company`, or the peer's player id for a private chat (and
+     *  `faction-<id>` / `private-<uid>-<uid>` on the older Chat 3.0 markup).
+     *  Measured live: a collapsed PM box, 20 bubbles, no composer, id 2862329.
+     *
+     *  Takes the OUTERMOST id below #chatRoot, so an inner wrapper that happens
+     *  to carry an id cannot split one channel into several. */
+    function channelOf(el) {
+        const root = chatRoot();
+        let cur = el, found = null;
+        while (cur && cur !== document.body && cur !== root) {
+            if (cur.id) found = String(cur.id);
+            cur = cur.parentElement;
+        }
+        return found ? 'c:' + found : null;
+    }
+
     // Torn gives public messages a stable id. A PM has none, so fall back to
     // channel plus text, which is stable for the life of the message and is
     // the same thing the quote already matches on.
@@ -245,13 +284,13 @@
         // throws, which would take down the whole pass. Elements go in the
         // WeakMap so detached windows can be collected; anything else goes in
         // a plain Map, which is tiny and bounded by the number of channels.
-        const w = (m.win && typeof m.win === 'object')
-            ? (winIds.get(m.win) ?? (winIds.set(m.win, ++winSeq), winSeq))
-            : (winOther.get(m.win) ?? (winOther.set(m.win, ++winSeq), winSeq));
-        return w + '|' + (m.text || '').slice(0, 120);
+        return winIdOf(m) + '|' + (m.text || '').slice(0, 120);
     }
 
     function winIdOf(m) {
+        // Torn's own channel name first: it is stable, unique per conversation,
+        // and survives the channel being collapsed.
+        if (m.chan) return m.chan;
         if (m.win && typeof m.win === 'object') {
             const w = winIds.get(m.win);
             if (w !== undefined) return w;
@@ -313,7 +352,10 @@
             // the quoted fragment.
             let target = null;
             for (let j = idx - 1; j >= 0; j--) {
-                if (all[j].win !== m.win) continue;     // never across channels
+                // By resolved channel, not by window element: two windows that
+                // windowFor() could not name are both null, and null === null,
+                // so a reaction in one used to find a target in the other.
+                if (winIdOf(all[j]) !== winIdOf(m)) continue;
                 if (all[j].text.includes(frag) && !REACTION.test(all[j].text)) { target = all[j]; break; }
             }
             // FAIL OPEN. No match means the message scrolled out of the

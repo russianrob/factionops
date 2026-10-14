@@ -18,6 +18,7 @@ const PRELUDE = `
 `;
 const mkFns = () => new Function('REACTION','QUOTE_LEN',
   `${PRELUDE}
+   ${grab('function isSelf(')}
    ${grab('function bubbleText(')}
    ${grab('function keyFor(')}
    ${grab('function winIdOf(')}
@@ -26,7 +27,7 @@ const mkFns = () => new Function('REACTION','QUOTE_LEN',
    ${grab('function remember(')}
    ${grab('function quoteFor(')}
    ${grab('function collect(')}
-   return {quoteFor, collect, keyFor, seen, texts, bubbleText};`)(REACTION,QUOTE_LEN);
+   return {quoteFor, collect, keyFor, seen, texts, bubbleText, isSelf, winIdOf};`)(REACTION,QUOTE_LEN);
 // Fresh state per test: the store persists by design, so sharing it across
 // tests would let one test's reactions leak into the next.
 let fns = mkFns();
@@ -285,6 +286,48 @@ t('THE SILENT ONE: a PM key is its text, so chips must not change it', () => {
 t('a public bubble takes the inner message element and ignores the rest', () => {
   const bubble = { childNodes: [tnode('SenderName'), enode('tcr-chips', '\u{1F525}')] };
   assert.equal(fns.bubbleText(bubble, { textContent: '  the actual message  ' }), 'the actual message');
+});
+
+console.log('\nisSelf — a hyphen is a word boundary, which /\\bself___/ got wrong:');
+t('the real PM wrapper is yours', () => {
+  assert.equal(fns.isSelf('root___EWrZN self___DidgR'), true);
+});
+t('THE BUG: a hyphenated class is NOT yours', () => {
+  // /\bself___/ matched this, because `-` counts as a word boundary. Reading
+  // someone else's message as your own is the dangerous direction.
+  assert.equal(fns.isSelf('position-self___hash'), false);
+  assert.equal(fns.isSelf('align-self___x justify-self___y'), false);
+});
+t('a public wrapper is not yours', () => {
+  assert.equal(fns.isSelf('root___EP_Dq first___icNlg'), false);
+  assert.equal(fns.isSelf(''), false);
+  assert.equal(fns.isSelf(null), false);
+});
+
+console.log('\nchannel identity — two unnameable windows must not share a bucket:');
+const pm = (text, chan) => ({ id:null, sender:'Them', text, win:null, chan, bubble:null, row:{style:{}} });
+
+t('THE BUG: two PMs with the same words used to collide', () => {
+  // windowFor() returns null for a window with no composer, and null === null,
+  // so every unnameable window shared one id and one keyspace.
+  const a = pm('see you at 8', 'c:2862329');
+  const b = pm('see you at 8', 'c:3189116');
+  assert.notEqual(fns.keyFor(a), fns.keyFor(b), 'different conversations, same key');
+});
+t('the same conversation still shares a key', () => {
+  assert.equal(fns.keyFor(pm('see you at 8', 'c:2862329')),
+               fns.keyFor(pm('see you at 8', 'c:2862329')));
+});
+t('a reaction cannot find its target in another PM', () => {
+  const {hide} = fns.collect([
+    pm('see you at 8', 'c:2862329'),
+    { ...pm('X "see you at 8"', 'c:3189116'), sender:'Other' },
+  ]);
+  assert.equal(hide.length, 0, 'matched across two different conversations');
+});
+t('with no channel id at all it still falls back rather than throwing', () => {
+  const a = { id:null, sender:'Them', text:'hi', win:null, chan:null, bubble:null, row:{style:{}} };
+  assert.ok(String(fns.keyFor(a)).endsWith('|hi'));
 });
 
 console.log(f?`\n${f} FAILED`:'\nall passed');
