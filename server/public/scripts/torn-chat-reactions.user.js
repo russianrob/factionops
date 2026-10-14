@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.0.3
+// @version      1.0.4
 // @description  Emoji reactions on Torn faction chat. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -19,6 +19,12 @@
 
 /*
  * CHANGELOG
+ * 1.0.4 - The diagnostic reports the first SUCCESSFUL pass instead of the
+ *         first pass. Chat renders long after the script starts, so the
+ *         one-shot report was being spent on an empty DOM and then falling
+ *         silent for the pass that worked. A 45s timeout covers the case
+ *         where nothing is ever found.
+ *
  * 1.0.3 - The '+' grid no longer summons the keyboard over itself. The free
  *         text field is no longer auto-focused, the menu is wider and
  *         scrollable on a phone, and it repositions after expanding instead
@@ -61,7 +67,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.0.3';
+    const SCRIPT_VERSION = '1.0.4';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -387,11 +393,12 @@
         if (!root) { diag({ reason: 'no-chatRoot' }); return; }
         const all = messages();
         if (!all.length) {
-            // The probe proved these ids exist, so zero here means the shape
-            // changed or we are looking at the wrong subtree -- worth a line
-            // rather than a silent no-op.
-            diag({ reason: 'no-messages', anchors: root.querySelectorAll('a[id]').length,
-                   boxes: root.querySelectorAll('[class*="box___"]').length });
+            // NOT reported here any more. Chat renders well after the script
+            // starts, so the first few passes legitimately find nothing -- and
+            // a one-shot diagnostic spent its only report on them, logging
+            // 'anchors:0' and then falling silent for the pass that actually
+            // worked. Only a pass that found messages is worth a line; if none
+            // ever does, the timeout below says so instead.
             return;
         }
         // Disconnected across the write. This writes into the very subtree it
@@ -424,8 +431,19 @@
     const boot = setInterval(() => {
         tries += 1;
         if (chatRoot()) { clearInterval(boot); observe(); queue(); }
-        else if (tries > 40) clearInterval(boot);
+        else if (tries > 40) { clearInterval(boot); diag({ reason: 'no-chatRoot-after-60s' }); }
     }, 1500);
+
+    // If no pass ever finds a message, say so once -- that is the genuinely
+    // broken case, and silence is how it used to look.
+    setTimeout(() => {
+        if (diagSent) return;
+        const root = chatRoot();
+        diag({ reason: 'never-found-messages',
+               chatRoot: Boolean(root),
+               anchors: root ? root.querySelectorAll('a[id]').length : 0,
+               boxes: root ? root.querySelectorAll('[class*="box___"]').length : 0 });
+    }, 45000);
 
     void SCRIPT_VERSION; void gmGet; void gmSet;
 })();
