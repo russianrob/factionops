@@ -10,6 +10,7 @@ const QUOTE_LEN = 24;
 // the same way the script does.
 const PRELUDE = `
   const seen = new Map();
+  const texts = new Map();
   const SEEN_CAP = 800;
   const winIds = new WeakMap();
   const winOther = new Map();
@@ -18,10 +19,13 @@ const PRELUDE = `
 const mkFns = () => new Function('REACTION','QUOTE_LEN',
   `${PRELUDE}
    ${grab('function keyFor(')}
+   ${grab('function winIdOf(')}
+   ${grab('function note(')}
+   ${grab('function findRemembered(')}
    ${grab('function remember(')}
    ${grab('function quoteFor(')}
    ${grab('function collect(')}
-   return {quoteFor, collect, keyFor, seen};`)(REACTION,QUOTE_LEN);
+   return {quoteFor, collect, keyFor, seen, texts};`)(REACTION,QUOTE_LEN);
 // Fresh state per test: the store persists by design, so sharing it across
 // tests would let one test's reactions leak into the next.
 let fns = mkFns();
@@ -219,6 +223,40 @@ t('an id-less message with a NULL window does not throw', () => {
   const react  = {id:null,sender:'You', text:'X "hey there"',win:null,bubble:null,row:{style:{}}};
   assert.doesNotThrow(() => fns.collect([target, react]));
   assert.ok(fns.seen.get(fns.keyFor(target)));
+});
+
+
+console.log('\na reaction whose target has scrolled out of the window:');
+
+t('THE REPORTED CASE: it still resolves, so it is still hidden', () => {
+  // Pass 1 renders the target. Pass 2 is after the virtualiser recycled it
+  // away, leaving only the reaction on screen. Before the message index this
+  // matched nothing, failed open, and sat in the chat as raw quoted text.
+  const target = msg('m1:1','A','You can\'t do mine?');
+  fns.collect([target]);
+  const react = msg('r1:2','B','X "You can\'t do mine?"');
+  const {hide} = fns.collect([react]);
+  assert.equal(hide.length, 1, 'resolved from the index, so hideable');
+  assert.ok(fns.seen.get(fns.keyFor(target)), 'and the chip is recorded');
+});
+
+t('a fragment never seen at all still stays visible', () => {
+  // The fail-open rule survives: only messages we have actually rendered can
+  // be matched, so a hand-typed quote is never swallowed.
+  const {hide} = fns.collect([msg('r1:1','B','X "something nobody ever said"')]);
+  assert.equal(hide.length, 0);
+});
+
+t('the index does not match across channels', () => {
+  fns.collect([msg('f1:1','A','same words here','faction')]);
+  const {hide} = fns.collect([msg('r1:2','B','X "same words here"','pm')]);
+  assert.equal(hide.length, 0, 'a faction message must not resolve a PM reaction');
+});
+
+t('a reaction is never itself indexed as a target', () => {
+  fns.collect([msg('r1:1','A','X "the original"')]);
+  const {hide} = fns.collect([msg('r2:2','B','Y "the original"')]);
+  assert.equal(hide.length, 0, 'the only candidate was a reaction, so no match');
 });
 
 console.log(f?`\n${f} FAILED`:'\nall passed');

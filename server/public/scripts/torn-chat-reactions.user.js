@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.7
+// @version      1.2.8
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -35,7 +35,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.7';
+    const SCRIPT_VERSION = '1.2.8';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -205,6 +205,12 @@
     // scrolling back put it there again -- chips popping in and out. Once a
     // reaction has been seen it is kept, so the chip is stable.
     const seen = new Map();          // key -> Map(emoji -> Set(sender))
+    // Every message text we have ever rendered, per channel, so a reaction can
+    // still find its target after the virtualiser has recycled that target
+    // away. Without this a reaction whose target has scrolled out of the
+    // ~15-row window matches nothing, fails open, and sits in the chat as raw
+    // quoted text -- which is exactly what it looked like.
+    const texts = new Map();         // winId -> [{ text, key }], newest last
     const SEEN_CAP = 800;
     const winIds = new WeakMap();
     const winOther = new Map();   // for a null/non-element window
@@ -226,6 +232,43 @@
         return w + '|' + (m.text || '').slice(0, 120);
     }
 
+    function winIdOf(m) {
+        if (m.win && typeof m.win === 'object') {
+            const w = winIds.get(m.win);
+            if (w !== undefined) return w;
+            winIds.set(m.win, ++winSeq);
+            return winSeq;
+        }
+        const w = winOther.get(m.win);
+        if (w !== undefined) return w;
+        winOther.set(m.win, ++winSeq);
+        return winSeq;
+    }
+
+    /** Remember a message so a later reaction can still find it. */
+    function note(m) {
+        if (REACTION.test(m.text)) return;      // reactions are not targets
+        const w = winIdOf(m);
+        let list = texts.get(w);
+        if (!list) { list = []; texts.set(w, list); }
+        const key = keyFor(m);
+        if (list.length && list[list.length - 1].key === key) return;
+        if (!list.some((e) => e.key === key)) {
+            list.push({ text: m.text, key });
+            if (list.length > 400) list.shift();
+        }
+    }
+
+    /** The most recent remembered message in this channel containing frag. */
+    function findRemembered(m, frag) {
+        const list = texts.get(winIdOf(m));
+        if (!list) return null;
+        for (let i = list.length - 1; i >= 0; i--) {
+            if (list[i].text.includes(frag)) return list[i].key;
+        }
+        return null;
+    }
+
     function remember(targetKey, emoji, sender) {
         let byEmoji = seen.get(targetKey);
         if (!byEmoji) {
@@ -241,6 +284,7 @@
     function collect(all) {
         const reg = new Map();
         const hide = [];
+        all.forEach((m) => note(m));
         all.forEach((m, idx) => {
             const hit = REACTION.exec(m.text);
             if (!hit) return;
@@ -257,8 +301,19 @@
             // virtual list, or somebody typed a quote by hand. Leave the line
             // visible as an ordinary message -- swallowing something we cannot
             // attribute is worse than not converting it.
-            if (!target) return;
-            reg.set(target, remember(keyFor(target), emoji, m.sender));
+            if (target) {
+                reg.set(target, remember(keyFor(target), emoji, m.sender));
+                hide.push(m);
+                return;
+            }
+            // Not on screen -- but we may have rendered it earlier this
+            // session. Matching from the index means the reaction is still
+            // resolved (and so still hidden) when its target has scrolled
+            // away. Only a fragment we have genuinely never seen stays
+            // visible, which keeps the fail-open rule intact.
+            const key = findRemembered(m, frag);
+            if (!key) return;
+            remember(key, emoji, m.sender);
             hide.push(m);
         });
         return { reg, hide };
