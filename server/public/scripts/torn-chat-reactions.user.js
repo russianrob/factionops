@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.9
+// @version      1.2.10
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -35,7 +35,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.9';
+    const SCRIPT_VERSION = '1.2.10';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -420,7 +420,14 @@
             // virtualiser already measured does not change and it never
             // re-measures -- the same hazard behind the shake bug. nowrap
             // because wrapping is what stacked them.
-            chips.style.cssText = 'position:absolute;left:6px;bottom:-11px;z-index:5;'
+            // `top:100%` pins the strip's TOP to the bubble's bottom edge, so the
+            // whole chip hangs below whatever height it renders at. A negative
+            // `bottom` could not do this: it pins the chip's BOTTOM, so the taller
+            // the chip the further UP its top reaches -- and an emoji glyph blows
+            // well past its 15px line box, which is how 1.2.9 ended up covering
+            // the last line of text. The -3px just tucks it into the bubble's own
+            // bottom padding so it reads as attached rather than floating.
+            chips.style.cssText = 'position:absolute;left:6px;top:100%;margin-top:-3px;z-index:5;'
                 + 'display:flex;gap:4px;flex-wrap:nowrap;white-space:nowrap;'
                 // Taps fall through: to the bubble beneath (which opens the
                 // picker) and to the message below, which the strip now covers.
@@ -435,7 +442,7 @@
                 chip.textContent = e + (who.size > 1 ? ' ' + who.size : '');
                 chip.title = [...who].join(', ');
                 chip.style.cssText = 'background:' + bg + ';border:1px solid rgba(255,255,255,.22);'
-                    + 'border-radius:10px;padding:0 6px;font-size:11px;line-height:17px;'
+                    + 'border-radius:9px;padding:0 5px;font-size:10px;line-height:15px;'
                     + 'box-shadow:0 1px 2px rgba(0,0,0,.45);cursor:default';
                 chips.appendChild(chip);
             }
