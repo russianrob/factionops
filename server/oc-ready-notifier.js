@@ -198,8 +198,14 @@ export const LOW_SUCCESS_THRESHOLD = 65;
  *              of the crime's outcome. Not in the API at all. 63% on an
  *              8.9% slot is noise; 63% on a 37.3% slot decides the crime,
  *              so when this is supplied the heaviest slot leads.
+ * @param minWeight drop slots lighter than this, for callers that only want
+ *              the ones worth acting on. A slot whose weight is UNKNOWN is
+ *              KEPT: null means the weights table has never seen that crime,
+ *              not that the slot is light, and silently hiding a genuinely
+ *              weak member because of a gap in our own lookup table is the
+ *              worse failure. Default 0 keeps every slot.
  */
-export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRESHOLD, seen, names, weights } = {}) {
+export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRESHOLD, seen, names, weights, minWeight = 0 } = {}) {
   const out = [];
   for (const c of (availableCrimes || [])) {
     if (!c || c.id == null) continue;
@@ -216,6 +222,13 @@ export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRE
       const pct = typeof s.checkpoint_pass_rate === 'number' ? s.checkpoint_pass_rate : null;
       if (pct == null || !Number.isFinite(pct)) continue;
       if (pct >= threshold) continue;
+      const weight = roleWeights
+        ? (roleWeights[normalizeOcName(s.position_info?.label || s.position)] ?? null)
+        : null;
+      // Light slots are filtered here rather than at the call site so the
+      // crime is dropped entirely when nothing heavy is left, instead of
+      // surfacing a crime with an empty weak list.
+      if (minWeight > 0 && typeof weight === 'number' && weight < minWeight) continue;
       weak.push({
         userId: String(uid),
         // Slot name first if Torn ever supplies one, roster second.
@@ -227,9 +240,7 @@ export function lowSuccessCrimes(availableCrimes, { threshold = LOW_SUCCESS_THRE
         // Saboteur #1 carries 14.6% and Saboteur #2 carries 8.9% on the same
         // crime, so the bare name would report the wrong slot as the one
         // that matters. Null when the table has never seen this crime.
-        weight: roleWeights
-          ? (roleWeights[normalizeOcName(s.position_info?.label || s.position)] ?? null)
-          : null,
+        weight,
       });
     }
     if (weak.length) {

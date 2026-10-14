@@ -221,3 +221,78 @@ test('a missing id falls back to the list rather than a broken link', () => {
   assert.match(u, /tab=crimes/);
   assert.ok(!/crimeId/.test(u), u);
 });
+
+// ── minWeight: hide the slots that cannot decide the crime ──────────────────
+// A 63% member on an 8.9% slot is noise; the same member on a 37.3% slot
+// decides it. The weights come from getRoleWeights(), keyed by the printed
+// label ('Saboteur #1'), not the bare role.
+
+const weightedSlot = (pct, label, opts = {}) => ({
+  position: label.replace(/\s*#\d+$/, ''),
+  position_info: { label },
+  checkpoint_pass_rate: pct,
+  user: { id: opts.id || 999, name: opts.name || 'Someone' },
+});
+// Keys are normalizeOcName()'d — lowercased, spaces and punctuation
+// stripped — so it is `saboteur1`, not 'Saboteur #1'.
+const WEIGHT_TABLE = { cashmeifyoucan: { saboteur1: 37.3, saboteur2: 8.9, muscle: 10 } };
+
+test('minWeight drops a light slot and keeps a heavy one', () => {
+  const out = lowSuccessCrimes(
+    [crime(1, [weightedSlot(63, 'Saboteur #1', { name: 'Heavy' }), weightedSlot(63, 'Saboteur #2', { name: 'Light' })])],
+    { weights: WEIGHT_TABLE, minWeight: 10 },
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].weak.length, 1);
+  assert.equal(out[0].weak[0].name, 'Heavy');
+  assert.equal(out[0].weak[0].weight, 37.3);
+});
+
+test('the floor is inclusive — exactly 10 survives a minWeight of 10', () => {
+  const out = lowSuccessCrimes(
+    [crime(1, [weightedSlot(63, 'Muscle')])], { weights: WEIGHT_TABLE, minWeight: 10 },
+  );
+  assert.equal(out[0].weak[0].weight, 10);
+});
+
+test('a crime whose every weak slot is light drops out entirely', () => {
+  // Not "a crime with an empty weak list" — the whole entry must go, or the
+  // chip shows a crime name with nothing under it.
+  const out = lowSuccessCrimes(
+    [crime(1, [weightedSlot(63, 'Saboteur #2')])], { weights: WEIGHT_TABLE, minWeight: 10 },
+  );
+  assert.deepEqual(out, []);
+});
+
+test('THE IMPORTANT ONE: an UNKNOWN weight is kept, never filtered', () => {
+  // null means our weights table has never seen this crime. Hiding a
+  // genuinely weak member because of a gap in our own lookup is worse than
+  // showing one light slot.
+  const out = lowSuccessCrimes(
+    [crime(1, [weightedSlot(63, 'Saboteur #1')], 'Some Brand New OC')],
+    { weights: WEIGHT_TABLE, minWeight: 10 },
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].weak[0].weight, null);
+});
+
+test('no weights supplied at all -> minWeight cannot filter anything', () => {
+  const out = lowSuccessCrimes(
+    [crime(1, [weightedSlot(63, 'Saboteur #2')])], { minWeight: 10 },
+  );
+  assert.equal(out.length, 1, 'every weight is null without the table, so nothing is light');
+});
+
+test('minWeight defaults to 0 — the notifier keeps seeing every slot', () => {
+  const out = lowSuccessCrimes(
+    [crime(1, [weightedSlot(63, 'Saboteur #2')])], { weights: WEIGHT_TABLE },
+  );
+  assert.equal(out[0].weak.length, 1);
+});
+
+test('minWeight does not disturb the pass-rate threshold', () => {
+  const out = lowSuccessCrimes(
+    [crime(1, [weightedSlot(90, 'Saboteur #1')])], { weights: WEIGHT_TABLE, minWeight: 10 },
+  );
+  assert.deepEqual(out, [], 'a 90% member is not weak however heavy the slot');
+});

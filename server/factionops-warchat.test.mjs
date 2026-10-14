@@ -171,7 +171,9 @@ test('main() will not build the furniture off the original pages', () => {
   const body = SRC.slice(i, i + 320);
   assert.match(body, /isOriginallyMatchedPage/);
   assert.match(body, /createSettingsGear/);
-  assert.match(body, /createHeatmapButton/);
+  // createHeatmapButton was removed with the activity heatmap in 5.6.15.
+  // The gate itself is what this test guards, not the specific furniture.
+  assert.doesNotMatch(body, /createHeatmapButton/);
 });
 
 // ── loading vs empty ───────────────────────────────────────────────────

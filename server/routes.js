@@ -10754,7 +10754,13 @@ router.get("/api/oc/weak", async (req, res) => {
     }
     let weights = null;
     try { weights = await getRoleWeights(); } catch { /* weights are a bonus */ }
-    const flagged = lowSuccessCrimes(data.availableCrimes || [], { names, weights });
+    // Weight floor. A 63% member on an 8.9% slot is noise; the same member
+    // on a 37.3% slot decides the crime. Default 10 hides the noise; pass
+    // ?minWeight=0 to see everything, which is what the push notifier does.
+    const minWeight = req.query.minWeight == null
+      ? 10
+      : Math.min(100, Math.max(0, Number(req.query.minWeight) || 0));
+    const flagged = lowSuccessCrimes(data.availableCrimes || [], { names, weights, minWeight });
     // Flattened to slots, because the chip lists PEOPLE, not crimes.
     const slots = [];
     for (const c of flagged) {
@@ -10767,7 +10773,7 @@ router.get("/api/oc/weak", async (req, res) => {
       }
     }
     slots.sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1));
-    return res.json({ threshold: LOW_SUCCESS_THRESHOLD, slots });
+    return res.json({ threshold: LOW_SUCCESS_THRESHOLD, minWeight, slots });
   } catch (e) {
     console.warn(`[oc/weak] ${info.factionId}: ${e.message}`);
     return res.status(502).json({ error: e.message });

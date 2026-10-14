@@ -9,7 +9,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseHTML } from 'linkedom';
 
-const BUILDS = ['factionops.user.js', 'factionops-private.user.js', 'factionops-beta.user.js'];
+// factionops-beta was deleted 2026-10-13 (one request in 12 days of logs,
+// from my own curl). Only the two live builds are asserted against.
+const BUILDS = ['factionops.user.js', 'factionops-private.user.js'];
 
 function fnFrom(src, name) {
   const i = src.indexOf('function ' + name + '(');
