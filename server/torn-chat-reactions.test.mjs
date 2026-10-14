@@ -41,10 +41,9 @@ t('a reaction lands on the quoted message, not the one above it', () => {
   const all=[msg('m1:1','POOPEATER','ima need to get a 99k boost'),
              msg('m2:2','Yukarii','Anyone working on amusement?'),
              msg('m3:3','Rob',Q('X','ima need to get a 99k'))];
-  const {reg,hide}=fns.collect(all);
+  const {reg}=fns.collect(all);
   assert.equal(reg.size,1);
   assert.ok(reg.has(all[0]), 'must attach to m1, not the adjacent m2');
-  assert.equal(hide.length,1,'the reaction line itself is hidden');
 });
 t('several people reacting aggregate under one emoji', () => {
   const all=[msg('m1:1','A','ima need to get a 99k boost'),
@@ -56,9 +55,10 @@ t('several people reacting aggregate under one emoji', () => {
 t('FAIL OPEN: an unmatched quote stays a visible message', () => {
   const all=[msg('m1:1','A','something else entirely'),
              msg('r1:2','B',Q('X','a message that scrolled away'))];
-  const {reg,hide}=fns.collect(all);
+  const {reg}=fns.collect(all);
   assert.equal(reg.size,0);
-  assert.equal(hide.length,0,'never swallow a line we cannot attribute');
+  // The line stays visible either way now; what matters is that an
+  // unmatched quote produces NO chip rather than a wrong one.
 });
 t('a reaction never targets another reaction', () => {
   const all=[msg('m1:1','A','ima need to get a 99k boost'),
@@ -70,8 +70,7 @@ t('a reaction never targets another reaction', () => {
 });
 t('an ordinary message with a quote in it is left alone', () => {
   const all=[msg('m1:1','A','he said "hello" to me')];
-  const {reg,hide}=fns.collect(all);
-  assert.equal(hide.length,0);
+  const {reg}=fns.collect(all);
   assert.equal(reg.size,0);
 });
 t('the most RECENT preceding match wins when text repeats', () => {
@@ -103,9 +102,8 @@ t('and the faction reaction stays in faction', () => {
 t('a reaction with no match in its OWN channel fails open', () => {
   const all=[msg('f1:1','A','only in faction','faction'),
              msg('r1:2','B','X "only in faction"','pm')];
-  const {reg,hide}=fns.collect(all);
+  const {reg}=fns.collect(all);
   assert.equal(reg.size,0,'must not reach into the other channel');
-  assert.equal(hide.length,0,'and the line stays visible');
 });
 
 
@@ -115,10 +113,9 @@ t('reactions work with id === null throughout', () => {
   // ever a map key, and the map is rebuilt from the DOM every pass.
   const all=[{id:null,sender:'Them',text:'hey there, how are you doing?',win:'pm',bubble:null,row:{style:{}}},
              {id:null,sender:'You', text:'X "hey there, how are you doing?"',win:'pm',bubble:null,row:{style:{}}}];
-  const {reg,hide}=fns.collect(all);
+  const {reg}=fns.collect(all);
   assert.equal(reg.size,1,'a null id must not collapse every message into one bucket');
   assert.ok(reg.has(all[0]));
-  assert.equal(hide.length,1);
 });
 t('two ID-LESS messages stay distinct', () => {
   // Keying by id would have merged these, since both ids are null.

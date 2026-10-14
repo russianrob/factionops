@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Chat Reactions
 // @namespace    RussianRob
-// @version      1.2.3
+// @version      1.2.4
 // @description  Emoji reactions on every Torn chat channel, public and private. A reaction is sent as an ordinary chat message, so people without the script still see a normal human reaction instead of junk. No server, no chat content leaves Torn.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -35,7 +35,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '1.2.3';
+    const SCRIPT_VERSION = '1.2.4';
 
     // Default six, plus a '+' that opens a picker for anything else.
     const QUICK = ['\u{1F602}', '\u{1F44D}', '❤️', '\u{1F525}', '\u{1F480}', '\u{1F62E}'];
@@ -199,7 +199,6 @@
 
     function collect(all) {
         const reg = new Map();
-        const hide = [];
         all.forEach((m, idx) => {
             const hit = REACTION.exec(m.text);
             if (!hit) return;
@@ -221,13 +220,25 @@
             const byEmoji = reg.get(target);
             if (!byEmoji.has(emoji)) byEmoji.set(emoji, new Set());
             byEmoji.get(emoji).add(m.sender);
-            hide.push(m.row);
         });
-        return { reg, hide };
+        return { reg };
     }
 
-    function paint(all, reg, hide) {
-        for (const row of hide) row.style.display = 'none';
+    function paint(all, reg) {
+        // The reaction line is deliberately left visible.
+        //
+        // This used to set display:none on the virtualItem___ row -- the very
+        // element the list virtualiser positions and measures. When the
+        // reaction was the NEWEST message, hiding it changed the list's
+        // scroll height, the virtualiser re-rendered to compensate, this
+        // observer fired and hid it again: a visible shake, reported from a
+        // faction chat. The channel also stayed green, because Torn marks a
+        // message read when it is seen and a display:none message never is.
+        //
+        // Any hide has the same problem: the virtualiser owns that row's
+        // geometry and its read state, and anything that changes either is a
+        // fight it will win. So the line stays. It reads as an ordinary
+        // reaction to everyone anyway, which is the whole design.
         for (const m of all) {
             const existing = m.bubble.parentElement
                 && m.bubble.parentElement.querySelector(':scope > .tcr-chips');
@@ -386,8 +397,8 @@
         // loop that warms the phone in your hand.
         if (observer) observer.disconnect();
         try {
-            const { reg, hide } = collect(all);
-            paint(all, reg, hide);
+            const { reg } = collect(all);
+            paint(all, reg);
             for (const m of all) if (!REACTION.test(m.text)) wire(m);
         } finally { observe(); }
     }
