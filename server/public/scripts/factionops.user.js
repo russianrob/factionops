@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.15
+// @version      5.6.16
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.15';
+    const SCRIPT_VERSION = '5.6.16';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -13239,6 +13239,121 @@ body.wb-chain-active {
         } catch (e) { /* menu is a convenience, never a dependency */ }
     }
 
+
+    // =========================================================================
+    // SECTION 14b: LIFE BAR PERCENTAGE
+    // =========================================================================
+    //
+    // Torn prints the life bar as "1,698 / 7,383". Mid-fight that is arithmetic
+    // you do not have time for, so this appends the percentage next to it,
+    // colour-banded -- the colour is what actually reads at a glance, the
+    // digits are for when the exact number matters.
+    //
+    // Anchored on the SHAPE OF THE TEXT, not a class. Torn's class names carry
+    // a per-build hash, so `[class*="bar"]` is a guess that expires; an element
+    // whose own text is "<digits> / <digits>" is the readout on any build.
+
+    const HP_RE = /^([\d,]+)\s*\/\s*([\d,]+)$/;
+    const HP_CLASS = 'fo-hp-pct';
+
+    /** An element's OWN text, ignoring child elements.
+     *
+     *  This is what makes the pass idempotent: our percentage is appended as a
+     *  child SPAN, so it is invisible here and the readout keeps matching HP_RE
+     *  on every later pass instead of growing "50% 50% 50%". */
+    function hpOwnText(el) {
+        let t = '';
+        for (const n of el.childNodes) if (n.nodeType === 3) t += n.nodeValue;
+        return t.trim();
+    }
+
+    /** Every life readout currently on the page. */
+    function findLifeReadouts() {
+        const out = [];
+        for (const el of document.querySelectorAll('span,div,p')) {
+            if (el.classList && el.classList.contains(HP_CLASS)) continue;
+            const m = HP_RE.exec(hpOwnText(el));
+            if (!m) continue;
+            const cur = parseInt(m[1].replace(/,/g, ''), 10);
+            const max = parseInt(m[2].replace(/,/g, ''), 10);
+            if (!isFinite(cur) || !isFinite(max) || max <= 0) continue;
+            out.push({ el, cur, max });
+        }
+        return out;
+    }
+
+    function hpColour(pct) {
+        if (pct <= 20) return '#ff6b6b';
+        if (pct <= 50) return '#f5d76e';
+        return '#6bd47f';
+    }
+
+    /** Append or update the percentage on every life readout. */
+    function paintLifePercents() {
+        for (const { el, cur, max } of findLifeReadouts()) {
+            // Floor, so it only says 100% when the bar is genuinely full and
+            // only says 0% when they are actually down -- a rounded 7382/7383
+            // reading "100%" is a lie at exactly the moment it matters.
+            let pct = Math.floor((cur / max) * 100);
+            if (pct === 100 && cur < max) pct = 99;
+            if (pct === 0 && cur > 0) pct = 1;
+            const text = pct + '%';
+            let tag = el.querySelector(':scope > .' + HP_CLASS);
+            if (!tag) {
+                tag = document.createElement('span');
+                tag.className = HP_CLASS;
+                // nowrap and inline-block so it cannot wrap the header or push
+                // a neighbour onto a second line; an injected element's
+                // preferred width has collapsed a Torn column before.
+                tag.style.cssText = 'margin-left:8px;font-weight:700;white-space:nowrap;'
+                    + 'display:inline-block;font-variant-numeric:tabular-nums';
+                el.appendChild(tag);
+            }
+            if (tag.textContent !== text) tag.textContent = text;
+            const col = hpColour(pct);
+            if (tag.style.color !== col) tag.style.color = col;
+        }
+    }
+
+    let hpObserver = null;
+    let hpQueued = false;
+
+    function hpPass() {
+        hpQueued = false;
+        // Disconnected across our own writes. An observer that reacts to what
+        // it just wrote is a runaway loop -- that one warmed phones in people's
+        // hands on the war page.
+        if (hpObserver) hpObserver.disconnect();
+        try { paintLifePercents(); } catch (e) { log('hp paint failed: ' + (e && e.message)); }
+        finally { hpObserve(); }
+    }
+
+    function hpQueue() {
+        if (hpQueued) return;
+        hpQueued = true;
+        setTimeout(hpPass, 120);
+    }
+
+    function hpObserve() {
+        // Scoped as tightly as the page allows, and NEVER document.body: the
+        // whole page mutates constantly and an observer that wide is a battery
+        // drain on a phone.
+        const root = document.getElementById('mainContainer')
+            || document.querySelector('.content-wrapper');
+        if (!root) return;
+        if (!hpObserver) hpObserver = new MutationObserver(hpQueue);
+        hpObserver.observe(root, { childList: true, subtree: true, characterData: true });
+    }
+
+    /** Entry point, called from initAttackPage. */
+    function initLifePercent() {
+        // initAttackPage also serves profiles.php; the life readout there is
+        // not a fight and does not need this.
+        if (!window.location.href.includes('sid=attack')) return;
+        hpQueue();
+        hpObserve();
+    }
+
     function detectPageAndInit() {
         const url = window.location.href;
 
@@ -13298,6 +13413,9 @@ body.wb-chain-active {
         }
 
         startStatusTimers();
+
+        // Percentage beside Torn's "1,698 / 7,383" life readout.
+        try { initLifePercent(); } catch (e) { log('life percent init failed: ' + (e && e.message)); }
 
         // Report viewing target to server (so war page shows who's on which attack)
         const targetId = getAttackTargetId();
