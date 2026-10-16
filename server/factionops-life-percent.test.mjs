@@ -23,6 +23,15 @@ function grab(sig) {
   throw new Error('unbalanced: ' + sig);
 }
 
+
+/** Lift `const NAME = ...;` verbatim from the script. */
+function grabConst(name) {
+  const re = new RegExp('^\\s*const ' + name + ' = .*?;\\s*$', 'm');
+  const m = re.exec(SRC);
+  assert.ok(m, 'const not found: ' + name);
+  return m[0].trim();
+}
+
 /** Just enough DOM for the real functions to run against. */
 function rig() {
   const mkSpan = () => {
@@ -35,6 +44,13 @@ function rig() {
       },
       set textContent(v) { e.childNodes = [{ nodeType: 3, nodeValue: v }]; },
       appendChild(c) { e.childNodes.push(c); e.children.push(c); c.parentElement = e; return c; },
+      remove() {
+        const p = e.parentElement;
+        if (!p) return;
+        p.children = p.children.filter((c) => c !== e);
+        p.childNodes = p.childNodes.filter((c) => c !== e);
+        e.parentElement = null;
+      },
       querySelector(sel) {
         const cls = sel.replace(':scope > .', '');
         return e.children.find((c) => c.classList && c.classList.contains(cls)) || null;
@@ -44,7 +60,19 @@ function rig() {
   };
   let ALL = [];
   const document = {
-    querySelectorAll: () => ALL,
+    // Honours a class selector, because paintLifePercents now sweeps
+    // '.fo-hp-pct' to clean up tags on elements that no longer qualify. A stub
+    // that returned everything for every selector made that sweep delete the
+    // readouts themselves.
+    querySelectorAll: (sel) => {
+      if (typeof sel === 'string' && sel.startsWith('.')) {
+        const cls = sel.slice(1);
+        const found = [];
+        for (const el of ALL) for (const c of el.children) if (c.classList.contains(cls)) found.push(c);
+        return found;
+      }
+      return ALL;
+    },
     getElementById: () => null,
     querySelector: () => null,
     createElement: () => mkSpan(),
@@ -54,8 +82,9 @@ function rig() {
     ${grab('function findLifeReadouts(')}
     ${grab('function hpColour(')}
     ${grab('function paintLifePercents(')}
-    const HP_RE = /^([\\d,]+)\\s*\\/\\s*([\\d,]+)$/;
-    const HP_CLASS = 'fo-hp-pct';
+    ${grabConst('HP_RE')}
+    ${grabConst('HP_MIN_MAX')}
+    ${grabConst('HP_CLASS')}
     return { hpOwnText, findLifeReadouts, hpColour, paintLifePercents };`)(document);
 
   const readout = (txt) => { const e = mkSpan(); e.childNodes = [{ nodeType: 3, nodeValue: txt }]; return e; };
@@ -130,4 +159,59 @@ test('colour bands: green healthy, amber wounded, red nearly down', () => {
   assert.equal(fns.hpColour(21), '#f5d76e');
   assert.equal(fns.hpColour(20), '#ff6b6b');
   assert.equal(fns.hpColour(0), '#ff6b6b');
+});
+
+test('IGNORES the turns counter -- the 5.6.16 regression', () => {
+  // Reported with a screenshot: "1/25" picked up a meaningless "4%". No spaces
+  // around the slash and a maximum far below any life total.
+  const r = rig(); const turns = r.readout('1/25');
+  r.put([turns]); r.fns.paintLifePercents();
+  assert.equal(turns.children.length, 0, 'decorated the turns counter');
+});
+
+test('ignores the ammo counter', () => {
+  const r = rig();
+  const els = ['28/30', '28/30 (0)', '5/5'].map(r.readout);
+  r.put(els); r.fns.paintLifePercents();
+  for (const e of els) assert.equal(e.children.length, 0, 'decorated ' + e.textContent);
+});
+
+test('both guards are independent: spaces alone are not enough', () => {
+  const r = rig(); const small = r.readout('3 / 25');       // spaced, but tiny max
+  r.put([small]); r.fns.paintLifePercents();
+  assert.equal(small.children.length, 0, 'a spaced low-max counter slipped through');
+});
+
+test('and a big max alone is not enough', () => {
+  const r = rig(); const nospace = r.readout('1,090/5,051'); // big, but unspaced
+  r.put([nospace]); r.fns.paintLifePercents();
+  assert.equal(nospace.children.length, 0, 'an unspaced life-sized counter slipped through');
+});
+
+test('a reading above its own maximum is not life', () => {
+  const r = rig(); const odd = r.readout('9,000 / 5,051');
+  r.put([odd]); r.fns.paintLifePercents();
+  assert.equal(odd.children.length, 0);
+});
+
+test('CLEANS UP a tag left by the looser 5.6.16 rule', () => {
+  // Someone updating mid-session has a stray "4%" on their turns counter. It
+  // has to come off on the next pass, not wait for a reload.
+  const r = rig(); const turns = r.readout('1/25');
+  const stale = { tagName: 'SPAN', className: 'fo-hp-pct', childNodes: [{ nodeType: 3, nodeValue: '4%' }],
+                  children: [], style: { cssText: '', color: '' },
+                  classList: { contains: (c) => c === 'fo-hp-pct' },
+                  get textContent() { return '4%'; }, parentElement: turns,
+                  remove() { turns.children = turns.children.filter((c) => c !== stale); } };
+  turns.children.push(stale); turns.childNodes.push(stale);
+  r.put([turns]); r.fns.paintLifePercents();
+  assert.equal(turns.children.length, 0, 'the stale percentage survived');
+});
+
+test('the real attack-page readouts still work', () => {
+  const r = rig();
+  const mine = r.readout('7,479 / 7,878'), theirs = r.readout('1,090 / 5,051');
+  r.put([mine, theirs]); r.fns.paintLifePercents();
+  assert.equal(r.shown(mine), '94%');
+  assert.equal(r.shown(theirs), '21%');
 });

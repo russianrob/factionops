@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.16
+// @version      5.6.17
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.16';
+    const SCRIPT_VERSION = '5.6.17';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -13253,7 +13253,16 @@ body.wb-chain-active {
     // a per-build hash, so `[class*="bar"]` is a guess that expires; an element
     // whose own text is "<digits> / <digits>" is the readout on any build.
 
-    const HP_RE = /^([\d,]+)\s*\/\s*([\d,]+)$/;
+    // SPACES around the slash are required. Torn writes life as "7,479 / 7,878"
+    // and the turns counter as "1/25", so this is what tells them apart -- 5.6.16
+    // used \s* and put a meaningless "4%" on the turns counter.
+    const HP_RE = /^([\d,]+) \/ ([\d,]+)$/;
+    // And a floor on the maximum, as a second independent guard: a life total is
+    // in the hundreds at minimum, while turns (25), ammo (30) and similar
+    // counters are far below it. Either test alone would have caught the turns
+    // counter; needing both means a change to Torn's spacing cannot silently
+    // bring the bug back.
+    const HP_MIN_MAX = 100;
     const HP_CLASS = 'fo-hp-pct';
 
     /** An element's OWN text, ignoring child elements.
@@ -13276,7 +13285,8 @@ body.wb-chain-active {
             if (!m) continue;
             const cur = parseInt(m[1].replace(/,/g, ''), 10);
             const max = parseInt(m[2].replace(/,/g, ''), 10);
-            if (!isFinite(cur) || !isFinite(max) || max <= 0) continue;
+            if (!isFinite(cur) || !isFinite(max) || max < HP_MIN_MAX) continue;
+            if (cur > max) continue;              // not a life reading
             out.push({ el, cur, max });
         }
         return out;
@@ -13290,6 +13300,14 @@ body.wb-chain-active {
 
     /** Append or update the percentage on every life readout. */
     function paintLifePercents() {
+        const keep = new Set();
+        for (const { el } of findLifeReadouts()) keep.add(el);
+        // Drop tags on anything that no longer qualifies. 5.6.16 decorated the
+        // turns counter, and without this that stray percentage would sit there
+        // until the page was reloaded.
+        for (const tag of document.querySelectorAll('.' + HP_CLASS)) {
+            if (!keep.has(tag.parentElement)) tag.remove();
+        }
         for (const { el, cur, max } of findLifeReadouts()) {
             // Floor, so it only says 100% when the bar is genuinely full and
             // only says 0% when they are actually down -- a rounded 7382/7383
