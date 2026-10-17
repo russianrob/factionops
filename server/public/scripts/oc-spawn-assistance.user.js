@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.83
+// @version      3.2.84
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,13 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.84 — Same-role evidence is level-bounded. 3.2.83's "same role on
+//           other OCs" fallback counted any level, so a member with no
+//           Cleared for Takeoff history was still pointed there on the
+//           strength of 85–89% Imitator runs on level-3 and level-4 crimes.
+//           Now only crimes no more than two levels below the target count
+//           (harder crimes still do); with nothing left in range the
+//           estimate falls to their level average, as it always did.
 // v3.2.83 — The Join pick fits the member to the slot. It was meant to rank
 //           open slots by the member's CPR for that exact OC and role
 //           (keys like "Blast from the Past::Picklock"), but the server
@@ -390,7 +397,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.83';
+    const SCRIPT_VERSION = '3.2.84';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -5312,10 +5319,13 @@
 
     // Expected CPR for a member on ONE open slot, and where the number came
     // from. Precedence: their own record on this crime as this role
-    // ('oc-role'), the same role on any other crime ('role', weighted by
-    // runs), their average at this crime's level ('level'), their overall
-    // average ('overall'). Role labels like "Thief #2" resolve to the base
-    // role. Pure — the server test pulls this out of the served source.
+    // ('oc-role'), the same role on other crimes ('role', weighted by runs,
+    // and only from crimes no more than two levels BELOW the target — an
+    // 89% Imitator on a level-3 crime says nothing about a level-7 one,
+    // while a harder crime is at least as good a witness), their average at
+    // this crime's level ('level'), their overall average ('overall'). Role
+    // labels like "Thief #2" resolve to the base role. Pure — the server
+    // test pulls this out of the served source.
     function expectedCprFor(m, crimeName, role, diff) {
         const byPos = m.byPosition || {};
         const base = String(role || '').replace(/\s*#\d+$/, '');
@@ -5325,6 +5335,7 @@
         for (const [k, v] of Object.entries(byPos)) {
             const i = k.indexOf('::');
             if (i < 0 || !(v && v.n > 0) || k.slice(i + 2).toLowerCase() !== base.toLowerCase()) continue;
+            if ((v.diff || 0) < (diff || 0) - 2) continue; // too far below the target level to count
             sum += v.cpr * v.n; n += v.n;
         }
         if (n > 0) return { cpr: Math.round(sum / n * 10) / 10, basis: 'role', n };

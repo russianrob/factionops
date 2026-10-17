@@ -132,3 +132,26 @@ test('trimByPositionToRoster empties the map for players no longer in the factio
   assert.deepEqual(cache[2].byPosition, {});
   assert.deepEqual(cache[2].entries, [{ diff: 5, rate: 60 }], 'level data untouched');
 });
+
+// Same-role evidence is level-bounded: a run more than two levels BELOW the
+// target says nothing about it (an 89% Imitator on a level-3 crime is not an
+// 89% Imitator on a level-7 one). Runs at or above the target still count —
+// a harder crime is at least as good a witness.
+test('same-role evidence from more than two levels below the target is ignored', () => {
+  const { expectedCprFor } = client();
+  const m = { ...DRAKE, byPosition: { ...DRAKE.byPosition,
+    'Gaslight the Way::Imitator': { cpr: 89, n: 1, diff: 3 },
+    'Snow Blind::Imitator': { cpr: 85, n: 1, diff: 4 } } };
+  assert.deepEqual(expectedCprFor(m, 'Cleared for Takeoff', 'Imitator', 7), { cpr: 65, basis: 'level', n: 2 });
+});
+
+test('same-role evidence within two levels counts, and so do harder crimes', () => {
+  const { expectedCprFor } = client();
+  const m = { ...DRAKE, byPosition: { ...DRAKE.byPosition,
+    'Honey Trap::Muscle': { cpr: 76, n: 1, diff: 5 },            // 7-2 = 5: counts
+    'Plucking the Lotus Petal::Muscle': { cpr: 84, n: 1, diff: 4 }, // too far below: ignored
+    'Market Forces::Muscle': { cpr: 88.5, n: 2, diff: 3 },        // too far below: ignored
+    'Break the Bank::Muscle': { cpr: 70, n: 1, diff: 8 } } };      // harder: counts
+  // (65×2 + 76 + 70) / 4 = 69
+  assert.deepEqual(expectedCprFor(m, 'Blast from the Past', 'Muscle', 7), { cpr: 69, basis: 'role', n: 4 });
+});
