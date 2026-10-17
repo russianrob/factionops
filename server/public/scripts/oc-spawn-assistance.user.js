@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.80
+// @version      3.2.81
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,21 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.81 — Join level has a floor. The walk that finds a member's stable
+//           level started at their highest level and stepped down to the
+//           first level whose average cleared Min CPR — and when NO level
+//           cleared it, fell through and left them at the highest level they
+//           had ever touched. So raising Min CPR could RAISE a join level:
+//           at 60 a member with seven level-3 crimes averaging 61.7% and one
+//           level-4 at 57% was offered level 3; at 65 he cleared nothing and
+//           was offered level 4. Now a member who clears the bar at no level
+//           is offered one level below the lowest level they have history at
+//           (floored at 1), so he lands on level 2. Server and script share
+//           the rule (computeJoinable; the server test extracts this copy
+//           and holds it to the same cases). Member Projector reads the
+//           faction's Min CPR instead of a hardcoded 60, so it stops calling
+//           someone stable at a level the join list just dropped them from.
+//           Setting text now says what ships; "pinned to Lvl 1" never was.
 // v3.2.72 — FIX: loaning any OC item reported "No stock" while the armoury was full (Core Drill x11, Shaped Charge x18, Zip Ties x61, all Available). mgr_fetchAllArmoryItemsAPI requested the armoury selections from /v2/faction, but every one of them (utilities/drugs/medical/boosters/temporary/armor/weapons/caches) is v1-only. Torn answers v2 with HTTP 200 and {error:{code:22,'This selection is only available in API v1'}} — so r.ok stayed true, nothing checked data.error, every data[sel] came back undefined, the cache filled with zero items, and mgr_prepareArmouryForItem bailed at `!entry` on EVERY item. Switched the call to v1 (the response shape this parser was already written for: ID/name/type/quantity/available/loaned/loaned_to). Also added an explicit data.error check that throws the real Torn message, and the loan button now shows that reason (28 chars + full text in the tooltip) instead of a misleading 'No stock' — an API failure and an empty shelf are no longer indistinguishable. The oc-nostock diagnostic added in 3.2.70/3.2.71 stays; it fires only on a failed loan and reports which branch bailed plus the API response shape.
 // v3.2.70 — Diagnostic only, no behaviour change. "No stock" on a loan attempt has three causes that render identically: (a) the /v2 armoury cache reports nothing available, (b) the page-AJAX category scan never saw the item — wrong category name, or the item sits past the hard 1000-row cap in mgr_fetchArmoryIDsForCategory, or (c) the item is present but every unit is already loaned to a member. Reported as Core Drill showing No stock while stock existed. Added an out-param to the category scan that counts rows seen for the hunted itemID, how many of those were loaned, pages walked, total rows, and whether the 1000-row cap was hit; mgr_prepareArmouryForItem now POSTs tag 'oc-nostock' to the client-log endpoint on BOTH null returns, tagged branch:'api-cache' or branch:'page-scan'. Fires only when a loan fails, so the normal path is untouched.
 // v3.1.76 — Member Projector now anchors on the member's highest STABLE OC level (avg CPR ≥ MINCPR), not just their highest completed. Previously a member who'd touched Lvl 6 at 57% avg CPR was shown as "OC Lvl 6 / 57%" with the projection targeting Lvl 7 ("Not Ready for Lvl 7") — a misleading double whammy: the displayed CPR was their unstable struggling number rather than where they're actually competent, and the projection skipped over the level they're still building. New logic: walk down from completedLevel to find the first level with CPR ≥ MINCPR, use that as the displayed anchor (currentOcLevel + currentLevelCpr); set the projection target to the level they've already attempted but not solidified (so their case becomes "OC Lvl 5 / 65% / attempting Lvl 6 at 57%" rendered as "Building for Lvl 6"). When no stable level exists yet (brand new member at Lvl 1 below MINCPR), anchor stays at completed level and projection targets that same level. Renderer surfaces an inline "attempting Lvl X at N%" tag in orange so the displayed numbers don't read as a contradiction with the projection.
@@ -346,7 +361,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.80';
+    const SCRIPT_VERSION = '3.2.81';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -3459,7 +3474,7 @@
             <div class="oc-setting-row">
                 <div class="oc-setting-info">
                     <span class="oc-setting-label">Min CPR %</span>
-                    <div class="oc-setting-desc">Minimum checkpoint pass rate a member needs before the script considers them eligible to join a crime at their historical level. Anyone below this gets pinned to Lvl 1 only.</div>
+                    <div class="oc-setting-desc">Minimum checkpoint pass rate a member needs at a level before the script offers them crimes at that level. Someone who clears it at no level is offered one level below the lowest level they have history at.</div>
                 </div>
                 <input class="oc-setting-num" id="cfg-mincpr" type="number" min="0" max="100"/>
             </div>
@@ -4359,6 +4374,39 @@
     // ═══════════════════════════════════════════════════════════════════════
     //  SCOPE PROJECTION
     // ═══════════════════════════════════════════════════════════════════════
+    // The join-level rule — a VERBATIM copy of computeJoinable in the server's
+    // oc-spawn.js (no @require here). The server test extracts this function
+    // from the served source and holds it to the same cases, so edit both.
+    //
+    // Walk DOWN from the member's highest level to the first level whose
+    // average clears Min CPR — their "effective top". If NO level clears it,
+    // drop one level below the lowest level we have data for (floored at 1):
+    // a member at 61% on level 3 should be building on level 2, not floating
+    // at the hardest crime they ever touched. A member with no completions at
+    // all (placement-only evidence) keeps the placement level.
+    function computeJoinable(entries, highestLevel, cpr, mincpr, boost) {
+      const byLevel = {};
+      for (const e of (entries || [])) {
+        if (!byLevel[e.diff]) byLevel[e.diff] = { sum: 0, count: 0 };
+        byLevel[e.diff].sum += e.rate;
+        byLevel[e.diff].count += 1;
+      }
+      const top = highestLevel || 0;
+      let effectiveTop = top;
+      let stable = false;
+      for (let lvl = top; lvl >= 1; lvl--) {
+        const lv = byLevel[lvl];
+        if (!lv) continue;
+        if ((lv.sum / lv.count) >= mincpr) { effectiveTop = lvl; stable = true; break; }
+      }
+      if (!stable) {
+        const levels = Object.keys(byLevel).map(Number);
+        if (levels.length) effectiveTop = Math.max(1, Math.min(...levels) - 1);
+      }
+      const joinable = cpr >= mincpr + boost ? Math.min(effectiveTop + 1, 10) : effectiveTop;
+      return { effectiveTop, joinable };
+    }
+
     function projectScope(currentScope, eligible) {
         if (currentScope === null) return null;
         const regenDays = CONFIG.FORECAST_HOURS / 24;
@@ -7297,28 +7345,10 @@
                 return;
             }
 
-            // Re-apply user's MINCPR/CPR_BOOST to joinable
+            // Re-apply user's MINCPR/CPR_BOOST to joinable — the one shared rule.
             const cprCache = {};
             for (const [uid, d] of Object.entries(rawCprCache || {})) {
-                // Per-level CPR: find highest level where member actually performs well
-                const levelCprs = {};
-                for (const e of (d.entries || [])) {
-                    if (!levelCprs[e.diff]) levelCprs[e.diff] = { sum: 0, count: 0 };
-                    levelCprs[e.diff].sum += e.rate;
-                    levelCprs[e.diff].count += 1;
-                }
-                let effectiveTop = d.highestLevel || 0;
-                for (let lvl = effectiveTop; lvl >= 1; lvl--) {
-                    const lc = levelCprs[lvl];
-                    if (!lc) continue;
-                    if ((lc.sum / lc.count) >= CONFIG.MINCPR) { effectiveTop = lvl; break; }
-                }
-                cprCache[uid] = {
-                    ...d,
-                    effectiveTop,
-                    joinable: d.cpr >= CONFIG.MINCPR + CONFIG.CPR_BOOST
-                        ? Math.min(effectiveTop + 1, 10) : effectiveTop,
-                };
+                cprCache[uid] = { ...d, ...computeJoinable(d.entries, d.highestLevel, d.cpr, CONFIG.MINCPR, CONFIG.CPR_BOOST) };
             }
 
             setStatus('Analysing…');

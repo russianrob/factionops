@@ -132,7 +132,7 @@ import { fetchFactionMembers, fetchFactionChain, fetchRankedWar, fetchFactionBas
 
 /** Mask an API key for safe logging — shows only last 4 chars. */
 const maskKey = (key) => key ? `****${String(key).slice(-4)}` : '****';
-import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName } from "./oc-spawn.js";
+import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeights, normalizeOcName, computeJoinable } from "./oc-spawn.js";
 import { createFlyerDelayPoller } from "./flyer-delay-poll.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
 import { lowSuccessCrimes, LOW_SUCCESS_THRESHOLD, WEAK_MIN_WEIGHT, WEAK_MIN_LEVEL } from "./oc-ready-notifier.js";
@@ -8129,7 +8129,10 @@ function runMemberProjector(factionId, data) {
     const completedLevel = cpr.highestLevel || cpr.effectiveTop || 0;
     const joinable = cpr.joinable || cpr.effectiveTop || completedLevel;
     const isEstimated = !!cpr.estimated; // no real OC data, using level-based estimate
-    const MINCPR = 60; // viability threshold for "stable at this level"
+    // Viability threshold for "stable at this level": the faction's own Min
+    // CPR, the same bar the join list applies, so the Projector cannot call
+    // a member stable at a level the join list has just dropped them from.
+    const MINCPR = store.getFactionSettings(factionId).oc_mincpr ?? 60;
 
     // "Anchor" = highest level where the member's avg CPR meets MINCPR.
     // This is the level the member is genuinely solid at. If their
@@ -9749,19 +9752,11 @@ router.get("/api/oc/spawn-key", async (req, res) => {
     const fSettings = store.getFactionSettings(playerInfo.factionId);
     const fMincpr = fSettings.oc_mincpr ?? 60;
     const fBoost  = fSettings.oc_cpr_boost ?? 15;
-    for (const [uid, d] of Object.entries(data.cprCache || {})) {
-      const lc = {};
-      for (const e of (d.entries || [])) {
-        if (!lc[e.diff]) lc[e.diff] = { sum: 0, count: 0 };
-        lc[e.diff].sum += e.rate; lc[e.diff].count += 1;
-      }
-      let effTop = d.highestLevel || 0;
-      for (let lvl = effTop; lvl >= 1; lvl--) {
-        const lv = lc[lvl]; if (!lv) continue;
-        if ((lv.sum / lv.count) >= fMincpr) { effTop = lvl; break; }
-      }
-      d.effectiveTop = effTop;
-      d.joinable = d.cpr >= fMincpr + fBoost ? Math.min(effTop + 1, 10) : effTop;
+    for (const d of Object.values(data.cprCache || {})) {
+      // One rule for the join level — computeJoinable in oc-spawn.js. It has
+      // a floor: a member who clears Min CPR at no level drops one below the
+      // lowest level they have data for, never up to their highest attempt.
+      Object.assign(d, computeJoinable(d.entries, d.highestLevel, d.cpr, fMincpr, fBoost));
     }
 
     const viewerObj = buildViewer(playerInfo);
@@ -9886,13 +9881,8 @@ router.get("/api/oc/spawn-key", async (req, res) => {
           // Apply faction settings to retry path too
           const fS2 = store.getFactionSettings(playerInfo.factionId);
           const fM2 = fS2.oc_mincpr ?? 60, fB2 = fS2.oc_cpr_boost ?? 15;
-          for (const [uid, d] of Object.entries(data.cprCache || {})) {
-            const lc = {};
-            for (const e of (d.entries || [])) { if (!lc[e.diff]) lc[e.diff] = { sum: 0, count: 0 }; lc[e.diff].sum += e.rate; lc[e.diff].count += 1; }
-            let effTop = d.highestLevel || 0;
-            for (let lvl = effTop; lvl >= 1; lvl--) { const lv = lc[lvl]; if (!lv) continue; if ((lv.sum / lv.count) >= fM2) { effTop = lvl; break; } }
-            d.effectiveTop = effTop;
-            d.joinable = d.cpr >= fM2 + fB2 ? Math.min(effTop + 1, 10) : effTop;
+          for (const d of Object.values(data.cprCache || {})) {
+            Object.assign(d, computeJoinable(d.entries, d.highestLevel, d.cpr, fM2, fB2));
           }
           // Run engines on fallback data too
           const fS2engines = {};
@@ -9996,19 +9986,8 @@ router.get("/api/oc/engines", async (req, res) => {
     const fSettings = store.getFactionSettings(fid);
     const fMincpr = fSettings.oc_mincpr ?? 60;
     const fBoost  = fSettings.oc_cpr_boost ?? 15;
-    for (const [, d] of Object.entries(data.cprCache || {})) {
-      const lc = {};
-      for (const e of (d.entries || [])) {
-        if (!lc[e.diff]) lc[e.diff] = { sum: 0, count: 0 };
-        lc[e.diff].sum += e.rate; lc[e.diff].count += 1;
-      }
-      let effTop = d.highestLevel || 0;
-      for (let lvl = effTop; lvl >= 1; lvl--) {
-        const lv = lc[lvl]; if (!lv) continue;
-        if ((lv.sum / lv.count) >= fMincpr) { effTop = lvl; break; }
-      }
-      d.effectiveTop = effTop;
-      d.joinable = d.cpr >= fMincpr + fBoost ? Math.min(effTop + 1, 10) : effTop;
+    for (const d of Object.values(data.cprCache || {})) {
+      Object.assign(d, computeJoinable(d.entries, d.highestLevel, d.cpr, fMincpr, fBoost));
     }
 
     // Heavy engines — cached per-faction, 1h TTL. Skip recompute if

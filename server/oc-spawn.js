@@ -138,6 +138,43 @@ async function fetchAvailableCrimes(factionId, apiKey) {
 // which for new/returning members almost always fails.
 const MIN_SAMPLES_FOR_BOOST = 3;
 
+// The join-level rule. Both routes.js handlers call this; the userscript
+// cannot @require, so it carries a verbatim copy (oc-joinable.test.mjs
+// extracts that copy and holds it to the same cases so they cannot drift).
+//
+// Walk DOWN from the member's highest level to the first level whose average
+// clears Min CPR — their "effective top", the level they are demonstrably
+// stable at. If NO level clears it, drop ONE LEVEL BELOW THE LOWEST LEVEL WE
+// HAVE DATA FOR (floored at 1): a member at 61% on level 3 should be building
+// on level 2, not floating at the hardest crime they ever touched. Before this
+// floor existed the loop fell through to highestLevel, so RAISING Min CPR
+// could RAISE a member's join level (Bond003, 2026-10-17: the bar went 60→65
+// and he went from level 3 to being offered level 4 at 57%).
+// A member with no completions at all — placement-only evidence from
+// buildCprCache — keeps the placement level; there is no data to drop below.
+export function computeJoinable(entries, highestLevel, cpr, mincpr, boost) {
+  const byLevel = {};
+  for (const e of (entries || [])) {
+    if (!byLevel[e.diff]) byLevel[e.diff] = { sum: 0, count: 0 };
+    byLevel[e.diff].sum += e.rate;
+    byLevel[e.diff].count += 1;
+  }
+  const top = highestLevel || 0;
+  let effectiveTop = top;
+  let stable = false;
+  for (let lvl = top; lvl >= 1; lvl--) {
+    const lv = byLevel[lvl];
+    if (!lv) continue;
+    if ((lv.sum / lv.count) >= mincpr) { effectiveTop = lvl; stable = true; break; }
+  }
+  if (!stable) {
+    const levels = Object.keys(byLevel).map(Number);
+    if (levels.length) effectiveTop = Math.max(1, Math.min(...levels) - 1);
+  }
+  const joinable = cpr >= mincpr + boost ? Math.min(effectiveTop + 1, 10) : effectiveTop;
+  return { effectiveTop, joinable };
+}
+
 // Extract current placements from non-completed crimes. A member sitting
 // on a level-4 Planning/Executing crime right now is demonstrably at least
 // level-4-capable — someone placed them there. We use this as evidence that
