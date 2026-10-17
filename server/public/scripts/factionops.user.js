@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.18
+// @version      5.6.19
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.18';
+    const SCRIPT_VERSION = '5.6.19';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -2950,6 +2950,8 @@ body.wb-chain-active {
 .fo-kal-yellow{color:#f5d76e}
 .fo-kal-plain{color:#9bb0c4}
 .fo-kal-arm{color:#9aa7b4}
+.fo-kal-build{color:#f5d76e;font-weight:600}
+.fo-kal-build-stale{opacity:.5;font-weight:400}
 /* Faction cooldowns dashboard (Option B — self-reported bars). */
 .fo-bars-section {
     border-bottom: 1px solid var(--wb-border);
@@ -7332,7 +7334,8 @@ body.wb-chain-active {
                 try {
                     if (res.status === 200) {
                         const d = JSON.parse(res.responseText);
-                        if (d && d.found) hit = d;
+                        // A build with no loadout is still worth showing.
+                        if (d && (d.found || d.build)) hit = d;
                     }
                 } catch (_) { /* a decoration must never throw */ }
                 _kalCache.set(id, hit);
@@ -7495,7 +7498,11 @@ body.wb-chain-active {
         const nm = (x) => (x && x.name ? x.name : null);
         const weapons = [s.primary, s.secondary, s.melee].filter((w) => w && w.name);
         const armour = (s.armour || []).map((a) => a.name).filter(Boolean);
-        if (!weapons.length && !armour.length) return '';
+        // The build split is independent of the loadout -- FFScouter has one
+        // for targets nobody has ever scouted a loadout from -- so an empty
+        // loadout alone is no longer a reason to render nothing.
+        const buildTxt = foBuildText(hit.build);
+        if (!weapons.length && !armour.length && !buildTxt) return '';
 
         const armourNames = new Set(armour);
         const rows = [];
@@ -7525,6 +7532,14 @@ body.wb-chain-active {
         // fact already carried by the piece names.
         if (armour.length) {
             rows.push('<span class="fo-kal-arm">' + foEsc(armour.join(' \u00b7 ')) + '</span>');
+        }
+
+        // Under what they carry, which is where it gets used: you read the
+        // weapons, then decide the temp.
+        if (buildTxt) {
+            const stale = hit.build.ageDays != null && hit.build.ageDays > FO_BUILD_STALE_DAYS;
+            rows.push('<span class="fo-kal-build' + (stale ? ' fo-kal-build-stale' : '')
+                + '" title="' + foEsc(foBuildTitle(hit.build)) + '">' + buildTxt + '</span>');
         }
 
         const days = Math.floor((hit.packAgeMs || 0) / 86400000);
@@ -14165,7 +14180,8 @@ body.wb-chain-active {
      *  entries are dimmed rather than dropped -- still the only signal there
      *  is, just a weaker one.
      */
-    function foBuildChip(b) {
+    /** "DEF 52% STR 39% \u00b7 52d", or '' when there is nothing to say. */
+    function foBuildText(b) {
         if (!b || !b.pct) return '';
         const AB = { strength: 'STR', defense: 'DEF', speed: 'SPD', dexterity: 'DEX' };
         const parts = Object.keys(b.pct)
@@ -14173,16 +14189,28 @@ body.wb-chain-active {
             .sort((x, y) => y[1] - x[1])
             .map((e) => (AB[e[0]] || String(e[0]).slice(0, 3).toUpperCase()) + ' ' + e[1] + '%');
         if (!parts.length) return '';
-        const stale = b.ageDays != null && b.ageDays > 120;
-        const age = b.ageDays != null ? ' \u00b7 ' + b.ageDays + 'd' : '';
+        return parts.join(' ') + (b.ageDays != null ? ' \u00b7 ' + b.ageDays + 'd' : '');
+    }
+
+    /** Over this many days the split is dimmed: still the only signal there
+     *  is, but it belongs to somebody who may have retrained since. */
+    const FO_BUILD_STALE_DAYS = 120;
+    function foBuildTitle(b) {
         let when = '';
         try {
-            if (b.updatedAt) when = ' (' + new Date(b.updatedAt * 1000).toISOString().slice(0, 10) + ')';
+            if (b && b.updatedAt) when = ' (' + new Date(b.updatedAt * 1000).toISOString().slice(0, 10) + ')';
         } catch (e) {}
+        const stale = b && b.ageDays != null && b.ageDays > FO_BUILD_STALE_DAYS;
+        return 'FFScouter build split' + when + (stale ? ' \u2014 stale, they may have retrained' : '');
+    }
+
+    function foBuildChip(b) {
+        const txt = foBuildText(b);
+        if (!txt) return '';
+        const stale = b.ageDays != null && b.ageDays > FO_BUILD_STALE_DAYS;
         return '<div style="font-size:9px;line-height:1.3;color:#f5d76e;opacity:'
-            + (stale ? '0.45' : '0.8') + '" title="FFScouter build split' + when
-            + (stale ? ' \u2014 stale, they may have retrained' : '') + '">'
-            + parts.join(' ') + age + '</div>';
+            + (stale ? '0.45' : '0.8') + '" title="' + foEsc(foBuildTitle(b)) + '">'
+            + txt + '</div>';
     }
 
     function renderScoutReport(report) {

@@ -13487,7 +13487,55 @@ router.get("/prewar/scout", (_req, res) => {
 // anyway — every enemy on the list is in the pack the scout pulled in a
 // single call — and outside one it answers found:false and the row stays
 // absent rather than empty.
-router.get("/api/loadout/kal", requireAuth, (req, res) => {
+// ── FFScouter build split, per player, cached ──────────────────────────────
+// The mini-profile asks for a loadout every time a card opens, so this cannot
+// hit FFScouter on each call. The underlying data is a point-in-time snapshot
+// measured at 23-346 days old, so a long TTL costs nothing and a whole enemy
+// roster settles into ~85 lookups per cycle.
+const _ffsBuildCache = new Map();          // playerId -> { build, at }
+const FFS_BUILD_TTL_MS = 12 * 60 * 60 * 1000;
+// Matches the scout report: below this the split does not change how you
+// fight someone, and FFScouter almost never has one for a small account.
+const FFS_BUILD_MIN_STATS = 2e9;
+
+async function ffsBuildFor(factionId, playerId) {
+  const pid = String(playerId);
+  const hit = _ffsBuildCache.get(pid);
+  if (hit && Date.now() - hit.at < FFS_BUILD_TTL_MS) return hit.build;
+
+  const key = (store.getFactionSettings(factionId)?.oc_ffs_key) || "";
+  if (!key) return null;
+  try {
+    const r = await fetch(`https://ffscouter.com/api/v1/get-stats?key=${encodeURIComponent(key)}&targets=${encodeURIComponent(pid)}`);
+    if (!r.ok) return null;
+    const arr = await r.json();
+    if (!Array.isArray(arr) || !arr[0]) return null;
+    const e = arr[0];
+    const dist = e.distribution;
+    const pct = dist && dist.stats_percentage;
+    let build = null;
+    // The threshold is checked HERE because bs_estimate rides in the same
+    // record — there is no cheaper place to do it.
+    if (pct && Object.keys(pct).length && Number(e.bs_estimate) >= FFS_BUILD_MIN_STATS) {
+      const at = Number(dist.last_updated) || 0;
+      build = {
+        pct,
+        human: dist.distribution_human || null,
+        updatedAt: at,
+        ageDays: at > 0 ? Math.floor((Date.now() / 1000 - at) / 86400) : null,
+      };
+    }
+    // A null is cached too: without that, every target FFScouter has nothing
+    // for would re-query on every single card open.
+    _ffsBuildCache.set(pid, { build, at: Date.now() });
+    return build;
+  } catch (err) {
+    console.warn(`[ffs-build] lookup failed for ${pid}: ${err.message}`);
+    return null;
+  }
+}
+
+router.get("/api/loadout/kal", requireAuth, async (req, res) => {
   const playerId = String(req.query.playerId || "").replace(/[^0-9]/g, "");
   if (!playerId) return res.status(400).json({ error: "playerId required" });
 
@@ -13508,8 +13556,12 @@ router.get("/api/loadout/kal", requireAuth, (req, res) => {
   } else if (pack) { hit = pack; source = "pack"; }
   else if (grown) { hit = grown; source = "harvest"; }
 
-  if (!hit) return res.json({ found: false });
-  return res.json({ found: true, source, ...hit });
+  // Independent of the loadout: FFScouter knows a build for some targets we
+  // have never seen a loadout for, and vice versa.
+  const build = await ffsBuildFor(req.user.factionId, playerId).catch(() => null);
+
+  if (!hit) return res.json({ found: false, build });
+  return res.json({ found: true, source, build, ...hit });
 });
 
 // ── POST /api/loadout/kal/harvest ────────────────────────────────────────
