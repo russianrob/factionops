@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.81
+// @version      3.2.82
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,19 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.82 — CPR tooltip fits a phone. Its per-checkpoint heatmap drew every
+//           cell on two lines (rate over count), so a member with 27 roles
+//           produced a grid taller than the screen; the tooltip is a fixed
+//           box with no height cap and could not scroll, and when it did not
+//           fit below the trigger it flipped above unconditionally, pushing
+//           the name, average and per-level table off the top. Now: one line
+//           per cell (rate, then pass/total as a small suffix; rows ~11px
+//           instead of ~18px), OC names clip with an ellipsis so five
+//           checkpoints fit the width, the tooltip is capped to the screen
+//           height and scrolls inside, it pins inside the screen instead of
+//           flipping off it, and a tap inside it no longer closes it. The
+//           heatmap builder is a pure function (buildCheckpointHeatmap) the
+//           server test pulls out of this file and checks.
 // v3.2.81 — Join level has a floor. The walk that finds a member's stable
 //           level started at their highest level and stepped down to the
 //           first level whose average cleared Min CPR — and when NO level
@@ -361,7 +374,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.81';
+    const SCRIPT_VERSION = '3.2.82';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -3075,6 +3088,8 @@
         .oc-cpr-click:hover, .oc-proj-click:hover { opacity: 0.75; }
         /* Tooltips */
         #oc-cpr-tooltip, #oc-scope-tooltip { position: fixed; z-index: 10001; background: #131f18; border: 1px solid #2d4a3e; border-radius: 6px; padding: 6px 8px; font-size: 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #d1d5db; box-shadow: 0 4px 20px rgba(0,0,0,.7); min-width: 200px; max-width: 280px; display: none; pointer-events: none; }
+        /* The CPR tooltip can be long (one heatmap row per role). Never taller than the screen; scroll inside. */
+        #oc-cpr-tooltip { max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; pointer-events: auto; }
         #oc-cpr-tooltip .oc-tt-title, #oc-scope-tooltip .oc-tt-title { font-weight: 600; color: #f3f4f6; margin-bottom: 2px; font-size: 11px; }
         #oc-cpr-tooltip .oc-tt-avg, #oc-scope-tooltip .oc-tt-avg   { color: #9ca3af; font-size: 9px; margin-bottom: 4px; }
         #oc-cpr-tooltip table, #oc-scope-tooltip table { width: 100%; border-collapse: collapse; }
@@ -3083,11 +3098,13 @@
         #oc-cpr-tooltip .oc-tt-note, #oc-scope-tooltip .oc-tt-note { color: #6b7280; font-size: 9px; margin-top: 4px; border-top: 1px solid #1a2e20; padding-top: 3px; }
         #oc-cpr-tooltip .oc-tt-heat-wrap { margin-top: 3px; max-width: 100%; overflow-x: auto; }
         #oc-cpr-tooltip .oc-tt-heat { border-collapse: collapse; }
-        #oc-cpr-tooltip .oc-tt-heat td.oc-tt-heat-cell { text-align: center; padding: 0 3px; line-height: 1.05; }
-        #oc-cpr-tooltip .oc-tt-heat td.oc-tt-heat-cell .r { font-weight: 600; font-size: 9px; }
-        #oc-cpr-tooltip .oc-tt-heat td.oc-tt-heat-cell .s { font-size: 7px; opacity: 0.7; }
-        #oc-cpr-tooltip .oc-tt-heat td.oc-tt-heat-label { font-size: 9px; padding-right: 4px; white-space: nowrap; color: #d1d5db; }
-        #oc-cpr-tooltip .oc-tt-heat td.oc-tt-heat-label .r { color: #6b7280; font-size: 8px; }
+        /* One line per cell: rate, then the count as a small suffix. Two-line cells made every row ~18px and a 27-role member's grid taller than a phone screen. */
+        #oc-cpr-tooltip .oc-tt-heat td.oc-tt-heat-cell { text-align: center; padding: 1px 2px; line-height: 1.1; white-space: nowrap; }
+        #oc-cpr-tooltip .oc-tt-heat td.oc-tt-heat-cell .r { font-weight: 600; font-size: 8px; }
+        #oc-cpr-tooltip .oc-tt-heat td.oc-tt-heat-cell .s { font-size: 6px; opacity: 0.7; margin-left: 2px; }
+        #oc-cpr-tooltip .oc-tt-heat td.oc-tt-heat-label { font-size: 8px; padding: 0 3px 0 0; color: #d1d5db; }
+        #oc-cpr-tooltip .oc-tt-heat .oc-tt-heat-lbl { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #oc-cpr-tooltip .oc-tt-heat td.oc-tt-heat-label .r { color: #6b7280; font-size: 7px; }
         /* v3.1.34: click-to-toggle tooltip for Outcome EV column headers */
         #oc-ev-tooltip { position: fixed; z-index: 10002; background: #131f18; border: 1px solid #2d4a3e; border-radius: 8px; padding: 10px 12px; font-size: 11px; color: #d1d5db; box-shadow: 0 4px 20px rgba(0,0,0,.7); max-width: 300px; display: none; line-height: 1.4; }
         #oc-ev-tooltip .oc-tt-title { font-weight: 600; color: #f3f4f6; margin-bottom: 5px; font-size: 12px; }
@@ -4133,6 +4150,52 @@
     // ═══════════════════════════════════════════════════════════════════════
     //  CPR TOOLTIP
     // ═══════════════════════════════════════════════════════════════════════
+    // Per-checkpoint heatmap for the CPR tooltip. byCheckpoint keys are
+    // "OcName::Role::Cn": one row per (OC, role), one cell per checkpoint,
+    // colour-coded by pass rate. Returns '' when nothing has been captured
+    // (the script only has this once an admin has opened the Completed tab
+    // with this member in it). Pure, HTML in and HTML out — the test pulls
+    // this out of the served source and checks the structure.
+    //
+    // A cell is ONE line: the rate, then pass/total as a small suffix. The
+    // old two-line cell (rate over count) made every row ~18px, and on a
+    // phone a member with 27 roles turned the tooltip into a grid taller
+    // than the screen. The label sits in a block that clips with an
+    // ellipsis, so a long OC name cannot widen the table either.
+    function buildCheckpointHeatmap(byCheckpoint) {
+        const cps = byCheckpoint || {};
+        const cpKeys = Object.keys(cps);
+        if (!cpKeys.length) return '';
+        const groups = {};
+        for (const k of cpKeys) {
+            const parts = k.split('::');
+            if (parts.length !== 3) continue;
+            const groupKey = parts[0] + '::' + parts[1];
+            const cpNum = Number(String(parts[2]).replace(/^C/, ''));
+            if (!groups[groupKey]) groups[groupKey] = {};
+            groups[groupKey][cpNum] = cps[k];
+        }
+        const groupRows = Object.entries(groups).map(([groupKey, byCp]) => {
+            const [oc, role] = groupKey.split('::');
+            const nums = Object.keys(byCp).map(Number).sort((a, b) => a - b);
+            const cells = nums.map(n => {
+                const e = byCp[n];
+                const total = (e.pass || 0) + (e.fail || 0);
+                const rate = total > 0 ? e.rate : 0;
+                const bg = rate >= 80 ? '#1b4332' : rate >= 60 ? '#3d3010' : '#3d1010';
+                const fg = rate >= 80 ? '#74c69d' : rate >= 60 ? '#f4a261' : '#ef4444';
+                return `<td class="oc-tt-heat-cell" style="background:${bg};color:${fg};">`
+                     + `<span class="r">${rate}%</span><span class="s">${e.pass}/${total}</span></td>`;
+            }).join('');
+            return `<tr><td class="oc-tt-heat-label"><div class="oc-tt-heat-lbl">${oc} <span class="r">${role}</span></div></td>${cells}</tr>`;
+        }).join('');
+        if (!groupRows) return '';
+        // Horizontal-scroll wrapper (v3.2.2) stays: an OC with more
+        // checkpoints than fit still scrolls sideways instead of widening.
+        return `<div class="oc-tt-note" style="font-weight:600;color:#d1d5db;">Per-checkpoint pass rate</div>`
+             + `<div class="oc-tt-heat-wrap"><table class="oc-tt-heat"><tbody>${groupRows}</tbody></table></div>`;
+    }
+
     function showCprTooltip(el) {
         const uid = parseInt(el.dataset.uid), data = cprBreakdownMap[uid];
         if (!data || !data.entries.length) return;
@@ -4148,45 +4211,7 @@
             return `<tr><td>Lvl ${lvl}</td><td>${byLevel[lvl].count} crime${byLevel[lvl].count > 1 ? 's' : ''}</td><td style="color:${c}">${avg}%</td></tr>`;
         }).join('');
         const oc = data.cpr >= 80 ? '#74c69d' : data.cpr >= 60 ? '#f4a261' : '#9ca3af';
-        // v3.1.94: per-checkpoint heatmap. Group byCheckpoint keys
-        // ("OcName::Role::Cn") into rows of (OcName + Role) → cells per
-        // checkpoint, color-coded by pass rate. Only renders if the
-        // userscript captured at least one Completed-tab response that
-        // contained this member; otherwise the section is omitted.
-        let checkpointHtml = '';
-        const cps = data.byCheckpoint || {};
-        const cpKeys = Object.keys(cps);
-        if (cpKeys.length > 0) {
-            const groups = {};
-            for (const k of cpKeys) {
-                const parts = k.split('::');
-                if (parts.length !== 3) continue;
-                const groupKey = parts[0] + '::' + parts[1];
-                const cpNum = Number(String(parts[2]).replace(/^C/, ''));
-                if (!groups[groupKey]) groups[groupKey] = {};
-                groups[groupKey][cpNum] = cps[k];
-            }
-            const groupRows = Object.entries(groups).map(([groupKey, byCp]) => {
-                const [oc, role] = groupKey.split('::');
-                const nums = Object.keys(byCp).map(Number).sort((a, b) => a - b);
-                const cells = nums.map(n => {
-                    const e = byCp[n];
-                    const total = (e.pass || 0) + (e.fail || 0);
-                    const rate = total > 0 ? e.rate : 0;
-                    const bg = rate >= 80 ? '#1b4332' : rate >= 60 ? '#3d3010' : '#3d1010';
-                    const fg = rate >= 80 ? '#74c69d' : rate >= 60 ? '#f4a261' : '#ef4444';
-                    return `<td class="oc-tt-heat-cell" style="background:${bg};color:${fg};">`
-                         + `<div class="r">${rate}%</div><div class="s">${e.pass}/${total}</div></td>`;
-                }).join('');
-                return `<tr><td class="oc-tt-heat-label">${oc} <span class="r">${role}</span></td>${cells}</tr>`;
-            }).join('');
-            // v3.2.2: heatmap wrapped in a horizontal-scroll container so
-            // OCs with many checkpoints (e.g. 12-cp scenarios) don't
-            // explode the tooltip width. Cell + label classes carry the
-            // sizing — see #oc-cpr-tooltip .oc-tt-heat* in the CSS block.
-            checkpointHtml = `<div class="oc-tt-note" style="font-weight:600;color:#d1d5db;">Per-checkpoint pass rate</div>
-                <div class="oc-tt-heat-wrap"><table class="oc-tt-heat"><tbody>${groupRows}</tbody></table></div>`;
-        }
+        const checkpointHtml = buildCheckpointHeatmap(data.byCheckpoint);
 
         cprTooltipEl.innerHTML = `
             <div class="oc-tt-title">${data.name}</div>
@@ -4194,6 +4219,7 @@
             <table><thead><tr><th>Level</th><th>Crimes</th><th>Avg CPR</th></tr></thead><tbody>${rows}</tbody></table>
             ${checkpointHtml}
             <div class="oc-tt-note">Only counts crimes within 1 level of player's best</div>`;
+        cprTooltipEl.scrollTop = 0;
         cprTooltipEl.style.display = 'block';
         const rect = el.getBoundingClientRect();
         cprTooltipEl.style.top = (rect.bottom + 6) + 'px';
@@ -4201,7 +4227,14 @@
         requestAnimationFrame(() => {
             const tr = cprTooltipEl.getBoundingClientRect();
             if (tr.right  > window.innerWidth  - 8) cprTooltipEl.style.left = (window.innerWidth  - tr.width  - 8) + 'px';
-            if (tr.bottom > window.innerHeight - 8) cprTooltipEl.style.top  = (rect.top - tr.height - 6) + 'px';
+            if (tr.bottom > window.innerHeight - 8) {
+                // No room below. Go above only if the whole box fits there;
+                // otherwise pin it as low as it can sit inside the screen.
+                // Flipping above unconditionally pushed the header off the
+                // top of a phone whenever the grid was taller than the gap.
+                const above = rect.top - tr.height - 6;
+                cprTooltipEl.style.top = Math.max(8, above >= 8 ? above : window.innerHeight - 8 - tr.height) + 'px';
+            }
         });
         cprTipOpen = true;
     }
@@ -4290,6 +4323,8 @@
     document.addEventListener('click', (e) => {
         // Don't close rec tooltip if clicking inside it (for Message Player button)
         if (recTooltipEl.contains(e.target)) return;
+        // Nor the CPR tooltip: it scrolls now, so a tap inside it is a scroll, not a dismissal.
+        if (cprTooltipEl.contains(e.target)) return;
         if (cprTipOpen) hideCprTooltip(); if (scopeTipOpen) hideScopeTooltip(); hideRecTooltip();
     });
 
