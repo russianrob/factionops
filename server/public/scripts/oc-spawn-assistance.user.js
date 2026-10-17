@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.82
+// @version      3.2.83
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,22 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.83 — The Join pick fits the member to the slot. It was meant to rank
+//           open slots by the member's CPR for that exact OC and role
+//           (keys like "Blast from the Past::Picklock"), but the server
+//           never attached that map, so every slot scored zero and the pick
+//           fell through to "the fullest OC at their level" — which is how
+//           a member with no Cleared for Takeoff history was sent to
+//           Cleared for Takeoff. The server now ships each member's per-OC,
+//           per-role CPR from the stored history (every level, "#N"
+//           stripped). The pick scores every open slot at the member's
+//           level by expected CPR — own record on this OC+role, else the
+//           same role on other OCs, else their level average, else overall —
+//           and sends them where they clear Min CPR; the fullest crime is
+//           only a tie-break. The Join tooltip says which basis the number
+//           came from and how many runs back it; the button turns amber
+//           when nothing open clears the bar for them. Same evidence the
+//           auto-dispatcher banner already used from its own history scan.
 // v3.2.82 — CPR tooltip fits a phone. Its per-checkpoint heatmap drew every
 //           cell on two lines (rate over count), so a member with 27 roles
 //           produced a grid taller than the screen; the tooltip is a fixed
@@ -374,7 +390,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.82';
+    const SCRIPT_VERSION = '3.2.83';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -3146,6 +3162,8 @@
             padding: 2px 7px; font-size: 10px; font-weight: 600;
         }
         .oc-rec-btn:hover { background: rgba(116,198,157,.22); }
+        /* Amber: the member's expected CPR is under Min CPR on every open slot at their level. */
+        .oc-rec-btn.oc-rec-low { color: #f4a261; border-color: rgba(244,162,97,.35); background: rgba(244,162,97,.10); }
         #oc-rec-tooltip {
             position: fixed; z-index: 10001; background: #131f18;
             border: 1px solid #2d4a3e; border-radius: 8px;
@@ -4253,12 +4271,18 @@
         } else if (rec.type === 'none') {
             html = `<div class="oc-tt-title">No OCs Available</div><div class="oc-tt-avg">${rec.text}</div>`;
         } else {
-            const cprStr = rec.cpr > 0 ? ` <span style="color:#74c69d">${rec.cpr}%</span>` : '';
+            const cprStr = rec.cpr > 0 ? ` <span style="color:${rec.lowCpr ? '#f4a261' : '#74c69d'}">${rec.cpr}%</span>` : '';
             const posStr = rec.position ? `<br><span style="color:#9ca3af">Role: ${rec.position}${cprStr}</span>` : '';
+            // Where the expected CPR came from, so a surprising pick explains itself.
+            const basisStr = { 'oc-role': 'their record on this OC in this role', 'role': 'the same role on other OCs',
+                               'level': `their Lvl ${rec.level} average`, 'overall': 'their overall average' }[rec.basis];
+            const nStr = rec.n > 0 ? ` (${rec.n} run${rec.n > 1 ? 's' : ''})` : '';
+            const lowStr = rec.lowCpr ? ` — below Min CPR ${CONFIG.MINCPR}%, and nothing open clears it` : '';
+            const whyStr = basisStr ? `<div class="oc-tt-note">Expected CPR from ${basisStr}${nStr}${lowStr}</div>` : '';
             const moreStr = rec.count > 1 ? `<div class="oc-tt-note">${rec.count - 1} other Lvl ${rec.level} OC${rec.count > 2 ? 's' : ''} also open</div>` : '';
             const msgText = `Please join ${rec.crime}${rec.position ? ' as ' + rec.position : ''}`;
             const msgBtn = `<button class="oc-msg-btn" data-xid="${uid}" data-msg="${msgText.replace(/"/g, '&quot;')}" style="margin-top:6px;width:100%;padding:4px 8px;background:#2d4a3e;color:#74c69d;border:1px solid #3d6a4e;border-radius:4px;cursor:pointer;font-size:10px;font-weight:600;">Message Player</button>`;
-            html = `<div class="oc-tt-title">${rec.crime}</div><div class="oc-tt-avg">Lvl ${rec.level} OC${posStr}</div>${moreStr}${msgBtn}`;
+            html = `<div class="oc-tt-title">${rec.crime}</div><div class="oc-tt-avg">Lvl ${rec.level} OC${posStr}</div>${whyStr}${moreStr}${msgBtn}`;
         }
         recTooltipEl.innerHTML = html;
         recTooltipEl.style.display = 'block';
@@ -5286,13 +5310,59 @@
         return null;
     }
 
+    // Expected CPR for a member on ONE open slot, and where the number came
+    // from. Precedence: their own record on this crime as this role
+    // ('oc-role'), the same role on any other crime ('role', weighted by
+    // runs), their average at this crime's level ('level'), their overall
+    // average ('overall'). Role labels like "Thief #2" resolve to the base
+    // role. Pure — the server test pulls this out of the served source.
+    function expectedCprFor(m, crimeName, role, diff) {
+        const byPos = m.byPosition || {};
+        const base = String(role || '').replace(/\s*#\d+$/, '');
+        const own = byPos[`${crimeName}::${base}`];
+        if (own && own.n > 0) return { cpr: own.cpr, basis: 'oc-role', n: own.n };
+        let sum = 0, n = 0;
+        for (const [k, v] of Object.entries(byPos)) {
+            const i = k.indexOf('::');
+            if (i < 0 || !(v && v.n > 0) || k.slice(i + 2).toLowerCase() !== base.toLowerCase()) continue;
+            sum += v.cpr * v.n; n += v.n;
+        }
+        if (n > 0) return { cpr: Math.round(sum / n * 10) / 10, basis: 'role', n };
+        let ls = 0, ln = 0;
+        for (const e of (m.cprEntries || [])) if (e.diff === diff) { ls += e.rate; ln += 1; }
+        if (ln > 0) return { cpr: Math.round(ls / ln * 10) / 10, basis: 'level', n: ln };
+        return { cpr: m.cpr ?? 0, basis: 'overall', n: 0 };
+    }
+
+    // Choose the open slot to send a member to. Slots they are expected to
+    // clear (>= mincpr) beat slots they are not; then the higher expected
+    // CPR; then the better evidence (own record > same role > level average
+    // > overall); then the fuller crime (lower `order`, the caller's
+    // fill-sorted position). The fullest crime used to win outright because
+    // every slot scored zero — the server never sent the per-OC map — so
+    // members were pointed at whichever crime was nearly full, fit or not.
+    function pickSlotForMember(m, openSlots, mincpr) {
+        const rank = { 'oc-role': 3, 'role': 2, 'level': 1, 'overall': 0 };
+        let best = null;
+        for (const s of (openSlots || [])) {
+            const x = expectedCprFor(m, s.crimeName, s.role, s.difficulty);
+            const c = { ...s, cpr: x.cpr, basis: x.basis, n: x.n, lowCpr: x.cpr < mincpr };
+            const better = !best
+                || (best.lowCpr && !c.lowCpr)
+                || (best.lowCpr === c.lowCpr && (
+                       c.cpr > best.cpr
+                    || (c.cpr === best.cpr && rank[c.basis] > rank[best.basis])
+                    || (c.cpr === best.cpr && rank[c.basis] === rank[best.basis] && c.order < best.order)));
+            if (better) best = c;
+        }
+        return best;
+    }
+
     function buildMemberRec(m, availableCrimes, weights) {
         if (m.inOC) {
             const readyLabel = (m.ocReadyAt && m.ocReadyAt > now()) ? fmtTs(m.ocReadyAt) : 'active (paused)';
             return { type: 'inoc', text: `In OC — free ${readyLabel}` };
         }
-        const byPos    = m.byPosition || {};
-        const memberCPR = m.cpr ?? 0;
         // Try exact level first, then search downward if none available
         let openOCs = [];
         let matchedLevel = m.joinable;
@@ -5304,7 +5374,8 @@
             );
             if (openOCs.length) { matchedLevel = lvl; break; }
         }
-        // Sort: most filled first, then expiry, then difficulty
+        // Sort: most filled first, then expiry, then difficulty — this order
+        // is only the final tie-break now (see pickSlotForMember).
         openOCs.sort((a, b) => {
             const aSlots = a.slots || [], bSlots = b.slots || [];
             const aFilled = aSlots.filter(s => (s.user_id ?? s.user?.id) != null).length;
@@ -5317,37 +5388,20 @@
         });
         if (!openOCs.length) return { type: 'none', text: `No OCs open (Lvl 1-${m.joinable})` };
 
-        let bestCrime = null, bestPos = null, bestPosCPR = -1;
-
-        for (const c of openOCs) {
-            const labeled = labelSlotPositions(c.slots || []);
-            for (const slot of labeled.filter(s => !s.user_id && !s.user?.id)) {
-                if (memberCPR < CONFIG.MINCPR) continue; // CPR too low for this slot
-
-                const pd  = lookupPosCPR(byPos, c.name, slot.position);
-                const posCPR = pd?.cpr || 0;
-                // Prefer: highest role CPR (OCs already sorted by fill count)
-                if (!bestCrime || posCPR > bestPosCPR) {
-                    bestPosCPR = posCPR; bestPos = slot.label;
-                    bestCrime = c;
-                }
+        // Every open slot at the matched level, tagged with its crime's
+        // fill-sorted position, scored by this member's expected CPR there.
+        const openSlots = [];
+        openOCs.forEach((c, order) => {
+            for (const slot of labelSlotPositions(c.slots || [])) {
+                if (slot.user_id || slot.user?.id) continue;
+                openSlots.push({ crimeName: c.name, difficulty: c.difficulty || 0, role: slot.position, label: slot.label, order });
             }
-            // Once we find a match in the most-filled OC, stop
-            if (bestCrime) break;
-        }
-
-        // Fallback: if no qualifying slot (CPR too low), show best available anyway with a warning
-        if (!bestCrime) {
-            const c = openOCs[0];
-            const labeled = labelSlotPositions(c.slots || []);
-            const openSlot = labeled.find(s => !s.user_id && !s.user?.id);
-            const pd  = lookupPosCPR(byPos, c.name, openSlot?.position);
-            return { type: 'rec', crime: c.name, position: openSlot?.label || openSlot?.position || null,
-                cpr: pd?.cpr || null, level: matchedLevel, count: openOCs.length, lowCpr: true };
-        }
-
-        return { type: 'rec', crime: bestCrime.name, position: bestPos,
-            cpr: bestPosCPR > 0 ? bestPosCPR : null, level: matchedLevel, count: openOCs.length };
+        });
+        const pick = pickSlotForMember(m, openSlots, CONFIG.MINCPR);
+        if (!pick) return { type: 'none', text: `No open slots (Lvl 1-${m.joinable})` };
+        return { type: 'rec', crime: pick.crimeName, position: pick.label || pick.role,
+            cpr: pick.cpr, basis: pick.basis, n: pick.n, lowCpr: pick.lowCpr,
+            level: matchedLevel, count: openOCs.length };
     }
 
     function renderEligibleMembers(eligible, availableCrimes, weights) {
@@ -5375,7 +5429,7 @@
             const rec = buildMemberRec(m, availableCrimes, weights);
             recMap[m.id] = rec;
             const recBtn = rec.type === 'rec'
-                ? `<span class="oc-rec-btn" data-uid="${m.id}">→ ${rec.crime.length > 14 ? rec.crime.slice(0,13) + '…' : rec.crime}</span>`
+                ? `<span class="oc-rec-btn${rec.lowCpr ? ' oc-rec-low' : ''}" data-uid="${m.id}">→ ${rec.crime.length > 14 ? rec.crime.slice(0,13) + '…' : rec.crime}</span>`
                 : `<span class="oc-rec-btn" data-uid="${m.id}" style="background:rgba(55,65,81,.2);color:#6b7280;border-color:rgba(55,65,81,.3);">${rec.type === 'inoc' ? 'In OC' : 'None open'}</span>`;
 
             return `<tr>

@@ -248,6 +248,35 @@ export function buildCprCache(completedCrimes, currentPlacements = {}, threshold
     }
   }
 
+  // Per-OC, per-role CPR: the member's own record on exactly this crime as
+  // exactly this role, keyed "Crime::Role" with any "#N" stripped. Every
+  // level counts — an OC sits at one level, so a run on it is always
+  // evidence about it, even when the level-average logic above ignores
+  // crimes far below the member's best. The Join pick and the dispatcher
+  // score open slots with this. A missing key means "no history on this OC
+  // as this role", and they fall back to the same role elsewhere, then the
+  // level average. Until 3.2.83 nothing attached this map, so every slot
+  // scored zero and the pick fell through to the fullest OC at the level.
+  const byPosition = {};
+  for (const crime of completedCrimes) {
+    if (!Array.isArray(crime.slots) || !crime.name) continue;
+    const diff = crime.difficulty || 0;
+    for (const slot of crime.slots) {
+      const uid = slot.user_id ?? slot.user?.id;
+      const rawRate = slot.checkpoint_pass_rate ?? slot.success_chance ?? null;
+      if (!uid || rawRate === null || !slot.position) continue;
+      const key = `${crime.name}::${String(slot.position).replace(/\s*#\d+$/, '')}`;
+      const mine = byPosition[uid] || (byPosition[uid] = {});
+      const e = mine[key] || (mine[key] = { sum: 0, n: 0, diff });
+      e.sum += rawRate; e.n += 1;
+    }
+  }
+  const finishByPosition = (uid) => {
+    const out = {};
+    for (const [k, e] of Object.entries(byPosition[uid] || {})) out[k] = { cpr: Math.round(e.sum / e.n * 10) / 10, n: e.n, diff: e.diff };
+    return out;
+  };
+
   const result = {};
   for (const [uid, d] of Object.entries(cache)) {
     const cpr = d.count > 0 ? d.rateSum / d.count : 0;
@@ -266,6 +295,7 @@ export function buildCprCache(completedCrimes, currentPlacements = {}, threshold
       effectiveTop: ruled.effectiveTop,
       joinable,
       entries: d.entries,
+      byPosition: finishByPosition(uid),
       currentPlacement: currentPlacements[uid] || 0,
     };
   }
@@ -280,6 +310,7 @@ export function buildCprCache(completedCrimes, currentPlacements = {}, threshold
       effectiveTop: diff,
       joinable: diff,
       entries: [],
+      byPosition: {},
       currentPlacement: diff,
     };
   }
@@ -472,6 +503,19 @@ function augmentWithSyntheticProfiles(cprCache, members) {
   return cprCache;
 }
 
+// Per-OC maps only for the current roster. The history carries ex-members
+// too (208 players against a 96-member roster for 42055), the map rides on
+// every spawn response, and nginx does not gzip JSON — so everyone not in
+// the faction gets an empty map. Their level entries stay: the forecaster
+// and the benchmarks still read those.
+export function trimByPositionToRoster(cprCache, members) {
+  const roster = new Set((members || []).map(m => String(m.id ?? m.player_id)));
+  for (const [uid, d] of Object.entries(cprCache || {})) {
+    if (!roster.has(String(uid)) && d && d.byPosition) d.byPosition = {};
+  }
+  return cprCache;
+}
+
 export async function getOcSpawnData(factionId, apiKey) {
   // Fetch available first so we can extract current placements and feed
   // them into the cache build. Completed-crimes cache is long-lived (6h TTL),
@@ -573,6 +617,7 @@ export async function getOcSpawnData(factionId, apiKey) {
   // Now that we have both cprCache + members, backfill synthetic entries for
   // members missing from the cache (no history AND not currently placed).
   augmentWithSyntheticProfiles(cprCache, members);
+  trimByPositionToRoster(cprCache, members);
 
   return { members, availableCrimes, cprCache };
 }
