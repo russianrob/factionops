@@ -21,6 +21,7 @@
 
 import * as push from './push-notifications.js';
 import * as store from './store.js';
+import { computeJoinable } from './oc-spawn.js';
 import { normalizeOcName, getRoleWeights } from './oc-spawn.js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join as pathJoin } from 'node:path';
@@ -293,32 +294,16 @@ function _resolveAdmins(factionId, members) {
 // one full OC's worth of deficit, it's a "spawn recommendation."
 const DEFAULT_SLOTS_PER_OC = 4;
 
-// Recompute each member's `joinable` using the faction's MINCPR and
-// CPR_BOOST settings. getOcSpawnData's cprCache is built with a server-
-// wide default MINCPR=60/BOOST=15; /api/oc/spawn-key's response re-runs
-// this same loop with the faction's oc_mincpr / oc_cpr_boost before the
-// userscript sees it, so the Admin tab's joinable differs from the raw
-// cache for factions whose mincpr isn't 60. Mirror that recalc here
-// so the notifier agrees with the Admin tab.
-function _applyFactionCprThreshold(cprCache, mincpr, boost) {
+// Re-tune each member's `joinable` with the faction's MINCPR and CPR_BOOST.
+// buildCprCache now applies these thresholds itself, so for a cache fresh
+// from getOcSpawnData this is a no-op; it stays as the guarantee that the
+// poller counts members by the SAME rule as the Admin tab whatever cache it
+// is handed. The rule itself lives in one place: computeJoinable.
+export function _applyFactionCprThreshold(cprCache, mincpr, boost) {
   if (!cprCache) return {};
   const out = {};
   for (const [uid, d] of Object.entries(cprCache)) {
-    const lc = {};
-    for (const e of (d?.entries || [])) {
-      if (!lc[e.diff]) lc[e.diff] = { sum: 0, count: 0 };
-      lc[e.diff].sum += e.rate;
-      lc[e.diff].count += 1;
-    }
-    let effTop = d?.highestLevel || 0;
-    for (let lvl = effTop; lvl >= 1; lvl--) {
-      const lv = lc[lvl];
-      if (!lv) continue;
-      if ((lv.sum / lv.count) >= mincpr) { effTop = lvl; break; }
-    }
-    const cpr = Number(d?.cpr || 0);
-    const joinable = cpr >= mincpr + boost ? Math.min(effTop + 1, 10) : effTop;
-    out[uid] = { ...d, effectiveTop: effTop, joinable };
+    out[uid] = { ...d, ...computeJoinable(d?.entries, d?.highestLevel, Number(d?.cpr || 0), mincpr, boost) };
   }
   return out;
 }

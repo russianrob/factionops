@@ -196,7 +196,19 @@ function extractCurrentPlacements(crimes) {
   return placements;
 }
 
-function buildCprCache(completedCrimes, currentPlacements = {}) {
+// The faction's Min CPR / boost, so the cache is built with the thresholds
+// its readers expect. /api/oc/spawn (the warboard app), /api/public/oc/spawn
+// and the ready-to-spawn poller read the cache's joinable with no further
+// recompute, so a cache built on hardcoded 60/15 was wrong for every faction
+// that had moved the setting.
+function factionThresholds(factionId) {
+  const s = store.getFactionSettings(factionId) || {};
+  return { mincpr: Number(s.oc_mincpr ?? 60), boost: Number(s.oc_cpr_boost ?? 15) };
+}
+
+export function buildCprCache(completedCrimes, currentPlacements = {}, thresholds = {}) {
+  const mincpr = Number(thresholds.mincpr ?? 60);
+  const boost  = Number(thresholds.boost ?? 15);
   const highestLevel = {};
   for (const crime of completedCrimes) {
     const diff = crime.difficulty || 0;
@@ -237,22 +249,21 @@ function buildCprCache(completedCrimes, currentPlacements = {}) {
   }
 
   const result = {};
-  const MINCPR = 60;
-  const CPR_BOOST = 15;
   for (const [uid, d] of Object.entries(cache)) {
     const cpr = d.count > 0 ? d.rateSum / d.count : 0;
     const topLevel = highestLevel[uid] || 0;
-    // Only allow joinable+1 projection if we have enough samples AT the
-    // current top level. One lucky completion isn't enough evidence.
-    const eligibleForBoost =
-        cpr >= MINCPR + CPR_BOOST
-        && d.topLevelCount >= MIN_SAMPLES_FOR_BOOST;
-    const joinable = eligibleForBoost ? Math.min(topLevel + 1, 10) : topLevel;
+    // The one join-level rule (per-level gate + floor), then this cache's
+    // extra guard: only allow the +1 projection with enough samples AT the
+    // top level. One lucky completion isn't enough evidence.
+    const ruled = computeJoinable(d.entries, topLevel, cpr, mincpr, boost);
+    const joinable = (ruled.joinable > ruled.effectiveTop && d.topLevelCount < MIN_SAMPLES_FOR_BOOST)
+      ? ruled.effectiveTop : ruled.joinable;
     result[uid] = {
       cpr: Math.round(cpr * 10) / 10,
       samples: d.count,
       topLevelSamples: d.topLevelCount,
       highestLevel: topLevel,
+      effectiveTop: ruled.effectiveTop,
       joinable,
       entries: d.entries,
       currentPlacement: currentPlacements[uid] || 0,
@@ -266,6 +277,7 @@ function buildCprCache(completedCrimes, currentPlacements = {}) {
     result[uid] = {
       cpr: 0, samples: 0, topLevelSamples: 0,
       highestLevel: diff,
+      effectiveTop: diff,
       joinable: diff,
       entries: [],
       currentPlacement: diff,
@@ -525,7 +537,7 @@ export async function getOcSpawnData(factionId, apiKey) {
     seen.add(cid);
     mergedCrimes.push(c);
   }
-  cprCache = buildCprCache(mergedCrimes, currentPlacements);
+  cprCache = buildCprCache(mergedCrimes, currentPlacements, factionThresholds(factionId));
 
   // Per-checkpoint attribution: parsed by the userscript fetch
   // interceptor from page-level completed-crime responses (only

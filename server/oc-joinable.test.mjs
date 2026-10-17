@@ -69,3 +69,41 @@ test('the userscript copy of the rule agrees with the server on every case', () 
     assert.deepEqual(client(entries, top, cpr, mincpr, boost), expected, name);
   }
 });
+
+// buildCprCache is the SOURCE of every cprCache. /api/oc/spawn (the warboard
+// app), /api/public/oc/spawn and the hourly ready-to-spawn poller read its
+// joinable with no downstream recompute, so it must apply the same rule with
+// the faction's own thresholds — not a private copy with hardcoded 60/15.
+const bondCrimes = [
+  ...[60, 60, 60, 60, 65, 65, 62].map((rate, i) => ({
+    id: 100 + i, difficulty: 3, status: 'Successful',
+    slots: [{ user_id: 4352390, checkpoint_pass_rate: rate }],
+  })),
+  { id: 200, difficulty: 4, status: 'Successful', slots: [{ user_id: 4352390, checkpoint_pass_rate: 57 }] },
+];
+
+test('buildCprCache at Min CPR 65 puts Bond003 at level 2, not 4', () => {
+  const cache = ocSpawn.buildCprCache(bondCrimes, {}, { mincpr: 65, boost: 15 });
+  assert.equal(cache[4352390].highestLevel, 4);
+  assert.equal(cache[4352390].joinable, 2);
+});
+
+test('buildCprCache at Min CPR 60 keeps Bond003 at level 3', () => {
+  const cache = ocSpawn.buildCprCache(bondCrimes, {}, { mincpr: 60, boost: 15 });
+  assert.equal(cache[4352390].joinable, 3);
+});
+
+test('buildCprCache keeps its three-sample guard on the +1 boost', () => {
+  // One lucky 90% completion at level 5: overall 90 clears 60+15, but a
+  // single sample at the top level is not evidence for level 6.
+  const crimes = [{ id: 1, difficulty: 5, status: 'Successful', slots: [{ user_id: 7, checkpoint_pass_rate: 90 }] }];
+  assert.equal(ocSpawn.buildCprCache(crimes, {}, { mincpr: 60, boost: 15 })[7].joinable, 5);
+});
+
+// The hourly ready-to-spawn poller re-tunes the cache with the faction's
+// thresholds before counting who can fill what. It must use the same rule.
+test('the ready-to-spawn poller applies the same floor (Bond003 at 65 is level 2)', async () => {
+  const { _applyFactionCprThreshold } = await import('./oc-ready-notifier.js');
+  const tuned = _applyFactionCprThreshold({ 4352390: { ...BOND } }, 65, 15);
+  assert.equal(tuned[4352390].joinable, 2);
+});
