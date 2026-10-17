@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.17
+// @version      5.6.18
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.17';
+    const SCRIPT_VERSION = '5.6.18';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -14152,6 +14152,39 @@ body.wb-chain-active {
         </div>`;
     }
 
+    /** FFScouter's build split, rendered under an enemy's stat estimate.
+     *
+     *  Answers "dex build or def build" before a fight, so temps and melees
+     *  can be chosen rather than guessed. The server sends this only for
+     *  targets at or above 2b, and only when FFScouter actually has a split
+     *  for them -- on a live 85-enemy roster that was 6 players, 3 of them in
+     *  the top 10. Absent for everyone else, and absent renders nothing.
+     *
+     *  The AGE is not optional. Measured splits ran from 23 to 346 days old,
+     *  and a year-old build belongs to somebody who has trained since. Stale
+     *  entries are dimmed rather than dropped -- still the only signal there
+     *  is, just a weaker one.
+     */
+    function foBuildChip(b) {
+        if (!b || !b.pct) return '';
+        const AB = { strength: 'STR', defense: 'DEF', speed: 'SPD', dexterity: 'DEX' };
+        const parts = Object.keys(b.pct)
+            .map((k) => [k, Number(b.pct[k]) || 0])
+            .sort((x, y) => y[1] - x[1])
+            .map((e) => (AB[e[0]] || String(e[0]).slice(0, 3).toUpperCase()) + ' ' + e[1] + '%');
+        if (!parts.length) return '';
+        const stale = b.ageDays != null && b.ageDays > 120;
+        const age = b.ageDays != null ? ' \u00b7 ' + b.ageDays + 'd' : '';
+        let when = '';
+        try {
+            if (b.updatedAt) when = ' (' + new Date(b.updatedAt * 1000).toISOString().slice(0, 10) + ')';
+        } catch (e) {}
+        return '<div style="font-size:9px;line-height:1.3;color:#f5d76e;opacity:'
+            + (stale ? '0.45' : '0.8') + '" title="FFScouter build split' + when
+            + (stale ? ' \u2014 stale, they may have retrained' : '') + '">'
+            + parts.join(' ') + age + '</div>';
+    }
+
     function renderScoutReport(report) {
         const body = document.getElementById('wb-scout-body');
         if (!body) return;
@@ -14252,7 +14285,7 @@ body.wb-chain-active {
                         <td class="${advClass}" style="font-size:10px">${advSymbol}</td>
                         <td style="text-align:left;color:#d63031">${t ? escapeHtml(t.name) : '\u2014'}</td>
                         <td>${t ? t.level : ''}</td>
-                        <td>${t && t.statsFormatted ? t.statsFormatted : '\u2014'}${t && t.source ? ' <span style="font-size:9px;opacity:0.5">' + t.source + '</span>' : ''}</td>
+                        <td>${t && t.statsFormatted ? t.statsFormatted : '\u2014'}${t && t.source ? ' <span style="font-size:9px;opacity:0.5">' + t.source + '</span>' : ''}${t ? foBuildChip(t.build) : ''}</td>
                         <td class="${advClass}" style="font-weight:700">${mu.advantage === 'ours' ? '+' : mu.advantage === 'theirs' ? '\u2013' : '='}</td>
                     </tr>`;
                 }).join('')}

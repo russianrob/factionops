@@ -4847,6 +4847,29 @@ function analyzeFaction(data, estimates) {
     .slice(0, 5)
     .map(m => ({ id: m.id, name: m.name, level: m.level, daysInFaction: m.days_in_faction || 0 }));
 
+  // Stat splits are shown only at or above this estimate. The threshold is
+  // applied here rather than at fetch time because `total` arrives in the very
+  // same FFScouter record as the split — filtering earlier would save nothing.
+  const BUILD_MIN_STATS = 2e9;
+
+  /** FFScouter's build split for a member, or null when it should not show.
+   *
+   *  Carries an age because the data is a point-in-time snapshot and can be
+   *  very old — measured 23 to 346 days on one roster. A year-old split on
+   *  someone who has trained since is worse than showing nothing, because it
+   *  gets acted on. */
+  function buildSplitFor(est) {
+    if (!est || !est.build || !est.build.pct) return null;
+    if (!(Number(est.total) >= BUILD_MIN_STATS)) return null;
+    const at = Number(est.build.at) || 0;
+    return {
+      pct: est.build.pct,
+      human: est.build.human,
+      updatedAt: at,
+      ageDays: at > 0 ? Math.floor((Date.now() / 1000 - at) / 86400) : null,
+    };
+  }
+
   // ── Members with stat estimates ──
   const rankedMembers = memberList.map(m => {
     const est = estimates && estimates[m.id];
@@ -4869,6 +4892,11 @@ function analyzeFaction(data, estimates) {
       stats: est ? est.total : null,
       statsFormatted: est ? formatStatNum(est.total) : null,
       source: est ? est.source : null,
+      // Only on the targets the answer changes anything for. Below this you
+      // are not choosing temps over a stat split, and FFScouter almost never
+      // has a build for a small account anyway (median estimate of players
+      // WITH a split was 3.9b, against 3.8m for those without).
+      build: buildSplitFor(est),
       statusState,
       isActive,
       isAvailable,
@@ -5364,7 +5392,23 @@ async function handleWarReport(req, res) {
               const pid = String(e.player_id);
               const total = Number(e.bs_estimate);
               if (!Number.isFinite(total) || total <= 0) continue;
-              estimates[pid] = { total, source: 'ffs' };
+              // FFScouter premium also returns the target's stat split, which
+              // answers "dex build or def build" — the thing you need before
+              // picking temps or swapping melees. It is only present when
+              // `premium_insights_available` is true for that player, which
+              // tracks how much FFScouter knows about them, NOT our key: on a
+              // live 85-enemy roster only 6 had one, but 3 of those were in
+              // the top 10 by estimate. Absent for everyone else, and the
+              // field is simply dropped then.
+              const dist = e.distribution;
+              const pct = dist && dist.stats_percentage;
+              estimates[pid] = {
+                total,
+                source: 'ffs',
+                build: (pct && Object.keys(pct).length)
+                  ? { pct, human: dist.distribution_human || null, at: Number(dist.last_updated) || 0 }
+                  : null,
+              };
             }
           }
           // Drop IDs we just filled in so the next key (if any) only
