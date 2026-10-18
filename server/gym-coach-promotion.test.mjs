@@ -80,7 +80,11 @@ test('it keeps the grants and connects the beta body actually uses', () => {
   for (const g of ['GM_setClipboard', 'GM_xmlhttpRequest', 'GM_setValue', 'GM_getValue']) {
     assert.match(head(STABLE), new RegExp('@grant\\s+' + g), 'missing grant ' + g);
   }
-  assert.match(head(STABLE), /@connect\s+weav3r\.dev/, 'the board fetch host was dropped');
+  // 0.12.15: prices come from Torn's own item market, so the only outbound
+  // hosts are Torn's. weav3r.dev (the old price mirror) must NOT be back.
+  assert.match(head(STABLE), /@connect\s+api\.torn\.com/, 'the API host was dropped');
+  assert.match(head(STABLE), /@connect\s+www\.torn\.com/, 'the page-fetch host was dropped');
+  assert.doesNotMatch(head(STABLE), /@connect\s+weav3r\.dev/, 'the third-party price mirror is back');
 });
 
 test('the retirement stub is gone from the beta path', () => {

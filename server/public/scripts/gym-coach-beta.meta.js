@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.14
+// @version      0.12.15
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      All Rights Reserved
@@ -16,7 +16,6 @@
 // @grant        GM.setValue
 // @grant        GM.xmlHttpRequest
 // @connect      api.torn.com
-// @connect      weav3r.dev
 // @connect      www.torn.com
 // @connect      torn.com
 // @run-at       document-end

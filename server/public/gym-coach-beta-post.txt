@@ -20,7 +20,7 @@
 
 <h3>Where your data goes</h3>
 
-<p>Nowhere. There's no server behind this. The energy ledger that drives the calibration lives on your device and stays there. The script talks to api.torn.com for your stats and bars, and to weav3r.dev's public price mirror for item prices, where the only thing that leaves your browser is an item ID. Nobody, me included, can see how you train.</p>
+<p>Nowhere. There's no server behind this. The energy ledger that drives the calibration lives on your device and stays there. The script talks to api.torn.com, for your stats, your bars and item prices, and to nothing else. Nobody, me included, can see how you train.</p>
 
 <p>That has one consequence you should know before you install: run it on one device. The ledger can't follow you from your phone to your desktop, so a second install starts from nothing, and if you train on one device while the other shows the panel, the calibration measures energy it never saw and the dates drift. Pick the device you actually train on and keep it there.</p>
 
