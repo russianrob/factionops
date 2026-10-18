@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.84
+// @version      3.2.85
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,21 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.85 — Two calibrations for the Join pick, both measured on faction
+//           history. (1) Borrowed same-role evidence from an easier crime
+//           is discounted 5 CPR per level below the target: the same player
+//           in the same role drops a median 5.7 one level up and 10.3 two
+//           levels up (400/174 pairs); in a backtest the plain borrowed
+//           number missed the first run at the higher level by 8.1 points,
+//           the discounted one by 5.2. (2) The own-record rule: when the
+//           best slot is a guess and the member has a real record on some
+//           open crime+role within 5 points of it, the record wins — a
+//           member's own record predicts their next run on that crime+role
+//           to within 2.9 points over 2,474 cases, so a guess that close is
+//           noise. Case that drove it: an 85% Imitator run on a level-4
+//           crime (one run, May) was out-ranking an eleven-run 71% Bomber
+//           record for a level-6 slot. Tooltip now shows the discount
+//           applied and when a record was preferred over a higher guess.
 // v3.2.84 — Same-role evidence is level-bounded. 3.2.83's "same role on
 //           other OCs" fallback counted any level, so a member with no
 //           Cleared for Takeoff history was still pointed there on the
@@ -397,7 +412,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.84';
+    const SCRIPT_VERSION = '3.2.85';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -4285,7 +4300,9 @@
                                'level': `their Lvl ${rec.level} average`, 'overall': 'their overall average' }[rec.basis];
             const nStr = rec.n > 0 ? ` (${rec.n} run${rec.n > 1 ? 's' : ''})` : '';
             const lowStr = rec.lowCpr ? ` — below Min CPR ${CONFIG.MINCPR}%, and nothing open clears it` : '';
-            const whyStr = basisStr ? `<div class="oc-tt-note">Expected CPR from ${basisStr}${nStr}${lowStr}</div>` : '';
+            const adjStr = rec.basis === 'role' && rec.adj > 0 ? `, \u2212${rec.adj} for level` : '';
+            const prefStr = rec.preferredOver != null ? ` \u2014 preferred over a guess ${Math.round((rec.preferredOver - rec.cpr) * 10) / 10} higher` : '';
+            const whyStr = basisStr ? `<div class="oc-tt-note">Expected CPR from ${basisStr}${nStr}${adjStr}${prefStr}${lowStr}</div>` : '';
             const moreStr = rec.count > 1 ? `<div class="oc-tt-note">${rec.count - 1} other Lvl ${rec.level} OC${rec.count > 2 ? 's' : ''} also open</div>` : '';
             const msgText = `Please join ${rec.crime}${rec.position ? ' as ' + rec.position : ''}`;
             const msgBtn = `<button class="oc-msg-btn" data-xid="${uid}" data-msg="${msgText.replace(/"/g, '&quot;')}" style="margin-top:6px;width:100%;padding:4px 8px;background:#2d4a3e;color:#74c69d;border:1px solid #3d6a4e;border-radius:4px;cursor:pointer;font-size:10px;font-weight:600;">Message Player</button>`;
@@ -5320,25 +5337,28 @@
     // Expected CPR for a member on ONE open slot, and where the number came
     // from. Precedence: their own record on this crime as this role
     // ('oc-role'), the same role on other crimes ('role', weighted by runs,
-    // and only from crimes no more than two levels BELOW the target — an
-    // 89% Imitator on a level-3 crime says nothing about a level-7 one,
-    // while a harder crime is at least as good a witness), their average at
-    // this crime's level ('level'), their overall average ('overall'). Role
-    // labels like "Thief #2" resolve to the base role. Pure — the server
-    // test pulls this out of the served source.
+    // only from crimes no more than two levels BELOW the target, and
+    // DISCOUNTED 5 points per level below it — measured on faction history:
+    // the same player in the same role drops a median 5.7 CPR one level up
+    // and 10.3 two levels up; a harder crime is not discounted), their
+    // average at this crime's level ('level'), their overall average
+    // ('overall'). 'role' results carry `adj`, the average discount applied,
+    // so the tooltip can show it. Role labels like "Thief #2" resolve to the
+    // base role. Pure — the server test pulls this out of the served source.
     function expectedCprFor(m, crimeName, role, diff) {
         const byPos = m.byPosition || {};
         const base = String(role || '').replace(/\s*#\d+$/, '');
         const own = byPos[`${crimeName}::${base}`];
         if (own && own.n > 0) return { cpr: own.cpr, basis: 'oc-role', n: own.n };
-        let sum = 0, n = 0;
+        let sum = 0, n = 0, discount = 0;
         for (const [k, v] of Object.entries(byPos)) {
             const i = k.indexOf('::');
             if (i < 0 || !(v && v.n > 0) || k.slice(i + 2).toLowerCase() !== base.toLowerCase()) continue;
             if ((v.diff || 0) < (diff || 0) - 2) continue; // too far below the target level to count
-            sum += v.cpr * v.n; n += v.n;
+            const off = 5 * Math.max(0, (diff || 0) - (v.diff || 0)); // 5 CPR per level below the target
+            sum += (v.cpr - off) * v.n; n += v.n; discount += off * v.n;
         }
-        if (n > 0) return { cpr: Math.round(sum / n * 10) / 10, basis: 'role', n };
+        if (n > 0) return { cpr: Math.round(sum / n * 10) / 10, basis: 'role', n, adj: Math.round(discount / n * 10) / 10 };
         let ls = 0, ln = 0;
         for (const e of (m.cprEntries || [])) if (e.diff === diff) { ls += e.rate; ln += 1; }
         if (ln > 0) return { cpr: Math.round(ls / ln * 10) / 10, basis: 'level', n: ln };
@@ -5349,15 +5369,22 @@
     // clear (>= mincpr) beat slots they are not; then the higher expected
     // CPR; then the better evidence (own record > same role > level average
     // > overall); then the fuller crime (lower `order`, the caller's
-    // fill-sorted position). The fullest crime used to win outright because
-    // every slot scored zero — the server never sent the per-OC map — so
-    // members were pointed at whichever crime was nearly full, fit or not.
+    // fill-sorted position). Then the own-record rule: if the winner is a
+    // guess and the member has a real record on some open crime+role within
+    // 5 points of it (and clearing the bar if the guess does), the record
+    // wins — 5 is borrowed evidence's measured error after discounting, and
+    // a record predicts the next run to within 2.9, so a guess that close
+    // is noise. The fullest crime used to win outright because every slot
+    // scored zero — the server never sent the per-OC map — so members were
+    // pointed at whichever crime was nearly full, fit or not.
     function pickSlotForMember(m, openSlots, mincpr) {
         const rank = { 'oc-role': 3, 'role': 2, 'level': 1, 'overall': 0 };
+        const scored = [];
         let best = null;
         for (const s of (openSlots || [])) {
             const x = expectedCprFor(m, s.crimeName, s.role, s.difficulty);
-            const c = { ...s, cpr: x.cpr, basis: x.basis, n: x.n, lowCpr: x.cpr < mincpr };
+            const c = { ...s, cpr: x.cpr, basis: x.basis, n: x.n, adj: x.adj || 0, lowCpr: x.cpr < mincpr };
+            scored.push(c);
             const better = !best
                 || (best.lowCpr && !c.lowCpr)
                 || (best.lowCpr === c.lowCpr && (
@@ -5365,6 +5392,15 @@
                     || (c.cpr === best.cpr && rank[c.basis] > rank[best.basis])
                     || (c.cpr === best.cpr && rank[c.basis] === rank[best.basis] && c.order < best.order)));
             if (better) best = c;
+        }
+        if (best && best.basis !== 'oc-role') {
+            let rec = null;
+            for (const c of scored) {
+                if (c.basis !== 'oc-role' || (c.lowCpr && !best.lowCpr)) continue;
+                if (c.cpr < best.cpr - 5) continue;
+                if (!rec || c.cpr > rec.cpr || (c.cpr === rec.cpr && c.order < rec.order)) rec = c;
+            }
+            if (rec) { rec.preferredOver = best.cpr; best = rec; }
         }
         return best;
     }
@@ -5411,7 +5447,7 @@
         const pick = pickSlotForMember(m, openSlots, CONFIG.MINCPR);
         if (!pick) return { type: 'none', text: `No open slots (Lvl 1-${m.joinable})` };
         return { type: 'rec', crime: pick.crimeName, position: pick.label || pick.role,
-            cpr: pick.cpr, basis: pick.basis, n: pick.n, lowCpr: pick.lowCpr,
+            cpr: pick.cpr, basis: pick.basis, n: pick.n, adj: pick.adj, preferredOver: pick.preferredOver, lowCpr: pick.lowCpr,
             level: matchedLevel, count: openOCs.length };
     }
 

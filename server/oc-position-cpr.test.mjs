@@ -68,7 +68,7 @@ const open = (crimeName, difficulty, role, order, extra = {}) => ({ crimeName, d
 test('expected CPR precedence: own OC+role, then same role elsewhere, then level average, then overall', () => {
   const { expectedCprFor } = client();
   assert.deepEqual(expectedCprFor(DRAKE, 'Dish It Out', 'Assassin', 6), { cpr: 75, basis: 'oc-role', n: 3 });
-  assert.deepEqual(expectedCprFor(DRAKE, 'Cleared for Takeoff', 'Assassin', 7), { cpr: 75, basis: 'role', n: 3 });
+  assert.deepEqual(expectedCprFor(DRAKE, 'Cleared for Takeoff', 'Assassin', 7), { cpr: 70, basis: 'role', n: 3, adj: 5 }); // Dish It Out is level 6: −5
   assert.deepEqual(expectedCprFor(DRAKE, 'Blast from the Past', 'Picklock', 7), { cpr: 65, basis: 'level', n: 2 });
   assert.deepEqual(expectedCprFor(DRAKE, 'Break the Bank', 'Robber', 8), { cpr: 71, basis: 'overall', n: 0 });
 });
@@ -92,13 +92,13 @@ test('the pick prefers the slot the member is known to clear, not the fullest OC
   assert.equal(r.lowCpr, false);
 });
 
-test('Shadow_drake: CFTO Assassin wins on same-role evidence (75) over a Picklock slot judged by level average (65)', () => {
+test('Shadow_drake: CFTO Assassin wins on discounted same-role evidence (70) over a Picklock slot judged by level average (65)', () => {
   const { pickSlotForMember } = client();
   const slots = [open('Blast from the Past', 7, 'Picklock', 0), open('Cleared for Takeoff', 7, 'Assassin', 1)];
   const r = pickSlotForMember(DRAKE, slots, 65);
   assert.equal(r.crimeName, 'Cleared for Takeoff');
   assert.equal(r.role, 'Assassin');
-  assert.deepEqual([r.cpr, r.basis, r.lowCpr], [75, 'role', false]);
+  assert.deepEqual([r.cpr, r.basis, r.lowCpr], [70, 'role', false]);
 });
 
 test('when nothing open clears the bar, the best of them is offered and flagged', () => {
@@ -152,6 +152,63 @@ test('same-role evidence within two levels counts, and so do harder crimes', () 
     'Plucking the Lotus Petal::Muscle': { cpr: 84, n: 1, diff: 4 }, // too far below: ignored
     'Market Forces::Muscle': { cpr: 88.5, n: 2, diff: 3 },        // too far below: ignored
     'Break the Bank::Muscle': { cpr: 70, n: 1, diff: 8 } } };      // harder: counts
-  // (65×2 + 76 + 70) / 4 = 69
-  assert.deepEqual(expectedCprFor(m, 'Blast from the Past', 'Muscle', 7), { cpr: 69, basis: 'role', n: 4 });
+  // Honey Trap is two levels below the target so it counts as 66; the level-7 and level-8 runs are not discounted.
+  // (65×2 + 66 + 70) / 4 = 66.5, average discount (0+0+10+0)/4 = 2.5
+  assert.deepEqual(expectedCprFor(m, 'Blast from the Past', 'Muscle', 7), { cpr: 66.5, basis: 'role', n: 4, adj: 2.5 });
+});
+
+// ── The discount: borrowed same-role evidence loses 5 points per level below the target ──
+// Measured on 42055's history: the same player in the same role drops a median
+// 5.7 CPR one level up and 10.3 two levels up (400 and 174 pairs). Backtest:
+// the plain borrowed number missed the first run at the higher level by 8.1
+// points; discounted, by 5.2.
+test('borrowed evidence from an easier crime is discounted 5 per level and says so', () => {
+  const { expectedCprFor } = client();
+  const m = { ...DRAKE, byPosition: { 'Snow Blind::Imitator': { cpr: 85, n: 1, diff: 4 } } };
+  assert.deepEqual(expectedCprFor(m, 'Sneaky Git Grab', 'Imitator', 6), { cpr: 75, basis: 'role', n: 1, adj: 10 });
+});
+
+test('evidence from the same level or a harder crime is not discounted', () => {
+  const { expectedCprFor } = client();
+  const m = { ...DRAKE, byPosition: { 'Break the Bank::Muscle': { cpr: 70, n: 1, diff: 8 } } };
+  assert.deepEqual(expectedCprFor(m, 'Blast from the Past', 'Muscle', 7), { cpr: 70, basis: 'role', n: 1, adj: 0 });
+});
+
+// ── The own-record rule: a real record on that crime and role beats a guess within 5 points ──
+// Backtest: a member's own record predicted their next run on that crime+role
+// to within 2.9 points (2,474 cases); borrowed evidence, even discounted, is
+// off by 5.2. A guess that beats a record by less than its own error is noise.
+const DRAKE_L6 = { ...DRAKE, joinable: 6, byPosition: { ...DRAKE.byPosition,
+  'Bidding War::Bomber': { cpr: 71.1, n: 11, diff: 6 },
+  'Snow Blind::Imitator': { cpr: 85, n: 1, diff: 4 },
+  'Counter Offer::Robber': { cpr: 78, n: 1, diff: 5 },
+  'Leave No Trace::Techie': { cpr: 70, n: 1, diff: 6 } },
+  cprEntries: [{ diff: 6, rate: 71.7 }, { diff: 7, rate: 65 }] };
+
+test('Shadow_drake at level 6: the eleven-run Bomber record beats a one-run Imitator guess that is 3.9 higher', () => {
+  const { pickSlotForMember } = client();
+  const slots = [open('Bidding War', 6, 'Driver', 0), open('Bidding War', 6, 'Bomber', 0),
+                 open('Leave No Trace', 6, 'Techie', 1), open('Sneaky Git Grab', 6, 'Imitator', 2), open('Bidding War', 6, 'Robber', 4)];
+  const r = pickSlotForMember(DRAKE_L6, slots, 70);
+  assert.equal(r.crimeName, 'Bidding War');
+  assert.equal(r.role, 'Bomber');
+  assert.deepEqual([r.cpr, r.basis, r.n, r.lowCpr], [71.1, 'oc-role', 11, false]);
+  assert.equal(r.preferredOver, 75, 'records which guess it displaced');
+});
+
+test('a guess that beats the record by more than 5 points wins', () => {
+  const { pickSlotForMember } = client();
+  const m = { ...DRAKE_L6, byPosition: { ...DRAKE_L6.byPosition, 'Snow Blind::Imitator': { cpr: 92, n: 2, diff: 4 } } }; // → 82 at level 6
+  const slots = [open('Bidding War', 6, 'Bomber', 0), open('Sneaky Git Grab', 6, 'Imitator', 1)];
+  const r = pickSlotForMember(m, slots, 70);
+  assert.equal(r.role, 'Imitator');
+  assert.equal(r.preferredOver, undefined);
+});
+
+test('a record that fails the bar is not preferred over a guess that clears it', () => {
+  const { pickSlotForMember } = client();
+  const m = { ...DRAKE_L6, byPosition: { ...DRAKE_L6.byPosition, 'Bidding War::Bomber': { cpr: 68, n: 11, diff: 6 } } };
+  const slots = [open('Bidding War', 6, 'Bomber', 0), open('Sneaky Git Grab', 6, 'Imitator', 1)]; // Imitator 75 clears 70, Bomber 68 does not
+  const r = pickSlotForMember(m, slots, 70);
+  assert.equal(r.role, 'Imitator');
 });
