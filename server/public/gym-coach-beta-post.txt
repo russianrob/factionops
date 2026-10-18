@@ -40,6 +40,6 @@
 <h3>Install</h3>
 <p><a href="https://tornwar.com/scripts/gym-coach-beta.user.js">Install Gym Coach Beta</a> (Tampermonkey opens it as a userscript; in Torn PDA, add that URL under Userscripts)</p>
 
-<p>This builds on <a href="https://www.torn.com/profiles.php?XID=4431836">AaronPMC</a>'s Gym Coach, written for rcexyz and released under MIT. The verdicts, the plan, the calibration and the Worth it? card are new, but the bones are his and the credit for the idea is too.</p>
+<p>This started as a project <a href="https://www.torn.com/profiles.php?XID=2598755">rcexyz</a> asked me to build. The screenshots above are his gym.</p>
 
 <p>If a date looks off or the coach tells you something that's plainly wrong, post it here with a screenshot and I'll chase it.</p>
