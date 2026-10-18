@@ -41,7 +41,7 @@
 <img src="https://tornwar.com/gym-coach-plan-shot.jpg" alt="Gym Coach Beta Plan tab: Speed, Dexterity and Strength goals with months of training and finish dates, Dexterity routed to George's because Frontline Fitness does not train it">
 
 <h3>Install</h3>
-<p><a href="https://tornwar.com/scripts/gym-coach-beta.user.js">Install Gym Coach Beta</a> (Tampermonkey opens it as a userscript; in Torn PDA, add that URL under Userscripts)</p>
+<p><a href="https://greasyfork.org/en/scripts/600789-gym-coach-beta">Install Gym Coach Beta on Greasy Fork</a></p>
 
 <p>This started as a project <a href="https://www.torn.com/profiles.php?XID=2598755">rcexyz</a> asked me to build. The screenshots above are my own gym.</p>
 
