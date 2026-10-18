@@ -59,7 +59,11 @@ test('the in-file version matches the header', () => {
   assert.match(STABLE, new RegExp('GC_VERSION = "' + tag(STABLE, 'version') + '"'));
 });
 
-test('both paths hand the reader on to the beta channel', () => {
+test('both paths hand the reader on to the Greasy Fork listing', () => {
+  // 0.12.16: updates come from Greasy Fork 600789. Both paths point there, so
+  // an install from tornwar.com or from the old gym-coach path migrates once
+  // and then tracks the listing. tornwar.com keeps serving the file for the
+  // post and for Greasy Fork to sync from, but it is no longer the update source.
   // 0.9.91 shipped @updateURL pointing at its own 638KB body, so every
   // install downloaded the whole script on each check. The rollback keeps the
   // meta file, which is the one header change made on top of that body.
@@ -68,11 +72,11 @@ test('both paths hand the reader on to the beta channel', () => {
   // one update the old path stops being consulted at all.
   for (const [label, src] of [['stable path', STABLE], ['beta path', BETA]]) {
     assert.equal(tag(src, 'downloadURL'),
-      'https://tornwar.com/scripts/gym-coach-beta.user.js', label);
+      'https://update.greasyfork.org/scripts/600789/Gym%20Coach%20Beta.user.js', label);
     // @updateURL must be the META file — pointing it at the body makes every
     // install poll 640KB on each check.
     assert.equal(tag(src, 'updateURL'),
-      'https://tornwar.com/scripts/gym-coach-beta.meta.js', label);
+      'https://update.greasyfork.org/scripts/600789/Gym%20Coach%20Beta.meta.js', label);
   }
 });
 

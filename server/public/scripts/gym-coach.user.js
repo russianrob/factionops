@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.15
+// @version      0.12.16
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      All Rights Reserved
@@ -19,8 +19,8 @@
 // @connect      www.torn.com
 // @connect      torn.com
 // @run-at       document-end
-// @downloadURL  https://tornwar.com/scripts/gym-coach-beta.user.js
-// @updateURL    https://tornwar.com/scripts/gym-coach-beta.meta.js
+// @downloadURL  https://update.greasyfork.org/scripts/600789/Gym%20Coach%20Beta.user.js
+// @updateURL    https://update.greasyfork.org/scripts/600789/Gym%20Coach%20Beta.meta.js
 // ==/UserScript==
 
 
@@ -66,7 +66,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.15";
+  var GC_VERSION = "0.12.16";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
