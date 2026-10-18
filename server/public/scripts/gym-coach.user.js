@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.16
+// @version      0.12.17
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      All Rights Reserved
@@ -66,7 +66,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.16";
+  var GC_VERSION = "0.12.17";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -4897,11 +4897,6 @@
     return { used: used, wasted: wasted, off: off, partial: partial };
   }
 
-  // How long a "wait for a full bar first" suggestion may ask you to wait.
-  // Lost when an earlier edit sliced this region out; the four places that use
-  // it then threw ReferenceError on the one code path that reaches them.
-  var WAIT_FULL_MAX = 45 * 60;
-
   // Full means at or above the cap — the point where regen genuinely stops.
   // This allowed two points of slack, inherited from the stable script and
   // never explained, which made 149/150 report "capped, regen paused" while
@@ -5612,81 +5607,50 @@
             t: "THEN",
             text: full
               ? "Bar is full — train " + focus + " so you don\u2019t overflow while shopping."
-              : "Wait " + fmtCd(toFull) + " for a full bar, then xan.",
+              : "Train whenever the bar fills. When your Xanax arrives, train what is in the bar first, then take it.",
           },
         ],
       };
     }
 
     if (state.drugCd <= 0) {
-      var waitFull = !full && toFull > 0 && toFull <= WAIT_FULL_MAX;
-      if (waitFull) {
-        var fat = (state.energyMax || 150) + 250;
+      // Train first, THEN take the Xanax, and take it straight away. A Xanax taken
+      // on a held bar puts that bar at risk if it overdoses, and every minute spent
+      // waiting for a full bar pushes the next Xanax back by the same minute. The
+      // happiness a Xanax adds is worth a few energy at most. Testers caught the
+      // old "wait for a full bar, then take a xan" advice on 2026-10-18. War stack,
+      // above, is the one place where taking it on a held bar is the point.
+      // One train is measured at the gym the steps send you to. betterGym() picks
+      // on dots alone, so it can name a 25e gym while you stand in a 10e one, and
+      // 15e would read as trainable in a gym where it is not one train.
+      var namedGym = upgrade ? upgrade.gym : GYMS.filter(function (g) { return g.Gym === state.gymName; })[0];
+      var perTrain = (namedGym && Number(namedGym.Energy)) || state.gymEnergy || 25;
+      var canAdd = boosterOpen(state.boosterCd) && cans > 0;
+      var canNote = canAdd ? " Booster has room \u2014 cans after the xan if you want a bigger training session." : "";
+      var loopSteps = [
+        { t: "WAIT", text: "Drug cooldown is about 6\u20138h. Train whenever the bar fills so it never overflows." },
+        { t: "REPEAT", text: "Cooldown reaches 0 \u2192 train what is in the bar \u2192 take a Xanax \u2192 train " + focus + " again." },
+      ];
+      if (state.energy < perTrain) {
         return {
-          kind: "wait",
-          move: "Wait " + fmtCd(toFull) + " for a full bar, then take a xan.",
-          why:
-            "Xan is ready but you\u2019re at " +
-            state.energy +
-            "/" +
-            state.energyMax +
-            ". Waiting lets you train " +
-            fat +
-            "e into " +
-            focus +
-            " instead of " +
-            afterXan +
-            "e.",
+          kind: "go",
+          move: "Take a Xanax now, then train " + afterXan + "e " + focus + ".",
+          why: "Your drug cooldown is clear and there is less than one train in the bar, so there is nothing to train first. Taking it now starts the next cooldown now.",
           steps: [
-            { t: "NOW", text: "Do not take a Xanax. Do not train. Let energy fill. " + fmtCd(toFull) + " left." },
-            { t: "+" + fmtCd(toFull), text: "Bar hits " + state.energyMax + ". Take 1 Xanax (" + xans + " left)." },
-            { t: "THEN", text: "Train " + fat + "e into " + focus + " at " + gym + ". One session. Don\u2019t split stats." },
-            {
-              t: "WAIT",
-              text: "The drug cooldown starts (about 6–8h). While it counts down, spend your natural energy whenever the bar fills. Never overflow.",
-            },
-            {
-              t: "NEXT",
-              text: "cooldown reaches 0 → wait for a full bar if it is under ~45m → take a Xanax → train " + focus + " again.",
-            },
-          ],
-          waste: "If you take a Xanax now you would only train " + afterXan + "e. Waiting picks up the rest of the bar.",
+            { t: "NOW", text: "Take 1 Xanax. You have " + xans + "." + canNote },
+            { t: "THEN", text: "Go to " + gym + ". Spend ALL your energy on " + focus + "." + leftoverNote() },
+          ].concat(loopSteps),
         };
       }
-      var trainNow = full ? Math.min(1000, state.energy + 250) : afterXan;
-      var canAdd = boosterOpen(state.boosterCd) && cans > 0;
       return {
         kind: "go",
-        move: full
-          ? "Take a Xanax now, then train " + trainNow + "e " + focus + "."
-          : "Take a xan now (" + state.energy + "e → " + afterXan + "e), then train " + focus + ".",
-        why: full
-          ? "Bar is full and your drug cooldown is clear. Take the Xanax first, so this session is " + trainNow + "e, not " + state.energy + "e."
-          : "Your drug cooldown is clear. Waiting for a full bar would take " +
-            fmtCd(toFull) +
-            " and delay your next Xanax. Take it, then train " +
-            focus +
-            ", the cooldown starts.",
+        move: "Train your " + state.energy + "e into " + focus + ", then take a Xanax.",
+        why: "Your drug cooldown is clear. Spend the bar before the Xanax so an overdose can\u2019t take that energy with it, then take it straight away so the next cooldown starts now. Holding the bar for the Xanax only gets those few trains its extra happiness.",
         steps: [
-          {
-            t: "NOW",
-            text:
-              "Take 1 Xanax. You have " +
-              xans +
-              "." +
-              (canAdd ? " Booster is under 24h — cans after the xan if you want a bigger training session." : ""),
-          },
-          { t: "THEN", text: "Go to " + gym + ". Spend ALL your energy on " + focus + "." + leftoverNote() },
-          { t: "WAIT", text: "Drug cooldown is about 6–8h. Do not take a Xanax until this says READY." },
-          {
-            t: "BETWEEN",
-            text: "When energy fills, train " + focus + " again. Never leave the bar sitting full while the cooldown is still running.",
-          },
-          {
-            t: "REPEAT",
-            text: "cooldown reaches 0 → wait for full bar if under ~45m → take a Xanax → train " + focus + ".",
-          },
-        ],
+          { t: "NOW", text: "Train " + state.energy + "e into " + focus + " at " + gym + "." },
+          { t: "THEN", text: "Take 1 Xanax right away. You have " + xans + "." + canNote },
+          { t: "THEN", text: "Spend the new 250e on " + focus + "." + leftoverNote() },
+        ].concat(loopSteps),
       };
     }
 
@@ -5702,17 +5666,16 @@
           { t: "WAIT", text: "Drug cooldown: " + fmtCd(state.drugCd) + ". Let the bar fill again while it ticks." },
           {
             t: "GOAL",
-            text: "Be at a full bar when xan comes off cooldown, then take a Xanax and train " + focus + " in one go.",
+            text: "When the cooldown ends, train what is in the bar, then take a Xanax straight away.",
           },
         ],
       };
     }
 
     if (toFull > 0 && state.drugCd < toFull) {
-      var extra = toFull - state.drugCd;
       return {
         kind: "wait",
-        move: "Wait " + fmtCd(state.drugCd) + " for xan, then train " + focus + ".",
+        move: "Xanax in " + fmtCd(state.drugCd) + ". Then train your bar, take it, and train again.",
         why:
           "Energy is " +
           state.energy +
@@ -5720,20 +5683,14 @@
           state.energyMax +
           " (full in " +
           fmtCd(toFull) +
-          "). Your drug cooldown reaches 0 first. Don\u2019t train this bar away unless you\u2019re about to overflow.",
+          "). Your drug cooldown reaches 0 first. When it does, spend the bar before you take the Xanax, then take it straight away.",
         steps: [
           refillStep(),
           mcsStep(),
           canStep(fmtCd(toFull)) ||
-            { t: "NOW", text: "Nothing. Bar isn\u2019t full. Xan isn\u2019t ready." },
-          {
-            t: "+" + fmtCd(state.drugCd),
-            text:
-              extra <= WAIT_FULL_MAX
-                ? "Xanax cooldown reaches 0. Wait the extra " + fmtCd(extra) + " for a full bar, then take a xan."
-                : "Xanax cooldown reaches 0. Take a xan now, then train " + focus + ".",
-          },
-          { t: "THEN", text: "Train " + focus + " at " + gym + "." },
+            { t: "NOW", text: "Nothing yet. The bar isn\u2019t full and the Xanax isn\u2019t ready." },
+          { t: "+" + fmtCd(state.drugCd), text: "Cooldown ends. Train what is in the bar, then take a Xanax." },
+          { t: "THEN", text: "Spend the new 250e on " + focus + " at " + gym + "." },
           { t: "LOOP", text: "Wait the next drug cooldown. Train whenever energy fills so you never overflow." },
         ],
       };
@@ -5760,7 +5717,7 @@
         },
         {
           t: "+" + fmtCd(state.drugCd),
-          text: "Xan ready. Prefer a full bar, then take a Xanax and train " + focus + " again.",
+          text: "Xan ready. Train what is in the bar, then take a Xanax and train " + focus + " again.",
         },
       ],
     };
@@ -5872,6 +5829,11 @@
     var labels = { str: "Strength", def: "Defense", spe: "Speed", dex: "Dexterity" };
     return " Leftover energy can go to " + (labels[state.focus2] || "the second skill") + ".";
   }
+
+  // How long Happy jump's Xanax pings may ask you to wait for a full bar before
+  // stacking one. Xan + gym no longer waits at all: it trains first, then takes
+  // the Xanax. Declared above its only user so var hoisting is not what keeps it.
+  var WAIT_FULL_MAX = 45 * 60;
 
   function focusLabel() {
     return { str: "Strength", def: "Defense", spe: "Speed", dex: "Dexterity" }[state.focus] || "Strength";
@@ -8791,21 +8753,39 @@
       cancelPing(PING_TICK);
     }
 
-    if (state.drugCd > 5) {
-      var xanAt = now + state.drugCd * 1000;
-      if (toFull > state.drugCd && toFull - state.drugCd <= WAIT_FULL_MAX) {
-        pingAt(PING_XAN, "Xan is up. Wait for a full bar, then take it.", xanAt);
+    // Happy jump keeps its own Xanax pings, unchanged: stacking a Xanax on a held
+    // bar is how a jump is built.
+    if (state.mode === "jump") {
+      if (state.drugCd > 5) {
+        var xanAt = now + state.drugCd * 1000;
+        if (toFull > state.drugCd && toFull - state.drugCd <= WAIT_FULL_MAX) {
+          pingAt(PING_XAN, "Xan is up. Wait for a full bar, then take it.", xanAt);
+          pingAt(PING_XAN_FULL, "Bar full. Take a xan, then train " + focusLabel() + ".", now + toFull * 1000);
+        } else {
+          pingAt(PING_XAN, "Xan is up. Open gym.", xanAt);
+          cancelPing(PING_XAN_FULL);
+        }
+      } else if (state.drugCd <= 0 && state.items.xanax > 0 && fullSoon && toFull <= WAIT_FULL_MAX) {
+        cancelPing(PING_XAN);
         pingAt(PING_XAN_FULL, "Bar full. Take a xan, then train " + focusLabel() + ".", now + toFull * 1000);
       } else {
-        pingAt(PING_XAN, "Xan is up. Open gym.", xanAt);
+        cancelPing(PING_XAN);
         cancelPing(PING_XAN_FULL);
       }
-    } else if (state.drugCd <= 0 && state.items.xanax > 0 && fullSoon && toFull <= WAIT_FULL_MAX) {
-      cancelPing(PING_XAN);
-      pingAt(PING_XAN_FULL, "Bar full. Take a xan, then train " + focusLabel() + ".", now + toFull * 1000);
+      return;
+    }
+    // Xan + gym: one Xanax ping, when the cooldown ends, saying to train first --
+    // a Xanax taken on a held bar risks that bar if it overdoses. The old second
+    // "bar full, take a xan" ping only existed to make people wait for a full bar
+    // before the Xanax, the habit this replaced; it is cancelled every pass so one
+    // armed by an older build cannot fire. With no Xanax in hand the ping stays
+    // neutral rather than telling you to take one you do not have.
+    cancelPing(PING_XAN_FULL);
+    if (state.drugCd > 5) {
+      pingAt(PING_XAN, state.items.xanax > 0 ? "Xan is up. Train your energy, then take it." : "Xan is up. Open gym.",
+             now + state.drugCd * 1000);
     } else {
       cancelPing(PING_XAN);
-      cancelPing(PING_XAN_FULL);
     }
   }
 

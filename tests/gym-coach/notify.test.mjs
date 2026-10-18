@@ -16,7 +16,7 @@ const PING_ENERGY = 2102, PING_XAN_FULL = 2103;
 // Goals say Speed. The stored focus still says Strength -- which is exactly
 // what a cold start reads, because applyGoalFocus() has never persisted.
 async function pings({ focus = "str", goals = { str: 0, def: 0, spe: 5e8, dex: 0 },
-                       energy = 100, drug = 0, tucked = true } = {}) {
+                       energy = 100, drug = 0, tucked = true, mode = "xan" } = {}) {
   const ctx = await b.newContext({ viewport: { width: 393, height: 1400 } });
   const page = await ctx.newPage();
   await page.route("**/*", r => {
@@ -30,7 +30,7 @@ async function pings({ focus = "str", goals = { str: 0, def: 0, spe: 5e8, dex: 0
     drug, booster: 60000, xan: 85, cans: 21, happy: 4300, happyMax: 5000, gym: 24,
     stats: { str: 150422278, def: 104614286, spe: 150464114, dex: 146009 },
     mem: {
-      gcb_v1_mode: "xan",
+      gcb_v1_mode: mode,
       gcb_v1_focus: focus,
       gcb_v1_goals: JSON.stringify(goals),
       // Tucked away is the reported setup, and the default here: notifications
@@ -69,10 +69,18 @@ await t("the energy-full ping names the stat the goal is on", async () => {
   assert.match(r.byId[PING_ENERGY], /Speed/, "ping said: " + r.byId[PING_ENERGY]);
 });
 
-await t("the xan ping names it too", async () => {
-  // Same stale read, second message. drugCd clear + xanax in hand + a bar
-  // filling soon is what arms this one.
+await t("Xan + gym no longer sends the bar-full Xanax ping", async () => {
+  // 0.12.17: in Xan + gym the coach says train first, then take the Xanax, so a
+  // ping telling you to take it the moment the bar fills is exactly the habit
+  // the fix removed.
   const r = await pings({ focus: "str", energy: 140, drug: 0 });
+  assert.ok(!r.byId[PING_XAN_FULL], "bar-full Xanax ping still scheduled: " + r.byId[PING_XAN_FULL]);
+});
+
+await t("the xan ping names it too", async () => {
+  // Same stale read, second message. Only Happy jump still sends this ping now:
+  // drugCd clear + xanax in hand + a bar filling soon is what arms it.
+  const r = await pings({ focus: "str", energy: 140, drug: 0, mode: "jump" });
   assert.ok(r.byId[PING_XAN_FULL], "no xan ping scheduled: " + JSON.stringify(r.byId));
   assert.match(r.byId[PING_XAN_FULL], /Speed/, "ping said: " + r.byId[PING_XAN_FULL]);
 });

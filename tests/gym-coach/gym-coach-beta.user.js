@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.9.85
+// @version      0.12.17
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
-// @license      MIT
+// @license      All Rights Reserved
 // @match        https://www.torn.com/*
 // @match        https://*.torn.com/*
 // @match        https://www.torn.com/gym.php*
@@ -16,2053 +16,13 @@
 // @grant        GM.setValue
 // @grant        GM.xmlHttpRequest
 // @connect      api.torn.com
-// @connect      weav3r.dev
 // @connect      www.torn.com
 // @connect      torn.com
 // @run-at       document-end
-// @downloadURL  https://tornwar.com/scripts/gym-coach-beta.user.js
-// @updateURL    https://tornwar.com/scripts/gym-coach-beta.user.js
+// @downloadURL  https://update.greasyfork.org/scripts/600789/Gym%20Coach%20Beta.user.js
+// @updateURL    https://update.greasyfork.org/scripts/600789/Gym%20Coach%20Beta.meta.js
 // ==/UserScript==
 
-/*
- * Gym Coach — free for everyone (MIT)
- * Built for rcexyz [2598755] by AaronPMC [4431836]
- *
- * CHANGELOG
-* 0.9.85 - The regen rate is read from Torn, not inferred from it.
- *
- *         Every missed-energy figure is a multiplication by seconds-per-energy,
- *         and the rate was derived as fulltime / (max - current). That has two
- *         holes. A FULL bar reports fulltime 0, so it can supply no rate at all
- *         -- the cold-start-on-a-full-bar case that fell back to Torn's 180s
- *         base and read 13e where the honest answer was 19e. And the quotient
- *         of two integers only approximates: 5983 seconds over a 50-point gap
- *         is 119.66 where the truth is 120.
- *
- *         The bars payload has carried the answer all along, and carries it on
- *         a full bar too: increment 5 every interval 600 is 120s a point,
- *         exactly. Measured live 2026-09-08.
- *
- *         The old derivation stays as the fallback for a payload without the
- *         tick fields, and the rate is still persisted for a cold start.
- *
- *         Checked while looking for this: Torn PDA exposes no energy or timer
- *         API to userscripts at all -- its documented surface is the API-key
- *         placeholder, PDA_httpGet, PDA_httpPost, PDA_storage and a GM_* shim.
- *         Its energy alerts are native and unreachable from here.
- *
-* 0.9.84 - A referee for the cans nobody watched.
- *
- *         0.9.83 catches a can the instant the bar moves, but only while the
- *         script is watching. Drink one with Torn closed, on another device, or
- *         mid page load, and the step happens where nothing is looking.
- *
- *         personalstats.energydrinkused is a cumulative count of cans drunk, so
- *         its delta since the last inventory snapshot is how many left the bag
- *         whoever was watching. Anything the detector did not already record is
- *         recorded now, through the same pending ledger.
- *
- *         v1 selections=personalstats, deliberately. Measured 2026-09-08: v1
- *         answered xantaken 718 while v2's ?stat= form answered 716 "as of
- *         yesterday". The v2 shape is a daily snapshot and cannot referee
- *         anything that happened today.
- *
- *         One-directional. A delta smaller than what was detected is not proof
- *         of over-detection -- the counter can lag the bar it referees -- and
- *         handing back a negative correction would put a drunk can back on the
- *         shelf. The ledger's thirty-minute expiry already covers a use that
- *         never landed.
- *
- *         It says how many, never which: attribution stays the detector's guess.
- *
-* 0.9.83 - A can drunk anywhere is a can off the shelf.
- *
- *         The machinery for this was already here and correct:
- *         decrementItemLocal holds a use against Torn's ~30s inventory cache
- *         and applyPendingUses re-applies it to every fetch until the API
- *         catches up. It had exactly one trigger -- the coach's own Use button.
- *         Drink a can on item.php, from the sidebar, on PDA or through another
- *         script and nothing recorded it: the Stock tab kept the can, and the
- *         advice kept offering it, until the next poll.
- *
- *         The energy bar is the tell, and it is not on the API's cache at all
- *         -- syncEnergyFromDom reads it off Torn's own page every second. A can
- *         is a discrete step of a size this script already knows, perk and
- *         Caffeine Consumption included, so an EXACT match against a can in the
- *         bag is a can you just drank.
- *
- *         Strict on purpose. Natural regen trickles, a Xanax is 250, a refill
- *         fills the bar, and a can you hold none of cannot be the one you
- *         drank. A false positive would show a can you still own as gone, which
- *         is worse than the stale number being fixed.
- *
- *         Ten seconds after the coach's own Use button, a jump is that use
- *         arriving rather than a new drink -- otherwise one can came off the
- *         shelf twice.
- *
- *         Where two cans share a size -- Munster and Santa at 20, Red Cow and
- *         Rudolph at 25, Taurine and X-MASS at 30 -- the count is right either
- *         way and the one you hold more of is assumed.
- *
-* 0.9.82 - Lock a specialist gym and the plan stops walking you out of it.
- *
- *         Six gyms are conditional: Balboas wants Def+Dex at 1.25x Str+Spd,
- *         and the four single-stat gyms want their own stat at 1.25x the
- *         second-highest. Access is withdrawn the moment the ratio stops
- *         holding, and nothing here knew that -- GYM_DATA carried the gains
- *         and the planner chased goals, so a plan could schedule its way out
- *         of range and then say "train Defense tomorrow" at a gym that had
- *         shut. Which is exactly what happened.
- *
- *         Plan tab, under Playstyle: pick a gym and it becomes a hard cap
- *         inside goalSegments, recomputed on every segment because the ceiling
- *         MOVES -- training the gym's own stat raises it and hands the others
- *         their room back. A goal past the ceiling reads as held rather than
- *         as coming. With no lock set the card still lists which of the six
- *         are open, because losing one quietly is the whole failure.
- *
- *         A warning was the alternative and was rejected: the warning and the
- *         damage arrive together.
- *
- *         (The entries between 0.9.73 and this one were never written up.)
- *
-* 0.9.73 - The board week runs Sunday to Saturday.
- *
- *         Asked for directly. It ran Monday to Sunday because epoch day 0 is a
- *         Thursday and day 4 was the first Monday; it now counts from day 3.
- *         The boundary is still 00:00 TCT and still computed from the UTC day
- *         number, never from a local-time getter -- a local reading starts the
- *         week hours late and the two halves of a board disagree.
- *
- *         Moving it renumbers every week index, so the first read after
- *         updating finds a week the stored baseline does not match and
- *         re-anchors. One week-to-date is lost, once. Weeks already archived
- *         keep their figures and their labels.
- *
- *         A test that hardcoded the weekday of a mid-week anchor went with it,
- *         and now derives the day instead -- it is a test about saying when a
- *         card started counting, not about which day the week begins.
- *
- * 0.9.72 - Using a can moves the number you are looking at.
- *
- *         Reported: "used x amount of cans but the number stayed the same
- *         until I refreshed".
- *
- *         The machinery for this was already here, and its own comment says
- *         what it is for: Torn caches the inventory for about thirty seconds,
- *         so the refresh fired straight after a use reads the PRE-use count
- *         back. A use is therefore recorded as PENDING and re-applied to every
- *         fetch until Torn's own number comes down, which is why the figure
- *         does not drop and then spring back up.
- *
- *         It was applied to the aggregate counts and to the happy-item list.
- *         It was never applied to the cans list -- which is what the rows on
- *         the Stock tab render from, what the heading above them totals, and
- *         what the can advice sums. So the use was recorded correctly and
- *         subtracted from a number nobody was looking at.
- *
- *         The cans list now takes the same treatment the happy list already
- *         had: the quantities are snapshotted when a fresh inventory lands,
- *         and pending uses are subtracted from THAT baseline rather than from
- *         the row's own current value -- re-applying on every fetch is the
- *         point, and subtracting from itself would compound one use into
- *         several. A drink that reaches zero also stops offering a USE button
- *         for an item you no longer hold.
- *
- * 0.9.71 - A faction board for the members Torn will not answer for.
- *
- *         The Board tab reads /faction/contributors, which needs faction API
- *         access -- a POSITION ability, granted by a leader, not a property of
- *         the key. Most members will never have it, and for them the tab was
- *         only ever a page explaining why it was empty. It is no longer offered
- *         to them at all. Torn's OpenAPI schema makes both halves of the answer
- *         REQUIRED on /key/info -- `access.faction` for the ability and
- *         `selections.faction` for whether the key may ask for contributors --
- *         so this is a read, not a guess. No answer yet means the request has
- *         not landed, and the tab waits rather than appearing and being taken
- *         away under a finger already moving. Settings has the way back in if
- *         Torn's flags are ever wrong.
- *
- *         What replaces it, on Now, where everybody can reach it: the same
- *         board, collected by hand. The gym counters are not in personalstats
- *         at all -- checked against Torn's own list of stat names -- so there
- *         is no endpoint to fall back on. But this script has been measuring
- *         your training all along, by stat, by day, without asking Torn about
- *         anybody. So the collection is inverted. Copy one line into faction
- *         chat, and whoever keeps the board pastes the pile in.
- *
- *         The line is one whitespace-free token so chat cannot break it up,
- *         and it carries four check digits because chat truncates long
- *         messages -- a cut tail is refused rather than read as a smaller
- *         week. Lines from another gym week are set aside rather than mixed
- *         in, the newest line per member wins, and every row says how old it
- *         is: a pasted board is a pile of snapshots taken at different moments,
- *         and a row that looks live but was copied on Tuesday is the one way
- *         this can mislead.
- *
- * 0.9.70 - The gym you are UNLOCKING is not a gym you own.
- *
- *         Reported live: a member standing in Cha Cha\u2019s was told "change gym
- *         to Atlas first \u2014 it trains Strength 9% faster for the same 10e a
- *         train, and you have it unlocked". Atlas is the very next rung on the
- *         ladder, and they did not own it.
- *
- *         Unlocked gyms never re-lock, so a stale scan can only UNDER-report.
- *         An over-report by exactly one is the tile being unlocked reading as
- *         owned \u2014 and a browser run against a gym list whose in-progress tile
- *         carries no lock class reproduces it exactly: the set comes back one
- *         too long, ending on the gym you cannot walk into.
- *
- *         A gym is counted unlocked by the ABSENCE of a lock class, so a tile
- *         Torn marks only as in-progress passes straight through. Two rules now
- *         stop it. The class token `inProgress` reads as not-owned, and \u2014 keyed
- *         on evidence read off the live page rather than on a class name \u2014 the
- *         one tile painting an unlock percentage is dropped from the set. You
- *         cannot be in progress toward a gym you already own. If several tiles
- *         ever carry a percentage the element means something else, and none is
- *         dropped rather than emptying the set and silencing every suggestion.
- *
- *         The switch advice also says what it is relying on now: how many of
- *         the 31 the scan saw unlocked and how long ago it looked, stamped at
- *         scan time. A confident sentence that cannot be traced is how this got
- *         believed in the first place. "Every gym unlocked" is reported as
- *         suspicious rather than impressive, since that is what a renamed lock
- *         class would produce.
- *
- * 0.9.68 - The faction xanax board is back, for the members Torn can answer for.
- *
- *         0.9.66 removed it on the grounds that Torn cannot answer "since
- *         January". That was generalised from ONE account -- mine, which has no
- *         January snapshot. Testing four members found coverage varies per
- *         member: two returned an exact 1 Jan 2026 snapshot, one returned
- *         December 2025, one returned August 2021.
- *
- *         So it is not impossible, it is PARTIAL -- and every response carries
- *         the date of the snapshot it actually used, which makes who can be
- *         answered knowable rather than guessed. A member whose snapshot is
- *         within a day of 1 January is counted. Everyone else is listed and
- *         marked, never shown as zero: "no January figure" and "took none" are
- *         different statements about a person, and 0.9.64 shipped the first as
- *         the second.
- *
- *         A day of slack, because a daily snapshot job is not a clock. Not a
- *         fortnight: that is a fortnight of xanax counted into the wrong year,
- *         which is what the December snapshot would have done.
- *
- *         Your own row skips all of this and comes from the item log, which is
- *         exact and needs no snapshot to exist.
- *
-* 0.9.67 - Xanax is back, counted from the log instead of guessed from a snapshot.
- *
- *         0.9.66 removed it because the snapshot route cannot answer "since
- *         January" -- asked for 1 Jan 2026 Torn returns a snapshot from Feb
- *         2024, and even where it answers an exact date the figure disagrees
- *         with the itemised log by 18% over two months.
- *
- *         Log 2290, "Item use xanax", is a record of discrete events with
- *         unique ids and timestamps. It can be COUNTED. Six pages covers a
- *         year, walked backwards through the link Torn hands back, deduplicated
- *         by id because pages overlap at the boundary.
- *
- *         What it cannot be is a faction board. There is no /user/{id}/log, so
- *         this is your own usage and the card says so rather than implying a
- *         ranking that Torn will not serve. Full key only, like the gym log.
- *
- *         Months are bucketed in TCT. Locally, a xanax taken just after
- *         midnight moves into the previous month, and in January into the
- *         previous year.
- *
- *         For the record, the faction-wide version people will ask about:
- *         FactionStatEnum has `drugsused`, which is ALL drugs rather than
- *         xanax, and is cumulative with no history -- so it could only ever
- *         count forward from the day a device first read it.
- *
-* 0.9.66 - The xanax board is removed. Torn cannot answer the question.
- *
- *         Checked against a real account rather than assumed, and the answer
- *         was no. Torn keeps fine-grained personal-stat history only for the
- *         last few months; ask for an older date and it silently returns the
- *         nearest snapshot it still holds:
- *
- *           asked 2026-06-01 -> snapshot 2026-06-01   exact
- *           asked 2026-08-01 -> snapshot 2026-08-01   exact
- *           asked 2026-01-01 -> snapshot 2024-02-23   two years out
- *           asked 2025-01-01 -> snapshot 2024-02-23   two years out
- *
- *         So the board shipped in 0.9.64 would have put 513 under a column
- *         headed 2026, when 513 is that account\u2019s xanax since FEBRUARY
- *         2024 -- about two and a half years of it, labelled as this year.
- *
- *         A shorter window is answerable, but "who has taken the most in the
- *         last 90 days" is not the question that was asked, and quietly
- *         swapping one for the other is how a number nobody can check ends up
- *         being trusted. So the board goes rather than becoming approximately
- *         right about something else.
- *
- *         The response does carry the snapshot date it actually used, which is
- *         what made this findable at all. Worth remembering if per-member
- *         history is ever wanted again: it is answerable for recent months and
- *         self-describing about when it is not.
- *
-* 0.9.65 - The xanax board counts from 1 January, not a rolling year.
- *
- *         A rolling twelve months quietly gives every member a different start
- *         date -- whoever the board is refreshed for. "Who has taken the most
- *         this year" is a question with one start date that the whole faction
- *         shares, so it starts at midnight TCT on 1 January and resets there.
- *
- *         The column is headed with the year itself rather than "Year", since
- *         the answer to "which year" should not need a footnote.
- *
-* 0.9.64 - Gym energy vs attack energy, and a year of xanax.
- *
- *         The board now separates what reached the gym from what never did.
- *         Gym is Torn\u2019s gymenergy counter; Attack is DERIVED, at 25 an
- *         attack, because Torn has no attack-energy counter at all --
- *         FactionStatEnum carries attack counts and nothing else. The count is
- *         printed beside it so the multiplication can be checked rather than
- *         trusted. Wins and losses both, since losing one still spent the
- *         energy; counting only wins would flatter whoever picks easy targets.
- *
- *         The board still ranks on gym energy. It is a gym board, and somebody
- *         who spent the week attacking should not top it.
- *
- *         And a xanax board for the last twelve months. xantaken is in
- *         personalstats, which is public for another player and answers
- *         historically, so a year is an exact subtraction rather than an
- *         estimate -- the same two calls the regen column makes, a year apart
- *         instead of a week. Ranked on the year rather than the lifetime
- *         counter, because that one mostly measures how long somebody has
- *         played. The year-ago half is history and cannot change, so it is
- *         fetched once and kept.
- *
- *         A year back is calendar arithmetic, not 365 days: 2024 was a leap
- *         year and the naive version lands a day early.
- *
-* 0.9.63 - Show the working behind the Regen column, and name it properly.
- *
- *         "Nat" meant natural regen and nobody could be expected to know that.
- *         It is the Regen column now.
- *
- *         It also reads 100% for every member, which is impossible: 1,725
- *         energy inside a day is roughly triple what a bar can regenerate in
- *         that time. Every row at 100% means every delta came out zero, and
- *         there are two very different reasons that could happen -- nobody
- *         bought anything, or Torn handed back the same figures for the
- *         week-start call as for the live one.
- *
- *         The arithmetic is sound, so guessing which would be guessing at
- *         Torn's payload again, and that has cost two round trips today
- *         already. Both ends of the subtraction are kept now and printed for
- *         your own row: refills, xanax and cans as they were at the week start
- *         and as they are now. If the two are identical the card says so, in
- *         red, and says the column is meaningless rather than leaving 100%
- *         standing as a claim about people.
- *
-* 0.9.62 - Drop the train count; say what the energy went into instead.
- *
- *         gymtrains was added so the board could show trains as well as energy,
- *         and it does not reconcile. 1,470 energy against 113 trains, at a
- *         confirmed 10 energy a train, is 34 trains missing.
- *
- *         Nor can it be checked. The contributors row is {id, username, value,
- *         in_faction} and there is no /user/{id}/gym path anywhere, so nobody's
- *         energy-per-train can be validated against a gym cost -- which also
- *         means my earlier reading of that column, calling 12.2 and 13.5 "not
- *         valid costs", assumed one gym per member for a whole week and was
- *         never sound.
- *
- *         A count that can be neither reconciled nor verified is worse than no
- *         count, so it is gone. What the energy went INTO is shown instead, and
- *         the board is one request cheaper.
- *
- *         The split survives that, because the four per-stat counters are
- *         ENERGY rather than trains -- and being energy, they add up to the
- *         energy counter by construction. Your own row now checks exactly that
- *         and says whether they agree. Unlike energy-per-train it needs no
- *         knowledge of anyone's gym, which the API will never give, and a
- *         disagreement is the signature of baselines taken at different moments.
- *
-* 0.9.61 - The board says when its own baselines disagree.
- *
- *         Reported: 1,470 energy against 113 trains, at 10 energy a train. The
- *         energy confirmed right, the trains short by about 34.
- *
- *         There were three explanations and the board could not tell them
- *         apart: Torn\u2019s two counters updating at different rates, a week
- *         spent across two gyms, or six baselines frozen at six different
- *         moments -- which is what the pre-0.9.51 anchoring did when a round
- *         died half-way. I guessed twice and was wrong twice, including
- *         calling a 50-energy specialist gym "impossible" when the script\u2019s
- *         own table lists four of them.
- *
- *         So it stops guessing and records the evidence: each stat\u2019s
- *         baseline is stamped with WHEN it was taken, and a board whose stamps
- *         are more than a minute apart says so. Each stat\u2019s own total stays
- *         honest either way -- it is only the RATIOS between two of them, the
- *         per-stat split and energy-per-train, that compare different windows.
- *
- *         Your own row also prints its raw before and after for every stat.
- *         When a subtraction is disputed the useful thing is both ends of it,
- *         not an argument.
- *
- *         And a Re-anchor button, so a board already known to be skewed can be
- *         restarted without waiting for Monday. It throws the week-to-date away
- *         deliberately: those were the figures being doubted.
- *
-* 0.9.60 - Stop asking which book, and say where the cap bites.
- *
- *         Two asked for together.
- *
- *         "Reading a different one?" is only worth the space when the answer is
- *         not already known. Where the page NAMED the book there is nothing to
- *         ask -- you can only read one at a time, so the other three are not
- *         candidates, they are noise. The prompt stays for a book recorded by
- *         hand, where the page has said nothing and a tap is the only way in.
- *
- *         And the card now states the stat at which +5% stops being +5%. Ten
- *         million is five percent of two hundred million, so above that every
- *         book is worth a flat ten million however big the stat gets -- and a
- *         row whose stat is already past it says so, because the same book on a
- *         40m stat is worth 2m and on a 260m stat is worth the same 10m as on a
- *         200m one. That is the difference between a book being worth reading
- *         and being worth reading LAST.
- *
- *         Derived from the percentage and the cap rather than typed in, so if
- *         either ever changes the number printed follows instead of lying.
- *
-* 0.9.59 - A book the page told us about is not a toggle.
- *
- *         Reported: tapping the green pill reset the countdown to 31 days. It
- *         did. The pill was the same toggle every other row uses, so a tap
- *         turned the book off, the detector re-added it on the next paint dated
- *         from now, and a countdown that had just been read exactly out of the
- *         item log threw that away.
- *
- *         The only thing a tap can do to a page-detected book is make it worse,
- *         so there is nothing to tap: it renders as a chip. Books the page has
- *         NOT told us about stay tappable, which is the entire point of them.
- *
- *         Also counts down in days AND hours, the way Torn's own icon does.
- *         Rounding 29d 16h up to "30d left" reads as disagreeing with the game
- *         about something you can see both of at once.
- *
-* 0.9.58 - Match the book catalogue on the name, not on its punctuation.
- *
- *         0.9.57's diagnostic paid for itself immediately: "catalogue had 44
- *         books, none of the four matched". The call worked, Torn answered, and
- *         a strict lowercase equality threw the answer away -- one apostrophe,
- *         one doubled space or one prefix is enough. Torn's own log message
- *         reads "You began reading the Book : <name>", so a prefixed item name
- *         was never a stretch.
- *
- *         Compared on letters and digits only now, and a catalogue name that
- *         CONTAINS a book name counts. Not the reverse: an item called "Brains"
- *         must not claim "Brawn Over Brains", and there is a test for it. The
- *         four names are distinctive enough that no punctuation can make two of
- *         them collide.
- *
- *         And if it still misses, the card now prints what Torn actually calls
- *         them rather than how many there were. A count told me nothing I could
- *         act on; four names would have settled this in one look.
- *
-* 0.9.57 - One book at a time, and the id lookup stops failing in silence.
- *
- *         Reported with Strength showing "31d left" beside Speed. Torn's strip
- *         carries ONE "Reading Book" entry because you can only read one, so a
- *         date against any other stat is stale whatever set it -- here a stray
- *         tap that nothing ever cleared. A book recognised on the page now
- *         clears every other one, including a hand-tapped date: the page is
- *         saying, right now, which book is being read, and that beats a tap.
- *
- *         And the card still read "(id not resolved yet)", because the item
- *         catalogue lookup had failed and said nothing about it. Two faults,
- *         both of them mine, and both already fixed once elsewhere in this same
- *         feature:
- *
- *         Its retry window was stamped BEFORE the request and set to a week --
- *         so one refused call killed the countdown for seven days. There is no
- *         success TTL to speak of, since ids never change and are kept once
- *         known, so that window only ever applied to failures. Now a minute,
- *         four times, then back off.
- *
- *         And its failure path was an empty catch. It now reports what came
- *         back -- the ids it resolved, or that the catalogue held N books and
- *         none of the four matched, or the error verbatim.
- *
-* 0.9.56 - The item log names a book by ID, so match it by ID.
- *
- *         The diagnostic added in 0.9.54 did its job on the first try. Log 2050
- *         reads:
- *
- *           data {"item":745,"faction":0}
- *
- *         An item id. The lookup searched the row for the book's NAME, which
- *         can never match, so it found nothing every time -- and said so
- *         honestly instead of quietly dating the book from the sighting.
- *
- *         Now matched on the id, read from the `data.item` FIELD rather than
- *         from the serialised row: "faction":745 and a colour code of "745"
- *         would both satisfy a blind string search of the JSON, and one of
- *         those is in every single row.
- *
- *         The ids come from /v2/torn/items?cat=Book, which answers a public key
- *         and never changes, so it is asked once and kept. Resolved rather than
- *         hardcoded, because only one of the four has ever been seen -- 745,
- *         "Time Is In The Mind" -- and a guessed id fails exactly the way this
- *         bug did: no match, no start, back to the sighting.
- *
- *         The name match stays as a fallback for the window before the
- *         catalogue answers.
- *
-* 0.9.55 - "Bar full 91m" on a bar that filled four minutes ago.
- *
- *         Reported with the bar reading 148/150 barely four minutes before the
- *         banner claimed ninety-one.
- *
- *         capSince was right: the moment the bar flipped to full was recorded
- *         correctly. What overrode it was the estimate. fillFromLastSpend dates
- *         a fill from the last spend Torn knows about, and the rule around it
- *         says it is "only ever used to reach FURTHER back than what we have,
- *         so a real observation is never overridden by an estimate" -- but
- *         reaching further back IS overriding, when what it reaches past is a
- *         direct sighting. A spend hours ago put the fill hours ago, and the
- *         148/150 reading in between was not consulted at all.
- *
- *         A bar cannot have been full before the last moment it was seen NOT
- *         full, so that moment is now recorded and the estimate is clamped to
- *         it. This does not touch the case the estimate exists for: a bar that
- *         filled while the app was closed was last seen below the cap BEFORE it
- *         filled, so the clamp is older than the estimate and changes nothing.
- *         Both directions are pinned, because a clamp applied unconditionally
- *         would throw away exactly the long streak this is meant to preserve.
- *
- *         Same family as the 0.9.43 fix, one layer further in. That one stopped
- *         the estimate being used on an incomplete timeline; this one stops it
- *         being used against a complete observation.
- *
-* 0.9.54 - Say what the item-log lookup actually found.
- *
- *         0.9.53 asks Torn's log 2050 for when a book was started, and the card
- *         still read "Torn does not say when you started" -- which could mean
- *         the call never ran, ran and matched nothing, or was refused. Three
- *         very different problems behind one sentence.
- *
- *         It now prints which, in Torn's own terms: how many rows came back and
- *         that none named the book, or the error verbatim, or the date it
- *         found. That payload has never actually been seen -- the probe ran out
- *         of rate limit before reaching 2050 -- and guessing at an unseen shape
- *         is what cost two rounds on the aria-label.
- *
- *         Also fixes the retry window. The clock was stamped before the request
- *         and success is gated elsewhere, so the six-hour wait only ever applied
- *         to FAILURES: one rate-limited call locked the countdown out for six
- *         hours. Now a minute, three times, then the long wait -- because a book
- *         with no log row at all fails every time, and polling that for ever is
- *         the pressure the wait exists to prevent.
- *
-* 0.9.53 - The book countdown is the real one, and the card shows one book.
- *
- *         0.9.52 found the book and then guessed its age. Reported as "31d
- *         left" by someone with about 28 HOURS left -- they were thirty days
- *         in when the coach first looked, and a sighting can only ever be
- *         dated from now.
- *
- *         Torn's log index names the row that knows: 2050, "Item use book",
- *         written when you start one. One call, asked the moment a book is
- *         recognised and not again for six hours, because a start date does
- *         not move while you are reading. The countdown is then exact and the
- *         card says so instead of carrying the "latest it can be" caveat.
- *
- *         The whole log row is searched for the book name rather than one
- *         field of it. Which key carries the item is undocumented and the
- *         probe ran out of rate limit before it could read one -- and a wrong
- *         key would find no start at all, silently falling back to dating from
- *         now, which is precisely the bug being fixed. Searching the row
- *         cannot fail that way.
- *
- *         Full keys only, since the log is. A Limited key keeps the sighting
- *         date and the caveat that goes with it.
- *
- *         The card also stops listing four books when you are reading one.
- *         Three rows saying "reading?" around the one that matters is three
- *         lines of noise; they fold behind a single line, and a tap is still
- *         how you record a book the page cannot show. And once a book is
- *         inside two days it counts down in HOURS -- "1d left" for something
- *         finishing this evening is the least useful way to say it.
- *
-* 0.9.52 - Book detection actually detects the book.
- *
- *         Reported as not working within minutes of 0.9.51 shipping, and it
- *         was not.
- *
- *         The first sighting of the label was written out as "Reading Book:
- *         <name> - <effect>", so the name was taken as everything up to the
- *         dash. The DOM note that followed it had the two run straight
- *         together with no separator at all -- "Reading Book: <name><effect>"
- *         -- and against that the split hands back the whole sentence, which
- *         matches none of the four books. Detection then found nothing, said
- *         nothing, and looked perfectly healthy doing it.
- *
- *         The names are known, so there was never anything to parse. A label
- *         that begins with one of the four IS that book, whatever punctuation
- *         follows. Matched now, not parsed, and both label shapes are pinned
- *         in the tests.
- *
- *         The Stat books card also prints what the strip actually said, in
- *         Torn's own words -- or says the strip was not on the page at all.
- *         Guessing at that wording is what caused this, and the next time it
- *         changes the fix should start from a screenshot rather than a guess.
- *
- *         Also moves a back-compat guard added in 0.9.50 that sat 58 lines
- *         before the value it guards is restored, so it could never fire.
- *         Harmless -- calibration already handles the absence -- but a check
- *         that cannot run reads as protection and is not.
- *
-* 0.9.51 - The coach works out which stat book you are reading.
- *
- *         Asked for after 0.9.44 shipped it as a manual tap. The tap stays --
- *         it is still the way to correct a date -- but it is no longer the only
- *         way the coach can know.
- *
- *         Nothing about a stat book reaches the perks payload. Confirmed live
- *         rather than assumed this time: perks.book came back an EMPTY ARRAY
- *         while a book was actively being read, because the four stat books
- *         award a one-off stat gain rather than an active multiplier, so
- *         parsePerks structurally cannot see them.
- *
- *         The status-icon strip under the Life bar does carry it -- and carries
- *         it ONLY in aria-label. Not title, not src, not text. Three separate
- *         scans of that area came back empty before anyone read the attribute,
- *         which is the same lesson as the Torn DOM keeps teaching: literal
- *         classes first, aria-label second, text last.
- *
- *         Detection gives WHICH book and never when it started, so a newly seen
- *         book is dated from the first moment this device saw it. That is a
- *         floor, not the real start, and the card says so instead of presenting
- *         the estimate as a fact -- a book noticed on day 20 of 31 would
- *         otherwise promise its award eleven days late.
- *
- *         Three answers, and the difference between the last two is the whole
- *         design: a book is being read / the strip is here and carries no book /
- *         there is no strip on this page. Only the middle one clears anything,
- *         and it only ever clears a date this device set ITSELF. A date you
- *         tapped in is never touched, because you know when you started it and
- *         this does not. Plenty of Torn pages have no sidebar, and treating
- *         that as "no book" would clear the countdown on every one of them.
- *
- *         Where the strip does show the book, the page wins: tapping it off
- *         gets overruled on the next paint, because Torn saying you are reading
- *         it beats a tap saying you are not.
- *
- *         Also fixes a real bug in 0.9.49, found while chasing something else.
- *         fetchTrainLog rebuilds state.trainLog as a fresh object literal, and
- *         sinceAt was not in it -- so the stamp was discarded on every
- *         successful round, and carriedSince's expiry could never fire after
- *         the first one. That is the entire drift fix 0.9.49 shipped, silently
- *         disabled by the round that was meant to feed it. Its own comment
- *         warned about exactly this: "a since without a sinceAt can never
- *         expire". The unit tests were 18/18 green throughout, because they
- *         exercised the two halves in isolation and never drove the round that
- *         rebuilds the object they live on. There is now a test that does.
- *
-* 0.9.50 - Calibration counts days where you trained more than one stat.
- *
- *         Reported by someone sitting at 1 of 7 after a week of alternating
- *         defense and speed, which is a perfectly ordinary way to train.
- *
- *         The rule was: exactly one stat may move that day, or the day is
- *         discarded -- "the day's energy was split in a ratio nothing
- *         recorded". The reasoning was right and the premise was wrong.
- *         Something did record it. The gym log is fetched once PER STAT, so
- *         the per-stat energy was already in hand on every round;
- *         trainLogByDay was summing it and throwing the stat away.
- *
- *         So a mixed day is now measured: each stat's own energy against each
- *         stat's own gain. For anyone who rotates stats that roughly halves
- *         the time to a working correction.
- *
- *         It can only ever turn a discarded day into a measured one, never a
- *         measured day into a wrong one. The split is refused unless the log
- *         accounts for exactly the stats that moved and for the energy the
- *         ledger recorded -- and any stat whose gain cannot be forecast at all
- *         disqualifies the whole day rather than being quietly left out of a
- *         total it should be in. Every one of those falls back to the old
- *         one-stat rule.
- *
- *         Which stat a log row is about is read from Torn's own wording for
- *         that row, never from the order the four ids were requested in. The
- *         browser test deliberately serves the wrong title under each id, so
- *         anything keying off request order fails there rather than in the
- *         wild.
- *
- *         Limited keys keep the one-stat rule, because the gym log is
- *         Full-only, and the card now says which of the two applies to you.
- *
-* 0.9.49 - "Spent today" crept upward on a page that was only being reloaded.
- *
- *         Reported: 340 energy actually trained, the card reading 367 and
- *         ticking up by one without a train. The tell was in the number itself
- *         -- that gym costs 10 energy a train, and no multiple of 10 ends in a
- *         7, so 367 could not be a gym total at all.
- *
- *         Two defects, and the second is why it never corrected itself.
- *
- *         On gym.php every observed bar drop was booked as training. Off gym.php
- *         the same code already discards anything that is not a whole 25-energy
- *         attack, with a comment explaining that the remainder is API/DOM skew
- *         -- but on the gym page there was no such guard, so a point or two of
- *         disagreement between the API bar and the DOM bar became a point or
- *         two of training, on every reload. Now counted in whole trains, at the
- *         cost the gym actually charges.
- *
- *         And the local count was carried against Torn's log FOREVER. The carry
- *         exists so a train from four seconds ago still shows while the log is
- *         two minutes stale, but it could not tell "the log is behind" from
- *         "the local count is wrong", and it resolved every disagreement in
- *         favour of the local one. So each point of skew survived every log
- *         round and accumulated all day. The log is the authority now: an
- *         excess it has not confirmed within seven minutes is dropped.
- *
-* 0.9.48 — Board hardening, after an adversarial read of the whole feature.
- *
- *         Twelve findings, all real, none of them cosmetic:
- *
- *         A request that never SETTLES wedged the tab for good. httpGet has no
- *         timeout, and PDA's HTTP layer collapses two identical in-flight GETs
- *         and orphans the second callback -- so boardBusy stayed true, every
- *         button went dead, and only a reload recovered it. Board requests are
- *         now raced against a 20s clock. A rejected promise is recoverable; an
- *         unsettled one is not.
- *
- *         Anchoring is atomic. Baselines were committed per stat as each landed,
- *         so a round that died half-way anchored energy at Monday and trains at
- *         whenever the next attempt succeeded -- and a split normalised across
- *         differently-anchored stats looks entirely plausible while being wrong
- *         for the rest of the week. Anchors now go to a draft and commit
- *         together or not at all.
- *
- *         A half-read board says so, and a rollover no longer throws away a
- *         good board when the fetch that follows it fails.
- *
- *         Refresh and the natural pass can no longer run at once, doubling the
- *         request rate the 700ms spacing exists to hold down. The natural pass
- *         gained a two-minute cooldown, the key guard fetchBoard already had,
- *         and it reports the members it could not read instead of counting them
- *         as done. Stale Nat figures are cleared rather than carried.
- *
- *         The pasted card printed "0% natural" beside members the table showed
- *         nothing for -- the two used different guards. One guard now.
- *
- *         Past weeks archived every member's full row to render one name each.
- *         Top three now: storeSet swallows a quota error, and this origin's
- *         localStorage is shared with Torn's own chat.
- *
- *         Boot sieves a stored board to finite numbers. A string in a stat map
- *         threw; a NaN week rolled on every read and dated a week to 1970.
- *
- *         Copy reported success it had not got -- writeText is a promise and
- *         its rejection was dropped, so a denied clipboard said "Copied" and
- *         never reached the fallback.
- *
- *         Also: the board now knows BEFORE asking whether your key has faction
- *         API access, from the /key/info call it already makes, and says so
- *         instead of spending six refused requests to find out. It is a faction
- *         POSITION ability, not a key property, so a Full key does not grant it
- *         -- and only codes 16 and 7 get that explanation now. Anything else is
- *         transient and no longer sends you off changing permissions.
- *
-* 0.9.47 — Trains on the board, beside the energy.
- *
- *         Asked for: see trains, not only energy. gymtrains is in the same
- *         enum, so it is one more request and it lands on the second line of
- *         each row -- "1,932 trains - str 60% - def 40%" -- rather than taking
- *         a fifth column, because five columns do not fit a phone and the tab
- *         bar wrapping when Board was added was the same mistake one element
- *         earlier.
- *
- *         Read as its own counter and never divided out of the energy. Energy
- *         per train runs from 5 in a starter gym to 25 in a specialist one, so
- *         a derived count would be fiction dressed up as a measurement -- and
- *         reading the two side by side is exactly what tells you which gym
- *         somebody is actually using.
- *
- *         Both cards carry it too.
- *
-* 0.9.46 — The board's stat column was energy, not gains.
- *
- *         Reported within the hour: "i used 340 but why does it say 340 str?"
- *         -- and that is exactly what it was. gymstrength, gymdefense,
- *         gymspeed and gymdexterity are ENERGY SPENT on that stat, not points
- *         gained; gymenergy is simply their sum. 0.9.45 rendered the number as
- *         "+340 str", which reads as 340 strength points and is off by six
- *         orders of magnitude for anyone with real stats.
- *
- *         Torn does not document this and the endpoint's own summary calls
- *         them challenge contributions, so it was flagged as unverified when
- *         the board shipped. One glance at a real faction settled it, which is
- *         why it was flagged rather than assumed.
- *
- *         Now the column is a SPLIT -- "all str", or "str 60% - def 40%" --
- *         which cannot be misread as a stat gain and is the more useful figure
- *         anyway, since the energy column already carries the total. Header
- *         renamed from Gained to Trained. The card says the same thing.
- *
- *         Also: the Discord card's columns did not line up, because "100% nat"
- *         is wider than "37% nat" and an unknown one is blank. Every cell is
- *         padded to a fixed width now, in the one format whose entire reason
- *         for existing is that it lines up.
- *
-* 0.9.45 — A faction gym board, with no server behind it.
- *
- *         Asked for: a leaderboard or hall of fame per faction -- who used the
- *         most natural regen this week -- without standing a backend up for it.
- *
- *         /v2/faction/contributors turns out to hand ONE caller every member's
- *         cumulative gym numbers, from a Limited key with faction API access.
- *         Nobody else installs anything, hands over a key or opts in, and no
- *         backend ever holds faction data. Energy spent and all four stat
- *         gains are in the same enum, so the board carries battle stats beside
- *         the energy rather than only the energy.
- *
- *         What that endpoint does not have is history -- its `timestamp` is a
- *         cache-buster, not a query -- so a WEEKLY figure is a delta against a
- *         baseline frozen at Monday 00:00 TCT. That baseline lives on this
- *         device, and the board still agrees across devices, because the
- *         numbers being subtracted are the FACTION's rather than this one's.
- *         Two clients anchored at the same Monday compute the same board
- *         without ever talking to each other. The shared clock is the sync.
- *
- *         The natural-regen column needs no baseline at all.
- *         /user/<id>/personalstats answers refills, xanax and energy drinks on
- *         a PUBLIC key -- the same figures Torn prints on a profile -- and with
- *         a timestamp answers them HISTORICALLY, so Monday's counts are simply
- *         asked for. A past week's answer never changes, so it is fetched once
- *         and kept. Natural energy is what is left after a refill, a pill and
- *         a can are taken out of the week.
- *
- *         Contributors takes one stat per call, so the board is five requests.
- *         They go out one at a time behind a gap, only when the tab is opened,
- *         behind a five-minute TTL -- never on the poll tick. The natural
- *         column is one more request per member and is a button, not automatic.
- *
- *         Copy for chat gives you the top twelve as plain text to paste into
- *         faction chat; Copy for Discord gives the same board fenced, where
- *         monospace columns survive. Nothing is uploaded -- the card is built
- *         on the device and goes to the clipboard.
- *
- *         A key whose faction position does not grant faction API access gets
- *         Torn's own refusal and what actually fixes it, rather than a spinner.
- *
-* 0.9.44 — Stat books count toward the plan.
- *
- *         Four books each award +5% of a stat, capped at 10,000,000, after 31
- *         days of reading:
- *
- *           Strength   Brawn Over Brains
- *           Defense    Keeping Your Face Handsome
- *           Speed      Time Is In The Mind
- *           Dexterity  A Job For Your Hands
- *
- *         They are not perks. Nothing reaches book_perks and no multiplier
- *         changes, so parsePerks can never see them -- which is why the coach
- *         forecast months ahead while ignoring a known, dated gain already in
- *         the post. A new card on Plan: tap the book you are reading and every
- *         date below accounts for it, with the countdown on screen so the
- *         assumption is visible rather than buried in an ETA.
- *
- *         It stops counting the moment the book lands, because by then the
- *         stat itself carries the award and counting it again would take it
- *         twice.
- *
- *         Every name checked against the wiki one at a time, because two of
- *         them are traps: "Get Hard Or Go Home" reads like the Defense book
- *         and is actually +20% gym gains for 31 days, and "Weaseling Out Of
- *         Trouble" is a passive Dexterity bonus rather than an award. Guessing
- *         from the names would have wired up the wrong book twice.
- *
-* 0.9.43 — The full-bar estimate is only used when the timeline is complete.
- *
- *         Reported: "Bar full 240m" when it had not been. 0.9.40 dates a bar
- *         nobody watched fill from the last spend the API knows about, and
- *         argued that was a floor -- assuming the spend emptied the bar can
- *         only date the fill LATER than reality, so it under-reports.
- *
- *         That argument holds only if every spend is VISIBLE. On a Limited key
- *         the gym log is refused, so training is invisible and the last attack
- *         becomes the last known spend: an attack nine hours ago dates the bar
- *         to four hours full when it was emptied by training one hour ago. An
- *         incomplete timeline is not a floor, it is a fiction, and it put a
- *         number on screen that was simply untrue.
- *
- *         The estimate now runs only where the gym log answers. Everything
- *         observed directly is untouched, so a Limited key keeps exactly what
- *         it had before 0.9.40 -- silence about a bar it never watched fill,
- *         which was the honest answer for that key all along.
- *
-* 0.9.42 — Stop asking a Limited key for the gym log it can never have.
- *
- *         The key log made it plain: on a Limited key, selection `log` is
- *         refused every single time, four calls a round, forever. A REFUSED
- *         call still counts against Torn's 100 a minute, so the script was
- *         spending roughly 2/min purely to be told no.
- *
- *         Code 16 is Torn stating a fact about the key, so it is remembered
- *         and the asking stops. Anything else is not: a rate limit means the
- *         key CAN read the log and was merely busy, and writing the feature
- *         off over a transient error is how it quietly dies for someone whose
- *         key is fine. That distinction is the one this session got wrong
- *         three times in the probe before it was pinned, so it is pinned here
- *         too, by a test and by a mutant in each direction.
- *
-* 0.9.41 — Training no longer empties your API budget.
- *
- *         Measured on a live account: 103 requests in 183 seconds, 88 of them
- *         inside one rolling minute, and 77 of those the gym log firing at
- *         0-1ms spacing. Torn allows 100 a minute per key, so an ordinary
- *         training session was enough to rate-limit everything -- which is
- *         what the red "Too many requests" in the header was, and what made a
- *         lost session permanent two versions ago.
- *
- *         Two faults, both mine. refresh("train") passed FORCE to the log
- *         fetch, and the gym-page click handler fires refresh("train") twice
- *         per press -- so every click bypassed the TTL and asked all four log
- *         endpoints again. Eight calls a click. The live `since` figure added
- *         in 0.9.39 already keeps "Spent today" moving without asking Torn at
- *         all, which is what makes forcing unnecessary rather than merely
- *         expensive.
- *
- *         And a failed round stamped no time, so `at` stayed old and every
- *         later call started a fresh round of four -- on a key that was
- *         failing BECAUSE it was rate limited. The limit fed itself. The
- *         attempt is stamped now, so failures back off like anything else.
- *
-* 0.9.40 — A full bar the script never watched fill is now dated, instead of
- *         being passed over in silence.
- *
- *         Reported twice: 150/150 on opening the app, no banner. The threshold
- *         was not the problem -- the CLOCK never started. The banner counts
- *         from the moment the bar filled, and that moment is only known if the
- *         app was open while it was climbing. Close it on a low bar overnight
- *         and there was no armed prediction, so the coach had no idea how long
- *         the bar had been sitting and said nothing. That was the right call
- *         when the ledger was all it had.
- *
- *         It is not all it has now. The train log and the attack log both
- *         carry timestamps, so the last time energy LEFT the bar is known, and
- *         the bar cannot have filled before it refilled from there. A session
- *         at 09:51 PM on a 150 bar dates the fill to five hours later, which
- *         is a banner rather than a shrug.
- *
- *         The estimate assumes that spend emptied the bar -- the same reading
- *         ledgerDelta already takes, and deliberately the generous one: spend
- *         less and the bar filled sooner, so the estimate can only ever date
- *         the fill LATER than reality and under-report the streak. It is used
- *         only where it reaches further back than what was actually observed,
- *         and never shortens a streak already known.
- *
-* 0.9.39 — A training session no longer falls down the gap while Torn's log
- *         catches up.
- *
- *         Reported: 400e trained at 09:51 PM, and "Spent today" still read 0e
- *         three quarters of an hour later -- with the Train Log card showing
- *         the session plainly the whole time, which is what proved the script
- *         had seen it.
- *
- *         `since` is the live figure carrying a session from the moment the
- *         bar drops on the gym page to the moment Torn's log admits it
- *         happened. Every successful fetch cleared it outright, assuming the
- *         round it just did includes the session. Torn's log lags, so that
- *         assumption is wrong about once per session -- and the header said
- *         "Too many requests", so the rounds that would have corrected it
- *         never arrived. The figure was gone for good.
- *
- *         It now compares instead of assuming: whatever the fresh log has
- *         caught up with is dropped, whatever it has not is kept. Self
- *         correcting in both directions, including a log that knows MORE than
- *         this device does because you trained on another one.
- *
- *         The log is also asked every two minutes rather than every one. It is
- *         four endpoints a round, the live figure now covers the wait, and
- *         rate limits are precisely what made the lost session permanent.
- *
-* 0.9.38 — The verdict now starts folded.
- *
- *         0.9.36 shipped the fold switched off, on the grounds that a stored
- *         preference is one thing and reshaping everyone's panel unasked is
- *         another. Asked for as the default after using it, so it is the
- *         default: the panel opens compact and the full verdict is one tap on
- *         the bar.
- *
- *         A stored choice still wins. Anyone who has deliberately expanded it
- *         keeps it expanded -- the default only decides for panels that have
- *         never been told either way, and a test pins that so the change
- *         cannot reach across and re-fold a panel someone opened on purpose.
- *
-* 0.9.37 — A percentage build no longer trains a stat that is OVER its share.
- *
- *         Reported: "why is it telling me to train dex if my ratio is over?"
- *         Correct question, and there were two faults behind it.
- *
- *         The increment ladder caps every stat at the same ABSOLUTE rung,
- *         which walks them toward equal VALUES. For four typed goals that is
- *         exactly right -- it is what "stats rise together" means. For a
- *         50/30/20 build it is the wrong shape to climb: it pulls the account
- *         toward 33/33/33 and only bends back at the very end, which is how
- *         Dexterity got scheduled while sitting 21 points over. Each rung is
- *         now scaled by the stat's own share, so every stat climbs to its own
- *         fraction, they arrive together, and an over-share stat simply has no
- *         room at its rung and waits.
- *
- *         And the card marked "next" from the share picker even when a total
- *         goal meant the PLANNER was choosing the leg -- so it could say
- *         "Strength next" while the verdict trained Speed. The marker follows
- *         the planner now; only maintain mode, which has no planner, asks the
- *         share picker directly.
- *
- *         Without a build nothing changes: flat rungs, lowest stat first.
- *
-* 0.9.36 — The verdict can be folded to one line on the Now tab.
- *
- *         Requested: have that top section minimised, with the option to
- *         expand it by clicking. Off the Now tab the verdict already collapses
- *         to a single tappable line, so this makes that same compact form
- *         available ON Now -- the tabs and the cards start higher up the
- *         screen without losing the answer, and the line still carries both
- *         the verdict and your energy.
- *
- *         Tap the tag to fold, tap the folded bar to open it again, and the
- *         choice is remembered. Folded on Now the bar EXPANDS rather than
- *         navigating, since you are already on the tab it would take you to;
- *         off Now it still returns you to Now exactly as before.
- *
- *         Off by default. A stored preference is one thing; silently
- *         reshaping the panel of everyone who never asked is another.
- *
-* 0.9.35 — On a percentage build, the gym bonus picks between the stats that
- *         are under -- it no longer loses to a slightly bigger gap.
- *
- *         Reported on Str 50 / Spe 30 / Dex 20 / Def 0: Speed was 14.9 points
- *         under and Strength 12.1, so 0.9.34 sent every session to Speed at
- *         +10% while Strength sat at +13%. Both were under and both had to be
- *         trained anyway, so taking the worse multiplier first is simply less
- *         stat for the same energy -- and maintain mode has no deadline, so
- *         the ORDER costs nothing while the multiplier costs 3% of every
- *         session.
- *
- *         Being under your share is now what makes a stat a candidate, and the
- *         bonus chooses among the candidates. It still converges: train the
- *         high-bonus stat and its share climbs until it is no longer under,
- *         at which point it drops out and the next takes over. The shape is
- *         held by the filter, not by the ranking. A stat that is OVER never
- *         wins however good its bonus.
- *
- *         The card marks which row is actually next, because rows are ordered
- *         by deficit and the deepest deficit is no longer the pick -- without
- *         the marker the top row reads as next and contradicts the verdict.
- *         The bonus is shown per row only when the four differ, since four
- *         identical numbers decide nothing.
- *
-* 0.9.34 — Set a build as percentages instead of four fixed numbers.
- *
- *         Asked for by someone running a custom Euphoria build: a fixed goal
- *         says nothing about SHAPE. "Strength 1b" has to be retyped every time
- *         it lands and says nothing about the other three, so anyone following
- *         a published build redoes the arithmetic by hand forever.
- *
- *         Percentages of your total, which is how builds are actually quoted
- *         and already what torn-gym-stat-percentages paints on gym.php. Any
- *         scale works: 40/30/20/10 and 4/3/2/1 are the same build, and what
- *         you typed stays in the box rather than being rewritten under your
- *         cursor. A share of 0 means never train that stat, which several
- *         published builds want for Defense.
- *
- *         Two modes off one input. With a total stat goal the shares become
- *         the four targets the planner already reads, so dates, increments,
- *         Steadfast ordering and "Worth it?" pricing all work untouched. Leave
- *         the total blank for maintain mode: no end date, and each session
- *         goes to whichever stat is furthest under its share.
- *
- *         Deficit beats Steadfast, which only breaks ties -- holding the shape
- *         is the point of asking for a build. And a stat that is OVER is
- *         reported as over rather than quietly retargeted: you cannot train a
- *         stat down, so it comes back on build only as the others grow. Fixed
- *         goals hid that entirely.
- *
-* 0.9.33 — The API poll drops from eight seconds to a minute.
- *
- *         Eight seconds is 7.5 calls a minute of a key capped at 100, spent
- *         re-reading cooldowns and perks that do not move that fast. It is
- *         also why there was no headroom left: running the ledger probe
- *         alongside it had Torn answering "code 5: Too many requests" to
- *         everything, which read as an access denial and nearly sent a whole
- *         feature down the wrong path.
- *
- *         Nothing on screen slows down. The bar is read from the page DOM once
- *         a second and the cooldowns tick down locally between polls, so the
- *         API round was never what made the panel feel live -- it carries
- *         cooldowns, perks, stats and gym, none of which change in eight
- *         seconds.
- *
- *         Off-gym goes the same way. It was 20s, which had every other Torn
- *         page polling three times harder than the gym itself.
- *
- *         Steady-state worst case is now about 10 calls a minute against the
- *         cap, counting the inventory walk, the four stat logs, refills,
- *         stocks, attacks and the key check. A test does that arithmetic from
- *         the constants rather than trusting this paragraph.
- *
-* 0.9.32 — The key box requires a Full key and refuses anything less.
- *
- *         Owner's decision. The gym training log is Full-only, and without it
- *         "Spent today" falls back to the bar and an unwatched gap cannot be
- *         reconstructed at all -- so a Limited key can never give a figure two
- *         devices agree on. The key is checked BEFORE it is stored, so a
- *         refused one never becomes the saved one, and the refusal says which
- *         level it was and where to make a Full one.
- *
- *         One deliberate exception: if the CHECK cannot run, the key is saved
- *         anyway. Torn caps a key at 100 calls a minute and the coach is
- *         already polling, so a check can fail for reasons that have nothing
- *         to do with the key -- refusing then would turn a busy moment into a
- *         lockout on a perfectly good key. It saves, and says the level could
- *         not be confirmed rather than claiming it was.
- *
- *         An invalid key is refused rather than waved through: Torn's code 2
- *         is a definite answer, not an inconclusive one, so it does not get
- *         the benefit of the doubt that a failed check does. httpGet rejects
- *         with the code on the Error and no payload, so the save path rebuilds
- *         the shape -- without that an unrecognised key scored "unknown" and
- *         was stored.
- *
-* 0.9.31 — A key you type in now beats the one Torn PDA injected.
- *
- *         The order was the other way round, which made a deliberately entered
- *         key unreachable on a phone. PDA substitutes its own key at install,
- *         that key is usually Limited, and the gym log is Full-only -- so
- *         pasting a Full key into Settings did nothing at all, and missed
- *         energy stayed "observed only" with no way to improve it. Injection
- *         is a default; typing one is intent, and intent wins. A PDA user who
- *         has never entered a key is unaffected.
- *
- *         Settings now says what the key in use can actually do, read from
- *         /v2/key/info -- which answers ANY key, so the check can never be the
- *         thing that fails and mislabel a good one. "Could not tell" is kept
- *         distinct from "not Full", because a rate-limited check must not nag
- *         someone whose key is fine.
- *
- *         The copy asked for a Limited key throughout, which is no longer the
- *         right advice: a Full key is what the training log needs. It says so,
- *         and says plainly what still works without one -- attacks, refills,
- *         cans, plans and notifications all do.
- *
-* 0.9.30 — Missed energy stops guessing about time the script did not watch.
- *
- *         Time the script DID watch was always right: the ledger ticks every
- *         second and sees every drop. Only the gaps were guessed, and the
- *         guess was "the bar must have sat at the cap the whole time". On one
- *         device that is fair. On two it is simply false -- the PC bills six
- *         quiet hours at the cap while the PDA emptied the bar twice inside
- *         them, and neither can know the other exists.
- *
- *         A gap is now reconstructed instead: walk it, let the bar climb at
- *         the known rate, apply each training session and attack at its own
- *         timestamp, and count only the time the bar genuinely sat full. Both
- *         devices read the same API, so both reach the same number -- which is
- *         the property the old model could never have.
- *
- *         The gym log needs a FULL key. On a Limited key the timeline is
- *         missing every training session, so simulating anyway would show the
- *         bar full straight through them: a confident wrong figure. Those gaps
- *         are declined instead -- booked as nothing, and the day marked
- *         "observed only" so the figure admits what it is. Under-reporting is
- *         recoverable; inventing is not.
- *
- *         Declining is only ever about gaps. A Limited key keeps its ordinary
- *         per-second accounting for time it was actually watching, because
- *         watching a bar needs no log.
- *
-* 0.9.29 — Energy spent attacking comes from Torn's attack log, not the bar.
- *
- *         Reported by a faction member running the coach on PC and PDA at the
- *         same time: both devices showed impossible figures. The cause is not
- *         arithmetic, it is the model. Each device only ever saw its OWN bar
- *         readings, so one that had been closed a while assumed the bar sat at
- *         the cap for the whole gap and booked the catch-up -- including the
- *         hours the other device was training and attacking. Both did it,
- *         neither could know the other existed.
- *
- *         The attack log has no such problem: both devices ask Torn the same
- *         question and get the same answer. /v2/user/attacks needs only a
- *         LIMITED key, takes a `from`, and returns rows with timestamps, so
- *         today's hits can be counted exactly instead of inferred from drops.
- *
- *         Zero attacks is now a REAL answer rather than a reason to fall back
- *         to the bar; only an unreadable one falls back, and says so. The line
- *         carries the hit count, so a figure that disagrees with what you did
- *         can be checked at a glance.
- *
- *         The day window is enforced where the counting happens, not only in
- *         the request -- requesting it alone means any change to that
- *         parameter silently swallows the previous day. Paging walks `to` back
- *         through the day because v2's next-link is unreliable, and stops at
- *         six pages: past 600 hits in a day the figure is academic and the
- *         requests are not.
- *
- *         `basic` joins the main selection list for player_id, which is what
- *         lets the log tell your hits from hits on you. It is PUBLIC access,
- *         so it cannot fail a call the rest of which already works.
- *
-* 0.9.28 — An unused refill says so next to the Gym title, not just in the
- *         panel.
- *
- *         DO THIS already carried the line, but the panel is tucked behind a
- *         pill and the moment that matters is arriving at gym.php on an empty
- *         bar with the day's refill unspent -- when you are looking at the
- *         gym, not at the coach.
- *
- *         Anchored on h4#skip-to-content, whose id is unhashed and stable
- *         where every generated class around it is not. That title row is
- *         float-based rather than flex, so the strip floats left to share the
- *         line instead of dropping beneath it; the harness gained those two
- *         CSS rules, because without them a "same line" test passes against a
- *         layout Torn does not have. Losing the anchor costs the strip its
- *         position and never its existence -- it falls back to floating.
- *
- *         It is a link to points.php, since the useful thing to do about an
- *         unused refill is go and spend it, and it wears .gc-btn's green,
- *         weight and corner so it reads as part of the coach.
- *
- *         The refill flag is re-read every three minutes rather than every
- *         ten. Ten was defensible on request count, but it also decided how
- *         long the strip kept advertising a refill you had already spent.
- *
-* 0.9.27 — The full-bar banner reads the clock the panel already prints.
- *
- *         Reported: it took far too long to appear, and on a freshly opened
- *         app it did not appear at all -- while the panel four inches away
- *         said "Bar has been full for 19m".
- *
- *         Both were the same mistake. The banner kept its OWN clock, started
- *         the first time a live tick happened to SEE a full bar, so reopening
- *         the app reset it to zero and cost another ten minutes. capStreak()
- *         has been there the whole time and is strictly better: it works from
- *         the moment the bar was predicted to fill, so a bar that filled while
- *         the app was closed counts from when it actually filled. Two clocks
- *         for one fact was the bug; there is one now, and a test pins the
- *         banner and the panel to the same number.
- *
- *         "Got it" now buys two minutes rather than ten. By the time you are
- *         dismissing it you have been told, so a short leash is worth more
- *         than a long silence.
- *
- *         Slimmer, too: one line at 33px instead of a three-row block that
- *         sat on top of Torn's nav and news ticker.
- *
- *         Mc Smoogle is offered on a FULL bar as well. It was only wired into
- *         the waiting-for-energy verdicts, which is exactly where you are not
- *         standing when the bar is full -- and since Torn banks energy above
- *         the cap, a full bar is a fine moment to claim it.
- *
-* 0.9.26 — Tells you when the weekly Mc Smoogle energy is waiting.
- *
- *         The plan has budgeted this for a while and DO THIS never mentioned
- *         it. Torn does expose it: /v2/user/stocks gives every holding a
- *         `bonus` object, and `available` is exactly the readiness flag.
- *
- *         The stock id is pinned to 29 rather than discovered, and that is the
- *         careful choice, not the lazy one. Matching the benefit description
- *         looks tidier until you read the catalogue: MUN (24) says
- *         "1x Six-Pack of Energy Drink" and MCS (29) says "100 energy", so
- *         anything grepping for "energy" matches both and would report a
- *         crate of cans as your energy claim. A pinned id can only fail
- *         silent. Keyed on the id alone for the same reason -- the account
- *         this was probed on also held IIL with a claim ready, and any looser
- *         test would have called that Mc Smoogle every time it came due.
- *
- *         Not gated on having room, unlike the point refill: Torn banks energy
- *         above the cap rather than discarding it, the way a xanax does, so
- *         claiming on a full bar loses nothing -- and a full bar is exactly
- *         when you are most likely to be reading it.
- *
- *         Its own request, because /user/stocks needs a limited key and Torn
- *         fails a combined call as a whole.
- *
-* 0.9.25 — Says something when the bar is sitting full, wherever you are.
- *
- *         Reported: "I have lost a lot of energy getting distracted by chat or
- *         reading a guide in the forums, not realizing I never trained." The
- *         coach had the data the whole time -- the poller runs on every Torn
- *         page -- but ensureUi strips the panel everywhere except the gym, so
- *         there was nothing anywhere to notice.
- *
- *         A banner now appears on any Torn page once the bar has been at the
- *         cap for ten minutes. "Got it" is a snooze rather than a dismissal:
- *         it buys ten quiet minutes and comes back, and only energy actually
- *         leaving the bar ends it. The clock is persisted, because it is
- *         measured across page loads and a fresh tab would otherwise restart
- *         it and never reach ten minutes.
- *
- *         Quiet during a war stack, where holding the bar is the plan the
- *         coach itself gave you, and quiet above the cap, where Torn pauses
- *         regen so nothing is bleeding. It drops below FactionOps' own top
- *         bar rather than fighting it for the spot.
- *
- *         Also: the daily point refill is now offered in DO THIS, but only
- *         when the bar is low enough for it to be worth spending -- a refill
- *         sets you to max, so suggesting one at 125/150 buys 25e and burns
- *         the day. Read from its own request, so a key that cannot see the
- *         flag leaves the reminder quiet instead of taking the panel down.
- *
-* 0.9.24 — Finds the notification bridge under warboard's own name.
- *
- *         warboard-iOS answers Torn PDA's bridge protocol, and the first cut of
- *         that exposed it as `window.flutter_inappwebview` so PDA-written
- *         scripts would work unchanged. That object's PRESENCE is how every
- *         userscript detects PDA, so every script inside warboard took the PDA
- *         branch — FactionOps turned SSE off and showed "network error". It is
- *         `window.__WB_BRIDGE__` now, and this looks for both.
- *
- *         Settings names the host honestly as a result: "warboard" rather than
- *         "Torn PDA" or "Browser", since it is neither. And the pings line asks
- *         whether a ping can actually reach you rather than whether you are in
- *         PDA — warboard can deliver them, a plain browser still cannot.
-* 0.9.23 — "Spent attacking 6e" on a day with no attacks. A Torn attack costs
- *         exactly 25e, so 6 was never one — it is API/DOM skew on the energy
- *         reading, which used to disappear among real training and only became
- *         visible once off-gym spend had its own line in 0.9.20. The line was
- *         new; the leak was not.
- *
- *         Off-gym spend is counted in WHOLE ATTACKS now: floor(drop / 25) × 25.
- *         Anything under one attack is discarded, and so is the remainder
- *         riding along with a real one, so 31e reads as a single attack rather
- *         than 31. That also removes the need to ask Torn: the flat 25e cost is
- *         what makes an off-gym drop identifiable without an API call at all.
-* 0.9.22 — Settings claimed "Host: Torn PDA" in a desktop browser. The row was
- *         a hardcoded string with no check behind it, and so were two others:
- *         instructions to leave the PDA API-key placeholder alone, and a note
- *         that pings use PDA notifications. Three assertions about the
- *         platform, none of them checked.
- *
- *         isPda() now decides. Only Torn PDA substitutes the key placeholder
- *         and only Torn PDA exposes the flutter bridge, so both are real
- *         evidence; the user agent is the last resort. It is a function rather
- *         than a constant because the bridge can arrive after this file runs.
- *
- *         The pings line is the one that mattered. Notifications go through
- *         PDA's bridge, which a browser does not have, so a desktop user was
- *         being promised something that could never arrive — and had no way to
- *         know why it never did. It now says so outright.
-* 0.9.21 — "Spent today" now comes from Torn's own gym logs rather than being
- *         inferred from the bar. Torn writes one line per session with the
- *         exact energy, stamped to the second, so it is a record where the bar
- *         was only ever a reconstruction — and it counts a session the script
- *         was not running for, which the bar cannot.
- *
- *         Log for truth, bar for immediacy: the figure is the log total plus
- *         whatever the bar has watched leave the gym page since, and it snaps
- *         to the log when the next round lands. A number that only moved when
- *         an API call landed would read as broken in the seconds after a
- *         train. Four calls, one per stat (5300-5303), on their own 60s TTL
- *         and forced right after a detected session — not on every 8s poll.
- *
- *         A failed round leaves the bar's figure standing and labels it "from
- *         the bar", because a failed call is no news rather than zero
- *         training. An EMPTY log is different: that is Torn saying you trained
- *         nothing, and it is reported as nothing.
-* 0.9.20 — This is a gym coach, so energy spent attacking is not "spent" — it
- *         never reached the gym, which from here is the same kind of loss as a
- *         bar sitting full. It now has its own line instead of being counted
- *         as training.
- *
- *         The page the drop happened on says where the energy went: only
- *         gym.php trains, and cdTimer already polls the bar once a second on
- *         EVERY Torn page, so the attacks were always being watched — they
- *         were just filed wrong. No logs and no extra API calls.
- *
- *         It was worse than a mislabel. finaliseTrain discards a small
- *         observed drop with no stat gain as API skew, but the threshold is
- *         `spent < 25` and a Torn attack costs exactly 25 and grants no stats
- *         — so every attack sailed past and was written into the train log as
- *         a session. A training session is only opened on the gym page now.
- *
- *         Attacking also counts against the usage figure, alongside cap waste,
- *         because a gym ETA built as though that energy had reached the gym is
- *         optimistic on precisely the days you warred hardest.
-* 0.9.19 — Steadfast now decides which stat a rotation leg goes to. It is the
- *         faction branch granting gym gains PER STAT — "+ 14% defense gym
- *         gains" against "+ 10% strength" — so the same energy is worth
- *         measurably more in one stat than another. parsePerks already folded
- *         it into state.perks and trainsTo already used it, so the ETAs were
- *         always right; nothing let it choose the ORDER. Now the rotation
- *         leads with the best bonus, ties fall back to shortest-first as
- *         before, and raising a goal by hand still wins — that is a deliberate
- *         act and a perk should not quietly undo it.
- *
- *         The Plan tab gains a "Gym gain bonus" card listing the per-stat
- *         figures with the best marked, because a plan that silently reorders
- *         itself reads as a bug rather than a decision.
-* 0.9.18 — Reported: "Spent today 26e, I didn't spend any energy training
- *         today." Correct — nothing had been spent. The bar reports WHOLE
- *         points while the absorbed-regen figure accrues smoothly, so between
- *         two ticks nowE === prevE and `prevE + absorbed - nowE` came out a
- *         fraction above zero and was booked as spend. Every poll, for as long
- *         as the bar climbed, and the tick never cancelled it.
- *
- *         The tell was that the figure depended on how often the panel looked:
- *         19e at 60s polls against 37e at 1s. A real spend does not care.
- *         Invisible on a training day (26e beside 1,500e), glaring on a day
- *         with none — and it inflated the `used` that calibration().usage is
- *         built from, so every ETA was quietly optimistic.
- *
- *         Absorbed regen is now floored, for the same reason missed energy
- *         already was: a third of a point has not arrived yet. Two old tests
- *         asserted the fractional readings (123.33e, 50.33e); they encoded the
- *         behaviour this bug came from, and now expect whole points.
- *
- *         Also: a stack is spotted from the bar itself. A day whose energy
- *         peaked more than 300 above your own cap was holding more than one
- *         Xanax could give it, which only happens deliberately — so cap time
- *         stops counting for that day whether or not the war-stack switch was
- *         ever flipped, and the Missed energy card marks those days and offers
- *         to clear just them. The line sits above one Xanax on a full bar
- *         (max + 250), which is the coach's own daily advice and must not read
- *         as a stack.
-* 0.9.17 — Settings gets a "Missed energy" card: the days inside the
- *         calibration window that recorded missed energy, each with a Clear.
- *         Asked for after 0.9.15, which stopped BOOKING war-stack waste but
- *         could do nothing about the days already recorded — those keep
- *         dragging every ETA down until they age out of the window.
- *
- *         Picked by hand, because the ledger stores {day, used, wasted} and has
- *         never recorded WHY a bar sat full, so a war-stack day cannot be told
- *         from a lazy one after the fact.
- *
- *         Reversible on purpose. This is real training history, so a cleared
- *         day keeps its original figure and offers Put back; a second clear
- *         will not overwrite that original with the zero it just wrote. Spend
- *         is never touched — it really did leave the bar, and it is what the
- *         model half of the calibration is measured from. The card shows what
- *         the usage figure would become before anything is removed, and Clear
- *         all reaches only the days listed on screen.
- *
- *         The click router resolves through a closest() whitelist, so the two
- *         new attributes had to be added to it — without that the handlers are
- *         unreachable dead code. Caught by the browser test; every unit test
- *         over them stayed green.
-* 0.9.16 — Reported: "I keep getting a notification that my energy is full,
- *         train Strength. My gym plan/goal is Speed." Nothing to change at
- *         the user's end — the notification really was naming the wrong stat.
- *
- *         applyGoalFocus() is what turns a goal into state.focus, and it lived
- *         inside renderPanelInner(), BEHIND its early return on a closed panel.
- *         Notifications are exactly the thing you want while the panel is shut
- *         — tucked away, or on any non-gym page, where ensureUi() closes it —
- *         so on that path the sync never ran and armNotifications() built its
- *         text from the stored focus, which defaults to "str". Panel open, the
- *         ping said Speed; panel tucked, the same account got Strength.
- *
- *         Two fixes, because there were two faults. The sync now runs inside
- *         armNotifications(), where the text is actually built. And the derived
- *         focus is persisted rather than only held in memory — without that,
- *         storage kept saying "str" forever and every cold read started wrong
- *         again. Both are pinned by mutation tests, and by an invariant test
- *         that the ping may never name a stat the plan is not on.
-* 0.9.15 — War stack contradicted itself twice, and both cost real energy.
- *
- *         It said "Do not take a Xanax". That is backwards: a stack is built BY
- *         taking them. Each banks 250e above the cap, and above the cap Torn
- *         pauses regen, so a stacked bar bleeds nothing while it waits. Sitting
- *         AT the cap is the only state that does bleed — so the old advice held
- *         you in the one place that loses energy. The verdict now says to take
- *         one when the drug cooldown is clear, you have one, and it will not
- *         spill past the 1,000e ceiling; otherwise it says hold and why. The
- *         Stock tab's Xanax row reads USE while stacking instead of BUY.
- *
- *         And it billed you for obeying. Time at the cap was booked as missed
- *         energy even while the coach was telling you to leave the bar alone.
- *         That waste feeds calibration().usage, which goalPlan() multiplies
- *         into every ETA, so one war dragged the whole plan toward the 0.3
- *         floor and held it there for the fourteen days AFTER the war ended.
- *         Waste is no longer booked while stacking, and the live card reframes
- *         the streak — it still shows how long the bar has been held, which is
- *         the number that matters during a war, just not as a loss.
- *
- *         What did NOT change: the cap time is still subtracted from absorbed
- *         regen when working out what you spent. That regen genuinely never
- *         landed whatever it is called, and handing it back as spend would make
- *         a held-then-dumped bar read as more energy trained than ever left it.
- *         A test pins the spend figure identical with stacking on and off.
-* 0.9.14 — A full segment said "Torn should hand it over on your next train".
- *         It will not: once the gym exp is earned the gym is gated on the FEE,
- *         not on more training — the wiki is explicit that you Activate it and
- *         buy the membership. The old line sent you to spend energy on nothing.
-* 0.9.13 — "How much energy until the next gym?" Torn has always tracked this
- *         and paints it as a whole-number percentage on gym.php — on the gym
- *         button marked inProgress___, which is easy to miss because it is not
- *         a progress bar, a progressbar role, or any text on the page. Reading
- *         it turns the question into arithmetic, so nothing has to be summed
- *         out of the training logs.
- *
- *         The segment lengths come from the wiki's "Estimate E for next gym"
- *         column. They are PER-SEGMENT — energy trained while AT a gym, not a
- *         lifetime running total. Two things prove it: read cumulatively, the
- *         18,000 -> 18,100 pair would be a 100-energy segment (about ten
- *         trains) between segments of 5,580 and 6,040; and the segments sum to
- *         551,255 energy for George's, about a year at a heavy 1,470e/day,
- *         which is the grind players describe. The cumulative reading puts
- *         George's at ten weeks.
- *
- *         The Music Store's "Well Tuned" perk (+30% gym experience) is applied,
- *         read as a number off the perk line rather than hardcoded. It is kept
- *         strictly apart from the stat multipliers: gym EXP changes when the
- *         next gym arrives and nothing about what a train is worth, and a test
- *         pins that it never leaks into the gain model.
- *
- *         Shown as a range, because a whole-number percent cannot say more than
- *         that. Silent rather than wrong where it has to be: a reading left
- *         over from a gym you have since bought, and the specialist gyms, which
- *         are gated on stat ratios and have no energy answer at all.
-* 0.9.12 — 0.9.11 argued with itself: "Bar full. Train Strength at Force
- *         Training" one line above "George\u2019s trains Strength 14% faster
- *         \u2014 switch before you spend this bar". Both true, together
- *         useless. The gym advice was bolted on as a sibling step instead of
- *         changing the advice it contradicted.
- *
- *         One gym per verdict now. When a better gym is available the training
- *         steps name THAT gym, and the switch is the first thing on the card
- *         rather than a footnote under an instruction to stay put. There is a
- *         test for the invariant itself \u2014 the steps card may never mention
- *         two different gyms \u2014 because that is the property that was
- *         broken, and it is cheaper to pin than any particular wording.
-* 0.9.11 — The coach reads which gym you are in and has always taken it as
- *         given. It will now tell you when a gym you ALREADY OWN trains your
- *         stat faster for the same energy: Anabolic Anomalies and George\u2019s
- *         are both 10e a train, and George\u2019s returns 46% more. That is not
- *         a trade-off, it is a third of every bar thrown away, and the coach was
- *         cheerfully telling you to spend it.
- *
- *         Same energy per train or cheaper, only. A gym with more dots that also
- *         costs more energy is a real trade \u2014 more per train against fewer
- *         trains \u2014 and the coach does not get to make that call. Balboas
- *         beats George\u2019s on Defense dots and costs 25e against 10e, so it
- *         is never pushed.
- *
- *         Which gyms you own is not in the API \u2014 `user?selections=gym`
- *         returns active_gym and nothing else \u2014 so it is read off gym.php,
- *         the page you are already standing on, at no API cost. Button order is
- *         1:1 with the gym table by index, because Torn spells a few names
- *         differently. Gyms unlock OUT of order, so the actual set is stored
- *         rather than a highest-unlocked mark. A half-rendered list is ignored:
- *         five buttons is React mid-render, not a player who owns five gyms.
- *
- *         And a gym that cannot train the stat at all now names one that can,
- *         instead of leaving you to work it out.
-* 0.9.10 — Xanax capped at 3 a day, not 4. 0.9.9 derived four from a nominal
- *         ~6h cooldown; in practice a fourth does not fit, reported from
- *         actually taking them. Three is now both the default and the ceiling.
-* 0.9.9 — Three corrections to "Worth it?", all of them things it was stating
- *         confidently and wrongly.
- *
- *         It said "until Strength is done" while quoting a figure that was the
- *         WHOLE schedule \u2014 every goal, not that one. Mine, from 0.9.0,
- *         when the ranking moved to the whole plan and the sentence did not
- *         follow. It names one goal only when there is one, and says "every
- *         goal" otherwise. "over the run" now reads "over the whole plan",
- *         since the old word left it genuinely ambiguous whether a day or the
- *         whole thing was meant.
- *
- *         Xanax was capped at 6 a day. The drug cooldown is about 6h, so four
- *         is the ceiling and the card was pricing a fifth and sixth that no
- *         amount of money can buy \u2014 taking one early is an overdose, not
- *         a faster plan.
- *
- *         And cans were ranked by money, which put a Can of Goose Juice ABOVE a
- *         Red Cow: 8e for $433k is cheaper per energy than 38e for $2.39m. It
- *         is also a quarter of the energy in an identical 2h booster slot, and
- *         once the booster is high that slot is the scarcer currency. Cans now
- *         rank strongest first with money only breaking ties between equals,
- *         they sit as a block below the things that cost money alone, and each
- *         one shows what its slot is worth in energy per booster-hour.
-* 0.9.8 — Every can is listed, not only the ones in your bag. Holding one weak
- *         can hid the other eight, and with them the comparison that actually
- *         decides what to buy: a can costs the same 2h of booster cooldown
- *         whatever its strength, so a Damp Valley and a Taurine Elite take the
- *         IDENTICAL slot for 15e against 45e. Twelve slots a day is 180e or
- *         540e depending only on which can fills them, and you could not notice
- *         that about a can you could not see.
- *
- *         Held cans lead the list, then the strongest of the rest, and each row
- *         says which it is. Unheld cans are tickable on purpose \u2014 planning
- *         a purchase is a real use \u2014 and they count toward the projection,
- *         because a tick that did nothing would be a lie in the other
- *         direction. What stops that going quiet is a line under the group
- *         naming the energy your plan is claiming from cans you do not hold.
- *
- *         "Worth it?" picks all nine up as purchase candidates and prices them,
- *         so a can three times the strength for one and a half times the money
- *         climbs the ranking on its own.
- *
- *         This REVERSES 0.7.1, which hid unheld cans so a configured can could
- *         not inflate a projection silently. That risk is real and has not been
- *         waved away \u2014 the safeguard moved from hiding the row to naming
- *         the consequence.
-* 0.9.7 — "Train 150e into Strength at Balboas Gym" \u2014 which trains Defense
- *         and Dexterity only. The advice never once looked at whether the gym
- *         you are standing in can train the stat it is telling you to spend a
- *         bar on. Nine of the 31 cannot train something: Balboas has no
- *         Strength or Speed, Legs Bums and Tums no Strength, Beach Bods no
- *         Dexterity, Davies Den no Speed, and the four specialist gyms train
- *         exactly one stat each.
- *
- *         The verdict now says so before any branch that could send you to the
- *         machine, happy jump included, and names what the gym DOES train so
- *         the next move is obvious: move gyms, or switch to one of those.
- *
- *         The projections always knew \u2014 gainOne has returned 0 for a
- *         zero-dot stat since the beginning, and the goal schedule refuses to
- *         build a leg it cannot finish. Only the sentence at the top was
- *         guessing.
-* 0.9.6 — Buy a can you owned none of and it stayed invisible until Torn\u2019s
- *         inventory cache expired, minutes later. 0.7.0 added the item-page
- *         scrape for exactly this, and it was already capturing the new can \u2014
- *         nothing read it. freshQty can only CORRECT a row that already exists,
- *         and a can you owned none of has no API row to correct, so the scraped
- *         count had nowhere to land.
- *
- *         The scrape can now ADD a can outright, not just adjust one. Only cans:
- *         it covers the whole item page, and a Xanax count has no business in
- *         the drink list. Still only while the scrape is newer than the API
- *         reading, so Torn takes back over the moment it catches up.
- *
- *         The scrape runs on item.php, so a can bought and never looked at is
- *         still unknown until the API refreshes \u2014 open your items once and
- *         it is picked up immediately.
-* 0.9.5 — A bar full for 39 minutes while the app was closed reported "full for
- *         44s" and 0e missed. The script cannot watch a bar it is not running
- *         beside, so the time has to be reconstructed on the way back in — and
- *         three things stopped that working.
- *
- *         It already KNEW when the bar would fill: that instant is what the
- *         "energy full" notification is scheduled from. It was computed, armed
- *         and thrown away. It is kept now, and a bar found full on reopen is
- *         dated from it rather than from the moment the panel happened to look.
- *         Only where the bar demonstrably got there — it ended at the cap, or
- *         ended lower than it started so a spend could have followed — because
- *         a prediction on a bar that merely rose and stopped short was wrong,
- *         and trusting it books waste that never happened.
- *
- *         The regen rate was not persisted. A full bar reports fulltime 0, so a
- *         cold start that opens ON a full bar could never derive the rate and
- *         fell back to Torn\u2019s non-donator base of 180s a point. At a
- *         donator\u2019s 120s that is every inferred fill half again too long,
- *         and it read 13e where the honest answer was 19e.
- *
- *         And a zero-length streak rendered as "Bar has been full for READY",
- *         fmtCd(0) meeting a sentence it was never written for. No streak, no
- *         line.
-* 0.9.4 — Spent energy was measured as the drop between two readings, which
- *         loses every point that refilled behind a session. Train the bar away,
- *         come back an hour later, and the hour of regen made the session read
- *         an hour smaller than it was: 150e spent showed as 100e.
- *
- *         It is an energy balance now. Regen that did not land in the bar is
- *         the waste 0.9.2 started counting, so what remains is what the bar
- *         absorbed, and the rest of the balance is what left it. Above the cap
- *         Torn pauses regen entirely, so nothing is absorbed there and banking
- *         keeps the plain reading it always had.
- *
- *         Two consequences worth knowing. A window that ends HIGHER than it
- *         started can still book spending — twenty points arrive, ten are still
- *         in the bar, so ten were spent, where the old rule saw a rise and
- *         recorded nothing. And a can drunk below the cap has to be clamped:
- *         the balance reads it as negative spending, which would quietly
- *         subtract a hundred from the day.
-* 0.9.3 — The verdict never mentioned the cans you had already budgeted. At
- *         25/150 with four a day in the plan it said "Nothing. Bar isn\u2019t
- *         full. Xan isn\u2019t ready." and left you waiting four hours for
- *         energy you had decided to buy.
- *
- *         Both waiting branches now lead with the cans instead: what to drink,
- *         what it adds, and how many more trains that is. It counts only cans
- *         you actually hold, and stops at the booster ceiling.
- *
- *         How many is the interesting part. Not the whole day\u2019s budget —
- *         twelve cans at 25/150 would bank most of it above the cap, where
- *         natural regen is paused. It suggests just enough to FILL the bar,
- *         which splits a big budget across the day on its own: twelve a day
- *         comes out as three sessions of four without needing to model a
- *         session at all. The line says which, so "5 of the 12 a day you
- *         budget \u2014 the rest keep for later sessions".
- *
- *         A full bar gets no can advice at all; the answer there is to train.
- *         Holding none of what you budget says exactly that rather than
- *         suggesting a drink you cannot take.
-* 0.9.2 — Missed energy read 0 after a full bar had sat for hours. Waste was
- *         only booked when the window ENDED at the cap, so the commonest case
- *         there is went uncounted: the bar sits full, you train, and by the
- *         time the panel looks again it has started refilling \u2014 the
- *         reading is below the cap and every one of those hours was discarded.
- *         Three hours capped then a session read 0 missed; it now reads 310.
- *
- *         The window is accounted as time instead of as a snapshot of where it
- *         ended: climbing to the cap and climbing back after a spend are both
- *         absorbed, and whatever is left over is the bar sitting full with
- *         nowhere to put the regen. The refill leg assumes the spend emptied
- *         the bar \u2014 the most generous reading available \u2014 so the
- *         figure is a floor, never more waste than really happened.
- *
- *         Banking is untouched: above the cap regen is paused on purpose, and
- *         all eight of those cases still book nothing.
-* 0.9.1 — The settings wheel had become where the script kept its actual
- *         features. Seven cards behind an icon that reads as "preferences",
- *         and while you were in there no tab was lit, so it did not even look
- *         like a place you could be.
- *
- *         It is split by what the thing IS. Goals, energy sources and playstyle
- *         are what you DECIDE, and they move every projection in the script, so
- *         they are a visible Plan tab now, alongside Calibration and Worth it?.
- *         An API key and a raw perk dump are what you configure once; only
- *         those stay behind the cog.
- *
- *         A tab still needs a reason to be tapped, so the Now page carries one
- *         line saying what the plan is \u2014 "Defense \u2192 150,000,000 \u00b7
- *         switch in 5 days \u00b7 all goals 9.7 months" \u2014 which taps
- *         through to it. With nothing set it reads "No goals set \u2014 tap to
- *         plan your route", so the feature announces itself instead of waiting
- *         to be found.
- *
- *         The tab bar was a hardcoded three-column grid; a fourth tab wrapped
- *         into a clipped second row rather than fitting. It is four columns now
- *         and holds one row down to 360px.
-* 0.9.0 — Goals rotate, and you can say what comes first.
- *
- *         Setting a goal used to take the choice away: the plan ran one whole
- *         stat at a time, shortest first, and the manual pickers disappeared.
- *         With three 1b goals that means one stat climbing for six months while
- *         the other two sit still. Now an increment can be set \u2014 50m, 100m,
- *         250m or 500m \u2014 and each stat climbs to the next milestone in
- *         turn, so they rise together. A stat that is behind catches up on its
- *         own first: at 105m against 150m it takes one leg by itself, then all
- *         three rotate.
- *
- *         Rotation is free. A stat\u2019s gains depend only on its own value,
- *         so interleaving cannot change any stat\u2019s total training time \u2014
- *         you are choosing what stays balanced along the way, not paying for
- *         it. Making that true in the code meant counting TRAINS and dividing
- *         once at the end. The old maths walked whole days and rounded up at
- *         the end of every goal; with three goals that was invisible, but at
- *         50m increments it is 52 legs, and it would have reported 24 days of
- *         cost against a true cost of about 0.1.
- *
- *         The \u25b2 on each goal moves that stat earlier in the order, and the
- *         list is drawn in the order it will be trained so the move is visible.
- *         Untouched, the order is still shortest-first. The Trend chart draws
- *         the same schedule as a staircase, and "Worth it?" ranks purchases
- *         against the whole schedule rather than whichever leg is in progress
- *         \u2014 pricing cans against a ten-day milestone read as nonsense.
-* 0.8.1 — 149/150 read "capped \u00b7 regen paused, spend it", drew a full red
- *         bar, and told you to train immediately. None of that was true: regen
- *         was still running, and at 10e a train 149e is fourteen trains where
- *         150e is fifteen \u2014 so the advice was to throw a train away for
- *         the sake of thirty seconds. The cause was two points of slack in the
- *         definition of "full", inherited from the stable script and never
- *         explained, copied into six places. There is now one definition: full
- *         means at or above YOUR maximum. Below it you get "full in 30s" and
- *         are told to wait; the energy-full ping is armed again for the last
- *         two points, where it used to be silently skipped.
-* 0.8.0 — Projections correct themselves against what actually happened, and a
- *         "Worth it?" card ranks money against time.
- *
- *         Calibration keeps two figures apart rather than blending them. The
- *         GAIN MODEL is what you really gained divided by what the model
- *         predicted for the energy you really spent \u2014 does the arithmetic
- *         hold? USAGE is the energy that reached the gym as a share of the
- *         energy that passed through your bar \u2014 do you actually spend it?
- *         Goal ETAs multiply by both, so a bar left sitting full now shows up
- *         as days added to the goal instead of a number with no consequence.
- *         Measured over the last 14 complete days, using only days where a
- *         single stat moved; below seven such days it stays out of the way and
- *         says so. Usage is measured against energy you HAD, never against the
- *         size of your plan \u2014 measuring against the plan would drop usage
- *         by exactly the amount any new source added, so every "what if I
- *         bought this" answer came back as no change at all.
- *
- *         Worth it? asks what one more a day would buy you, for the goal you
- *         are training now. Prices are the cheapest live bazaar or item-market
- *         listing, so the ranking is by cost per day saved rather than by
- *         sticker price. A source too small to matter one at a time is quoted
- *         at the smallest count that does move the date, rather than silently
- *         vanishing. Refills are bought with points and Mc Smoogle is capital
- *         you keep, so neither is ranked as spend; Mc Smoogle gets its own line
- *         and its own smallest-number-of-increments answer.
- *
- *         Prices come from weav3r.dev, which mirrors both halves of the item
- *         market in one unauthenticated call, so this costs nothing from the
- *         100-a-minute key budget. What leaves the browser is an item ID. If
- *         that host is unreachable, Torn\u2019s own item market is tried next
- *         \u2014 one API call, and the bazaar half is lost.
-* 0.7.2 — The booster meter said "room for 0 more cans" at 46h 42m of a 48h
- *         cap. Torn only requires you to be UNDER the cap to drink, so a can
- *         can carry you past it \u2014 the headroom is rounded up now, not down.
- * 0.7.1 — The can list under Energy sources shows only cans you actually hold,
- *         read from your inventory rather than a fixed set of staples. A can
- *         you have already configured stays listed even at zero, so a setting
- *         cannot disappear and quietly change the projection.
- * 0.7.0 — Reads item counts from the item page instead of waiting on the API,
- *         which Torn caches for minutes \u2014 drink a can and the old number
- *         lingered. Visiting the item page now records what is actually there,
- *         and those counts are used while they are newer than the API reading,
- *         which takes over again once Torn catches up.
- * 0.6.1 — Sessions logged the energy spent but no stat gain. Energy moves the
- *         instant you train, while Torn caches battle stats for up to about
- *         thirty seconds \u2014 and the entry was written two seconds later, so
- *         the stats had not moved yet and every gain read as nothing. It now
- *         waits for the stats to actually change before writing, and records
- *         the session without a gain rather than losing it if they never do.
- * 0.6.0 — Whole training sessions were missing from the log. It was driven by
- *         comparing energy between API polls, but the page updates energy live
- *         every second, so the drop was absorbed before a payload arrived and
- *         nothing was recorded \u2014 which is why "Spent today" was right while
- *         the log stayed empty. The log is now driven by the same observation
- *         the ledger uses, so it catches training started any way at all, not
- *         only a click the script recognises. An observed drop still has to be
- *         backed by a real stat gain before it becomes an entry.
- * 0.5.6 — Mc Smoogle Corp added as an energy source: 100 energy every 7 days
- *         per increment, so about 14 a day each. Counted in increments rather
- *         than shares, because the share threshold moves with the price. Torn
- *         does not expose stock benefits through the perks API, so this cannot
- *         be detected \u2014 tick it and set how many increments you hold. The
- *         daily total also sums whatever sources exist now rather than a fixed
- *         list, which had silently excluded anything added later.
- * 0.5.5 — Phantom "Trained 5e" entries. There are two train loggers and 0.3.3
- *         only fixed one: a second, poll-driven logger compared energy between
- *         API readings, but energy is updated live from the page while the API
- *         lags, so a stale poll a few points lower looked like a small session.
- *         It now requires the stat to have actually gone up \u2014 a real train
- *         always raises the stat, a stale reading does not \u2014 stands down
- *         while a click-driven train is being measured, and attributes the gain
- *         to the stat that moved instead of the total of all four, which is
- *         where "+1,685,994,823" for a 250e session came from.
- * 0.5.4 — Restores WAIT_FULL_MAX, a constant an earlier edit deleted. Four
- *         places used it, so the panel threw and drew nothing as soon as the
- *         coach reached a "wait for a full bar" branch. node --check cannot see
- *         a missing variable, so the build now scans for identifiers that are
- *         used but never declared.
- * 0.5.3 — A failure while drawing the panel used to leave an empty box: the
- *         element exists and is styled, so it looks like the script is fine and
- *         has nothing to say. The draw is wrapped now, and a failure shows the
- *         message and stack in the panel itself, with a retry button.
- * 0.5.2 — Set gains a "Perks Torn sent" card listing every perk line from all
- *         nine sources, ticking the ones the script is actually using. A perk
- *         it ignores can then be named rather than guessed at \u2014 which is
- *         what it took to work out that education perks omit the word "gym".
- * 0.5.1 — Off the Now tab, the verdict and energy meter collapse into a single
- *         tappable line, giving Stock and Trend roughly a third more room. The
- *         line still carries the verdict and your energy, and tapping it goes
- *         back to Now.
- * 0.5.0 — Goals. Set a target on any stat — type a number or shorthand like
- *         150m — and the coach works out how long each takes at your energy,
- *         gym, happy and perks, then trains them one at a time. Shortest goal
- *         first: the total is the same whatever the order, so this finishes
- *         something soonest. The Trend chart becomes the schedule, each stat
- *         climbing only in its own window and flattening at its target before
- *         the next one starts. The manual priority and second-skill pickers are
- *         still there, and take over whenever no goal is set.
- * 0.4.0 — The projection chart showed all four stats climbing, including ones
- *         you never train. It was drawing four separate "what if all your
- *         energy went here" lines, which reads as a forecast. Only the stat you
- *         train grows now; the rest stay flat. Gym perks from education,
- *         property, merit, stock and enhancers were also being dropped whenever
- *         the perk text did not contain the word "gym" — education perks
- *         usually read "+ 1%% strength gain" — so the filter is widened,
- *         with drink, happy, nerve and crime perks explicitly excluded. The
- *         perks card now lists every source that contributed and the exact line
- *         it counted, so a multiplier that looks wrong can be traced.
- * 0.3.10 — Missed energy is floored rather than rounded. Regen arrives in whole
- *          points, so half a point at the cap has cost you nothing yet, and
- *          rounding meant ninety seconds at a full bar reported "1 missed" \u2014
- *          which reads as a mistake you did not make. The fraction is still
- *          accumulated, it is just not claimed until a whole point is gone.
- * 0.3.9 — Banking energy above the cap is no longer counted as missed. Regen
- *         does pause above the cap, and the old rule counted that as waste \u2014
- *         so drinking ten cans past 150 booked the whole stockpiling session,
- *         and every hour spent working through banked energy, as energy you had
- *         let slip. Missed now means only what it should: the bar sat AT the
- *         cap and regen fell on the floor.
- * 0.3.8 — The booster cooldown has left the 12-hour rail and has its own meter.
- *         A 28h cooldown filled a 12h rail completely and read as "maxed" when
- *         it was little over half of a 48h ceiling. The rail is a time window,
- *         and the booster is not a wait but a budget with a cap, so it now
- *         shows how much of the ceiling is used and how many more cans fit
- *         under it. Also ports the Caffeine Consumption event from the Drink
- *         Gains script: while it runs, every can is worth double, read from
- *         Torn\u2019s calendar and cached for 12 hours.
- * 0.3.7 — Every can now has its real value, taken from the Drink Gains script
- *         (torn-can-energy 1.2.2) rather than guessed: Goose Juice 5, Damp
- *         Valley 10, Crocozade 15, Munster and Santa Shooters 20, Red Cow and
- *         Rockstar Rudolph 25, Taurine Elite and X-MASS 30 — matched on
- *         item id first, since names drift with events. Values are also
- *         perk-adjusted: books and faction, job or company perks that raise
- *         energy-drink or consumable gain are read from your perks and applied,
- *         so what is shown is what YOU get, and the projections follow. The
- *         source filters now list the cans you actually hold, so a seasonal can
- *         can be ticked instead of being unrepresentable.
- * 0.3.6 — Energy drinks are their own section rather than a sub-list tucked
- *         under an unrelated row, and the rows finally have styles: five CSS
- *         blocks added in earlier versions never actually landed (the string
- *         they anchored to did not exist, and only the markup edit beside them
- *         was asserted), so the drink rows and the Set-pane tick boxes were
- *         rendering unstyled. The tick box also shared a class name with the
- *         energy bar's 1px tick marks and was being styled as one.
- * 0.3.5 — The energy-drink line expands into the cans you actually hold, each
- *         with its own USE button, strongest first. Munster, Red Cow and
- *         Taurine show their energy; anything else is listed by name and count
- *         rather than assigned a figure that would be a guess. Also: the
- *         booster ceiling is no longer hardcoded to 24h. The faction perk
- *         raises it to 48h, detected from your perks and also inferred from
- *         the bar itself \u2014 a cooldown above 24h cannot exist without the
- *         perk, so seeing one proves it. Before this the coach told you to
- *         hold cans you could still use.
- * 0.3.4 — "Spent today" was losing nearly everything. The ledger only wrote
- *         itself to storage after 20 credited events, but a whole training
- *         session credits exactly ONCE — so every session was discarded when
- *         the page navigated, and the figure was whatever single window
- *         happened to survive. Spending is now written through immediately,
- *         the rest flushes on a 15-second clock instead of a counter, and the
- *         ledger is saved on pagehide and when the tab is hidden.
- * 0.3.3 — The train log reported the wrong number. It printed state.energy at
- *         the moment of the click — your remaining balance — labelled as if it
- *         were what the session cost, so a 150e session showed "150e" only by
- *         coincidence and a click on an empty bar logged "0e". It now records
- *         the energy actually spent and the stat actually gained, measured
- *         after the refresh, and a click that trained nothing writes no line.
- * 0.3.2 — War stack and the 10-star bonus switched themselves ON at every
- *         reload: Torn PDA returns stored values as STRINGS, and !!"false" is
- *         true. Booleans are now parsed rather than coerced, which also fixes
- *         the panel ignoring whether you had tucked it away. The 10-star Adult
- *         Novelties switch is gone \u2014 it is read from your perks and listed
- *         with the faction and company lines under Gym perks. Energy sources
- *         became tick boxes, with each can listed separately because Munster,
- *         Red Cow and Taurine are +20, +25 and +30. And a plain-English pass
- *         over the coach: no more "CD pops" or "dump Strength" \u2014 it says
- *         "cooldown reaches 0" and "train Strength".
- * 0.3.1 — Fixes waking up to a full bar and being told it had been full for a
- *         second. At boot state.energy is 0 meaning "not read yet", not "empty",
- *         but the ledger tick ran anyway: it cleared the overnight cap streak
- *         and booked a phantom spend of the whole bar. The ledger now waits for
- *         a real reading from the API or the page. The streak also falls back to
- *         the last stored reading when it was already full, so an upgrade or a
- *         cold start still reports the hours rather than starting from zero.
- * 0.3.0 — Two changes. The floating badge is gone: it duplicated the in-gym
- *         "GYM COACH" button and sat over Torn's chrome, so the panel now
- *         opens from the gym page only. And the script keeps an energy ledger
- *         \u2014 what you spent against what your bar dropped while already full.
- *         Waste is worked out by comparing two observations rather than by
- *         running a timer, so eight hours asleep on a full bar is counted, not
- *         missed. The Now tab shows the live figure ("full for 2h 04m, that is
- *         41e you did not get"); the Trend tab charts spent vs missed per day.
- * 0.2.5 — Badge is circular, and the three tab blocks became one segmented
- *         control: a single bordered track with the selected tab as an amber
- *         pill inside it. Reads as one switch rather than three buttons
- *         competing for attention, and gives the amber back to the verdict.
- * 0.2.4 — THE FIX for the script never running under Torn PDA. Line 903 held
- *         a curly apostrophe inside a SINGLE-quoted string:
- *         return \'<span class="chip bad">DON\u2019T</span>\';
- *         GMforPDA normalises typographic quotes to straight ASCII when it
- *         processes the source, which closed the string at DON\' and left T as
- *         a stray token: "SyntaxError: Unexpected identifier \'T\'. Expected a
- *         \';\' following a return statement." The file never parsed, so nothing
- *         ran at all — no button, no error anywhere visible. Only PDA rewrites
- *         the source, hence it worked in Safari and Tampermonkey. All curly
- *         quotes in code are now \\u escapes, so no quote character exists in
- *         the source to normalise. Caught by gym-diag, which registered an
- *         error handler and reported the exception off the device.
- * 0.2.3 — Reverts the @grant unsafeWindow added in the previous version. It was
- *         a guess, and bisection probes carrying it stopped running under PDA
- *         entirely, while the same header without it runs. The body references
- *         unsafeWindow only behind typeof guards, so the grant bought nothing.
- * 0.2.2 — REVERTED in the next version: declared @grant unsafeWindow. The body references unsafeWindow five
- *         times (guarded PDA-detection fallbacks) but the header never granted
- *         it. Torn PDA would not run the file at all in that state — no button,
- *         no error, dead before the first statement — while Safari and
- *         Tampermonkey ran it fine. FactionOps uses unsafeWindow and grants it,
- *         and works under PDA; that was the difference.
- * 0.2.1 — Fixes the script never running under Torn PDA at all. The file
- *         carried the API-key placeholder TWICE: the real one, and a decoy
- *         split across two string literals on the line above, used to detect
- *         whether PDA had substituted a key. PDA rewrites that placeholder by
- *         matching the source text before it injects, and a greedy match spans
- *         from the decoy to the real one, deleting the code between and leaving
- *         an unbalanced bracket. The file then fails to parse, so nothing runs:
- *         no button, no error, nothing in the console. Only PDA rewrites the
- *         source, which is why it worked in Safari and Tampermonkey. There is
- *         now exactly one placeholder, single-quoted, as in the scripts known
- *         to work under PDA; substitution is detected from the value itself.
- * 0.2.0 — Badge code rewritten. It is a real <button> styled by one
- *         setAttribute call instead of a <div> with twenty-one
- *         style.setProperty calls — a rejected value used to leave it
- *         half-styled with no error. Taps go through the browser's own click
- *         handling, so the touchend dedupe that could swallow the first tap is
- *         gone. Mounting now re-checks for ~20 seconds instead of stopping at
- *         the first success, so a late gym render still gets a badge.
- * 0.1.10 — Removed the diagnostic beacon and its @connect entry. It reported
- *          version and mount state to tornwar.com to work out why the script
- *          was not running; the script makes no request anywhere but the Torn
- *          API now.
- * 0.1.9 — @updateURL pointed at the .meta.js, which is 950 bytes of pure
- *         comments. A runtime that installs whatever @updateURL returns as the
- *         script body — Torn PDA behaves this way, and warboard-iOS did the
- *         same until 0.11.223 — ends up with an inert script that still lists
- *         the right version. No badge, no error, nothing. It now points at the
- *         .user.js, which is what the upstream PDA build always did.
- * 0.1.8 — Temporary boot beacon, to tell "not installed" apart from "installed
- *         but old" apart from "running and invisible" \u2014 they look the same
- *         from outside. Reports version, path and capability flags only.
- * 0.1.7 — The beta was invisible on PDA whenever the stable script was also
- *         installed, in two ways. The badge on PDA next to the stable script. Both
- *         pin themselves with !important to the same corner at the same size in
- *         the same green reading "GYM", so they overlapped exactly and only the
- *         top one could be tapped. The beta badge now sits a badge-height above,
- *         is amber, and reads BETA; the in-gym dock button is likewise labelled
- *         and coloured apart. Both panels also claim the maximum z-index, so
- *         the beta now re-appends itself when opened, which is the only way to
- *         come in front of a panel that cannot be outranked.
- * 0.1.6 — Centred the owner line.
- * 0.1.5 — Owner line is just the name and ID now; the licence sentence and the
- *         built-for credit live in the script header, which is where anyone
- *         checking provenance looks anyway.
- * 0.1.4 — Dropped the footer. Its Tuck Away button duplicated the header\u2019s
- *         minimise and its timestamp duplicated the header\u2019s, so it was ~57px
- *         of the scrolling area spent on nothing. The header timestamp now
- *         carries the .gc-ago hook so the once-a-second ticker keeps it live.
- * 0.1.3 — Energy read wrong once you banked past the cap. The meter clamped
- *         to the maximum, so a real 194/150 showed as 150/150 and the train
- *         count lost four goes; it now shows the true figure with the overflow
- *         drawn past a cap marker. "Full in" was also stale: the API's fulltime
- *         is measured at the energy it was polled at and never ticked down, so
- *         after a xanax it counted toward a level already passed. It is now a
- *         per-point rate derived from that same payload, applied to live energy,
- *         and it reads zero at or above the cap.
- * 0.1.2 — The tab buttons sat on a dark plate: the stable stylesheet paints
- *         .tabs itself, and the beta override only replaced its layout. Reset
- *         its background, radius and margin. The scrolling area was also being
- *         starved by the pinned header — the 12-hour rail moved into the Now
- *         tab (it is Now information, and it cost ~90px on tabs it says nothing
- *         about), the verdict and meters tightened, and the panel grew to 92dvh.
- *         The content area went from about an eighth of the panel to nearly half.
- * 0.1.1 — Seeds history and coach settings from the stable script on first
- *         run, so Trend is not blank beside a stable copy holding weeks of it.
- *         Renamed the in-gym dock button and the DOM-observer flag, which both
- *         scripts were still fighting over.
- * 0.1.0 — First beta of the redesigned overlay, forked from stable 0.10.7.
- *         The verdict is a header, not a tab: what to do next, why, and the
- *         energy and cooldown state behind it are all above the tab bar. Six
- *         tabs became three — Now (steps, live stats, perks), Stock (items),
- *         Trend (chart, projection, log) — with settings behind the cog. Adds
- *         an energy bar ticked per train and a 12-hour cooldown rail. Reads
- *         the stable script's saved API key but never writes to its settings.
- */
 
 (function () {
   "use strict";
@@ -2106,7 +66,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.9.85";
+  var GC_VERSION = "0.12.17";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -2575,9 +535,17 @@
     energy: 0,
     energyMax: 150,
     energyFulltime: 0,
+    // The fill moment the pending notification is scheduled for.
+    armedFullAt: 0,
     energySecPerE: 0,
     lastSeen: null,
     energyKnown: false,
+    // Last calibration values that actually qualified, so a failed quorum
+    // degrades to a stale number instead of silently becoming 1.0.
+    calLast: {},
+    // Longest gap between training sessions, in hours. 0 = not set, and the
+    // estimate stays out of the way entirely.
+    gapHours: 0,
     ledger: [],
     prices: {},
     gymsOwned: [],
@@ -2645,7 +613,6 @@
   // What is currently typed into the paste box. renderPanel() rebuilds the
   // panel's markup on every poll tick, so anything in an unbacked field is gone
   // a second after it is pasted.
-  var draftPaste = "";
   var keyBoxFocused = false;
 
   function pdaGlobal(name) {
@@ -3744,6 +1711,12 @@
       state.energyMax = d.max;
       changed = true;
     }
+    // Re-arm on a LOCAL change, not only after an API refresh. This is the path
+    // that sees you train: the bar drops here, the fill moment moves out by the
+    // energy just spent, and until now the already-scheduled notification kept
+    // pointing at the old one. The drift guard in armNotifications stops this
+    // re-scheduling on every regen tick.
+    if (changed) { try { armNotifications(); } catch (_) {} }
     return changed;
   }
 
@@ -4071,6 +2044,38 @@
     );
   }
 
+/**
+ * What a train at `happy` gives up against the same train at `happyMax`.
+ *
+ * Pure, and takes everything explicitly, because the interesting cases are the
+ * ones state rarely holds: happy already at max, a gym that cannot train the
+ * stat, a stat of zero on a fresh account.
+ *
+ * Compounding across a stack is deliberately NOT modelled: each train raises
+ * the stat a little, so the real loss over 250 energy is marginally larger than
+ * this. Understating it is the safe direction for a number meant to prompt a
+ * decision.
+ */
+  function happyLoss(stat, happy, happyMax, dots, energyP, perk, typ) {
+    if (!stat || !dots || !energyP) return null;
+    var h = Number(happy) || 0;
+    var hm = Number(happyMax) || 0;
+    if (!hm || h >= hm) return null;
+    var now = gainOne(stat, h, dots, energyP, perk || 1, typ);
+    var full = gainOne(stat, hm, dots, energyP, perk || 1, typ);
+    if (!(full > now)) return null;
+    return {
+      now: now,
+      full: full,
+      lost: full - now,
+      // Of the gain you WOULD have had. "You are getting 71% of the train" is
+      // the number that means something, not happy as a percentage of its cap.
+      keptPct: now / full,
+      happy: h,
+      happyMax: hm,
+    };
+  }
+
   function projectDays(days, energyPerDay, typ) {
     var stat = state.stats[typ] || 0;
     if (!stat) return 0;
@@ -4246,7 +2251,8 @@
   }
 
   function calibration() {
-    var out = { ok: false, days: 0, looked: 0, model: 1, usage: 1,
+    var out = { ok: false, modelOk: false, usageOk: false,
+                days: 0, looked: 0, model: 1, usage: 1,
                 actual: 0, predicted: 0, used: 0, wasted: 0, off: 0, uDays: 0,
                 // How many of the measured days needed the log's per-stat
                 // split. Shown, because a day measured that way rests on one
@@ -4307,14 +2313,20 @@
       // a measured one, never a measured day into a wrong one.
       var split = mixedDayEnergy(byStat[d], moved.map(function (m) { return m.k; }), e);
       if (!split) continue;
-      var pSum = 0, gSum = 0, bad = false;
+      // Only the stats the log actually has energy for. A stat that moved
+      // without gym energy behind it (attacked up mid-war) is excluded from
+      // BOTH sides -- counting its gain against a prediction that never
+      // included it would read as the model under-predicting.
+      var pSum = 0, gSum = 0, bad = false, counted = 0;
       moved.forEach(function (m) {
+        if (!(split[m.k] > 0)) return;
         var pm = predictDay(m.from, split[m.k], m.k, state.gymName);
         if (!(pm > 0)) { bad = true; return; }
         pSum += pm;
         gSum += m.g;
+        counted += 1;
       });
-      if (bad || !(pSum > 0)) continue;
+      if (bad || !counted || !(pSum > 0)) continue;
       out.actual += gSum;
       out.predicted += pSum;
       out.days += 1;
@@ -4333,21 +2345,92 @@
       out.off += byDay[d].off || 0;
     }
 
-    if (out.days < CAL_MIN_DAYS) {
-      out.reason = out.days + " of " + CAL_MIN_DAYS + " days measured";
-      return out;
-    }
-    if (!(out.predicted > 0) || !(out.used + out.wasted + out.off > 0)) {
-      out.reason = "not enough recorded energy yet";
-      return out;
-    }
-    out.model = calClamp(out.actual / out.predicted, CAL_MODEL_LO, CAL_MODEL_HI);
+    // The two factors are gated SEPARATELY, and this is the whole point.
+    //
+    // `model` asks "is the gain arithmetic right?", so it needs days where a
+    // stat actually moved. `usage` asks "do you spend what you generate?", and
+    // the ledger answers that on every day the script ran -- including war
+    // days, stack days and days you never touched the gym, which are exactly
+    // the days it most wants to see.
+    //
+    // Gating them together meant a war week, which deletes GAIN days, also
+    // threw away a SPEND measurement that was sitting right there in a full
+    // 14-day ledger. The card went dark all at once instead of keeping the
+    // half it still knew.
+    var spend = out.used + out.wasted + out.off;
+    out.modelOk = out.days >= CAL_MIN_DAYS && out.predicted > 0;
+    out.usageOk = out.uDays >= CAL_MIN_DAYS && spend > 0;
+
+    if (out.modelOk) out.model = calClamp(out.actual / out.predicted, CAL_MODEL_LO, CAL_MODEL_HI);
     // Energy spent attacking counts against you here exactly like a full bar:
     // it is energy that did not reach the gym, and a gym ETA built as though it
     // had is optimistic on precisely the days you warred hardest.
-    out.usage = calClamp(out.used / (out.used + out.wasted + out.off), CAL_USAGE_LO, CAL_USAGE_HI);
-    out.ok = true;
+    if (out.usageOk) out.usage = calClamp(out.used / (out.used + out.wasted + out.off), CAL_USAGE_LO, CAL_USAGE_HI);
+
+    calRemember(out, today);
+
+    // Lowest-priority stand-in, and only ever for `usage`. A gap length says
+    // nothing about whether the gain arithmetic is right, so it can never
+    // substitute for `model`.
+    //
+    // Order is strict: a figure measured this window wins, then a measured
+    // one that has gone stale, then this estimate. A guess never displaces
+    // real data — it only fills the hole left when the ledger cannot answer,
+    // which is the first week after install, a Limited key whose gym log is
+    // empty, or training on a device that is not the one reading this.
+    if (!out.usageOk && !out.usageHeld) {
+      var gl = gapLoss();
+      if (gl && gl.pct < 1) {
+        out.usage = calClamp(gl.pct, CAL_USAGE_LO, CAL_USAGE_HI);
+        out.usageEst = true;
+        out.usageEstLost = gl.lost;
+      }
+    }
+
+    // `ok` keeps its old meaning -- both factors live and freshly measured --
+    // because callers that show "calibrated" wording still mean that.
+    out.ok = out.modelOk && out.usageOk;
+    if (!out.modelOk) out.reason = out.days + " of " + CAL_MIN_DAYS + " days measured";
+    else if (!out.usageOk) out.reason = "not enough recorded energy yet";
     return out;
+  }
+
+  // Calibration is recomputed from scratch on every render and never stored,
+  // so a factor that stops qualifying used to snap back to a flat 1 -- the
+  // "it reset itself" the user sees. Nothing was ever erased; the quorum just
+  // failed. So: keep the last value that DID qualify and keep using it,
+  // labelled with its age. Stale and honest beats silently pretending the
+  // correction is 1.0.
+  function calRemember(out, today) {
+    var mem = state.calLast || {};
+    var dirty = false;
+
+    function keep(name, dayCount) {
+      if (out[name + "Ok"]) {
+        var prev = mem[name];
+        // Written at most once a day, or when the value really moves. This
+        // runs inside render(); it must not touch storage on every paint.
+        if (!prev || prev.at !== today || Math.abs(prev.v - out[name]) > 0.005) {
+          mem[name] = { v: out[name], at: today, days: dayCount };
+          dirty = true;
+        }
+        return;
+      }
+      var held = mem[name];
+      if (!held || !(held.v > 0)) return;
+      out[name] = held.v;
+      out[name + "Stale"] = Math.max(0, today - held.at);
+      out[name + "Held"] = true;
+      out[name + "HeldDays"] = held.days || 0;
+    }
+
+    keep("model", out.days);
+    keep("usage", out.uDays);
+
+    if (dirty) {
+      state.calLast = mem;
+      storeSet("calLast", mem);
+    }
   }
 
   // --- schedule --------------------------------------------------------------
@@ -4377,9 +2460,79 @@
     return Number((gym || gymFor())[{ str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[k]]) || 0;
   }
 
+  var STAT_LABEL = { str: "Strength", spe: "Speed", def: "Defense", dex: "Dexterity" };
+
+  /**
+   * Why a goal has no finish date, in the planner's own numbers.
+   *
+   * Four rounds of inference from screenshots produced four wrong answers,
+   * because the three inputs that decide it — the milestone list, the share
+   * ceiling at each milestone, and the gain per train — are none of them on
+   * screen. This prints them. Off unless the owner turns it on.
+   */
+  function diagFor(k, cur, target, plan) {
+    try {
+      var g = gymFor();
+      var dots = dotsFor(k, g);
+      var sh = state.shares || null, maxShare = 0;
+      if (sh) HIST_KEYS.forEach(function (x) { if ((sh[x] || 0) > maxShare) maxShare = sh[x] || 0; });
+      var targets = {};
+      HIST_KEYS.forEach(function (x) { targets[x] = Number((state.goals || {})[x]) || 0; });
+      var levels = goalLevels(Number(state.goalStep) || 0, targets);
+      var mf = (plan.cal && plan.cal.ok) ? plan.cal.model : 1;
+      var per = dots ? gainOne(cur, state.happyMax || state.happy || 5000, dots,
+                               g.Energy || 25, (state.perks && state.perks[k]) || 1, k) * mf : 0;
+      var lines = levels.slice(0, 8).map(function (L) {
+        var cap = shareCap(k, L, targets[k], sh, maxShare);
+        var lc = lockCap(state.stats || {}, state.gymLock || "", k);
+        if (lc < cap) cap = lc;
+        return "L" + Math.round(L / 1000) + "k cap " + Math.round(cap / 1000) + "k"
+          + (cur >= cap ? " SKIP" : " ok");
+      });
+      return "gym " + (g.Gym || "?") + " dots " + dots
+        + " | perk " + (((state.perks || {})[k]) || 1)
+        + " | mf " + mf.toFixed(3)
+        + " | gain/train " + (per >= 1 ? Math.round(per) : per.toFixed(3))
+        + " | need " + Math.round(target - cur).toLocaleString()
+        + " | step " + (Number(state.goalStep) || 0)
+        + " | book " + (pendingBookAward(k) || 0)
+        + " | lock " + (state.gymLock || "none")
+        + " | levels: " + lines.join(", ");
+    } catch (e) { return "diag failed: " + e.message; }
+  }
+
+  /**
+   * The best gym you OWN for one stat, or null if none of them trains it.
+   *
+   * Only the dots decide: gain is dots x energyPerTrain and a fixed bar buys
+   * bar/energyPerTrain trains, so the energy term cancels — the same
+   * reasoning betterGym() already carries. A gym you have locked yourself to
+   * is honoured, because the plan does not get to send you somewhere you have
+   * said you are not going.
+   */
+  function bestOwnedGymFor(k) {
+    if (state.gymLock) return null;
+    var owned = state.gymsOwned;
+    if (!owned || !owned.length) return null;
+    var DOT = { str: "Str", def: "Def", spe: "Spe", dex: "Dex" }[k];
+    var best = null, bd = 0;
+    owned.forEach(function (i) {
+      var g = GYMS[i];
+      if (!g) return;
+      var d = Number(g[DOT]) || 0;
+      if (d <= 0) return;
+      if (d > bd || (d === bd && (Number(g.Energy) || 25) < (Number(best.Energy) || 25))) {
+        best = g; bd = d;
+      }
+    });
+    return best;
+  }
+
   // Trains to take a stat from one value to another, and where it lands.
-  function trainsTo(k, from, to, mf) {
-    var gym = gymFor();
+  // `atGym` prices the leg somewhere other than the gym you are standing in,
+  // which is how a stat this gym cannot train still gets an ETA.
+  function trainsTo(k, from, to, mf, atGym) {
+    var gym = atGym || gymFor();
     var dots = dotsFor(k, gym);
     if (!dots || !(to > from)) return null;
     var energyP = gym.Energy || 25;
@@ -4582,6 +2735,40 @@
         simStats[k] = r.end;
       });
     });
+
+    // Final sweep, uncapped by the share ratio.
+    //
+    // shareCap is a PACING device: it holds a stat to `milestone x its share
+    // / the largest share` so the ratios converge as the plan runs. It was
+    // also, accidentally, a CEILING. A stat sitting ahead of its ratio has
+    // that cap below its own current value at EVERY milestone — the best it
+    // ever reaches is maxTarget x share/maxShare — so it was skipped every
+    // time, produced no segment, and the row reported "not reachable at this
+    // rate" for a goal that was perfectly reachable.
+    //
+    // Reported by Eddie877 [2693357], who also found the trigger: raising his
+    // total goal made it reappear. That lifts every milestone, which lifts the
+    // ceiling clear of him. He never hit the stat's own goal, which is why it
+    // never made sense as a completion.
+    //
+    // Pacing still applies above — this only runs once the ratio-paced levels
+    // are exhausted, so a stat ahead of its share is scheduled LAST, which is
+    // what waiting for the others to catch up should look like. The gym lock
+    // is a real ceiling and is still honoured.
+    keys.forEach(function (k) {
+      if (cur[k] >= targets[k]) return;
+      var lc2 = lockCap(simStats, lock, k);
+      var cap2 = Math.min(targets[k], lc2);
+      if (cur[k] >= cap2) return;
+      var r2 = trainsTo(k, cur[k], cap2, mf);
+      if (!r2 || !r2.trains) return;
+      segs.push({ k: k, from: cur[k], to: r2.end, cap: cap2, target: targets[k],
+                  trains: r2.trains, at: at, lockCap: lc2 });
+      at += r2.trains;
+      cur[k] = r2.end;
+      simStats[k] = r2.end;
+    });
+
     return segs;
   }
 
@@ -4614,7 +2801,13 @@
     if (!est || !est.gym) return "";
 
     var cal = calibration();
-    var eff = dailyEnergy().total * (cal.ok ? cal.usage : 1);
+    // cal.usage directly, NOT behind cal.ok. `ok` means both factors
+    // qualified, so gating usage on it re-coupled what 0.12.12 split apart:
+    // a war week kills the gain days, cal.ok goes false, and the spend
+    // measurement sitting in a full ledger stops being applied. The field is
+    // 1 when unknown and the last measured value when stale, so it is always
+    // safe to multiply by.
+    var eff = dailyEnergy().total * cal.usage;
     var days = eff > 0 ? Math.ceil(est.remainMax / eff) : 0;
     var perk = state.gymExpMult > 1
       ? ' · ' + perkPct(state.gymExpMult) + ' gym exp applied'
@@ -4641,7 +2834,8 @@
     // The plan's energy is what you INTEND to spend. The usage factor turns it
     // into what you have actually been spending, which is what an honest ETA
     // has to be built on.
-    var eff = cal.ok ? e * cal.usage : e;
+    // Direct, not behind cal.ok — see the note in unlockHtml.
+    var eff = e * cal.usage;
     var st = state.stats || {};
     var g = state.goals || {};
     // Perks and shares BELONG in this key. Both decide the rotation order, and
@@ -4745,14 +2939,16 @@
   }
 
   // --- prices and value ------------------------------------------------------
-  // Ranking money against time needs a price, and the price that matters is the
-  // cheapest one you can actually buy at. weav3r.dev mirrors both halves of the
-  // item market in one unauthenticated call — the market price AND live bazaar
-  // listings — so this costs nothing from Torn's 100-a-minute budget. Torn's own
-  // item market is the fallback if that host is unreachable: one API call, and
-  // the bazaar half is lost.
+  // Ranking money against time needs a price. It comes from Torn's own item
+  // market (v2 /market/{id}/itemmarket, cheapest listing) and from nowhere
+  // else: this script's only outbound host is api.torn.com. Bazaars often run a
+  // few percent under the item market, but Torn's API exposes no bazaar prices
+  // (its bazaar endpoint lists which bazaars stock an item, not what they
+  // charge), and the third-party mirror that did carry them was one more host
+  // seeing your lookups. The figures feed a RANKING, so a few percent applied
+  // to every item alike barely moves it. Cached six hours: at most one call per
+  // item per six hours, and none at all without a goal to shorten.
   var PRICE_TTL = 6 * 3600 * 1000;
-  var PRICE_HOST = "https://weav3r.dev/api/marketplace/";
   var XAN_ID = 206, FHC_ID = 367;
 
   function canIdFor(k) {
@@ -4776,23 +2972,6 @@
   function priceStale(id) {
     var p = state.prices[String(id)];
     return !p || !(p.at > Date.now() - PRICE_TTL);
-  }
-
-  // Cheapest of every live bazaar listing and the item-market price. A zero or a
-  // missing array means "no price known", never "free" — item pages with no
-  // listings answer exactly that way.
-  function parseWeav3r(d) {
-    if (!d || typeof d !== "object") return 0;
-    var best = 0;
-    if (Array.isArray(d.listings)) {
-      d.listings.forEach(function (l) {
-        var v = Number(l && l.price) || 0;
-        if (v > 0 && (!best || v < best)) best = v;
-      });
-    }
-    var mk = Number(d.market_price) || 0;
-    if (mk > 0 && (!best || mk < best)) best = mk;
-    return best;
   }
 
   // Torn has answered item-market listings in more than one shape across v1 and
@@ -4820,20 +2999,12 @@
   var pricesInFlight = 0;
 
   function fetchPrice(id) {
-    return httpGet(PRICE_HOST + id + "?limit=5").then(function (d) {
-      var p = parseWeav3r(d);
-      if (p > 0) return setPrice(id, p, "bazaar");
-      throw new Error("no listing");
-    }).catch(function () {
-      // weav3r unreachable or silent: fall back to Torn's own item market. Costs
-      // one call from the key budget, which is why it is not the first choice.
-      var key = resolveKey();
-      if (!key) return false;
-      return httpGet("https://api.torn.com/market/" + id + "?selections=itemmarket&key=" +
-                     encodeURIComponent(key) + "&comment=" + encodeURIComponent(COMMENT))
-        .then(function (d2) { return setPrice(id, parseTornMarket(d2), "market"); })
-        .catch(function () { return false; });
-    });
+    var key = resolveKey();
+    if (!key) return Promise.resolve(false);
+    return httpGet("https://api.torn.com/v2/market/" + id + "/itemmarket?limit=5&key=" +
+                   encodeURIComponent(key) + "&comment=" + encodeURIComponent(COMMENT))
+      .then(function (d) { return setPrice(id, parseTornMarket(d), "market"); })
+      .catch(function () { return false; });
   }
 
   function refreshPrices() {
@@ -4909,7 +3080,7 @@
     valueCandidates().forEach(function (c) {
       // The added energy goes through the same usage factor the baseline did,
       // or the two ETAs are not measured the same way and the diff is fiction.
-      var per = c.e * (cal && cal.ok ? cal.usage : 1);
+      var per = c.e * (cal ? cal.usage : 1);
       var room = c.room != null ? c.room : Infinity;
       var steps = (base <= VALUE_STEP_MAX_DAYS ? VALUE_STEPS : [1])
         .filter(function (n) { return n <= room; });
@@ -4961,7 +3132,7 @@
     // gets the same smallest-count-that-matters treatment as the consumables —
     // but it is capital you keep, not money you spend, so it is not ranked
     // alongside them.
-    var mcsPer = (100 / 7) * (cal && cal.ok ? cal.usage : 1);
+    var mcsPer = (100 / 7) * (cal ? cal.usage : 1);
     var mcs = { n: 0, days: base, saved: 0 };
     for (var mi = 1; mi <= MCS_MAX_EXTRA; mi++) {
       var md = scheduleDays(plan.totalTrains, (plan.energy || 0) + mcsPer * mi);
@@ -5138,6 +3309,38 @@
       // chance to derive the real one.
       storeSet("focus", k);
     }
+  }
+
+  // What a long gap between sessions actually costs, for people whose ledger
+  // cannot measure it yet.
+  //
+  // The loss is NOT proportional to time away. Energy caps, so a gap only
+  // costs you the part that overflows: at 120s/e a 150 bar refills in five
+  // hours, and a five-hour night costs nothing at all. An eight-hour night
+  // costs the three hours past the cap, about 90e — not eight hours of regen.
+  //
+  // Only the longest gap is charged. Shorter gaps in a waking day rarely
+  // reach the cap, and charging every gap would double-count the same bar.
+  //
+  // Returns null when there is nothing to say: no gap set, or a gap short
+  // enough that the bar never fills.
+  function gapLoss() {
+    var hours = Number(state.gapHours) || 0;
+    if (!(hours > 0)) return null;
+    var secPerE = energyRate();
+    var max = state.energyMax || 150;
+    if (!(secPerE > 0) || !(max > 0)) return null;
+    var fillSec = max * secPerE;
+    var overSec = hours * 3600 - fillSec;
+    var out = { hours: hours, fillSec: fillSec, lost: 0, pct: 1 };
+    if (overSec <= 0) return out;           // bar never fills: nothing wasted
+    out.lost = Math.round(overSec / secPerE);
+    // Measured against everything the day makes available, because that is
+    // what cal.usage is measured against and what it multiplies.
+    var total = dailyEnergy().total;
+    if (!(total > 0)) return out;
+    out.pct = Math.max(0, (total - out.lost) / total);
+    return out;
   }
 
   function dailyEnergy() {
@@ -5384,7 +3587,30 @@
       var note = "";
       if (row) {
         if (row.done) note = "reached";
-        else if (!isFinite(row.days)) note = "not reachable at this rate";
+        else if (!isFinite(row.days) && dotsFor(k) === 0) {
+          // The planner costs every goal at the gym you are STANDING IN, so a
+          // stat this gym cannot train came back with no finish date — which
+          // reads as impossible when the goal is fine and the gym is not.
+          // Confirmed twice: Legs Bums and Tums has no Strength, Frontline
+          // Fitness no Dexterity, and in both cases the "unreachable" stat
+          // was among the cheapest the owner had left.
+          var alt = bestOwnedGymFor(k);
+          var d2 = Infinity;
+          if (alt) {
+            var r2 = trainsTo(k, cur, target, (plan.cal && plan.cal.ok) ? plan.cal.model : 1, alt);
+            var eDay = plan.energy || 0;
+            if (r2 && eDay > 0) d2 = (r2.trains * (Number(alt.Energy) || 25)) / eDay;
+          }
+          note = isFinite(d2)
+            ? fmtDays(d2) + " of training at " + alt.Gym + " \u00b7 "
+              + (state.gymName || "this gym") + " doesn't train " + STAT_LABEL[k]
+            : (state.gymName || "this gym") + " doesn't train " + STAT_LABEL[k]
+              + (alt ? " \u2014 best is " + alt.Gym : " \u2014 switch gym");
+        }
+        else if (!isFinite(row.days)) {
+          note = "not reachable at this rate";
+          if (state.diag) note += " \u2014 " + diagFor(k, cur, target, plan);
+        }
         else note = fmtDays(row.days) + " of training" +
           (row.startsIn > 0 ? ", starting in " + fmtDays(row.startsIn) : "") +
           " \u00b7 done in " + fmtDays(row.doneIn);
@@ -5528,7 +3754,7 @@
       (state.mcsCost ? esc(fmt(state.mcsCost)) : "") + '"></div>' +
       '<p class="muted" style="margin:8px 0 0">' +
       (priced
-        ? "Cheapest live bazaar or item-market listing, refreshed every few hours. Prices move; treat these as a ranking, not a quote."
+        ? "Cheapest item-market listing, refreshed every few hours. Bazaars often run a few percent under it. Prices move; treat these as a ranking, not a quote."
         : "Fetching prices\u2026 if they do not appear, the price host is unreachable and Torn\u2019s own item market is tried next.") +
       "</p></div>"
     );
@@ -5598,8 +3824,25 @@
           fmtDays(cost) + " to " + STAT_LABEL[plan.next.k] + "."
           + "</p>"
         : "") +
-      '<p class="muted" style="margin:8px 0 0">Projections are scaled by both figures, measured over ' +
-      cal.days + " day" + (cal.days === 1 ? "" : "s") + " of the last " + CAL_WINDOW +
+      // The two factors now carry their own day counts, because they are
+      // measured over different days: the gain model needs a day a stat moved,
+      // the usage figure needs only a day the ledger ran. Printing one count
+      // for both was why a war week looked like the whole card had reset.
+      '<p class="muted" style="margin:8px 0 0">Gain model from ' + cal.days + " day" +
+      (cal.days === 1 ? "" : "s") + ", energy use from " + cal.uDays + " day" +
+      (cal.uDays === 1 ? "" : "s") + ", both out of the last " + CAL_WINDOW + ". " +
+      (cal.modelHeld
+        ? "Gain model is last measured, " + cal.modelStale + "d ago — held rather than discarded. "
+        : "") +
+      (cal.usageHeld
+        ? "Energy use is last measured, " + cal.usageStale + "d ago — held rather than discarded. "
+        : "") +
+      "</p>" +
+      // Exact about WHICH number each factor touches. The old wording claimed
+      // both scaled "projections" when the 7/30/90 figures used neither, which
+      // is what sent the reader looking for a bug that was in the sentence.
+      '<p class="muted" style="margin:8px 0 0">Both figures scale the 7/30/90 projections ' +
+      "and the goal ETAs. The next-gym ETA uses energy use only" +
       ". Every point that leaves your bar counts as spent, so attacks land here too." +
       "</p></div>"
     );
@@ -5651,6 +3894,55 @@
       "projections are describing a cupboard you do not have.</div>";
   }
 
+  // One slot, one meaning. When the ledger can measure how much of the day's
+  // energy reaches the gym, it shows that and offers no control — a typed
+  // number competing with a measurement is how you end up discounting the
+  // same eight hours twice. The stepper appears only when nothing has been
+  // measured: the first week after install, a Limited key whose gym log is
+  // empty, or when training happens on a different device from this one.
+  function captureRowHtml() {
+    var cal = calibration();
+    var pct = Math.round(cal.usage * 100);
+
+    if (cal.usageOk) {
+      return '<div class="row"><span>Reaches the gym</span><b class="' + (pct >= 90 ? "ok" : "warn") + '">' +
+        pct + "% measured</b></div>";
+    }
+    if (cal.usageHeld) {
+      return '<div class="row"><span>Reaches the gym</span><b class="' + (pct >= 90 ? "ok" : "warn") + '">' +
+        pct + "% measured, " + cal.usageStale + "d ago</b></div>";
+    }
+
+    var gl = gapLoss();
+    var hrs = Number(state.gapHours) || 0;
+    var fillH = gl ? gl.fillSec / 3600 : (state.energyMax || 150) * energyRate() / 3600;
+    var note;
+    if (!hrs) {
+      note = "Not measured yet. Set your longest gap between sessions and this is estimated instead.";
+    } else if (!gl || !(gl.lost > 0)) {
+      // The point most people get wrong, so it is worth saying outright.
+      note = "Nothing wasted — your bar takes " + fillH.toFixed(1) +
+        "h to fill, so a " + hrs + "h gap never reaches the cap.";
+    } else {
+      note = "About " + fmt(gl.lost) + "e a day overflows: your bar is full after " +
+        fillH.toFixed(1) + "h, and the remaining " + (hrs - fillH).toFixed(1) + "h of regen has nowhere to go.";
+    }
+
+    return (
+      '<div class="row"><span>Longest gap</span>' +
+      '<span class="gcb-step">' +
+      '<button data-gap="-1"' + (hrs <= 0 ? " disabled" : "") + ">−</button>" +
+      "<i>" + (hrs ? hrs + "h" : "off") + "</i>" +
+      '<button data-gap="1"' + (hrs >= 24 ? " disabled" : "") + ">+</button>" +
+      "</span></div>" +
+      (hrs
+        ? '<div class="row"><span>Reaches the gym</span><b class="' + (pct >= 90 ? "ok" : "warn") + '">' +
+          pct + "% estimated</b></div>"
+        : "") +
+      '<p class="muted" style="margin:6px 0 0">' + note + "</p>"
+    );
+  }
+
   function srcHtml() {
     var e = dailyEnergy();
     function rowHtml(r) {
@@ -5698,6 +3990,7 @@
       (e.mcs ? '<div class="row"><span>Mc Smoogle Corp</span><b>' + fmt(e.mcs) + "e</b></div>" : "") +
       (e.cans ? '<div class="row"><span>Cans</span><b>' + fmt(e.cans) + "e</b></div>" : "") +
       '<div class="row"><span>Total per day</span><b class="ok">' + fmt(e.total) + "e</b></div>" +
+      captureRowHtml() +
       (state.warStack ? '<p class="muted" style="margin:8px 0 0">War stack is on, so Xanax is banked rather than spent \u2014 it is left out of the total.</p>' : "") +
       "</div>"
     );
@@ -6034,11 +4327,21 @@
       if (moved.indexOf(keys[i]) === -1) return null;
       total += split[keys[i]];
     }
-    // A stat that moved with nothing logged against it gained from somewhere
-    // the log cannot see, so any split would be invented.
+    // A stat that moved with NOTHING logged against it did not get there on
+    // gym energy -- overwhelmingly it was attacked up during a war. That used
+    // to void the whole day, so a day you trained perfectly well was thrown
+    // away BECAUSE you also fought. Now the unlogged stat is simply left out
+    // of the comparison and the trained stats are still measured.
+    //
+    // The energy reconciliation below is what makes this safe: every point of
+    // gym energy must still be accounted for by the logged stats. If a stat
+    // moved on gym energy whose log entry is missing, `total` falls short of
+    // `used` and the day is rejected here exactly as before.
+    var logged = 0;
     for (i = 0; i < moved.length; i++) {
-      if (!(split[moved[i]] > 0)) return null;
+      if (split[moved[i]] > 0) logged += 1;
     }
+    if (!logged) return null;
     if (Math.abs(total - (Number(used) || 0)) > MIXED_SLACK) return null;
     return split;
   }
@@ -6594,11 +4897,6 @@
     return { used: used, wasted: wasted, off: off, partial: partial };
   }
 
-  // How long a "wait for a full bar first" suggestion may ask you to wait.
-  // Lost when an earlier edit sliced this region out; the four places that use
-  // it then threw ReferenceError on the one code path that reaches them.
-  var WAIT_FULL_MAX = 45 * 60;
-
   // Full means at or above the cap — the point where regen genuinely stops.
   // This allowed two points of slack, inherited from the stable script and
   // never explained, which made 149/150 report "capped, regen paused" while
@@ -6669,6 +4967,28 @@
   // One line on the front page saying what the plan is and where to change it.
   // Everything it names lived behind a settings icon, so someone who never
   // tapped a cog never learned there was a plan to make at all.
+  // Below this the line is not worth the space, and a note that shows on every
+  // single visit is a note nobody reads by the third day.
+  var HAPPY_SHOW_BELOW = 0.8;
+
+  function happyStripHtml() {
+    var k = state.focus;
+    if (!k || !state.stats || !state.stats[k]) return "";
+    var l = happyLoss(state.stats[k], state.happy, state.happyMax,
+                      gymDots(k), perTrainEnergy(), (state.perks && state.perks[k]) || 1, k);
+    if (!l || l.keptPct > HAPPY_SHOW_BELOW) return "";
+    var e = perTrainEnergy() || 10;
+    var trains = Math.max(1, Math.round(250 / e));
+    var stack = l.lost * trains;
+    return '<div class="gcb-happy">' +
+      "<b>" + Math.round(l.keptPct * 100) + "% of a full-happy train.</b> " +
+      "At " + fmt(l.happy) + " happy you gain " + fmt(Math.round(l.now)) +
+      " where full would give " + fmt(Math.round(l.full)) + " \u2014 " +
+      "<b>" + fmt(Math.round(l.lost)) + " " + (STAT_LABEL[k] || k) + "</b> per train, " +
+      "about <b>" + fmt(Math.round(stack)) + "</b> over a 250-energy stack." +
+      "</div>";
+  }
+
   function planStripHtml() {
     if (!hasGoals()) {
       return (
@@ -6863,7 +5183,14 @@
         ? "Change gym to " + b.gym.Gym + " first \u2014 " + state.gymName + " cannot train " +
           STAT_LABEL[k] + " at all" + prov + "."
         : "Change gym to " + b.gym.Gym + " first \u2014 it trains " + STAT_LABEL[k] + " " +
-          b.pct + "% faster for the same " + fmt(e) + "e a train" + prov + "."
+          b.pct + "% faster" +
+          // Only claim "the same" when it IS the same. A 25e gym and a 10e
+          // gym still give the same total for the same bar, and saying so
+          // stops the advice looking wrong to anyone who checks the dots.
+          (Number(b.gym.Energy) === e
+            ? " for the same " + fmt(e) + "e a train"
+            : " per point of energy (" + fmt(Number(b.gym.Energy)) + "e a train against " +
+              fmt(e) + "e \u2014 same bar, same total)") + prov + "."
     };
   }
 
@@ -7148,7 +5475,12 @@
       if (!g || g.Gym === cur.Gym) return;
       var d = Number(g[DOT]) || 0;
       var e = Number(g.Energy) || 25;
-      if (e > curE || d <= curDots) return;
+      // Energy per train is NOT a cost. Gain is dots x energyPerTrain, and a
+      // fixed bar buys (bar / energyPerTrain) trains, so the term cancels
+      // exactly: over the same energy, only the dots decide. Excluding the
+      // bigger gym for its bigger trains is how Balboas, at 7.5 dex, lost to
+      // Cha Cha's at 7.0.
+      if (d <= curDots) return;
       if (!best) { best = g; return; }
       var bd = Number(best[DOT]) || 0;
       if (d > bd || (d === bd && e < (Number(best.Energy) || 25))) best = g;
@@ -7275,81 +5607,50 @@
             t: "THEN",
             text: full
               ? "Bar is full — train " + focus + " so you don\u2019t overflow while shopping."
-              : "Wait " + fmtCd(toFull) + " for a full bar, then xan.",
+              : "Train whenever the bar fills. When your Xanax arrives, train what is in the bar first, then take it.",
           },
         ],
       };
     }
 
     if (state.drugCd <= 0) {
-      var waitFull = !full && toFull > 0 && toFull <= WAIT_FULL_MAX;
-      if (waitFull) {
-        var fat = (state.energyMax || 150) + 250;
+      // Train first, THEN take the Xanax, and take it straight away. A Xanax taken
+      // on a held bar puts that bar at risk if it overdoses, and every minute spent
+      // waiting for a full bar pushes the next Xanax back by the same minute. The
+      // happiness a Xanax adds is worth a few energy at most. Testers caught the
+      // old "wait for a full bar, then take a xan" advice on 2026-10-18. War stack,
+      // above, is the one place where taking it on a held bar is the point.
+      // One train is measured at the gym the steps send you to. betterGym() picks
+      // on dots alone, so it can name a 25e gym while you stand in a 10e one, and
+      // 15e would read as trainable in a gym where it is not one train.
+      var namedGym = upgrade ? upgrade.gym : GYMS.filter(function (g) { return g.Gym === state.gymName; })[0];
+      var perTrain = (namedGym && Number(namedGym.Energy)) || state.gymEnergy || 25;
+      var canAdd = boosterOpen(state.boosterCd) && cans > 0;
+      var canNote = canAdd ? " Booster has room \u2014 cans after the xan if you want a bigger training session." : "";
+      var loopSteps = [
+        { t: "WAIT", text: "Drug cooldown is about 6\u20138h. Train whenever the bar fills so it never overflows." },
+        { t: "REPEAT", text: "Cooldown reaches 0 \u2192 train what is in the bar \u2192 take a Xanax \u2192 train " + focus + " again." },
+      ];
+      if (state.energy < perTrain) {
         return {
-          kind: "wait",
-          move: "Wait " + fmtCd(toFull) + " for a full bar, then take a xan.",
-          why:
-            "Xan is ready but you\u2019re at " +
-            state.energy +
-            "/" +
-            state.energyMax +
-            ". Waiting lets you train " +
-            fat +
-            "e into " +
-            focus +
-            " instead of " +
-            afterXan +
-            "e.",
+          kind: "go",
+          move: "Take a Xanax now, then train " + afterXan + "e " + focus + ".",
+          why: "Your drug cooldown is clear and there is less than one train in the bar, so there is nothing to train first. Taking it now starts the next cooldown now.",
           steps: [
-            { t: "NOW", text: "Do not take a Xanax. Do not train. Let energy fill. " + fmtCd(toFull) + " left." },
-            { t: "+" + fmtCd(toFull), text: "Bar hits " + state.energyMax + ". Take 1 Xanax (" + xans + " left)." },
-            { t: "THEN", text: "Train " + fat + "e into " + focus + " at " + gym + ". One session. Don\u2019t split stats." },
-            {
-              t: "WAIT",
-              text: "The drug cooldown starts (about 6–8h). While it counts down, spend your natural energy whenever the bar fills. Never overflow.",
-            },
-            {
-              t: "NEXT",
-              text: "cooldown reaches 0 → wait for a full bar if it is under ~45m → take a Xanax → train " + focus + " again.",
-            },
-          ],
-          waste: "If you take a Xanax now you would only train " + afterXan + "e. Waiting picks up the rest of the bar.",
+            { t: "NOW", text: "Take 1 Xanax. You have " + xans + "." + canNote },
+            { t: "THEN", text: "Go to " + gym + ". Spend ALL your energy on " + focus + "." + leftoverNote() },
+          ].concat(loopSteps),
         };
       }
-      var trainNow = full ? Math.min(1000, state.energy + 250) : afterXan;
-      var canAdd = boosterOpen(state.boosterCd) && cans > 0;
       return {
         kind: "go",
-        move: full
-          ? "Take a Xanax now, then train " + trainNow + "e " + focus + "."
-          : "Take a xan now (" + state.energy + "e → " + afterXan + "e), then train " + focus + ".",
-        why: full
-          ? "Bar is full and your drug cooldown is clear. Take the Xanax first, so this session is " + trainNow + "e, not " + state.energy + "e."
-          : "Your drug cooldown is clear. Waiting for a full bar would take " +
-            fmtCd(toFull) +
-            " and delay your next Xanax. Take it, then train " +
-            focus +
-            ", the cooldown starts.",
+        move: "Train your " + state.energy + "e into " + focus + ", then take a Xanax.",
+        why: "Your drug cooldown is clear. Spend the bar before the Xanax so an overdose can\u2019t take that energy with it, then take it straight away so the next cooldown starts now. Holding the bar for the Xanax only gets those few trains its extra happiness.",
         steps: [
-          {
-            t: "NOW",
-            text:
-              "Take 1 Xanax. You have " +
-              xans +
-              "." +
-              (canAdd ? " Booster is under 24h — cans after the xan if you want a bigger training session." : ""),
-          },
-          { t: "THEN", text: "Go to " + gym + ". Spend ALL your energy on " + focus + "." + leftoverNote() },
-          { t: "WAIT", text: "Drug cooldown is about 6–8h. Do not take a Xanax until this says READY." },
-          {
-            t: "BETWEEN",
-            text: "When energy fills, train " + focus + " again. Never leave the bar sitting full while the cooldown is still running.",
-          },
-          {
-            t: "REPEAT",
-            text: "cooldown reaches 0 → wait for full bar if under ~45m → take a Xanax → train " + focus + ".",
-          },
-        ],
+          { t: "NOW", text: "Train " + state.energy + "e into " + focus + " at " + gym + "." },
+          { t: "THEN", text: "Take 1 Xanax right away. You have " + xans + "." + canNote },
+          { t: "THEN", text: "Spend the new 250e on " + focus + "." + leftoverNote() },
+        ].concat(loopSteps),
       };
     }
 
@@ -7365,17 +5666,16 @@
           { t: "WAIT", text: "Drug cooldown: " + fmtCd(state.drugCd) + ". Let the bar fill again while it ticks." },
           {
             t: "GOAL",
-            text: "Be at a full bar when xan comes off cooldown, then take a Xanax and train " + focus + " in one go.",
+            text: "When the cooldown ends, train what is in the bar, then take a Xanax straight away.",
           },
         ],
       };
     }
 
     if (toFull > 0 && state.drugCd < toFull) {
-      var extra = toFull - state.drugCd;
       return {
         kind: "wait",
-        move: "Wait " + fmtCd(state.drugCd) + " for xan, then train " + focus + ".",
+        move: "Xanax in " + fmtCd(state.drugCd) + ". Then train your bar, take it, and train again.",
         why:
           "Energy is " +
           state.energy +
@@ -7383,20 +5683,14 @@
           state.energyMax +
           " (full in " +
           fmtCd(toFull) +
-          "). Your drug cooldown reaches 0 first. Don\u2019t train this bar away unless you\u2019re about to overflow.",
+          "). Your drug cooldown reaches 0 first. When it does, spend the bar before you take the Xanax, then take it straight away.",
         steps: [
           refillStep(),
           mcsStep(),
           canStep(fmtCd(toFull)) ||
-            { t: "NOW", text: "Nothing. Bar isn\u2019t full. Xan isn\u2019t ready." },
-          {
-            t: "+" + fmtCd(state.drugCd),
-            text:
-              extra <= WAIT_FULL_MAX
-                ? "Xanax cooldown reaches 0. Wait the extra " + fmtCd(extra) + " for a full bar, then take a xan."
-                : "Xanax cooldown reaches 0. Take a xan now, then train " + focus + ".",
-          },
-          { t: "THEN", text: "Train " + focus + " at " + gym + "." },
+            { t: "NOW", text: "Nothing yet. The bar isn\u2019t full and the Xanax isn\u2019t ready." },
+          { t: "+" + fmtCd(state.drugCd), text: "Cooldown ends. Train what is in the bar, then take a Xanax." },
+          { t: "THEN", text: "Spend the new 250e on " + focus + " at " + gym + "." },
           { t: "LOOP", text: "Wait the next drug cooldown. Train whenever energy fills so you never overflow." },
         ],
       };
@@ -7423,7 +5717,7 @@
         },
         {
           t: "+" + fmtCd(state.drugCd),
-          text: "Xan ready. Prefer a full bar, then take a Xanax and train " + focus + " again.",
+          text: "Xan ready. Train what is in the bar, then take a Xanax and train " + focus + " again.",
         },
       ],
     };
@@ -7535,6 +5829,11 @@
     var labels = { str: "Strength", def: "Defense", spe: "Speed", dex: "Dexterity" };
     return " Leftover energy can go to " + (labels[state.focus2] || "the second skill") + ".";
   }
+
+  // How long Happy jump's Xanax pings may ask you to wait for a full bar before
+  // stacking one. Xan + gym no longer waits at all: it trains first, then takes
+  // the Xanax. Declared above its only user so var hoisting is not what keeps it.
+  var WAIT_FULL_MAX = 45 * 60;
 
   function focusLabel() {
     return { str: "Strength", def: "Defense", spe: "Speed", dex: "Dexterity" }[state.focus] || "Strength";
@@ -7726,7 +6025,12 @@
   function recordHistory() {
     var st = state.stats;
     if (!st) return;
-    var v = [st.str | 0, st.def | 0, st.spe | 0, st.dex | 0];
+    // NOT `| 0`. That is an int32 coercion and it wraps at 2,147,483,648:
+    // past that the stored value goes negative, predictDay bails on
+    // `!(startStat > 0)`, and the stat is excluded from the model FOREVER --
+    // no number of good days can recover it.
+    var v = [Math.round(st.str) || 0, Math.round(st.def) || 0,
+             Math.round(st.spe) || 0, Math.round(st.dex) || 0];
     if (!(v[0] || v[1] || v[2] || v[3])) return; // never record a failed read as a real zero
     var d = dayKey(Date.now());
     var last = state.hist.length ? state.hist[state.hist.length - 1] : null;
@@ -8282,41 +6586,201 @@
     return n;
   }
 
-  // The line is one whitespace-free token so faction chat cannot break it into
-  // pieces, and so a paste can be scanned by splitting on whitespace and
-  // ignoring everything that is not one of these.
+  // The line a member pastes into faction chat.
+  //
+  // Everything left of the bracket is written to be READ. The week is a date,
+  // not the internal week counter -- "week 2959" told a human nothing, and
+  // neither did the "GCB1" tag that used to lead the line. Numbers carry their
+  // units, and stats nobody trained are left out, so a pure-Strength week is
+  // shorter than a split one.
+  //
+  // The bracket at the end is the only part meant for the machine: the player
+  // id, because a member who renames would otherwise appear as two rows, and
+  // four check digits.
+  //
+  // It no longer has to be one whitespace-free token. That rule existed because
+  // the board used to be fed by pasting a whole block of chat and splitting it
+  // on spaces; now that the card reads chat messages directly, each message is
+  // already its own unit and the line is free to contain spaces.
+  var LINE_HEAD = "Gym week of ";
+
+  // The OLD pipe format, still recognised so a member who has not updated yet
+  // is not silently missing from the board for a week.
   var LINE_TAG = "GCB1";
 
   // Chat truncates long messages, and people edit things. Four digits over the
-  // whole payload is enough that a cut tail or a changed digit fails to verify
-  // rather than parsing as a smaller week.
+  // payload is enough that a cut tail or a changed digit fails to verify rather
+  // than parsing as a smaller week.
   function pasteCk(s) {
     var n = 0;
     for (var i = 0; i < s.length; i++) n = (n * 31 + s.charCodeAt(i)) % 9973;
     return ("000" + n).slice(-4);
   }
 
-  function pasteLine(o) {
-    // Torn usernames are letters, digits, underscore and hyphen; anything else
-    // arrived by accident and would break the delimiter.
-    var name = String((o && o.name) || "").replace(/[^A-Za-z0-9_-]/g, "");
-    var body = [LINE_TAG, o.week, o.id, name, o.gymE, o.str, o.def, o.spe, o.dex,
-                o.atkE, (o.xan == null ? "-" : o.xan), o.at].join("|");
-    return body + "|" + pasteCk(body);
+  // What the check digits are computed over.
+  //
+  // The DATA, not the rendered line: a wording change must not invalidate every
+  // line already sitting in chat, and a line damaged in transit still yields
+  // different data and so fails to verify.
+  function pasteCanon(o, name) {
+    var v = function (x) { return Math.max(0, Number(x) || 0); };
+    return [Number(o.week), Number(o.id), name, v(o.gymE), v(o.str), v(o.def),
+            v(o.spe), v(o.dex), v(o.atkE), (o.xan == null ? "-" : v(o.xan))].join("|");
   }
 
-  function pasteParse(text) {
+  var PASTE_STATS = [["str", "Str"], ["def", "Def"], ["spe", "Spe"], ["dex", "Dex"]];
+
+  // getUTC*, because the gym week boundary is TCT. Local getters name the day
+  // wrong west of Greenwich, and the line would disagree with the board that
+  // reads it.
+  var PASTE_DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  function pasteStamp(atSec) {
+    var ms = Number(atSec) * 1000;
+    if (!isFinite(ms) || ms <= 0) return "";
+    var d = new Date(ms);
+    return PASTE_DOW[d.getUTCDay()] + " " +
+      ("0" + d.getUTCHours()).slice(-2) + ":" + ("0" + d.getUTCMinutes()).slice(-2);
+  }
+
+  /**
+   * Turn "Wed 15:31" back into a real instant.
+   *
+   * Exact, not approximate: the week is already known from the line, so the
+   * weekday is an offset from that week's start rather than a guess at which
+   * Wednesday was meant.
+   */
+  function pasteStampParse(stamp, week) {
+    var m = /^([A-Z][a-z]{2}) (\d{2}):(\d{2})$/.exec(String(stamp || ""));
+    if (!m) return null;
+    var day = PASTE_DOW.indexOf(m[1]);
+    if (day < 0 || week == null) return null;
+    return Math.floor(
+      (weekStartMs(week) + day * DAY_MS + Number(m[2]) * 3600000 + Number(m[3]) * 60000) / 1000
+    );
+  }
+
+  function pasteLine(o) {
+    // Torn usernames are letters, digits, underscore and hyphen; anything else
+    // arrived by accident and would break the parse.
+    var name = String((o && o.name) || "").replace(/[^A-Za-z0-9_-]/g, "");
+    var split = PASTE_STATS
+      .filter(function (k) { return Number(o[k[0]]) > 0; })
+      .map(function (k) { return k[1] + " " + fmt(o[k[0]]); })
+      .join(" · ");
+
+    var bits = [fmt(o.gymE) + "e gym" + (split ? " (" + split + ")" : "")];
+    if (Number(o.atkE) > 0) bits.push(fmt(o.atkE) + "e attacks");
+    // "no figure" and "took none" are different statements about a person, and
+    // the faction xanax board shipped the first as the second once already.
+    bits.push(o.xan == null ? "xanax n/a"
+      : (Number(o.xan) === 0 ? "no xanax" : fmt(o.xan) + " xanax"));
+
+    // When it was copied, said plainly.
+    //
+    // A board built from pasted lines is a pile of snapshots taken at
+    // different moments, and a row that looks live but was copied on Tuesday
+    // is the one way this can mislead. The old line carried a raw epoch for
+    // this; a weekday and a clock time say the same thing to a person, and
+    // are exact rather than approximate because the week it belongs to is
+    // already in the line.
+    var stamp = pasteStamp(o.at);
+    if (stamp) bits.push("copied " + stamp);
+
+    return LINE_HEAD + boardWeekLabel(weekStartMs(o.week)) + " — " + name +
+      " · " + bits.join(" · ") +
+      " [" + Number(o.id) + " #" + pasteCk(pasteCanon(o, name)) + "]";
+  }
+
+  /**
+   * Turn a week label like "Sep 20" back into the week number it came from.
+   *
+   * Searched outward from the current week so the NEAREST match wins, which is
+   * what makes "Jan 3" unambiguous either side of New Year. The window stops
+   * well short of a year: labels repeat every 52 weeks, and a wider search
+   * could match the same date twice.
+   */
+  function weekFromLabel(label, nowMs) {
+    var cur = weekKey(Number(nowMs) || Date.now());
+    if (boardWeekLabel(weekStartMs(cur)) === label) return cur;
+    for (var d = 1; d <= 20; d++) {
+      if (boardWeekLabel(weekStartMs(cur - d)) === label) return cur - d;
+      if (boardWeekLabel(weekStartMs(cur + d)) === label) return cur + d;
+    }
+    return null;
+  }
+
+  var PASTE_RE = /Gym week of ([A-Z][a-z]{2}) (\d{1,2})\s*—\s*([A-Za-z0-9_-]+)([^\[\]]*)\[(\d+)\s+#(\d{4})\]/g;
+
+  var pasteNum = function (m) { return m ? Number(String(m[1]).replace(/,/g, "")) : 0; };
+
+  /**
+   * Read every line in a blob of text.
+   *
+   * @param atSec when the text was SEEN -- a chat message's own timestamp. The
+   *        readable line carries no clock of its own, because the message it
+   *        arrives in already has one. Falls back to now, which is right for a
+   *        line read the moment it is posted and the best available otherwise.
+   */
+  function pasteParse(text, nowMs, atSec) {
+    var now = Number(nowMs) || Date.now();
+    var at = Number(atSec) || Math.floor(now / 1000);
+    var out = [], m;
+
+    PASTE_RE.lastIndex = 0;
+    while ((m = PASTE_RE.exec(String(text || "")))) {
+      var week = weekFromLabel(m[1] + " " + Number(m[2]), now);
+      if (week === null) continue;
+
+      var mid = m[4];
+      var row = { week: week, id: Number(m[5]), name: m[3], at: at,
+                  gymE: pasteNum(mid.match(/([\d,]+)e gym/)),
+                  str: 0, def: 0, spe: 0, dex: 0,
+                  atkE: pasteNum(mid.match(/([\d,]+)e attacks/)),
+                  xan: null };
+
+      var paren = mid.match(/\(([^)]*)\)/);
+      if (paren) {
+        PASTE_STATS.forEach(function (k) {
+          var hit = paren[1].match(new RegExp(k[1] + "\\s+([\\d,]+)"));
+          if (hit) row[k[0]] = Number(hit[1].replace(/,/g, ""));
+        });
+      }
+      var st = mid.match(/copied ([A-Z][a-z]{2} \d{2}:\d{2})/);
+      if (st) row.at = pasteStampParse(st[1], week) || row.at;
+
+      if (/no xanax/.test(mid)) row.xan = 0;
+      else {
+        var xn = mid.match(/([\d,]+) xanax/);
+        if (xn) row.xan = Number(xn[1].replace(/,/g, ""));
+      }
+
+      // Verify last, against the data we just read back. A line that was cut
+      // short or edited reconstructs to something else and is dropped, rather
+      // than being believed as a smaller week.
+      if (pasteCk(pasteCanon(row, row.name)) !== m[6]) continue;
+      out.push(row);
+    }
+
+    return out.concat(pasteParseLegacy(text));
+  }
+
+  /** The 0.9.88 pipe format. Kept so the changeover does not lose a week. */
+  function pasteParseLegacy(text) {
     var out = [];
     String(text || "").split(/\s+/).forEach(function (tok) {
       if (tok.slice(0, LINE_TAG.length + 1) !== LINE_TAG + "|") return;
       var f = tok.split("|");
       if (f.length !== 13) return;
       var ck = f.pop();
-      if (pasteCk(f.join("|")) !== ck) return;
-      var n = function (i) { var v = Number(f[i]); return f[i] !== "" && isFinite(v) ? v : null; };
-      var row = { week: n(1), id: n(2), name: f[3], gymE: n(4), str: n(5), def: n(6),
-                  spe: n(7), dex: n(8), atkE: n(9),
-                  xan: f[10] === "-" ? null : n(10), at: n(11) };
+      var n = 0;
+      var body = f.join("|");
+      for (var i = 0; i < body.length; i++) n = (n * 31 + body.charCodeAt(i)) % 9973;
+      if (("000" + n).slice(-4) !== ck) return;
+      var num = function (i) { var v = Number(f[i]); return f[i] !== "" && isFinite(v) ? v : null; };
+      var row = { week: num(1), id: num(2), name: f[3], gymE: num(4), str: num(5), def: num(6),
+                  spe: num(7), dex: num(8), atkE: num(9),
+                  xan: f[10] === "-" ? null : num(10), at: num(11) };
       // Half a row is worse than none: a member listed with a plausible-looking
       // week they did not do is exactly the kind of wrong this board must not
       // produce.
@@ -8361,6 +6825,60 @@
     return { rows: rows, added: added, otherWeek: other, read: mine.length };
   }
 
+  // ---- Reading the board out of faction chat --------------------------------
+  //
+  // The card used to ask somebody to select the whole chat, copy it, and paste
+  // it into a box. The box is gone: this reads the faction channel itself.
+  //
+  // It reads the channel's TEXT rather than walking its message nodes. Torn's
+  // chat is React and every class name is hash-suffixed and changes on each
+  // Torn rebuild, so a walker keyed to `content___` would quietly stop finding
+  // messages one day and the board would simply go empty with nothing to
+  // explain it. The line is anchored and checksummed, so scanning a blob of
+  // text is no less safe and survives any rebuild.
+  //
+  // READ ONLY. Nothing is typed and nothing is sent. A script posting in your
+  // faction's chat is a different thing entirely and is not this feature.
+  function factionChatBox() {
+    var root = document.getElementById("chatRoot");
+    // You are in one faction, so there is one faction channel. Matched by
+    // prefix because the id carries the faction number, which this script has
+    // never needed to know and still does not.
+    return root ? root.querySelector('div[id^="faction-"]') : null;
+  }
+
+  // What the merged board says, for deciding whether anything actually moved.
+  // Row count alone misses the common case: a member re-posting an updated
+  // line for a week they were already on the board for.
+  function pasteSig(rows) {
+    return (rows || []).map(function (r) {
+      return [r.id, r.gymE, r.atkE, r.str, r.def, r.spe, r.dex, r.xan, r.at].join(":");
+    }).join("|");
+  }
+
+  var lastChatText = "";
+
+  function scanFactionChat() {
+    var box = factionChatBox();
+    if (!box) return;
+    var text = box.textContent || "";
+    // Chat is re-rendered constantly. Re-parsing only when the text actually
+    // changed keeps this to a string compare on almost every tick.
+    if (!text || text === lastChatText) return;
+    lastChatText = text;
+
+    var wkNow = weekKey(Date.now());
+    var have = state.pasted && state.pasted.week === wkNow && Array.isArray(state.pasted.rows)
+      ? state.pasted.rows : [];
+    var res = pasteCollect(have, text, wkNow);
+    if (!res.read) return;
+    if (pasteSig(res.rows) === pasteSig(have)) return;
+
+    state.pasted = { week: wkNow, rows: res.rows, at: Date.now() };
+    storeSet("pasted", state.pasted);
+    if (state.open) renderPanel();
+  }
+
   // Your own week, in the shape a line is made from. Every figure comes off
   // this device's own ledger -- the gym counters are not in personalstats at
   // all, so there is nothing to ask Torn for and nothing that needs a key.
@@ -8388,8 +6906,8 @@
     return '<div class="gc-card"><h3>Faction board by paste</h3>' +
       '<p class="muted" style="margin:0 0 9px">Torn will only tell one person the whole faction\u2019s gym energy, ' +
       'and only if their <b>position</b> grants faction API access. This does not ask Torn anything: your line is ' +
-      'built from the training this script has already watched on this device. Copy it into faction chat, and ' +
-      'whoever is keeping the board pastes everybody\u2019s in below.</p>' +
+      'built from the training this script has already watched on this device. Copy it into faction chat \u2014 ' +
+      'everybody else\u2019s lines are read out of chat for you.</p>' +
 
       '<div class="row"><div><b>Your week</b><div class="muted">' +
       fmt(mine.gymE) + "e into the gym" +
@@ -8402,13 +6920,10 @@
         : '<span class="chip wait">KEY</span>') +
       "</div>" +
 
-      '<textarea id="gcbPaste" rows="3" placeholder="Paste the lines from faction chat here" ' +
-      'style="width:100%;margin-top:9px;box-sizing:border-box;background:rgba(0,0,0,.25);' +
-      'border:1px solid rgba(255,255,255,.14);border-radius:8px;color:inherit;padding:7px;' +
-      'font:11px/1.4 ui-monospace,Menlo,monospace;resize:vertical"></textarea>' +
-      '<div class="actions" style="margin-top:7px">' +
-      (have.length ? '<button class="gc-btn secondary" data-act="pasteclear">Clear board</button>' : "") +
-      '<button class="gc-btn" data-act="pasteread">Read pasted lines</button></div>' +
+      (have.length
+        ? '<div class="actions" style="margin-top:7px">'
+          + '<button class="gc-btn secondary" data-act="pasteclear">Clear board</button></div>'
+        : "") +
 
       (have.length
         ? '<div class="gcb-brow head" style="margin-top:10px"><span class="gcb-brank">#</span>' +
@@ -8417,8 +6932,10 @@
           have.map(function (r, i) { return pasteRowHtml(r, i, mine.id); }).join("") +
           '<p class="muted gc-cap">Week of ' + boardWeekLabel(weekStartMs(wk)) +
           ' \u00b7 ' + have.length + (have.length === 1 ? " member" : " members") +
-          ' \u00b7 each line is as fresh as the moment that member copied it.</p>'
-        : '<p class="muted" style="margin:9px 0 0">Nothing collected yet.</p>') +
+          ' \u00b7 read from faction chat \u00b7 each line is as fresh as the moment that member copied it.</p>'
+        : '<p class="muted" style="margin:9px 0 0">Nothing collected yet. Lines appear here as ' +
+          'members paste them into faction chat' +
+          (factionChatBox() ? "" : " \u2014 open faction chat so they can be read") + '.</p>') +
       "</div>";
   }
 
@@ -9984,6 +8501,62 @@
     storeSet("log", state.log);
   }
 
+  // ── Device-wide lease on the expensive half of a round ────────────────
+  //
+  // Every fetcher below refresh()'s first call carries its own TTL, but those
+  // TTLs live in this page's `state`. Two tabs (or a phone and a desktop
+  // browser) therefore keep two independent clocks and each pays full price:
+  // the key log shows the giveaway, three `inventory` calls inside 52 seconds
+  // when INV_TTL is 90.
+  //
+  // `state.fetchInFlight` cannot help — it is per-page by construction. This
+  // lease is in localStorage, which every tab of an origin shares and reads
+  // synchronously, so whichever tab gets there first does the extras and the
+  // others skip them for one lease.
+  //
+  // Three deliberate properties:
+  //   - Time-based, never released explicitly. A tab that crashes or is closed
+  //     mid-round cannot wedge the others; the lease just expires.
+  //   - Any storage failure returns true, i.e. fetch anyway. A browser with
+  //     localStorage blocked behaves exactly as it does today rather than
+  //     quietly never refreshing, which would be a far worse bug than a
+  //     duplicate call.
+  //   - NOT storeGet/storeSet: those prefer GM storage, which some managers
+  //     serve from a per-tab cache. A lock has to read what the other tab
+  //     actually wrote, so this talks to localStorage directly.
+  //
+  // Not shared: the fetched payloads. Putting an inventory response in
+  // localStorage is how you earn a QuotaExceededError, so a tab that skips
+  // simply keeps its previous numbers until it next wins the lease — which is
+  // no staler than the TTLs already allow.
+  var EXTRAS_LEASE_MS = 45000; // half of INV_TTL — long enough to cover a round
+  var LEASE_KEY = NS + "_extras_lease";
+  // Identifies THIS page among the tabs sharing the origin. Re-generated per
+  // load, which is what we want: a reloaded tab is a new claimant.
+  var INSTANCE_ID = String(Date.now()) + "_" + Math.random().toString(36).slice(2, 10);
+
+  function claimExtrasLease() {
+    try {
+      var raw = localStorage.getItem(LEASE_KEY);
+      var rec = raw ? JSON.parse(raw) : null;
+      var at = rec ? Number(rec.at) || 0 : 0;
+      var by = rec ? rec.by : null;
+      var now = Date.now();
+      // Blocks only on a FRESH lease held by a DIFFERENT tab. The holder keeps
+      // running on its own TTLs, so a single-tab user is affected by none of
+      // this — the lease deduplicates across tabs, it does not add throttling
+      // within one.
+      //
+      // `at <= now` guards a clock that disagrees with itself: a future-dated
+      // lease reads as expired rather than locking every tab out forever.
+      if (by && by !== INSTANCE_ID && at <= now && now - at < EXTRAS_LEASE_MS) return false;
+      localStorage.setItem(LEASE_KEY, JSON.stringify({ at: now, by: INSTANCE_ID }));
+      return true;
+    } catch (e) {
+      return true;
+    }
+  }
+
   function refresh(kind) {
     var key = resolveKey();
     if (!key) {
@@ -9998,6 +8571,11 @@
     var invAge = Date.now() - (state.invAt || 0);
     var invForce = kind === "boot" || kind === "manual" || !state.lastFetch;
     var wantInv = invForce || ((kind === "open" || kind === "stock" || kind === "train" || state.tab === "stock") && invAge > INV_TTL);
+    // Claimed once per round, before the first await, so two tabs waking
+    // together cannot both pass. boot and manual bypass it: an explicit
+    // refresh the user asked for must never be silently swallowed by a lease
+    // another tab happens to hold.
+    var mayRunExtras = invForce || claimExtrasLease();
     // `basic` is PUBLIC access, so appending it cannot fail a call the rest of
     // which already works -- and it carries player_id, which is what lets the
     // attack log tell your hits from hits on you.
@@ -10016,16 +8594,20 @@
         // was most of a 100-a-minute budget during an ordinary session. The
         // live `since` figure already keeps "Spent today" moving without
         // asking Torn at all, which is what makes this safe to drop.
-        fetchTrainLog(kind === "boot" || kind === "manual");
-        fetchRefills(kind === "boot" || kind === "manual");
-        // The referee on cans drunk where the bar could not be watched. Same
-        // three-minute TTL as refills, and it rides the poll that is already
-        // happening rather than adding one of its own.
-        fetchCansUsed(kind === "boot" || kind === "manual");
-        fetchStocks(kind === "boot" || kind === "manual");
-        fetchAttacksToday(kind === "boot" || kind === "manual" || kind === "train");
-        fetchKeyLevel(kind === "boot" || kind === "manual");
-        if (!wantInv) return null;
+        // The cheap combined call above runs in every tab, so the energy bar
+        // never goes stale. Only the expensive tail is leased.
+        if (mayRunExtras) {
+          fetchTrainLog(kind === "boot" || kind === "manual");
+          fetchRefills(kind === "boot" || kind === "manual");
+          // The referee on cans drunk where the bar could not be watched. Same
+          // three-minute TTL as refills, and it rides the poll that is already
+          // happening rather than adding one of its own.
+          fetchCansUsed(kind === "boot" || kind === "manual");
+          fetchStocks(kind === "boot" || kind === "manual");
+          fetchAttacksToday(kind === "boot" || kind === "manual" || kind === "train");
+          fetchKeyLevel(kind === "boot" || kind === "manual");
+        }
+        if (!wantInv || !mayRunExtras) return null;
         return fetchInventoryV2().then(
           function (rows) {
             var tal0 = state.invTally || {};
@@ -10138,6 +8720,10 @@
       cancelPing(PING_ENERGY);
       cancelPing(PING_XAN_FULL);
       cancelPing(PING_TICK);
+      // Forget what was armed as well. Leaving it set means that when war stack
+      // comes back off, the drift guard compares against a moment from before
+      // the stack and can decide nothing changed — so no ping is re-armed at all.
+      state.armedFullAt = 0;
       return;
     }
     var now = Date.now();
@@ -10146,8 +8732,20 @@
     // at 149 scheduled no "energy full" ping at all — the last two points were
     // treated as already arrived.
     var fullSoon = toFull > 5 && !barFull();
-    if (fullSoon) pingAt(PING_ENERGY, "Energy full — train " + focusLabel(), now + toFull * 1000);
-    else cancelPing(PING_ENERGY);
+    if (fullSoon) {
+      var fullAtMs = now + toFull * 1000;
+      // Regen moves `toFull` down by exactly the time that has passed, so the
+      // ABSOLUTE fill moment does not move while you simply wait. It moves only
+      // when energy is spent or a can is drunk — so a drift this large means the
+      // scheduled ping is now wrong, and anything smaller is just the clock.
+      if (!state.armedFullAt || Math.abs(fullAtMs - state.armedFullAt) > 60000) {
+        pingAt(PING_ENERGY, "Energy full — train " + focusLabel(), fullAtMs);
+        state.armedFullAt = fullAtMs;
+      }
+    } else {
+      cancelPing(PING_ENERGY);
+      state.armedFullAt = 0;
+    }
 
     if (state.mode === "jump") {
       pingAt(PING_TICK, "Happy tick — jump window", now + nextTickSec() * 1000);
@@ -10155,21 +8753,39 @@
       cancelPing(PING_TICK);
     }
 
-    if (state.drugCd > 5) {
-      var xanAt = now + state.drugCd * 1000;
-      if (toFull > state.drugCd && toFull - state.drugCd <= WAIT_FULL_MAX) {
-        pingAt(PING_XAN, "Xan is up. Wait for a full bar, then take it.", xanAt);
+    // Happy jump keeps its own Xanax pings, unchanged: stacking a Xanax on a held
+    // bar is how a jump is built.
+    if (state.mode === "jump") {
+      if (state.drugCd > 5) {
+        var xanAt = now + state.drugCd * 1000;
+        if (toFull > state.drugCd && toFull - state.drugCd <= WAIT_FULL_MAX) {
+          pingAt(PING_XAN, "Xan is up. Wait for a full bar, then take it.", xanAt);
+          pingAt(PING_XAN_FULL, "Bar full. Take a xan, then train " + focusLabel() + ".", now + toFull * 1000);
+        } else {
+          pingAt(PING_XAN, "Xan is up. Open gym.", xanAt);
+          cancelPing(PING_XAN_FULL);
+        }
+      } else if (state.drugCd <= 0 && state.items.xanax > 0 && fullSoon && toFull <= WAIT_FULL_MAX) {
+        cancelPing(PING_XAN);
         pingAt(PING_XAN_FULL, "Bar full. Take a xan, then train " + focusLabel() + ".", now + toFull * 1000);
       } else {
-        pingAt(PING_XAN, "Xan is up. Open gym.", xanAt);
+        cancelPing(PING_XAN);
         cancelPing(PING_XAN_FULL);
       }
-    } else if (state.drugCd <= 0 && state.items.xanax > 0 && fullSoon && toFull <= WAIT_FULL_MAX) {
-      cancelPing(PING_XAN);
-      pingAt(PING_XAN_FULL, "Bar full. Take a xan, then train " + focusLabel() + ".", now + toFull * 1000);
+      return;
+    }
+    // Xan + gym: one Xanax ping, when the cooldown ends, saying to train first --
+    // a Xanax taken on a held bar risks that bar if it overdoses. The old second
+    // "bar full, take a xan" ping only existed to make people wait for a full bar
+    // before the Xanax, the habit this replaced; it is cancelled every pass so one
+    // armed by an older build cannot fire. With no Xanax in hand the ping stays
+    // neutral rather than telling you to take one you do not have.
+    cancelPing(PING_XAN_FULL);
+    if (state.drugCd > 5) {
+      pingAt(PING_XAN, state.items.xanax > 0 ? "Xan is up. Train your energy, then take it." : "Xan is up. Open gym.",
+             now + state.drugCd * 1000);
     } else {
       cancelPing(PING_XAN);
-      cancelPing(PING_XAN_FULL);
     }
   }
 
@@ -10370,6 +8986,10 @@
       "#" + PANEL_ID + " .gcb-icon.on{background:#f2a03d;border-color:#f2a03d;color:#12161b}" +
       "#" + PANEL_ID + " .gcb-icon:active{transform:scale(.94)}" +
 
+      "#" + PANEL_ID + " .gcb-happy{margin:6px 0 0;padding:7px 9px;border-radius:8px;" +
+      "font-size:11.5px;line-height:1.45;background:rgba(224,179,87,.10);" +
+      "border:1px solid rgba(224,179,87,.38);color:#e7d3a8}" +
+      "#" + PANEL_ID + " .gcb-happy b{color:#ffd98a}" +
       "#" + PANEL_ID + " .gcb-verdict{flex:0 0 auto;padding:11px 13px 9px;" +
       "background:radial-gradient(120% 100% at 0% 0%,rgba(242,160,61,.10),transparent 60%)}" +
       "#" + PANEL_ID + " .gcb-verdict.go{background:radial-gradient(120% 100% at 0% 0%,rgba(63,191,127,.12),transparent 60%)}" +
@@ -10476,6 +9096,11 @@
   // spent re-reading things that do not move that fast -- and it is what left
   // no headroom when anything else asked a question. The bar is read from the
   // page DOM once a second regardless, so nothing on screen got slower.
+  // Minimum spacing between the two gym MutationObservers' API refreshes.
+  // They share this: see the note at the observer for why per-observer state
+  // does not work.
+  var ENERGY_OBS_MIN_MS = 45000;
+  var lastEnergyObsAt = 0;
   var POLL_GYM_MS = 60000;
   // Off-gym was 20s, which made every other Torn page poll three times harder
   // than the gym itself. Same rate now.
@@ -10624,9 +9249,21 @@
     applyGoalFocus();
     var c = coach();
     var e = dailyEnergy();
-    var g7 = projectDays(7, e.total, state.focus);
-    var g30 = projectDays(30, e.total, state.focus);
-    var g90 = projectDays(90, e.total, state.focus);
+    // Calibrated, like every other forward-looking number on the panel. These
+    // were the one holdout: they took raw e.total while the goal ETAs and the
+    // gym-unlock ETA were already corrected, so the same panel showed two
+    // different futures and the calibration card claimed to govern both.
+    // `usage` scales the energy that reaches the gym; `model` scales the gain
+    // that energy actually produced.
+    var calP = calibration();
+    var eProj = e.total * calP.usage;
+    var g7 = projectDays(7, eProj, state.focus) * calP.model;
+    var g30 = projectDays(30, eProj, state.focus) * calP.model;
+    var g90 = projectDays(90, eProj, state.focus) * calP.model;
+    // Kept so the card can show what the uncorrected figure would have been.
+    // A reader who sees only the corrected number cannot tell how big the
+    // correction is, and this one is routinely 20-30%.
+    var g90Raw = projectDays(90, e.total, state.focus);
     var tot = state.stats.str + state.stats.def + state.stats.spe + state.stats.dex;
     var live = state.status === "live";
     // Not gated on war stack any more: stacking is exactly when you want to be
@@ -10641,6 +9278,14 @@
       (c.steps && c.steps.length
         ? '<div class="gc-card"><h3>Do this</h3>' + stepsHtml(c.steps) + "</div>"
         : "") +
+      // Directly under the advice, not at the foot of the tab.
+      //
+      // It was the second-to-last card, so switching it on during a war meant
+      // scrolling past Live, Gym perks and the faction board to reach it --
+      // and it is the one control that changes what every card above it says.
+      // A setting that governs the advice belongs beside the advice.
+      '<div class="gc-card toggle"><div><h3 style="margin:0">War stack</h3><div class="muted">Hold energy. Mute training and Xanax pings.</div></div>' +
+      '<div class="sw' + (state.warStack ? " on" : "") + '" id="stackSw"><i></i></div></div>'  +
       '<div class="gc-card"><h3>Live</h3><div class="grid three">' +
       '<div class="stat"><label>Energy' +
       (state.energyDom ? ' <span style="opacity:.6;font-weight:400">live</span>' : ' <span style="opacity:.6;font-weight:400">api</span>') +
@@ -10673,8 +9318,6 @@
         .filter(Boolean)
         .join("<br>") || "No gym perks found in what Torn sent.") +
       "</p></div>" +
-      '<div class="gc-card toggle"><div><h3 style="margin:0">War stack</h3><div class="muted">Hold energy. Mute training and Xanax pings.</div></div>' +
-      '<div class="sw' + (state.warStack ? " on" : "") + '" id="stackSw"><i></i></div></div>'  +
       pasteCardHtml();
 
     var boostOk = boosterOpen(state.boosterCd);
@@ -10791,7 +9434,14 @@
       '<div class="proj"><span>7d</span><div class="bar"><i style="width:' + Math.min(100, (g7 / maxP) * 100) + '%"></i></div><b>+' + fmt(g7) + "</b></div>" +
       '<div class="proj"><span>30d</span><div class="bar"><i style="width:' + Math.min(100, (g30 / maxP) * 100) + '%"></i></div><b>+' + fmt(g30) + "</b></div>" +
       '<div class="proj"><span>90d</span><div class="bar"><i style="width:100%"></i></div><b>+' + fmt(g90) + "</b></div>" +
-      '<div class="muted" style="margin-top:8px">Now ' + fmt(tot) + "</div></div>";
+      '<div class="muted" style="margin-top:8px">Now ' + fmt(tot) +
+      // Showing the uncorrected figure alongside is what stops the 90-day
+      // number appearing to jump for no reason the day a factor goes live or
+      // stale. The size of the gap IS the information.
+      (Math.abs(g90Raw - g90) > Math.max(1, g90 * 0.02)
+        ? ' · 90d uncalibrated +' + fmt(g90Raw)
+        : "") +
+      "</div></div>";
 
     var progRange = state.histRange || 30;
     // Only built for the visible tab. histChart -> histProjection runs the gain
@@ -10912,7 +9562,7 @@
     panel.innerHTML =
       ownerBannerHtml() +
       '<div class="gcb-bar"><div class="gcb-brand"><i class="gcb-dot' + (live ? "" : " off") + '"></i>' +
-      "<b>GYM COACH</b><span>" +
+      '<b data-diag="1">GYM COACH</b><span>' +
       (live ? 'beta · <span class="gc-ago">' + ago() + "</span>" : esc(state.statusText)) +
       "</span></div>" +
       '<div class="gcb-icons">' +
@@ -10939,6 +9589,7 @@
           (c.waste ? '<div class="gcb-waste">' + c.waste + "</div>" : "") +
           "</div>" +
           '<div class="gcb-meters">' + energyMeterHtml() + "</div>" +
+          happyStripHtml() +
           planStripHtml()
         : tab === "now"
         // Folded, on Now: the same compact bar, but it expands rather than
@@ -10985,8 +9636,6 @@
       var body2 = panel.querySelector(".gc-body");
       if (body2) body2.scrollTop = bodyY;
     }
-    var box = panel.querySelector("#gcbPaste");
-    if (box) box.value = draftPaste;
     var key2 = panel.querySelector("#gcKey");
     if (key2) {
       key2.value = keyVal || draftKey || "";
@@ -11302,10 +9951,6 @@
     panel.addEventListener(
       "input",
       function (e) {
-        if (e.target && e.target.id === "gcbPaste") {
-          draftPaste = String(e.target.value || "");
-          return;
-        }
         if (!isKey(e.target)) return;
         draftKey = String(e.target.value || "");
         trySaveKey(draftKey);
@@ -11558,6 +10203,8 @@
     renderPanel();
   }
 
+  var _diagTaps = 0, _diagTapAt = 0;
+
   function onPanelClick(e) {
     var t = e.target;
     if (!t) return;
@@ -11565,8 +10212,23 @@
     if (!t || typeof t.closest !== "function") return;
     // Every clickable attribute has to be listed here or the handler below it is
     // dead code -- closest() returns null and this returns before reaching it.
-    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],[data-board],#stackSw,#novSw,#boardSw");
+    t = t.closest("[data-tab],[data-act],[data-focus],[data-focus2],[data-mode],[data-use],[data-use-id],[data-tip],[data-hrange],[data-src],[data-tick],[data-goalstep],[data-raise],[data-clearday],[data-restoreday],[data-book],[data-board],[data-diag],[data-gap],#stackSw,#novSw,#boardSw");
     if (!t) return;
+    if (t.dataset.diag) {
+      // Deliberately undiscoverable: this is a tool for chasing one report,
+      // not a feature, and the panel is other people's screen. Five taps on
+      // the brand inside three seconds, which nothing does by accident.
+      var now = Date.now();
+      if (now - (_diagTapAt || 0) > 3000) _diagTaps = 0;
+      _diagTapAt = now;
+      if (++_diagTaps < 5) return;
+      _diagTaps = 0;
+      state.diag = !state.diag;
+      storeSet("diag", state.diag);
+      resetPlanCaches();
+      renderPanel();
+      return;
+    }
     if (t.dataset.board) {
       onBoardClick(t.dataset.board);
       return;
@@ -11588,6 +10250,15 @@
       if (!state.src) state.src = {};
       state.src[tk] = srcCount(tk) > 0 ? 0 : (trow ? trow.def : 1);
       storeSet("src", state.src);
+      renderPanel();
+      return;
+    }
+    if (t.dataset.gap) {
+      var gh = (Number(state.gapHours) || 0) + (Number(t.dataset.gap) || 0);
+      if (gh < 0) gh = 0;
+      if (gh > 24) gh = 24;
+      state.gapHours = gh;
+      storeSet("gapHours", gh);
       renderPanel();
       return;
     }
@@ -11726,29 +10397,6 @@
       }
       copyText(pasteLine(mineNow));
       showToast("Copied", "Paste it into faction chat.");
-      renderPanel();
-      return;
-    }
-    if (t.dataset.act === "pasteread") {
-      var boxEl = document.getElementById("gcbPaste");
-      var text = boxEl ? String(boxEl.value || "") : draftPaste;
-      var wkNow = weekKey(Date.now());
-      var haveNow = state.pasted && state.pasted.week === wkNow && Array.isArray(state.pasted.rows)
-        ? state.pasted.rows : [];
-      var res = pasteCollect(haveNow, text, wkNow);
-      state.pasted = { week: wkNow, rows: res.rows, at: Date.now() };
-      storeSet("pasted", state.pasted);
-      draftPaste = "";
-      if (boxEl) boxEl.value = "";
-      showToast(
-        res.read ? "Read " + res.read + (res.read === 1 ? " line" : " lines") : "No lines found",
-        res.read
-          ? res.added + " new, " + (res.read - res.added) + " updated" +
-            (res.otherWeek ? " \u00b7 " + res.otherWeek + " from another week ignored" : "")
-          : (res.otherWeek
-              ? res.otherWeek + " line(s) were from another gym week."
-              : "Nothing in that paste looked like a line from this script.")
-      );
       renderPanel();
       return;
     }
@@ -12010,6 +10658,26 @@
         if (!/gym\.php/i.test(location.href)) return;
         clearTimeout(obs._t);
         obs._t = setTimeout(function () {
+          // THROTTLED, and the throttle is SHARED.
+          //
+          // Two roots are observed -- #gymroot and the energy bar -- each with
+          // its own observer and its own 500ms debounce. The bar mutates
+          // continuously as it fills, so every quiet gap scheduled another
+          // full API call, from each observer independently. Measured on a
+          // live device: 29 calls a minute from this script, 20 of them v1
+          // /user, against Torn's 100-a-minute key budget -- while the actual
+          // POLL sits at a well-behaved 60s.
+          //
+          // The floor lives at module scope on purpose. Per-observer state
+          // would let two observers alternate straight through it.
+          //
+          // Nothing on screen slows down: syncEnergyFromDom() reads the bar
+          // off the page every second regardless, so energy stays live. This
+          // call only exists to pick up what the DOM does not show, and that
+          // does not move in under a minute.
+          var now = Date.now();
+          if (now - lastEnergyObsAt < ENERGY_OBS_MIN_MS) return;
+          lastEnergyObsAt = now;
           refresh("energy");
         }, 500);
       });
@@ -12174,6 +10842,7 @@
       state.goalOrder = state.goalOrder.filter(function (k) { return HIST_KEYS.indexOf(k) !== -1; });
       var stepSaved = Number(storeGet("goalStep", GOAL_STEP_DEFAULT));
       state.goalStep = GOAL_STEPS.indexOf(stepSaved) !== -1 ? stepSaved : GOAL_STEP_DEFAULT;
+      state.diag = storeGet("diag", false) === true;
       // Validated against the list rather than trusted: a stored name that is
       // not one of the six would be a lock nothing can satisfy, and every goal
       // would sit on hold with no way to see why.
@@ -12187,6 +10856,17 @@
       if (typeof state.ledger === "string") { try { state.ledger = JSON.parse(state.ledger); } catch (_) { state.ledger = []; } }
       if (!Array.isArray(state.ledger)) state.ledger = [];
       state.ledger = state.ledger.filter(function (e) { return e && typeof e.d === "number"; });
+      state.gapHours = Math.max(0, Math.min(24, Number(storeGet("gapHours", 0)) || 0));
+      var cl = storeGet("calLast", null);
+      if (typeof cl === "string") { try { cl = JSON.parse(cl); } catch (_) { cl = null; } }
+      state.calLast = (cl && typeof cl === "object" && !Array.isArray(cl)) ? cl : {};
+      // A held factor outside its clamp would be worse than no factor at all.
+      ["model", "usage"].forEach(function (n) {
+        var h = state.calLast[n];
+        var lo = n === "model" ? CAL_MODEL_LO : CAL_USAGE_LO;
+        var hi = n === "model" ? CAL_MODEL_HI : CAL_USAGE_HI;
+        if (!h || typeof h.v !== "number" || !(h.v >= lo && h.v <= hi) || typeof h.at !== "number") delete state.calLast[n];
+      });
       var sv = storeGet("src", null);
       if (typeof sv === "string") { try { sv = JSON.parse(sv); } catch (_) { sv = null; } }
       if (sv && typeof sv === "object") {
@@ -12242,6 +10922,12 @@
         }
         dockInGym();
       }, 1500);
+      // Faction chat, for board lines. Its own slower tick: chat re-renders
+      // constantly and there is no hurry, so this is a string compare on
+      // almost every pass and a parse only when the text actually changed.
+      setInterval(function () {
+        try { scanFactionChat(); } catch (_) { /* chat is optional furniture */ }
+      }, 6000);
       // The item page fills its rows in after load, so keep looking for a while.
       if (/item\.php/i.test(location.href)) {
         var scanTries = 0;
