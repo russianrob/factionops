@@ -13,7 +13,7 @@
 
 <h3>The numbers correct themselves</h3>
 
-<p>Most gym calculators tell you a date and never check whether they were right. This one keeps two figures from your own last 14 days. The gain model is what you really gained divided by what the maths predicted for the energy you really spent. Usage is the energy that reached the gym as a share of the energy that passed through your bar. Every ETA is multiplied by both, so a bar you keep leaving full shows up as days added to your goal instead of a number with no consequence. Below seven qualifying days it stays out of the way and says so.</p>
+<p>The coach keeps two figures from your own last 14 days. The gain model is what you really gained divided by what the maths predicted for the energy you really spent. Usage is the energy that reached the gym as a share of the energy that passed through your bar. Every ETA is multiplied by both, so a bar you keep leaving full shows up as days added to your goal instead of a number with no consequence. Below seven qualifying days it stays out of the way and says so.</p>
 
 
 <p>Smaller things it does along the way: it works out which stat book you're reading and shows the real countdown. It tells you what training at low happiness is costing you, as stat you didn't gain. In Torn PDA it pings you when the bar is full and when a happy jump window opens.</p>
