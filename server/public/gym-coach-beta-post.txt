@@ -34,8 +34,8 @@
 <h3>Screenshots</h3>
 <p><em>The Now tab: a verdict, the next 12 hours, and the booster meter:</em></p>
 <img src="https://tornwar.com/gym-coach-now-shot.jpg" alt="Gym Coach Beta Now tab: Wait 10m for a full bar, then take a xan, with the 12-hour strip and booster meter below">
-<p><em>The Plan tab: goals per stat with finish dates:</em></p>
-<img src="https://tornwar.com/gym-coach-plan-shot.jpg" alt="Gym Coach Beta Plan tab showing per-stat goals and their finish dates">
+<p><em>The Plan tab: goals per stat with finish dates. Look at Dexterity: 2.1 months at George's, because the gym this player is standing in doesn't train it:</em></p>
+<img src="https://tornwar.com/gym-coach-plan-shot.jpg" alt="Gym Coach Beta Plan tab: Speed, Dexterity and Strength goals with months of training and finish dates, Dexterity routed to George's because Frontline Fitness does not train it">
 <p><em>Worth it? ranking cans and xanax by cost per day saved:</em></p>
 <img src="https://tornwar.com/gym-coach-worth-shot.jpg" alt="Gym Coach Beta Worth it card ranking purchases by cost per day saved">
 
