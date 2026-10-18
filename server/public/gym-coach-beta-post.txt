@@ -22,11 +22,15 @@
 
 <p>Nowhere. There's no server behind this. The energy ledger that drives the calibration lives on your device and stays there. The script talks to api.torn.com for your stats and bars, and to weav3r.dev's public price mirror for item prices, where the only thing that leaves your browser is an item ID. Nobody, me included, can see how you train.</p>
 
+<p>That has one consequence you should know before you install: run it on one device. The ledger can't follow you from your phone to your desktop, so a second install starts from nothing, and if you train on one device while the other shows the panel, the calibration measures energy it never saw and the dates drift. Pick the device you actually train on and keep it there.</p>
+
 <p>It needs your API key. A Limited key does most of it. A Full key lets it read your log, which is what the xanax count, the book detection and the finer calibration are built on.</p>
 
 <h3>Why "Beta"</h3>
 
-<p>Because the calibration is still being checked against real people's training, and the recent fixes have come from users. The latest one: a goal reporting "not reachable at this rate" when it was perfectly reachable. Eddie877 found it and found the trigger too. If a number looks wrong to you, it might be, and I want to hear about it.</p>
+<p>Because the calibration is still being checked against real people's training, and the recent fixes have come from users. The latest one: a goal reporting "not reachable at this rate" when it was perfectly reachable. Eddie877 found it and found the trigger too.</p>
+
+<p>So treat it as a beta in the real sense. Feedback and bug reports are the point of releasing it at this stage, and I'd strongly encourage both. If a number looks wrong to you, it might be. Post it here with a screenshot and the gym you were standing in, and I'll chase it.</p>
 
 <p>Works on desktop with Tampermonkey and in Torn PDA.</p>
 
@@ -41,4 +45,4 @@
 
 <p>This started as a project <a href="https://www.torn.com/profiles.php?XID=2598755">rcexyz</a> asked me to build. The screenshots above are his gym.</p>
 
-<p>If a date looks off or the coach tells you something that's plainly wrong, post it here with a screenshot and I'll chase it.</p>
+<p>Even if nothing's broken, a line about whether the dates matched what actually happened is useful to me.</p>
