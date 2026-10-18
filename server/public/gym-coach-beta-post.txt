@@ -37,12 +37,12 @@
 <h3>Screenshots</h3>
 <p><em>The Now tab: a verdict, the next 12 hours, and the booster meter:</em></p>
 <img src="https://tornwar.com/gym-coach-now-shot.jpg" alt="Gym Coach Beta Now tab: Wait 10m for a full bar, then take a xan, with the 12-hour strip and booster meter below">
-<p><em>The Plan tab: goals per stat with finish dates. Look at Dexterity: 2.1 months at George's, because the gym this player is standing in doesn't train it:</em></p>
+<p><em>The Plan tab: goals per stat with finish dates. Look at Dexterity: 2.1 months at George's, because the gym I'm standing in doesn't train it:</em></p>
 <img src="https://tornwar.com/gym-coach-plan-shot.jpg" alt="Gym Coach Beta Plan tab: Speed, Dexterity and Strength goals with months of training and finish dates, Dexterity routed to George's because Frontline Fitness does not train it">
 
 <h3>Install</h3>
 <p><a href="https://tornwar.com/scripts/gym-coach-beta.user.js">Install Gym Coach Beta</a> (Tampermonkey opens it as a userscript; in Torn PDA, add that URL under Userscripts)</p>
 
-<p>This started as a project <a href="https://www.torn.com/profiles.php?XID=2598755">rcexyz</a> asked me to build. The screenshots above are his gym.</p>
+<p>This started as a project <a href="https://www.torn.com/profiles.php?XID=2598755">rcexyz</a> asked me to build. The screenshots above are my own gym.</p>
 
 <p>Even if nothing's broken, a line about whether the dates matched what actually happened is useful to me.</p>
