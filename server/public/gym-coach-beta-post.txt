@@ -5,9 +5,11 @@
 
 <p>The gym page gives you four stats, some dots, and a bar. Everything else is on you. Which stat today, whether this gym is even the right one, whether to wait for the bar to fill, whether that can is worth what it costs, and when you'll finally hit the number you've been chasing. Most of us run all of that in our heads and get it slightly wrong for months.</p>
 
-<p>This puts a small overlay on the gym page that does the arithmetic and gives you a verdict. Three tabs.</p>
+<p>This puts a small overlay on the gym page that does the arithmetic and gives you a verdict. Five tabs, and a gear for settings.</p>
 
-<ul><li><strong>Now</strong> tells you one thing to do. "Train Defense here." "Wait 23m for full energy, then train Strength." Or, when you've wandered into a gym that can't train the stat you're on, "Don't train here" with where to go instead. Under it sits a cooldown rail for your drug and booster timers, with the bits of the rules people forget (a can still works at 46h of a 48h cap, because Torn only needs you under it)</li><li><strong>Plan</strong> is your goals per stat, each with a finish date. Tap the arrow to train a stat earlier and the list redraws in the order it will actually run. Gym unlocks get their own date, and a stat your current gym can't train gets a date at a gym that can. If you've locked a specialist gym, the plan stops walking you out of it</li><li><strong>Settings</strong> is your key, your goals, and your energy sources: the cans you hold, read from your inventory rather than a fixed list</li></ul>
+<ul><li><strong>Now</strong> tells you one thing to do. From the screenshot below: "Wait 10m for a full bar, then take a xan. Xan is ready but you're at 145/150. Waiting lets you train 400e into Speed instead of 395e." When you've wandered into a gym that can't train the stat you're on, it says don't train here and where to go instead. Under the verdict is a strip of the next 12 hours, marking when your drug cooldown ends and when the bar fills, and a booster meter that knows the bits of the rules people forget ("3h 28m of headroom, room for 2 more cans", because Torn only needs you under the cap, not clear of it)</li><li><strong>Plan</strong> is your goals per stat, each with a finish date. Tap the arrow to train a stat earlier and the list redraws in the order it will actually run. Gym unlocks get their own date, and a stat your current gym can't train gets a date at a gym that can. If you've locked a specialist gym, the plan stops walking you out of it. The calibration and Worth it? cards below live here too, along with your energy sources: the cans you hold, read from your inventory rather than a fixed list</li><li><strong>Inventory</strong> is what you actually have right now: energy drinks, happy items, live battle stats and a train log</li><li><strong>Trend</strong> is progression over time, and energy used against energy missed</li><li><strong>Board</strong> appears if your key has faction API access: a gym-energy board for the whole faction</li></ul>
+
+<p>Settings sits behind the gear: your key, your playstyle, the specialist gym lock.</p>
 
 <h3>The numbers correct themselves</h3>
 
@@ -30,8 +32,8 @@
 <p>Works on desktop with Tampermonkey and in Torn PDA.</p>
 
 <h3>Screenshots</h3>
-<p><em>The Now tab, with a verdict and the cooldown rail:</em></p>
-<img src="https://tornwar.com/gym-coach-now-shot.jpg" alt="Gym Coach Beta Now tab on the Torn gym page, showing the verdict and cooldown rail">
+<p><em>The Now tab: a verdict, the next 12 hours, and the booster meter:</em></p>
+<img src="https://tornwar.com/gym-coach-now-shot.jpg" alt="Gym Coach Beta Now tab: Wait 10m for a full bar, then take a xan, with the 12-hour strip and booster meter below">
 <p><em>The Plan tab: goals per stat with finish dates:</em></p>
 <img src="https://tornwar.com/gym-coach-plan-shot.jpg" alt="Gym Coach Beta Plan tab showing per-stat goals and their finish dates">
 <p><em>Worth it? ranking cans and xanax by cost per day saved:</em></p>
