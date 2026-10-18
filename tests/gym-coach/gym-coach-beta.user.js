@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gym Coach Beta
 // @namespace    RussianRob
-// @version      0.12.17
+// @version      0.12.18
 // @description  Beta lane for Gym Coach — verdict-first overlay, three tabs, cooldown rail. Runs alongside the stable script. Fork of AaronPMC [4431836]'s Gym Coach, which this builds on.
 // @author       RussianRob
 // @license      All Rights Reserved
@@ -66,7 +66,7 @@
   // the panel proudly displayed "v3.2.74". deploy.sh now refuses to ship a file
   // where this and @version disagree, which fixes the drift at the only moment
   // that matters without trusting a shim to tell the truth.
-  var GC_VERSION = "0.12.17";
+  var GC_VERSION = "0.12.18";
   var COMMENT = "GymCoach-AaronPMC";
 
   // Exactly ONE occurrence of the placeholder in this file, single-quoted, the
@@ -1072,6 +1072,9 @@
     var map = {
       xanax: [
         "Xanax",
+        (!state.warStack && state.mode !== "jump"
+          ? "Train what is in the bar first, then take it: an overdose can\u2019t take energy you have already spent. "
+          : "") +
         "+250 energy (caps at 1,000) and +75 happy. Starts a shared drug cooldown of 6–8 hours (random). Side effects while it lasts, including a battle-stat penalty. Overdose can wipe energy, nerve, and happy. Cooldown now: " + drugLeft + ".",
       ],
       cans: [
@@ -4438,6 +4441,22 @@
     return g ? Number(g.Energy) || 0 : 0;
   }
 
+  // Energy in one train at the gym the coach sends you to. betterGym() picks on
+  // dots alone, so it can name a 25e gym while you stand in a 10e one, and 15e
+  // would read as trainable in a gym where it is not one train.
+  function namedGymTrainEnergy() {
+    var upgrade = betterGym(state.focus);
+    var g = upgrade ? upgrade.gym : GYMS.filter(function (x) { return x.Gym === state.gymName; })[0];
+    return (g && Number(g.Energy)) || state.gymEnergy || 25;
+  }
+
+  // Xan + gym only: true while the bar holds at least one train, which is when
+  // the coach says to train first and take the Xanax after (0.12.17). War stack
+  // and Happy jump take a Xanax on a held bar on purpose, so never for them.
+  function trainBeforeXan() {
+    return !state.warStack && state.mode !== "jump" && state.energy >= namedGymTrainEnergy();
+  }
+
   // How long a locally-counted train is carried before Torn's log overrules it.
   //
   // Two full log rounds and then some. Shorter than the fetch interval and the
@@ -5620,11 +5639,7 @@
       // happiness a Xanax adds is worth a few energy at most. Testers caught the
       // old "wait for a full bar, then take a xan" advice on 2026-10-18. War stack,
       // above, is the one place where taking it on a held bar is the point.
-      // One train is measured at the gym the steps send you to. betterGym() picks
-      // on dots alone, so it can name a 25e gym while you stand in a 10e one, and
-      // 15e would read as trainable in a gym where it is not one train.
-      var namedGym = upgrade ? upgrade.gym : GYMS.filter(function (g) { return g.Gym === state.gymName; })[0];
-      var perTrain = (namedGym && Number(namedGym.Energy)) || state.gymEnergy || 25;
+      var perTrain = namedGymTrainEnergy();
       var canAdd = boosterOpen(state.boosterCd) && cans > 0;
       var canNote = canAdd ? " Booster has room \u2014 cans after the xan if you want a bigger training session." : "";
       var loopSteps = [
@@ -9331,7 +9346,11 @@
       '<div class="gc-card"><h3>Inventory · live</h3>' +
       (invNote ? '<div class="muted" style="margin:-4px 0 8px">' + invNote + "</div>" : "") +
       [
-        { key: "xanax", n: "Xanax", v: state.items.xanax, rec: xanOk ? "USE" : state.drugCd ? "WAIT " + fmtCd(state.drugCd) : "BUY", cls: xanOk ? "ok" : "warn" },
+        // A one-tap USE on a held bar is the habit 0.12.17 removed from the Now
+        // verdict, so while the bar holds a train it is a TRAIN FIRST tip chip.
+        { key: "xanax", n: "Xanax", v: state.items.xanax,
+          rec: xanOk ? (trainBeforeXan() ? "TRAIN FIRST" : "USE") : state.drugCd ? "WAIT " + fmtCd(state.drugCd) : "BUY",
+          cls: xanOk && !trainBeforeXan() ? "ok" : "warn" },
         { key: "fhc", n: "FHC", v: state.items.fhc, rec: "DON\u2019T", cls: "bad" },
         { key: "nandrolone", n: "Nandrolone", v: state.items.nandrolone, rec: "OPTIONAL", cls: "warn" },
         state.mode !== "jump" ? null : { key: "edvd", n: "Erotic DVDs", v: state.items.edvd, rec: state.mode !== "jump" ? "OFF" : !state.items.edvd ? "NEED" : jumpGo && boostOk ? "USE" : "HOLD", cls: state.mode === "jump" ? "ok" : "muted" },
