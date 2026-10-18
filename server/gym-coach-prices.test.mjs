@@ -43,12 +43,9 @@ test('the market parser takes the cheapest listing from the v2 item-market shape
   assert.equal(parseTornMarket({ itemmarket: { item: { id: 206 }, listings: [] } }), 0, 'no listings is no price, never free');
 });
 
-test('the changelog block is gone; the two-line credit stays', () => {
+test('no changelog and no credit comment: the body starts right after the header', () => {
   assert.equal(BETA.includes('CHANGELOG'), false);
-  assert.match(BETA, /Built for rcexyz \[2598755\] by AaronPMC \[4431836\]/);
-  // Not indexOf('/*'): the @match line "https://*.torn.com/*" contains one.
-  const credit = BETA.indexOf('/*\n * Gym Coach');
-  assert.notEqual(credit, -1, 'the credit block opens the body');
-  const close = BETA.indexOf('*/', credit);
-  assert.ok(close - credit < 200, 'the opening comment is a short credit, not thousands of lines');
+  assert.equal(BETA.includes('free for everyone (MIT)'), false);
+  const afterHeader = BETA.slice(BETA.indexOf('// ==/UserScript==') + '// ==/UserScript=='.length).trimStart();
+  assert.doesNotMatch(afterHeader, /^\/\*/, 'no block comment opens the body');
 });

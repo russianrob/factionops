@@ -23,10 +23,6 @@
 // @updateURL    https://tornwar.com/scripts/gym-coach-beta.meta.js
 // ==/UserScript==
 
-/*
- * Gym Coach — free for everyone (MIT)
- * Built for rcexyz [2598755] by AaronPMC [4431836]
- */
 
 (function () {
   "use strict";
