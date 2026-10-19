@@ -87,3 +87,32 @@ test("paces are exact differences: base day, else the first saved day, else none
   assert.ok(!(5 in p), "seen only at L: no pace");
   assert.ok(!(6 in p), "hidden at L: no pace");
 });
+
+// ── projection and pass days ────────────────────────────────────────────
+test("projected positions count every faction at its own pace", () => {
+  const respect = { 42055: 1000, 1: 1050, 2: 2000, 3: 900 };
+  const paces = { 42055: 100, 1: 0, 2: 0, 3: 150 };
+  const proj = climb.projectPositions(respect, paces, 42055);
+  assert.equal(proj.length, 365);
+  assert.equal(proj[0], 2, "d=1: passed 1, 3 not yet past us");
+  assert.equal(proj[364], 2, "d=365: passed 1 and 2, overtaken by 3");
+  assert.equal(climb.projectPositions(respect, { 1: 0 }, 42055), null, "no pace for us: no projection");
+});
+
+test("the horizons are entries 7, 30, 91, 182 and 365", () => {
+  const proj = Array.from({ length: 365 }, (_, i) => 1000 - i);
+  assert.deepEqual(climb.horizonsOf(proj), { 7: 994, 30: 971, 91: 910, 182: 819, 365: 636 });
+});
+
+test("days to pass for rows above and below us", () => {
+  const above = (gap, pace, usPace) => climb.daysToPass({ above: true, gap, pace, usPace });
+  const below = (gap, pace, usPace) => climb.daysToPass({ above: false, gap, pace, usPace });
+  assert.equal(above(1000, 50, 150), 10);
+  assert.equal(above(1000, 150, 150), null, "as fast as us: pulling away");
+  assert.equal(above(1000, 200, 150), null);
+  assert.equal(above(-5, 50, 150), 0, "level or already behind: today");
+  assert.equal(below(-1000, 250, 150), 10);
+  assert.equal(below(-1000, 100, 150), null);
+  assert.equal(above(1000, NaN, 150), null);
+  assert.equal(below(-1000, 250, undefined), null);
+});

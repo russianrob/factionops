@@ -92,3 +92,31 @@ export function pacesFor(byDay, latest, win) {
   }
   return out;
 }
+
+// ── projection and the table's pass days ──────────────────────────────────
+// Our position for d = 1 … days, with every faction keeping its own pace.
+export function projectPositions(latestRespect, paces, us, days = 365) {
+  const me = String(us);
+  if (!(me in paces)) return null;
+  const ids = Object.keys(paces).filter((id) => id !== me);
+  const start = ids.map((id) => latestRespect[id]), pace = ids.map((id) => paces[id]);
+  const out = [];
+  for (let d = 1; d <= days; d++) {
+    const mine = latestRespect[me] + d * paces[me];
+    let ahead = 0;
+    for (let i = 0; i < ids.length; i++) if (start[i] + d * pace[i] > mine) ahead++;
+    out.push(1 + ahead);
+  }
+  return out;
+}
+
+export const horizonsOf = (projection) =>
+  Object.fromEntries(HORIZONS.map((d) => [d, projection ? projection[d - 1] : null]));
+
+// Days until the gap closes, or null when it never does. `above` means the row
+// sits above us in the table; gap is their respect minus ours.
+export function daysToPass({ above, gap, pace, usPace }) {
+  if (!Number.isFinite(pace) || !Number.isFinite(usPace)) return null;
+  if (above) return usPace > pace ? Math.max(0, gap) / (usPace - pace) : null;
+  return pace > usPace ? Math.max(0, -gap) / (pace - usPace) : null;
+}
