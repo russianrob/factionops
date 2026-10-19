@@ -7,8 +7,8 @@
 // return success for a token they will never deliver to, so the only
 // proof is a human seeing a banner.
 //
-//   node tools/push-test.mjs 137558 bonus_imminent
-//   node tools/push-test.mjs 137558 chain_alert
+//   node tools/push-probe.mjs 137558 bonus_imminent
+//   node tools/push-probe.mjs 137558 chain_alert
 //
 // The type is passed through to the preference gate, so this also tells
 // you whether that type is switched off for the player.
@@ -28,7 +28,7 @@ const playerId = String(process.argv[2] || '').trim();
 const type = String(process.argv[3] || 'bonus_imminent').trim();
 
 if (!playerId) {
-  console.error('usage: node tools/push-test.mjs <playerId> [notifType]');
+  console.error('usage: node tools/push-probe.mjs <playerId> [notifType]');
   process.exit(1);
 }
 
