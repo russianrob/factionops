@@ -116,3 +116,44 @@ test("days to pass for rows above and below us", () => {
   assert.equal(above(1000, NaN, 150), null);
   assert.equal(below(-1000, 250, undefined), null);
 });
+
+// ── crowding note ───────────────────────────────────────────────────────
+// Us at 1,000 gaining 100 a day. Six factions sit 100–600 above and stand
+// still; one at 350 above is faster than us; one is far ahead.
+const CROWD = {
+  latestRespect: { 42055: 1000, a1: 1100, a2: 1200, a3: 1300, a4: 1400, a5: 1500, a6: 1600, c: 1350, d: 50000 },
+  paces: { 42055: 100, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0, a6: 0, c: 200, d: 0 },
+  hidden: [], us: 42055,
+};
+const note = (over) => climb.crowdingNote({ ...CROWD, ...over });
+
+test("a crowded month gets the approved sentence, counting every faction within X", () => {
+  // We pass six (gaps up to 600), and seven factions sit within 600 because c does too.
+  assert.equal(note({ basePosition: 11, position: 9, projected30: 3 }),
+    "We climbed 2 places last month (#11 to #9). At this pace we climb 6 in the next month, " +
+    "because 7 factions are within 600 respect above us.");
+});
+
+test("the faster note after a flat or falling month, with singular forms", () => {
+  const one = { latestRespect: { 42055: 1000, a1: 1100, d: 50000 }, paces: { 42055: 100, a1: 0, d: 0 } };
+  assert.equal(note({ ...one, basePosition: 7, position: 9, projected30: 8 }),
+    "We fell 2 places last month (#7 to #9). At this pace we climb 1 in the next month, " +
+    "because 1 faction is within 100 respect above us.");
+  assert.match(note({ basePosition: 9, position: 9, projected30: 6 }), /^We held #9 last month\. /);
+  assert.match(note({ basePosition: 8, position: 9, projected30: 7 }), /^We fell 1 place last month \(#8 to #9\)\. /);
+});
+
+test("a sparse month gets the slower note and the nearest faction we don't reach", () => {
+  // c (350 ahead, faster) and d stay ahead at d = 30; c is the nearer one.
+  assert.equal(note({ basePosition: 19, position: 9, projected30: 7 }),
+    "We climbed 10 places last month (#19 to #9). At this pace we climb only 2 in the next month. " +
+    "The nearest faction above us that we don't reach this month is 350 respect ahead.");
+  assert.match(note({ basePosition: 19, position: 9, projected30: 9 }), / At this pace we hold #9 for the next month\. /);
+  assert.match(note({ basePosition: 19, position: 9, projected30: 10 }), / At this pace we fall 1 place in the next month\. /);
+});
+
+test("no note inside the 3-place margin, at #1, or without a 30-day base", () => {
+  assert.equal(note({ basePosition: 10, position: 9, projected30: 7 }), null, "1 then 2: noise");
+  assert.equal(note({ basePosition: 19, position: 9, projected30: 1 }), null, "we would reach #1");
+  assert.equal(note({ basePosition: null, position: 9, projected30: 3 }), null);
+});

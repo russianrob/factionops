@@ -120,3 +120,41 @@ export function daysToPass({ above, gap, pace, usPace }) {
   if (above) return usPace > pace ? Math.max(0, gap) / (usPace - pace) : null;
   return pace > usPace ? Math.max(0, -gap) / (pace - usPace) : null;
 }
+
+// ── crowding note ─────────────────────────────────────────────────────────
+const places = (n) => (n === 1 ? "1 place" : n + " places");
+
+// Explains a coming month that moves much faster or slower than the last one.
+// Positions are midnight positions; projected30 is our projected position at
+// d = 30 for the window whose paces are passed in.
+export function crowdingNote({ latestRespect, hidden, paces, us, basePosition, position, projected30 }) {
+  if (basePosition == null || position == null || projected30 == null) return null;
+  const me = String(us), last = basePosition - position, next = position - projected30;
+  const hide = new Set((hidden || []).map(String));
+  const mine = latestRespect[me], mine30 = mine + 30 * paces[me];
+  const ahead = Object.keys(latestRespect).filter((id) => id !== me && !hide.has(id) && latestRespect[id] > mine);
+  const at30 = (id) => (id in paces ? latestRespect[id] + 30 * paces[id] : null);
+  const head = last > 0 ? `We climbed ${places(last)} last month (#${basePosition} to #${position}).`
+    : last === 0 ? `We held #${position} last month.`
+    : `We fell ${places(-last)} last month (#${basePosition} to #${position}).`;
+
+  if (next > 0 && next >= 2 * last && next >= last + 3) {
+    const passed = ahead.filter((id) => at30(id) !== null && at30(id) <= mine30);
+    if (!passed.length) return null;
+    const X = Math.max(...passed.map((id) => latestRespect[id] - mine));
+    const M = ahead.filter((id) => latestRespect[id] - mine <= X).length;
+    return `${head} At this pace we climb ${next} in the next month, because ${M} ` +
+      `${M === 1 ? "faction is" : "factions are"} within ${fmtNum(X)} respect above us.`;
+  }
+  if (last > 0 && next <= last / 2 && next <= last - 3 && projected30 !== 1) {
+    const mid = next > 0 ? `At this pace we climb only ${next} in the next month.`
+      : next === 0 ? `At this pace we hold #${position} for the next month.`
+      : `At this pace we fall ${places(-next)} in the next month.`;
+    const still = ahead.filter((id) => at30(id) !== null && at30(id) > mine30).map((id) => latestRespect[id] - mine);
+    const tail = still.length
+      ? ` The nearest faction above us that we don't reach this month is ${fmtNum(Math.min(...still))} respect ahead.`
+      : "";
+    return `${head} ${mid}${tail}`;
+  }
+  return null;
+}
