@@ -258,3 +258,52 @@ test("a throwing fetch never becomes an unhandled rejection", async () => {
   assert.equal(s.retry, true);
   assert.match(s.error, /network/);
 });
+
+// ── scheduling ──────────────────────────────────────────────────────────
+function fakeCron() {
+  const scheduled = [];
+  return { scheduled, schedule(expr, fn, options) {
+    const task = { expr, fn, options, stopped: false, stop() { this.stopped = true; } };
+    scheduled.push(task);
+    return task;
+  } };
+}
+function fakeTimers() {
+  const set = [];
+  return { set, setTimeout(fn, ms) { const h = { fn, ms, cleared: false }; set.push(h); return h; },
+    clearTimeout(h) { if (h) h.cleared = true; } };
+}
+
+test("the job runs at 00:05 UTC and 60 s after start, never twice at once, and stops cleanly", async () => {
+  const cron = fakeCron(), timers = fakeTimers();
+  const opts = { ...setup(fakeTorn({ days: { "2026-10-19": SNAP } })), cron, timers };
+  assert.equal(startHofSnapshots(opts), true);
+  try {
+    const [task] = cron.scheduled;
+    assert.equal(task.expr, "5 0 * * *");
+    assert.deepEqual(task.options, { timezone: "UTC", noOverlap: true });
+    const boot = timers.set[0];
+    assert.equal(boot.ms, 60000);
+    const running = boot.fn();
+    await task.fn();
+    assert.equal(timers.set[timers.set.length - 1].ms, 15 * 60 * 1000, "busy: the daily run arms the retry");
+    await running;
+    assert.ok(existsSync(join(opts.dataDir, "days", "2026-10-19.json")));
+  } finally {
+    stopHofSnapshots();
+  }
+  assert.equal(cron.scheduled[0].stopped, true);
+  assert.ok(timers.set.every((h) => h.cleared), "boot and retry timers cleared");
+});
+
+test("no OWNER_API_KEY, or HOF_SCHEDULE=0, schedules nothing", () => {
+  const cron = fakeCron(), timers = fakeTimers();
+  assert.equal(startHofSnapshots({ key: "", cron, timers }), false);
+  process.env.HOF_SCHEDULE = "0";
+  try {
+    assert.equal(startHofSnapshots({ key: KEY, cron, timers }), false);
+  } finally {
+    delete process.env.HOF_SCHEDULE;
+  }
+  assert.equal(cron.scheduled.length + timers.set.length, 0);
+});

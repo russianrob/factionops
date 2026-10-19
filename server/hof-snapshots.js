@@ -313,3 +313,66 @@ function buildIn(ctx) {
   return digest;
 }
 export const buildDigest = (opts) => buildIn(context(opts));
+
+// ── scheduling ──────────────────────────────────────────────────────────
+let job = null;
+
+function logRun(reason, s) {
+  const parts = [`saved ${s.saved.length}`];
+  if (s.saved.length) parts[0] += ` (${s.saved[s.saved.length - 1]} … ${s.saved[0]})`;
+  if (s.waiting.length) parts.push(`waiting ${s.waiting.length}`);
+  if (s.hidden) parts.push(`hidden [${s.hidden.join(",")}]`);
+  if (s.digest) parts.push(`digest ${s.digest.day} #${s.digest.position}`);
+  if (s.error) parts.push(`stopped: ${s.error}`);
+  console.log(`[hof] ${reason}: ${parts.join(" | ")}`);
+}
+
+function armRetry(j) {
+  if (job !== j || j.retryTimer) return;
+  j.retryTimer = j.timers.setTimeout(() => { j.retryTimer = null; trigger(j, "retry"); }, RETRY_MS);
+}
+
+// One run at a time. noOverlap only stops cron overlapping itself, so the boot
+// catch-up and the retry share this guard; a run that finds the job busy arms
+// the retry rather than being dropped. Every run ends in .catch: Node exits on
+// an unhandled rejection, and that would take every warboard feature down.
+function trigger(j, reason) {
+  if (job !== j) return Promise.resolve();
+  if (j.running) { armRetry(j); return Promise.resolve(); }
+  j.running = true;
+  return runOnce(j.opts)
+    .then((s) => { logRun(reason, s); if (s.retry) armRetry(j); })
+    .catch((e) => { console.error(`[hof] ${reason} run failed: ${e.message}`); armRetry(j); })
+    .finally(() => { j.running = false; });
+}
+
+export function startHofSnapshots(opts = {}) {
+  if (process.env.HOF_SCHEDULE === "0") {
+    console.log("[hof] disabled by HOF_SCHEDULE=0");
+    return false;
+  }
+  const key = opts.key !== undefined ? opts.key : process.env.OWNER_API_KEY;
+  if (!key) {
+    console.log("[hof] no OWNER_API_KEY — not scheduling");
+    return false;
+  }
+  if (job) return true;
+  const cron = opts.cron || nodeCron;
+  const timers = opts.timers || { setTimeout, clearTimeout };
+  const j = { opts: { ...opts, key }, timers, running: false, retryTimer: null, task: null, bootTimer: null };
+  job = j;
+  // The server's local time isn't UTC, so the timezone must be explicit.
+  j.task = cron.schedule("5 0 * * *", () => trigger(j, "daily"), { timezone: "UTC", noOverlap: true });
+  j.bootTimer = timers.setTimeout(() => trigger(j, "boot"), BOOT_DELAY_MS);
+  console.log("[hof] scheduled: 00:05 UTC daily, catch-up in 60 s");
+  return true;
+}
+
+export function stopHofSnapshots() {
+  const j = job;
+  if (!j) return;
+  job = null;
+  try { if (j.task) j.task.stop(); } catch {}
+  j.timers.clearTimeout(j.bootTimer);
+  if (j.retryTimer) j.timers.clearTimeout(j.retryTimer);
+}
