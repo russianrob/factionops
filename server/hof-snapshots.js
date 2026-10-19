@@ -95,3 +95,36 @@ export function snapshotFacts(parsed) {
   }
   return { respect, names, count: Object.keys(respect).length, skipped: parsed.skipped };
 }
+
+// ── which days a run wants ──────────────────────────────────────────────
+function savedDaysIn(ctx) {
+  let names;
+  try { names = readdirSync(join(ctx.dir, "days")); } catch { return []; }
+  return names.filter((n) => n.endsWith(".json") && DAY_RE.test(n.slice(0, -5))).map((n) => n.slice(0, -5)).sort();
+}
+export const savedDays = (opts) => savedDaysIn(context(opts));
+
+const readAttempts = (ctx) => readJson(attemptsPath(ctx)) || {};
+
+// A past day that answered code 30 is asked again only on a later UTC date.
+function recordAttempt(ctx, day, today) {
+  const attempts = readAttempts(ctx), oldest = addDays(today, -(WINDOW_DAYS - 1));
+  attempts[day] = today;
+  for (const d of Object.keys(attempts)) if (d < oldest) delete attempts[d];
+  writeAtomic(attemptsPath(ctx), JSON.stringify(attempts));
+}
+
+// Newest first: the 45-day window minus saved days, minus past days that
+// already answered code 30 today. Older days are never requested.
+function missingIn(ctx) {
+  const today = utcDay(ctx.nowFn()), have = new Set(savedDaysIn(ctx)), asked = readAttempts(ctx);
+  const out = [];
+  for (let i = 0; i < WINDOW_DAYS; i++) {
+    const day = addDays(today, -i);
+    if (have.has(day)) continue;
+    if (i > 0 && asked[day] === today) continue;
+    out.push(day);
+  }
+  return out;
+}
+export const missingDays = (opts) => missingIn(context(opts));

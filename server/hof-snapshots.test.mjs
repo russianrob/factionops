@@ -81,3 +81,21 @@ test("the CSV parser handles quoted commas, doubled quotes and CRLF, and skips s
 test("a snapshot without a needed column is refused", () => {
   assert.throws(() => snapshotFacts(parseSnapshotCsv("id,name\n1,A\n")), /no respect column/);
 });
+
+// ── which days ──────────────────────────────────────────────────────────
+test("a run wants the 45 days newest first, minus saved days and past days asked today", () => {
+  const opts = setup(fakeTorn());
+  const all = missingDays(opts);
+  assert.equal(all.length, 45);
+  assert.deepEqual([all[0], all[44]], ["2026-10-19", "2026-09-05"]);
+
+  mkdirSync(join(opts.dataDir, "days"), { recursive: true });
+  writeFileSync(join(opts.dataDir, "days", "2026-10-18.json"), "{}");
+  writeFileSync(join(opts.dataDir, "attempts.json"), JSON.stringify({
+    "2026-10-19": "2026-10-19", "2026-10-17": "2026-10-19", "2026-10-16": "2026-10-18" }));
+  const some = missingDays(opts);
+  assert.ok(!some.includes("2026-10-18"), "saved");
+  assert.ok(!some.includes("2026-10-17"), "already answered code 30 today");
+  assert.ok(some.includes("2026-10-19"), "today is never skipped");
+  assert.ok(some.includes("2026-10-16"), "answered yesterday: due again");
+});
