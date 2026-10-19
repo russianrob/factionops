@@ -307,3 +307,51 @@ test("no OWNER_API_KEY, or HOF_SCHEDULE=0, schedules nothing", () => {
   }
   assert.equal(cron.scheduled.length + timers.set.length, 0);
 });
+
+// ── review fixes ────────────────────────────────────────────────────────
+test("a key problem in the Hall of Fame check ends the run without a retry, even after today's code 30", async () => {
+  const torn = fakeTorn({ days: { "2026-10-18": SNAP }, onHof: () => tornErr(2, "Incorrect key") });
+  const s = await runOnce(setup(torn));
+  assert.equal(s.keyError, true);
+  assert.equal(s.retry, false, "today's code 30 had armed it; a key problem clears it");
+  assert.deepEqual(s.saved, []);
+});
+
+test("a short file is kept aside, and accepted when Torn serves it again unchanged", async () => {
+  const SHORT = csvOf(WORLD.slice(0, 300));
+  const torn = fakeTorn({ days: { "2026-10-19": SNAP, "2026-10-18": SHORT } });
+  const opts = setup(torn);
+  const s1 = await runOnce(opts);
+  assert.ok(!s1.saved.includes("2026-10-18"));
+  assert.equal(gunzipSync(readFileSync(join(opts.dataDir, "raw", "2026-10-18.rejected.csv.gz"))).toString(), SHORT,
+    "nothing Torn served is thrown away");
+
+  clock.now += 15 * 60 * 1000;
+  const s2 = await runOnce(opts);
+  assert.ok(s2.saved.includes("2026-10-18"), "the same file twice is real, not cut off");
+  assert.ok(!existsSync(join(opts.dataDir, "raw", "2026-10-18.rejected.csv.gz")));
+});
+
+test("a day that fails on its own doesn't hold back the older days", async () => {
+  const torn = fakeTorn({ days: { "2026-10-19": SNAP, "2026-10-18": "id,name\n1,A\n", "2026-10-17": SNAP },
+    onSnapshot: (day) => (day === "2026-10-16" ? reply("gone", 404) : null) });
+  const opts = setup(torn);
+  const s = await runOnce(opts);
+  assert.deepEqual(s.saved, ["2026-10-19", "2026-10-17"]);
+  assert.ok(existsSync(join(opts.dataDir, "raw", "2026-10-18.rejected.csv.gz")), "a file missing a column is kept aside");
+  const attempts = JSON.parse(readFileSync(join(opts.dataDir, "attempts.json"), "utf8"));
+  assert.equal(attempts["2026-10-18"], "2026-10-19", "asked again on a later UTC date, not every 15 minutes");
+  assert.equal(attempts["2026-10-16"], "2026-10-19");
+});
+
+test("while the Hall of Fame check fails on a first run, it still saves every raw file", async () => {
+  const torn = fakeTorn({ days: { "2026-10-19": SNAP, "2026-10-18": SNAP, "2026-09-18": SNAP }, onHof: () => reply("oops", 500) });
+  const opts = setup(torn);
+  const s = await runOnce(opts);
+  assert.deepEqual(s.saved, []);
+  for (const d of ["2026-10-19", "2026-10-18", "2026-09-18"]) {
+    assert.ok(existsSync(join(opts.dataDir, "raw", `${d}.csv.gz`)), `${d} raw file kept`);
+  }
+  assert.equal(torn.hofCalls().length, 1, "the check isn't repeated for every day");
+  assert.equal(s.retry, true);
+});

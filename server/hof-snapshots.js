@@ -21,6 +21,11 @@ const RETRY_MS = 15 * 60 * 1000;
 const BOOT_DELAY_MS = 60 * 1000;
 const CALL_GAP_MS = 1100;
 const KEY_CODES = new Set([1, 2, 10, 13, 16, 18]);
+// Failures that mean Torn or the link is down rather than one file being bad:
+// the run stops and tries again in 15 minutes. Anything else is that day's own
+// problem, and the older days carry on.
+const GENERAL_CODES = new Set(["network", "timeout", 5, 8, 9, 14, 15, 17, 24]);
+const isGeneral = (code) => GENERAL_CODES.has(code) || /^http_5\d\d$/.test(String(code));
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Worked out at call time, so a test that sets DATA_DIR first never touches
@@ -40,6 +45,8 @@ function context(opts = {}) {
 }
 
 const rawPath = (ctx, day) => join(ctx.dir, "raw", `${day}.csv.gz`);
+// A fetched file that fails a check is kept here; no reader ever lists it.
+const rejectedPath = (ctx, day) => join(ctx.dir, "raw", `${day}.rejected.csv.gz`);
 const dayPath = (ctx, day) => join(ctx.dir, "days", `${day}.json`);
 const digestPath = (ctx) => join(ctx.dir, "digest.json");
 const attemptsPath = (ctx) => join(ctx.dir, "attempts.json");
@@ -184,6 +191,28 @@ function readRaw(ctx, day, deleteBroken) {
   }
 }
 
+function readRejected(ctx, day) {
+  try { return gunzipSync(readFileSync(rejectedPath(ctx, day))).toString("utf8"); } catch { return null; }
+}
+
+// Checks a fetched file. One that fails is set aside, never discarded. Torn
+// never changes a published file, so the same short file on a later fetch is
+// real, not cut off, and is accepted.
+function checkFetched(ctx, day, text, baseline) {
+  let facts;
+  try {
+    facts = snapshotFacts(parseSnapshotCsv(text));
+  } catch (e) {
+    writeAtomic(rejectedPath(ctx, day), gzipSync(text));
+    return { rejected: e.message, kind: "columns" };
+  }
+  if (baseline !== null && facts.count < 0.9 * baseline && readRejected(ctx, day) !== text) {
+    writeAtomic(rejectedPath(ctx, day), gzipSync(text));
+    return { rejected: `only ${facts.count} factions with respect against ${baseline} on the newest saved day`, kind: "count" };
+  }
+  return { facts };
+}
+
 function newestDayIn(ctx) {
   const days = savedDaysIn(ctx);
   for (let i = days.length - 1; i >= 0; i--) {
@@ -201,7 +230,14 @@ export async function runOnce(opts = {}) {
   const out = { saved: [], waiting: [], hidden: null, retry: false, keyError: false, error: null, digest: null };
   const newest = newestDayIn(ctx);
   let baseline = newest ? Object.keys(newest.respect).length : null;
-  let hidden = null;
+  let hidden = null, deferred = false;
+  // A key problem ends the run and cancels any retry: every later call would
+  // spend another request on a key Torn has already refused.
+  const keyProblem = (code) => {
+    out.keyError = true;
+    out.retry = false;
+    out.error = `key problem (code ${code})`;
+  };
 
   for (const day of missingIn(ctx)) {
     try {
@@ -209,40 +245,52 @@ export async function runOnce(opts = {}) {
       if (!facts) {
         const r = await call(ctx, "/faction/snapshot", { timestamp: dayMs(day) / 1000 }, 120000);
         if (!r.ok) {
-          if (r.code === 30) {
+          if (KEY_CODES.has(r.code)) { keyProblem(r.code); break; }
+          if (r.code === 30 || !isGeneral(r.code)) {
+            // Not published yet, or this one file is bad: the older days carry on.
             out.waiting.push(day);
+            if (r.code !== 30) out.error = `snapshot ${day}: ${r.code} ${r.message || ""}`.trim();
             if (day === today) out.retry = true;
             else recordAttempt(ctx, day, today);
             continue;
           }
-          if (KEY_CODES.has(r.code)) { out.keyError = true; out.error = `key problem (code ${r.code})`; break; }
           out.error = `snapshot ${day}: ${r.code} ${r.message || ""}`.trim();
           out.retry = true;
           break;
         }
-        facts = snapshotFacts(parseSnapshotCsv(r.text));
-        if (baseline !== null && facts.count < 0.9 * baseline) {
-          throw new Error(`only ${facts.count} factions with respect against ${baseline} on the newest saved day`);
+        const checked = checkFetched(ctx, day, r.text, baseline);
+        if (checked.rejected) {
+          out.waiting.push(day);
+          out.error = `${day}: ${checked.rejected}`;
+          if (checked.kind === "count") out.retry = true;          // most likely cut off: try again soon
+          else if (day !== today) recordAttempt(ctx, day, today);  // a format change won't fix itself today
+          continue;
         }
+        facts = checked.facts;
         writeAtomic(rawPath(ctx, day), gzipSync(r.text));
+        try { unlinkSync(rejectedPath(ctx, day)); } catch {}
       }
+      if (baseline === null) baseline = facts.count;
+      if (deferred) continue;  // raw file kept; its day file waits for a hidden list
       if (hidden === null) {
         const h = await hiddenFor(ctx, facts.respect);
+        if (!h.ok && KEY_CODES.has(h.code)) { keyProblem(h.code); break; }
         const previous = h.ok ? null : newestDayIn(ctx);
         if (h.ok) hidden = h.hidden;
         else if (previous) hidden = previous.hidden || [];
         else {
-          // No list at all yet: keep the raw files, write no day files, and let
-          // the next run build them without fetching again.
+          // No list at all yet: keep fetching raw files (Torn's copies expire),
+          // write no day files, and let the next run build them without
+          // fetching again.
           out.error = `hall of fame check: ${h.code}`;
           out.retry = true;
-          break;
+          deferred = true;
+          continue;
         }
         out.hidden = hidden;
       }
       writeAtomic(dayPath(ctx, day), JSON.stringify({ day, respect: facts.respect, hidden }));
       out.saved.push(day);
-      if (baseline === null) baseline = facts.count;
     } catch (e) {
       out.error = `${day}: ${e.message}`;
       out.retry = true;

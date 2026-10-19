@@ -218,9 +218,11 @@ function headerHtml(data, w, nowMs) {
   if (!data.us) return '<p class="when">We are not in these standings.</p>';
   var name = '';
   data.rows.forEach(function (r) { if (r.us) name = r.name; });
-  var when = data.source === 'midnight'
-    ? "Torn's live standings are unavailable, so this shows last midnight's."
-    : updatedLabel(data.updatedAt, nowMs);
+  // Midnight standings with a refresh in flight (every restart's first view)
+  // are loading, not unavailable; the page asks again five seconds later.
+  var when = data.source !== 'midnight' ? updatedLabel(data.updatedAt, nowMs)
+    : data.refreshing ? "Loading Torn's live standings\u2026"
+    : "Torn's live standings are unavailable, so this shows last midnight's.";
   var age = Math.floor((nowMs - Date.parse(data.day + 'T00:00:00Z')) / DAY_MS);
   var old = age > 1 ? ' Paces come from the ' + data.day + ' snapshot.' : '';
   return '<div class="head"><div class="big">#' + data.us.position + '</div>' +
@@ -382,6 +384,13 @@ function load(isFollowUp) {
   });
 }
 
+// Once a minute and on becoming visible: reload when due, otherwise redraw,
+// so "updated N min ago" stays true between loads.
+function tick() {
+  if (refreshDue(STATE.loadedAt, Date.now(), !document.hidden, IS_PDA)) load(false);
+  else render();
+}
+
 function boot() {
   document.getElementById('switch').addEventListener('click', function (e) {
     var b = e.target.closest ? e.target.closest('button[data-w]') : null;
@@ -389,9 +398,6 @@ function boot() {
     STATE.w = Number(b.getAttribute('data-w'));
     render();
   });
-  function tick() {
-    if (refreshDue(STATE.loadedAt, Date.now(), !document.hidden, IS_PDA)) load(false);
-  }
   var resized = null;
   window.addEventListener('resize', function () { clearTimeout(resized); resized = setTimeout(render, 150); });
   document.addEventListener('visibilitychange', tick);

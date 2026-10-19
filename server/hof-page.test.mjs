@@ -31,10 +31,11 @@ const NAMES = ["esc", "sep", "fmtNum", "fmtPace", "fmtDate", "updatedLabel", "pa
   "switchHtml", "horizonsHtml", "noteHtml", "niceStep", "chartSvg", "tableHtml", "followUpDelay",
   "refreshDue", "setStatus", "render", "load"];
 const CONSTS = PAGE.match(/^var [A-Z_]+ = .*;$/gm);
-function page(globals = {}) {
+function page(globals = {}, extra = []) {
+  const names = [...NAMES, ...extra];
   const box = { ...globals };
   vm.createContext(box);
-  vm.runInContext([...CONSTS, ...NAMES.map(fn), `globalThis.P = { ${NAMES.join(", ")}, STATE };`].join("\n"), box);
+  vm.runInContext([...CONSTS, ...names.map(fn), `globalThis.P = { ${names.join(", ")}, STATE };`].join("\n"), box);
   return box.P;
 }
 
@@ -175,4 +176,25 @@ test("the header says how fresh the standings are", () => {
   assert.match(P.headerHtml(DATA, 30, UPDATED + 60000), /#250<\/div>.*Dead Fragment.*3,552,938 respect · 100\/day over 30 days/);
   assert.match(P.headerHtml({ ...DATA, source: "midnight" }, 30, UPDATED), /Torn&#39;s live standings are unavailable/);
   assert.match(P.headerHtml(DATA, 30, Date.UTC(2026, 9, 21, 12)), /Paces come from the 2026-10-19 snapshot\./);
+});
+
+// ── review fixes ────────────────────────────────────────────────────────
+test("right after a restart the header says the live standings are loading, not unavailable", () => {
+  const html = page().headerHtml({ ...DATA, source: "midnight", refreshing: true }, 30, UPDATED);
+  assert.match(html, /Loading Torn&#39;s live standings/);
+  assert.doesNotMatch(html, /unavailable/);
+  assert.match(page().headerHtml({ ...DATA, source: "midnight", refreshing: false }, 30, UPDATED), /unavailable/);
+});
+
+test("between loads the page still redraws, so 'updated N min ago' keeps counting", () => {
+  const els = {};
+  let fetches = 0;
+  const P = page({ document: { hidden: false, getElementById: (id) => (els[id] ||= { innerHTML: "" }) },
+    fetch: () => { fetches++; } }, ["tick"]);
+  P.STATE.data = { ...DATA, updatedAt: Date.now() - 5 * 60000 };
+  P.STATE.loadedAt = Date.now();
+  P.STATE.w = 30;
+  P.tick();
+  assert.equal(fetches, 0, "not due for a reload yet");
+  assert.match(els.head.innerHTML, /updated 5 min ago/);
 });
