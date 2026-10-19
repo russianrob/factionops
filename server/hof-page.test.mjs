@@ -27,7 +27,7 @@ function fn(name) {
   }
   throw new Error("unbalanced braces in " + name);
 }
-const NAMES = ["esc", "sep", "fmtNum", "fmtPace", "fmtDate", "updatedLabel", "passLabel", "headerHtml",
+const NAMES = ["esc", "sep", "fmtNum", "fmtWeek", "fmtDate", "updatedLabel", "passLabel", "headerHtml",
   "switchHtml", "horizonsHtml", "noteHtml", "niceStep", "chartSvg", "tableHtml", "followUpDelay",
   "refreshDue", "setStatus", "render", "load"];
 const CONSTS = PAGE.match(/^var [A-Z_]+ = .*;$/gm);
@@ -75,7 +75,6 @@ test("the page formats numbers exactly as hof-climb.js does", () => {
   for (const v of [0, 188, 9999, 10000, 74850, 99950, 110914, 999500, 3552938, -33882, -1000000]) {
     assert.equal(P.fmtNum(v), climb.fmtNum(v), String(v));
   }
-  for (const v of [7752.032, -7752.5, -0.3, null, NaN]) assert.equal(P.fmtPace(v), climb.fmtPace(v), String(v));
 });
 
 test("the table lists 20 above, us highlighted, and 5 below, linked to Torn", () => {
@@ -173,7 +172,7 @@ test("the header says how fresh the standings are", () => {
   assert.equal(P.updatedLabel(UPDATED, UPDATED + 30000), "updated just now");
   assert.equal(P.updatedLabel(UPDATED, UPDATED + 5 * 60000), "updated 5 min ago");
   assert.equal(P.updatedLabel(UPDATED, UPDATED + 3 * 3600000), "updated 3 h ago");
-  assert.match(P.headerHtml(DATA, 30, UPDATED + 60000), /#250<\/div>.*Dead Fragment.*3,552,938 respect · 100\/day over 30 days/);
+  assert.match(P.headerHtml(DATA, 30, UPDATED + 60000), /#250<\/div>.*Dead Fragment.*3,552,938 respect · 700 a week \(30-day average\)/);
   assert.match(P.headerHtml({ ...DATA, source: "midnight" }, 30, UPDATED), /Torn&#39;s live standings are unavailable/);
   assert.match(P.headerHtml(DATA, 30, Date.UTC(2026, 9, 21, 12)), /Paces come from the 2026-10-19 snapshot\./);
 });
@@ -197,4 +196,22 @@ test("between loads the page still redraws, so 'updated N min ago' keeps countin
   P.tick();
   assert.equal(fetches, 0, "not due for a reload yet");
   assert.match(els.head.innerHTML, /updated 5 min ago/);
+});
+
+// ── pace per week ───────────────────────────────────────────────────────
+test("paces show per week, the rhythm of the wars", () => {
+  const P = page();
+  const cases = [[7775.87, "54.4k"], [2368, "16.6k"], [310.9, "2,176"], [-10, "-70"], [0, "0"], [null, "—"], [NaN, "—"]];
+  for (const [p, want] of cases) assert.equal(P.fmtWeek(p), want, String(p));
+});
+
+test("the table's pace column is per week", () => {
+  const html = page().tableHtml(DATA, 30);
+  assert.match(html, /<th>Pace \/week<\/th>/);
+  assert.match(html, />#249 F249<\/a><\/td><td>1,000<\/td><td>280<\/td>/);
+});
+
+test("'How this works' explains the pace as respect per week", () => {
+  assert.match(PAGE, /Pace is the respect gained between Torn's daily snapshots over\s+the window, shown per week\./);
+  assert.doesNotMatch(PAGE, /divided by the days/);
 });

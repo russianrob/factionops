@@ -197,7 +197,10 @@ negative value gets a "-" in front:
 A value that rounds up into the next band uses that band, so 99,960 is "100k"
 and 999,500 is "1.00M". Paces are rounded to the nearest whole number, halves
 away from zero, and shown with separators ("7,752/day"); a pace that rounds to
-0 prints "0/day".
+0 prints "0/day". The page shows every pace per week instead, the rhythm of the
+wars: the daily pace × 7, rounded, in the number formats above ("54.4k"). The
+owner chose this on 2026-10-19 because a daily figure read as if the faction
+earned it every day, when most days add about 1k and each war about 45k.
 
 **Real-data anchors.** The finished functions must give these from saved
 copies of the three snapshots fetched during the feasibility spike (2026-09-18,
@@ -611,7 +614,8 @@ come from Torn and are HTML-escaped wherever they are rendered.
 
 Top to bottom:
 
-1. **Header.** Our live position, respect and pace for the selected window,
+1. **Header.** Our live position, respect and pace for the selected window
+   ("54.4k a week (30-day average)"),
    with "updated just now", "updated N min ago" or "updated N h ago". When
    `source` is `"midnight"` it says "Torn's live standings are unavailable, so
    this shows last midnight's.", or "Loading Torn's live standings…" while a
@@ -633,12 +637,12 @@ Top to bottom:
    `faction-history.html`'s `lineChart()`. Colours come from the tokens.
 6. **Table.** The 20 factions above us, our row highlighted, and the 5 below.
    Columns: position and faction together ("#249 ilimitada", linked to
-   `https://www.torn.com/factions.php?step=profile&ID=<id>`), gap, pace per day,
+   `https://www.torn.com/factions.php?step=profile&ID=<id>`), gap, pace per week,
    and pass, labelled as under *Days to pass*. On a narrow phone the table
    scrolls sideways inside its box with that first column fixed, as on
    `/slackers`.
-7. **How this works.** Pace is the change between Torn's daily snapshots over
-   the window, divided by the days. Projections assume every faction keeps its
+7. **How this works.** Pace is the respect gained between Torn's daily
+   snapshots over the window, shown per week. Projections assume every faction keeps its
    pace and start from last midnight's standings; the table uses live respect.
    Most of our respect arrives with each war, so a pass date a few days out can
    land a few days either way. Positions follow Torn's Hall of Fame, which

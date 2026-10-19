@@ -136,8 +136,8 @@ tbody tr.us td.nm{box-shadow:inset 3px 0 0 var(--rail)}
   <p id="note" class="note"></p>
   <div id="chart" class="panel chart"></div>
   <div class="panel"><div class="scroll" id="table"></div></div>
-  <p class="foot"><b>How this works.</b> Pace is the change between Torn's daily snapshots over
-    the window, divided by the days. Projections assume every faction keeps its pace and start
+  <p class="foot"><b>How this works.</b> Pace is the respect gained between Torn's daily snapshots over
+    the window, shown per week. Projections assume every faction keeps its pace and start
     from last midnight's standings; the table uses live respect. Most of our respect arrives with
     each war, so a pass date a few days out can land a few days either way. Positions follow
     Torn's Hall of Fame, which leaves out a few factions that appear in Torn's data.</p>
@@ -178,10 +178,10 @@ function fmtNum(v) {
   return s + Math.floor(hundredthsM / 100) + '.' + String(hundredthsM % 100).padStart(2, '0') + 'M';
 }
 
-function fmtPace(p) {
+// Paces arrive per day; the page shows them per week, the rhythm of the wars.
+function fmtWeek(p) {
   if (p == null || !isFinite(p)) return '—';
-  var r = Math.sign(p) * Math.round(Math.abs(p));
-  return (r < 0 ? '-' : '') + sep(Math.abs(r)) + '/day';
+  return fmtNum(Math.round(p * 7));
 }
 
 // Torn time is UTC. The year shows only when it isn't the current one.
@@ -227,7 +227,7 @@ function headerHtml(data, w, nowMs) {
   var old = age > 1 ? ' Paces come from the ' + data.day + ' snapshot.' : '';
   return '<div class="head"><div class="big">#' + data.us.position + '</div>' +
     '<div class="facts"><b>' + esc(name) + '</b> · ' + sep(data.us.respect) + ' respect · ' +
-    esc(fmtPace(data.us.pace ? data.us.pace[w] : null)) + ' over ' + w + ' days</div></div>' +
+    esc(fmtWeek(data.us.pace ? data.us.pace[w] : null)) + ' a week (' + w + '-day average)</div></div>' +
     '<p class="when">' + esc(when + old) + '</p>';
 }
 
@@ -321,10 +321,10 @@ function tableHtml(data, w) {
     return '<tr' + (r.us ? ' class="us"' : '') + '>' +
       '<td class="nm"><a href="' + esc(link) + '" target="_blank" rel="noopener">#' + r.position + ' ' + esc(r.name) + '</a></td>' +
       '<td>' + (r.us ? '' : esc(fmtNum(r.gap))) + '</td>' +
-      '<td>' + esc(fmtPace(r.pace ? r.pace[w] : null).replace('/day', '')) + '</td>' +
+      '<td>' + esc(fmtWeek(r.pace ? r.pace[w] : null)) + '</td>' +
       '<td>' + esc(passLabel(r, me >= 0 && i < me, usPace, w, data.updatedAt)) + '</td></tr>';
   }).join('');
-  return '<table><thead><tr><th>Faction</th><th>Gap</th><th>Pace /day</th><th>Pass</th></tr></thead><tbody>' + body + '</tbody></table>';
+  return '<table><thead><tr><th>Faction</th><th>Gap</th><th>Pace /week</th><th>Pass</th></tr></thead><tbody>' + body + '</tbody></table>';
 }
 
 // While the server is refreshing, ask once more a few seconds later; that
