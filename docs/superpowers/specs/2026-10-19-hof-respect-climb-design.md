@@ -1,7 +1,7 @@
 # Hall of Fame Respect Climb — Design
 
 **Date:** 2026-10-19
-**Status:** design approved in chat 2026-10-19; spec reviewed; not built
+**Status:** built and live at `/hof` (2026-10-19)
 **Owner:** RussianRob [137558], faction 42055 (Dead Fragment)
 
 ## Goal
@@ -305,16 +305,23 @@ first.
      older days.
    - Code 30 for a past day records the day in `attempts.json`, and the run
      continues.
-   - A key problem (codes 1, 2, 10, 13, 16, 18) is logged once and ends the
-     run without arming the retry. Every later run, boot catch-ups included,
-     tries again.
-   - Anything else (other codes, HTTP errors, timeouts, network errors, code 5
-     after its retries) ends the run and arms the 15-minute retry.
+   - A key problem (codes 1, 2, 10, 13, 16, 18), from the snapshot or the
+     Hall of Fame check, is logged once, ends the run and cancels any retry
+     the run had armed. Every later run, boot catch-ups included, tries again.
+   - A general failure (network errors, timeouts, code 5 after its retries,
+     codes 8, 9, 14, 15, 17, 24, and HTTP 5xx) means Torn or the link is down:
+     the run ends and arms the 15-minute retry.
+   - Any other failure belongs to that one file: today's arms the retry, a
+     past day's is recorded in `attempts.json`, and the older days carry on.
 3. A fetched file must have `id`, `name` and `respect` in its header row
    (columns are found by name, so added or reordered columns don't matter) and
    at least 90% as many factions with respect as the newest saved day, which
-   catches a cut-off download. A file that fails either check is not saved; the run ends and
-   arms the retry.
+   catches a cut-off download. A file that fails is set aside as
+   `raw/<day>.rejected.csv.gz`, never discarded, and the older days carry on.
+   A short file arms the retry and is accepted when the next fetch returns it
+   unchanged: Torn never changes a published file, so it is real, not cut off.
+   A file missing a column is asked about again only on a later UTC date (a
+   format change won't fix itself the same day).
 4. A fetched file is saved gzipped to `raw/<day>.csv.gz`, exactly as Torn
    served it.
 5. The run makes sure it has a hidden list (below).
@@ -349,9 +356,10 @@ undetected. It can't affect our current position, only a distant projection,
 and today no faction below us catches us within a year anyway.
 
 If the Hall of Fame check fails, the run uses the `hidden` list from the newest
-saved day file. If there is no saved day file yet, the run keeps its raw files,
-writes no day files and arms the 15-minute retry. The next run builds the day
-files from the raw files without fetching them again.
+saved day file. If there is no saved day file yet, the run keeps fetching and
+saving raw files for the older days (Torn's copies expire), writes no day files
+and arms the 15-minute retry. The next run builds the day files from the raw
+files without fetching them again.
 
 **Digest.** `buildDigest()` reads every day file and L's raw file (for the
 names in the fallback table), computes everything through `hof-climb.js`, and
@@ -388,6 +396,7 @@ after a big move.
 ```
 server/data/hof/
   raw/2026-10-19.csv.gz     Torn's file as served, gzipped (about 1.3 MB a day)
+  raw/<day>.rejected.csv.gz a fetched file that failed a check, kept aside
   days/2026-10-19.json      the compact day file (about 150 KB a day)
   attempts.json             past days that answered code 30, and when
   digest.json               the nightly summary (about 1 MB)
@@ -605,8 +614,9 @@ Top to bottom:
 1. **Header.** Our live position, respect and pace for the selected window,
    with "updated just now", "updated N min ago" or "updated N h ago". When
    `source` is `"midnight"` it says "Torn's live standings are unavailable, so
-   this shows last midnight's." When the digest's day is more than a day old, a
-   line says which day the paces come from.
+   this shows last midnight's.", or "Loading Torn's live standings…" while a
+   refresh is in flight (every restart's first view). When the digest's day is
+   more than a day old, a line says which day the paces come from.
 2. **Pace switch.** 30 days (the default), 7 days, and 90 days, each shown only
    while its window is available. Switching redraws everything below in the
    browser without a new request.
@@ -636,7 +646,8 @@ Top to bottom:
 
 A visible tab refreshes every 15 minutes, and at once when it becomes visible
 with data older than that, so a tab left open in the background spends no
-calls. Inside Torn PDA (`window.flutter_inappwebview` is defined),
+calls. Between loads it redraws once a minute, so "updated N min ago" stays
+true. Inside Torn PDA (`window.flutter_inappwebview` is defined),
 `document.hidden` can read true while the page is on screen, so there the
 refresh runs regardless of visibility. After an answer with `"refreshing":
 true`, the page fetches once more five seconds later. A failed refresh keeps
@@ -653,13 +664,14 @@ minutes."
 | A past day inside the 45 days answers code 30 | Recorded in `attempts.json`; asked again only on a later UTC date |
 | A day older than 45 days | Never requested |
 | Too many requests (code 5) | Wait 2 s, then 1.8 times longer, up to 5 retries; then the run ends and retries in 15 minutes |
-| Key problem (codes 1, 2, 10, 13, 16, 18) | Logged once per run; the run ends with no 15-minute retry; each later run, boot catch-ups included, tries again |
+| Key problem (codes 1, 2, 10, 13, 16, 18), from the snapshot or the Hall of Fame check | Logged once per run; the run ends and any retry it armed is cancelled; each later run, boot catch-ups included, tries again |
 | No `OWNER_API_KEY`, or `HOF_SCHEDULE=0` | The job isn't scheduled; the page serves the existing digest, or a 503 without one |
-| Any other Torn, HTTP, timeout or network error in the job | The run ends; retry in 15 minutes |
-| Snapshot without a needed column, or with under 90% of the newest saved day's factions | Not saved; logged; retry in 15 minutes |
-| Crash between the raw file and the day file | The next run builds the day file from the raw file, without a call |
+| A general failure: network, timeout, code 5 after its retries, codes 8, 9, 14, 15, 17, 24, HTTP 5xx | The run ends; retry in 15 minutes |
+| Any other failure of one day's file | Today's arms the retry; a past day's is asked again on a later UTC date; the older days carry on |
+| Snapshot without a needed column, or with under 90% of the newest saved day's factions | Set aside as `raw/<day>.rejected.csv.gz`; the older days carry on. A short file retries in 15 minutes and is accepted when it comes back unchanged; a missing column is asked again on a later UTC date |
+| Crash between the raw file and the day file | The next run builds the day file from the raw file, without fetching the snapshot again |
 | Raw file that won't unzip or parse | Deleted and fetched again |
-| Hall of Fame check fails | The newest saved hidden list is used; with none, raw files only and a retry in 15 minutes |
+| Hall of Fame check fails | The newest saved hidden list is used; with none, the backfill keeps saving raw files, day files wait, and a retry in 15 minutes |
 | A write fails (EACCES, ENOSPC) | Logged; the day isn't marked done; retry in 15 minutes |
 | A day file can't be parsed | Rebuilt from its raw file; if that fails too, left out of history and paces, and logged |
 | Live refresh fails | The last live copy with its own time; with none, last midnight's standings, labelled; next attempt after 15 minutes |
