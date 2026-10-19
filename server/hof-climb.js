@@ -158,3 +158,51 @@ export function crowdingNote({ latestRespect, hidden, paces, us, basePosition, p
   }
   return null;
 }
+
+// ── the digest ────────────────────────────────────────────────────────────
+// The fallback table at L: 20 above us, us and 5 below, in Hall of Fame order.
+export function midnightTable(data, names, us) {
+  const me = String(us), hide = new Set((data.hidden || []).map(String));
+  const list = Object.keys(data.respect).filter((id) => !hide.has(id))
+    .map((id) => ({ id, respect: data.respect[id] }))
+    .sort((a, b) => b.respect - a.respect || Number(a.id) - Number(b.id));
+  let position = 0;
+  list.forEach((r, i) => {
+    if (i === 0 || r.respect !== list[i - 1].respect) position = i + 1;
+    r.position = position;
+  });
+  const i = list.findIndex((r) => r.id === me);
+  if (i < 0) return null;
+  const rows = list.slice(Math.max(0, i - 20), i + 6).map((r) => ({
+    position: r.position, id: Number(r.id), name: (names && names[r.id]) || `#${r.id}`, respect: r.respect,
+  }));
+  return { position: list[i].position, respect: list[i].respect, rows };
+}
+
+// byDay: the recent saved days (at least the last 100, which covers the 90-day
+// window's limit); history: one historyEntry per saved day, oldest first;
+// names: id -> name at the latest day.
+export function computeDigest({ byDay, history, names, factionId, builtAt }) {
+  const days = Object.keys(byDay).sort();
+  const latest = days[days.length - 1], L = byDay[latest], us = String(factionId);
+  const windows = resolveWindows(days, latest);
+  const positionAt = Object.fromEntries(history.map((h) => [h.day, h.position]));
+  const paces = {}, projection = {}, notes = {};
+  for (const w of Object.keys(windows)) {
+    const p = pacesFor(byDay, latest, windows[w]);
+    for (const id in p) (paces[id] ||= {})[w] = Math.round(p[id] * 100) / 100;
+    projection[w] = projectPositions(L.respect, p, us);
+    notes[w] = windows[30] && projection[w]
+      ? crowdingNote({
+          latestRespect: L.respect, hidden: L.hidden, paces: p, us,
+          basePosition: positionAt[windows[30].base] ?? null,
+          position: positionAt[latest] ?? null,
+          projected30: projection[w][29],
+        })
+      : null;
+  }
+  return {
+    version: DIGEST_VERSION, factionId: Number(factionId), day: latest, builtAt,
+    windows, paces, history, projection, notes, midnight: midnightTable(L, names, us),
+  };
+}

@@ -157,3 +157,37 @@ test("no note inside the 3-place margin, at #1, or without a 30-day base", () =>
   assert.equal(note({ basePosition: 19, position: 9, projected30: 1 }), null, "we would reach #1");
   assert.equal(note({ basePosition: null, position: 9, projected30: 3 }), null);
 });
+
+// ── the digest ──────────────────────────────────────────────────────────
+test("the midnight table is 20 above, us and 5 below, in Hall of Fame order", () => {
+  const respect = { 42055: 1000 };
+  for (let i = 1; i <= 30; i++) respect[i] = 1000 + i * 10;  // 30 above
+  for (let i = 31; i <= 40; i++) respect[i] = 1000 - (i - 30) * 10;  // 10 below
+  respect[99] = 5000;  // hidden
+  const t = climb.midnightTable({ respect, hidden: [99] }, { 20: "<Top> & co" }, 42055);
+  assert.equal(t.position, 31);
+  assert.equal(t.rows.length, 26);
+  assert.deepEqual([t.rows[0].position, t.rows[20].id, t.rows[25].position], [11, 42055, 36]);
+  assert.equal(t.rows[0].name, "<Top> & co", "names are data; the page escapes them");
+  assert.equal(t.rows[1].name, "#19", "a missing name falls back to the id");
+});
+
+test("computeDigest puts every piece in the shape the API reads", () => {
+  const byDay = {
+    "2026-09-18": { respect: { 42055: 1000, 1: 2000, 2: 1500 }, hidden: [] },
+    "2026-10-18": { respect: { 42055: 3900, 1: 2000, 2: 1500, 3: 5000 }, hidden: [] },
+    "2026-10-19": { respect: { 42055: 4100, 1: 2000, 2: 1500, 3: 5000 }, hidden: [] },
+  };
+  const history = Object.keys(byDay).map((d) => climb.historyEntry(d, byDay[d], 42055));
+  const dg = climb.computeDigest({ byDay, history, names: { 1: "One" }, factionId: 42055, builtAt: 123 });
+  assert.equal(dg.version, climb.DIGEST_VERSION);
+  assert.equal(dg.day, "2026-10-19");
+  assert.deepEqual(dg.windows, { 30: { base: "2026-09-18", span: 31 } });
+  assert.equal(dg.paces[42055][30], 100);
+  assert.equal(dg.paces[3][30], 0, "3 first appears on 10-18");
+  assert.deepEqual(dg.history.map((h) => h.position), [3, 2, 2]);
+  assert.equal(dg.projection[30].length, 365);
+  assert.equal(dg.notes[30], null, "climbing 1 then 0: no note");
+  assert.equal(dg.midnight.position, 2);
+  assert.equal(dg.midnight.rows[0].id, 3);
+});
