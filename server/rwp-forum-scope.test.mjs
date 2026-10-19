@@ -1,14 +1,13 @@
 // Which forums RW Pricer reads.
 //
-// The forum halves were gated on `forums.php` alone, which is every forum
-// Torn has — forty-two of them. A weapon name in Fun & Games got a badge, and
-// a screenshot pasted into General Discussion was sent to the server and paid
-// for. The readers only ever had a reason to run where people sell things.
+// The forum badges were gated on `forums.php` alone, which is every forum
+// Torn has — forty-two of them. A weapon name in Fun & Games got a badge.
+// The badges only ever had a reason to run where people sell things.
 //
 // Trading Post is f=10. The ids come from Torn's own /v2/forum/categories;
 // f=67 is Tools & Userscripts, where RW Pricer's own thread lives, and it is
-// deliberately NOT in scope — a screenshot posted there is a question about
-// the script, not stock for sale.
+// deliberately NOT in scope — a list posted there is a question about the
+// script, not stock for sale.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -69,9 +68,8 @@ test("an ordinary chat forum is not read", () => {
 });
 
 test("RW Pricer's own forum is not read", () => {
-  // f=67 is Tools & Userscripts. A screenshot in the support thread is someone
-  // asking why a price is wrong; reading it back at them helps nobody and
-  // costs a model call.
+  // f=67 is Tools & Userscripts. A list in the support thread is someone
+  // asking why a price is wrong, not stock for sale.
   assert.equal(ok("#/p=threads&f=67&t=16530575&b=0&a=0"), false);
 });
 
@@ -92,7 +90,7 @@ test("an id ENDING in 10 is not Trading Post either", () => {
 
 test("a hash with no forum id reads nothing", () => {
   // Fail closed. A link that omits f= could be any forum, and guessing wrong
-  // in the permissive direction spends money on a thread nobody wanted read.
+  // in the permissive direction badges a thread that is not selling anything.
   assert.equal(ok("#/p=threads&t=16530575&b=0&a=0"), false);
   assert.equal(ok(""), false);
   assert.equal(ok("#"), false);
@@ -107,8 +105,8 @@ test("the forum index itself reads nothing", () => {
   assert.equal(ok("#/p=main"), false);
 });
 
-// ── The gate is actually wired into both halves ────────────────
-// A pure function nothing calls is worth nothing. Both forum readers run
+// ── The gate is actually wired into the forum pass ─────────────
+// A pure function nothing calls is worth nothing. The forum pass runs
 // repeatedly — Torn's forums are a single-page app, so moving between threads
 // changes the hash and never reloads — which means the check has to happen on
 // every pass, not once at startup.
@@ -119,22 +117,4 @@ test("the text parser checks the forum on every pass", () => {
   const body = SRC.slice(i, i + 900);
   assert.match(body, /var run = function \(\) \{\s*(\/\/[^\n]*\n\s*)*if \(!forumAllowsReads\(/,
     "forumAllowsReads is not the first thing run() does");
-});
-
-test("the screenshot reader checks the forum on every pass", () => {
-  const i = SRC.indexOf("function scan() {");
-  assert.ok(i > 0);
-  const body = SRC.slice(i, i + 500);
-  assert.match(body, /function scan\(\) \{\s*(\/\/[^\n]*\n\s*)*if \(!forumAllowsReads\(/,
-    "forumAllowsReads is not the first thing scan() does");
-});
-
-test("neither half is gated only at startup", () => {
-  // The shape that would pass the two tests above while still being wrong:
-  // checking once outside the loop. Both entry points are reached from a
-  // plain forums.php test, and that must stay the only thing they check —
-  // the per-pass gate is what handles navigation between threads.
-  const calls = SRC.match(/forumAllowsReads\(/g) || [];
-  assert.ok(calls.length >= 3,
-    "expected a definition plus a call in each half, found " + calls.length);
 });
