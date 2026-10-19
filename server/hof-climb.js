@@ -39,3 +39,56 @@ export function fmtPace(p) {
   const r = Math.sign(p) * Math.round(Math.abs(p));
   return (r < 0 ? "-" : "") + sep(Math.abs(r)) + "/day";
 }
+
+// ── positions, windows, paces ─────────────────────────────────────────────
+// 1 + the factions with strictly more respect that the Hall of Fame shows,
+// so a tie counts in the faction's favour.
+export function positionOf(respect, hidden, id) {
+  const key = String(id), mine = respect[key];
+  if (!(mine > 0)) return null;
+  const hide = new Set((hidden || []).map(String));
+  let ahead = 0;
+  for (const k in respect) if (respect[k] > mine && k !== key && !hide.has(k)) ahead++;
+  return 1 + ahead;
+}
+
+export function historyEntry(day, data, us) {
+  return { day, position: positionOf(data.respect, data.hidden, us), respect: data.respect[String(us)] ?? null };
+}
+
+// A window is offered only when a saved day sits close to L − w; further back,
+// "7 days" would really be measuring a longer stretch.
+export const windowLimit = (w) => w + Math.max(2, Math.ceil(w / 10));
+
+export function resolveWindows(days, latest) {
+  const out = {};
+  for (const w of WINDOWS) {
+    const target = addDays(latest, -w);
+    let base = null;
+    for (const d of days) if (d <= target) base = d;
+    if (base === null) continue;
+    const span = daysBetween(base, latest);
+    if (span <= windowLimit(w)) out[w] = { base, span };
+  }
+  return out;
+}
+
+// byDay holds every saved day from the window's base to `latest`. A faction
+// missing at the base is measured from the first saved day it appears on, so
+// every pace is an exact difference between two snapshots. One seen only at
+// `latest` gets no pace. Hidden factions get none either; a faction hidden at
+// the base but visible now still uses its base respect.
+export function pacesFor(byDay, latest, win) {
+  const L = byDay[latest], B = byDay[win.base];
+  const hide = new Set((L.hidden || []).map(String));
+  const between = Object.keys(byDay).filter((d) => d > win.base && d < latest).sort();
+  const out = {};
+  for (const id in L.respect) {
+    if (hide.has(id)) continue;
+    const now = L.respect[id];
+    if (B.respect[id] > 0) { out[id] = (now - B.respect[id]) / win.span; continue; }
+    const first = between.find((d) => byDay[d].respect[id] > 0);
+    if (first) out[id] = (now - byDay[first].respect[id]) / daysBetween(first, latest);
+  }
+  return out;
+}

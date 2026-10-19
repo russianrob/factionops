@@ -31,3 +31,59 @@ test("fmtPace rounds halves away from zero and never prints -0", () => {
   ];
   for (const [v, want] of cases) assert.equal(climb.fmtPace(v), want, String(v));
 });
+
+// ── positions, windows, paces ───────────────────────────────────────────
+test("position counts only strictly greater respect, so a tie is in our favour", () => {
+  const respect = { 1: 500, 2: 300, 3: 300, 42055: 300, 4: 100 };
+  assert.equal(climb.positionOf(respect, [], 42055), 2);
+  assert.equal(climb.positionOf(respect, [], 2), 2);
+});
+
+test("position leaves out the day's hidden factions", () => {
+  const respect = { 1: 500, 2: 400, 42055: 300 };
+  assert.equal(climb.positionOf(respect, [2], 42055), 2);
+  assert.equal(climb.positionOf(respect, [], 99), null);
+});
+
+const daysFrom = (first, last, skip = []) => {
+  const out = [];
+  for (let d = first; d <= last; d = climb.addDays(d, 1)) if (!skip.includes(d)) out.push(d);
+  return out;
+};
+
+test("a window with every day saved spans exactly w days", () => {
+  const days = daysFrom("2026-07-01", "2026-10-19");
+  assert.deepEqual(climb.resolveWindows(days, "2026-10-19"), {
+    7: { base: "2026-10-12", span: 7 },
+    30: { base: "2026-09-19", span: 30 },
+    90: { base: "2026-07-21", span: 90 },
+  });
+});
+
+test("a missing base day falls back to the nearest earlier day inside the limit", () => {
+  const days = daysFrom("2026-09-01", "2026-10-19", ["2026-10-12"]);
+  assert.deepEqual(climb.resolveWindows(days, "2026-10-19")[7], { base: "2026-10-11", span: 8 });
+});
+
+test("a window whose base is past its limit is not offered", () => {
+  // The spike's three days: 31 days back is fine for 30 (limit 33), not for 7 (limit 9).
+  const w = climb.resolveWindows(["2026-09-18", "2026-10-18", "2026-10-19"], "2026-10-19");
+  assert.deepEqual(w, { 30: { base: "2026-09-18", span: 31 } });
+  assert.deepEqual([7, 30, 90].map(climb.windowLimit), [9, 33, 99]);
+});
+
+test("paces are exact differences: base day, else the first saved day, else none", () => {
+  const byDay = {
+    "2026-09-19": { respect: { 42055: 1000, 1: 900, 2: 5000, 4: 700 }, hidden: [4] },
+    "2026-10-18": { respect: { 42055: 3800, 1: 950, 2: 5000, 3: 50000, 4: 1300 }, hidden: [] },
+    "2026-10-19": { respect: { 42055: 4000, 1: 960, 2: 4700, 3: 50000, 4: 1600, 5: 5000, 6: 9000 }, hidden: [6] },
+  };
+  const p = climb.pacesFor(byDay, "2026-10-19", { base: "2026-09-19", span: 30 });
+  assert.equal(p[42055], 100);
+  assert.equal(p[1], 2);
+  assert.equal(p[2], -10, "a pace can be negative");
+  assert.equal(p[3], 0, "first seen on 10-18 at 50,000 and flat since: 0, not 50,000 / age");
+  assert.equal(p[4], 30, "hidden at the base, visible now: still measured from the base");
+  assert.ok(!(5 in p), "seen only at L: no pace");
+  assert.ok(!(6 in p), "hidden at L: no pace");
+});
