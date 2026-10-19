@@ -243,8 +243,9 @@ snapshot call passes `timeoutMs: 120000`.
 ### `server/hof-snapshots.js` — the daily job
 
 Exports `startHofSnapshots()` and `stopHofSnapshots()`, plus `runOnce()`,
-`parseSnapshotCsv()`, `missingDays()`, `detectHidden()` and `buildDigest()` for
-tests. Each takes `{ dataDir, fetchImpl, nowFn, key, factionId, sleep, cron,
+`parseSnapshotCsv()`, `snapshotFacts()`, `savedDays()`, `missingDays()`,
+`detectHidden()`, `buildDigest()` and `defaultDataDir()` for tests and for
+`hof-api.js`. Each takes `{ dataDir, fetchImpl, nowFn, key, factionId, sleep, cron,
 timers }`, defaulting to `join(process.env.DATA_DIR || join(__dirname, "data"),
 "hof")` worked out at call time, global `fetch`, `() => Date.now()`,
 `process.env.OWNER_API_KEY`, `OWNER_FACTION_ID` or 42055, a real sleep,
@@ -311,8 +312,8 @@ first.
      after its retries) ends the run and arms the 15-minute retry.
 3. A fetched file must have `id`, `name` and `respect` in its header row
    (columns are found by name, so added or reordered columns don't matter) and
-   at least 90% as many rows as the newest saved day, which catches a cut-off
-   download. A file that fails either check is not saved; the run ends and
+   at least 90% as many factions with respect as the newest saved day, which
+   catches a cut-off download. A file that fails either check is not saved; the run ends and
    arms the retry.
 4. A fetched file is saved gzipped to `raw/<day>.csv.gz`, exactly as Torn
    served it.
@@ -387,7 +388,7 @@ after a big move.
 ```
 server/data/hof/
   raw/2026-10-19.csv.gz     Torn's file as served, gzipped (about 1.3 MB a day)
-  days/2026-10-19.json      the compact day file (about 130 KB a day)
+  days/2026-10-19.json      the compact day file (about 150 KB a day)
   attempts.json             past days that answered code 30, and when
   digest.json               the nightly summary (about 1 MB)
 ```
@@ -444,7 +445,8 @@ git-ignored (`server/.gitignore` ignores `data/`), and no route serves it.
 ### `server/hof-api.js` — live merge and cache
 
 `createHofApi({ dataDir, fetchImpl, nowFn, key, factionId })` returns
-`{ handle(req, res) }`, with the same defaults as the job. `routes.js` creates
+`{ handle(req, res), settle() }`, with the same defaults as the job; `settle()`
+resolves once no refresh is running, which the tests use. `routes.js` creates
 one instance. Creating it does no I/O and starts no timers.
 
 `handle()` never rejects: any error becomes a JSON 500 and a log line. Express
@@ -563,7 +565,7 @@ pointed at an `mkdtemp` directory before any import:
   reused without a fetch, and a broken one deleted and fetched again; the
   row-count check; hidden detection paging to P + 200 and the set difference
   over the top P + 100; the fallback to the newest saved list, and the deferral
-  when there is none; the digest's contents, its rebuild on a version change,
+  when there is none; a failed write ending the run with a retry; the digest's contents, its rebuild on a version change,
   and an unparseable day file rebuilt from its raw file; the cron line and
   options (cron injected); the 60-second boot delay; a busy guard arming the
   retry; `stopHofSnapshots()` clearing everything; and a throwing fetch never
@@ -613,10 +615,11 @@ Top to bottom:
 4. **Crowding note**, when the selected window has one.
 5. **Chart.** Our position over time, best at the top. The saved history is a
    solid line, the projection a dashed line out to one year, the five horizons
-   are labelled dots, and a thin line marks the latest snapshot. It uses the
-   proportions of `graph()` in `server/pages/prewar.html` (a 660-wide viewBox,
-   14 px text) so the labels stay readable on a phone. Month labels sit at each
-   UTC month start (`Date.UTC(y, m, 1)`), adapted from the UTC year lines in
+   are labelled dots, and a thin line marks the latest snapshot. It is drawn at
+   its column's real pixel width with 13 px text, so the labels stay readable on
+   a phone; a fixed 660-wide viewBox like `graph()` in `server/pages/prewar.html`
+   shrinks them to about 7 px there. Month labels sit at each UTC month start
+   (`Date.UTC(y, m, 1)`), adapted from the UTC year lines in
    `faction-history.html`'s `lineChart()`. Colours come from the tokens.
 6. **Table.** The 20 factions above us, our row highlighted, and the 5 below.
    Columns: position and faction together ("#249 ilimitada", linked to
@@ -638,7 +641,8 @@ calls. Inside Torn PDA (`window.flutter_inappwebview` is defined),
 refresh runs regardless of visibility. After an answer with `"refreshing":
 true`, the page fetches once more five seconds later. A failed refresh keeps
 the current data and adds "Couldn't reach warboard; showing data from N min
-ago." A 503 shows "Collecting Torn's daily snapshots. Check back in a few
+ago."; with no data yet it says "Couldn't reach warboard. It will try again in
+a minute." A 503 shows "Collecting Torn's daily snapshots. Check back in a few
 minutes."
 
 ## Error handling
@@ -652,7 +656,7 @@ minutes."
 | Key problem (codes 1, 2, 10, 13, 16, 18) | Logged once per run; the run ends with no 15-minute retry; each later run, boot catch-ups included, tries again |
 | No `OWNER_API_KEY`, or `HOF_SCHEDULE=0` | The job isn't scheduled; the page serves the existing digest, or a 503 without one |
 | Any other Torn, HTTP, timeout or network error in the job | The run ends; retry in 15 minutes |
-| Snapshot without a needed column, or with under 90% of the last day's rows | Not saved; logged; retry in 15 minutes |
+| Snapshot without a needed column, or with under 90% of the newest saved day's factions | Not saved; logged; retry in 15 minutes |
 | Crash between the raw file and the day file | The next run builds the day file from the raw file, without a call |
 | Raw file that won't unzip or parse | Deleted and fetched again |
 | Hall of Fame check fails | The newest saved hidden list is used; with none, raw files only and a retry in 15 minutes |
