@@ -78,9 +78,10 @@ test("price badges carry their text in a data attribute, not title", () => {
     "the native tooltip is left in place: " + body);
 });
 
-test("the three price explanations go through it", () => {
-  // The line tag, the table cell and the read badge. Cog and button titles are
-  // chrome and deliberately left as native tooltips.
-  const calls = (SRC.match(/setTip\(/g) || []).length;
-  assert.ok(calls >= 3, "only " + calls + " badges routed through setTip");
+test("both price explanations go through it", () => {
+  // The line tag and the table cell. Cog and button titles are chrome and
+  // deliberately left as native tooltips. Counts call sites, not the
+  // definition, so losing one caller fails.
+  const calls = (SRC.match(/setTip\((tag|cell),/g) || []).length;
+  assert.ok(calls >= 2, "only " + calls + " badges routed through setTip");
 });

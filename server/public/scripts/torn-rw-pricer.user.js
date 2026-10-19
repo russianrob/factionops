@@ -4547,8 +4547,8 @@
         var out = [], all = (root || document).querySelectorAll('div, p, td, li, blockquote');
         for (var i = 0; i < all.length; i++) {
             var el = all[i];
-            // Our own card is built from <br>-separated rows, so without this
-            // the line parser injects price tags inside it.
+            // Skip our own output: an element inside one of this script's
+            // badges is not a line to parse.
             if (isOurs(el)) continue;
             if (el.getElementsByTagName && el.getElementsByTagName('br').length) { out.push(el); continue; }
             // A container of other candidates is not itself a line.
