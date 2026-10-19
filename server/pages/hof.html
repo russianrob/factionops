@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>Hall of Fame climb</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap">
+<style>
+/* The /slackers tokens. Light is the base set; both dark paths redefine only
+   the tokens, so no colour is ever defined solely inside a media query. */
+:root{
+  --bg:#eef1f5; --panel:#ffffff; --sunk:#f6f8fa;
+  --ink:#151a21; --muted:#5d6875; --faint:#8a95a3;
+  --line:#e0e5ec; --line2:#eef1f5;
+  --cool:#2f5d8a;
+  --warn:#c8790a; --warn-ink:#7a4805; --warn-wash:rgba(200,121,10,.10); --warn-wash2:rgba(200,121,10,.20);
+  --good:#186a6a;
+  --rail:#c8790a;
+  --shadow:0 1px 2px rgba(20,30,45,.05),0 8px 24px rgba(20,30,45,.07);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#10141a; --panel:#171d25; --sunk:#131920;
+    --ink:#e6ebf2; --muted:#94a1b1; --faint:#6a7683;
+    --line:#242c36; --line2:#1c232c;
+    --cool:#6aa6dd;
+    --warn:#f0a93a; --warn-ink:#f7c983; --warn-wash:rgba(240,169,58,.11); --warn-wash2:rgba(240,169,58,.22);
+    --good:#4fb3a5;
+    --rail:#f0a93a;
+    --shadow:0 1px 2px rgba(0,0,0,.35),0 10px 30px rgba(0,0,0,.4);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10141a; --panel:#171d25; --sunk:#131920;
+  --ink:#e6ebf2; --muted:#94a1b1; --faint:#6a7683;
+  --line:#242c36; --line2:#1c232c;
+  --cool:#6aa6dd;
+  --warn:#f0a93a; --warn-ink:#f7c983; --warn-wash:rgba(240,169,58,.11); --warn-wash2:rgba(240,169,58,.22);
+  --good:#4fb3a5;
+  --rail:#f0a93a;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 10px 30px rgba(0,0,0,.4);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--ink); min-height:100vh;
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font-variant-numeric:tabular-nums; line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+  padding:clamp(16px,3.5vw,40px);
+}
+.inner{max-width:880px;margin:0 auto}
+.eyebrow{font-size:11.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+h1{
+  font-family:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  font-weight:800; font-size:clamp(30px,6vw,46px); line-height:1;
+  letter-spacing:-.03em; margin:0 0 18px;
+}
+.banner{
+  display:none; margin:0 0 16px; padding:11px 14px;
+  border:1px solid var(--warn); border-radius:10px; background:var(--warn-wash);
+  color:var(--warn-ink); font-size:13px;
+}
+.banner.on{display:block}
+.head{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 14px;margin:0 0 4px}
+.big{font-family:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;font-weight:800;
+  font-size:clamp(40px,9vw,60px);line-height:1;letter-spacing:-.03em}
+.facts{font-size:15px}
+.when{font-size:12.5px;color:var(--muted);margin:0 0 16px}
+button{
+  font:inherit;font-size:13px;background:var(--sunk);color:var(--ink);
+  border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer;
+}
+:focus-visible{outline:2px solid var(--cool);outline-offset:2px}
+.seg{display:inline-flex;gap:0;margin:0 0 14px;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg:empty{display:none}
+.seg button{border:0;border-radius:0}
+.seg button + button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--cool);color:var(--bg);font-weight:600}
+.hz{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:0 0 14px}
+.hz div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 10px}
+.hz .k{display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.hz .v{font-size:20px;font-weight:700}
+@media (max-width:520px){.hz{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.note{margin:0 0 16px;padding:11px 14px;background:var(--panel);border:1px solid var(--line);
+  border-left:3px solid var(--rail);border-radius:10px;font-size:14px}
+.note:empty{display:none}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+  overflow:hidden;margin:0 0 16px}
+.panel:empty{display:none}
+.chart{padding:8px 6px 2px}
+.chart svg{display:block;width:100%;height:auto}
+.chart .grid{stroke:var(--line);stroke-width:1}
+.chart text{fill:var(--faint);font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.chart .hist{fill:none;stroke:var(--cool);stroke-width:3;stroke-linejoin:round}
+.chart .proj{fill:none;stroke:var(--cool);stroke-width:2.5;stroke-dasharray:7 6;opacity:.85}
+.chart .now{stroke:var(--faint);stroke-dasharray:2 4}
+.chart .dot{fill:var(--warn)}
+.chart .dotlabel{fill:var(--ink);font-weight:700}
+.scroll{overflow-x:auto}
+table{border-collapse:separate;border-spacing:0;width:100%;min-width:440px;font-size:13.5px}
+thead th{
+  position:sticky;top:0;z-index:3;background:var(--panel);
+  border-bottom:2px solid var(--line);padding:10px;
+  font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);
+  text-align:right;white-space:nowrap;
+}
+thead th:first-child{text-align:left;position:sticky;left:0;z-index:4}
+tbody td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--line2);white-space:nowrap}
+tbody td.nm{
+  text-align:left;position:sticky;left:0;background:var(--panel);z-index:2;
+  font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;
+}
+@media (max-width:520px){tbody td.nm{max-width:150px}}
+tbody td.nm a{color:inherit;text-decoration:none}
+tbody td.nm a:hover{color:var(--cool)}
+/* Our row: an opaque wash, so the fixed first column never shows text behind it. */
+tbody tr.us td{background:linear-gradient(var(--warn-wash),var(--warn-wash)),var(--panel);font-weight:700}
+tbody tr.us td.nm{box-shadow:inset 3px 0 0 var(--rail)}
+.foot{color:var(--muted);font-size:12.5px;margin:16px 2px 0;max-width:78ch}
+</style>
+</head>
+<body>
+<div class="inner">
+  <p class="eyebrow">Faction Hall of Fame · respect</p>
+  <h1>How far can we climb?</h1>
+  <div id="status" class="banner" role="status"></div>
+  <div id="head"></div>
+  <div id="switch" class="seg" role="group" aria-label="Pace window"></div>
+  <div id="horizons" class="hz"></div>
+  <p id="note" class="note"></p>
+  <div id="chart" class="panel chart"></div>
+  <div class="panel"><div class="scroll" id="table"></div></div>
+  <p class="foot"><b>How this works.</b> Pace is the change between Torn's daily snapshots over
+    the window, divided by the days. Projections assume every faction keeps its pace and start
+    from last midnight's standings; the table uses live respect. Most of our respect arrives with
+    each war, so a pass date a few days out can land a few days either way. Positions follow
+    Torn's Hall of Fame, which leaves out a few factions that appear in Torn's data.</p>
+</div>
+<script>
+// Every function here is a plain top-level declaration so hof-page.test.mjs
+// can run it; render, load and boot are the only ones that touch the DOM.
+var DAY_MS = 86400000;
+var HORIZONS = [7, 30, 91, 182, 365];
+var HORIZON_LABELS = { 7: '1 week', 30: '1 month', 91: '3 months', 182: '6 months', 365: '1 year' };
+var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+var SWITCH_ORDER = [30, 7, 90];
+var STATE = { data: null, w: null, loadedAt: 0 };
+var IS_PDA = typeof window !== 'undefined' && typeof window.flutter_inappwebview !== 'undefined';
+
+// Faction names come from Torn, so they are escaped wherever they're shown.
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function sep(n) {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// The same bands as fmtNum in hof-climb.js; hof-page.test.mjs keeps them equal.
+function fmtNum(v) {
+  var a = Math.abs(v), s = v < 0 ? '-' : '';
+  var whole = Math.round(a);
+  if (whole === 0) return '0';
+  if (whole < 10000) return s + sep(whole);
+  var tenthsK = Math.round(a / 100);
+  if (tenthsK < 1000) return s + Math.floor(tenthsK / 10) + '.' + (tenthsK % 10) + 'k';
+  var k = Math.round(a / 1000);
+  if (k < 1000) return s + k + 'k';
+  var hundredthsM = Math.round(a / 10000);
+  return s + Math.floor(hundredthsM / 100) + '.' + String(hundredthsM % 100).padStart(2, '0') + 'M';
+}
+
+function fmtPace(p) {
+  if (p == null || !isFinite(p)) return '—';
+  var r = Math.sign(p) * Math.round(Math.abs(p));
+  return (r < 0 ? '-' : '') + sep(Math.abs(r)) + '/day';
+}
+
+// Torn time is UTC. The year shows only when it isn't the current one.
+function fmtDate(ms, nowMs) {
+  var d = new Date(ms), y = d.getUTCFullYear();
+  return d.getUTCDate() + ' ' + MONTHS[d.getUTCMonth()] + (y !== new Date(nowMs).getUTCFullYear() ? ' ' + y : '');
+}
+
+function updatedLabel(updatedAt, nowMs) {
+  var mins = Math.floor((nowMs - updatedAt) / 60000);
+  if (mins < 1) return 'updated just now';
+  if (mins < 60) return 'updated ' + mins + ' min ago';
+  return 'updated ' + Math.floor(mins / 60) + ' h ago';
+}
+
+// The pass column. days comes from the API: until we pass a row above, or
+// until a row below catches us.
+function passLabel(row, above, usPace, w, updatedAt) {
+  if (row.us) return '';
+  var pace = row.pace ? row.pace[w] : null;
+  if (pace == null || usPace == null || !isFinite(pace) || !isFinite(usPace)) return '—';
+  var days = row.days ? row.days[w] : null;
+  if (above) {
+    if (days == null) return 'pulling away';
+    if (days > 365) return 'over a year';
+    return fmtDate(updatedAt + days * DAY_MS, updatedAt);
+  }
+  if (days == null || days > 365) return '';
+  var n = Math.ceil(days);
+  return n === 0 ? 'catches us today' : 'catches us in ' + n + (n === 1 ? ' day' : ' days');
+}
+
+function headerHtml(data, w, nowMs) {
+  if (!data.us) return '<p class="when">We are not in these standings.</p>';
+  var name = '';
+  data.rows.forEach(function (r) { if (r.us) name = r.name; });
+  var when = data.source === 'midnight'
+    ? "Torn's live standings are unavailable, so this shows last midnight's."
+    : updatedLabel(data.updatedAt, nowMs);
+  var age = Math.floor((nowMs - Date.parse(data.day + 'T00:00:00Z')) / DAY_MS);
+  var old = age > 1 ? ' Paces come from the ' + data.day + ' snapshot.' : '';
+  return '<div class="head"><div class="big">#' + data.us.position + '</div>' +
+    '<div class="facts"><b>' + esc(name) + '</b> · ' + sep(data.us.respect) + ' respect · ' +
+    esc(fmtPace(data.us.pace ? data.us.pace[w] : null)) + ' over ' + w + ' days</div></div>' +
+    '<p class="when">' + esc(when + old) + '</p>';
+}
+
+function switchHtml(data, w) {
+  return SWITCH_ORDER.filter(function (x) { return data.windows.indexOf(x) >= 0; }).map(function (x) {
+    return '<button type="button" data-w="' + x + '"' + (x === w ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"') +
+      '>' + x + ' days</button>';
+  }).join('');
+}
+
+function horizonsHtml(data, w) {
+  var proj = data.projection && data.projection[w];
+  if (!proj) return '';
+  return HORIZONS.map(function (d) {
+    return '<div><span class="k">' + HORIZON_LABELS[d] + '</span><span class="v">#' + proj[d - 1] + '</span></div>';
+  }).join('');
+}
+
+function noteHtml(data, w) {
+  return data.notes && data.notes[w] ? esc(data.notes[w]) : '';
+}
+
+function niceStep(raw) {
+  var steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000];
+  for (var i = 0; i < steps.length; i++) if (steps[i] >= raw) return steps[i];
+  return 10000;
+}
+
+// Our position over time, best at the top: the saved history solid, the
+// projection dashed out to a year, the horizons as labelled dots. Drawn at
+// the container's real pixel width, so its 13 px text stays 13 px on a phone.
+function chartSvg(data, w, width) {
+  var hist = (data.history || []).filter(function (h) { return h.position; });
+  if (!hist.length) return '';
+  var proj = data.projection && data.projection[w];
+  var W = Math.max(300, Math.round(width || 660)), H = 240, L = 52, R = 16, T = 18, B = 30, iw = W - L - R, ih = H - T - B;
+  var t0 = Date.parse(hist[0].day + 'T00:00:00Z'), tL = Date.parse(data.day + 'T00:00:00Z');
+  var t1 = proj ? tL + 365 * DAY_MS : Math.max(tL, t0 + DAY_MS);
+  var all = hist.map(function (h) { return h.position; }).concat(proj || []);
+  var best = Math.min.apply(null, all), worst = Math.max.apply(null, all);
+  var step = niceStep(Math.max(1, (worst - best) / 4));
+  var top = Math.max(1, Math.floor(best / step) * step);
+  var bottom = Math.max(top + step, Math.ceil(worst / step) * step);
+  function x(t) { return (L + (t - t0) / (t1 - t0) * iw).toFixed(1); }
+  function y(p) { return (T + (p - top) / (bottom - top) * ih).toFixed(1); }
+
+  var g = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Our Hall of Fame position: saved history, then the projection">';
+  for (var p = top; p <= bottom; p += step) {
+    g += '<line class="grid" x1="' + L + '" x2="' + (W - R) + '" y1="' + y(p) + '" y2="' + y(p) + '"/>' +
+      '<text x="' + (L - 8) + '" y="' + (Number(y(p)) + 4) + '" text-anchor="end">#' + p + '</text>';
+  }
+  // Month labels at each UTC month start; January shows the year instead.
+  var months = [], d0 = new Date(t0);
+  for (var m = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() + 1, 1); m <= t1;
+       m = Date.UTC(new Date(m).getUTCFullYear(), new Date(m).getUTCMonth() + 1, 1)) months.push(m);
+  var every = Math.max(1, Math.ceil(months.length / Math.max(1, Math.floor(iw / 56))));
+  months.forEach(function (ms, i) {
+    if (i % every) return;
+    var dm = new Date(ms);
+    var label = dm.getUTCMonth() === 0 ? String(dm.getUTCFullYear()) : MONTHS[dm.getUTCMonth()];
+    g += '<text x="' + x(ms) + '" y="' + (H - 8) + '" text-anchor="middle">' + label + '</text>';
+  });
+  g += '<line class="now" x1="' + x(tL) + '" x2="' + x(tL) + '" y1="' + T + '" y2="' + (H - B) + '"/>';
+  g += '<polyline class="hist" points="' + hist.map(function (h) {
+    return x(Date.parse(h.day + 'T00:00:00Z')) + ',' + y(h.position);
+  }).join(' ') + '"/>';
+  if (proj) {
+    var pts = [x(tL) + ',' + y(hist[hist.length - 1].position)];
+    for (var d = 1; d <= 365; d++) pts.push(x(tL + d * DAY_MS) + ',' + y(proj[d - 1]));
+    g += '<polyline class="proj" points="' + pts.join(' ') + '"/>';
+    // 1 week and 1 month sit close together, so the lower dot's label goes
+    // below and the higher one's above; any label that would clip at the top
+    // goes below too.
+    var below = proj[6] >= proj[29] ? 7 : 30;
+    HORIZONS.forEach(function (hd) {
+      var cx = x(tL + hd * DAY_MS), cy = Number(y(proj[hd - 1]));
+      var ly = hd === below || cy - 9 < T + 10 ? cy + 20 : cy - 9;
+      g += '<circle class="dot" cx="' + cx + '" cy="' + cy + '" r="4.5"/>' +
+        '<text class="dotlabel" x="' + cx + '" y="' + ly + '" text-anchor="middle">#' + proj[hd - 1] + '</text>';
+    });
+  }
+  return g + '</svg>';
+}
+
+function tableHtml(data, w) {
+  var me = -1;
+  data.rows.forEach(function (r, i) { if (r.us) me = i; });
+  var usPace = data.us && data.us.pace ? data.us.pace[w] : null;
+  var body = data.rows.map(function (r, i) {
+    var link = 'https://www.torn.com/factions.php?step=profile&ID=' + encodeURIComponent(r.id);
+    return '<tr' + (r.us ? ' class="us"' : '') + '>' +
+      '<td class="nm"><a href="' + esc(link) + '" target="_blank" rel="noopener">#' + r.position + ' ' + esc(r.name) + '</a></td>' +
+      '<td>' + (r.us ? '' : esc(fmtNum(r.gap))) + '</td>' +
+      '<td>' + esc(fmtPace(r.pace ? r.pace[w] : null).replace('/day', '')) + '</td>' +
+      '<td>' + esc(passLabel(r, me >= 0 && i < me, usPace, w, data.updatedAt)) + '</td></tr>';
+  }).join('');
+  return '<table><thead><tr><th>Faction</th><th>Gap</th><th>Pace /day</th><th>Pass</th></tr></thead><tbody>' + body + '</tbody></table>';
+}
+
+// While the server is refreshing, ask once more a few seconds later; that
+// second request reads the shared copy and costs no Torn call.
+function followUpDelay(data) {
+  return data && data.refreshing ? 5000 : null;
+}
+
+// Every 15 minutes while the tab is visible. Torn PDA's WebView can report
+// hidden while the page is on screen, so there it refreshes regardless.
+function refreshDue(loadedAt, nowMs, visible, isPda) {
+  return (visible || isPda) && nowMs - loadedAt >= 15 * 60000;
+}
+
+function setStatus(text) {
+  var el = document.getElementById('status');
+  el.textContent = text || '';
+  el.className = text ? 'banner on' : 'banner';
+}
+
+function render() {
+  var d = STATE.data;
+  if (!d) return;
+  if (d.windows.indexOf(STATE.w) < 0) STATE.w = d.defaultWindow;
+  var w = STATE.w, now = Date.now();
+  document.getElementById('head').innerHTML = headerHtml(d, w, now);
+  document.getElementById('switch').innerHTML = switchHtml(d, w);
+  document.getElementById('horizons').innerHTML = horizonsHtml(d, w);
+  document.getElementById('note').innerHTML = noteHtml(d, w);
+  // The panel is hidden while empty, so measure the column it sits in.
+  var chart = document.getElementById('chart');
+  var width = (chart.parentNode && chart.parentNode.clientWidth) || 672;
+  chart.innerHTML = chartSvg(d, w, width - 14);
+  document.getElementById('table').innerHTML = tableHtml(d, w);
+}
+
+function load(isFollowUp) {
+  return fetch('/api/hof', { cache: 'no-store' }).then(function (r) {
+    if (r.status === 503) {
+      setStatus("Collecting Torn's daily snapshots. Check back in a few minutes.");
+      return null;
+    }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function (d) {
+    if (!d) return;
+    STATE.data = d;
+    STATE.loadedAt = Date.now();
+    setStatus('');
+    render();
+    var delay = followUpDelay(d);
+    if (delay && !isFollowUp) setTimeout(function () { load(true); }, delay);
+  }).catch(function () {
+    if (!STATE.data) return setStatus("Couldn't reach warboard. It will try again in a minute.");
+    var mins = Math.max(1, Math.round((Date.now() - STATE.data.updatedAt) / 60000));
+    setStatus("Couldn't reach warboard; showing data from " + mins + ' min ago.');
+  });
+}
+
+function boot() {
+  document.getElementById('switch').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[data-w]') : null;
+    if (!b) return;
+    STATE.w = Number(b.getAttribute('data-w'));
+    render();
+  });
+  function tick() {
+    if (refreshDue(STATE.loadedAt, Date.now(), !document.hidden, IS_PDA)) load(false);
+  }
+  var resized = null;
+  window.addEventListener('resize', function () { clearTimeout(resized); resized = setTimeout(render, 150); });
+  document.addEventListener('visibilitychange', tick);
+  setInterval(tick, 60000);
+  load(false);
+}
+
+boot();
+</script>
+</body>
+</html>
