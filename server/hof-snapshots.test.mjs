@@ -99,3 +99,162 @@ test("a run wants the 45 days newest first, minus saved days and past days asked
   assert.ok(some.includes("2026-10-19"), "today is never skipped");
   assert.ok(some.includes("2026-10-16"), "answered yesterday: due again");
 });
+
+// ── a run ───────────────────────────────────────────────────────────────
+test("the first run saves what Torn has, finds the hidden list once, and records the rest", async () => {
+  const torn = fakeTorn({ days: { "2026-10-19": SNAP, "2026-10-18": SNAP, "2026-09-18": SNAP } });
+  const opts = setup(torn);
+  const s = await runOnce(opts);
+
+  assert.deepEqual(s.saved, ["2026-10-19", "2026-10-18", "2026-09-18"]);
+  assert.equal(torn.snapshotCalls().length, 45);
+  assert.equal(torn.hofCalls().length, 5, "we're #250, so it pages to position 450");
+  assert.deepEqual(s.hidden, [77], "88 sits below P + 100, so it isn't looked for");
+  assert.deepEqual(readDay(opts, "2026-09-18").hidden, [77], "backfilled days take the same list");
+  assert.equal(readDay(opts, "2026-10-18").respect[US], 1751500);
+  assert.equal(gunzipSync(readFileSync(join(opts.dataDir, "raw", "2026-10-19.csv.gz"))).toString(), SNAP,
+    "Torn's file is kept exactly as served");
+
+  const attempts = JSON.parse(readFileSync(join(opts.dataDir, "attempts.json"), "utf8"));
+  assert.equal(Object.keys(attempts).length, 42);
+  assert.ok(Object.values(attempts).every((d) => d === "2026-10-19"));
+
+  const digest = JSON.parse(readFileSync(join(opts.dataDir, "digest.json"), "utf8"));
+  assert.equal(digest.day, "2026-10-19");
+  assert.equal(digest.midnight.position, 250, "the hidden faction isn't counted ahead of us");
+  assert.equal(s.retry, false);
+
+  const at = torn.calls.map((c) => c.at);
+  for (let i = 1; i < at.length; i++) assert.ok(at[i] - at[i - 1] >= 1100, "calls are 1.1 s apart");
+
+  const again = await runOnce(opts);
+  assert.deepEqual(again.saved, []);
+  assert.equal(torn.calls.length, 50, "a second run the same day makes no calls");
+});
+
+test("today's unpublished file arms the retry; a past day is asked again on a later UTC date", async () => {
+  const torn = fakeTorn({ days: { "2026-10-18": SNAP } });
+  const opts = setup(torn);
+  const s = await runOnce(opts);
+  assert.deepEqual(s.saved, ["2026-10-18"]);
+  assert.ok(s.waiting.includes("2026-10-19"));
+  assert.equal(s.retry, true);
+  assert.ok(!("2026-10-19" in JSON.parse(readFileSync(join(opts.dataDir, "attempts.json"), "utf8"))));
+
+  clock.now += 15 * 60 * 1000;
+  let before = torn.snapshotCalls().length;
+  await runOnce(opts);
+  assert.equal(torn.snapshotCalls().length - before, 1, "15 minutes later only today is asked");
+
+  clock.now = Date.UTC(2026, 9, 20, 0, 5);
+  before = torn.snapshotCalls().length;
+  await runOnce(opts);
+  const asked = torn.snapshotCalls().slice(before).map((c) => dayOf(c.params.timestamp));
+  assert.ok(asked.includes("2026-10-17"), "due again on the next UTC date");
+});
+
+test("code 5 backs off 2 s, then 1.8 times longer, for up to 5 retries", async () => {
+  let busy = 3;
+  const torn = fakeTorn({ days: { "2026-10-19": SNAP },
+    onSnapshot: (day) => (day === "2026-10-19" && busy-- > 0 ? tornErr(5, "Too many requests") : null) });
+  const opts = setup(torn);
+  const s = await runOnce(opts);
+  assert.equal(s.saved[0], "2026-10-19");
+  assert.deepEqual(clock.sleeps.filter((ms) => ms >= 2000).slice(0, 3), [2000, 3600, 6480]);
+
+  const stuck = fakeTorn({ onSnapshot: () => tornErr(5, "Too many requests") });
+  const s2 = await runOnce(setup(stuck));
+  assert.equal(stuck.snapshotCalls().length, 6, "the first call and 5 retries");
+  assert.equal(s2.retry, true);
+  assert.match(s2.error, /^snapshot 2026-10-19: 5/);
+});
+
+test("a key problem ends the run without arming the retry", async () => {
+  const torn = fakeTorn({ onSnapshot: () => tornErr(2, "Incorrect key") });
+  const s = await runOnce(setup(torn));
+  assert.equal(torn.snapshotCalls().length, 1);
+  assert.equal(s.keyError, true);
+  assert.equal(s.retry, false);
+});
+
+test("a saved raw file stands in for the fetch; a broken one is fetched again", async () => {
+  const torn = fakeTorn({ days: { "2026-10-19": SNAP } });
+  const opts = setup(torn);
+  mkdirSync(join(opts.dataDir, "raw"), { recursive: true });
+  writeFileSync(join(opts.dataDir, "raw", "2026-10-18.csv.gz"), gzipSync(SNAP));
+  writeFileSync(join(opts.dataDir, "raw", "2026-10-17.csv.gz"), "not gzip");
+  const s = await runOnce(opts);
+  const asked = torn.snapshotCalls().map((c) => dayOf(c.params.timestamp));
+  assert.ok(!asked.includes("2026-10-18"), "the saved copy was used");
+  assert.ok(s.saved.includes("2026-10-18"));
+  assert.ok(asked.includes("2026-10-17"), "the broken copy was fetched again");
+  assert.ok(!existsSync(join(opts.dataDir, "raw", "2026-10-17.csv.gz")));
+});
+
+test("a cut-off download is not saved", async () => {
+  const torn = fakeTorn({ days: { "2026-10-19": SNAP, "2026-10-18": csvOf(WORLD.slice(0, 300)) } });
+  const opts = setup(torn);
+  const s = await runOnce(opts);
+  assert.deepEqual(s.saved, ["2026-10-19"]);
+  assert.match(s.error, /only 300 factions with respect against 603/);
+  assert.equal(s.retry, true);
+  assert.ok(!existsSync(join(opts.dataDir, "raw", "2026-10-18.csv.gz")));
+});
+
+test("a failed write ends the run with a retry and leaves the day unsaved", async () => {
+  const torn = fakeTorn({ days: { "2026-10-19": SNAP } });
+  const opts = setup(torn);
+  writeFileSync(join(opts.dataDir, "days"), "not a directory");  // every day-file write now fails
+  const s = await runOnce(opts);
+  assert.deepEqual(s.saved, []);
+  assert.equal(s.retry, true);
+  assert.match(s.error, /^2026-10-19: /);
+  assert.ok(existsSync(join(opts.dataDir, "raw", "2026-10-19.csv.gz")), "the raw file waits for the next run");
+});
+
+test("a failed Hall of Fame check reuses the newest saved list", async () => {
+  const torn = fakeTorn({ days: { "2026-10-19": SNAP }, onHof: () => reply("oops", 500) });
+  const opts = setup(torn);
+  mkdirSync(join(opts.dataDir, "days"), { recursive: true });
+  writeFileSync(join(opts.dataDir, "days", "2026-10-18.json"),
+    JSON.stringify({ day: "2026-10-18", respect: { [US]: 5 }, hidden: [77, 88] }));
+  await runOnce(opts);
+  assert.deepEqual(readDay(opts, "2026-10-19").hidden, [77, 88]);
+});
+
+test("with no saved list, it keeps the raw file and builds the day once the check works", async () => {
+  const hof = { down: true };
+  const torn = fakeTorn({ days: { "2026-10-19": SNAP }, onHof: () => (hof.down ? reply("oops", 500) : null) });
+  const opts = setup(torn);
+  const s1 = await runOnce(opts);
+  assert.deepEqual(s1.saved, []);
+  assert.equal(s1.retry, true);
+  assert.ok(existsSync(join(opts.dataDir, "raw", "2026-10-19.csv.gz")));
+  assert.ok(!existsSync(join(opts.dataDir, "days", "2026-10-19.json")));
+
+  hof.down = false;
+  clock.now += 15 * 60 * 1000;
+  const s2 = await runOnce(opts);
+  assert.ok(s2.saved.includes("2026-10-19"));
+  const fetches = torn.snapshotCalls().filter((c) => dayOf(c.params.timestamp) === "2026-10-19");
+  assert.equal(fetches.length, 1, "built from the raw file, not fetched again");
+});
+
+test("the digest is rebuilt on a version change, and an unreadable day file from its raw file", async () => {
+  const torn = fakeTorn({ days: { "2026-10-19": SNAP, "2026-10-18": SNAP } });
+  const opts = setup(torn);
+  await runOnce(opts);
+  writeFileSync(join(opts.dataDir, "digest.json"), JSON.stringify({ version: 0, day: "2026-10-19" }));
+  writeFileSync(join(opts.dataDir, "days", "2026-10-18.json"), "{not json");
+  const calls = torn.calls.length;
+  await runOnce(opts);
+  assert.equal(torn.calls.length, calls, "nothing was missing, so no calls");
+  assert.equal(JSON.parse(readFileSync(join(opts.dataDir, "digest.json"), "utf8")).version, DIGEST_VERSION);
+  assert.deepEqual(readDay(opts, "2026-10-18").hidden, [77], "rebuilt with the newest saved list");
+});
+
+test("a throwing fetch never becomes an unhandled rejection", async () => {
+  const s = await runOnce(setup({ fetchImpl: () => { throw new Error("boom"); } }));
+  assert.equal(s.retry, true);
+  assert.match(s.error, /network/);
+});
