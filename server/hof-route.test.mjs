@@ -218,3 +218,41 @@ test("no key means no refresh; errors become JSON, never a rejection", async () 
   assert.equal(res.statusCode, 500);
   assert.deepEqual(res.body, { error: "internal error" });
 });
+
+// ── wiring in routes.js ──────────────────────────────────────────────────
+const SRC = readFileSync(new URL("./routes.js", import.meta.url), "utf8");
+function fn(name) {
+  const i = SRC.indexOf("function " + name + "(");
+  assert.ok(i >= 0, "not in routes.js: " + name);
+  let k = SRC.indexOf("(", i), depth = 0;
+  for (; k < SRC.length; k++) {
+    if (SRC[k] === "(") depth++;
+    else if (SRC[k] === ")" && --depth === 0) break;
+  }
+  const o = SRC.indexOf("{", k);
+  let d = 0;
+  for (let j = o; j < SRC.length; j++) {
+    if (SRC[j] === "{") d++;
+    else if (SRC[j] === "}" && --d === 0) return SRC.slice(i, j + 1);
+  }
+  throw new Error("unbalanced braces in " + name);
+}
+function gateFor(path) {
+  const box = { process: { env: {} }, parseCookie: () => null, verifyToken: () => { throw new Error("no token"); } };
+  vm.createContext(box);
+  vm.runInContext(fn("gateMiddleware") + "\nglobalThis.gate = gateMiddleware;", box);
+  const seen = { next: false, redirect: null };
+  box.gate({ path, headers: {} }, { redirect: (to) => { seen.redirect = to; } }, () => { seen.next = true; });
+  return seen;
+}
+
+test("routes.js serves /hof from pages/ and /api/hof from hof-api.js", () => {
+  assert.match(SRC, /router\.get\("\/api\/hof", \(req, res\) => hofApi\.handle\(req, res\)\);/);
+  assert.match(SRC, /router\.get\("\/hof",[\s\S]{0,200}"Cache-Control", "no-store"[\s\S]{0,120}\.\/pages\/hof\.html/);
+});
+
+test("the site gate lets /hof through and still gates other pages", () => {
+  assert.deepEqual(gateFor("/hof"), { next: true, redirect: null });
+  assert.deepEqual(gateFor("/api/hof"), { next: true, redirect: null });
+  assert.deepEqual(gateFor("/slackers"), { next: false, redirect: "/gate.html" });
+});

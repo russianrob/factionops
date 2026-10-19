@@ -111,6 +111,7 @@ import * as warPayouts from "./war-payouts.js";
 import { turtleWatch } from "./turtle-watch.js";
 import * as warHistory from "./war-history.js";
 import * as slackers from "./slackers-model.js";
+import { createHofApi } from "./hof-api.js";
 import * as gymEnergy from "./gym-energy-snapshot.js";
 import * as gymComp from "./gym-comp.js";
 import * as upcomingWar from "./upcoming-war.js";
@@ -1388,6 +1389,9 @@ export function gateMiddleware(req, res, next) {
     req.path.startsWith("/diag/") ||
     req.path === "/war" || req.path.startsWith("/war/") ||
     req.path === "/payouts" || req.path.startsWith("/payouts/") ||
+    // The Hall of Fame climb page is public by design: Hall of Fame respect is
+    // public, and the page holds nothing else.
+    req.path === "/hof" || req.path.startsWith("/hof/") ||
     req.path.endsWith(".meta.js") || req.path.endsWith(".user.js") ||
     // Install assets — same public-by-design rationale as userscript
     // .user.js. Apps need to be installable without a gate cookie since
@@ -13608,6 +13612,16 @@ router.get("/slackers", (_req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
   res.set("Cache-Control", "no-store");
   return res.send(renderSlackersPage());
+});
+
+// Hall of Fame respect climb (docs/superpowers/specs/2026-10-19-hof-respect-climb-design.md).
+// Public: Hall of Fame respect is public, and the page holds nothing else.
+const hofApi = createHofApi();
+router.get("/api/hof", (req, res) => hofApi.handle(req, res));
+router.get("/hof", (_req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.set("Cache-Control", "no-store");
+  return res.sendFile(new URL("./pages/hof.html", import.meta.url).pathname);
 });
 
 export default router;

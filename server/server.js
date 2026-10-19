@@ -41,6 +41,7 @@ import * as stakeoutStore from "./stakeout-store.js";
 import { startWatcher as startStakeoutWatcher, stopWatcher as stopStakeoutWatcher } from "./stakeout-watcher.js";
 import { startRwpRefresh } from "./rwp-refresh.js";
 import { startFactionHistorySchedule } from "./faction-history-schedule.js";
+import { startHofSnapshots, stopHofSnapshots } from "./hof-snapshots.js";
 import { startRestockTracker } from "./restock-tracker.js";
 import { startPersonalWatcher } from "./personal-watcher.js";
 import * as itemMarket from "./item-market.js";
@@ -693,6 +694,8 @@ else console.log("[stakeout-watcher] disabled (set STAKEOUT_WATCHER=1 to enable 
 // auction CSVs so the PDA path (which can't gunzip the CDN) gets fresh prices.
 startRwpRefresh();
 startFactionHistorySchedule();
+// Hall of Fame climb: saves Torn's daily faction snapshot (00:05 UTC + boot catch-up).
+startHofSnapshots();
 startRestockTracker();
 startPersonalWatcher();
 // Item-market lowest-listing cache: value OC reward artifacts (e.g. Priceless
@@ -1000,6 +1003,7 @@ function shutdown(signal) {
   if (warDetectTimer) { clearInterval(warDetectTimer); warDetectTimer = null; }
   try { stopPersonalMonitor(); } catch (_) {}
   try { stopStakeoutWatcher(); } catch (_) {}
+  try { stopHofSnapshots(); } catch (_) {}
   stopMembershipSchedule();
   stopSubscriptionManager();
 
