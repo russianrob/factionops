@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.13.3
+// @version      3.13.4
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the screenshots and stock lists people post in forum trade threads
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.13.3';
+    var SCRIPT_VERSION = '3.13.4';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -251,6 +251,29 @@
         return '$' + n.toLocaleString();
     }
 
+    // Torn PDA's GMforPDA keeps each GM value in this page's own localStorage,
+    // under the same key. Tampermonkey and the warboard apps keep GM storage
+    // apart from the page. The localStorage tidying below has to know which
+    // one it is running on, or on PDA it deletes the value it just saved.
+    // The probe is written once and left in place, so later loads only read
+    // it: in the warboard apps every GM write rewrites the whole GM store.
+    function gmSharesLocalStorage() {
+        if (typeof GM_setValue !== 'function' || typeof GM_getValue !== 'function') return false;
+        try {
+            if (GM_getValue('rwp_gm_probe', 0) !== 1) GM_setValue('rwp_gm_probe', 1);
+        } catch (e) {
+            // Only a GM store kept in this page's localStorage can run out of
+            // the page's quota, so a full torn.com storage still means shared.
+            return !!e && (e.name === 'QuotaExceededError' || e.code === 22);
+        }
+        try { return localStorage.getItem('rwp_gm_probe') !== null; } catch (e2) { return false; }
+    }
+    var GM_SHARES_LOCALSTORAGE = gmSharesLocalStorage();
+    // On PDA a GM value shares torn.com's localStorage with Torn's own chat.
+    // A 0.6 MB price cache once filled it and broke chat, and the feed is now
+    // about 1.6M characters, so anything bigger than this stays in memory.
+    var SHARED_STORAGE_MAX = 100000;
+
     function safeGet(key, fallback) {
         try {
             if (typeof GM_getValue === 'function') return GM_getValue(key, fallback);
@@ -264,7 +287,15 @@
 
     function safeSet(key, val) {
         try {
-            if (typeof GM_setValue === 'function') { GM_setValue(key, val); try { localStorage.removeItem(key); } catch (e2) {} return; }
+            if (typeof GM_setValue === 'function') {
+                if (GM_SHARES_LOCALSTORAGE) {
+                    // Here the GM value IS the localStorage entry, so it must
+                    // not be removed after saving.
+                    try { if (JSON.stringify(val).length <= SHARED_STORAGE_MAX) GM_setValue(key, val); } catch (e4) {}
+                    return;
+                }
+                GM_setValue(key, val); try { localStorage.removeItem(key); } catch (e2) {} return;
+            }
         } catch (e) {}
         try {
             var s = JSON.stringify(val);
@@ -276,7 +307,11 @@
     (function purgeStaleLocalStorageCaches() {
         try {
             if (typeof GM_setValue !== 'function') return;
-            ['rwp_price_cache', 'rwp_networth_data_cache', 'rwp_badge_cache', 'rwp_torn_items_marketprice', 'rwp_uid_details_cache'].forEach(function (k) {
+            // On PDA these keys ARE the saved GM values. Only the price feed,
+            // which is never saved there, can be left over from an old version.
+            var stale = GM_SHARES_LOCALSTORAGE ? ['rwp_price_cache']
+                : ['rwp_price_cache', 'rwp_networth_data_cache', 'rwp_badge_cache', 'rwp_torn_items_marketprice', 'rwp_uid_details_cache'];
+            stale.forEach(function (k) {
                 try { localStorage.removeItem(k); } catch (e) {}
             });
         } catch (e) {}
@@ -2774,6 +2809,10 @@
         try { console.log('[rwp-base-price] init — DOM-polling mode (PDA-compatible)'); } catch (_) {}
 
         var bpPriceFetchInFlight = false;
+        // After a refused or failed request, wait 5 minutes before asking
+        // again, so a bad key or a rate limit cannot turn the 2.5 s poll into
+        // a stream of 1 MB requests.
+        var bpNextFetchAt = 0;
 
         // v3.1.42: DOM-polling instead of XHR/fetch hooks. PDA's
         // pdaHandler_httpPost intercepts inventory requests before our
@@ -2785,13 +2824,14 @@
         function pollAndLabel() {
             if (isTornToolsActive()) return;
             var invCache = safeGet(NW_DATA_CACHE_KEY, null);
-            var mpCache = safeGet(NW_ITEMS_CACHE_KEY, null);
-            if (!mpCache || !mpCache.map || !mpCache.byName || !mpCache.byId) {
+            var mpCache = marketPriceMaps();
+            if (!mpCache) {
                 var key = getEffectiveApiKey();
-                if (key && !bpPriceFetchInFlight) {
+                if (key && !bpPriceFetchInFlight && Date.now() >= bpNextFetchAt) {
                     bpPriceFetchInFlight = true;
-                    fetchItemMarketPrices(key, function () {
+                    fetchItemMarketPrices(key, function (err) {
                         bpPriceFetchInFlight = false;
+                        if (err) bpNextFetchAt = Date.now() + 5 * 60 * 1000;
                         pollAndLabel();
                     });
                 }
@@ -3206,14 +3246,24 @@
         return false;
     }
 
+    // The market-price list this page last fetched. It is read before storage,
+    // so a save that does not stick (PDA storage full) costs one request per
+    // page instead of one every time the labeller looks.
+    var mpMemory = null;
+
+    function marketPriceMaps() {
+        var maps = mpMemory || safeGet(NW_ITEMS_CACHE_KEY, null);
+        return (maps && maps.map && maps.byName && maps.byId) ? maps : null;
+    }
+
     // v3.1.16: fetch /v2/torn/items, build market_price map. Cached 24h.
     // Returns { itemId: market_price } — items with market_price=0/null
     // are "N/A" on the item market, meaning Torn isn't valuing them in
     // networth, so we should add their RW market value.
     function fetchItemMarketPrices(key, cb) {
         try {
-            var cached = safeGet(NW_ITEMS_CACHE_KEY, null);
-            if (cached && cached.ts && Date.now() - cached.ts < NW_ITEMS_TTL && cached.map && cached.byName && cached.byId) {
+            var cached = marketPriceMaps();
+            if (cached && cached.ts && Date.now() - cached.ts < NW_ITEMS_TTL) {
                 cb(null, cached.map);
                 return;
             }
@@ -3261,7 +3311,8 @@
                 byId[it.id] = best;
                 if (it.name && best > 0) byName[String(it.name).toLowerCase().trim()] = best;
             }
-            safeSet(NW_ITEMS_CACHE_KEY, { ts: Date.now(), map: map, byName: byName, byId: byId });
+            mpMemory = { ts: Date.now(), map: map, byName: byName, byId: byId };
+            safeSet(NW_ITEMS_CACHE_KEY, mpMemory);
             try { console.log('[rwp-networth] cached prices for ' + Object.keys(map).length + ' items (' + Object.keys(byName).length + ' with a usable price via market or vendor)'); } catch (_) {}
             cb(null, map);
         }).catch(function (e) { cb(new Error('items fetch failed: ' + (e && e.message ? e.message : e))); });
@@ -5161,8 +5212,8 @@
         tradeInited = true;
         var warnedNoMap = false;
         function go() {
-            var maps = safeGet(NW_ITEMS_CACHE_KEY, null);
-            var haveMap = !!(maps && maps.byId && maps.byName);
+            var maps = marketPriceMaps();
+            var haveMap = !!maps;
             if (!haveMap && !warnedNoMap) {
                 warnedNoMap = true;
                 try { console.log('[rwp-trade] no item-market map (api key ' + (getEffectiveApiKey() ? 'set' : 'missing') + ') — RW weapons still price, plain items will not'); } catch (_) {}
