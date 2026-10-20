@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Flyout Diag
 // @namespace    RussianRob
-// @version      0.1.0
+// @version      0.1.1
 // @author       RussianRob
 // @description  Temporary diagnostic - logs every time Torn's fly-out menu opens, asks whether all its icons drew, and tries one candidate fix per open, to find why the icons go missing on iPhone. Safe to remove once the cause is found.
 // @license      All Rights Reserved
@@ -18,6 +18,8 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v0.1.1  - A verdict tapped just as Torn shuts the menu (on that same tap) now
+//           still counts and moves on to the next test, instead of being lost.
 // v0.1.0  - Initial release. On every fly-out open: logs the panel's state, shows
 //           a verdict bar beside the menu (All icons OK / Top missing / Bottom
 //           missing / Other), and runs one candidate fix per open, moving to the
@@ -31,9 +33,9 @@
   var W = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
   // One copy per page: a page restored from the back/forward cache keeps the old one.
   if (W.__tfd) return;
-  W.__tfd = { ver: "0.1.0" };
+  W.__tfd = { ver: "0.1.1" };
 
-  var VER = "0.1.0";
+  var VER = "0.1.1";
   var TAG = "flyout-diag";
   var LOG_URL = "https://tornwar.com/api/debug/client-log";
   var BEACON_URL = "https://tornwar.com/api/debug/tt-beacon?m=";
@@ -261,7 +263,7 @@
   }
 
   // ---- open / close ----
-  var cur = null, wasOpen = false, rowsSent = false;
+  var cur = null, lastClosed = null, wasOpen = false, rowsSent = false;
   var opens = +(ssGet("tfd_opens") || 0);
   function check() {
     var o = isOpen();
@@ -324,20 +326,30 @@
     var c = cur;
     cur = null;
     if (!c) return;
+    c.closedAt = Date.now();
+    lastClosed = c;
     note("close", { o: c.o, ts: c.ts, v: c.verdict, ms: Date.now() - c.at, scr: c.scrolls, pts: c.ptsSent ? undefined : c.pts });
     // A test is only done once the owner has judged it; an open with no verdict repeats it.
     if (c.verdict) { tally(c.ts, c.verdict); advance(); }
   }
   function verdict(v) {
-    if (!cur) return;
-    cur.verdict = v;
+    var c = cur, late = false;
+    if (!c) {
+      // Torn may shut the menu on the same tap, before the bar's click arrives. That tap
+      // still judges the open that just closed, once, within 1.5s.
+      c = lastClosed;
+      if (!c || c.verdict || Date.now() - c.closedAt > 1500) return;
+      late = true;
+    }
+    c.verdict = v;
     var p = panel();
     note("verdict", {
-      o: cur.o, ts: cur.ts, v: v, via: cur.via, ms: Date.now() - cur.at, scr: cur.scrolls,
+      o: c.o, ts: c.ts, v: v, via: c.via, ms: Date.now() - c.at, scr: c.scrolls, late: late ? 1 : undefined,
       sc: p ? [p.scrollTop, p.scrollHeight, p.clientHeight] : null, r: p ? rect(p) : null, sy: W.scrollY
     });
     var bs = bar.querySelectorAll("button[data-v]"), i;
     for (i = 0; i < bs.length; i++) bs[i].classList.toggle("tfd-picked", bs[i].getAttribute("data-v") === v);
+    if (late) { tally(c.ts, v); advance(); }          // onClose has already run without a verdict
     setTimeout(flush, 200);
   }
   function tally(ts, v) {
