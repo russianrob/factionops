@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.5.14
+// @version      1.5.15
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout.user.js
@@ -15,7 +15,7 @@
   "use strict";
   if (window.__tornMenuRight) return;
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.5.14";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.5.15";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
@@ -68,6 +68,9 @@
   var CLOSE_DIST = 60;
   var HORIZ_RATIO = 2.0;
   var SYS_EDGE = 24;
+  // The phone owns swipes that start this close to either screen edge: iOS uses them
+  // for back/forward and Android gesture navigation for Back. Open swipes start further in.
+  var OPEN_EDGE = 30;
 
   // Containers that scroll horizontally by transforming an inner track (e.g. flexslider),
   // so they report overflow-x:hidden even though content overflows. A swipe inside these
@@ -173,6 +176,8 @@
     if (!e.touches || e.touches.length !== 1 || !mobileActive()) { start = null; return; }
     var t = e.touches[0];
     if (!isOpen() && onScrollStrip(e.target)) { start = null; return; }
+    // An edge swipe is the phone navigating: don't also open the menu or flip its side.
+    if (!isOpen() && (t.clientX <= OPEN_EDGE || t.clientX >= window.innerWidth - OPEN_EDGE)) { start = null; return; }
     start = { x: t.clientX, y: t.clientY, id: t.identifier, open: isOpen(), sideSet: false };
   }
 
