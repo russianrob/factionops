@@ -14,6 +14,16 @@ import {
   isOwnOutput, readPostText,
 } from "./rwp-text-read.js";
 
+// Nothing here may reach the network. A reader that called the model again
+// would hit this recorder, answer "nothing found" at once and be billed for
+// nothing; the budget test below checks it was never called.
+const sent = [];
+globalThis.fetch = async (url) => {
+  sent.push(String(url));
+  return { ok: true, status: 200, headers: { get: () => null },
+           json: async () => ({ content: [{ text: '{"items": []}' }] }), text: async () => "" };
+};
+
 const feed = JSON.parse(fs.readFileSync(new URL("./data/rwp-prices.json", import.meta.url), "utf8"));
 
 const POST = `
@@ -297,8 +307,10 @@ test("a cached post never spends the budget", () => {
   const mayRead = () => { claims++; return true; };
   // No cache entry for this text, so the claim must happen exactly once.
   const unique = "Kodachi " + Math.random() + " 53% Parry 600m Jackhammer 18% Expose";
+  sent.length = 0;
   return readPostText(feed, unique, { mayRead, force: false }).then(() => {
     assert.equal(claims, 1, "an uncached read did not claim budget");
+    assert.deepEqual(sent, [], "an uncached read reached the network");
   });
 });
 

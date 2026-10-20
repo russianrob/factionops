@@ -1,5 +1,8 @@
 // Read a Torn item card out of a SCREENSHOT.
 //
+// Switched off: readItemImage never downloads a picture or calls the model
+// now, and a screenshot the cache does not already hold gets no reading.
+//
 // RW Pricer prices items by reading Torn's own DOM. A forum post has no DOM to
 // read — people paste a picture of the tooltip — so the bonuses have to come out
 // of pixels. Same vision path the weekly circular uses.
@@ -11,11 +14,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { claudeExtractImage } from "./circular-pipeline.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(__dirname, "data", "rwp-image-cache");
-const MAX_BYTES = 6 * 1024 * 1024;
 /**
  * How long a reading stays good.
  *
@@ -176,13 +177,6 @@ export function readCache(url, hint) {
   } catch { return null; }
 }
 
-function writeCache(url, value, hint) {
-  try {
-    fs.mkdirSync(DIR, { recursive: true });
-    fs.writeFileSync(fileFor(url, hint), JSON.stringify({ at: Date.now(), url, ...value }));
-  } catch (e) { console.warn(`[rwp-image] cache write failed: ${e.message}`); }
-}
-
 const PROMPT = `This image is a screenshot of a Torn item tooltip for a weapon or armour piece.
 
 Return ONE JSON object, nothing else:
@@ -300,45 +294,7 @@ export async function readItemImage(url, opts = {}) {
   const hit = readCache(url, hint);
   if (hit && !opts.force) return { ok: true, cached: true, item: hit.item };
 
-  let b64, mediaType, sha;
-  try {
-    const res = await fetch(url, { redirect: "follow" });
-    if (!res.ok) return { ok: false, reason: `image fetch returned HTTP ${res.status}` };
-    const type = (res.headers.get("content-type") || "").toLowerCase();
-    if (!/^image\/(png|jpe?g|webp)/.test(type)) return { ok: false, reason: `not an image (${type || "unknown"})` };
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > MAX_BYTES) return { ok: false, reason: "image is too large" };
-    b64 = buf.toString("base64");
-    mediaType = type.split(";")[0];
-    sha = createHash("sha256").update(buf).digest("hex");
-  } catch (e) {
-    return { ok: false, reason: `could not fetch the image: ${e.message}` };
-  }
-
-  // Seen these exact bytes before under another URL: reuse the reading and note
-  // this URL for next time, so only the first sighting anywhere costs anything.
-  const prev = readBodyCache(sha, hint);
-  if (prev) {
-    writeCache(url, { item: prev.item, sha }, hint);
-    return { ok: true, cached: true, sameImage: true, item: prev.item };
-  }
-
-  let reply;
-  try {
-    reply = await claudeExtractImage([b64], buildPrompt(hint, opts.bonusNames), { model: "claude-haiku-4-5-20251001", maxTokens: 700, mediaType });
-  } catch (e) {
-    return { ok: false, reason: `vision read failed: ${e.message}` };
-  }
-
-  const item = parseReply(reply);
-  // A refusal is a RESULT — cached so an unreadable picture is not re-read on
-  // every page load.
-  if (!usableRead(item)) {
-    writeCache(url, { item: null, sha }, hint);
-    writeBodyCache(sha, null, hint);
-    return { ok: true, item: null, reason: "could not read an item from that image" };
-  }
-  writeCache(url, { item, sha }, hint);
-  writeBodyCache(sha, item, hint);
-  return { ok: true, item };
+  // Reading is switched off: a screenshot the cache does not already hold is
+  // neither downloaded nor read. See the read routes in routes.js.
+  return { ok: false, reason: "screenshot reading is switched off" };
 }

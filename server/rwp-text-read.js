@@ -1,5 +1,9 @@
 // Read a stock list out of a forum post's TEXT.
 //
+// Switched off: readPostText never calls the model now, and a post the cache
+// does not already hold gets no items. The aliases it learned while it ran
+// still ship in the daily price feed (learnedAliases, used by rwp-refresh.js).
+//
 // RW Pricer parses five post formats deterministically, in the browser, for
 // nothing. This is the fallback for the sixth — a shape nobody has written a
 // rule for yet. Until now an unknown format cost a round of somebody's time
@@ -23,7 +27,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { claudeExtractImage } from "./circular-pipeline.js";
 import { resolveName, resolveBonus } from "./rwp-price.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -270,22 +273,7 @@ export async function readPostText(feed, text, opts = {}) {
   const may = typeof opts.mayRead === "function" ? opts.mayRead() : opts.mayRead;
   if (!may) return { ok: true, items: null, needsMember: true };
 
-  let reply;
-  try {
-    reply = await claudeExtractImage([], buildTextPrompt(body), {
-      model: "claude-haiku-4-5-20251001", maxTokens: 2000,
-    });
-  } catch (e) {
-    return { ok: false, reason: `read failed: ${e.message}` };
-  }
-
-  let parsed = null;
-  const m = String(reply || "").match(/\{[\s\S]*\}/);
-  if (m) { try { parsed = JSON.parse(m[0]); } catch { parsed = null; } }
-
-  const items = verifyItems(feed, body, parsed && parsed.items);
-  writeTextCache(body, items);
-  const learned = newAliases(feed, items);
-  if (Object.keys(learned).length) saveAliases(learned);
-  return { ok: true, items, learned };
+  // Reading is switched off: a post the cache does not already hold gets no
+  // items, and the model is never asked. See the read routes in routes.js.
+  return { ok: true, items: [] };
 }

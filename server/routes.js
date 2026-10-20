@@ -115,10 +115,7 @@ import { createHofApi } from "./hof-api.js";
 import * as gymEnergy from "./gym-energy-snapshot.js";
 import * as gymComp from "./gym-comp.js";
 import * as upcomingWar from "./upcoming-war.js";
-import * as rwpImage from "./rwp-image-read.js";
-import * as rwpText from "./rwp-text-read.js";
 import * as readBudget from "./rwp-read-budget.js";
-import { priceItem as rwpPriceItem, weaponByBuyPrice as rwpWeaponByBuyPrice } from "./rwp-price.js";
 import * as chainHits from "./chain-hits.js";
 import { renderSlackersPage } from "./slackers-page.js";
 import * as xanaxModel from "./xanax-model.js";
@@ -137,7 +134,7 @@ import { getOcSpawnData, getCachedCompletedCrimes, calculateOutcome, getRoleWeig
 import { createFlyerDelayPoller } from "./flyer-delay-poll.js";
 import { checkAndNotifyAsync as ocReadyCheck, startPoller as startOcReadyPoller } from "./oc-ready-notifier.js";
 import { lowSuccessCrimes, LOW_SUCCESS_THRESHOLD, WEAK_MIN_WEIGHT, WEAK_MIN_LEVEL } from "./oc-ready-notifier.js";
-import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById, getItemCatalog, getAllBuyPricesByName } from "./item-values.js";
+import { getItemMarketValue, maybeRefreshItemValues, getItemPriceByName, getItemValueFetchedAt, getAllItemPricesById, getItemCatalog } from "./item-values.js";
 import { getLowestListing, trackItem, getListingsById, getListingsByName, fetchNow as itemMarketFetchNow } from "./item-market.js";
 import * as vaultRequests from "./vault-requests.js";
 import * as keyUsage from "./key-usage-log.js";
@@ -12947,89 +12944,12 @@ router.get("/api/faction/:factionId/upcoming-war", requireAuth, async (req, res)
   });
 });
 
-// Price a read item off the same rwp-prices.json the script loads, so the badge
-// and RW Pricer are quoting one dataset.
-let _rwpFeed = null, _rwpFeedAt = 0;
-function rwpFeed() {
-  if (!_rwpFeed || Date.now() - _rwpFeedAt > 30 * 60 * 1000) {
-    const f = pathJoin(serverDataPath(), "rwp-prices.json");
-    _rwpFeed = JSON.parse(readFileSync(f, "utf-8"));
-    _rwpFeedAt = Date.now();
-  }
-  return _rwpFeed;
-}
-
 /**
- * The item as read, with a name we can actually price where one can be worked
- * out.
- *
- * A cropped card names no weapon and the reader fills the gap from the picture:
- * an ArmaLite M-15A4 came back as "M16A4". But the card carries the shop buy
- * price, and that is a fixed catalogue figure -- exactly one weapon costs
- * $20,000,000 -- so it names the gun when nothing else on the card does.
- */
-function identify(item) {
-  if (!item) return item;
-  try {
-    const feed = rwpFeed();
-    // No name at all is what a cropped card honestly returns now; a name that
-    // resolves to nothing is what it used to invent. The buy price answers both.
-    if (!item.name || rwpPriceItem(feed, item).unknown) {
-      const byBuy = rwpWeaponByBuyPrice(feed, getAllBuyPricesByName(), item.buy);
-      if (byBuy) return { ...item, name: byBuy, readAs: item.name, identifiedByBuyPrice: true };
-    }
-  } catch (_) { /* identification is a bonus, never a failure mode */ }
-  return item;
-}
-
-function priceOf(item) {
-  // No !item.name guard: identify() can supply one from the shop price, and
-  // bailing here would drop the reading before it got the chance.
-  if (!item) return null;
-  try {
-    const p = rwpPriceItem(rwpFeed(), identify(item));
-    return p.ok ? p : null;
-  } catch (e) {
-    console.warn(`[rwp-price] ${e.message}`);
-    return null;
-  }
-}
-
-// Did the reader hand back a name that is not a Torn item at all?
-//
-// A cropped card names no weapon, and the model fills the gap from whatever
-// text is nearby: the Kodachi post came back "Big Al's Gun Shop Katana" -- the
-// sell shop welded to what the picture looked like -- with confident:true. The
-// badge printed that invented name onto a public sale thread.
-//
-// Carried as its own field rather than inside `price`, because an already
-// installed script ignores a field it does not know about but would happily
-// render a price object that has no estimate in it.
-function unknownItem(item) {
-  if (!item) return false;
-  // A nameless card is not an invented one — it is honest about having no name,
-  // and identify() may still place it. Only a name that resolves to nothing is
-  // the failure this flag exists to suppress.
-  if (!item.name) return false;
-  try {
-    const p = rwpPriceItem(rwpFeed(), identify(item));
-    return !p.ok && !!p.unknown;
-  } catch { return false; }
-}
-
-// Read a Torn item card out of a posted SCREENSHOT, for RW Pricer on the forums.
-// Auth'd because it spends money: one vision call per new image, then cached on
-// the URL so a busy thread costs one read however many people open it.
-// Anyone may READ the cache; only a signed-in faction member can cause a new
-// vision call. RW Pricer ships publicly and has no warboard session, so
-// demanding one would make this a Dead Fragment feature — but an open endpoint
-// would spend the owner's money for strangers. Cache-for-all, pay-for-members
-// gives everyone the common images for nothing and keeps the bill attributable.
-/**
- * Charge a paid read to the signed-in player when there is one, or the address
- * when there is not. Verifying here is for BILLING, never for access — the
- * readers answer anyone, and a bad or missing token just means the read is
- * charged to the address instead.
+ * Charge a budgeted request to the signed-in player when there is one, or the
+ * address when there is not. Only /api/loadout/seen spends this budget now
+ * that the forum readers are switched off. Verifying here is for the budget,
+ * never for access: a bad or missing token just means the request is charged
+ * to the address instead.
  *
  * An IP is a poor identity for this population: a faction behind one NAT, or
  * anyone on mobile carrier CGNAT, shares it, and nginx's own rate limit was
@@ -13044,86 +12964,22 @@ function readerKey(req) {
   return readBudget.budgetKey(req.ip, pid);
 }
 
-router.post("/api/rwp/read-image", express.json({ limit: "8kb" }), async (req, res) => {
-  const url = String((req.body && req.body.url) || "");
-  if (!url) return res.status(400).json({ error: "url is required" });
-  if (!rwpImage.hostAllowed(url)) return res.status(400).json({ error: "that image host is not allowed" });
-
-  // The caption the picture was posted with, when the script offers one. It is
-  // only ever sent on a SECOND attempt, after an un-hinted read failed to
-  // produce a usable name, so the ordinary path still hits the ordinary cache.
-  const hint = rwpImage.cleanHint(req.body && req.body.hint);
-
-  const cached = rwpImage.readCache(url, hint);
-  if (cached) return res.json({ item: cached.item, price: priceOf(cached.item), unknownItem: unknownItem(cached.item), cached: true });
-
-  // No cache entry — this one costs. Open to anyone now, bounded by a budget
-  // rather than by membership: the cache above is keyed by URL alone, so the
-  // first reader of a screenshot pays for it and every reader after is free.
-  // The cost is per distinct picture ever read, not per reader.
-  const spend = readBudget.take(readerKey(req));
-  if (spend) return res.json({ item: null, cached: false, busy: true, reason: spend.error });
-
-  // The reader picks bonus names from the feed's own list rather than
-  // transcribing them: "Stricken" came back "Shricken" once, and a bonus that
-  // resolves to nothing takes the whole bonus out of the price.
-  const out = await rwpImage.readItemImage(url, {
-    hint, bonusNames: rwpImage.bonusNamesFrom(rwpFeed()),
-  });
-  if (!out.ok) return res.status(400).json({ error: out.reason });
-  return res.json({ item: out.item, price: priceOf(out.item), unknownItem: unknownItem(out.item), cached: !!out.cached, reason: out.reason || null });
-});
-
-// Price a stock list out of a forum post's TEXT, when RW Pricer's own parsers
-// could not. They handle six post formats in the browser for nothing; this is
-// for the seventh. Same policy as the screenshot reader: anyone may read the
-// cache, only a signed-in member can cause a new read, so a busy thread costs
-// one read however many people open it and the bill stays attributable.
-router.post("/api/rwp/read-text", express.json({ limit: "32kb" }), async (req, res) => {
-  const text = String((req.body && req.body.text) || "");
-  if (text.trim().length < 20) return res.status(400).json({ error: "not enough text to read" });
-
-  // Open to anyone, bounded by a budget rather than by membership. mayRead is
-  // a FUNCTION so the budget is spent at the point of the model call and not
-  // before: readPostText consults its cache first, and a cached post must stay
-  // free and unlimited.
-  let refusal = null;
-  const mayRead = () => {
-    const spend = readBudget.take(readerKey(req));
-    if (spend) { refusal = spend; return false; }
-    return true;
-  };
-
-  let out;
-  try {
-    out = await rwpText.readPostText(rwpFeed(), text, { mayRead });
-  } catch (e) {
-    console.warn(`[rwp-text] ${e.message}`);
-    return res.status(500).json({ error: "could not read that post" });
-  }
-  if (!out.ok) return res.status(400).json({ error: out.reason });
-  if (out.needsMember) {
-    return res.json({ items: null, busy: true, reason: (refusal && refusal.error) || "busy" });
-  }
-
-  // Priced here rather than in the browser, so the badge and the screenshot
-  // reader quote one ladder.
-  const items = (out.items || []).map((it) => ({
-    ...it,
-    price: priceOf({ name: it.name, rarity: it.rarity, bonuses: it.bonuses }),
-  }));
-  // Which client version asked, and for which post.
-  //
-  // Four rounds of this went by without knowing what was installed, because a
-  // 200 in the access log says nothing about the script that made it. The text
-  // key also settles a second question the log raised: two reads arrived in the
-  // same second, and the call site only asks once per page — two SAME keys at
-  // one moment means two copies of the script are installed and running.
-  console.log(`[rwp-text] v=${String((req.body && req.body.v) || "?").slice(0, 12)} ` +
-              `key=${rwpText.textKey(text).slice(4, 12)} items=${items.length} ` +
-              `cached=${!!out.cached}`);
-  return res.json({ items, cached: !!out.cached, learned: out.learned || null });
-});
+// The forum readers are switched off.
+//
+// RW Pricer 3.13.4 and older, and the standalone "RW Pricer - Forum
+// Screenshots" script, still post here: every forum post and screenshot they
+// could not price locally used to be sent for an AI read billed to the owner.
+// The owner stopped paying for those, and installs that never update (PDA
+// never does) will keep asking, so both routes answer at once with the reply
+// every old version treats as "nothing to show". No cache, no budget, no
+// image download, no model call.
+//
+// Never answer with a 401 or a needsMember field: RW Pricer 3.9.3-3.13.4 take
+// either as "sign in", post the player's Torn API key to /api/auth and ask
+// again. A screenshot reply needs a non-empty `error`, which every screenshot
+// client checks before its caption retry and its "could not read" note.
+router.post("/api/rwp/read-image", (_req, res) => res.json({ error: "Screenshot reading has been switched off." }));
+router.post("/api/rwp/read-text", (_req, res) => res.json({ items: [] }));
 
 router.get("/random", (_req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
