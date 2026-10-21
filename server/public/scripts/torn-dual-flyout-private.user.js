@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout Private
 // @namespace    RussianRob.torn-dual-flyout.private
-// @version      1.6.0
+// @version      1.6.1
 // @description  Private test build of Torn Dual Flyout: the two-way swipe menu plus a row of pinned menu links under Torn's phone header. Run this OR the public Torn Dual Flyout, not both.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout-private.user.js
@@ -40,7 +40,7 @@
   // if the public one won, this build stays off and says why.
   if (window.__tornMenuRight) { showBothOnNote(); return; }
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.6.0";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.6.1";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
@@ -90,25 +90,70 @@
     // the instant React's real open state (visible___) takes over.
     'html.tdf-preopen #fly-out-panel{transform:none!important;transition:none!important;}' +
     'html.tdf-preopen #sidebar [class*="overlay___"]{display:none!important;}' +
-    // Pinned links: a row under Torn's phone header. It wraps onto another line rather
-    // than ever scrolling sideways (sliding strips are what the player found finicky),
-    // and takes Torn's own panel colours so it suits light and dark mode alike.
-    '#tdf-pins{display:flex;flex-wrap:wrap;justify-content:center;gap:2px 4px;box-sizing:border-box;width:100%;padding:3px 4px;' +
-    'background:var(--default-bg-panel-color,#333);color:var(--default-color,#ddd);border-bottom:1px solid rgba(0,0,0,.35);}' +
-    '#tdf-pins .tdf-pin{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;' +
-    'min-width:44px;min-height:32px;padding:2px 4px;border-radius:4px;color:inherit;text-decoration:none;' +
-    '-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;}' +
-    '#tdf-pins .tdf-pin-attn{background:rgba(34,139,230,.18);}' +
-    '.tdf-pin-icon{display:inline-flex;align-items:center;justify-content:center;width:34px;height:23px;line-height:0;}' +
-    '.tdf-pin-icon svg{max-width:100%;max-height:100%;}' +
-    '#tdf-pins .tdf-pin-name{font:10px/12px Arial,Helvetica,sans-serif;max-width:68px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
-    '#tdf-pins .tdf-pin-badge{position:absolute;top:0;right:1px;font:700 10px/12px Arial,Helvetica,sans-serif;color:#a9e34b;text-shadow:0 1px rgba(0,0,0,.25);}' +
-    'html.tdf-iconsonly #tdf-pins .tdf-pin-name{display:none;}' +
+    // Pinned links: a row under Torn's phone header, drawn the way Torn's own phone top
+    // bar draws its links (its sidebar-old stylesheet, read off the owner's phone on
+    // 2026-10-21): the same dark bar, nine links to a screen width, Torn's short names,
+    // counts and colours. It wraps onto another line rather than ever sliding
+    // sideways: the sliding is what the player found finicky about Torn's bar.
+    '#tdf-pins{display:flex;flex-wrap:wrap;justify-content:flex-start;align-items:center;box-sizing:border-box;width:100%;margin:0;padding:0;' +
+    'position:relative;z-index:100;background:#333;border-top:1px solid #000;border-bottom:1px solid #000;' +
+    'box-shadow:inset 0 1px rgba(255,255,255,.1),0 1px rgba(255,255,255,.1);font-family:Arial,Helvetica,sans-serif;' +
+    '-webkit-user-select:none;user-select:none;}' +
+    '#tdf-pins.tdf-pins-jail{background:#353526;}' +
+    'body.dark-mode #tdf-pins.tdf-pins-jail{background:#242415;}' +
+    '#tdf-pins.tdf-pins-hospital{background:#3b3b3b;}' +
+    'body[data-abroad="true"] #tdf-pins:not(.tdf-pins-jail):not(.tdf-pins-hospital){background:#26333f;}' +
+    // A pin is one of Torn's slides (a ninth of the width, 2px either side) holding the
+    // same nesting as Torn's link: a 40px row, then the link with its icon and name.
+    '#tdf-pins .tdf-pin{position:relative;display:block;box-sizing:border-box;flex:0 0 calc(100% / 9);width:calc(100% / 9);' +
+    'max-width:calc(100% / 9);padding:0 2px;text-align:center;color:#999;font-size:6px;font-weight:700;text-transform:uppercase;' +
+    'text-decoration:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;}' +
+    '#tdf-pins .tdf-pin-row{display:block;position:relative;max-width:40px;margin:0 auto;}' +
+    '#tdf-pins .tdf-pin-link{display:flex;flex-direction:column;align-items:center;margin:4px 0;padding:0;}' +
+    '.tdf-pin-icon{display:flex;flex-direction:row;justify-content:center;align-items:center;width:34px;height:23px;}' +
+    '.tdf-pin-glyph,#tdf-pins .tdf-pin-name{display:block;white-space:nowrap;line-height:7px;}' +
+    '#tdf-pins .tdf-pin-name{max-width:100%;overflow:hidden;text-overflow:ellipsis;}' +
+    '#tdf-pins .tdf-pin-badge{position:absolute;top:-1px;right:-3px;width:14px;text-align:center;letter-spacing:-1px;color:#74c0fc;' +
+    'font:700 10px/8px Arial,Helvetica,sans-serif;}' +
+    // Names, as Torn's bar colours them: the page you are on is white, Torn's blue
+    // "something here" is blue (paler on the page you are on), and in jail, in hospital
+    // or abroad only the names left plain take that status's tint.
+    '#tdf-pins .tdf-pin.tdf-pin-on{color:#fff;}' +
+    '#tdf-pins .tdf-pin.tdf-pin-attn{color:#74c0fc;}' +
+    '#tdf-pins .tdf-pin.tdf-pin-attn.tdf-pin-on{color:#d0ebff;}' +
+    '#tdf-pins .tdf-pin.tdf-pin-jail:not(.tdf-pin-on):not(.tdf-pin-attn){color:#bdbdae;}' +
+    '#tdf-pins .tdf-pin.tdf-pin-hospital:not(.tdf-pin-on):not(.tdf-pin-attn){color:#ddd;}' +
+    'body[data-abroad="true"] #tdf-pins .tdf-pin:not(.tdf-pin-jail):not(.tdf-pin-hospital):not(.tdf-pin-on):not(.tdf-pin-attn){color:#8fa6bc;}' +
+    // Torn's blue dot on a highlighted link.
+    '#tdf-pins .tdf-pin.tdf-pin-attn::after{content:"";display:block;position:absolute;top:2px;right:4px;width:6px;height:6px;' +
+    'border-radius:100%;background:linear-gradient(#74c0fc,#1c7ed6);box-shadow:0 1px rgba(0,0,0,.25);}' +
+    '#tdf-pins .tdf-pin.tdf-pin-attn.tdf-pin-on::after{background:linear-gradient(#e7f5ff,#74c0fc);}' +
+    // Icons: Torn's top-bar gradients (copies, see ensureDefs) and shadows, rule for rule
+    // in Torn's order. Each icon also gets a layer of its own, as the menu's do (above):
+    // the cog panel's pin list scrolls, and WebKit leaves shadowed icons blank when they
+    // scroll into view without one.
+    '.tdf-pin-icon svg{max-width:34px;max-height:34px;overflow:visible;fill:url(#tdf-g-regular);filter:drop-shadow(0 0 1.3px #000);transform:translateZ(0);}' +
+    '#tdf-pins .tdf-pin.tdf-pin-on .tdf-pin-icon svg{fill:url(#tdf-g-regular-on);filter:drop-shadow(0 0 1px rgba(255,255,255,.5));}' +
+    '#tdf-pins .tdf-pin.tdf-pin-attn .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-hospital.tdf-pin-attn .tdf-pin-icon svg,' +
+    '#tdf-pins .tdf-pin.tdf-pin-jail.tdf-pin-attn .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-travel.tdf-pin-attn .tdf-pin-icon svg{fill:url(#tdf-g-blue);}' +
+    '#tdf-pins .tdf-pin.tdf-pin-attn.tdf-pin-on .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-hospital.tdf-pin-attn.tdf-pin-on .tdf-pin-icon svg,' +
+    '#tdf-pins .tdf-pin.tdf-pin-jail.tdf-pin-attn.tdf-pin-on .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-travel.tdf-pin-attn.tdf-pin-on .tdf-pin-icon svg{fill:url(#tdf-g-blue-on);}' +
+    '#tdf-pins .tdf-pin.tdf-pin-attn.tdf-pin-on .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-jail.tdf-pin-attn.tdf-pin-on .tdf-pin-icon svg{filter:none;}' +
+    '#tdf-pins .tdf-pin.tdf-pin-jail .tdf-pin-icon svg{fill:url(#tdf-g-jail);filter:drop-shadow(0 1px 1.3px #000);}' +
+    '#tdf-pins .tdf-pin.tdf-pin-jail.tdf-pin-on .tdf-pin-icon svg{fill:url(#tdf-g-white);filter:drop-shadow(0 1px 1.3px #fff);}' +
+    '#tdf-pins .tdf-pin.tdf-pin-hospital .tdf-pin-icon svg{fill:url(#tdf-g-hospital);filter:drop-shadow(0 1px 1.3px #000);}' +
+    '#tdf-pins .tdf-pin.tdf-pin-hospital.tdf-pin-on .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-travel.tdf-pin-on .tdf-pin-icon svg{fill:url(#tdf-g-white);filter:none;}' +
+    '#tdf-pins .tdf-pin.tdf-pin-travel .tdf-pin-icon svg{fill:url(#tdf-g-travel);filter:drop-shadow(0 1px 1.3px #000);}' +
+    '#tdf-settings .tdf-pin-icon svg{max-height:23px;}' +
+    // Icons only hides the names, as it does in the menu; a pin with no icon keeps its
+    // name, so it is never an empty box.
+    'html.tdf-iconsonly #tdf-pins .tdf-pin:not(.tdf-pin-noicon) .tdf-pin-name{display:none;}' +
     // The cog panel's pin list scrolls inside the panel once it outgrows half the screen.
     '#tdf-settings .tdf-pins-head{margin:8px 0 2px;padding-top:8px;border-top:1px solid #2e333d;font-weight:700;color:#f3f4f6;}' +
     '#tdf-settings .tdf-pins-list{max-height:50vh;overflow-y:auto;}' +
     '#tdf-settings .tdf-pins-list label{padding:4px 0;}' +
-    '#tdf-settings .tdf-pins-none{color:#8a8f98;padding:4px 0;}';
+    '#tdf-settings .tdf-pins-none{color:#8a8f98;padding:4px 0;}' +
+    '#tdf-settings .tdf-pins-err{color:#fca5a5;padding:4px 0;}';
   var s = document.createElement("style");
   s.id = "torn-menu-right";
   s.textContent = css;
@@ -295,6 +340,7 @@
   function fillPinList(d) {
     var box = d.querySelector(".tdf-pins-list");
     if (!box) return;
+    ensureDefs();   // the list's icons use the same gradients as the row's
     var links = menuLinks(), pins = loadPins();
     box.textContent = "";
     if (!links.length) {
@@ -310,12 +356,24 @@
       cb.type = "checkbox";
       cb.setAttribute("data-key", l.key);
       cb.checked = pins.indexOf(l.key) !== -1;
-      cb.addEventListener("change", function () { setPinned(l.key, cb.checked); });
+      cb.addEventListener("change", function () {
+        setPinned(l.key, cb.checked);
+        // Show what was saved, not what was tapped: a full localStorage refuses the write.
+        var saved = loadPins().indexOf(l.key) !== -1;
+        if (saved !== cb.checked) { cb.checked = saved; saveError(box); }
+      });
       label.appendChild(cb);
       label.appendChild(iconClone(l));
       label.appendChild(document.createTextNode(l.name));
       box.appendChild(label);
     });
+  }
+  function saveError(box) {
+    if (box.querySelector(".tdf-pins-err")) return;
+    var err = document.createElement("div");
+    err.className = "tdf-pins-err";
+    err.textContent = "Could not save: this browser's storage for Torn is full.";
+    box.insertBefore(err, box.firstChild);
   }
   // A fresh tick goes to the end of the list: pins show in the order they were ticked.
   function setPinned(key, on) {
@@ -366,7 +424,7 @@
       return v.filter(function (k, i) { return typeof k === "string" && k !== "" && v.indexOf(k) === i; });
     } catch (e) { return []; }
   }
-  function savePins(list) { try { localStorage.setItem(PINS_KEY, JSON.stringify(list)); } catch (e) {} }
+  function savePins(list) { try { localStorage.setItem(PINS_KEY, JSON.stringify(list)); return true; } catch (e) { return false; } }
   // A pin is remembered by its link with any scheme and host taken off, so a page
   // matches whether Torn writes its address absolute or relative.
   function pinKey(href) { return String(href || "").replace(/^[a-z][a-z0-9+.-]*:\/\/[^\/]*/i, ""); }
@@ -375,6 +433,9 @@
   // icons, then each area and list row. The people a list row expands to show sit
   // outside the row's own link, so they are not picked up.
   var MENU_LINK_SEL = '[class*="accountLinks___"] a[href], [id^="nav-"] > [class*="areaRow___"] > a[href]';
+  // Torn's mark for the page the player is on, matched from the start of a class so one
+  // that merely ends in it is not taken for it.
+  function isActive(el) { return !!el && /(^|\s)active___/.test(el.className); }
   function menuLinks() {
     var p = panel(), out = [], seen = Object.create(null), i;
     if (!p) return out;
@@ -393,66 +454,137 @@
       var row = a.closest('[id^="nav-"]');
       out.push({
         key: key, href: href, name: name || key,
+        navId: row ? row.id.slice(4) : "",   // "gym" for #nav-gym
         count: countEl ? countEl.textContent.trim() : "",
         attn: !!row && /attention___/.test(row.className),   // Torn's blue "something here" tint
+        // The page the player is on: Torn marks an area or list row active___, and for
+        // the Messages / Events / Awards icons the wrapper round the icon's link.
+        on: isActive(a) || isActive(row) || isActive(a.parentNode),
         svg: a.querySelector("svg")
       });
     }
     return out;
   }
-  // Keep only the #fragment of a url() paint. WebKit can report it resolved against the
-  // page address, and written back inline a full address stops pointing at this page's
-  // gradient once the address changes (or under a <base> tag). The gradients Torn's
-  // icons use are defined once in this same page.
-  function localUrl(v) { return String(v || "").replace(/url\(\s*["']?[^"'()#]*(#[^"'()]+)["']?\s*\)/g, 'url("$1")'); }
-  // Torn colours its icons with rules that only reach inside the menu (a gradient fill
-  // and a drop shadow), so a copy anywhere else would come out flat and black: carry
-  // both across inline. Read once per redraw, and only for links being drawn.
-  function paintOf(link) {
-    if (!link.paint) {
-      link.paint = { fill: "", filter: "" };
-      try {
-        var cs = link.svg ? getComputedStyle(link.svg) : null;
-        if (cs) {
-          link.paint.fill = localUrl(cs.fill);
-          link.paint.filter = cs.filter && cs.filter !== "none" ? cs.filter : "";
-        }
-      } catch (e) {}
-    }
-    return link.paint;
+  // Torn's own short names for its phone top bar, by menu id, as that bar printed them
+  // on the owner's phone (2026-10-21). Torn's own copy, when the page has it, comes
+  // first (tornShortNames); a link in neither keeps its menu name.
+  var SHORT_NAMES = {
+    messages: "Messages", events: "Events", awards: "Awards", faction_armory: "Armory", faction_controls: "Controls",
+    home: "home", items: "Items", gym: "Gym", property_vault: "Vault", crimes: "Crimes", city: "City", job: "job",
+    education: "edu", faction: "faction", missions: "Missions", newspaper: "News", jail: "Jail", hospital: "Hospital",
+    casino: "Casino", hall_of_fame: "HOF", forums: "Forums", properties: "property", calendar: "calendar",
+    enemies_list: "Enemies", friends_list: "Friends", targets_list: "Targets", poker: "Poker"
+  };
+  // Torn keeps its sidebar data for the tab in sessionStorage ("sidebarData" plus the
+  // player id), short names included. Parsed again only when Torn has rewritten it.
+  var shortRaw = null, shortTorn = Object.create(null);
+  function tornShortNames() {
+    var raw = null, m, i, k;
+    try {
+      m = /(?:^|;\s*)uid=(\d+)/.exec(document.cookie || "");
+      if (m) raw = sessionStorage.getItem("sidebarData" + m[1]);
+      for (i = 0; !raw && i < sessionStorage.length; i++) {
+        k = sessionStorage.key(i);
+        if (/^sidebarData\d*$/.test(k)) raw = sessionStorage.getItem(k);
+      }
+    } catch (e) { raw = null; }
+    if (raw === shortRaw) return shortTorn;
+    shortRaw = raw;
+    shortTorn = Object.create(null);
+    try {
+      var d = raw ? JSON.parse(raw) : null;
+      // Only the shape Torn writes counts: groups of entries by id, each with a short
+      // name in text. Anything else falls back to the built-in names.
+      ["areas", "lists", "account"].forEach(function (g) {
+        var grp = d && d[g];
+        if (!grp || typeof grp !== "object" || Array.isArray(grp)) return;
+        Object.keys(grp).forEach(function (key) {
+          var v = grp[key];
+          if (v && typeof v.shortName === "string" && v.shortName.trim()) shortTorn[key] = v.shortName.trim();
+        });
+      });
+    } catch (e) {}
+    return shortTorn;
   }
+  // The name under a pin: Torn's short name (its data keys lists without the "_list"
+  // the menu ids carry), then the built-in list, then the menu's own name.
+  function shortName(link) {
+    var t = tornShortNames(), id = link.navId;
+    return (id && (t[id] || t[id.replace(/_list$/, "")] || SHORT_NAMES[id])) || link.name;
+  }
+  // Torn tints its top bar while the player is in jail, in hospital or travelling. The
+  // menu says which: the panel's inJail___ / inHospital___ classes, travel___ icons.
+  function userStatus() {
+    var p = panel();
+    if (!p) return "";
+    if (/inJail___/.test(p.className)) return "jail";
+    if (/inHospital___/.test(p.className)) return "hospital";
+    if (p.querySelector('[class*="defaultIcon___"][class*="travel___"]')) return "travel";
+    return "";
+  }
+  // Torn's top-bar gradients, copied stop for stop from its sidebar-old build. Ours, not
+  // Torn's: the menu build defines only some of them, and only while it is drawn.
+  var GRADIENTS = [["regular", "#888888", "#666666"], ["regular-on", "#DDDDDD", "#AAAAAA"], ["blue", "#74C0FC", "#1C7ED6"],
+    ["blue-on", "#E7F5FF", "#74C0FC"], ["jail", "#BDBCAF", "#8A8973"], ["hospital", "#DDDDDD", "#AAAAAA"],
+    ["travel", "#8FA6BC", "#5F7F9F"], ["white", "#FFFFFF", "#FFFFFF"]];
+  function ensureDefs() {
+    if (document.getElementById("tdf-pins-defs") || !document.body) return;
+    var d = document.createElement("div");
+    d.id = "tdf-pins-defs";
+    d.setAttribute("aria-hidden", "true");
+    // Out of sight but not display:none, which would stop the gradients painting.
+    d.setAttribute("style", "position:absolute;width:0;height:0;overflow:hidden;");
+    d.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0"><defs>' + GRADIENTS.map(function (g) {
+      return '<linearGradient id="tdf-g-' + g[0] + '" gradientUnits="objectBoundingBox" gradientTransform="rotate(90)">' +
+        '<stop offset="0" stop-color="' + g[1] + '"></stop><stop offset="1" stop-color="' + g[2] + '"></stop></linearGradient>';
+    }).join("") + "</defs></svg>";
+    document.body.appendChild(d);
+  }
+  // A copy of a menu link's icon. Torn colours its icons with rules that only reach
+  // inside the menu, so the copy is coloured by this script's own rules (above), which
+  // follow Torn's top bar.
   function iconClone(link) {
     var wrap = document.createElement("span");
     wrap.className = "tdf-pin-icon";
     if (!link.svg) return wrap;
-    var c = link.svg.cloneNode(true), p = paintOf(link), style = "", ids, j;
+    var glyph = document.createElement("span"), c = link.svg.cloneNode(true), ids, j;
+    glyph.className = "tdf-pin-glyph";
     // The original stays in the menu, so any id the copy carried would be a duplicate;
     // references inside the icon still find the original's.
     c.removeAttribute("id");
     ids = c.querySelectorAll("[id]");
     for (j = 0; j < ids.length; j++) ids[j].removeAttribute("id");
-    if (p.fill) style += "fill:" + p.fill + ";";
-    if (p.filter) style += "filter:" + p.filter + ";";
-    if (style) c.setAttribute("style", style + (c.getAttribute("style") || ""));
-    wrap.appendChild(c);
+    glyph.appendChild(c);
+    wrap.appendChild(glyph);
     return wrap;
   }
-  function pinEl(link) {
+  // One pin, nested the way Torn nests a top-bar link: a 40px row holding the count and
+  // the link itself, which holds the icon and the short name. status is the player's
+  // ("jail", "hospital", "travel" or ""), which tints the pin as it tints Torn's bar.
+  function pinEl(link, label, status) {
     var a = document.createElement("a");
-    a.className = "tdf-pin" + (link.attn ? " tdf-pin-attn" : "");
+    a.className = "tdf-pin" + (link.attn ? " tdf-pin-attn" : "") + (link.on ? " tdf-pin-on" : "") +
+      (status ? " tdf-pin-" + status : "") + (link.svg ? "" : " tdf-pin-noicon");
     a.setAttribute("href", link.href);
-    a.setAttribute("aria-label", link.count ? link.name + ", " + link.count : link.name);
-    a.appendChild(iconClone(link));
-    var name = document.createElement("span");
-    name.className = "tdf-pin-name";
-    name.textContent = link.name;
-    a.appendChild(name);
+    // Read out the way Torn's own link reads, full name and all: "Events, 4 new".
+    a.setAttribute("aria-label", link.count ? link.name + ", " + link.count + " new" : link.name);
+    var row = document.createElement("span");
+    row.className = "tdf-pin-row";
     if (link.count) {
       var badge = document.createElement("span");
       badge.className = "tdf-pin-badge";
       badge.textContent = link.count;
-      a.appendChild(badge);
+      row.appendChild(badge);
     }
+    var inner = document.createElement("span");
+    inner.className = "tdf-pin-link";
+    inner.appendChild(iconClone(link));
+    var name = document.createElement("span");
+    name.className = "tdf-pin-name";
+    name.textContent = label;
+    inner.appendChild(name);
+    row.appendChild(inner);
+    a.appendChild(row);
     return a;
   }
   // Torn re-draws the menu as counts change: follow it within a beat, one re-draw per
@@ -474,15 +606,14 @@
   // than the row's own height; if it does, the measured overlap is 0 and no spacer is
   // added. The spacer is a height, not a margin, so it cannot collapse through its
   // parent and move the content's own top, which is what is measured.
-  var spacerH = 0;   // the room the row needs, as last measured at the top of the page
+  var spacerH = 0;   // the room the row needs, as last measured
   function syncSpacer(row) {
     var content = document.querySelector('.content-wrapper[role="main"]');
     var sb = document.getElementById("sidebar");
     if (!row || !content || !sb) spacerH = 0;
-    // Only at the top of the page: if Torn's sidebar stays on screen as the page
-    // scrolls, the gap read part-way down is the scroll, not room the row needs.
-    // Further down, the last answer stands.
-    else if (!(window.scrollY > 0) && typeof sb.getBoundingClientRect === "function" && typeof content.getBoundingClientRect === "function") {
+    // Torn's header and sidebar scroll with the page (its menu only fixes itself to the
+    // screen once the header has scrolled off), so the gap reads the same at any scroll.
+    else if (typeof sb.getBoundingClientRect === "function" && typeof content.getBoundingClientRect === "function") {
       var need = Math.min(row.offsetHeight || 0, sb.getBoundingClientRect().bottom - content.getBoundingClientRect().top);
       spacerH = need >= 1 ? Math.round(need) : 0;
     }
@@ -493,34 +624,83 @@
     var h = "height:" + spacerH + "px";
     if (sp.getAttribute("style") !== h) sp.setAttribute("style", h);
   }
+  // ---- Pinned links leave the menu ----------------------------------------------
+  // A link the row is showing is hidden in the menu, so each link lives in one place:
+  // its row, its icon among Messages / Events / Awards, and that icon bar itself once
+  // every icon in it is pinned. Only while the row shows them: with no row the menu
+  // keeps everything. A stylesheet rather than touching Torn's elements, so it is in
+  // place before Torn draws the menu (no flash of pinned links) and its re-renders
+  // cannot undo it.
+  var HIDE_ID = "tdf-pins-hide";
+  // A value as a CSS string. Quotes, backslashes, braces and control characters are
+  // escaped, so no stored value can end the string or the rule early.
+  function cssStr(v) {
+    return '"' + String(v).replace(/["\\{}\x00-\x1f\x7f]/g, function (c) { return "\\" + c.charCodeAt(0).toString(16) + " "; }) + '"';
+  }
+  // The link to key k, written relative ("/gym.php") or absolute (".../torn.com/gym.php").
+  function linkTo(k, pre) { return pre + "a[href=" + cssStr(k) + "]," + pre + "a[href$=" + cssStr("torn.com" + k) + "]"; }
+  function hideCss(keys) {
+    if (!keys.length) return "";
+    var P = "html #fly-out-panel ", rules = [], pinned = [], others = "";
+    keys.forEach(function (k) {
+      rules.push(P + '[id^="nav-"]:has(' + linkTo(k, '> [class*="areaRow___"] > ') + ")");
+      rules.push(P + '[class*="accountLinks___"] > :has(' + linkTo(k, "> ") + ")");
+      pinned.push(linkTo(k, ""));
+      others += ":not([href=" + cssStr(k) + "]):not([href$=" + cssStr("torn.com" + k) + "])";
+    });
+    // The icon bar: it holds a pinned link and no link that isn't pinned. Weighty
+    // enough to beat Icons only's display:block on the same bar.
+    rules.push(P + '[class*="accountLinksWrap___"]:has(' + pinned.join(",") + "):not(:has(a[href]" + others + "))");
+    return rules.map(function (r) { return r + "{display:none!important;}"; }).join("");
+  }
+  function setHidden(keys) {
+    var css = hideCss(keys), s = document.getElementById(HIDE_ID);
+    if (!css) { if (s) s.remove(); return; }
+    if (!s) {
+      s = document.createElement("style");
+      s.id = HIDE_ID;
+      (document.head || document.documentElement).appendChild(s);
+    }
+    if (s.textContent !== css) s.textContent = css;
+  }
+  function dropRow(row) { if (row) row.remove(); syncSpacer(null); }
   // Draw (or re-draw) the row directly above Torn's name/bars strip, the first thing
   // under the header on a phone. No strip means this is not the phone layout: no row.
   function renderPins() {
     var row = document.getElementById("tdf-pins");
+    var keys = loadPins();
+    // Nothing pinned: nothing to draw, hide or measure, so the menu is not even read.
+    if (!keys.length) { dropRow(row); setHidden([]); return; }
+    var links = menuLinks();
+    // Torn has not drawn the menu's links yet (the page is still loading): keep the
+    // pinned ones hidden, ready for when it does, so they never flash up in it.
+    if (!links.length) { dropRow(row); setHidden(keys); return; }
     var strip = document.querySelector('#sidebar [class*="userInformationMobile___"]');
     var byKey = Object.create(null), shown = [];
-    menuLinks().forEach(function (l) { byKey[l.key] = l; });
+    links.forEach(function (l) { byKey[l.key] = l; });
     // A pin whose link has left the menu stays remembered, just not drawn.
-    loadPins().forEach(function (k) { if (byKey[k]) shown.push(byKey[k]); });
-    if (!strip || !shown.length) {
-      if (row) row.remove();
-      syncSpacer(null);
-      return;
-    }
+    keys.forEach(function (k) { if (byKey[k]) shown.push(byKey[k]); });
+    // No strip means this is not the phone layout: no row, and then the menu keeps
+    // every link, so a pinned link is never missing from both places.
+    if (!strip || !shown.length) { dropRow(row); setHidden([]); return; }
     if (!row) {
       row = document.createElement("nav");
       row.id = "tdf-pins";
       row.setAttribute("aria-label", "Pinned links");
     }
     if (row.parentNode !== strip.parentNode || row.nextSibling !== strip) strip.parentNode.insertBefore(row, strip);
+    ensureDefs();
+    var status = userStatus(), labels = shown.map(shortName);
     // Rebuild only when something a pin shows has changed, so the 800ms tick never
     // swaps a pin out from under a finger mid-tap.
-    var sig = JSON.stringify(shown.map(function (l) { var p = paintOf(l); return [l.key, l.name, l.count, l.attn, p.fill, p.filter]; }));
+    var sig = JSON.stringify([status].concat(shown.map(function (l, i) { return [l.key, labels[i], l.name, l.count, l.attn, l.on, !!l.svg]; })));
     if (row.__tdfSig !== sig) {
       row.__tdfSig = sig;
+      row.className = status ? "tdf-pins-" + status : "";
       row.textContent = "";
-      shown.forEach(function (l) { row.appendChild(pinEl(l)); });
+      shown.forEach(function (l, i) { row.appendChild(pinEl(l, labels[i], status)); });
     }
+    setHidden(shown.map(function (l) { return l.key; }));
     syncSpacer(row);
   }
 
