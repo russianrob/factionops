@@ -120,8 +120,13 @@ function page(menu, { strip = true, body = '', panelClass = '' } = {}) {
 // failSave: localStorage refuses to save tdf_pins (full). session: what Torn keeps in
 // sessionStorage. strip, body, panelClass: see page(). width: the screen's width.
 // unread: Messages / Events / Awards counts the page opens with ({ messages: 1 }).
+// drawn: how much of Torn's page there is when the script starts. 'all': all of it.
+// 'header': Torn's header app has drawn #header-wrapper-top, but its sidebar app has not
+// yet drawn the menu button into it or #sidebar into #sidebarroot. 'none': document-start,
+// before even Torn's page source. drawPage(), drawHeader() and drawSidebar() bring the
+// parts in as Torn draws them, Torn's counts already in them.
 function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU, failSave = false,
-  session = null, strip = true, body = '', panelClass = '', width = 393, unread = null } = {}) {
+  session = null, strip = true, body = '', panelClass = '', width = 393, unread = null, drawn = 'all' } = {}) {
   const { document, Event } = parseHTML(page(menu, { strip, body, panelClass }));
   const btn = document.getElementById('fly-out-menu-button');
   btn.getClientRects = () => [{}];   // laid out: the phone header is showing
@@ -129,6 +134,21 @@ function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU
   const panel = document.getElementById('fly-out-panel');
   btn.__reactProps$tdfp = { onClick() { panel.classList.toggle('visible___AnarB'); } };
   if (unread) setUnread(document, unread);
+  const parts = {};
+  if (drawn !== 'all') {
+    parts.btn = btn; parts.sidebar = document.getElementById('sidebar');
+    btn.remove(); parts.sidebar.remove();
+  }
+  if (drawn === 'none') {
+    parts.top = document.getElementById('header-wrapper-top'); parts.top.remove();
+    parts.source = [...document.body.childNodes]; parts.source.forEach((n) => n.remove());
+  }
+  const drawPage = () => parts.source.forEach((n) => document.body.appendChild(n));
+  const drawHeader = () => document.getElementById('header-root').appendChild(parts.top);
+  const drawSidebar = () => {
+    document.getElementById('header-wrapper-top').appendChild(parts.btn);
+    document.getElementById('sidebarroot').appendChild(parts.sidebar);
+  };
 
   const store = new Map([['tmr_side', 'r'], ['tdf_iconsonly', iconsOnly ? '1' : '0']]);
   if (stored !== null) store.set('tdf_pins', typeof stored === 'string' ? stored : JSON.stringify(stored));
@@ -149,9 +169,16 @@ function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU
   const touch = {};
   document.addEventListener = (type, fn) => { (touch[type] = touch[type] || []).push(fn); };
   const intervals = [], timeouts = [], observers = [];
-  // Records what each observer was told to watch.
-  class MO { constructor(cb) { this.cb = cb; observers.push(this); } observe(target, opts) { this.target = target; this.opts = opts; } disconnect() {} }
-  const win = { innerWidth: width, addEventListener() {} };
+  // Records what each observer was told to watch (target and opts: the last thing). One
+  // that is disconnected watches nothing and hears nothing more.
+  class MO {
+    constructor(cb) { this.cb = cb; this.watching = []; observers.push(this); }
+    observe(target, opts) { this.target = target; this.opts = opts; this.watching.push({ target, opts }); }
+    disconnect() { this.watching = []; this.target = null; if (observers.includes(this)) observers.splice(observers.indexOf(this), 1); }
+  }
+  const winOn = {};
+  const win = { innerWidth: width, addEventListener(type, fn) { (winOn[type] = winOn[type] || []).push(fn); } };
+  const fire = (type) => (winOn[type] || []).forEach((fn) => fn(new Event(type)));
   const getComputedStyle = () => ({});   // the swipe code asks; nothing here overflows
   const run = (file) => new Function('window', 'document', 'localStorage', 'sessionStorage', 'MutationObserver', 'getComputedStyle',
     'setInterval', 'setTimeout', 'clearInterval', readFileSync(file, 'utf8'))(
@@ -165,11 +192,15 @@ function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU
 
   const flush = () => { while (timeouts.length) timeouts.shift()(); };
   const tick = () => { intervals.slice().forEach((fn) => fn()); flush(); };   // one round of the timers
-  const mutate = () => { observers.forEach((o) => o.cb([])); flush(); };      // Torn changed the DOM
-  // Torn's React has just committed: every observer still watching something in the page
-  // runs before the page is painted again (one on an element Torn has thrown away hears
-  // nothing), and no timer has fired yet.
-  const react = () => { observers.filter((o) => o.target && o.target.isConnected).forEach((o) => o.cb([])); };
+  const mutate = () => { observers.slice().forEach((o) => o.cb([])); flush(); };      // Torn changed the DOM
+  // Torn's React has just committed a change to the children, class or text of the nodes
+  // named. Only the observers that would hear of it run, as in a browser, before the page
+  // is painted again and before any timer: one watching that node, or a node it is inside
+  // with subtree. A callback that disconnects another before its turn has it hear nothing.
+  const commit = (...changed) => {
+    const hears = (o) => o.watching.some(({ target, opts }) => changed.some((n) => target === n || (opts.subtree && target.contains(n))));
+    observers.filter(hears).forEach((o) => { if (o.watching.length) o.cb([]); });
+  };
   const pins = () => [...document.querySelectorAll('#tdf-pins a')];
   function openCog() {
     tick();   // the cog is placed by the timer, beside the menu button
@@ -181,7 +212,8 @@ function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU
     cb.checked = on;
     cb.dispatchEvent(new Event('change'));
   }
-  return { document, win, store, touch, tick, mutate, react, flush, pins, openCog, tickBox, panel, observers };
+  return { document, win, store, touch, tick, mutate, commit, fire, flush, pins, openCog, tickBox, panel, observers,
+    drawPage, drawHeader, drawSidebar };
 }
 
 // Every declaration in the script's own stylesheet whose selector matches el.
@@ -260,14 +292,14 @@ test('the header names the private build, its own update address, and the versio
   const h = header(readFileSync(SRC, 'utf8'));
   assert.equal(field(h, 'name'), 'Torn Dual Flyout Private');
   assert.equal(field(h, 'namespace'), 'RussianRob.torn-dual-flyout.private');
-  assert.equal(field(h, 'version'), '1.6.3');
+  assert.equal(field(h, 'version'), '1.6.4');
   assert.equal(field(h, 'author'), 'RussianRob');
   assert.equal(field(h, 'license'), 'All Rights Reserved');
   assert.equal(field(h, 'downloadURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.user.js');
   assert.equal(field(h, 'updateURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.meta.js');
   assert.equal(field(h, 'grant'), 'none');
   assert.equal(field(h, 'copyright'), null);
-  assert.equal(load().win.__tdfVer, '1.6.3');
+  assert.equal(load().win.__tdfVer, '1.6.4');
 });
 
 test('the .meta.js update file carries the same header as the script', () => {
@@ -294,7 +326,7 @@ test('loaded first, this build keeps the public copy from starting a second time
   const p = load({ order: 'private-first' });
   assert.equal(p.document.querySelectorAll('#torn-menu-right').length, 1);
   assert.equal(p.touch.touchstart.length, 1);
-  assert.equal(p.win.__tdfVer, '1.6.3');
+  assert.equal(p.win.__tdfVer, '1.6.4');
   p.tick();
   assert.equal(p.document.getElementById('tdfp-both-on'), null);
 });
@@ -1053,7 +1085,7 @@ test('a new unread for a pinned link does not light the button up, not even unti
   setUnread(p.document, { events: 0 }); p.mutate();   // the player reads their events
   setUnread(p.document, { events: 1 });               // and a new one comes in: Torn puts its green and number back
   assert.ok(menuBtn(p).classList.contains('green'));
-  p.react();
+  p.commit(menuBtn(p), p.panel);                      // in one commit, with the menu's Events link
   assert.equal(menuBtn(p).classList.contains('green'), false);
   assert.equal(cascade(p.document, numOf(p), 'visibility'), 'hidden');
   assert.equal(countShown(p), '');
@@ -1083,7 +1115,7 @@ test('a menu button Torn draws afresh is put right too, and watched like the fir
   assert.equal(fresh.classList.contains('green'), false);
   setUnread(p.document, { events: 0 }); p.mutate();
   setUnread(p.document, { events: 2 });
-  p.react();
+  p.commit(fresh, p.panel);
   assert.equal(fresh.classList.contains('green'), false);
 });
 
@@ -1109,4 +1141,115 @@ test('unpinning while nothing is unread hands back Torn\'s plain button: no gree
   p.tickBox('/events.php', false);
   assert.equal(menuBtn(p).classList.contains('green'), false);
   assert.equal(asDrawn(p), want);
+});
+
+// ---- Torn drawing its header and sidebar --------------------------------------------
+// Torn's sidebar app draws the menu button into the header's #header-wrapper-top and
+// #sidebar into #sidebarroot, in one commit, a moment after the page starts. What the
+// timer would put right is put right in that same moment, before the page is painted:
+// Torn's own count on the button never shows, and the row comes in with Torn's header.
+const byId = (p, id) => p.document.getElementById(id);
+
+test('when Torn draws the menu button after the script starts, it is put right in that moment, not at the next tick', () => {
+  const p = load({ stored: ['/events.php'], drawn: 'header' });   // Events, 4 new: all that is unread
+  p.drawSidebar();
+  assert.ok(menuBtn(p).classList.contains('green'));             // as Torn draws it
+  p.commit(byId(p, 'header-wrapper-top'), byId(p, 'sidebarroot'));
+  assert.equal(menuBtn(p).classList.contains('green'), false);
+  assert.equal(cascade(p.document, numOf(p), 'visibility'), 'hidden');
+  assert.equal(p.pins().length, 1, 'the row comes in with it');
+  assert.ok(byId(p, 'tdf-cog'), 'and the cog');
+});
+
+test('a menu button Torn draws afresh is put right in that moment too', () => {
+  const p = load({ stored: ['/events.php'] });   // no tick: watched from the start
+  const old = menuBtn(p);
+  old.insertAdjacentHTML('afterend', menuButtonHtml(4));   // Torn's React mounts a new button
+  old.remove();
+  const fresh = menuBtn(p);
+  fresh.getClientRects = () => [{}];
+  fresh.__tornClass = fresh.getAttribute('class');
+  p.commit(byId(p, 'header-wrapper-top'));
+  assert.equal(fresh.classList.contains('green'), false);
+  assert.equal(cascade(p.document, numOf(p), 'visibility'), 'hidden');
+});
+
+test('from document-start, before Torn has even drawn its header, the button is put right the moment Torn draws it', () => {
+  const p = load({ stored: ['/events.php'], drawn: 'none' });
+  p.drawPage();                     // the page source: #header-root and #sidebarroot, both empty
+  p.commit(p.document.body);
+  p.drawHeader();                   // Torn's header app draws #header-wrapper-top
+  p.commit(byId(p, 'header-root'));
+  p.drawSidebar();
+  p.commit(byId(p, 'header-wrapper-top'), byId(p, 'sidebarroot'));
+  assert.equal(menuBtn(p).classList.contains('green'), false);
+  assert.equal(p.pins().length, 1);
+});
+
+test('Torn drawing its header and its sidebar in one go is put right in that same moment', () => {
+  const p = load({ stored: ['/events.php'], drawn: 'none' });
+  p.drawPage(); p.drawHeader(); p.drawSidebar();   // all in one task
+  p.commit(p.document.body, byId(p, 'header-root'), byId(p, 'header-wrapper-top'), byId(p, 'sidebarroot'));
+  assert.equal(menuBtn(p).classList.contains('green'), false);
+  assert.equal(p.pins().length, 1);
+});
+
+const watchesPage = (p) => p.observers.some((o) => o.watching.some((w) => w.target === p.document.documentElement));
+
+test('once Torn\'s header and sidebar are there, only those two are watched, and only for their own children', () => {
+  const p = load({ stored: ['/events.php'], drawn: 'none' });
+  assert.ok(watchesPage(p), 'the whole page, until then');
+  p.drawPage(); p.commit(p.document.body);
+  assert.ok(watchesPage(p), 'still: Torn has not drawn its header yet');
+  p.drawHeader(); p.commit(byId(p, 'header-root'));
+  assert.equal(watchesPage(p), false);
+  for (const id of ['header-wrapper-top', 'sidebarroot']) {
+    assert.ok(p.observers.some((o) => o.watching.some((w) => w.target === byId(p, id) && JSON.stringify(w.opts) === '{"childList":true}')), id);
+  }
+});
+
+test('when the script starts after Torn has drawn its header and sidebar, it never watches the whole page', () => {
+  const p = load({ stored: ['/events.php'] });
+  assert.equal(watchesPage(p), false);
+});
+
+test('on a page where Torn draws no header or sidebar, the whole-page watch stops once the page has loaded', () => {
+  const p = load({ drawn: 'none' });
+  assert.ok(watchesPage(p));
+  p.fire('load');
+  assert.equal(watchesPage(p), false);
+});
+
+test('a header Torn draws afresh is watched from the next tick', () => {
+  const p = load({ stored: ['/events.php'] });
+  p.tick();
+  const old = byId(p, 'header-wrapper-top');   // Torn's header app draws a new one, menu button not yet in it
+  old.insertAdjacentHTML('afterend', '<div id="header-wrapper-top" class="header-wrapper-top"></div>');
+  old.remove();
+  p.commit(byId(p, 'header-root'));
+  p.tick();
+  byId(p, 'header-wrapper-top').insertAdjacentHTML('beforeend', menuButtonHtml(4));   // then the sidebar app's new button
+  const fresh = menuBtn(p);
+  fresh.getClientRects = () => [{}];
+  fresh.__tornClass = fresh.getAttribute('class');
+  p.commit(byId(p, 'header-wrapper-top'));
+  assert.equal(fresh.classList.contains('green'), false);
+});
+
+test('a sidebar Torn draws afresh has the row back in it in that moment', () => {
+  const p = load({ stored: ['/events.php'] });
+  const old = byId(p, 'sidebar'), fresh = old.cloneNode(true);
+  fresh.querySelector('#tdf-pins').remove();   // Torn's own markup: no row in it
+  old.after(fresh);
+  old.remove();
+  p.commit(byId(p, 'sidebarroot'));
+  assert.equal(p.pins().length, 1);
+  assert.ok(fresh.contains(byId(p, 'tdf-pins')));
+});
+
+test('the whole page stays watched until Torn has drawn both its header and #sidebarroot', () => {
+  const p = load({ drawn: 'none' });
+  p.document.body.insertAdjacentHTML('beforeend', '<div id="header-root"><div id="header-wrapper-top" class="header-wrapper-top"></div></div>');
+  p.commit(p.document.body);
+  assert.ok(watchesPage(p));
 });

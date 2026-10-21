@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout Private
 // @namespace    RussianRob.torn-dual-flyout.private
-// @version      1.6.3
+// @version      1.6.4
 // @description  Private test build of Torn Dual Flyout: the two-way swipe menu plus a row of pinned menu links under Torn's phone header. Run this OR the public Torn Dual Flyout, not both.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout-private.user.js
@@ -40,7 +40,7 @@
   // if the public one won, this build stays off and says why.
   if (window.__tornMenuRight) { showBothOnNote(); return; }
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.6.3";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.6.4";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
@@ -785,7 +785,44 @@
     syncMenuButton(links, shown);
   }
 
-  setInterval(function () { ensureCog(); startMenuObserver(); syncMenuOpen(); startPinsObserver(); renderPins(); }, 800);
+  // ---- Torn drawing its header and sidebar --------------------------------------------
+  // What the 800ms tick keeps in step with Torn's page.
+  function syncAll() { ensureCog(); startMenuObserver(); syncMenuOpen(); startPinsObserver(); renderPins(); }
+  // Torn's sidebar app draws the menu button into the header's #header-wrapper-top and
+  // #sidebar into #sidebarroot, in one go. Watching those two for new children does what
+  // the tick does in that same moment, before the page is painted, not up to 800ms later:
+  // Torn's own count on the button never shows, and the row comes in with Torn's header.
+  // Only their own children: Torn's frequent changes further down (bars, timers) are not
+  // heard here.
+  function watchMount() {
+    ["header-wrapper-top", "sidebarroot"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el || el.__tdfMountObs) return;
+      el.__tdfMountObs = true;
+      new MutationObserver(syncAll).observe(el, { childList: true });
+    });
+  }
+  // At document-start neither is there yet: #sidebarroot comes with Torn's page source,
+  // but #header-wrapper-top is drawn by Torn's header app. Until both are, the whole page
+  // is watched for them, and then only they are.
+  function mounted() { return !!(document.getElementById("header-wrapper-top") && document.getElementById("sidebarroot")); }
+  if (!mounted()) {
+    var early = new MutationObserver(function () {
+      watchMount();
+      if (!mounted()) return;
+      early.disconnect();
+      // Put things right at once, in case Torn drew its sidebar in this same moment,
+      // which those two observers came too late to hear.
+      syncAll();
+    });
+    early.observe(html, { childList: true, subtree: true });
+    // A page Torn draws without them: the tick takes over from here.
+    window.addEventListener("load", function () { early.disconnect(); });
+  }
+
+  // Torn may draw either of the two afresh: the tick watches the new one.
+  setInterval(function () { watchMount(); syncAll(); }, 800);
+  watchMount();
   ensureCog();
   startMenuObserver();
   startPinsObserver();
