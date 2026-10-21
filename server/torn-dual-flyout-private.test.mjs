@@ -1,0 +1,189 @@
+// torn-dual-flyout-private: the private test build of Torn Dual Flyout, which adds a
+// row of pinned menu links under Torn's phone header.
+//
+// A player asked for a "both option": their most-used links (Crimes, Targets, Gym) at
+// the top of the page and the rest left in Torn's fly-out sidebar, because sliding
+// Torn's old top bar is finicky. The pins are ticked in the cog panel, drawn above the
+// name/bars strip, and follow the menu live. Spec:
+// docs/superpowers/specs/2026-10-21-dual-flyout-private-pins-design.md
+//
+// linkedom has no layout or cascade: these tests run the real script against Torn's
+// phone markup, resolve its stylesheet with element.matches(), and stub the few
+// measurements the spacer takes.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { parseHTML } from 'linkedom';
+
+// TDFP_SRC lets a working copy be tested before it is installed over the served file.
+const SRC = process.env.TDFP_SRC || '/opt/warboard/server/public/scripts/torn-dual-flyout-private.user.js';
+const META = SRC.replace(/\.user\.js$/, '.meta.js');
+const PUBLIC = '/opt/warboard/server/public/scripts/torn-dual-flyout.user.js';
+// What the browser reports for a menu icon's fill: Torn's CSS points it at a gradient.
+const FILL = 'url("#sidebar_svg_gradient_regular_mobile")';
+const TARGETS = '/page.php?sid=list&type=targets';
+
+// One area row as Torn's sidebar build draws it (nL / nM in app.4af34ba3e31baa7e.js).
+function areaRow(id, href, name) {
+  return `<div class="area-mobile___AK1cR notList___jrp60" id="nav-${id}"><div class="areaRow___Eheay">` +
+    `<a href="${href}" class="link___tg6eQ mobileLink___NbSV4"><span class="svgIconWrap___MDuQ8"><span class="defaultIcon___GnL0d mobile___nUzYc">` +
+    `<svg id="${id}-icon" viewBox="0 0 20 20"><path d="M0 0h20v20z"/></svg></span></span>` +
+    `<span class="linkName___YZMai">${name}</span></a></div></div>`;
+}
+// Torn's menu, cut down: the Messages / Events / Awards icons (Events with 4 unread),
+// three area rows, and a Targets list row expanded to show one person.
+const MENU = `
+  <div class="accountLinksWrap___wnKEu mobile___hMyTx"><div class="accountLinks___GEnNc">
+    <div class="wrap___zBGBU"><a href="/messages.php" class="messages___kA4RB" id="nav-messages" aria-label="Messages"><svg viewBox="0 0 24 24"><path d="M0 0h24v24z"/></svg></a></div>
+    <div class="wrap___zBGBU"><a href="/events.php" class="events___wU4rv positive___Jcxif" id="nav-events" aria-label="Events, 4 new"><svg viewBox="0 0 24 24"><path d="M0 0h24v24z"/></svg><span class="amount___vyASa">4</span></a></div>
+    <div class="wrap___zBGBU"><a href="/awards.php" class="awards___yD4LU" id="nav-awards" aria-label="Awards"><svg viewBox="0 0 24 24"><path d="M0 0h24v24z"/></svg></a></div>
+  </div></div>
+  <div class="areas___u5RJi areasMobile___CpJPd">
+    ${areaRow('gym', '/gym.php', 'Gym')}
+    ${areaRow('crimes', '/loader.php?sid=crimes', 'Crimes')}
+    ${areaRow('forums', '/forums.php', 'Forums')}
+    <div class="area-mobile___AK1cR list___biv0w" id="nav-targets_list">
+      <div class="areaRow___Eheay activated___B5fHK">
+        <a href="${TARGETS.replace('&', '&amp;')}" class="link___tg6eQ mobileLink___NbSV4 listLink___OocMj"><span class="svgIconWrap___MDuQ8"><span class="defaultIcon___GnL0d mobile___nUzYc"><svg viewBox="0 0 18 18"><path d="M0 0h18v18z"/></svg></span></span><span class="linkName___YZMai">Targets</span><span class="listAmount___YYmp1">12</span></a>
+        <button type="button" class="toggleBtn___hJrM0 activated___B5fHK" aria-label="Toggle Targets list"><span class="arrow___TSkXC"></span></button>
+      </div>
+      <div class="members"><a href="/profiles.php?XID=1">Someone</a></div>
+    </div>
+  </div>`;
+
+// A Torn page on a phone: header with the menu button, #sidebar holding the fly-out
+// panel and the name/bars strip, then the page content.
+function page(menu) {
+  return `<html><head></head><body>
+    <div id="header-root"><div class="header-wrapper-top"><button id="fly-out-menu-button"><svg id="menu-icon"><path d="M0 0h1v1z"/></svg></button></div></div>
+    <div id="sidebarroot"><div id="sidebar" class="sidebar___c4dEc mobile___fSMgm">
+      <aside id="fly-out-panel" class="flyOutPanel___Zqwqt">${menu}</aside>
+      <div class="userInformationMobile___Aznrv"><div>name and money</div><div class="swiperWrapper___gaWYk">bars</div></div>
+    </div></div>
+    <div class="content-wrapper" role="main"><h4 id="page-title">Home</h4></div>
+  </body></html>`;
+}
+
+// Runs the real script(s) against that page. order: 'private' (this build alone),
+// 'public-first' or 'private-first' (both copies installed, loading in that order).
+// stored: what tdf_pins holds (an array, or a raw string to store as is).
+function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU } = {}) {
+  const { document, Event } = parseHTML(page(menu));
+  const btn = document.getElementById('fly-out-menu-button');
+  btn.getClientRects = () => [{}];   // laid out: the phone header is showing
+  const panel = document.getElementById('fly-out-panel');
+  btn.__reactProps$tdfp = { onClick() { panel.classList.toggle('visible___AnarB'); } };
+
+  const store = new Map([['tmr_side', 'r'], ['tdf_iconsonly', iconsOnly ? '1' : '0']]);
+  if (stored !== null) store.set('tdf_pins', typeof stored === 'string' ? stored : JSON.stringify(stored));
+  const localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+  const touch = {};
+  document.addEventListener = (type, fn) => { (touch[type] = touch[type] || []).push(fn); };
+  const intervals = [], timeouts = [], observers = [];
+  class MO { constructor(cb) { this.cb = cb; observers.push(this); } observe() {} disconnect() {} }
+  const win = { innerWidth: 393, addEventListener() {} };
+  const getComputedStyle = (el) => ({ fill: /^svg$/i.test(el.tagName) ? FILL : '' });
+  const run = (file) => new Function('window', 'document', 'localStorage', 'MutationObserver', 'getComputedStyle',
+    'setInterval', 'setTimeout', 'clearInterval', readFileSync(file, 'utf8'))(
+    win, document, localStorage, MO, getComputedStyle,
+    (fn) => { intervals.push(fn); return intervals.length; },
+    (fn) => { timeouts.push(fn); return timeouts.length; },
+    () => {});
+  if (order === 'public-first') run(PUBLIC);
+  run(SRC);
+  if (order === 'private-first') run(PUBLIC);
+
+  const flush = () => { while (timeouts.length) timeouts.shift()(); };
+  const tick = () => { intervals.slice().forEach((fn) => fn()); flush(); };   // one round of the timers
+  const mutate = () => { observers.forEach((o) => o.cb([])); flush(); };      // Torn changed the DOM
+  const pins = () => [...document.querySelectorAll('#tdf-pins a')];
+  function openCog() {
+    tick();   // the cog is placed by the timer, beside the menu button
+    document.getElementById('tdf-cog').dispatchEvent(new Event('click'));
+    return document.getElementById('tdf-settings');
+  }
+  function tickBox(key, on) {
+    const cb = document.querySelector(`#tdf-settings input[data-key="${key}"]`);
+    cb.checked = on;
+    cb.dispatchEvent(new Event('change'));
+  }
+  return { document, win, store, touch, tick, mutate, flush, pins, openCog, tickBox, panel };
+}
+
+// Every declaration in the script's own stylesheet whose selector matches el.
+function styledBy(document, el) {
+  const css = document.getElementById('torn-menu-right').textContent;
+  const out = {};
+  for (const [, selectors, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const hit = selectors.split(',').some((sel) => {
+      try { return el.matches(sel.trim()); } catch { return false; }   // ::after and the like
+    });
+    if (!hit) continue;
+    for (const decl of body.split(';')) {
+      const i = decl.indexOf(':');
+      if (i > 0) out[decl.slice(0, i).trim()] = decl.slice(i + 1).trim();
+    }
+  }
+  return out;
+}
+
+function header(text) {
+  const m = text.match(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==/);
+  return m ? m[0] : '';
+}
+function field(h, name) {
+  const m = h.match(new RegExp('^// @' + name + '[ \\t]+(.+)$', 'm'));
+  return m ? m[1].trim() : null;
+}
+
+test('the header names the private build, its own update address, and the version the page reports', () => {
+  const h = header(readFileSync(SRC, 'utf8'));
+  assert.equal(field(h, 'name'), 'Torn Dual Flyout Private');
+  assert.equal(field(h, 'namespace'), 'RussianRob.torn-dual-flyout.private');
+  assert.equal(field(h, 'version'), '1.6.0');
+  assert.equal(field(h, 'author'), 'RussianRob');
+  assert.equal(field(h, 'license'), 'All Rights Reserved');
+  assert.equal(field(h, 'downloadURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.user.js');
+  assert.equal(field(h, 'updateURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.meta.js');
+  assert.equal(field(h, 'grant'), 'none');
+  assert.equal(field(h, 'copyright'), null);
+  assert.equal(load().win.__tdfVer, '1.6.0');
+});
+
+test('the .meta.js update file carries the same header as the script', () => {
+  assert.equal(header(readFileSync(META, 'utf8')), header(readFileSync(SRC, 'utf8')));
+});
+
+test('no curly quotes anywhere in the script: PDA straightens them and the script stops parsing', () => {
+  assert.doesNotMatch(readFileSync(SRC, 'utf8'), /[‘’“”]/);
+});
+
+test('with the public Torn Dual Flyout already running, this build stays off and says so', () => {
+  const p = load({ order: 'public-first', stored: ['/gym.php'] });
+  assert.equal(p.document.querySelectorAll('#torn-menu-right').length, 1);   // the public copy's stylesheet only
+  assert.equal(p.touch.touchstart.length, 1);                                // one swipe handler: the public one
+  assert.equal(p.win.__tdfVer, '1.5.16');
+  p.tick();
+  assert.equal(p.document.getElementById('tdf-pins'), null);
+  const note = p.document.getElementById('tdfp-both-on');
+  assert.ok(note, 'a note says why');
+  assert.match(note.textContent, /public Torn Dual Flyout is also on/);
+});
+
+test('loaded first, this build keeps the public copy from starting a second time', () => {
+  const p = load({ order: 'private-first' });
+  assert.equal(p.document.querySelectorAll('#torn-menu-right').length, 1);
+  assert.equal(p.touch.touchstart.length, 1);
+  assert.equal(p.win.__tdfVer, '1.6.0');
+  p.tick();
+  assert.equal(p.document.getElementById('tdfp-both-on'), null);
+});
+
+test('the cog panel says which build is running', () => {
+  const settings = load().openCog();
+  assert.match(settings.querySelector('h4').textContent, /^Torn Dual Flyout Private/);
+});
