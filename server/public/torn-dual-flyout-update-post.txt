@@ -1,0 +1,23 @@
+<div style="text-align:center">
+<h2>Torn Dual Flyout: pinned links</h2>
+<p><em>A row under the header for the links you use most</em></p>
+</div>
+
+<p>This one came from a player who wanted Crimes, Targets and Gym on screen all the time, the way Torn's top bar has them, with everything else left in the fly-out menu. The top bar slides sideways when you touch it, though, and they found that finicky. So I added pinned links.</p>
+
+<p>Tap the gear next to the menu button and tick the links you want. They go in a row under the header, drawn the way Torn's top bar draws them, and unread messages, events and awards show green like they do there. Nine or ten fit on a line depending on your screen. Pin more than that and the row wraps onto a second line instead of sliding.</p>
+
+<p>Whatever you pin comes out of the menu, so nothing shows up twice. If you pin Messages, its count moves to the row, and the menu button only counts what's left in the menu.</p>
+
+<p>To change the order, hold a link in the Bar order list (same gear panel) for a moment, then drag it where you want it. The row updates when you let go.</p>
+
+<p>Your side, Icons only and Sticky settings carry over, and Icons only works on the row too. It still doesn't need an API key.</p>
+
+<h3>Screenshot</h3>
+<p><em>Vault, Forums, Missions and Poker pinned under the header, with the menu open on the left:</em></p>
+<img src="https://tornwar.com/torn-dual-flyout-pins-shot.jpg" alt="Torn Dual Flyout with four links pinned in a row under Torn's header and the fly-out menu open on the left">
+
+<h3>Install</h3>
+<p><a href="https://greasyfork.org/en/scripts/585201-torn-dual-flyout">Torn Dual Flyout on Greasy Fork</a>. If you already have it, it'll update itself.</p>
+
+<p>If the row looks off on your phone or a link won't pin, post a screenshot here and I'll take a look.</p>
