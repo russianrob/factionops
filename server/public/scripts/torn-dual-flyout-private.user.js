@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout Private
 // @namespace    RussianRob.torn-dual-flyout.private
-// @version      1.6.2
+// @version      1.6.3
 // @description  Private test build of Torn Dual Flyout: the two-way swipe menu plus a row of pinned menu links under Torn's phone header. Run this OR the public Torn Dual Flyout, not both.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout-private.user.js
@@ -40,7 +40,7 @@
   // if the public one won, this build stays off and says why.
   if (window.__tornMenuRight) { showBothOnNote(); return; }
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.6.2";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.6.3";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
@@ -65,6 +65,11 @@
     'font-size:11px;line-height:1;font-weight:700;background:linear-gradient(to top,#666,#888);' +
     '-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;pointer-events:none;}' +
     'html.tmr-right #fly-out-menu-button::after{content:"▶";}' +
+    // While the row shows a pinned Messages / Events / Awards the button counts only the
+    // ones still in the menu (syncMenuButton): Torn's number is hidden and that count is
+    // drawn over it, in Torn's own colour and size.
+    '#fly-out-menu-button[data-tdf-count] [class*="notificationsAmount___"]{visibility:hidden!important;}' +
+    '#fly-out-menu-button[data-tdf-count] [class*="notificationsAmount___"]::after{content:var(--tdf-count);visibility:visible;position:absolute;top:0;left:0;}' +
     '#tdf-cog{position:absolute;background:transparent;border:0;padding:0;margin:0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2147483001;pointer-events:auto;-webkit-tap-highlight-color:transparent;}' +
     '#tdf-cog svg{display:block;}' +
     '#tdf-settings{position:fixed;top:40px;left:8px;right:8px;margin:0 auto;max-width:280px;z-index:2147483000;background:#0e0f12;border:1px solid #2e333d;border-radius:8px;padding:10px 12px;color:#dde2e8;font:13px -apple-system,system-ui,sans-serif;box-shadow:0 8px 28px rgba(0,0,0,.65);}' +
@@ -476,6 +481,7 @@
         navId: row ? row.id.slice(4) : "",   // "gym" for #nav-gym
         count: countEl ? countEl.textContent.trim() : "",
         attn: !!row && /attention___/.test(row.className),   // Torn's blue "something here" tint
+        acct: !!a.closest('[class*="accountLinks___"]'),     // Messages, Events or Awards
         on: on,
         // Unread Messages, Events or Awards: Torn marks the icon's link positive___, and
         // its top bar shows them green, except on that link's own page, which shows as
@@ -694,7 +700,47 @@
     }
     if (s.textContent !== css) s.textContent = css;
   }
-  function dropRow(row) { if (row) row.remove(); syncSpacer(null); }
+  // ---- The three-bar button --------------------------------------------------------
+  // Torn's menu button counts every unread Message, Event and Award, and is green while
+  // there are any. One that is pinned is read in the row, not behind the button, so while
+  // the row shows a pinned Messages / Events / Awards the button counts only the ones
+  // still in the menu, and is green only while that is more than 0. With none of them in
+  // the row the button is Torn's, handed back as Torn drew it.
+  // A count as the menu writes it: "4", or "1.2k" from a thousand up, past Torn's 99.
+  function countOf(text) { return /k$/i.test(text) ? 1000 : parseInt(text, 10) || 0; }
+  function syncMenuButton(links, shown) {
+    var btn = menuButton();
+    if (!btn) return;
+    var pinned = (shown || []).filter(function (l) { return l.acct; });
+    if (!pinned.length) {
+      if (!btn.hasAttribute("data-tdf-count")) return;   // not changed, or already handed back
+      btn.removeAttribute("data-tdf-count");
+      btn.style.removeProperty("--tdf-count");
+      if (!btn.getAttribute("style")) btn.removeAttribute("style");
+      // Torn's green comes and goes with its number.
+      if (btn.querySelector('[class*="notificationsAmount___"]') && !btn.classList.contains("green")) btn.classList.add("green");
+      return;
+    }
+    var n = 0;
+    links.forEach(function (l) { if (l.acct && pinned.indexOf(l) < 0) n += countOf(l.count); });
+    n = Math.min(n, 99);
+    if (btn.getAttribute("data-tdf-count") !== String(n)) btn.setAttribute("data-tdf-count", String(n));
+    // The number as a CSS string, which is what the stylesheet draws; none for 0.
+    var css = n ? '"' + n + '"' : "";
+    if (btn.style.getPropertyValue("--tdf-count") !== css) {
+      if (css) btn.style.setProperty("--tdf-count", css);
+      else btn.style.removeProperty("--tdf-count");
+    }
+    if (btn.classList.contains("green") !== n > 0) btn.classList.toggle("green", n > 0);
+    // Torn's React puts its green back when a new one comes in after none, and rewrites its
+    // number when a count changes: put the button right before the page is painted, not a
+    // tick later. Writes only what differs, so its own writes come back to it once and stop.
+    if (!btn.__tdfBtnObs) {
+      btn.__tdfBtnObs = true;
+      new MutationObserver(function () { renderPins(); }).observe(btn, { attributes: true, attributeFilter: ["class"], childList: true, subtree: true, characterData: true });
+    }
+  }
+  function dropRow(row) { if (row) row.remove(); syncSpacer(null); syncMenuButton(null, null); }
   // Draw (or re-draw) the row directly above Torn's name/bars strip, the first thing
   // under the header on a phone. No strip means this is not the phone layout: no row.
   function renderPins() {
@@ -736,6 +782,7 @@
     }
     setHidden(shown.map(function (l) { return l.key; }));
     syncSpacer(row);
+    syncMenuButton(links, shown);
   }
 
   setInterval(function () { ensureCog(); startMenuObserver(); syncMenuOpen(); startPinsObserver(); renderPins(); }, 800);

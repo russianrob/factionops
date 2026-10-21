@@ -50,13 +50,62 @@ const MENU = `
     </div>
   </div>`;
 
+// Torn's three-bar menu button (tC in the sidebar build): while any Messages / Events /
+// Awards are unread it is green, with their total (capped at 99) in a span.
+function menuButtonHtml(n) {
+  return `<button class="menuButton___uV5dz top_header_button${n > 0 ? ' green' : ''}" type="button" aria-label="Show sidebar" aria-controls="fly-out-panel" aria-expanded="false" id="fly-out-menu-button">` +
+    '<svg id="menu-icon" width="24" height="24" viewBox="0 0 24 24"><path d="M20 18H4v-2h16v2zm0-5H4v-2h16v2zm0-5H4V6h16v2z"/></svg>' +
+    (n > 0 ? `<span class="notificationsAmount___zGHim">${n}</span>` : '') + '</button>';
+}
+// The total that button shows for a menu: what the account links' labels say is new.
+function unreadTotal(menu) {
+  let n = 0;
+  for (const [, c] of menu.matchAll(/aria-label="(?:Messages|Events|Awards), (\d+) new"/g)) n += +c;
+  return Math.min(n, 99);
+}
+// Torn's unread counts change, in one React commit: each Messages / Events / Awards link
+// named takes its new count the way Torn draws it (tK: positive___, the aria-label with
+// the full number, the amount shortened by Torn's own rule), and the button follows.
+const ACCOUNT = { messages: 'Messages', events: 'Events', awards: 'Awards' };
+function tornAmount(n) {
+  if (n < 1000) return String(n);
+  if (n > 99000) return '99k';
+  let t = Math.floor(n / 100) / 10;
+  if (n > 10000) t = Math.floor(t);
+  return `${t}k`;
+}
+function setUnread(document, counts) {
+  for (const [id, n] of Object.entries(counts)) {
+    const a = document.getElementById(`nav-${id}`);
+    a.classList.toggle('positive___Jcxif', n > 0);
+    a.setAttribute('aria-label', ACCOUNT[id] + (n > 0 ? `, ${n} new` : ''));
+    let amount = a.querySelector('.amount___vyASa');
+    if (n > 0 && !amount) { amount = document.createElement('span'); amount.className = 'amount___vyASa'; a.appendChild(amount); }
+    if (n > 0) amount.textContent = tornAmount(n); else if (amount) amount.remove();
+  }
+  let total = 0;
+  for (const id of Object.keys(ACCOUNT)) total += +(/, (\d+) new$/.exec(document.getElementById(`nav-${id}`).getAttribute('aria-label')) || [0, 0])[1];
+  tornButton(document, Math.min(total, 99));
+}
+// What Torn's React does to the button for a new total: it rewrites the class only when
+// the class it renders changes (React compares with its own last render, not with the
+// page), and adds, updates or removes the count.
+function tornButton(document, n) {
+  const btn = document.getElementById('fly-out-menu-button');
+  const cls = 'menuButton___uV5dz top_header_button' + (n > 0 ? ' green' : '');
+  if (btn.__tornClass !== cls) { btn.setAttribute('class', cls); btn.__tornClass = cls; }
+  let span = btn.querySelector('.notificationsAmount___zGHim');
+  if (n > 0 && !span) { span = document.createElement('span'); span.className = 'notificationsAmount___zGHim'; btn.appendChild(span); }
+  if (n > 0) span.textContent = String(n); else if (span) span.remove();
+}
+
 // A Torn page on a phone: header with the menu button, #sidebar holding the fly-out
 // panel and the name/bars strip, then the page content. strip: false is a page with
 // no phone strip (desktop, or Torn's top-bar mode); body adds attributes to <body>
 // (dark mode, abroad); panelClass adds Torn's status classes to the panel.
 function page(menu, { strip = true, body = '', panelClass = '' } = {}) {
   return `<html><head></head><body ${body}>
-    <div id="header-root"><div class="header-wrapper-top"><button id="fly-out-menu-button"><svg id="menu-icon"><path d="M0 0h1v1z"/></svg></button></div></div>
+    <div id="header-root"><div id="header-wrapper-top" class="header-wrapper-top">${menuButtonHtml(unreadTotal(menu))}</div></div>
     <div id="sidebarroot"><div id="sidebar" class="sidebar___c4dEc mobile___fSMgm">
       <aside id="fly-out-panel" class="flyOutPanel___Zqwqt ${panelClass}">${menu}</aside>
       ${strip ? '<div class="userInformationMobile___Aznrv"><div>name and money</div><div class="swiperWrapper___gaWYk">bars</div></div>' : ''}
@@ -70,13 +119,16 @@ function page(menu, { strip = true, body = '', panelClass = '' } = {}) {
 // stored: what tdf_pins holds (an array, or a raw string to store as is).
 // failSave: localStorage refuses to save tdf_pins (full). session: what Torn keeps in
 // sessionStorage. strip, body, panelClass: see page(). width: the screen's width.
+// unread: Messages / Events / Awards counts the page opens with ({ messages: 1 }).
 function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU, failSave = false,
-  session = null, strip = true, body = '', panelClass = '', width = 393 } = {}) {
+  session = null, strip = true, body = '', panelClass = '', width = 393, unread = null } = {}) {
   const { document, Event } = parseHTML(page(menu, { strip, body, panelClass }));
   const btn = document.getElementById('fly-out-menu-button');
   btn.getClientRects = () => [{}];   // laid out: the phone header is showing
+  btn.__tornClass = btn.getAttribute('class');   // what Torn's React last rendered
   const panel = document.getElementById('fly-out-panel');
   btn.__reactProps$tdfp = { onClick() { panel.classList.toggle('visible___AnarB'); } };
+  if (unread) setUnread(document, unread);
 
   const store = new Map([['tmr_side', 'r'], ['tdf_iconsonly', iconsOnly ? '1' : '0']]);
   if (stored !== null) store.set('tdf_pins', typeof stored === 'string' ? stored : JSON.stringify(stored));
@@ -114,6 +166,10 @@ function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU
   const flush = () => { while (timeouts.length) timeouts.shift()(); };
   const tick = () => { intervals.slice().forEach((fn) => fn()); flush(); };   // one round of the timers
   const mutate = () => { observers.forEach((o) => o.cb([])); flush(); };      // Torn changed the DOM
+  // Torn's React has just committed: every observer still watching something in the page
+  // runs before the page is painted again (one on an element Torn has thrown away hears
+  // nothing), and no timer has fired yet.
+  const react = () => { observers.filter((o) => o.target && o.target.isConnected).forEach((o) => o.cb([])); };
   const pins = () => [...document.querySelectorAll('#tdf-pins a')];
   function openCog() {
     tick();   // the cog is placed by the timer, beside the menu button
@@ -125,7 +181,7 @@ function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU
     cb.checked = on;
     cb.dispatchEvent(new Event('change'));
   }
-  return { document, win, store, touch, tick, mutate, flush, pins, openCog, tickBox, panel, observers };
+  return { document, win, store, touch, tick, mutate, react, flush, pins, openCog, tickBox, panel, observers };
 }
 
 // Every declaration in the script's own stylesheet whose selector matches el.
@@ -204,14 +260,14 @@ test('the header names the private build, its own update address, and the versio
   const h = header(readFileSync(SRC, 'utf8'));
   assert.equal(field(h, 'name'), 'Torn Dual Flyout Private');
   assert.equal(field(h, 'namespace'), 'RussianRob.torn-dual-flyout.private');
-  assert.equal(field(h, 'version'), '1.6.2');
+  assert.equal(field(h, 'version'), '1.6.3');
   assert.equal(field(h, 'author'), 'RussianRob');
   assert.equal(field(h, 'license'), 'All Rights Reserved');
   assert.equal(field(h, 'downloadURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.user.js');
   assert.equal(field(h, 'updateURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.meta.js');
   assert.equal(field(h, 'grant'), 'none');
   assert.equal(field(h, 'copyright'), null);
-  assert.equal(load().win.__tdfVer, '1.6.2');
+  assert.equal(load().win.__tdfVer, '1.6.3');
 });
 
 test('the .meta.js update file carries the same header as the script', () => {
@@ -238,7 +294,7 @@ test('loaded first, this build keeps the public copy from starting a second time
   const p = load({ order: 'private-first' });
   assert.equal(p.document.querySelectorAll('#torn-menu-right').length, 1);
   assert.equal(p.touch.touchstart.length, 1);
-  assert.equal(p.win.__tdfVer, '1.6.2');
+  assert.equal(p.win.__tdfVer, '1.6.3');
   p.tick();
   assert.equal(p.document.getElementById('tdfp-both-on'), null);
 });
@@ -904,4 +960,153 @@ test('a stored value with quotes or braces hides nothing but its own link', () =
     if (el.closest('#nav-gym')) continue;
     assert.ok(!hidden(p, el), el.id || el.className);
   }
+});
+
+// ---- The three-bar button ---------------------------------------------------------
+// Torn's menu button counts every unread Message, Event and Award, and is green while
+// there are any. One that is pinned is in the row, not behind the button, so while the
+// row shows it the button counts only the ones still in the menu.
+const menuBtn = (p) => p.document.getElementById('fly-out-menu-button');
+const numOf = (p) => menuBtn(p).querySelector('[class*="notificationsAmount___"]');
+const countShown = (p) => menuBtn(p).style.getPropertyValue('--tdf-count');   // the number drawn over Torn's ('' for none)
+// The button as a page would compare it: its attributes, in any order (linkedom moves
+// an attribute to the end when it is rewritten; a browser keeps its place), and contents.
+const asDrawn = (p) => JSON.stringify([[...menuBtn(p).attributes].map((a) => [a.name, a.value]).sort(), menuBtn(p).innerHTML]);
+
+test('with every unread link pinned, the three-bar button shows no number and no green', () => {
+  const torn = load();                           // nothing pinned: Torn's own button says 4, in green
+  assert.equal(numOf(torn).textContent, '4');
+  assert.ok(menuBtn(torn).classList.contains('green'));
+  const p = load({ stored: ['/events.php'] });   // Events, 4 new: all that is unread
+  p.tick();
+  assert.equal(menuBtn(p).classList.contains('green'), false);
+  assert.equal(cascade(p.document, numOf(p), 'visibility'), 'hidden');
+  assert.equal(countShown(p), '');
+});
+
+test('with some unread links pinned, the button counts only the ones still in the menu, and stays green', () => {
+  const p = load({ stored: ['/messages.php'], unread: { messages: 1 } });   // Messages 1 pinned, Events 4 in the menu
+  assert.equal(numOf(p).textContent, '5');
+  p.tick();
+  assert.ok(menuBtn(p).classList.contains('green'));
+  assert.equal(cascade(p.document, numOf(p), 'visibility'), 'hidden');   // Torn's 5
+  assert.equal(countShown(p), '"4"');
+});
+
+test('the button\'s number takes the place of Torn\'s, in Torn\'s own colour and size', () => {
+  const p = load({ stored: ['/messages.php'], unread: { messages: 1 } });
+  p.tick();
+  const after = (prop) => cascade(p.document, numOf(p), prop, 'after');
+  assert.equal(after('content'), 'var(--tdf-count)');
+  assert.equal(after('visibility'), 'visible');
+  assert.equal(after('position'), 'absolute');
+  assert.equal(after('top'), '0');
+  assert.equal(after('left'), '0');
+  // Inherited from Torn's number: nothing of ours sets them.
+  assert.equal(after('color'), undefined);
+  assert.equal(after('font-size'), undefined);
+});
+
+test('with no Messages / Events / Awards in the row, the button is left as Torn drew it', () => {
+  const jail = areaRow('jail', '/jail.php', 'Jail').replace('Jail</span>', 'Jail</span><span class="amount___vyASa">12</span>');
+  const menu = MENU.replace(areaRow('forums', '/forums.php', 'Forums'), areaRow('forums', '/forums.php', 'Forums') + jail);
+  // Nothing pinned; area and list pins; an area with a count of its own; and Events
+  // pinned on a page with no row.
+  for (const opts of [{}, { stored: ['/gym.php', TARGETS] }, { stored: ['/jail.php'], menu }, { stored: ['/events.php'], strip: false }]) {
+    const torn = asDrawn(load({ ...opts, stored: null }));
+    const p = load(opts);
+    p.tick(); p.mutate();
+    assert.equal(asDrawn(p), torn, JSON.stringify(opts.stored));
+    assert.equal(cascade(p.document, numOf(p), 'visibility'), undefined);
+  }
+});
+
+test('unpinning hands the button back to Torn exactly as Torn drew it, with the row or without it', () => {
+  const torn = asDrawn(load());
+  for (const stored of [['/events.php', '/gym.php'], ['/events.php']]) {
+    const p = load({ stored });
+    p.tick();
+    assert.notEqual(asDrawn(p), torn);
+    p.openCog();
+    p.tickBox('/events.php', false);
+    assert.equal(asDrawn(p), torn, JSON.stringify(stored));
+    assert.equal(cascade(p.document, numOf(p), 'visibility'), undefined);
+  }
+});
+
+test('the button follows the menu live: a new count, the green going when only pinned links are unread, and coming back', () => {
+  const p = load({ stored: ['/messages.php'], unread: { messages: 1 } });
+  p.tick();
+  setUnread(p.document, { events: 6 }); p.mutate();
+  assert.equal(countShown(p), '"6"');
+  setUnread(p.document, { events: 0 }); p.mutate();   // only the pinned Messages is unread now
+  assert.equal(menuBtn(p).classList.contains('green'), false);
+  assert.equal(countShown(p), '');
+  setUnread(p.document, { awards: 2 }); p.mutate();   // an award comes in; Torn's button was green all along
+  assert.ok(menuBtn(p).classList.contains('green'));
+  assert.equal(countShown(p), '"2"');
+});
+
+test('a new unread for a pinned link does not light the button up, not even until the next timer', () => {
+  const p = load({ stored: ['/events.php'] });
+  p.tick();
+  setUnread(p.document, { events: 0 }); p.mutate();   // the player reads their events
+  setUnread(p.document, { events: 1 });               // and a new one comes in: Torn puts its green and number back
+  assert.ok(menuBtn(p).classList.contains('green'));
+  p.react();
+  assert.equal(menuBtn(p).classList.contains('green'), false);
+  assert.equal(cascade(p.document, numOf(p), 'visibility'), 'hidden');
+  assert.equal(countShown(p), '');
+});
+
+test('like Torn\'s, the button\'s number stops at 99, counts in thousands included', () => {
+  const p = load({ stored: ['/messages.php'], unread: { messages: 1, events: 1234 } });
+  p.tick();
+  assert.equal(p.document.querySelector('#nav-events .amount___vyASa').textContent, '1.2k');
+  assert.equal(countShown(p), '"99"');
+  const q = load({ stored: ['/messages.php'], unread: { messages: 1, events: 60, awards: 50 } });
+  q.tick();
+  assert.equal(countShown(q), '"99"');
+});
+
+test('a menu button Torn draws afresh is put right too, and watched like the first', () => {
+  const p = load({ stored: ['/events.php'] });
+  p.tick();
+  const old = menuBtn(p);
+  old.insertAdjacentHTML('afterend', menuButtonHtml(4));   // Torn's React mounts a new button
+  old.remove();
+  const fresh = menuBtn(p);
+  fresh.getClientRects = () => [{}];
+  fresh.__tornClass = fresh.getAttribute('class');
+  assert.ok(fresh.classList.contains('green'));
+  p.tick();
+  assert.equal(fresh.classList.contains('green'), false);
+  setUnread(p.document, { events: 0 }); p.mutate();
+  setUnread(p.document, { events: 2 });
+  p.react();
+  assert.equal(fresh.classList.contains('green'), false);
+});
+
+test('the button is watched for all Torn\'s React rewrites on it: its class, its number coming and going, and the number\'s text', () => {
+  const p = load({ stored: ['/messages.php'], unread: { messages: 1 } });
+  p.tick();
+  const o = p.observers.find((x) => x.target === menuBtn(p));
+  assert.ok(o, 'an observer on the button');
+  assert.deepEqual([...o.opts.attributeFilter], ['class']);
+  assert.equal(o.opts.childList, true);
+  assert.equal(o.opts.subtree, true);         // the number is a child of the button
+  assert.equal(o.opts.characterData, true);   // and Torn rewrites its text when only the count changes
+});
+
+test('unpinning while nothing is unread hands back Torn\'s plain button: no green without Torn\'s number', () => {
+  const torn = load();
+  setUnread(torn.document, { events: 0 });            // Torn's own button with nothing unread
+  const want = asDrawn(torn);
+  const p = load({ stored: ['/events.php', '/gym.php'] });
+  p.tick();
+  setUnread(p.document, { events: 0 }); p.mutate();   // the player reads the pinned Events
+  p.openCog();
+  p.tickBox('/events.php', false);
+  assert.equal(menuBtn(p).classList.contains('green'), false);
+  assert.equal(asDrawn(p), want);
 });
