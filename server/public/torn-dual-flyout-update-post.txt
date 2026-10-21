@@ -3,7 +3,7 @@
 <p><em>A row under the header for the links you use most</em></p>
 </div>
 
-<p>This one came from a player who wanted Crimes, Targets and Gym on screen all the time, the way Torn's top bar has them, with everything else left in the fly-out menu. The top bar slides sideways when you touch it, though, and they found that finicky. So I added pinned links.</p>
+<p>Someone wanted pinned links in the top bar, so I added them.</p>
 
 <p>Tap the gear next to the menu button and tick the links you want. They go in a row under the header, drawn the way Torn's top bar draws them, and unread messages, events and awards show green like they do there. Nine or ten fit on a line depending on your screen. Pin more than that and the row wraps onto a second line instead of sliding.</p>
 
