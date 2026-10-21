@@ -103,7 +103,12 @@
     '.tdf-pin-icon svg{max-width:100%;max-height:100%;}' +
     '#tdf-pins .tdf-pin-name{font:10px/12px Arial,Helvetica,sans-serif;max-width:68px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
     '#tdf-pins .tdf-pin-badge{position:absolute;top:0;right:1px;font:700 10px/12px Arial,Helvetica,sans-serif;color:#a9e34b;text-shadow:0 1px rgba(0,0,0,.25);}' +
-    'html.tdf-iconsonly #tdf-pins .tdf-pin-name{display:none;}';
+    'html.tdf-iconsonly #tdf-pins .tdf-pin-name{display:none;}' +
+    // The cog panel's pin list scrolls inside the panel once it outgrows half the screen.
+    '#tdf-settings .tdf-pins-head{margin:8px 0 2px;padding-top:8px;border-top:1px solid #2e333d;font-weight:700;color:#f3f4f6;}' +
+    '#tdf-settings .tdf-pins-list{max-height:50vh;overflow-y:auto;}' +
+    '#tdf-settings .tdf-pins-list label{padding:4px 0;}' +
+    '#tdf-settings .tdf-pins-none{color:#8a8f98;padding:4px 0;}';
   var s = document.createElement("style");
   s.id = "torn-menu-right";
   s.textContent = css;
@@ -270,7 +275,9 @@
     d.className = "tdf-hidden";
     d.innerHTML = '<h4>Torn Dual Flyout Private <span class="tdf-x">×</span></h4>' +
       '<label><input type="checkbox" class="tdf-iconsonly-cb"' + (iconsOnly() ? " checked" : "") + "> Icons only (hide menu names)</label>" +
-      '<label><input type="checkbox" class="tdf-sticky-cb"' + (sticky() ? " checked" : "") + "> Sticky (keep menu open across pages + scroll while open)</label>";
+      '<label><input type="checkbox" class="tdf-sticky-cb"' + (sticky() ? " checked" : "") + "> Sticky (keep menu open across pages + scroll while open)</label>" +
+      '<div class="tdf-pins-head">Pinned links (shown under the header)</div>' +
+      '<div class="tdf-pins-list"></div>';
     (document.body || html).appendChild(d);
     d.querySelector(".tdf-x").addEventListener("click", function () { d.classList.add("tdf-hidden"); });
     d.querySelector(".tdf-iconsonly-cb").addEventListener("change", function (ev) { applyIconsOnly(ev.target.checked); });
@@ -279,7 +286,43 @@
   function toggleSettings() {
     buildSettings();
     var d = document.getElementById("tdf-settings");
-    if (d) d.classList.toggle("tdf-hidden");
+    if (!d) return;
+    d.classList.toggle("tdf-hidden");
+    if (!d.classList.contains("tdf-hidden")) fillPinList(d);   // fresh from the menu each time it opens
+  }
+  // The cog panel's "Pinned links" list: every link in the menu with a tick box,
+  // rebuilt from the menu each time the panel opens, so new or renamed rows show up.
+  function fillPinList(d) {
+    var box = d.querySelector(".tdf-pins-list");
+    if (!box) return;
+    var links = menuLinks(), pins = loadPins();
+    box.textContent = "";
+    if (!links.length) {
+      var none = document.createElement("div");
+      none.className = "tdf-pins-none";
+      none.textContent = "No menu links found yet. Open the menu once, then reopen this panel.";
+      box.appendChild(none);
+      return;
+    }
+    links.forEach(function (l) {
+      var label = document.createElement("label");
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.setAttribute("data-key", l.key);
+      cb.checked = pins.indexOf(l.key) !== -1;
+      cb.addEventListener("change", function () { setPinned(l.key, cb.checked); });
+      label.appendChild(cb);
+      label.appendChild(iconClone(l));
+      label.appendChild(document.createTextNode(l.name));
+      box.appendChild(label);
+    });
+  }
+  // A fresh tick goes to the end of the list: pins show in the order they were ticked.
+  function setPinned(key, on) {
+    var pins = loadPins().filter(function (k) { return k !== key; });
+    if (on) pins.push(key);
+    savePins(pins);
+    renderPins();
   }
   var COG_SVG = '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="#8a8f98" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.63-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.13 8.48a.49.49 0 0 0 .12.61l2.03 1.58c-.05.31-.07.62-.07.94 0 .32.02.63.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.14.24.44.32.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.26.42.49.42h4c.23 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.15.06.45-.02.59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.02-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>';
   function positionCog(cog, b) {

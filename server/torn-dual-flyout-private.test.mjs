@@ -326,3 +326,43 @@ test('pins appear once the menu has loaded its links', () => {
   p.tick();
   assert.equal(p.pins().length, 1);
 });
+
+test('the cog panel lists every link in the menu once, and not the people a list shows', () => {
+  const settings = load().openCog();
+  const keys = [...settings.querySelectorAll('.tdf-pins-list input[data-key]')].map((cb) => cb.getAttribute('data-key'));
+  assert.deepEqual(keys, ['/messages.php', '/events.php', '/awards.php', '/gym.php', '/loader.php?sid=crimes', '/forums.php', TARGETS]);
+  const names = [...settings.querySelectorAll('.tdf-pins-list label')].map((l) => l.textContent.trim());
+  assert.deepEqual(names, ['Messages', 'Events', 'Awards', 'Gym', 'Crimes', 'Forums', 'Targets']);
+});
+
+test('the list shows what is already pinned', () => {
+  const settings = load({ stored: ['/gym.php'] }).openCog();
+  const checked = [...settings.querySelectorAll('.tdf-pins-list input[data-key]')]
+    .filter((cb) => cb.checked).map((cb) => cb.getAttribute('data-key'));
+  assert.deepEqual(checked, ['/gym.php']);
+});
+
+test('ticking pins links in the order ticked, and unticking takes one off', () => {
+  const p = load();
+  p.openCog();
+  p.tickBox('/loader.php?sid=crimes', true);
+  p.tickBox('/gym.php', true);
+  assert.equal(p.store.get('tdf_pins'), JSON.stringify(['/loader.php?sid=crimes', '/gym.php']));
+  assert.deepEqual(p.pins().map((a) => a.getAttribute('href')), ['/loader.php?sid=crimes', '/gym.php']);
+  p.tickBox('/loader.php?sid=crimes', false);
+  assert.equal(p.store.get('tdf_pins'), JSON.stringify(['/gym.php']));
+  assert.deepEqual(p.pins().map((a) => a.getAttribute('href')), ['/gym.php']);
+  p.tickBox('/gym.php', false);
+  assert.equal(p.document.getElementById('tdf-pins'), null);
+});
+
+test('before the menu has loaded, the list says so, and reopening the panel picks the links up', () => {
+  const p = load({ menu: '' });
+  const settings = p.openCog();
+  assert.match(settings.querySelector('.tdf-pins-list').textContent, /No menu links found yet/);
+  p.panel.innerHTML = MENU;
+  p.openCog();   // a second tap on the cog shuts the panel
+  p.openCog();   // and a third opens it again
+  assert.equal(settings.querySelectorAll('.tdf-pins-list input[data-key]').length, 7);
+  assert.doesNotMatch(settings.querySelector('.tdf-pins-list').textContent, /No menu links found yet/);
+});
