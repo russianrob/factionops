@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout Private
 // @namespace    RussianRob.torn-dual-flyout.private
-// @version      1.6.4
+// @version      1.6.5
 // @description  Private test build of Torn Dual Flyout: the two-way swipe menu plus a row of pinned menu links under Torn's phone header. Run this OR the public Torn Dual Flyout, not both.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout-private.user.js
@@ -40,7 +40,7 @@
   // if the public one won, this build stays off and says why.
   if (window.__tornMenuRight) { showBothOnNote(); return; }
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.6.4";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.6.5";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
@@ -169,7 +169,17 @@
     '#tdf-settings .tdf-pins-list{max-height:50vh;overflow-y:auto;}' +
     '#tdf-settings .tdf-pins-list label{padding:4px 0;}' +
     '#tdf-settings .tdf-pins-none{color:#8a8f98;padding:4px 0;}' +
-    '#tdf-settings .tdf-pins-err{color:#fca5a5;padding:4px 0;}';
+    '#tdf-settings .tdf-pins-err{color:#fca5a5;padding:4px 0;}' +
+    // The bar order list: a pin's icon and name, then its two arrows, each big enough to
+    // tap, and quick to tap again (no wait to see if it is a double-tap zoom).
+    '#tdf-settings .tdf-order-row{display:flex;align-items:center;gap:9px;padding:3px 0;}' +
+    '#tdf-settings .tdf-order-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '#tdf-settings .tdf-order-row button{flex:0 0 auto;width:32px;height:28px;margin:0;padding:0;background:#1b1f26;border:1px solid #2e333d;border-radius:6px;color:#dde2e8;font-size:11px;line-height:1;cursor:pointer;touch-action:manipulation;}' +
+    '#tdf-settings .tdf-order-row button:disabled{opacity:.3;cursor:default;}' +
+    // The panel scrolls inside the screen once its two lists outgrow it: 40px from the
+    // top and 8px clear of the bottom, less its own padding and border (22px). dvh is
+    // the screen less the browser's own bars, where the browser knows it.
+    '#tdf-settings{max-height:calc(100vh - 70px);max-height:calc(100dvh - 70px);overflow-y:auto;overscroll-behavior:contain;}';
   var s = document.createElement("style");
   s.id = "torn-menu-right";
   s.textContent = css;
@@ -337,6 +347,7 @@
     d.innerHTML = '<h4>Torn Dual Flyout Private <span class="tdf-x">×</span></h4>' +
       '<label><input type="checkbox" class="tdf-iconsonly-cb"' + (iconsOnly() ? " checked" : "") + "> Icons only (hide menu names)</label>" +
       '<label><input type="checkbox" class="tdf-sticky-cb"' + (sticky() ? " checked" : "") + "> Sticky (keep menu open across pages + scroll while open)</label>" +
+      '<div class="tdf-order"></div>' +
       '<div class="tdf-pins-head">Pinned links (shown under the header)</div>' +
       '<div class="tdf-pins-list"></div>';
     (document.body || html).appendChild(d);
@@ -356,9 +367,10 @@
   function fillPinList(d) {
     var box = d.querySelector(".tdf-pins-list");
     if (!box) return;
-    var oldErr = d.querySelector(".tdf-pins-err");
-    if (oldErr) oldErr.remove();   // a fresh list, a fresh start: the next failed tick says so again
+    // A fresh list, a fresh start: the next failed tick or move says so again.
+    d.querySelectorAll(".tdf-pins-err").forEach(function (n) { n.remove(); });
     ensureDefs();   // the list's icons use the same gradients as the row's
+    fillOrderList(d);
     var links = menuLinks(), pins = loadPins();
     box.textContent = "";
     if (!links.length) {
@@ -379,11 +391,50 @@
         // Show what was saved, not what was tapped: a full localStorage refuses the write.
         var saved = loadPins().indexOf(l.key) !== -1;
         if (saved !== cb.checked) { cb.checked = saved; saveError(box); }
+        fillOrderList(d);
       });
       label.appendChild(cb);
       label.appendChild(iconClone(l));
       label.appendChild(document.createTextNode(l.name));
       box.appendChild(label);
+    });
+  }
+  // The cog panel's "Bar order" list: the pins the bar shows, first at the top, each with
+  // an up and a down arrow. A move redraws only this list, so the tick list below stays
+  // scrolled where it was.
+  function fillOrderList(d) {
+    var box = d.querySelector(".tdf-order");
+    if (!box) return;
+    var shown = pinnedInMenu(loadPins(), menuLinks());
+    box.textContent = "";
+    if (shown.length < 2) return;   // one pin or none: nothing to put in order
+    var head = document.createElement("div");
+    head.className = "tdf-pins-head";
+    head.textContent = "Bar order (top is first)";
+    box.appendChild(head);
+    shown.forEach(function (l, i) {
+      var row = document.createElement("div");
+      row.className = "tdf-order-row";
+      row.setAttribute("data-key", l.key);
+      row.appendChild(iconClone(l));
+      var name = document.createElement("span");
+      name.className = "tdf-order-name";
+      name.textContent = l.name;
+      row.appendChild(name);
+      [["up", -1, "\u25b2"], ["down", 1, "\u25bc"]].forEach(function (a) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "tdf-order-" + a[0];
+        b.textContent = a[2];
+        b.setAttribute("aria-label", "Move " + l.name + " " + a[0]);
+        b.disabled = a[1] < 0 ? i === 0 : i === shown.length - 1;   // the first goes no higher, the last no lower
+        b.addEventListener("click", function () {
+          if (!movePin(l.key, a[1])) saveError(box);
+          fillOrderList(d);   // what was saved, not what was tapped
+        });
+        row.appendChild(b);
+      });
+      box.appendChild(row);
     });
   }
   // The note goes above the list, not in it: the list scrolls, and a note at its top
@@ -402,6 +453,21 @@
     if (on) pins.push(key);
     savePins(pins);
     renderPins();
+  }
+  // One tap on an arrow: the pin swaps places with the next pin the bar shows that way
+  // (dir -1 towards the front, 1 towards the end). A remembered pin that is not in the
+  // menu is stepped over and keeps its place. False if the new order could not be saved.
+  function movePin(key, dir) {
+    var pins = loadPins();
+    var bar = pinnedInMenu(pins, menuLinks()).map(function (l) { return l.key; });
+    var at = bar.indexOf(key), other = at === -1 ? undefined : bar[at + dir];
+    if (other === undefined) return true;   // already first or last: nothing to save
+    var i = pins.indexOf(key), j = pins.indexOf(other);
+    pins[i] = other;
+    pins[j] = key;
+    var ok = savePins(pins);
+    renderPins();
+    return ok;
   }
   var COG_SVG = '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="#8a8f98" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.63-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.13 8.48a.49.49 0 0 0 .12.61l2.03 1.58c-.05.31-.07.62-.07.94 0 .32.02.63.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.14.24.44.32.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.26.42.49.42h4c.23 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.15.06.45-.02.59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.02-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>';
   function positionCog(cog, b) {
@@ -446,6 +512,14 @@
     } catch (e) { return []; }
   }
   function savePins(list) { try { localStorage.setItem(PINS_KEY, JSON.stringify(list)); return true; } catch (e) { return false; } }
+  // The pinned links the menu has, in pin order. A pin whose link has left the menu
+  // stays remembered, just not drawn.
+  function pinnedInMenu(keys, links) {
+    var byKey = Object.create(null), shown = [];
+    links.forEach(function (l) { byKey[l.key] = l; });
+    keys.forEach(function (k) { if (byKey[k]) shown.push(byKey[k]); });
+    return shown;
+  }
   // A pin is remembered by its link with any scheme and host taken off, so a page
   // matches whether Torn writes its address absolute or relative.
   function pinKey(href) { return String(href || "").replace(/^[a-z][a-z0-9+.-]*:\/\/[^\/]*/i, ""); }
@@ -753,10 +827,7 @@
     // pinned ones hidden, ready for when it does, so they never flash up in it.
     if (!links.length) { dropRow(row); setHidden(keys); return; }
     var strip = document.querySelector('#sidebar [class*="userInformationMobile___"]');
-    var byKey = Object.create(null), shown = [];
-    links.forEach(function (l) { byKey[l.key] = l; });
-    // A pin whose link has left the menu stays remembered, just not drawn.
-    keys.forEach(function (k) { if (byKey[k]) shown.push(byKey[k]); });
+    var shown = pinnedInMenu(keys, links);
     // No strip means this is not the phone layout: no row, and then the menu keeps
     // every link, so a pinned link is never missing from both places.
     if (!strip || !shown.length) { dropRow(row); setHidden([]); return; }
@@ -816,8 +887,12 @@
       syncAll();
     });
     early.observe(html, { childList: true, subtree: true });
-    // A page Torn draws without them: the tick takes over from here.
-    window.addEventListener("load", function () { early.disconnect(); });
+    // A page Torn draws without them: the tick takes over a few seconds after the page
+    // has loaded. Not at load itself, as Torn's header app can draw its part after that;
+    // and counted from now when the script starts on a page that has already loaded.
+    var stopEarly = function () { setTimeout(function () { early.disconnect(); }, 10000); };
+    if (document.readyState === "complete") stopEarly();
+    else window.addEventListener("load", stopEarly);
   }
 
   // Torn may draw either of the two afresh: the tick watches the new one.

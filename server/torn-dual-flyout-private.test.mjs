@@ -124,9 +124,11 @@ function page(menu, { strip = true, body = '', panelClass = '' } = {}) {
 // 'header': Torn's header app has drawn #header-wrapper-top, but its sidebar app has not
 // yet drawn the menu button into it or #sidebar into #sidebarroot. 'none': document-start,
 // before even Torn's page source. drawPage(), drawHeader() and drawSidebar() bring the
-// parts in as Torn draws them, Torn's counts already in them.
+// parts in as Torn draws them, Torn's counts already in them; drawSidebar('sidebar') or
+// drawSidebar('button') brings in just one of the sidebar app's two parts. loaded: the
+// script starts after the page has finished loading (document.readyState "complete").
 function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU, failSave = false,
-  session = null, strip = true, body = '', panelClass = '', width = 393, unread = null, drawn = 'all' } = {}) {
+  session = null, strip = true, body = '', panelClass = '', width = 393, unread = null, drawn = 'all', loaded = false } = {}) {
   const { document, Event } = parseHTML(page(menu, { strip, body, panelClass }));
   const btn = document.getElementById('fly-out-menu-button');
   btn.getClientRects = () => [{}];   // laid out: the phone header is showing
@@ -143,11 +145,12 @@ function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU
     parts.top = document.getElementById('header-wrapper-top'); parts.top.remove();
     parts.source = [...document.body.childNodes]; parts.source.forEach((n) => n.remove());
   }
+  if (loaded) Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true });
   const drawPage = () => parts.source.forEach((n) => document.body.appendChild(n));
   const drawHeader = () => document.getElementById('header-root').appendChild(parts.top);
-  const drawSidebar = () => {
-    document.getElementById('header-wrapper-top').appendChild(parts.btn);
-    document.getElementById('sidebarroot').appendChild(parts.sidebar);
+  const drawSidebar = (what = 'both') => {
+    if (what !== 'sidebar') document.getElementById('header-wrapper-top').appendChild(parts.btn);
+    if (what !== 'button') document.getElementById('sidebarroot').appendChild(parts.sidebar);
   };
 
   const store = new Map([['tmr_side', 'r'], ['tdf_iconsonly', iconsOnly ? '1' : '0']]);
@@ -215,7 +218,14 @@ function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU
     cb.checked = on;
     cb.dispatchEvent(new Event('change'));
   }
-  return { document, win, store, touch, tick, mutate, commit, fire, flush, pins, openCog, tickBox, panel, observers,
+  // A tap on a pin's up or down arrow in the cog panel's bar order list. Like a browser
+  // would not, this taps an arrow that is off too.
+  function move(key, dir) {
+    const btn = document.querySelector(`#tdf-settings .tdf-order-row[data-key="${key}"] button.tdf-order-${dir}`);
+    assert.ok(btn, `${dir} arrow for ${key}`);
+    btn.dispatchEvent(new Event('click'));
+  }
+  return { document, win, store, touch, tick, mutate, commit, fire, flush, pins, openCog, tickBox, move, panel, observers,
     drawPage, drawHeader, drawSidebar };
 }
 
@@ -295,14 +305,14 @@ test('the header names the private build, its own update address, and the versio
   const h = header(readFileSync(SRC, 'utf8'));
   assert.equal(field(h, 'name'), 'Torn Dual Flyout Private');
   assert.equal(field(h, 'namespace'), 'RussianRob.torn-dual-flyout.private');
-  assert.equal(field(h, 'version'), '1.6.4');
+  assert.equal(field(h, 'version'), '1.6.5');
   assert.equal(field(h, 'author'), 'RussianRob');
   assert.equal(field(h, 'license'), 'All Rights Reserved');
   assert.equal(field(h, 'downloadURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.user.js');
   assert.equal(field(h, 'updateURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.meta.js');
   assert.equal(field(h, 'grant'), 'none');
   assert.equal(field(h, 'copyright'), null);
-  assert.equal(load().win.__tdfVer, '1.6.4');
+  assert.equal(load().win.__tdfVer, '1.6.5');
 });
 
 test('the .meta.js update file carries the same header as the script', () => {
@@ -329,7 +339,7 @@ test('loaded first, this build keeps the public copy from starting a second time
   const p = load({ order: 'private-first' });
   assert.equal(p.document.querySelectorAll('#torn-menu-right').length, 1);
   assert.equal(p.touch.touchstart.length, 1);
-  assert.equal(p.win.__tdfVer, '1.6.4');
+  assert.equal(p.win.__tdfVer, '1.6.5');
   p.tick();
   assert.equal(p.document.getElementById('tdfp-both-on'), null);
 });
@@ -927,6 +937,155 @@ test('unpinning the last link takes the spacer away with the row', () => {
   assert.equal(spacer(p), null);
 });
 
+// ---- The bar order --------------------------------------------------------------
+// Above the tick list, the cog panel lists the pinned links in the order the bar shows
+// them, first at the top, each with an up and a down arrow: one tap moves a pin one
+// place, and the bar follows at once.
+const orderKeys = (p) => [...p.document.querySelectorAll('#tdf-settings .tdf-order-row')].map((r) => r.getAttribute('data-key'));
+const barKeys = (p) => p.pins().map((a) => a.getAttribute('href'));
+const arrow = (p, key, dir) => p.document.querySelector(`#tdf-settings .tdf-order-row[data-key="${key}"] button.tdf-order-${dir}`);
+
+test('the cog panel lists the pinned links in bar order, first at the top, above the tick list', () => {
+  const p = load({ stored: ['/gym.php', '/events.php', '/forums.php'] });
+  const settings = p.openCog();
+  assert.deepEqual(orderKeys(p), ['/gym.php', '/events.php', '/forums.php']);
+  assert.deepEqual([...settings.querySelectorAll('.tdf-order-name')].map((n) => n.textContent), ['Gym', 'Events', 'Forums']);
+  assert.equal(settings.querySelectorAll('.tdf-order-row .tdf-pin-icon svg').length, 3, 'each with its icon');
+  const order = settings.querySelector('.tdf-order');
+  assert.equal(order.querySelector('.tdf-pins-head').textContent, 'Bar order (top is first)');
+  const kids = [...settings.children];
+  assert.ok(kids.indexOf(order) < kids.indexOf(settings.querySelector('.tdf-pins-list')), 'above the tick list');
+});
+
+test('with fewer than two pins on the bar there is nothing to order, so no order list', () => {
+  for (const stored of [[], ['/gym.php'], ['/gym.php', '/gone.php']]) {
+    const settings = load({ stored }).openCog();
+    assert.equal(settings.querySelectorAll('.tdf-order-row').length, 0, JSON.stringify(stored));
+    assert.doesNotMatch(settings.textContent, /Bar order/, JSON.stringify(stored));
+  }
+});
+
+test('the up arrow moves a pin one place towards the front: saved, and the bar and the list follow at once', () => {
+  const p = load({ stored: ['/gym.php', '/events.php', '/forums.php'] });
+  p.openCog();
+  p.move('/forums.php', 'up');
+  const want = ['/gym.php', '/forums.php', '/events.php'];
+  assert.equal(p.store.get('tdf_pins'), JSON.stringify(want));
+  assert.deepEqual(barKeys(p), want);
+  assert.deepEqual(orderKeys(p), want);
+});
+
+test('the down arrow moves a pin one place towards the end', () => {
+  const p = load({ stored: ['/gym.php', '/events.php', '/forums.php'] });
+  p.openCog();
+  p.move('/gym.php', 'down');
+  const want = ['/events.php', '/gym.php', '/forums.php'];
+  assert.equal(p.store.get('tdf_pins'), JSON.stringify(want));
+  assert.deepEqual(barKeys(p), want);
+  assert.deepEqual(orderKeys(p), want);
+});
+
+test('the first pin\'s up arrow and the last pin\'s down arrow are off, and a tap on either changes nothing', () => {
+  const keys = ['/gym.php', '/events.php', '/forums.php'];
+  const p = load({ stored: keys });
+  p.openCog();
+  assert.deepEqual(keys.flatMap((k) => ['up', 'down'].map((d) => arrow(p, k, d).disabled)), [true, false, false, false, false, true]);
+  p.move('/gym.php', 'up');
+  p.move('/forums.php', 'down');
+  assert.equal(p.store.get('tdf_pins'), JSON.stringify(keys));
+  assert.deepEqual(barKeys(p), keys);
+});
+
+test('a remembered pin that is not in the menu is stepped over: the pins either side of it swap, and it keeps its place', () => {
+  const p = load({ stored: ['/gym.php', '/gone.php', '/events.php'] });
+  p.openCog();
+  assert.deepEqual(orderKeys(p), ['/gym.php', '/events.php']);
+  p.move('/events.php', 'up');
+  assert.equal(p.store.get('tdf_pins'), JSON.stringify(['/events.php', '/gone.php', '/gym.php']));
+  assert.deepEqual(barKeys(p), ['/events.php', '/gym.php']);
+});
+
+test('the last pin on the bar cannot go down, even with a remembered pin after it that is not in the menu', () => {
+  const keys = ['/gym.php', '/events.php', '/gone.php'];
+  const p = load({ stored: keys });
+  p.openCog();
+  assert.equal(arrow(p, '/events.php', 'down').disabled, true);
+  p.move('/events.php', 'down');
+  assert.equal(p.store.get('tdf_pins'), JSON.stringify(keys));
+});
+
+test('an order that could not be saved stays as it was, and a note above the order list says why', () => {
+  const p = load({ stored: ['/gym.php', '/events.php'], failSave: true });
+  const settings = p.openCog();
+  p.move('/events.php', 'up');
+  p.move('/events.php', 'up');
+  assert.equal(p.store.get('tdf_pins'), JSON.stringify(['/gym.php', '/events.php']));
+  assert.deepEqual(barKeys(p), ['/gym.php', '/events.php']);
+  assert.deepEqual(orderKeys(p), ['/gym.php', '/events.php']);
+  const notes = settings.querySelectorAll('.tdf-pins-err');
+  assert.equal(notes.length, 1);   // one note, however many taps fail
+  assert.match(notes[0].textContent, /Could not save/);
+  assert.ok(notes[0].nextElementSibling === settings.querySelector('.tdf-order'), 'the note sits right above the order list');
+  p.tickBox('/forums.php', true);   // a tick that fails too: its own note, above the tick list
+  assert.equal(settings.querySelectorAll('.tdf-pins-err').length, 2);
+  p.openCog(); p.openCog();   // closed and opened again: no old notes
+  assert.equal(p.document.querySelectorAll('#tdf-settings .tdf-pins-err').length, 0);
+});
+
+test('ticking and unticking a link updates the order list at once', () => {
+  const p = load({ stored: ['/gym.php'] });
+  p.openCog();
+  p.tickBox('/events.php', true);
+  assert.deepEqual(orderKeys(p), ['/gym.php', '/events.php']);
+  p.tickBox('/forums.php', true);
+  assert.deepEqual(orderKeys(p), ['/gym.php', '/events.php', '/forums.php']);
+  p.tickBox('/gym.php', false);
+  assert.deepEqual(orderKeys(p), ['/events.php', '/forums.php']);
+  p.tickBox('/events.php', false);
+  assert.deepEqual(orderKeys(p), []);
+});
+
+test('moving a pin leaves the tick list as it is, so it stays scrolled where it was', () => {
+  const p = load({ stored: ['/gym.php', '/events.php'] });
+  const settings = p.openCog();
+  const before = [...settings.querySelectorAll('.tdf-pins-list input')];
+  p.move('/events.php', 'up');
+  const after = [...settings.querySelectorAll('.tdf-pins-list input')];
+  assert.equal(after.length, before.length);
+  assert.ok(after.every((cb, i) => cb === before[i]));
+});
+
+test('each arrow is a plain button that says which pin it moves and which way', () => {
+  const p = load({ stored: ['/gym.php', '/events.php'] });
+  p.openCog();
+  assert.equal(arrow(p, '/gym.php', 'up').getAttribute('aria-label'), 'Move Gym up');
+  assert.equal(arrow(p, '/events.php', 'down').getAttribute('aria-label'), 'Move Events down');
+  assert.equal(arrow(p, '/gym.php', 'up').textContent, '\u25b2');
+  assert.equal(arrow(p, '/gym.php', 'down').textContent, '\u25bc');
+  assert.equal(arrow(p, '/gym.php', 'down').getAttribute('type'), 'button');
+});
+
+test('the arrows are big enough to tap, quick taps are not taken for a zoom, and an arrow that is off is dimmed', () => {
+  const p = load({ stored: ['/gym.php', '/events.php'] });
+  p.openCog();
+  const css = styledBy(p.document, arrow(p, '/gym.php', 'down'));
+  assert.equal(css.width, '32px');
+  assert.equal(css.height, '28px');
+  assert.equal(css['touch-action'], 'manipulation');
+  assert.equal(cascade(p.document, arrow(p, '/gym.php', 'up'), 'opacity'), '.3');
+  assert.notEqual(cascade(p.document, arrow(p, '/gym.php', 'down'), 'opacity'), '.3');
+});
+
+test('the cog panel scrolls inside the screen once its lists outgrow it, its bottom edge on the screen', () => {
+  const p = load();
+  const css = styledBy(p.document, p.openCog());
+  // 40px from the top and 8px clear of the bottom, less its own 10px padding and 1px
+  // border at each end: the height is the content's, without them.
+  assert.equal(css['max-height'], 'calc(100dvh - 70px)');
+  assert.equal(css['overflow-y'], 'auto');
+  assert.equal(css['overscroll-behavior'], 'contain');
+});
+
 // ---- Pinned links leave the menu ----------------------------------------------
 const hidden = (p, el) => cascade(p.document, el, 'display') === 'none';
 const wrapOf = (p, id) => p.document.getElementById(id).parentNode;   // the account icon's own box
@@ -1216,10 +1375,28 @@ test('when the script starts after Torn has drawn its header and sidebar, it nev
   assert.equal(watchesPage(p), false);
 });
 
-test('on a page where Torn draws no header or sidebar, the whole-page watch stops once the page has loaded', () => {
+test('on a page where Torn draws no header or sidebar, the whole-page watch stops a few seconds after the page has loaded', () => {
   const p = load({ drawn: 'none' });
-  assert.ok(watchesPage(p));
   p.fire('load');
+  assert.ok(watchesPage(p), 'not at load itself');
+  p.flush();
+  assert.equal(watchesPage(p), false);
+});
+
+test('a header Torn draws after the page has loaded is still watched from the moment it is drawn', () => {
+  const p = load({ stored: ['/events.php'], drawn: 'none' });
+  p.drawPage(); p.commit(p.document.body);
+  p.fire('load');
+  p.drawSidebar('sidebar'); p.commit(byId(p, 'sidebarroot'));         // the sidebar app draws #sidebar: no header yet
+  p.drawHeader(); p.commit(byId(p, 'header-root'));                   // Torn's header app, after the page has loaded
+  p.drawSidebar('button'); p.commit(byId(p, 'header-wrapper-top'));   // then the sidebar app's button, into it
+  assert.equal(menuBtn(p).classList.contains('green'), false);
+});
+
+test('when the script starts after the page has loaded, the whole-page watch still stops a few seconds later', () => {
+  const p = load({ drawn: 'none', loaded: true });
+  assert.ok(watchesPage(p));
+  p.flush();
   assert.equal(watchesPage(p), false);
 });
 
