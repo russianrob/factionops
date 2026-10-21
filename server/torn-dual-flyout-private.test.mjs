@@ -192,7 +192,10 @@ function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU
 
   const flush = () => { while (timeouts.length) timeouts.shift()(); };
   const tick = () => { intervals.slice().forEach((fn) => fn()); flush(); };   // one round of the timers
-  const mutate = () => { observers.slice().forEach((o) => o.cb([])); flush(); };      // Torn changed the DOM
+  // Torn changed something somewhere: every observer runs, then every timer. That is more
+  // than a browser would run, so it only shows that nothing changes, or sets a page up. To
+  // show that a change is followed, name what Torn changed with commit(), then flush().
+  const mutate = () => { observers.slice().forEach((o) => o.cb([])); flush(); };
   // Torn's React has just committed a change to the children, class or text of the nodes
   // named. Only the observers that would hear of it run, as in a browser, before the page
   // is painted again and before any timer: one watching that node, or a node it is inside
@@ -528,7 +531,7 @@ test('an unread Messages / Events / Awards pin is Torn\'s green: name, count and
   assert.equal(c(messages, 'color'), '#999');
   // Torn marks Messages unread: green on the next redraw.
   p.document.getElementById('nav-messages').classList.add('positive___Jcxif');
-  p.mutate();
+  p.commit(p.document.getElementById('nav-messages')); p.flush();
   assert.match(p.pins()[1].className, /tdf-pin-avail/);
 });
 
@@ -612,7 +615,7 @@ test('the bar follows the player\'s status live: out of jail, back to Torn\'s gr
   p.tick();
   assert.match(p.document.getElementById('tdf-pins').className, /tdf-pins-jail/);
   p.panel.classList.remove('inJail___vh7Jg');
-  p.mutate();
+  p.commit(p.panel); p.flush();
   const row = p.document.getElementById('tdf-pins');
   assert.doesNotMatch(row.className, /tdf-pins-jail/);
   assert.equal(cascade(p.document, row, 'background'), '#333');
@@ -744,7 +747,7 @@ test('a pin follows the menu live: a new count and the attention tint reach the 
   msg.setAttribute('aria-label', 'Messages, 2 new');
   msg.insertAdjacentHTML('beforeend', '<span class="amount___vyASa">2</span>');
   p.document.getElementById('nav-gym').classList.add('attention___DT8nN');
-  p.mutate();   // Torn re-drew the menu; no timer tick yet
+  p.commit(msg, p.document.getElementById('nav-gym')); p.flush();   // Torn re-drew the menu; no timer tick yet
   const [m, g] = p.pins();
   assert.equal(m.querySelector('.tdf-pin-badge').textContent, '2');
   assert.equal(m.querySelector('.tdf-pin-name').textContent, 'Messages');
@@ -1069,12 +1072,12 @@ test('unpinning hands the button back to Torn exactly as Torn drew it, with the 
 test('the button follows the menu live: a new count, the green going when only pinned links are unread, and coming back', () => {
   const p = load({ stored: ['/messages.php'], unread: { messages: 1 } });
   p.tick();
-  setUnread(p.document, { events: 6 }); p.mutate();
+  setUnread(p.document, { events: 6 }); p.commit(menuBtn(p), p.panel); p.flush();
   assert.equal(countShown(p), '"6"');
-  setUnread(p.document, { events: 0 }); p.mutate();   // only the pinned Messages is unread now
+  setUnread(p.document, { events: 0 }); p.commit(menuBtn(p), p.panel); p.flush();   // only the pinned Messages is unread now
   assert.equal(menuBtn(p).classList.contains('green'), false);
   assert.equal(countShown(p), '');
-  setUnread(p.document, { awards: 2 }); p.mutate();   // an award comes in; Torn's button was green all along
+  setUnread(p.document, { awards: 2 }); p.commit(menuBtn(p), p.panel); p.flush();   // an award comes in; Torn's button was green all along
   assert.ok(menuBtn(p).classList.contains('green'));
   assert.equal(countShown(p), '"2"');
 });
@@ -1252,4 +1255,15 @@ test('the whole page stays watched until Torn has drawn both its header and #sid
   p.document.body.insertAdjacentHTML('beforeend', '<div id="header-root"><div id="header-wrapper-top" class="header-wrapper-top"></div></div>');
   p.commit(p.document.body);
   assert.ok(watchesPage(p));
+});
+
+test('after a document-start load, the row follows the menu live, as on a page the script found already drawn', () => {
+  const p = load({ stored: ['/events.php', '/gym.php'], drawn: 'none' });
+  p.drawPage(); p.commit(p.document.body);
+  p.drawHeader(); p.commit(byId(p, 'header-root'));
+  p.drawSidebar(); p.commit(byId(p, 'header-wrapper-top'), byId(p, 'sidebarroot'));
+  const gym = p.document.getElementById('nav-gym');
+  gym.classList.add('attention___DT8nN');   // Torn tints Gym: a change inside the menu only
+  p.commit(gym); p.flush();
+  assert.match(p.pins()[1].className, /tdf-pin-attn/);
 });
