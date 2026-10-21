@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout Private
 // @namespace    RussianRob.torn-dual-flyout.private
-// @version      1.6.1
+// @version      1.6.2
 // @description  Private test build of Torn Dual Flyout: the two-way swipe menu plus a row of pinned menu links under Torn's phone header. Run this OR the public Torn Dual Flyout, not both.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout-private.user.js
@@ -40,7 +40,7 @@
   // if the public one won, this build stays off and says why.
   if (window.__tornMenuRight) { showBothOnNote(); return; }
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.6.1";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.6.2";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
@@ -103,10 +103,12 @@
     'body.dark-mode #tdf-pins.tdf-pins-jail{background:#242415;}' +
     '#tdf-pins.tdf-pins-hospital{background:#3b3b3b;}' +
     'body[data-abroad="true"] #tdf-pins:not(.tdf-pins-jail):not(.tdf-pins-hospital){background:#26333f;}' +
-    // A pin is one of Torn's slides (a ninth of the width, 2px either side) holding the
-    // same nesting as Torn's link: a 40px row, then the link with its icon and name.
-    '#tdf-pins .tdf-pin{position:relative;display:block;box-sizing:border-box;flex:0 0 calc(100% / 9);width:calc(100% / 9);' +
-    'max-width:calc(100% / 9);padding:0 2px;text-align:center;color:#999;font-size:6px;font-weight:700;text-transform:uppercase;' +
+    // A pin is one of Torn's slides (Torn's share of the width for this screen, see
+    // perLine; 2px either side) holding the same nesting as Torn's link: a 40px row, then
+    // the link with its icon and name.
+    '#tdf-pins .tdf-pin{position:relative;display:block;box-sizing:border-box;flex:0 0 calc(100% / var(--tdf-cols, 9));' +
+    'width:calc(100% / var(--tdf-cols, 9));max-width:calc(100% / var(--tdf-cols, 9));padding:0 2px;text-align:center;color:#999;' +
+    'font-size:6px;font-weight:700;text-transform:uppercase;' +
     'text-decoration:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;}' +
     '#tdf-pins .tdf-pin-row{display:block;position:relative;max-width:40px;margin:0 auto;}' +
     '#tdf-pins .tdf-pin-link{display:flex;flex-direction:column;align-items:center;margin:4px 0;padding:0;}' +
@@ -115,15 +117,20 @@
     '#tdf-pins .tdf-pin-name{max-width:100%;overflow:hidden;text-overflow:ellipsis;}' +
     '#tdf-pins .tdf-pin-badge{position:absolute;top:-1px;right:-3px;width:14px;text-align:center;letter-spacing:-1px;color:#74c0fc;' +
     'font:700 10px/8px Arial,Helvetica,sans-serif;}' +
-    // Names, as Torn's bar colours them: the page you are on is white, Torn's blue
-    // "something here" is blue (paler on the page you are on), and in jail, in hospital
-    // or abroad only the names left plain take that status's tint.
+    // Names, as Torn's bar colours them: unread Messages, Events or Awards are green, name
+    // and count (the name a lighter green in hospital), the page you are on is white,
+    // Torn's blue "something here" is blue (paler on the page you are on), and in jail, in
+    // hospital or abroad only the names left plain take that status's tint.
+    '#tdf-pins .tdf-pin.tdf-pin-avail{color:#85b200;}' +
+    '#tdf-pins .tdf-pin.tdf-pin-avail .tdf-pin-badge{color:#85b200;}' +
     '#tdf-pins .tdf-pin.tdf-pin-on{color:#fff;}' +
     '#tdf-pins .tdf-pin.tdf-pin-attn{color:#74c0fc;}' +
     '#tdf-pins .tdf-pin.tdf-pin-attn.tdf-pin-on{color:#d0ebff;}' +
-    '#tdf-pins .tdf-pin.tdf-pin-jail:not(.tdf-pin-on):not(.tdf-pin-attn){color:#bdbdae;}' +
-    '#tdf-pins .tdf-pin.tdf-pin-hospital:not(.tdf-pin-on):not(.tdf-pin-attn){color:#ddd;}' +
-    'body[data-abroad="true"] #tdf-pins .tdf-pin:not(.tdf-pin-jail):not(.tdf-pin-hospital):not(.tdf-pin-on):not(.tdf-pin-attn){color:#8fa6bc;}' +
+    '#tdf-pins .tdf-pin.tdf-pin-jail:not(.tdf-pin-on):not(.tdf-pin-attn):not(.tdf-pin-avail){color:#bdbdae;}' +
+    '#tdf-pins .tdf-pin.tdf-pin-hospital:not(.tdf-pin-on):not(.tdf-pin-attn):not(.tdf-pin-avail){color:#ddd;}' +
+    '#tdf-pins .tdf-pin.tdf-pin-hospital.tdf-pin-avail{color:#a3d900;}' +
+    'body[data-abroad="true"] #tdf-pins .tdf-pin:not(.tdf-pin-jail):not(.tdf-pin-hospital):not(.tdf-pin-on):not(.tdf-pin-attn)' +
+    ':not(.tdf-pin-avail){color:#8fa6bc;}' +
     // Torn's blue dot on a highlighted link.
     '#tdf-pins .tdf-pin.tdf-pin-attn::after{content:"";display:block;position:absolute;top:2px;right:4px;width:6px;height:6px;' +
     'border-radius:100%;background:linear-gradient(#74c0fc,#1c7ed6);box-shadow:0 1px rgba(0,0,0,.25);}' +
@@ -134,6 +141,10 @@
     // scroll into view without one.
     '.tdf-pin-icon svg{max-width:34px;max-height:34px;overflow:visible;fill:url(#tdf-g-regular);filter:drop-shadow(0 0 1.3px #000);transform:translateZ(0);}' +
     '#tdf-pins .tdf-pin.tdf-pin-on .tdf-pin-icon svg{fill:url(#tdf-g-regular-on);filter:drop-shadow(0 0 1px rgba(255,255,255,.5));}' +
+    '#tdf-pins .tdf-pin.tdf-pin-avail .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-jail.tdf-pin-avail .tdf-pin-icon svg{' +
+    'fill:url(#tdf-g-green);filter:drop-shadow(0 0 1.2px rgba(133,178,0,.44));}' +
+    '#tdf-pins .tdf-pin.tdf-pin-hospital.tdf-pin-avail .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-travel.tdf-pin-avail .tdf-pin-icon svg{' +
+    'fill:url(#tdf-g-hospital-green);filter:none;}' +
     '#tdf-pins .tdf-pin.tdf-pin-attn .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-hospital.tdf-pin-attn .tdf-pin-icon svg,' +
     '#tdf-pins .tdf-pin.tdf-pin-jail.tdf-pin-attn .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-travel.tdf-pin-attn .tdf-pin-icon svg{fill:url(#tdf-g-blue);}' +
     '#tdf-pins .tdf-pin.tdf-pin-attn.tdf-pin-on .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-hospital.tdf-pin-attn.tdf-pin-on .tdf-pin-icon svg,' +
@@ -340,6 +351,8 @@
   function fillPinList(d) {
     var box = d.querySelector(".tdf-pins-list");
     if (!box) return;
+    var oldErr = d.querySelector(".tdf-pins-err");
+    if (oldErr) oldErr.remove();   // a fresh list, a fresh start: the next failed tick says so again
     ensureDefs();   // the list's icons use the same gradients as the row's
     var links = menuLinks(), pins = loadPins();
     box.textContent = "";
@@ -368,12 +381,15 @@
       box.appendChild(label);
     });
   }
+  // The note goes above the list, not in it: the list scrolls, and a note at its top
+  // would be out of sight after a tick further down.
   function saveError(box) {
-    if (box.querySelector(".tdf-pins-err")) return;
+    var prev = box.previousElementSibling;
+    if (prev && prev.classList.contains("tdf-pins-err")) return;
     var err = document.createElement("div");
     err.className = "tdf-pins-err";
     err.textContent = "Could not save: this browser's storage for Torn is full.";
-    box.insertBefore(err, box.firstChild);
+    box.parentNode.insertBefore(err, box);
   }
   // A fresh tick goes to the end of the list: pins show in the order they were ticked.
   function setPinned(key, on) {
@@ -452,14 +468,19 @@
       // member count is listAmount___, left out on purpose (a list size is not news).
       var countEl = a.querySelector('[class*="amount___"]');
       var row = a.closest('[id^="nav-"]');
+      // The page the player is on: Torn marks an area or list row active___, and for
+      // the Messages / Events / Awards icons the wrapper round the icon's link.
+      var on = isActive(a) || isActive(row) || isActive(a.parentNode);
       out.push({
         key: key, href: href, name: name || key,
         navId: row ? row.id.slice(4) : "",   // "gym" for #nav-gym
         count: countEl ? countEl.textContent.trim() : "",
         attn: !!row && /attention___/.test(row.className),   // Torn's blue "something here" tint
-        // The page the player is on: Torn marks an area or list row active___, and for
-        // the Messages / Events / Awards icons the wrapper round the icon's link.
-        on: isActive(a) || isActive(row) || isActive(a.parentNode),
+        on: on,
+        // Unread Messages, Events or Awards: Torn marks the icon's link positive___, and
+        // its top bar shows them green, except on that link's own page, which shows as
+        // the page you are on. Area rows have counts too, but are never green.
+        avail: !on && /(^|\s)positive___/.test(a.className),
         svg: a.querySelector("svg")
       });
     }
@@ -526,7 +547,8 @@
   // Torn's: the menu build defines only some of them, and only while it is drawn.
   var GRADIENTS = [["regular", "#888888", "#666666"], ["regular-on", "#DDDDDD", "#AAAAAA"], ["blue", "#74C0FC", "#1C7ED6"],
     ["blue-on", "#E7F5FF", "#74C0FC"], ["jail", "#BDBCAF", "#8A8973"], ["hospital", "#DDDDDD", "#AAAAAA"],
-    ["travel", "#8FA6BC", "#5F7F9F"], ["white", "#FFFFFF", "#FFFFFF"]];
+    ["travel", "#8FA6BC", "#5F7F9F"], ["white", "#FFFFFF", "#FFFFFF"], ["green", "#AFC372", "#798D3C"],
+    ["hospital-green", "#C9DD8C", "#9BBD36"]];
   function ensureDefs() {
     if (document.getElementById("tdf-pins-defs") || !document.body) return;
     var d = document.createElement("div");
@@ -563,7 +585,7 @@
   // ("jail", "hospital", "travel" or ""), which tints the pin as it tints Torn's bar.
   function pinEl(link, label, status) {
     var a = document.createElement("a");
-    a.className = "tdf-pin" + (link.attn ? " tdf-pin-attn" : "") + (link.on ? " tdf-pin-on" : "") +
+    a.className = "tdf-pin" + (link.attn ? " tdf-pin-attn" : "") + (link.on ? " tdf-pin-on" : "") + (link.avail ? " tdf-pin-avail" : "") +
       (status ? " tdf-pin-" + status : "") + (link.svg ? "" : " tdf-pin-noicon");
     a.setAttribute("href", link.href);
     // Read out the way Torn's own link reads, full name and all: "Events, 4 new".
@@ -586,6 +608,15 @@
     row.appendChild(inner);
     a.appendChild(row);
     return a;
+  }
+  // How many links Torn's top bar fits on a line: its own table, keyed by the screen's
+  // width (the first width at or above it), and 20 on anything wider.
+  var PER_LINE = [[358, 8], [400, 9], [450, 10], [500, 11], [550, 12], [595, 13], [640, 14], [690, 15], [730, 16], [770, 17],
+    [810, 18], [850, 19]];
+  function perLine() {
+    var w = window.innerWidth || document.documentElement.clientWidth, i;
+    for (i = 0; i < PER_LINE.length; i++) if (w <= PER_LINE[i][0]) return PER_LINE[i][1];
+    return 20;
   }
   // Torn re-draws the menu as counts change: follow it within a beat, one re-draw per
   // burst of changes. The row lives outside the panel, so drawing it never feeds back here.
@@ -689,11 +720,14 @@
       row.setAttribute("aria-label", "Pinned links");
     }
     if (row.parentNode !== strip.parentNode || row.nextSibling !== strip) strip.parentNode.insertBefore(row, strip);
+    // Read on every draw, so a turn of the phone is followed within a tick.
+    var cols = String(perLine());
+    if (row.style.getPropertyValue("--tdf-cols") !== cols) row.style.setProperty("--tdf-cols", cols);
     ensureDefs();
     var status = userStatus(), labels = shown.map(shortName);
     // Rebuild only when something a pin shows has changed, so the 800ms tick never
     // swaps a pin out from under a finger mid-tap.
-    var sig = JSON.stringify([status].concat(shown.map(function (l, i) { return [l.key, labels[i], l.name, l.count, l.attn, l.on, !!l.svg]; })));
+    var sig = JSON.stringify([status].concat(shown.map(function (l, i) { return [l.key, labels[i], l.name, l.count, l.attn, l.on, l.avail, !!l.svg]; })));
     if (row.__tdfSig !== sig) {
       row.__tdfSig = sig;
       row.className = status ? "tdf-pins-" + status : "";

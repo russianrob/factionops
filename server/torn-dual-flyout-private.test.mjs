@@ -69,9 +69,9 @@ function page(menu, { strip = true, body = '', panelClass = '' } = {}) {
 // 'public-first' or 'private-first' (both copies installed, loading in that order).
 // stored: what tdf_pins holds (an array, or a raw string to store as is).
 // failSave: localStorage refuses to save tdf_pins (full). session: what Torn keeps in
-// sessionStorage. strip, body, panelClass: see page().
+// sessionStorage. strip, body, panelClass: see page(). width: the screen's width.
 function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU, failSave = false,
-  session = null, strip = true, body = '', panelClass = '' } = {}) {
+  session = null, strip = true, body = '', panelClass = '', width = 393 } = {}) {
   const { document, Event } = parseHTML(page(menu, { strip, body, panelClass }));
   const btn = document.getElementById('fly-out-menu-button');
   btn.getClientRects = () => [{}];   // laid out: the phone header is showing
@@ -99,7 +99,7 @@ function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU
   const intervals = [], timeouts = [], observers = [];
   // Records what each observer was told to watch.
   class MO { constructor(cb) { this.cb = cb; observers.push(this); } observe(target, opts) { this.target = target; this.opts = opts; } disconnect() {} }
-  const win = { innerWidth: 393, addEventListener() {} };
+  const win = { innerWidth: width, addEventListener() {} };
   const getComputedStyle = () => ({});   // the swipe code asks; nothing here overflows
   const run = (file) => new Function('window', 'document', 'localStorage', 'sessionStorage', 'MutationObserver', 'getComputedStyle',
     'setInterval', 'setTimeout', 'clearInterval', readFileSync(file, 'utf8'))(
@@ -204,14 +204,14 @@ test('the header names the private build, its own update address, and the versio
   const h = header(readFileSync(SRC, 'utf8'));
   assert.equal(field(h, 'name'), 'Torn Dual Flyout Private');
   assert.equal(field(h, 'namespace'), 'RussianRob.torn-dual-flyout.private');
-  assert.equal(field(h, 'version'), '1.6.1');
+  assert.equal(field(h, 'version'), '1.6.2');
   assert.equal(field(h, 'author'), 'RussianRob');
   assert.equal(field(h, 'license'), 'All Rights Reserved');
   assert.equal(field(h, 'downloadURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.user.js');
   assert.equal(field(h, 'updateURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.meta.js');
   assert.equal(field(h, 'grant'), 'none');
   assert.equal(field(h, 'copyright'), null);
-  assert.equal(load().win.__tdfVer, '1.6.1');
+  assert.equal(load().win.__tdfVer, '1.6.2');
 });
 
 test('the .meta.js update file carries the same header as the script', () => {
@@ -238,7 +238,7 @@ test('loaded first, this build keeps the public copy from starting a second time
   const p = load({ order: 'private-first' });
   assert.equal(p.document.querySelectorAll('#torn-menu-right').length, 1);
   assert.equal(p.touch.touchstart.length, 1);
-  assert.equal(p.win.__tdfVer, '1.6.1');
+  assert.equal(p.win.__tdfVer, '1.6.2');
   p.tick();
   assert.equal(p.document.getElementById('tdfp-both-on'), null);
 });
@@ -292,6 +292,8 @@ test('the icon colours are Torn\'s own top-bar gradients, defined once in the pa
   assert.deepEqual(stops('hospital'), ['#DDDDDD', '#AAAAAA']);
   assert.deepEqual(stops('travel'), ['#8FA6BC', '#5F7F9F']);
   assert.deepEqual(stops('white'), ['#FFFFFF', '#FFFFFF']);
+  assert.deepEqual(stops('green'), ['#AFC372', '#798D3C']);
+  assert.deepEqual(stops('hospital-green'), ['#C9DD8C', '#9BBD36']);
 });
 
 test('a pin shows the menu\'s unread count, but not the size of a list', () => {
@@ -303,7 +305,7 @@ test('a pin shows the menu\'s unread count, but not the size of a list', () => {
   assert.equal(targets.querySelector('.tdf-pin-badge'), null);
 });
 
-test('nine pins to a line from the left, the rest wrap onto the next line, and nothing scrolls sideways', () => {
+test('pins share a line the way Torn\'s bar shares it, from the left; the rest wrap onto the next line, and nothing scrolls sideways', () => {
   const p = load({ stored: ['/gym.php'] });
   p.tick();
   const row = p.document.getElementById('tdf-pins'), pin = p.pins()[0];
@@ -311,7 +313,18 @@ test('nine pins to a line from the left, the rest wrap onto the next line, and n
   assert.equal(cascade(p.document, row, 'flex-wrap'), 'wrap');
   assert.equal(cascade(p.document, row, 'justify-content'), 'flex-start');
   for (const prop of ['overflow', 'overflow-x']) assert.doesNotMatch(cascade(p.document, row, prop) || '', /auto|scroll/);
-  for (const prop of ['flex', 'width', 'max-width']) assert.match(cascade(p.document, pin, prop) || '', /calc\(100% \/ 9\)/, prop);
+  for (const prop of ['flex', 'width', 'max-width']) assert.match(cascade(p.document, pin, prop) || '', /calc\(100% \/ var\(--tdf-cols, 9\)\)/, prop);
+  assert.equal(row.style.getPropertyValue('--tdf-cols'), '9');   // a 393px phone: nine to a line
+});
+
+test('how many pins fit on a line follows Torn\'s own table for the screen width, and follows a turn of the phone', () => {
+  const cols = (width) => { const p = load({ stored: ['/gym.php'], width }); p.tick(); return p.document.getElementById('tdf-pins').style.getPropertyValue('--tdf-cols'); };
+  assert.deepEqual([320, 358, 375, 393, 400, 401, 414, 430, 450, 451, 768, 1024].map(cols), ['8', '8', '9', '9', '9', '10', '10', '10', '10', '11', '17', '20']);
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  p.win.innerWidth = 430;   // turned, or a bigger phone's width settling
+  p.tick();
+  assert.equal(p.document.getElementById('tdf-pins').style.getPropertyValue('--tdf-cols'), '10');
 });
 
 test('the row is Torn\'s phone top bar: its dark bar, black edges and highlight lines', () => {
@@ -400,8 +413,10 @@ test('on the Messages page its pin is white too: Torn marks the wrapper round th
   assert.doesNotMatch(targets.className, /tdf-pin-on/);   // its row is activated___ (opened), not active___
 });
 
-test('counts are Torn\'s blue numbers at the top right of the icon', () => {
-  const p = load({ stored: ['/events.php'] });
+test('an area\'s count is Torn\'s blue number at the top right of the icon', () => {
+  const jail = areaRow('jail', '/jail.php', 'Jail').replace('Jail</span>', 'Jail</span><span class="amount___vyASa">12</span>');
+  const menu = MENU.replace(areaRow('forums', '/forums.php', 'Forums'), areaRow('forums', '/forums.php', 'Forums') + jail);
+  const p = load({ stored: ['/jail.php'], menu });
   p.tick();
   const badge = p.pins()[0].querySelector('.tdf-pin-badge'), c = (prop) => cascade(p.document, badge, prop);
   assert.equal(badge.parentNode.className, 'tdf-pin-row');
@@ -410,6 +425,43 @@ test('counts are Torn\'s blue numbers at the top right of the icon', () => {
   assert.equal(c('top'), '-1px');
   assert.equal(c('right'), '-3px');
   assert.equal(c('font'), '700 10px/8px Arial,Helvetica,sans-serif');
+});
+
+test('an unread Messages / Events / Awards pin is Torn\'s green: name, count and icon; a read one stays grey', () => {
+  const p = load({ stored: ['/events.php', '/messages.php'] });
+  p.tick();
+  const [events, messages] = p.pins(), c = (el, prop) => cascade(p.document, el, prop);
+  assert.match(events.className, /tdf-pin-avail/);
+  assert.equal(c(events, 'color'), '#85b200');
+  assert.equal(c(events.querySelector('.tdf-pin-badge'), 'color'), '#85b200');
+  assert.equal(c(events.querySelector('svg'), 'fill'), 'url(#tdf-g-green)');
+  assert.equal(c(events.querySelector('svg'), 'filter'), 'drop-shadow(0 0 1.2px rgba(133,178,0,.44))');
+  assert.doesNotMatch(messages.className, /tdf-pin-avail/);
+  assert.equal(c(messages, 'color'), '#999');
+  // Torn marks Messages unread: green on the next redraw.
+  p.document.getElementById('nav-messages').classList.add('positive___Jcxif');
+  p.mutate();
+  assert.match(p.pins()[1].className, /tdf-pin-avail/);
+});
+
+test('an unread pin stays green in jail and abroad, takes Torn\'s lighter green in hospital, and is white on its own page', () => {
+  // Name colour, icon fill, icon shadow and count colour of a pinned Events with 4 new.
+  const ev = (opts, before) => {
+    const p = load({ stored: ['/events.php'], ...opts });
+    if (before) before(p);
+    p.tick();
+    const a = p.pins()[0], svg = a.querySelector('svg');
+    return [cascade(p.document, a, 'color'), cascade(p.document, svg, 'fill'), cascade(p.document, svg, 'filter'), cascade(p.document, a.querySelector('.tdf-pin-badge'), 'color')];
+  };
+  const green = ['url(#tdf-g-green)', 'drop-shadow(0 0 1.2px rgba(133,178,0,.44))'];
+  assert.deepEqual(ev({ panelClass: 'inJail___vh7Jg' }), ['#85b200', ...green, '#85b200']);
+  assert.deepEqual(ev({ body: 'data-abroad="true"' }), ['#85b200', ...green, '#85b200']);
+  assert.deepEqual(ev({ panelClass: 'inHospital___bjnEe' }), ['#a3d900', 'url(#tdf-g-hospital-green)', 'none', '#85b200']);
+  const travel = MENU.replace(/defaultIcon___GnL0d mobile___nUzYc/g, 'defaultIcon___GnL0d mobile___nUzYc travel___VRg89');
+  assert.deepEqual(ev({ menu: travel, body: 'data-abroad="true"' }), ['#85b200', 'url(#tdf-g-hospital-green)', 'none', '#85b200']);
+  // On the Events page Torn shows the page you are on instead: white, with a blue count.
+  assert.deepEqual(ev({}, (p) => p.document.getElementById('nav-events').parentNode.classList.add('active___Xsu5j')),
+    ['#fff', 'url(#tdf-g-regular-on)', 'drop-shadow(0 0 1px rgba(255,255,255,.5))', '#74c0fc']);
 });
 
 test('in jail, in hospital and abroad the bar takes Torn\'s colours', () => {
@@ -704,13 +756,21 @@ test('the cog panel\'s pin list gives each icon a layer of its own, as the menu 
   assert.match(cascade(p.document, p.pins()[0].querySelector('svg'), 'transform') || '', /translateZ\(0\)/);
 });
 
-test('a pin that could not be saved is not left looking ticked, and the list says why', () => {
+test('a pin that could not be saved is not left looking ticked, and a note above the list says why', () => {
   const p = load({ failSave: true });
   const settings = p.openCog();
   p.tickBox('/gym.php', true);
+  p.tickBox('/forums.php', true);
   assert.equal(settings.querySelector('input[data-key="/gym.php"]').checked, false);
   assert.equal(p.document.getElementById('tdf-pins'), null);
-  assert.match(settings.querySelector('.tdf-pins-err').textContent, /Could not save/);
+  const notes = settings.querySelectorAll('.tdf-pins-err');
+  assert.equal(notes.length, 1);   // one note, however many ticks fail
+  assert.match(notes[0].textContent, /Could not save/);
+  // Above the list, not in it: the list scrolls, and a note at its top would be out of
+  // sight after a tick further down.
+  assert.ok(notes[0].nextElementSibling === settings.querySelector('.tdf-pins-list'), 'the note sits right above the list');
+  p.openCog(); p.openCog();   // closed and opened again: a fresh list, no old note
+  assert.equal(p.document.querySelectorAll('#tdf-settings .tdf-pins-err').length, 0);
 });
 
 test('with nothing pinned, the timer does not even read the menu', () => {
