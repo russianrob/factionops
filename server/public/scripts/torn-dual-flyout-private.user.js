@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout Private
 // @namespace    RussianRob.torn-dual-flyout.private
-// @version      1.6.5
+// @version      1.6.6
 // @description  Private test build of Torn Dual Flyout: the two-way swipe menu plus a row of pinned menu links under Torn's phone header. Run this OR the public Torn Dual Flyout, not both.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout-private.user.js
@@ -40,7 +40,7 @@
   // if the public one won, this build stays off and says why.
   if (window.__tornMenuRight) { showBothOnNote(); return; }
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.6.5";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.6.6";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
@@ -160,7 +160,7 @@
     '#tdf-pins .tdf-pin.tdf-pin-hospital .tdf-pin-icon svg{fill:url(#tdf-g-hospital);filter:drop-shadow(0 1px 1.3px #000);}' +
     '#tdf-pins .tdf-pin.tdf-pin-hospital.tdf-pin-on .tdf-pin-icon svg,#tdf-pins .tdf-pin.tdf-pin-travel.tdf-pin-on .tdf-pin-icon svg{fill:url(#tdf-g-white);filter:none;}' +
     '#tdf-pins .tdf-pin.tdf-pin-travel .tdf-pin-icon svg{fill:url(#tdf-g-travel);filter:drop-shadow(0 1px 1.3px #000);}' +
-    '#tdf-settings .tdf-pin-icon svg{max-height:23px;}' +
+    '#tdf-settings .tdf-pin-icon svg,.tdf-order-ghost .tdf-pin-icon svg{max-height:23px;}' +
     // Icons only hides the names, as it does in the menu; a pin with no icon keeps its
     // name, so it is never an empty box.
     'html.tdf-iconsonly #tdf-pins .tdf-pin:not(.tdf-pin-noicon) .tdf-pin-name{display:none;}' +
@@ -170,12 +170,25 @@
     '#tdf-settings .tdf-pins-list label{padding:4px 0;}' +
     '#tdf-settings .tdf-pins-none{color:#8a8f98;padding:4px 0;}' +
     '#tdf-settings .tdf-pins-err{color:#fca5a5;padding:4px 0;}' +
-    // The bar order list: a pin's icon and name, then its two arrows, each big enough to
-    // tap, and quick to tap again (no wait to see if it is a double-tap zoom).
-    '#tdf-settings .tdf-order-row{display:flex;align-items:center;gap:9px;padding:3px 0;}' +
-    '#tdf-settings .tdf-order-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
-    '#tdf-settings .tdf-order-row button{flex:0 0 auto;width:32px;height:28px;margin:0;padding:0;background:#1b1f26;border:1px solid #2e333d;border-radius:6px;color:#dde2e8;font-size:11px;line-height:1;cursor:pointer;touch-action:manipulation;}' +
-    '#tdf-settings .tdf-order-row button:disabled{opacity:.3;cursor:default;}' +
+    // The bar order list keeps its heading's and tiles' margins inside it, so its height
+    // is all the room it takes, with or without room kept for unticked pins (keepPlace).
+    '#tdf-settings .tdf-order{display:flow-root;}' +
+    // The bar order list: one tile per pin, as Torn's own Navigation settings draws its
+    // links (its preferences build, dark mode, 2026-10-21): a dark rounded tile 32px tall
+    // and 2px from the next, the icon in a 34 x 23 box, then the name. The whole tile is
+    // what a finger holds, so nothing under it scrolls, is selected or calls out.
+    '#tdf-settings .tdf-order-row,.tdf-order-ghost{display:flex;align-items:center;box-sizing:border-box;margin-bottom:2px;padding:0 8px 0 0;' +
+    'background-color:#333;color:#ddd;border-radius:5px;box-shadow:0 0 2px rgba(0,0,0,.35);font-size:12px;' +
+    'font-family:Arial,Helvetica,sans-serif;line-height:32px;letter-spacing:.3px;cursor:grab;touch-action:none;' +
+    '-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;}' +
+    '#tdf-settings .tdf-order-row .tdf-pin-icon,.tdf-order-ghost .tdf-pin-icon{flex:0 0 auto;}' +
+    '#tdf-settings .tdf-order-name,.tdf-order-ghost .tdf-order-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    // While a tile is dragged the tiles it passes slide out of its way, the tile itself
+    // stays faded in the place it will land, and a copy of it floats over the page under
+    // the pointer, with no lag, letting every touch through to what is under it.
+    '#tdf-settings .tdf-order-row{transition:transform .25s ease;}' +
+    '#tdf-settings .tdf-order-row.tdf-order-lifted{opacity:.3;}' +
+    '.tdf-order-ghost{position:fixed;z-index:2147483001;margin:0;pointer-events:none;transition:none;}' +
     // The panel scrolls inside the screen once its two lists outgrow it: 40px from the
     // top and 8px clear of the bottom, less its own padding and border (22px). dvh is
     // the screen less the browser's own bars, where the browser knows it.
@@ -295,6 +308,8 @@
 
   function onStart(e) {
     if (!e.touches || e.touches.length !== 1 || !mobileActive()) { start = null; return; }
+    // A touch in the cog panel is for the panel: a tile dragged, a list scrolled.
+    if (e.target && e.target.closest && e.target.closest("#tdf-settings")) { start = null; return; }
     var t = e.touches[0];
     if (!isOpen() && onScrollStrip(e.target)) { start = null; return; }
     // An edge swipe is the phone navigating: don't also open the menu or flip its side.
@@ -344,12 +359,17 @@
     var d = document.createElement("div");
     d.id = "tdf-settings";
     d.className = "tdf-hidden";
+    // Torn's sidebar takes no swipe that starts under this mark, as on its own Navigation
+    // settings list, so a tile dragged here never opens Torn's menu either.
+    d.setAttribute("data-prevent-flyout-swipe", "true");
     d.innerHTML = '<h4>Torn Dual Flyout Private <span class="tdf-x">×</span></h4>' +
       '<label><input type="checkbox" class="tdf-iconsonly-cb"' + (iconsOnly() ? " checked" : "") + "> Icons only (hide menu names)</label>" +
       '<label><input type="checkbox" class="tdf-sticky-cb"' + (sticky() ? " checked" : "") + "> Sticky (keep menu open across pages + scroll while open)</label>" +
-      '<div class="tdf-order"></div>' +
       '<div class="tdf-pins-head">Pinned links (shown under the header)</div>' +
-      '<div class="tdf-pins-list"></div>';
+      '<div class="tdf-pins-list"></div>' +
+      // Below the tick list, so a tick that brings it in or takes it away never moves
+      // the row just tapped.
+      '<div class="tdf-order"></div>';
     (document.body || html).appendChild(d);
     d.querySelector(".tdf-x").addEventListener("click", function () { d.classList.add("tdf-hidden"); });
     d.querySelector(".tdf-iconsonly-cb").addEventListener("change", function (ev) { applyIconsOnly(ev.target.checked); });
@@ -367,8 +387,11 @@
   function fillPinList(d) {
     var box = d.querySelector(".tdf-pins-list");
     if (!box) return;
-    // A fresh list, a fresh start: the next failed tick or move says so again.
+    // A fresh list, a fresh start: the next failed tick or move says so again, and the
+    // order list gives up any room it kept for unticked pins.
     d.querySelectorAll(".tdf-pins-err").forEach(function (n) { n.remove(); });
+    var order = d.querySelector(".tdf-order");
+    if (order) order.style.minHeight = "";
     ensureDefs();   // the list's icons use the same gradients as the row's
     fillOrderList(d);
     var links = menuLinks(), pins = loadPins();
@@ -387,11 +410,13 @@
       cb.setAttribute("data-key", l.key);
       cb.checked = pins.indexOf(l.key) !== -1;
       cb.addEventListener("change", function () {
+        var top = d.scrollTop;
         setPinned(l.key, cb.checked);
         // Show what was saved, not what was tapped: a full localStorage refuses the write.
         var saved = loadPins().indexOf(l.key) !== -1;
         if (saved !== cb.checked) { cb.checked = saved; saveError(box); }
         fillOrderList(d);
+        keepPlace(d, top);
       });
       label.appendChild(cb);
       label.appendChild(iconClone(l));
@@ -399,43 +424,191 @@
       box.appendChild(label);
     });
   }
-  // The cog panel's "Bar order" list: the pins the bar shows, first at the top, each with
-  // an up and a down arrow. A move redraws only this list, so the tick list below stays
-  // scrolled where it was.
+  // The order list is the panel's last part, so an untick that takes a tile off it takes
+  // that much off the panel's foot. Scrolled down to there, the browser has to scroll the
+  // panel back by as much, sliding the tick list under the finger, and a quick second tap
+  // lands on the row before. Instead the order list keeps that room until the panel next
+  // opens, and the panel goes back to where it was, all before anything is painted.
+  function keepPlace(d, top) {
+    var lost = top - d.scrollTop;   // the browser lays the panel out to answer this
+    if (lost <= 0) return;
+    var box = d.querySelector(".tdf-order");
+    box.style.minHeight = box.offsetHeight + lost + "px";
+    d.scrollTop = top;
+  }
+  // The cog panel's "Bar order" list: the pins the bar shows, first at the top, one tile
+  // each, the way Torn's Navigation settings lists its links. A tile is held and dragged
+  // to its new place (below), and one that has the focus moves a place at a time with
+  // the arrow keys. A move redraws only this list, so the tick list above stays scrolled
+  // where it was.
   function fillOrderList(d) {
     var box = d.querySelector(".tdf-order");
     if (!box) return;
+    stopDrag();   // a list drawn afresh ends any drag on the old one
     var shown = pinnedInMenu(loadPins(), menuLinks());
     box.textContent = "";
     if (shown.length < 2) return;   // one pin or none: nothing to put in order
     var head = document.createElement("div");
     head.className = "tdf-pins-head";
-    head.textContent = "Bar order (top is first)";
+    head.textContent = "Bar order (top is first; hold and drag to move)";
     box.appendChild(head);
-    shown.forEach(function (l, i) {
+    shown.forEach(function (l) {
       var row = document.createElement("div");
       row.className = "tdf-order-row";
       row.setAttribute("data-key", l.key);
+      row.setAttribute("tabindex", "0");
       row.appendChild(iconClone(l));
       var name = document.createElement("span");
       name.className = "tdf-order-name";
       name.textContent = l.name;
       row.appendChild(name);
-      [["up", -1, "\u25b2"], ["down", 1, "\u25bc"]].forEach(function (a) {
-        var b = document.createElement("button");
-        b.type = "button";
-        b.className = "tdf-order-" + a[0];
-        b.textContent = a[2];
-        b.setAttribute("aria-label", "Move " + l.name + " " + a[0]);
-        b.disabled = a[1] < 0 ? i === 0 : i === shown.length - 1;   // the first goes no higher, the last no lower
-        b.addEventListener("click", function () {
-          if (!movePin(l.key, a[1])) saveError(box);
-          fillOrderList(d);   // what was saved, not what was tapped
-        });
-        row.appendChild(b);
+      row.addEventListener("keydown", function (ev) {
+        var dir = ev.key === "ArrowUp" ? -1 : ev.key === "ArrowDown" ? 1 : 0;
+        if (!dir) return;
+        ev.preventDefault();   // the panel does not scroll as well
+        if (!movePin(l.key, dir)) saveError(box);
+        fillOrderList(d);   // what was saved, not what was pressed
+        // The tile keeps the focus where it lands, without the panel jumping to it.
+        var moved = orderTile(box, l.key);
+        if (moved) moved.focus({ preventScroll: true });
       });
+      watchTile(row, d, box);
       box.appendChild(row);
     });
+  }
+  // A pin's tile in the order list, matched on its key as stored rather than through a
+  // selector, which a key with quotes in it could break.
+  function orderTile(box, key) {
+    var tiles = box.querySelectorAll(".tdf-order-row"), i;
+    for (i = 0; i < tiles.length; i++) if (tiles[i].getAttribute("data-key") === key) return tiles[i];
+    return null;
+  }
+  // ---- Dragging a tile ----------------------------------------------------------------
+  // As in Torn's Navigation settings (dnd-kit there): a finger held still on a tile for
+  // 150ms, or a mouse moved more than 8px with its button down, lifts it. A copy then
+  // follows the pointer up and down, the tile itself stays faded in the list in the place
+  // it would land, and the tiles it passes slide out of its way. Letting go saves the new
+  // order at once; a drag the browser cancels changes nothing.
+  var HOLD_MS = 150, HOLD_SLOP = 5, MOUSE_SLOP = 8;
+  var drag = null;   // the press, or the drag, on a tile of the order list
+  function watchTile(row, d, box) {
+    row.addEventListener("pointerdown", function (ev) { pressTile(ev, row, d, box); });
+    row.addEventListener("pointermove", movePointer);
+    row.addEventListener("pointerup", dropTile);
+    row.addEventListener("pointercancel", cancelDrag);
+    // A long press is how a tile is picked up, not a call for the browser's own menu.
+    row.addEventListener("contextmenu", function (ev) { ev.preventDefault(); });
+  }
+  function pressTile(ev, row, d, box) {
+    if (drag || ev.button !== 0) return;   // one drag at a time, and only the main mouse button
+    var g = drag = { row: row, d: d, box: box, id: ev.pointerId, mouse: ev.pointerType === "mouse",
+      x0: ev.clientX, y0: ev.clientY, y: ev.clientY, on: false, timer: 0, raf: 0 };
+    // The tile keeps the pointer until it is let go, wherever it goes: a finger is kept
+    // anyway, a mouse only when asked.
+    if (row.setPointerCapture) { try { row.setPointerCapture(ev.pointerId); } catch (e) {} }
+    if (!g.mouse) g.timer = setTimeout(function () { if (drag === g) liftTile(g); }, HOLD_MS);
+  }
+  function movePointer(ev) {
+    var g = drag;
+    if (!g || ev.pointerId !== g.id) return;
+    g.y = ev.clientY;
+    if (g.on) { placeTiles(g); keepScrolling(g); return; }
+    var dx = ev.clientX - g.x0, dy = ev.clientY - g.y0, far = Math.sqrt(dx * dx + dy * dy);
+    if (g.mouse) { if (far > MOUSE_SLOP) liftTile(g); }
+    else if (far > HOLD_SLOP) stopDrag();   // a finger on the move before the hold is up is not holding a tile
+  }
+  function dropTile(ev) {
+    var g = drag;
+    if (!g || ev.pointerId !== g.id) return;
+    if (!g.on) { stopDrag(); return; }   // a tap, or a press let go before the hold was up
+    g.y = ev.clientY;
+    placeTiles(g);
+    if (g.to !== g.from) {
+      var keys = g.keys.slice();
+      keys.splice(g.to, 0, keys.splice(g.from, 1)[0]);
+      if (!orderPins(keys)) saveError(g.box);
+    }
+    fillOrderList(g.d);   // what was saved, without the copy or the fading: no drop animation
+  }
+  function cancelDrag(ev) {
+    var g = drag;
+    if (!g || ev.pointerId !== g.id) return;
+    if (g.on) fillOrderList(g.d); else stopDrag();   // every tile back as it was, nothing saved
+  }
+  // Lifted: the tiles are measured once, here, and the copy laid over the tile.
+  function liftTile(g) {
+    g.tiles = [].slice.call(g.box.querySelectorAll(".tdf-order-row"));
+    g.keys = g.tiles.map(function (t) { return t.getAttribute("data-key"); });
+    g.from = g.to = g.tiles.indexOf(g.row);
+    g.rects = g.tiles.map(function (t) { return t.getBoundingClientRect(); });
+    g.top0 = g.d.scrollTop;
+    var r = g.rects[g.from], copy = g.row.cloneNode(true);
+    copy.className = "tdf-order-ghost";
+    copy.removeAttribute("data-key");
+    copy.removeAttribute("tabindex");
+    copy.setAttribute("aria-hidden", "true");
+    copy.style.left = r.left + "px";
+    copy.style.top = r.top + "px";
+    copy.style.width = r.width + "px";
+    copy.style.height = r.height + "px";
+    document.body.appendChild(copy);
+    g.ghost = copy;
+    g.row.classList.add("tdf-order-lifted");
+    g.on = true;
+    placeTiles(g);
+  }
+  // Every tile for where the pointer is now: the copy under it, the faded tile in the
+  // place whose middle is nearest the copy's, and the tiles between moved a place. The
+  // panel's own scroll since the lift counts in, so the place is the one under the finger.
+  function placeTiles(g) {
+    var dy = g.y - g.y0, r = g.rects, from = g.from, to = 0, best = Infinity, i, off;
+    var c = r[from].top + r[from].height / 2 + dy + (g.d.scrollTop - g.top0);
+    for (i = 0; i < r.length; i++) {
+      off = Math.abs(c - (r[i].top + r[i].height / 2));
+      if (off < best) { best = off; to = i; }
+    }
+    g.to = to;
+    g.ghost.style.transform = "translateY(" + dy + "px)";
+    g.tiles.forEach(function (t, j) {
+      var y = j === from ? r[to].top - r[from].top :
+        from < to && j > from && j <= to ? r[j - 1].top - r[j].top :
+        to < from && j >= to && j < from ? r[j + 1].top - r[j].top : 0;
+      if (y) t.style.setProperty("transform", "translateY(" + y + "px)");
+      else t.style.removeProperty("transform");
+    });
+  }
+  // Dragged within 48px of the panel's top or bottom edge, the panel scrolls that way a
+  // step a frame, up to 12px the nearer the edge, for as long as it can go further. Only
+  // the way the finger has headed since the press: a tile lifted at an edge stays put.
+  var SCROLL_EDGE = 48, SCROLL_STEP = 12;
+  function scrollStep(g) {
+    var r = g.d.getBoundingClientRect(), y = g.y;
+    if (y > g.y0 && y > r.bottom - SCROLL_EDGE) return Math.ceil(SCROLL_STEP * Math.min(1, (y - r.bottom + SCROLL_EDGE) / SCROLL_EDGE));
+    if (y < g.y0 && y < r.top + SCROLL_EDGE) return -Math.ceil(SCROLL_STEP * Math.min(1, (r.top + SCROLL_EDGE - y) / SCROLL_EDGE));
+    return 0;
+  }
+  function keepScrolling(g) {
+    if (!g.raf && scrollStep(g)) g.raf = requestAnimationFrame(function () { scrollFrame(g); });
+  }
+  function scrollFrame(g) {
+    g.raf = 0;
+    if (drag !== g) return;
+    var step = scrollStep(g), before = g.d.scrollTop;
+    if (!step) return;
+    g.d.scrollTop = before + step;
+    if (g.d.scrollTop === before) return;   // as far as it goes
+    placeTiles(g);
+    keepScrolling(g);
+  }
+  // Ends the press or the drag under way, if any: its timer, its scrolling and its copy
+  // go. The tiles are put back by drawing the list afresh.
+  function stopDrag() {
+    var g = drag;
+    if (!g) return;
+    drag = null;
+    clearTimeout(g.timer);
+    if (g.raf) cancelAnimationFrame(g.raf);
+    if (g.ghost) g.ghost.remove();
   }
   // The note goes above the list, not in it: the list scrolls, and a note at its top
   // would be out of sight after a tick further down.
@@ -454,20 +627,29 @@
     savePins(pins);
     renderPins();
   }
-  // One tap on an arrow: the pin swaps places with the next pin the bar shows that way
-  // (dir -1 towards the front, 1 towards the end). A remembered pin that is not in the
-  // menu is stepped over and keeps its place. False if the new order could not be saved.
-  function movePin(key, dir) {
-    var pins = loadPins();
-    var bar = pinnedInMenu(pins, menuLinks()).map(function (l) { return l.key; });
-    var at = bar.indexOf(key), other = at === -1 ? undefined : bar[at + dir];
-    if (other === undefined) return true;   // already first or last: nothing to save
-    var i = pins.indexOf(key), j = pins.indexOf(other);
-    pins[i] = other;
-    pins[j] = key;
+  // The pins named in keys, put in that order in the places those same pins take in the
+  // saved list, so a remembered pin that is not in the menu keeps its place. False if the
+  // new order could not be saved.
+  function orderPins(keys) {
+    var pins = loadPins(), slots = [];
+    keys = keys.filter(function (k) { return pins.indexOf(k) !== -1; });
+    keys.forEach(function (k) { slots.push(pins.indexOf(k)); });
+    slots.sort(function (a, b) { return a - b; });
+    keys.forEach(function (k, i) { pins[slots[i]] = k; });
     var ok = savePins(pins);
     renderPins();
     return ok;
+  }
+  // One press of an arrow key: the pin moves one place on the bar as the menu has it now
+  // (dir -1 towards the front, 1 towards the end), over any remembered pin that is not in
+  // the menu. Already first or last, or no longer in the menu: nothing to save.
+  function movePin(key, dir) {
+    var bar = pinnedInMenu(loadPins(), menuLinks()).map(function (l) { return l.key; });
+    var at = bar.indexOf(key), to = at + dir;
+    if (at === -1 || to < 0 || to >= bar.length) return true;
+    bar.splice(at, 1);
+    bar.splice(to, 0, key);
+    return orderPins(bar);
   }
   var COG_SVG = '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="#8a8f98" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.63-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.13 8.48a.49.49 0 0 0 .12.61l2.03 1.58c-.05.31-.07.62-.07.94 0 .32.02.63.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.14.24.44.32.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.26.42.49.42h4c.23 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.15.06.45-.02.59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.02-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>';
   function positionCog(cog, b) {
