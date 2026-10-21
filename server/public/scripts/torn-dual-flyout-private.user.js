@@ -455,6 +455,44 @@
     }
     return a;
   }
+  // Torn re-draws the menu as counts change: follow it within a beat, one re-draw per
+  // burst of changes. The row lives outside the panel, so drawing it never feeds back here.
+  var pinsTimer = null;
+  function schedulePins() {
+    if (pinsTimer) return;
+    pinsTimer = setTimeout(function () { pinsTimer = null; renderPins(); }, 60);
+  }
+  function startPinsObserver() {
+    var p = panel();
+    if (!p || p.__tdfPinsObs) return;
+    p.__tdfPinsObs = true;
+    new MutationObserver(schedulePins).observe(p, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["class", "aria-label"] });
+  }
+  // Measured, not assumed. TornTools pads the page content for its own phone links,
+  // which suggests the content does not move down for anything added up here. If it
+  // does not, a spacer at the top of the content makes up the difference, never more
+  // than the row's own height; if it does, the measured overlap is 0 and no spacer is
+  // added. The spacer is a height, not a margin, so it cannot collapse through its
+  // parent and move the content's own top, which is what is measured.
+  var spacerH = 0;   // the room the row needs, as last measured at the top of the page
+  function syncSpacer(row) {
+    var content = document.querySelector('.content-wrapper[role="main"]');
+    var sb = document.getElementById("sidebar");
+    if (!row || !content || !sb) spacerH = 0;
+    // Only at the top of the page: if Torn's sidebar stays on screen as the page
+    // scrolls, the gap read part-way down is the scroll, not room the row needs.
+    // Further down, the last answer stands.
+    else if (!(window.scrollY > 0) && typeof sb.getBoundingClientRect === "function" && typeof content.getBoundingClientRect === "function") {
+      var need = Math.min(row.offsetHeight || 0, sb.getBoundingClientRect().bottom - content.getBoundingClientRect().top);
+      spacerH = need >= 1 ? Math.round(need) : 0;
+    }
+    var sp = document.getElementById("tdf-pins-spacer");
+    if (!spacerH) { if (sp) sp.remove(); return; }
+    if (!sp) { sp = document.createElement("div"); sp.id = "tdf-pins-spacer"; }
+    if (content.firstChild !== sp) content.insertBefore(sp, content.firstChild);   // Torn may wipe the content
+    var h = "height:" + spacerH + "px";
+    if (sp.getAttribute("style") !== h) sp.setAttribute("style", h);
+  }
   // Draw (or re-draw) the row directly above Torn's name/bars strip, the first thing
   // under the header on a phone. No strip means this is not the phone layout: no row.
   function renderPins() {
@@ -466,6 +504,7 @@
     loadPins().forEach(function (k) { if (byKey[k]) shown.push(byKey[k]); });
     if (!strip || !shown.length) {
       if (row) row.remove();
+      syncSpacer(null);
       return;
     }
     if (!row) {
@@ -482,11 +521,13 @@
       row.textContent = "";
       shown.forEach(function (l) { row.appendChild(pinEl(l)); });
     }
+    syncSpacer(row);
   }
 
-  setInterval(function () { ensureCog(); startMenuObserver(); syncMenuOpen(); renderPins(); }, 800);
+  setInterval(function () { ensureCog(); startMenuObserver(); syncMenuOpen(); startPinsObserver(); renderPins(); }, 800);
   ensureCog();
   startMenuObserver();
+  startPinsObserver();
   renderPins();
   maybeReopen();                                   // sticky? re-open the menu on this full page load
 

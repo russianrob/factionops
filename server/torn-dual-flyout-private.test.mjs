@@ -366,3 +366,105 @@ test('before the menu has loaded, the list says so, and reopening the panel pick
   assert.equal(settings.querySelectorAll('.tdf-pins-list input[data-key]').length, 7);
   assert.doesNotMatch(settings.querySelector('.tdf-pins-list').textContent, /No menu links found yet/);
 });
+
+test('a pin follows the menu live: a new count and the attention tint reach the row', () => {
+  const p = load({ stored: ['/messages.php', '/gym.php'] });
+  p.tick();
+  const msg = p.document.getElementById('nav-messages');
+  msg.setAttribute('aria-label', 'Messages, 2 new');
+  msg.insertAdjacentHTML('beforeend', '<span class="amount___vyASa">2</span>');
+  p.document.getElementById('nav-gym').classList.add('attention___DT8nN');
+  p.mutate();   // Torn re-drew the menu; no timer tick yet
+  const [m, g] = p.pins();
+  assert.equal(m.querySelector('.tdf-pin-badge').textContent, '2');
+  assert.equal(m.querySelector('.tdf-pin-name').textContent, 'Messages');
+  assert.match(g.className, /tdf-pin-attn/);
+});
+
+// The spacer measures the page: give #sidebar, the content and the row the sizes a phone would.
+function layout(p, { sidebarBottom, contentTop, rowHeight }) {
+  p.document.getElementById('sidebar').getBoundingClientRect = () => ({ top: 36, bottom: sidebarBottom });
+  p.document.querySelector('.content-wrapper').getBoundingClientRect = () => ({ top: contentTop, bottom: contentTop + 500 });
+  Object.defineProperty(p.document.getElementById('tdf-pins'), 'offsetHeight', { value: rowHeight, configurable: true });
+}
+const spacer = (p) => p.document.getElementById('tdf-pins-spacer');
+
+test('when the page content stays put under the row, a spacer of the row\'s height makes room', () => {
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  layout(p, { sidebarBottom: 136, contentTop: 96, rowHeight: 40 });   // the strip ended at 96 before the row
+  p.tick();
+  const sp = spacer(p);
+  assert.ok(sp, 'spacer added');
+  assert.equal(sp.parentNode.className, 'content-wrapper');
+  assert.equal(sp.parentNode.firstChild, sp);
+  assert.match(sp.getAttribute('style'), /^height:\s*40px;?$/);
+});
+
+test('when the page content moves down for the row by itself, no spacer is added', () => {
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  layout(p, { sidebarBottom: 136, contentTop: 136, rowHeight: 40 });
+  p.tick();
+  assert.equal(spacer(p), null);
+});
+
+test('the spacer never grows past the row\'s own height', () => {
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  layout(p, { sidebarBottom: 400, contentTop: 96, rowHeight: 40 });
+  p.tick();
+  assert.match(spacer(p).getAttribute('style'), /^height:\s*40px;?$/);
+});
+
+test('the spacer is measured at the top of the page only: part-way down, the last answer stands', () => {
+  // If Torn's sidebar stays on screen as the page scrolls, the gap between it and the
+  // content read part-way down is the scroll, not room the row needs.
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  layout(p, { sidebarBottom: 136, contentTop: 136, rowHeight: 40 });   // at the top: content flows
+  p.tick();
+  p.win.scrollY = 300;
+  layout(p, { sidebarBottom: 136, contentTop: -164, rowHeight: 40 });  // scrolled under a sidebar that stayed
+  p.tick();
+  assert.equal(spacer(p), null);
+  p.win.scrollY = 0;
+  layout(p, { sidebarBottom: 136, contentTop: 96, rowHeight: 40 });    // back at the top, now covered
+  p.tick();
+  assert.ok(spacer(p), 'measured again at the top');
+});
+
+test('a spacer Torn wipes with the page content comes back, even part-way down the page', () => {
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  layout(p, { sidebarBottom: 136, contentTop: 96, rowHeight: 40 });
+  p.tick();
+  spacer(p).remove();
+  p.win.scrollY = 300;
+  p.tick();
+  assert.match(spacer(p).getAttribute('style'), /^height:\s*40px;?$/);
+});
+
+test('the spacer stays the first thing in the page content when Torn puts something ahead of it', () => {
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  layout(p, { sidebarBottom: 136, contentTop: 96, rowHeight: 40 });
+  p.tick();
+  const content = p.document.querySelector('.content-wrapper');
+  content.insertAdjacentHTML('afterbegin', '<div class="info-msg">A banner</div>');
+  p.tick();
+  assert.equal(content.firstChild, spacer(p));
+  assert.equal(p.document.querySelectorAll('#tdf-pins-spacer').length, 1);
+});
+
+test('unpinning the last link takes the spacer away with the row', () => {
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  layout(p, { sidebarBottom: 136, contentTop: 96, rowHeight: 40 });
+  p.tick();
+  assert.ok(spacer(p), 'spacer there to begin with');
+  p.openCog();
+  p.tickBox('/gym.php', false);
+  assert.equal(p.document.getElementById('tdf-pins'), null);
+  assert.equal(spacer(p), null);
+});
