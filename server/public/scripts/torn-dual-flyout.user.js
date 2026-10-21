@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout
 // @namespace    RussianRob
-// @version      1.5.15
+// @version      1.5.16
 // @description  Two-way swipe for Torn's mobile fly-out menu: swipe left opens it on the right, swipe right opens it on the left, with a side arrow on the menu button.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout.user.js
@@ -15,7 +15,7 @@
   "use strict";
   if (window.__tornMenuRight) return;
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.5.15";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.5.16";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
@@ -30,6 +30,12 @@
     'border-top-right-radius:5px!important;border-top-left-radius:0!important;}' +
     'html.tmr-left #fly-out-panel:not([class*="visible___"]){transform:translateX(-100%)!important;}' +
     'html.tmr-left #fly-out-panel[class*="visible___"]{box-shadow:1px 0 5px rgba(0,0,0,.7)!important;}' +
+    // Every icon on its own layer. Torn's icons carry a CSS drop-shadow, and on iOS 18
+    // WebKit draws those only for the part of the scrolling panel that is on screen when
+    // the menu opens, never redrawing them on scroll, so the icons scrolled out of view
+    // stay blank. With a layer each they are drawn whole and keep their shadow. Only the
+    // svg itself: Torn positions some icon paths with transforms of their own.
+    '#fly-out-panel svg{transform:translateZ(0);}' +
     '#fly-out-menu-button::after{content:"◀";position:absolute;bottom:0;left:50%;transform:translateX(-50%);' +
     'font-size:11px;line-height:1;font-weight:700;background:linear-gradient(to top,#666,#888);' +
     '-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;pointer-events:none;}' +
