@@ -329,14 +329,14 @@ test('the header names the private build, its own update address, and the versio
   const h = header(readFileSync(SRC, 'utf8'));
   assert.equal(field(h, 'name'), 'Torn Dual Flyout Private');
   assert.equal(field(h, 'namespace'), 'RussianRob.torn-dual-flyout.private');
-  assert.equal(field(h, 'version'), '1.6.6');
+  assert.equal(field(h, 'version'), '1.6.7');
   assert.equal(field(h, 'author'), 'RussianRob');
   assert.equal(field(h, 'license'), 'All Rights Reserved');
   assert.equal(field(h, 'downloadURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.user.js');
   assert.equal(field(h, 'updateURL'), 'https://tornwar.com/scripts/torn-dual-flyout-private.meta.js');
   assert.equal(field(h, 'grant'), 'none');
   assert.equal(field(h, 'copyright'), null);
-  assert.equal(load().win.__tdfVer, '1.6.6');
+  assert.equal(load().win.__tdfVer, '1.6.7');
 });
 
 test('the .meta.js update file carries the same header as the script', () => {
@@ -1903,6 +1903,47 @@ test('the cog panel scrolls inside the screen once its lists outgrow it, its bot
   // An engine without dvh drops that one and keeps the 100vh before it.
   assert.match(p.document.getElementById('torn-menu-right').textContent,
     /#tdf-settings\{[^}]*max-height:calc\(100vh - 70px\);max-height:calc\(100dvh - 70px\);/);
+});
+
+test('the menu panel ends under its last link, and a list taller than the screen still scrolls inside it', () => {
+  // The part of Torn's own panel rule that matters here: stretched to the foot, scrolling.
+  const TORN_PANEL = '.flyOutPanel___Zqwqt{position:absolute;top:66px;bottom:0;left:0;overflow-y:auto}';
+  for (const iconsOnly of [false, true]) for (const side of ['right', 'left']) {
+    const p = load({ iconsOnly });
+    const html = p.document.documentElement;
+    html.classList.toggle('tmr-right', side === 'right');
+    html.classList.toggle('tmr-left', side === 'left');
+    const torn = p.document.createElement('style');
+    torn.textContent = TORN_PANEL;
+    p.document.head.insertBefore(torn, p.document.head.firstChild);
+    const v = (prop) => cascade(p.document, p.panel, prop);
+    const at = `${side}${iconsOnly ? ', icons only' : ''}`;
+    // Torn stretches the panel to the foot of the screen (bottom:0), so with links pinned
+    // out of the menu the bare panel showed under the last one. Its height is the list's
+    // now, up to the screen below its top: 100% of the screen, not 100vh, which on an
+    // iPhone is the screen's height with Safari's toolbar hidden and would put the last
+    // links under the toolbar.
+    assert.equal(v('position'), 'fixed', at);
+    assert.equal(v('top'), '36px', at);
+    assert.equal(v('bottom'), 'auto', at);
+    assert.equal(v('max-height'), 'calc(100% - 36px)', at);
+    assert.equal(v('height'), undefined, at);       // nothing holds it open...
+    assert.equal(v('min-height'), undefined, at);
+    assert.equal(v('overflow-y'), 'auto', at);      // ...and a long list still scrolls inside it
+    // The top and the cap need their !important: Torn writes its own top and max-height on
+    // the panel, and a style written on the element beats any rule without one.
+    const own = styledBy(p.document, p.panel);
+    assert.equal(own.top, '36px!important', at);
+    assert.equal(own['max-height'], 'calc(100% - 36px)!important', at);
+    // An edge where it ends, rounded on the inner corner like the top one, square against
+    // the side of the screen.
+    assert.equal(v('border-bottom'), '1px solid #444', at);
+    const [inner, outer] = side === 'right'
+      ? ['border-bottom-left-radius', 'border-bottom-right-radius']
+      : ['border-bottom-right-radius', 'border-bottom-left-radius'];
+    assert.equal(v(inner), '5px', at);
+    assert.equal(v(outer), undefined, at);
+  }
 });
 
 // ---- Pinned links leave the menu ----------------------------------------------

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Dual Flyout Private
 // @namespace    RussianRob.torn-dual-flyout.private
-// @version      1.6.6
+// @version      1.6.7
 // @description  Private test build of Torn Dual Flyout: the two-way swipe menu plus a row of pinned menu links under Torn's phone header. Run this OR the public Torn Dual Flyout, not both.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-dual-flyout-private.user.js
@@ -40,19 +40,28 @@
   // if the public one won, this build stays off and says why.
   if (window.__tornMenuRight) { showBothOnNote(); return; }
   window.__tornMenuRight = true;
-  window.__tdfVer = "1.6.6";   // runtime version marker (confirm the installed build)
+  window.__tdfVer = "1.6.7";   // runtime version marker (confirm the installed build)
 
   var html = document.documentElement;
 
   var css =
+    // The panel is as tall as its list, up to the foot of the screen. Torn stretches it
+    // to the foot (bottom:0), which left bare panel under the last link once links were
+    // pinned out of the menu. 100% rather than 100vh: on an iPhone 100vh is the screen's
+    // height with Safari's toolbar hidden, so the last links would sit under the toolbar.
+    // The cap needs its !important: Torn writes its own max-height on the panel, sized
+    // for a top of 0 once the page has scrolled, which from this 36px top would run a
+    // long list off the foot of the screen.
     'html.tmr-right #fly-out-panel{position:fixed!important;left:auto!important;right:0!important;top:36px!important;' +
-    'border-left:1px solid #444!important;border-right:0!important;' +
-    'border-top-left-radius:5px!important;border-top-right-radius:0!important;}' +
+    'bottom:auto!important;max-height:calc(100% - 36px)!important;' +
+    'border-left:1px solid #444!important;border-right:0!important;border-bottom:1px solid #444!important;' +
+    'border-top-left-radius:5px!important;border-top-right-radius:0!important;border-bottom-left-radius:5px!important;}' +
     'html.tmr-right #fly-out-panel:not([class*="visible___"]){transform:translateX(100%)!important;}' +
     'html.tmr-right #fly-out-panel[class*="visible___"]{box-shadow:-1px 0 5px rgba(0,0,0,.7)!important;}' +
     'html.tmr-left #fly-out-panel{position:fixed!important;right:auto!important;left:0!important;top:36px!important;' +
-    'border-right:1px solid #444!important;border-left:0!important;' +
-    'border-top-right-radius:5px!important;border-top-left-radius:0!important;}' +
+    'bottom:auto!important;max-height:calc(100% - 36px)!important;' +
+    'border-right:1px solid #444!important;border-left:0!important;border-bottom:1px solid #444!important;' +
+    'border-top-right-radius:5px!important;border-top-left-radius:0!important;border-bottom-right-radius:5px!important;}' +
     'html.tmr-left #fly-out-panel:not([class*="visible___"]){transform:translateX(-100%)!important;}' +
     'html.tmr-left #fly-out-panel[class*="visible___"]{box-shadow:1px 0 5px rgba(0,0,0,.7)!important;}' +
     // Every icon on its own layer. Torn's icons carry a CSS drop-shadow, and on iOS 18
