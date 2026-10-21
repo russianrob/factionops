@@ -19,7 +19,8 @@ import { parse as parseSelector, stringify as stringifySelector } from 'css-what
 // TDFP_SRC lets a working copy be tested before it is installed over the served file.
 const SRC = process.env.TDFP_SRC || '/opt/warboard/server/public/scripts/torn-dual-flyout-private.user.js';
 const META = SRC.replace(/\.user\.js$/, '.meta.js');
-const PUBLIC = '/opt/warboard/server/public/scripts/torn-dual-flyout.user.js';
+// TDF_SRC, as in the edge and icons tests, tests a working copy of the public build.
+const PUBLIC = process.env.TDF_SRC || '/opt/warboard/server/public/scripts/torn-dual-flyout.user.js';
 const TARGETS = '/page.php?sid=list&type=targets';
 
 // One area row as Torn's sidebar build draws it (nL / nM in app.4af34ba3e31baa7e.js).
@@ -342,34 +343,115 @@ test('the .meta.js update file carries the same header as the script', () => {
   assert.equal(header(readFileSync(META, 'utf8')), header(readFileSync(SRC, 'utf8')));
 });
 
-test('no curly quotes anywhere in the script: PDA straightens them and the script stops parsing', () => {
-  assert.doesNotMatch(readFileSync(SRC, 'utf8'), /[‘’“”]/);
+test('no curly quotes anywhere in either build: PDA straightens them and the script stops parsing', () => {
+  for (const f of [SRC, PUBLIC]) assert.doesNotMatch(readFileSync(f, 'utf8'), /[‘’“”]/, f);
 });
+
+// Which build drew the cog panel: its title names it (both builds report the same version).
+const builtBy = (p) => p.openCog().querySelector('h4').firstChild.textContent.trim();
 
 test('with the public Torn Dual Flyout already running, this build stays off and says so', () => {
   const p = load({ order: 'public-first', stored: ['/gym.php'] });
-  assert.equal(p.document.querySelectorAll('#torn-menu-right').length, 1);   // the public copy's stylesheet only
-  assert.equal(p.touch.touchstart.length, 1);                                // one swipe handler: the public one
-  assert.equal(p.win.__tdfVer, '1.5.16');
+  assert.equal(p.document.querySelectorAll('#torn-menu-right').length, 1);   // one copy's stylesheet
+  assert.equal(p.touch.touchstart.length, 1);                                // one swipe handler
   p.tick();
-  assert.equal(p.document.getElementById('tdf-pins'), null);
+  assert.equal(p.document.querySelectorAll('#tdf-pins').length, 1, 'the public copy draws the pins, once');
   const note = p.document.getElementById('tdfp-both-on');
   assert.ok(note, 'a note says why');
   assert.match(note.textContent, /public Torn Dual Flyout is also on/);
+  assert.equal(builtBy(p), 'Torn Dual Flyout');
 });
 
-test('loaded first, this build keeps the public copy from starting a second time', () => {
-  const p = load({ order: 'private-first' });
+test('loaded first, this build keeps the public copy from starting a second time, and the public copy says nothing', () => {
+  const p = load({ order: 'private-first', stored: ['/gym.php'] });
   assert.equal(p.document.querySelectorAll('#torn-menu-right').length, 1);
   assert.equal(p.touch.touchstart.length, 1);
-  assert.equal(p.win.__tdfVer, '1.6.6');
   p.tick();
+  assert.equal(p.document.querySelectorAll('#tdf-pins').length, 1);
   assert.equal(p.document.getElementById('tdfp-both-on'), null);
+  assert.equal(builtBy(p), 'Torn Dual Flyout Private');
 });
 
 test('the cog panel says which build is running', () => {
   const settings = load().openCog();
   assert.match(settings.querySelector('h4').textContent, /^Torn Dual Flyout Private/);
+});
+
+// ---- The public build ----
+// The public Torn Dual Flyout is this build under its own name: the same code, the same
+// version, its own update address, and GPL-3.0 so Greasy Fork can list it.
+test('the public build names itself, keeps its own update address, carries this build\'s version, and is GPL-3.0', () => {
+  const h = header(readFileSync(PUBLIC, 'utf8'));
+  assert.equal(field(h, 'name'), 'Torn Dual Flyout');
+  assert.equal(field(h, 'namespace'), 'RussianRob');
+  assert.equal(field(h, 'version'), field(header(readFileSync(SRC, 'utf8')), 'version'));
+  assert.equal(field(h, 'author'), 'RussianRob');
+  assert.equal(field(h, 'license'), 'GPL-3.0-or-later');
+  assert.equal(field(h, 'downloadURL'), 'https://tornwar.com/scripts/torn-dual-flyout.user.js');
+  assert.equal(field(h, 'updateURL'), 'https://tornwar.com/scripts/torn-dual-flyout.user.js');
+  assert.equal(field(h, 'match'), 'https://www.torn.com/*');
+  assert.equal(field(h, 'run-at'), 'document-start');
+  assert.equal(field(h, 'grant'), 'none');
+  assert.equal(field(h, 'copyright'), null);
+  assert.match(field(h, 'description'), /pinned menu links/);
+  assert.doesNotMatch(h, /private|fork/i);
+});
+
+// Every other header line decides where and how the code runs (@match, @run-at, @grant, any
+// @require), so the two headers must match line for line, with only the values that name a
+// build left out.
+const NAMING = /^(\/\/ @(?:name|namespace|description|downloadURL|updateURL|license)[ \t]+).*$/gm;
+test('the two builds\' headers differ only in the values that say which build it is', () => {
+  const masked = (f) => header(readFileSync(f, 'utf8')).replace(NAMING, '$1<build>');
+  assert.equal(masked(PUBLIC), masked(SRC));
+});
+
+// What tells the builds apart: the header, the private build's note and its guard (the
+// public one steps aside without a word), and the cog panel's title. With those cut out,
+// the two must be the same code, so a change to one is a change to both.
+function sameCode(text, guardFrom, guardTo) {
+  const body = text.slice(text.indexOf('// ==/UserScript==') + '// ==/UserScript=='.length);
+  const a = body.indexOf(guardFrom), b = body.indexOf(guardTo);
+  assert.ok(a !== -1 && b >= a && body.indexOf(guardFrom, a + 1) === -1 && body.indexOf(guardTo, b + 1) === -1, 'the guard, once');
+  return (body.slice(0, a) + '<guard>' + body.slice(b + guardTo.length))
+    .replace('<h4>Torn Dual Flyout Private <span', '<h4>Torn Dual Flyout <span');
+}
+// The public build's whole guard, word for word: nothing else hides in the cut.
+const GUARD = '  // Two copies of Torn Dual Flyout (this one and the private test build) would both\n' +
+  '  // answer every swipe, so whichever loads first runs alone.\n' +
+  '  if (window.__tornMenuRight) return;\n';
+// The private build's note and guard, word for word, as GUARD is for the public: shared
+// code slipped in among them would be cut out of the comparison unseen.
+const PRIVATE_GUARD = '  // Shown instead of running when another copy of Torn Dual Flyout got here first.\n' +
+  '  function showBothOnNote() {\n' +
+  '    var tries = 0;\n' +
+  '    var iv = setInterval(function () {\n' +
+  '      if (++tries > 100) { clearInterval(iv); return; }        // ~20s and still no page: give up\n' +
+  '      if (!document.body) return;                              // document-start: wait for <body>\n' +
+  '      clearInterval(iv);\n' +
+  '      if (document.getElementById("tdfp-both-on")) return;\n' +
+  '      var n = document.createElement("div");\n' +
+  '      n.id = "tdfp-both-on";\n' +
+  '      n.setAttribute("style", "position:fixed;left:0;right:0;top:0;z-index:2147483002;padding:8px 34px 8px 10px;" +\n' +
+  '        "background:#3b2f00;color:#ffe08a;border-bottom:1px solid #6b5500;font:13px/1.35 -apple-system,system-ui,sans-serif;");\n' +
+  '      n.textContent = "Torn Dual Flyout Private is off because the public Torn Dual Flyout is also on. " +\n' +
+  '        "Turn the public one off to test this build.";\n' +
+  '      var x = document.createElement("span");\n' +
+  '      x.textContent = "\\u00d7";\n' +
+  '      x.setAttribute("style", "position:absolute;right:10px;top:3px;font-size:20px;cursor:pointer;");\n' +
+  '      x.addEventListener("click", function () { n.remove(); });\n' +
+  '      n.appendChild(x);\n' +
+  '      document.body.appendChild(n);\n' +
+  '    }, 200);\n' +
+  '  }\n' +
+  '  // Two copies of Torn Dual Flyout would both answer every swipe. The public copy\n' +
+  '  // already steps aside when this flag is set, so whichever loads first runs alone;\n' +
+  '  // if the public one won, this build stays off and says why.\n' +
+  '  if (window.__tornMenuRight) { showBothOnNote(); return; }\n';
+test('the public build is this build\'s code, apart from the lines that say which build it is', () => {
+  const mine = sameCode(readFileSync(SRC, 'utf8'), PRIVATE_GUARD, PRIVATE_GUARD);
+  const pub = sameCode(readFileSync(PUBLIC, 'utf8'), GUARD, GUARD);
+  assert.ok(pub === mine, 'the same code');   // not assert.equal: two 66KB strings make an unreadable diff
 });
 
 test('with nothing pinned the page is left as Torn drew it', () => {
