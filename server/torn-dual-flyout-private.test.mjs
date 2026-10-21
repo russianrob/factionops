@@ -19,15 +19,17 @@ import { parseHTML } from 'linkedom';
 const SRC = process.env.TDFP_SRC || '/opt/warboard/server/public/scripts/torn-dual-flyout-private.user.js';
 const META = SRC.replace(/\.user\.js$/, '.meta.js');
 const PUBLIC = '/opt/warboard/server/public/scripts/torn-dual-flyout.user.js';
-// What the browser reports for a menu icon's fill: Torn's CSS points it at a gradient.
+// What the browser reports for a menu icon's fill and filter: Torn's CSS points the
+// fill at a gradient and gives the icon a drop shadow.
 const FILL = 'url("#sidebar_svg_gradient_regular_mobile")';
+const SHADOW = 'drop-shadow(rgba(0, 0, 0, 0.45) 0px 1px 2px)';
 const TARGETS = '/page.php?sid=list&type=targets';
 
 // One area row as Torn's sidebar build draws it (nL / nM in app.4af34ba3e31baa7e.js).
 function areaRow(id, href, name) {
   return `<div class="area-mobile___AK1cR notList___jrp60" id="nav-${id}"><div class="areaRow___Eheay">` +
     `<a href="${href}" class="link___tg6eQ mobileLink___NbSV4"><span class="svgIconWrap___MDuQ8"><span class="defaultIcon___GnL0d mobile___nUzYc">` +
-    `<svg id="${id}-icon" viewBox="0 0 20 20"><path d="M0 0h20v20z"/></svg></span></span>` +
+    `<svg id="${id}-icon" viewBox="0 0 20 20"><path id="${id}-path" d="M0 0h20v20z"/></svg></span></span>` +
     `<span class="linkName___YZMai">${name}</span></a></div></div>`;
 }
 // Torn's menu, cut down: the Messages / Events / Awards icons (Events with 4 unread),
@@ -67,7 +69,8 @@ function page(menu) {
 // Runs the real script(s) against that page. order: 'private' (this build alone),
 // 'public-first' or 'private-first' (both copies installed, loading in that order).
 // stored: what tdf_pins holds (an array, or a raw string to store as is).
-function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU } = {}) {
+// fill: what the browser reports as a menu icon's computed fill.
+function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU, fill = FILL } = {}) {
   const { document, Event } = parseHTML(page(menu));
   const btn = document.getElementById('fly-out-menu-button');
   btn.getClientRects = () => [{}];   // laid out: the phone header is showing
@@ -86,7 +89,7 @@ function load({ order = 'private', stored = null, iconsOnly = false, menu = MENU
   const intervals = [], timeouts = [], observers = [];
   class MO { constructor(cb) { this.cb = cb; observers.push(this); } observe() {} disconnect() {} }
   const win = { innerWidth: 393, addEventListener() {} };
-  const getComputedStyle = (el) => ({ fill: /^svg$/i.test(el.tagName) ? FILL : '' });
+  const getComputedStyle = (el) => (/^svg$/i.test(el.tagName) ? { fill, filter: SHADOW } : { fill: '', filter: 'none' });
   const run = (file) => new Function('window', 'document', 'localStorage', 'MutationObserver', 'getComputedStyle',
     'setInterval', 'setTimeout', 'clearInterval', readFileSync(file, 'utf8'))(
     win, document, localStorage, MO, getComputedStyle,
@@ -186,4 +189,140 @@ test('loaded first, this build keeps the public copy from starting a second time
 test('the cog panel says which build is running', () => {
   const settings = load().openCog();
   assert.match(settings.querySelector('h4').textContent, /^Torn Dual Flyout Private/);
+});
+
+test('with nothing pinned the page is left as Torn drew it', () => {
+  const p = load();
+  p.tick(); p.mutate();
+  assert.equal(p.document.getElementById('tdf-pins'), null);
+  assert.equal(p.document.getElementById('tdf-pins-spacer'), null);
+});
+
+test('pinned links sit above the bars strip, in the order they were ticked, as plain links', () => {
+  const p = load({ stored: [TARGETS, '/gym.php', '/messages.php'] });
+  p.tick();
+  const row = p.document.getElementById('tdf-pins');
+  assert.ok(row, 'row drawn');
+  assert.equal(row.parentNode.id, 'sidebar');
+  assert.match(row.nextElementSibling.className, /userInformationMobile___/);
+  assert.deepEqual(p.pins().map((a) => a.getAttribute('href')), [TARGETS, '/gym.php', '/messages.php']);
+  assert.deepEqual(p.pins().map((a) => a.querySelector('.tdf-pin-name').textContent), ['Targets', 'Gym', 'Messages']);
+});
+
+test('each pin carries its menu icon, coloured the way the menu colours it', () => {
+  const p = load({ stored: ['/gym.php', '/messages.php'] });
+  p.tick();
+  assert.equal(p.pins().length, 2);
+  for (const a of p.pins()) {
+    const svg = a.querySelector('.tdf-pin-icon svg');
+    assert.ok(svg, `${a.getAttribute('href')} has an icon`);
+    assert.equal(a.querySelector('[id]'), null);   // the copy brings no duplicate ids
+    assert.match(svg.getAttribute('style') || '', /fill:url\("#sidebar_svg_gradient_regular_mobile"\)/);
+    assert.match(svg.getAttribute('style') || '', /filter:drop-shadow\(rgba\(0, 0, 0, 0\.45\) 0px 1px 2px\)/);
+  }
+});
+
+test('an icon fill the browser reports as a full address still points at the page\'s own gradient', () => {
+  // WebKit can resolve a url() fill against the page address. Written back inline, a
+  // full address stops pointing at this page's gradient once the address changes (or
+  // under a <base> tag), and the gradients live in this same page: keep the #fragment.
+  const p = load({ stored: ['/gym.php'], fill: 'url("https://www.torn.com/gym.php#sidebar_svg_gradient_regular_mobile")' });
+  p.tick();
+  assert.match(p.pins()[0].querySelector('svg').getAttribute('style'), /^fill:url\("#sidebar_svg_gradient_regular_mobile"\);/);
+});
+
+test('a pin shows the menu\'s unread count, but not the size of a list', () => {
+  const p = load({ stored: ['/events.php', TARGETS] });
+  p.tick();
+  const [events, targets] = p.pins();
+  assert.equal(events.querySelector('.tdf-pin-badge').textContent, '4');
+  assert.equal(events.querySelector('.tdf-pin-name').textContent, 'Events');   // not "Events, 4 new"
+  assert.equal(targets.querySelector('.tdf-pin-badge'), null);
+});
+
+test('the row wraps onto another line and never scrolls sideways', () => {
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  const css = styledBy(p.document, p.document.getElementById('tdf-pins'));
+  assert.equal(css['display'], 'flex');
+  assert.equal(css['flex-wrap'], 'wrap');
+  for (const prop of ['overflow', 'overflow-x']) assert.doesNotMatch(css[prop] || '', /auto|scroll/);
+});
+
+test('Icons only hides the names under the pins, as it does in the menu', () => {
+  const on = load({ stored: ['/gym.php'], iconsOnly: true });
+  on.tick();
+  assert.equal(styledBy(on.document, on.pins()[0].querySelector('.tdf-pin-name')).display, 'none');
+  const off = load({ stored: ['/gym.php'] });
+  off.tick();
+  assert.notEqual(styledBy(off.document, off.pins()[0].querySelector('.tdf-pin-name')).display, 'none');
+});
+
+test('a row dropped by a Torn re-render comes back on the next tick', () => {
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  p.document.getElementById('tdf-pins').remove();
+  p.tick();
+  const row = p.document.getElementById('tdf-pins');
+  assert.ok(row, 'row back');
+  assert.match(row.nextElementSibling.className, /userInformationMobile___/);
+  assert.equal(p.pins().length, 1);
+});
+
+test('the row follows the bars strip when Torn draws the strip again somewhere else', () => {
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  const sidebar = p.document.getElementById('sidebar');
+  const strip = sidebar.querySelector('[class*="userInformationMobile___"]');
+  sidebar.insertBefore(strip, sidebar.firstChild);   // now ahead of the fly-out panel
+  p.tick();
+  assert.equal(p.document.getElementById('tdf-pins').nextElementSibling, strip);
+  assert.equal(p.document.querySelectorAll('#tdf-pins').length, 1);
+});
+
+test('a tick with nothing new leaves the pins in place, so a tap in progress is not lost', () => {
+  const p = load({ stored: ['/gym.php'] });
+  p.tick();
+  const before = p.pins()[0];
+  assert.ok(before, 'pin drawn');
+  p.tick(); p.tick();
+  assert.equal(p.pins()[0], before);
+});
+
+test('a damaged pins setting is treated as nothing pinned', () => {
+  for (const bad of ['{oops', '"just a string"', '[1, null, {}]', '["constructor", "__proto__", "toString"]']) {
+    const p = load({ stored: bad });
+    p.tick();
+    assert.equal(p.document.getElementById('tdf-pins'), null, bad);
+  }
+});
+
+test('a link stored twice is pinned once', () => {
+  const p = load({ stored: ['/gym.php', '/forums.php', '/gym.php'] });
+  p.tick();
+  assert.deepEqual(p.pins().map((a) => a.getAttribute('href')), ['/gym.php', '/forums.php']);
+});
+
+test('a pinned link that is no longer in the menu waits, undrawn, and the rest still show', () => {
+  const p = load({ stored: ['/gone.php', '/gym.php'] });
+  p.tick();
+  assert.deepEqual(p.pins().map((a) => a.getAttribute('href')), ['/gym.php']);
+  assert.equal(p.store.get('tdf_pins'), JSON.stringify(['/gone.php', '/gym.php']));   // still remembered
+});
+
+test('a pin matches its menu link whether Torn writes the address absolute or relative', () => {
+  const menu = MENU.replace('href="/gym.php"', 'href="https://www.torn.com/gym.php"');
+  const p = load({ stored: ['/gym.php'], menu });
+  p.tick();
+  assert.equal(p.pins().length, 1);
+  assert.equal(p.pins()[0].getAttribute('href'), 'https://www.torn.com/gym.php');
+});
+
+test('pins appear once the menu has loaded its links', () => {
+  const p = load({ stored: ['/gym.php'], menu: '' });
+  p.tick();
+  assert.equal(p.document.getElementById('tdf-pins'), null);
+  p.panel.innerHTML = MENU;
+  p.tick();
+  assert.equal(p.pins().length, 1);
 });

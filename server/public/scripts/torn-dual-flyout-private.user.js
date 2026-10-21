@@ -89,7 +89,21 @@
     // position (no closed-off-screen frame, no slide-in) so there's no flash. Dropped
     // the instant React's real open state (visible___) takes over.
     'html.tdf-preopen #fly-out-panel{transform:none!important;transition:none!important;}' +
-    'html.tdf-preopen #sidebar [class*="overlay___"]{display:none!important;}';
+    'html.tdf-preopen #sidebar [class*="overlay___"]{display:none!important;}' +
+    // Pinned links: a row under Torn's phone header. It wraps onto another line rather
+    // than ever scrolling sideways (sliding strips are what the player found finicky),
+    // and takes Torn's own panel colours so it suits light and dark mode alike.
+    '#tdf-pins{display:flex;flex-wrap:wrap;justify-content:center;gap:2px 4px;box-sizing:border-box;width:100%;padding:3px 4px;' +
+    'background:var(--default-bg-panel-color,#333);color:var(--default-color,#ddd);border-bottom:1px solid rgba(0,0,0,.35);}' +
+    '#tdf-pins .tdf-pin{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;' +
+    'min-width:44px;min-height:32px;padding:2px 4px;border-radius:4px;color:inherit;text-decoration:none;' +
+    '-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;}' +
+    '#tdf-pins .tdf-pin-attn{background:rgba(34,139,230,.18);}' +
+    '.tdf-pin-icon{display:inline-flex;align-items:center;justify-content:center;width:34px;height:23px;line-height:0;}' +
+    '.tdf-pin-icon svg{max-width:100%;max-height:100%;}' +
+    '#tdf-pins .tdf-pin-name{font:10px/12px Arial,Helvetica,sans-serif;max-width:68px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '#tdf-pins .tdf-pin-badge{position:absolute;top:0;right:1px;font:700 10px/12px Arial,Helvetica,sans-serif;color:#a9e34b;text-shadow:0 1px rgba(0,0,0,.25);}' +
+    'html.tdf-iconsonly #tdf-pins .tdf-pin-name{display:none;}';
   var s = document.createElement("style");
   s.id = "torn-menu-right";
   s.textContent = css;
@@ -293,9 +307,144 @@
     }
     positionCog(cog, b);
   }
-  setInterval(function () { ensureCog(); startMenuObserver(); syncMenuOpen(); }, 800);
+  // ---- Pinned links ------------------------------------------------------------
+  // A row of the menu links the player ticked in the cog panel, drawn under Torn's
+  // phone header so favourites are one tap away without opening the menu. The menu
+  // itself is left exactly as Torn draws it. Each pin is a plain link to the same
+  // address as its menu row: tapping one is an ordinary navigation, nothing is
+  // clicked on the player's behalf.
+  var PINS_KEY = "tdf_pins";   // JSON array of pin keys, in the order they were ticked
+  // Anything that is not a list of strings (damaged, or written by something else)
+  // counts as nothing pinned; a key stored twice counts once.
+  function loadPins() {
+    try {
+      var v = JSON.parse(localStorage.getItem(PINS_KEY) || "[]");
+      if (!Array.isArray(v)) return [];
+      return v.filter(function (k, i) { return typeof k === "string" && k !== "" && v.indexOf(k) === i; });
+    } catch (e) { return []; }
+  }
+  function savePins(list) { try { localStorage.setItem(PINS_KEY, JSON.stringify(list)); } catch (e) {} }
+  // A pin is remembered by its link with any scheme and host taken off, so a page
+  // matches whether Torn writes its address absolute or relative.
+  function pinKey(href) { return String(href || "").replace(/^[a-z][a-z0-9+.-]*:\/\/[^\/]*/i, ""); }
+
+  // Every top-level link in Torn's menu, top to bottom: the Messages / Events / Awards
+  // icons, then each area and list row. The people a list row expands to show sit
+  // outside the row's own link, so they are not picked up.
+  var MENU_LINK_SEL = '[class*="accountLinks___"] a[href], [id^="nav-"] > [class*="areaRow___"] > a[href]';
+  function menuLinks() {
+    var p = panel(), out = [], seen = Object.create(null), i;
+    if (!p) return out;
+    var links = p.querySelectorAll(MENU_LINK_SEL);
+    for (i = 0; i < links.length; i++) {
+      var a = links[i], href = a.getAttribute("href"), key = pinKey(href);
+      if (!key || seen[key]) continue;
+      seen[key] = true;
+      // Area and list rows carry their name in a span; the account icons only in
+      // their aria-label ("Events, 4 new").
+      var nameEl = a.querySelector('[class*="linkName___"]');
+      var name = (nameEl ? nameEl.textContent : (a.getAttribute("aria-label") || "")).replace(/,\s*[\d,+]+\s+new\s*$/i, "").trim();
+      // An unread or waiting count. Class matching is case-sensitive: a list row's
+      // member count is listAmount___, left out on purpose (a list size is not news).
+      var countEl = a.querySelector('[class*="amount___"]');
+      var row = a.closest('[id^="nav-"]');
+      out.push({
+        key: key, href: href, name: name || key,
+        count: countEl ? countEl.textContent.trim() : "",
+        attn: !!row && /attention___/.test(row.className),   // Torn's blue "something here" tint
+        svg: a.querySelector("svg")
+      });
+    }
+    return out;
+  }
+  // Keep only the #fragment of a url() paint. WebKit can report it resolved against the
+  // page address, and written back inline a full address stops pointing at this page's
+  // gradient once the address changes (or under a <base> tag). The gradients Torn's
+  // icons use are defined once in this same page.
+  function localUrl(v) { return String(v || "").replace(/url\(\s*["']?[^"'()#]*(#[^"'()]+)["']?\s*\)/g, 'url("$1")'); }
+  // Torn colours its icons with rules that only reach inside the menu (a gradient fill
+  // and a drop shadow), so a copy anywhere else would come out flat and black: carry
+  // both across inline. Read once per redraw, and only for links being drawn.
+  function paintOf(link) {
+    if (!link.paint) {
+      link.paint = { fill: "", filter: "" };
+      try {
+        var cs = link.svg ? getComputedStyle(link.svg) : null;
+        if (cs) {
+          link.paint.fill = localUrl(cs.fill);
+          link.paint.filter = cs.filter && cs.filter !== "none" ? cs.filter : "";
+        }
+      } catch (e) {}
+    }
+    return link.paint;
+  }
+  function iconClone(link) {
+    var wrap = document.createElement("span");
+    wrap.className = "tdf-pin-icon";
+    if (!link.svg) return wrap;
+    var c = link.svg.cloneNode(true), p = paintOf(link), style = "", ids, j;
+    // The original stays in the menu, so any id the copy carried would be a duplicate;
+    // references inside the icon still find the original's.
+    c.removeAttribute("id");
+    ids = c.querySelectorAll("[id]");
+    for (j = 0; j < ids.length; j++) ids[j].removeAttribute("id");
+    if (p.fill) style += "fill:" + p.fill + ";";
+    if (p.filter) style += "filter:" + p.filter + ";";
+    if (style) c.setAttribute("style", style + (c.getAttribute("style") || ""));
+    wrap.appendChild(c);
+    return wrap;
+  }
+  function pinEl(link) {
+    var a = document.createElement("a");
+    a.className = "tdf-pin" + (link.attn ? " tdf-pin-attn" : "");
+    a.setAttribute("href", link.href);
+    a.setAttribute("aria-label", link.count ? link.name + ", " + link.count : link.name);
+    a.appendChild(iconClone(link));
+    var name = document.createElement("span");
+    name.className = "tdf-pin-name";
+    name.textContent = link.name;
+    a.appendChild(name);
+    if (link.count) {
+      var badge = document.createElement("span");
+      badge.className = "tdf-pin-badge";
+      badge.textContent = link.count;
+      a.appendChild(badge);
+    }
+    return a;
+  }
+  // Draw (or re-draw) the row directly above Torn's name/bars strip, the first thing
+  // under the header on a phone. No strip means this is not the phone layout: no row.
+  function renderPins() {
+    var row = document.getElementById("tdf-pins");
+    var strip = document.querySelector('#sidebar [class*="userInformationMobile___"]');
+    var byKey = Object.create(null), shown = [];
+    menuLinks().forEach(function (l) { byKey[l.key] = l; });
+    // A pin whose link has left the menu stays remembered, just not drawn.
+    loadPins().forEach(function (k) { if (byKey[k]) shown.push(byKey[k]); });
+    if (!strip || !shown.length) {
+      if (row) row.remove();
+      return;
+    }
+    if (!row) {
+      row = document.createElement("nav");
+      row.id = "tdf-pins";
+      row.setAttribute("aria-label", "Pinned links");
+    }
+    if (row.parentNode !== strip.parentNode || row.nextSibling !== strip) strip.parentNode.insertBefore(row, strip);
+    // Rebuild only when something a pin shows has changed, so the 800ms tick never
+    // swaps a pin out from under a finger mid-tap.
+    var sig = JSON.stringify(shown.map(function (l) { var p = paintOf(l); return [l.key, l.name, l.count, l.attn, p.fill, p.filter]; }));
+    if (row.__tdfSig !== sig) {
+      row.__tdfSig = sig;
+      row.textContent = "";
+      shown.forEach(function (l) { row.appendChild(pinEl(l)); });
+    }
+  }
+
+  setInterval(function () { ensureCog(); startMenuObserver(); syncMenuOpen(); renderPins(); }, 800);
   ensureCog();
   startMenuObserver();
+  renderPins();
   maybeReopen();                                   // sticky? re-open the menu on this full page load
 
   // SPA route changes (Torn uses in-section hash routing) don't reload the script, so
