@@ -2,7 +2,7 @@
 // A fake Torn and a fake clock; every test gets its own temporary data dir.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
@@ -354,4 +354,62 @@ test("while the Hall of Fame check fails on a first run, it still saves every ra
   }
   assert.equal(torn.hofCalls().length, 1, "the check isn't repeated for every day");
   assert.equal(s.retry, true);
+});
+
+// ── the long windows' estimate ──────────────────────────────────────────
+const { addDays } = await import("./hof-climb.js");
+// Saved days up to 2026-10-19 with us gaining 30 a day, and an estimate file.
+function longSetup(first = "2026-09-05") {
+  const opts = setup(fakeTorn());
+  mkdirSync(join(opts.dataDir, "days"), { recursive: true });
+  for (let d = first, n = 0; d <= "2026-10-19"; d = addDays(d, 1), n++) {
+    writeFileSync(join(opts.dataDir, "days", `${d}.json`),
+      JSON.stringify({ day: d, respect: { [US]: 3000 + n * 30, 1001: 9000 }, hidden: [] }));
+  }
+  return opts;
+}
+const estimateFile = (builtAt, ours = 500) => {
+  const days = {};
+  for (let d = "2025-10-08"; d < "2026-09-05"; d = addDays(d, 1)) days[d] = { [US]: ours, 1001: 8000 };
+  return JSON.stringify({ version: 1, builtAt, anchorDay: "2026-09-05", fittedTo: "2026-10-19", band: "test", factions: 2, days });
+};
+const digestOf = (opts) => JSON.parse(readFileSync(join(opts.dataDir, "digest.json"), "utf8"));
+
+test("the digest takes the estimate in, and is rebuilt when estimates.json appears, changes or goes", async () => {
+  const opts = longSetup();
+  const file = join(opts.dataDir, "estimates.json");
+  await runOnce(opts);
+  assert.deepEqual(Object.keys(digestOf(opts).windows), ["7", "30"]);
+  writeFileSync(file, estimateFile(111));
+  await runOnce(opts);
+  assert.deepEqual(digestOf(opts).windows[365], { base: "2025-10-19", span: 365, estimated: true });
+  assert.equal(digestOf(opts).estimatesBuiltAt, 111);
+  writeFileSync(file, estimateFile(222, 600));
+  await runOnce(opts);
+  assert.equal(digestOf(opts).estimatesBuiltAt, 222);
+  assert.equal(digestOf(opts).paces[US][365], Math.round((4320 - 600) / 365 * 100) / 100);
+  unlinkSync(file);
+  await runOnce(opts);
+  assert.equal(digestOf(opts).estimatesBuiltAt, null);
+  assert.deepEqual(Object.keys(digestOf(opts).windows), ["7", "30"]);
+});
+
+test("a broken estimates.json is left out with a warning and never forces a rebuild", async () => {
+  const opts = longSetup();
+  await runOnce(opts);
+  const built = digestOf(opts).builtAt;
+  writeFileSync(join(opts.dataDir, "estimates.json"), "{not json");
+  const warned = [], warn = console.warn;
+  console.warn = (m) => warned.push(String(m));
+  try { clock.now += 1000; await runOnce(opts); } finally { console.warn = warn; }
+  assert.equal(digestOf(opts).builtAt, built, "not rebuilt");
+  assert.ok(warned.some((m) => /estimates\.json/.test(m)));
+});
+
+test("a saved day 402 days back still counts, for the 1-year window", async () => {
+  const opts = longSetup("2026-09-18");
+  writeFileSync(join(opts.dataDir, "days", "2025-09-12.json"),
+    JSON.stringify({ day: "2025-09-12", respect: { [US]: 100, 1001: 9000 }, hidden: [] }));
+  await runOnce(opts);
+  assert.deepEqual(digestOf(opts).windows[365], { base: "2025-09-12", span: 402 });
 });

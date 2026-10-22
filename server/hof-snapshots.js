@@ -16,7 +16,7 @@ import { DIGEST_VERSION, addDays, computeDigest, dayMs, historyEntry, utcDay } f
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WINDOW_DAYS = 45;              // today and the 44 days before it
-const KEEP_DAYS = 100;               // the 90-day window's limit is 99
+const KEEP_DAYS = 402;               // the 1-year window's limit (365 + 37)
 const RETRY_MS = 15 * 60 * 1000;
 const BOOT_DELAY_MS = 60 * 1000;
 const CALL_GAP_MS = 1100;
@@ -50,6 +50,7 @@ const rejectedPath = (ctx, day) => join(ctx.dir, "raw", `${day}.rejected.csv.gz`
 const dayPath = (ctx, day) => join(ctx.dir, "days", `${day}.json`);
 const digestPath = (ctx) => join(ctx.dir, "digest.json");
 const attemptsPath = (ctx) => join(ctx.dir, "attempts.json");
+const estimatesPath = (ctx) => join(ctx.dir, "estimates.json");
 
 // A temporary name, then a rename: pm2 often stops warboard with SIGKILL, and
 // nothing may ever read half a file.
@@ -311,11 +312,25 @@ export async function runOnce(opts = {}) {
 }
 
 // ── the digest ──────────────────────────────────────────────────────────
+// The long windows' estimate (hof-estimate.js), or null. A file that won't
+// parse or has the wrong shape is left out with a warning: a bad file can
+// only take the estimated windows away.
+function readEstimates(ctx) {
+  if (!existsSync(estimatesPath(ctx))) return null;
+  const e = readJson(estimatesPath(ctx));
+  if (e && e.version === 1 && Number.isFinite(e.builtAt) && e.days && typeof e.days === "object") return e;
+  console.warn("[hof] estimates.json is unreadable or the wrong shape; the long windows use saved days only");
+  return null;
+}
+
+// Stale on a new day, a new digest version, or an estimate that appeared,
+// changed or went since the digest was built.
 function digestStale(ctx) {
   const days = savedDaysIn(ctx);
   if (!days.length) return false;
-  const d = readJson(digestPath(ctx));
-  return !d || d.version !== DIGEST_VERSION || d.day < days[days.length - 1];
+  const d = readJson(digestPath(ctx)), e = readEstimates(ctx);
+  return !d || d.version !== DIGEST_VERSION || d.day < days[days.length - 1] ||
+    (d.estimatesBuiltAt ?? null) !== (e ? e.builtAt : null);
 }
 
 // A day file that won't parse is rebuilt from its raw file; with no usable raw
@@ -356,6 +371,7 @@ function buildIn(ctx) {
   const facts = readRaw(ctx, latest, false);
   const digest = computeDigest({
     byDay, history, names: facts ? facts.names : {}, factionId: ctx.factionId, builtAt: ctx.nowFn(),
+    estimates: readEstimates(ctx),
   });
   writeAtomic(digestPath(ctx), JSON.stringify(digest));
   return digest;
