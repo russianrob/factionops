@@ -31,6 +31,9 @@
   const STYLE_ID = 'tdms-style';
   // Torn's strip order, with the short labels the row uses.
   const STATS = [['strength', 'str'], ['speed', 'spd'], ['dexterity', 'dex'], ['defense', 'def'], ['damage', 'dmg']];
+  // Tile borders for the colours Torn gives its effect icons.
+  const COLORS = { red: '#e0463c', green: '#5cb85c', blue: '#3c8be0', yellow: '#e0c03c' };
+  const ICON_DIR = '/images/v2/attack/effect_icons/';
   // The look the owner approved from the live mock-up (layout B). The row sits over the top
   // of the enemy's window, above Torn's own layers, and taps go straight through it.
   const CSS = [
@@ -70,6 +73,22 @@
     return { box, store: null };
   }
 
+  // The effects Torn puts in the right-hand icon column of your own window: types 1 and 2,
+  // with time left, drawn as an icon ("iconOnly" or "both"; Torn treats a missing mode as
+  // "both"). Types 3 and 4 (distractions, perks) go in Torn's left column instead.
+  function showsAsIcon(e) {
+    if (!e || (e.type !== 1 && e.type !== 2) || !(e.timeLeft > 0)) return false;
+    const mode = e.renderMode == null ? 'both' : e.renderMode;
+    return mode === 'iconOnly' || mode === 'both';
+  }
+
+  // Torn draws every hardening_* effect with the kinetokinesis icon, and adds _<level> when
+  // the effect has one.
+  function iconName(e) {
+    const base = /^hardening_/.test(e.class) ? 'kinetokinesis' : e.class;
+    return e.level ? base + '_' + e.level : base;
+  }
+
   // What the row draws, or null when it shouldn't show. It shows on Torn's phone layout (one
   // player window on the page) while the enemy's window is up: layout "attacker", Torn's
   // default. Tapping your own header switches the layout to "defender" and Torn shows your
@@ -85,15 +104,19 @@
     if (layout !== 'attacker') return null;
     const windows = (document.getElementById('attack-root') || document).querySelectorAll('[class*="playerWindow___"]');
     if (windows.length !== 1) return null;
+    const list = (attack.currentTemporaryEffects || {})[me.userID];
     return {
       win: windows[0],
       stats: STATS.map(([k, label]) => ({ label, value: mods[k] && typeof mods[k].value === 'number' ? mods[k].value : 0 })),
+      effects: Array.isArray(list) ? list.filter(showsAsIcon) : [],
     };
   }
 
   // Everything the row shows, as one string.
   function viewKey(view) {
-    return view ? JSON.stringify(view.stats.map((s) => s.value)) : 'none';
+    if (!view) return 'none';
+    return JSON.stringify([view.stats.map((s) => s.value),
+      view.effects.map((e) => [e.ID, e.class, e.level, e.timeLeft, e.iconColor])]);
   }
 
   // Logs the first error only, so a change on Torn's side shows up without flooding the console.
@@ -142,6 +165,34 @@
     }
   }
 
+  function tile(e) {
+    const t = el('span', 'tdms-icon');
+    t.style.borderColor = COLORS[e.iconColor] || '#888';
+    const img = el('img');
+    img.alt = e.title || e.class;
+    img.src = ICON_DIR + iconName(e) + '.svg';
+    t.appendChild(img);
+    t.appendChild(el('i', '', ''));
+    return t;
+  }
+
+  // The icons line: one tile per effect, as Torn draws them, with the seconds left under each.
+  // Hidden when there is nothing to show.
+  function drawIcons(line, effects) {
+    const tilesKey = effects.map((e) => [e.ID, iconName(e), e.iconColor].join('/')).join('|');
+    if (line.getAttribute('data-key') !== tilesKey) {
+      line.setAttribute('data-key', tilesKey);
+      line.textContent = '';
+      for (const e of effects) line.appendChild(tile(e));
+    }
+    effects.forEach((e, i) => {
+      const text = e.timeLeft > 300 ? '\u221e' : String(e.timeLeft);
+      const secs = line.children[i].lastChild;
+      if (secs.textContent !== text) secs.textContent = text;
+    });
+    line.hidden = effects.length === 0;
+  }
+
   // Draws the row from Torn's current state, putting it into the enemy's window or taking it
   // out. Safe to run any number of times: it only touches the page where something differs.
   function paint() {
@@ -157,6 +208,7 @@
       if (!row) row = buildRow();
       if (row.parentNode !== host) host.appendChild(row);
       drawStats(row.firstChild, view.stats);
+      drawIcons(row.lastChild, view.effects);
     } catch (err) {
       report(err);
     }

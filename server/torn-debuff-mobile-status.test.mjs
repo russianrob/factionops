@@ -361,3 +361,91 @@ test('an error in the script never reaches Torn\'s dispatch', () => {
   assert.doesNotThrow(() => page.flush());
   assert.equal(page.logs.length, 1, 'logged once');
 });
+
+test('your effect shows Torn\'s icon, the seconds left and Torn\'s colour', () => {
+  const page = load({ store: makeStore(state({ mine: [fx()] })) });
+  assert.deepEqual(page.tiles(), [{ src: '/images/v2/attack/effect_icons/smoked.svg', secs: '103', border: '#e0463c' }]);
+  assert.equal(page.document.querySelector('#tdms-row .tdms-icons').hidden, false);
+  assert.equal(page.document.querySelector('#tdms-row .tdms-icon img').getAttribute('alt'), 'Smoked');
+});
+
+test('boosts show as well as debuffs, like a needle you used', () => {
+  // No needle has been seen in Torn's data yet, so this class name is made up. A boost is an
+  // effect like any other, in Torn's green.
+  const boost = fx({ ID: 7, type: 1, class: 'made_up_boost', title: 'Boost', timeLeft: 120, iconColor: 'green' });
+  const page = load({ store: makeStore(state({ mine: [boost] })) });
+  assert.deepEqual(page.tiles(), [{ src: '/images/v2/attack/effect_icons/made_up_boost.svg', secs: '120', border: '#5cb85c' }]);
+});
+
+test('each of Torn\'s icon colours has its border, and an unknown one is grey', () => {
+  const mine = ['red', 'green', 'blue', 'yellow', 'purple'].map((c, i) => fx({ ID: i + 1, class: 'c' + i, iconColor: c }));
+  const page = load({ store: makeStore(state({ mine })) });
+  assert.deepEqual(page.tiles().map((t) => t.border), ['#e0463c', '#5cb85c', '#3c8be0', '#e0c03c', '#888']);
+});
+
+test('only the effects Torn shows in your own window\'s icon column', () => {
+  const mine = [
+    fx({ ID: 1, class: 'a', type: 1 }),
+    fx({ ID: 2, class: 'b', renderMode: 'iconOnly' }),
+    fx({ ID: 3, class: 'c', renderMode: undefined }),          // no mode counts as both
+    fx({ ID: 4, class: 'd', renderMode: 'backgroundOnly' }),   // Torn only paints it over the model
+    fx({ ID: 5, class: 'e', type: 3 }),                        // a distraction: Torn's left column
+    fx({ ID: 6, class: 'f', type: 4 }),                        // a perk: Torn's left column
+    fx({ ID: 7, class: 'g', timeLeft: 0 }),                    // run out
+    fx({ ID: 8, class: 'h', timeLeft: null }),                 // no time: Torn leaves it out
+  ];
+  const page = load({ store: makeStore(state({ mine })) });
+  assert.deepEqual(page.tiles().map((t) => t.src.split('/').pop()), ['a.svg', 'b.svg', 'c.svg']);
+});
+
+test('hardening effects use the kinetokinesis icon, and a level goes on the name', () => {
+  const mine = [
+    fx({ ID: 1, class: 'hardening_left_arm' }),
+    fx({ ID: 2, class: 'weakened', level: 2 }),
+    fx({ ID: 3, class: 'withered', level: 0 }),
+  ];
+  const page = load({ store: makeStore(state({ mine })) });
+  assert.deepEqual(page.tiles().map((t) => t.src.split('/').pop()), ['kinetokinesis.svg', 'weakened_2.svg', 'withered.svg']);
+});
+
+test('over 300 seconds shows the infinity sign, where Torn shows its eternity icon', () => {
+  const page = load({ store: makeStore(state({ mine: [fx({ ID: 1, timeLeft: 301 }), fx({ ID: 2, timeLeft: 300 })] })) });
+  assert.deepEqual(page.tiles().map((t) => t.secs), ['\u221e', '300']);
+});
+
+test('with no effects there is no icons line, and never a sample icon', () => {
+  const page = load({ store: makeStore(state({ mine: [] })) });
+  assert.equal(page.document.querySelector('#tdms-row .tdms-icons').hidden, true);
+  assert.equal(page.document.querySelectorAll('#tdms-row img').length, 0);
+});
+
+test('the enemy\'s effects are not shown as yours', () => {
+  const page = load({ store: makeStore(state({ theirs: [fx()] })) });
+  assert.deepEqual(page.tiles(), []);
+  assert.equal(page.document.querySelector('#tdms-row .tdms-icons').hidden, true);
+});
+
+test('with no effects map at all, the numbers still show', () => {
+  for (const effects of [null, {}, { [ME]: 'not a list' }]) {
+    const page = load({ store: makeStore(state({ effects })) });
+    assert.deepEqual(page.numbers(), NUMBERS, JSON.stringify(effects));
+    assert.equal(page.document.querySelector('#tdms-row .tdms-icons').hidden, true);
+  }
+});
+
+test('two of the same effect show as two tiles, as Torn shows them', () => {
+  const page = load({ store: makeStore(state({ mine: [fx({ ID: 1 }), fx({ ID: 2, timeLeft: 40 })] })) });
+  assert.deepEqual(page.tiles().map((t) => t.secs), ['103', '40']);
+});
+
+test('an effect Torn adds mid-fight shows up, and one it takes away goes', () => {
+  const store = makeStore(state());
+  const page = load({ store });
+  store.set(state({ mine: [fx()] }));
+  page.flush();
+  assert.equal(page.tiles().length, 1);
+  store.set(state({ mine: [] }));
+  page.flush();
+  assert.equal(page.tiles().length, 0);
+  assert.equal(page.document.querySelector('#tdms-row .tdms-icons').hidden, true);
+});
