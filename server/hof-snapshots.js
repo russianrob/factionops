@@ -313,12 +313,13 @@ export async function runOnce(opts = {}) {
 
 // ── the digest ──────────────────────────────────────────────────────────
 // The long windows' estimate (hof-estimate.js), or null. A file that won't
-// parse or has the wrong shape is left out with a warning: a bad file can
-// only take the estimated windows away.
+// parse or has the wrong shape, down to a day that holds nothing, is left
+// out with a warning: a bad file can only take the estimated windows away.
 function readEstimates(ctx) {
   if (!existsSync(estimatesPath(ctx))) return null;
   const e = readJson(estimatesPath(ctx));
-  if (e && e.version === 1 && Number.isFinite(e.builtAt) && e.days && typeof e.days === "object") return e;
+  if (e && e.version === 1 && Number.isFinite(e.builtAt) && e.days && typeof e.days === "object" &&
+      Object.values(e.days).every((d) => d && typeof d === "object")) return e;
   console.warn("[hof] estimates.json is unreadable or the wrong shape; the long windows use saved days only");
   return null;
 }

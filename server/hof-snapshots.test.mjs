@@ -406,6 +406,26 @@ test("a broken estimates.json is left out with a warning and never forces a rebu
   assert.ok(warned.some((m) => /estimates\.json/.test(m)));
 });
 
+test("an estimates.json with a day that holds nothing is left out with a warning, and the digest is rebuilt without it", async () => {
+  const opts = longSetup();
+  const file = join(opts.dataDir, "estimates.json");
+  writeFileSync(file, estimateFile(111));
+  await runOnce(opts);
+  assert.equal(digestOf(opts).estimatesBuiltAt, 111);
+  const bad = JSON.parse(estimateFile(333));
+  bad.days["2025-10-19"] = null;
+  writeFileSync(file, JSON.stringify(bad));
+  const warned = [], warn = console.warn;
+  console.warn = (m) => warned.push(String(m));
+  let s;
+  try { clock.now += 1000; s = await runOnce(opts); } finally { console.warn = warn; }
+  assert.equal(s.error, null);
+  assert.equal(s.retry, false);
+  assert.equal(digestOf(opts).estimatesBuiltAt, null, "not frozen on the old estimate");
+  assert.deepEqual(Object.keys(digestOf(opts).windows), ["7", "30"]);
+  assert.ok(warned.some((m) => /estimates\.json/.test(m)));
+});
+
 test("a saved day 402 days back still counts, for the 1-year window", async () => {
   const opts = longSetup("2026-09-18");
   writeFileSync(join(opts.dataDir, "days", "2025-09-12.json"),
