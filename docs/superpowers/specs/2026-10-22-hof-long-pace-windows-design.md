@@ -35,7 +35,7 @@ my calls; every one is listed in the morning report.
 |---|---|---|---|
 | 1 | Which long windows? | 90, 182 and 365 days, labelled 3 months, 6 months and 1 year | 90 already exists (it goes exact in December). "1 year" is shorter than "12 months" and fits five buttons on a phone. |
 | 2 | Estimate all three, or only 6 months and 1 year? | All three | The 3-month estimate is the best measured of the three. Without it there's no 3-month pace until December. |
-| 3 | Which factions get estimates? | The 168 factions whose respect on 2026-10-22 was within 1.25M below to 2.25M above ours (positions #162 to #329), plus us | At our fastest long pace (about 5.8k a day), a year adds about 2.1M. Factions further away can't meet us within a year at any plausible pace. The band covers the table for months to come. |
+| 3 | Which factions get estimates? | The 167 factions whose respect on 2026-10-22 was within 1.25M below to 2.25M above ours (positions #162 to #329, which include us), and us | At our fastest long pace (about 5.8k a day), a year adds about 2.1M. Factions further away can't meet us within a year at any plausible pace. The band covers the table for months to come. |
 | 4 | Pace for factions outside the band, in an estimated window | No pace in the table. In the projection and the crowding note they keep the longest exact window's pace (30 days today, 90 days from December). | Leaving them out would drop every faction far above us from the count, which would put the 1-year horizon near #1. Their pace can't change whether they meet us. |
 | 5 | Our own faction's estimate | The rebuild from our own faction's records, made on 2026-10-20 (chains, war payouts, OC, territory, attacks and losses) | It is far tighter than the method for rivals: about ±1k at 3 months and ±3k at a year. |
 | 6 | Where the estimate lives | A separate file, `server/data/hof/estimates.json`. Never a synthetic day file in `days/`. | Exact data and estimates never mix, and deleting the file switches the estimates off. |
@@ -58,7 +58,7 @@ the daily job. For each faction in the band:
 It used the owner key at about 40 calls a minute, comment `wb-hof-history`.
 The pull script and its replies stay outside the repo. A faction whose chain
 pages or reports are incomplete is left out of the estimates (no pace), never
-given a partial number.
+given a partial number. So is one the records can't explain (below).
 
 ## The estimate for rivals
 
@@ -87,22 +87,31 @@ days from A0 to 2026-10-22 (AU):
 At t = A0, est(A0) = r(A0) exactly, so the series joins the saved days with no
 step.
 
+A faction is left out when the records can't explain it: `u` comes out below
+0, so its records add up to more than it gained over the saved days (something
+they don't show took respect away, and nothing says when it did before A0), or
+a day's estimate comes out at 0 or below. On the built file this left out one
+faction, which lost about 80k in five days in early October with no chain or
+war behind it; spread over the year, that loss would have cut its 1-year pace
+by more than half.
+
 ### How good it is
 
-This was measured on 2026-10-21 against TornStats, which keeps a weekly respect
-series for many factions (used only to check the method, never as a source).
-The sample was 11 factions between #240 and #258. The table gives how far each
-estimated weekly pace was from the true one:
+This was measured against TornStats, which keeps a weekly respect series for
+many factions (used only to check the method, never as a source). On the
+built file (2026-10-22, every report fetched) the sample is the 12 estimated
+factions TornStats tracks. The table gives how far each estimated weekly pace
+was from the true one:
 
 | Window | Median | Worst |
 |---|---|---|
-| 3 months | 3.6% | 11.9% |
-| 6 months | 5.2% | 43.1% |
-| 1 year | 8.1% | 34.2% |
+| 3 months | 3.8% | 12.1% |
+| 6 months | 5.0% | 39.9% |
+| 1 year | 8.0% | 33.6% |
 
-That check estimated most war rewards from the score. The pull fetches every
-report, and the check is run again on the built file before deploy. The page
-gives these figures in plain words. Some factions' rhythm changed during the
+The first check, on 2026-10-21, used 11 factions between #240 and #258 and
+estimated most war rewards from the score: 3.6%, 5.2% and 8.1% median, 11.9%,
+43.1% and 34.2% worst. The page gives the built file's figures in plain words. Some factions' rhythm changed during the
 year (a new chain habit, a pause between wars), and a constant `u` can't
 follow that.
 
@@ -174,9 +183,9 @@ entry per offered window. Nothing else changes. A row with no estimate gets
   2026, so until it has saved one from 3 months back (17 Dec), 6 months
   (19 Mar 2027) or a year (18 Sep 2027), that window's starting respect is
   rebuilt from Torn's public chain and ranked-war reports. Checked against an
-  outside weekly record for 11 factions near us, a typical pace was within
-  about 4% (3 months), 5% (6 months) and 8% (1 year), but a few were a third
-  out. Only the 168 factions within reach of us are estimated; the rest keep
+  outside weekly record for 12 factions near us, a typical pace was within
+  about 4% (3 months), 5% (6 months) and 8% (1 year), though the worst was 40%
+  out. Only 166 of the 167 factions within reach of us are estimated; the rest keep
   their 30-day pace in the projection." The figures are the ones measured on
   the built file before deploy. "30-day" is the longest window that isn't
   estimated, which the page works out from `windows` and `estimated` (it
