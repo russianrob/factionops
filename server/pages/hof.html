@@ -82,6 +82,9 @@ button{
 .seg button{border:0;border-radius:0}
 .seg button + button{border-left:1px solid var(--line)}
 .seg button.on{background:var(--cool);color:var(--bg);font-weight:600}
+.foot:empty{display:none}
+/* Five windows on a 360 px phone: tighter buttons keep them on one line. */
+@media (max-width:420px){.seg button{padding:7px 8px;font-size:12.5px}}
 .hz{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:0 0 14px}
 .hz div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 10px}
 .hz .k{display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
@@ -141,6 +144,7 @@ tbody tr.us td.nm{box-shadow:inset 3px 0 0 var(--rail)}
     from last midnight's standings; the table uses live respect. Most of our respect arrives with
     each war, so a pass date a few days out can land a few days either way. Positions follow
     Torn's Hall of Fame, which leaves out a few factions that appear in Torn's data.</p>
+  <p id="estnote" class="foot"></p>
 </div>
 <script>
 // Every function here is a plain top-level declaration so hof-page.test.mjs
@@ -149,7 +153,9 @@ var DAY_MS = 86400000;
 var HORIZONS = [7, 30, 91, 182, 365];
 var HORIZON_LABELS = { 7: '1 week', 30: '1 month', 91: '3 months', 182: '6 months', 365: '1 year' };
 var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-var SWITCH_ORDER = [30, 7, 90];
+var SWITCH_ORDER = [30, 7, 90, 182, 365];
+var WINDOW_LABELS = { 7: '7 days', 30: '30 days', 90: '3 months', 182: '6 months', 365: '1 year' };
+var AVERAGE_LABELS = { 7: '7-day', 30: '30-day', 90: '3-month', 182: '6-month', 365: '1-year' };
 var STATE = { data: null, w: null, loadedAt: 0 };
 var IS_PDA = typeof window !== 'undefined' && typeof window.flutter_inappwebview !== 'undefined';
 
@@ -214,6 +220,27 @@ function passLabel(row, above, usPace, w, updatedAt) {
   return n === 0 ? 'catches us today' : 'catches us in ' + n + (n === 1 ? ' day' : ' days');
 }
 
+// The long windows are estimated until warboard's saved days reach back that
+// far; the API says which.
+function isEstimated(data, w) {
+  return Boolean(data.estimated && data.estimated[w]);
+}
+
+// Shown under the footer only while the selected window is estimated. The
+// factions outside the estimate keep the longest exact window's pace in the
+// projection, which the note names.
+function estNoteHtml(data, w) {
+  if (!isEstimated(data, w)) return '';
+  var under = data.windows.filter(function (x) { return !isEstimated(data, x); });
+  var label = under.length ? AVERAGE_LABELS[Math.max.apply(null, under)] : '30-day';
+  return '* Estimated. Warboard\'s own copies of Torn\'s daily data start on 18 Sep 2026, so until it has one from ' +
+    '3 months back (17 Dec), 6 months back (19 Mar 2027) or a year back (18 Sep 2027), that window starts from each ' +
+    'faction\'s respect rebuilt from Torn\'s public chain and ranked-war reports. Checked against an outside weekly ' +
+    'record for 11 factions near us, a typical pace was within about 4% (3 months), 5% (6 months) and 8% (1 year), ' +
+    'though a few were a third out. Only the 168 factions within reach of us are estimated; in the projection the ' +
+    'rest keep their ' + label + ' pace.';
+}
+
 function headerHtml(data, w, nowMs) {
   if (!data.us) return '<p class="when">We are not in these standings.</p>';
   var name = '';
@@ -227,14 +254,15 @@ function headerHtml(data, w, nowMs) {
   var old = age > 1 ? ' Paces come from the ' + data.day + ' snapshot.' : '';
   return '<div class="head"><div class="big">#' + data.us.position + '</div>' +
     '<div class="facts"><b>' + esc(name) + '</b> · ' + sep(data.us.respect) + ' respect · ' +
-    esc(fmtWeek(data.us.pace ? data.us.pace[w] : null)) + ' a week (' + w + '-day average)</div></div>' +
+    esc(fmtWeek(data.us.pace ? data.us.pace[w] : null)) + ' a week (' + AVERAGE_LABELS[w] + ' average' +
+    (isEstimated(data, w) ? ', estimated*' : '') + ')</div></div>' +
     '<p class="when">' + esc(when + old) + '</p>';
 }
 
 function switchHtml(data, w) {
   return SWITCH_ORDER.filter(function (x) { return data.windows.indexOf(x) >= 0; }).map(function (x) {
     return '<button type="button" data-w="' + x + '"' + (x === w ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"') +
-      '>' + x + ' days</button>';
+      '>' + WINDOW_LABELS[x] + (isEstimated(data, x) ? '*' : '') + '</button>';
   }).join('');
 }
 
@@ -324,7 +352,7 @@ function tableHtml(data, w) {
       '<td>' + esc(fmtWeek(r.pace ? r.pace[w] : null)) + '</td>' +
       '<td>' + esc(passLabel(r, me >= 0 && i < me, usPace, w, data.updatedAt)) + '</td></tr>';
   }).join('');
-  return '<table><thead><tr><th>Faction</th><th>Gap</th><th>Pace /week</th><th>Pass</th></tr></thead><tbody>' + body + '</tbody></table>';
+  return '<table><thead><tr><th>Faction</th><th>Gap</th><th>Pace /week' + (isEstimated(data, w) ? '*' : '') + '</th><th>Pass</th></tr></thead><tbody>' + body + '</tbody></table>';
 }
 
 // While the server is refreshing, ask once more a few seconds later; that
@@ -354,6 +382,7 @@ function render() {
   document.getElementById('switch').innerHTML = switchHtml(d, w);
   document.getElementById('horizons').innerHTML = horizonsHtml(d, w);
   document.getElementById('note').innerHTML = noteHtml(d, w);
+  document.getElementById('estnote').innerHTML = estNoteHtml(d, w);
   // The panel is hidden while empty, so measure the column it sits in.
   var chart = document.getElementById('chart');
   var width = (chart.parentNode && chart.parentNode.clientWidth) || 672;

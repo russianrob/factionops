@@ -29,7 +29,7 @@ function fn(name) {
 }
 const NAMES = ["esc", "sep", "fmtNum", "fmtWeek", "fmtDate", "updatedLabel", "passLabel", "headerHtml",
   "switchHtml", "horizonsHtml", "noteHtml", "niceStep", "chartSvg", "tableHtml", "followUpDelay",
-  "refreshDue", "setStatus", "render", "load"];
+  "refreshDue", "setStatus", "render", "load", "isEstimated", "estNoteHtml"];
 const CONSTS = PAGE.match(/^var [A-Z_]+ = .*;$/gm);
 function page(globals = {}, extra = []) {
   const names = [...NAMES, ...extra];
@@ -214,4 +214,50 @@ test("the table's pace column is per week", () => {
 test("'How this works' explains the pace as respect per week", () => {
   assert.match(PAGE, /Pace is the respect gained between Torn's daily snapshots over\s+the window, shown per week\./);
   assert.doesNotMatch(PAGE, /divided by the days/);
+});
+
+// ── long windows ────────────────────────────────────────────────────────
+const LONG = {
+  ...DATA, windows: [7, 30, 90, 182, 365], estimated: { 7: false, 30: false, 90: true, 182: true, 365: true },
+  us: { ...DATA.us, pace: { 7: 110, 30: 100, 90: 90, 182: 80, 365: 4583.2 } },
+};
+
+test("the switch reads 30 days, 7 days, 3 months, 6 months, 1 year, and stars the estimated ones", () => {
+  const html = page().switchHtml(LONG, 30);
+  assert.deepEqual([...html.matchAll(/>([^<]+)<\/button>/g)].map((m) => m[1]),
+    ["30 days", "7 days", "3 months*", "6 months*", "1 year*"]);
+  assert.match(page().switchHtml({ ...LONG, estimated: { ...LONG.estimated, 90: false } }, 90), /class="on" aria-pressed="true">3 months</);
+});
+
+test("the header names the window and says when it is estimated", () => {
+  const P = page();
+  assert.match(P.headerHtml(LONG, 365, UPDATED + 60000), /32\.1k a week \(1-year average, estimated\*\)/);
+  assert.match(P.headerHtml({ ...LONG, estimated: { ...LONG.estimated, 90: false } }, 90, UPDATED + 60000), /630 a week \(3-month average\)/);
+  assert.match(P.headerHtml(LONG, 30, UPDATED + 60000), /700 a week \(30-day average\)/);
+});
+
+test("the pace heading is starred in an estimated window", () => {
+  assert.match(page().tableHtml(LONG, 182), /<th>Pace \/week\*<\/th>/);
+  assert.match(page().tableHtml(LONG, 30), /<th>Pace \/week<\/th>/);
+});
+
+test("the estimate note shows only in an estimated window, and names the pace the rest keep", () => {
+  const P = page();
+  assert.equal(P.estNoteHtml(LONG, 30), "");
+  assert.match(P.estNoteHtml(LONG, 365), /^\* Estimated\. /);
+  assert.match(P.estNoteHtml(LONG, 365), /keep their 30-day pace/);
+  assert.match(P.estNoteHtml({ ...LONG, estimated: { ...LONG.estimated, 90: false } }, 365), /keep their 3-month pace/);
+  assert.equal(P.estNoteHtml(DATA, 30), "", "an answer from before the long windows");
+});
+
+test("render fills the estimate note", () => {
+  const els = {};
+  const P = page({ document: { getElementById: (id) => (els[id] ||= { innerHTML: "" }) } });
+  P.STATE.data = LONG;
+  P.STATE.w = 182;
+  P.render();
+  assert.match(els.estnote.innerHTML, /^\* Estimated\. /);
+  P.STATE.w = 7;
+  P.render();
+  assert.equal(els.estnote.innerHTML, "");
 });
