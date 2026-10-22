@@ -1,7 +1,7 @@
 # Torn Debuff Mobile Status (design)
 
 **Status:** approved by the owner on 2026-10-21 (EDT), after a live mock-up of layout B on their phone: "okay go with B but dont have the sample icons thing".
-**Script:** `server/public/scripts/torn-debuff-mobile-status.user.js` and `.meta.js`, version 1.0.0. Tests: `server/torn-debuff-mobile-status.test.mjs`.
+**Script:** `server/public/scripts/torn-debuff-mobile-status.user.js` and `.meta.js`, version 1.0.2. Tests: `server/torn-debuff-mobile-status.test.mjs`.
 
 ## Why
 
@@ -41,7 +41,7 @@ The row has two lines: the numbers line and, under it, the icons line.
 - **Icons line:** your effects, good and bad (a needle you used as well as the enemy's smoke), drawn with Torn's own icon images. Each sits on a small dark tile whose border is Torn's colour for that effect (red, green, blue or yellow). The seconds left show under the icon and count down every second. Over 300 seconds shows an infinity sign, where Torn shows its eternity icon.
 - **Which effects:** the ones Torn puts in the right-hand column of your own window. That means type 1 or 2, more than 0 seconds left, and a render mode of `iconOnly` or `both` (a missing render mode counts as `both`).
 - **Icon file:** `/images/v2/attack/effect_icons/<name>.svg`. The name is the effect's class with `_<level>` added when the effect has a level. Every `hardening_*` class uses `kinetokinesis` instead, as Torn does.
-- **Look:** as in the approved mock-up. The background is see-through dark with a 1px green border. Text is 11 to 12px. Each icon is cropped to its symbol and shown 20px square, on a 26 x 37px tile (since 1.0.1; 1.0.0 showed the whole icon at 26px on 34px tiles, which left a lot of empty space). The row sits 4px in from the window's top, left and right edges.
+- **Look:** as in the approved mock-up. The background is see-through dark with a 1px green border. Text is 11 to 12px. Each icon is cropped to the part of Torn's 54 x 50 canvas that holds its symbol (x 7..43, y 8..42, measured on 18 icons), shown in a 21 x 20px window on a 27 x 37px tile. A faint stub of Torn's side bar still shows beside most symbols. (1.0.0 showed the whole icon at 26px on 34px tiles, which left a lot of empty space. 1.0.1's 20px window cut the end of the stun ring.) The row sits 4px in from the window's top, left and right edges.
 
 ## When it shows
 
@@ -90,14 +90,14 @@ The store's `timeLeft` changes only when Torn's data refreshes, every 4 seconds.
 ## Script
 
 - **Header:**
-  - `@name Torn Debuff Mobile Status`, `@namespace RussianRob`, `@author RussianRob`, `@version 1.0.0`, `@license All Rights Reserved`, no `@copyright`;
+  - `@name Torn Debuff Mobile Status`, `@namespace RussianRob`, `@author RussianRob`, `@version 1.0.2`, `@license All Rights Reserved`, no `@copyright`;
   - `@match https://www.torn.com/page.php?sid=attack*` and `https://www.torn.com/loader.php?sid=attack*`;
   - `@run-at document-idle`, `@grant none`;
   - `@downloadURL` is the served `.user.js` and `@updateURL` the served `.meta.js`.
 - **Page world:** `@grant none` runs the script in the page world in Tampermonkey, where React's fiber and the store are visible. PDA runs scripts in the page world anyway.
 - **Nothing else needed:** no API key, no network requests, no saved settings and no `GM_*` calls.
 - **ASCII only:** the source is ASCII, with the infinity sign written as `\u221e`. PDA breaks curly quotes, and ASCII avoids that whole class of bug.
-- **Changelog:** a `// ===== CHANGELOG =====` block with the 1.0.0 entry.
+- **Changelog:** a `// ===== CHANGELOG =====` block with an entry for each version, newest first.
 - **Distribution:** served at `https://tornwar.com/scripts/torn-debuff-mobile-status.user.js`, with its `.meta.js` beside it. The owner pastes it to Greasy Fork, and posts link to the Greasy Fork page.
 
 ## Testing
@@ -110,6 +110,7 @@ The tests are `server/torn-debuff-mobile-status.test.mjs`, using node:test and l
   - `hardening_*` drawn as kinetokinesis, and the level suffix;
   - the border colour, and the infinity sign over 300;
   - no icons line when there are no effects, and never any sample icons.
+- **Tiles:** the icon sits in a window that shows all of canvas x 7..43, y 8..42 and little else, without stretching it. Only one rule sizes the icon, and it resets `max-width` and `max-height`. Worked out from its rules, a tile is 27 x 37px.
 - **Countdown:** it shows `timeLeft` minus the elapsed seconds, drops an icon at 0, and resets when the store sends new numbers. These tests use fake timers.
 - **Visibility:**
   - layout "attacker" with one window shows the row;

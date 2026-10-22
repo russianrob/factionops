@@ -147,7 +147,7 @@ test('the header: the attack page only, the page world, and updates from the met
   assert.deepEqual(tag('name'), ['Torn Debuff Mobile Status']);
   assert.deepEqual(tag('namespace'), ['RussianRob']);
   assert.deepEqual(tag('author'), ['RussianRob']);
-  assert.deepEqual(tag('version'), ['1.0.1']);
+  assert.deepEqual(tag('version'), ['1.0.2']);
   assert.deepEqual(tag('license'), ['All Rights Reserved']);
   assert.deepEqual(tag('copyright'), []);
   assert.deepEqual(tag('match'), ['https://www.torn.com/page.php?sid=attack*', 'https://www.torn.com/loader.php?sid=attack*']);
@@ -157,6 +157,7 @@ test('the header: the attack page only, the page world, and updates from the met
   assert.deepEqual(tag('updateURL'), ['https://tornwar.com/scripts/torn-debuff-mobile-status.meta.js']);
   assert.equal(readFileSync(META, 'utf8'), header + '\n', 'the meta file is the header, byte for byte');
   assert.match(src, /^\/\/ CHANGELOG$/m);
+  assert.match(src, /^\/\/ v1\.0\.2  - /m, 'the changelog has the 1.0.2 entry');
   assert.match(src, /^\/\/ v1\.0\.1  - /m, 'the changelog has the 1.0.1 entry');
   assert.match(src, /^\/\/ v1\.0\.0  - /m, 'the changelog has the 1.0.0 entry');
 });
@@ -370,41 +371,65 @@ test('your effect shows Torn\'s icon, the seconds left and Torn\'s colour', () =
   assert.equal(page.document.querySelector('#tdms-row .tdms-icon img').getAttribute('alt'), 'Smoked');
 });
 
-// Torn draws each effect icon on a 54x50 canvas: the symbol sits in the square x 7..41,
-// y 8..42 (measured on 14 of Torn's icons), with empty canvas and a faint bar to its right.
-// The tile shows only that square, in a 20px window, so the box is small and the symbol a
-// little bigger than the whole icon at 26px made it.
-test('each icon is cropped to its symbol, on a tile that fits it', () => {
+// The declarations of the row's stylesheet rule for `sel`, as an object. There must be
+// exactly one rule for it, so a second one can't quietly override it.
+function cssRule(page, sel) {
+  const found = page.document.getElementById('tdms-style').textContent.split('\n').filter((l) => l.startsWith(sel + '{'));
+  assert.equal(found.length, 1, sel);
+  return Object.fromEntries(found[0].slice(sel.length + 1, -1).split(';')
+    .map((d) => [d.slice(0, d.indexOf(':')), d.slice(d.indexOf(':') + 1)]));
+}
+// A CSS length (px, or a bare 0) as a number of px.
+const px = (v) => Number(/^(-?[\d.]+)(px)?$/.exec(v)[1]);
+
+// Torn draws each effect icon on a 54x50 canvas. Measured on 18 of its icons, the symbols all
+// lie inside x 7..43, y 8..42 (stunned spans x 7..43); the rest is empty canvas and a faint
+// bar running out to the right. The tile shows only that part of the icon, in a window, so
+// the box is small and the symbol a little bigger than the whole icon at 26px made it.
+test('each icon is cropped to its symbol, and no symbol is cut', () => {
   const page = load({ store: makeStore(state({ mine: [fx()] })) });
   const tile = page.document.querySelector('#tdms-row .tdms-icon');
   assert.deepEqual([...tile.children].map((c) => c.className || c.tagName), ['tdms-glyph', 'I'], 'the window, then the seconds');
   assert.equal(tile.firstChild.firstChild.tagName, 'IMG', 'Torn\'s icon is inside the window');
-  const css = page.document.getElementById('tdms-style').textContent;
-  // A rule's declarations as an object, and a length as a number of px.
-  const rule = (sel) => {
-    const line = css.split('\n').find((l) => l.startsWith(sel + '{'));
-    assert.ok(line, sel);
-    return Object.fromEntries(line.slice(sel.length + 1, -1).split(';')
-      .map((d) => [d.slice(0, d.indexOf(':')), d.slice(d.indexOf(':') + 1)]));
-  };
-  const px = (v) => Number(/^(-?[\d.]+)(px)?$/.exec(v)[1]);
-  const win = rule('#tdms-row .tdms-glyph');
-  const img = rule('#tdms-row .tdms-glyph img');
+  const imgRules = page.document.getElementById('tdms-style').textContent.split('\n').filter((l) => / img\{/.test(l));
+  assert.deepEqual(imgRules.map((l) => l.slice(0, l.indexOf('{'))), ['#tdms-row .tdms-glyph img'], 'no other rule sizes the icon');
+  const win = cssRule(page, '#tdms-row .tdms-glyph');
+  const img = cssRule(page, '#tdms-row .tdms-glyph img');
   assert.deepEqual([win.display, win.position, win.overflow, img.position], ['block', 'relative', 'hidden', 'absolute']);
   const sx = px(img.width) / 54;
   const sy = px(img.height) / 50;
   assert.ok(Math.abs(sx - sy) < 0.001, 'the icon keeps its shape');
-  const seen = [-px(img.left) / sx, (px(win.width) - px(img.left)) / sx, -px(img.top) / sy, (px(win.height) - px(img.top)) / sy];
-  assert.deepEqual(seen.map((n) => Math.round(n * 10) / 10), [7, 41, 8, 42], 'the part of the canvas the window shows');
-  // The tile's outer size: its 1px border and padding round the 20px window, and the seconds
-  // under it (10px text on the row's 1.1 line height, so 11px high; 3 digits fit in 20px).
-  // 1.0.0's tiles were 36 x 43.
-  const t = rule('#tdms-row .tdms-icon');
+  const x = [-px(img.left) / sx, (px(win.width) - px(img.left)) / sx];
+  const y = [-px(img.top) / sy, (px(win.height) - px(img.top)) / sy];
+  const seen = `canvas x ${x.map((n) => n.toFixed(2)).join('..')}, y ${y.map((n) => n.toFixed(2)).join('..')}`;
+  assert.ok(x[0] <= 7.05 && x[1] >= 42.95 && y[0] <= 8.05 && y[1] >= 41.95, 'every symbol shows whole: ' + seen);
+  assert.ok(x[0] > 6.5 && x[1] < 43.5 && y[0] > 7.5 && y[1] < 42.5, 'and little else: ' + seen);
+});
+
+// The icon is bigger than its window, so a page rule that keeps images inside their box
+// (img{max-width:100%}) would shrink it into the window and spoil the crop.
+test('a page rule that keeps images inside their box can\'t shrink the icon', () => {
+  const page = load({ store: makeStore(state({ mine: [fx()] })) });
+  const img = cssRule(page, '#tdms-row .tdms-glyph img');
+  assert.deepEqual([img['max-width'], img['max-height']], ['none', 'none']);
+});
+
+// The tile's outer size, from its rules: the border and padding round the window, and the
+// seconds under it, one line high. 1.0.0's tiles were 36 x 43, 1.0.1's 26 x 37.
+test('a tile is 27 x 37 px: the icon window with the seconds under it', () => {
+  const page = load({ store: makeStore(state({ mine: [fx()] })) });
+  const t = cssRule(page, '#tdms-row .tdms-icon');
+  const win = cssRule(page, '#tdms-row .tdms-glyph');
+  const secs = cssRule(page, '#tdms-row .tdms-icon i');
+  assert.deepEqual([t.display, t['flex-direction']], ['flex', 'column'], 'the seconds go under the icon');
+  // The row's font is "11px/1.1 ...", so a line is 1.1 times its text size unless set.
+  const lineHeight = secs['line-height'] ? px(secs['line-height'])
+    : px(secs['font-size']) * Number(/\/([\d.]+) /.exec(cssRule(page, '#tdms-row').font)[1]);
   const [pt, pr = pt, pb = pt, pl = pr] = t.padding.split(' ').map(px);
   const border = px(t.border.split(' ')[0]);
-  const width = (t.width ? px(t.width) : px(win.width) + pl + pr) + 2 * border;
-  const height = pt + px(win.height) + 11 + pb + 2 * border;
-  assert.deepEqual([width, height], [26, 37]);
+  const width = (t.width ? px(t.width) : px(win.width)) + pl + pr + 2 * border;
+  const height = pt + px(win.height) + lineHeight + pb + 2 * border;
+  assert.deepEqual([width, Number(height.toFixed(2))], [27, 37]);
 });
 
 test('boosts show as well as debuffs, like a needle you used', () => {
