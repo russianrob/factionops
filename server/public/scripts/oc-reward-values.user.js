@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Reward Values
 // @namespace    RussianRob
-// @version      1.3.1
+// @version      1.3.2
 // @description  Shows the real market value of completed-OC reward items (the paintings/weapons Torn prices at $0 or a stale catalog price) and a per-OC "Items total", reading live item-market prices straight from Torn with YOUR own API key. Talks only to api.torn.com. Works in Torn PDA.
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -17,7 +17,7 @@
 
 (function () {
   "use strict";
-  const SCRIPT_VERSION = "1.3.1";
+  const SCRIPT_VERSION = "1.3.2";
   const KEY_STORE  = "ocwk_torn_api_key";
   const CACHE_KEY  = "ocwk_listings_v3";
   const TTL_MS     = 10 * 60 * 1000;
@@ -296,11 +296,11 @@
 
   try {
     if (typeof GM_registerMenuCommand === "function") {
-      GM_registerMenuCommand("Set OC API key (Torn)", () => {
+      GM_registerMenuCommand("OC Reward Values: Set OC API key (Torn)", () => {
         const k = prompt("Paste your Torn API key (Limited Access is enough):", _apiKey || "");
         if (k != null) { saveKey(k); _byId = {}; _byName = {}; _state = _apiKey ? "checking" : "none"; _barSig = null; schedule(); }
       });
-      GM_registerMenuCommand("Clear OC API key", () => { clearKey(); _byId = {}; _byName = {}; _state = "none"; _barSig = null; schedule(); });
+      GM_registerMenuCommand("OC Reward Values: Clear OC API key", () => { clearKey(); _byId = {}; _byName = {}; _state = "none"; _barSig = null; schedule(); });
     }
   } catch (_) {}
 

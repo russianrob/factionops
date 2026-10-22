@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.60
+// @version      2.73.61
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -26,6 +26,26 @@
 // Upstream: FF Scouter V2 (GPL-3.0, rDacted/Weav3r/xentac/Glasnost)
 //   https://greasyfork.org/en/scripts/535292
 //
+// 2.73.61 —  Menu: the API key entry names the script, "FFS Banner Estimates:
+//              Enter Limited API Key". Some menus list every script's entries
+//              together, and "Enter Limited API Key" alone didn't say whose it was.
+//
+// 2.73.60 —  Show the country for members who are abroad.
+//
+// 2.73.59 —  The travel chip's click-to-show-country actually has a country.
+//
+// 2.73.58 —  Hide people in federal jail.
+//
+// 2.73.57 —  Loadout sightings, capture only: when Torn shows an opponent's
+//              equipped items in a fight, report what was visible, so the
+//              faction pools sightings nobody could collect alone. No UI yet.
+//
+// 2.73.56 —  Take the refusal codes from a script that got them right.
+//
+// 2.73.55 —  Stand down when Torn refuses the key.
+//
+// 2.73.54 —  Never call a target Okay on our own authority.
+//
 // 2.73.53 —  Sorting: FFS only orders the lists it is for.
 //              Two reports, the same shape — FFS re-applying its own
 //              order every paint over one the reader had chosen.
@@ -46,6 +66,10 @@
 //              so the enemy ordering cannot be swallowed by it.
 //
 //              The enemy list is untouched and still needs no click.
+//
+// 2.73.52 —  The cache stops out-voting the poll.
+//
+// 2.73.51 —  Never paint "Hospital" on a free target.
 //
 // 2.73.50 —  War list: a target who has just left hospital.
 //              Two reports, both about the moment a hospital timer ends.
@@ -1088,7 +1112,7 @@ if (!singleton) {
   var key = rD_getValue("limited_key", null);
   var info_line = null;
 
-  rD_registerMenuCommand("Enter Limited API Key", () => {
+  rD_registerMenuCommand("FFS Banner Estimates: Enter Limited API Key", () => {
     let userInput = prompt(
       "[FF Scouter V2]: Enter Limited API Key",
       rD_getValue("limited_key", ""),
@@ -3473,7 +3497,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.60';
+  const SCRIPT_VERSION = '2.73.61';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.

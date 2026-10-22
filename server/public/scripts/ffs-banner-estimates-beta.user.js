@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates Beta
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.911
+// @version      2.73.912
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -25,6 +25,22 @@
 // Upstream: FF Scouter V2 (GPL-3.0, rDacted/Weav3r/xentac/Glasnost)
 //   https://greasyfork.org/en/scripts/535292
 //
+// 2.73.912 — Menu: the API key entry names the script, "FFS Banner Estimates
+//              Beta: Enter Limited API Key". Some menus list every script's
+//              entries together, and "Enter Limited API Key" alone didn't say
+//              whose it was.
+// 2.73.911 — Take the refusal codes from a script that got them right (as FFS 2.73.56).
+// 2.73.910 — Stand down when Torn refuses the key (as FFS 2.73.55).
+// 2.73.909 — Never call a target Okay on our own authority (as FFS 2.73.54).
+// 2.73.908 — FFS only orders the lists it is for (as FFS 2.73.53).
+// 2.73.907 — Our own side of the war board is not a target list.
+// 2.73.906 — The roster is not the war board.
+// 2.73.905 — The cache stops out-voting the poll (as FFS 2.73.52).
+// 2.73.904 — Never paint "Hospital" on a free target (as FFS 2.73.51).
+// 2.73.903 — Release when Torn says okay, not when it fails to say no.
+// 2.73.902 — Capture what the poll actually said.
+// 2.73.901 — The class is Torn's, the text is ours.
+// 2.73.900 — A target who just walked out of hospital.
 // 2.73.0-wb18 — Travel countdown fixes: wb17 diag on /factions.php?step=your
 //              returned zero faction IDs and zero rows. Two fixes:
 //              1. Own-faction-id resolver — when on step=your the URL
@@ -1041,7 +1057,7 @@ if (!singleton) {
   var key = rD_getValue("limited_key", null);
   var info_line = null;
 
-  rD_registerMenuCommand("Enter Limited API Key", () => {
+  rD_registerMenuCommand("FFS Banner Estimates Beta: Enter Limited API Key", () => {
     let userInput = prompt(
       "[FF Scouter V2]: Enter Limited API Key",
       rD_getValue("limited_key", ""),
@@ -3285,7 +3301,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.911';
+  const SCRIPT_VERSION = '2.73.912';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
