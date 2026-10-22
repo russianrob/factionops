@@ -86,7 +86,8 @@ function tabSession({ full = false } = {}) {
 // - GM storage (w.store; two pages given the same store share it, as tabs do);
 // - the tab's sessionStorage (`session`, from tabSession());
 // - Torn's API (w.calls, one per request, answered with answer() or noAnswer());
-// - the menu (w.menu) and the console (w.logs).
+// - the menu (w.menu by name, and w.menuCalls, every name in the order registered) and the
+//   console (w.logs).
 // Pass `data` for raw sidebar data (null for none), or `icons` for statusIcons.icons. `menu` is
 // false for a host with no menu, or 'throws' for one whose menu throws.
 function page({ sidebar = 'Fly-out, phone', icons = { drug_cooldown: drug(NOW - 1) }, data, store = {},
@@ -98,7 +99,7 @@ function page({ sidebar = 'Fly-out, phone', icons = { drug_cooldown: drug(NOW - 
   let timerId = 0;
   const winListeners = {};
   const w = {
-    document: dom.document, Event: dom.Event, store, clock, calls: [], menu: {}, logs: [], checks: [], pollMs: null,
+    document: dom.document, Event: dom.Event, store, clock, calls: [], menu: {}, menuCalls: [], logs: [], checks: [], pollMs: null,
     window: {
       innerWidth: 400,
       innerHeight: 800,
@@ -130,7 +131,7 @@ function page({ sidebar = 'Fly-out, phone', icons = { drug_cooldown: drug(NOW - 
         w.window, w.document, session,
         (k, d) => (Object.prototype.hasOwnProperty.call(store, k) ? store[k] : d),
         (k, v) => { store[k] = v; },
-        menu ? (name, fn) => { if (menu === 'throws') throw new Error('no menu here'); w.menu[name] = fn; } : undefined,
+        menu ? (name, fn) => { if (menu === 'throws') throw new Error('no menu here'); w.menu[name] = fn; w.menuCalls.push(name); } : undefined,
         gmRequest ? (opts) => { w.calls.push(opts); } : undefined,
         (url, init) => new Promise((resolve, reject) => {
           w.calls.push({ url, init, fetch: true,
@@ -928,7 +929,7 @@ test('the phone\'s own long-press menu is held back on the icon', () => {
 });
 
 test('the menu entry names the script, so it stands out among other scripts\' entries', () => {
-  assert.deepEqual(Object.keys(page().run().menu), [MENU]);
+  assert.deepEqual(page().run().menuCalls, [MENU], 'one entry, registered once');
 });
 
 test('the key box: a plain text field that starts empty, with Save, Clear and Cancel', () => {

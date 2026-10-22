@@ -1,7 +1,7 @@
 # Torn Xanax Reminder (design)
 
 **Status:** approved by the owner on 2026-10-22 (EDT), with one change to the war window: "change it to tap to select items for armoury or items then write it" (see Q6, Q7).
-**Script:** `server/public/scripts/torn-xanax-reminder.user.js` and `.meta.js`, version 1.0.0. Tests: `server/torn-xanax-reminder.test.mjs`.
+**Script:** `server/public/scripts/torn-xanax-reminder.user.js` and `.meta.js`, version 1.0.1. Tests: `server/torn-xanax-reminder.test.mjs`.
 
 ## Why
 
@@ -95,7 +95,7 @@ The script never clicks anything itself. Every way out of the icon is a plain li
 
 - **PDA:** the source carries `###PDA-APIKEY###` once and only once. PDA swaps it for your key. A second copy, or one split across strings, breaks PDA's substitution.
 - **Everywhere else:** you enter it once, in a small box:
-  - It opens from the script's menu ("Set API key"), where the userscript manager has a menu.
+  - It opens from the script's menu ("Xanax Reminder: Set API key", named for the script because some menus list every script's entries together), where the userscript manager has a menu.
   - It also opens on a long press of the Xanax icon, as the blood bag's settings do. That reaches it in any app, even one with no menu.
   - The box says a Public-level key is enough, and has Save, Clear and Cancel.
   - The saved key is never shown. The field starts empty, and the box says whether a key is saved (or PDA's is in use).
@@ -117,7 +117,7 @@ The script never clicks anything itself. Every way out of the icon is a plain li
 
 - `server/public/scripts/torn-xanax-reminder.user.js` and `.meta.js`, owned `warboard:warboard`.
 - **Header:**
-  - @name "Torn Xanax Reminder", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.0, a CHANGELOG block. The in-file `VERSION` matches @version, and the console line on start carries it.
+  - @name "Torn Xanax Reminder", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.1, a CHANGELOG block. The in-file `VERSION` matches @version, and the console line on start carries it.
   - @downloadURL and @updateURL: `https://tornwar.com/scripts/torn-xanax-reminder.user.js` and `.meta.js`.
   - @grant: GM_getValue, GM_setValue, GM_xmlhttpRequest, GM_registerMenuCommand. @connect api.torn.com.
 - The served file and the repo are the same file (`server/public/scripts` is served), committed and pushed together.
