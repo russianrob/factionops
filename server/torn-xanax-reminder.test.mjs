@@ -641,3 +641,331 @@ test('an answer of an unexpected shape gives no war line and never breaks the ch
     assert.doesNotMatch(w.label(), /War starts/);
   }
 });
+
+// ---------------------------------------------------------------------------------------------
+// The tap, the box and the key box
+// ---------------------------------------------------------------------------------------------
+
+const ARMOURY = 'https://www.torn.com/factions.php?step=your&type=1#/tab=armoury&start=0&sub=drugs';
+const CHOICE = 'tm-xanax-reminder-choice';
+const KEYBOX = 'tm-xanax-reminder-key';
+// GM storage as an earlier answer from Torn left it, checked just now: a key, and a war
+// starting at `start` (in the window by default).
+const warStore = (start = START) => ({ [KEY_STORE]: KEY, [WAR_STORE]: JSON.stringify({ at: NOW * 1000, start, end: 0, error: '' }) });
+const box = (w) => w.document.getElementById(CHOICE);
+const keyBox = (w) => w.document.getElementById(KEYBOX);
+const keyButtons = (w) => [...keyBox(w).querySelectorAll('button')];
+const escape = (w) => fire(w, w.document.body, 'keydown', { key: 'Escape' });
+
+test('outside the war window, a tap follows the link to your items and opens no box', () => {
+  const w = page({ store: warStore(NOW + 2 * 86400) }).run();
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, false, 'the link opens your items');
+  assert.equal(box(w), null);
+  w.clock.ms = (NOW + 86400 + 60) * 1000;   // 24 hours before the start: the window opens
+  w.store[WAR_STORE] = JSON.stringify({ at: w.clock.ms, start: NOW + 2 * 86400, end: 0, error: '' });
+  w.check();
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, true, 'and in the window, the box');
+});
+
+test('in the war window, a tap opens a box with Armoury and Items', () => {
+  const w = page({ store: warStore() }).run();
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, true, 'the box opens instead of the link');
+  assert.ok(box(w));
+  assert.equal(box(w).querySelector('b').textContent, 'War starts in 5h 12m');
+  assert.deepEqual([...box(w).querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')]),
+    [['Armoury', ARMOURY], ['Items', ITEMS]]);
+  assert.equal(w.link().getAttribute('href'), ITEMS, 'the icon still points at your items');
+});
+
+test('from the war\'s start, a tap goes straight to your items again, and an open box closes', () => {
+  const w = page({ store: warStore() }).run();
+  fire(w, w.link(), 'click');
+  assert.ok(box(w));
+  w.clock.ms = START * 1000;
+  w.check();
+  assert.equal(box(w), null, 'the box closed at the start');
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, false);
+});
+
+test('the open box keeps its time current', () => {
+  const w = page({ store: warStore() }).run();
+  fire(w, w.link(), 'click');
+  w.clock.ms += 12 * 60 * 1000;
+  w.check();
+  assert.equal(box(w).querySelector('b').textContent, 'War starts in 5h 0m');
+});
+
+test('with no key, a tap goes straight to your items, even with a war time saved', () => {
+  const store = warStore();
+  delete store[KEY_STORE];
+  const w = page({ store }).run();
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, false);
+  assert.equal(box(w), null);
+  w.store[KEY_STORE] = KEY;
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, true, 'with the key back, the box');
+});
+
+test('after a Torn error, with no war time from before, a tap goes straight to your items', async () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  answer(w.calls[0], { error: { code: 2, error: 'Incorrect key' } });
+  await settle();
+  w.check();
+  assert.match(w.label(), /Incorrect key/);
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, false, 'the link opens your items');
+  assert.equal(box(w), null);
+  // Thirty minutes on, Torn answers with a war in the window: now the tap lets you pick.
+  w.clock.ms += 30 * 60 * 1000;
+  w.check();
+  answer(w.calls[1], wars(ranked(START)));
+  await settle();
+  w.check();
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, true, 'and once Torn gives a war time, the box');
+});
+
+test('the tap that opens the box doesn\'t close it', () => {
+  const w = page({ store: warStore() }).run();
+  // Everything a phone sends for one tap, in order.
+  fire(w, w.link(), 'pointerdown', { pointerType: 'touch' });
+  fire(w, w.link(), 'touchstart');
+  fire(w, w.link(), 'pointerup', { pointerType: 'touch' });
+  fire(w, w.link(), 'touchend');
+  fire(w, w.link(), 'mousedown', { button: 0 });
+  fire(w, w.link(), 'mouseup', { button: 0 });
+  fire(w, w.link(), 'click');
+  w.advance(1000);
+  assert.ok(box(w), 'still open');
+  assert.equal(keyBox(w), null, 'and no key box');
+});
+
+test('a tap elsewhere, Escape or scrolling closes the box', () => {
+  const w = page({ store: warStore() }).run();
+  fire(w, w.link(), 'click');
+  assert.ok(box(w), 'open');
+  fire(w, w.document.querySelector('#header-wrapper-top a'), 'pointerdown');
+  assert.equal(box(w), null, 'a tap elsewhere');
+  fire(w, w.link(), 'click');
+  assert.ok(box(w), 'open again');
+  escape(w);
+  assert.equal(box(w), null, 'Escape');
+  fire(w, w.link(), 'click');
+  assert.ok(box(w), 'and again');
+  w.scroll();
+  assert.equal(box(w), null, 'scrolling');
+});
+
+test('a tap inside the box keeps it, and a tap on one of its links closes it once the link opens', () => {
+  const w = page({ store: warStore() }).run();
+  fire(w, w.link(), 'click');
+  fire(w, box(w).querySelector('b'), 'pointerdown');
+  assert.ok(box(w), 'still open');
+  const armoury = box(w).querySelector('a');
+  fire(w, armoury, 'pointerdown');
+  assert.equal(fire(w, armoury, 'click').defaultPrevented, false, 'the link opens');
+  assert.ok(box(w), 'not closed during the tap');
+  w.advance(0);
+  assert.equal(box(w), null, 'closed right after');
+});
+
+test('a second tap on the icon closes the box, and two taps never make two boxes', () => {
+  const w = page({ store: warStore() }).run();
+  fire(w, w.link(), 'click');
+  fire(w, w.link(), 'pointerdown', { pointerType: 'touch' });
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, true, 'the second tap doesn\'t open your items either');
+  assert.equal(box(w), null);
+  fire(w, w.link(), 'click');
+  assert.equal(w.document.querySelectorAll('#' + CHOICE).length, 1);
+});
+
+test('the box goes when the icon goes, and opening it closes the tooltip', () => {
+  const w = page({ store: warStore() }).run();
+  fire(w, w.link(), 'focus');
+  fire(w, w.link(), 'click');
+  assert.equal(w.document.getElementById(TIP), null, 'no tooltip over the box');
+  w.setIcons({ drug_cooldown: drug(NOW + 3600) });
+  w.check();
+  assert.equal(box(w), null);
+});
+
+test('a long press opens the key box and no choice box, and the tap that ends it goes nowhere', () => {
+  const w = page({ store: warStore() }).run();
+  fire(w, w.link(), 'touchstart');
+  w.advance(500);
+  assert.ok(keyBox(w), 'the key box is open');
+  assert.equal(fire(w, w.link(), 'touchend').defaultPrevented, true, 'no click follows on a phone');
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, true, 'and a click that comes anyway goes nowhere');
+  assert.equal(box(w), null, 'no choice box');
+});
+
+test('after a long press, the next tap is a tap again', () => {
+  const w = page({ store: warStore() }).run();
+  fire(w, w.link(), 'touchstart');
+  w.advance(500);
+  fire(w, w.link(), 'touchend');
+  escape(w);
+  fire(w, w.link(), 'touchstart');
+  w.advance(100);
+  assert.equal(fire(w, w.link(), 'touchend').defaultPrevented, false);
+  fire(w, w.link(), 'click');
+  assert.ok(box(w), 'the box opens');
+});
+
+test('a short press is a tap, and a swipe along the strip is neither', () => {
+  const w = page().run();
+  fire(w, w.link(), 'touchstart');
+  w.advance(300);
+  fire(w, w.link(), 'touchend');
+  w.advance(1000);
+  assert.equal(keyBox(w), null, 'a short press');
+  fire(w, w.link(), 'touchstart');
+  fire(w, w.link(), 'touchmove');
+  w.advance(1000);
+  assert.equal(keyBox(w), null, 'a swipe');
+  fire(w, w.link(), 'touchstart');
+  w.advance(500);
+  assert.ok(keyBox(w), 'a long press does open it');
+});
+
+test('a long press with the mouse opens the key box too, and a right-click keeps its menu', () => {
+  const w = page().run();
+  fire(w, w.link(), 'mousedown', { button: 0 });
+  w.advance(500);
+  assert.ok(keyBox(w));
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, true);
+  escape(w);
+  fire(w, w.link(), 'mousedown', { button: 2 });
+  w.advance(1000);
+  assert.equal(keyBox(w), null, 'a right-click is no long press');
+  assert.equal(fire(w, w.link(), 'contextmenu').defaultPrevented, false, 'its menu opens');
+});
+
+test('the phone\'s own long-press menu is held back on the icon', () => {
+  const w = page().run();
+  fire(w, w.link(), 'touchstart');
+  assert.equal(fire(w, w.link(), 'contextmenu').defaultPrevented, true);
+  assert.match(w.document.getElementById(STYLES).textContent, /#tm-xanax-reminder a \{ -webkit-touch-callout: none;/);
+});
+
+test('the key box: a plain text field that starts empty, with Save, Clear and Cancel', () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  w.menu['Set API key']();
+  w.menu['Set API key']();
+  assert.equal(w.document.querySelectorAll('#' + KEYBOX).length, 1, 'never two');
+  const input = keyBox(w).querySelector('input');
+  assert.equal(input.getAttribute('type'), 'text', 'a password field sets off password managers');
+  assert.equal(input.value || '', '', 'the saved key is never shown');
+  assert.ok(!keyBox(w).textContent.includes(KEY));
+  assert.match(keyBox(w).textContent, /A Public-level key is enough\./);
+  assert.match(keyBox(w).textContent, /A key is saved\./);
+  assert.deepEqual(keyButtons(w).map((b) => b.textContent), ['Save', 'Clear', 'Cancel']);
+  assert.doesNotMatch(readFileSync(SRC, 'utf8'), /type\s*=\s*['"]?password/i);
+});
+
+test('the key box from the menu closes an open box and the tooltip', () => {
+  const w = page({ store: warStore() }).run();
+  fire(w, w.link(), 'click');
+  fire(w, w.link(), 'focus');
+  w.menu['Set API key']();
+  assert.ok(keyBox(w));
+  assert.equal(box(w), null);
+  assert.equal(w.document.getElementById(TIP), null);
+});
+
+test('the menu opens a styled key box even while the cooldown runs', () => {
+  const w = page({ icons: { drug_cooldown: drug(NOW + 3600) } }).run();
+  w.menu['Set API key']();
+  assert.ok(keyBox(w));
+  assert.match(w.document.getElementById(STYLES).textContent, /#tm-xanax-reminder-key \{ position: fixed;/);
+  assert.match(keyBox(w).textContent, /No key saved\./);
+});
+
+test('Save keeps the key, forgets the old answer and asks Torn at once', () => {
+  const w = page({ store: { [WAR_STORE]: JSON.stringify({ at: NOW * 1000, start: START, end: 0, error: 'Incorrect key' }) } }).run();
+  w.menu['Set API key']();
+  keyBox(w).querySelector('input').value = '  ' + KEY + ' ';
+  fire(w, keyButtons(w)[0], 'click');
+  assert.equal(w.store[KEY_STORE], KEY, 'saved, trimmed');
+  assert.equal(keyBox(w), null, 'the box closes');
+  w.check();
+  assert.equal(w.calls.length, 1, 'asked straight away');
+  assert.equal(w.label(), LABEL, 'the old answer and its error are gone');
+});
+
+test('a new key is asked about at once, even in a tab that just asked with the old one', async () => {
+  const w = page({ store: { [KEY_STORE]: 'OLDKEY123456789' } }).run();
+  assert.equal(w.calls.length, 1, 'asked with the old key');
+  answer(w.calls[0], { error: { code: 2, error: 'Incorrect key' } });
+  await settle();
+  w.menu['Set API key']();
+  keyBox(w).querySelector('input').value = KEY;
+  fire(w, keyButtons(w)[0], 'click');
+  w.check();
+  assert.equal(w.calls.length, 2, 'asked again with the new key');
+  assert.equal(w.calls[1].url, URL);
+});
+
+test('Save with an empty field keeps the saved key and its answer', () => {
+  const w = page({ store: warStore() }).run();
+  const war = w.store[WAR_STORE];
+  w.menu['Set API key']();
+  fire(w, keyButtons(w)[0], 'click');
+  assert.equal(keyBox(w), null, 'the box closes');
+  assert.equal(w.store[KEY_STORE], KEY);
+  assert.equal(w.store[WAR_STORE], war);
+});
+
+test('Enter in the field saves too', () => {
+  const w = page().run();
+  w.menu['Set API key']();
+  const input = keyBox(w).querySelector('input');
+  input.value = KEY;
+  fire(w, input, 'keydown', { key: 'Enter' });
+  assert.equal(w.store[KEY_STORE], KEY);
+  assert.equal(keyBox(w), null);
+});
+
+test('Clear forgets the key and the war time', () => {
+  const w = page({ store: warStore() }).run();
+  w.menu['Set API key']();
+  fire(w, keyButtons(w)[1], 'click');
+  assert.equal(w.store[KEY_STORE], '');
+  assert.equal(JSON.parse(w.store[WAR_STORE]).start, 0);
+  w.check();
+  assert.equal(w.calls.length, 0, 'no key, no call');
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, false, 'the tap opens your items');
+});
+
+test('Cancel, Escape and a tap on the dark area change nothing; a tap inside the box keeps it', () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  const ways = [
+    () => fire(w, keyButtons(w)[2], 'click'),
+    () => escape(w),
+    () => fire(w, keyBox(w), 'click'),
+  ];
+  for (const close of ways) {
+    w.menu['Set API key']();
+    keyBox(w).querySelector('input').value = 'SOMETHINGELSE123';
+    fire(w, keyBox(w).querySelector('p'), 'click');
+    assert.ok(keyBox(w), 'a tap inside keeps it');
+    close();
+    assert.equal(keyBox(w), null);
+    assert.equal(w.store[KEY_STORE], KEY);
+  }
+});
+
+test('the key box says when PDA\'s key is in use, and never shows it', () => {
+  const src = readFileSync(SRC, 'utf8').replace('###PDA-APIKEY###', 'PDAKEY0123456789');
+  const w = page({ src }).run();
+  w.menu['Set API key']();
+  assert.match(keyBox(w).textContent, /Using the key Torn PDA gives the script\./);
+  assert.ok(!keyBox(w).textContent.includes('PDAKEY0123456789'));
+});
+
+test('a host with no menu, or one whose menu throws, still gets the icon and the long press', () => {
+  for (const menu of [false, 'throws']) {
+    const w = page({ menu }).run();
+    assert.ok(w.icon(), String(menu));
+    fire(w, w.link(), 'touchstart');
+    w.advance(500);
+    assert.ok(keyBox(w), String(menu));
+  }
+});

@@ -39,16 +39,22 @@
   const ICON_ID = 'tm-xanax-reminder';
   const STYLE_ID = 'tm-xanax-reminder-styles';
   const TIP_ID = 'tm-xanax-reminder-tip';
+  const CHOICE_ID = 'tm-xanax-reminder-choice';
+  const KEYBOX_ID = 'tm-xanax-reminder-key';
   // The Blood Bag Reminder's icon. When it is in the row, the Xanax goes right after it.
   const BLOODBAG_ID = 'tm-full-life-bloodbag';
   // Torn's own Xanax picture (item 206). It is 100 x 50.
   const XANAX_PNG = 'https://www.torn.com/images/items/206/large.png';
   const ITEMS_URL = 'https://www.torn.com/item.php#drugs-items';
+  // The faction armoury's Drugs tab.
+  const ARMOURY_URL = 'https://www.torn.com/factions.php?step=your&type=1#/tab=armoury&start=0&sub=drugs';
   // The row of status icons. Torn's old sidebar calls it status-icons___ and the Fly-out
   // Sidebar statusIcons___. Only inside #sidebar: Torn's header menu is a list too, and it
   // comes first on every page.
   const ROW_SELECTOR = '#sidebar ul[class*="status-icons"], #sidebar ul[class*="statusIcons___"]';
   const POLL_MS = 2000;
+  // A press this long opens the key box, as the blood bag's settings do.
+  const LONG_PRESS_MS = 500;
   const LABEL = 'Drug cooldown over: Xanax ready';
   // GM storage: the key from the key box, and what Torn last said about the war.
   const KEY_STORE = 'tm-xanax-reminder-key';
@@ -278,6 +284,16 @@
       if (keyboardFocus(a)) showTip();
     });
     a.addEventListener('blur', hideTip);
+    // The tap, and the long press that opens the key box.
+    a.addEventListener('click', onTap);
+    a.addEventListener('touchstart', startPress, { passive: true });
+    a.addEventListener('touchend', endPress);
+    a.addEventListener('touchmove', cancelPress, { passive: true });
+    a.addEventListener('touchcancel', cancelPress);
+    a.addEventListener('mousedown', startPress);
+    a.addEventListener('mouseup', endPress);
+    a.addEventListener('mouseleave', cancelPress);
+    a.addEventListener('contextmenu', onContextMenu);
     return li;
   }
 
@@ -291,6 +307,7 @@
 
   function removeIcon() {
     hideTip();
+    closeChoice();
     if (icon && icon.parentNode) icon.remove();
   }
 
@@ -378,6 +395,200 @@
     }
   }
 
+  // ===== THE TAP =====
+
+  // The open Armoury/Items box, if any.
+  let choice = null;
+  // A long press: its timer while the finger is down, and whether it fired, so the tap that
+  // ends it goes nowhere.
+  let pressTimer = null;
+  let longPressed = false;
+
+  // The icon's link opens your items. In the war window the tap opens the box instead, and a
+  // second tap closes it. The script never clicks anything itself.
+  function onTap(e) {
+    if (longPressed) {
+      longPressed = false;
+      e.preventDefault();
+      return;
+    }
+    if (choice) {
+      e.preventDefault();
+      closeChoice();
+      return;
+    }
+    const left = warSecondsLeft(Date.now());
+    if (!left) return;
+    e.preventDefault();
+    openChoice(left);
+  }
+
+  // A box under the icon: when the war starts, and two plain links, Armoury and Items.
+  function openChoice(left) {
+    closeChoice();
+    hideTip();
+    choice = document.createElement('div');
+    choice.id = CHOICE_ID;
+    const title = document.createElement('b');
+    title.textContent = 'War starts in ' + untilText(left);
+    choice.appendChild(title);
+    [['Armoury', ARMOURY_URL], ['Items', ITEMS_URL]].forEach((pair) => {
+      const link = document.createElement('a');
+      link.textContent = pair[0];
+      link.href = pair[1];
+      // Close once the tap has gone through, so the link still opens.
+      link.addEventListener('click', () => setTimeout(closeChoice, 0));
+      choice.appendChild(link);
+    });
+    document.body.appendChild(choice);
+    placeNear(choice, icon, false);
+  }
+
+  function closeChoice() {
+    if (!choice) return;
+    choice.remove();
+    choice = null;
+  }
+
+  // Each check: the box closes when the window does, and its time stays current.
+  function syncChoice(nowMs) {
+    if (!choice) return;
+    const left = warSecondsLeft(nowMs);
+    if (!left) closeChoice();
+    else choice.firstChild.textContent = 'War starts in ' + untilText(left);
+  }
+
+  function startPress(e) {
+    longPressed = false;
+    // A finger, or the main mouse button. A right-click keeps its menu.
+    if (e.type === 'mousedown' && e.button !== 0) return;
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      longPressed = true;
+      openKeyBox();
+    }, LONG_PRESS_MS);
+  }
+
+  function cancelPress() {
+    clearTimeout(pressTimer);
+    pressTimer = null;
+  }
+
+  // On a phone, stopping the touchend of a long press stops its click too.
+  function endPress(e) {
+    cancelPress();
+    if (longPressed && e.cancelable) e.preventDefault();
+  }
+
+  // The phone's own long-press menu for links would cover the key box.
+  function onContextMenu(e) {
+    if (pressTimer || longPressed) e.preventDefault();
+  }
+
+  function onPointerDown(e) {
+    if (!choice) return;
+    if (choice.contains(e.target) || (icon && icon.contains(e.target))) return;
+    closeChoice();
+  }
+
+  function onKeyDown(e) {
+    if (e.key !== 'Escape') return;
+    closeChoice();
+    closeKeyBox();
+  }
+
+  function onScroll() {
+    hideTip();
+    closeChoice();
+  }
+
+  // ===== THE KEY BOX =====
+
+  // Opens from the menu ("Set API key") or a long press on the icon, over everything else. The
+  // field is a plain text field (a password field sets off password managers) that starts
+  // empty: the saved key is never shown.
+  function openKeyBox() {
+    closeKeyBox();
+    closeChoice();
+    hideTip();
+    ensureStyles();
+    const overlay = document.createElement('div');
+    overlay.id = KEYBOX_ID;
+    const panel = document.createElement('div');
+    panel.className = 'tm-xanax-panel';
+    const title = document.createElement('b');
+    title.textContent = 'Torn Xanax Reminder';
+    const about = document.createElement('p');
+    about.textContent = 'With your API key, the script checks when your faction\'s next ranked war starts. '
+      + 'In the 24 hours before it, a tap on the icon lets you pick the armoury or your items. '
+      + 'A Public-level key is enough.';
+    const status = document.createElement('p');
+    status.textContent = keyStatus();
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Your API key';
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('spellcheck', 'false');
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveKey(input.value);
+    });
+    const buttons = document.createElement('div');
+    buttons.className = 'tm-xanax-buttons';
+    buttons.appendChild(button('Save', () => saveKey(input.value)));
+    buttons.appendChild(button('Clear', () => setKey('')));
+    buttons.appendChild(button('Cancel', closeKeyBox));
+    [title, about, status, input, buttons].forEach((el) => panel.appendChild(el));
+    overlay.appendChild(panel);
+    // A tap on the dark area around the box is Cancel.
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeKeyBox();
+    });
+    document.body.appendChild(overlay);
+    try {
+      input.focus();
+    } catch (e) {
+      // Some hosts can't focus from here; the field is still there to tap.
+    }
+  }
+
+  function keyStatus() {
+    const saved = gmGet(KEY_STORE);
+    if (typeof saved === 'string' && saved.trim()) return 'A key is saved.';
+    if (HAS_PDA_KEY) return 'Using the key Torn PDA gives the script.';
+    return 'No key saved.';
+  }
+
+  // Save with an empty field changes nothing: only Clear removes a key.
+  function saveKey(value) {
+    const key = String(value || '').trim();
+    if (key) setKey(key);
+    else closeKeyBox();
+  }
+
+  // Saves the key ('' for none) and forgets what Torn said with the old one, so the next check
+  // asks again straight away.
+  function setKey(value) {
+    gmSet(KEY_STORE, String(value || '').trim());
+    writeWar({ at: 0, start: 0, end: 0, error: '' });
+    askedAt = null;
+    closeKeyBox();
+  }
+
+  function button(label, onClick) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function closeKeyBox() {
+    const box = document.getElementById(KEYBOX_ID);
+    if (box) box.remove();
+  }
+
   // ===== STYLES =====
 
   const ICON_CSS = [
@@ -405,11 +616,27 @@
     '#' + TIP_ID + '.tm-xanax-under::after { top: -4px; bottom: auto; }',
   ].join('\n');
 
+  // The Armoury/Items box in Torn's tooltip look, and the key box.
+  const BOX_CSS = [
+    // No text selection and no iPhone link menu on a long press of the icon.
+    '#' + ICON_ID + ' a { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }',
+    '#' + CHOICE_ID + ' { position: fixed; z-index: 99999; box-sizing: border-box; padding: 8px; border-radius: 4px; background: #444; color: #ddd; box-shadow: 0 0 2px 0 rgba(0,0,0,.65); font: 400 12px/14px Arial, sans-serif; text-align: center; white-space: nowrap; }',
+    '#' + CHOICE_ID + ' b { display: block; margin-bottom: 6px; font-weight: 700; }',
+    '#' + CHOICE_ID + ' a { display: inline-block; margin: 0 3px; padding: 6px 12px; border: 1px solid #666; border-radius: 4px; background: #2e2e2e; color: #fff; font-weight: 700; text-decoration: none; }',
+    '#' + KEYBOX_ID + ' { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 100000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.7); }',
+    '#' + KEYBOX_ID + ' .tm-xanax-panel { box-sizing: border-box; width: 320px; max-width: calc(100vw - 32px); padding: 14px; border-radius: 8px; background: #2e2e2e; color: #ddd; font: 400 13px/17px Arial, sans-serif; text-align: left; }',
+    '#' + KEYBOX_ID + ' p { margin: 8px 0; }',
+    // 16px, or an iPhone zooms in when the field is tapped.
+    '#' + KEYBOX_ID + ' input { box-sizing: border-box; width: 100%; padding: 6px 8px; border: 1px solid #666; border-radius: 4px; background: #1d1d1d; color: #fff; font: 16px monospace; }',
+    '#' + KEYBOX_ID + ' .tm-xanax-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }',
+    '#' + KEYBOX_ID + ' button { padding: 6px 12px; border: 1px solid #666; border-radius: 4px; background: #444; color: #fff; font: 700 12px Arial, sans-serif; cursor: pointer; }',
+  ].join('\n');
+
   function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement('style');
     style.id = STYLE_ID;
-    style.textContent = ICON_CSS + '\n' + TIP_CSS;
+    style.textContent = ICON_CSS + '\n' + TIP_CSS + '\n' + BOX_CSS;
     (document.head || root).appendChild(style);
   }
 
@@ -431,6 +658,7 @@
       if (icon.parentNode !== row) place(row);
       maybeAsk(nowMs);
       setLabel(labelLines(nowMs));
+      syncChoice(nowMs);
     } catch (e) {
       // A bad value stops this one check. It never reaches Torn's page.
     }
@@ -438,8 +666,19 @@
 
   // ===== START =====
 
-  // Scrolling moves the icon, and the tooltip would float away from it.
-  window.addEventListener('scroll', hideTip, { capture: true, passive: true });
+  // The script's menu, where the host has one. A long press on the icon opens the key box too.
+  try {
+    if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Set API key', openKeyBox);
+  } catch (e) {
+    // PDA once crashed here. Without a menu, the long press still works.
+  }
+  // A tap anywhere but the box or the icon closes the box. These run before the click, so the
+  // tap that opens the box can't close it: the box isn't there yet.
+  document.addEventListener('pointerdown', onPointerDown, true);
+  document.addEventListener('touchstart', onPointerDown, { capture: true, passive: true });
+  document.addEventListener('keydown', onKeyDown, true);
+  // Scrolling moves the icon, and the tooltip and the box would float away from it.
+  window.addEventListener('scroll', onScroll, { capture: true, passive: true });
   setInterval(check, POLL_MS);
   check();
   console.log('[Torn Xanax Reminder ' + VERSION + '] running');
