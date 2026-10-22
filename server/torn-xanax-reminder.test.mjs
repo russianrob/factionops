@@ -71,11 +71,11 @@ function order(w) {
 }
 
 // A tab's sessionStorage. It lasts from page to page in one tab, so two pages given the same
-// one are two pages of one tab.
-function tabSession() {
+// one are two pages of one tab. With full, every write throws, as one with no room does.
+function tabSession({ full = false } = {}) {
   return Object.create({
     getItem(k) { return Object.prototype.hasOwnProperty.call(this, k) ? this[k] : null; },
-    setItem(k, v) { this[k] = String(v); },
+    setItem(k, v) { if (full) throw new Error('QuotaExceededError'); this[k] = String(v); },
     removeItem(k) { delete this[k]; },
   });
 }
@@ -527,6 +527,23 @@ test('storage that will not save, like a full localStorage in PDA, still means o
   // Every write throws, as a full localStorage does; the saved key still reads.
   const store = new Proxy({ [KEY_STORE]: KEY }, { set() { throw new Error('QuotaExceededError'); } });
   const w = page({ store }).run();
+  assert.equal(w.calls.length, 1);
+  noAnswer(w.calls[0]);
+  await settle();
+  w.check();
+  w.clock.ms += 29 * 60 * 1000;
+  w.check();
+  assert.equal(w.calls.length, 1, 'not again within 30 minutes');
+  w.clock.ms += 60 * 1000;
+  w.check();
+  assert.equal(w.calls.length, 2, 'once more after 30 minutes');
+});
+
+test('with nowhere to save at all, a page still calls once per 30 minutes', async () => {
+  // Writes throw in storage and in the tab's sessionStorage too, so only the page's own
+  // memory of its last call is left to keep the 30 minutes.
+  const store = new Proxy({ [KEY_STORE]: KEY }, { set() { throw new Error('QuotaExceededError'); } });
+  const w = page({ store, session: tabSession({ full: true }) }).run();
   assert.equal(w.calls.length, 1);
   noAnswer(w.calls[0]);
   await settle();
