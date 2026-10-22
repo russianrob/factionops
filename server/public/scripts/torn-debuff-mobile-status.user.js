@@ -93,6 +93,13 @@
     return e.level ? base + '_' + e.level : base;
   }
 
+  // Your effects that Torn shows as icons, from the store's attack data.
+  function myEffects(attack) {
+    const me = attack.attackerUser;
+    const list = me && (attack.currentTemporaryEffects || {})[me.userID];
+    return Array.isArray(list) ? list.filter(showsAsIcon) : [];
+  }
+
   // What the row draws, or null when it shouldn't show. It shows on Torn's phone layout (one
   // player window on the page) while the enemy's window is up: layout "attacker", Torn's
   // default. Tapping your own header switches the layout to "defender" and Torn shows your
@@ -108,11 +115,10 @@
     if (layout !== 'attacker') return null;
     const windows = (document.getElementById('attack-root') || document).querySelectorAll('[class*="playerWindow___"]');
     if (windows.length !== 1) return null;
-    const list = (attack.currentTemporaryEffects || {})[me.userID];
     return {
       win: windows[0],
       stats: STATS.map(([k, label]) => ({ label, value: mods[k] && typeof mods[k].value === 'number' ? mods[k].value : 0 })),
-      effects: Array.isArray(list) ? list.filter(showsAsIcon) : [],
+      effects: myEffects(attack),
     };
   }
 
@@ -130,6 +136,7 @@
     console.info('[Torn Debuff Mobile Status] ' + (err && err.message ? err.message : String(err)));
   }
 
+  // Adds the row's stylesheet to the page, once.
   function ensureStyle() {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement('style');
@@ -138,6 +145,7 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
+  // Makes an element with an optional class and text; the row is built from these.
   function el(tag, cls, text) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -169,6 +177,8 @@
     }
   }
 
+  // One effect: Torn's icon on a small dark tile, bordered in Torn's colour for it, with the
+  // seconds left under it (drawIcons fills those in).
   function tile(e) {
     const t = el('span', 'tdms-icon');
     t.style.borderColor = COLORS[e.iconColor] || '#888';
@@ -181,12 +191,10 @@
   }
 
   // The icons line: one tile per effect, as Torn draws them, with the seconds left under each,
-  // counted down from when Torn's numbers arrived. Hidden when there is nothing to show.
-  function drawIcons(line, effects) {
-    const now = Date.now();
-    const key = JSON.stringify(effects.map((e) => [e.ID, e.class, e.level, e.timeLeft]));
-    if (key !== snap.key) snap = { key, at: now, list: effects };
-    const gone = Math.floor((now - snap.at) / 1000);
+  // counted down from when Torn's numbers arrived (noteEffects keeps them and that time).
+  // Hidden when there is nothing to show.
+  function drawIcons(line) {
+    const gone = Math.floor((Date.now() - snap.at) / 1000);
     const shown = snap.list.map((e) => ({ e, left: e.timeLeft - gone })).filter((x) => x.left > 0);
     const tilesKey = shown.map((x) => [x.e.ID, iconName(x.e), x.e.iconColor].join('/')).join('|');
     if (line.getAttribute('data-key') !== tilesKey) {
@@ -228,7 +236,7 @@
       if (!row) row = buildRow();
       if (row.parentNode !== host) host.appendChild(row);
       drawStats(row.firstChild, view.stats);
-      drawIcons(row.lastChild, view.effects);
+      drawIcons(row.lastChild);
     } catch (err) {
       report(err);
     }
@@ -241,11 +249,22 @@
     requestAnimationFrame(paint);
   }
 
+  // Keeps your effect list and the time it arrived, for the countdown. It runs on every
+  // dispatch, even while the row is hidden (your own window is up) or the phone has paused
+  // frames in the background, so the seconds are counted from when Torn's numbers came in,
+  // not from when the row was next drawn.
+  function noteEffects() {
+    const list = myEffects((store.getState() || {}).attack || {});
+    const key = JSON.stringify(list.map((e) => [e.ID, e.class, e.level, e.timeLeft]));
+    if (key !== snap.key) snap = { key, at: Date.now(), list };
+  }
+
   // Torn's store calls back on every dispatch, hits and animations included, so repaint only
   // when something the row shows has changed. Nothing may be thrown from here: an error in a
   // Redux listener stops the dispatch, and Torn's own listeners with it.
   function onStore() {
     try {
+      noteEffects();
       if (viewKey(readView()) !== lastKey) schedule();
     } catch (err) {
       report(err);
@@ -272,7 +291,7 @@
     store.subscribe(onStore);
     const root = document.getElementById('attack-root');
     if (root) new MutationObserver(onMutations).observe(root, { childList: true, subtree: true });
-    schedule();
+    onStore();   // the data Torn already has counts as the first dispatch: note it and paint
   }
 
   // Torn's attack app renders after the page loads, and PDA can run this script before that,

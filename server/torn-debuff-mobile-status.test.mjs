@@ -496,3 +496,25 @@ test('the countdown timer runs only while icons show', () => {
   page.flush();
   assert.equal(page.timers.size, 1, 'back with the row');
 });
+
+test('a refresh that lands while the phone has paused frames is counted from when it arrived', () => {
+  // In the background a phone pauses frames, but Torn's poll can still dispatch.
+  const store = makeStore(state({ mine: [fx({ timeLeft: 103 })] }));
+  const page = load({ store });
+  store.set(state({ mine: [fx({ timeLeft: 90 })] }));
+  page.clock.now += 30000;
+  page.flush();   // back in the foreground: the booked frame runs
+  assert.deepEqual(page.tiles().map((t) => t.secs), ['60']);
+});
+
+test('a refresh that lands while your own window is up is counted from when it arrived', () => {
+  const store = makeStore(state({ mine: [fx({ timeLeft: 103 })] }));
+  const page = load({ store });
+  store.set(state({ layout: 'defender', mine: [fx({ timeLeft: 103 })] }));
+  page.flush();
+  store.set(state({ layout: 'defender', mine: [fx({ timeLeft: 99 })] }));   // Torn's refresh
+  page.advance(3000);
+  store.set(state({ layout: 'attacker', mine: [fx({ timeLeft: 99 })] }));   // tap back 3 s later
+  page.flush();
+  assert.deepEqual(page.tiles().map((t) => t.secs), ['96']);
+});
