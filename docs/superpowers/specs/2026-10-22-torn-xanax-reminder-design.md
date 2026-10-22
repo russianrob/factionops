@@ -26,13 +26,13 @@ One icon in Torn's row of status icons, the row under your name in the sidebar (
 
 - **Picture:** Torn's Xanax item picture, `https://www.torn.com/images/items/206/large.png` (same site, nothing hosted elsewhere). It is 100 x 50, so it is drawn at 17 x 17 with `object-fit: contain`, which leaves a 17 x 8.5 pill. The edge is `filter: drop-shadow(0 0 .6px rgba(0,0,0,.85))`.
 - **Pulse:** one 900 ms pulse when the icon is added, as the blood bag does. It doesn't repeat.
-- **Label:** hovering over the icon with a mouse, or focusing it, shows a tooltip styled like Torn's own. Its lines:
+- **Label:** hovering over the icon with a mouse, or focusing it from the keyboard, shows a tooltip styled like Torn's own. Its lines:
   - first, in bold: "Drug cooldown over: Xanax ready";
   - in the war window: "War starts in 5h 12m: tap to pick the armoury or your items";
   - when the last war check failed: "Couldn't check the war time: <Torn's message>".
   - The link's `aria-label` is the same lines joined with ". ".
   - Times read "5h 12m", or "45m" under an hour. Minutes round up, so it never says "0m".
-  - A touch doesn't open the tooltip. On an iPhone, a page that changes when a finger "hovers" turns the first tap into a hover, and the tap goes nowhere.
+  - A touch doesn't open the tooltip. On an iPhone, a page that changes when a finger "hovers" turns the first tap into a hover, and the tap goes nowhere. A tap also focuses the link, so focus opens the tooltip only from the keyboard (where the browser can tell).
 - **Its own ids:** `tm-xanax-reminder` for the icon and `tm-xanax-reminder-styles` for its stylesheet, so it can never be mistaken for the blood bag's.
 
 ## Where it goes
@@ -99,7 +99,7 @@ The script never clicks anything itself. Every way out of the icon is a plain li
   - It also opens on a long press of the Xanax icon, as the blood bag's settings do. That reaches it in any app, even one with no menu.
   - The box says a Public-level key is enough, and has Save, Clear and Cancel.
   - The saved key is never shown. The field starts empty, and the box says whether a key is saved (or PDA's is in use).
-  - Save with an empty field is the same as Clear. Saving or clearing forgets what Torn said with the old key, so the next check (while the icon shows) asks at once.
+  - Save with an empty field changes nothing; only Clear removes a key. Saving a key, or clearing it, forgets what Torn said with the old key, so the next check (while the icon shows) asks at once.
   - Escape, Cancel, or a tap on the dark area around the box closes it without a change.
   - The input is a plain text field, never `type="password"`, which sets off password managers.
 - **Stored:** in GM storage. A saved key beats the PDA one. An empty key means no key.
