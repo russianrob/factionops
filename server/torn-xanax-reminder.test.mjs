@@ -308,3 +308,85 @@ test('a check that meets an error stops quietly, and the next one works', () => 
   w.check();
   assert.ok(w.icon());
 });
+
+// ---------------------------------------------------------------------------------------------
+// The tooltip
+// ---------------------------------------------------------------------------------------------
+
+const TIP = 'tm-xanax-reminder-tip';
+
+test('a mouse hover shows a tooltip like Torn\'s, with the label in bold, and leaving hides it', () => {
+  const w = page().run();
+  fire(w, w.link(), 'pointerenter', { pointerType: 'mouse' });
+  const tip = w.document.getElementById(TIP);
+  assert.ok(tip, 'the tooltip is open');
+  assert.equal(tip.getAttribute('role'), 'tooltip');
+  assert.deepEqual([...tip.children].map((el) => [el.tagName, el.textContent]), [['B', LABEL]]);
+  fire(w, w.link(), 'pointerleave', { pointerType: 'mouse' });
+  assert.equal(w.document.getElementById(TIP), null);
+});
+
+test('a touch opens no tooltip, so an iPhone never turns the tap into a hover', () => {
+  const w = page().run();
+  fire(w, w.link(), 'pointerenter', { pointerType: 'touch' });
+  fire(w, w.link(), 'mouseenter');
+  fire(w, w.link(), 'mouseover');
+  assert.equal(w.document.getElementById(TIP), null);
+  fire(w, w.link(), 'pointerenter', { pointerType: 'mouse' });
+  assert.ok(w.document.getElementById(TIP), 'a mouse does open it');
+});
+
+test('focus shows the tooltip and blur hides it', () => {
+  const w = page().run();
+  fire(w, w.link(), 'focus');
+  assert.ok(w.document.getElementById(TIP));
+  fire(w, w.link(), 'blur');
+  assert.equal(w.document.getElementById(TIP), null);
+});
+
+test('focus from a tap opens no tooltip, and focus from the keyboard does', () => {
+  const w = page().run();
+  const link = w.link();
+  const real = link.matches.bind(link);
+  // The test page can't tell the two apart, so the test says what the browser would: a tap's
+  // focus is not :focus-visible, the keyboard's is.
+  const focusVisible = (yes) => {
+    link.matches = (selector) => (selector === ':focus-visible' ? yes : real(selector));
+  };
+  focusVisible(false);
+  fire(w, link, 'focus');
+  assert.equal(w.document.getElementById(TIP), null, 'a tap');
+  fire(w, link, 'blur');
+  focusVisible(true);
+  fire(w, link, 'focus');
+  assert.ok(w.document.getElementById(TIP), 'the keyboard');
+});
+
+test('scrolling hides the tooltip', () => {
+  const w = page().run();
+  fire(w, w.link(), 'focus');
+  assert.ok(w.document.getElementById(TIP), 'open');
+  w.scroll();
+  assert.equal(w.document.getElementById(TIP), null);
+});
+
+test('the tooltip never doubles, and goes with the icon', () => {
+  const w = page().run();
+  fire(w, w.link(), 'focus');
+  fire(w, w.link(), 'pointerenter', { pointerType: 'mouse' });
+  assert.equal(w.document.querySelectorAll('#' + TIP).length, 1);
+  w.setIcons({ drug_cooldown: drug(NOW + 3600) });
+  w.check();
+  assert.equal(w.document.getElementById(TIP), null);
+});
+
+test('the tooltip is placed inside the screen, with a number for each side', () => {
+  const w = page().run();
+  fire(w, w.link(), 'focus');
+  const style = w.document.getElementById(TIP).getAttribute('style') || '';
+  assert.match(style, /left:\s*\d+px/);
+  assert.match(style, /top:\s*\d+px/);
+  assert.doesNotMatch(style, /NaN/);
+  const css = w.document.getElementById(STYLES).textContent;
+  assert.match(css, /#tm-xanax-reminder-tip \{ position: fixed; z-index: 99999; pointer-events: none;/);
+});

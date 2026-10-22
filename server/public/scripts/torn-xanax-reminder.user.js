@@ -38,6 +38,7 @@
 
   const ICON_ID = 'tm-xanax-reminder';
   const STYLE_ID = 'tm-xanax-reminder-styles';
+  const TIP_ID = 'tm-xanax-reminder-tip';
   // The Blood Bag Reminder's icon. When it is in the row, the Xanax goes right after it.
   const BLOODBAG_ID = 'tm-full-life-bloodbag';
   // Torn's own Xanax picture (item 206). It is 100 x 50.
@@ -97,6 +98,17 @@
     img.height = 17;
     a.appendChild(img);
     li.appendChild(a);
+    // The tooltip opens on a mouse hover or on focus, never on a touch. On an iPhone, a page
+    // that changes when a finger "hovers" turns the first tap into a hover, and the tap goes
+    // nowhere; so there is no mouseenter or mouseover handler at all.
+    a.addEventListener('pointerenter', (e) => {
+      if (e.pointerType === 'mouse') showTip();
+    });
+    a.addEventListener('pointerleave', hideTip);
+    a.addEventListener('focus', () => {
+      if (keyboardFocus(a)) showTip();
+    });
+    a.addEventListener('blur', hideTip);
     return li;
   }
 
@@ -109,6 +121,7 @@
   }
 
   function removeIcon() {
+    hideTip();
     if (icon && icon.parentNode) icon.remove();
   }
 
@@ -118,9 +131,76 @@
   }
 
   function setLabel(lines) {
+    tipLines = lines;
     const a = icon.firstChild;
     const text = lines.join('. ');
     if (a.getAttribute('aria-label') !== text) a.setAttribute('aria-label', text);
+    if (tip) fillTip();
+  }
+
+  // ===== THE TOOLTIP =====
+
+  // The open tooltip, if any, and the label it shows, line by line.
+  let tip = null;
+  let tipLines = [LABEL];
+
+  // A tooltip like Torn's own, over the icon: the first line in bold, the others under it.
+  function showTip() {
+    if (!icon || !icon.parentNode) return;
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = TIP_ID;
+      tip.setAttribute('role', 'tooltip');
+      document.body.appendChild(tip);
+    }
+    fillTip();
+  }
+
+  function fillTip() {
+    tip.textContent = '';
+    tipLines.forEach((line, i) => {
+      const el = document.createElement(i === 0 ? 'b' : 'div');
+      el.textContent = line;
+      tip.appendChild(el);
+    });
+    placeNear(tip, icon, true);
+  }
+
+  function hideTip() {
+    if (!tip) return;
+    tip.remove();
+    tip = null;
+  }
+
+  // Focus from the keyboard, not from a tap: on a phone a tap focuses the link too, and the
+  // tooltip would linger after it. A browser that can't tell the two apart says yes.
+  function keyboardFocus(el) {
+    try {
+      return el.matches(':focus-visible');
+    } catch (e) {
+      return true;
+    }
+  }
+
+  // Puts one of the script's boxes over the icon (above) or under it, inside the screen. With
+  // no room above, it goes under. The arrow (a CSS ::after) points at the icon's middle.
+  function placeNear(el, anchor, above) {
+    try {
+      const r = anchor.getBoundingClientRect();
+      const width = el.offsetWidth || 0;
+      const height = el.offsetHeight || 0;
+      const middle = r.left + r.width / 2;
+      const left = Math.max(8, Math.min(Math.round(middle - width / 2), (window.innerWidth || 0) - width - 8));
+      let top = Math.round(r.top - height - 10);
+      const under = !above || top < 8;
+      if (under) top = Math.round(r.bottom + 10);
+      el.style.left = left + 'px';
+      el.style.top = top + 'px';
+      el.style.setProperty('--tm-xanax-arrow', Math.round(middle - left) + 'px');
+      el.classList.toggle('tm-xanax-under', under);
+    } catch (e) {
+      // It stays where the stylesheet puts it.
+    }
   }
 
   // ===== STYLES =====
@@ -141,11 +221,20 @@
     '#' + ICON_ID + ' img { display: block; width: 17px; height: 17px; max-width: none; max-height: none; object-fit: contain; filter: drop-shadow(0 0 .6px rgba(0,0,0,.85)); }',
   ].join('\n');
 
+  // Torn's own tooltip look: dark grey, light text, a small arrow at the icon.
+  const TIP_CSS = [
+    '#' + TIP_ID + ' { position: fixed; z-index: 99999; pointer-events: none; box-sizing: border-box; max-width: 240px; padding: 8px; border-radius: 4px; background: #444; color: #ddd; box-shadow: 0 0 2px 0 rgba(0,0,0,.65); font: 400 12px/14px Arial, sans-serif; text-align: left; }',
+    '#' + TIP_ID + ' b { display: block; font-weight: 700; }',
+    '#' + TIP_ID + ' div { margin-top: 2px; }',
+    '#' + TIP_ID + '::after { content: ""; position: absolute; bottom: -4px; left: var(--tm-xanax-arrow, 50%); width: 8px; height: 8px; margin-left: -4px; background: #444; transform: rotate(45deg); }',
+    '#' + TIP_ID + '.tm-xanax-under::after { top: -4px; bottom: auto; }',
+  ].join('\n');
+
   function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement('style');
     style.id = STYLE_ID;
-    style.textContent = ICON_CSS;
+    style.textContent = ICON_CSS + '\n' + TIP_CSS;
     (document.head || root).appendChild(style);
   }
 
@@ -173,6 +262,8 @@
 
   // ===== START =====
 
+  // Scrolling moves the icon, and the tooltip would float away from it.
+  window.addEventListener('scroll', hideTip, { capture: true, passive: true });
   setInterval(check, POLL_MS);
   check();
   console.log('[Torn Xanax Reminder ' + VERSION + '] running');
