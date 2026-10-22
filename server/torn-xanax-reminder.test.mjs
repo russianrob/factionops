@@ -1025,6 +1025,17 @@ test('the key box says when PDA\'s key is in use, and never shows it', () => {
   assert.ok(!keyBox(w).textContent.includes('PDAKEY0123456789'));
 });
 
+test('the key box says why the last check failed, so a bad key shows on a phone too', async () => {
+  // On a phone the tooltip never opens, so the key box is where a bad key can show.
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  answer(w.calls[0], { error: { code: 2, error: 'Incorrect key ' + KEY } });
+  await settle();
+  w.menu['Set API key']();
+  const text = keyBox(w).textContent;
+  assert.match(text, /A key is saved\. Couldn't check the war time: Incorrect key \*\*\*\*/);
+  assert.ok(!text.includes(KEY), 'the key never shows');
+});
+
 test('a host with no menu, or one whose menu throws, still gets the icon and the long press', () => {
   for (const menu of [false, 'throws']) {
     const w = page({ menu }).run();

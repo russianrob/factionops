@@ -583,11 +583,16 @@
     }
   }
 
+  // Whether a key is saved, or PDA's is in use, never the key itself. With a key in use, it
+  // also says why the last check failed: on a phone the tooltip never opens, so this is where
+  // a bad key shows.
   function keyStatus() {
     const saved = gmGet(KEY_STORE);
-    if (typeof saved === 'string' && saved.trim()) return 'A key is saved.';
-    if (HAS_PDA_KEY) return 'Using the key Torn PDA gives the script.';
-    return 'No key saved.';
+    let text = 'No key saved.';
+    if (typeof saved === 'string' && saved.trim()) text = 'A key is saved.';
+    else if (HAS_PDA_KEY) text = 'Using the key Torn PDA gives the script.';
+    const error = apiKey() ? readWar().error : '';
+    return error ? text + ' Couldn\'t check the war time: ' + error : text;
   }
 
   // Save with an empty field changes nothing: only Clear removes a key.
