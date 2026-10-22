@@ -113,6 +113,8 @@ export function createHofApi(opts = {}) {
       updatedAt: src.updatedAt,
       day: d.day,
       windows,
+      // Which windows' paces are estimated (hof-estimate.js) rather than exact.
+      estimated: Object.fromEntries(windows.map((w) => [w, Boolean(d.windows[w] && d.windows[w].estimated)])),
       defaultWindow: windows.includes(30) ? 30 : (windows.length ? windows[windows.length - 1] : null),
       us: me ? { position: me.position, respect: me.respect, pace: pick(usPace) } : null,
       rows,

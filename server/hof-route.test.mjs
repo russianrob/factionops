@@ -256,3 +256,22 @@ test("the site gate lets /hof through and still gates other pages", () => {
   assert.deepEqual(gateFor("/api/hof"), { next: true, redirect: null });
   assert.deepEqual(gateFor("/slackers"), { next: false, redirect: "/gate.html" });
 });
+
+test("estimated windows are flagged, and a row the estimate doesn't hold has no pace or days", async () => {
+  const root = mkdtempSync(join(tmpdir(), "hof-api-"));
+  const d = writeDigest(root);
+  d.windows[365] = { base: "2025-10-19", span: 365, estimated: true };
+  for (const id of Object.keys(d.paces)) d.paces[id][365] = 40;
+  delete d.paces[hofList(250)[248].id][365];   // #249 has no estimate
+  d.projection[365] = Array(365).fill(240);
+  d.notes[365] = null;
+  writeFileSync(join(root, "hof", "digest.json"), JSON.stringify(d));
+  const api = createHofApi({ dataDir: join(root, "hof"), fetchImpl: fakeHof(250).fetchImpl, nowFn: () => T0, key: KEY, factionId: US });
+  const { body } = await get(api);
+  assert.deepEqual(body.windows, [7, 30, 365]);
+  assert.deepEqual(body.estimated, { 7: false, 30: false, 365: true });
+  const above = body.rows[19];
+  assert.equal(above.position, 249);
+  assert.deepEqual([above.pace[365], above.days[365]], [null, null]);
+  assert.equal(body.rows[18].pace[365], 40);
+});
