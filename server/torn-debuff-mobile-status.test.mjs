@@ -132,9 +132,11 @@ function load({ windows = 1, store, win = {} } = {}) {
     // The icons line's tiles: icon file, seconds shown, border colour.
     tiles: () => [...document.querySelectorAll('#tdms-row .tdms-icon')].map((t) => ({
       src: t.querySelector('img').getAttribute('src'),
-      secs: t.lastChild.textContent,
+      secs: t.querySelector('i').textContent,
       border: t.style.borderColor,
     })),
+    // Each tile's name line, in order: "Smoked".
+    names: () => [...document.querySelectorAll('#tdms-row .tdms-icon .tdms-name')].map((n) => n.textContent),
   };
 }
 
@@ -147,7 +149,7 @@ test('the header: the attack page only, the page world, and updates from the met
   assert.deepEqual(tag('name'), ['Torn Debuff Mobile Status']);
   assert.deepEqual(tag('namespace'), ['RussianRob']);
   assert.deepEqual(tag('author'), ['RussianRob']);
-  assert.deepEqual(tag('version'), ['1.0.2']);
+  assert.deepEqual(tag('version'), ['1.0.3']);
   assert.deepEqual(tag('license'), ['All Rights Reserved']);
   assert.deepEqual(tag('copyright'), []);
   assert.deepEqual(tag('match'), ['https://www.torn.com/page.php?sid=attack*', 'https://www.torn.com/loader.php?sid=attack*']);
@@ -157,6 +159,7 @@ test('the header: the attack page only, the page world, and updates from the met
   assert.deepEqual(tag('updateURL'), ['https://tornwar.com/scripts/torn-debuff-mobile-status.meta.js']);
   assert.equal(readFileSync(META, 'utf8'), header + '\n', 'the meta file is the header, byte for byte');
   assert.match(src, /^\/\/ CHANGELOG$/m);
+  assert.match(src, /^\/\/ v1\.0\.3  - /m, 'the changelog has the 1.0.3 entry');
   assert.match(src, /^\/\/ v1\.0\.2  - /m, 'the changelog has the 1.0.2 entry');
   assert.match(src, /^\/\/ v1\.0\.1  - /m, 'the changelog has the 1.0.1 entry');
   assert.match(src, /^\/\/ v1\.0\.0  - /m, 'the changelog has the 1.0.0 entry');
@@ -386,13 +389,16 @@ const px = (v) => Number(/^(-?[\d.]+)(px)?$/.exec(v)[1]);
 // lie inside x 7..43, y 8..42 (stunned spans x 7..43); the rest is empty canvas and a faint
 // bar running out to the right. The tile shows only that part of the icon, in a window, so
 // the box is small and the symbol a little bigger than the whole icon at 26px made it.
+// Measured since (2026-10-23): Enraged is drawn on 30x30 instead (its own test, below), and
+// Shocked's lightning runs y 7..43, so half a pixel of each tip falls outside the window.
 test('each icon is cropped to its symbol, and no symbol is cut', () => {
   const page = load({ store: makeStore(state({ mine: [fx()] })) });
   const tile = page.document.querySelector('#tdms-row .tdms-icon');
-  assert.deepEqual([...tile.children].map((c) => c.className || c.tagName), ['tdms-glyph', 'I'], 'the window, then the seconds');
+  assert.deepEqual([...tile.children].map((c) => c.className || c.tagName), ['tdms-glyph', 'I', 'tdms-name'], 'the window, the seconds, then the name');
   assert.equal(tile.firstChild.firstChild.tagName, 'IMG', 'Torn\'s icon is inside the window');
   const imgRules = page.document.getElementById('tdms-style').textContent.split('\n').filter((l) => / img\{/.test(l));
-  assert.deepEqual(imgRules.map((l) => l.slice(0, l.indexOf('{'))), ['#tdms-row .tdms-glyph img'], 'no other rule sizes the icon');
+  assert.deepEqual(imgRules.map((l) => l.slice(0, l.indexOf('{'))), ['#tdms-row .tdms-glyph img', '#tdms-row .tdms-glyph.tdms-whole img'],
+    'no other rule sizes the icon (the second is for Enraged, below)');
   const win = cssRule(page, '#tdms-row .tdms-glyph');
   const img = cssRule(page, '#tdms-row .tdms-glyph img');
   assert.deepEqual([win.display, win.position, win.overflow, img.position], ['block', 'relative', 'hidden', 'absolute']);
@@ -414,22 +420,79 @@ test('a page rule that keeps images inside their box can\'t shrink the icon', ()
   assert.deepEqual([img['max-width'], img['max-height']], ['none', 'none']);
 });
 
-// The tile's outer size, from its rules: the border and padding round the window, and the
-// seconds under it, one line high. 1.0.0's tiles were 36 x 43, 1.0.1's 26 x 37.
-test('a tile is 27 x 37 px: the icon window with the seconds under it', () => {
+// The tile's outer size, from its rules: the border and padding round the window, then the
+// seconds and the name under it, one line each. 1.0.0's tiles were 36 x 43, 1.0.1's 26 x 37 and
+// 1.0.2's 27 x 37. A name wider than the window makes the tile wider; it never gets narrower.
+test('a tile is 45.8 px tall and at least 27 px wide: the icon window, the seconds and the name', () => {
   const page = load({ store: makeStore(state({ mine: [fx()] })) });
   const t = cssRule(page, '#tdms-row .tdms-icon');
   const win = cssRule(page, '#tdms-row .tdms-glyph');
   const secs = cssRule(page, '#tdms-row .tdms-icon i');
-  assert.deepEqual([t.display, t['flex-direction']], ['flex', 'column'], 'the seconds go under the icon');
+  const name = cssRule(page, '#tdms-row .tdms-name');
+  assert.deepEqual([t.display, t['flex-direction']], ['flex', 'column'], 'the seconds and the name go under the icon');
+  assert.equal(name['white-space'], 'nowrap', 'a long name widens the tile instead of taking a second line');
   // The row's font is "11px/1.1 ...", so a line is 1.1 times its text size unless set.
-  const lineHeight = secs['line-height'] ? px(secs['line-height'])
-    : px(secs['font-size']) * Number(/\/([\d.]+) /.exec(cssRule(page, '#tdms-row').font)[1]);
+  const ratio = Number(/\/([\d.]+) /.exec(cssRule(page, '#tdms-row').font)[1]);
+  const line = (r) => (r['line-height'] ? px(r['line-height']) : px(r['font-size']) * ratio);
   const [pt, pr = pt, pb = pt, pl = pr] = t.padding.split(' ').map(px);
   const border = px(t.border.split(' ')[0]);
-  const width = (t.width ? px(t.width) : px(win.width)) + pl + pr + 2 * border;
-  const height = pt + px(win.height) + lineHeight + pb + 2 * border;
-  assert.deepEqual([width, Number(height.toFixed(2))], [27, 37]);
+  const minWidth = (t.width ? px(t.width) : px(win.width)) + pl + pr + 2 * border;
+  const height = pt + px(win.height) + line(secs) + line(name) + pb + 2 * border;
+  assert.equal(name['line-height'], undefined, 'the name line takes the row\'s spacing, so it grows with its text');
+  assert.deepEqual([minWidth, Number(height.toFixed(2))], [27, 45.8]);
+});
+
+// Torn's icon gives no name, so the tile shows the title Torn gives the effect, the name its
+// own icon's tooltip shows, as a small label under the seconds (like "str" under "+35%").
+test('each tile names its effect under the seconds, with Torn\'s title for it', () => {
+  const shock = fx({ ID: 2, class: 'shock', title: 'Shocked', desc: 'Miss the next turn', timeLeft: 248 });
+  const page = load({ store: makeStore(state({ mine: [fx(), shock] })) });
+  assert.deepEqual(page.names(), ['Smoked', 'Shocked']);
+  const tile = page.document.querySelectorAll('#tdms-row .tdms-icon')[1];
+  assert.deepEqual([...tile.children].map((c) => c.className || c.tagName), ['tdms-glyph', 'I', 'tdms-name']);
+  assert.equal(tile.querySelector('i').textContent, '248', 'the seconds are still the seconds');
+});
+
+test('the seconds still count down with the name under them', () => {
+  const page = load({ store: makeStore(state({ mine: [fx({ timeLeft: 3 })] })) });
+  page.advance(1000);
+  assert.deepEqual([page.tiles()[0].secs, page.names()[0]], ['2', 'Smoked']);
+});
+
+// Torn keys its own icons by ID and class and sends the title as display text, so a new title
+// on the same effect is unlikely; if one comes with a refresh, the tile shows it.
+test('a new title for the same effect shows on its tile', () => {
+  const store = makeStore(state({ mine: [fx({ timeLeft: 100 })] }));
+  const page = load({ store });
+  store.set(state({ mine: [fx({ timeLeft: 96, title: 'Smoked again' })] }));
+  page.advance(1000);
+  assert.deepEqual([page.names(), page.tiles()[0].secs], [['Smoked again'], '95']);
+});
+
+test('an effect sent without a title is named by its class', () => {
+  const page = load({ store: makeStore(state({ mine: [fx({ title: undefined, class: 'shock' }), fx({ ID: 2, title: '', class: 'frozen' })] })) });
+  assert.deepEqual(page.names(), ['shock', 'frozen']);
+});
+
+// Torn draws Enraged on a 30x30 canvas that its symbol fills edge to edge, where the others are
+// 54x50 with the symbol in the middle (measured 2026-10-23). The crop made for those would cut
+// Enraged on every side, so its tile scales the whole icon into the same window.
+test('Enraged, on its smaller canvas, shows whole in the same window', () => {
+  const enraged = fx({ ID: 2, class: 'enraged', title: 'Enraged', iconColor: 'green' });
+  const page = load({ store: makeStore(state({ mine: [fx(), enraged] })) });
+  const glyphs = [...page.document.querySelectorAll('#tdms-row .tdms-icon')].map((t) => t.firstChild.className);
+  assert.deepEqual(glyphs, ['tdms-glyph', 'tdms-glyph tdms-whole'], 'only Enraged is drawn whole');
+  assert.equal(page.tiles()[1].src, '/images/v2/attack/effect_icons/enraged.svg');
+  const win = cssRule(page, '#tdms-row .tdms-glyph');
+  const img = cssRule(page, '#tdms-row .tdms-glyph.tdms-whole img');
+  const sx = px(img.width) / 30;
+  const sy = px(img.height) / 30;
+  assert.ok(Math.abs(sx - sy) < 0.001, 'the icon keeps its shape');
+  const x = [-px(img.left) / sx, (px(win.width) - px(img.left)) / sx];
+  const y = [-px(img.top) / sy, (px(win.height) - px(img.top)) / sy];
+  const seen = `canvas x ${x.map((n) => n.toFixed(2)).join('..')}, y ${y.map((n) => n.toFixed(2)).join('..')}`;
+  assert.ok(x[0] <= 0 && x[1] >= 30 && y[0] <= 0 && y[1] >= 30, 'the whole canvas shows: ' + seen);
+  assert.ok(px(img.width) >= 19, 'and about as big as the other symbols (the stun ring is 21 px)');
 });
 
 test('boosts show as well as debuffs, like a needle you used', () => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Debuff Mobile Status
 // @namespace    RussianRob
-// @version      1.0.2
+// @version      1.0.3
 // @description  On Torn's phone attack page, shows your own +/-% stats and your effects (debuffs and boosts, with seconds left) in a row at the top of the enemy's window, so you can see them without leaving your weapons.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-debuff-mobile-status.user.js
@@ -16,6 +16,9 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.3  - Each effect tile shows the effect's name under the seconds (Torn's own name
+//           for it, like "Shocked"), so you can tell what an icon is. Enraged now shows
+//           whole: Torn draws it on a smaller canvas, which the crop cut on every side.
 // v1.0.2  - The icon window is 1px wider, so no symbol is cut (1.0.1 cut the right end
 //           of the stun ring). Tiles are 27 x 37 px. A page style that keeps images
 //           inside their box can no longer shrink the icon.
@@ -40,6 +43,9 @@
   // Tile borders for the colours Torn gives its effect icons.
   const COLORS = { red: '#e0463c', green: '#5cb85c', blue: '#3c8be0', yellow: '#e0c03c' };
   const ICON_DIR = '/images/v2/attack/effect_icons/';
+  // Icons Torn draws on a 30x30 canvas that the symbol fills edge to edge, unlike the 54x50
+  // ones the crop below is made for. Their tiles show the whole icon instead.
+  const WHOLE_ICONS = ['enraged'];
   // The look the owner approved from the live mock-up (layout B). The row sits over the top
   // of the enemy's window, above Torn's own layers, and taps go straight through it.
   const CSS = [
@@ -54,16 +60,23 @@
     '#tdms-row .tdms-icons{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:4px}',
     '#tdms-row .tdms-icons[hidden]{display:none}',
     '#tdms-row .tdms-icon{display:flex;flex-direction:column;align-items:center;background:rgba(0,0,0,.62);border:1px solid #888;border-radius:4px;padding:2px}',
-    // Torn draws each effect icon on a 54x50 canvas. Measured on 18 of its icons, the symbols
-    // all lie inside x 7..43, y 8..42; the rest is empty canvas and a faint bar that runs out
-    // to the right from under the symbol. The tile shows only that part, in a 21x20px window
-    // at 7/12 of the icon's size (36 canvas units across 21px), so the box stays small and the
-    // symbol is easy to read. A short stub of the bar still shows beside most symbols.
+    // Torn draws its effect icons on a 54x50 canvas (Enraged, on 30x30, is the exception: see
+    // WHOLE_ICONS). Measured on 18 of them, the symbols all lie inside x 7..43, y 8..42; the
+    // rest is empty canvas and a faint bar that runs out to the right from under the symbol.
+    // (Shocked's lightning, measured later, runs y 7..43: half a pixel of each tip is cut.)
+    // The tile shows only that part, in a 21x20px window at 7/12 of the icon's size (36
+    // canvas units across 21px), so the box stays small and the symbol is easy to read. A
+    // short stub of the bar still shows beside most symbols.
     // max-width and max-height are reset because the icon is bigger than its window, and a
     // page rule that keeps images inside their box would shrink it.
     '#tdms-row .tdms-glyph{display:block;position:relative;width:21px;height:20px;overflow:hidden}',
     '#tdms-row .tdms-glyph img{position:absolute;left:-4.08px;top:-4.58px;width:31.5px;height:29.17px;max-width:none;max-height:none}',
+    // A 30x30 icon (WHOLE_ICONS) is scaled whole into the same window: 20px, centred.
+    '#tdms-row .tdms-glyph.tdms-whole img{left:.5px;top:0;width:20px;height:20px}',
     '#tdms-row .tdms-icon i{font-style:normal;font-size:10px}',
+    // The effect's name under the seconds, on one line (a long name makes the tile wider),
+    // spaced like the rest of the row so the line grows if the phone enlarges small text.
+    '#tdms-row .tdms-name{font-size:8px;white-space:nowrap;opacity:.85}',
   ].join('\n');
 
   let store = null;      // Torn's Redux store, once found
@@ -192,18 +205,20 @@
   }
 
   // One effect: Torn's icon on a small dark tile, bordered in Torn's colour for it, with the
-  // seconds left under it (drawIcons fills those in, so they stay the tile's last child). The
-  // icon sits in a window that shows only its symbol (see the CSS).
+  // seconds left under it (drawIcons fills those in) and the effect's name under them: the
+  // title Torn gives it, or its class when there is none. The icon sits in a window that
+  // shows only its symbol, or the whole icon for the few drawn on a smaller canvas (see the CSS).
   function tile(e) {
     const t = el('span', 'tdms-icon');
     t.style.borderColor = COLORS[e.iconColor] || '#888';
-    const win = el('span', 'tdms-glyph');
+    const win = el('span', 'tdms-glyph' + (WHOLE_ICONS.includes(e.class) ? ' tdms-whole' : ''));
     const img = el('img');
     img.alt = e.title || e.class;
     img.src = ICON_DIR + iconName(e) + '.svg';
     win.appendChild(img);
     t.appendChild(win);
     t.appendChild(el('i', '', ''));
+    t.appendChild(el('span', 'tdms-name', e.title || e.class));
     return t;
   }
 
@@ -213,7 +228,8 @@
   function drawIcons(line) {
     const gone = Math.floor((Date.now() - snap.at) / 1000);
     const shown = snap.list.map((e) => ({ e, left: e.timeLeft - gone })).filter((x) => x.left > 0);
-    const tilesKey = shown.map((x) => [x.e.ID, iconName(x.e), x.e.iconColor].join('/')).join('|');
+    // The tiles are rebuilt only when an effect, its icon, its colour or its name changes.
+    const tilesKey = JSON.stringify(shown.map((x) => [x.e.ID, iconName(x.e), x.e.iconColor, x.e.title || x.e.class]));
     if (line.getAttribute('data-key') !== tilesKey) {
       line.setAttribute('data-key', tilesKey);
       line.textContent = '';
@@ -221,7 +237,7 @@
     }
     shown.forEach((x, i) => {
       const text = x.left > 300 ? '\u221e' : String(x.left);
-      const secs = line.children[i].lastChild;
+      const secs = line.children[i].querySelector('i');
       if (secs.textContent !== text) secs.textContent = text;
     });
     line.hidden = shown.length === 0;
