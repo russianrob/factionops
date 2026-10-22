@@ -251,3 +251,113 @@ test('loaded twice on the same page, it runs once', () => {
   assert.equal(page.document.querySelectorAll('#tdms-row').length, 1);
   assert.equal(page.document.querySelectorAll('#tdms-style').length, 1);
 });
+
+test('tapping your own header hides the row, and tapping back brings it back', () => {
+  const store = makeStore(state());
+  const page = load({ store });
+  store.set(state({ layout: 'defender' }));
+  page.flush();
+  assert.equal(page.row(), null);
+  store.set(state({ layout: 'attacker' }));
+  page.flush();
+  assert.equal(page.row().parentNode, page.layers());
+  assert.deepEqual(page.numbers(), NUMBERS);
+});
+
+test('new numbers from Torn show up', () => {
+  const store = makeStore(state());
+  const page = load({ store });
+  store.set(state({ mods: { ...MODS, speed: { value: 0 } } }));
+  page.flush();
+  assert.equal(page.numbers()[1], '+0%spd');
+});
+
+test('it subscribes once and watches the whole attack app', () => {
+  const store = makeStore(state());
+  const page = load({ store });
+  page.run();   // a second injection on the same page
+  assert.equal(store.listeners.length, 1);
+  assert.equal(page.observers.length, 1);
+  assert.equal(page.observers[0].target, page.document.getElementById('attack-root'));
+  assert.deepEqual(page.observers[0].options, { childList: true, subtree: true });
+});
+
+test('a dispatch repaints only when something the row shows changed', () => {
+  const store = makeStore(state());
+  const page = load({ store });
+  const hit = state();
+  hit.attack.hitsLog = { [ENEMY]: [{ attackResult: 'hit', x: 120, y: 200 }] };
+  store.set(hit);
+  assert.equal(page.frames.length, 0, 'a hit on the enemy changes nothing the row shows');
+  store.set(state({ mods: { ...MODS, speed: { value: 0 } } }));
+  assert.equal(page.frames.length, 1, 'your speed changing does');
+});
+
+test('when Torn rebuilds the window, the row moves into the new one', () => {
+  const page = load({ store: makeStore(state()) });
+  const area = page.document.querySelector('[class*="playerArea___"]');
+  const old = area.querySelector('[class*="playerWindow___"]');
+  old.remove();
+  area.insertAdjacentHTML('beforeend', WINDOW);
+  page.mutate([{ target: area, addedNodes: [area.lastChild], removedNodes: [old] }]);
+  page.flush();
+  assert.equal(page.row().parentNode, page.layers());
+  assert.equal(page.document.querySelectorAll('#tdms-row').length, 1);
+});
+
+test('turning the phone (two windows, then one) hides the row and brings it back', () => {
+  const page = load({ store: makeStore(state()) });
+  const area = page.document.querySelector('[class*="playerArea___"]');
+  area.insertAdjacentHTML('beforeend', WINDOW);
+  const extra = area.lastChild;
+  page.mutate([{ target: area, addedNodes: [extra] }]);
+  page.flush();
+  assert.equal(page.row(), null);
+  extra.remove();
+  page.mutate([{ target: area, removedNodes: [extra] }]);
+  page.flush();
+  assert.equal(page.row().parentNode, page.layers());
+});
+
+test('the row\'s own changes never set the observer off', () => {
+  const page = load({ store: makeStore(state()) });
+  const row = page.row();
+  page.mutate([{ target: row.firstChild }]);
+  page.mutate([{ target: page.layers(), addedNodes: [row] }]);
+  page.mutate([{ target: page.layers(), removedNodes: [row] }]);
+  assert.equal(page.frames.length, 0);
+});
+
+test('repaints never add a second row or stylesheet', () => {
+  const store = makeStore(state());
+  const page = load({ store });
+  for (let i = 1; i <= 5; i++) {
+    store.set(state({ mods: { ...MODS, strength: { value: 35 + i } } }));
+    page.mutate([{ target: page.document.body }]);
+    page.flush();
+  }
+  assert.equal(page.document.querySelectorAll('#tdms-row').length, 1);
+  assert.equal(page.document.querySelectorAll('#tdms-style').length, 1);
+  assert.equal(page.numbers()[0], '+40%str');
+});
+
+test('if Torn\'s data goes missing for one refresh, the row goes and then comes back', () => {
+  const store = makeStore(state());
+  const page = load({ store });
+  store.set({ attack: { attackerUser: { userID: ME } }, activePlayerLayout: { activePlayerLayout: 'attacker' } });
+  page.flush();
+  assert.equal(page.row(), null);
+  store.set(state());
+  page.flush();
+  assert.deepEqual(page.numbers(), NUMBERS);
+});
+
+test('an error in the script never reaches Torn\'s dispatch', () => {
+  const store = makeStore(state());
+  const page = load({ store });
+  const bad = state();
+  Object.defineProperty(bad.attack.attackerUser, 'statsModifiers', { get() { throw new Error('shape changed'); } });
+  assert.doesNotThrow(() => store.set(bad));
+  assert.doesNotThrow(() => page.flush());
+  assert.equal(page.logs.length, 1, 'logged once');
+});

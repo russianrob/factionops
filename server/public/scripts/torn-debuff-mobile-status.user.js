@@ -53,6 +53,7 @@
   let row = null;        // the row, built once and moved into whichever window Torn renders
   let pending = false;   // a repaint is booked for the next frame
   let reported = false;  // the first error has been logged
+  let lastKey = '';      // what the row last showed, so dispatches that change none of it are skipped
 
   // Torn keeps the fight in a Redux store, on the props of a React fiber a few levels above
   // the players' box. Returns the box and the store; either can be null.
@@ -88,6 +89,11 @@
       win: windows[0],
       stats: STATS.map(([k, label]) => ({ label, value: mods[k] && typeof mods[k].value === 'number' ? mods[k].value : 0 })),
     };
+  }
+
+  // Everything the row shows, as one string.
+  function viewKey(view) {
+    return view ? JSON.stringify(view.stats.map((s) => s.value)) : 'none';
   }
 
   // Logs the first error only, so a change on Torn's side shows up without flooding the console.
@@ -142,6 +148,7 @@
     pending = false;
     try {
       const view = readView();
+      lastKey = viewKey(view);
       if (!view) {
         if (row && row.parentNode) row.parentNode.removeChild(row);
         return;
@@ -162,9 +169,37 @@
     requestAnimationFrame(paint);
   }
 
+  // Torn's store calls back on every dispatch, hits and animations included, so repaint only
+  // when something the row shows has changed. Nothing may be thrown from here: an error in a
+  // Redux listener stops the dispatch, and Torn's own listeners with it.
+  function onStore() {
+    try {
+      if (viewKey(readView()) !== lastKey) schedule();
+    } catch (err) {
+      report(err);
+    }
+  }
+
+  // Torn rebuilds the window without the store changing (the phone turning, React remounting
+  // it), and the row goes with it. Book a repaint for any change in the attack app except our
+  // own: changes inside the row, or the row itself being added or removed. That way this can't
+  // set itself off, and the repaint changes nothing when the row is already in place.
+  function onMutations(records) {
+    for (const m of records) {
+      if (row && (m.target === row || row.contains(m.target))) continue;
+      const nodes = [...m.addedNodes, ...m.removedNodes];
+      if (nodes.length && nodes.every((n) => n === row)) continue;
+      schedule();
+      return;
+    }
+  }
+
   function attach(s) {
     store = s;
     ensureStyle();
+    store.subscribe(onStore);
+    const root = document.getElementById('attack-root');
+    if (root) new MutationObserver(onMutations).observe(root, { childList: true, subtree: true });
     schedule();
   }
 
