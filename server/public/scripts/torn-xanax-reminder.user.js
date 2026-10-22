@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Xanax Reminder
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @description  A Xanax icon in Torn's row of status icons as soon as your drug cooldown is over. Tap it to open your items on the Drugs tab. With a Public API key, in the 24 hours before your faction's next ranked war, the tap lets you pick the faction armoury or your items.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-xanax-reminder.user.js
@@ -20,6 +20,8 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.1  - The menu entry names the script: "Xanax Reminder: Set API key", so it
+//           stands out in a menu that lists every script's entries together.
 // v1.0.0  - First release. A Xanax icon in Torn's row of status icons as soon as your
 //           drug cooldown is over, read from Torn's own sidebar data. A tap opens your
 //           items on the Drugs tab. With an API key, in the 24 hours before your
@@ -28,7 +30,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
 
   // Loaded twice on one page (two copies installed, or PDA injecting it again), it runs once.
   // The mark goes on the page itself, which every copy can see; each copy may have its own window.
@@ -540,9 +542,9 @@
 
   // ===== THE KEY BOX =====
 
-  // Opens from the menu ("Set API key") or a long press on the icon, over everything else. The
-  // field is a plain text field (a password field sets off password managers) that starts
-  // empty: the saved key is never shown.
+  // Opens from the menu ("Xanax Reminder: Set API key") or a long press on the icon, over
+  // everything else. The field is a plain text field (a password field sets off password
+  // managers) that starts empty: the saved key is never shown.
   function openKeyBox() {
     closeKeyBox();
     closeChoice();
@@ -708,7 +710,7 @@
 
   // The script's menu, where the host has one. A long press on the icon opens the key box too.
   try {
-    if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Set API key', openKeyBox);
+    if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Xanax Reminder: Set API key', openKeyBox);
   } catch (e) {
     // PDA once crashed here. Without a menu, the long press still works.
   }

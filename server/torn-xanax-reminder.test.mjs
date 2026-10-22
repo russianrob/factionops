@@ -160,7 +160,7 @@ test('the header: the owner\'s script, served from tornwar.com, with its version
   assert.deepEqual(tag('name'), ['Torn Xanax Reminder']);
   assert.deepEqual(tag('namespace'), ['RussianRob']);
   assert.deepEqual(tag('author'), ['RussianRob']);
-  assert.deepEqual(tag('version'), ['1.0.0']);
+  assert.deepEqual(tag('version'), ['1.0.1']);
   assert.deepEqual(tag('license'), ['All Rights Reserved']);
   assert.deepEqual(tag('copyright'), []);
   assert.deepEqual(tag('match'), ['https://www.torn.com/*', 'https://torn.com/*']);
@@ -170,13 +170,14 @@ test('the header: the owner\'s script, served from tornwar.com, with its version
   assert.deepEqual(tag('downloadURL'), ['https://tornwar.com/scripts/torn-xanax-reminder.user.js']);
   assert.deepEqual(tag('updateURL'), ['https://tornwar.com/scripts/torn-xanax-reminder.meta.js']);
   assert.equal(readFileSync(META, 'utf8'), header + '\n', 'the meta file is the header, byte for byte');
-  assert.match(src, /const VERSION = '1\.0\.0';/, 'the in-file version matches @version');
-  assert.match(src, /^\/\/ v1\.0\.0  - First release\./m, 'the changelog has the 1.0.0 entry');
+  assert.match(src, /const VERSION = '1\.0\.1';/, 'the in-file version matches @version');
+  assert.match(src, /^\/\/ v1\.0\.1  - The menu entry names the script/m, 'the changelog has the 1.0.1 entry');
+  assert.match(src, /^\/\/ v1\.0\.0  - First release\./m, 'the changelog keeps the 1.0.0 entry');
 });
 
 test('the source is plain ASCII, so PDA can run it, and the console line carries the version', () => {
   assert.equal(readFileSync(SRC, 'utf8').match(/[^\x00-\x7f]/g), null);
-  assert.deepEqual(page().run().logs, ['[Torn Xanax Reminder 1.0.0] running']);
+  assert.deepEqual(page().run().logs, ['[Torn Xanax Reminder 1.0.1] running']);
 });
 
 for (const sidebar of Object.keys(SIDEBARS)) {
@@ -711,6 +712,9 @@ test('an answer of an unexpected shape gives no war line and never breaks the ch
 const ARMOURY = 'https://www.torn.com/factions.php?step=your&type=1#/tab=armoury&start=0&sub=drugs';
 const CHOICE = 'tm-xanax-reminder-choice';
 const KEYBOX = 'tm-xanax-reminder-key';
+// The script's one menu entry. It names the script, because a host's menu may list every
+// script's entries together, as the warboard app's does.
+const MENU = 'Xanax Reminder: Set API key';
 // GM storage as an earlier answer from Torn left it, checked just now: a key, and a war
 // starting at `start` (in the window by default).
 const warStore = (start = START) => ({ [KEY_STORE]: KEY, [WAR_STORE]: JSON.stringify({ at: NOW * 1000, start, end: 0, error: '' }) });
@@ -923,10 +927,14 @@ test('the phone\'s own long-press menu is held back on the icon', () => {
   assert.match(w.document.getElementById(STYLES).textContent, /#tm-xanax-reminder a \{ -webkit-touch-callout: none;/);
 });
 
+test('the menu entry names the script, so it stands out among other scripts\' entries', () => {
+  assert.deepEqual(Object.keys(page().run().menu), [MENU]);
+});
+
 test('the key box: a plain text field that starts empty, with Save, Clear and Cancel', () => {
   const w = page({ store: { [KEY_STORE]: KEY } }).run();
-  w.menu['Set API key']();
-  w.menu['Set API key']();
+  w.menu[MENU]();
+  w.menu[MENU]();
   assert.equal(w.document.querySelectorAll('#' + KEYBOX).length, 1, 'never two');
   const input = keyBox(w).querySelector('input');
   assert.equal(input.getAttribute('type'), 'text', 'a password field sets off password managers');
@@ -942,7 +950,7 @@ test('the key box from the menu closes an open box and the tooltip', () => {
   const w = page({ store: warStore() }).run();
   fire(w, w.link(), 'click');
   fire(w, w.link(), 'focus');
-  w.menu['Set API key']();
+  w.menu[MENU]();
   assert.ok(keyBox(w));
   assert.equal(box(w), null);
   assert.equal(w.document.getElementById(TIP), null);
@@ -950,7 +958,7 @@ test('the key box from the menu closes an open box and the tooltip', () => {
 
 test('the menu opens a styled key box even while the cooldown runs', () => {
   const w = page({ icons: { drug_cooldown: drug(NOW + 3600) } }).run();
-  w.menu['Set API key']();
+  w.menu[MENU]();
   assert.ok(keyBox(w));
   assert.match(w.document.getElementById(STYLES).textContent, /#tm-xanax-reminder-key \{ position: fixed;/);
   assert.match(keyBox(w).textContent, /No key saved\./);
@@ -958,7 +966,7 @@ test('the menu opens a styled key box even while the cooldown runs', () => {
 
 test('Save keeps the key, forgets the old answer and asks Torn at once', () => {
   const w = page({ store: { [WAR_STORE]: JSON.stringify({ at: NOW * 1000, start: START, end: 0, error: 'Incorrect key' }) } }).run();
-  w.menu['Set API key']();
+  w.menu[MENU]();
   keyBox(w).querySelector('input').value = '  ' + KEY + ' ';
   fire(w, keyButtons(w)[0], 'click');
   assert.equal(w.store[KEY_STORE], KEY, 'saved, trimmed');
@@ -973,7 +981,7 @@ test('a new key is asked about at once, even in a tab that just asked with the o
   assert.equal(w.calls.length, 1, 'asked with the old key');
   answer(w.calls[0], { error: { code: 2, error: 'Incorrect key' } });
   await settle();
-  w.menu['Set API key']();
+  w.menu[MENU]();
   keyBox(w).querySelector('input').value = KEY;
   fire(w, keyButtons(w)[0], 'click');
   w.check();
@@ -995,7 +1003,7 @@ test('once storage saves again, a new key is asked about at once in a tab that k
   answer(w.calls[0], { error: { code: 2, error: 'Incorrect key' } });
   await settle();
   full = false;
-  w.menu['Set API key']();
+  w.menu[MENU]();
   keyBox(w).querySelector('input').value = KEY;
   fire(w, keyButtons(w)[0], 'click');
   w.check();
@@ -1005,7 +1013,7 @@ test('once storage saves again, a new key is asked about at once in a tab that k
 test('Save with an empty field keeps the saved key and its answer', () => {
   const w = page({ store: warStore() }).run();
   const war = w.store[WAR_STORE];
-  w.menu['Set API key']();
+  w.menu[MENU]();
   fire(w, keyButtons(w)[0], 'click');
   assert.equal(keyBox(w), null, 'the box closes');
   assert.equal(w.store[KEY_STORE], KEY);
@@ -1014,7 +1022,7 @@ test('Save with an empty field keeps the saved key and its answer', () => {
 
 test('Enter in the field saves too', () => {
   const w = page().run();
-  w.menu['Set API key']();
+  w.menu[MENU]();
   const input = keyBox(w).querySelector('input');
   input.value = KEY;
   fire(w, input, 'keydown', { key: 'Enter' });
@@ -1024,7 +1032,7 @@ test('Enter in the field saves too', () => {
 
 test('Clear forgets the key and the war time', () => {
   const w = page({ store: warStore() }).run();
-  w.menu['Set API key']();
+  w.menu[MENU]();
   fire(w, keyButtons(w)[1], 'click');
   assert.equal(w.store[KEY_STORE], '');
   assert.equal(JSON.parse(w.store[WAR_STORE]).start, 0);
@@ -1041,7 +1049,7 @@ test('Cancel, Escape and a tap on the dark area change nothing; a tap inside the
     () => fire(w, keyBox(w), 'click'),
   ];
   for (const close of ways) {
-    w.menu['Set API key']();
+    w.menu[MENU]();
     keyBox(w).querySelector('input').value = 'SOMETHINGELSE123';
     fire(w, keyBox(w).querySelector('p'), 'click');
     assert.ok(keyBox(w), 'a tap inside keeps it');
@@ -1054,7 +1062,7 @@ test('Cancel, Escape and a tap on the dark area change nothing; a tap inside the
 test('the key box says when PDA\'s key is in use, and never shows it', () => {
   const src = readFileSync(SRC, 'utf8').replace('###PDA-APIKEY###', 'PDAKEY0123456789');
   const w = page({ src }).run();
-  w.menu['Set API key']();
+  w.menu[MENU]();
   assert.match(keyBox(w).textContent, /Using the key Torn PDA gives the script\./);
   assert.ok(!keyBox(w).textContent.includes('PDAKEY0123456789'));
 });
@@ -1064,7 +1072,7 @@ test('the key box says why the last check failed, so a bad key shows on a phone 
   const w = page({ store: { [KEY_STORE]: KEY } }).run();
   answer(w.calls[0], { error: { code: 2, error: 'Incorrect key ' + KEY } });
   await settle();
-  w.menu['Set API key']();
+  w.menu[MENU]();
   const text = keyBox(w).textContent;
   assert.match(text, /A key is saved\. Couldn't check the war time: Incorrect key \*\*\*\*/);
   assert.ok(!text.includes(KEY), 'the key never shows');
