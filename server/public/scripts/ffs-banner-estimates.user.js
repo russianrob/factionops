@@ -37,8 +37,10 @@
 // 2.73.58 —  Hide people in federal jail.
 //
 // 2.73.57 —  Loadout sightings, capture only: when Torn shows an opponent's
-//              equipped items in a fight, report what was visible, so the
-//              faction pools sightings nobody could collect alone. No UI yet.
+//              equipped items in a fight, the script sends what was visible,
+//              with your player ID, to tornwar.com, so the faction pools
+//              sightings nobody could collect alone. No UI yet. Adds
+//              @grant unsafeWindow.
 //
 // 2.73.56 —  Take the refusal codes from a script that got them right.
 //

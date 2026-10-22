@@ -3,7 +3,7 @@
 // @namespace    http://torn.city.com.dot.com.com
 // @version      1.0.20
 // @description  Calculates and displays your current crime chain (Crimes 2.0 DOM-compat patch)
-// @author       Ironhydedragon[2428902] (RussianRob maintains fork)
+// @author       Ironhydedragon[2428902]
 // @match        https://www.torn.com/page.php?sid=crimes*
 // @license      MIT
 // @run-at       document-end

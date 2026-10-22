@@ -32,7 +32,7 @@
 // 2.73.911 — Take the refusal codes from a script that got them right (as FFS 2.73.56).
 // 2.73.910 — Stand down when Torn refuses the key (as FFS 2.73.55).
 // 2.73.909 — Never call a target Okay on our own authority (as FFS 2.73.54).
-// 2.73.908 — FFS only orders the lists it is for (as FFS 2.73.53).
+// 2.73.908 — The enemy list is never skipped as our own side (lands as FFS 2.73.53).
 // 2.73.907 — Our own side of the war board is not a target list.
 // 2.73.906 — The roster is not the war board.
 // 2.73.905 — The cache stops out-voting the poll (as FFS 2.73.52).
