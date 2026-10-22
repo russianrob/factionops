@@ -83,8 +83,11 @@ button{
 .seg button + button{border-left:1px solid var(--line)}
 .seg button.on{background:var(--cool);color:var(--bg);font-weight:600}
 .foot:empty{display:none}
-/* Five windows on a 360 px phone: tighter buttons keep them on one line. */
-@media (max-width:420px){.seg button{padding:7px 8px;font-size:12.5px}}
+/* Five windows on a 360 px phone: labels never wrap inside a button, tighter
+   buttons keep them on one line, and a narrower screen scrolls the switch
+   rather than the page. */
+.seg button{white-space:nowrap}
+@media (max-width:420px){.seg{max-width:100%;overflow-x:auto}.seg button{padding:7px 6px;font-size:12px}}
 .hz{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:0 0 14px}
 .hz div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 10px}
 .hz .k{display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
