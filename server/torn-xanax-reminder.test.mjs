@@ -111,7 +111,8 @@ function page({ sidebar = 'Fly-out, phone', icons = { drug_cooldown: drug(NOW - 
     label: () => (w.link() ? w.link().getAttribute('aria-label') : null),
     setIcons(next) { session.sidebarData137558 = sidebarData(next); },
     check() { w.checks.forEach((fn) => fn()); },
-    scroll() { (winListeners.scroll || []).forEach((fn) => fn({ type: 'scroll' })); },
+    // A scroll of the page by default, or of one element.
+    scroll(target = w.document) { (winListeners.scroll || []).forEach((fn) => fn({ type: 'scroll', target })); },
     advance(ms) {
       const until = clock.ms + ms;
       for (;;) {
@@ -795,6 +796,22 @@ test('a tap elsewhere, Escape or scrolling closes the box', () => {
   assert.ok(box(w), 'and again');
   w.scroll();
   assert.equal(box(w), null, 'scrolling');
+});
+
+test('a part of the page that scrolls by itself, like a chat, leaves the tooltip and the box open', () => {
+  const w = page({ store: warStore() }).run();
+  // A chat list scrolls itself as messages come in, and it doesn't hold the icon.
+  const chat = w.document.createElement('div');
+  w.document.body.appendChild(chat);
+  fire(w, w.link(), 'pointerenter', { pointerType: 'mouse' });
+  w.scroll(chat);
+  assert.ok(w.document.getElementById(TIP), 'the tooltip stays');
+  fire(w, w.link(), 'click');
+  assert.ok(box(w), 'the box opens');
+  w.scroll(chat);
+  assert.ok(box(w), 'and stays while the chat scrolls');
+  w.scroll(w.document.getElementById('sidebar'));
+  assert.equal(box(w), null, 'a scroll of what holds the icon closes it');
 });
 
 test('a tap inside the box keeps it, and a tap on one of its links closes it once the link opens', () => {

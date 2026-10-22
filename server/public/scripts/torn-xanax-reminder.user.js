@@ -528,7 +528,12 @@
     closeKeyBox();
   }
 
-  function onScroll() {
+  // A scroll of the page, or of anything that holds the icon, would leave the box and the
+  // tooltip behind. Other parts of the page scroll by themselves (a chat keeping up with new
+  // messages), and those leave both open.
+  function onScroll(e) {
+    const target = e && e.target;
+    if (target && target.nodeType === 1 && !(icon && target.contains(icon))) return;
     hideTip();
     closeChoice();
   }
