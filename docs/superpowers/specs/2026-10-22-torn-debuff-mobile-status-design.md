@@ -47,7 +47,7 @@ The row has two lines: the numbers line and, under it, the icons line.
 
 - **Phone layout only.** It shows only when exactly one player window (`[class*="playerWindow___"]`) is on the page. Desktop and wide tablets show both windows, so it never shows there.
 - **Only while the enemy's window is up.** That is when the store's `activePlayerLayout.activePlayerLayout` is `"attacker"`, Torn's default. Tapping your own header sets it to `"defender"`, and Torn shows your window. The row goes away then and comes back when you tap back.
-- **Before, during and after the fight.** The numbers line shows whenever your data is there, like the strip in your own window. The icons line only appears while you have effects.
+- **Before, during and after the fight.** The numbers line shows whenever your data is there (at least one of the five stats has a number), like the strip in your own window. The icons line only appears while you have effects.
 - **Never in the way.** It has `pointer-events: none`, so every tap reaches whatever is underneath. There are no tooltips and nothing to tap.
 
 ## Where the data comes from
@@ -59,7 +59,7 @@ Torn's attack page keeps the fight in a Redux store. Torn updates it from its ow
    - `attack.attackerUser.userID` and `attack.attackerUser.statsModifiers.<stat>.value`. On this page you are always the attacker.
    - `attack.currentTemporaryEffects[<your userID>]`, an array of `{ID, class, level, type, timeLeft, renderMode, iconColor, ...}`. The whole map can be `null`.
    - `activePlayerLayout.activePlayerLayout`.
-3. It calls `store.subscribe()`. The callback runs on every dispatch, hits and animations included, so it works out the small view the row needs: the five values, the effect list, the layout and the window count. It repaints in the next animation frame, and only if that view changed or the row is no longer where it belongs.
+3. It calls `store.subscribe()`. The callback runs on every dispatch, hits and animations included, so it works out the small view the row needs: the five values, the effect list, the layout and the window count. It repaints in the next animation frame, and only if that view changed. The callback catches its own errors: an error thrown into Redux's dispatch would stop Torn's own listeners.
 
 **Rejected:**
 - **Hooking the attackData request.** It would miss the live updates and would have to run at document-start.
@@ -82,7 +82,7 @@ The store's `timeLeft` changes only when Torn's data refreshes, every 4 seconds.
   - when the row should show, it appends the row to the current window's layer stack, unless it is already there;
   - otherwise it removes the row.
 
-  It runs on every repaint. A `MutationObserver` on `#attack-root`, the attack app's root (child list, subtree), also catches Torn rebuilding the window without a store change. The observer ignores changes inside the row, and only schedules a repaint when the row is missing from where it belongs, so it can't trigger itself.
+  It runs on every repaint. A `MutationObserver` on `#attack-root`, the attack app's root (child list, subtree), also catches Torn rebuilding the window without a store change. The observer books at most one repaint per frame, and a repaint changes nothing when the row is already in place. It ignores changes inside the row and the row itself being added or removed, so it can't trigger itself.
 - **Start-up:** the attack app renders after the page loads. The script checks every 500 ms for `[class*="playersModelWrap___"]` and its store, then subscribes and stops checking. It keeps checking for as long as the box is missing; a page that shows an error instead of a fight never gets one, and each check is a single selector lookup. If the box is there but no store turns up within 10 seconds, it stops and logs one `console.info` line.
 - **One copy:** a `window.__tdmsLoaded` flag stops a second injection of the script from running.
 - **If Torn changes its page:** with no store, or none of the fields, nothing is drawn and one `console.info` line says why. The script never throws into Torn's page.
@@ -116,7 +116,7 @@ The tests are `server/torn-debuff-mobile-status.test.mjs`, using node:test and l
   - "defender" hides it, and so do two windows;
   - flipping back mounts it in the new window;
   - repeated repaints never duplicate it.
-- **Robustness:** with no store, `currentTemporaryEffects: null` or no `statsModifiers`, nothing is drawn and nothing is thrown.
+- **Robustness:** with no store, or no `statsModifiers` (or none of the five stats in it), nothing is drawn. With `currentTemporaryEffects: null` the numbers line shows and there is no icons line. Nothing is ever thrown, and an error never reaches Torn's dispatch.
 - **Subscribe:** a dispatch that changes nothing the row uses doesn't repaint.
 
 **Live check** on the owner's phone in a real fight:
