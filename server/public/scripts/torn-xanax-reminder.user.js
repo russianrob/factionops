@@ -50,6 +50,38 @@
   const ROW_SELECTOR = '#sidebar ul[class*="status-icons"], #sidebar ul[class*="statusIcons___"]';
   const POLL_MS = 2000;
   const LABEL = 'Drug cooldown over: Xanax ready';
+  // GM storage: the key from the key box, and what Torn last said about the war.
+  const KEY_STORE = 'tm-xanax-reminder-key';
+  const WAR_STORE = 'tm-xanax-reminder-war';
+  // Torn is asked at most this often, across all tabs.
+  const CALL_EVERY_MS = 30 * 60 * 1000;
+  // The war window: the 24 hours before the start.
+  const WINDOW_S = 24 * 60 * 60;
+  // PDA puts your API key in place of this placeholder when it loads the script. The file must
+  // hold the placeholder once only: PDA finds it by its text, and a second copy breaks the swap.
+  const PDA_KEY = '###PDA-APIKEY###';
+  // Still the placeholder (it has the #s) means PDA didn't swap it, or this isn't PDA.
+  const HAS_PDA_KEY = PDA_KEY.indexOf('##') === -1 && PDA_KEY.length > 8;
+
+  // ===== GM STORAGE =====
+
+  // Every GM_* call is guarded, because hosts differ in what they give a script. Values are
+  // stored as strings, because PDA hands stored values back as strings.
+  function gmGet(name) {
+    try {
+      return typeof GM_getValue === 'function' ? GM_getValue(name, '') : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function gmSet(name, value) {
+    try {
+      if (typeof GM_setValue === 'function') GM_setValue(name, value);
+    } catch (e) {
+      // Without storage the script just asks Torn again later.
+    }
+  }
 
   // ===== TORN'S SIDEBAR DATA =====
 
@@ -79,6 +111,143 @@
       const end = Number(entry.timerExpiresAt);
       return !(end > 0) || end > nowS;
     });
+  }
+
+  // ===== THE WAR TIME =====
+
+  // The key for Torn's API: one saved in the key box beats the one PDA gives. '' means none.
+  function apiKey() {
+    const saved = gmGet(KEY_STORE);
+    if (typeof saved === 'string' && saved.trim()) return saved.trim();
+    return HAS_PDA_KEY ? PDA_KEY : '';
+  }
+
+  // What Torn last said about your faction's ranked war, shared by every tab: at = when a tab
+  // last asked (ms), start and end = the war's times (Unix seconds, 0 for none), error = why
+  // the last ask failed ('' if it didn't). Read with Number(), as PDA hands back strings; a
+  // value that won't parse reads as nothing saved.
+  function readWar() {
+    let v = gmGet(WAR_STORE);
+    try {
+      if (typeof v === 'string') v = v ? JSON.parse(v) : null;
+    } catch (e) {
+      v = null;
+    }
+    if (!v || typeof v !== 'object') v = {};
+    return {
+      at: Number(v.at) || 0,
+      start: Number(v.start) || 0,
+      end: Number(v.end) || 0,
+      error: typeof v.error === 'string' ? v.error : '',
+    };
+  }
+
+  function writeWar(war) {
+    gmSet(WAR_STORE, JSON.stringify(war));
+  }
+
+  // This tab's own last call (ms), or null. It keeps the 30 minutes even when storage won't
+  // save: PDA keeps GM values in localStorage, and a full localStorage throws on every write.
+  let askedAt = null;
+
+  // Asks Torn about the war, at most once every 30 minutes across all tabs. The time goes into
+  // storage before the call, so another tab sees it and waits. Only called while the icon shows.
+  function maybeAsk(nowMs) {
+    const key = apiKey();
+    if (!key) return;
+    const war = readWar();
+    // A saved time in the future means the clock moved back: ask now rather than wait for it.
+    if (war.at <= nowMs && nowMs - war.at < CALL_EVERY_MS) return;
+    if (askedAt !== null && askedAt <= nowMs && nowMs - askedAt < CALL_EVERY_MS) return;
+    askedAt = nowMs;
+    war.at = nowMs;
+    writeWar(war);
+    askTorn(key).then((ranked) => {
+      const now = readWar();
+      now.start = ranked ? Number(ranked.start) || 0 : 0;
+      now.end = ranked ? Number(ranked.end) || 0 : 0;
+      now.error = '';
+      writeWar(now);
+    }, (message) => {
+      // Keep the last good answer, and say why this one failed.
+      const now = readWar();
+      now.error = message;
+      writeWar(now);
+    });
+  }
+
+  // GET your faction's wars. Resolves with wars.ranked (null when no ranked war is set), or
+  // rejects with words for the tooltip: Torn's own error text, or a fixed message. The key is
+  // in the request and nowhere else.
+  function askTorn(key) {
+    const url = 'https://api.torn.com/v2/faction/wars?key=' + encodeURIComponent(key) + '&comment=xanax-reminder';
+    return new Promise((resolve, reject) => {
+      const answered = (text) => {
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          reject('no answer from Torn');
+          return;
+        }
+        if (data && data.error) {
+          reject(hideKey(String(data.error.error || 'error ' + data.error.code), key));
+        } else if (data && data.wars && typeof data.wars === 'object') {
+          resolve(data.wars.ranked && typeof data.wars.ranked === 'object' ? data.wars.ranked : null);
+        } else {
+          reject('unexpected answer from Torn');
+        }
+      };
+      const failed = () => reject('no answer from Torn');
+      // GM_xmlhttpRequest where the host has it: it isn't held to the page's rules on what the
+      // page may fetch. fetch where it doesn't.
+      if (typeof GM_xmlhttpRequest === 'function') {
+        try {
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url: url,
+            anonymous: true,
+            timeout: 20000,
+            onload: (res) => answered(res && res.responseText != null ? String(res.responseText) : ''),
+            onerror: failed,
+            ontimeout: failed,
+            onabort: failed,
+          });
+          return;
+        } catch (e) {
+          // Fall through to fetch.
+        }
+      }
+      try {
+        fetch(url, { credentials: 'omit' }).then((res) => res.text()).then(answered, failed);
+      } catch (e) {
+        failed();
+      }
+    });
+  }
+
+  // Torn's messages don't hold the key, but the tooltip must never show it, so make sure.
+  function hideKey(text, key) {
+    return text.split(key).join('****');
+  }
+
+  // Seconds until the war starts, in the 24 hours before it (start - 24h <= now < start), or 0
+  // outside them. Needs a key: without one, the tap always opens your items. A war with an end
+  // time is over.
+  function warSecondsLeft(nowMs) {
+    if (!apiKey()) return 0;
+    const war = readWar();
+    const nowS = nowMs / 1000;
+    if (!(war.start > 0) || war.end > 0) return 0;
+    if (nowS < war.start - WINDOW_S || nowS >= war.start) return 0;
+    return war.start - nowS;
+  }
+
+  // "5h 12m", or "45m" under an hour. Minutes round up, so it never says 0m.
+  function untilText(seconds) {
+    const mins = Math.max(1, Math.ceil(seconds / 60));
+    const h = Math.floor(mins / 60);
+    return h > 0 ? h + 'h ' + (mins % 60) + 'm' : mins + 'm';
   }
 
   // ===== THE ICON =====
@@ -125,9 +294,15 @@
     if (icon && icon.parentNode) icon.remove();
   }
 
-  // The icon's label, line by line: for the tooltip, and joined for screen readers.
-  function labelLines() {
-    return [LABEL];
+  // The icon's label, line by line: for the tooltip, and joined for screen readers. With no key
+  // there is never a war line or an error line.
+  function labelLines(nowMs) {
+    const lines = [LABEL];
+    const left = warSecondsLeft(nowMs);
+    if (left) lines.push('War starts in ' + untilText(left) + ': tap to pick the armoury or your items');
+    const error = apiKey() ? readWar().error : '';
+    if (error) lines.push('Couldn\'t check the war time: ' + error);
+    return lines;
   }
 
   function setLabel(lines) {
@@ -254,7 +429,8 @@
       ensureStyles();
       if (!icon) icon = buildIcon();
       if (icon.parentNode !== row) place(row);
-      setLabel(labelLines());
+      maybeAsk(nowMs);
+      setLabel(labelLines(nowMs));
     } catch (e) {
       // A bad value stops this one check. It never reaches Torn's page.
     }

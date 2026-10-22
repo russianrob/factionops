@@ -390,3 +390,254 @@ test('the tooltip is placed inside the screen, with a number for each side', () 
   const css = w.document.getElementById(STYLES).textContent;
   assert.match(css, /#tm-xanax-reminder-tip \{ position: fixed; z-index: 99999; pointer-events: none;/);
 });
+
+// ---------------------------------------------------------------------------------------------
+// The war time and the key
+// ---------------------------------------------------------------------------------------------
+
+const KEY = 'TESTKEY123456789';   // the shape of a Torn key; not a real one
+const KEY_STORE = 'tm-xanax-reminder-key';
+const WAR_STORE = 'tm-xanax-reminder-war';
+const START = NOW + 5 * 3600 + 12 * 60;   // a ranked war starting 5h 12m after the test clock
+const WAR_LINE = 'War starts in 5h 12m: tap to pick the armoury or your items';
+const URL = 'https://api.torn.com/v2/faction/wars?key=' + KEY + '&comment=xanax-reminder';
+// Torn's answer to /v2/faction/wars, and its ranked war (end is null until the war ends).
+const wars = (ranked) => ({ pacts: [], wars: { ranked, raids: [], territory: [] } });
+const ranked = (start, end = null) => ({ war_id: 51418, start, end, target: 3000, winner: null, factions: [] });
+
+test('the source carries PDA\'s key placeholder exactly once', () => {
+  assert.equal(readFileSync(SRC, 'utf8').split('###PDA-APIKEY###').length - 1, 1);
+});
+
+test('with no key there is no call, and no extra line', () => {
+  const w = page().run();
+  w.check();
+  assert.equal(w.calls.length, 0);
+  assert.equal(w.label(), LABEL);
+  w.store[KEY_STORE] = KEY;
+  w.check();
+  assert.equal(w.calls.length, 1, 'with a key, it asks');
+});
+
+test('with a key, the check asks Torn about your faction\'s wars, without cookies', () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  assert.equal(w.calls.length, 1);
+  assert.equal(w.calls[0].method, 'GET');
+  assert.equal(w.calls[0].url, URL);
+  assert.equal(w.calls[0].anonymous, true);
+});
+
+test('no call while the drug cooldown runs, or on a page without the row', () => {
+  const w = page({ icons: { drug_cooldown: drug(NOW + 3600) }, store: { [KEY_STORE]: KEY } }).run();
+  w.check();
+  assert.equal(w.calls.length, 0, 'on cooldown');
+  w.setIcons({ drug_cooldown: drug(NOW - 1) });
+  w.check();
+  assert.equal(w.calls.length, 1, 'once it is over, it asks');
+  const bare = page({ store: { [KEY_STORE]: KEY } });
+  const row = bare.row();
+  const holder = row.parentNode;
+  row.remove();
+  bare.run();
+  assert.equal(bare.calls.length, 0, 'no row');
+  holder.appendChild(row);
+  bare.check();
+  assert.equal(bare.calls.length, 1, 'with the row back, it asks');
+});
+
+test('in the 24 hours before the war, the label says when it starts', async () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  answer(w.calls[0], wars(ranked(START)));
+  await settle();
+  w.check();
+  assert.equal(w.label(), LABEL + '. ' + WAR_LINE);
+});
+
+test('the war line runs from 24 hours before the start until the start', async () => {
+  const cases = [
+    [NOW + 86400, 'War starts in 24h 0m: tap to pick the armoury or your items', 'exactly 24 hours before'],
+    [NOW + 86401, null, 'just over 24 hours before'],
+    [NOW + 5 * 3600 + 11 * 60 + 30, WAR_LINE, 'minutes round up'],
+    [NOW + 45 * 60, 'War starts in 45m: tap to pick the armoury or your items', 'under an hour'],
+    [NOW + 30, 'War starts in 1m: tap to pick the armoury or your items', 'under a minute: never 0m'],
+    [NOW, null, 'at the start'],
+    [NOW - 3600, null, 'once it has started'],
+  ];
+  for (const [start, line, why] of cases) {
+    const w = page({ store: { [KEY_STORE]: KEY } }).run();
+    answer(w.calls[0], wars(ranked(start)));
+    await settle();
+    w.check();
+    assert.equal(w.label(), line ? LABEL + '. ' + line : LABEL, why);
+  }
+});
+
+test('no ranked war, or one with an end time, gives no war line', async () => {
+  for (const reply of [wars(null), wars(ranked(START, NOW - 60))]) {
+    const w = page({ store: { [KEY_STORE]: KEY } }).run();
+    answer(w.calls[0], reply);
+    await settle();
+    w.check();
+    assert.equal(w.label(), LABEL);
+  }
+});
+
+test('the window opens and closes as the clock moves, without a reload', async () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  answer(w.calls[0], wars(ranked(NOW + 86400 + 600)));   // 24h 10m away
+  await settle();
+  w.check();
+  assert.equal(w.label(), LABEL, 'not yet');
+  w.clock.ms += 600 * 1000;
+  w.check();
+  assert.match(w.label(), /War starts in 24h 0m/, 'open');
+  w.clock.ms += 86400 * 1000;
+  w.check();
+  assert.equal(w.label(), LABEL, 'the war has started');
+});
+
+test('at most one call per 30 minutes, even with two tabs sharing storage', () => {
+  const store = { [KEY_STORE]: KEY };
+  const clock = { ms: NOW * 1000 };
+  const a = page({ store, clock }).run();
+  const b = page({ store, clock }).run();
+  assert.equal(a.calls.length + b.calls.length, 1, 'the second tab sees the first one\'s call');
+  clock.ms += 29 * 60 * 1000;
+  a.check();
+  b.check();
+  assert.equal(a.calls.length + b.calls.length, 1, 'not again within 30 minutes');
+  clock.ms += 60 * 1000;
+  a.check();
+  b.check();
+  assert.equal(a.calls.length + b.calls.length, 2, 'once more after 30 minutes');
+});
+
+test('storage that will not save, like a full localStorage in PDA, still means one call per 30 minutes', async () => {
+  // Every write throws, as a full localStorage does; the saved key still reads.
+  const store = new Proxy({ [KEY_STORE]: KEY }, { set() { throw new Error('QuotaExceededError'); } });
+  const w = page({ store }).run();
+  assert.equal(w.calls.length, 1);
+  noAnswer(w.calls[0]);
+  await settle();
+  w.check();
+  w.clock.ms += 29 * 60 * 1000;
+  w.check();
+  assert.equal(w.calls.length, 1, 'not again within 30 minutes');
+  w.clock.ms += 60 * 1000;
+  w.check();
+  assert.equal(w.calls.length, 2, 'once more after 30 minutes');
+});
+
+test('a Torn error shows in the label, and the next try waits 30 minutes', async () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  answer(w.calls[0], { error: { code: 2, error: 'Incorrect key' } });
+  await settle();
+  w.check();
+  assert.equal(w.label(), LABEL + '. Couldn\'t check the war time: Incorrect key');
+  w.clock.ms += 10 * 60 * 1000;
+  w.check();
+  assert.equal(w.calls.length, 1);
+  w.clock.ms += 20 * 60 * 1000;
+  w.check();
+  assert.equal(w.calls.length, 2);
+});
+
+test('no answer from Torn is said as such', async () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  noAnswer(w.calls[0]);
+  await settle();
+  w.check();
+  assert.equal(w.label(), LABEL + '. Couldn\'t check the war time: no answer from Torn');
+});
+
+test('an error after a good answer keeps that answer, and a good answer clears the error', async () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  answer(w.calls[0], wars(ranked(START)));
+  await settle();
+  w.clock.ms += 30 * 60 * 1000;
+  w.check();
+  noAnswer(w.calls[1]);
+  await settle();
+  w.check();
+  assert.equal(w.label(), LABEL + '. War starts in 4h 42m: tap to pick the armoury or your items. Couldn\'t check the war time: no answer from Torn');
+  w.clock.ms += 30 * 60 * 1000;
+  w.check();
+  answer(w.calls[2], wars(ranked(START)));
+  await settle();
+  w.check();
+  assert.equal(w.label(), LABEL + '. War starts in 4h 12m: tap to pick the armoury or your items');
+});
+
+test('the key never shows in the label, the tooltip or the console', async () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  answer(w.calls[0], { error: { code: 2, error: 'Incorrect key ' + KEY } });
+  await settle();
+  w.check();
+  fire(w, w.link(), 'focus');
+  const seen = [w.label(), w.document.getElementById(TIP).textContent, ...w.logs].join('\n');
+  assert.ok(!seen.includes(KEY));
+  assert.match(w.label(), /Incorrect key \*\*\*\*/);
+});
+
+test('the answer is kept for every tab', async () => {
+  const store = { [KEY_STORE]: KEY };
+  const clock = { ms: NOW * 1000 };
+  const a = page({ store, clock }).run();
+  answer(a.calls[0], wars(ranked(START)));
+  await settle();
+  const b = page({ store, clock }).run();
+  assert.equal(b.calls.length, 0);
+  assert.equal(b.label(), LABEL + '. ' + WAR_LINE);
+});
+
+test('a saved key beats PDA\'s, and PDA\'s is used when none is saved', () => {
+  const src = readFileSync(SRC, 'utf8').replace('###PDA-APIKEY###', 'PDAKEY0123456789');
+  assert.match(page({ src }).run().calls[0].url, /key=PDAKEY0123456789&/);
+  assert.equal(page({ src, store: { [KEY_STORE]: KEY } }).run().calls[0].url, URL);
+});
+
+test('a host without GM_xmlhttpRequest asks with fetch', async () => {
+  const w = page({ store: { [KEY_STORE]: KEY }, gmRequest: false }).run();
+  assert.equal(w.calls.length, 1);
+  assert.ok(w.calls[0].fetch);
+  assert.equal(w.calls[0].url, URL);
+  answer(w.calls[0], wars(ranked(START)));
+  await settle();
+  w.check();
+  assert.equal(w.label(), LABEL + '. ' + WAR_LINE);
+});
+
+test('the open tooltip follows a new label', async () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  fire(w, w.link(), 'focus');
+  answer(w.calls[0], wars(ranked(START)));
+  await settle();
+  w.check();
+  assert.deepEqual([...w.document.getElementById(TIP).children].map((el) => el.textContent), [LABEL, WAR_LINE]);
+});
+
+test('stored values that come back as strings, or as objects, still work', () => {
+  // PDA hands stored values back as strings; another host might hand back the parsed object.
+  const asObject = page({ store: { [KEY_STORE]: KEY, [WAR_STORE]: { at: String(NOW * 1000), start: String(START), end: '0', error: '' } } }).run();
+  assert.equal(asObject.calls.length, 0, 'the check time was read');
+  assert.equal(asObject.label(), LABEL + '. ' + WAR_LINE);
+  const junk = page({ store: { [KEY_STORE]: KEY, [WAR_STORE]: '{"at":' } }).run();
+  assert.equal(junk.calls.length, 1, 'a stored value that won\'t parse is nothing saved');
+  assert.equal(junk.label(), LABEL);
+});
+
+test('a stored check time in the future (the clock moved back) means ask now', () => {
+  const later = JSON.stringify({ at: (NOW + 86400) * 1000, start: 0, end: 0, error: '' });
+  assert.equal(page({ store: { [KEY_STORE]: KEY, [WAR_STORE]: later } }).run().calls.length, 1);
+});
+
+test('an answer of an unexpected shape gives no war line and never breaks the check', async () => {
+  for (const reply of [{}, { wars: null }, wars({ start: 'soon', end: null }), wars('x')]) {
+    const w = page({ store: { [KEY_STORE]: KEY } }).run();
+    answer(w.calls[0], reply);
+    await settle();
+    assert.doesNotThrow(() => w.check());
+    assert.ok(w.icon(), JSON.stringify(reply));
+    assert.doesNotMatch(w.label(), /War starts/);
+  }
+});
