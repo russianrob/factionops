@@ -102,7 +102,9 @@ test("the file maps each day to every faction's respect, oldest day first", () =
   assert.deepEqual(Object.keys(f.days), ["2026-09-16", "2026-09-17"]);
 });
 
-test("the build script writes the file from a folder of replies, and says what it left out", () => {
+// A folder of replies, the saved days and our own series, as the pull and the
+// daily job leave them; run(ownFile) builds the file from them into `out`.
+function buildFixture() {
   const root = mkdtempSync(join(tmpdir(), "hof-estimate-build-"));
   const replies = join(root, "replies"), dataDir = join(root, "data");
   mkdirSync(replies);
@@ -125,6 +127,11 @@ test("the build script writes the file from a folder of replies, and says what i
   const run = (ownFile) => spawnSync(process.execPath, [new URL("./bin/hof-estimate-build.mjs", import.meta.url).pathname,
     "--replies", replies, "--factions", factions, "--own", ownFile, "--from", "2026-09-15", "--fit", AU, "--out", out],
   { env: { ...process.env, DATA_DIR: dataDir }, encoding: "utf8" });
+  return { root, put, own, out, run };
+}
+
+test("the build script writes the file from a folder of replies, and says what it left out", () => {
+  const { root, own, out, run } = buildFixture();
   const r = run(own);
   assert.equal(r.status, 0, r.stderr);
   const f = JSON.parse(readFileSync(out, "utf8"));
@@ -141,4 +148,16 @@ test("the build script writes the file from a folder of replies, and says what i
   const bad = run(gappy);
   assert.notEqual(bad.status, 0);
   assert.match(bad.stderr, /our own series has no 2026-09-16/);
+});
+
+test("a chain repeated where two pages meet counts once", () => {
+  // The pull asks for each page up to the oldest start on the page before,
+  // and Torn includes that chain again at the top of the next page.
+  const { put, own, out, run } = buildFixture();
+  put("chains-7-p2", { chains: [FACTION.chains[1]] });
+  const r = run(own);
+  assert.equal(r.status, 0, r.stderr);
+  const f = JSON.parse(readFileSync(out, "utf8"));
+  assert.equal(f.days["2026-09-17"][7], Math.round(100000 - 500 - 2400 / 34));
+  assert.match(r.stdout, /^7: u \d+\/day, 2 chains,/m);
 });

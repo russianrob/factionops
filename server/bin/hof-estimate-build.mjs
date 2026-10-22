@@ -49,11 +49,14 @@ for (const { id } of list.factions) {
   const why = missingRecords({ chainPages, warList, rewards, fromS, fitS });
   if (why) { console.log(`${id}: left out: ${why}`); continue; }
   if (!(anchor[id] > 0) || !(fit[id] > 0)) { console.log(`${id}: left out: not in the saved days`); continue; }
-  const s = estimateSeries({ id, chains: chainPages.flat(), wars: warList, rewards, anchorDay, anchorRespect: anchor[id],
+  // Each page runs up to the oldest start on the page before, so the chain
+  // where two pages meet comes back twice; it counts once.
+  const chains = [...new Map(chainPages.flat().map((c) => [c.id, c])).values()];
+  const s = estimateSeries({ id, chains, wars: warList, rewards, anchorDay, anchorRespect: anchor[id],
     fitDay: args.fit, fitRespect: fit[id], from: args.from });
   if (!s) { console.log(`${id}: left out: the records can't explain it (a day at 0 or below)`); continue; }
   series[id] = s.days;
-  console.log(`${id}: u ${Math.round(s.u)}/day, ${chainPages.flat().length} chains, ${warList.length} wars, ` +
+  console.log(`${id}: u ${Math.round(s.u)}/day, ${chains.length} chains, ${warList.length} wars, ` +
     `${anchorDay} back to ${args.from}: ${s.days[args.from]}`);
 }
 
