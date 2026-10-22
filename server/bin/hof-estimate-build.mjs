@@ -54,7 +54,7 @@ for (const { id } of list.factions) {
   const chains = [...new Map(chainPages.flat().map((c) => [c.id, c])).values()];
   const s = estimateSeries({ id, chains, wars: warList, rewards, anchorDay, anchorRespect: anchor[id],
     fitDay: args.fit, fitRespect: fit[id], from: args.from });
-  if (!s) { console.log(`${id}: left out: the records can't explain it (a day at 0 or below)`); continue; }
+  if (!s) { console.log(`${id}: left out: the records can't explain it (they add up to more than it gained, or a day comes out at 0 or below)`); continue; }
   series[id] = s.days;
   console.log(`${id}: u ${Math.round(s.u)}/day, ${chains.length} chains, ${warList.length} wars, ` +
     `${anchorDay} back to ${args.from}: ${s.days[args.from]}`);

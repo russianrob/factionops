@@ -74,6 +74,12 @@ test("a faction the records can't explain (a day at 0 or below) is left out", ()
   assert.equal(est.estimateSeries({ ...FACTION, anchorRespect: 150, fitRespect: 3550 }), null);
 });
 
+test("a faction whose records add up to more than it gained over the saved days is left out", () => {
+  // Its 1,000 chain in the saved days against a real gain of 500: something the
+  // records don't show took respect away, and nothing says when it did before.
+  assert.equal(est.estimateSeries({ ...FACTION, fitRespect: 100500 }), null);
+});
+
 test("records that stop short leave the faction out, and say why", () => {
   const chain = (id, start) => ({ id, respect: 1, start, end: start + 60 });
   const full = Array.from({ length: 100 }, (_, i) => chain(i, at("2026-01-01") + i));

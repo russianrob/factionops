@@ -62,12 +62,16 @@ export function missingRecords({ chainPages, warList, rewards, fromS, fitS }) {
 
 // est(t) = r(A0) − public(t, A0) − u × days(t, A0) for every day from `from`
 // to the day before anchorDay (A0), in whole respect. u is fitted on A0 to
-// fitDay, so the series meets the saved days with no step. Null when a day
-// comes out at 0 or below: the records can't explain this faction.
+// fitDay, so the series meets the saved days with no step. Null when the
+// records can't explain this faction: they add up to more than it gained
+// over the fitted days, or a day comes out at 0 or below.
 export function estimateSeries({ id, chains, wars, rewards, anchorDay, anchorRespect, fitDay, fitRespect, from }) {
   const A0 = dayMs(anchorDay) / 1000, AU = dayMs(fitDay) / 1000;
   const gain = (t0, t1) => publicGain({ id, chains, wars, rewards, t0, t1, openEnd: AU });
   const u = unseenRate({ r0: anchorRespect, rU: fitRespect, gain: gain(A0, AU), days: (AU - A0) / DAY_S });
+  // Something the records don't show took respect away, and nothing says
+  // when it did in the year before.
+  if (u < 0) return null;
   const days = {};
   for (let d = from; d < anchorDay; d = addDays(d, 1)) {
     const t = dayMs(d) / 1000;
