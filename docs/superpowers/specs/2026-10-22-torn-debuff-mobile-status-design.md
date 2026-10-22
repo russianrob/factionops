@@ -41,7 +41,7 @@ The row has two lines: the numbers line and, under it, the icons line.
 - **Icons line:** your effects, good and bad (a needle you used as well as the enemy's smoke), drawn with Torn's own icon images. Each sits on a small dark tile whose border is Torn's colour for that effect (red, green, blue or yellow). The seconds left show under the icon and count down every second. Over 300 seconds shows an infinity sign, where Torn shows its eternity icon.
 - **Which effects:** the ones Torn puts in the right-hand column of your own window. That means type 1 or 2, more than 0 seconds left, and a render mode of `iconOnly` or `both` (a missing render mode counts as `both`).
 - **Icon file:** `/images/v2/attack/effect_icons/<name>.svg`. The name is the effect's class with `_<level>` added when the effect has a level. Every `hardening_*` class uses `kinetokinesis` instead, as Torn does.
-- **Look:** as in the approved mock-up. The background is see-through dark with a 1px green border. Text is 11 to 12px. Icons are 26px on 34px tiles. The row sits 4px in from the window's top, left and right edges.
+- **Look:** as in the approved mock-up. The background is see-through dark with a 1px green border. Text is 11 to 12px. Each icon is cropped to its symbol and shown 20px square, on a 26 x 37px tile (since 1.0.1; 1.0.0 showed the whole icon at 26px on 34px tiles, which left a lot of empty space). The row sits 4px in from the window's top, left and right edges.
 
 ## When it shows
 

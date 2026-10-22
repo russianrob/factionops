@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Debuff Mobile Status
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @description  On Torn's phone attack page, shows your own +/-% stats and your effects (debuffs and boosts, with seconds left) in a row at the top of the enemy's window, so you can see them without leaving your weapons.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-debuff-mobile-status.user.js
@@ -16,6 +16,9 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.1  - Smaller effect tiles. Each shows just the symbol from Torn's icon, without
+//           the empty canvas around it, so a tile is 26 x 37 px instead of 36 x 43 and
+//           the symbol is a little bigger.
 // v1.0.0  - First release. On the phone layout of the attack page, a row at the
 //           top of the enemy's window shows your five +/-% and your effect icons
 //           with the seconds left, so your own debuffs stay in view while you fight.
@@ -47,8 +50,13 @@
     '#tdms-row .tdms-down b{color:#ff6b5e}',
     '#tdms-row .tdms-icons{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:4px}',
     '#tdms-row .tdms-icons[hidden]{display:none}',
-    '#tdms-row .tdms-icon{width:34px;display:flex;flex-direction:column;align-items:center;background:rgba(0,0,0,.62);border:1px solid #888;border-radius:5px;padding:2px 0}',
-    '#tdms-row .tdms-icon img{width:26px;height:26px}',
+    '#tdms-row .tdms-icon{display:flex;flex-direction:column;align-items:center;background:rgba(0,0,0,.62);border:1px solid #888;border-radius:4px;padding:2px}',
+    // Torn draws each effect icon on a 54x50 canvas, with the symbol in the square x 7..41,
+    // y 8..42 and empty canvas and a faint bar to its right. The tile shows only that square,
+    // scaled to fill a 20px window (20/34 of the icon's size), so the box stays small and the
+    // symbol is easy to read. A little of the bar still shows beside a few symbols.
+    '#tdms-row .tdms-glyph{display:block;position:relative;width:20px;height:20px;overflow:hidden}',
+    '#tdms-row .tdms-glyph img{position:absolute;left:-4.12px;top:-4.71px;width:31.76px;height:29.41px}',
     '#tdms-row .tdms-icon i{font-style:normal;font-size:10px}',
   ].join('\n');
 
@@ -178,14 +186,17 @@
   }
 
   // One effect: Torn's icon on a small dark tile, bordered in Torn's colour for it, with the
-  // seconds left under it (drawIcons fills those in).
+  // seconds left under it (drawIcons fills those in, so they stay the tile's last child). The
+  // icon sits in a window that shows only its symbol (see the CSS).
   function tile(e) {
     const t = el('span', 'tdms-icon');
     t.style.borderColor = COLORS[e.iconColor] || '#888';
+    const win = el('span', 'tdms-glyph');
     const img = el('img');
     img.alt = e.title || e.class;
     img.src = ICON_DIR + iconName(e) + '.svg';
-    t.appendChild(img);
+    win.appendChild(img);
+    t.appendChild(win);
     t.appendChild(el('i', '', ''));
     return t;
   }
