@@ -57,6 +57,10 @@
   let pending = false;   // a repaint is booked for the next frame
   let reported = false;  // the first error has been logged
   let lastKey = '';      // what the row last showed, so dispatches that change none of it are skipped
+  let ticker = 0;        // the one-second countdown timer; it runs only while icons show
+  // The effect list Torn last sent and when it arrived. Torn's timeLeft only changes when its
+  // data refreshes (every 4 s), and Torn counts its own icons down in between; so does this.
+  let snap = { key: '', at: 0, list: [] };
 
   // Torn keeps the fight in a Redux store, on the props of a React fiber a few levels above
   // the players' box. Returns the box and the store; either can be null.
@@ -176,21 +180,36 @@
     return t;
   }
 
-  // The icons line: one tile per effect, as Torn draws them, with the seconds left under each.
-  // Hidden when there is nothing to show.
+  // The icons line: one tile per effect, as Torn draws them, with the seconds left under each,
+  // counted down from when Torn's numbers arrived. Hidden when there is nothing to show.
   function drawIcons(line, effects) {
-    const tilesKey = effects.map((e) => [e.ID, iconName(e), e.iconColor].join('/')).join('|');
+    const now = Date.now();
+    const key = JSON.stringify(effects.map((e) => [e.ID, e.class, e.level, e.timeLeft]));
+    if (key !== snap.key) snap = { key, at: now, list: effects };
+    const gone = Math.floor((now - snap.at) / 1000);
+    const shown = snap.list.map((e) => ({ e, left: e.timeLeft - gone })).filter((x) => x.left > 0);
+    const tilesKey = shown.map((x) => [x.e.ID, iconName(x.e), x.e.iconColor].join('/')).join('|');
     if (line.getAttribute('data-key') !== tilesKey) {
       line.setAttribute('data-key', tilesKey);
       line.textContent = '';
-      for (const e of effects) line.appendChild(tile(e));
+      for (const x of shown) line.appendChild(tile(x.e));
     }
-    effects.forEach((e, i) => {
-      const text = e.timeLeft > 300 ? '\u221e' : String(e.timeLeft);
+    shown.forEach((x, i) => {
+      const text = x.left > 300 ? '\u221e' : String(x.left);
       const secs = line.children[i].lastChild;
       if (secs.textContent !== text) secs.textContent = text;
     });
-    line.hidden = effects.length === 0;
+    line.hidden = shown.length === 0;
+    setTicking(shown.length > 0);
+  }
+
+  // Starts or stops the one-second countdown repaint.
+  function setTicking(on) {
+    if (on && !ticker) ticker = setInterval(schedule, 1000);
+    if (!on && ticker) {
+      clearInterval(ticker);
+      ticker = 0;
+    }
   }
 
   // Draws the row from Torn's current state, putting it into the enemy's window or taking it
@@ -202,6 +221,7 @@
       lastKey = viewKey(view);
       if (!view) {
         if (row && row.parentNode) row.parentNode.removeChild(row);
+        setTicking(false);
         return;
       }
       const host = view.win.querySelector('[class*="allLayers___"]') || view.win;

@@ -449,3 +449,50 @@ test('an effect Torn adds mid-fight shows up, and one it takes away goes', () =>
   assert.equal(page.tiles().length, 0);
   assert.equal(page.document.querySelector('#tdms-row .tdms-icons').hidden, true);
 });
+
+test('the seconds count down every second, and an icon goes at 0', () => {
+  const page = load({ store: makeStore(state({ mine: [fx({ timeLeft: 3 })] })) });
+  const secs = () => page.tiles().map((t) => t.secs);
+  assert.deepEqual(secs(), ['3']);
+  page.advance(1000);
+  assert.deepEqual(secs(), ['2']);
+  page.advance(1000);
+  assert.deepEqual(secs(), ['1']);
+  page.advance(1000);
+  assert.deepEqual(secs(), []);
+  assert.equal(page.document.querySelector('#tdms-row .tdms-icons').hidden, true);
+});
+
+test('Torn\'s refresh resets the count to its own numbers', () => {
+  const store = makeStore(state({ mine: [fx({ timeLeft: 103 })] }));
+  const page = load({ store });
+  page.advance(2000);
+  assert.deepEqual(page.tiles().map((t) => t.secs), ['101']);
+  store.set(state({ mine: [fx({ timeLeft: 102 })] }));   // Torn's clock runs a second behind
+  page.flush();
+  assert.deepEqual(page.tiles().map((t) => t.secs), ['102']);
+  page.advance(1000);
+  assert.deepEqual(page.tiles().map((t) => t.secs), ['101']);
+});
+
+test('back from the background, the seconds are right straight away', () => {
+  // Phones pause timers and frames while the app is in the background.
+  const page = load({ store: makeStore(state({ mine: [fx({ timeLeft: 103 })] })) });
+  page.clock.now += 60000;
+  page.advance(1000);
+  assert.deepEqual(page.tiles().map((t) => t.secs), ['42']);
+});
+
+test('the countdown timer runs only while icons show', () => {
+  const store = makeStore(state({ mine: [fx({ timeLeft: 2 })] }));
+  const page = load({ store });
+  assert.equal(page.timers.size, 1, 'the countdown; the store finder has stopped');
+  page.advance(2000);
+  assert.equal(page.timers.size, 0, 'stopped when the last icon went');
+  store.set(state({ layout: 'defender', mine: [fx({ timeLeft: 50 })] }));
+  page.flush();
+  assert.equal(page.timers.size, 0, 'none while the row is hidden');
+  store.set(state({ mine: [fx({ timeLeft: 50 })] }));
+  page.flush();
+  assert.equal(page.timers.size, 1, 'back with the row');
+});
