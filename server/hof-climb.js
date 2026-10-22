@@ -5,8 +5,8 @@
 // its own to get wrong. The rules, and the reasons for them, are in
 // docs/superpowers/specs/2026-10-19-hof-respect-climb-design.md.
 
-export const DIGEST_VERSION = 1;
-export const WINDOWS = [7, 30, 90];
+export const DIGEST_VERSION = 2;
+export const WINDOWS = [7, 30, 90, 182, 365];
 export const HORIZONS = [7, 30, 91, 182, 365];
 const DAY_MS = 86400000;
 
@@ -57,18 +57,19 @@ export function historyEntry(day, data, us) {
 }
 
 // A window is offered only when a saved day sits close to L − w; further back,
-// "7 days" would really be measuring a longer stretch.
+// "7 days" would really be measuring a longer stretch. A long window with no
+// such day is estimated instead when the estimate holds L − w itself, so its
+// base is exactly w days back (estimateDays: the days it holds us on).
 export const windowLimit = (w) => w + Math.max(2, Math.ceil(w / 10));
 
-export function resolveWindows(days, latest) {
-  const out = {};
+export function resolveWindows(days, latest, estimateDays = []) {
+  const out = {}, estimated = new Set(estimateDays);
   for (const w of WINDOWS) {
     const target = addDays(latest, -w);
     let base = null;
     for (const d of days) if (d <= target) base = d;
-    if (base === null) continue;
-    const span = daysBetween(base, latest);
-    if (span <= windowLimit(w)) out[w] = { base, span };
+    if (base !== null && daysBetween(base, latest) <= windowLimit(w)) out[w] = { base, span: daysBetween(base, latest) };
+    else if (estimated.has(target)) out[w] = { base: target, span: w, estimated: true };
   }
   return out;
 }
@@ -90,6 +91,15 @@ export function pacesFor(byDay, latest, win) {
     const first = between.find((d) => byDay[d].respect[id] > 0);
     if (first) out[id] = (now - byDay[first].respect[id]) / daysBetween(first, latest);
   }
+  return out;
+}
+
+// An estimated window's paces, from the estimate at the base to L. A faction
+// the estimate doesn't hold gets none: falling back to its first saved day,
+// as pacesFor does, would show a month's gain as a year's pace.
+export function estimatedPacesFor(L, base, span) {
+  const hide = new Set((L.hidden || []).map(String)), out = {};
+  for (const id in L.respect) if (!hide.has(id) && base[id] > 0) out[id] = (L.respect[id] - base[id]) / span;
   return out;
 }
 
@@ -179,22 +189,36 @@ export function midnightTable(data, names, us) {
   return { position: list[i].position, respect: list[i].respect, rows };
 }
 
-// byDay: the recent saved days (at least the last 100, which covers the 90-day
+// byDay: the recent saved days (at least the last 402, which covers the 1-year
 // window's limit); history: one historyEntry per saved day, oldest first;
-// names: id -> name at the latest day.
-export function computeDigest({ byDay, history, names, factionId, builtAt }) {
+// names: id -> name at the latest day; estimates: the estimates file
+// (hof-estimate.js), or null.
+export function computeDigest({ byDay, history, names, factionId, builtAt, estimates = null }) {
   const days = Object.keys(byDay).sort();
   const latest = days[days.length - 1], L = byDay[latest], us = String(factionId);
-  const windows = resolveWindows(days, latest);
+  const estimateDays = estimates ? Object.keys(estimates.days).filter((d) => estimates.days[d][us] > 0) : [];
+  const windows = resolveWindows(days, latest, estimateDays);
   const positionAt = Object.fromEntries(history.map((h) => [h.day, h.position]));
+  const raw = {};
+  for (const w of Object.keys(windows)) if (!windows[w].estimated) raw[w] = pacesFor(byDay, latest, windows[w]);
+  // An estimated window holds only the factions near us, so its projection
+  // and note lay its paces over the longest exact window's, and every other
+  // faction still counts. With no exact window there is nothing to lay it on.
+  const exact = Object.keys(raw).map(Number);
+  const under = exact.length ? Math.max(...exact) : null;
+  for (const w of Object.keys(windows)) {
+    if (!windows[w].estimated) continue;
+    if (under === null) delete windows[w];
+    else raw[w] = estimatedPacesFor(L, estimates.days[windows[w].base], windows[w].span);
+  }
   const paces = {}, projection = {}, notes = {};
   for (const w of Object.keys(windows)) {
-    const p = pacesFor(byDay, latest, windows[w]);
+    const p = raw[w], all = windows[w].estimated ? { ...raw[under], ...p } : p;
     for (const id in p) (paces[id] ||= {})[w] = Math.round(p[id] * 100) / 100;
-    projection[w] = projectPositions(L.respect, p, us);
+    projection[w] = projectPositions(L.respect, all, us);
     notes[w] = windows[30] && projection[w]
       ? crowdingNote({
-          latestRespect: L.respect, hidden: L.hidden, paces: p, us,
+          latestRespect: L.respect, hidden: L.hidden, paces: all, us,
           basePosition: positionAt[windows[30].base] ?? null,
           position: positionAt[latest] ?? null,
           projected30: projection[w][29],
@@ -204,5 +228,6 @@ export function computeDigest({ byDay, history, names, factionId, builtAt }) {
   return {
     version: DIGEST_VERSION, factionId: Number(factionId), day: latest, builtAt,
     windows, paces, history, projection, notes, midnight: midnightTable(L, names, us),
+    estimatesBuiltAt: estimates ? estimates.builtAt : null,
   };
 }

@@ -191,3 +191,73 @@ test("computeDigest puts every piece in the shape the API reads", () => {
   assert.equal(dg.midnight.position, 2);
   assert.equal(dg.midnight.rows[0].id, 3);
 });
+
+// ── long windows, estimated until the saved days reach back ─────────────
+test("the long windows' limits are 99, 201 and 402 days", () => {
+  assert.deepEqual(climb.WINDOWS, [7, 30, 90, 182, 365]);
+  assert.deepEqual([90, 182, 365].map(climb.windowLimit), [99, 201, 402]);
+});
+
+test("a long window is estimated, w days back, only while no saved day is close enough", () => {
+  const saved = daysFrom("2026-09-18", "2026-10-22");
+  const estimate = daysFrom("2025-10-08", "2026-09-17");
+  assert.deepEqual(climb.resolveWindows(saved, "2026-10-22", estimate), {
+    7: { base: "2026-10-15", span: 7 },
+    30: { base: "2026-09-22", span: 30 },
+    90: { base: "2026-07-24", span: 90, estimated: true },
+    182: { base: "2026-04-23", span: 182, estimated: true },
+    365: { base: "2025-10-22", span: 365, estimated: true },
+  });
+  // On 2026-12-17 a saved day sits exactly 90 days back, and 3 months turns exact.
+  const later = daysFrom("2026-09-18", "2026-12-17");
+  assert.deepEqual(climb.resolveWindows(later, "2026-12-16", estimate)[90], { base: "2026-09-17", span: 90, estimated: true });
+  assert.deepEqual(climb.resolveWindows(later, "2026-12-17", estimate)[90], { base: "2026-09-18", span: 90 });
+  assert.equal(climb.resolveWindows(saved, "2026-10-22")[90], undefined, "no estimate, no long window");
+});
+
+test("in an estimated window a faction the estimate doesn't hold gets no pace, even with saved days in the window", () => {
+  const L = { respect: { 42055: 4000, 1: 3000, 2: 9000, 3: 500 }, hidden: [3] };
+  const p = climb.estimatedPacesFor(L, { 42055: 400, 2: 1800, 3: 100 }, 360);
+  assert.deepEqual(p, { 42055: 10, 2: 20 }, "1 isn't in the estimate; 3 is hidden");
+});
+
+// Us at 4,000; faction 1 far above and outside the estimate; 2 just above us
+// and in it. Exact days hold the last 30; the estimate holds a year back.
+function longWorld({ withUs = true } = {}) {
+  const byDay = {};
+  for (const d of daysFrom("2026-09-18", "2026-10-22")) {
+    const n = climb.daysBetween("2026-09-18", d);
+    byDay[d] = { respect: { 42055: 3000 + n * 30, 1: 1000000, 2: 4100 + n }, hidden: [] };
+  }
+  const days = {};
+  for (const d of daysFrom("2025-10-08", "2026-09-17")) days[d] = withUs ? { 42055: 350, 2: 3769 } : { 2: 3769 };
+  const history = Object.keys(byDay).map((d) => climb.historyEntry(d, byDay[d], 42055));
+  return { byDay, history, names: {}, factionId: 42055, builtAt: 1, estimates: { version: 1, builtAt: 77, days } };
+}
+
+test("an estimated window shows only estimated paces, and projects with the 30-day paces underneath", () => {
+  const dg = climb.computeDigest(longWorld());
+  assert.deepEqual(dg.windows[365], { base: "2025-10-22", span: 365, estimated: true });
+  assert.equal(dg.estimatesBuiltAt, 77);
+  assert.equal(dg.paces[42055][365], Math.round((4020 - 350) / 365 * 100) / 100);
+  assert.equal(dg.paces[2][365], 1);
+  assert.equal(dg.paces[1][365], undefined, "1 isn't estimated, so the table shows no 1-year pace for it");
+  assert.equal(dg.paces[1][30], 0);
+  // 1 sits 996k above us and stands still at its 30-day pace: still ahead in a year.
+  assert.equal(dg.projection[365][364], 2, "1 counted ahead; 2 passed");
+});
+
+test("no estimated window without an exact one under it, or without us in the estimate", () => {
+  assert.equal(climb.computeDigest(longWorld({ withUs: false })).windows[365], undefined);
+  const w = longWorld();
+  for (const d of Object.keys(w.byDay)) if (d !== "2026-10-22") delete w.byDay[d];
+  w.history = [climb.historyEntry("2026-10-22", w.byDay["2026-10-22"], 42055)];
+  assert.deepEqual(climb.computeDigest(w).windows, {});
+});
+
+test("without an estimate the digest says so, and the short windows are as before", () => {
+  const w = longWorld();
+  const dg = climb.computeDigest({ ...w, estimates: null });
+  assert.equal(dg.estimatesBuiltAt, null);
+  assert.deepEqual(Object.keys(dg.windows), ["7", "30"]);
+});
