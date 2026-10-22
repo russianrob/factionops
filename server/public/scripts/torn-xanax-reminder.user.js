@@ -81,12 +81,17 @@
     }
   }
 
+  // True when the value was saved. A full localStorage, where PDA keeps GM values, throws.
   function gmSet(name, value) {
     try {
-      if (typeof GM_setValue === 'function') GM_setValue(name, value);
+      if (typeof GM_setValue === 'function') {
+        GM_setValue(name, value);
+        return true;
+      }
     } catch (e) {
-      // Without storage the script just asks Torn again later.
+      // Not saved: the caller decides what to do without it.
     }
+    return false;
   }
 
   // ===== TORN'S SIDEBAR DATA =====
@@ -130,10 +135,24 @@
 
   // What Torn last said about your faction's ranked war, shared by every tab: at = when a tab
   // last asked (ms), start and end = the war's times (Unix seconds, 0 for none), error = why
-  // the last ask failed ('' if it didn't). Read with Number(), as PDA hands back strings; a
-  // value that won't parse reads as nothing saved.
+  // the last ask failed ('' if it didn't).
   function readWar() {
-    let v = gmGet(WAR_STORE);
+    const shared = parseWar(gmGet(WAR_STORE));
+    // The tab's own copy, kept only while storage won't save (see writeWar). It wins unless
+    // storage holds a newer ask, such as one from another tab.
+    let tab = null;
+    try {
+      const own = sessionStorage.getItem(WAR_STORE);
+      if (own) tab = parseWar(own);
+    } catch (e) {
+      tab = null;
+    }
+    return tab && tab.at >= shared.at ? tab : shared;
+  }
+
+  // A stored war record, read with Number(), as PDA hands back strings. A value that won't
+  // parse reads as nothing saved.
+  function parseWar(v) {
     try {
       if (typeof v === 'string') v = v ? JSON.parse(v) : null;
     } catch (e) {
@@ -148,8 +167,19 @@
     };
   }
 
+  // Storage is shared by every tab. When it won't save (PDA keeps GM values in localStorage,
+  // and a full localStorage throws on every write), the record goes into this tab's
+  // sessionStorage instead, which lasts from page to page; without it, every page would ask
+  // Torn again and lose the answer. Once storage saves again, the tab's copy goes.
   function writeWar(war) {
-    gmSet(WAR_STORE, JSON.stringify(war));
+    const text = JSON.stringify(war);
+    const saved = gmSet(WAR_STORE, text);
+    try {
+      if (saved) sessionStorage.removeItem(WAR_STORE);
+      else sessionStorage.setItem(WAR_STORE, text);
+    } catch (e) {
+      // Without either, askedAt still keeps each page to one ask every 30 minutes.
+    }
   }
 
   // This tab's own last call (ms), or null. It keeps the 30 minutes even when storage won't

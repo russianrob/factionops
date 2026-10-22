@@ -70,18 +70,28 @@ function order(w) {
   return [...w.row().children].map((li) => li.id || li.querySelector('a').getAttribute('aria-label'));
 }
 
+// A tab's sessionStorage. It lasts from page to page in one tab, so two pages given the same
+// one are two pages of one tab.
+function tabSession() {
+  return Object.create({
+    getItem(k) { return Object.prototype.hasOwnProperty.call(this, k) ? this[k] : null; },
+    setItem(k, v) { this[k] = String(v); },
+    removeItem(k) { delete this[k]; },
+  });
+}
+
 // A Torn page with the script on it. The test controls everything the script reaches for:
 // - the clock (w.clock.ms), and timers (w.advance(ms) moves the clock and runs what is due);
 // - the 2-second check (w.check() runs it once; the script runs it once itself on start);
 // - GM storage (w.store; two pages given the same store share it, as tabs do);
+// - the tab's sessionStorage (`session`, from tabSession());
 // - Torn's API (w.calls, one per request, answered with answer() or noAnswer());
 // - the menu (w.menu) and the console (w.logs).
 // Pass `data` for raw sidebar data (null for none), or `icons` for statusIcons.icons. `menu` is
 // false for a host with no menu, or 'throws' for one whose menu throws.
 function page({ sidebar = 'Fly-out, phone', icons = { drug_cooldown: drug(NOW - 1) }, data, store = {},
-  clock = { ms: NOW * 1000 }, src = readFileSync(SRC, 'utf8'), gmRequest = true, menu = true } = {}) {
+  clock = { ms: NOW * 1000 }, session = tabSession(), src = readFileSync(SRC, 'utf8'), gmRequest = true, menu = true } = {}) {
   const dom = parseHTML('<!doctype html><html><head></head><body>' + HEADER + SIDEBARS[sidebar] + '</body></html>');
-  const session = Object.create({ getItem(k) { return Object.prototype.hasOwnProperty.call(this, k) ? this[k] : null; } });
   const saved = data !== undefined ? data : sidebarData(icons);
   if (saved !== null) session.sidebarData137558 = saved;
   const timers = [];
@@ -528,6 +538,40 @@ test('storage that will not save, like a full localStorage in PDA, still means o
   assert.equal(w.calls.length, 2, 'once more after 30 minutes');
 });
 
+test('with storage that will not save, the pages of one tab share one call and keep its answer', async () => {
+  // Every write throws, as a full localStorage does; the saved key still reads. Torn loads a
+  // new page for almost every click, and each page runs the script afresh.
+  const store = new Proxy({ [KEY_STORE]: KEY }, { set() { throw new Error('QuotaExceededError'); } });
+  const session = tabSession();
+  const clock = { ms: NOW * 1000 };
+  const first = page({ store, session, clock }).run();
+  assert.equal(first.calls.length, 1);
+  answer(first.calls[0], wars(ranked(START)));
+  await settle();
+  clock.ms += 60 * 1000;
+  const next = page({ store, session, clock }).run();
+  assert.equal(next.calls.length, 0, 'the next page asks nothing');
+  assert.match(next.label(), /War starts in 5h 11m/);
+});
+
+test('an answer that storage has no room for still shows in this tab', async () => {
+  // Storage takes the time of the call, then is full when the answer comes.
+  let room = 1;
+  const store = new Proxy({ [KEY_STORE]: KEY }, {
+    set(target, k, v) {
+      if (room-- <= 0) throw new Error('QuotaExceededError');
+      target[k] = v;
+      return true;
+    },
+  });
+  const w = page({ store }).run();
+  assert.equal(w.calls.length, 1);
+  answer(w.calls[0], wars(ranked(START)));
+  await settle();
+  w.check();
+  assert.equal(w.label(), LABEL + '. ' + WAR_LINE);
+});
+
 test('a Torn error shows in the label, and the next try waits 30 minutes', async () => {
   const w = page({ store: { [KEY_STORE]: KEY } }).run();
   answer(w.calls[0], { error: { code: 2, error: 'Incorrect key' } });
@@ -901,6 +945,27 @@ test('a new key is asked about at once, even in a tab that just asked with the o
   w.check();
   assert.equal(w.calls.length, 2, 'asked again with the new key');
   assert.equal(w.calls[1].url, URL);
+});
+
+test('once storage saves again, a new key is asked about at once in a tab that kept its own copy', async () => {
+  // Storage is full at first, and has room again by the time the new key is saved.
+  let full = true;
+  const store = new Proxy({ [KEY_STORE]: 'OLDKEY123456789' }, {
+    set(target, k, v) {
+      if (full) throw new Error('QuotaExceededError');
+      target[k] = v;
+      return true;
+    },
+  });
+  const w = page({ store }).run();
+  answer(w.calls[0], { error: { code: 2, error: 'Incorrect key' } });
+  await settle();
+  full = false;
+  w.menu['Set API key']();
+  keyBox(w).querySelector('input').value = KEY;
+  fire(w, keyButtons(w)[0], 'click');
+  w.check();
+  assert.equal(w.calls.length, 2, 'asked again with the new key');
 });
 
 test('Save with an empty field keeps the saved key and its answer', () => {
