@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.14.0
+// @version      3.14.1
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the stock lists people post in forum trade threads
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.14.0';
+    var SCRIPT_VERSION = '3.14.1';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -2444,6 +2444,7 @@
             var estimatedPrice = median;
             var estSource = null;   // source of the dominant estimate value (for the no-comp range display)
             var deriv = [];   // tooltip derivation lines: {label, amt, src, n, prem}
+            var exactFloor = null;   // two-bonus build-up: the best bonus sold at its exact roll
             var _bonusValueRaw = function(b) {
                 if (weaponKey && b.level) {
                     var lvlCount = getWeaponLevelCount(itemKey, b.name, rarity, b.level);
@@ -2552,6 +2553,17 @@
                     estSource = infos[maxIdx].source;
                     for (var pv = 0; pv < infos.length; pv++) {
                         var inf = infos[pv];
+                        if (inf.source === 'exact %') {
+                            // The floor below. A two-bonus item reads the all-time
+                            // tables, while the same gun with this bonus alone is
+                            // badged from the last year's sales at this roll where
+                            // there are enough of them, so the higher of the two counts.
+                            var exV = inf.value, exN = inf.count;
+                            var recLv = recentTables && recentTables.levelPrices && recentTables.levelPrices[itemKey + '|' + bonuses[pv].name];
+                            var recE = recLv && recLv[rarity] && recLv[rarity][bonuses[pv].level];
+                            if (Array.isArray(recE) && recE[0] > exV) { exV = recE[0]; exN = recE[1]; }
+                            if (!exactFloor || exV > exactFloor.value) exactFloor = { value: exV, n: exN, b: bonuses[pv] };
+                        }
                         if (pv === maxIdx) {
                             deriv.push({ label: derivLabel(bonuses[pv]), amt: inf.value, src: inf.source, n: inf.count, prem: false });
                         } else {
@@ -2633,6 +2645,35 @@
                                      n: calPa[3], prem: false });
                     }
                 }
+            }
+
+            // ─── A second bonus never makes a gun cheaper ────────────
+            //
+            // The blend above can pull a two-bonus estimate under what the
+            // same gun sells for with its better bonus alone. An Orange
+            // Bushmaster Carbon 15 with 14% Revitalize and 26% Conserve came
+            // out at $2.09B: four with 14% Revitalize and nothing else had
+            // sold for a median of $3.19B, Conserve added nothing, and the
+            // $200M colour median did the rest. So when a bonus has sales of
+            // its own at this exact roll, on this weapon at this colour, the
+            // estimate goes no lower than they did, nor lower than the same
+            // gun with that bonus alone is badged. Sales at the exact roll
+            // only: a value worked out between two rolls is an estimate too.
+            //
+            // Measured the way the blend was, out of sample on 2,151
+            // two-bonus sales (feed from the oldest 80% of 293k rows, scored
+            // on the newest 20%, in two halves):
+            //
+            //   no pair comp       22.7% / 22.5% -> 22.7% / 21.5% off by >50%
+            //                      |log err| 0.290 / 0.280 -> 0.285 / 0.276
+            //   where it applies   222 sales, est/actual 0.76 -> 0.90
+            //
+            // A gun with a comp for its exact pair is left alone: holding
+            // those up the same way made more of them miss by over half.
+            if (exactFloor && exactFloor.value > estimatedPrice) {
+                estimatedPrice = exactFloor.value;
+                deriv.push({ label: 'not below ' + derivLabel(exactFloor.b) + ' alone', amt: exactFloor.value,
+                             src: 'exact %', n: exactFloor.n, prem: false });
             }
 
             // Gather full price arrays for tooltip
