@@ -100,6 +100,9 @@ export async function refreshRwpPrices(reason) {
       weaponBonusLift:   wData.bonusLift,
       // The exact weapon: both bonuses at both rolls, last 365 days only.
       weaponPairLevelPrices: (wData.recent && wData.recent.pairLevelPrices) || {},
+      // The same, every year: the badge blends a two-bonus gun's own earlier
+      // sales into its price, and a gun that sold once may have sold long ago.
+      weaponExactPrices: wData.pairLevelPrices || {},
       // Rolls too thin to price from, kept so a badge can say what DID sell
       // near a roll it cannot price.
       weaponThinRolls:   (wData.recent && wData.recent.thinRolls) || wData.thinRolls || {},

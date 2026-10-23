@@ -60,13 +60,16 @@ function priceAll(feed, items) {
     "var weaponPrices = FEED.weaponPrices, bonusPrices = FEED.bonusPrices || {}, classPrices = FEED.classPrices || {};",
     "var weaponComboPrices = FEED.comboPrices || {}, weaponPairComboPrices = FEED.pairComboPrices || {};",
     "var weaponLevelPrices = FEED.levelPrices || {}, recentTables = FEED.recent || null, ACTIVE = null;",
+    // Empty: none of these guns has sold before. rwp-exact-gun.test.mjs
+    // covers the ones that have.
+    v("weaponExactPrices"),
     // Which colour's cross-weapon bonus median to read; this feed has none.
     "function getBonusColorByName() { return null; }",
     fn("TBL"), fn("levelMedianOf"), fn("getMedianPrice"), fn("getBonusMedian"),
     fn("getWeaponComboMedian"), fn("getWeaponComboThinArray"), fn("getWeaponComboPriceArray"),
     fn("pairKeyFor"), fn("getWeaponPairComboMedian"), fn("getWeaponPairComboArray"),
     fn("getWeaponLevelMedian"), fn("getWeaponLevelCount"), fn("getCombinedLevelValue"),
-    fn("getPriceArray"), fn("getBonusPriceArray"),
+    fn("getPriceArray"), fn("getBonusPriceArray"), fn("getWeaponExactGun"), fn("monthYearOfDay"),
     "globalThis.run = function (items) {",
     "  var out = [];",
     "  for (var i = 0; i < items.length; i++) {",

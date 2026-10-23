@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.14.1
+// @version      3.14.2
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the stock lists people post in forum trade threads
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.14.1';
+    var SCRIPT_VERSION = '3.14.2';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -82,6 +82,7 @@
     var armourComboPrices = DEFAULT_ARMOUR_COMBO_PRICES;  // armour+bonus combo medians
     var weaponPairComboPrices = {};   // weapon|bonusA+bonusB exact double-bonus medians
     var weaponLevelPrices = {};   // weapon|bonus -> rarity -> exact-% -> median (per bonus level)
+    var weaponExactPrices = {};   // weapon|bonusA+bonusB -> rarity -> 'rollA+rollB' -> [median, sales, day of last sale], every year
     var weaponMaxBonus = DEFAULT_WEAPON_MAX_BONUS || {};   // bonus on highest sale per weapon+rarity
     var COMBO_MIN_SAMPLES = 3;   // min auctions needed to use combo median
     // Recency, applied per group rather than as one cutoff.
@@ -499,6 +500,25 @@
         var key = weaponName + '|' + pairKeyFor(bonusA, bonusB);
         if (weaponPairComboPrices[key] && weaponPairComboPrices[key][rarity]) return weaponPairComboPrices[key][rarity];
         return null;
+    }
+
+    // This very gun: the weapon at this colour with both bonuses at both
+    // rolls. The table keys the bonuses in name order, as pairKeyFor does,
+    // and the rolls follow them.
+    function getWeaponExactGun(weaponName, bonuses, rarity) {
+        if (!bonuses || bonuses.length !== 2 || !bonuses[0].level || !bonuses[1].level) return null;
+        var a = bonuses[0], b = bonuses[1];
+        if (b.name < a.name) { a = bonuses[1]; b = bonuses[0]; }
+        var t = weaponExactPrices[weaponName + '|' + a.name + '+' + b.name];
+        var e = t && t[rarity] && t[rarity][a.level + '+' + b.level];
+        return (Array.isArray(e) && e[0] > 0 && e[1] > 0) ? e : null;
+    }
+
+    // 'Aug 2025' for a day counted from 1 Jan 1970, the way the table dates a sale.
+    function monthYearOfDay(day) {
+        var d = new Date(day * 86400000);
+        return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()] +
+            ' ' + d.getUTCFullYear();
     }
 
     function levelMedianOf(v) { return (v == null) ? null : (Array.isArray(v) ? v[0] : v); }
@@ -1329,6 +1349,7 @@
             if (cached.armourSetPrices) armourSetPrices = cached.armourSetPrices;
             if (cached.weaponComboPrices) weaponComboPrices = cached.weaponComboPrices;
             if (cached.weaponPairComboPrices) weaponPairComboPrices = cached.weaponPairComboPrices;
+            if (cached.weaponExactPrices) weaponExactPrices = cached.weaponExactPrices;
             if (cached.weaponLevelPrices) weaponLevelPrices = cached.weaponLevelPrices;
             if (cached.armourComboPrices) armourComboPrices = cached.armourComboPrices;
             if (cached.weaponMaxBonus) weaponMaxBonus = cached.weaponMaxBonus;
@@ -1352,6 +1373,7 @@
         if (jsonData.armourSetPrices) armourSetPrices = jsonData.armourSetPrices;
         if (jsonData.weaponComboPrices) weaponComboPrices = jsonData.weaponComboPrices;
         if (jsonData.weaponPairComboPrices) weaponPairComboPrices = jsonData.weaponPairComboPrices;
+        if (jsonData.weaponExactPrices) weaponExactPrices = jsonData.weaponExactPrices;
         if (jsonData.itemAliases) ITEM_ALIASES = jsonData.itemAliases;
         if (jsonData.weaponLevelPrices) weaponLevelPrices = jsonData.weaponLevelPrices;
         if (jsonData.armourComboPrices) armourComboPrices = jsonData.armourComboPrices;
@@ -1393,6 +1415,8 @@
                     classPrices = weaponData.classPrices;
                     weaponComboPrices = weaponData.comboPrices;
                     weaponPairComboPrices = weaponData.pairComboPrices || {};
+                    // Every year's sales: recent.pairLevelPrices holds only the last one.
+                    weaponExactPrices = weaponData.pairLevelPrices || {};
                     weaponLevelPrices = weaponData.levelPrices || {};
                     if (weaponData.itemAliases) ITEM_ALIASES = weaponData.itemAliases;
                     if (weaponData.weaponMaxBonus) weaponMaxBonus = weaponData.weaponMaxBonus;
@@ -1421,6 +1445,7 @@
                 armourSetPrices: armourSetPrices,
                 weaponComboPrices: weaponComboPrices,
                 weaponPairComboPrices: weaponPairComboPrices,
+                weaponExactPrices: weaponExactPrices,
                 weaponLevelPrices: weaponLevelPrices,
                 armourComboPrices: armourComboPrices,
                 weaponMaxBonus: weaponMaxBonus,
@@ -2445,6 +2470,7 @@
             var estSource = null;   // source of the dominant estimate value (for the no-comp range display)
             var deriv = [];   // tooltip derivation lines: {label, amt, src, n, prem}
             var exactFloor = null;   // two-bonus build-up: the best bonus sold at its exact roll
+            var exactGun = null;     // two-bonus build-up: this very gun's own sales
             var _bonusValueRaw = function(b) {
                 if (weaponKey && b.level) {
                     var lvlCount = getWeaponLevelCount(itemKey, b.name, rarity, b.level);
@@ -2541,6 +2567,7 @@
                     var pArr = getWeaponPairComboArray(itemKey, bonuses[0].name, bonuses[1].name, rarity);
                     deriv.push({ label: bonuses[0].name + ' + ' + bonuses[1].name, amt: pairMed, src: 'exact pair', n: (pArr && pArr[3]) || null, prem: false });
                 } else {
+                    exactGun = weaponKey ? getWeaponExactGun(itemKey, bonuses, rarity) : null;
                     var priceArr = weaponKey ? getPriceArray(itemKey, rarity) : getArmourPriceArray(itemKey, rarity);
                     var plain = (priceArr && priceArr[0]) ? priceArr[0] : Math.round(median * 0.1);
                     plain = Math.max(plain, Math.round(median * 0.03));
@@ -2670,10 +2697,55 @@
             //
             // A gun with a comp for its exact pair is left alone: holding
             // those up the same way made more of them miss by over half.
-            if (exactFloor && exactFloor.value > estimatedPrice) {
-                estimatedPrice = exactFloor.value;
-                deriv.push({ label: 'not below ' + derivLabel(exactFloor.b) + ' alone', amt: exactFloor.value,
-                             src: 'exact %', n: exactFloor.n, prem: false });
+            // Held here, and again after the exact gun's sales below; said
+            // once, as the last line, if it holds both times.
+            var floorLine = null;
+            var holdAtFloor = function() {
+                if (exactFloor && exactFloor.value > estimatedPrice) {
+                    estimatedPrice = exactFloor.value;
+                    if (floorLine) deriv.splice(deriv.indexOf(floorLine), 1);
+                    floorLine = { label: 'not below ' + derivLabel(exactFloor.b) + ' alone', amt: exactFloor.value,
+                                  src: 'exact %', n: exactFloor.n, prem: false };
+                    deriv.push(floorLine);
+                }
+            };
+            holdAtFloor();
+
+            // ─── This exact gun's own sales ──────────────────────────
+            //
+            // With no comp for its pair, a two-bonus gun is built up from
+            // what each bonus sells for without the other. This very gun may
+            // have sold before, though: same weapon, colour, both bonuses at
+            // both rolls. The Orange Bushmaster above sold once, for $4.00B,
+            // and nothing in the build-up reads that sale. So its own sales
+            // are averaged in, geometrically like the colour blend, with
+            // n/(n+1) of the weight for n sales: half for one, two thirds for
+            // two. Every year counts: leaning less on sales over a year old,
+            // or dropping those over two, was measured and was not better.
+            //
+            // Measured the same way, on the two-bonus sales with no pair comp
+            // whose exact gun had sold before:
+            //
+            //   off by >50%        18.9% / 23.9% -> 7.9% / 6.2%
+            //   |log err|          0.287 / 0.270 -> 0.199 / 0.201
+            //   all two-bonus      22.6% / 22.5% -> 20.9% / 20.6% off by >50%
+            //
+            // Taking the sale in place of the estimate ran high, and holding
+            // the estimate up to it overshot. A gun with a pair comp is left
+            // alone: the pair's median already holds its sales, and averaging
+            // them in again scored worse. The floor holds after the blend
+            // too, so a lower sale of this gun does not take it under its
+            // better bonus alone.
+            if (exactGun && estimatedPrice > 0) {
+                var egW = exactGun[1] / (exactGun[1] + 1);
+                var egBlend = Math.round(Math.exp(egW * Math.log(exactGun[0]) + (1 - egW) * Math.log(estimatedPrice)));
+                if (egBlend > 0 && isFinite(egBlend)) {
+                    estimatedPrice = egBlend;
+                    deriv.push({ label: 'blended with this exact gun', amt: exactGun[0],
+                                 src: Math.round(egW * 100) + '% this gun, last sold ' + monthYearOfDay(exactGun[2]),
+                                 n: exactGun[1], prem: false });
+                    holdAtFloor();
+                }
             }
 
             // Gather full price arrays for tooltip
