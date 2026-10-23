@@ -7,9 +7,9 @@
 // and with no pair comp to lean on, that blend pulled a gun with a bonus
 // added below what the same gun sells for without one.
 //
-// The estimator is inline in injectPriceTags, so it is lifted out between the
-// two comments that bracket it and run, inside a loop over the page's items
-// as it is there, over a hand-built feed holding the report's numbers.
+// The estimator is run the way injectPriceTags runs it, inside a loop over
+// the page's items as it is there, over a hand-built feed holding the
+// report's numbers.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -33,15 +33,23 @@ function v(name) {
   assert.ok(m, "var not found: " + name);
   return m[0].trim();
 }
+// Pieces only a build with the shared estimator has.
+const fnIfAny = (name) => (SRC.includes("function " + name + "(") ? fn(name) : "");
 function estimatorBlock() {
   const a = SRC.indexOf("// Determine bonus color tier for each bonus");
   const b = SRC.indexOf("// Gather full price arrays for tooltip");
   assert.ok(a > 0 && b > a, "the estimator block in injectPriceTags has moved");
   return SRC.slice(a, b);
 }
+// The estimator as injectPriceTags runs it: its call to estimateItemPrice,
+// or in a build from before that function, the block itself.
+function estimatorStep() {
+  const call = fn("injectPriceTags").match(/^[ \t]*var est = estimateItemPrice\(.*\);\n[ \t]*var bonusColors = est\.bonusColors.*;$/m);
+  return call ? call[0] : estimatorBlock();
+}
 // Which table set an item reads, chosen per item just before the estimator.
 function activeLine() {
-  const m = SRC.match(/^[ \t]*ACTIVE = \(weaponKey && recentTables && bonuses\.length === 1\) \? recentTables : null;$/m);
+  const m = fn("injectPriceTags").match(/^[ \t]*ACTIVE = \(weaponKey && recentTables && bonuses\.length === 1\) \? recentTables : null;$/m);
   assert.ok(m, "the per-item table choice in injectPriceTags has changed");
   return m[0].trim();
 }
@@ -70,6 +78,7 @@ function priceAll(feed, items) {
     fn("pairKeyFor"), fn("getWeaponPairComboMedian"), fn("getWeaponPairComboArray"),
     fn("getWeaponLevelMedian"), fn("getWeaponLevelCount"), fn("getCombinedLevelValue"),
     fn("getPriceArray"), fn("getBonusPriceArray"), fn("getWeaponExactGun"), fn("monthYearOfDay"),
+    fnIfAny("estimateItemPrice"),
     "globalThis.run = function (items) {",
     "  var out = [];",
     "  for (var i = 0; i < items.length; i++) {",
@@ -78,7 +87,7 @@ function priceAll(feed, items) {
     "    " + activeLine(),
     "    var median = getMedianPrice(weaponKey, rarity), bonusFn = getBonusMedian;",
     "    var itemKey = weaponKey, comboFn = getWeaponComboMedian;",
-    estimatorBlock(),
+    estimatorStep(),
     "    out.push({ est: estimatedPrice, deriv: deriv });",
     "  }",
     "  return out;",

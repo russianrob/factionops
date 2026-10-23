@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn RW Pricer
 // @namespace    torn.rw.weapon.inline.pricer
-// @version      3.14.2
+// @version      3.14.3
 // @description  Inline price badges for RW weapons and armour using daily-refreshed auction data, including the stock lists people post in forum trade threads
 // @author       RussianRob
 // @license      GPL-3.0-or-later
@@ -34,7 +34,7 @@
 
     // ─── PDA API Key Pattern (future extensibility) ──────────
     var apiKey = '';
-    var SCRIPT_VERSION = '3.14.2';
+    var SCRIPT_VERSION = '3.14.3';
     var PDAKey = '###PDA-APIKEY###';
     if (PDAKey.charAt(0) !== '#') { apiKey = PDAKey; }
 
@@ -2388,6 +2388,335 @@
         return containers;
     }
 
+    /**
+     * What an item's badge prices it at, worked out from its bonuses.
+     *
+     * weaponKey is the weapon's name, or null for a piece of armour; itemKey
+     * is the item's name either way, and comboFn and bonusFn are the combo
+     * and bonus lookups for that kind of item. The estimate starts from
+     * median, the item's colour median. The caller picks the price tables
+     * first, in ACTIVE, and nothing outside this function is changed.
+     *
+     * Returns the price, which can come to 0 (the badge then shows the
+     * median), the source the price rests on, the tooltip's working as a line
+     * per step, and the colour each bonus was read at.
+     */
+    function estimateItemPrice(weaponKey, itemKey, rarity, bonuses, median, comboFn, bonusFn) {
+        // Determine bonus color tier for each bonus (falls back to weapon rarity)
+        var bonusColors = {};
+        for (var bc = 0; bc < bonuses.length; bc++) {
+            var bColor = getBonusColorByName(bonuses[bc].name, bonuses[bc].level);
+            bonusColors[bonuses[bc].name] = bColor || rarity;
+        }
+
+        var estimatedPrice = median;
+        var estSource = null;   // source of the dominant estimate value (for the no-comp range display)
+        var deriv = [];   // tooltip derivation lines: {label, amt, src, n, prem}
+        var exactFloor = null;   // two-bonus build-up: the best bonus sold at its exact roll
+        var exactGun = null;     // two-bonus build-up: this very gun's own sales
+        var _bonusValueRaw = function(b) {
+            if (weaponKey && b.level) {
+                var lvlCount = getWeaponLevelCount(itemKey, b.name, rarity, b.level);
+                if (lvlCount) {
+                    var lvlMed = getWeaponLevelMedian(itemKey, b.name, rarity, b.level);
+                    if (lvlMed) return { value: lvlMed, source: 'exact %', count: lvlCount };
+                }
+            }
+            var combo = comboFn(itemKey, b.name, rarity);
+            if (combo) {
+                var cArr = weaponKey ? getWeaponComboPriceArray(itemKey, b.name, rarity) : getArmourComboPriceArray(itemKey, b.name, rarity);
+                return { value: combo, source: 'combo', count: (cArr && cArr[3]) || null };
+            }
+            // Too few exact-bonus sales for a median, but a real comp exists — use it (its sale
+            // count flags it low-confidence via the tooltip's ⚠) instead of blindly flooring.
+            if (weaponKey) {
+                var thinArr = getWeaponComboThinArray(itemKey, b.name, rarity);
+                if (thinArr) return { value: thinArr[1], source: 'exact comp', count: thinArr[3] };
+            }
+            var bMed = bonusFn(b.name, bonusColors[b.name]);
+            var basePa = weaponKey ? getPriceArray(itemKey, rarity) : getArmourPriceArray(itemKey, rarity);
+            if (!bMed) return { value: median, source: 'base weapon', count: (basePa && basePa[3]) || null };
+            var bArr = weaponKey ? getBonusPriceArray(b.name, bonusColors[b.name]) : getArmourBonusPriceArray(b.name, bonusColors[b.name]);
+            var bvFloor = (basePa && basePa[0]) ? Math.max(basePa[0], Math.round(median * 0.03)) : Math.round(median * 0.1);
+            if (bvFloor > bMed) return { value: bvFloor, source: 'weapon floor', count: (basePa && basePa[3]) || null };
+            return { value: bMed, source: 'bonus median', count: (bArr && bArr[3]) || null };
+        };
+        // Downward-only combined-% curve correction. A low bonus roll must not inherit the
+        // %-agnostic combo median of much higher rolls (e.g. a 10% Revitalize priced off
+        // 13–16% sales). Skips the high-confidence same-rarity 'exact %' path and never
+        // raises an estimate, so it cannot inflate any weapon vs prior behaviour.
+        var bonusValueInfo = function(b) {
+            var r0 = _bonusValueRaw(b);
+            if (!(weaponKey && b.level && r0 && r0.source !== 'exact %' && r0.value != null)) return r0;
+            // The %→value curve for this weapon+bonus across every rarity. Where it
+            // is used depends on how many bonuses the item carries, because the two
+            // cases are not the same problem.
+            var curve = getCombinedLevelValue(itemKey, b.name, b.level);
+            if (!curve || curve.value == null) return r0;
+
+            // TWO BONUSES: the base is a %-agnostic median — the comp is "this
+            // weapon with this bonus", at any roll. Raised on the forum, and right:
+            // for a roll the comp does not share, that median is the wrong number
+            // whichever side of the range the roll sits on. Until now the curve was
+            // consulted only for rolls BELOW the range and only to lower the answer,
+            // which left the median as the base for most doubles.
+            //
+            // The curve and the median are combined rather than the curve replacing
+            // it: the curve knows the roll but pools rarities, the median knows the
+            // rarity but not the roll, and each is a partial reading. Measured out of
+            // sample — feed built from the oldest 80% of 276k rows, scored on the
+            // newest 20%, split in half again so a win on one half that vanishes on
+            // the other is visible:
+            //
+            //   double, no pair comp    26.0% -> 24.1% off by >50%   (other half 29.3% -> 27.4%)
+            //                           median |log err| 0.314 -> 0.275
+            //                           median est/actual 0.83 -> 0.87
+            //
+            // Replacing outright, requiring same-rarity level data, and gating on a
+            // sample count were all measured too; all scored worse than this.
+            if (bonuses.length >= 2) {
+                return { value: Math.round(Math.sqrt(curve.value * r0.value)),
+                         source: 'level %', count: curve.count };
+            }
+
+            // ONE BONUS: rarity is essentially a restatement of the roll, so the
+            // curve is not a second opinion and blending it adds noise — measured,
+            // it costs about a point. The original narrow rule stays: only a genuine
+            // LOW-OUTLIER roll, below THIS rarity's own observed range, and only
+            // downward. A low roll at a high rarity means a second bonus set that
+            // rarity, which is the case the %-agnostic median over-inflates.
+            var lvR = TBL('levelPrices')[itemKey + '|' + b.name];
+            lvR = lvR && lvR[rarity];
+            if (lvR) {
+                var minR = Math.min.apply(null, Object.keys(lvR).map(Number));
+                if (b.level < minR && curve.value < r0.value) {
+                    return { value: curve.value, source: 'level %', count: curve.count };
+                }
+            }
+            return r0;
+        };
+        function derivLabel(b) { return b.name + (b.level ? ' ' + b.level + '%' : ''); }
+        if (bonuses.length === 1) {
+            var i0 = bonusValueInfo(bonuses[0]);
+            estimatedPrice = i0.value;
+            estSource = i0.source;
+            deriv.push({ label: derivLabel(bonuses[0]), amt: i0.value, src: i0.source, n: i0.count, prem: false });
+        } else if (bonuses.length >= 2) {
+            var pairMed = (weaponKey && bonuses.length === 2)
+                ? getWeaponPairComboMedian(itemKey, bonuses[0].name, bonuses[1].name, rarity) : null;
+            if (pairMed) {
+                estimatedPrice = pairMed;
+                estSource = 'exact pair';
+                var pArr = getWeaponPairComboArray(itemKey, bonuses[0].name, bonuses[1].name, rarity);
+                deriv.push({ label: bonuses[0].name + ' + ' + bonuses[1].name, amt: pairMed, src: 'exact pair', n: (pArr && pArr[3]) || null, prem: false });
+            } else {
+                exactGun = weaponKey ? getWeaponExactGun(itemKey, bonuses, rarity) : null;
+                var priceArr = weaponKey ? getPriceArray(itemKey, rarity) : getArmourPriceArray(itemKey, rarity);
+                var plain = (priceArr && priceArr[0]) ? priceArr[0] : Math.round(median * 0.1);
+                plain = Math.max(plain, Math.round(median * 0.03));
+                if (plain > median) plain = median;
+                var infos = [];
+                for (var bv = 0; bv < bonuses.length; bv++) infos.push(bonusValueInfo(bonuses[bv]));
+                var maxIdx = 0;
+                for (var mi = 1; mi < infos.length; mi++) { if (infos[mi].value > infos[maxIdx].value) maxIdx = mi; }
+                estimatedPrice = infos[maxIdx].value;
+                estSource = infos[maxIdx].source;
+                for (var pv = 0; pv < infos.length; pv++) {
+                    var inf = infos[pv];
+                    if (inf.source === 'exact %') {
+                        // The floor below. A two-bonus item reads the all-time
+                        // tables, while the same gun with this bonus alone is
+                        // badged from the last year's sales at this roll where
+                        // there are enough of them, so the higher of the two counts.
+                        var exV = inf.value, exN = inf.count;
+                        var recLv = recentTables && recentTables.levelPrices && recentTables.levelPrices[itemKey + '|' + bonuses[pv].name];
+                        var recE = recLv && recLv[rarity] && recLv[rarity][bonuses[pv].level];
+                        if (Array.isArray(recE) && recE[0] > exV) { exV = recE[0]; exN = recE[1]; }
+                        if (!exactFloor || exV > exactFloor.value) exactFloor = { value: exV, n: exN, b: bonuses[pv] };
+                    }
+                    if (pv === maxIdx) {
+                        deriv.push({ label: derivLabel(bonuses[pv]), amt: inf.value, src: inf.source, n: inf.count, prem: false });
+                    } else {
+                        var prem = Math.max(0, inf.value - plain);
+                        estimatedPrice += prem;
+                        // raw and floor ride along so the tooltip can explain a zero.
+                        // A premium is what the bonus adds ABOVE a bare weapon of this
+                        // colour, so a bonus worth less than that floor adds nothing --
+                        // which is a different statement from "we have no data".
+                        deriv.push({ label: derivLabel(bonuses[pv]), amt: prem, src: inf.source,
+                                     n: inf.count, prem: true, raw: inf.value, floor: plain });
+                    }
+                }
+            }
+        }
+
+        // ─── Double-bonus calibration ────────────────────────────
+        //
+        // A two-bonus estimate is a build-up from single-bonus comps, and it
+        // drifts both ways: the centre sits low and the tail runs hot. The
+        // weapon's own median at this rarity is an INDEPENDENT second reading
+        // of the same item, so the two are combined as a geometric mean —
+        // the right average for prices, which spread log-normally.
+        //
+        // Measured out of sample on Marches' auction data: the feed was built
+        // from the oldest 80% of 276k weapon rows and every double-bonus sale
+        // in the newest 20% was priced against it, split in half again so a
+        // win on one half that vanishes on the other would show.
+        //
+        //   flat half-and-half   23.7% / 26.0% off by >50%, |log err| 0.273 / 0.321
+        //   spread + lift        22.5% / 23.9%,             |log err| 0.273 / 0.317
+        //   thin comps (<=10)    21.6% -> 20.8%,            |log err| 0.270 -> 0.266
+        //
+        // Weighting by the chain's own sample count, and by how expensive
+        // the bonus is across all weapons, were both measured and both
+        // scored WORSE -- the second badly, because Warlord's cross-weapon
+        // median sits below a big weapon's colour median and it reads as a
+        // cheap bonus.
+        //
+        // SINGLE-bonus items are deliberately excluded. The same blend makes
+        // them worse (15.3% -> 23.7% off by >50%), because for one bonus the
+        // roll and the rarity are close to the same fact, so averaging them
+        // adds noise rather than a second opinion. Fitted variants — a flat
+        // multiplier, a fitted blend weight, a clamp band — all scored worse
+        // out of sample than this plain 50/50, so there is no constant here
+        // to go stale.
+        if (weaponKey && bonuses.length >= 2 && estimatedPrice > 0) {
+            var calPa = getPriceArray(itemKey, rarity);
+            var calMed = (calPa && calPa[1] > 0 && calPa[3] >= 3) ? calPa[1] : null;
+            if (calMed) {
+                // How much to lean on the bonus comps rather than the colour
+                // median. It was a flat half-and-half; two things say the
+                // median deserves less than that.
+                //
+                // SPREAD -- an Orange MP5k runs from $33M to $10.5B, and a
+                // median drawn across a range that wide says very little
+                // about any ONE item. A tight range means the opposite.
+                //
+                // LIFT -- when the bonus comps land far ABOVE the median,
+                // that is the signal the item really is one of the rare
+                // ones, not that the comps are noisy. Raised from the
+                // thread: a 26% Warlord was being averaged down to a
+                // quarter of what its own comps said.
+                //
+                // Whichever argues harder wins, so a wide range and a big
+                // lift do not compound into blind trust.
+                var calLo = calPa[0], calHi = calPa[2];
+                var calSpread = (calLo > 0 && calHi > 0) ? Math.log(calHi / calLo) : 0;
+                var calLift = Math.max(0, Math.log(estimatedPrice / calMed));
+                var calW = Math.max(calSpread / (calSpread + 2), calLift / (calLift + 0.5));
+                var blended = Math.round(Math.exp(
+                    calW * Math.log(estimatedPrice) + (1 - calW) * Math.log(calMed)));
+                if (blended > 0 && isFinite(blended)) {
+                    estimatedPrice = blended;
+                    // Said out loud in the tooltip. A number nobody can trace
+                    // is how the last pricing complaint started.
+                    deriv.push({ label: 'blended with ' + rarity + ' ' + itemKey + ' median',
+                                 amt: calMed, src: Math.round(calW * 100) + '% comps',
+                                 n: calPa[3], prem: false });
+                }
+            }
+        }
+
+        // ─── A second bonus never makes a gun cheaper ────────────
+        //
+        // The blend above can pull a two-bonus estimate under what the
+        // same gun sells for with its better bonus alone. An Orange
+        // Bushmaster Carbon 15 with 14% Revitalize and 26% Conserve came
+        // out at $2.09B: four with 14% Revitalize and nothing else had
+        // sold for a median of $3.19B, Conserve added nothing, and the
+        // $200M colour median did the rest. So when a bonus has sales of
+        // its own at this exact roll, on this weapon at this colour, the
+        // estimate goes no lower than they did, nor lower than the same
+        // gun with that bonus alone is badged. Sales at the exact roll
+        // only: a value worked out between two rolls is an estimate too.
+        //
+        // Measured the way the blend was, out of sample on 2,151
+        // two-bonus sales (feed from the oldest 80% of 293k rows, scored
+        // on the newest 20%, in two halves):
+        //
+        //   no pair comp       22.7% / 22.5% -> 22.7% / 21.5% off by >50%
+        //                      |log err| 0.290 / 0.280 -> 0.285 / 0.276
+        //   where it applies   222 sales, est/actual 0.76 -> 0.90
+        //
+        // A gun with a comp for its exact pair is left alone: holding
+        // those up the same way made more of them miss by over half.
+        // Held here, and again after the exact gun's sales below; said
+        // once, as the last line, if it holds both times.
+        var floorLine = null;
+        var holdAtFloor = function() {
+            if (exactFloor && exactFloor.value > estimatedPrice) {
+                estimatedPrice = exactFloor.value;
+                if (floorLine) deriv.splice(deriv.indexOf(floorLine), 1);
+                floorLine = { label: 'not below ' + derivLabel(exactFloor.b) + ' alone', amt: exactFloor.value,
+                              src: 'exact %', n: exactFloor.n, prem: false };
+                deriv.push(floorLine);
+            }
+        };
+        holdAtFloor();
+
+        // ─── This exact gun's own sales ──────────────────────────
+        //
+        // With no comp for its pair, a two-bonus gun is built up from
+        // what each bonus sells for without the other. This very gun may
+        // have sold before, though: same weapon, colour, both bonuses at
+        // both rolls. The Orange Bushmaster above sold once, for $4.00B,
+        // and nothing in the build-up reads that sale. So its own sales
+        // are averaged in, geometrically like the colour blend, with
+        // n/(n+1) of the weight for n sales: half for one, two thirds for
+        // two. Every year counts: leaning less on sales over a year old,
+        // or dropping those over two, was measured and was not better.
+        //
+        // Measured the same way, on the two-bonus sales with no pair comp
+        // whose exact gun had sold before:
+        //
+        //   off by >50%        18.9% / 23.9% -> 7.9% / 6.2%
+        //   |log err|          0.287 / 0.270 -> 0.199 / 0.201
+        //   all two-bonus      22.6% / 22.5% -> 20.9% / 20.6% off by >50%
+        //
+        // Taking the sale in place of the estimate ran high, and holding
+        // the estimate up to it overshot. A gun with a pair comp is left
+        // alone: the pair's median already holds its sales, and averaging
+        // them in again scored worse. The floor holds after the blend
+        // too, so a lower sale of this gun does not take it under its
+        // better bonus alone.
+        if (exactGun && estimatedPrice > 0) {
+            var egW = exactGun[1] / (exactGun[1] + 1);
+            var egBlend = Math.round(Math.exp(egW * Math.log(exactGun[0]) + (1 - egW) * Math.log(estimatedPrice)));
+            if (egBlend > 0 && isFinite(egBlend)) {
+                estimatedPrice = egBlend;
+                deriv.push({ label: 'blended with this exact gun', amt: exactGun[0],
+                             src: Math.round(egW * 100) + '% this gun, last sold ' + monthYearOfDay(exactGun[2]),
+                             n: exactGun[1], prem: false });
+                holdAtFloor();
+            }
+        }
+
+        return { price: estimatedPrice, source: estSource, deriv: deriv, bonusColors: bonusColors };
+    }
+
+    /**
+     * The badge's price for a weapon known only by its name, colour and
+     * bonuses, as a trade row knows it.
+     *
+     * It reads the tables the badge reads, last year's for a weapon with one
+     * bonus and every year's for two, and puts the caller's choice back
+     * afterwards. Returns null when the weapon has no median at that colour,
+     * which is when the badge shows nothing.
+     */
+    function badgePriceFor(weaponKey, rarity, bonuses) {
+        var prevActive = ACTIVE;
+        // Word for word as in injectPriceTags; a test holds the two together.
+        ACTIVE = (weaponKey && recentTables && bonuses.length === 1) ? recentTables : null;
+        try {
+            var median = getMedianPrice(weaponKey, rarity);
+            if (!median) return null;
+            var est = estimateItemPrice(weaponKey, weaponKey, rarity, bonuses, median, getWeaponComboMedian, getBonusMedian);
+            return est.price || median;
+        } finally {
+            ACTIVE = prevActive;
+        }
+    }
+
     function injectPriceTags() {
 
         var containers = findItemContainers();
@@ -2459,294 +2788,8 @@
             var itemKey = weaponKey || armourKey;
             var comboFn = weaponKey ? getWeaponComboMedian : getArmourComboMedian;
 
-            // Determine bonus color tier for each bonus (falls back to weapon rarity)
-            var bonusColors = {};
-            for (var bc = 0; bc < bonuses.length; bc++) {
-                var bColor = getBonusColorByName(bonuses[bc].name, bonuses[bc].level);
-                bonusColors[bonuses[bc].name] = bColor || rarity;
-            }
-
-            var estimatedPrice = median;
-            var estSource = null;   // source of the dominant estimate value (for the no-comp range display)
-            var deriv = [];   // tooltip derivation lines: {label, amt, src, n, prem}
-            var exactFloor = null;   // two-bonus build-up: the best bonus sold at its exact roll
-            var exactGun = null;     // two-bonus build-up: this very gun's own sales
-            var _bonusValueRaw = function(b) {
-                if (weaponKey && b.level) {
-                    var lvlCount = getWeaponLevelCount(itemKey, b.name, rarity, b.level);
-                    if (lvlCount) {
-                        var lvlMed = getWeaponLevelMedian(itemKey, b.name, rarity, b.level);
-                        if (lvlMed) return { value: lvlMed, source: 'exact %', count: lvlCount };
-                    }
-                }
-                var combo = comboFn(itemKey, b.name, rarity);
-                if (combo) {
-                    var cArr = weaponKey ? getWeaponComboPriceArray(itemKey, b.name, rarity) : getArmourComboPriceArray(itemKey, b.name, rarity);
-                    return { value: combo, source: 'combo', count: (cArr && cArr[3]) || null };
-                }
-                // Too few exact-bonus sales for a median, but a real comp exists — use it (its sale
-                // count flags it low-confidence via the tooltip's ⚠) instead of blindly flooring.
-                if (weaponKey) {
-                    var thinArr = getWeaponComboThinArray(itemKey, b.name, rarity);
-                    if (thinArr) return { value: thinArr[1], source: 'exact comp', count: thinArr[3] };
-                }
-                var bMed = bonusFn(b.name, bonusColors[b.name]);
-                var basePa = weaponKey ? getPriceArray(itemKey, rarity) : getArmourPriceArray(itemKey, rarity);
-                if (!bMed) return { value: median, source: 'base weapon', count: (basePa && basePa[3]) || null };
-                var bArr = weaponKey ? getBonusPriceArray(b.name, bonusColors[b.name]) : getArmourBonusPriceArray(b.name, bonusColors[b.name]);
-                var bvFloor = (basePa && basePa[0]) ? Math.max(basePa[0], Math.round(median * 0.03)) : Math.round(median * 0.1);
-                if (bvFloor > bMed) return { value: bvFloor, source: 'weapon floor', count: (basePa && basePa[3]) || null };
-                return { value: bMed, source: 'bonus median', count: (bArr && bArr[3]) || null };
-            };
-            // Downward-only combined-% curve correction. A low bonus roll must not inherit the
-            // %-agnostic combo median of much higher rolls (e.g. a 10% Revitalize priced off
-            // 13–16% sales). Skips the high-confidence same-rarity 'exact %' path and never
-            // raises an estimate, so it cannot inflate any weapon vs prior behaviour.
-            var bonusValueInfo = function(b) {
-                var r0 = _bonusValueRaw(b);
-                if (!(weaponKey && b.level && r0 && r0.source !== 'exact %' && r0.value != null)) return r0;
-                // The %→value curve for this weapon+bonus across every rarity. Where it
-                // is used depends on how many bonuses the item carries, because the two
-                // cases are not the same problem.
-                var curve = getCombinedLevelValue(itemKey, b.name, b.level);
-                if (!curve || curve.value == null) return r0;
-
-                // TWO BONUSES: the base is a %-agnostic median — the comp is "this
-                // weapon with this bonus", at any roll. Raised on the forum, and right:
-                // for a roll the comp does not share, that median is the wrong number
-                // whichever side of the range the roll sits on. Until now the curve was
-                // consulted only for rolls BELOW the range and only to lower the answer,
-                // which left the median as the base for most doubles.
-                //
-                // The curve and the median are combined rather than the curve replacing
-                // it: the curve knows the roll but pools rarities, the median knows the
-                // rarity but not the roll, and each is a partial reading. Measured out of
-                // sample — feed built from the oldest 80% of 276k rows, scored on the
-                // newest 20%, split in half again so a win on one half that vanishes on
-                // the other is visible:
-                //
-                //   double, no pair comp    26.0% -> 24.1% off by >50%   (other half 29.3% -> 27.4%)
-                //                           median |log err| 0.314 -> 0.275
-                //                           median est/actual 0.83 -> 0.87
-                //
-                // Replacing outright, requiring same-rarity level data, and gating on a
-                // sample count were all measured too; all scored worse than this.
-                if (bonuses.length >= 2) {
-                    return { value: Math.round(Math.sqrt(curve.value * r0.value)),
-                             source: 'level %', count: curve.count };
-                }
-
-                // ONE BONUS: rarity is essentially a restatement of the roll, so the
-                // curve is not a second opinion and blending it adds noise — measured,
-                // it costs about a point. The original narrow rule stays: only a genuine
-                // LOW-OUTLIER roll, below THIS rarity's own observed range, and only
-                // downward. A low roll at a high rarity means a second bonus set that
-                // rarity, which is the case the %-agnostic median over-inflates.
-                var lvR = TBL('levelPrices')[itemKey + '|' + b.name];
-                lvR = lvR && lvR[rarity];
-                if (lvR) {
-                    var minR = Math.min.apply(null, Object.keys(lvR).map(Number));
-                    if (b.level < minR && curve.value < r0.value) {
-                        return { value: curve.value, source: 'level %', count: curve.count };
-                    }
-                }
-                return r0;
-            };
-            function derivLabel(b) { return b.name + (b.level ? ' ' + b.level + '%' : ''); }
-            if (bonuses.length === 1) {
-                var i0 = bonusValueInfo(bonuses[0]);
-                estimatedPrice = i0.value;
-                estSource = i0.source;
-                deriv.push({ label: derivLabel(bonuses[0]), amt: i0.value, src: i0.source, n: i0.count, prem: false });
-            } else if (bonuses.length >= 2) {
-                var pairMed = (weaponKey && bonuses.length === 2)
-                    ? getWeaponPairComboMedian(itemKey, bonuses[0].name, bonuses[1].name, rarity) : null;
-                if (pairMed) {
-                    estimatedPrice = pairMed;
-                    estSource = 'exact pair';
-                    var pArr = getWeaponPairComboArray(itemKey, bonuses[0].name, bonuses[1].name, rarity);
-                    deriv.push({ label: bonuses[0].name + ' + ' + bonuses[1].name, amt: pairMed, src: 'exact pair', n: (pArr && pArr[3]) || null, prem: false });
-                } else {
-                    exactGun = weaponKey ? getWeaponExactGun(itemKey, bonuses, rarity) : null;
-                    var priceArr = weaponKey ? getPriceArray(itemKey, rarity) : getArmourPriceArray(itemKey, rarity);
-                    var plain = (priceArr && priceArr[0]) ? priceArr[0] : Math.round(median * 0.1);
-                    plain = Math.max(plain, Math.round(median * 0.03));
-                    if (plain > median) plain = median;
-                    var infos = [];
-                    for (var bv = 0; bv < bonuses.length; bv++) infos.push(bonusValueInfo(bonuses[bv]));
-                    var maxIdx = 0;
-                    for (var mi = 1; mi < infos.length; mi++) { if (infos[mi].value > infos[maxIdx].value) maxIdx = mi; }
-                    estimatedPrice = infos[maxIdx].value;
-                    estSource = infos[maxIdx].source;
-                    for (var pv = 0; pv < infos.length; pv++) {
-                        var inf = infos[pv];
-                        if (inf.source === 'exact %') {
-                            // The floor below. A two-bonus item reads the all-time
-                            // tables, while the same gun with this bonus alone is
-                            // badged from the last year's sales at this roll where
-                            // there are enough of them, so the higher of the two counts.
-                            var exV = inf.value, exN = inf.count;
-                            var recLv = recentTables && recentTables.levelPrices && recentTables.levelPrices[itemKey + '|' + bonuses[pv].name];
-                            var recE = recLv && recLv[rarity] && recLv[rarity][bonuses[pv].level];
-                            if (Array.isArray(recE) && recE[0] > exV) { exV = recE[0]; exN = recE[1]; }
-                            if (!exactFloor || exV > exactFloor.value) exactFloor = { value: exV, n: exN, b: bonuses[pv] };
-                        }
-                        if (pv === maxIdx) {
-                            deriv.push({ label: derivLabel(bonuses[pv]), amt: inf.value, src: inf.source, n: inf.count, prem: false });
-                        } else {
-                            var prem = Math.max(0, inf.value - plain);
-                            estimatedPrice += prem;
-                            // raw and floor ride along so the tooltip can explain a zero.
-                            // A premium is what the bonus adds ABOVE a bare weapon of this
-                            // colour, so a bonus worth less than that floor adds nothing --
-                            // which is a different statement from "we have no data".
-                            deriv.push({ label: derivLabel(bonuses[pv]), amt: prem, src: inf.source,
-                                         n: inf.count, prem: true, raw: inf.value, floor: plain });
-                        }
-                    }
-                }
-            }
-
-            // ─── Double-bonus calibration ────────────────────────────
-            //
-            // A two-bonus estimate is a build-up from single-bonus comps, and it
-            // drifts both ways: the centre sits low and the tail runs hot. The
-            // weapon's own median at this rarity is an INDEPENDENT second reading
-            // of the same item, so the two are combined as a geometric mean —
-            // the right average for prices, which spread log-normally.
-            //
-            // Measured out of sample on Marches' auction data: the feed was built
-            // from the oldest 80% of 276k weapon rows and every double-bonus sale
-            // in the newest 20% was priced against it, split in half again so a
-            // win on one half that vanishes on the other would show.
-            //
-            //   flat half-and-half   23.7% / 26.0% off by >50%, |log err| 0.273 / 0.321
-            //   spread + lift        22.5% / 23.9%,             |log err| 0.273 / 0.317
-            //   thin comps (<=10)    21.6% -> 20.8%,            |log err| 0.270 -> 0.266
-            //
-            // Weighting by the chain's own sample count, and by how expensive
-            // the bonus is across all weapons, were both measured and both
-            // scored WORSE -- the second badly, because Warlord's cross-weapon
-            // median sits below a big weapon's colour median and it reads as a
-            // cheap bonus.
-            //
-            // SINGLE-bonus items are deliberately excluded. The same blend makes
-            // them worse (15.3% -> 23.7% off by >50%), because for one bonus the
-            // roll and the rarity are close to the same fact, so averaging them
-            // adds noise rather than a second opinion. Fitted variants — a flat
-            // multiplier, a fitted blend weight, a clamp band — all scored worse
-            // out of sample than this plain 50/50, so there is no constant here
-            // to go stale.
-            if (weaponKey && bonuses.length >= 2 && estimatedPrice > 0) {
-                var calPa = getPriceArray(itemKey, rarity);
-                var calMed = (calPa && calPa[1] > 0 && calPa[3] >= 3) ? calPa[1] : null;
-                if (calMed) {
-                    // How much to lean on the bonus comps rather than the colour
-                    // median. It was a flat half-and-half; two things say the
-                    // median deserves less than that.
-                    //
-                    // SPREAD -- an Orange MP5k runs from $33M to $10.5B, and a
-                    // median drawn across a range that wide says very little
-                    // about any ONE item. A tight range means the opposite.
-                    //
-                    // LIFT -- when the bonus comps land far ABOVE the median,
-                    // that is the signal the item really is one of the rare
-                    // ones, not that the comps are noisy. Raised from the
-                    // thread: a 26% Warlord was being averaged down to a
-                    // quarter of what its own comps said.
-                    //
-                    // Whichever argues harder wins, so a wide range and a big
-                    // lift do not compound into blind trust.
-                    var calLo = calPa[0], calHi = calPa[2];
-                    var calSpread = (calLo > 0 && calHi > 0) ? Math.log(calHi / calLo) : 0;
-                    var calLift = Math.max(0, Math.log(estimatedPrice / calMed));
-                    var calW = Math.max(calSpread / (calSpread + 2), calLift / (calLift + 0.5));
-                    var blended = Math.round(Math.exp(
-                        calW * Math.log(estimatedPrice) + (1 - calW) * Math.log(calMed)));
-                    if (blended > 0 && isFinite(blended)) {
-                        estimatedPrice = blended;
-                        // Said out loud in the tooltip. A number nobody can trace
-                        // is how the last pricing complaint started.
-                        deriv.push({ label: 'blended with ' + rarity + ' ' + itemKey + ' median',
-                                     amt: calMed, src: Math.round(calW * 100) + '% comps',
-                                     n: calPa[3], prem: false });
-                    }
-                }
-            }
-
-            // ─── A second bonus never makes a gun cheaper ────────────
-            //
-            // The blend above can pull a two-bonus estimate under what the
-            // same gun sells for with its better bonus alone. An Orange
-            // Bushmaster Carbon 15 with 14% Revitalize and 26% Conserve came
-            // out at $2.09B: four with 14% Revitalize and nothing else had
-            // sold for a median of $3.19B, Conserve added nothing, and the
-            // $200M colour median did the rest. So when a bonus has sales of
-            // its own at this exact roll, on this weapon at this colour, the
-            // estimate goes no lower than they did, nor lower than the same
-            // gun with that bonus alone is badged. Sales at the exact roll
-            // only: a value worked out between two rolls is an estimate too.
-            //
-            // Measured the way the blend was, out of sample on 2,151
-            // two-bonus sales (feed from the oldest 80% of 293k rows, scored
-            // on the newest 20%, in two halves):
-            //
-            //   no pair comp       22.7% / 22.5% -> 22.7% / 21.5% off by >50%
-            //                      |log err| 0.290 / 0.280 -> 0.285 / 0.276
-            //   where it applies   222 sales, est/actual 0.76 -> 0.90
-            //
-            // A gun with a comp for its exact pair is left alone: holding
-            // those up the same way made more of them miss by over half.
-            // Held here, and again after the exact gun's sales below; said
-            // once, as the last line, if it holds both times.
-            var floorLine = null;
-            var holdAtFloor = function() {
-                if (exactFloor && exactFloor.value > estimatedPrice) {
-                    estimatedPrice = exactFloor.value;
-                    if (floorLine) deriv.splice(deriv.indexOf(floorLine), 1);
-                    floorLine = { label: 'not below ' + derivLabel(exactFloor.b) + ' alone', amt: exactFloor.value,
-                                  src: 'exact %', n: exactFloor.n, prem: false };
-                    deriv.push(floorLine);
-                }
-            };
-            holdAtFloor();
-
-            // ─── This exact gun's own sales ──────────────────────────
-            //
-            // With no comp for its pair, a two-bonus gun is built up from
-            // what each bonus sells for without the other. This very gun may
-            // have sold before, though: same weapon, colour, both bonuses at
-            // both rolls. The Orange Bushmaster above sold once, for $4.00B,
-            // and nothing in the build-up reads that sale. So its own sales
-            // are averaged in, geometrically like the colour blend, with
-            // n/(n+1) of the weight for n sales: half for one, two thirds for
-            // two. Every year counts: leaning less on sales over a year old,
-            // or dropping those over two, was measured and was not better.
-            //
-            // Measured the same way, on the two-bonus sales with no pair comp
-            // whose exact gun had sold before:
-            //
-            //   off by >50%        18.9% / 23.9% -> 7.9% / 6.2%
-            //   |log err|          0.287 / 0.270 -> 0.199 / 0.201
-            //   all two-bonus      22.6% / 22.5% -> 20.9% / 20.6% off by >50%
-            //
-            // Taking the sale in place of the estimate ran high, and holding
-            // the estimate up to it overshot. A gun with a pair comp is left
-            // alone: the pair's median already holds its sales, and averaging
-            // them in again scored worse. The floor holds after the blend
-            // too, so a lower sale of this gun does not take it under its
-            // better bonus alone.
-            if (exactGun && estimatedPrice > 0) {
-                var egW = exactGun[1] / (exactGun[1] + 1);
-                var egBlend = Math.round(Math.exp(egW * Math.log(exactGun[0]) + (1 - egW) * Math.log(estimatedPrice)));
-                if (egBlend > 0 && isFinite(egBlend)) {
-                    estimatedPrice = egBlend;
-                    deriv.push({ label: 'blended with this exact gun', amt: exactGun[0],
-                                 src: Math.round(egW * 100) + '% this gun, last sold ' + monthYearOfDay(exactGun[2]),
-                                 n: exactGun[1], prem: false });
-                    holdAtFloor();
-                }
-            }
+            var est = estimateItemPrice(weaponKey, itemKey, rarity, bonuses, median, comboFn, bonusFn);
+            var bonusColors = est.bonusColors, estimatedPrice = est.price, estSource = est.source, deriv = est.deriv;
 
             // Gather full price arrays for tooltip
             var itemPriceArray = weaponKey ? getPriceArray(weaponKey, rarity) : getArmourPriceArray(armourKey, rarity);
@@ -4113,6 +4156,11 @@
      *
      * Only weapons carrying a bonus get one: a plain Kodachi in a trade IS
      * worth its market price, and replacing that with anything would be wrong.
+     *
+     * The figure is the badge's, so a gun is worth the same in a trade as on
+     * its own row. Where the badge has nothing to say, because the icon gives
+     * no colour or the weapon has no colour median, the forum ladder prices
+     * it, working the colour out from the roll if it has to.
      */
     function tradeRwValue(rowLi, name) {
         if (!rowLi || !name) return 0;
@@ -4120,6 +4168,12 @@
         if (!icon) return 0;
         var t = parseTradeBonusTitle(icon.getAttribute('title'));
         if (!t) return 0;
+        var key = lookupWeapon(normalizeWeaponName(name));
+        if (!key) return 0;
+        if (t.rarity) {
+            var b = badgePriceFor(key, t.rarity, t.bonuses);
+            if (b > 0) return b;
+        }
         var p = priceForumRow({ name: name, rarity: t.rarity, bonuses: t.bonuses });
         return (p && p.value > 0) ? p.value : 0;
     }

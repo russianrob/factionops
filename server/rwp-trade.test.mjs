@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 
-const SRC = fs.readFileSync(new URL("./public/scripts/torn-rw-pricer.user.js", import.meta.url), "utf8");
+const SRC = fs.readFileSync(process.env.RWP_SRC || new URL("./public/scripts/torn-rw-pricer.user.js", import.meta.url), "utf8");
 const FEED = JSON.parse(fs.readFileSync(new URL("./data/rwp-prices.json", import.meta.url), "utf8"));
 
 function fn(name) {
@@ -33,6 +33,9 @@ function v(name) {
   assert.ok(m, "var not found: " + name);
   return m[0].trim();
 }
+// Pieces only a build with the shared estimator has. A build without them
+// still loads, so the tests show it failing rather than erroring.
+const fnIfAny = (name) => (SRC.includes("function " + name + "(") ? fn(name) : "");
 
 const sandbox = { FEED };
 vm.createContext(sandbox);
@@ -43,6 +46,9 @@ vm.runInContext([
   "var weaponComboPrices = FEED.weaponComboPrices, weaponPairComboPrices = FEED.weaponPairComboPrices;",
   "var classPrices = FEED.classPrices, weaponLevelPrices = FEED.weaponLevelPrices;",
   "var recentTables = FEED.recent || null; var ACTIVE = null; var ITEM_ALIASES = {};",
+  "var weaponExactPrices = FEED.weaponExactPrices || {};",
+  // The colour each bonus is read at, as the badge reads it.
+  v("BONUS_ID_MAP"), SRC.slice(SRC.indexOf("var BONUS_COLOR_RANGES = {"), SRC.indexOf("// ─── Fetching flag ───")),
   "var KNOWN_WEAPONS = {}; Object.keys(WEAPON_CLASS).forEach(function(w){ KNOWN_WEAPONS[w.toLowerCase()] = w; });",
   // Same name, different punctuation. Built from the shipping function so the
   // harness cannot drift from what the script indexes.
@@ -54,6 +60,10 @@ vm.runInContext([
   fn("getWeaponLevelMedian"), fn("getWeaponLevelCount"), fn("getCombinedLevelValue"),
   fn("forumBonusNames"), fn("rarityFromRoll"), fn("forumBonusWorth"), fn("priceForumRow"),
   fn("parseTradeBonusTitle"),
+  // The badge's estimator, which a trade row is priced with.
+  fn("getBonusMedian"), fn("getWeaponComboThinArray"), fn("getWeaponComboPriceArray"), fn("getWeaponPairComboArray"),
+  fn("getPriceArray"), fn("getBonusPriceArray"), fn("getWeaponExactGun"), fn("monthYearOfDay"),
+  fnIfAny("estimateItemPrice"), fnIfAny("badgePriceFor"),
 ].join("\n"), sandbox, { timeout: 5000, filename: "rwp-trade.js" });
 
 const { parseTradeBonusTitle, priceForumRow } = sandbox;

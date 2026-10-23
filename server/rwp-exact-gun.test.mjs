@@ -42,9 +42,15 @@ function estimatorBlock() {
   assert.ok(a > 0 && b > a, "the estimator block in injectPriceTags has moved");
   return SRC.slice(a, b);
 }
+// The estimator as injectPriceTags runs it: its call to estimateItemPrice,
+// or in a build from before that function, the block itself.
+function estimatorStep() {
+  const call = fn("injectPriceTags").match(/^[ \t]*var est = estimateItemPrice\(.*\);\n[ \t]*var bonusColors = est\.bonusColors.*;$/m);
+  return call ? call[0] : estimatorBlock();
+}
 // Which table set an item reads, chosen per item just before the estimator.
 function activeLine() {
-  const m = SRC.match(/^[ \t]*ACTIVE = \(weaponKey && recentTables && bonuses\.length === 1\) \? recentTables : null;$/m);
+  const m = fn("injectPriceTags").match(/^[ \t]*ACTIVE = \(weaponKey && recentTables && bonuses\.length === 1\) \? recentTables : null;$/m);
   assert.ok(m, "the per-item table choice in injectPriceTags has changed");
   return m[0].trim();
 }
@@ -75,6 +81,7 @@ function priceAll(feed, items) {
     fn("getWeaponLevelMedian"), fn("getWeaponLevelCount"), fn("getCombinedLevelValue"),
     fn("getPriceArray"), fn("getBonusPriceArray"),
     fnIfAny("getWeaponExactGun"), fnIfAny("monthYearOfDay"),
+    fnIfAny("estimateItemPrice"),
     "globalThis.run = function (items) {",
     "  var out = [];",
     "  for (var i = 0; i < items.length; i++) {",
@@ -83,7 +90,7 @@ function priceAll(feed, items) {
     "    " + activeLine(),
     "    var median = getMedianPrice(weaponKey, rarity), bonusFn = getBonusMedian;",
     "    var itemKey = weaponKey, comboFn = getWeaponComboMedian;",
-    estimatorBlock(),
+    estimatorStep(),
     "    out.push({ est: estimatedPrice, deriv: deriv });",
     "  }",
     "  return out;",
