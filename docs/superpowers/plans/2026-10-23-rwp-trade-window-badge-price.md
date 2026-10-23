@@ -1586,6 +1586,15 @@ Run the executing-plans `task-done` for Task 5 with the test command `bash /opt/
 
 Expected: the ledger line ends `→ tests 2198 pass 2196 fail 0 skipped 2 exit 0`. Then add `Task 5: release files: torn-rw-pricer.user.js 140bec75, torn-rw-pricer.meta.js b89aa2c3, rwp-trade-badge.test.mjs 80bf12ea, rwp-trade.test.mjs b055eb9b, rwp-second-bonus.test.mjs 1d49d0d7, rwp-exact-gun.test.mjs 3e1d178d`.
 
+Keep that run's full output under a fixed name, for the review package:
+
+```bash
+WS=/opt/warboard/.superpowers/sdd/2026-10-23-rwp-trade-window-badge-price
+cp "$(ls -t $WS/out/tests-*.txt | head -1)" $WS/out/suite-final.txt && grep -E "^# (tests|pass|fail|skipped) " $WS/out/suite-final.txt
+```
+
+Expected: `# tests 2198`, `# pass 2196`, `# fail 0`, `# skipped 2`. Any other count means the newest output was not the whole suite; run Step 3 again and copy that.
+
 ---
 
 ### Task 6: Final review, release and report
@@ -1606,7 +1615,7 @@ Nothing is committed before the review, because the working tree is the served t
 ```bash
 WS=/opt/warboard/.superpowers/sdd/2026-10-23-rwp-trade-window-badge-price; R=$WS/review; mkdir -p $R
 cd /opt/warboard/server && for f in public/scripts/torn-rw-pricer.user.js public/scripts/torn-rw-pricer.meta.js rwp-trade.test.mjs rwp-second-bonus.test.mjs rwp-exact-gun.test.mjs; do diff -u $f $WS/ov/$f; done > $R/changes.diff; diff -u /dev/null $WS/ov/rwp-trade-badge.test.mjs >> $R/changes.diff
-cp $WS/out/bt.txt $WS/out/owner.txt $WS/out/mutants.txt $R/ && node $WS/tools/move-check.mjs $WS/base.user.js $WS/ov/public/scripts/torn-rw-pricer.user.js > $R/move-check.txt && cp "$(ls -t $WS/out/tests-*.txt | head -1)" $R/suite.txt && wc -l $R/*
+cp $WS/out/bt.txt $WS/out/owner.txt $WS/out/mutants.txt $R/ && node $WS/tools/move-check.mjs $WS/base.user.js $WS/ov/public/scripts/torn-rw-pricer.user.js > $R/move-check.txt && cp $WS/out/suite-final.txt $R/suite.txt && wc -l $R/*
 ```
 
 Expected: `changes.diff` with 1,205 lines (the moved block shows as 288 lines out and 288 in; `move-check.txt` is the proof they are the same), and the five output files.
@@ -1624,7 +1633,7 @@ Dispatch one reviewer with the Agent tool: `subagent_type: "general-purpose"`, `
 
 Follow executing-plans' Final Review:
 - Re-grade the findings by their effect on a person using the script.
-- Critical and Important findings get one fix pass in the overlay. For each, write a test, watch it fail on the current build, make it pass, then rerun Task 4 Steps 2 to 4 and Task 5 Steps 2 and 3. The hashes in this plan no longer apply after a fix, so record the new ones.
+- Critical and Important findings get one fix pass in the overlay. For each, write a test, watch it fail on the current build, make it pass, then rerun Task 4 Steps 2 to 4 and Task 5 Steps 2 to 4. The hashes in this plan no longer apply after a fix, so record the new ones.
 - Minor findings go to the ledger as deferred.
 - Each "Declined to judge" line gets a ruling.
 
