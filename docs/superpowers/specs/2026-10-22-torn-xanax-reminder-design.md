@@ -1,7 +1,7 @@
 # Torn Xanax Reminder (design)
 
 **Status:** approved by the owner on 2026-10-22 (EDT), with one change to the war window: "change it to tap to select items for armoury or items then write it" (see Q6, Q7).
-**Script:** `server/public/scripts/torn-xanax-reminder.user.js` and `.meta.js`, version 1.0.1. Tests: `server/torn-xanax-reminder.test.mjs`.
+**Script:** `server/public/scripts/torn-xanax-reminder.user.js` and `.meta.js`, version 1.0.2. Tests: `server/torn-xanax-reminder.test.mjs`.
 
 ## Why
 
@@ -14,7 +14,7 @@ The owner asked for "a xanax icon for when drug cooldown is empty", "like the bl
 | Q1 | A new script of the owner's: "Torn Xanax Reminder", file `torn-xanax-reminder.user.js`. RussianRob, All Rights Reserved, served on tornwar and ready to paste to Greasy Fork. Not part of the Blood Bag copy, which stays ButtChew's script plus a fix, and not part of Gym Coach. |
 | Q2 | The icon shows as soon as the drug cooldown is over. Nothing else gates it. |
 | Q3 | Tapping opens your items page on the Drugs tab. |
-| Q4 | Torn's own Xanax picture, at the size of the other icons, with a thin dark edge so it shows in light mode. It pulses once when it appears, like the blood bag. Mock-up, with the owner's real icons: https://tornwar.com/s/eb90faa22e66a87f.jpg (a 30-day link). |
+| Q4 | Torn's own Xanax picture, at the size of the other icons (since 1.0.2, 1.5 times that: see Picture), with a thin dark edge so it shows in light mode. It pulses once when it appears, like the blood bag. Mock-up, with the owner's real icons: https://tornwar.com/s/eb90faa22e66a87f.jpg (a 30-day link). |
 | Q5 | First in the row. When the blood bag icon is showing, the Xanax sits right after it. |
 | Q6, Q7 | In the 24 hours before your faction's next ranked war starts, tapping the icon shows two buttons, **Armoury** and **Items**, and you pick. At any other time it opens your items. The owner first said "armoury as a choice for 24h before a war starts" and chose 7a (switch automatically). On reviewing this spec they changed it to the choice: "change it to tap to select items for armoury or items". There is no settings menu for where it goes. |
 | Q8 | The war's start time comes from Torn's API, using your key. A Public-level key is enough. You enter it once, and PDA fills it in by itself. Without a key, the tap always opens your items. |
@@ -24,7 +24,7 @@ The owner asked for "a xanax icon for when drug cooldown is empty", "like the bl
 
 One icon in Torn's row of status icons, the row under your name in the sidebar (on a phone, the strip you swipe at the top).
 
-- **Picture:** Torn's Xanax item picture, `https://www.torn.com/images/items/206/large.png` (same site, nothing hosted elsewhere). It is 100 x 50, so it is drawn at 17 x 17 with `object-fit: contain`, which leaves a 17 x 8.5 pill. The edge is `filter: drop-shadow(0 0 .6px rgba(0,0,0,.85))`.
+- **Picture:** Torn's Xanax item picture, `https://www.torn.com/images/items/206/large.png` (same site, nothing hosted elsewhere). It is 100 x 50. Since 1.0.2 it is drawn 1.5 times the 17 px slot: a 26 x 17 box with `object-fit: contain`, which leaves a 26 x 13 pill, centred on the slot by `margin-left: -4.5px` and spilling about 4 px into the gap on each side. The box is the slot's height rather than having a top margin, which would collapse through the link and move it down off its slot. The slot (the `li` and its link) stays 17 x 17, so no other icon moves. Until then it was drawn at 17 x 17, a 17 x 8.5 pill; on 2026-10-22 the owner asked for the pill "bigger and zoomed in" and chose this from a mock-up: https://tornwar.com/s/a04b78a14385d3bd.jpg (a 30-day link). The edge is `filter: drop-shadow(0 0 .6px rgba(0,0,0,.85))`.
 - **Pulse:** one 900 ms pulse when the icon is added, as the blood bag does. It doesn't repeat.
 - **Label:** hovering over the icon with a mouse, or focusing it from the keyboard, shows a tooltip styled like Torn's own. Its lines:
   - first, in bold: "Drug cooldown over: Xanax ready";
@@ -117,7 +117,7 @@ The script never clicks anything itself. Every way out of the icon is a plain li
 
 - `server/public/scripts/torn-xanax-reminder.user.js` and `.meta.js`, owned `warboard:warboard`.
 - **Header:**
-  - @name "Torn Xanax Reminder", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.1, a CHANGELOG block. The in-file `VERSION` matches @version, and the console line on start carries it.
+  - @name "Torn Xanax Reminder", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.2, a CHANGELOG block. The in-file `VERSION` matches @version, and the console line on start carries it.
   - @downloadURL and @updateURL: `https://tornwar.com/scripts/torn-xanax-reminder.user.js` and `.meta.js`.
   - @grant: GM_getValue, GM_setValue, GM_xmlhttpRequest, GM_registerMenuCommand. @connect api.torn.com.
 - The served file and the repo are the same file (`server/public/scripts` is served), committed and pushed together.
@@ -169,6 +169,7 @@ Tests come first, with node:test and linkedom, in `server/torn-xanax-reminder.te
 - With Fly-out on: the icon appears once the drug cooldown is over, and goes after you take a Xanax.
 - The tap opens your items on the Drugs tab. In the 24 hours before a ranked war, it shows the two buttons, and Armoury opens the armoury's Drugs tab.
 - A long press opens the key box.
+- 1.0.2: the pill shows whole (not cropped) and centred where the 1.0.1 icon was, and a tap on either end opens the Drugs tab.
 - Through remote inspect: the drug cooldown's key in Torn's sidebar data, and that `sub=drugs` is the armoury's Drugs tab.
 
 ## Not in this version

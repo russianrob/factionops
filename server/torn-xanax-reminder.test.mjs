@@ -161,7 +161,7 @@ test('the header: the owner\'s script, served from tornwar.com, with its version
   assert.deepEqual(tag('name'), ['Torn Xanax Reminder']);
   assert.deepEqual(tag('namespace'), ['RussianRob']);
   assert.deepEqual(tag('author'), ['RussianRob']);
-  assert.deepEqual(tag('version'), ['1.0.1']);
+  assert.deepEqual(tag('version'), ['1.0.2']);
   assert.deepEqual(tag('license'), ['All Rights Reserved']);
   assert.deepEqual(tag('copyright'), []);
   assert.deepEqual(tag('match'), ['https://www.torn.com/*', 'https://torn.com/*']);
@@ -171,14 +171,15 @@ test('the header: the owner\'s script, served from tornwar.com, with its version
   assert.deepEqual(tag('downloadURL'), ['https://tornwar.com/scripts/torn-xanax-reminder.user.js']);
   assert.deepEqual(tag('updateURL'), ['https://tornwar.com/scripts/torn-xanax-reminder.meta.js']);
   assert.equal(readFileSync(META, 'utf8'), header + '\n', 'the meta file is the header, byte for byte');
-  assert.match(src, /const VERSION = '1\.0\.1';/, 'the in-file version matches @version');
-  assert.match(src, /^\/\/ v1\.0\.1  - The menu entry names the script/m, 'the changelog has the 1.0.1 entry');
+  assert.match(src, /const VERSION = '1\.0\.2';/, 'the in-file version matches @version');
+  assert.match(src, /^\/\/ v1\.0\.2  - A bigger pill/m, 'the changelog has the 1.0.2 entry');
+  assert.match(src, /^\/\/ v1\.0\.1  - The menu entry names the script/m, 'the changelog keeps the 1.0.1 entry');
   assert.match(src, /^\/\/ v1\.0\.0  - First release\./m, 'the changelog keeps the 1.0.0 entry');
 });
 
 test('the source is plain ASCII, so PDA can run it, and the console line carries the version', () => {
   assert.equal(readFileSync(SRC, 'utf8').match(/[^\x00-\x7f]/g), null);
-  assert.deepEqual(page().run().logs, ['[Torn Xanax Reminder 1.0.1] running']);
+  assert.deepEqual(page().run().logs, ['[Torn Xanax Reminder 1.0.2] running']);
 });
 
 for (const sidebar of Object.keys(SIDEBARS)) {
@@ -203,14 +204,47 @@ for (const sidebar of Object.keys(SIDEBARS)) {
   });
 }
 
-test('the icon is Torn\'s Xanax picture at the size of the other icons, with a thin edge, and pulses once', () => {
+// Every declaration in the rules whose selector is exactly this one, as { property: value }.
+function declarations(css, selector) {
+  const out = {};
+  for (const block of css.split('}')) {
+    const [sel, body] = block.split('{');
+    if (!body || sel.trim() !== selector) continue;
+    for (const d of body.split(';')) {
+      const i = d.indexOf(':');
+      if (i > 0) out[d.slice(0, i).trim()] = d.slice(i + 1).trim();
+    }
+  }
+  return out;
+}
+
+test('the icon is Torn\'s Xanax picture, the whole pill drawn 1.5 times its 17 px slot and centred on it, with a thin edge, and pulses once', () => {
   const w = page().run();
   const img = w.icon().querySelector('img');
   assert.equal(img.getAttribute('src'), XANAX_PNG);
-  assert.equal(img.getAttribute('width'), '17');
+  assert.equal(img.getAttribute('width'), '26');
   assert.equal(img.getAttribute('height'), '17');
   const css = w.document.getElementById(STYLES).textContent;
-  assert.match(css, /#tm-xanax-reminder img \{[^}]*object-fit: contain;[^}]*drop-shadow\(0 0 \.6px rgba\(0,0,0,\.85\)\)/);
+  // The slot stays the size of Torn's other icons, so nothing else in the row moves.
+  const slot = declarations(css, '#tm-xanax-reminder a');
+  assert.equal(slot.width, '17px');
+  assert.equal(slot.height, '17px');
+  const pic = declarations(css, '#tm-xanax-reminder img');
+  assert.equal(pic.width, '26px');
+  assert.equal(pic.height, '17px');
+  assert.equal(pic['margin-left'], (17 - 26) / 2 + 'px', 'centred on the slot');
+  // A top margin would collapse through the link and move it, the tap target, down off its slot.
+  assert.equal(pic['margin-top'], undefined);
+  assert.equal(pic.margin, undefined);
+  assert.equal(pic['object-fit'], 'contain', 'the whole pill, ends included');
+  // Nothing on the icon clips the pill back into the 17 px square.
+  for (const block of css.split('}')) {
+    const [sel, body] = block.split('{');
+    if (body && sel.includes('#tm-xanax-reminder')) assert.doesNotMatch(body, /overflow\s*:\s*(hidden|clip|scroll|auto)/, sel.trim());
+  }
+  assert.equal(pic['max-width'], 'none');
+  assert.equal(pic['max-height'], 'none');
+  assert.equal(pic.filter, 'drop-shadow(0 0 .6px rgba(0,0,0,.85))');
   assert.match(css, /#tm-xanax-reminder \{ animation: tm-xanax-pulse 900ms ease-out 1; \}/);
 });
 

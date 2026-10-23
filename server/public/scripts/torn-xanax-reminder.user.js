@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Xanax Reminder
 // @namespace    RussianRob
-// @version      1.0.1
+// @version      1.0.2
 // @description  A Xanax icon in Torn's row of status icons as soon as your drug cooldown is over. Tap it to open your items on the Drugs tab. With a Public API key, in the 24 hours before your faction's next ranked war, the tap lets you pick the faction armoury or your items.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-xanax-reminder.user.js
@@ -20,6 +20,8 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.2  - A bigger pill: drawn 1.5 times its 17 px slot (26 px wide) and centred where
+//           it was, so it reads as clearly as Torn's own icons. No other icon moves.
 // v1.0.1  - The menu entry names the script: "Xanax Reminder: Set API key", so it
 //           stands out in a menu that lists every script's entries together.
 // v1.0.0  - First release. A Xanax icon in Torn's row of status icons as soon as your
@@ -30,7 +32,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.1';
+  const VERSION = '1.0.2';
 
   // Loaded twice on one page (two copies installed, or PDA injecting it again), it runs once.
   // The mark goes on the page itself, which every copy can see; each copy may have its own window.
@@ -301,7 +303,7 @@
     const img = document.createElement('img');
     img.src = XANAX_PNG;
     img.alt = 'Xanax';
-    img.width = 17;
+    img.width = 26;
     img.height = 17;
     a.appendChild(img);
     li.appendChild(a);
@@ -644,9 +646,13 @@
     '#' + ICON_ID + ' { animation: tm-xanax-pulse 900ms ease-out 1; }',
     '@keyframes tm-xanax-pulse { 0% { transform: scale(0.9); } 60% { transform: scale(1.1); } 100% { transform: scale(1); } }',
     '#' + ICON_ID + ' a { display: block; width: 17px; height: 17px; }',
-    // The 100 x 50 picture fits the 17 x 17 box as a pill, with a thin dark edge so it shows
-    // in light mode. No max-width or max-height, so no page style can shrink it.
-    '#' + ICON_ID + ' img { display: block; width: 17px; height: 17px; max-width: none; max-height: none; object-fit: contain; filter: drop-shadow(0 0 .6px rgba(0,0,0,.85)); }',
+    // The pill is drawn 1.5 times the 17 px slot: the 100 x 50 picture fits a 26 x 17 box as a
+    // 26 x 13 pill, centred on the slot and spilling about 4 px into the gap on each side. The
+    // box is the slot's height, not a top margin: a top margin would collapse through the link
+    // and move it down off its slot. The slot stays 17 x 17, so no other icon moves. A thin dark
+    // edge so it shows in light mode.
+    // No max-width or max-height, so no page style can shrink it.
+    '#' + ICON_ID + ' img { display: block; width: 26px; height: 17px; margin-left: -4.5px; max-width: none; max-height: none; object-fit: contain; filter: drop-shadow(0 0 .6px rgba(0,0,0,.85)); }',
   ].join('\n');
 
   // Torn's own tooltip look: dark grey, light text, a small arrow at the icon.
