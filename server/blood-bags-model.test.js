@@ -97,3 +97,102 @@ test("a blood line in a wording the reader has not met is flagged; known ones ar
   assert.equal(model.isUnreadBloodLine(`${who(1, "P1")} deposited 1 x Blood Bag : Irradiated`), false);
   assert.equal(model.isUnreadBloodLine(`${who(1, "P1")} used one of the faction's Xanax items`), false);
 });
+
+// ── timeframes, types and wars ──────────────────────────────────────────────
+const DAY = 86400;
+const NOW = 1792800000;                       // 2026-10-24 00:00 UTC, in seconds
+const at = (daysAgo) => NOW - Math.round(daysAgo * DAY);
+
+test("a timeframe is one of five, 7 days when missing; anything else is refused", () => {
+  assert.equal(model.parseWindow(undefined), "7d");
+  assert.equal(model.parseWindow(""), "7d");
+  for (const w of ["24h", "7d", "30d", "90d", "all"]) assert.equal(model.parseWindow(w), w);
+  assert.equal(model.parseWindow("30D"), "30d");
+  for (const bad of ["1y", "7", "__proto__", "toString"]) assert.equal(model.parseWindow(bad), null, bad);
+});
+
+test("a blood type is all or one of eight, and a + typed into a link still reads", () => {
+  assert.equal(model.parseType(undefined), "all");
+  assert.equal(model.parseType("ALL"), "all");
+  assert.equal(model.parseType("A+"), "A+");
+  assert.equal(model.parseType("A "), "A+", "a literal + in a query string arrives as a space");
+  assert.equal(model.parseType("ab "), "AB+");
+  assert.equal(model.parseType("o-"), "O-");
+  for (const bad of ["C+", " A", "A", "Irradiated"]) assert.equal(model.parseType(bad), null, bad);
+});
+
+test("a war runs from its start to its end; a live one to now; one not started yet is no war", () => {
+  const wars = [
+    { id: 1, start: at(10), end: at(9) },
+    { id: 2, start: at(1), end: 0 },
+    { id: 3, start: NOW + DAY, end: 0 },
+  ];
+  assert.deepEqual(model.warSpans(wars, NOW), [{ start: at(10), end: at(9) }, { start: at(1), end: NOW }]);
+  assert.deepEqual(model.liveWar(wars, NOW), { id: 2, start: at(1) });
+  assert.equal(model.liveWar([{ id: 1, start: at(10), end: at(9) }], NOW), null);
+});
+
+test("a timeframe covers its days up to now; all time starts where the history reaches", () => {
+  assert.deepEqual(model.windowRange("7d", NOW, at(300)), { fromSec: NOW - 7 * DAY, toSec: NOW });
+  assert.deepEqual(model.windowRange("24h", NOW, at(300)), { fromSec: NOW - DAY, toSec: NOW });
+  assert.deepEqual(model.windowRange("all", NOW, at(300)), { fromSec: at(300), toSec: NOW });
+});
+
+// ── per member ──────────────────────────────────────────────────────────────
+const L = (kind, playerId, daysAgo, over = {}) => ({ ts: at(daysAgo), kind, playerId: String(playerId), type: "O+", qty: 1, toId: null, ...over });
+const sevenDays = (over = {}) => ({ fromSec: NOW - 7 * DAY, toSec: NOW, type: "all", warSpans: [], ...over });
+
+test("given is fills plus deposits; used is uses plus hand-outs received, less returns; net is the difference", () => {
+  const out = model.tally([
+    L("fill", 1, 1), L("fill", 1, 2), L("deposit", 1, 3, { qty: 5 }),
+    L("use", 1, 1), L("gave", 9, 2, { qty: 3, toId: "1" }), L("returned", 1, 2, { qty: 1 }),
+  ], sevenDays());
+  assert.deepEqual(out.get("1"), { given: 7, used: 3, usedInWars: 0, net: 4 });
+  assert.equal(out.get("9"), undefined, "handing bags out counts nothing for the leader");
+});
+
+test("three fills by one member in the same second are three bags", () => {
+  const out = model.tally([L("fill", 1, 1), L("fill", 1, 1), L("fill", 1, 1)], sevenDays());
+  assert.equal(out.get("1").given, 3);
+});
+
+test("a timeframe includes both its ends and nothing outside them", () => {
+  const out = model.tally([
+    L("fill", 1, 7), L("fill", 1, 0), L("fill", 1, 7.01), { ...L("fill", 1, 0), ts: NOW + 1 },
+  ], sevenDays());
+  assert.equal(out.get("1").given, 2);
+});
+
+test("the type filter keeps one type, and fills with no type count under all types only", () => {
+  const lines = [L("fill", 1, 1, { type: "A+" }), L("fill", 1, 1, { type: null }), L("use", 1, 1, { type: "O+" })];
+  assert.deepEqual(model.tally(lines, sevenDays()).get("1"), { given: 2, used: 1, usedInWars: 0, net: 1 });
+  assert.deepEqual(model.tally(lines, sevenDays({ type: "A+" })).get("1"), { given: 1, used: 0, usedInWars: 0, net: 1 });
+  assert.deepEqual(model.tally(lines, sevenDays({ type: "O+" })).get("1"), { given: 0, used: 1, usedInWars: 0, net: -1 });
+});
+
+test("use during a war counts as used but not against net, a live war's up to now", () => {
+  const spans = model.warSpans([{ id: 1, start: at(5), end: at(4) }, { id: 2, start: at(1), end: 0 }], NOW);
+  const out = model.tally([
+    L("use", 1, 4.5), L("use", 1, 0.5), L("use", 1, 3), L("fill", 1, 3),
+  ], sevenDays({ warSpans: spans }));
+  assert.deepEqual(out.get("1"), { given: 1, used: 3, usedInWars: 2, net: 0 });
+});
+
+test("a hand-out to themselves counts against the leader; a retrieval cancels it for the member it came from", () => {
+  const out = model.tally([
+    L("loaned", 9, 1, { qty: 2, toId: "9" }),
+    L("gave", 9, 1, { qty: 4, toId: "2" }), L("retrieved", 9, 0.5, { qty: 1, toId: "2" }),
+  ], sevenDays());
+  assert.equal(out.get("9").used, 2);
+  assert.equal(out.get("2").used, 3);
+});
+
+test("returning bags cancels use but never adds to net", () => {
+  const spans = model.warSpans([{ id: 1, start: at(3), end: at(2) }], NOW);
+  // Lent before the window and returned inside it.
+  const before = model.tally([L("loaned", 9, 20, { qty: 7, toId: "1" }), L("returned", 1, 1, { qty: 7 })], sevenDays());
+  assert.deepEqual(before.get("1"), { given: 0, used: 0, usedInWars: 0, net: 0 });
+  // Lent during a war and returned after it.
+  const acrossWar = model.tally([L("loaned", 9, 2.5, { qty: 4, toId: "1" }), L("returned", 1, 1, { qty: 4 })], sevenDays({ warSpans: spans }));
+  assert.deepEqual(acrossWar.get("1"), { given: 0, used: 4, usedInWars: 4, net: 0 });
+});

@@ -80,3 +80,85 @@ export function isUnreadBloodLine(text) {
   const s = String(text || "");
   return /Blood Bag/.test(s) && !/Empty Blood Bag|Irradiated|Box of Medical Supplies/.test(s) && parseLine(s) === null;
 }
+
+// ── Timeframes and types ───────────────────────────────────────────────────
+// Days per timeframe; "all" runs from wherever the stored history reaches.
+export const WINDOWS = { "24h": 1, "7d": 7, "30d": 30, "90d": 90, all: null };
+export const DEFAULT_WINDOW = "7d";
+const DAY = 86400;
+
+/** The timeframe a request asked for: 7 days when missing, null when unknown. */
+export function parseWindow(raw) {
+  if (raw == null || raw === "") return DEFAULT_WINDOW;
+  const w = String(raw).toLowerCase();
+  return Object.prototype.hasOwnProperty.call(WINDOWS, w) ? w : null;
+}
+
+/** The blood type a request asked for: "all" when missing, null when unknown. */
+export function parseType(raw) {
+  if (raw == null || raw === "") return "all";
+  // A "+" typed into an address bar arrives as a space, so "A+" reads "A ".
+  const t = String(raw).replace(/ /g, "+").toUpperCase();
+  if (t === "ALL") return "all";
+  return TYPES.includes(t) ? t : null;
+}
+
+/** The seconds a timeframe covers, both ends included. */
+export function windowRange(window, nowSec, reachSec) {
+  const days = WINDOWS[window];
+  return { fromSec: days == null ? Number(reachSec) || 0 : nowSec - days * DAY, toSec: nowSec };
+}
+
+// ── Ranked wars ────────────────────────────────────────────────────────────
+// A war runs from its start to its end. Torn writes end: 0 for a war still
+// going, so its span runs to now; a war that has not started yet has no span.
+export function warSpans(wars, nowSec) {
+  const out = [];
+  for (const w of wars || []) {
+    const start = Number(w && w.start) || 0;
+    if (!start || start > nowSec) continue;
+    out.push({ start, end: Number(w.end) > 0 ? Number(w.end) : nowSec });
+  }
+  return out;
+}
+
+/** The ranked war going on at nowSec, as { id, start }, or null. */
+export function liveWar(wars, nowSec) {
+  for (const w of wars || []) {
+    const start = Number(w && w.start) || 0;
+    if (start && start <= nowSec && !(Number(w.end) > 0 && Number(w.end) <= nowSec)) return { id: w.id, start };
+  }
+  return null;
+}
+
+// ── Per member ─────────────────────────────────────────────────────────────
+/**
+ * { given, used, usedInWars, net } per member id, over the lines whose time is
+ * in [fromSec, toSec] and whose type passes the filter. Lines with no type
+ * count under "all" only. warSpans comes from warSpans().
+ *
+ * Use is split into outside wars and during wars, and each part stops at zero.
+ * A return cancels use but is not a gift: bags lent before the window, or lent
+ * during a war and returned after it, would otherwise come out as net given.
+ */
+export function tally(lines, { fromSec, toSec, type = "all", warSpans: spans = [] } = {}) {
+  const sums = new Map();
+  for (const l of lines || []) {
+    if (!(l.ts >= fromSec && l.ts <= toSec)) continue;
+    if (type !== "all" && l.type !== type) continue;
+    const id = String(chargedTo(l));
+    let s = sums.get(id);
+    if (!s) sums.set(id, (s = { given: 0, out: 0, war: 0 }));
+    if (l.kind === "fill" || l.kind === "deposit") { s.given += l.qty; continue; }
+    const n = l.kind === "returned" || l.kind === "retrieved" ? -l.qty : l.qty;
+    if (spans.some((w) => l.ts >= w.start && l.ts <= w.end)) s.war += n;
+    else s.out += n;
+  }
+  const out = new Map();
+  for (const [id, s] of sums) {
+    const usedOutside = Math.max(0, s.out);
+    const usedInWars = Math.max(0, s.war);
+    out.set(id, { given: s.given, used: usedOutside + usedInWars, usedInWars, net: s.given - usedOutside });
+  }
+  return out;
+}
