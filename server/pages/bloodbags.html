@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="dark">
+<title>Blood Bag Contributions</title>
+<style>
+/* Always dark, like the board it was modelled on, in the /slackers dark tokens.
+   The tile colours and the Wall of Shame red are this page's own. */
+:root{
+  --bg:#10141a; --panel:#171d25; --sunk:#131920;
+  --ink:#e6ebf2; --muted:#94a1b1; --faint:#6a7683;
+  --line:#242c36; --line2:#1c232c;
+  --link:#6aa6dd; --warn:#f0a93a;
+  --give:#34d399; --give-wash:rgba(52,211,153,.09);
+  --use:#22d3ee; --use-wash:rgba(34,211,238,.09);
+  --net:#60a5fa; --net-wash:rgba(96,165,250,.09);
+  --members:#c084fc; --members-wash:rgba(192,132,252,.09);
+  --shame:#f87171; --shame-line:rgba(248,113,113,.35); --shame-wash:rgba(248,113,113,.07);
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 10px 30px rgba(0,0,0,.4);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--ink); min-height:100vh;
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font-variant-numeric:tabular-nums; line-height:1.45; -webkit-font-smoothing:antialiased;
+  padding:clamp(16px,3.5vw,40px);
+}
+.inner{max-width:1120px;margin:0 auto}
+.eyebrow{font-size:11.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+h1{font-size:clamp(24px,4vw,32px);font-weight:800;color:var(--give);margin:0 0 6px;letter-spacing:-.01em}
+.lede{color:var(--muted);margin:0 0 18px;max-width:70ch}
+h2{font-size:17px;font-weight:700;margin:0 0 12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin:0 0 16px;box-shadow:var(--shadow)}
+.hidden{display:none}
+form{display:flex;gap:10px;flex-wrap:wrap}
+input,select{background:var(--sunk);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font:inherit;font-size:15px;min-width:0}
+input{flex:1 1 220px}
+button{border:0;border-radius:8px;padding:10px 16px;font:inherit;font-weight:700;cursor:pointer}
+button.primary{background:var(--give);color:#06281d}
+button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+button:disabled{opacity:.6;cursor:default}
+.sub{color:var(--muted);font-size:13.5px;margin:0 0 12px}
+.msg{color:var(--warn);font-size:13.5px;margin:10px 0 0}
+.msg:empty{display:none}
+.filters{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end}
+.filters label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted);flex:1 1 200px}
+.note{color:var(--warn);font-size:14px;margin:0 0 16px}
+.note:empty{display:none}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.tile{border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.tile .label{font-size:13px;color:var(--muted)}
+.tile .value{font-size:26px;font-weight:800;line-height:1.2}
+.tile .sub{margin:2px 0 0;font-size:12.5px}
+.tile.give{background:var(--give-wash)} .tile.give .value{color:var(--give)}
+.tile.use{background:var(--use-wash)} .tile.use .value{color:var(--use)}
+.tile.net{background:var(--net-wash)} .tile.net .value{color:var(--net)}
+.tile.members{background:var(--members-wash)} .tile.members .value{color:var(--members)}
+.updated{color:var(--faint);font-size:13px;margin:12px 0 0}
+.you{background:var(--sunk);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin:0 0 16px;font-weight:600}
+.lists{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.list ol{list-style:none;margin:0;padding:0}
+.list li{display:flex;align-items:baseline;gap:10px;padding:9px 0;border-top:1px solid var(--line2)}
+.list li:first-child{border-top:0}
+.rank{color:var(--faint);font-size:12px;width:2.6em;flex:none}
+.name{color:var(--ink);text-decoration:none;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.name:hover{color:var(--link);text-decoration:underline}
+.val{font-weight:700;color:var(--give)}
+.list.shame{border-color:var(--shame-line);background:linear-gradient(var(--shame-wash),var(--shame-wash)),var(--panel)}
+.list.shame h2,.list.shame .name,.list.shame .val{color:var(--shame)}
+.empty{color:var(--faint);font-size:13.5px}
+.foot{color:var(--faint);font-size:12.5px;margin:6px 0 0;max-width:80ch}
+@media (max-width:860px){.lists{grid-template-columns:1fr}}
+@media (max-width:640px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<div class="inner">
+  <p class="eyebrow">Faction 42055 &middot; Dead Fragment</p>
+  <h1>Blood Bag Contributions</h1>
+  <p class="lede" id="lede">Loading&hellip;</p>
+
+  <div class="card signin hidden" id="signin">
+    <h2>Sign in</h2>
+    <p class="sub">Sign in with your Torn API key. Torn checks it, this browser keeps only a sign-in token, and warboard keeps the key the way it does for FactionOps.</p>
+    <form id="keyform" autocomplete="off">
+      <input id="key" type="text" inputmode="latin" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Torn API key" aria-label="Torn API key">
+      <button class="primary" type="submit" id="go">Open board</button>
+    </form>
+    <p class="msg" id="signin-msg"></p>
+  </div>
+
+  <div id="board" class="hidden">
+    <div class="card filters">
+      <label>Timeframe <select id="win"></select></label>
+      <label>Blood type <select id="type"></select></label>
+      <button type="button" class="ghost" id="signout">Sign out</button>
+    </div>
+    <p class="note" id="note"></p>
+    <div class="card">
+      <h2>Overview</h2>
+      <div class="tiles" id="tiles"></div>
+      <p class="updated" id="updated"></p>
+    </div>
+    <p class="you" id="you"></p>
+    <div class="lists">
+      <div class="card list"><h2>Top 10 Contributors</h2><ol id="top-given"></ol></div>
+      <div class="card list"><h2>Top 10 Net Contributors</h2><ol id="top-net"></ol></div>
+      <div class="card list shame"><h2>Wall of Shame</h2><ol id="wall"></ol></div>
+    </div>
+    <p class="foot">Given: bags filled from the faction's empty bags, plus filled bags deposited. Used: bags used from the armoury, and bags a leader gives or loans you, less any returned. Bags used during a ranked war count as used but not against you. Net is given minus used outside wars. Empty and irradiated bags count for nothing.</p>
+  </div>
+</div>
+
+<script>
+// Every number on this page comes from /api/bloodbags, which checks that the
+// viewer is a Dead Fragment member; the page itself holds no member data.
+var TOKEN_KEY = "bloodbags_token";
+var WINDOW_LABELS = { "24h": "Past 24 hours", "7d": "Past 7 days", "30d": "Past 30 days", "90d": "Past 90 days", "all": "All time" };
+var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+var STATE = { data: null, win: "7d", type: "all" };
+
+function $(id) { return document.getElementById(id); }
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function sep(n) {
+  return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+function signed(n) {
+  n = Math.round(Number(n) || 0);
+  return n > 0 ? "+" + sep(n) : sep(n);
+}
+function pad2(n) { return (n < 10 ? "0" : "") + n; }
+function monthYear(sec) { var d = new Date(sec * 1000); return MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear(); }
+function dayMonth(sec) { var d = new Date(sec * 1000); return d.getUTCDate() + " " + MONTHS[d.getUTCMonth()]; }
+function windowLabel(w, reachSec) {
+  if (w === "all" && reachSec) return "All time (since " + monthYear(reachSec) + ")";
+  return WINDOW_LABELS[w] || w;
+}
+function typeLabel(t) { return t === "all" ? "All types" : t; }
+function apiPath(win, type) {
+  // encodeURIComponent turns "A+" into "A%2B"; a bare "+" would arrive as a space.
+  return "/api/bloodbags?window=" + encodeURIComponent(win) + "&type=" + encodeURIComponent(type);
+}
+// Torn City Time is UTC, so the clock is read in UTC whatever the viewer's zone.
+function tct(ms) { var d = new Date(ms); return pad2(d.getUTCHours()) + ":" + pad2(d.getUTCMinutes()) + " TCT"; }
+function ago(ms, nowMs) {
+  var m = Math.max(0, Math.floor((nowMs - ms) / 60000));
+  if (m < 1) return "just now";
+  if (m < 60) return m + (m === 1 ? " minute ago" : " minutes ago");
+  var h = Math.floor(m / 60);
+  if (h < 48) return h + (h === 1 ? " hour ago" : " hours ago");
+  return Math.floor(h / 24) + " days ago";
+}
+function updatedLine(updatedAt, nowMs) {
+  if (!updatedAt) return "No update yet.";
+  return "Latest update: " + ago(updatedAt, nowMs) + " (" + tct(updatedAt) + ")";
+}
+function noteText(d) {
+  if (!d.updatedAt) return "No data yet: the first update runs within the hour.";
+  if (!d.backfillDone && d.reachSec) {
+    return "History so far reaches back to " + dayMonth(d.reachSec) + "; the rest of the year is still being filled in" +
+      (d.liveWar ? " once the ranked war ends." : ".");
+  }
+  return "";
+}
+function youLine(you) {
+  if (!you) return "You: no blood bags given or used in this window";
+  return "You: " + (you.rank ? "#" + you.rank + " of " + you.of + " - " : "") +
+    sep(you.given) + " given, " + sep(you.used) + " used (" + sep(you.usedInWars) + " during wars), net " + signed(you.net);
+}
+function tile(kind, label, value, sub) {
+  return '<div class="tile ' + kind + '"><div class="label">' + label + '</div><div class="value">' + value + "</div>" +
+    (sub ? '<p class="sub">' + sub + "</p>" : "") + "</div>";
+}
+function overviewHtml(o) {
+  return tile("give", "Given", sep(o.given), "") +
+    tile("use", "Used", sep(o.used), sep(o.usedInWars) + " during wars") +
+    tile("net", "Net", signed(o.net), "given less used outside wars") +
+    tile("members", "Members", sep(o.members), "");
+}
+function listHtml(rows, kind) {
+  if (!rows || !rows.length) {
+    return '<li class="empty">' + (kind === "wall" ? "Nobody is below zero." : "Nobody yet.") + "</li>";
+  }
+  return rows.map(function (r) {
+    return '<li><span class="rank">#' + r.rank + "</span>" +
+      '<a class="name" href="https://www.torn.com/profiles.php?XID=' + encodeURIComponent(r.playerId) + '" target="_blank" rel="noopener">' +
+      esc(r.name) + '</a><span class="val">' + (kind === "given" ? sep(r.value) : signed(r.value)) + "</span></li>";
+  }).join("");
+}
+function options(values, selected, label) {
+  return values.map(function (v) {
+    return '<option value="' + esc(v) + '"' + (v === selected ? " selected" : "") + ">" + esc(label(v)) + "</option>";
+  }).join("");
+}
+function render() {
+  var d = STATE.data;
+  $("win").innerHTML = options(d.windows, STATE.win, function (w) { return windowLabel(w, d.reachSec); });
+  $("type").innerHTML = options(d.types, STATE.type, typeLabel);
+  $("note").textContent = noteText(d);
+  $("tiles").innerHTML = overviewHtml(d.overview);
+  $("updated").textContent = updatedLine(d.updatedAt, Date.now());
+  $("you").textContent = youLine(d.you);
+  $("top-given").innerHTML = listHtml(d.topGiven, "given");
+  $("top-net").innerHTML = listHtml(d.topNet, "net");
+  $("wall").innerHTML = listHtml(d.wall, "wall");
+}
+
+// The API key is swapped once for a sign-in token and is not kept in this
+// browser; the token is what lives in localStorage.
+function token() { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; } }
+function setToken(t) { try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+function showSignin(msg) {
+  $("signin").className = "card signin";
+  $("board").className = "hidden";
+  $("lede").textContent = "Who keeps the faction's blood supply topped up, and who takes more than they give. For Dead Fragment members.";
+  $("signin-msg").textContent = msg || "";
+}
+function showBoard() {
+  $("signin").className = "card signin hidden";
+  $("board").className = "";
+  $("lede").textContent = "Who keeps the faction's blood supply topped up, and who takes more than they give.";
+}
+function load() {
+  var t = token();
+  if (!t) { showSignin(""); return; }
+  fetch(apiPath(STATE.win, STATE.type), { headers: { Authorization: "Bearer " + t } })
+    .then(function (r) {
+      return r.json().then(function (d) { return { status: r.status, d: d }; }, function () { return { status: r.status, d: {} }; });
+    })
+    .then(function (res) {
+      if (res.status === 401) { setToken(""); showSignin("That session has expired. Sign in again."); return; }
+      if (res.status === 403) { setToken(""); showSignin(res.d.error || "This board is for Dead Fragment members."); return; }
+      if (res.status !== 200) { $("lede").textContent = "Could not load the board: " + (res.d.error || "HTTP " + res.status); return; }
+      STATE.data = res.d;
+      showBoard();
+      render();
+    })
+    .catch(function (err) { $("lede").textContent = "Could not reach warboard: " + err.message; });
+}
+function signIn(e) {
+  e.preventDefault();
+  var key = $("key").value.trim();
+  if (!key) return;
+  $("go").disabled = true;
+  $("signin-msg").textContent = "Checking with Torn...";
+  fetch("/api/auth", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey: key, scriptName: "bloodbags" })
+  })
+    .then(function (r) {
+      return r.json().then(function (d) { return { status: r.status, d: d }; }, function () { return { status: r.status, d: {} }; });
+    })
+    .then(function (res) {
+      $("go").disabled = false;
+      // /api/auth's own refusal talks about FactionOps; this board says who it is for.
+      if (res.status === 403) { showSignin("This board is for Dead Fragment members."); return; }
+      if (res.status !== 200 || !res.d.token) { showSignin(res.d.error || "Torn would not accept that key."); return; }
+      $("key").value = "";
+      setToken(res.d.token);
+      load();
+    })
+    .catch(function (err) { $("go").disabled = false; showSignin("Could not reach warboard: " + err.message); });
+}
+function boot() {
+  $("keyform").addEventListener("submit", signIn);
+  $("win").addEventListener("change", function (e) { STATE.win = e.target.value; load(); });
+  $("type").addEventListener("change", function (e) { STATE.type = e.target.value; load(); });
+  $("signout").addEventListener("click", function () { setToken(""); STATE.data = null; showSignin("Signed out."); });
+  // ?signout in the address clears the token first: a way back to the sign-in card.
+  if (location.search.indexOf("signout") !== -1) setToken("");
+  load();
+}
+if (typeof document !== "undefined" && document.getElementById("keyform")) boot();
+</script>
+</body>
+</html>
