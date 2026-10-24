@@ -172,3 +172,49 @@ test("the page is plain ASCII, asks for the key in a text field, and serves thro
   const { renderBloodBagsPage } = await import("./blood-bags-page.js");
   assert.equal(renderBloodBagsPage(), PAGE);
 });
+
+// ── review fixes ────────────────────────────────────────────────────────────
+test("the note says when the first update failed, and when the member list may be out of date", () => {
+  const { P } = page();
+  const reach = Date.UTC(2026, 9, 20) / 1000;
+  assert.equal(P.noteText({ updatedAt: null, lastPollFailed: true }),
+    "No data yet: the last update failed, and it tries again every hour.");
+  assert.equal(P.noteText({ updatedAt: 1, backfillDone: true, rosterStale: true }),
+    "The member list could not be refreshed just now, so it may be out of date.");
+  assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: null, rosterStale: true }),
+    "History so far reaches back to 20 Oct; the rest of the year is still being filled in. " +
+    "The member list could not be refreshed just now, so it may be out of date.");
+});
+
+test("a slow answer for an earlier choice never replaces the board for a later one", async () => {
+  const pending = [];
+  const { P, els } = page({
+    stored: { bloodbags_token: "t" },
+    fetchImpl: (url) => new Promise((resolve, reject) => pending.push({ url, resolve, reject })),
+  });
+  const given = (n, window) => ({ ...BOARD, window, overview: { ...BOARD.overview, given: n } });
+  P.STATE.win = "24h"; P.load();
+  P.STATE.win = "all"; P.load();
+  assert.equal(pending.length, 2);
+  pending[1].resolve(answer(200, given(2, "all")));
+  await flush(); await flush();
+  pending[0].resolve(answer(200, given(1, "24h")));
+  await flush(); await flush();
+  assert.equal(P.STATE.data.window, "all");
+  assert.match(els.tiles.innerHTML, /Given<\/div><div class="value">2</);
+
+  // A stale failure says nothing either.
+  P.STATE.win = "7d"; P.load();
+  P.STATE.win = "30d"; P.load();
+  pending[3].resolve(answer(200, given(3, "30d")));
+  await flush(); await flush();
+  pending[2].reject(new Error("offline"));
+  await flush(); await flush();
+  assert.equal(P.STATE.data.window, "30d");
+  assert.doesNotMatch(els.lede.textContent, /Could not/);
+});
+
+test("the key field asks for no input mode browsers do not know", () => {
+  const known = ["none", "text", "decimal", "numeric", "tel", "search", "email", "url"];
+  for (const m of PAGE.matchAll(/inputmode="([^"]*)"/g)) assert.ok(known.includes(m[1]), m[1]);
+});

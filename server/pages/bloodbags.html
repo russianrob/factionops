@@ -87,7 +87,7 @@ button:disabled{opacity:.6;cursor:default}
     <h2>Sign in</h2>
     <p class="sub">Sign in with your Torn API key. Torn checks it, this browser keeps only a sign-in token, and warboard keeps the key the way it does for FactionOps.</p>
     <form id="keyform" autocomplete="off">
-      <input id="key" type="text" inputmode="latin" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Torn API key" aria-label="Torn API key">
+      <input id="key" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Torn API key" aria-label="Torn API key">
       <button class="primary" type="submit" id="go">Open board</button>
     </form>
     <p class="msg" id="signin-msg"></p>
@@ -121,7 +121,7 @@ button:disabled{opacity:.6;cursor:default}
 var TOKEN_KEY = "bloodbags_token";
 var WINDOW_LABELS = { "24h": "Past 24 hours", "7d": "Past 7 days", "30d": "Past 30 days", "90d": "Past 90 days", "all": "All time" };
 var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-var STATE = { data: null, win: "7d", type: "all" };
+var STATE = { data: null, win: "7d", type: "all", seq: 0 };
 
 function $(id) { return document.getElementById(id); }
 function esc(s) {
@@ -163,12 +163,17 @@ function updatedLine(updatedAt, nowMs) {
   return "Latest update: " + ago(updatedAt, nowMs) + " (" + tct(updatedAt) + ")";
 }
 function noteText(d) {
-  if (!d.updatedAt) return "No data yet: the first update runs within the hour.";
-  if (!d.backfillDone && d.reachSec) {
-    return "History so far reaches back to " + dayMonth(d.reachSec) + "; the rest of the year is still being filled in" +
-      (d.liveWar ? " once the ranked war ends." : ".");
+  if (!d.updatedAt) {
+    return d.lastPollFailed ? "No data yet: the last update failed, and it tries again every hour." :
+      "No data yet: the first update runs within the hour.";
   }
-  return "";
+  var notes = [];
+  if (!d.backfillDone && d.reachSec) {
+    notes.push("History so far reaches back to " + dayMonth(d.reachSec) + "; the rest of the year is still being filled in" +
+      (d.liveWar ? " once the ranked war ends." : "."));
+  }
+  if (d.rosterStale) notes.push("The member list could not be refreshed just now, so it may be out of date.");
+  return notes.join(" ");
 }
 function youLine(you) {
   if (!you) return "You: no blood bags given or used in this window";
@@ -231,11 +236,15 @@ function showBoard() {
 function load() {
   var t = token();
   if (!t) { showSignin(""); return; }
+  // Quick filter changes can leave several answers in flight; only the newest
+  // one may draw, or say it failed.
+  var seq = ++STATE.seq;
   fetch(apiPath(STATE.win, STATE.type), { headers: { Authorization: "Bearer " + t } })
     .then(function (r) {
       return r.json().then(function (d) { return { status: r.status, d: d }; }, function () { return { status: r.status, d: {} }; });
     })
     .then(function (res) {
+      if (seq !== STATE.seq) return;
       if (res.status === 401) { setToken(""); showSignin("That session has expired. Sign in again."); return; }
       if (res.status === 403) { setToken(""); showSignin(res.d.error || "This board is for Dead Fragment members."); return; }
       if (res.status !== 200) { $("lede").textContent = "Could not load the board: " + (res.d.error || "HTTP " + res.status); return; }
@@ -243,7 +252,7 @@ function load() {
       showBoard();
       render();
     })
-    .catch(function (err) { $("lede").textContent = "Could not reach warboard: " + err.message; });
+    .catch(function (err) { if (seq === STATE.seq) $("lede").textContent = "Could not reach warboard: " + err.message; });
 }
 function signIn(e) {
   e.preventDefault();
