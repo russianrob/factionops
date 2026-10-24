@@ -1,10 +1,10 @@
 # Faction blood-bag board (design)
 
-**Status:** for the owner's review. Settled with the owner on 2026-10-23 (EDT) over 15 questions; every answer was the recommended one ("go with your recommendations"). The owner approved the design on 2026-10-23 at about 21:05 EDT with "yes write the spec".
+**Status:** approved. Settled with the owner on 2026-10-23 (EDT) over 15 questions; every answer was the recommended one ("go with your recommendations"). The owner approved the design on 2026-10-23 at about 21:05 EDT with "yes write the spec", and this spec at about 21:36 EDT with "write the plan". The plan is `docs/superpowers/plans/2026-10-24-faction-blood-bag-board.md`.
 **Where:** `https://tornwar.com/bloodbags`, for Dead Fragment (faction 42055).
-**New files:** `server/blood-bags.js` (the collector), `server/blood-bags-model.js` (the numbers) and `server/blood-bags-page.js` (the markup).
-**Changed files:** a route in `server/routes.js` and a start line in `server/server.js`.
-**Tests:** `server/blood-bags-model.test.js`, `server/blood-bags.test.js` and a route test.
+**New files:** `server/blood-bags.js` (the collector and the route's handler), `server/blood-bags-model.js` (the numbers), `server/pages/bloodbags.html` (the page) and `server/blood-bags-page.js` (which serves it).
+**Changed files:** `server/routes.js` (two routes, and the site gate lets `/bloodbags` through) and a start line in `server/server.js`.
+**Tests:** `server/blood-bags-model.test.js`, `server/blood-bags.test.js`, `server/blood-bags-route.test.js` and `server/blood-bags-page.test.js`.
 
 ## Why
 
@@ -30,7 +30,7 @@ The owner wants a board like another faction's "Blood Bag Contributions" page (s
 
 ## What the page shows
 
-- **Sign-in:** the same Torn-key sign-in as /slackers (`POST /api/auth`, token in localStorage). The key is never stored.
+- **Sign-in:** the same Torn-key sign-in as /slackers (`POST /api/auth`, token in localStorage). The browser swaps the key for a token and doesn't keep it; warboard keeps the key the way every `/api/auth` sign-in does.
 - **Filters:**
   - Timeframe: Past 24 hours, Past 7 days, Past 30 days, Past 90 days, All time (since the month the backfill reaches back to, for example "since Oct 2025").
   - Blood type: All types, then the eight types.
@@ -82,7 +82,7 @@ The sample held no gave, loaned, returned or retrieved lines for blood bags. The
   - It walks back a page at a time and stops at the first page that reaches lines it has already stored.
 - **No line is skipped at a page edge:**
   - The next page asks for lines up to and including the oldest second already seen, and repeats are dropped by line id.
-  - The plan checks with one live call whether Torn's `to` includes its own second.
+  - Checked live on 2026-10-24: Torn's `to` leaves its own second out and `from` includes its own, so the next page asks for `to` = the oldest second + 1.
   - If a page makes no progress (all of it in one second), the walk steps a second back and logs that.
 - **Errors:** Torn reports errors in the body at HTTP 200, so every response's `error` is checked. A failed poll keeps the data it has, logs, and tries again the next hour.
 - **What is kept:** only blood-bag lines, as the line id, time, player id and name, kind, blood type (or none) and count, and for a hand-out, who received it. Everything else in the news is dropped.
