@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Xanax Reminder
 // @namespace    RussianRob
-// @version      1.0.3
+// @version      1.0.4
 // @description  A Xanax icon in Torn's row of status icons as soon as your drug cooldown is over: a tap opens your items, and during your faction's ranked war (with a Public API key) the armoury, your items or a choice of both, as set in its settings box.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-xanax-reminder.user.js
@@ -20,6 +20,11 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.4  - The key field shows the key in use with all but its last 4 hidden, so you can
+//           see a key is saved. The box says what the key is used for again, and what Torn
+//           found the moment it answers. A save that doesn't all stick changes nothing. An
+//           answer for a key you have since replaced is dropped, and the war period ends 7
+//           days after the start at the latest, even if every check fails.
 // v1.0.3  - A settings box like the Blood Bag Reminder's (long press the icon, or "Xanax
 //           Reminder: Settings" in the menu): choose what a tap does during a ranked war
 //           (ask each time, the faction armoury, or your items) and enter the API key.
@@ -38,7 +43,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.3';
+  const VERSION = '1.0.4';
 
   // Loaded twice on one page (two copies installed, or PDA injecting it again), it runs once.
   // The mark goes on the page itself, which every copy can see; each copy may have its own window.

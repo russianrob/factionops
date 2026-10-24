@@ -1,7 +1,7 @@
 # Torn Xanax Reminder (design)
 
-**Status:** approved by the owner on 2026-10-22 (EDT), with one change to the war window: "change it to tap to select items for armoury or items then write it" (see Q6, Q7). Amended on 2026-10-24 (EDT) for 1.0.3, a settings box and a tap setting for the war: the owner asked "or create a settings box like bloodbags that gives us an option if inwant to go to fac armourybdueing war", then approved the design with "yes go with your recommendations" (see Q9).
-**Script:** `server/public/scripts/torn-xanax-reminder.user.js` and `.meta.js`, version 1.0.3. Tests: `server/torn-xanax-reminder.test.mjs`.
+**Status:** approved by the owner on 2026-10-22 (EDT), with one change to the war window: "change it to tap to select items for armoury or items then write it" (see Q6, Q7). Amended on 2026-10-24 (EDT) for 1.0.3, a settings box and a tap setting for the war: the owner asked "or create a settings box like bloodbags that gives us an option if inwant to go to fac armourybdueing war", then approved the design with "yes go with your recommendations" (see Q9). Amended again the same day for 1.0.4, the key's last 4 in the key field: the owner asked "once we enter the api key can it save the last 4 characters instead of it being blank?", then said "go with recommendations" (see Q10).
+**Script:** `server/public/scripts/torn-xanax-reminder.user.js` and `.meta.js`, version 1.0.4. Tests: `server/torn-xanax-reminder.test.mjs`.
 
 ## Why
 
@@ -18,8 +18,9 @@ The owner asked for "a xanax icon for when drug cooldown is empty", "like the bl
 | Q5 | First in the row. When the blood bag icon is showing, the Xanax sits right after it. |
 | Q6, Q7 | In the 24 hours before your faction's next ranked war starts, tapping the icon shows two buttons, **Armoury** and **Items**, and you pick. At any other time it opens your items. The owner first said "armoury as a choice for 24h before a war starts" and chose 7a (switch automatically). On reviewing this spec they changed it to the choice: "change it to tap to select items for armoury or items". Until 1.0.3 there was no setting for where it goes; since then this choice is the "Ask each time" setting, the default (Q9). |
 | Q8 | The war's start time comes from Torn's API, using your key. A Public-level key is enough. You enter it once, in the settings box, and PDA fills it in by itself. Without a key, the tap always opens your items. |
-| Q9 | 1.0.3 adds a settings box, laid out like the Blood Bag Reminder's (a long press on the icon, or "Xanax Reminder: Settings" in the menu), with the API key and a list, "During a ranked war": **Ask each time** (the Armoury/Items box, the default), **Faction Armoury (Drugs)** or **Your Items (Drugs)**. The war counts from 24 hours before its start until Torn gives it an end time; while it is on, the box's title says "Ranked war on". Outside a war a tap opens your items, and that is not a setting. Without a key a tap always opens your items. Save says "Saved." and closes a second later, or says "Couldn't save, try again." and stays open. The owner had written: "the xanax icon isnt giving me an option i dont know id its saving my api key when i enter it". |
-| Assumed | These went to the owner as assumptions and were not corrected: only ranked wars count, not raids or territory wars; the window ends when the war starts (until 1.0.3; since then the war period lasts until Torn gives the war an end time, Q9); the script asks Torn about the war at most once every 30 minutes, shared across tabs. |
+| Q9 | 1.0.3 adds a settings box, laid out like the Blood Bag Reminder's (a long press on the icon, or "Xanax Reminder: Settings" in the menu), with the API key and a list, "During a ranked war": **Ask each time** (the Armoury/Items box, the default), **Faction Armoury (Drugs)** or **Your Items (Drugs)**. The war counts from 24 hours before its start until Torn gives it an end time (since 1.0.4, 7 days after the start at the latest: Q10); while it is on, the box's title says "Ranked war on". Outside a war a tap opens your items, and that is not a setting. Without a key a tap always opens your items. Save says "Saved." and closes a second later, or says "Couldn't save, try again." and stays open. The owner had written: "the xanax icon isnt giving me an option i dont know id its saving my api key when i enter it". |
+| Q10 | 1.0.4: when a key is in use, the empty key field's grey hint shows it with all but its last 4 hidden (`************AbCd`); PDA's key shows the same way, and a saved key still beats it. The line under the key updates the moment Torn answers. An answer for a key that has since been saved over or cleared is dropped. The war period ends 7 days after the start at the latest, a safety cap for when every check fails. The owner asked "once we enter the api key can it save the last 4 characters instead of it being blank?", and said "go with recommendations" to these. 1.0.4 also ships two fixes from 1.0.3's review: a save that doesn't all stick changes nothing, and the line under the key says what the key is used for. |
+| Assumed | These went to the owner as assumptions and were not corrected: only ranked wars count, not raids or territory wars; the window ends when the war starts (until 1.0.3; since then the war period lasts until Torn gives the war an end time, Q9, and since 1.0.4 at most 7 days after the start, Q10); the script asks Torn about the war at most once every 30 minutes, shared across tabs. |
 
 ## What it shows
 
@@ -74,7 +75,7 @@ The script never clicks anything itself. Every way out of the icon is a plain li
   - The tap that opens it never also closes it.
   - There is never more than one box.
   - The icon's own link still points at your items, so if anything in the box fails, a tap still gets you somewhere useful.
-- **The war period** runs from 24 hours before the start until Torn gives the war an end time: `start - 86400 <= now`, with no end time, from the last answer Torn gave. Any end time means the war is over. On 2026-10-24 none of the faction's 99 ended wars had an end time later than when it was read, and the longest ran 108 hours, so the period has no cap. If a war ends while every check fails (a bad key, Torn down), the tap keeps the war behaviour until a check succeeds; the settings box shows how long ago Torn last answered and why the last check failed.
+- **The war period** runs from 24 hours before the start until Torn gives the war an end time, and 7 days after the start at the latest: `start - 86400 <= now < start + 604800`, with no end time, from the last answer Torn gave. Any end time means the war is over. On 2026-10-24 none of the faction's 99 ended wars had an end time later than when it was read, and the longest ran 108 hours, so the 7 days (since 1.0.4) never end a real war early. They are there for a war that ends while every check fails (a bad key, Torn down): the tap keeps the war behaviour until a check succeeds or the 7 days are up, and the settings box shows how long ago Torn last answered and why the last check failed. The line under the key still reports Torn's last answer as it was.
 - **Every check works out the period again** and sets the icon's link, so the tap changes at the start of the period, at the war's start and at its end, and when the setting or the key changes, without a reload. A redrawn row gets the same link.
 - **A long press** (500 ms, as the blood bag) opens the settings box. The tap that ends a long press doesn't open the choice box or follow the link. The phone's own long-press menu for links is held back on the icon. A right-click keeps its menu.
 
@@ -87,6 +88,7 @@ The script never clicks anything itself. Every way out of the icon is a plain li
   - At most once every 30 minutes, across all tabs. The time of the last call is kept in GM storage, which tabs share (in PDA, GM storage is the page's `localStorage`, which tabs also share). A tab writes that time before it calls, so two tabs don't both call.
   - At most 2 calls an hour, and none while you're on cooldown, apart from one each time you save a key.
 - **What is kept:** the war's `start` and `end` (0 for "no ranked war"), when a tab last asked (`at`), when Torn last answered (`okAt`), and the last error, in GM storage. Everything is stored as a string, because PDA hands stored values back as strings; numbers are read back with `Number()`, and a stored check time in the future (the clock moved back) means ask now.
+- **An answer for a replaced key** is dropped: when an answer comes back after the key it was asked with has been saved over or cleared, nothing of it is kept. The key in use has its own call.
 - **With no key** there is no call and no extra line in the tooltip. The tap opens your items, even with a war time saved from an earlier key.
 - **When a call fails** (a Torn error such as code 2 "Incorrect key", or no answer):
   - The tap uses the last start time Torn gave. If there is none, it opens your items.
@@ -107,12 +109,13 @@ The script never clicks anything itself. Every way out of the icon is a plain li
   - The list and the field use 16 px text, or an iPhone zooms in when they are tapped.
   - Nothing is focused when it opens, so a phone doesn't raise its keyboard over it.
 - **During a ranked war:** the list Ask each time, Faction Armoury (Drugs), Your Items (Drugs). It shows the saved choice, or Ask each time when none is saved. A line under it says what the list does and that a long press opens these settings.
-- **API key:** a plain text field, never `type="password"`, which sets off password managers. It starts empty: the saved key is never shown.
+- **API key:** a plain text field, never `type="password"`, which sets off password managers. It starts empty. When a key is in use (a saved one, or PDA's), its grey hint is the key with all but its last 4 hidden, `************AbCd`; otherwise the hint is "Your API key". The rest of the key is never shown. The hint changes at once after Save or Clear key, and not after a save that failed.
 - **The line under the key** says what the key is for ("With your API key, the script checks when your faction's ranked war starts and ends."), that a Public-level key is enough, whether a key is saved (or PDA's is in use), and what Torn said:
   - "Not checked yet." until Torn answers.
   - "Checked 12m ago: ranked war on." The war part can also be "war starts in 5h 12m", "the ranked war is over" or "no ranked war set". Under a minute it says "just now". For an answer kept without its time (saved by 1.0.2), it says "earlier".
   - After a failed check: "Couldn't check the war time: <Torn's message>.", then "Torn last answered 3h 5m ago: ranked war on." if Torn has answered before.
   - With no key, it says the war choice needs one, and that until then a tap always opens your items.
+  - It updates the moment Torn answers while the box is open, so in the second before the box closes after Save it can already say what Torn found. The box still closes a second after a save.
 - **Buttons:** Clear key, Cancel and Save.
   - Save keeps the war choice, and the key when one is typed (trimmed). An empty field keeps the saved key; only Clear key removes it. Enter in the field is Save.
   - Saving a key, or clearing it, forgets what Torn said with the old key and asks Torn at once, even during a cooldown.
@@ -170,6 +173,7 @@ Tests come first, with node:test and linkedom, in `server/torn-xanax-reminder.te
   - From 24h before the start until Torn gives the war an end time, a tap opens the box with exactly two links, Armoury and Items, pointing where this spec says; after that, a tap goes straight to your items again.
   - With the armoury setting, the icon's link points at the armoury in that period. With the items setting, it points at your items, with no box. The link survives a redrawn row, and goes back when the setting or the key goes.
   - With no key, or an API error and nothing cached, a tap goes straight to your items.
+  - The war period ends 7 days after the start, even when every check has failed, and an open Armoury/Items box closes then.
   - An API error after a good answer keeps that answer.
   - Tapping outside the box, pressing Escape, scrolling, a second tap on the icon, or a tap on one of its links closes it. The tap that opens it doesn't close it. Two taps never give two boxes. The box goes when the icon goes.
   - A long press opens the settings box, and opens no choice box. A short press is a tap.
@@ -179,10 +183,12 @@ Tests come first, with node:test and linkedom, in `server/torn-xanax-reminder.te
     - the key field is a plain text field that starts empty;
     - Save, Clear key, Cancel and the "x" do what this spec says;
     - a save that storage refuses, drops or keeps only in part says so;
-    - the line under the key says what Torn last said, and how long ago.
+    - the line under the key says what Torn last said, and how long ago, and follows Torn's answer while the box is open;
+    - the key field's hint shows only the last 4 of the key in use (a saved one, or PDA's), follows Save and Clear key, and stays put after a failed save.
 - **API use:**
   - No call while the icon is hidden, and no call without a key.
   - At most one call per 30 minutes, even with two "tabs" sharing storage.
+  - An answer for a key that has since been saved over or cleared is dropped.
   - The key never shows up in the tooltip, `aria-label` or console output.
   - Stored values that come back as strings, or as objects, still work. A stored check time in the future means ask now.
 - **The source:**
@@ -199,6 +205,7 @@ Tests come first, with node:test and linkedom, in `server/torn-xanax-reminder.te
 - A long press opens the settings box.
 - 1.0.2: the pill shows whole (not cropped) and centred where the 1.0.1 icon was, and a tap on either end opens the Drugs tab.
 - 1.0.3: a long press opens "Xanax Reminder Settings", and the line under the key says "A key is saved." with what Torn last said. Choose Faction Armoury (Drugs) and Save: it says "Saved." and closes. During the war, a tap then opens the armoury on its Drugs tab (`sub=drugs`). Ask each time, back again, gives the box titled "Ranked war on".
+- 1.0.4: after Save, the key field's grey hint shows `************` and your key's last 4, and the line under it says what Torn found (or why it failed) within a second or so, before the box closes.
 - Through remote inspect: the drug cooldown's key in Torn's sidebar data, and that `sub=drugs` is the armoury's Drugs tab.
 
 ## Not in this version
@@ -207,3 +214,4 @@ Tests come first, with node:test and linkedom, in `server/torn-xanax-reminder.te
 - War stack or any Gym Coach advice ("train first, then take the Xanax").
 - Sounds or notifications.
 - The booster cooldown.
+- From 1.0.3's review leftovers, which the owner left out of 1.0.4: a 1.0.2 war record that said "no ranked war" reads "Not checked yet." until the next check; times past a day read "50h 3m ago", not in days; the "x" and "Saved." have no screen-reader names.
