@@ -1,6 +1,6 @@
 # Faction blood-bag board (design)
 
-**Status:** approved. Settled with the owner on 2026-10-23 (EDT) over 15 questions; every answer was the recommended one ("go with your recommendations"). The owner approved the design on 2026-10-23 at about 21:05 EDT with "yes write the spec", and this spec at about 21:36 EDT with "write the plan". The plan is `docs/superpowers/plans/2026-10-24-faction-blood-bag-board.md`. Amended on 2026-10-24 (EDT) with the fixes from the final review.
+**Status:** approved. Settled with the owner on 2026-10-23 (EDT) over 15 questions; every answer was the recommended one ("go with your recommendations"). The owner approved the design on 2026-10-23 at about 21:05 EDT with "yes write the spec", and this spec at about 21:36 EDT with "write the plan". The plan is `docs/superpowers/plans/2026-10-24-faction-blood-bag-board.md`. Amended on 2026-10-24 (EDT) with the fixes from the final review, and again that day when the owner chose to load history at 2 calls a minute during a ranked war (Q14).
 **Where:** `https://tornwar.com/bloodbags`, for Dead Fragment (faction 42055).
 **New files:** `server/blood-bags.js` (the collector and the route's handler), `server/blood-bags-model.js` (the numbers), `server/pages/bloodbags.html` (the page) and `server/blood-bags-page.js` (which serves it).
 **Changed files:** `server/routes.js` (two routes, and the site gate lets `/bloodbags` through) and a start line in `server/server.js`.
@@ -26,7 +26,7 @@ The owner wants a board like another faction's "Blood Bag Contributions" page (s
 | Q10 | The viewer sees their own row, even outside the top 10. |
 | Q11 | Each list holds at most 10. The Wall of Shame lists only members whose net is below zero, and never pads. |
 | Q7 | Updated every hour from the faction's armoury news, using the owner's faction key, as /slackers does. The page shows the time of the last update. |
-| Q14 | History is filled in once, a year back, at no more than 10 calls a minute and never while a ranked war is live. "All time" means since that date. |
+| Q14 | History is filled in once, a year back, at no more than 10 calls a minute, and no more than 2 a minute while a ranked war is live. The owner chose this on 2026-10-24; at first it waited for the war to end. "All time" means since that date. |
 
 ## What the page shows
 
@@ -93,11 +93,11 @@ The sample held no gave, loaned, returned or retrieved lines for blood bags. The
 ### The one-year backfill
 
 - It runs once, from the newest line back to 365 days before the day it starts, for both categories.
-- No more than 10 calls a minute.
+- No more than 10 calls a minute, and no more than 2 a minute (a page every 30 seconds) while a ranked war is live, so the war pollers keep the key's budget. The hourly poll is not slowed: its calls go out between the backfill's pages.
 - It remembers where it is, so a server restart resumes it.
-- It waits while a ranked war is live and carries on after the war. It also waits while the war list is more than 65 minutes old (an hour's poll plus 5 minutes), so a failed read of the list cannot let it run through a war.
+- Once the hourly read of the war list shows the war is over, it goes back to 10 a minute. A war list more than 65 minutes old (an hour's poll plus 5 minutes), or one that could not be read, counts as a war, so a war it cannot see costs no more than one it can. It logs a line when it slows down and when it speeds back up, not for every page.
 - It marks itself done. "All time" then means since the date it reached back to, about October 2025.
-- **Cost:** about 1,300 calls, a little over 2 hours at 10 a minute. About 360 action lines a day comes to 3 or 4 calls per day of history; deposits are about 25 calls a year.
+- **Cost:** about 1,300 calls: a little over 2 hours at 10 a minute, or about 11 hours at the war pace. About 360 action lines a day comes to 3 or 4 calls per day of history; deposits are about 25 calls a year.
 
 ### Ranked-war windows
 
@@ -155,7 +155,7 @@ Typeless fills count under All types only.
 
 **Collector tests (`blood-bags.test.js`):**
 - With a fake fetch: walking pages, dropping repeats, stopping at stored lines, the no-progress guard and the Torn body error.
-- The backfill: its pace, waiting while a war is live, and resuming from its saved place.
+- The backfill: its pace, the slower pace while a war is live or the war list is out of date, the poll going on beside it, and resuming from its saved place.
 
 **Route test:** a member gets 200, another faction 403, no token 401, the owner 200.
 
@@ -164,7 +164,7 @@ Typeless fills count under All types only.
 ## Release
 
 - **Server code, so:** pm2 reload as root and the health check, under the standing OK. Then commit and push.
-- The backfill starts on its own after the reload and runs for about 2 hours, or waits for a live war to end first.
+- The backfill starts on its own after the reload and runs for about 2 hours, or about 11 at the war pace while a ranked war is live.
 - Nothing is installed on anyone's device.
 
 ## Not in this version
