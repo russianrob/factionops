@@ -161,7 +161,7 @@ test('the header: the owner\'s script, served from tornwar.com, with its version
   assert.deepEqual(tag('name'), ['Torn Xanax Reminder']);
   assert.deepEqual(tag('namespace'), ['RussianRob']);
   assert.deepEqual(tag('author'), ['RussianRob']);
-  assert.deepEqual(tag('version'), ['1.0.2']);
+  assert.deepEqual(tag('version'), ['1.0.3']);
   assert.deepEqual(tag('license'), ['All Rights Reserved']);
   assert.deepEqual(tag('copyright'), []);
   assert.deepEqual(tag('match'), ['https://www.torn.com/*', 'https://torn.com/*']);
@@ -171,15 +171,16 @@ test('the header: the owner\'s script, served from tornwar.com, with its version
   assert.deepEqual(tag('downloadURL'), ['https://tornwar.com/scripts/torn-xanax-reminder.user.js']);
   assert.deepEqual(tag('updateURL'), ['https://tornwar.com/scripts/torn-xanax-reminder.meta.js']);
   assert.equal(readFileSync(META, 'utf8'), header + '\n', 'the meta file is the header, byte for byte');
-  assert.match(src, /const VERSION = '1\.0\.2';/, 'the in-file version matches @version');
-  assert.match(src, /^\/\/ v1\.0\.2  - A bigger pill/m, 'the changelog has the 1.0.2 entry');
+  assert.match(src, /const VERSION = '1\.0\.3';/, 'the in-file version matches @version');
+  assert.match(src, /^\/\/ v1\.0\.3  - A settings box/m, 'the changelog has the 1.0.3 entry');
+  assert.match(src, /^\/\/ v1\.0\.2  - A bigger pill/m, 'the changelog keeps the 1.0.2 entry');
   assert.match(src, /^\/\/ v1\.0\.1  - The menu entry names the script/m, 'the changelog keeps the 1.0.1 entry');
   assert.match(src, /^\/\/ v1\.0\.0  - First release\./m, 'the changelog keeps the 1.0.0 entry');
 });
 
 test('the source is plain ASCII, so PDA can run it, and the console line carries the version', () => {
   assert.equal(readFileSync(SRC, 'utf8').match(/[^\x00-\x7f]/g), null);
-  assert.deepEqual(page().run().logs, ['[Torn Xanax Reminder 1.0.2] running']);
+  assert.deepEqual(page().run().logs, ['[Torn Xanax Reminder 1.0.3] running']);
 });
 
 for (const sidebar of Object.keys(SIDEBARS)) {

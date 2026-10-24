@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Xanax Reminder
 // @namespace    RussianRob
-// @version      1.0.2
-// @description  A Xanax icon in Torn's row of status icons as soon as your drug cooldown is over. Tap it to open your items on the Drugs tab. With a Public API key, in the 24 hours before your faction's next ranked war, the tap lets you pick the faction armoury or your items.
+// @version      1.0.3
+// @description  A Xanax icon in Torn's row of status icons as soon as your drug cooldown is over: a tap opens your items, and during your faction's ranked war (with a Public API key) the armoury, your items or a choice of both, as set in its settings box.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-xanax-reminder.user.js
 // @updateURL    https://tornwar.com/scripts/torn-xanax-reminder.meta.js

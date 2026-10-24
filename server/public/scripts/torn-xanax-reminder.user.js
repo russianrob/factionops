@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Xanax Reminder
 // @namespace    RussianRob
-// @version      1.0.2
-// @description  A Xanax icon in Torn's row of status icons as soon as your drug cooldown is over. Tap it to open your items on the Drugs tab. With a Public API key, in the 24 hours before your faction's next ranked war, the tap lets you pick the faction armoury or your items.
+// @version      1.0.3
+// @description  A Xanax icon in Torn's row of status icons as soon as your drug cooldown is over: a tap opens your items, and during your faction's ranked war (with a Public API key) the armoury, your items or a choice of both, as set in its settings box.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-xanax-reminder.user.js
 // @updateURL    https://tornwar.com/scripts/torn-xanax-reminder.meta.js
@@ -20,6 +20,12 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.3  - A settings box like the Blood Bag Reminder's (long press the icon, or "Xanax
+//           Reminder: Settings" in the menu): choose what a tap does during a ranked war
+//           (ask each time, the faction armoury, or your items) and enter the API key.
+//           Save now says whether it saved, and the box says what Torn last answered.
+//           The war counts until Torn gives it an end time, not just until it starts, so
+//           the choice works during the war itself.
 // v1.0.2  - A bigger pill: drawn 1.5 times its 17 px slot (26 px wide) and centred where
 //           it was, so it reads as clearly as Torn's own icons. No other icon moves.
 // v1.0.1  - The menu entry names the script: "Xanax Reminder: Set API key", so it
@@ -32,7 +38,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.2';
+  const VERSION = '1.0.3';
 
   // Loaded twice on one page (two copies installed, or PDA injecting it again), it runs once.
   // The mark goes on the page itself, which every copy can see; each copy may have its own window.
