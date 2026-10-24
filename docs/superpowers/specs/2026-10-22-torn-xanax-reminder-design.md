@@ -142,7 +142,7 @@ The script never clicks anything itself. Every way out of the icon is a plain li
 
 - `server/public/scripts/torn-xanax-reminder.user.js` and `.meta.js`, owned `warboard:warboard`.
 - **Header:**
-  - @name "Torn Xanax Reminder", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.3, a CHANGELOG block. The in-file `VERSION` matches @version, and the console line on start carries it.
+  - @name "Torn Xanax Reminder", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.4, a CHANGELOG block. The in-file `VERSION` matches @version, and the console line on start carries it.
   - @downloadURL and @updateURL: `https://tornwar.com/scripts/torn-xanax-reminder.user.js` and `.meta.js`.
   - @grant: GM_getValue, GM_setValue, GM_xmlhttpRequest, GM_registerMenuCommand. @connect api.torn.com.
 - The served file and the repo are the same file (`server/public/scripts` is served), committed and pushed together.

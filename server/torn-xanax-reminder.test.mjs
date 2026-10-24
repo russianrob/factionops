@@ -1434,6 +1434,27 @@ test('with PDA\'s key in use the hint shows its last 4, and a saved key\'s last 
   assert.equal(keyField(v).getAttribute('placeholder'), '************6789');
 });
 
+test('the settings box never puts more of a key than its last 4 in the console or the page: on opening, Save, Clear key, or when Torn answers', async () => {
+  const src = readFileSync(SRC, 'utf8').replace('###PDA-APIKEY###', 'PDAKEY0123454321');
+  const w = page({ src, store: { [KEY_STORE]: KEY } }).run();
+  w.menu[MENU]();
+  keyField(w).value = 'NEWKEY1234560000';
+  press(w, 'Save');
+  answer(w.calls[w.calls.length - 1], wars(ranked(NOW - 3600)));
+  await settle();
+  w.advance(1000);
+  w.menu[MENU]();
+  press(w, 'Clear key');
+  answer(w.calls[w.calls.length - 1], { error: { code: 2, error: 'Incorrect key' } });
+  await settle();
+  const logs = w.logs.join('\n');
+  const html = w.document.documentElement.outerHTML;
+  for (const key of [KEY, 'NEWKEY1234560000', 'PDAKEY0123454321']) {
+    assert.ok(!logs.includes(key.slice(0, -4)), 'the console: no more of ...' + key.slice(-4) + ' than its last 4');
+    assert.ok(!html.includes(key.slice(0, -4)), 'the page: no more of ...' + key.slice(-4) + ' than its last 4');
+  }
+});
+
 test('the open box says what Torn found the moment Torn answers, and still closes a second after Save', async () => {
   for (const [reply, words] of [
     [wars(ranked(NOW - 3600)), /A key is saved\. Checked just now: ranked war on\./],
