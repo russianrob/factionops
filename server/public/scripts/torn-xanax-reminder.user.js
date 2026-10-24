@@ -74,8 +74,12 @@
   // After a save, the settings box says so for this long, then closes.
   const SAVED_MS = 1000;
   // The war period starts this long before the war does, and lasts until Torn gives the war
-  // an end time.
+  // an end time, or until WAR_CAP_S after the start.
   const WINDOW_S = 24 * 60 * 60;
+  // The war period ends this long after the start at the latest, even when no check has worked
+  // since: without it, a key that goes bad mid-war would keep the war behaviour for good. The
+  // longest of 99 wars looked at ran 108 hours.
+  const WAR_CAP_S = 7 * 24 * 60 * 60;
   // What a tap does in the war period, from the settings box: 'ask' opens the box with
   // Armoury and Items, 'armoury' and 'items' go straight there. Anything else reads as 'ask'.
   const WAR_TAP_STORE = 'tm-xanax-reminder-war-tap';
@@ -230,6 +234,9 @@
     war.at = nowMs;
     writeWar(war);
     askTorn(key).then((ranked) => {
+      // An answer for a key that has since been saved over or cleared says nothing about the
+      // key in use now: that key has its own call.
+      if (apiKey() !== key) return;
       const now = readWar();
       now.start = ranked ? Number(ranked.start) || 0 : 0;
       now.end = ranked ? Number(ranked.end) || 0 : 0;
@@ -238,6 +245,7 @@
       writeWar(now);
       refreshSettings();
     }, (message) => {
+      if (apiKey() !== key) return;
       // Keep the last good answer, and say why this one failed.
       const now = readWar();
       now.error = message;
@@ -308,13 +316,15 @@
   }
 
   // The war period: { left } in the 24 hours before the start (seconds to go), { on: true }
-  // from the start until Torn gives the war an end time, or null outside it. Any end time
-  // means the war is over. Needs a key: without one, the tap always opens your items.
+  // from the start until Torn gives the war an end time (seven days at most), or null outside
+  // it. Any end time means the war is over. Needs a key: without one, the tap always opens
+  // your items.
   function warPhase(nowMs) {
     if (!apiKey()) return null;
     const war = readWar();
     const nowS = nowMs / 1000;
-    if (!(war.start > 0) || war.end > 0 || nowS < war.start - WINDOW_S) return null;
+    if (!(war.start > 0) || war.end > 0) return null;
+    if (nowS < war.start - WINDOW_S || nowS >= war.start + WAR_CAP_S) return null;
     return nowS < war.start ? { left: war.start - nowS } : { on: true };
   }
 

@@ -860,6 +860,40 @@ test('a war with an end time is over, even when that time is still to come', () 
   assert.equal(fire(w, w.link(), 'click').defaultPrevented, false);
 });
 
+test('the war period ends seven days after the start, even when no check has worked since', () => {
+  const start = NOW - 3600;
+  for (const tap of ['armoury', 'ask']) {
+    const w = page({ store: { ...warStore(start), [WAR_TAP_STORE]: tap } }).run();
+    // A key that went bad mid-war: every check since has failed, so the record still says the war is on.
+    const at = (s) => {
+      w.clock.ms = s * 1000;
+      w.store[WAR_STORE] = JSON.stringify({ at: s * 1000, okAt: NOW * 1000, start, end: 0, error: 'Incorrect key' });
+      w.check();
+    };
+    at(start + 7 * 86400 - 60);
+    const words = tap === 'ask' ? 'tap to pick the armoury or your items' : 'tap to open the armoury';
+    assert.equal(w.label(), LABEL + '. Ranked war on: ' + words + '. Couldn\'t check the war time: Incorrect key', tap + ': a minute before the seven days are up');
+    at(start + 7 * 86400);
+    assert.equal(w.label(), LABEL + '. Couldn\'t check the war time: Incorrect key', tap + ': seven days after the start');
+    assert.equal(w.link().getAttribute('href'), ITEMS, tap);
+    assert.equal(fire(w, w.link(), 'click').defaultPrevented, false, tap + ': a tap follows the link to your items');
+    assert.equal(box(w), null, tap);
+  }
+});
+
+test('an open Armoury/Items box closes when the seven days are up', () => {
+  const start = NOW - 3600;
+  const w = page({ store: warStore(start) }).run();
+  w.clock.ms = (start + 7 * 86400 - 60) * 1000;
+  w.store[WAR_STORE] = JSON.stringify({ at: w.clock.ms, okAt: NOW * 1000, start, end: 0, error: 'Incorrect key' });
+  w.check();
+  fire(w, w.link(), 'click');
+  assert.ok(box(w), 'open a minute before');
+  w.clock.ms += 60 * 1000;
+  w.check();
+  assert.equal(box(w), null);
+});
+
 test('a stored tap setting the script doesn\'t know reads as ask each time', () => {
   for (const tap of ['bogus', '', 'ARMOURY', 1]) {
     const w = page({ store: { ...warStore(NOW - 3600), [WAR_TAP_STORE]: tap } }).run();
@@ -1443,6 +1477,45 @@ test('an answer that lands after the box closes brings no box back, and one that
   assert.match(settings(v).textContent, /A key is saved\. Checked just now: ranked war on\./, 'the box opened again follows the answer');
 });
 
+test('an answer for a key that has since been replaced is dropped, whichever answer lands first', async () => {
+  for (const [mine, late, says, never] of [
+    [{ error: { code: 2, error: 'Incorrect key' } }, wars(ranked(NOW - 3600)), /A key is saved\. Couldn't check the war time: Incorrect key\./, /Checked just now/],
+    [wars(ranked(NOW - 3600)), { error: { code: 2, error: 'Incorrect key' } }, /A key is saved\. Checked just now: ranked war on\./, /Couldn't check/],
+  ]) {
+    const w = page({ store: { [KEY_STORE]: 'OLDKEY1234567890' } }).run();
+    assert.equal(w.calls.length, 1, 'asked with the old key');
+    w.menu[MENU]();
+    keyField(w).value = KEY;
+    press(w, 'Save');
+    assert.equal(w.calls.length, 2, 'asked with the new key');
+    answer(w.calls[1], mine);
+    await settle();
+    answer(w.calls[0], late);   // the old key's answer lands late
+    await settle();
+    w.advance(1000);
+    w.menu[MENU]();
+    assert.match(settings(w).textContent, says);
+    assert.doesNotMatch(settings(w).textContent, never);
+  }
+});
+
+test('Clear key with PDA\'s key there: the hint shows PDA\'s last 4, PDA\'s key is asked about at once, and the cleared key\'s late answer is dropped', async () => {
+  const src = readFileSync(SRC, 'utf8').replace('###PDA-APIKEY###', 'PDAKEY0123454321');
+  const w = page({ src, store: { [KEY_STORE]: KEY } }).run();
+  assert.equal(w.calls.length, 1, 'asked with the saved key');
+  w.menu[MENU]();
+  press(w, 'Clear key');
+  assert.match(settings(w).textContent, /Key cleared\./);
+  assert.equal(keyField(w).getAttribute('placeholder'), '************4321');
+  assert.equal(w.calls.length, 2, 'PDA\'s key is asked about at once');
+  assert.match(w.calls[1].url, /key=PDAKEY0123454321&/);
+  answer(w.calls[1], wars(ranked(NOW - 3600)));
+  await settle();
+  answer(w.calls[0], { error: { code: 2, error: 'Incorrect key' } });   // the cleared key's answer lands late
+  await settle();
+  assert.match(settings(w).textContent, /Using the key Torn PDA gives the script\. Checked just now: ranked war on\./);
+});
+
 test('the settings box says what the key is used for', () => {
   for (const store of [{}, warStore()]) {
     const w = page({ store }).run();
@@ -1474,6 +1547,32 @@ test('the settings box says why the last check failed, so a bad key shows on a p
   const text = settings(w).textContent;
   assert.match(text, /A key is saved\. Couldn't check the war time: Incorrect key \*\*\*\*/);
   assert.ok(!text.includes(KEY), 'the key never shows');
+});
+
+test('Save with only spaces in the key field keeps the saved key', () => {
+  const w = page({ store: warStore() }).run();
+  w.menu[MENU]();
+  keyField(w).value = '   ';
+  press(w, 'Save');
+  assert.equal(w.store[KEY_STORE], KEY);
+  assert.match(settings(w).textContent, /Saved\./);
+});
+
+test('an open Armoury/Items box closes when the setting stops being ask each time', () => {
+  const w = page({ store: warStore(NOW - 3600) }).run();
+  fire(w, w.link(), 'click');
+  assert.ok(box(w));
+  w.store[WAR_TAP_STORE] = 'armoury';   // saved in another tab
+  w.check();
+  assert.equal(box(w), null);
+});
+
+test('with no key, the line under the key ends with the note, and says nothing of a check', () => {
+  const w = page().run();
+  w.menu[MENU]();
+  assert.equal(w.document.getElementById(SETTINGS + '-status').textContent,
+    'With your API key, the script checks when your faction\'s ranked war starts and ends. A Public-level key is enough. '
+    + 'No key saved. The war choice needs one: until then, a tap always opens your items.');
 });
 
 test('a host with no menu, or one whose menu throws, still gets the icon and the long press', () => {
