@@ -994,6 +994,13 @@ import('./chain-hits.js').then(m => m.start()).catch(e => {
   console.error('[chain-hits] failed to start collector:', e.message);
 });
 
+// The blood-bag board's collector: an hourly armoury-news poll, about 2 calls an
+// hour, and a one-off year of history at 10 calls a minute that waits out live
+// ranked wars.
+import('./blood-bags.js').then(m => m.start()).catch(e => {
+  console.error('[blood-bags] failed to start collector:', e.message);
+});
+
 // ── Graceful shutdown ───────────────────────────────────────────────────
 
 function shutdown(signal) {

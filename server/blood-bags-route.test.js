@@ -199,3 +199,49 @@ test("the roster is read from Torn's faction basic, whose members are keyed by p
   assert.deepEqual(rosterFromBasic({ ID: 42055 }), []);
   assert.deepEqual(rosterFromBasic(null), []);
 });
+
+// ── wiring in routes.js and server.js ───────────────────────────────────────
+const ROUTES = readFileSync(new URL("./routes.js", import.meta.url), "utf8");
+const SERVER = readFileSync(new URL("./server.js", import.meta.url), "utf8");
+function routesFn(name) {
+  const i = ROUTES.indexOf("function " + name + "(");
+  assert.ok(i >= 0, "not in routes.js: " + name);
+  let k = ROUTES.indexOf("(", i), depth = 0;
+  for (; k < ROUTES.length; k++) {
+    if (ROUTES[k] === "(") depth++;
+    else if (ROUTES[k] === ")" && --depth === 0) break;
+  }
+  const o = ROUTES.indexOf("{", k);
+  let d = 0;
+  for (let j = o; j < ROUTES.length; j++) {
+    if (ROUTES[j] === "{") d++;
+    else if (ROUTES[j] === "}" && --d === 0) return ROUTES.slice(i, j + 1);
+  }
+  throw new Error("unbalanced braces in " + name);
+}
+// The site gate as it runs with the gate switched on and no gate cookie.
+function gateFor(path) {
+  const box = { process: { env: {} }, parseCookie: () => null, verifyToken: () => { throw new Error("no token"); } };
+  vm.createContext(box);
+  vm.runInContext(routesFn("gateMiddleware") + "\nglobalThis.gate = gateMiddleware;", box);
+  const seen = { next: false, redirect: null };
+  box.gate({ path, headers: {} }, { redirect: (to) => { seen.redirect = to; } }, () => { seen.next = true; });
+  return seen;
+}
+
+test("routes.js serves /api/bloodbags behind requireAuth, and /bloodbags uncached from blood-bags-page.js", () => {
+  assert.match(ROUTES, /^import \{ createBloodBagsApi \} from "\.\/blood-bags\.js";$/m);
+  assert.match(ROUTES, /^import \{ renderBloodBagsPage \} from "\.\/blood-bags-page\.js";$/m);
+  assert.match(ROUTES, /router\.get\("\/api\/bloodbags", requireAuth, \(req, res\) => bloodBagsApi\.handle\(req, res\)\);/);
+  assert.match(ROUTES, /router\.get\("\/bloodbags",[\s\S]{0,200}"Cache-Control", "no-store"[\s\S]{0,80}renderBloodBagsPage\(\)/);
+});
+
+test("the site gate lets /bloodbags through, as it does /hof, and still gates other pages", () => {
+  assert.deepEqual(gateFor("/bloodbags"), { next: true, redirect: null });
+  assert.deepEqual(gateFor("/api/bloodbags"), { next: true, redirect: null });
+  assert.deepEqual(gateFor("/slackers"), { next: false, redirect: "/gate.html" });
+});
+
+test("server.js starts the collector", () => {
+  assert.match(SERVER, /import\('\.\/blood-bags\.js'\)\.then\(m => m\.start\(\)\)/);
+});

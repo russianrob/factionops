@@ -118,6 +118,8 @@ import * as upcomingWar from "./upcoming-war.js";
 import * as readBudget from "./rwp-read-budget.js";
 import * as chainHits from "./chain-hits.js";
 import { renderSlackersPage } from "./slackers-page.js";
+import { createBloodBagsApi } from "./blood-bags.js";
+import { renderBloodBagsPage } from "./blood-bags-page.js";
 import * as xanaxModel from "./xanax-model.js";
 import * as attackLedger from "./attack-ledger.js";
 import * as webauthn from "./webauthn.js";
@@ -1389,6 +1391,10 @@ export function gateMiddleware(req, res, next) {
     // The Hall of Fame climb page is public by design: Hall of Fame respect is
     // public, and the page holds nothing else.
     req.path === "/hof" || req.path.startsWith("/hof/") ||
+    // The blood-bag board brings its own Torn-key sign-in, as /war and /payouts
+    // do, and its markup holds no member data: every number comes from
+    // /api/bloodbags, which checks membership.
+    req.path === "/bloodbags" || req.path.startsWith("/bloodbags/") ||
     req.path.endsWith(".meta.js") || req.path.endsWith(".user.js") ||
     // Install assets — same public-by-design rationale as userscript
     // .user.js. Apps need to be installable without a gate cookie since
@@ -13468,6 +13474,16 @@ router.get("/slackers", (_req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
   res.set("Cache-Control", "no-store");
   return res.send(renderSlackersPage());
+});
+
+// Blood-bag board (docs/superpowers/specs/2026-10-24-faction-blood-bag-board-design.md).
+// Dead Fragment members only: the JSON checks membership, and the page is markup.
+const bloodBagsApi = createBloodBagsApi();
+router.get("/api/bloodbags", requireAuth, (req, res) => bloodBagsApi.handle(req, res));
+router.get("/bloodbags", (_req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.set("Cache-Control", "no-store");
+  return res.send(renderBloodBagsPage());
 });
 
 // Hall of Fame respect climb (docs/superpowers/specs/2026-10-19-hof-respect-climb-design.md).
