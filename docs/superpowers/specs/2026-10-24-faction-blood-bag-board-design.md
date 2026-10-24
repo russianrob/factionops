@@ -1,6 +1,6 @@
 # Faction blood-bag board (design)
 
-**Status:** approved. Settled with the owner on 2026-10-23 (EDT) over 15 questions; every answer was the recommended one ("go with your recommendations"). The owner approved the design on 2026-10-23 at about 21:05 EDT with "yes write the spec", and this spec at about 21:36 EDT with "write the plan". The plan is `docs/superpowers/plans/2026-10-24-faction-blood-bag-board.md`.
+**Status:** approved. Settled with the owner on 2026-10-23 (EDT) over 15 questions; every answer was the recommended one ("go with your recommendations"). The owner approved the design on 2026-10-23 at about 21:05 EDT with "yes write the spec", and this spec at about 21:36 EDT with "write the plan". The plan is `docs/superpowers/plans/2026-10-24-faction-blood-bag-board.md`. Amended on 2026-10-24 (EDT) with the fixes from the final review.
 **Where:** `https://tornwar.com/bloodbags`, for Dead Fragment (faction 42055).
 **New files:** `server/blood-bags.js` (the collector and the route's handler), `server/blood-bags-model.js` (the numbers), `server/pages/bloodbags.html` (the page) and `server/blood-bags-page.js` (which serves it).
 **Changed files:** `server/routes.js` (two routes, and the site gate lets `/bloodbags` through) and a start line in `server/server.js`.
@@ -84,24 +84,24 @@ The sample held no gave, loaned, returned or retrieved lines for blood bags. The
   - The next page asks for lines up to and including the oldest second already seen, and repeats are dropped by line id.
   - Checked live on 2026-10-24: Torn's `to` leaves its own second out and `from` includes its own, so the next page asks for `to` = the oldest second + 1.
   - If a page makes no progress (all of it in one second), the walk steps a second back and logs that.
-- **Errors:** Torn reports errors in the body at HTTP 200, so every response's `error` is checked. A failed poll keeps the data it has, logs, and tries again the next hour.
-- **What is kept:** only blood-bag lines, as the line id, time, player id and name, kind, blood type (or none) and count, and for a hand-out, who received it. Everything else in the news is dropped.
+- **Errors:** Torn reports errors in the body at HTTP 200, so every response's `error` is checked, and a reply without its list counts as an error, not as an empty page. A failed poll keeps the data it has, logs, and tries again the next hour.
+- **What is kept:** only blood-bag lines, as the line id, time, player id and name, kind, blood type (or none) and count, and for a hand-out, who received it. Everything else in the news is dropped. A blood-bag line in a wording the reader does not know is kept as written and logged once. Each start reads those lines again, so they count once the reader knows the wording.
 - **Where:** `data/blood-bags/42055.json`, in its own folder like `data/chain-hits/` and `data/gym-energy/`. It is written to a temporary file and renamed, by the server process, so the server's own user owns it.
 - **Two jobs, one store:** the hourly poll works down from the newest lines and the backfill works down from its saved place. Both write the same store, and repeats are dropped by line id.
-- **Cost:** about 2 calls an hour. The armoury logs about 360 action lines and a few deposit lines a day, so an hour's news fits in one page of each.
+- **Cost:** about 3 calls an hour: one page of each category, and the ranked-war list. The armoury logs about 360 action lines and a few deposit lines a day, so an hour's news fits in one page of each.
 
 ### The one-year backfill
 
 - It runs once, from the newest line back to 365 days before the day it starts, for both categories.
 - No more than 10 calls a minute.
 - It remembers where it is, so a server restart resumes it.
-- It waits while a ranked war is live and carries on after the war.
+- It waits while a ranked war is live and carries on after the war. It also waits while the war list is more than 65 minutes old (an hour's poll plus 5 minutes), so a failed read of the list cannot let it run through a war.
 - It marks itself done. "All time" then means since the date it reached back to, about October 2025.
 - **Cost:** about 1,300 calls, a little over 2 hours at 10 a minute. About 360 action lines a day comes to 3 or 4 calls per day of history; deposits are about 25 calls a year.
 
 ### Ranked-war windows
 
-- **Source:** Torn's public ranked-war list for the faction, `/v2/faction/42055/rankedwars`, refreshed once a day, and every hour while the backfill runs so it sees a war start. One call reaches back to October 2024.
+- **Source:** Torn's public ranked-war list for the faction, `/v2/faction/42055/rankedwars`, read every hour with the poll, so a war's start and end are known within the hour. One call reaches back to October 2024.
 - **A war's window:** from its `start` to its `end`. A war with no end yet is live, and its window runs to now.
 - The server's own war history begins in April 2026, which does not cover the year, so it is not used here.
 
@@ -109,9 +109,11 @@ The sample held no gave, loaned, returned or retrieved lines for blood bags. The
 
 For the chosen window and blood type, per player:
 - **given:** fills plus filled-bag deposits.
-- **used:** uses, plus hand-outs received, minus returns.
-- **used during wars:** the part of used whose time falls inside a ranked-war window.
-- **net** = given − (used − used during wars).
+- **used:** uses, plus hand-outs received, minus returns, never below zero. A return cancels use wherever it falls, so bags lent outside a war and returned during one cancel out.
+- **used during wars:** uses and hand-outs received inside a ranked-war window, minus the returns there, never below zero and never more than used.
+- **net** = given − (used − used during wars). So a return never counts as a gift.
+
+No timeframe starts before the history is complete. While the backfill runs, every timeframe starts no earlier than the point both categories have reached. Deposits fill in much sooner than actions, and would otherwise be counted without the fills and uses beside them.
 
 Typeless fills count under All types only.
 
@@ -135,8 +137,9 @@ Typeless fills count under All types only.
 
 - A former member counts in the totals and appears on no list.
 - A member who only used bags during wars has a net of zero, so they appear on no list.
-- Before the first poll, the page says the board has no data yet.
-- While the backfill runs, the page says how far back the data reaches so far, and "All time" means that far.
+- Before the first poll, the page says the board has no data yet. If that poll failed, it says so, and that it tries again every hour.
+- While the backfill runs, the page says how far back the data reaches so far. "All time" means that far, and no shorter timeframe starts before it.
+- If the member list could not be refreshed, the board uses the last one it has and says the lists may be out of date.
 - If the hourly poll has been failing, "Latest update" shows its age, so a stale board says so.
 - A live war's use counts as war use from its start to now.
 
