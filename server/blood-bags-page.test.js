@@ -112,7 +112,7 @@ test("the note says when there is no data yet, and how far back the history reac
   assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: null }),
     "History so far reaches back to 20 Oct; the rest of the year is still being filled in.");
   assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: { id: 1 } }),
-    "History so far reaches back to 20 Oct; the rest of the year is still being filled in once the ranked war ends.");
+    "History so far reaches back to 20 Oct; the rest of the year is still being filled in, slowly while the ranked war is on.");
   assert.equal(P.noteText({ updatedAt: 1, backfillDone: true, reachSec: reach }), "");
 });
 

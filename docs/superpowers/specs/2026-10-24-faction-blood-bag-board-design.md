@@ -138,7 +138,7 @@ Typeless fills count under All types only.
 - A former member counts in the totals and appears on no list.
 - A member who only used bags during wars has a net of zero, so they appear on no list.
 - Before the first poll, the page says the board has no data yet. If that poll failed, it says so, and that it tries again every hour.
-- While the backfill runs, the page says how far back the data reaches so far. "All time" means that far, and no shorter timeframe starts before it.
+- While the backfill runs, the page says how far back the data reaches so far, and during a ranked war that the rest is filling in slowly. "All time" means that far, and no shorter timeframe starts before it.
 - If the member list could not be refreshed, the board uses the last one it has and says the lists may be out of date.
 - If the hourly poll has been failing, "Latest update" shows its age, so a stale board says so.
 - A live war's use counts as war use from its start to now.
