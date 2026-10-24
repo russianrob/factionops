@@ -162,3 +162,64 @@ export function tally(lines, { fromSec, toSec, type = "all", warSpans: spans = [
   }
   return out;
 }
+
+// ── The board ──────────────────────────────────────────────────────────────
+const LIST_SIZE = 10;
+const ZERO = Object.freeze({ given: 0, used: 0, usedInWars: 0, net: 0 });
+
+// Ties go by name, ignoring case, then by id, so a tie always reads the same.
+function byName(a, b) {
+  const x = a.name.toLowerCase(), y = b.name.toLowerCase();
+  if (x !== y) return x < y ? -1 : 1;
+  return a.playerId < b.playerId ? -1 : a.playerId > b.playerId ? 1 : 0;
+}
+function ranked(rows, key) {
+  return rows.slice(0, LIST_SIZE).map((r, i) => ({ rank: i + 1, playerId: r.playerId, name: r.name, value: r[key] }));
+}
+
+/**
+ * Everything the page shows for one timeframe and blood type:
+ *   { window, type, fromSec, toSec, overview, topGiven, topNet, wall, you }
+ * lines are stored blood lines ({ ts, kind, type, qty, playerId, toId }),
+ * roster today's members ([{ playerId, name }]) and wars Torn's ranked-war list
+ * ([{ id, start, end }]). The lists hold current members only; the overview
+ * counts everyone, former members too, so its totals match the armoury.
+ */
+export function buildBoard({ lines, roster, wars, nowSec, window, type, viewerId, reachSec }) {
+  const { fromSec, toSec } = windowRange(window, nowSec, reachSec);
+  const per = tally(lines, { fromSec, toSec, type, warSpans: warSpans(wars, nowSec) });
+
+  const overview = { given: 0, used: 0, usedInWars: 0, net: 0, members: (roster || []).length };
+  for (const r of per.values()) {
+    overview.given += r.given;
+    overview.used += r.used;
+    overview.usedInWars += r.usedInWars;
+    overview.net += r.net;
+  }
+
+  const members = (roster || []).map((m) => {
+    const id = String(m.playerId);
+    return { playerId: id, name: String(m.name || id), ...(per.get(id) || ZERO) };
+  });
+  const topGiven = members.filter((m) => m.given > 0).sort((a, b) => b.given - a.given || byName(a, b));
+  const topNet = members.filter((m) => m.net > 0).sort((a, b) => b.net - a.net || byName(a, b));
+  const wall = members.filter((m) => m.net < 0).sort((a, b) => a.net - b.net || byName(a, b));
+
+  // The viewer's own line, even outside the top ten: their place among the
+  // whole roster by net. Someone not on today's roster gets no place.
+  let you = null;
+  const mine = per.get(String(viewerId));
+  if (mine && (mine.given || mine.used)) {
+    const order = members.slice().sort((a, b) => b.net - a.net || byName(a, b));
+    const at = order.findIndex((m) => m.playerId === String(viewerId));
+    you = { rank: at >= 0 ? at + 1 : null, of: members.length, ...mine };
+  }
+
+  return {
+    window, type, fromSec, toSec, overview,
+    topGiven: ranked(topGiven, "given"),
+    topNet: ranked(topNet, "net"),
+    wall: ranked(wall, "net"),
+    you,
+  };
+}

@@ -196,3 +196,82 @@ test("returning bags cancels use but never adds to net", () => {
   const acrossWar = model.tally([L("loaned", 9, 2.5, { qty: 4, toId: "1" }), L("returned", 1, 1, { qty: 4 })], sevenDays({ warSpans: spans }));
   assert.deepEqual(acrossWar.get("1"), { given: 0, used: 4, usedInWars: 4, net: 0 });
 });
+
+// ── the board ───────────────────────────────────────────────────────────────
+const member = (id, name) => ({ playerId: String(id), name });
+const board = (over = {}) => model.buildBoard({
+  lines: [], roster: [], wars: [], nowSec: NOW, window: "7d", type: "all", viewerId: "0", reachSec: at(300), ...over,
+});
+// n fills, or n uses, by one member a day ago.
+const fills = (id, n) => Array.from({ length: n }, () => L("fill", id, 1));
+const uses = (id, n) => Array.from({ length: n }, () => L("use", id, 1));
+
+test("the lists hold current members only; the overview counts everyone, former members too", () => {
+  const b = board({
+    roster: [member(1, "Ann")],
+    lines: [...fills(1, 2), ...fills(77, 5), ...uses(77, 1)],
+  });
+  assert.deepEqual(b.topGiven.map((r) => r.playerId), ["1"]);
+  assert.deepEqual(b.overview, { given: 7, used: 1, usedInWars: 0, net: 6, members: 1 });
+});
+
+test("top contributors: most given first, ties by name whatever the case, ten at most", () => {
+  const roster = Array.from({ length: 12 }, (_, i) => member(i + 1, "m" + String(i + 1).padStart(2, "0")));
+  roster[2].name = "Bea"; roster[3].name = "alf";
+  const lines = [...fills(3, 20), ...fills(4, 20)];
+  for (let i = 5; i <= 12; i++) lines.push(...fills(i, i));
+  const b = board({ roster, lines });
+  assert.equal(b.topGiven.length, 10);
+  assert.deepEqual(b.topGiven.slice(0, 3), [
+    { rank: 1, playerId: "4", name: "alf", value: 20 },
+    { rank: 2, playerId: "3", name: "Bea", value: 20 },
+    { rank: 3, playerId: "12", name: "m12", value: 12 },
+  ]);
+  assert.ok(!b.topGiven.some((r) => r.playerId === "1" || r.playerId === "2"), "nobody with nothing given");
+});
+
+test("top net lists only net above zero; the Wall of Shame only below it, lowest first, never padded", () => {
+  const b = board({
+    roster: [member(1, "Ann"), member(2, "Bob"), member(3, "Cat"), member(4, "Dan"), member(5, "Eve")],
+    lines: [...fills(1, 5), ...uses(1, 1), ...uses(2, 3), ...uses(3, 1), ...fills(4, 1), ...uses(4, 1), ...uses(5, 3)],
+  });
+  assert.deepEqual(b.topNet, [{ rank: 1, playerId: "1", name: "Ann", value: 4 }]);
+  assert.deepEqual(b.wall, [
+    { rank: 1, playerId: "2", name: "Bob", value: -3 },
+    { rank: 2, playerId: "5", name: "Eve", value: -3 },
+    { rank: 3, playerId: "3", name: "Cat", value: -1 },
+  ]);
+});
+
+test("a member who only used bags during wars is on no list, and the overview still shows the use", () => {
+  const b = board({
+    roster: [member(1, "Ann")],
+    wars: [{ id: 1, start: at(2), end: at(1) }],
+    lines: [L("use", 1, 1.5), L("use", 1, 1.5)],
+  });
+  assert.deepEqual([b.topGiven, b.topNet, b.wall], [[], [], []]);
+  assert.deepEqual(b.overview, { given: 0, used: 2, usedInWars: 2, net: 0, members: 1 });
+});
+
+test("the viewer's line ranks them by net among the whole roster, even outside the top ten", () => {
+  const roster = Array.from({ length: 15 }, (_, i) => member(i + 1, "m" + String(i + 1).padStart(2, "0")));
+  const lines = [];
+  for (let i = 1; i <= 13; i++) lines.push(...fills(i, 20 - i));
+  lines.push(...fills(14, 1), ...uses(14, 2), L("use", 14, 1, { ts: at(1.5) }));
+  const b = board({ roster, lines, viewerId: "14", wars: [{ id: 1, start: at(2), end: at(1.2) }] });
+  assert.deepEqual(b.you, { rank: 15, of: 15, given: 1, used: 3, usedInWars: 1, net: -1 });
+  assert.equal(board({ roster, lines, viewerId: "15" }).you, null, "nothing given or used in the window");
+});
+
+test("a viewer who is not on today's roster still sees their figures, unranked", () => {
+  const b = board({ roster: [member(1, "Ann")], lines: fills(99, 2), viewerId: "99" });
+  assert.deepEqual(b.you, { rank: null, of: 1, given: 2, used: 0, usedInWars: 0, net: 2 });
+});
+
+test("all time starts where the history reaches; the type filter reaches the lists", () => {
+  const roster = [member(1, "Ann")];
+  const lines = [L("fill", 1, 200, { type: "A+" }), L("fill", 1, 400, { type: "A+" }), L("fill", 1, 1, { type: "O+" })];
+  assert.equal(board({ roster, lines, window: "all" }).topGiven[0].value, 2);
+  assert.equal(board({ roster, lines, window: "all", type: "A+" }).topGiven[0].value, 1);
+  assert.deepEqual(board({ roster, lines, window: "all", type: "B-" }).topGiven, []);
+});
