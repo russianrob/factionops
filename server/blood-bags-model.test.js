@@ -194,7 +194,7 @@ test("returning bags cancels use but never adds to net", () => {
   assert.deepEqual(before.get("1"), { given: 0, used: 0, usedInWars: 0, net: 0 });
   // Lent during a war and returned after it.
   const acrossWar = model.tally([L("loaned", 9, 2.5, { qty: 4, toId: "1" }), L("returned", 1, 1, { qty: 4 })], sevenDays({ warSpans: spans }));
-  assert.deepEqual(acrossWar.get("1"), { given: 0, used: 4, usedInWars: 4, net: 0 });
+  assert.deepEqual(acrossWar.get("1"), { given: 0, used: 0, usedInWars: 0, net: 0 });
 });
 
 // ── the board ───────────────────────────────────────────────────────────────
@@ -274,4 +274,35 @@ test("all time starts where the history reaches; the type filter reaches the lis
   assert.equal(board({ roster, lines, window: "all" }).topGiven[0].value, 2);
   assert.equal(board({ roster, lines, window: "all", type: "A+" }).topGiven[0].value, 1);
   assert.deepEqual(board({ roster, lines, window: "all", type: "B-" }).topGiven, []);
+});
+
+
+// ── review fixes ────────────────────────────────────────────────────────────
+test("bags lent outside a war and returned during one cancel out, so nobody lands on the Wall of Shame for them", () => {
+  const wars = [{ id: 1, start: at(3), end: at(2) }];
+  const lines = [L("loaned", 9, 4, { qty: 4, toId: "1" }), L("returned", 1, 2.5, { qty: 4 })];
+  assert.deepEqual(model.tally(lines, sevenDays({ warSpans: model.warSpans(wars, NOW) })).get("1"),
+    { given: 0, used: 0, usedInWars: 0, net: 0 });
+  assert.deepEqual(board({ roster: [member(1, "Ann")], wars, lines }).wall, []);
+});
+
+test("returns cancel use but the war part never exceeds the total, and net never exceeds given", () => {
+  const spans = model.warSpans([{ id: 1, start: at(3), end: at(2) }], NOW);
+  // 2 used outside the war, 3 lent during it: all of it counts, the war part off net.
+  assert.deepEqual(model.tally([...uses(1, 2), L("loaned", 9, 2.5, { qty: 3, toId: "1" })], sevenDays({ warSpans: spans })).get("1"),
+    { given: 0, used: 5, usedInWars: 3, net: -2 });
+  // 5 used outside the war and 3 returned during it: 2 used, all of it outside.
+  assert.deepEqual(model.tally([...uses(1, 5), L("returned", 1, 2.5, { qty: 3 })], sevenDays({ warSpans: spans })).get("1"),
+    { given: 0, used: 2, usedInWars: 0, net: -2 });
+});
+
+test("while the history is still filling in, no timeframe starts before it", () => {
+  const reach = NOW - 5 * 3600;
+  for (const w of ["24h", "7d", "30d", "90d", "all"]) {
+    assert.deepEqual(model.windowRange(w, NOW, reach), { fromSec: reach, toSec: NOW }, w);
+  }
+  // A deposit from 3 days ago is outside every timeframe until the history reaches it.
+  const lines = [L("deposit", 1, 3, { qty: 9 }), L("fill", 1, 0.1)];
+  assert.equal(board({ roster: [member(1, "Ann")], lines, reachSec: reach }).overview.given, 1);
+  assert.equal(board({ roster: [member(1, "Ann")], lines, reachSec: at(300) }).overview.given, 10);
 });

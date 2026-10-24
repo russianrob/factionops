@@ -103,10 +103,15 @@ export function parseType(raw) {
   return TYPES.includes(t) ? t : null;
 }
 
-/** The seconds a timeframe covers, both ends included. */
+/**
+ * The seconds a timeframe covers, both ends included. None starts before
+ * reachSec, where the history is complete: while the backfill runs, deposits
+ * reach weeks further back than the rest, and would be counted alone.
+ */
 export function windowRange(window, nowSec, reachSec) {
   const days = WINDOWS[window];
-  return { fromSec: days == null ? Number(reachSec) || 0 : nowSec - days * DAY, toSec: nowSec };
+  const reach = Number(reachSec) || 0;
+  return { fromSec: days == null ? reach : Math.max(nowSec - days * DAY, reach), toSec: nowSec };
 }
 
 // ── Ranked wars ────────────────────────────────────────────────────────────
@@ -137,9 +142,11 @@ export function liveWar(wars, nowSec) {
  * in [fromSec, toSec] and whose type passes the filter. Lines with no type
  * count under "all" only. warSpans comes from warSpans().
  *
- * Use is split into outside wars and during wars, and each part stops at zero.
- * A return cancels use but is not a gift: bags lent before the window, or lent
- * during a war and returned after it, would otherwise come out as net given.
+ * Use is summed outside wars and during wars, and a return cancels use
+ * wherever it falls, so bags lent outside a war and returned during one cancel
+ * out. Total use stops at zero and the war part never exceeds it. So a return
+ * is never a gift: bags lent before the window would otherwise come out as net
+ * given.
  */
 export function tally(lines, { fromSec, toSec, type = "all", warSpans: spans = [] } = {}) {
   const sums = new Map();
@@ -156,9 +163,9 @@ export function tally(lines, { fromSec, toSec, type = "all", warSpans: spans = [
   }
   const out = new Map();
   for (const [id, s] of sums) {
-    const usedOutside = Math.max(0, s.out);
-    const usedInWars = Math.max(0, s.war);
-    out.set(id, { given: s.given, used: usedOutside + usedInWars, usedInWars, net: s.given - usedOutside });
+    const used = Math.max(0, s.out + s.war);
+    const usedInWars = Math.min(Math.max(0, s.war), used);
+    out.set(id, { given: s.given, used, usedInWars, net: s.given - (used - usedInWars) });
   }
   return out;
 }
