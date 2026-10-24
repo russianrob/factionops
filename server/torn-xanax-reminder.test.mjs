@@ -1357,6 +1357,92 @@ test('a box opened again just after Save stays open', () => {
   assert.ok(settings(w), 'the first box\'s timer went with it');
 });
 
+test('the key field\'s hint shows the saved key with all but its last 4 hidden, and asks for a key when none is saved', () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  w.menu[MENU]();
+  assert.equal(keyField(w).getAttribute('placeholder'), '************6789');
+  assert.equal(keyField(w).value || '', '', 'the field itself stays empty');
+  assert.ok(!settings(w).outerHTML.includes(KEY.slice(0, -4)), 'no more of the key than its last 4');
+  const v = page().run();
+  v.menu[MENU]();
+  assert.equal(keyField(v).getAttribute('placeholder'), 'Your API key');
+});
+
+test('the hint follows Save and Clear key at once, and a save that fails leaves it on the key still saved', () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  w.menu[MENU]();
+  keyField(w).value = 'NEWKEY1234560000';
+  press(w, 'Save');
+  assert.equal(keyField(w).getAttribute('placeholder'), '************0000', 'the new key\'s last 4, before the box closes');
+  w.advance(1000);
+  w.menu[MENU]();
+  press(w, 'Clear key');
+  assert.equal(keyField(w).getAttribute('placeholder'), 'Your API key');
+  // GM storage that drops writes of the key without a word.
+  const store = new Proxy(warStore(), { set(target, k, v) { if (k !== KEY_STORE) target[k] = v; return true; } });
+  const v = page({ store }).run();
+  v.menu[MENU]();
+  keyField(v).value = 'NEWKEY1234560000';
+  press(v, 'Save');
+  assert.match(settings(v).textContent, /Couldn't save, try again\./);
+  assert.equal(keyField(v).getAttribute('placeholder'), '************6789', 'still the saved key');
+});
+
+test('with PDA\'s key in use the hint shows its last 4, and a saved key\'s last 4 take over', () => {
+  const src = readFileSync(SRC, 'utf8').replace('###PDA-APIKEY###', 'PDAKEY0123454321');
+  const w = page({ src }).run();
+  w.menu[MENU]();
+  assert.equal(keyField(w).getAttribute('placeholder'), '************4321');
+  assert.ok(!settings(w).outerHTML.includes('PDAKEY'), 'no more of PDA\'s key than its last 4');
+  const v = page({ src, store: { [KEY_STORE]: KEY } }).run();
+  v.menu[MENU]();
+  assert.equal(keyField(v).getAttribute('placeholder'), '************6789');
+});
+
+test('the open box says what Torn found the moment Torn answers, and still closes a second after Save', async () => {
+  for (const [reply, words] of [
+    [wars(ranked(NOW - 3600)), /A key is saved\. Checked just now: ranked war on\./],
+    [{ error: { code: 2, error: 'Incorrect key' } }, /A key is saved\. Couldn't check the war time: Incorrect key\./],
+  ]) {
+    const w = page({ icons: { drug_cooldown: drug(NOW + 3600) } }).run();
+    w.menu[MENU]();
+    keyField(w).value = KEY;
+    press(w, 'Save');
+    assert.match(settings(w).textContent, /A key is saved\. Not checked yet\./);
+    w.advance(300);
+    answer(w.calls[0], reply);
+    await settle();
+    assert.match(settings(w).textContent, words, 'while the box is still open');
+    assert.match(settings(w).textContent, /Saved\./, 'and "Saved." stays');
+    w.advance(700);
+    assert.equal(settings(w), null, 'it closes a second after Save, as before');
+  }
+});
+
+test('an answer that lands after the box closes brings no box back, and one that lands in a box opened again shows there', async () => {
+  const saved = () => {
+    const w = page({ icons: { drug_cooldown: drug(NOW + 3600) } }).run();
+    w.menu[MENU]();
+    keyField(w).value = KEY;
+    press(w, 'Save');
+    w.advance(1000);
+    assert.equal(settings(w), null);
+    return w;
+  };
+  const w = saved();
+  answer(w.calls[0], wars(ranked(NOW - 3600)));
+  await settle();
+  assert.equal(settings(w), null, 'no box comes back');
+  w.menu[MENU]();
+  assert.match(settings(w).textContent, /A key is saved\. Checked just now: ranked war on\./);
+  const v = saved();
+  v.menu[MENU]();
+  assert.match(settings(v).textContent, /A key is saved\. Not checked yet\./);
+  answer(v.calls[0], wars(ranked(NOW - 3600)));
+  await settle();
+  assert.match(settings(v).textContent, /A key is saved\. Checked just now: ranked war on\./, 'the box opened again follows the answer');
+});
+
 test('the settings box says what the key is used for', () => {
   for (const store of [{}, warStore()]) {
     const w = page({ store }).run();

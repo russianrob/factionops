@@ -218,7 +218,7 @@
 
   // Asks Torn about the war, at most once every 30 minutes across all tabs. The time goes into
   // storage before the call, so another tab sees it and waits. Called by each check while the
-  // icon shows, and when a key is saved.
+  // icon shows, and when a key is saved. When Torn answers, an open settings box says so.
   function maybeAsk(nowMs) {
     const key = apiKey();
     if (!key) return;
@@ -236,11 +236,13 @@
       now.error = '';
       now.okAt = Date.now();
       writeWar(now);
+      refreshSettings();
     }, (message) => {
       // Keep the last good answer, and say why this one failed.
       const now = readWar();
       now.error = message;
       writeWar(now);
+      refreshSettings();
     });
   }
 
@@ -607,8 +609,8 @@
   // Opens from the menu ("Xanax Reminder: Settings") or a long press on the icon, over
   // everything else, laid out like the Blood Bag Reminder's settings: what a tap does during a
   // ranked war, and the API key. The key field is a plain text field (a password field sets off
-  // password managers) that starts empty: the saved key is never shown. Nothing is focused, so
-  // a phone doesn't raise its keyboard over the box.
+  // password managers) that starts empty; its grey hint shows the key in use with all but its
+  // last 4 hidden. Nothing is focused, so a phone doesn't raise its keyboard over the box.
   function openSettings() {
     closeSettings();
     closeChoice();
@@ -633,26 +635,27 @@
     const input = make('input');
     input.id = SETTINGS_ID + '-key';
     input.type = 'text';
-    input.placeholder = 'Your API key';
+    input.placeholder = keyHint();
     input.setAttribute('autocomplete', 'off');
     input.setAttribute('autocapitalize', 'off');
     input.setAttribute('spellcheck', 'false');
     const status = make('p');
-    // What the key is for comes first: someone pasting a key should know what it is used for.
+    status.id = SETTINGS_ID + '-status';
     const showStatus = () => {
-      status.textContent = 'With your API key, the script checks when your faction\'s ranked war starts and ends. '
-        + 'A Public-level key is enough. ' + keyStatus(Date.now());
+      status.textContent = statusText(Date.now());
     };
     showStatus();
     const message = make('p', '', 'tm-xanax-message');
     // After Save or Clear key. When storage kept it, the icon follows at once, the field
-    // empties (so a second Save asks Torn nothing more), and the box says so and closes a
-    // second later. When it didn't, the box says so and stays open.
+    // empties (so a second Save asks Torn nothing more) and its hint shows the key now in use,
+    // and the box says so and closes a second later. When it didn't, the box says so and stays
+    // open, with the hint as it was.
     const finish = (ok, words) => {
       message.textContent = ok ? words : 'Couldn\'t save, try again.';
       message.classList.toggle('tm-xanax-bad', !ok);
       if (!ok) return;
       input.value = '';
+      input.placeholder = keyHint();
       showStatus();
       check();
       clearTimeout(savedTimer);
@@ -718,6 +721,28 @@
     if (war.end > 0) return 'the ranked war is over';
     const nowS = nowMs / 1000;
     return nowS < war.start ? 'war starts in ' + untilText(war.start - nowS) : 'ranked war on';
+  }
+
+  // The key field's grey hint: the key in use with all but its last 4 hidden, so you can see a
+  // key is saved (or PDA's is in use) without the rest of it showing; "Your API key" when there
+  // is none.
+  function keyHint() {
+    const key = apiKey();
+    return key ? '************' + key.slice(-4) : 'Your API key';
+  }
+
+  // The line under the key field. What the key is for comes first: someone pasting a key should
+  // know what it is used for.
+  function statusText(nowMs) {
+    return 'With your API key, the script checks when your faction\'s ranked war starts and ends. '
+      + 'A Public-level key is enough. ' + keyStatus(nowMs);
+  }
+
+  // Brings the open settings box's line up to date. Called when Torn answers, so the box says
+  // what Torn found at once, even in the second before it closes after a save.
+  function refreshSettings() {
+    const status = document.getElementById(SETTINGS_ID + '-status');
+    if (status) status.textContent = statusText(Date.now());
   }
 
   // Saves the key ('' for none), and says whether storage kept it. A new key, or none, forgets
