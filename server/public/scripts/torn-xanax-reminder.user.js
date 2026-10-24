@@ -65,8 +65,19 @@
   const WAR_STORE = 'tm-xanax-reminder-war';
   // Torn is asked at most this often, across all tabs.
   const CALL_EVERY_MS = 30 * 60 * 1000;
-  // The war window: the 24 hours before the start.
+  // The war period starts this long before the war does, and lasts until Torn gives the war
+  // an end time.
   const WINDOW_S = 24 * 60 * 60;
+  // What a tap does in the war period, from the settings box: 'ask' opens the box with
+  // Armoury and Items, 'armoury' and 'items' go straight there. Anything else reads as 'ask'.
+  const WAR_TAP_STORE = 'tm-xanax-reminder-war-tap';
+  const WAR_TAPS = ['ask', 'armoury', 'items'];
+  // The end of the war line in the icon's label, for each setting.
+  const TAP_WORDS = {
+    ask: 'tap to pick the armoury or your items',
+    armoury: 'tap to open the armoury',
+    items: 'tap to open your items',
+  };
   // PDA puts your API key in place of this placeholder when it loads the script. The file must
   // hold the placeholder once only: PDA finds it by its text, and a second copy breaks the swap.
   const PDA_KEY = '###PDA-APIKEY###';
@@ -271,16 +282,32 @@
     return text.split(key).join('****');
   }
 
-  // Seconds until the war starts, in the 24 hours before it (start - 24h <= now < start), or 0
-  // outside them. Needs a key: without one, the tap always opens your items. A war with an end
-  // time is over.
-  function warSecondsLeft(nowMs) {
-    if (!apiKey()) return 0;
+  // What a tap does in the war period, as the settings box saved it.
+  function warTap() {
+    const saved = gmGet(WAR_TAP_STORE);
+    return WAR_TAPS.indexOf(saved) >= 0 ? saved : 'ask';
+  }
+
+  // The war period: { left } in the 24 hours before the start (seconds to go), { on: true }
+  // from the start until Torn gives the war an end time, or null outside it. Any end time
+  // means the war is over. Needs a key: without one, the tap always opens your items.
+  function warPhase(nowMs) {
+    if (!apiKey()) return null;
     const war = readWar();
     const nowS = nowMs / 1000;
-    if (!(war.start > 0) || war.end > 0) return 0;
-    if (nowS < war.start - WINDOW_S || nowS >= war.start) return 0;
-    return war.start - nowS;
+    if (!(war.start > 0) || war.end > 0 || nowS < war.start - WINDOW_S) return null;
+    return nowS < war.start ? { left: war.start - nowS } : { on: true };
+  }
+
+  // The war period in words: "War starts in 5h 12m", or "Ranked war on".
+  function phaseText(phase) {
+    return phase.on ? 'Ranked war on' : 'War starts in ' + untilText(phase.left);
+  }
+
+  // Where the icon's link points: the armoury in the war period when that is the setting, your
+  // items otherwise. Each check sets it, so it follows the war, the setting and the key.
+  function linkTarget(nowMs) {
+    return warPhase(nowMs) && warTap() === 'armoury' ? ARMOURY_URL : ITEMS_URL;
   }
 
   // "5h 12m", or "45m" under an hour. Minutes round up, so it never says 0m.
@@ -349,8 +376,8 @@
   // there is never a war line or an error line.
   function labelLines(nowMs) {
     const lines = [LABEL];
-    const left = warSecondsLeft(nowMs);
-    if (left) lines.push('War starts in ' + untilText(left) + ': tap to pick the armoury or your items');
+    const phase = warPhase(nowMs);
+    if (phase) lines.push(phaseText(phase) + ': ' + TAP_WORDS[warTap()]);
     const error = apiKey() ? readWar().error : '';
     if (error) lines.push('Couldn\'t check the war time: ' + error);
     return lines;
@@ -438,8 +465,9 @@
   let pressTimer = null;
   let longPressed = false;
 
-  // The icon's link opens your items. In the war window the tap opens the box instead, and a
-  // second tap closes it. The script never clicks anything itself.
+  // The icon's link opens your items, or the armoury in the war period when that is the
+  // setting. With "ask each time", a tap in the war period opens the box instead, and a second
+  // tap closes it. The script never clicks anything itself.
   function onTap(e) {
     if (longPressed) {
       longPressed = false;
@@ -451,20 +479,21 @@
       closeChoice();
       return;
     }
-    const left = warSecondsLeft(Date.now());
-    if (!left) return;
+    const phase = warPhase(Date.now());
+    if (!phase || warTap() !== 'ask') return;
     e.preventDefault();
-    openChoice(left);
+    openChoice(phase);
   }
 
-  // A box under the icon: when the war starts, and two plain links, Armoury and Items.
-  function openChoice(left) {
+  // A box under the icon: the war's time, or that it is on, and two plain links, Armoury and
+  // Items.
+  function openChoice(phase) {
     closeChoice();
     hideTip();
     choice = document.createElement('div');
     choice.id = CHOICE_ID;
     const title = document.createElement('b');
-    title.textContent = 'War starts in ' + untilText(left);
+    title.textContent = phaseText(phase);
     choice.appendChild(title);
     [['Armoury', ARMOURY_URL], ['Items', ITEMS_URL]].forEach((pair) => {
       const link = document.createElement('a');
@@ -484,12 +513,13 @@
     choice = null;
   }
 
-  // Each check: the box closes when the window does, and its time stays current.
+  // Each check: the box closes when the war period ends or the setting stops being "ask each
+  // time", and its first line stays current.
   function syncChoice(nowMs) {
     if (!choice) return;
-    const left = warSecondsLeft(nowMs);
-    if (!left) closeChoice();
-    else choice.firstChild.textContent = 'War starts in ' + untilText(left);
+    const phase = warPhase(nowMs);
+    if (!phase || warTap() !== 'ask') closeChoice();
+    else choice.firstChild.textContent = phaseText(phase);
   }
 
   function startPress(e) {
@@ -705,6 +735,8 @@
       if (!icon) icon = buildIcon();
       if (icon.parentNode !== row) place(row);
       maybeAsk(nowMs);
+      const href = linkTarget(nowMs);
+      if (icon.firstChild.getAttribute('href') !== href) icon.firstChild.setAttribute('href', href);
       setLabel(labelLines(nowMs));
       syncChoice(nowMs);
     } catch (e) {

@@ -448,6 +448,8 @@ const WAR_STORE = 'tm-xanax-reminder-war';
 const START = NOW + 5 * 3600 + 12 * 60;   // a ranked war starting 5h 12m after the test clock
 const WAR_LINE = 'War starts in 5h 12m: tap to pick the armoury or your items';
 const URL = 'https://api.torn.com/v2/faction/wars?key=' + KEY + '&comment=xanax-reminder';
+// The settings box's choice for a tap during a ranked war.
+const WAR_TAP_STORE = 'tm-xanax-reminder-war-tap';
 // Torn's answer to /v2/faction/wars, and its ranked war (end is null until the war ends).
 const wars = (ranked) => ({ pacts: [], wars: { ranked, raids: [], territory: [] } });
 const ranked = (start, end = null) => ({ war_id: 51418, start, end, target: 3000, winner: null, factions: [] });
@@ -500,15 +502,15 @@ test('in the 24 hours before the war, the label says when it starts', async () =
   assert.equal(w.label(), LABEL + '. ' + WAR_LINE);
 });
 
-test('the war line runs from 24 hours before the start until the start', async () => {
+test('the war line runs from 24 hours before the start until Torn gives the war an end time', async () => {
   const cases = [
     [NOW + 86400, 'War starts in 24h 0m: tap to pick the armoury or your items', 'exactly 24 hours before'],
     [NOW + 86401, null, 'just over 24 hours before'],
     [NOW + 5 * 3600 + 11 * 60 + 30, WAR_LINE, 'minutes round up'],
     [NOW + 45 * 60, 'War starts in 45m: tap to pick the armoury or your items', 'under an hour'],
     [NOW + 30, 'War starts in 1m: tap to pick the armoury or your items', 'under a minute: never 0m'],
-    [NOW, null, 'at the start'],
-    [NOW - 3600, null, 'once it has started'],
+    [NOW, 'Ranked war on: tap to pick the armoury or your items', 'at the start'],
+    [NOW - 3600, 'Ranked war on: tap to pick the armoury or your items', 'once it has started'],
   ];
   for (const [start, line, why] of cases) {
     const w = page({ store: { [KEY_STORE]: KEY } }).run();
@@ -540,7 +542,12 @@ test('the window opens and closes as the clock moves, without a reload', async (
   assert.match(w.label(), /War starts in 24h 0m/, 'open');
   w.clock.ms += 86400 * 1000;
   w.check();
-  assert.equal(w.label(), LABEL, 'the war has started');
+  assert.match(w.label(), /Ranked war on/, 'the war has started, and is still on');
+  assert.equal(w.calls.length, 2, 'that check asked Torn again');
+  answer(w.calls[1], wars(ranked(NOW + 86400 + 600, Math.floor(w.clock.ms / 1000) - 60)));
+  await settle();
+  w.check();
+  assert.equal(w.label(), LABEL, 'Torn gave it an end time');
 });
 
 test('at most one call per 30 minutes, even with two tabs sharing storage', () => {
@@ -778,13 +785,18 @@ test('in the war window, a tap opens a box with Armoury and Items', () => {
   assert.equal(w.link().getAttribute('href'), ITEMS, 'the icon still points at your items');
 });
 
-test('from the war\'s start, a tap goes straight to your items again, and an open box closes', () => {
+test('from the war\'s start the box says the war is on, and once Torn gives it an end time a tap opens your items again', async () => {
   const w = page({ store: warStore() }).run();
   fire(w, w.link(), 'click');
   assert.ok(box(w));
   w.clock.ms = START * 1000;
   w.check();
-  assert.equal(box(w), null, 'the box closed at the start');
+  assert.equal(box(w).querySelector('b').textContent, 'Ranked war on', 'the box stays, and says so');
+  w.clock.ms += 120 * 1000;
+  answer(w.calls[0], wars(ranked(START, START + 60)));
+  await settle();
+  w.check();
+  assert.equal(box(w), null, 'the box closed when the war ended');
   assert.equal(fire(w, w.link(), 'click').defaultPrevented, false);
 });
 
@@ -794,6 +806,82 @@ test('the open box keeps its time current', () => {
   w.clock.ms += 12 * 60 * 1000;
   w.check();
   assert.equal(box(w).querySelector('b').textContent, 'War starts in 5h 0m');
+});
+
+test('during the war, a tap opens the box under "Ranked war on", with Armoury and Items', () => {
+  const w = page({ store: warStore(NOW - 3600) }).run();
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, true);
+  assert.equal(box(w).querySelector('b').textContent, 'Ranked war on');
+  assert.deepEqual([...box(w).querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')]),
+    [['Armoury', ARMOURY], ['Items', ITEMS]]);
+  assert.equal(w.label(), LABEL + '. Ranked war on: tap to pick the armoury or your items');
+});
+
+test('set to the armoury, the link points at the armoury from 24 hours before the war until it ends, with no box', () => {
+  const w = page({ store: { ...warStore(NOW + 2 * 86400), [WAR_TAP_STORE]: 'armoury' } }).run();
+  assert.equal(w.link().getAttribute('href'), ITEMS, 'two days before: your items');
+  const war = (start, end = 0) => {
+    w.store[WAR_STORE] = JSON.stringify({ at: w.clock.ms, start, end, error: '' });
+    w.check();
+  };
+  war(START);
+  assert.equal(w.link().getAttribute('href'), ARMOURY, 'in the 24 hours before');
+  assert.equal(w.label(), LABEL + '. War starts in 5h 12m: tap to open the armoury');
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, false, 'the tap follows the link');
+  assert.equal(box(w), null, 'and opens no box');
+  war(NOW - 3600);
+  assert.equal(w.link().getAttribute('href'), ARMOURY, 'during the war');
+  assert.equal(w.label(), LABEL + '. Ranked war on: tap to open the armoury');
+  war(NOW - 3600, NOW - 60);
+  assert.equal(w.link().getAttribute('href'), ITEMS, 'once it has an end time');
+  assert.equal(w.label(), LABEL);
+});
+
+test('set to your items, a tap goes straight to your items all through the war, with no box', () => {
+  const w = page({ store: { ...warStore(NOW - 3600), [WAR_TAP_STORE]: 'items' } }).run();
+  assert.equal(w.link().getAttribute('href'), ITEMS);
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, false);
+  assert.equal(box(w), null);
+  assert.equal(w.label(), LABEL + '. Ranked war on: tap to open your items');
+});
+
+test('a war with an end time is over, even when that time is still to come', () => {
+  const store = { ...warStore(), [WAR_TAP_STORE]: 'armoury',
+    [WAR_STORE]: JSON.stringify({ at: NOW * 1000, start: NOW - 3600, end: NOW + 3600, error: '' }) };
+  const w = page({ store }).run();
+  assert.equal(w.label(), LABEL);
+  assert.equal(w.link().getAttribute('href'), ITEMS);
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, false);
+});
+
+test('a stored tap setting the script doesn\'t know reads as ask each time', () => {
+  for (const tap of ['bogus', '', 'ARMOURY', 1]) {
+    const w = page({ store: { ...warStore(NOW - 3600), [WAR_TAP_STORE]: tap } }).run();
+    assert.equal(fire(w, w.link(), 'click').defaultPrevented, true, String(tap));
+    assert.ok(box(w), String(tap));
+  }
+});
+
+test('the armoury link survives Torn redrawing the row, and goes back to your items when the setting or the key goes', () => {
+  const w = page({ sidebar: 'Fly-out, desktop', store: { ...warStore(NOW - 3600), [WAR_TAP_STORE]: 'armoury' } }).run();
+  assert.equal(w.link().getAttribute('href'), ARMOURY);
+  const old = w.row();
+  const fresh = w.document.createElement('ul');
+  fresh.className = old.className;
+  fresh.innerHTML = TORN_ICONS;
+  old.replaceWith(fresh);
+  w.check();
+  assert.equal(w.icon().parentNode, fresh);
+  assert.equal(w.link().getAttribute('href'), ARMOURY, 'after the redraw');
+  w.store[WAR_TAP_STORE] = 'ask';
+  w.check();
+  assert.equal(w.link().getAttribute('href'), ITEMS, 'the setting changed');
+  w.store[WAR_TAP_STORE] = 'armoury';
+  w.check();
+  assert.equal(w.link().getAttribute('href'), ARMOURY);
+  delete w.store[KEY_STORE];
+  w.check();
+  assert.equal(w.link().getAttribute('href'), ITEMS, 'the key went');
 });
 
 test('with no key, a tap goes straight to your items, even with a war time saved', () => {
