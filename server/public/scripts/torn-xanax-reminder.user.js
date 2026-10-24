@@ -44,7 +44,7 @@
   const STYLE_ID = 'tm-xanax-reminder-styles';
   const TIP_ID = 'tm-xanax-reminder-tip';
   const CHOICE_ID = 'tm-xanax-reminder-choice';
-  const KEYBOX_ID = 'tm-xanax-reminder-key';
+  const SETTINGS_ID = 'tm-xanax-reminder-settings';
   // The Blood Bag Reminder's icon. When it is in the row, the Xanax goes right after it.
   const BLOODBAG_ID = 'tm-full-life-bloodbag';
   // Torn's own Xanax picture (item 206). It is 100 x 50.
@@ -57,14 +57,16 @@
   // comes first on every page.
   const ROW_SELECTOR = '#sidebar ul[class*="status-icons"], #sidebar ul[class*="statusIcons___"]';
   const POLL_MS = 2000;
-  // A press this long opens the key box, as the blood bag's settings do.
+  // A press this long opens the settings box, as the blood bag's settings do.
   const LONG_PRESS_MS = 500;
   const LABEL = 'Drug cooldown over: Xanax ready';
-  // GM storage: the key from the key box, and what Torn last said about the war.
+  // GM storage: the key from the settings box, and what Torn last said about the war.
   const KEY_STORE = 'tm-xanax-reminder-key';
   const WAR_STORE = 'tm-xanax-reminder-war';
   // Torn is asked at most this often, across all tabs.
   const CALL_EVERY_MS = 30 * 60 * 1000;
+  // After a save, the settings box says so for this long, then closes.
+  const SAVED_MS = 1000;
   // The war period starts this long before the war does, and lasts until Torn gives the war
   // an end time.
   const WINDOW_S = 24 * 60 * 60;
@@ -109,6 +111,12 @@
     return false;
   }
 
+  // True when storage kept the value: saved, then read back the same. Some hosts drop a write
+  // without throwing.
+  function saveChecked(name, value) {
+    return gmSet(name, value) && gmGet(name) === value;
+  }
+
   // ===== TORN'S SIDEBAR DATA =====
 
   // statusIcons.icons from the data both of Torn's sidebars save to sessionStorage on every
@@ -141,7 +149,7 @@
 
   // ===== THE WAR TIME =====
 
-  // The key for Torn's API: one saved in the key box beats the one PDA gives. '' means none.
+  // The key for Torn's API: one saved in the settings box beats the one PDA gives. '' means none.
   function apiKey() {
     const saved = gmGet(KEY_STORE);
     if (typeof saved === 'string' && saved.trim()) return saved.trim();
@@ -149,8 +157,8 @@
   }
 
   // What Torn last said about your faction's ranked war, shared by every tab: at = when a tab
-  // last asked (ms), start and end = the war's times (Unix seconds, 0 for none), error = why
-  // the last ask failed ('' if it didn't).
+  // last asked (ms), okAt = when Torn last answered (ms, 0 for not yet), start and end = the
+  // war's times (Unix seconds, 0 for none), error = why the last ask failed ('' if it didn't).
   function readWar() {
     const shared = parseWar(gmGet(WAR_STORE));
     // The tab's own copy, kept only while storage won't save (see writeWar). It wins unless
@@ -176,6 +184,7 @@
     if (!v || typeof v !== 'object') v = {};
     return {
       at: Number(v.at) || 0,
+      okAt: Number(v.okAt) || 0,
       start: Number(v.start) || 0,
       end: Number(v.end) || 0,
       error: typeof v.error === 'string' ? v.error : '',
@@ -202,7 +211,8 @@
   let askedAt = null;
 
   // Asks Torn about the war, at most once every 30 minutes across all tabs. The time goes into
-  // storage before the call, so another tab sees it and waits. Only called while the icon shows.
+  // storage before the call, so another tab sees it and waits. Called by each check while the
+  // icon shows, and when a key is saved.
   function maybeAsk(nowMs) {
     const key = apiKey();
     if (!key) return;
@@ -218,6 +228,7 @@
       now.start = ranked ? Number(ranked.start) || 0 : 0;
       now.end = ranked ? Number(ranked.end) || 0 : 0;
       now.error = '';
+      now.okAt = Date.now();
       writeWar(now);
     }, (message) => {
       // Keep the last good answer, and say why this one failed.
@@ -310,11 +321,21 @@
     return warPhase(nowMs) && warTap() === 'armoury' ? ARMOURY_URL : ITEMS_URL;
   }
 
-  // "5h 12m", or "45m" under an hour. Minutes round up, so it never says 0m.
-  function untilText(seconds) {
-    const mins = Math.max(1, Math.ceil(seconds / 60));
+  // "5h 12m", or "45m" under an hour.
+  function hmText(mins) {
     const h = Math.floor(mins / 60);
     return h > 0 ? h + 'h ' + (mins % 60) + 'm' : mins + 'm';
+  }
+
+  // Time to go. Minutes round up, so it never says 0m.
+  function untilText(seconds) {
+    return hmText(Math.max(1, Math.ceil(seconds / 60)));
+  }
+
+  // Time since: "just now" under a minute, then "12m ago" (minutes round down).
+  function agoText(ms) {
+    const mins = Math.floor(ms / 60000);
+    return mins < 1 ? 'just now' : hmText(mins) + ' ago';
   }
 
   // ===== THE ICON =====
@@ -345,7 +366,7 @@
       if (keyboardFocus(a)) showTip();
     });
     a.addEventListener('blur', hideTip);
-    // The tap, and the long press that opens the key box.
+    // The tap, and the long press that opens the settings box.
     a.addEventListener('click', onTap);
     a.addEventListener('touchstart', startPress, { passive: true });
     a.addEventListener('touchend', endPress);
@@ -530,7 +551,7 @@
     pressTimer = setTimeout(() => {
       pressTimer = null;
       longPressed = true;
-      openKeyBox();
+      openSettings();
     }, LONG_PRESS_MS);
   }
 
@@ -545,7 +566,7 @@
     if (longPressed && e.cancelable) e.preventDefault();
   }
 
-  // The phone's own long-press menu for links would cover the key box.
+  // The phone's own long-press menu for links would cover the settings box.
   function onContextMenu(e) {
     if (pressTimer || longPressed) e.preventDefault();
   }
@@ -559,7 +580,7 @@
   function onKeyDown(e) {
     if (e.key !== 'Escape') return;
     closeChoice();
-    closeKeyBox();
+    closeSettings();
   }
 
   // A scroll of the page, or of anything that holds the icon, would leave the box and the
@@ -572,94 +593,158 @@
     closeChoice();
   }
 
-  // ===== THE KEY BOX =====
+  // ===== THE SETTINGS BOX =====
 
-  // Opens from the menu ("Xanax Reminder: Set API key") or a long press on the icon, over
-  // everything else. The field is a plain text field (a password field sets off password
-  // managers) that starts empty: the saved key is never shown.
-  function openKeyBox() {
-    closeKeyBox();
+  // The timer that closes the settings box a second after a save.
+  let savedTimer = null;
+
+  // Opens from the menu ("Xanax Reminder: Settings") or a long press on the icon, over
+  // everything else, laid out like the Blood Bag Reminder's settings: what a tap does during a
+  // ranked war, and the API key. The key field is a plain text field (a password field sets off
+  // password managers) that starts empty: the saved key is never shown. Nothing is focused, so
+  // a phone doesn't raise its keyboard over the box.
+  function openSettings() {
+    closeSettings();
     closeChoice();
     hideTip();
     ensureStyles();
-    const overlay = document.createElement('div');
-    overlay.id = KEYBOX_ID;
-    const panel = document.createElement('div');
-    panel.className = 'tm-xanax-panel';
-    const title = document.createElement('b');
-    title.textContent = 'Torn Xanax Reminder';
-    const about = document.createElement('p');
-    about.textContent = 'With your API key, the script checks when your faction\'s next ranked war starts. '
-      + 'In the 24 hours before it, a tap on the icon lets you pick the armoury or your items. '
-      + 'A Public-level key is enough.';
-    const status = document.createElement('p');
-    status.textContent = keyStatus();
-    const input = document.createElement('input');
+    const overlay = make('div');
+    overlay.id = SETTINGS_ID;
+    const panel = make('div', '', 'tm-xanax-panel');
+    const head = make('div', '', 'tm-xanax-head');
+    head.appendChild(make('b', 'Xanax Reminder Settings'));
+    head.appendChild(button('x', closeSettings));
+    // The war list, showing the saved choice.
+    const list = make('select');
+    list.id = SETTINGS_ID + '-war';
+    const current = warTap();
+    [['ask', 'Ask each time'], ['armoury', 'Faction Armoury (Drugs)'], ['items', 'Your Items (Drugs)']].forEach((pair) => {
+      const option = make('option', pair[1]);
+      option.value = pair[0];
+      if (pair[0] === current) option.selected = true;
+      list.appendChild(option);
+    });
+    const input = make('input');
+    input.id = SETTINGS_ID + '-key';
     input.type = 'text';
     input.placeholder = 'Your API key';
     input.setAttribute('autocomplete', 'off');
     input.setAttribute('autocapitalize', 'off');
     input.setAttribute('spellcheck', 'false');
+    const status = make('p');
+    const showStatus = () => {
+      status.textContent = 'A Public-level key is enough. ' + keyStatus(Date.now());
+    };
+    showStatus();
+    const message = make('p', '', 'tm-xanax-message');
+    // After Save or Clear key. When storage kept it, the icon follows at once, the field
+    // empties (so a second Save asks Torn nothing more), and the box says so and closes a
+    // second later. When it didn't, the box says so and stays open.
+    const finish = (ok, words) => {
+      message.textContent = ok ? words : 'Couldn\'t save, try again.';
+      message.classList.toggle('tm-xanax-bad', !ok);
+      if (!ok) return;
+      input.value = '';
+      showStatus();
+      check();
+      clearTimeout(savedTimer);
+      savedTimer = setTimeout(closeSettings, SAVED_MS);
+    };
+    // Save keeps the war choice, and the key when one is typed: an empty field keeps the saved
+    // key, and only Clear key removes it.
+    const save = () => {
+      const picked = WAR_TAPS.indexOf(list.value) >= 0 ? list.value : 'ask';
+      const key = String(input.value || '').trim();
+      finish(saveChecked(WAR_TAP_STORE, picked) && (!key || setKey(key)), 'Saved.');
+    };
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') saveKey(input.value);
+      if (e.key === 'Enter') save();
     });
-    const buttons = document.createElement('div');
-    buttons.className = 'tm-xanax-buttons';
-    buttons.appendChild(button('Save', () => saveKey(input.value)));
-    buttons.appendChild(button('Clear', () => setKey('')));
-    buttons.appendChild(button('Cancel', closeKeyBox));
-    [title, about, status, input, buttons].forEach((el) => panel.appendChild(el));
+    const buttons = make('div', '', 'tm-xanax-buttons');
+    buttons.appendChild(button('Clear key', () => finish(setKey(''), 'Key cleared.'), 'tm-xanax-clear'));
+    buttons.appendChild(button('Cancel', closeSettings));
+    buttons.appendChild(button('Save', save, 'tm-xanax-save'));
+    const body = make('div', '', 'tm-xanax-body');
+    [
+      label('During a ranked war:', list), list,
+      make('p', 'What a tap on the icon does from 24 hours before your faction\'s ranked war until it ends. '
+        + 'The rest of the time, a tap opens your items. A long press on the icon opens these settings.'),
+      label('API key:', input), input, status, message, buttons,
+    ].forEach((el) => body.appendChild(el));
+    panel.appendChild(head);
+    panel.appendChild(body);
     overlay.appendChild(panel);
     // A tap on the dark area around the box is Cancel.
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) closeKeyBox();
+      if (e.target === overlay) closeSettings();
     });
     document.body.appendChild(overlay);
-    try {
-      input.focus();
-    } catch (e) {
-      // Some hosts can't focus from here; the field is still there to tap.
-    }
   }
 
-  // Whether a key is saved, or PDA's is in use, never the key itself. With a key in use, it
-  // also says why the last check failed: on a phone the tooltip never opens, so this is where
-  // a bad key shows.
-  function keyStatus() {
+  // The line under the key field: whether a key is saved, or PDA's is in use, never the key
+  // itself; then what Torn last said and how long ago, or why the last check failed. On a phone
+  // the tooltip never opens, so this is where a bad key, or an answer gone stale, shows.
+  function keyStatus(nowMs) {
     const saved = gmGet(KEY_STORE);
-    let text = 'No key saved.';
+    let text = 'No key saved. The war choice needs one: until then, a tap always opens your items.';
     if (typeof saved === 'string' && saved.trim()) text = 'A key is saved.';
     else if (HAS_PDA_KEY) text = 'Using the key Torn PDA gives the script.';
-    const error = apiKey() ? readWar().error : '';
-    return error ? text + ' Couldn\'t check the war time: ' + error : text;
+    if (!apiKey()) return text;
+    const war = readWar();
+    // Only Torn's answer sets a war start, so a record with one but no answer time (saved before
+    // the script kept that time) did have an answer: "earlier".
+    const answered = war.okAt > 0 || war.start > 0;
+    const when = war.okAt > 0 ? agoText(nowMs - war.okAt) : 'earlier';
+    const last = answered ? when + ': ' + warWords(war, nowMs) + '.' : '';
+    if (war.error) return text + ' Couldn\'t check the war time: ' + war.error + '.' + (last ? ' Torn last answered ' + last : '');
+    return text + (last ? ' Checked ' + last : ' Not checked yet.');
   }
 
-  // Save with an empty field changes nothing: only Clear removes a key.
-  function saveKey(value) {
-    const key = String(value || '').trim();
-    if (key) setKey(key);
-    else closeKeyBox();
+  // What Torn's last answer means now, in words for the settings box.
+  function warWords(war, nowMs) {
+    if (!(war.start > 0)) return 'no ranked war set';
+    if (war.end > 0) return 'the ranked war is over';
+    const nowS = nowMs / 1000;
+    return nowS < war.start ? 'war starts in ' + untilText(war.start - nowS) : 'ranked war on';
   }
 
-  // Saves the key ('' for none) and forgets what Torn said with the old one, so the next check
-  // asks again straight away.
+  // Saves the key ('' for none), and says whether storage kept it. A new key, or none, forgets
+  // what Torn said with the old one and asks Torn at once, even while the cooldown runs, so the
+  // settings box can say whether the key works.
   function setKey(value) {
-    gmSet(KEY_STORE, String(value || '').trim());
-    writeWar({ at: 0, start: 0, end: 0, error: '' });
+    if (!saveChecked(KEY_STORE, String(value || '').trim())) return false;
+    writeWar({ at: 0, okAt: 0, start: 0, end: 0, error: '' });
     askedAt = null;
-    closeKeyBox();
+    maybeAsk(Date.now());
+    return true;
   }
 
-  function button(label, onClick) {
-    const b = document.createElement('button');
+  // An element with its text and class; either may be left out.
+  function make(tag, text, className) {
+    const el = document.createElement(tag);
+    if (text) el.textContent = text;
+    if (className) el.className = className;
+    return el;
+  }
+
+  // A label for one of the box's controls.
+  function label(text, control) {
+    const el = make('label', text);
+    el.setAttribute('for', control.id);
+    return el;
+  }
+
+  function button(words, onClick, className) {
+    const b = make('button', words, className);
     b.type = 'button';
-    b.textContent = label;
     b.addEventListener('click', onClick);
     return b;
   }
 
-  function closeKeyBox() {
-    const box = document.getElementById(KEYBOX_ID);
+  function closeSettings() {
+    clearTimeout(savedTimer);
+    savedTimer = null;
+    const box = document.getElementById(SETTINGS_ID);
     if (box) box.remove();
   }
 
@@ -694,20 +779,30 @@
     '#' + TIP_ID + '.tm-xanax-under::after { top: -4px; bottom: auto; }',
   ].join('\n');
 
-  // The Armoury/Items box in Torn's tooltip look, and the key box.
+  // The Armoury/Items box in Torn's tooltip look, and the settings box.
   const BOX_CSS = [
     // No text selection and no iPhone link menu on a long press of the icon.
     '#' + ICON_ID + ' a { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }',
     '#' + CHOICE_ID + ' { position: fixed; z-index: 99999; box-sizing: border-box; padding: 8px; border-radius: 4px; background: #444; color: #ddd; box-shadow: 0 0 2px 0 rgba(0,0,0,.65); font: 400 12px/14px Arial, sans-serif; text-align: center; white-space: nowrap; }',
     '#' + CHOICE_ID + ' b { display: block; margin-bottom: 6px; font-weight: 700; }',
     '#' + CHOICE_ID + ' a { display: inline-block; margin: 0 3px; padding: 6px 12px; border: 1px solid #666; border-radius: 4px; background: #2e2e2e; color: #fff; font-weight: 700; text-decoration: none; }',
-    '#' + KEYBOX_ID + ' { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 100000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.7); }',
-    '#' + KEYBOX_ID + ' .tm-xanax-panel { box-sizing: border-box; width: 320px; max-width: calc(100vw - 32px); padding: 14px; border-radius: 8px; background: #2e2e2e; color: #ddd; font: 400 13px/17px Arial, sans-serif; text-align: left; }',
-    '#' + KEYBOX_ID + ' p { margin: 8px 0; }',
-    // 16px, or an iPhone zooms in when the field is tapped.
-    '#' + KEYBOX_ID + ' input { box-sizing: border-box; width: 100%; padding: 6px 8px; border: 1px solid #666; border-radius: 4px; background: #1d1d1d; color: #fff; font: 16px monospace; }',
-    '#' + KEYBOX_ID + ' .tm-xanax-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }',
-    '#' + KEYBOX_ID + ' button { padding: 6px 12px; border: 1px solid #666; border-radius: 4px; background: #444; color: #fff; font: 700 12px Arial, sans-serif; cursor: pointer; }',
+    '#' + SETTINGS_ID + ' { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 100000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.8); }',
+    '#' + SETTINGS_ID + ' .tm-xanax-panel { box-sizing: border-box; width: 450px; max-width: 90%; max-height: 90%; overflow-y: auto; border-radius: 10px; background: #2e2e2e; color: #ccc; box-shadow: 0 4px 20px rgba(0,0,0,.5); font: 400 14px/18px Arial, sans-serif; text-align: left; }',
+    '#' + SETTINGS_ID + ' .tm-xanax-head { display: flex; align-items: center; justify-content: space-between; padding: 15px 20px; border-radius: 10px 10px 0 0; background: linear-gradient(to bottom, #1a1a1a, #2a2a2a); }',
+    '#' + SETTINGS_ID + ' .tm-xanax-head b { color: #fff; font-size: 18px; }',
+    '#' + SETTINGS_ID + ' .tm-xanax-head button { width: 30px; height: 30px; padding: 0; border: none; background: none; color: #aaa; font: 24px Arial, sans-serif; cursor: pointer; }',
+    '#' + SETTINGS_ID + ' .tm-xanax-body { padding: 20px; }',
+    '#' + SETTINGS_ID + ' label { display: block; margin-bottom: 5px; color: #aaa; }',
+    // 16px, or an iPhone zooms in when the list or the field is tapped.
+    '#' + SETTINGS_ID + ' select, #' + SETTINGS_ID + ' input { box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid #444; border-radius: 5px; background: #1a1a1a; color: #fff; font: 16px Arial, sans-serif; }',
+    '#' + SETTINGS_ID + ' input { font-family: monospace; }',
+    '#' + SETTINGS_ID + ' p { margin: 5px 0 20px; color: #888; font-size: 12px; line-height: 16px; }',
+    '#' + SETTINGS_ID + ' p.tm-xanax-message { margin: 0 0 10px; color: #a3c248; font-size: 14px; }',
+    '#' + SETTINGS_ID + ' p.tm-xanax-bad { color: #e8735a; }',
+    '#' + SETTINGS_ID + ' .tm-xanax-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }',
+    '#' + SETTINGS_ID + ' .tm-xanax-buttons button { padding: 10px 20px; border: none; border-radius: 5px; background: linear-gradient(to bottom, #555, #777); color: #fff; font: 14px Arial, sans-serif; cursor: pointer; }',
+    '#' + SETTINGS_ID + ' .tm-xanax-buttons .tm-xanax-clear { margin-right: auto; padding: 10px 12px; background: none; color: #aaa; }',
+    '#' + SETTINGS_ID + ' .tm-xanax-buttons .tm-xanax-save { background: linear-gradient(to bottom, #799427, #a3c248); }',
   ].join('\n');
 
   function ensureStyles() {
@@ -746,9 +841,9 @@
 
   // ===== START =====
 
-  // The script's menu, where the host has one. A long press on the icon opens the key box too.
+  // The script's menu, where the host has one. A long press on the icon opens the settings box too.
   try {
-    if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Xanax Reminder: Set API key', openKeyBox);
+    if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Xanax Reminder: Settings', openSettings);
   } catch (e) {
     // PDA once crashed here. Without a menu, the long press still works.
   }

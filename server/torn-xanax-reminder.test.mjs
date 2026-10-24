@@ -748,21 +748,26 @@ test('an answer of an unexpected shape gives no war line and never breaks the ch
 });
 
 // ---------------------------------------------------------------------------------------------
-// The tap, the box and the key box
+// The tap, the box and the settings box
 // ---------------------------------------------------------------------------------------------
 
 const ARMOURY = 'https://www.torn.com/factions.php?step=your&type=1#/tab=armoury&start=0&sub=drugs';
 const CHOICE = 'tm-xanax-reminder-choice';
-const KEYBOX = 'tm-xanax-reminder-key';
+const SETTINGS = 'tm-xanax-reminder-settings';
 // The script's one menu entry. It names the script, because a host's menu may list every
 // script's entries together, as the warboard app's does.
-const MENU = 'Xanax Reminder: Set API key';
+const MENU = 'Xanax Reminder: Settings';
 // GM storage as an earlier answer from Torn left it, checked just now: a key, and a war
 // starting at `start` (in the window by default).
 const warStore = (start = START) => ({ [KEY_STORE]: KEY, [WAR_STORE]: JSON.stringify({ at: NOW * 1000, start, end: 0, error: '' }) });
 const box = (w) => w.document.getElementById(CHOICE);
-const keyBox = (w) => w.document.getElementById(KEYBOX);
-const keyButtons = (w) => [...keyBox(w).querySelectorAll('button')];
+const settings = (w) => w.document.getElementById(SETTINGS);
+// The settings box's key field; a tap on one of its buttons, found by its words; and a pick
+// from its war list, as a tap on the list makes it. Only the picked option is set: setting one
+// takes the mark off the others, as in a browser.
+const keyField = (w) => settings(w).querySelector('input');
+const press = (w, words) => fire(w, [...settings(w).querySelectorAll('button')].find((b) => b.textContent === words), 'click');
+const pick = (w, value) => { settings(w).querySelector('option[value="' + value + '"]').selected = true; };
 const escape = (w) => fire(w, w.document.body, 'keydown', { key: 'Escape' });
 
 test('outside the war window, a tap follows the link to your items and opens no box', () => {
@@ -923,7 +928,7 @@ test('the tap that opens the box doesn\'t close it', () => {
   fire(w, w.link(), 'click');
   w.advance(1000);
   assert.ok(box(w), 'still open');
-  assert.equal(keyBox(w), null, 'and no key box');
+  assert.equal(settings(w), null, 'and no settings box');
 });
 
 test('a tap elsewhere, Escape or scrolling closes the box', () => {
@@ -991,11 +996,11 @@ test('the box goes when the icon goes, and opening it closes the tooltip', () =>
   assert.equal(box(w), null);
 });
 
-test('a long press opens the key box and no choice box, and the tap that ends it goes nowhere', () => {
+test('a long press opens the settings box and no choice box, and the tap that ends it goes nowhere', () => {
   const w = page({ store: warStore() }).run();
   fire(w, w.link(), 'touchstart');
   w.advance(500);
-  assert.ok(keyBox(w), 'the key box is open');
+  assert.ok(settings(w), 'the settings box is open');
   assert.equal(fire(w, w.link(), 'touchend').defaultPrevented, true, 'no click follows on a phone');
   assert.equal(fire(w, w.link(), 'click').defaultPrevented, true, 'and a click that comes anyway goes nowhere');
   assert.equal(box(w), null, 'no choice box');
@@ -1020,26 +1025,26 @@ test('a short press is a tap, and a swipe along the strip is neither', () => {
   w.advance(300);
   fire(w, w.link(), 'touchend');
   w.advance(1000);
-  assert.equal(keyBox(w), null, 'a short press');
+  assert.equal(settings(w), null, 'a short press');
   fire(w, w.link(), 'touchstart');
   fire(w, w.link(), 'touchmove');
   w.advance(1000);
-  assert.equal(keyBox(w), null, 'a swipe');
+  assert.equal(settings(w), null, 'a swipe');
   fire(w, w.link(), 'touchstart');
   w.advance(500);
-  assert.ok(keyBox(w), 'a long press does open it');
+  assert.ok(settings(w), 'a long press does open it');
 });
 
-test('a long press with the mouse opens the key box too, and a right-click keeps its menu', () => {
+test('a long press with the mouse opens the settings box too, and a right-click keeps its menu', () => {
   const w = page().run();
   fire(w, w.link(), 'mousedown', { button: 0 });
   w.advance(500);
-  assert.ok(keyBox(w));
+  assert.ok(settings(w));
   assert.equal(fire(w, w.link(), 'click').defaultPrevented, true);
   escape(w);
   fire(w, w.link(), 'mousedown', { button: 2 });
   w.advance(1000);
-  assert.equal(keyBox(w), null, 'a right-click is no long press');
+  assert.equal(settings(w), null, 'a right-click is no long press');
   assert.equal(fire(w, w.link(), 'contextmenu').defaultPrevented, false, 'its menu opens');
 });
 
@@ -1054,49 +1059,63 @@ test('the menu entry names the script, so it stands out among other scripts\' en
   assert.deepEqual(page().run().menuCalls, [MENU], 'one entry, registered once');
 });
 
-test('the key box: a plain text field that starts empty, with Save, Clear and Cancel', () => {
+test('the settings box: a war list, a plain text key field that starts empty, and x, Clear key, Cancel and Save', () => {
   const w = page({ store: { [KEY_STORE]: KEY } }).run();
   w.menu[MENU]();
   w.menu[MENU]();
-  assert.equal(w.document.querySelectorAll('#' + KEYBOX).length, 1, 'never two');
-  const input = keyBox(w).querySelector('input');
-  assert.equal(input.getAttribute('type'), 'text', 'a password field sets off password managers');
-  assert.equal(input.value || '', '', 'the saved key is never shown');
-  assert.ok(!keyBox(w).textContent.includes(KEY));
-  assert.match(keyBox(w).textContent, /A Public-level key is enough\./);
-  assert.match(keyBox(w).textContent, /A key is saved\./);
-  assert.deepEqual(keyButtons(w).map((b) => b.textContent), ['Save', 'Clear', 'Cancel']);
-  assert.doesNotMatch(readFileSync(SRC, 'utf8'), /type\s*=\s*['"]?password/i);
+  assert.equal(w.document.querySelectorAll('#' + SETTINGS).length, 1, 'never two');
+  assert.equal(settings(w).querySelector('b').textContent, 'Xanax Reminder Settings');
+  assert.deepEqual([...settings(w).querySelectorAll('label')].map((l) => [l.textContent, l.getAttribute('for')]),
+    [['During a ranked war:', SETTINGS + '-war'], ['API key:', SETTINGS + '-key']]);
+  assert.equal(settings(w).querySelector('select').id, SETTINGS + '-war');
+  const field = keyField(w);
+  assert.equal(field.id, SETTINGS + '-key');
+  assert.equal(field.getAttribute('type'), 'text', 'a password field sets off password managers');
+  assert.equal(field.value || '', '', 'the saved key is never shown');
+  assert.ok(!settings(w).textContent.includes(KEY));
+  assert.match(settings(w).textContent, /A Public-level key is enough\. A key is saved\./);
+  assert.deepEqual([...settings(w).querySelectorAll('button')].map((b) => b.textContent), ['x', 'Clear key', 'Cancel', 'Save']);
+  const src = readFileSync(SRC, 'utf8');
+  assert.doesNotMatch(src, /type\s*=\s*['"]?password/i);
+  assert.doesNotMatch(src, /\.focus\(/, 'nothing is focused, so a phone keeps its keyboard down');
 });
 
-test('the key box from the menu closes an open box and the tooltip', () => {
+test('the settings box from the menu closes an open box and the tooltip', () => {
   const w = page({ store: warStore() }).run();
   fire(w, w.link(), 'click');
   fire(w, w.link(), 'focus');
   w.menu[MENU]();
-  assert.ok(keyBox(w));
+  assert.ok(settings(w));
   assert.equal(box(w), null);
   assert.equal(w.document.getElementById(TIP), null);
 });
 
-test('the menu opens a styled key box even while the cooldown runs', () => {
+test('the menu opens a styled settings box even while the cooldown runs, with 16px controls so an iPhone doesn\'t zoom', () => {
   const w = page({ icons: { drug_cooldown: drug(NOW + 3600) } }).run();
   w.menu[MENU]();
-  assert.ok(keyBox(w));
-  assert.match(w.document.getElementById(STYLES).textContent, /#tm-xanax-reminder-key \{ position: fixed;/);
-  assert.match(keyBox(w).textContent, /No key saved\./);
+  assert.ok(settings(w));
+  const css = w.document.getElementById(STYLES).textContent;
+  assert.match(css, /#tm-xanax-reminder-settings \{ position: fixed;/);
+  assert.match(declarations(css, '#tm-xanax-reminder-settings select, #tm-xanax-reminder-settings input').font, /^16px /);
+  assert.match(settings(w).textContent, /No key saved\./);
 });
 
-test('Save keeps the key, forgets the old answer and asks Torn at once', () => {
+test('Save keeps the key, forgets the old answer, asks Torn at once and says so', () => {
   const w = page({ store: { [WAR_STORE]: JSON.stringify({ at: NOW * 1000, start: START, end: 0, error: 'Incorrect key' }) } }).run();
   w.menu[MENU]();
-  keyBox(w).querySelector('input').value = '  ' + KEY + ' ';
-  fire(w, keyButtons(w)[0], 'click');
+  keyField(w).value = '  ' + KEY + ' ';
+  press(w, 'Save');
   assert.equal(w.store[KEY_STORE], KEY, 'saved, trimmed');
-  assert.equal(keyBox(w), null, 'the box closes');
-  w.check();
   assert.equal(w.calls.length, 1, 'asked straight away');
   assert.equal(w.label(), LABEL, 'the old answer and its error are gone');
+  const text = settings(w).textContent;
+  assert.match(text, /Saved\./);
+  assert.match(text, /A key is saved\. Not checked yet\./);
+  assert.equal(keyField(w).value, '', 'the field empties');
+  press(w, 'Save');
+  assert.equal(w.calls.length, 1, 'so a second Save asks nothing more');
+  w.advance(1000);
+  assert.equal(settings(w), null, 'the box closes a second later');
 });
 
 test('a new key is asked about at once, even in a tab that just asked with the old one', async () => {
@@ -1105,8 +1124,8 @@ test('a new key is asked about at once, even in a tab that just asked with the o
   answer(w.calls[0], { error: { code: 2, error: 'Incorrect key' } });
   await settle();
   w.menu[MENU]();
-  keyBox(w).querySelector('input').value = KEY;
-  fire(w, keyButtons(w)[0], 'click');
+  settings(w).querySelector('input').value = KEY;
+  press(w, 'Save');
   w.check();
   assert.equal(w.calls.length, 2, 'asked again with the new key');
   assert.equal(w.calls[1].url, URL);
@@ -1127,8 +1146,8 @@ test('once storage saves again, a new key is asked about at once in a tab that k
   await settle();
   full = false;
   w.menu[MENU]();
-  keyBox(w).querySelector('input').value = KEY;
-  fire(w, keyButtons(w)[0], 'click');
+  settings(w).querySelector('input').value = KEY;
+  press(w, 'Save');
   w.check();
   assert.equal(w.calls.length, 2, 'asked again with the new key');
 });
@@ -1137,66 +1156,212 @@ test('Save with an empty field keeps the saved key and its answer', () => {
   const w = page({ store: warStore() }).run();
   const war = w.store[WAR_STORE];
   w.menu[MENU]();
-  fire(w, keyButtons(w)[0], 'click');
-  assert.equal(keyBox(w), null, 'the box closes');
+  press(w, 'Save');
+  assert.match(settings(w).textContent, /Saved\./);
   assert.equal(w.store[KEY_STORE], KEY);
   assert.equal(w.store[WAR_STORE], war);
+  assert.equal(w.calls.length, 0, 'nothing to ask');
+  w.advance(1000);
+  assert.equal(settings(w), null, 'the box closes a second later');
 });
 
-test('Enter in the field saves too', () => {
+test('Enter in the key field saves too', () => {
   const w = page().run();
   w.menu[MENU]();
-  const input = keyBox(w).querySelector('input');
-  input.value = KEY;
-  fire(w, input, 'keydown', { key: 'Enter' });
+  keyField(w).value = KEY;
+  fire(w, keyField(w), 'keydown', { key: 'Enter' });
   assert.equal(w.store[KEY_STORE], KEY);
-  assert.equal(keyBox(w), null);
+  assert.match(settings(w).textContent, /Saved\./);
+  w.advance(1000);
+  assert.equal(settings(w), null);
 });
 
-test('Clear forgets the key and the war time', () => {
+test('Clear key forgets the key and the war time, says so and closes a second later', () => {
   const w = page({ store: warStore() }).run();
   w.menu[MENU]();
-  fire(w, keyButtons(w)[1], 'click');
+  press(w, 'Clear key');
   assert.equal(w.store[KEY_STORE], '');
   assert.equal(JSON.parse(w.store[WAR_STORE]).start, 0);
+  assert.match(settings(w).textContent, /Key cleared\./);
+  assert.match(settings(w).textContent, /No key saved\./);
+  w.advance(1000);
+  assert.equal(settings(w), null);
   w.check();
   assert.equal(w.calls.length, 0, 'no key, no call');
   assert.equal(fire(w, w.link(), 'click').defaultPrevented, false, 'the tap opens your items');
 });
 
-test('Cancel, Escape and a tap on the dark area change nothing; a tap inside the box keeps it', () => {
+test('Cancel, the x, Escape and a tap on the dark area change nothing; a tap inside the box keeps it', () => {
   const w = page({ store: { [KEY_STORE]: KEY } }).run();
   const ways = [
-    () => fire(w, keyButtons(w)[2], 'click'),
+    () => press(w, 'Cancel'),
+    () => press(w, 'x'),
     () => escape(w),
-    () => fire(w, keyBox(w), 'click'),
+    () => fire(w, settings(w), 'click'),
   ];
   for (const close of ways) {
     w.menu[MENU]();
-    keyBox(w).querySelector('input').value = 'SOMETHINGELSE123';
-    fire(w, keyBox(w).querySelector('p'), 'click');
-    assert.ok(keyBox(w), 'a tap inside keeps it');
+    pick(w, 'armoury');
+    keyField(w).value = 'SOMETHINGELSE123';
+    fire(w, settings(w).querySelector('p'), 'click');
+    assert.ok(settings(w), 'a tap inside keeps it');
     close();
-    assert.equal(keyBox(w), null);
+    assert.equal(settings(w), null);
     assert.equal(w.store[KEY_STORE], KEY);
+    assert.equal(w.store[WAR_TAP_STORE], undefined, 'the war choice too');
   }
 });
 
-test('the key box says when PDA\'s key is in use, and never shows it', () => {
+test('the war list shows the saved choice (ask each time when none is saved), and Save keeps a new one and closes the box a second later', () => {
+  const fresh = page({ store: warStore() }).run();
+  fresh.menu[MENU]();
+  assert.equal(settings(fresh).querySelector('select').value, 'ask', 'nothing saved yet: ask each time');
+  const w = page({ store: { ...warStore(), [WAR_TAP_STORE]: 'items' } }).run();
+  w.menu[MENU]();
+  const list = settings(w).querySelector('select');
+  assert.deepEqual([...list.querySelectorAll('option')].map((o) => [o.getAttribute('value'), o.textContent]),
+    [['ask', 'Ask each time'], ['armoury', 'Faction Armoury (Drugs)'], ['items', 'Your Items (Drugs)']]);
+  assert.equal(list.value, 'items', 'the saved choice');
+  pick(w, 'armoury');
+  press(w, 'Save');
+  assert.equal(w.store[WAR_TAP_STORE], 'armoury');
+  assert.equal(w.store[KEY_STORE], KEY, 'an empty key field keeps the saved key');
+  assert.match(settings(w).textContent, /Saved\./);
+  w.advance(999);
+  assert.ok(settings(w), 'still open just under a second on');
+  w.advance(1);
+  assert.equal(settings(w), null, 'closed a second after');
+});
+
+test('after Save, the icon\'s link and label follow the new choice at once', () => {
+  const w = page({ store: warStore() }).run();
+  assert.equal(w.label(), LABEL + '. ' + WAR_LINE);
+  w.menu[MENU]();
+  pick(w, 'armoury');
+  press(w, 'Save');
+  assert.equal(w.link().getAttribute('href'), ARMOURY, 'without waiting for the next check');
+  assert.equal(w.label(), LABEL + '. War starts in 5h 12m: tap to open the armoury');
+});
+
+test('a key saved while the cooldown runs is asked about at once, and the box then says what Torn found', async () => {
+  const w = page({ icons: { drug_cooldown: drug(NOW + 3600) } }).run();
+  assert.equal(w.icon(), null, 'the cooldown runs: no icon');
+  w.menu[MENU]();
+  keyField(w).value = KEY;
+  press(w, 'Save');
+  assert.equal(w.calls.length, 1, 'asked at once');
+  assert.equal(w.calls[0].url, URL);
+  assert.match(settings(w).textContent, /A key is saved\. Not checked yet\./);
+  answer(w.calls[0], wars(ranked(NOW - 3600)));
+  await settle();
+  w.advance(1000);
+  assert.equal(settings(w), null);
+  w.menu[MENU]();
+  assert.match(settings(w).textContent, /A key is saved\. Checked just now: ranked war on\./);
+  w.check();
+  assert.equal(w.calls.length, 1, 'and no second call while the cooldown runs');
+});
+
+test('the box says what Torn\'s last answer means now', async () => {
+  const cases = [
+    [wars(ranked(START)), 'war starts in 5h 12m'],
+    [wars(ranked(NOW - 3600)), 'ranked war on'],
+    [wars(ranked(NOW - 7200, NOW - 60)), 'the ranked war is over'],
+    [wars(null), 'no ranked war set'],
+  ];
+  for (const [reply, words] of cases) {
+    const w = page({ store: { [KEY_STORE]: KEY } }).run();
+    answer(w.calls[0], reply);
+    await settle();
+    w.menu[MENU]();
+    assert.match(settings(w).textContent, new RegExp('A key is saved\\. Checked just now: ' + words + '\\.'), words);
+  }
+});
+
+test('the box says how long ago Torn answered, and keeps saying it when a later check fails', async () => {
+  const w = page({ store: { [KEY_STORE]: KEY } }).run();
+  answer(w.calls[0], wars(ranked(NOW - 3600)));
+  await settle();
+  w.clock.ms += (3 * 3600 + 5 * 60) * 1000;
+  w.menu[MENU]();
+  assert.match(settings(w).textContent, /A key is saved\. Checked 3h 5m ago: ranked war on\./);
+  w.check();
+  noAnswer(w.calls[1]);
+  await settle();
+  w.menu[MENU]();
+  assert.match(settings(w).textContent,
+    /A key is saved\. Couldn't check the war time: no answer from Torn\. Torn last answered 3h 5m ago: ranked war on\./);
+});
+
+test('an answer kept without its time, as an older version saved it, reads as checked earlier', () => {
+  const w = page({ store: warStore(NOW - 3600) }).run();
+  w.menu[MENU]();
+  assert.match(settings(w).textContent, /A key is saved\. Checked earlier: ranked war on\./);
+});
+
+test('a save that storage refuses, drops, or keeps only in part says so, stays open and keeps the saved key', () => {
+  // GM storage that won't keep some names: it throws, or drops the write without a word.
+  const refusing = (names, how) => new Proxy(warStore(), {
+    set(target, k, v) {
+      if (!names.includes(k)) target[k] = v;
+      else if (how === 'throws') throw new Error('QuotaExceededError');
+      return true;
+    },
+  });
+  for (const [why, store] of [
+    ['refused', refusing([WAR_TAP_STORE, KEY_STORE], 'throws')],
+    ['dropped', refusing([WAR_TAP_STORE, KEY_STORE], 'drops')],
+    ['the choice kept but not the key', refusing([KEY_STORE], 'drops')],
+  ]) {
+    const w = page({ store }).run();
+    const war = w.store[WAR_STORE];
+    w.menu[MENU]();
+    pick(w, 'armoury');
+    keyField(w).value = 'NEWKEY1234567890';
+    press(w, 'Save');
+    assert.match(settings(w).textContent, /Couldn't save, try again\./, why);
+    press(w, 'Clear key');
+    assert.match(settings(w).textContent, /Couldn't save, try again\./, why + ': Clear key');
+    w.advance(5000);
+    assert.ok(settings(w), why + ': the box stays open');
+    assert.equal(w.store[KEY_STORE], KEY, why + ': the saved key is kept');
+    assert.equal(w.store[WAR_STORE], war, why + ': and so is its answer');
+    assert.equal(w.calls.length, 0, why + ': and Torn is not asked');
+  }
+});
+
+test('a box opened again just after Save stays open', () => {
+  const w = page({ store: warStore() }).run();
+  w.menu[MENU]();
+  press(w, 'Save');
+  press(w, 'Cancel');
+  assert.equal(settings(w), null);
+  w.menu[MENU]();
+  w.advance(2000);
+  assert.ok(settings(w), 'the first box\'s timer went with it');
+});
+
+test('with no key, the box says the war choice needs one', () => {
+  const w = page().run();
+  w.menu[MENU]();
+  assert.match(settings(w).textContent, /No key saved\. The war choice needs one: until then, a tap always opens your items\./);
+});
+
+test('the settings box says when PDA\'s key is in use, and never shows it', () => {
   const src = readFileSync(SRC, 'utf8').replace('###PDA-APIKEY###', 'PDAKEY0123456789');
   const w = page({ src }).run();
   w.menu[MENU]();
-  assert.match(keyBox(w).textContent, /Using the key Torn PDA gives the script\./);
-  assert.ok(!keyBox(w).textContent.includes('PDAKEY0123456789'));
+  assert.match(settings(w).textContent, /Using the key Torn PDA gives the script\./);
+  assert.ok(!settings(w).textContent.includes('PDAKEY0123456789'));
 });
 
-test('the key box says why the last check failed, so a bad key shows on a phone too', async () => {
-  // On a phone the tooltip never opens, so the key box is where a bad key can show.
+test('the settings box says why the last check failed, so a bad key shows on a phone too', async () => {
+  // On a phone the tooltip never opens, so the settings box is where a bad key can show.
   const w = page({ store: { [KEY_STORE]: KEY } }).run();
   answer(w.calls[0], { error: { code: 2, error: 'Incorrect key ' + KEY } });
   await settle();
   w.menu[MENU]();
-  const text = keyBox(w).textContent;
+  const text = settings(w).textContent;
   assert.match(text, /A key is saved\. Couldn't check the war time: Incorrect key \*\*\*\*/);
   assert.ok(!text.includes(KEY), 'the key never shows');
 });
@@ -1207,6 +1372,6 @@ test('a host with no menu, or one whose menu throws, still gets the icon and the
     assert.ok(w.icon(), String(menu));
     fire(w, w.link(), 'touchstart');
     w.advance(500);
-    assert.ok(keyBox(w), String(menu));
+    assert.ok(settings(w), String(menu));
   }
 });
