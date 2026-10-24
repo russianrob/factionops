@@ -1357,6 +1357,14 @@ test('a box opened again just after Save stays open', () => {
   assert.ok(settings(w), 'the first box\'s timer went with it');
 });
 
+test('the settings box says what the key is used for', () => {
+  for (const store of [{}, warStore()]) {
+    const w = page({ store }).run();
+    w.menu[MENU]();
+    assert.match(settings(w).textContent, /With your API key, the script checks when your faction's ranked war starts and ends\. A Public-level key is enough\./);
+  }
+});
+
 test('with no key, the box says the war choice needs one', () => {
   const w = page().run();
   w.menu[MENU]();

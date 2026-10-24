@@ -108,7 +108,7 @@ The script never clicks anything itself. Every way out of the icon is a plain li
   - Nothing is focused when it opens, so a phone doesn't raise its keyboard over it.
 - **During a ranked war:** the list Ask each time, Faction Armoury (Drugs), Your Items (Drugs). It shows the saved choice, or Ask each time when none is saved. A line under it says what the list does and that a long press opens these settings.
 - **API key:** a plain text field, never `type="password"`, which sets off password managers. It starts empty: the saved key is never shown.
-- **The line under the key** says a Public-level key is enough, whether a key is saved (or PDA's is in use), and what Torn said:
+- **The line under the key** says what the key is for ("With your API key, the script checks when your faction's ranked war starts and ends."), that a Public-level key is enough, whether a key is saved (or PDA's is in use), and what Torn said:
   - "Not checked yet." until Torn answers.
   - "Checked 12m ago: ranked war on." The war part can also be "war starts in 5h 12m", "the ranked war is over" or "no ranked war set". Under a minute it says "just now". For an answer kept without its time (saved by 1.0.2), it says "earlier".
   - After a failed check: "Couldn't check the war time: <Torn's message>.", then "Torn last answered 3h 5m ago: ranked war on." if Torn has answered before.

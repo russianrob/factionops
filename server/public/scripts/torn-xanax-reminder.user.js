@@ -638,8 +638,10 @@
     input.setAttribute('autocapitalize', 'off');
     input.setAttribute('spellcheck', 'false');
     const status = make('p');
+    // What the key is for comes first: someone pasting a key should know what it is used for.
     const showStatus = () => {
-      status.textContent = 'A Public-level key is enough. ' + keyStatus(Date.now());
+      status.textContent = 'With your API key, the script checks when your faction\'s ranked war starts and ends. '
+        + 'A Public-level key is enough. ' + keyStatus(Date.now());
     };
     showStatus();
     const message = make('p', '', 'tm-xanax-message');
