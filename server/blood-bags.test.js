@@ -544,3 +544,37 @@ test("during a war the backfill's slower pace never holds up the hourly poll", a
   assert.ok(pollCalls[1].at - pollCalls[0].at < WAR_GAP_MS, `the poll's calls came ${pollCalls[1].at - pollCalls[0].at} ms apart`);
   assert.ok(pages.at(-1).at > pollCalls[1].at, "the backfill went on after the poll was done");
 });
+
+test("an hourly tick that lands while the backfill waits out its 30 seconds goes out at once, 6 s apart", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [], wars: [{ id: 51418, start: T0 - DAY, end: 0 }] });
+  const clock = manualClock(T0 * 1000);
+  torn.clock = clock;
+  const c = createBloodBagCollector({
+    dataDir: mkdtempSync(join(tmpdir(), "blood-bags-")), fetchImpl: torn.fetchImpl, nowFn: () => clock.now,
+    sleepFn: clock.sleep, keyFn: () => "k", log: () => {},
+  });
+  await clock.until(Promise.all([c.pollOnce(), c.refreshWars()]));
+  let reached;
+  const third = new Promise((r) => { reached = r; });
+  torn.fail = () => { if (backfillPages(torn).length === 3) reached(); return null; };
+  const run = c.runBackfill();
+  await clock.until(third);
+  torn.fail = null;
+  // The backfill is now waiting out its 30 s; the hourly tick comes 10 s in.
+  const page3 = backfillPages(torn)[2].at;
+  assert.equal(clock.timers.length, 1, "only the backfill's wait is pending");
+  clock.now = page3 + 10000;
+  const asked = clock.now;
+  const mark = torn.calls.length;
+  await clock.until(c.tick());
+  const isPage = (call) => call.url.pathname === "/v2/faction/news" && call.url.searchParams.get("from") === String(CUTOFF);
+  const tickCalls = torn.calls.slice(mark).filter((call) => !isPage(call));
+  assert.equal(tickCalls.length, 3, "the war list and one page of each category");
+  assert.ok(tickCalls[0].at - asked <= GAP_MS, `the tick's first call came ${tickCalls[0].at - asked} ms after it was asked`);
+  for (let i = 1; i < 3; i++) assert.ok(tickCalls[i].at - tickCalls[i - 1].at <= 2 * GAP_MS, `tick call ${i}: ${tickCalls[i].at - tickCalls[i - 1].at} ms`);
+  await clock.until(run);
+  const pages = backfillPages(torn);
+  assert.ok(between(pages).every((ms) => ms >= WAR_GAP_MS), `backfill pages: ${between(pages)}`);
+  assert.ok(between(torn.calls).every((ms) => ms >= GAP_MS), `every call still waits its turn: ${between(torn.calls)}`);
+  assert.equal(c.snapshot().backfillDone, true);
+});
