@@ -236,6 +236,7 @@ test("the backfill fills the year below the first page, a call every 6 seconds, 
   });
   const { c } = setup({ torn });
   await c.pollOnce();
+  await c.refreshWars();
   await c.runBackfill();
 
   const backfill = newsCalls(torn).slice(2);
@@ -271,7 +272,9 @@ test("a Torn error mid-backfill keeps its place and never marks the backfill don
   const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
   const { c, logs } = setup({ torn });
   await c.pollOnce();
-  torn.fail = (u, n) => (n > 5 ? reply({ error: { code: 5, error: "Too many requests" } }) : null);
+  await c.refreshWars();
+  // News calls 1 and 2 are the poll; backfill pages 3 to 5 succeed, then Torn refuses.
+  torn.fail = (u) => (u.pathname === "/v2/faction/news" && newsCalls(torn).length > 5 ? reply({ error: { code: 5, error: "Too many requests" } }) : null);
   await c.runBackfill();
   const snap = c.snapshot();
   assert.equal(snap.backfillDone, false);
@@ -287,7 +290,8 @@ test("after a restart the backfill carries on from its saved place, with no repe
   const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
   const { c, make } = setup({ torn });
   await c.pollOnce();
-  torn.fail = (u, n) => (n > 5 ? reply({ error: { code: 5, error: "Too many requests" } }) : null);
+  await c.refreshWars();
+  torn.fail = (u) => (u.pathname === "/v2/faction/news" && newsCalls(torn).length > 5 ? reply({ error: { code: 5, error: "Too many requests" } }) : null);
   await c.runBackfill();
   const saved = c.snapshot().cats.armoryAction.gaps[0].to;
 
@@ -305,6 +309,7 @@ test("the poll and the backfill share one pace", async () => {
   const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
   const { c } = setup({ torn });
   await c.pollOnce();
+  await c.refreshWars();
   const running = c.runBackfill();
   await c.pollOnce();
   await running;
@@ -313,7 +318,7 @@ test("the poll and the backfill share one pace", async () => {
   assert.equal(c.snapshot().backfillDone, true);
 });
 
-test("the war list is fetched hourly while the backfill has work, and daily once it is done", async () => {
+test("the war list is read with every hourly poll, before and after the backfill is done", async () => {
   const torn = fakeTorn({ action: actions(300, T0 - 60, 3600), deposit: [], wars: [{ id: 7, start: T0 - DAY, end: 0 }] });
   const { c, clock } = setup({ torn });
   const warCalls = () => torn.calls.filter((call) => call.url.pathname.endsWith("/rankedwars")).length;
@@ -328,12 +333,13 @@ test("the war list is fetched hourly while the backfill has work, and daily once
   await c.tick(); await c.runBackfill();
   assert.equal(warCalls(), 3);
   assert.equal(c.snapshot().backfillDone, true);
+  // A war that starts after the backfill is done is seen within the hour, so
+  // use during it never counts against anyone for long.
+  torn.wars.push({ id: 8, start: Math.floor(clock.now / 1000) + 600, end: 0 });
   clock.now += HOUR_MS;
   await c.tick();
-  assert.equal(warCalls(), 3, "daily once the backfill is done");
-  clock.now += 23 * HOUR_MS;
-  await c.tick();
-  assert.equal(warCalls(), 4);
+  assert.equal(warCalls(), 4, "still hourly once the backfill is done");
+  assert.deepEqual(c.snapshot().wars.map((w) => w.id), [7, 8]);
 });
 
 test("start runs one tick at once and then every hour; stop ends it", async () => {
@@ -354,4 +360,125 @@ test("start runs one tick at once and then every hour; stop ends it", async () =
   assert.equal(newsCalls(torn).length, 2);
   c.stop();
   assert.equal(timers[0].cleared, true);
+});
+
+// ── review fixes ────────────────────────────────────────────────────────────
+test("a save that fails during the backfill is logged, and the run still settles, so the server stays up", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const clock = { now: T0 * 1000 };
+  torn.clock = clock;
+  const logs = [];
+  const opts = {
+    dataDir: mkdtempSync(join(tmpdir(), "blood-bags-")), fetchImpl: torn.fetchImpl, nowFn: () => clock.now,
+    sleepFn: async (ms) => { clock.now += ms; }, keyFn: () => "k", log: (m) => logs.push(m),
+  };
+  const c = createBloodBagCollector(opts);
+  await c.pollOnce();
+  await c.refreshWars();
+  // From here every save fails: the folder's path now runs through a file.
+  const file = join(mkdtempSync(join(tmpdir(), "blood-bags-")), "a-file");
+  writeFileSync(file, "");
+  opts.dataDir = join(file, "store");
+  await assert.doesNotReject(c.runBackfill());
+  assert.ok(logs.some((m) => m.includes("backfill save failed")), logs.join("\n"));
+});
+
+test("the backfill waits while the ranked-war list cannot be read, and goes on once it can", async () => {
+  const torn = fakeTorn({ action: actions(300, T0 - 60, 3600), deposit: [], wars: [{ id: 51418, start: T0 - DAY, end: 0 }] });
+  torn.fail = (u) => (u.pathname.endsWith("/rankedwars") ? reply({ error: { code: 5, error: "Too many requests" } }) : null);
+  const { c, clock, logs } = setup({ torn });
+  await c.tick(); await c.runBackfill();
+  assert.equal(newsCalls(torn).length, 2, "the poll ran; the backfill made no call during a war it could not see");
+  assert.ok(logs.some((m) => m.includes("backfill waiting: the ranked-war list has not been read")), logs.join("\n"));
+  assert.equal(c.snapshot().backfillDone, false);
+
+  torn.fail = null;
+  torn.wars[0].end = T0 + 600;
+  clock.now += HOUR_MS;
+  await c.tick(); await c.runBackfill();
+  assert.equal(c.snapshot().backfillDone, true);
+});
+
+test("a ranked-war reply without its list is a failed read, not a list of no wars", async () => {
+  const torn = fakeTorn({ action: actions(300, T0 - 60, 3600), deposit: [], wars: [{ id: 51418, start: T0 - DAY, end: 0 }] });
+  torn.fail = (u) => (u.pathname.endsWith("/rankedwars") ? reply({ rankedwars: null }) : null);
+  const { c, logs } = setup({ torn });
+  assert.equal(await c.refreshWars(), false);
+  assert.ok(logs.some((m) => m.includes("war list failed")), logs.join("\n"));
+  await c.tick(); await c.runBackfill();
+  assert.equal(newsCalls(torn).length, 2, "no backfill call on a war list that was not read");
+});
+
+test("a news reply without its list is a failed call, so the backfill keeps its gap", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const { c, logs } = setup({ torn });
+  await c.pollOnce();
+  await c.refreshWars();
+  const before = c.snapshot().cats.armoryAction.gaps;
+  torn.fail = (u) => (u.pathname === "/v2/faction/news" ? reply({ news: null }) : null);
+  await c.runBackfill();
+  assert.deepEqual(c.snapshot().cats.armoryAction.gaps, before);
+  assert.equal(c.snapshot().backfillDone, false);
+  assert.ok(logs.some((m) => m.includes("backfill failed")), logs.join("\n"));
+});
+
+test("a page that comes back at or past its own `to` still moves the walk down", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const { c } = setup({ torn });
+  await c.pollOnce();
+  await c.refreshWars();
+  let served = false;
+  torn.fail = (u) => {
+    if (served || u.pathname !== "/v2/faction/news" || !u.searchParams.has("to")) return null;
+    served = true;
+    const to = Number(u.searchParams.get("to"));
+    return reply({ news: Array.from({ length: 100 }, () => entry(to, FILL(300))) });
+  };
+  torn.calls.length = 0;
+  await c.runBackfill();
+  const tos = newsCalls(torn).map((call) => Number(call.url.searchParams.get("to")));
+  assert.ok(tos[1] < tos[0], `after a page asked with to=${tos[0]}, the next asked with to=${tos[1]}`);
+  assert.equal(c.snapshot().backfillDone, true);
+});
+
+test("the store remembers whether the last poll succeeded", async () => {
+  const torn = fakeTorn({ action: actions(10, T0 - 60), deposit: [] });
+  const { c } = setup({ torn });
+  await c.pollOnce();
+  assert.equal(c.snapshot().lastPollOk, true);
+  torn.fail = () => reply({ error: { code: 5, error: "Too many requests" } });
+  await c.pollOnce();
+  assert.equal(c.snapshot().lastPollOk, false);
+});
+
+test("a blood line the reader cannot read yet is kept as written, and counted once a later reader can", async () => {
+  const odd = `${who(5, "P5")} donated 2x Blood Bag : O+ to the hospital`;
+  const torn = fakeTorn({ action: [entry(T0 - 60, odd)], deposit: [] });
+  const { c, make, dir } = setup({ torn });
+  await c.pollOnce();
+  const stored = JSON.parse(readFileSync(join(dir, "42055.json"), "utf8"));
+  assert.deepEqual(Object.values(stored.unread), [{ ts: T0 - 60, text: odd }]);
+  // As a store written by an older reader would hold it: a line today's reader knows.
+  stored.unread["777"] = { ts: T0 - 120, text: FILL(8) };
+  writeFileSync(join(dir, "42055.json"), JSON.stringify(stored));
+  const lines = make().snapshot().lines;
+  assert.deepEqual(lines.filter((l) => l.playerId === "8").map((l) => [l.kind, l.ts]), [["fill", T0 - 120]]);
+  assert.ok(!lines.some((l) => l.playerId === "5"), "a line no reader knows stays out of the sums");
+});
+
+test("a store written before lastPollOk and unread existed loads as it is, and polls on", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "blood-bags-"));
+  const rec = { ts: T0 - 7200, kind: "fill", playerId: "4", name: "P4", type: "O+", qty: 1, toId: null, toName: null };
+  writeFileSync(join(dir, "42055.json"), JSON.stringify({
+    version: 1, factionId: "42055", cutoffSec: CUTOFF, lines: { "4000001": rec },
+    cats: { armoryAction: { headTs: T0 - 7200, gaps: [{ from: CUTOFF, to: T0 - 9000 }] }, armoryDeposit: { headTs: T0 - 7200, gaps: [] } },
+    wars: [], warsAt: 0, lastPollAt: (T0 - 3600) * 1000,
+  }));
+  const torn = fakeTorn({ action: [entry(T0 - 60, FILL(6))], deposit: [] });
+  const { c, logs } = setup({ torn, dataDir: dir });
+  assert.equal(c.snapshot().lines.length, 1);
+  assert.equal(await c.pollOnce(), true);
+  assert.equal(c.snapshot().lines.length, 2);
+  assert.ok(!logs.some((m) => m.includes("store unreadable")), logs.join("\n"));
+  assert.deepEqual(readdirSync(dir), ["42055.json"]);
 });

@@ -62,6 +62,7 @@ test("a Dead Fragment member gets the board, never cached", async () => {
   assert.equal(res.headers["Cache-Control"], "no-store");
   assert.deepEqual(res.body.topGiven, [{ rank: 1, playerId: "1", name: "Ann", value: 1 }]);
   assert.deepEqual(res.body.wall, [{ rank: 1, playerId: "2", name: "Bob", value: -1 }]);
+  assert.equal((await get(api, token(1, "42055"))).statusCode, 200, "the faction id as /api/auth issues it, a string");
 });
 
 test("a member of another faction is refused", async () => {
@@ -156,7 +157,7 @@ test("the answer carries everything the page reads", async () => {
   }) });
   const { body } = await get(api, token(2), { window: "all" });
   assert.deepEqual(Object.keys(body).sort(), [
-    "backfillDone", "fromSec", "liveWar", "overview", "reachSec", "rosterStale", "toSec", "topGiven", "topNet",
+    "backfillDone", "fromSec", "lastPollFailed", "liveWar", "overview", "reachSec", "rosterStale", "toSec", "topGiven", "topNet",
     "type", "types", "updatedAt", "wall", "window", "windows", "you",
   ]);
   assert.deepEqual(body.windows, ["24h", "7d", "30d", "90d", "all"]);
@@ -238,10 +239,33 @@ test("routes.js serves /api/bloodbags behind requireAuth, and /bloodbags uncache
 
 test("the site gate lets /bloodbags through, as it does /hof, and still gates other pages", () => {
   assert.deepEqual(gateFor("/bloodbags"), { next: true, redirect: null });
+  // Routing is not strict, so /bloodbags/ is the same page and needs the same pass.
+  assert.deepEqual(gateFor("/bloodbags/"), { next: true, redirect: null });
   assert.deepEqual(gateFor("/api/bloodbags"), { next: true, redirect: null });
   assert.deepEqual(gateFor("/slackers"), { next: false, redirect: "/gate.html" });
 });
 
 test("server.js starts the collector", () => {
   assert.match(SERVER, /import\('\.\/blood-bags\.js'\)\.then\(m => m\.start\(\)\)/);
+});
+
+// ── review fixes ────────────────────────────────────────────────────────────
+test("the answer says when the last poll failed", async () => {
+  const failing = setup({ snapshot: () => ({
+    lines: [], wars: [], lastPollAt: null, lastPollOk: false, reachSec: null, backfillDone: false, cutoffSec: NOW - 365 * 86400,
+  }) });
+  assert.equal((await get(failing.api, token(1))).body.lastPollFailed, true);
+  const fine = setup();
+  assert.equal((await get(fine.api, token(1))).body.lastPollFailed, false);
+});
+
+test("a roster fetch that hangs gives up after its time limit, so the board answers", { timeout: 5000 }, async () => {
+  const api = createBloodBagsApi({
+    collector: { snapshot: () => ({ lines: [], wars: [], lastPollAt: null, reachSec: null, backfillDone: false, cutoffSec: 0 }) },
+    nowFn: () => NOW * 1000, log: () => {}, rosterTimeoutMs: 20,
+    rosterFn: () => new Promise(() => {}),
+  });
+  const res = await get(api, token(1));
+  assert.equal(res.statusCode, 502);
+  assert.deepEqual(res.body, { error: "The member list is unavailable right now." });
 });

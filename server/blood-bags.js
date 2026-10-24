@@ -35,9 +35,9 @@ export const HEAD_MAX_PAGES = 10;
 const BACKFILL_DAYS = 365;
 const DAY = 86400;
 export const POLL_MS = 60 * 60 * 1000;
-// The war list is wanted daily, and hourly while the backfill has work, so the
-// backfill sees a war start and end.
-const WARS_DAILY_MS = 24 * 60 * 60 * 1000;
+// The backfill runs only on a ranked-war list read this recently. The list is
+// read with every hourly poll, so this leaves a late tick 5 minutes.
+const WARS_FRESH_MS = POLL_MS + 5 * 60 * 1000;
 // The backfill saves every this many pages; a restart repeats at most these.
 const SAVE_EVERY = 10;
 
@@ -56,8 +56,12 @@ export const defaultDataDir = () => join(process.env.DATA_DIR || join(__dirname,
  *   cats        per category: headTs, the newest second the poll has reached, and
  *               gaps, the [from, to) ranges still to fetch (the backfill's work)
  *   cutoffSec   365 days before the UTC day the store was started
- *   wars        Torn's ranked-war list, as [{ id, start, end }], and warsAt
+ *   wars        Torn's ranked-war list, as [{ id, start, end }], and warsAt,
+ *               when it was last read successfully (ms)
  *   lastPollAt  when the last poll of both categories succeeded (ms)
+ *   lastPollOk  whether the last poll succeeded (null before the first)
+ *   unread      { [line id]: { ts, text } }: blood lines in a wording the reader
+ *               does not know, kept so a later reader can count them
  */
 export function createBloodBagCollector(opts = {}) {
   const dir = () => opts.dataDir || defaultDataDir();
@@ -76,7 +80,6 @@ export function createBloodBagCollector(opts = {}) {
   let lastCallAt = -Infinity;
   let queue = Promise.resolve();
   let keyMissingLogged = false;
-  const unreadLogged = new Set();
   let backfilling = null;
   let ticking = false;
   let timer = null;
@@ -86,7 +89,7 @@ export function createBloodBagCollector(opts = {}) {
     return {
       version: 1, factionId: FACTION, cutoffSec: today - BACKFILL_DAYS * DAY,
       lines: {}, cats: Object.fromEntries(CATS.map((c) => [c, { headTs: null, gaps: [] }])),
-      wars: [], warsAt: 0, lastPollAt: null,
+      wars: [], warsAt: 0, lastPollAt: null, lastPollOk: null, unread: {},
     };
   }
 
@@ -97,6 +100,16 @@ export function createBloodBagCollector(opts = {}) {
       if (!raw || raw.version !== 1 || !raw.lines || !raw.cats) throw new Error("not a blood-bag store");
       data = raw;
       for (const c of CATS) data.cats[c] = data.cats[c] || { headTs: null, gaps: [] };
+      // Fields added after the first stores were written.
+      if (data.lastPollOk === undefined) data.lastPollOk = null;
+      data.unread = data.unread || {};
+      // A blood line an older reader could not read is counted once this one can.
+      for (const [id, u] of Object.entries(data.unread)) {
+        const rec = parseLine(u && u.text);
+        if (!rec) continue;
+        if (!data.lines[id]) data.lines[id] = { ts: Number(u.ts) || 0, ...rec };
+        delete data.unread[id];
+      }
     } catch (err) {
       if (err.code !== "ENOENT") {
         // Set aside rather than written over, so it can be looked at; the board
@@ -178,8 +191,8 @@ export function createBloodBagCollector(opts = {}) {
     if (data.lines[id] || ts < data.cutoffSec) return;
     const rec = parseLine(e.text);
     if (!rec) {
-      if (isUnreadBloodLine(e.text) && !unreadLogged.has(id)) {
-        unreadLogged.add(id);
+      if (isUnreadBloodLine(e.text) && !data.unread[id]) {
+        data.unread[id] = { ts, text: String(e.text) };
         log(`[blood-bags] unread blood line ${id}: ${e.text}`);
       }
       return;
@@ -202,7 +215,10 @@ export function createBloodBagCollector(opts = {}) {
       if (from != null) params.from = String(from);
       if (to != null) params.to = String(to);
       const body = await tornGet("/faction/news", params);
-      const news = Array.isArray(body.news) ? body.news : [];
+      // Read as empty, a reply without its list would end the walk, and the
+      // backfill would drop the gap it was filling.
+      if (!Array.isArray(body.news)) throw new Error("the news reply has no list");
+      const news = body.news;
       for (const e of news) keep(e);
       const stamps = news.map((e) => Number(e.timestamp) || 0);
       if (page === 0 && stamps.length) newest = Math.max(...stamps);
@@ -215,7 +231,9 @@ export function createBloodBagCollector(opts = {}) {
       let next = oldest + 1;
       if (to != null && next >= to) {
         log(`[blood-bags] ${cat}: a full page at second ${oldest}; stepping past it, so lines beyond the page may be missing`);
-        next = oldest;
+        // Below this page's own `to` even if Torn sent lines at or past it, so the
+        // walk always moves down.
+        next = Math.min(oldest, to - 1);
       }
       to = next;
     }
@@ -251,15 +269,16 @@ export function createBloodBagCollector(opts = {}) {
       }
     }
     if (ok) data.lastPollAt = nowFn();
+    data.lastPollOk = ok;
     save();
     return ok;
   }
 
   /**
-   * What the route reads: { lines, wars, lastPollAt, reachSec, backfillDone,
-   * cutoffSec, cats }. reachSec is how far back the history is complete: the
-   * year's floor once the backfill is done, the top of the newest gap until
-   * then, null before the first poll.
+   * What the route reads: { lines, wars, lastPollAt, lastPollOk, reachSec,
+   * backfillDone, cutoffSec, cats }. reachSec is how far back the history is
+   * complete: the year's floor once the backfill is done, the top of the newest
+   * gap until then, null before the first poll.
    */
   function snapshot() {
     load();
@@ -271,6 +290,7 @@ export function createBloodBagCollector(opts = {}) {
       lines: lineList,
       wars: data.wars,
       lastPollAt: data.lastPollAt,
+      lastPollOk: data.lastPollOk,
       reachSec: started ? Math.max(...reaches) : null,
       backfillDone: started && CATS.every((cat) => data.cats[cat].gaps.length === 0),
       cutoffSec: data.cutoffSec,
@@ -283,8 +303,10 @@ export function createBloodBagCollector(opts = {}) {
     load();
     try {
       const body = await tornGet(`/faction/${FACTION}/rankedwars`, {});
-      const list = Array.isArray(body.rankedwars) ? body.rankedwars : [];
-      data.wars = list.map((w) => ({ id: w.id, start: Number(w.start) || 0, end: Number(w.end) || 0 }));
+      // Taken as no wars, a reply without its list would let the backfill run
+      // through a live one.
+      if (!Array.isArray(body.rankedwars)) throw new Error("the ranked-war reply has no list");
+      data.wars = body.rankedwars.map((w) => ({ id: w.id, start: Number(w.start) || 0, end: Number(w.end) || 0 }));
       data.warsAt = nowFn();
       save();
       return true;
@@ -312,6 +334,12 @@ export function createBloodBagCollector(opts = {}) {
       for (;;) {
         const next = nextGap();
         if (!next) break;
+        // Only on a recent, successful read of the war list: an old or failed
+        // read could miss a war that has started.
+        if (!(nowFn() - data.warsAt < WARS_FRESH_MS)) {
+          log("[blood-bags] backfill waiting: the ranked-war list has not been read in the last hour");
+          break;
+        }
         const war = liveWar(data.wars, nowSec());
         if (war) {
           log(`[blood-bags] backfill waiting: ranked war ${war.id} is live`);
@@ -327,28 +355,38 @@ export function createBloodBagCollector(opts = {}) {
       // Its place is kept; the next hourly tick starts it again from there.
       fail("backfill", err);
     } finally {
-      save();
+      // tick starts the backfill and moves on, so a save that throws here must
+      // not escape: under pm2 an unhandled rejection ends the whole server.
+      try { save(); } catch (err) { fail("backfill save", err); }
     }
   }
 
   /**
    * The backfill: fills every gap, newest first, a page per call, GAP_MS apart.
-   * It stops while a ranked war is live, and on any error, and the next hourly
-   * tick starts it again from where it stopped. Returns the run in progress.
+   * It stops while a ranked war is live or the war list is out of date, and on
+   * any error, and the next hourly tick starts it again from where it stopped.
+   * Returns the run in progress, which never rejects.
    */
   function runBackfill() {
-    if (!backfilling) backfilling = backfill().finally(() => { backfilling = null; });
+    if (!backfilling) {
+      backfilling = backfill()
+        .catch((err) => log(`[blood-bags] backfill failed: ${err.message}`))
+        .finally(() => { backfilling = null; });
+    }
     return backfilling;
   }
 
-  /** Every hour: the war list when it is due, the poll, then the backfill if there is work. */
+  /**
+   * Every hour: the ranked-war list, the poll, then the backfill if there is
+   * work. The war list is read every time, so a war's start and end reach the
+   * board within the hour, as everything else does.
+   */
   async function tick() {
     if (ticking) return;
     ticking = true;
     try {
       load();
-      const every = hasGaps() ? POLL_MS : WARS_DAILY_MS;
-      if (nowFn() - data.warsAt >= every - 60 * 1000) await refreshWars();
+      await refreshWars();
       await pollOnce();
       if (hasGaps()) runBackfill();
     } finally {
@@ -387,6 +425,17 @@ const ROSTER_TTL_MS = 60 * 60 * 1000;
 // A viewer missing from the roster gets it fetched again before being turned
 // away, but never more often than this; so does a failed refresh.
 const ROSTER_RECHECK_MS = 5 * 60 * 1000;
+// A roster fetch that hangs would hold every board request waiting on it.
+const ROSTER_TIMEOUT_MS = 20 * 1000;
+
+// The promise, or a rejection once ms have passed; the timer is cleared either way.
+function withTimeout(promise, ms) {
+  let timer;
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer within ${ms / 1000} s`)), ms);
+  });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
 
 /**
  * Today's members, as [{ playerId, name }], from what fetchFactionBasic returns:
@@ -400,12 +449,14 @@ export function rosterFromBasic(basic) {
 /**
  * The route's handler, as { handle(req, res) }. requireAuth has already checked
  * the token and put its claims on req.user. opts, for tests: collector (has
- * snapshot()), rosterFn() -> [{ playerId, name }], nowFn() -> ms, log(msg).
+ * snapshot()), rosterFn() -> [{ playerId, name }], nowFn() -> ms, log(msg),
+ * rosterTimeoutMs.
  */
 export function createBloodBagsApi(opts = {}) {
   const collector = opts.collector || bloodBagCollector;
   const nowFn = opts.nowFn || (() => Date.now());
   const log = opts.log || ((msg) => console.error(msg));
+  const rosterTimeoutMs = opts.rosterTimeoutMs || ROSTER_TIMEOUT_MS;
   // The owner's own key, the same call /slackers makes for its roster.
   const rosterFn = opts.rosterFn || (async () => {
     const key = store.getFactionApiKey(FACTION);
@@ -425,7 +476,7 @@ export function createBloodBagsApi(opts = {}) {
     if (!inflight) {
       inflight = (async () => {
         try {
-          roster = { at: nowFn(), members: await rosterFn(), stale: false };
+          roster = { at: nowFn(), members: await withTimeout(rosterFn(), rosterTimeoutMs), stale: false };
         } catch (err) {
           failedAt = nowFn();
           roster = { ...roster, stale: roster.members.length > 0 };
@@ -477,6 +528,7 @@ export function createBloodBagsApi(opts = {}) {
         windows: Object.keys(WINDOWS),
         types: ["all", ...TYPES],
         rosterStale: r.stale,
+        lastPollFailed: snap.lastPollOk === false,
       });
     } catch (err) {
       log(`[blood-bags] /api/bloodbags failed: ${err.message}`);
