@@ -16,7 +16,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as store from "./store.js";
 import { logCall } from "./key-usage-log.js";
-import { parseLine, isUnreadBloodLine, liveWar } from "./blood-bags-model.js";
+import { fetchFactionBasic } from "./torn-api.js";
+import {
+  TYPES, WINDOWS, parseLine, isUnreadBloodLine, liveWar, parseWindow, parseType, buildBoard,
+} from "./blood-bags-model.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const FACTION = "42055";
@@ -374,4 +377,112 @@ export const bloodBagCollector = createBloodBagCollector();
 /** server.js starts the hourly poll and the backfill with this. */
 export function start() {
   return bloodBagCollector.start();
+}
+
+// ── /api/bloodbags ──────────────────────────────────────────────────────────
+export const OWNER_ID = "137558";
+export const NOT_A_MEMBER = "This board is for Dead Fragment members.";
+// The roster moves slowly, so it is kept for an hour, as /slackers does.
+const ROSTER_TTL_MS = 60 * 60 * 1000;
+// A viewer missing from the roster gets it fetched again before being turned
+// away, but never more often than this; so does a failed refresh.
+const ROSTER_RECHECK_MS = 5 * 60 * 1000;
+
+/**
+ * Today's members, as [{ playerId, name }], from what fetchFactionBasic returns:
+ * Torn's v1 faction basic, whose `members` is a map keyed by player id (the
+ * /slackers roster reads it the same way).
+ */
+export function rosterFromBasic(basic) {
+  return Object.entries((basic && basic.members) || {}).map(([id, m]) => ({ playerId: String(id), name: String((m && m.name) || id) }));
+}
+
+/**
+ * The route's handler, as { handle(req, res) }. requireAuth has already checked
+ * the token and put its claims on req.user. opts, for tests: collector (has
+ * snapshot()), rosterFn() -> [{ playerId, name }], nowFn() -> ms, log(msg).
+ */
+export function createBloodBagsApi(opts = {}) {
+  const collector = opts.collector || bloodBagCollector;
+  const nowFn = opts.nowFn || (() => Date.now());
+  const log = opts.log || ((msg) => console.error(msg));
+  // The owner's own key, the same call /slackers makes for its roster.
+  const rosterFn = opts.rosterFn || (async () => {
+    const key = store.getFactionApiKey(FACTION);
+    if (!key) throw new Error("no faction key on file");
+    return rosterFromBasic(await fetchFactionBasic(FACTION, key));
+  });
+
+  let roster = { at: 0, members: [], stale: false };
+  let failedAt = -Infinity;
+  let inflight = null;
+
+  // Today's members, fetched again once older than maxAgeMs. A failed fetch
+  // keeps the last list, marked stale, rather than blanking the board.
+  function getRoster(maxAgeMs) {
+    const now = nowFn();
+    if (now - roster.at < maxAgeMs || now - failedAt < ROSTER_RECHECK_MS) return Promise.resolve(roster);
+    if (!inflight) {
+      inflight = (async () => {
+        try {
+          roster = { at: nowFn(), members: await rosterFn(), stale: false };
+        } catch (err) {
+          failedAt = nowFn();
+          roster = { ...roster, stale: roster.members.length > 0 };
+          log(`[blood-bags] roster refresh failed: ${err.message}`);
+        }
+        return roster;
+      })().finally(() => { inflight = null; });
+    }
+    return inflight;
+  }
+
+  async function handle(req, res) {
+    res.set("Cache-Control", "no-store");
+    try {
+      const viewerId = String((req.user && req.user.playerId) ?? "");
+      const isOwner = viewerId === OWNER_ID;
+      if (!isOwner && String((req.user && req.user.factionId) ?? "") !== FACTION) {
+        return res.status(403).json({ error: NOT_A_MEMBER });
+      }
+      const query = req.query || {};
+      const window = parseWindow(query.window);
+      if (!window) return res.status(400).json({ error: "Unknown timeframe." });
+      const type = parseType(query.type);
+      if (!type) return res.status(400).json({ error: "Unknown blood type." });
+
+      // A token lasts 90 days and outlives membership, so the faction it names is
+      // checked against today's roster too. Someone who joined since the roster
+      // was fetched gets a fresh look before being turned away.
+      let r = await getRoster(ROSTER_TTL_MS);
+      const listed = () => r.members.some((m) => String(m.playerId) === viewerId);
+      if (!isOwner && r.members.length && !listed()) {
+        r = await getRoster(ROSTER_RECHECK_MS);
+        if (!listed()) return res.status(403).json({ error: NOT_A_MEMBER });
+      }
+      if (!r.members.length) return res.status(502).json({ error: "The member list is unavailable right now." });
+
+      const snap = collector.snapshot();
+      const nowSec = Math.floor(nowFn() / 1000);
+      const board = buildBoard({
+        lines: snap.lines, roster: r.members, wars: snap.wars, nowSec, window, type, viewerId,
+        reachSec: snap.reachSec ?? nowSec,
+      });
+      return res.json({
+        ...board,
+        updatedAt: snap.lastPollAt,
+        reachSec: snap.reachSec,
+        backfillDone: snap.backfillDone,
+        liveWar: liveWar(snap.wars, nowSec),
+        windows: Object.keys(WINDOWS),
+        types: ["all", ...TYPES],
+        rosterStale: r.stale,
+      });
+    } catch (err) {
+      log(`[blood-bags] /api/bloodbags failed: ${err.message}`);
+      return res.status(500).json({ error: "internal error" });
+    }
+  }
+
+  return { handle };
 }
