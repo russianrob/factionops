@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as store from "./store.js";
 import { logCall } from "./key-usage-log.js";
-import { parseLine, isUnreadBloodLine } from "./blood-bags-model.js";
+import { parseLine, isUnreadBloodLine, liveWar } from "./blood-bags-model.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const FACTION = "42055";
@@ -31,6 +31,12 @@ export const GAP_MS = 6000;
 export const HEAD_MAX_PAGES = 10;
 const BACKFILL_DAYS = 365;
 const DAY = 86400;
+export const POLL_MS = 60 * 60 * 1000;
+// The war list is wanted daily, and hourly while the backfill has work, so the
+// backfill sees a war start and end.
+const WARS_DAILY_MS = 24 * 60 * 60 * 1000;
+// The backfill saves every this many pages; a restart repeats at most these.
+const SAVE_EVERY = 10;
 
 // Worked out at call time, so a test that sets DATA_DIR first never touches the
 // live folder. The store sits in its own folder, as chain-hits and gym-energy do.
@@ -57,6 +63,8 @@ export function createBloodBagCollector(opts = {}) {
   const sleepFn = opts.sleepFn || ((ms) => new Promise((r) => setTimeout(r, ms)));
   const keyFn = opts.keyFn || (() => store.getFactionApiKey(FACTION));
   const log = opts.log || ((msg) => console.log(msg));
+  const setIntervalFn = opts.setIntervalFn || ((fn, ms) => setInterval(fn, ms));
+  const clearIntervalFn = opts.clearIntervalFn || ((t) => clearInterval(t));
   const nowSec = () => Math.floor(nowFn() / 1000);
   const file = () => join(dir(), `${FACTION}.json`);
 
@@ -66,6 +74,9 @@ export function createBloodBagCollector(opts = {}) {
   let queue = Promise.resolve();
   let keyMissingLogged = false;
   const unreadLogged = new Set();
+  let backfilling = null;
+  let ticking = false;
+  let timer = null;
 
   function fresh() {
     const today = Math.floor(nowSec() / DAY) * DAY;
@@ -264,5 +275,103 @@ export function createBloodBagCollector(opts = {}) {
     };
   }
 
-  return { load, save, pollOnce, snapshot };
+  /** Torn's public ranked-war list for the faction; one call reaches back two years. */
+  async function refreshWars() {
+    load();
+    try {
+      const body = await tornGet(`/faction/${FACTION}/rankedwars`, {});
+      const list = Array.isArray(body.rankedwars) ? body.rankedwars : [];
+      data.wars = list.map((w) => ({ id: w.id, start: Number(w.start) || 0, end: Number(w.end) || 0 }));
+      data.warsAt = nowFn();
+      save();
+      return true;
+    } catch (err) {
+      fail("war list", err);
+      return false;
+    }
+  }
+
+  const hasGaps = () => CATS.some((cat) => data.cats[cat].gaps.length > 0);
+
+  // The newest gap first, so the history fills in from the present backwards.
+  function nextGap() {
+    let best = null;
+    for (const cat of CATS) {
+      for (const gap of data.cats[cat].gaps) if (!best || gap.to > best.gap.to) best = { cat, gap };
+    }
+    return best;
+  }
+
+  async function backfill() {
+    load();
+    let pages = 0;
+    try {
+      for (;;) {
+        const next = nextGap();
+        if (!next) break;
+        const war = liveWar(data.wars, nowSec());
+        if (war) {
+          log(`[blood-bags] backfill waiting: ranked war ${war.id} is live`);
+          break;
+        }
+        const r = await walk(next.cat, next.gap.from, next.gap.to, 1);
+        if (r.done) data.cats[next.cat].gaps.splice(data.cats[next.cat].gaps.indexOf(next.gap), 1);
+        else next.gap.to = r.to;
+        if (++pages % SAVE_EVERY === 0) save();
+      }
+      if (pages && !hasGaps()) log(`[blood-bags] backfill done: history reaches ${new Date(data.cutoffSec * 1000).toISOString().slice(0, 10)}`);
+    } catch (err) {
+      // Its place is kept; the next hourly tick starts it again from there.
+      fail("backfill", err);
+    } finally {
+      save();
+    }
+  }
+
+  /**
+   * The backfill: fills every gap, newest first, a page per call, GAP_MS apart.
+   * It stops while a ranked war is live, and on any error, and the next hourly
+   * tick starts it again from where it stopped. Returns the run in progress.
+   */
+  function runBackfill() {
+    if (!backfilling) backfilling = backfill().finally(() => { backfilling = null; });
+    return backfilling;
+  }
+
+  /** Every hour: the war list when it is due, the poll, then the backfill if there is work. */
+  async function tick() {
+    if (ticking) return;
+    ticking = true;
+    try {
+      load();
+      const every = hasGaps() ? POLL_MS : WARS_DAILY_MS;
+      if (nowFn() - data.warsAt >= every - 60 * 1000) await refreshWars();
+      await pollOnce();
+      if (hasGaps()) runBackfill();
+    } finally {
+      ticking = false;
+    }
+  }
+
+  /** One tick now, then one an hour. Starting twice does nothing. */
+  function start() {
+    if (timer) return Promise.resolve();
+    timer = setIntervalFn(() => { tick().catch((e) => log(`[blood-bags] tick failed: ${e.message}`)); }, POLL_MS);
+    return tick().catch((e) => log(`[blood-bags] tick failed: ${e.message}`));
+  }
+
+  function stop() {
+    if (timer) clearIntervalFn(timer);
+    timer = null;
+  }
+
+  return { load, save, pollOnce, snapshot, refreshWars, runBackfill, tick, start, stop };
+}
+
+// The one the server runs; routes.js reads it through createBloodBagsApi.
+export const bloodBagCollector = createBloodBagCollector();
+
+/** server.js starts the hourly poll and the backfill with this. */
+export function start() {
+  return bloodBagCollector.start();
 }

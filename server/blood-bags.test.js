@@ -223,3 +223,135 @@ test("a store that will not read is set aside, not written over", async () => {
   assert.equal(readFileSync(join(dir, files[0]), "utf8"), "{ not json");
   assert.ok(logs.some((m) => m.includes("store unreadable")));
 });
+
+// ── the backfill, the war list and the schedule ─────────────────────────────
+const HOUR_MS = 3600 * 1000;
+const bloodIn = (torn, fromSec) => torn.news.armoryAction.concat(torn.news.armoryDeposit)
+  .filter((e) => e.timestamp >= fromSec && /Blood Bag :/.test(e.text) && !/Irradiated/.test(e.text)).length;
+
+test("the backfill fills the year below the first page, a call every 6 seconds, down to the year's floor", async () => {
+  const torn = fakeTorn({
+    action: actions(1000, T0 - 60, Math.round(0.4 * DAY)),
+    deposit: [entry(T0 - 5 * DAY, `${who(7, "P7")} deposited 3x Blood Bag : B+`), entry(T0 - 380 * DAY, `${who(7, "P7")} deposited 9x Blood Bag : B+`)],
+  });
+  const { c } = setup({ torn });
+  await c.pollOnce();
+  await c.runBackfill();
+
+  const backfill = newsCalls(torn).slice(2);
+  assert.ok(backfill.length >= 6);
+  for (const call of backfill) assert.equal(call.url.searchParams.get("from"), String(CUTOFF));
+  const times = torn.calls.map((call) => call.at);
+  for (let i = 1; i < times.length; i++) assert.ok(times[i] - times[i - 1] >= GAP_MS, `call ${i} came ${times[i] - times[i - 1]} ms after the one before`);
+  const snap = c.snapshot();
+  assert.equal(snap.backfillDone, true);
+  assert.equal(snap.reachSec, CUTOFF);
+  assert.equal(snap.lines.length, bloodIn(torn, CUTOFF));
+  assert.ok(snap.lines.every((l) => l.ts >= CUTOFF));
+});
+
+test("the backfill waits while a ranked war is live and carries on after it", async () => {
+  const torn = fakeTorn({ action: actions(300, T0 - 60, 3600), deposit: [], wars: [{ id: 51418, start: T0 - DAY, end: 0 }] });
+  const { c, clock, logs } = setup({ torn });
+  await c.tick();
+  await c.runBackfill();
+  assert.equal(newsCalls(torn).length, 2, "the poll still runs; the backfill makes no call");
+  assert.ok(logs.some((m) => m.includes("ranked war 51418 is live")));
+  assert.equal(c.snapshot().backfillDone, false);
+
+  torn.wars[0].end = T0 + 600;
+  clock.now += HOUR_MS;
+  await c.tick();
+  await c.runBackfill();
+  assert.equal(c.snapshot().backfillDone, true);
+  assert.equal(c.snapshot().lines.length, bloodIn(torn, CUTOFF));
+});
+
+test("a Torn error mid-backfill keeps its place and never marks the backfill done", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const { c, logs } = setup({ torn });
+  await c.pollOnce();
+  torn.fail = (u, n) => (n > 5 ? reply({ error: { code: 5, error: "Too many requests" } }) : null);
+  await c.runBackfill();
+  const snap = c.snapshot();
+  assert.equal(snap.backfillDone, false);
+  const lastGood = newsCalls(torn)[4];
+  const pageOldest = Math.min(...torn.news.armoryAction
+    .filter((e) => e.timestamp >= CUTOFF && e.timestamp < Number(lastGood.url.searchParams.get("to")))
+    .sort((a, b) => b.timestamp - a.timestamp).slice(0, 100).map((e) => e.timestamp));
+  assert.deepEqual(snap.cats.armoryAction.gaps, [{ from: CUTOFF, to: pageOldest + 1 }]);
+  assert.ok(logs.some((m) => m.includes("backfill failed: Torn API error: Too many requests (code 5)")));
+});
+
+test("after a restart the backfill carries on from its saved place, with no repeats and no gap", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const { c, make } = setup({ torn });
+  await c.pollOnce();
+  torn.fail = (u, n) => (n > 5 ? reply({ error: { code: 5, error: "Too many requests" } }) : null);
+  await c.runBackfill();
+  const saved = c.snapshot().cats.armoryAction.gaps[0].to;
+
+  torn.fail = null;
+  torn.calls.length = 0;
+  const after = make();
+  await after.runBackfill();
+  assert.equal(newsCalls(torn)[0].url.searchParams.get("to"), String(saved), "it starts where the last one stopped");
+  const snap = after.snapshot();
+  assert.equal(snap.backfillDone, true);
+  assert.equal(snap.lines.length, bloodIn(torn, CUTOFF));
+});
+
+test("the poll and the backfill share one pace", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const { c } = setup({ torn });
+  await c.pollOnce();
+  const running = c.runBackfill();
+  await c.pollOnce();
+  await running;
+  const times = torn.calls.map((call) => call.at);
+  for (let i = 1; i < times.length; i++) assert.ok(times[i] - times[i - 1] >= GAP_MS);
+  assert.equal(c.snapshot().backfillDone, true);
+});
+
+test("the war list is fetched hourly while the backfill has work, and daily once it is done", async () => {
+  const torn = fakeTorn({ action: actions(300, T0 - 60, 3600), deposit: [], wars: [{ id: 7, start: T0 - DAY, end: 0 }] });
+  const { c, clock } = setup({ torn });
+  const warCalls = () => torn.calls.filter((call) => call.url.pathname.endsWith("/rankedwars")).length;
+  await c.tick(); await c.runBackfill();
+  assert.equal(warCalls(), 1);
+  clock.now += HOUR_MS;
+  await c.tick(); await c.runBackfill();
+  assert.equal(warCalls(), 2, "hourly, so it sees the war end");
+
+  torn.wars[0].end = T0;
+  clock.now += HOUR_MS;
+  await c.tick(); await c.runBackfill();
+  assert.equal(warCalls(), 3);
+  assert.equal(c.snapshot().backfillDone, true);
+  clock.now += HOUR_MS;
+  await c.tick();
+  assert.equal(warCalls(), 3, "daily once the backfill is done");
+  clock.now += 23 * HOUR_MS;
+  await c.tick();
+  assert.equal(warCalls(), 4);
+});
+
+test("start runs one tick at once and then every hour; stop ends it", async () => {
+  const torn = fakeTorn({ action: actions(10, T0 - 60), deposit: [] });
+  const timers = [];
+  const clock = { now: T0 * 1000 };
+  torn.clock = clock;
+  const c = createBloodBagCollector({
+    dataDir: mkdtempSync(join(tmpdir(), "blood-bags-")), fetchImpl: torn.fetchImpl, nowFn: () => clock.now,
+    sleepFn: async (ms) => { clock.now += ms; }, keyFn: () => "k", log: () => {},
+    setIntervalFn: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t; },
+    clearIntervalFn: (t) => { t.cleared = true; },
+  });
+  await c.start();
+  await c.start();
+  assert.equal(timers.length, 1, "a second start does nothing");
+  assert.equal(timers[0].ms, HOUR_MS);
+  assert.equal(newsCalls(torn).length, 2);
+  c.stop();
+  assert.equal(timers[0].cleared, true);
+});
