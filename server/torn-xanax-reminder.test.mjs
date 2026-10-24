@@ -1331,6 +1331,21 @@ test('a save that storage refuses, drops, or keeps only in part says so, stays o
   }
 });
 
+test('a save that keeps the choice but not the key changes nothing: the old choice stays in force', () => {
+  // GM storage that drops writes of the key without a word, and keeps the rest.
+  const store = new Proxy(warStore(), { set(target, k, v) { if (k !== KEY_STORE) target[k] = v; return true; } });
+  const w = page({ store }).run();
+  w.menu[MENU]();
+  pick(w, 'armoury');
+  keyField(w).value = 'NEWKEY1234567890';
+  press(w, 'Save');
+  assert.match(settings(w).textContent, /Couldn't save, try again\./);
+  press(w, 'Cancel');
+  w.check();
+  assert.equal(w.link().getAttribute('href'), ITEMS, 'the icon does not switch to the armoury');
+  assert.equal(fire(w, w.link(), 'click').defaultPrevented, true, 'a tap still asks, as before the save');
+});
+
 test('a box opened again just after Save stays open', () => {
   const w = page({ store: warStore() }).run();
   w.menu[MENU]();

@@ -657,11 +657,15 @@
       savedTimer = setTimeout(closeSettings, SAVED_MS);
     };
     // Save keeps the war choice, and the key when one is typed: an empty field keeps the saved
-    // key, and only Clear key removes it.
+    // key, and only Clear key removes it. A save that doesn't all stick changes nothing: the
+    // choice goes back to what it was, so "Couldn't save" is true of both.
     const save = () => {
       const picked = WAR_TAPS.indexOf(list.value) >= 0 ? list.value : 'ask';
       const key = String(input.value || '').trim();
-      finish(saveChecked(WAR_TAP_STORE, picked) && (!key || setKey(key)), 'Saved.');
+      const before = gmGet(WAR_TAP_STORE);
+      const ok = saveChecked(WAR_TAP_STORE, picked) && (!key || setKey(key));
+      if (!ok && gmGet(WAR_TAP_STORE) !== before) gmSet(WAR_TAP_STORE, before);
+      finish(ok, 'Saved.');
     };
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') save();

@@ -121,7 +121,7 @@ The script never clicks anything itself. Every way out of the icon is a plain li
     - the icon's link and label follow at once;
     - the field empties, so a second Save asks Torn nothing more;
     - the box closes a second later.
-  - If storage doesn't give the value back, the box says "Couldn't save, try again." and stays open, and the key saved before is kept.
+  - If storage doesn't give a value back, the save changes nothing: the box says "Couldn't save, try again." and stays open, and the war choice and the key saved before are kept.
   - Escape, Cancel, the "x", or a tap on the dark area around the box closes it without a change.
 - **PDA:** the source carries `###PDA-APIKEY###` once and only once. PDA swaps it for your key. A second copy, or one split across strings, breaks PDA's substitution.
 - **Stored:** in GM storage, as strings: the key, the war choice and the war record. A saved key beats the PDA one. An empty key means no key.
