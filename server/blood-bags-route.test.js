@@ -152,17 +152,18 @@ test("with no roster at all the board says so", async () => {
 
 test("the answer carries everything the page reads", async () => {
   const { api } = setup({ snapshot: () => ({
-    lines: LINES, wars: [{ id: 51418, start: NOW - 86400, end: 0 }], lastPollAt: NOW * 1000 - 10 * MIN_MS,
-    reachSec: NOW - 30 * 86400, backfillDone: false, cutoffSec: NOW - 365 * 86400,
+    lines: LINES, wars: [{ id: 51418, start: NOW - 86400, end: 0 }], warsAt: NOW * 1000 - 10 * MIN_MS,
+    lastPollAt: NOW * 1000 - 10 * MIN_MS, reachSec: NOW - 30 * 86400, backfillDone: false, cutoffSec: NOW - 365 * 86400,
   }) });
   const { body } = await get(api, token(2), { window: "all" });
   assert.deepEqual(Object.keys(body).sort(), [
-    "backfillDone", "fromSec", "lastPollFailed", "liveWar", "overview", "reachSec", "rosterStale", "toSec", "topGiven", "topNet",
-    "type", "types", "updatedAt", "wall", "window", "windows", "you",
+    "backfillDone", "backfillSlow", "fromSec", "lastPollFailed", "liveWar", "overview", "reachSec", "rosterStale", "toSec", "topGiven",
+    "topNet", "type", "types", "updatedAt", "wall", "window", "windows", "you",
   ]);
   assert.deepEqual(body.windows, ["24h", "7d", "30d", "90d", "all"]);
   assert.deepEqual(body.types, ["all", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]);
   assert.deepEqual(body.liveWar, { id: 51418, start: NOW - 86400 });
+  assert.equal(body.backfillSlow, true);
   assert.equal(body.fromSec, NOW - 30 * 86400, "all time starts where the history reaches");
   assert.equal(body.updatedAt, NOW * 1000 - 10 * MIN_MS);
   assert.deepEqual(body.overview, { given: 1, used: 1, usedInWars: 1, net: 1, members: 3 });
@@ -257,6 +258,21 @@ test("the answer says when the last poll failed", async () => {
   assert.equal((await get(failing.api, token(1))).body.lastPollFailed, true);
   const fine = setup();
   assert.equal((await get(fine.api, token(1))).body.lastPollFailed, false);
+});
+
+test("the answer says when the backfill is at the war pace: a live war, or a war list too old to say", async () => {
+  const slow = async (snap) => {
+    const { api } = setup({ snapshot: () => ({
+      lines: LINES, wars: [], warsAt: NOW * 1000 - 10 * MIN_MS, lastPollAt: NOW * 1000 - 10 * MIN_MS,
+      reachSec: NOW - 30 * 86400, backfillDone: false, cutoffSec: NOW - 365 * 86400, ...snap,
+    }) });
+    return (await get(api, token(1))).body.backfillSlow;
+  };
+  assert.equal(await slow({}), false, "a list read 10 minutes ago, with no war");
+  assert.equal(await slow({ wars: [{ id: 51418, start: NOW - 86400, end: 0 }] }), true, "a live war");
+  assert.equal(await slow({ warsAt: NOW * 1000 - 66 * MIN_MS }), true, "a list over 65 minutes old");
+  assert.equal(await slow({ warsAt: 0 }), true, "a list never read");
+  assert.equal(await slow({ warsAt: 0, backfillDone: true }), false, "nothing left to fill in");
 });
 
 test("a roster fetch that hangs gives up after its time limit, so the board answers", { timeout: 5000 }, async () => {

@@ -95,7 +95,7 @@ The sample held no gave, loaned, returned or retrieved lines for blood bags. The
 - It runs once, from the newest line back to 365 days before the day it starts, for both categories.
 - No more than 10 calls a minute, and no more than 2 a minute (a page every 30 seconds) while a ranked war is live, so the war pollers keep the key's budget. The hourly poll is not slowed: its calls go out between the backfill's pages.
 - It remembers where it is, so a server restart resumes it.
-- Once the hourly read of the war list shows the war is over, it goes back to 10 a minute. A war list more than 65 minutes old (an hour's poll plus 5 minutes), or one that could not be read, counts as a war, so a war it cannot see costs no more than one it can. It logs a line when it slows down and when it speeds back up, not for every page.
+- Once the hourly read of the war list shows the war is over, it goes back to 10 a minute. A war list more than 65 minutes old (an hour's poll plus 5 minutes), or one that could not be read, counts as a war, so a war it cannot see costs no more than one it can. It logs a line at its first page after each start, and whenever its pace or the reason for it changes, never for every page: `[blood-bags] backfill at 10 calls a minute: no ranked war is live` (a start at full speed), `[blood-bags] backfill slowed to 2 calls a minute: <reason>`, `[blood-bags] backfill still at 2 calls a minute: <reason>` (a new reason while it is already slow) and `[blood-bags] backfill back to 10 calls a minute: no ranked war is live`. The reason is `ranked war <id> is live` or `the ranked-war list has not been read in the last hour`.
 - It marks itself done. "All time" then means since the date it reached back to, about October 2025.
 - **Cost:** about 1,300 calls: a little over 2 hours at 10 a minute, or about 11 hours at the war pace. About 360 action lines a day comes to 3 or 4 calls per day of history; deposits are about 25 calls a year.
 
@@ -138,7 +138,7 @@ Typeless fills count under All types only.
 - A former member counts in the totals and appears on no list.
 - A member who only used bags during wars has a net of zero, so they appear on no list.
 - Before the first poll, the page says the board has no data yet. If that poll failed, it says so, and that it tries again every hour.
-- While the backfill runs, the page says how far back the data reaches so far, and during a ranked war that the rest is filling in slowly. "All time" means that far, and no shorter timeframe starts before it.
+- While the backfill runs, the page says how far back the data reaches so far, and, whenever the backfill is at the war pace, that the rest is filling in slowly: "slowly while the ranked war is on" during a war, and just "slowly" while the war list is out of date. "All time" means that far, and no shorter timeframe starts before it.
 - If the member list could not be refreshed, the board uses the last one it has and says the lists may be out of date.
 - If the hourly poll has been failing, "Latest update" shows its age, so a stale board says so.
 - A live war's use counts as war use from its start to now.

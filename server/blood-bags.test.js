@@ -342,7 +342,7 @@ test("the war list is read with every hourly poll, before and after the backfill
   assert.equal(warCalls(), 1);
   clock.now += HOUR_MS;
   await c.tick(); await c.runBackfill();
-  assert.equal(warCalls(), 2, "hourly, so it sees the war end");
+  assert.equal(warCalls(), 2, "read every hour: a list over 65 minutes old would slow the backfill");
 
   torn.wars[0].end = T0;
   clock.now += HOUR_MS;
@@ -577,4 +577,93 @@ test("an hourly tick that lands while the backfill waits out its 30 seconds goes
   assert.ok(between(pages).every((ms) => ms >= WAR_GAP_MS), `backfill pages: ${between(pages)}`);
   assert.ok(between(torn.calls).every((ms) => ms >= GAP_MS), `every call still waits its turn: ${between(torn.calls)}`);
   assert.equal(c.snapshot().backfillDone, true);
+});
+
+test("after a restart once the war is over, the backfill says it is at 10 calls a minute, and goes at that pace", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [], wars: [{ id: 51418, start: T0 - DAY, end: 0 }] });
+  const { c, make, clock, logs } = setup({ torn });
+  await c.pollOnce();
+  await c.refreshWars();
+  // Two slow pages, then Torn refuses and the run stops.
+  torn.fail = (u) => (u.pathname === "/v2/faction/news" && newsCalls(torn).length > 4 ? reply({ error: { code: 5, error: "Too many requests" } }) : null);
+  await c.runBackfill();
+  torn.fail = null;
+  // The war ends, and the restart's first tick reads the list that says so.
+  torn.wars[0].end = Math.floor(clock.now / 1000);
+  torn.calls.length = 0;
+  const after = make();
+  await after.refreshWars();
+  const before = logs.length;
+  await after.runBackfill();
+  const said = (text) => logs.slice(before).filter((m) => m.includes(text)).length;
+  assert.equal(said("backfill at 10 calls a minute: no ranked war is live"), 1, logs.slice(before).join("\n"));
+  assert.equal(said("2 calls a minute"), 0, logs.slice(before).join("\n"));
+  const pages = backfillPages(torn);
+  assert.ok(between(pages).every((ms) => ms >= GAP_MS && ms < WAR_GAP_MS), `${pages.length} backfill pages: ${between(pages)}`);
+  assert.equal(after.snapshot().backfillDone, true);
+});
+
+test("a war list that goes out of date mid-run, then is read again, keeps the war pace and logs each new reason once", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [], wars: [{ id: 51418, start: T0 - DAY, end: 0 }] });
+  const { c, clock, logs } = setup({ torn });
+  await c.pollOnce();
+  await c.refreshWars();
+  // At the third page the hourly read is late, so the list goes out of date; at
+  // the sixth it is read again.
+  let jumped = false;
+  let reread = null;
+  torn.fail = () => {
+    const n = backfillPages(torn).length;
+    if (!jumped && n === 3) { jumped = true; clock.now += 66 * 60 * 1000; }
+    if (!reread && n === 6) reread = c.refreshWars();
+    return null;
+  };
+  await c.runBackfill();
+  await reread;
+  const said = (text) => logs.filter((m) => m.includes(text)).length;
+  assert.equal(said("backfill slowed to 2 calls a minute: ranked war 51418 is live"), 1, logs.join("\n"));
+  assert.equal(said("backfill still at 2 calls a minute: the ranked-war list has not been read in the last hour"), 1, logs.join("\n"));
+  assert.equal(said("backfill still at 2 calls a minute: ranked war 51418 is live"), 1, logs.join("\n"));
+  assert.equal(said("10 calls a minute"), 0, logs.join("\n"));
+  const pages = backfillPages(torn);
+  assert.ok(between(pages).every((ms) => ms >= WAR_GAP_MS), `${pages.length} backfill pages: ${between(pages)}`);
+  assert.equal(c.snapshot().backfillDone, true);
+});
+
+test("a war that starts while the backfill runs at full speed slows it from the next page", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [], wars: [{ id: 9, start: T0 + 45, end: 0 }] });
+  const { c, logs } = setup({ torn });
+  await c.pollOnce();
+  await c.refreshWars();
+  await c.runBackfill();
+  const pages = backfillPages(torn);
+  const gaps = between(pages);
+  assert.ok(pages.length >= 7, `${pages.length} backfill pages`);
+  assert.ok(gaps.slice(0, 3).every((ms) => ms < WAR_GAP_MS), `before the war: ${gaps}`);
+  assert.ok(gaps.slice(-3).every((ms) => ms >= WAR_GAP_MS), `once it starts: ${gaps}`);
+  const said = (text) => logs.filter((m) => m.includes(text)).length;
+  assert.equal(said("backfill at 10 calls a minute: no ranked war is live"), 1, logs.join("\n"));
+  assert.equal(said("backfill slowed to 2 calls a minute: ranked war 9 is live"), 1, logs.join("\n"));
+});
+
+test("after a restart during a war the first page goes at once, then one every 30 seconds", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [], wars: [{ id: 51418, start: T0 - DAY, end: 0 }] });
+  const { c, make, clock, logs } = setup({ torn });
+  await c.pollOnce();
+  await c.refreshWars();
+  // Two slow pages, then Torn refuses and the run stops.
+  torn.fail = (u) => (u.pathname === "/v2/faction/news" && newsCalls(torn).length > 4 ? reply({ error: { code: 5, error: "Too many requests" } }) : null);
+  await c.runBackfill();
+  torn.fail = null;
+  torn.calls.length = 0;
+  const restartAt = clock.now;
+  const before = logs.length;
+  const after = make();
+  await after.runBackfill();
+  const pages = backfillPages(torn);
+  assert.equal(pages[0].at, restartAt, "the first page goes at once");
+  assert.ok(between(pages).every((ms) => ms >= WAR_GAP_MS), `${pages.length} backfill pages: ${between(pages)}`);
+  const said = (text) => logs.slice(before).filter((m) => m.includes(text)).length;
+  assert.equal(said("backfill slowed to 2 calls a minute: ranked war 51418 is live"), 1, "the restart says its pace again");
+  assert.equal(after.snapshot().backfillDone, true);
 });

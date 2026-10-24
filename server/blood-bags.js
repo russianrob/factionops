@@ -45,6 +45,17 @@ const WARS_FRESH_MS = POLL_MS + 5 * 60 * 1000;
 // The backfill saves every this many pages; a restart repeats at most these.
 const SAVE_EVERY = 10;
 
+/**
+ * Why the backfill is at the war pace, or null at full speed: a live ranked war,
+ * or a war list too old to say (a missing warsAt counts as never read). The
+ * collector and the route both ask, so the log and the page never disagree.
+ */
+function slowReason(wars, warsAt, nowMs) {
+  if (!(nowMs - warsAt < WARS_FRESH_MS)) return "the ranked-war list has not been read in the last hour";
+  const war = liveWar(wars, Math.floor(nowMs / 1000));
+  return war ? `ranked war ${war.id} is live` : null;
+}
+
 // Worked out at call time, so a test that sets DATA_DIR first never touches the
 // live folder. The store sits in its own folder, as chain-hits and gym-energy do.
 export const defaultDataDir = () => join(process.env.DATA_DIR || join(__dirname, "data"), "blood-bags");
@@ -83,9 +94,10 @@ export function createBloodBagCollector(opts = {}) {
   let lineList = null;
   let lastCallAt = -Infinity;
   let queue = Promise.resolve();
-  // The backfill's own clock for the war pace, and what its last pace line said.
+  // The backfill's own clock for the war pace, and what its last pace line said:
+  // undefined until the first page, so every start says which pace it is at.
   let lastPageAt = -Infinity;
-  let paceNote = null;
+  let paceNote;
   let keyMissingLogged = false;
   let backfilling = null;
   let ticking = false;
@@ -282,10 +294,10 @@ export function createBloodBagCollector(opts = {}) {
   }
 
   /**
-   * What the route reads: { lines, wars, lastPollAt, lastPollOk, reachSec,
-   * backfillDone, cutoffSec, cats }. reachSec is how far back the history is
-   * complete: the year's floor once the backfill is done, the top of the newest
-   * gap until then, null before the first poll.
+   * What the route reads: { lines, wars, warsAt, lastPollAt, lastPollOk,
+   * reachSec, backfillDone, cutoffSec, cats }. reachSec is how far back the
+   * history is complete: the year's floor once the backfill is done, the top of
+   * the newest gap until then, null before the first poll.
    */
   function snapshot() {
     load();
@@ -296,6 +308,7 @@ export function createBloodBagCollector(opts = {}) {
     return {
       lines: lineList,
       wars: data.wars,
+      warsAt: data.warsAt,
       lastPollAt: data.lastPollAt,
       lastPollOk: data.lastPollOk,
       reachSec: started ? Math.max(...reaches) : null,
@@ -338,16 +351,14 @@ export function createBloodBagCollector(opts = {}) {
    * Before each backfill page: while a ranked war is live, or the war list is
    * too old to say, wait until WAR_GAP_MS after the page before. The wait is
    * outside pace(), so the hourly poll's calls go out in between. A line is
-   * logged when the pace or its reason changes, not for every page.
+   * logged at the first page after a start, and when the pace or its reason
+   * changes, not for every page.
    */
   async function warPace() {
-    const known = nowFn() - data.warsAt < WARS_FRESH_MS;
-    const war = known ? liveWar(data.wars, nowSec()) : null;
-    const note = !known ? "the ranked-war list has not been read in the last hour"
-      : war ? `ranked war ${war.id} is live` : null;
+    const note = slowReason(data.wars, data.warsAt, nowFn());
     if (note !== paceNote) {
-      log(note ? `[blood-bags] backfill slowed to 2 calls a minute: ${note}`
-        : "[blood-bags] backfill back to 10 calls a minute: no ranked war is live");
+      log(note ? `[blood-bags] backfill ${paceNote ? "still at" : "slowed to"} 2 calls a minute: ${note}`
+        : `[blood-bags] backfill ${paceNote === undefined ? "at" : "back to"} 10 calls a minute: no ranked war is live`);
       paceNote = note;
     }
     if (!note) return;
@@ -535,7 +546,8 @@ export function createBloodBagsApi(opts = {}) {
       if (!r.members.length) return res.status(502).json({ error: "The member list is unavailable right now." });
 
       const snap = collector.snapshot();
-      const nowSec = Math.floor(nowFn() / 1000);
+      const nowMs = nowFn();
+      const nowSec = Math.floor(nowMs / 1000);
       const board = buildBoard({
         lines: snap.lines, roster: r.members, wars: snap.wars, nowSec, window, type, viewerId,
         reachSec: snap.reachSec ?? nowSec,
@@ -545,6 +557,8 @@ export function createBloodBagsApi(opts = {}) {
         updatedAt: snap.lastPollAt,
         reachSec: snap.reachSec,
         backfillDone: snap.backfillDone,
+        // Whether the rest is filling in at the war pace, so the page can say "slowly".
+        backfillSlow: !snap.backfillDone && slowReason(snap.wars, snap.warsAt, nowMs) !== null,
         liveWar: liveWar(snap.wars, nowSec),
         windows: Object.keys(WINDOWS),
         types: ["all", ...TYPES],

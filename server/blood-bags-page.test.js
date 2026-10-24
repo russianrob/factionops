@@ -116,6 +116,15 @@ test("the note says when there is no data yet, and how far back the history reac
   assert.equal(P.noteText({ updatedAt: 1, backfillDone: true, reachSec: reach }), "");
 });
 
+test("the note says the history fills in slowly while the war list is out of date, too", () => {
+  const { P } = page();
+  const reach = Date.UTC(2026, 9, 20) / 1000;
+  assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: null, backfillSlow: true }),
+    "History so far reaches back to 20 Oct; the rest of the year is still being filled in, slowly.");
+  assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: { id: 1 }, backfillSlow: true }),
+    "History so far reaches back to 20 Oct; the rest of the year is still being filled in, slowly while the ranked war is on.");
+});
+
 test("the overview shows the war part of use and a signed net", () => {
   const { P } = page();
   const html = P.overviewHtml(BOARD.overview);
