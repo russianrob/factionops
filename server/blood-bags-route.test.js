@@ -285,3 +285,30 @@ test("a roster fetch that hangs gives up after its time limit, so the board answ
   assert.equal(res.statusCode, 502);
   assert.deepEqual(res.body, { error: "The member list is unavailable right now." });
 });
+
+// ── the owner's key ─────────────────────────────────────────────────────────
+test("the roster is read with the owner's own key from OWNER_API_KEY", async () => {
+  const savedKey = process.env.OWNER_API_KEY;
+  const savedFetch = globalThis.fetch;
+  const asked = [];
+  process.env.OWNER_API_KEY = "test-owner-key";
+  globalThis.fetch = async (url) => {
+    asked.push(new URL(url));
+    return { ok: true, status: 200, json: async () => ({ members: { 1: { name: "Ann" } } }) };
+  };
+  try {
+    const api = createBloodBagsApi({
+      collector: { snapshot: () => ({ lines: [], wars: [], lastPollAt: null, reachSec: null, backfillDone: false, cutoffSec: 0 }) },
+      nowFn: () => NOW * 1000, log: () => {},
+    });
+    const res = await get(api, token(1));
+    assert.equal(res.statusCode, 200);
+    assert.equal(asked.length, 1);
+    assert.equal(asked[0].pathname, "/faction/42055");
+    assert.ok(asked[0].searchParams.get("key") === "test-owner-key", "the roster call carries the owner's key");
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (savedKey === undefined) delete process.env.OWNER_API_KEY;
+    else process.env.OWNER_API_KEY = savedKey;
+  }
+});

@@ -2,15 +2,18 @@
 //
 // Torn keeps years of armoury news but hands it out 100 lines at a time, newest
 // first, so this keeps its own copy of just the blood-bag lines. An hourly poll
-// picks up what is new. A one-off backfill walks a year back, at no more than
-// 10 calls a minute, and 2 a minute while a ranked war is live, so the war
-// pollers keep the key's budget. Both write one store, and a line's own id
+// picks up what is new. A one-off backfill, which the hourly tick starts only
+// when BLOODBAGS_BACKFILL is 1, walks a year back, at no more than 10 calls a
+// minute, and 2 a minute while a ranked war is live, so the war pollers keep the
+// key's budget. Both write one store, and a line's own id
 // decides what is a repeat. Spec: docs/superpowers/specs/2026-10-24-faction-blood-bag-board-design.md
 //
 // Every Torn call sends the key in the Authorization header, never in the URL,
 // is tagged comment=wb-bloodbags in Torn's own log, and is recorded in
-// warboard's key-usage log. The key is the owner's faction key, never a pooled
-// member key, as /slackers does.
+// warboard's key-usage log. The key is the owner's own: the one they signed in
+// with, else OWNER_API_KEY. Never the faction key on file, which can be another
+// member's, nor a pooled member key: Torn caps how many records one player may
+// read a day, and the board spends only the owner's.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,9 +35,11 @@ export const GAP_MS = 6000;
 // While a ranked war is live, backfill pages are at least this far apart: 2 a
 // minute. The wait is the backfill's own, so the poll is not slowed.
 export const WAR_GAP_MS = 30000;
-// An hour of news fits in one page. Ten pages is about three days of it, so the
-// cap only bites after a long outage, and what it leaves goes to the backfill.
-export const HEAD_MAX_PAGES = 10;
+// An hour of news fits in one page, even in a war. Thirty pages hold more than a
+// day of war-time news, so after Torn's daily read cap has kept the poll out
+// until it resets, the poll alone catches up. Anything past thirty pages goes
+// to the backfill.
+export const HEAD_MAX_PAGES = 30;
 const BACKFILL_DAYS = 365;
 const DAY = 86400;
 export const POLL_MS = 60 * 60 * 1000;
@@ -44,6 +49,9 @@ export const POLL_MS = 60 * 60 * 1000;
 const WARS_FRESH_MS = POLL_MS + 5 * 60 * 1000;
 // The backfill saves every this many pages; a restart repeats at most these.
 const SAVE_EVERY = 10;
+
+/** The owner's own key: the one they signed in with, else OWNER_API_KEY; null with neither. */
+const ownerKey = () => store.getApiKeyForPlayer(OWNER_ID) || process.env.OWNER_API_KEY || null;
 
 /**
  * Why the backfill is at the war pace, or null at full speed: a live ranked war,
@@ -63,7 +71,9 @@ export const defaultDataDir = () => join(process.env.DATA_DIR || join(__dirname,
 /**
  * The collector. Everything it touches comes in through opts, so a test can run
  * it against a fake Torn, a fake clock and a temporary folder:
- *   dataDir, fetchImpl, nowFn() -> ms, sleepFn(ms), keyFn() -> key or null, log(msg)
+ *   dataDir, fetchImpl, nowFn() -> ms, sleepFn(ms), keyFn() -> key or null, log(msg),
+ *   backfill (whether the hourly tick starts the backfill; by default, whether
+ *   BLOODBAGS_BACKFILL is 1)
  * Nothing is read, written or scheduled until a method is called.
  *
  * The store, data/blood-bags/42055.json:
@@ -83,7 +93,11 @@ export function createBloodBagCollector(opts = {}) {
   const fetchImpl = opts.fetchImpl || ((url, init) => fetch(url, init));
   const nowFn = opts.nowFn || (() => Date.now());
   const sleepFn = opts.sleepFn || ((ms) => new Promise((r) => setTimeout(r, ms)));
-  const keyFn = opts.keyFn || (() => store.getFactionApiKey(FACTION));
+  const keyFn = opts.keyFn || ownerKey;
+  // The year's backfill reads thousands of pages. On the owner's key it would use
+  // up Torn's daily read cap in hours, and the owner's own alerts with it, so the
+  // hourly tick starts it only when BLOODBAGS_BACKFILL is 1.
+  const backfillOn = opts.backfill ?? process.env.BLOODBAGS_BACKFILL === "1";
   const log = opts.log || ((msg) => console.log(msg));
   const setIntervalFn = opts.setIntervalFn || ((fn, ms) => setInterval(fn, ms));
   const clearIntervalFn = opts.clearIntervalFn || ((t) => clearInterval(t));
@@ -165,7 +179,7 @@ export function createBloodBagCollector(opts = {}) {
   async function tornGet(path, params) {
     const key = keyFn();
     if (!key) {
-      const err = new Error("no faction key on file, or it is quarantined");
+      const err = new Error("no owner key: no sign-in key on file and no OWNER_API_KEY");
       err.code = "no-key";
       throw err;
     }
@@ -196,7 +210,7 @@ export function createBloodBagCollector(opts = {}) {
 
   function fail(what, err) {
     if (err.code === "no-key") {
-      if (!keyMissingLogged) log(`[blood-bags] no faction key for ${FACTION}; trying again next hour`);
+      if (!keyMissingLogged) log("[blood-bags] no owner key (no sign-in key on file and no OWNER_API_KEY); trying again next hour");
       keyMissingLogged = true;
       return;
     }
@@ -409,9 +423,9 @@ export function createBloodBagCollector(opts = {}) {
   }
 
   /**
-   * Every hour: the ranked-war list, the poll, then the backfill if there is
-   * work. The war list is read every time, so a war's start and end reach the
-   * board within the hour, as everything else does.
+   * Every hour: the ranked-war list, the poll, then the backfill if it is on
+   * and there is work. The war list is read every time, so a war's start and
+   * end reach the board within the hour, as everything else does.
    */
   async function tick() {
     if (ticking) return;
@@ -420,7 +434,7 @@ export function createBloodBagCollector(opts = {}) {
       load();
       await refreshWars();
       await pollOnce();
-      if (hasGaps()) runBackfill();
+      if (backfillOn && hasGaps()) runBackfill();
     } finally {
       ticking = false;
     }
@@ -444,7 +458,7 @@ export function createBloodBagCollector(opts = {}) {
 // The one the server runs; routes.js reads it through createBloodBagsApi.
 export const bloodBagCollector = createBloodBagCollector();
 
-/** server.js starts the hourly poll and the backfill with this. */
+/** server.js starts the hourly poll, and the backfill when it is on, with this. */
 export function start() {
   return bloodBagCollector.start();
 }
@@ -491,8 +505,8 @@ export function createBloodBagsApi(opts = {}) {
   const rosterTimeoutMs = opts.rosterTimeoutMs || ROSTER_TIMEOUT_MS;
   // The owner's own key, the same call /slackers makes for its roster.
   const rosterFn = opts.rosterFn || (async () => {
-    const key = store.getFactionApiKey(FACTION);
-    if (!key) throw new Error("no faction key on file");
+    const key = ownerKey();
+    if (!key) throw new Error("no owner key: no sign-in key on file and no OWNER_API_KEY");
     return rosterFromBasic(await fetchFactionBasic(FACTION, key));
   });
 

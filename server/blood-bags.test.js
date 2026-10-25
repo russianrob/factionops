@@ -10,6 +10,10 @@ import { join } from "node:path";
 
 // No blood-bags module may ever touch the live data folder from a test.
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "blood-bags-test-"));
+// The hourly tick starts the year's backfill only when BLOODBAGS_BACKFILL is 1.
+// These tests are about how the backfill runs, so it is on for all but the one
+// that turns it off.
+process.env.BLOODBAGS_BACKFILL = "1";
 const { createBloodBagCollector, GAP_MS, WAR_GAP_MS, HEAD_MAX_PAGES } = await import("./blood-bags.js");
 
 const T0 = 1792800000;                      // now, in seconds: 2026-10-24 00:00 UTC
@@ -145,21 +149,21 @@ test("a full page inside one second steps past that second and says so", async (
   assert.ok(logs.some((m) => m.includes(`a full page at second ${S}`)), logs.join("\n"));
 });
 
-test("a long outage: the poll stops after ten pages and hands the rest to the backfill", async () => {
+test("a long outage: the poll stops at its page cap and hands the rest to the backfill", async () => {
   const torn = fakeTorn({ action: [entry(T0 - 30 * DAY, FILL(1))], deposit: [] });
   const { c, logs } = setup({ torn });
   await c.pollOnce();
-  torn.news.armoryAction.push(...actions(1500, T0 - 60, 60));
+  torn.news.armoryAction.push(...actions(HEAD_MAX_PAGES * 100 + 500, T0 - 60, 60));
   torn.calls.length = 0;
   await c.pollOnce();
   assert.equal(newsCalls(torn, "armoryAction").length, HEAD_MAX_PAGES);
   const cat = c.snapshot().cats.armoryAction;
   assert.equal(cat.headTs, T0 - 60);
   // Each page after the first repeats the oldest second of the one before (that
-  // is what keeps lines sharing a second), so ten pages reach the 991st new
-  // line, and the gap starts just above it.
-  assert.deepEqual(cat.gaps, [{ from: T0 - 30 * DAY, to: T0 - 60 - 990 * 60 + 1 }]);
-  assert.ok(logs.some((m) => m.includes("stopped after 10 pages")));
+  // is what keeps lines sharing a second), so the cap's pages reach new line
+  // 99 * HEAD_MAX_PAGES + 1, and the gap starts just above it.
+  assert.deepEqual(cat.gaps, [{ from: T0 - 30 * DAY, to: T0 - 60 - 99 * HEAD_MAX_PAGES * 60 + 1 }]);
+  assert.ok(logs.some((m) => m.includes(`stopped after ${HEAD_MAX_PAGES} pages`)));
 });
 
 test("Torn's error in a 200 reply keeps the data, is logged, and leaves the update time alone", async () => {
@@ -175,12 +179,12 @@ test("Torn's error in a 200 reply keeps the data, is logged, and leaves the upda
   assert.ok(logs.some((m) => m.includes("Too many requests (code 5)")));
 });
 
-test("with no key on file the poll makes no call and says so once", async () => {
+test("with no owner key the poll makes no call and says so once", async () => {
   const { c, torn, logs } = setup({ key: null });
   assert.equal(await c.pollOnce(), false);
   assert.equal(await c.pollOnce(), false);
   assert.equal(torn.calls.length, 0);
-  assert.equal(logs.filter((m) => m.includes("no faction key")).length, 1);
+  assert.equal(logs.filter((m) => m.includes("no owner key")).length, 1);
 });
 
 test("lines older than the year are not kept", async () => {
@@ -666,4 +670,81 @@ test("after a restart during a war the first page goes at once, then one every 3
   const said = (text) => logs.slice(before).filter((m) => m.includes(text)).length;
   assert.equal(said("backfill slowed to 2 calls a minute: ranked war 51418 is live"), 1, "the restart says its pace again");
   assert.equal(after.snapshot().backfillDone, true);
+});
+
+// ── the owner's key ─────────────────────────────────────────────────────────
+test("with no key passed in and no sign-in key on file, every call carries OWNER_API_KEY", async () => {
+  const torn = fakeTorn({ action: actions(3, T0 - 60) });
+  const clock = { now: T0 * 1000 };
+  torn.clock = clock;
+  const saved = process.env.OWNER_API_KEY;
+  process.env.OWNER_API_KEY = "test-owner-key";
+  try {
+    const c = createBloodBagCollector({
+      dataDir: mkdtempSync(join(tmpdir(), "blood-bags-")), fetchImpl: torn.fetchImpl, nowFn: () => clock.now,
+      sleepFn: async (ms) => { clock.now += ms; }, log: () => {},
+    });
+    await c.refreshWars();
+    assert.equal(await c.pollOnce(), true);
+    assert.equal(torn.calls.length, 3, "the war list and a page of each category");
+    assert.ok(torn.calls.every((call) => call.auth === "ApiKey test-owner-key"), "every call carries the owner's key");
+  } finally {
+    if (saved === undefined) delete process.env.OWNER_API_KEY;
+    else process.env.OWNER_API_KEY = saved;
+  }
+});
+
+test("with BLOODBAGS_BACKFILL unset, the hourly tick polls and the year's backfill waits", async () => {
+  const torn = fakeTorn({ action: actions(250, T0 - 60) });
+  const clock = { now: T0 * 1000 };
+  torn.clock = clock;
+  const logs = [];
+  delete process.env.BLOODBAGS_BACKFILL;
+  try {
+    const c = createBloodBagCollector({
+      dataDir: mkdtempSync(join(tmpdir(), "blood-bags-")), fetchImpl: torn.fetchImpl, nowFn: () => clock.now,
+      sleepFn: async (ms) => { clock.now += ms; }, keyFn: () => "k", log: (m) => logs.push(m),
+    });
+    await c.tick();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(newsCalls(torn).length, 2, "one page of each category, and no backfill page");
+    assert.deepEqual(logs.filter((m) => m.includes("backfill")), []);
+    assert.equal(c.snapshot().backfillDone, false, "the year below the first page is still a gap");
+  } finally {
+    process.env.BLOODBAGS_BACKFILL = "1";
+  }
+});
+
+test("with no key passed in, the owner's sign-in key comes first, before OWNER_API_KEY", async () => {
+  const store = await import("./store.js");
+  const torn = fakeTorn({ action: actions(3, T0 - 60) });
+  const clock = { now: T0 * 1000 };
+  torn.clock = clock;
+  const saved = process.env.OWNER_API_KEY;
+  process.env.OWNER_API_KEY = "test-owner-key";
+  store.storeApiKey("137558", "test-sign-in-key");
+  try {
+    const c = createBloodBagCollector({
+      dataDir: mkdtempSync(join(tmpdir(), "blood-bags-")), fetchImpl: torn.fetchImpl, nowFn: () => clock.now,
+      sleepFn: async (ms) => { clock.now += ms; }, log: () => {},
+    });
+    assert.equal(await c.pollOnce(), true);
+    assert.ok(torn.calls.every((call) => call.auth === "ApiKey test-sign-in-key"), "every call carries the sign-in key");
+  } finally {
+    store.removeApiKey("137558");
+    if (saved === undefined) delete process.env.OWNER_API_KEY;
+    else process.env.OWNER_API_KEY = saved;
+  }
+});
+
+test("a day of war-time news missed while the key could not read is caught up by the poll alone", async () => {
+  const torn = fakeTorn({ action: [entry(T0 - 30 * DAY, FILL(1))], deposit: [] });
+  const { c } = setup({ torn });
+  await c.pollOnce();
+  // 27 hours at 45 armoury lines an hour, busier than the war hours seen so far.
+  torn.news.armoryAction.push(...actions(27 * 45, T0 - 60, 80));
+  assert.equal(await c.pollOnce(), true);
+  const cat = c.snapshot().cats.armoryAction;
+  assert.deepEqual(cat.gaps, [], "nothing left for the backfill, which may be off");
+  assert.equal(cat.headTs, T0 - 60);
 });

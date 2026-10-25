@@ -25,8 +25,8 @@ The owner wants a board like another faction's "Blood Bag Contributions" page (s
 | Q6 | The lists show current members only. The overview totals count everyone, so they match the armoury. |
 | Q10 | The viewer sees their own row, even outside the top 10. |
 | Q11 | Each list holds at most 10. The Wall of Shame lists only members whose net is below zero, and never pads. |
-| Q7 | Updated every hour from the faction's armoury news, using the owner's faction key, as /slackers does. The page shows the time of the last update. |
-| Q14 | History is filled in once, a year back, at no more than 10 calls a minute, and no more than 2 a minute while a ranked war is live. The owner chose this on 2026-10-24; at first it waited for the war to end. "All time" means since that date. |
+| Q7 | Updated every hour from the faction's armoury news, using the owner's own key (the one they signed in with, else `OWNER_API_KEY`), never the faction key on file or a pooled member key; the owner chose this on 2026-10-25, after the faction key on file ran out of Torn's daily read allowance. The page shows the time of the last update. |
+| Q14 | History is filled in once, a year back, at no more than 10 calls a minute, and no more than 2 a minute while a ranked war is live. The owner chose this on 2026-10-24; at first it waited for the war to end. Since 2026-10-25 the hourly tick starts it only when `BLOODBAGS_BACKFILL` is 1 (see The one-year backfill). "All time" means since that date. |
 
 ## What the page shows
 
@@ -75,7 +75,7 @@ The sample held no gave, loaned, returned or retrieved lines for blood bags. The
 
 ### Collecting
 
-- **When:** every hour, using the owner's faction key (`store.getFactionApiKey("42055")`), never a pooled member key.
+- **When:** every hour, using the owner's own key (the one they signed in with, else `OWNER_API_KEY`), never the faction key on file (`store.getFactionApiKey("42055")`, which can be another member's) nor a pooled member key: Torn caps how many records one player may read a day.
 - **What:**
   - It reads Torn's v2 faction news twice: `cat=armoryAction` (fills, uses, hand-outs) and `cat=armoryDeposit` (deposits).
   - Each call asks for `limit=100`, newest first.
@@ -93,6 +93,7 @@ The sample held no gave, loaned, returned or retrieved lines for blood bags. The
 ### The one-year backfill
 
 - It runs once, from the newest line back to 365 days before the day it starts, for both categories.
+- The hourly tick starts it only when `BLOODBAGS_BACKFILL` is 1. On the owner's key it would use up Torn's daily read cap in hours, and the owner's own alerts with it, so since 2026-10-25 it is off until the owner chooses how much of that allowance it may spend.
 - No more than 10 calls a minute, and no more than 2 a minute (a page every 30 seconds) while a ranked war is live, so the war pollers keep the key's budget. The hourly poll is not slowed: its calls go out between the backfill's pages.
 - It remembers where it is, so a server restart resumes it.
 - Once the hourly read of the war list shows the war is over, it goes back to 10 a minute. A war list more than 65 minutes old (an hour's poll plus 5 minutes), or one that could not be read, counts as a war, so a war it cannot see costs no more than one it can. It logs a line at its first page after each start, and whenever its pace or the reason for it changes, never for every page: `[blood-bags] backfill at 10 calls a minute: no ranked war is live` (a start at full speed), `[blood-bags] backfill slowed to 2 calls a minute: <reason>`, `[blood-bags] backfill still at 2 calls a minute: <reason>` (a new reason while it is already slow) and `[blood-bags] backfill back to 10 calls a minute: no ranked war is live`. The reason is `ranked war <id> is live` or `the ranked-war list has not been read in the last hour`.
