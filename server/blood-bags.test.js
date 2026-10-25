@@ -10,11 +10,7 @@ import { join } from "node:path";
 
 // No blood-bags module may ever touch the live data folder from a test.
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "blood-bags-test-"));
-// The hourly tick starts the year's backfill only when BLOODBAGS_BACKFILL is 1.
-// These tests are about how the backfill runs, so it is on for all but the one
-// that turns it off.
-process.env.BLOODBAGS_BACKFILL = "1";
-const { createBloodBagCollector, GAP_MS, WAR_GAP_MS, HEAD_MAX_PAGES } = await import("./blood-bags.js");
+const { createBloodBagCollector, GAP_MS, WAR_GAP_MS, HEAD_MAX_PAGES, TICK_PAGES } = await import("./blood-bags.js");
 
 const T0 = 1792800000;                      // now, in seconds: 2026-10-24 00:00 UTC
 const DAY = 86400;
@@ -694,27 +690,6 @@ test("with no key passed in and no sign-in key on file, every call carries OWNER
   }
 });
 
-test("with BLOODBAGS_BACKFILL unset, the hourly tick polls and the year's backfill waits", async () => {
-  const torn = fakeTorn({ action: actions(250, T0 - 60) });
-  const clock = { now: T0 * 1000 };
-  torn.clock = clock;
-  const logs = [];
-  delete process.env.BLOODBAGS_BACKFILL;
-  try {
-    const c = createBloodBagCollector({
-      dataDir: mkdtempSync(join(tmpdir(), "blood-bags-")), fetchImpl: torn.fetchImpl, nowFn: () => clock.now,
-      sleepFn: async (ms) => { clock.now += ms; }, keyFn: () => "k", log: (m) => logs.push(m),
-    });
-    await c.tick();
-    await new Promise((r) => setImmediate(r));
-    assert.equal(newsCalls(torn).length, 2, "one page of each category, and no backfill page");
-    assert.deepEqual(logs.filter((m) => m.includes("backfill")), []);
-    assert.equal(c.snapshot().backfillDone, false, "the year below the first page is still a gap");
-  } finally {
-    process.env.BLOODBAGS_BACKFILL = "1";
-  }
-});
-
 test("with no key passed in, the owner's sign-in key comes first, before OWNER_API_KEY", async () => {
   const store = await import("./store.js");
   const torn = fakeTorn({ action: actions(3, T0 - 60) });
@@ -745,6 +720,113 @@ test("a day of war-time news missed while the key could not read is caught up by
   torn.news.armoryAction.push(...actions(27 * 45, T0 - 60, 80));
   assert.equal(await c.pollOnce(), true);
   const cat = c.snapshot().cats.armoryAction;
-  assert.deepEqual(cat.gaps, [], "nothing left for the backfill, which may be off");
+  assert.deepEqual(cat.gaps, [], "nothing left for the backfill, which takes only a few pages an hour");
   assert.equal(cat.headTs, T0 - 60);
+});
+
+// ── the hourly budget ───────────────────────────────────────────────────────
+test("each hourly tick takes 4 backfill pages after its poll, 6 s apart, and the next tick carries on below them", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const { c, clock } = setup({ torn });
+  await c.tick();
+  assert.equal(TICK_PAGES, 4);
+  assert.equal(backfillPages(torn).length, TICK_PAGES, "the first tick's pages");
+  const place = c.snapshot().cats.armoryAction.gaps[0].to;
+  clock.now += HOUR_MS;
+  await c.tick();
+  const pages = backfillPages(torn);
+  assert.equal(pages.length, 2 * TICK_PAGES, "as many again an hour later");
+  assert.equal(pages[TICK_PAGES].url.searchParams.get("to"), String(place), "the second tick starts where the first stopped");
+  assert.ok(between(pages.slice(0, TICK_PAGES)).every((ms) => ms >= GAP_MS && ms < WAR_GAP_MS), `${between(pages)}`);
+  assert.ok(between(torn.calls).every((ms) => ms >= GAP_MS), "the poll and the pages share one pace");
+  assert.equal(c.snapshot().backfillDone, false);
+});
+
+test("the tick that reaches the year's floor says the backfill is done, and later ticks take no pages", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const { c, clock, logs } = setup({ torn });
+  // The 900 lines below the first page take 10 pages, each starting at the last
+  // line of the one before: 4, 4, then the last 2.
+  for (let hour = 0; hour < 3; hour++) {
+    await c.tick();
+    clock.now += HOUR_MS;
+  }
+  assert.equal(backfillPages(torn).length, 10);
+  assert.equal(c.snapshot().backfillDone, true);
+  assert.equal(logs.filter((m) => m.includes("backfill done")).length, 1, logs.join("\n"));
+  const mark = torn.calls.length;
+  await c.tick();
+  assert.equal(torn.calls.length - mark, 3, "the war list and a page of each category, and no backfill page");
+  assert.equal(c.snapshot().lines.length, bloodIn(torn, CUTOFF));
+});
+
+test("while a ranked war is live the hourly tick takes no backfill pages, and the first tick after it ends takes them again", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [], wars: [{ id: 51418, start: T0 - DAY, end: 0 }] });
+  const { c, clock } = setup({ torn });
+  await c.tick();
+  clock.now += HOUR_MS;
+  await c.tick();
+  assert.equal(torn.calls.length, 6, "each tick reads the war list and a page of each category");
+  assert.equal(backfillPages(torn).length, 0, "no pages during the war");
+  torn.wars[0].end = Math.floor(clock.now / 1000);
+  clock.now += HOUR_MS;
+  await c.tick();
+  const pages = backfillPages(torn);
+  assert.equal(pages.length, TICK_PAGES, "the first tick after the war takes its pages");
+  assert.ok(between(pages).every((ms) => ms >= GAP_MS && ms < WAR_GAP_MS), `at full speed: ${between(pages)}`);
+});
+
+test("in an hour whose read of the war list failed the tick takes no backfill pages, though the last list is not 65 minutes old", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const { c, clock, logs } = setup({ torn });
+  await c.tick();
+  assert.equal(backfillPages(torn).length, TICK_PAGES);
+  clock.now += HOUR_MS;
+  torn.fail = (u) => (u.pathname.endsWith("/rankedwars") ? reply({ error: { code: 5, error: "Too many requests" } }) : null);
+  await c.tick();
+  assert.ok(logs.some((m) => m.includes("war list failed")), logs.join("\n"));
+  assert.equal(backfillPages(torn).length, TICK_PAGES, "the list from an hour ago cannot say whether a war has started since");
+  torn.fail = null;
+  clock.now += HOUR_MS;
+  await c.tick();
+  assert.equal(backfillPages(torn).length, 2 * TICK_PAGES, "the pages go on once the list reads again");
+});
+
+test("a Torn error ends that hour's pages and keeps their place, and the next tick carries on from it", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const { c, clock, logs } = setup({ torn });
+  // The second page is refused, as every news read is for a key at Torn's daily read cap.
+  torn.fail = (u) => (u.pathname === "/v2/faction/news" && backfillPages(torn).length === 2
+    ? reply({ error: { code: 14, error: "Daily read limit reached" } }) : null);
+  await c.tick();
+  assert.equal(backfillPages(torn).length, 2, "a page, the refusal, and no more that hour");
+  assert.ok(logs.some((m) => m.includes("backfill failed: Torn API error: Daily read limit reached (code 14)")), logs.join("\n"));
+  const place = c.snapshot().cats.armoryAction.gaps[0].to;
+  torn.fail = null;
+  clock.now += HOUR_MS;
+  await c.tick();
+  const pages = backfillPages(torn);
+  assert.equal(pages.length, 2 + TICK_PAGES);
+  assert.equal(pages[2].url.searchParams.get("to"), String(place), "it carries on from the page before the refusal");
+});
+
+test("after a restart the first tick carries on from where the last tick's pages stopped, with no repeats and no gap", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const { c, make, clock } = setup({ torn });
+  await c.tick();
+  const place = c.snapshot().cats.armoryAction.gaps[0].to;
+  // The restart comes 20 minutes later, and its tick runs at once.
+  clock.now += 20 * 60 * 1000;
+  const after = make();
+  await after.tick();
+  const pages = backfillPages(torn);
+  assert.equal(pages.length, 2 * TICK_PAGES);
+  assert.equal(pages[TICK_PAGES].url.searchParams.get("to"), String(place));
+  for (let hour = 0; hour < 2; hour++) {
+    clock.now += HOUR_MS;
+    await after.tick();
+  }
+  const snap = after.snapshot();
+  assert.equal(snap.backfillDone, true);
+  assert.equal(snap.lines.length, bloodIn(torn, CUTOFF));
 });

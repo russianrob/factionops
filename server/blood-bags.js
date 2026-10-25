@@ -2,10 +2,9 @@
 //
 // Torn keeps years of armoury news but hands it out 100 lines at a time, newest
 // first, so this keeps its own copy of just the blood-bag lines. An hourly poll
-// picks up what is new. A one-off backfill, which the hourly tick starts only
-// when BLOODBAGS_BACKFILL is 1, walks a year back, at no more than 10 calls a
-// minute, and 2 a minute while a ranked war is live, so the war pollers keep the
-// key's budget. Both write one store, and a line's own id
+// picks up what is new. A one-off backfill walks a year back, a few pages with
+// each hourly tick and none while a ranked war is live, so the war pollers keep
+// the key's budget. Both write one store, and a line's own id
 // decides what is a repeat. Spec: docs/superpowers/specs/2026-10-24-faction-blood-bag-board-design.md
 //
 // Every Torn call sends the key in the Authorization header, never in the URL,
@@ -33,13 +32,18 @@ const PAGE = 100;
 // this far apart: 10 a minute for the poll and the backfill together.
 export const GAP_MS = 6000;
 // While a ranked war is live, backfill pages are at least this far apart: 2 a
-// minute. The wait is the backfill's own, so the poll is not slowed.
+// minute. The hourly tick takes no pages during a war, so this paces a run that
+// is already going when one starts. The wait is the backfill's own, so the poll
+// is not slowed.
 export const WAR_GAP_MS = 30000;
 // An hour of news fits in one page, even in a war. Thirty pages hold more than a
 // day of war-time news, so after Torn's daily read cap has kept the poll out
 // until it resets, the poll alone catches up. Anything past thirty pages goes
 // to the backfill.
 export const HEAD_MAX_PAGES = 30;
+// The backfill pages each hourly tick takes, about 96 a day: the year fills in
+// over days, on the owner's key, without using up their daily read cap.
+export const TICK_PAGES = 4;
 const BACKFILL_DAYS = 365;
 const DAY = 86400;
 export const POLL_MS = 60 * 60 * 1000;
@@ -54,9 +58,11 @@ const SAVE_EVERY = 10;
 const ownerKey = () => store.getApiKeyForPlayer(OWNER_ID) || process.env.OWNER_API_KEY || null;
 
 /**
- * Why the backfill is at the war pace, or null at full speed: a live ranked war,
- * or a war list too old to say (a missing warsAt counts as never read). The
- * collector and the route both ask, so the log and the page never disagree.
+ * Why the backfill waits, or null when it may go at full speed: a live ranked
+ * war, or a war list too old to say (a missing warsAt counts as never read). The
+ * hourly tick takes no pages while there is a reason, a run already going slows
+ * to the war pace, and the route tells the page; all three ask here, so the log
+ * and the page never disagree.
  */
 function slowReason(wars, warsAt, nowMs) {
   if (!(nowMs - warsAt < WARS_FRESH_MS)) return "the ranked-war list has not been read in the last hour";
@@ -71,9 +77,7 @@ export const defaultDataDir = () => join(process.env.DATA_DIR || join(__dirname,
 /**
  * The collector. Everything it touches comes in through opts, so a test can run
  * it against a fake Torn, a fake clock and a temporary folder:
- *   dataDir, fetchImpl, nowFn() -> ms, sleepFn(ms), keyFn() -> key or null, log(msg),
- *   backfill (whether the hourly tick starts the backfill; by default, whether
- *   BLOODBAGS_BACKFILL is 1)
+ *   dataDir, fetchImpl, nowFn() -> ms, sleepFn(ms), keyFn() -> key or null, log(msg)
  * Nothing is read, written or scheduled until a method is called.
  *
  * The store, data/blood-bags/42055.json:
@@ -94,10 +98,6 @@ export function createBloodBagCollector(opts = {}) {
   const nowFn = opts.nowFn || (() => Date.now());
   const sleepFn = opts.sleepFn || ((ms) => new Promise((r) => setTimeout(r, ms)));
   const keyFn = opts.keyFn || ownerKey;
-  // The year's backfill reads thousands of pages. On the owner's key it would use
-  // up Torn's daily read cap in hours, and the owner's own alerts with it, so the
-  // hourly tick starts it only when BLOODBAGS_BACKFILL is 1.
-  const backfillOn = opts.backfill ?? process.env.BLOODBAGS_BACKFILL === "1";
   const log = opts.log || ((msg) => console.log(msg));
   const setIntervalFn = opts.setIntervalFn || ((fn, ms) => setInterval(fn, ms));
   const clearIntervalFn = opts.clearIntervalFn || ((t) => clearInterval(t));
@@ -380,11 +380,11 @@ export function createBloodBagCollector(opts = {}) {
     if (wait > 0) await sleepFn(wait);
   }
 
-  async function backfill() {
+  async function backfill(maxPages) {
     load();
     let pages = 0;
     try {
-      for (;;) {
+      while (pages < maxPages) {
         const next = nextGap();
         if (!next) break;
         await warPace();
@@ -401,21 +401,22 @@ export function createBloodBagCollector(opts = {}) {
       // Its place is kept; the next hourly tick starts it again from there.
       fail("backfill", err);
     } finally {
-      // tick starts the backfill and moves on, so a save that throws here must
-      // not escape: under pm2 an unhandled rejection ends the whole server.
+      // A save that throws here must not escape: under pm2 an unhandled
+      // rejection ends the whole server.
       try { save(); } catch (err) { fail("backfill save", err); }
     }
   }
 
   /**
-   * The backfill: fills every gap, newest first, a page per call, GAP_MS apart,
-   * or WAR_GAP_MS while a ranked war is live or the war list is out of date. It
-   * stops on any error, and the next hourly tick starts it again from where it
-   * stopped. Returns the run in progress, which never rejects.
+   * The backfill: fills the gaps, newest first, a page per call, at most
+   * maxPages pages (by default all of them), GAP_MS apart, or WAR_GAP_MS while a
+   * ranked war is live or the war list is out of date. It stops on any error,
+   * and the next hourly tick carries on from where it stopped. A call while a
+   * run is going joins that run. Returns the run, which never rejects.
    */
-  function runBackfill() {
+  function runBackfill(maxPages = Infinity) {
     if (!backfilling) {
-      backfilling = backfill()
+      backfilling = backfill(maxPages)
         .catch((err) => log(`[blood-bags] backfill failed: ${err.message}`))
         .finally(() => { backfilling = null; });
     }
@@ -423,18 +424,21 @@ export function createBloodBagCollector(opts = {}) {
   }
 
   /**
-   * Every hour: the ranked-war list, the poll, then the backfill if it is on
-   * and there is work. The war list is read every time, so a war's start and
-   * end reach the board within the hour, as everything else does.
+   * Every hour: the ranked-war list, the poll, then up to TICK_PAGES pages of
+   * the backfill. The war list is read every time, so a war's start and end
+   * reach the board within the hour, as everything else does. No pages while a
+   * ranked war is live, nor in an hour whose read of the list failed: the list
+   * from the hour before still counts as fresh, but cannot say whether a war
+   * has started since. Resolves once the hour's pages are done.
    */
   async function tick() {
     if (ticking) return;
     ticking = true;
     try {
       load();
-      await refreshWars();
+      const listed = await refreshWars();
       await pollOnce();
-      if (backfillOn && hasGaps()) runBackfill();
+      if (listed && hasGaps() && slowReason(data.wars, data.warsAt, nowFn()) === null) await runBackfill(TICK_PAGES);
     } finally {
       ticking = false;
     }
@@ -458,7 +462,7 @@ export function createBloodBagCollector(opts = {}) {
 // The one the server runs; routes.js reads it through createBloodBagsApi.
 export const bloodBagCollector = createBloodBagCollector();
 
-/** server.js starts the hourly poll, and the backfill when it is on, with this. */
+/** server.js starts the hourly poll, and with it the backfill's pages, with this. */
 export function start() {
   return bloodBagCollector.start();
 }
