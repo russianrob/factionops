@@ -476,3 +476,59 @@ test('the Xanax and Blood Bag icons are never learned or hidden', () => {
   assert.deepEqual(showing(w), [BLOODBAG, XANAX]);
   assert.equal(Object.keys(kindsIn(w.store)).some((k) => /xanax|blood/i.test(k)), false);
 });
+
+// ---------------------------------------------------------------------------------------------
+// Room
+// ---------------------------------------------------------------------------------------------
+
+for (const layout of DESKTOPS) {
+  test(`${layout}: with an icon hidden, the row is spaced by a 10 px gap with no margins, and only this row`, () => {
+    const w = page({ layout, store: hiding('married') }).run();
+    const rows = matching(w, 'column-gap: 10px');
+    assert.deepEqual([...rows], [w.row()], 'the desktop row, nothing else');
+    assert.ok(rulesWith(w, 'flex-wrap: wrap').length > 0);
+    const noMargin = matching(w, 'margin-right: 0');
+    assert.ok([...w.row().children].every((el) => noMargin.has(el)), 'every icon in it, ours too');
+    assert.equal([...noMargin].some((el) => el.parentNode !== w.row()), false);
+  });
+}
+
+for (const layout of PHONES) {
+  test(`${layout}: the phone strip keeps Torn's own spacing`, () => {
+    const w = page({ layout, store: hiding('married') }).run();
+    assert.equal(matching(w, 'column-gap: 10px').size, 0);
+    assert.equal(matching(w, 'margin-right: 0').size, 0);
+  });
+}
+
+test('with nothing hidden, Torn\'s spacing is left alone on desktop too', () => {
+  const w = page({ layout: 'Fly-out, desktop' }).run();
+  assert.equal(rulesWith(w, 'column-gap').length, 0);
+});
+
+test('after the stylesheet changes, the phone strip gets a scroll event, so Torn redraws its fade; not when nothing changed', () => {
+  const w = page({ store: hiding('maleGender') });
+  const strip = w.row().parentNode;
+  let scrolls = 0;
+  strip.addEventListener('scroll', () => { scrolls += 1; });
+  w.run();
+  assert.equal(scrolls, 1, 'the first stylesheet');
+  w.check();
+  assert.equal(scrolls, 1, 'nothing changed');
+  w.store['tih-hidden'] = JSON.stringify(['maleGender', 'book']);
+  w.check();
+  assert.equal(scrolls, 2);
+});
+
+test('at document-start the first stylesheet, with no row yet, sends nothing and breaks nothing; a change once the row is drawn sends one', () => {
+  const w = page({ start: true, store: hiding('maleGender') }).run();
+  w.draw();
+  let scrolls = 0;
+  w.row().parentNode.addEventListener('scroll', () => { scrolls += 1; });
+  w.check();
+  assert.equal(scrolls, 0);
+  assert.equal(showing(w).includes('Male'), false);
+  w.store['tih-hidden'] = JSON.stringify(['maleGender', 'book']);
+  w.check();
+  assert.equal(scrolls, 1);
+});

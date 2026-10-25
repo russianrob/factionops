@@ -38,6 +38,7 @@
   // Sidebar statusIcons___. Only inside #sidebar: other parts of a page (faction member lists,
   // profiles) draw icons with the same classes, and those are left alone.
   const ROWS = ['#sidebar ul[class*="status-icons"]', '#sidebar ul[class*="statusIcons___"]'];
+  const ROW_SELECTOR = ROWS.join(', ');
   const POLL_MS = 2000;
   // GM storage: what the script has learned about each kind of icon, and which kinds are hidden.
   // Two values, so a tab learning a new icon can't undo a save made in another tab.
@@ -48,6 +49,8 @@
   // a hidden kind has a number in one of these, the whole range is hidden, so a new level never
   // shows.
   const LEVELS = [[39, 43], [44, 48], [49, 53], [57, 61], [63, 67], [78, 80]];
+  // The desktop row: Torn's big icons, 6 a line, not the phone strip.
+  const DESKTOP_ROWS = ROWS.map((row) => row + '[class*="big___"]:not([class*="mobile___"])');
 
   // ===== GM STORAGE =====
 
@@ -220,6 +223,15 @@
 
   // ===== THE STYLESHEET =====
 
+  // Torn spaces the desktop row with a 10 px right margin on every icon but each 6th
+  // (li:nth-child(6n)). A hidden icon still counts in that 6th, so lines would come out uneven.
+  // While something is hidden, the row is a wrapping flex row with a 10 px gap and no margins
+  // instead: 6 x 17 px and 5 x 10 px fill its 152 px exactly, as Torn's lines do.
+  const SPACING_CSS = [
+    DESKTOP_ROWS.join(', ') + ' { display: flex !important; flex-wrap: wrap !important; column-gap: 10px !important; row-gap: 0 !important; }',
+    DESKTOP_ROWS.map((row) => row + ' > li').join(', ') + ' { flex: none !important; margin-right: 0 !important; }',
+  ].join('\n');
+
   // One rule per hidden picture number, for Torn's icon with that number in the row. The ___
   // after the number keeps icon5 from matching icon52; some of Torn's class names have four
   // underscores (icon52____l66f), and those match too.
@@ -229,7 +241,9 @@
 
   // The whole stylesheet for these hidden numbers.
   function cssText(numbers) {
-    return numbers.map(hideRule).join('\n');
+    const rules = [];
+    if (numbers.length) rules.push(SPACING_CSS);
+    return rules.concat(numbers.map(hideRule)).join('\n');
   }
 
   // Puts the stylesheet in the page, or back in it if something took it out, and brings it up
@@ -245,6 +259,15 @@
     }
     if (style.textContent === css) return;
     style.textContent = css;
+    nudgeStrip();
+  }
+
+  // Torn works out the fade at the phone strip's right edge (meaning "more to scroll") only on
+  // load, on a resize and on a scroll, so it would stay after icons are hidden. Both sidebars
+  // listen for scroll on the strip itself, so one sent there makes them work it out again.
+  function nudgeStrip() {
+    const row = document.querySelector(ROW_SELECTOR);
+    if (row && row.parentElement) row.parentElement.dispatchEvent(new Event('scroll'));
   }
 
   // ===== THE CHECK =====
