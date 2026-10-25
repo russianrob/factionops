@@ -51,6 +51,15 @@
   const LEVELS = [[39, 43], [44, 48], [49, 53], [57, 61], [63, 67], [78, 80]];
   // The desktop row: Torn's big icons, 6 a line, not the phone strip.
   const DESKTOP_ROWS = ROWS.map((row) => row + '[class*="big___"]:not([class*="mobile___"])');
+  const SETTINGS_ID = 'tm-icon-hider-settings';
+  // After a save, the box says so for this long, then closes.
+  const SAVED_MS = 1000;
+  // Torn's own icon pictures: one sprite with a picture every 18 px, picture N at -(N-1)*18 px.
+  const SPRITE_URL = 'https://www.torn.com/images/v2/svg_icons/sprites/user_status_icons_sprite.svg';
+  const HELP = 'Untick an icon to hide it. Hidden icons stay in this list, so you can bring them back. '
+    + 'A long press on any icon in the row opens these settings.';
+  const PDA_HELP = ' Torn PDA has no script menu, so one icon always stays showing.';
+  const KEEP_ONE = 'Keep one icon showing: in Torn PDA, a long press on an icon is the only way back here.';
 
   // ===== GM STORAGE =====
 
@@ -74,6 +83,12 @@
       // Not saved: the caller decides what to do without it.
     }
     return false;
+  }
+
+  // True when storage kept the value: saved, then read back the same. Some hosts drop a write
+  // without throwing.
+  function saveChecked(name, value) {
+    return gmSet(name, value) && gmGet(name) === value;
   }
 
   // A stored value, read from its JSON. PDA hands values back as strings; a host that hands back
@@ -115,6 +130,13 @@
   // can't hide. Torn draws the icon with the class named for that number.
   function iconNumber(entry) {
     const m = entry && typeof entry === 'object' ? /^icon(\d+)$/.exec(String(entry.iconID || '')) : null;
+    return m ? Number(m[1]) : 0;
+  }
+
+  // The picture number of Torn's icon in the row, from its class (icon52____l66f is 52), or 0
+  // for any other li (the Xanax and Blood Bag icons have no such class).
+  function numberOf(li) {
+    const m = /(?:^|\s)icon(\d+)_/.exec(li && li.className ? String(li.className) : '');
     return m ? Number(m[1]) : 0;
   }
 
@@ -232,6 +254,29 @@
     DESKTOP_ROWS.map((row) => row + ' > li').join(', ') + ' { flex: none !important; margin-right: 0 !important; }',
   ].join('\n');
 
+  // The settings box, laid out like the Xanax Reminder's.
+  const BOX_CSS = [
+    '#' + SETTINGS_ID + ' { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 100000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.8); }',
+    '#' + SETTINGS_ID + ' .tm-tih-panel { box-sizing: border-box; display: flex; flex-direction: column; width: 450px; max-width: 90%; max-height: 90%; border-radius: 10px; background: #2e2e2e; color: #ccc; box-shadow: 0 4px 20px rgba(0,0,0,.5); font: 400 14px/18px Arial, sans-serif; text-align: left; }',
+    '#' + SETTINGS_ID + ' .tm-tih-head { display: flex; flex: none; align-items: center; justify-content: space-between; padding: 15px 20px; border-radius: 10px 10px 0 0; background: linear-gradient(to bottom, #1a1a1a, #2a2a2a); }',
+    '#' + SETTINGS_ID + ' .tm-tih-head b { color: #fff; font-size: 18px; }',
+    '#' + SETTINGS_ID + ' .tm-tih-head button { width: 30px; height: 30px; padding: 0; border: none; background: none; color: #aaa; font: 24px Arial, sans-serif; cursor: pointer; }',
+    '#' + SETTINGS_ID + ' .tm-tih-body { display: flex; flex-direction: column; min-height: 0; padding: 20px; }',
+    '#' + SETTINGS_ID + ' p { margin: 0 0 15px; color: #888; font-size: 12px; line-height: 16px; }',
+    // The list scrolls inside the box when it is taller than the screen.
+    '#' + SETTINGS_ID + ' .tm-tih-list { min-height: 0; margin-bottom: 15px; overflow-y: auto; }',
+    '#' + SETTINGS_ID + ' .tm-tih-group { margin: 10px 0 4px; color: #aaa; font-size: 12px; }',
+    // 16px, or an iPhone zooms in when a switch is tapped.
+    '#' + SETTINGS_ID + ' label { display: flex; align-items: center; gap: 10px; padding: 6px 0; color: #fff; font: 16px Arial, sans-serif; cursor: pointer; }',
+    '#' + SETTINGS_ID + ' input { flex: none; width: 18px; height: 18px; margin: 0; }',
+    '#' + SETTINGS_ID + ' .tm-tih-pic { flex: none; width: 17px; height: 17px; background: url("' + SPRITE_URL + '") no-repeat; }',
+    '#' + SETTINGS_ID + ' p.tm-tih-message { margin: 0 0 10px; color: #a3c248; font-size: 14px; }',
+    '#' + SETTINGS_ID + ' p.tm-tih-bad { color: #e8735a; }',
+    '#' + SETTINGS_ID + ' .tm-tih-buttons { display: flex; flex: none; justify-content: flex-end; gap: 10px; }',
+    '#' + SETTINGS_ID + ' .tm-tih-buttons button { padding: 10px 20px; border: none; border-radius: 5px; background: linear-gradient(to bottom, #555, #777); color: #fff; font: 14px Arial, sans-serif; cursor: pointer; }',
+    '#' + SETTINGS_ID + ' .tm-tih-buttons .tm-tih-save { background: linear-gradient(to bottom, #799427, #a3c248); }',
+  ].join('\n');
+
   // One rule per hidden picture number, for Torn's icon with that number in the row. The ___
   // after the number keeps icon5 from matching icon52; some of Torn's class names have four
   // underscores (icon52____l66f), and those match too.
@@ -241,7 +286,7 @@
 
   // The whole stylesheet for these hidden numbers.
   function cssText(numbers) {
-    const rules = [];
+    const rules = [BOX_CSS];
     if (numbers.length) rules.push(SPACING_CSS);
     return rules.concat(numbers.map(hideRule)).join('\n');
   }
@@ -270,6 +315,156 @@
     if (row && row.parentElement) row.parentElement.dispatchEvent(new Event('scroll'));
   }
 
+  // ===== THE SETTINGS BOX =====
+
+  // The timer that closes the box a second after a save.
+  let savedTimer = null;
+
+  // Opens from the menu ("Icon Hider: Settings") or a long press on one of Torn's icons, over
+  // everything else, laid out like the Xanax Reminder's settings: a switch for every kind of icon
+  // seen in the row, ticked when it shows. Nothing changes in the row until Save. Nothing is
+  // focused when it opens.
+  function openSettings() {
+    closeSettings();
+    const kinds = learned();
+    const hidden = readHidden();
+    const pda = isPda();
+    const overlay = make('div');
+    overlay.id = SETTINGS_ID;
+    const panel = make('div', '', 'tm-tih-panel');
+    const head = make('div', '', 'tm-tih-head');
+    head.appendChild(make('b', 'Icon Hider Settings'));
+    head.appendChild(button('x', closeSettings));
+    const list = make('div', '', 'tm-tih-list');
+    const groups = listGroups(kinds);
+    if (!groups.inRow.length && !groups.seen.length) list.appendChild(make('p', 'No icons seen yet.'));
+    [['In your row now', groups.inRow], ['Seen before', groups.seen]].forEach((group) => {
+      if (!group[1].length) return;
+      list.appendChild(make('div', group[0], 'tm-tih-group'));
+      group[1].forEach((item) => list.appendChild(switchLine(item, kinds[item.key].title, hidden.indexOf(item.key) < 0)));
+    });
+    const message = make('p', '', 'tm-tih-message');
+    const say = (words, ok) => {
+      message.textContent = words;
+      message.classList.toggle('tm-tih-bad', !ok);
+    };
+    // Save keeps the kinds that are unticked. A save counts only when storage gives the value
+    // back: then the row changes at once and the box closes a second later. When it doesn't, the
+    // box says so and stays open, and what was saved before is kept.
+    const save = () => {
+      const next = [...list.querySelectorAll('input')].filter((box) => !box.checked).map((box) => box.getAttribute('data-key'));
+      if (pda && !leavesOneShowing(kinds, next)) {
+        say(KEEP_ONE, false);
+        return;
+      }
+      const before = gmGet(HIDDEN_STORE);
+      if (!saveChecked(HIDDEN_STORE, JSON.stringify(next))) {
+        if (gmGet(HIDDEN_STORE) !== before) gmSet(HIDDEN_STORE, before);
+        say('Couldn\'t save, try again.', false);
+        return;
+      }
+      say('Saved.', true);
+      check();
+      clearTimeout(savedTimer);
+      savedTimer = setTimeout(closeSettings, SAVED_MS);
+    };
+    const buttons = make('div', '', 'tm-tih-buttons');
+    buttons.appendChild(button('Cancel', closeSettings));
+    buttons.appendChild(button('Save', save, 'tm-tih-save'));
+    const body = make('div', '', 'tm-tih-body');
+    [make('p', HELP + (pda ? PDA_HELP : '')), list, message, buttons].forEach((el) => body.appendChild(el));
+    panel.appendChild(head);
+    panel.appendChild(body);
+    overlay.appendChild(panel);
+    // A tap on the dark area around the box is Cancel.
+    overlay.addEventListener('click', safely((e) => {
+      if (e.target === overlay) closeSettings();
+    }));
+    (document.body || root).appendChild(overlay);
+  }
+
+  // The kinds for the list: those in Torn's data now, in the row's order, then the rest by title.
+  // Each comes with the picture number to draw: the one in the row now, or the last one learned.
+  function listGroups(kinds) {
+    const icons = readIcons() || {};
+    const inRow = Object.keys(icons)
+      .filter((key) => iconNumber(icons[key]) && own(kinds, key))
+      .map((key) => ({ key, n: iconNumber(icons[key]) }));
+    const seen = Object.keys(kinds)
+      .filter((key) => !inRow.some((item) => item.key === key))
+      .sort((a, b) => kinds[a].title.localeCompare(kinds[b].title))
+      .map((key) => ({ key, n: kinds[key].ids[kinds[key].ids.length - 1] }));
+    return { inRow, seen };
+  }
+
+  // One line of the list: a checkbox (ticked when the kind shows), Torn's picture and Torn's
+  // title. The whole line is a label, so a tap anywhere on it flips the switch.
+  function switchLine(item, title, shown) {
+    const line = make('label');
+    const box = make('input');
+    box.type = 'checkbox';
+    box.checked = shown;
+    box.setAttribute('data-key', item.key);
+    const pic = make('span', '', 'tm-tih-pic');
+    pic.setAttribute('style', 'background-position: ' + (-(item.n - 1) * 18) + 'px 0');
+    line.appendChild(box);
+    line.appendChild(pic);
+    line.appendChild(make('span', title));
+    return line;
+  }
+
+  // Torn PDA, told apart as FactionOps does it: PDA's bridge (without the warboard app's own
+  // bridge, as the warboard app once offered PDA's name too), or PDA's user agent. PDA shows no
+  // script menu, so a long press on an icon is the only way back to the box there. Asked each
+  // time the box opens, not at start: the script starts before the page has anything, and PDA's
+  // bridge may come later.
+  function isPda() {
+    try {
+      const warboard = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.gmBridge);
+      if (typeof window.flutter_inappwebview !== 'undefined' && !warboard) return true;
+      return /TornPDA|tornpda|DalvikTornPDA|com\.manuito/i.test(navigator.userAgent || '');
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // In PDA, true when at least one of Torn's icons in the row would still show with these kinds
+  // hidden. With no row, or no Torn icon in it, there is nothing to keep.
+  function leavesOneShowing(kinds, hidden) {
+    const row = document.querySelector(ROW_SELECTOR);
+    const numbers = row ? [...row.children].map(numberOf).filter(Boolean) : [];
+    if (!numbers.length) return true;
+    const gone = hiddenNumbers(kinds, hidden);
+    return numbers.some((n) => gone.indexOf(n) < 0);
+  }
+
+  function closeSettings() {
+    clearTimeout(savedTimer);
+    savedTimer = null;
+    const box = document.getElementById(SETTINGS_ID);
+    if (box) box.remove();
+  }
+
+  // Escape closes the box without a change.
+  function onKeyDown(e) {
+    if (e.key === 'Escape' && document.getElementById(SETTINGS_ID)) closeSettings();
+  }
+
+  // An element with its text and class; either may be left out.
+  function make(tag, text, className) {
+    const el = document.createElement(tag);
+    if (text) el.textContent = text;
+    if (className) el.className = className;
+    return el;
+  }
+
+  function button(words, onClick, className) {
+    const b = make('button', words, className);
+    b.type = 'button';
+    b.addEventListener('click', safely(onClick));
+    return b;
+  }
+
   // ===== THE CHECK =====
 
   // At start, then every 2 seconds: learns what is new in Torn's data, and brings the stylesheet
@@ -284,6 +479,25 @@
 
   // ===== START =====
 
+  // Every handler the script gives the page, its box or the menu runs inside a try, so an error
+  // in one stays there and never reaches Torn's page.
+  function safely(handler) {
+    return function (e) {
+      try {
+        handler(e);
+      } catch (err) {
+        // Dropped, as an error in a check is.
+      }
+    };
+  }
+
+  // The script's menu, where the host has one. A long press on one of Torn's icons opens the box too.
+  try {
+    if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand('Icon Hider: Settings', safely(openSettings));
+  } catch (e) {
+    // PDA once crashed here. Without a menu, the long press still works.
+  }
+  document.addEventListener('keydown', safely(onKeyDown), true);
   // At document-start, before Torn draws anything, so a hidden icon doesn't flash on a page load.
   check();
   setInterval(check, POLL_MS);

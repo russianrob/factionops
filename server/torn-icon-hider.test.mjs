@@ -532,3 +532,211 @@ test('at document-start the first stylesheet, with no row yet, sends nothing and
   w.check();
   assert.equal(scrolls, 1);
 });
+
+// ---------------------------------------------------------------------------------------------
+// The settings box
+// ---------------------------------------------------------------------------------------------
+
+test('"Icon Hider: Settings" in the menu opens the box: a title, an x, the help, the list, Cancel and Save', () => {
+  const w = page().run();
+  assert.deepEqual(Object.keys(w.menu), [MENU]);
+  w.menu[MENU]();
+  const box = w.box();
+  assert.ok(box, 'the box is on the page');
+  assert.equal(box.parentNode, w.document.body);
+  assert.equal(box.querySelector('.tm-tih-head b').textContent, 'Icon Hider Settings');
+  assert.deepEqual([...box.querySelectorAll('button')].map((b) => b.textContent), ['x', 'Cancel', 'Save']);
+  assert.equal(box.querySelector('.tm-tih-body p').textContent, HELP);
+  assert.equal(readFileSync(SRC, 'utf8').includes('.focus('), false, 'nothing is focused when it opens');
+  const css = w.document.getElementById(STYLES).textContent;
+  assert.match(css, /#tm-icon-hider-settings \.tm-tih-panel \{[^}]*width: 450px; max-width: 90%;/);
+  assert.match(css, /#tm-icon-hider-settings label \{[^}]*font: 16px/, '16px, or an iPhone zooms in');
+  assert.match(css, /#tm-icon-hider-settings \.tm-tih-list \{[^}]*overflow-y: auto;/, 'a long list scrolls in the box');
+  w.menu[MENU]();
+  assert.equal(w.document.querySelectorAll('#' + BOX).length, 1, 'never two boxes');
+});
+
+test('the list: the row\'s kinds in the row\'s order, then the ones seen before by title, each with Torn\'s picture', () => {
+  const store = { 'tih-kinds': JSON.stringify({ travel: { title: 'Traveling', ids: [71] }, company: { title: 'Company', ids: [73, 27] } }) };
+  const w = page({ store }).run();
+  w.menu[MENU]();
+  assert.deepEqual([...w.box().querySelectorAll('.tm-tih-group')].map((g) => g.textContent), ['In your row now', 'Seen before']);
+  assert.deepEqual(lines(w).map((l) => l.name), TITLES.concat(['Company', 'Traveling']));
+  const pos = Object.fromEntries(lines(w).map((l) => [l.name, l.pos]));
+  assert.equal(pos.Male, 'background-position: -90px 0', 'picture 6: -(6-1) x 18 px');
+  assert.equal(pos['Drug Cooldown'], 'background-position: -936px 0', 'picture 53');
+  assert.equal(pos.Company, 'background-position: -468px 0', 'the last picture learned: 27');
+  const css = w.document.getElementById(STYLES).textContent;
+  assert.ok(css.includes('url("https://www.torn.com/images/v2/svg_icons/sprites/user_status_icons_sprite.svg")'), 'Torn\'s own sprite');
+});
+
+test('hidden kinds are listed in their place, unticked, and the rest ticked', () => {
+  const w = page({ store: hiding('married', 'book') }).run();
+  w.menu[MENU]();
+  assert.deepEqual(lines(w).map((l) => [l.name, l.on]), [['Male', true], ['Subscriber', true], ['Married', false],
+    ['Faction', true], ['Reading Book', false], ['Drug Cooldown', true]]);
+});
+
+test('with nothing learned yet, the box says "No icons seen yet."', () => {
+  const w = page({ data: null }).run();
+  w.menu[MENU]();
+  assert.equal(w.box().querySelectorAll('input').length, 0);
+  assert.equal(w.box().querySelector('.tm-tih-list').textContent, 'No icons seen yet.');
+});
+
+test('Save hides what is unticked at once, says "Saved." and closes a second later', () => {
+  const w = page().run();
+  w.menu[MENU]();
+  boxSwitch(w, 'Male').checked = false;
+  fire(w, boxButton(w, 'Save'), 'click');
+  assert.equal(w.box().querySelector('.tm-tih-message').textContent, 'Saved.');
+  assert.equal(w.store['tih-hidden'], '["maleGender"]');
+  assert.equal(showing(w).includes('Male'), false, 'at once');
+  w.advance(999);
+  assert.ok(w.box(), 'still open');
+  w.advance(1);
+  assert.equal(w.box(), null, 'closed a second after the save');
+});
+
+test('a save that storage refuses, drops, or reads back wrong says so, stays open, and keeps what was saved before', () => {
+  const ways = {
+    refuses: (store, k, v) => { if (k === 'tih-hidden') throw new Error('QuotaExceededError'); store[k] = v; },
+    drops: (store, k, v) => { if (k !== 'tih-hidden') store[k] = v; },
+    // The save's write comes back changed; the write that puts the old choice back works.
+    'reads back wrong': (() => {
+      let garbled = false;
+      return (store, k, v) => {
+        store[k] = k === 'tih-hidden' && !garbled ? v.slice(0, -1) : v;
+        if (k === 'tih-hidden') garbled = true;
+      };
+    })(),
+  };
+  for (const [name, setValue] of Object.entries(ways)) {
+    const w = page({ store: hiding('book'), setValue }).run();
+    w.menu[MENU]();
+    boxSwitch(w, 'Male').checked = false;
+    fire(w, boxButton(w, 'Save'), 'click');
+    const message = w.box().querySelector('.tm-tih-message');
+    assert.equal(message.textContent, 'Couldn\'t save, try again.', name);
+    assert.ok(message.classList.contains('tm-tih-bad'), name);
+    w.advance(5000);
+    assert.ok(w.box(), name + ': stays open');
+    assert.equal(w.store['tih-hidden'], '["book"]', name + ': the old choice is kept');
+    assert.deepEqual(showing(w), [BLOODBAG, XANAX, 'Male', 'Subscriber', 'Married', 'Faction', 'Drug Cooldown'], name);
+  }
+});
+
+test('Cancel, the x, Escape and a tap on the dark area close the box without a change; a tap inside it does not', () => {
+  const ways = [
+    (w) => fire(w, boxButton(w, 'Cancel'), 'click'),
+    (w) => fire(w, boxButton(w, 'x'), 'click'),
+    (w) => fire(w, w.document.body, 'keydown', { key: 'Escape' }),
+    (w) => fire(w, w.box(), 'click'),
+  ];
+  ways.forEach((close, i) => {
+    const w = page().run();
+    w.menu[MENU]();
+    boxSwitch(w, 'Male').checked = false;
+    fire(w, w.box().querySelector('.tm-tih-panel'), 'click');
+    fire(w, w.document.body, 'keydown', { key: 'Enter' });
+    assert.ok(w.box(), 'a tap inside, or another key, leaves it open');
+    close(w);
+    assert.equal(w.box(), null, 'way ' + i);
+    assert.equal(w.store['tih-hidden'], undefined, 'nothing saved');
+    assert.equal(showing(w).includes('Male'), true);
+  });
+});
+
+test('each time it opens, the switches show what is saved', () => {
+  const w = page().run();
+  w.menu[MENU]();
+  boxSwitch(w, 'Male').checked = false;
+  fire(w, boxButton(w, 'Cancel'), 'click');
+  w.menu[MENU]();
+  assert.equal(boxSwitch(w, 'Male').checked, true, 'Cancel saved nothing');
+  fire(w, boxButton(w, 'Cancel'), 'click');
+  w.store['tih-hidden'] = JSON.stringify(['faction']);
+  w.menu[MENU]();
+  assert.equal(boxSwitch(w, 'Faction').checked, false, 'a save from another tab');
+});
+
+test('titles go in as text, never as HTML', () => {
+  const icons = { odd: { iconID: 'icon9', title: '<img src=x onerror=alert(1)>Odd &lt;b&gt;', link: '#' } };
+  const w = page({ icons }).run();
+  w.menu[MENU]();
+  assert.deepEqual(lines(w).map((l) => l.name), ['Odd <b>']);
+  assert.equal(w.box().querySelectorAll('img, b:not(.tm-tih-head b)').length, 0);
+});
+
+test('in Torn PDA, Save won\'t hide the last of Torn\'s icons showing in the row, and says why', () => {
+  const w = page({ pda: true }).run();
+  w.menu[MENU]();
+  assert.ok(w.box().querySelector('.tm-tih-body p').textContent.endsWith('Torn PDA has no script menu, so one icon always stays showing.'));
+  w.box().querySelectorAll('input').forEach((box) => { box.checked = false; });
+  fire(w, boxButton(w, 'Save'), 'click');
+  const message = w.box().querySelector('.tm-tih-message');
+  assert.equal(message.textContent, KEEP_ONE);
+  assert.ok(message.classList.contains('tm-tih-bad'));
+  assert.equal(w.store['tih-hidden'], undefined, 'nothing saved');
+  boxSwitch(w, 'Faction').checked = true;
+  fire(w, boxButton(w, 'Save'), 'click');
+  assert.equal(message.textContent, 'Saved.');
+  assert.deepEqual(showing(w), [BLOODBAG, XANAX, 'Faction']);
+});
+
+test('PDA is told by its user agent too; the warboard app (even with PDA\'s bridge) and Tampermonkey can hide every icon', () => {
+  const hideAll = (opts) => {
+    const w = page(opts).run();
+    w.menu[MENU]();
+    w.box().querySelectorAll('input').forEach((box) => { box.checked = false; });
+    fire(w, boxButton(w, 'Save'), 'click');
+    return w.box().querySelector('.tm-tih-message').textContent;
+  };
+  assert.equal(hideAll({ ua: 'Mozilla/5.0 (Linux; Android 14) TornPDA/3.7' }), KEEP_ONE);
+  assert.equal(hideAll({ pda: true, warboard: true }), 'Saved.');
+  assert.equal(hideAll({ warboard: true }), 'Saved.');
+  assert.equal(hideAll({}), 'Saved.');
+  const w = page({ warboard: true }).run();
+  w.menu[MENU]();
+  assert.equal(w.box().querySelector('.tm-tih-body p').textContent, HELP, 'no PDA line');
+});
+
+test('PDA\'s bridge counts when it arrives after the script has started', () => {
+  const w = page().run();
+  w.window.flutter_inappwebview = { callHandler() {} };
+  w.menu[MENU]();
+  assert.ok(w.box().querySelector('.tm-tih-body p').textContent.endsWith('Torn PDA has no script menu, so one icon always stays showing.'));
+  w.box().querySelectorAll('input').forEach((box) => { box.checked = false; });
+  fire(w, boxButton(w, 'Save'), 'click');
+  assert.equal(w.box().querySelector('.tm-tih-message').textContent, KEEP_ONE);
+});
+
+test('in PDA, with no Torn icon in the row to keep, Save works', () => {
+  const w = page({ pda: true }).run();
+  w.row().innerHTML = '';
+  w.menu[MENU]();
+  w.box().querySelectorAll('input').forEach((box) => { box.checked = false; });
+  fire(w, boxButton(w, 'Save'), 'click');
+  assert.equal(w.box().querySelector('.tm-tih-message').textContent, 'Saved.');
+});
+
+test('a host with no menu, or a menu that throws, still runs and hides icons', () => {
+  for (const menu of [false, 'throws']) {
+    const w = page({ menu, store: hiding('maleGender') }).run();
+    assert.equal(showing(w).includes('Male'), false, String(menu));
+    assert.deepEqual(w.logs, ['[Torn Icon Hider 1.0.0] running']);
+  }
+});
+
+test('an error inside a handler is caught there, never reaching Torn\'s page', () => {
+  const src = readFileSync(SRC, 'utf8');
+  const hooks = src.split('\n').filter((l) => /addEventListener\(|GM_registerMenuCommand\(/.test(l));
+  assert.ok(hooks.length >= 4, 'the menu, the box\'s buttons and the document\'s listeners');
+  for (const l of hooks) assert.ok(l.includes('safely('), 'inside a try: ' + l.trim());
+  const w = page().run();
+  // An event any field of which throws when it is read.
+  const bad = new Proxy({}, { get() { throw new Error('a field that throws'); } });
+  for (const [type, listeners] of Object.entries(w.captures)) {
+    for (const listener of listeners) assert.doesNotThrow(() => listener.fn.call(w.document, bad), type);
+  }
+});
