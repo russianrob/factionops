@@ -830,3 +830,42 @@ test("after a restart the first tick carries on from where the last tick's pages
   assert.equal(snap.backfillDone, true);
   assert.equal(snap.lines.length, bloodIn(torn, CUTOFF));
 });
+
+test("for hours at Torn's daily read cap, each tick makes one refused page after its refused poll, and the place holds", async () => {
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: [] });
+  const { c, clock, logs } = setup({ torn });
+  await c.tick();
+  const place = c.snapshot().cats.armoryAction.gaps[0].to;
+  // Torn's daily read cap: every news read is refused, the war list still reads.
+  torn.fail = (u) => (u.pathname === "/v2/faction/news" ? reply({ error: { code: 14, error: "Daily read limit reached" } }) : null);
+  for (let hour = 0; hour < 3; hour++) {
+    clock.now += HOUR_MS;
+    const mark = torn.calls.length;
+    await c.tick();
+    assert.equal(torn.calls.length - mark, 4, "the war list, the two refused polls and one refused page");
+  }
+  assert.equal(c.snapshot().cats.armoryAction.gaps[0].to, place, "the place holds");
+  assert.equal(logs.filter((m) => m.includes("backfill done")).length, 0);
+  torn.fail = null;
+  clock.now += HOUR_MS;
+  await c.tick();
+  const pages = backfillPages(torn);
+  assert.equal(pages.length, TICK_PAGES + 3 + TICK_PAGES);
+  assert.equal(pages[TICK_PAGES + 3].url.searchParams.get("to"), String(place), "the first tick after the cap carries on from the same place");
+});
+
+test("with a gap in each category, a tick's 4 pages are shared between them, newest gap first", async () => {
+  // 150 deposits two days apart, so the first poll leaves a deposit gap as well as the action one.
+  const deposits = Array.from({ length: 150 }, (_, i) => entry(T0 - 3600 - i * 2 * DAY, `${who(7, "P7")} deposited 1x Blood Bag : O+`));
+  const torn = fakeTorn({ action: actions(1000, T0 - 60, Math.round(0.3 * DAY)), deposit: deposits });
+  const { c, clock } = setup({ torn });
+  const perTick = [];
+  for (let hour = 0; hour < 4; hour++) {
+    const mark = backfillPages(torn).length;
+    await c.tick();
+    perTick.push(backfillPages(torn).slice(mark).map((p) => (p.url.searchParams.get("cat") === "armoryAction" ? "A" : "D")).join(""));
+    clock.now += HOUR_MS;
+  }
+  assert.deepEqual(perTick, ["AAAA", "AADA", "AAA", ""], "4 pages a tick across both categories, newest gap first");
+  assert.equal(c.snapshot().backfillDone, true);
+});
