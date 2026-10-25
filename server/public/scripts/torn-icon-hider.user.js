@@ -60,6 +60,13 @@
     + 'A long press on any icon in the row opens these settings.';
   const PDA_HELP = ' Torn PDA has no script menu, so one icon always stays showing.';
   const KEEP_ONE = 'Keep one icon showing: in Torn PDA, a long press on an icon is the only way back here.';
+  // A press this long on one of Torn's icons opens the settings box, as the Xanax Reminder's does.
+  const LONG_PRESS_MS = 500;
+  // A finger may wobble this far before the press counts as a move (a scroll of the strip).
+  const SLOP_PX = 10;
+  // After a long press, the click it ends in is stopped if it comes this soon. Mouse events this
+  // soon after a touch are the phone's copies of it, and start no press.
+  const AFTER_PRESS_MS = 600;
 
   // ===== GM STORAGE =====
 
@@ -245,6 +252,11 @@
 
   // ===== THE STYLESHEET =====
 
+  // No iPhone link menu and no text selection on a long press of Torn's icons in the row. The
+  // phone decides when the finger lands, so this is on all the time.
+  const CALLOUT_CSS = ROWS.map((row) => row + ' > li[class*="icon"] a').join(', ')
+    + ' { -webkit-touch-callout: none !important; -webkit-user-select: none !important; user-select: none !important; }';
+
   // Torn spaces the desktop row with a 10 px right margin on every icon but each 6th
   // (li:nth-child(6n)). A hidden icon still counts in that 6th, so lines would come out uneven.
   // While something is hidden, the row is a wrapping flex row with a 10 px gap and no margins
@@ -286,7 +298,7 @@
 
   // The whole stylesheet for these hidden numbers.
   function cssText(numbers) {
-    const rules = [BOX_CSS];
+    const rules = [CALLOUT_CSS, BOX_CSS];
     if (numbers.length) rules.push(SPACING_CSS);
     return rules.concat(numbers.map(hideRule)).join('\n');
   }
@@ -465,6 +477,121 @@
     return b;
   }
 
+  // ===== THE LONG PRESS =====
+
+  let pressTimer = null;
+  // Torn's icon being pressed, and where the finger landed on it.
+  let pressed = null;
+  let startX = 0;
+  let startY = 0;
+  // A long press just opened the box, and the press hasn't ended yet.
+  let longPressed = false;
+  // Until when the click a long press ends in is stopped, in ms.
+  let stopClickUntil = 0;
+  // When the last touch ended, in ms.
+  let touchedAt = -Infinity;
+
+  // Torn's own icon in the row that an event happened on, or null: an li with an iconN___ class
+  // in the row. The Xanax and Blood Bag icons have no such class, and keep their own long press.
+  function tornIcon(target) {
+    const el = target && target.nodeType === 1 ? target : (target && target.parentElement) || null;
+    const li = el && typeof el.closest === 'function' ? el.closest('li') : null;
+    if (!li || !numberOf(li)) return null;
+    const row = li.parentElement;
+    return row && row.matches(ROW_SELECTOR) ? li : null;
+  }
+
+  function startPress(li) {
+    longPressed = false;
+    stopClickUntil = 0;
+    clearTimeout(pressTimer);
+    pressed = li;
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      pressed = null;
+      longPressed = true;
+      openSettings();
+    }, LONG_PRESS_MS);
+  }
+
+  function cancelPress() {
+    clearTimeout(pressTimer);
+    pressTimer = null;
+    pressed = null;
+  }
+
+  // A finger on one of Torn's icons starts a press. A second finger (a pinch) cancels it.
+  function onTouchStart(e) {
+    const touches = e.touches || [];
+    if (touches.length > 1) {
+      cancelPress();
+      return;
+    }
+    const li = tornIcon(e.target);
+    if (!li) return;
+    startX = touches[0] ? touches[0].clientX : 0;
+    startY = touches[0] ? touches[0].clientY : 0;
+    startPress(li);
+  }
+
+  // A finger moving more than a wobble (scrolling the strip, say) cancels the press.
+  function onTouchMove(e) {
+    if (!pressed) return;
+    const t = e.touches && e.touches[0];
+    if (!t || Math.abs(t.clientX - startX) > SLOP_PX || Math.abs(t.clientY - startY) > SLOP_PX) cancelPress();
+  }
+
+  // The main mouse button on one of Torn's icons starts a press. A right-click keeps its menu,
+  // and mouse events that follow a touch are the phone's copies of it.
+  function onMouseDown(e) {
+    if (e.button !== 0 || Date.now() - touchedAt < AFTER_PRESS_MS) return;
+    const li = tornIcon(e.target);
+    if (li) startPress(li);
+  }
+
+  // The mouse leaving the icon cancels the press.
+  function onMouseOut(e) {
+    if (pressed && !(e.relatedTarget && pressed.contains(e.relatedTarget))) cancelPress();
+  }
+
+  // Letting go. After a long press, a touch's end is cancelled, which stops the click it would
+  // make: that keeps Torn from selecting the icon or following its link. When it can't be
+  // cancelled, or the press was the mouse's, the click that follows is stopped instead.
+  function onPressEnd(e) {
+    cancelPress();
+    if (e.type === 'touchend') touchedAt = Date.now();
+    if (!longPressed) return;
+    longPressed = false;
+    if (e.type === 'touchend' && e.cancelable) {
+      e.preventDefault();
+      return;
+    }
+    stopClickUntil = Date.now() + AFTER_PRESS_MS;
+  }
+
+  // A touch the browser took over (a scroll, its own gesture) ends the press with no click.
+  function onTouchCancel() {
+    cancelPress();
+    longPressed = false;
+  }
+
+  // The click a long press ends in, wherever it lands, goes no further: stopPropagation keeps it
+  // from Torn's React (which would select the icon), and preventDefault from the link (which
+  // would open, or reload the page you're on). Either alone is not enough.
+  function onClick(e) {
+    if (!stopClickUntil) return;
+    const stop = Date.now() <= stopClickUntil;
+    stopClickUntil = 0;
+    if (!stop) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  // The phone's own long-press menu (Android's) is held back during a press.
+  function onContextMenu(e) {
+    if (pressTimer || longPressed) e.preventDefault();
+  }
+
   // ===== THE CHECK =====
 
   // At start, then every 2 seconds: learns what is new in Torn's data, and brings the stylesheet
@@ -498,6 +625,19 @@
     // PDA once crashed here. Without a menu, the long press still works.
   }
   document.addEventListener('keydown', safely(onKeyDown), true);
+  // Presses on Torn's icons are watched from the document, in the capture phase, so they keep
+  // working when Torn redraws or replaces the row, and the click a long press ends in is stopped
+  // before Torn's own handlers see it. touchstart and touchmove never cancel anything, so they
+  // are passive; touchend has to be able to cancel, so it isn't.
+  document.addEventListener('touchstart', safely(onTouchStart), { capture: true, passive: true });
+  document.addEventListener('touchmove', safely(onTouchMove), { capture: true, passive: true });
+  document.addEventListener('touchend', safely(onPressEnd), { capture: true, passive: false });
+  document.addEventListener('touchcancel', safely(onTouchCancel), { capture: true, passive: true });
+  document.addEventListener('mousedown', safely(onMouseDown), true);
+  document.addEventListener('mouseup', safely(onPressEnd), true);
+  document.addEventListener('mouseout', safely(onMouseOut), true);
+  document.addEventListener('click', safely(onClick), true);
+  document.addEventListener('contextmenu', safely(onContextMenu), true);
   // At document-start, before Torn draws anything, so a hidden icon doesn't flash on a page load.
   check();
   setInterval(check, POLL_MS);

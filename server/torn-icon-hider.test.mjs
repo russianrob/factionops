@@ -740,3 +740,197 @@ test('an error inside a handler is caught there, never reaching Torn\'s page', (
     for (const listener of listeners) assert.doesNotThrow(() => listener.fn.call(w.document, bad), type);
   }
 });
+
+// ---------------------------------------------------------------------------------------------
+// The long press
+// ---------------------------------------------------------------------------------------------
+
+// A finger at (x, y), as touch events carry it.
+const at = (x, y) => ({ touches: [{ clientX: x, clientY: y }] });
+
+for (const layout of Object.keys(LAYOUTS)) {
+  test(`${layout}: a 500 ms touch on one of Torn's icons opens the box, and its end is cancelled, so no click follows`, () => {
+    const w = page({ layout }).run();
+    const link = w.icon('Male').querySelector('a');
+    fire(w, link, 'touchstart', at(10, 10));
+    w.advance(499);
+    assert.equal(w.box(), null, 'not yet');
+    w.advance(1);
+    assert.ok(w.box(), 'open');
+    assert.equal(fire(w, link, 'touchend').defaultPrevented, true, 'cancelled: the phone makes no click');
+  });
+}
+
+test('a short tap opens nothing, and its click reaches Torn untouched', () => {
+  const w = page().run();
+  const link = w.icon('Male').querySelector('a');
+  fire(w, link, 'touchstart', at(10, 10));
+  w.advance(200);
+  assert.equal(fire(w, link, 'touchend').defaultPrevented, false);
+  const click = fire(w, link, 'click');
+  assert.equal(click.defaultPrevented, false, 'the link works');
+  assert.equal(w.reactSaw.length, 1, 'Torn\'s React sees it');
+  w.advance(2000);
+  assert.equal(w.box(), null);
+});
+
+test('a 500 ms mouse press opens the box, and the click it ends in reaches neither Torn\'s React nor the link', () => {
+  const w = page({ layout: 'Fly-out, desktop' }).run();
+  const link = w.icon('Faction').querySelector('a');
+  fire(w, link, 'mousedown', { button: 0 });
+  w.advance(500);
+  assert.ok(w.box());
+  fire(w, link, 'mouseup', { button: 0 });
+  const click = fire(w, link, 'click', { button: 0 });
+  assert.equal(click.defaultPrevented, true, 'the link doesn\'t open (or reload the page)');
+  assert.equal(w.reactSaw.length, 0, 'Torn doesn\'t select the icon');
+});
+
+test('a short mouse click passes through untouched', () => {
+  const w = page({ layout: 'Fly-out, desktop' }).run();
+  const link = w.icon('Faction').querySelector('a');
+  fire(w, link, 'mousedown', { button: 0 });
+  w.advance(100);
+  fire(w, link, 'mouseup', { button: 0 });
+  assert.equal(fire(w, link, 'click', { button: 0 }).defaultPrevented, false);
+  assert.equal(w.reactSaw.length, 1);
+  w.advance(1000);
+  assert.equal(w.box(), null);
+});
+
+test('a finger moving more than 10 px cancels the press; a small wobble doesn\'t', () => {
+  const w = page().run();
+  const link = w.icon('Male').querySelector('a');
+  fire(w, link, 'touchstart', at(10, 10));
+  fire(w, link, 'touchmove', at(30, 10));
+  w.advance(600);
+  assert.equal(w.box(), null, 'a scroll of the strip');
+  fire(w, link, 'touchend');
+  fire(w, link, 'touchstart', at(10, 10));
+  fire(w, link, 'touchmove', at(14, 13));
+  w.advance(500);
+  assert.ok(w.box(), 'a wobble');
+});
+
+test('a second finger cancels the press', () => {
+  const w = page().run();
+  const link = w.icon('Male').querySelector('a');
+  fire(w, link, 'touchstart', at(10, 10));
+  fire(w, link, 'touchstart', { touches: [{ clientX: 10, clientY: 10 }, { clientX: 90, clientY: 40 }] });
+  w.advance(600);
+  assert.equal(w.box(), null, 'a pinch');
+  fire(w, link, 'touchend');
+  fire(w, link, 'touchstart', at(10, 10));
+  w.advance(500);
+  assert.ok(w.box(), 'one finger again');
+});
+
+test('the mouse leaving the icon cancels the press; a right-click starts none and keeps its menu', () => {
+  const w = page({ layout: 'Fly-out, desktop' }).run();
+  const link = w.icon('Faction').querySelector('a');
+  fire(w, link, 'mousedown', { button: 0 });
+  fire(w, link, 'mouseout', { relatedTarget: w.icon('Faction') });
+  w.advance(100);
+  fire(w, link, 'mouseout', { relatedTarget: w.document.body });
+  w.advance(600);
+  assert.equal(w.box(), null, 'left the icon');
+  fire(w, link, 'mouseup', { button: 0 });
+  fire(w, link, 'mousedown', { button: 2 });
+  w.advance(600);
+  assert.equal(w.box(), null, 'a right-click');
+  assert.equal(fire(w, link, 'contextmenu').defaultPrevented, false, 'its menu opens');
+  fire(w, link, 'mouseup', { button: 2 });
+  fire(w, link, 'mousedown', { button: 0 });
+  w.advance(500);
+  assert.ok(w.box(), 'the main button, held on the icon');
+});
+
+test('the phone\'s own long-press menu is held back during a press', () => {
+  const w = page().run();
+  const link = w.icon('Male').querySelector('a');
+  fire(w, link, 'touchstart', at(10, 10));
+  w.advance(300);
+  assert.equal(fire(w, link, 'contextmenu').defaultPrevented, true);
+  fire(w, link, 'touchend');
+  assert.equal(fire(w, link, 'contextmenu').defaultPrevented, false, 'no press, no change');
+});
+
+test('a long press on the Xanax or Blood Bag icon, or on icons elsewhere on the page, doesn\'t open this box', () => {
+  const w = page().run();
+  const others = [w.icon(XANAX), w.icon(BLOODBAG), w.document.querySelector('#tray li')];
+  for (const el of others) {
+    fire(w, el.querySelector('a'), 'touchstart', at(10, 10));
+    w.advance(600);
+    assert.equal(w.box(), null, el.id || el.className);
+    fire(w, el.querySelector('a'), 'touchend');
+  }
+  fire(w, w.icon('Male').querySelector('a'), 'touchstart', at(10, 10));
+  w.advance(500);
+  assert.ok(w.box(), 'Torn\'s own icon in the row');
+});
+
+test('it works on a row Torn has replaced', () => {
+  const w = page().run();
+  const ul = w.replaceRow();
+  fire(w, ul.firstElementChild.nextElementSibling.nextElementSibling.querySelector('a'), 'touchstart', at(10, 10));
+  w.advance(500);
+  assert.ok(w.box());
+});
+
+test('after a long press, the phone\'s copies of the touch as mouse events start no second press', () => {
+  const w = page().run();
+  const link = w.icon('Male').querySelector('a');
+  fire(w, link, 'touchstart', at(10, 10));
+  w.advance(500);
+  const box = w.box();
+  assert.ok(box, 'the long press opened the box');
+  fire(w, link, 'touchend');
+  w.advance(50);
+  fire(w, link, 'mousedown', { button: 0 });
+  w.advance(600);
+  assert.equal(w.box(), box, 'the same box');
+});
+
+test('right after a long press, a tap on a switch in the box works', () => {
+  const w = page().run();
+  const link = w.icon('Male').querySelector('a');
+  fire(w, link, 'touchstart', at(10, 10));
+  w.advance(500);
+  fire(w, link, 'touchend');
+  w.advance(200);
+  assert.equal(fire(w, boxSwitch(w, 'Male'), 'click').defaultPrevented, false, 'the switch flips');
+});
+
+test('when a long press\'s touchend can\'t be cancelled, the click that follows is stopped; one much later is not', () => {
+  const w = page().run();
+  const link = w.icon('Male').querySelector('a');
+  fire(w, link, 'touchstart', at(10, 10));
+  w.advance(500);
+  assert.equal(fire(w, link, 'touchend', { cancelable: false }).defaultPrevented, false);
+  w.advance(100);
+  const click = fire(w, link, 'click');
+  assert.equal(click.defaultPrevented, true);
+  assert.equal(w.reactSaw.length, 0);
+  fire(w, boxButton(w, 'Cancel'), 'click');
+  w.advance(1000);
+  assert.equal(fire(w, link, 'click').defaultPrevented, false, 'a later tap is a tap');
+  assert.equal(w.reactSaw.length, 1);
+});
+
+test('touchstart and touchmove are watched passively; touchend can cancel', () => {
+  const w = page().run();
+  assert.equal(w.captures.touchstart[0].passive, true);
+  assert.equal(w.captures.touchmove[0].passive, true);
+  assert.equal(w.captures.touchend[0].passive, false);
+});
+
+for (const layout of Object.keys(LAYOUTS)) {
+  test(`${layout}: Torn's icon links in the row get no iPhone link menu and no text selection; nothing else does`, () => {
+    const w = page({ layout }).run();
+    const links = matching(w, '-webkit-touch-callout: none');
+    assert.ok(TITLES.every((t) => links.has(w.icon(t).querySelector('a'))), 'Torn\'s icons in the row');
+    assert.equal(links.has(w.icon(XANAX).querySelector('a')), false, 'the Xanax icon keeps its own');
+    assert.equal([...links].some((a) => a.parentNode.parentNode !== w.row()), false, 'nothing outside the row');
+    assert.ok(rulesWith(w, '-webkit-touch-callout: none').every((sel) => rulesWith(w, 'user-select: none').includes(sel)));
+  });
+}
