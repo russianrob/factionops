@@ -2,15 +2,20 @@
 // skips people who can't be attacked: FFScouter's hospital times rule out the
 // ones it knows about, and Torn is asked about the pick. The target list is
 // fetched again once it is an hour old, while someone is chaining. Runs the
-// SHIPPED functions of both copies, stable and beta. FFS_DIR points it at
-// another folder holding both copies.
+// SHIPPED functions of every copy in COPIES (today only the beta). FFS_DIR
+// points it at another folder holding them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const DIR = process.env.FFS_DIR || '/opt/warboard/server/public/scripts';
-const COPIES = ['ffs-banner-estimates.user.js', 'ffs-banner-estimates-beta.user.js'].map((file) => ({
+// Only the beta has the change. On 2026-10-25 the owner kept it to the beta
+// and put the stable copy back to 2.73.61, the version before it, so stable
+// users get no update. Promote it as 2.73.63, not 2.73.62: 2.73.62 was served
+// for 15 minutes, and anyone who took it is never offered a second 2.73.62.
+// Then add 'ffs-banner-estimates.user.js' back to this list.
+const COPIES = ['ffs-banner-estimates-beta.user.js'].map((file) => ({
   tag: file.includes('beta') ? 'beta' : 'stable',
   SRC: readFileSync(join(DIR, file), 'utf8'),
 }));
