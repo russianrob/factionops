@@ -169,8 +169,8 @@ function noteText(d) {
   }
   var notes = [];
   if (!d.backfillDone && d.reachSec) {
-    notes.push("History so far reaches back to " + dayMonth(d.reachSec) + "; the rest of the year is still being filled in" +
-      (d.liveWar ? ", slowly while the ranked war is on." : d.backfillSlow ? ", slowly." : "."));
+    notes.push("History so far reaches back to " + dayMonth(d.reachSec) + "; the rest of the year " +
+      (d.liveWar ? "fills in after the ranked war." : d.backfillHeld ? "is on hold for now." : "is still being filled in, a little each hour."));
   }
   if (d.rosterStale) notes.push("The member list could not be refreshed just now, so it may be out of date.");
   return notes.join(" ");

@@ -575,8 +575,9 @@ export function createBloodBagsApi(opts = {}) {
         updatedAt: snap.lastPollAt,
         reachSec: snap.reachSec,
         backfillDone: snap.backfillDone,
-        // Whether the rest is filling in at the war pace, so the page can say "slowly".
-        backfillSlow: !snap.backfillDone && slowReason(snap.wars, snap.warsAt, nowMs) !== null,
+        // Whether the rest of the year is on hold, for a live war or a war list too
+        // old to say, so the page can say what it waits for.
+        backfillHeld: !snap.backfillDone && slowReason(snap.wars, snap.warsAt, nowMs) !== null,
         liveWar: liveWar(snap.wars, nowSec),
         windows: Object.keys(WINDOWS),
         types: ["all", ...TYPES],

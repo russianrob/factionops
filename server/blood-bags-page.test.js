@@ -110,19 +110,19 @@ test("the note says when there is no data yet, and how far back the history reac
   const reach = Date.UTC(2026, 9, 20) / 1000;
   assert.equal(P.noteText({ updatedAt: null }), "No data yet: the first update runs within the hour.");
   assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: null }),
-    "History so far reaches back to 20 Oct; the rest of the year is still being filled in.");
+    "History so far reaches back to 20 Oct; the rest of the year is still being filled in, a little each hour.");
   assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: { id: 1 } }),
-    "History so far reaches back to 20 Oct; the rest of the year is still being filled in, slowly while the ranked war is on.");
+    "History so far reaches back to 20 Oct; the rest of the year fills in after the ranked war.");
   assert.equal(P.noteText({ updatedAt: 1, backfillDone: true, reachSec: reach }), "");
 });
 
-test("the note says the history fills in slowly while the war list is out of date, too", () => {
+test("the note says the rest of the year is on hold while the war list is out of date", () => {
   const { P } = page();
   const reach = Date.UTC(2026, 9, 20) / 1000;
-  assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: null, backfillSlow: true }),
-    "History so far reaches back to 20 Oct; the rest of the year is still being filled in, slowly.");
-  assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: { id: 1 }, backfillSlow: true }),
-    "History so far reaches back to 20 Oct; the rest of the year is still being filled in, slowly while the ranked war is on.");
+  assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: null, backfillHeld: true }),
+    "History so far reaches back to 20 Oct; the rest of the year is on hold for now.");
+  assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: { id: 1 }, backfillHeld: true }),
+    "History so far reaches back to 20 Oct; the rest of the year fills in after the ranked war.");
 });
 
 test("the overview shows the war part of use and a signed net", () => {
@@ -191,7 +191,7 @@ test("the note says when the first update failed, and when the member list may b
   assert.equal(P.noteText({ updatedAt: 1, backfillDone: true, rosterStale: true }),
     "The member list could not be refreshed just now, so it may be out of date.");
   assert.equal(P.noteText({ updatedAt: 1, backfillDone: false, reachSec: reach, liveWar: null, rosterStale: true }),
-    "History so far reaches back to 20 Oct; the rest of the year is still being filled in. " +
+    "History so far reaches back to 20 Oct; the rest of the year is still being filled in, a little each hour. " +
     "The member list could not be refreshed just now, so it may be out of date.");
 });
 
