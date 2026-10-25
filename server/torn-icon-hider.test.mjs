@@ -416,6 +416,15 @@ test('a picture number belongs to the kind it was last seen with, and a kind lef
   assert.deepEqual(kinds.company, { title: 'Company', ids: [27] }, 'seen before, kept');
 });
 
+test('after Torn renames a hidden kind, the other hidden kinds stay hidden', () => {
+  // old_faction was hidden; Torn now calls it faction, so its number moves there and old_faction is dropped.
+  const store = Object.assign({ 'tih-kinds': JSON.stringify({ old_faction: { title: 'Faction', ids: [74] } }) }, hiding('old_faction', 'maleGender'));
+  const w = page({ store }).run();
+  assert.equal(kindsIn(w.store).old_faction, undefined, 'the old name is dropped');
+  assert.equal(showing(w).includes('Male'), false, 'Male stays hidden');
+  assert.equal(showing(w).includes('Faction'), true, 'the renamed kind shows until it is hidden again (Q2)');
+});
+
 test('a hidden cooldown\'s next level is hidden before it is ever seen', () => {
   const w = page({ store: hiding('drug_cooldown') }).run();
   assert.equal(showing(w).includes('Drug Cooldown'), false);
@@ -433,6 +442,10 @@ test('another hidden kind\'s new picture number shows until the next check, then
   w.check();
   assert.equal(showing(w).includes('Faction'), false, 'learned at the next check');
   assert.deepEqual(kindsIn(w.store).faction.ids, [74, 81]);
+});
+
+test('the check runs every 2 seconds, so another hidden kind\'s new picture number shows for 2 seconds at most', () => {
+  assert.equal(page().run().pollMs, 2000);
 });
 
 test('a kind that is switched on is never hidden by another kind\'s level range', () => {
@@ -915,6 +928,45 @@ test('when a long press\'s touchend can\'t be cancelled, the click that follows 
   w.advance(1000);
   assert.equal(fire(w, link, 'click').defaultPrevented, false, 'a later tap is a tap');
   assert.equal(w.reactSaw.length, 1);
+});
+
+test('after a long press whose touchend can\'t be cancelled and no click comes, a tap much later is not stopped', () => {
+  const w = page().run();
+  const link = w.icon('Male').querySelector('a');
+  fire(w, link, 'touchstart', at(10, 10));
+  w.advance(500);
+  fire(w, link, 'touchend', { cancelable: false });
+  fire(w, w.document.body, 'keydown', { key: 'Escape' });
+  assert.equal(w.box(), null, 'closed with Escape, and no click came');
+  w.advance(5000);
+  assert.equal(fire(w, link, 'click').defaultPrevented, false, 'a tap 5 s later is a tap');
+  assert.equal(w.reactSaw.length, 1);
+});
+
+test('after a long press whose touchend can\'t be cancelled and no click comes, a tap on a switch in the box at once works', () => {
+  const w = page().run();
+  const link = w.icon('Male').querySelector('a');
+  fire(w, link, 'touchstart', at(10, 10));
+  w.advance(500);
+  fire(w, link, 'touchend', { cancelable: false });
+  w.advance(200);
+  const sw = boxSwitch(w, 'Male');
+  fire(w, sw, 'touchstart', at(200, 200));
+  fire(w, sw, 'touchend');
+  assert.equal(fire(w, sw, 'click').defaultPrevented, false, 'the switch flips');
+});
+
+test('after a long press whose touchend can\'t be cancelled, the phone\'s mouse copies of the touch don\'t let its click through', () => {
+  const w = page().run();
+  const link = w.icon('Male').querySelector('a');
+  fire(w, link, 'touchstart', at(10, 10));
+  w.advance(500);
+  fire(w, link, 'touchend', { cancelable: false });
+  w.advance(10);
+  fire(w, link, 'mousedown', { button: 0 });
+  fire(w, link, 'mouseup', { button: 0 });
+  assert.equal(fire(w, link, 'click').defaultPrevented, true);
+  assert.equal(w.reactSaw.length, 0);
 });
 
 test('touchstart and touchmove are watched passively; touchend can cancel', () => {

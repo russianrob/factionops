@@ -522,6 +522,8 @@
 
   // A finger on one of Torn's icons starts a press. A second finger (a pinch) cancels it.
   function onTouchStart(e) {
+    // A new touch is a new tap, so the click a long press ended in has come and gone.
+    stopClickUntil = 0;
     const touches = e.touches || [];
     if (touches.length > 1) {
       cancelPress();
@@ -545,6 +547,8 @@
   // and mouse events that follow a touch are the phone's copies of it.
   function onMouseDown(e) {
     if (e.button !== 0 || Date.now() - touchedAt < AFTER_PRESS_MS) return;
+    // A new press of the mouse's own, not a phone's copy of a touch: that click has come and gone too.
+    stopClickUntil = 0;
     const li = tornIcon(e.target);
     if (li) startPress(li);
   }
