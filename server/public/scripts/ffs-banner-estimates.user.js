@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.61
+// @version      2.73.62
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -25,6 +25,13 @@
 // =============================================================================
 // Upstream: FF Scouter V2 (GPL-3.0, rDacted/Weav3r/xentac/Glasnost)
 //   https://greasyfork.org/en/scripts/535292
+//
+// 2.73.62 —  Chain button: skip people who can't be attacked. FFScouter's
+//              hospital times rule out the ones it knows are in hospital, and
+//              Torn is asked about the pick, one API call on your key and at
+//              most 3 a click, so a click opens someone out of hospital, not
+//              travelling and not in jail. The target list is fetched again
+//              once it is an hour old while you chain; it was never refreshed.
 //
 // 2.73.61 —  Menu: the API key entry names the script, "FFS Banner Estimates:
 //              Enter Limited API Key". Some menus list every script's entries
@@ -326,9 +333,14 @@ function ffs_nowSecFloat() {
   } catch (_) {}
   return Date.now() / 1000;
 }
-const FF_TARGET_STALENESS = 24 * 60 * 60 * 1000; // Refresh the target list every day
+// The chain button's target list is fetched again once it is this old, at a
+// page load while someone is chaining (ffs_chainRefreshOnLoad), so the
+// hospital times FFScouter sends with it stay current.
+const FF_TARGET_STALENESS = 60 * 60 * 1000;
 const TARGET_KEY = "ffscouterv2-targets";
 const TARGET_INDEX_KEY = "ffscouterv2-target-index";
+// When the chain button was last clicked, in ms.
+const CHAIN_CLICKED_KEY = "ffscouterv2-chain-clicked-at";
 const CLEARED_TSC_KEY = "ffscouterv2-cleared-tsc-keys";
 const CHECK_KEY_CACHE_KEY = "ffscouterv2-check-key-cache";
 const CHECK_KEY_INTERVAL = 15 * 60 * 1000;
@@ -3499,7 +3511,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.61';
+  const SCRIPT_VERSION = '2.73.62';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
@@ -4931,20 +4943,16 @@ if (!singleton) {
       return parsed.targets;
     }
 
-    if (parsed.last_updated + FF_TARGET_STALENESS > new Date()) {
-      // Old cache, return nothing
+    // last_updated comes back from storage as a date string, so it is read as
+    // a time first. Adding the staleness to the string itself made text that
+    // never compared as a date, and no list was ever seen as old.
+    const age = Date.now() - new Date(parsed.last_updated).getTime();
+    if (!(age < FF_TARGET_STALENESS)) {
+      // An old list, or one whose time can't be read: return nothing
       return null;
     }
 
     return parsed.targets;
-  }
-
-  function get_next_target_index() {
-    const value = Number(rD_getValue(TARGET_INDEX_KEY, 0));
-
-    rD_setValue(TARGET_INDEX_KEY, value + 1);
-
-    return value;
   }
 
   function reset_next_target_index() {
@@ -4985,6 +4993,9 @@ if (!singleton) {
               last_updated: new Date(),
             };
             rD_setValue(TARGET_KEY, JSON.stringify(result));
+            // A new list starts from its top: FFScouter orders it by battle
+            // stats, and its hospital times are the newest there are.
+            reset_next_target_index();
             console.log("[FF Scouter V2] Chain list updated successfully");
           }
         } else {
@@ -5021,24 +5032,106 @@ if (!singleton) {
     });
   }
 
-  function get_random_chain_target() {
-    const targets = get_cached_targets(true);
-    if (!targets) {
-      return null;
-    }
-
-    let index = get_next_target_index();
-
-    if (index >= targets.length) {
-      index = 0;
-      reset_next_target_index();
-    }
-
-    return targets[index];
-  }
-
   function clear_cached_targets() {
     rD_deleteValue(TARGET_KEY);
+  }
+
+  // A click on the chain button this recent means someone is chaining.
+  const FFS_CHAIN_ACTIVE_MS = 10 * 60 * 1000;
+
+  // At a page load: fetch the chain list if there is none, and otherwise let
+  // update_ff_targets fetch it again if it is an hour old, but only within
+  // FFS_CHAIN_ACTIVE_MS of a click on the chain button, so the refresh comes
+  // while someone is chaining, not on every page anyone opens. It runs here,
+  // on the page the click opened, because a fetch begun by the click itself
+  // is lost when "same tab" takes that page away.
+  function ffs_chainRefreshOnLoad() {
+    const clickedAt = Number(rD_getValue(CHAIN_CLICKED_KEY, 0)) || 0;
+    if (!get_cached_targets(true) || Date.now() - clickedAt < FFS_CHAIN_ACTIVE_MS) {
+      update_ff_targets();
+    }
+  }
+
+  // A click asks Torn about this many chain targets at most. When they are
+  // all out, a note says so and the next click carries on after them.
+  const FFS_CHAIN_MAX_CHECKS = 3;
+  // How long a click waits for Torn's answer about one target.
+  const FFS_CHAIN_CHECK_TIMEOUT_MS = 4000;
+
+  /**
+   * Torn's own word on whether a chain target can be attacked now: "ok" for
+   * the status Okay, "out" for any other (hospital, travel, abroad, jail), and
+   * "unknown" when Torn gives no answer, and the button then goes by FFScouter
+   * alone, as it did before it asked. One API call on the script's key, with
+   * a cache-buster so a hospital stay that began seconds ago is seen. While
+   * Torn is refusing the key it asks nothing, as the other Torn calls here do.
+   */
+  async function ffs_chainStatus(playerId) {
+    if (!key || Date.now() < _ffsRateLimitedUntil) return "unknown";
+    const url = `https://api.torn.com/v2/user/${playerId}/basic?striptags=true&timestamp=${Date.now()}&key=${encodeURIComponent(key)}`;
+    let timer = null;
+    try {
+      const data = await Promise.race([
+        fetch(url).then((r) => r.json()),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), FFS_CHAIN_CHECK_TIMEOUT_MS);
+        }),
+      ]);
+      if (!data || data.error) {
+        if (ffs_isRateLimitError(data)) _ffsRateLimitedUntil = Date.now() + FFS_RATE_LIMIT_BACKOFF_MS;
+        return "unknown";
+      }
+      const state = data.profile && data.profile.status && data.profile.status.state;
+      if (!state) return "unknown";
+      return state === "Okay" ? "ok" : "out";
+    } catch (_) {
+      return "unknown";
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * The next target on the chain list who can be attacked, walking from the
+   * saved place `start` and round the list once. FFScouter's hospital_until
+   * rules out, for free, the ones it already knows are in hospital, and
+   * `check(playerId)` asks Torn about the rest, at most FFS_CHAIN_MAX_CHECKS
+   * a click. Torn saying "ok", or giving no answer, means go.
+   *
+   * Resolves to the target and `next`, where the following click starts; or,
+   * when nobody can be attacked, to a null target, `next`, and the note to show.
+   */
+  async function ffs_chainPick(targets, start, nowMs, check) {
+    const n = targets.length;
+    // A saved place past the end of this list starts again from its top.
+    const from = Number.isInteger(start) && start >= 0 && start < n ? start : 0;
+    let checks = 0;
+    let soonest = null;
+    for (let step = 0; step < n; step++) {
+      const i = (from + step) % n;
+      const t = targets[i];
+      if (!t || !t.player_id) continue;
+      const outAt = Number(t.hospital_until) * 1000;
+      if (outAt > nowMs) {
+        if (!soonest || outAt < soonest.at) soonest = { name: t.name, at: outAt };
+        continue;
+      }
+      if (checks === FFS_CHAIN_MAX_CHECKS) {
+        return {
+          target: null,
+          next: i,
+          note: `The next ${FFS_CHAIN_MAX_CHECKS} on your chain list can't be attacked right now (hospital, travel or jail). Click again for the next ones.`,
+        };
+      }
+      checks++;
+      if ((await check(t.player_id)) !== "out") return { target: t, next: (i + 1) % n };
+    }
+    let note = "Nobody on your chain list can be attacked right now.";
+    if (soonest) {
+      const minutes = Math.max(1, Math.ceil((soonest.at - nowMs) / 60000));
+      note += ` First out of hospital: ${soonest.name} in ${minutes} min.`;
+    }
+    return { target: null, next: from, note };
   }
 
   // Chain button stolen from https://greasyfork.org/en/scripts/511916-random-target-finder
@@ -5067,27 +5160,70 @@ if (!singleton) {
     button.style.borderRadius = "6px";
     button.style.cursor = "pointer";
 
-    // Add a click event listener to open Google in a new tab
-    button.addEventListener("click", function () {
-      let rando = get_random_chain_target();
-      if (!rando) {
+    // One click, one target. The click waits a moment while Torn is asked
+    // about the pick (ffs_chainPick); a second click meanwhile is ignored
+    // rather than starting a second search.
+    let busy = false;
+    button.addEventListener("click", async function () {
+      if (busy) return;
+      // A page load within FFS_CHAIN_ACTIVE_MS of this counts as chaining
+      // and may fetch the list again (ffs_chainRefreshOnLoad).
+      rD_setValue(CHAIN_CLICKED_KEY, Date.now());
+      const targets = get_cached_targets(true);
+      if (!targets || !targets.length) {
+        update_ff_targets();
         return;
       }
 
       const linkType = ffSettingsGet("chain-link-type") || "attack";
       const tabType = ffSettingsGet("chain-tab-type") || "newtab";
 
-      let profileLink;
-      if (linkType === "profile") {
-        profileLink = `https://www.torn.com/profiles.php?XID=${rando.player_id}`;
-      } else {
-        profileLink = `https://www.torn.com/page.php?sid=attack&user2ID=${rando.player_id}`;
+      // A new tab has to be opened by the click itself, before Torn answers:
+      // the browser's popup blocker stops one opened after a wait. Torn PDA
+      // opens tabs its own way, so there the tab opens once the target is
+      // known, with the call the button always used. The warboard apps have
+      // one view and load a new tab's address in it, so a blank tab there
+      // would load an empty page over Torn's: they go to the target in place,
+      // which is where a new tab opened in them anyway.
+      const onPDA = apikey[0] != "#";
+      const host = typeof GM_info !== "undefined" && GM_info ? GM_info.scriptHandler : "";
+      const inPlace = tabType === "sametab" || host === "WarboardIOS" || host === "WarboardNative";
+      let tab = null;
+      if (!inPlace && !onPDA) {
+        tab = window.open("", "_blank");
+        if (tab) {
+          tab.opener = null;
+          try {
+            tab.document.title = "FF Scouter: finding a chain target";
+          } catch (_) {}
+        }
       }
 
-      if (tabType === "sametab") {
-        window.location.href = profileLink;
-      } else {
-        window.open(profileLink, '_blank', 'noopener,noreferrer');
+      busy = true;
+      button.style.opacity = "0.5";
+      try {
+        const start = Number(rD_getValue(TARGET_INDEX_KEY, 0)) || 0;
+        const pick = await ffs_chainPick(targets, start, Date.now(), ffs_chainStatus);
+        rD_setValue(TARGET_INDEX_KEY, pick.next);
+        if (!pick.target) {
+          if (tab) tab.close();
+          showToast(pick.note, TOAST_LOG);
+          return;
+        }
+        const id = pick.target.player_id;
+        const link =
+          linkType === "profile"
+            ? `https://www.torn.com/profiles.php?XID=${id}`
+            : `https://www.torn.com/page.php?sid=attack&user2ID=${id}`;
+        if (inPlace) window.location.href = link;
+        else if (tab) tab.location.href = link;
+        else window.open(link, "_blank", "noopener,noreferrer");
+      } catch (err) {
+        if (tab) tab.close();
+        console.error("[FF Scouter V2] Chain button failed", err);
+      } finally {
+        busy = false;
+        button.style.opacity = "";
       }
     });
     // Add the button to the page
@@ -6304,7 +6440,7 @@ if (!singleton) {
   }
 
   create_chain_button();
-  update_ff_targets();
+  ffs_chainRefreshOnLoad();
   checkKeyAndUpdatePremium();
   setInterval(checkKeyAndUpdatePremium, CHECK_KEY_INTERVAL);
 
