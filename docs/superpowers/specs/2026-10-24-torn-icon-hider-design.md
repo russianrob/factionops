@@ -1,6 +1,6 @@
 # Torn Icon Hider (design)
 
-**Status:** written on 2026-10-24 (EDT) for the owner's review, not yet approved. The owner asked at 20:06 EDT, with a screenshot of the phone header: "can we create a script that shows which icons we want to show and which we want to hide". They answered "our own script" (20:10 EDT) and "do recommended" (20:14 EDT) to the questions below. Research into Torn's row after that turned up a few things the owner hasn't seen yet; they are the rows marked **New** in the Decisions table.
+**Status:** approved by the owner on 2026-10-24 at 21:12 EDT: "approved, write the plan". The owner asked at 20:06 EDT, with a screenshot of the phone header: "can we create a script that shows which icons we want to show and which we want to hide". They answered "our own script" (20:10 EDT) and "do recommended" (20:14 EDT) to the questions below. Research into Torn's row after that turned up the rows marked **New** in the Decisions table, which the owner approved with the rest. Plan: `docs/superpowers/plans/2026-10-24-torn-icon-hider.md`.
 **Script:** `server/public/scripts/torn-icon-hider.user.js` and `.meta.js`, version 1.0.0. Tests: `server/torn-icon-hider.test.mjs`.
 
 ## Why
