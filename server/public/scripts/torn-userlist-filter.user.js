@@ -101,8 +101,8 @@
   }
 
   // The four switches: each is on unless it was saved off, so a kind missing from what was
-  // saved is on (Fallen, in switches saved by 1.0.0). With nothing saved, or a value that won't
-  // parse, all four are on.
+  // saved (one added since the switches were saved) is on. With nothing saved, or a value that
+  // won't parse, all four are on.
   function readSwitches() {
     const saved = readJson(STORE);
     const on = {};
