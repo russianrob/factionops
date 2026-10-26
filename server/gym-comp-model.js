@@ -164,3 +164,98 @@ export function finaliseWeeks(readings, done, nowMs) {
   }
   return out;
 }
+
+// ── The monthly ladder ──────────────────────────────────────────────────
+// The calendar month in TCT, scored exactly like the week: energy trained
+// between two of our own readings. It keeps the 25 best instead of a winner,
+// and it carries no prize; the weekly Xanax is the only one.
+
+export const MONTH_TOP = 25;
+
+/** The calendar month containing `nowMs`: the 1st 00:00 → the last day 23:59:59.999 TCT. */
+export function monthWindow(nowMs) {
+  const d = new Date(nowMs);
+  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+  return { start, end: Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) - 1 };
+}
+
+/**
+ * Energy trained this month, best first.
+ *
+ * The week's sums, with one difference: a member missing from the start line
+ * is measured from their own first reading this month instead of being scored
+ * zero. A week is short enough to sit out; a month is not, and scoring them
+ * zero would leave somebody who joined on the 3rd off the ladder until the
+ * next one. `joinedAt` is when that first reading was taken, so the page can
+ * say so. Everyone who was at the start line has `joinedAt: null`.
+ */
+export function monthStandings(baseline, current, readings, startMs) {
+  if (!current) return [];
+  const rows = standings(baseline, current).map((r) => {
+    if (!r.partial) return { ...r, joinedAt: null };
+    // Their earliest reading inside the month, and never one after `current`:
+    // the current reading itself if there is nothing earlier.
+    let first = current;
+    for (const x of readings || []) {
+      const at = Number(x.at);
+      if (at >= startMs && at < Number(first.at) && x.members && x.members[r.id]) first = x;
+    }
+    const [own] = standings({ members: { [r.id]: first.members[r.id] } },
+                            { members: { [r.id]: current.members[r.id] } });
+    return { ...own, joinedAt: Number(first.at) };
+  });
+  rows.sort((a, b) => b.energy - a.energy || String(a.name).localeCompare(String(b.name)));
+  return rows;
+}
+
+/** The ladder itself: the best 25 who trained at all. Nobody is listed on zero. */
+export function monthTop(rows) {
+  return (rows || []).filter((r) => r.energy > 0).slice(0, MONTH_TOP);
+}
+
+/** The month in progress, as the page shows it. */
+export function monthBoard(readings, nowMs) {
+  const m = monthWindow(nowMs);
+  // As with the week: no reading before the 1st means the month is measured
+  // from its first reading instead, and `lateStart` tells the page so.
+  const { reading: base, late } = baselineFor(readings, m.start);
+  const now = latestUpTo(readings, nowMs);
+  return {
+    start: m.start, end: m.end,
+    baselineAt: base ? Number(base.at) : 0,
+    lateStart: late,
+    currentAt: now ? Number(now.at) : 0,
+    top: monthTop(monthStandings(base, now, readings, m.start)),
+  };
+}
+
+/**
+ * Save every month that has finished and is not saved yet.
+ *
+ * Unlike a week, a month is saved only if we have a reading from before its
+ * 1st. A ladder measured from the 13th would be published as the month's and
+ * be wrong for everyone on it. That rules out the month the readings began
+ * (September 2026), and nothing after it.
+ *
+ * The finish line is the last reading at or before the next month's midnight,
+ * which is the same reading the next month starts from. So no training falls
+ * between two months, and none counts in both.
+ */
+export function finaliseMonths(readings, done, nowMs) {
+  const out = [];
+  if (!readings || !readings.length) return out;
+  const seen = new Set((done || []).map((d) => Number(d.monthStart)));
+  const currentStart = monthWindow(nowMs).start;
+  const earliest = Math.min(...readings.map((r) => Number(r.at)));
+  for (let start = monthWindow(earliest).start; start < currentStart; start = monthWindow(start).end + 1) {
+    if (seen.has(start)) continue;
+    const end = monthWindow(start).end;
+    const base = latestUpTo(readings, start);
+    const fin = latestUpTo(readings, end + 1);
+    if (!base || !fin || Number(fin.at) <= Number(base.at)) continue;
+    const top = monthTop(monthStandings(base, fin, readings, start));
+    if (!top.length) continue;
+    out.push({ monthStart: start, monthEnd: end, top, baselineAt: Number(base.at), finalAt: Number(fin.at) });
+  }
+  return out;
+}
