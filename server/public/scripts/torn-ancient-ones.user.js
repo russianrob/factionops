@@ -57,17 +57,23 @@
   const COUNTRIES = ['Mexico', 'Cayman Islands', 'Canada', 'Hawaii', 'United Kingdom', 'Argentina',
     'Switzerland', 'Japan', 'China', 'UAE', 'South Africa'];
   const TORN_CITY = 'Torn City';
+  const PROFILE_URL = 'https://www.torn.com/profiles.php?XID=';
+  const ATTACK_URL = 'https://www.torn.com/loader.php?sid=attack&user2ID=';
 
   // ===== TIMES =====
 
   // At most one sweep of the six a minute, across all tabs.
   const SWEEP_EVERY_MS = 60 * 1000;
-  // How often each tab checks whether a sweep is due.
+  // How often each tab checks whether a sweep is due, and redraws the box.
   const TICK_MS = 5000;
   // After Torn says too many requests, IP blocked or API off, the next sweep waits this long.
   const BACK_OFF_MS = 5 * 60 * 1000;
   // A change gets a time only when the reading before it was at most this much older.
   const TIMED_GAP_MS = 3 * 60 * 1000;
+  // A change stays highlighted this long after the script saw it.
+  const HIGHLIGHT_MS = 5 * 60 * 1000;
+  // A new summoning is possible this long after M'aol's death, by Torn's patch notes (#408).
+  const RESUMMON_MS = 48 * 60 * 60 * 1000;
 
   // Torn's error codes for a key it won't take: wrong key (2), key owner in federal jail (10),
   // key off for the owner's inactivity (13), key paused (18). Torn blocks an IP that keeps
@@ -310,6 +316,7 @@
     let i = 0;
     const end = () => {
       sweeping = false;
+      drawSafe();
     };
     const next = () => {
       // A closed box, or a key saved over or cleared since the sweep began, ends it.
@@ -328,6 +335,7 @@
           const r = readReading();
           applyProfile(r, id, readProfile(profile), Date.now());
           writeReading(r);
+          drawSafe();
           next();
         } catch (e) {
           end();
@@ -412,18 +420,255 @@
   }
 
   // Each tab's check, every 5 seconds and when the page comes back into view: a sweep if one is
-  // due.
+  // due, then the box redrawn from the stored reading, so a sweep by another tab shows too.
   function tick() {
     try {
       const nowMs = Date.now();
       if (sweepDue(nowMs)) sweep(apiKey(), nowMs);
+      draw();
     } catch (e) {
       // A surprise stops this one check. It never breaks the page.
     }
   }
 
+  function drawSafe() {
+    try {
+      draw();
+    } catch (e) {
+      // As in tick: a surprise never breaks the page.
+    }
+  }
+
+  // ===== THE BOX =====
+
+  // The box's colour: orange, where the Loot Rangers box is blue, so the two can't be mixed up.
+  const ACCENT = '#f0a04b';
+  const BOX_ID = 'tao-box';
+  const STYLE_ID = 'tao-styles';
+  // The box starts at the bottom left (the Loot Rangers box starts at the bottom right). The
+  // title bar takes touch-action: none, so a finger on it drags the box, not the page.
+  const STYLE = [
+    '#tao-box{position:fixed;left:20px;bottom:20px;z-index:999998;max-width:320px;background:rgba(11,15,25,0.95);color:' + ACCENT + ';border:1px solid ' + ACCENT + ';border-radius:6px;box-shadow:0 0 6px rgba(0,0,0,0.6);font:12px Verdana,Arial,sans-serif;text-align:left}',
+    '#tao-box .tao-head{display:flex;align-items:center;gap:4px;padding:4px 6px;cursor:move;touch-action:none;border-bottom:1px solid ' + ACCENT + '}',
+    '#tao-box.tao-folded .tao-head{border-bottom:0}',
+    '#tao-box .tao-titles{flex:1;min-width:0}',
+    '#tao-box .tao-title{font-weight:bold}',
+    '#tao-box .tao-summary{font-size:10px}',
+    '#tao-box .tao-btn{padding:0 5px;font-size:10px;line-height:16px;background:transparent;color:' + ACCENT + ';border:1px solid ' + ACCENT + ';border-radius:3px;cursor:pointer}',
+    '#tao-box .tao-body{padding:4px 6px;line-height:1.4;cursor:default}',
+    '#tao-box.tao-folded .tao-body{display:none}',
+    '#tao-box .tao-line{padding:1px 3px;border-radius:3px}',
+    '#tao-box .tao-line > span, #tao-box .tao-line > a{margin-right:6px}',
+    '#tao-box .tao-down{opacity:0.55}',
+    '#tao-box .tao-new{background:rgba(240,160,75,0.25)}',
+    '#tao-box .tao-note{font-size:10px;padding-left:8px}',
+    '#tao-box a{color:' + ACCENT + ';text-decoration:underline}',
+    '#tao-box .tao-foot{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:3px;font-size:10px}',
+    '#tao-box .tao-keyrow{margin-top:4px;font-size:10px}',
+    '#tao-box .tao-keyrow input{width:150px;margin:3px 4px 0 0;font-size:11px}',
+    '#tao-box [hidden]{display:none}',
+  ].join('\n');
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  let box = null;
+  // What the lines were last drawn from. They are rebuilt only when it changes: a line rebuilt
+  // under a finger would lose the tap.
+  let drawn = '';
+
+  // An element with its text and class; either may be left out.
+  function make(tag, text, className) {
+    const el = document.createElement(tag);
+    if (text) el.textContent = text;
+    if (className) el.className = className;
+    return el;
+  }
+
+  // Sets an element's text only when it differs.
+  function setText(el, text) {
+    if (el && el.textContent !== text) el.textContent = text;
+  }
+
+  // The box: a title bar with the summary under the title, then the lines and the footer.
+  function makeBox() {
+    if (!document.getElementById(STYLE_ID)) {
+      const style = make('style');
+      style.id = STYLE_ID;
+      style.textContent = STYLE;
+      (document.head || document.documentElement).appendChild(style);
+    }
+    box = make('div');
+    box.id = BOX_ID;
+    const head = make('div', '', 'tao-head');
+    const titles = make('div', '', 'tao-titles');
+    titles.appendChild(make('div', 'Ancient Ones', 'tao-title'));
+    titles.appendChild(make('div', '', 'tao-summary'));
+    head.appendChild(titles);
+    const body = make('div', '', 'tao-body');
+    body.appendChild(make('div', '', 'tao-lines'));
+    const foot = make('div', '', 'tao-foot');
+    foot.appendChild(make('span', '', 'tao-age'));
+    body.appendChild(foot);
+    box.appendChild(head);
+    box.appendChild(body);
+    document.body.appendChild(box);
+  }
+
+  // Draws the box from the stored reading: the summary, the lines and the footer.
+  function draw() {
+    if (!box) return;
+    const nowMs = Date.now();
+    const r = readReading();
+    const key = apiKey();
+    setText(box.querySelector('.tao-summary'), summary(r, key, nowMs));
+    setText(box.querySelector('.tao-age'), footer(r, key, nowMs));
+    const lines = order(r.npcs).map((id) => line(id, r, nowMs));
+    const plan = JSON.stringify(lines);
+    if (plan !== drawn) {
+      drawn = plan;
+      const holder = box.querySelector('.tao-lines');
+      holder.textContent = '';
+      lines.forEach((l) => holder.appendChild(lineElement(l)));
+    }
+    box.querySelector('.tao-head').classList.toggle('tao-new', lines.some((l) => l.fresh));
+  }
+
+  // The ids to draw, in order: M'aol first, then the praetorians nearest country first. One with
+  // no known country goes last. One not read yet has no line.
+  function order(npcs) {
+    const rank = (id) => {
+      const i = COUNTRIES.indexOf(npcs[id].place);
+      return i < 0 ? COUNTRIES.length : i;
+    };
+    const praetorians = PRAETORIANS.filter((id) => npcs[id]).sort((a, b) => rank(a) - rank(b) || a - b);
+    return (npcs[MAOL] ? [MAOL] : []).concat(praetorians);
+  }
+
+  // One line, as plain data: who, where, life left, its state in words, whether it can be hit
+  // now (then it gets an Attack link), notes under it, and whether it is dimmed or highlighted.
+  function line(id, r, nowMs) {
+    const n = r.npcs[id];
+    const asleep = down(n);
+    const canHit = id === MAOL ? hittable(r.npcs) : n.state === 'up';
+    let state = '';
+    const notes = [];
+    if (asleep) {
+      state = n.state + (n.since ? ' ' + clock(n.since, nowMs) : '');
+    } else if (id === MAOL && canHit) {
+      notes.push('moves about every 15 min' + (n.since ? ', here since ' + clock(n.since, nowMs) : ''));
+    } else if (id === MAOL) {
+      const up = PRAETORIANS.filter((p) => !down(r.npcs[p])).length;
+      state = 'shielded, ' + up + ' praetorian' + (up === 1 ? '' : 's') + ' up';
+    }
+    return {
+      id: id,
+      name: n.name || String(id),
+      where: n.state !== 'unknown' && n.place ? n.place : n.words,
+      life: !asleep && n.max > 0 ? percent(n) + '%' : '',
+      state: state,
+      attack: canHit,
+      notes: notes,
+      down: asleep,
+      fresh: n.changedAt > 0 && nowMs >= n.changedAt && nowMs - n.changedAt < HIGHLIGHT_MS,
+    };
+  }
+
+  // Life left as a whole percent, rounded down, but at least 1 while any is left.
+  function percent(n) {
+    if (n.cur <= 0) return 0;
+    return Math.min(100, Math.max(1, Math.floor((100 * n.cur) / n.max)));
+  }
+
+  // A line's elements. All text goes in as text, Torn's words included, never as HTML. Links
+  // open in the same tab: the warboard app's web view handles new tabs badly.
+  function lineElement(l) {
+    const el = make('div', '', 'tao-line' + (l.down ? ' tao-down' : '') + (l.fresh ? ' tao-new' : ''));
+    el.setAttribute('data-id', String(l.id));
+    const name = make('a', l.name, 'tao-name');
+    name.setAttribute('href', PROFILE_URL + l.id);
+    el.appendChild(name);
+    if (l.where) el.appendChild(make('span', l.where, 'tao-where'));
+    if (l.life) el.appendChild(make('span', l.life, 'tao-life'));
+    if (l.state) el.appendChild(make('span', l.state, 'tao-state'));
+    if (l.attack) {
+      const attack = make('a', 'Attack', 'tao-attack');
+      attack.setAttribute('href', ATTACK_URL + l.id);
+      el.appendChild(attack);
+    }
+    l.notes.forEach((note) => el.appendChild(make('div', note, 'tao-note')));
+    return el;
+  }
+
+  // The line under the title.
+  function summary(r, key, nowMs) {
+    if (!key) return 'Needs an API key.';
+    const npcs = r.npcs;
+    if (!IDS.some((id) => npcs[id])) return r.error ? 'Couldn\'t read Torn.' : 'Reading Torn...';
+    const asleep = PRAETORIANS.filter((id) => down(npcs[id])).length;
+    if (asleep < PRAETORIANS.length) return (PRAETORIANS.length - asleep) + ' of 5 praetorians up. M\'aol shielded.';
+    const m = npcs[MAOL];
+    if (!m) return 'All 5 praetorians down.';
+    if (!down(m)) {
+      if (m.state !== 'unknown' && m.place) return 'M\'aol can be hit: in ' + m.place + '.';
+      return 'M\'aol can be hit: ' + (m.words || 'where is unknown') + '.';
+    }
+    return 'All asleep. ' + nextSummoning(r, nowMs);
+  }
+
+  // When a new summoning is possible: 48 hours after a seen death of M'aol, inside the window
+  // patch #408 gives, from 10:00 TCT on Oct 26 to 23:59:59 TCT on Oct 31 of this year.
+  function nextSummoning(r, nowMs) {
+    const year = new Date(nowMs).getUTCFullYear();
+    const opens = Date.UTC(year, 9, 26, 10, 0, 0);
+    const ends = Date.UTC(year, 9, 31, 23, 59, 59);
+    if (nowMs < opens) return 'Summoning opens ' + clock(opens, nowMs) + '.';
+    if (nowMs > ends) return 'No more summonings this Halloween.';
+    const m = r.npcs[MAOL];
+    const died = m.state === 'beaten' ? m.since : 0;
+    if (died) {
+      const from = died + RESUMMON_MS;
+      if (from > ends) return 'No more summonings this Halloween.';
+      if (from <= nowMs) return 'Next summoning possible now (48 h after M\'aol\'s death).';
+      return 'Next summoning possible from ' + clock(from, nowMs) + ' (48 h after M\'aol\'s death).';
+    }
+    return 'Next summoning possible 48 h after M\'aol\'s death.';
+  }
+
+  // The footer: how long ago Torn last answered, or why the last call failed.
+  function footer(r, key, nowMs) {
+    if (!key) return '';
+    if (r.stop) return 'Torn won\'t take the key: ' + r.error + '. Save a new key.';
+    if (r.error) return 'Couldn\'t read Torn: ' + r.error + '.' + (r.okAt ? ' Last answer ' + ago(nowMs - r.okAt) + ' ago.' : '');
+    if (r.okAt) return 'updated ' + ago(nowMs - r.okAt) + ' ago';
+    return 'Reading Torn...';
+  }
+
+  // How long, in words: seconds under a minute, then minutes, then hours.
+  function ago(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + ' s';
+    const min = Math.floor(s / 60);
+    return min < 60 ? min + ' min' : Math.floor(min / 60) + ' h';
+  }
+
+  // A time in TCT, Torn's clock (UTC), as HH:MM TCT, with the date when it isn't today.
+  function clock(ms, nowMs) {
+    const d = new Date(ms);
+    const now = new Date(nowMs);
+    const time = hhmm(ms) + ' TCT';
+    const today = d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth() && d.getUTCDate() === now.getUTCDate();
+    return today ? time : MONTHS[d.getUTCMonth()] + ' ' + d.getUTCDate() + ' ' + time;
+  }
+
+  // A time in TCT as HH:MM, with nothing after it.
+  function hhmm(ms) {
+    const d = new Date(ms);
+    const pad = (v) => (v < 10 ? '0' : '') + v;
+    return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
+  }
+
   // ===== START =====
 
+  makeBox();
   tick();
   setInterval(tick, TICK_MS);
   // A page that comes back into view reads at once if a sweep is due. PDA misreports this.

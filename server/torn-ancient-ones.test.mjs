@@ -647,3 +647,252 @@ test('with no GM functions at all, the script still runs on PDA\'s key and break
   assert.deepEqual(w.logs, [RUNNING]);
   assert.equal(env.requests.filter((r) => r.via === 'fetch' && r.url.startsWith('https://api.torn.com/')).length, 12);
 });
+
+// ---------------------------------------------------------------------------------------------
+// The box
+// ---------------------------------------------------------------------------------------------
+
+const boxOf = (w) => w.document.getElementById('tao-box');
+const summary = (w) => boxOf(w).querySelector('.tao-summary').textContent;
+const footer = (w) => boxOf(w).querySelector('.tao-age').textContent;
+const lineEl = (w, id) => boxOf(w).querySelector('.tao-line[data-id="' + id + '"]');
+// A line's own parts (name, where, life, state, Attack), joined by two spaces.
+function lineText(w, id) {
+  const el = lineEl(w, id);
+  return el ? [...el.children].filter((c) => !c.classList.contains('tao-note')).map((c) => c.textContent).join('  ') : null;
+}
+// Every line, in order, as text.
+const lineTexts = (w) => [...boxOf(w).querySelectorAll('.tao-line')].map((el) => lineText(w, Number(el.getAttribute('data-id'))));
+// The notes under a line.
+const notes = (w, id) => [...lineEl(w, id).querySelectorAll('.tao-note')].map((n) => n.textContent);
+
+// A new device holding what this one stored, with its clock ms later and Torn giving the same
+// answers: as when the owner comes back to Torn after a while.
+async function later(env, ms, tabOpts = {}) {
+  const next = device({ store: { ...env.store }, torn: env.torn, tornstats: env.tornstats });
+  next.now = env.now + ms;
+  const w = next.tab(tabOpts).run();
+  await next.advance(0);
+  return { env: next, w };
+}
+
+test('the box: bottom left, titled "Ancient Ones", in its own styles', async () => {
+  const { w } = await started();
+  const box = boxOf(w);
+  assert.equal(box.parentNode, w.document.body);
+  assert.equal(box.querySelector('.tao-title').textContent, 'Ancient Ones');
+  const css = w.document.getElementById('tao-styles').textContent;
+  assert.match(css, /#tao-box\{position:fixed;left:20px;bottom:20px;[^}]*max-width:320px;background:rgba\(11,15,25,0\.95\);color:#f0a04b;[^}]*font:12px Verdana/);
+  assert.match(css, /\.tao-head\{[^}]*touch-action:none/);
+});
+
+test('the lines at 11:25 TCT: M\'aol first, then the praetorians nearest country first, each in its own words', async () => {
+  const { w } = await started({ torn: READ_1125 });
+  assert.deepEqual(lineTexts(w), [
+    'M\'aol  Torn City  100%  shielded, 4 praetorians up',
+    'Nol\'dasaym  Mexico  beaten',
+    'Dyno\'salam  Cayman Islands  33%  Attack',
+    'Asmol\'yand  Canada  89%  Attack',
+    'Sylo\'nadam  Hawaii  99%  Attack',
+    'Ladso\'myna  United Kingdom  53%  Attack',
+  ]);
+  assert.equal(summary(w), '4 of 5 praetorians up. M\'aol shielded.');
+  assert.ok(lineEl(w, 101).classList.contains('tao-down'));
+  assert.equal(lineEl(w, 100).classList.contains('tao-down'), false);
+});
+
+test('the lines at 12:15 TCT: M\'aol shielded in the Cayman Islands, three beaten', async () => {
+  const { w } = await started({ torn: READ_1215 });
+  assert.deepEqual(lineTexts(w), [
+    'M\'aol  Cayman Islands  100%  shielded, 2 praetorians up',
+    'Nol\'dasaym  Mexico  beaten',
+    'Dyno\'salam  Cayman Islands  beaten',
+    'Asmol\'yand  Canada  55%  Attack',
+    'Sylo\'nadam  Hawaii  98%  Attack',
+    'Ladso\'myna  United Kingdom  beaten',
+  ]);
+  assert.equal(summary(w), '2 of 5 praetorians up. M\'aol shielded.');
+});
+
+test('one praetorian left: "1 praetorian up"; one with no known country goes last; dormant says so', async () => {
+  const { w } = await started({ torn: { ...allBeaten('Awoken'), 100: profile(100, 'Awoken in Atlantis', 1000), 102: profile(102, 'Dormant in Canada', 5000) } });
+  assert.equal(lineText(w, 23), 'M\'aol  Torn City  100%  shielded, 1 praetorian up');
+  assert.equal(summary(w), '1 of 5 praetorians up. M\'aol shielded.');
+  assert.deepEqual([...boxOf(w).querySelectorAll('.tao-line')].map((el) => Number(el.getAttribute('data-id'))), [23, 101, 102, 103, 104, 100]);
+  assert.equal(lineText(w, 102), 'Asmol\'yand  Canada  dormant');
+  assert.equal(lineText(w, 100), 'Dyno\'salam  Awoken in Atlantis  1%  Attack');
+});
+
+test('a fall the script saw in time shows its time; one it didn\'t, none', async () => {
+  const { env, w } = await started();
+  env.torn[100] = beaten(100, 'Cayman Islands');
+  await env.advance(MIN);
+  assert.equal(lineText(w, 100), 'Dyno\'salam  Cayman Islands  beaten 10:41 TCT');
+  assert.equal(lineText(w, 101), 'Nol\'dasaym  Mexico  beaten');
+});
+
+test('once all five are down, M\'aol can be hit: an Attack link, his country, and how he moves', async () => {
+  const { env, w } = await started({ torn: allBeaten('Awoken in Mexico') });
+  assert.equal(summary(w), 'M\'aol can be hit: in Mexico.');
+  assert.equal(lineText(w, 23), 'M\'aol  Mexico  100%  Attack');
+  assert.deepEqual(notes(w, 23), ['moves about every 15 min']);
+  env.torn[23] = up(23, 'Cayman Islands', 140000000);
+  await env.advance(MIN);
+  assert.equal(summary(w), 'M\'aol can be hit: in Cayman Islands.');
+  assert.equal(lineText(w, 23), 'M\'aol  Cayman Islands  92%  Attack');
+  assert.deepEqual(notes(w, 23), ['moves about every 15 min, here since 10:41 TCT']);
+});
+
+test('M\'aol can be hit only when all five are down, whatever his own words say', async () => {
+  const shielded = await started({ torn: { ...allBeaten('Awoken in Mexico'), 104: up(104, 'United Kingdom') } });
+  assert.equal(lineText(shielded.w, 23), 'M\'aol  Mexico  100%  shielded, 1 praetorian up');
+  assert.equal(lineEl(shielded.w, 23).querySelector('.tao-attack'), null);
+  const open = await started({ torn: allBeaten('Awoken') });
+  assert.equal(lineText(open.w, 23), 'M\'aol  Torn City  100%  Attack');
+  assert.equal(summary(open.w), 'M\'aol can be hit: in Torn City.');
+  const odd = await started({ torn: allBeaten('Awoken in Atlantis') });
+  assert.equal(summary(odd.w), 'M\'aol can be hit: Awoken in Atlantis.');
+});
+
+test('the summary with no key, before any answer, and when Torn never answered', async () => {
+  const none = device();
+  const a = none.tab().run();
+  await none.advance(0);
+  assert.equal(summary(a), 'Needs an API key.');
+  assert.equal(footer(a), '');
+  const waiting = device();
+  waiting.store[KEY_STORE] = KEY;
+  waiting.hold = 'torn';
+  const b = waiting.tab().run();
+  await waiting.advance(0);
+  assert.equal(summary(b), 'Reading Torn...');
+  assert.equal(footer(b), 'Reading Torn...');
+  const failing = device();
+  failing.store[KEY_STORE] = KEY;
+  failing.torn[23] = null;
+  const c = failing.tab().run();
+  await failing.advance(0);
+  assert.equal(summary(c), 'Couldn\'t read Torn.');
+  assert.equal(footer(c), 'Couldn\'t read Torn: no answer from Torn.');
+});
+
+test('all asleep: the next summoning, 48 h after a seen death of M\'aol', async () => {
+  const { env, w } = await started({ torn: allBeaten('Awoken in Mexico') });
+  env.torn[23] = beaten(23, 'Mexico');
+  await env.advance(MIN);
+  assert.equal(lineText(w, 23), 'M\'aol  Mexico  beaten 10:41 TCT');
+  assert.equal(summary(w), 'All asleep. Next summoning possible from Oct 28 10:41 TCT (48 h after M\'aol\'s death).');
+  const after = await later(env, 48 * 60 * MIN);
+  assert.equal(summary(after.w), 'All asleep. Next summoning possible now (48 h after M\'aol\'s death).');
+  const unseen = await started({ torn: { ...allBeaten(), 23: beaten(23, 'Mexico') } });
+  assert.equal(summary(unseen.w), 'All asleep. Next summoning possible 48 h after M\'aol\'s death.');
+});
+
+test('all asleep, by the window\'s edges: 10:00 TCT on Oct 26 to 23:59:59 TCT on Oct 31', async () => {
+  const asleep = { ...allBeaten(), 23: beaten(23, 'Mexico') };
+  const at = async (ms) => {
+    const env = device({ torn: asleep });
+    env.now = ms;
+    env.store[KEY_STORE] = KEY;
+    const w = env.tab().run();
+    await env.advance(0);
+    return summary(w);
+  };
+  assert.equal(await at(Date.UTC(2026, 9, 26, 9, 59, 59)), 'All asleep. Summoning opens 10:00 TCT.');
+  assert.equal(await at(Date.UTC(2026, 9, 25, 12, 0)), 'All asleep. Summoning opens Oct 26 10:00 TCT.');
+  assert.equal(await at(Date.UTC(2026, 9, 26, 10, 0, 0)), 'All asleep. Next summoning possible 48 h after M\'aol\'s death.');
+  assert.equal(await at(Date.UTC(2026, 9, 31, 23, 59, 59)), 'All asleep. Next summoning possible 48 h after M\'aol\'s death.');
+  assert.equal(await at(Date.UTC(2026, 10, 1, 0, 0, 0)), 'All asleep. No more summonings this Halloween.');
+  // A death less than 48 h before the window ends: no more this year.
+  const late = device({ torn: allBeaten('Awoken in Mexico') });
+  late.store[KEY_STORE] = KEY;
+  late.now = Date.UTC(2026, 9, 30, 0, 0);
+  const lw = late.tab().run();
+  await late.advance(0);
+  late.torn[23] = beaten(23, 'Mexico');
+  await late.advance(MIN);
+  assert.equal(summary(lw), 'All asleep. No more summonings this Halloween.');
+});
+
+test('links: a name goes to the profile, Attack to the fight, both in this tab; Attack only for one that can be hit now', async () => {
+  const { w } = await started({ torn: READ_1125 });
+  assert.equal(lineEl(w, 100).querySelector('.tao-name').getAttribute('href'), 'https://www.torn.com/profiles.php?XID=100');
+  assert.equal(lineEl(w, 100).querySelector('.tao-attack').getAttribute('href'), 'https://www.torn.com/loader.php?sid=attack&user2ID=100');
+  assert.equal(lineEl(w, 23).querySelector('.tao-name').getAttribute('href'), 'https://www.torn.com/profiles.php?XID=23');
+  assert.equal(lineEl(w, 101).querySelector('.tao-attack'), null);
+  assert.equal(lineEl(w, 23).querySelector('.tao-attack'), null);
+  assert.deepEqual([...boxOf(w).querySelectorAll('.tao-attack')].map((a) => a.parentNode.getAttribute('data-id')), ['100', '102', '103', '104']);
+  assert.ok([...boxOf(w).querySelectorAll('a')].every((a) => !a.hasAttribute('target')));
+});
+
+test('a change is highlighted, with the title bar, for 5 minutes: there at 4, gone at 6', async () => {
+  const { env, w } = await started();
+  const head = () => boxOf(w).querySelector('.tao-head');
+  assert.equal(head().classList.contains('tao-new'), false, 'the first reading changes nothing');
+  env.torn[100] = beaten(100, 'Cayman Islands');
+  await env.advance(MIN);
+  await env.advance(4 * MIN);
+  assert.ok(lineEl(w, 100).classList.contains('tao-new'));
+  assert.ok(head().classList.contains('tao-new'));
+  assert.equal(lineEl(w, 102).classList.contains('tao-new'), false);
+  await env.advance(2 * MIN);
+  assert.equal(lineEl(w, 100).classList.contains('tao-new'), false);
+  assert.equal(head().classList.contains('tao-new'), false);
+});
+
+test('M\'aol coming within reach is highlighted on his line too', async () => {
+  const { env, w } = await started({ torn: { ...allBeaten('Awoken in Mexico'), 104: up(104, 'United Kingdom', 1000) } });
+  env.torn[104] = beaten(104, 'United Kingdom');
+  await env.advance(MIN);
+  assert.ok(lineEl(w, 23).classList.contains('tao-new'));
+  assert.ok(lineEl(w, 104).classList.contains('tao-new'));
+});
+
+test('Torn\'s words go in as text, never as HTML', async () => {
+  const { w } = await started({ torn: { ...READ_1125, 102: profile(102, 'Sleeping <b>soundly</b>', 1000, { state: 'Okay' }) } });
+  assert.equal(lineText(w, 102), 'Asmol\'yand  Sleeping <b>soundly</b>  1%');
+  assert.equal(boxOf(w).querySelector('b'), null);
+});
+
+test('life left is a whole percent, rounded down, but at least 1% while any is left', async () => {
+  const { w } = await started({ torn: { ...READ_1125, 100: up(100, 'Cayman Islands', 1), 102: up(102, 'Canada', 217799999) } });
+  assert.equal(lineText(w, 100), 'Dyno\'salam  Cayman Islands  1%  Attack');
+  assert.equal(lineText(w, 102), 'Asmol\'yand  Canada  99%  Attack');
+});
+
+test('the footer: how long ago Torn answered, or why it didn\'t, with the key cut out', async () => {
+  const { env, w } = await started();
+  assert.equal(footer(w), 'updated 0 s ago');
+  await env.advance(40 * SEC);
+  assert.equal(footer(w), 'updated 40 s ago');
+  env.torn[23] = null;
+  await env.advance(2 * MIN);
+  assert.equal(footer(w), 'Couldn\'t read Torn: no answer from Torn. Last answer 2 min ago.');
+  const hidden = await later(env, 3 * 60 * MIN, { visible: false });
+  assert.equal(footer(hidden.w), 'Couldn\'t read Torn: no answer from Torn. Last answer 3 h ago.');
+  const refused = device();
+  refused.store[KEY_STORE] = KEY;
+  refused.tornError = { code: 2, error: 'Incorrect key ' + KEY };
+  const r = refused.tab().run();
+  await refused.advance(0);
+  assert.equal(footer(r), 'Torn won\'t take the key: Incorrect key **** (code 2). Save a new key.');
+  assert.equal(boxOf(r).textContent.includes(KEY), false);
+});
+
+test('a hidden tab still draws, within 5 seconds, the sweep another tab made', async () => {
+  const env = device();
+  env.store[KEY_STORE] = KEY;
+  env.tab().run();
+  const quiet = env.tab({ visible: false }).run();
+  await env.advance(0);
+  env.torn[100] = beaten(100, 'Cayman Islands');
+  await env.advance(MIN + 5 * SEC);
+  assert.equal(lineText(quiet, 100), 'Dyno\'salam  Cayman Islands  beaten 10:41 TCT');
+});
+
+test('lines with nothing new in them are left as they are, not built again', async () => {
+  const { env, w } = await started({ torn: READ_1215 });
+  const before = lineEl(w, 102);
+  await env.advance(30 * SEC);
+  assert.equal(lineEl(w, 102), before);
+});
