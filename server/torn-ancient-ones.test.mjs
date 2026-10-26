@@ -1641,3 +1641,15 @@ test('a gap in the readings that could hide one of his stops starts his trail ag
   assert.ok(maolNotes(w).includes('route Canada > Hawaii > Mexico > Cayman Islands > United Kingdom'), JSON.stringify(maolNotes(w)));
   assert.match(maolNotes(w).find((n) => n.startsWith('next ')), /^next Canada/);
 });
+
+test('storage that won\'t save the reading, with a sweep stored ahead of the clock, still sweeps once a minute', async () => {
+  // PDA's localStorage full, and a sweep stored 3 hours ahead: the device's clock was set back.
+  const env = device({ store: { [KEY_STORE]: KEY, [READING_STORE]: JSON.stringify({ at: T0 + 3 * 60 * MIN }) }, torn: READ_1215 });
+  const full = (store, k, v) => {
+    if (k === READING_STORE) throw new Error('QuotaExceededError');
+    store[k] = v;
+  };
+  env.tab({ setValue: full }).run();
+  await env.advance(2 * MIN);
+  assert.equal(env.torns().length, 18);
+});

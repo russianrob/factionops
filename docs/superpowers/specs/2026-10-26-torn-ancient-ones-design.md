@@ -9,6 +9,7 @@
   - 08:15 EDT: a read of Torn's API found M'aol abroad while still shielded, which changed "What Torn does" and M'aol's shielded line.
   - 08:48 EDT: a read with four beaten put him in Canada, where the newest had fallen, and agreed with TornStats on all six. TornStats' time for one fall had moved by a second, which changed "Asking TornStats". Tests for a clock set back were added to "Testing".
   - 09:39 to 09:42 EDT, testing a 0.9.0 build: the owner asked "please have it in order they were beaten please", then "the first four are in order except for the last one", and approved the design with "yes go ahead, do recommended", which also said yes to the footer saying when the box tries again after Torn says to wait. That changed "The box" (the order of the lines), "Asking TornStats" (what a defeat time is used for), "Asking Torn" (the footer) and "Testing".
+  - 10:10 EDT, the final review: two of its findings changed "M'aol's route" (a gap of 10 minutes or more in his readings starts his trail again) and "Stored" (a sweep stored ahead of the clock doesn't beat a tab's own copy).
 
 **Script:** `server/public/scripts/torn-ancient-ones.user.js` and `.meta.js`, version 1.0.0. Tests: `server/torn-ancient-ones.test.mjs`.
 
@@ -220,7 +221,7 @@ GM storage, as strings of JSON, because PDA hands stored values back as strings:
 
 **Edge cases:**
 - Nothing stored, or a value that won't parse: no reading yet, the default place, not folded.
-- A save that storage refuses (PDA keeps GM values in localStorage, which can be full): the tab keeps its own copy for this page.
+- A save that storage refuses (PDA keeps GM values in localStorage, which can be full): the tab keeps its own copy for this page. A sweep stored ahead of the clock (the clock was set back) doesn't count as newer than that copy, so the tab still sweeps once a minute.
 
 ## Where it runs
 

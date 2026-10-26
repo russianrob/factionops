@@ -258,7 +258,9 @@
 
   function readReading() {
     const shared = parseReading(gmGet(READING_STORE));
-    return tabCopy && tabCopy.at >= shared.at ? parseReading(JSON.stringify(tabCopy)) : shared;
+    // A sweep stored ahead of the clock (the clock was set back) is not a newer one.
+    const newer = tabCopy && shared.at > tabCopy.at && shared.at <= Date.now();
+    return tabCopy && !newer ? parseReading(JSON.stringify(tabCopy)) : shared;
   }
 
   function writeReading(r) {
