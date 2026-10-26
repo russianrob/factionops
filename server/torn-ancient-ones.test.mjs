@@ -1341,3 +1341,221 @@ test('while an estimate shows, the lines are built again only when what they say
   }
   assert.ok(rebuilt >= 10 && rebuilt <= 20, 'built again ' + rebuilt + ' times in 10 minutes');
 });
+
+// ---------------------------------------------------------------------------------------------
+// The box's controls
+// ---------------------------------------------------------------------------------------------
+
+const part = (w, cls) => boxOf(w).querySelector('.' + cls);
+// A press on an element of the page, as a pointer would make it.
+function press(w, el, x, y, button = 0) {
+  const e = new w.dom.Event('pointerdown', { bubbles: true });
+  e.clientX = x;
+  e.clientY = y;
+  e.button = button;
+  el.dispatchEvent(e);
+}
+// Types a key into the key row and saves it.
+function saveKey(w, text) {
+  part(w, 'tao-key').value = text;
+  part(w, 'tao-save').click();
+}
+const stored = (env) => JSON.parse(env.store[BOX_STORE]);
+
+test('fold: the box folds to its title bar and stays folded after a reload, and it still reads Torn', async () => {
+  const { env, w } = await started();
+  let bodyClicks = 0;
+  w.document.body.addEventListener('click', () => { bodyClicks += 1; });
+  assert.equal(part(w, 'tao-fold').textContent, '-');
+  part(w, 'tao-fold').click();
+  assert.ok(boxOf(w).classList.contains('tao-folded'));
+  assert.equal(part(w, 'tao-fold').textContent, '+');
+  assert.equal(part(w, 'tao-fold').getAttribute('title'), 'Open the box');
+  assert.equal(stored(env).folded, true);
+  assert.equal(bodyClicks, 0, 'the click goes no further than the box');
+  assert.match(w.document.getElementById('tao-styles').textContent, /#tao-box\.tao-folded \.tao-body\{display:none\}/);
+  await env.advance(2 * MIN);
+  assert.equal(env.torns().length, 18);
+  const reload = env.tab().run();
+  assert.ok(boxOf(reload).classList.contains('tao-folded'));
+  part(reload, 'tao-fold').click();
+  assert.equal(boxOf(reload).classList.contains('tao-folded'), false);
+  assert.equal(stored(env).folded, false);
+});
+
+test('close: the box goes until the page reloads, and the page asks Torn and TornStats nothing more', async () => {
+  const { env, w } = await started();
+  part(w, 'tao-close').click();
+  assert.equal(boxOf(w), null);
+  const torns = env.torns().length;
+  await env.advance(10 * MIN);
+  assert.equal(env.torns().length, torns);
+  assert.equal(env.stats().length, 0);
+  const reload = env.tab().run();
+  await env.advance(0);
+  assert.ok(boxOf(reload));
+});
+
+test('closing the box mid-sweep stops the sweep: no more calls go out', async () => {
+  const { env, w } = await started();
+  env.hold = 'torn';
+  await env.advance(MIN);
+  assert.equal(env.torns().length, 7);
+  part(w, 'tao-close').click();
+  env.hold = false;
+  await env.release();
+  await env.advance(MIN);
+  assert.equal(env.torns().length, 7);
+});
+
+test('a drag by the title bar moves the box, saves its place, and leaves the page\'s own styles alone', async () => {
+  const { env, w } = await started();
+  press(w, part(w, 'tao-head'), 100, 700);
+  w.fire('pointermove', { clientX: 150, clientY: 650 });
+  assert.equal(boxOf(w).style.left, '70px');
+  assert.equal(boxOf(w).style.top, '530px');
+  w.fire('pointerup', {});
+  assert.deepEqual(stored(env), { left: 70, top: 530, folded: false });
+  assert.equal(w.document.body.getAttribute('style'), null);
+  assert.equal(w.document.documentElement.getAttribute('style'), null);
+  w.fire('pointermove', { clientX: 300, clientY: 300 });
+  assert.equal(boxOf(w).style.left, '70px', 'the drag is over');
+  const reload = env.tab().run();
+  assert.equal(boxOf(reload).style.left, '70px');
+  assert.equal(boxOf(reload).style.top, '530px');
+});
+
+test('a drag cut off part way still ends, and saves where it got to', async () => {
+  for (const end of ['pointercancel', 'blur']) {
+    const { env, w } = await started();
+    press(w, part(w, 'tao-head'), 100, 700);
+    w.fire('pointermove', { clientX: 90, clientY: 690 });
+    w.fire(end, {});
+    assert.deepEqual(stored(env), { left: 10, top: 570, folded: false }, end);
+    w.fire('pointermove', { clientX: 300, clientY: 300 });
+    assert.equal(boxOf(w).style.left, '10px', end);
+  }
+});
+
+test('a press on a button in the title bar, or with another mouse button, is no drag, and a press that doesn\'t move saves nothing', async () => {
+  const { env, w } = await started();
+  press(w, part(w, 'tao-fold'), 100, 700);
+  w.fire('pointermove', { clientX: 150, clientY: 650 });
+  w.fire('pointerup', {});
+  assert.equal(boxOf(w).style.left, '');
+  press(w, part(w, 'tao-head'), 100, 700, 2);
+  w.fire('pointermove', { clientX: 150, clientY: 650 });
+  w.fire('pointerup', {});
+  assert.equal(boxOf(w).style.left, '');
+  press(w, part(w, 'tao-head'), 100, 700);
+  w.fire('pointerup', {});
+  assert.equal(BOX_STORE in env.store, false);
+});
+
+test('a saved place is pulled back inside the window on load and on resize, and left as saved', async () => {
+  const env = device({ store: { [KEY_STORE]: KEY, [BOX_STORE]: JSON.stringify({ left: 1200, top: 700, folded: false }) } });
+  const w = env.tab().run();
+  assert.equal(boxOf(w).style.left, '980px');
+  assert.equal(boxOf(w).style.top, '600px');
+  w.win.innerWidth = 400;
+  w.win.innerHeight = 700;
+  w.fire('resize', {});
+  assert.equal(boxOf(w).style.left, '100px');
+  assert.equal(boxOf(w).style.top, '500px');
+  assert.deepEqual(stored(env), { left: 1200, top: 700, folded: false });
+  const strings = device({ store: { [BOX_STORE]: JSON.stringify({ left: '12', top: '34' }) } }).tab().run();
+  assert.equal(boxOf(strings).style.left, '12px');
+  const junk = device({ store: { [BOX_STORE]: JSON.stringify({ left: 'far', top: null }) } }).tab().run();
+  assert.equal(boxOf(junk).style.left, '');
+});
+
+test('the key row: in place of the lines with no key, and opened by the Key button with one', async () => {
+  const none = device();
+  const a = none.tab().run();
+  await none.advance(0);
+  assert.equal(part(a, 'tao-keyrow').hidden, false);
+  assert.equal(part(a, 'tao-lines').hidden, true);
+  const input = part(a, 'tao-key');
+  assert.equal(input.getAttribute('type'), 'text');
+  assert.equal(input.getAttribute('autocomplete'), 'off');
+  assert.equal(input.getAttribute('placeholder'), 'Your API key');
+  assert.deepEqual([...boxOf(a).querySelectorAll('.tao-term')].map((t) => t.textContent), [
+    'Data Storage: Only on this device: the six NPCs\' last reading, the box\'s place, your key.',
+    'Data Sharing: None. The script also reads TornStats\' public feed of the six, and sends TornStats nothing of yours.',
+    'Purpose of Use: Show where the Ancient Ones are and which can be attacked.',
+    'Key Storage & Sharing: Stored on this device in the script\'s storage; sent only to Torn\'s API.',
+    'Key Access Level: Public.',
+  ]);
+  const { w } = await started();
+  assert.equal(part(w, 'tao-keyrow').hidden, true);
+  part(w, 'tao-keybtn').click();
+  assert.equal(part(w, 'tao-keyrow').hidden, false);
+  assert.equal(part(w, 'tao-lines').hidden, false);
+  part(w, 'tao-keybtn').click();
+  assert.equal(part(w, 'tao-keyrow').hidden, true);
+});
+
+test('saving a key stores it, shows only its last 4, closes the row and reads Torn at once', async () => {
+  const env = device();
+  const w = env.tab().run();
+  await env.advance(30 * SEC);
+  assert.equal(env.torns().length, 0);
+  saveKey(w, '  ' + KEY + ' ');
+  await env.advance(0);
+  assert.equal(env.store[KEY_STORE], KEY);
+  assert.equal(part(w, 'tao-key').value, '');
+  assert.equal(part(w, 'tao-key').getAttribute('placeholder'), '************wxyz');
+  assert.equal(part(w, 'tao-keyrow').hidden, true);
+  assert.equal(env.torns().length, 6);
+  assert.equal(boxOf(w).textContent.includes(KEY), false);
+});
+
+test('a key saved within a minute of the last sweep is used at once', async () => {
+  const { env, w } = await started();
+  await env.advance(10 * SEC);
+  part(w, 'tao-keybtn').click();
+  saveKey(w, 'NewKey000000abc');
+  await env.advance(0);
+  assert.equal(env.torns().length, 12);
+  assert.ok(env.torns().slice(6).every((r) => r.url.includes('&key=NewKey000000abc&')));
+});
+
+test('a key Torn won\'t take stops the sweeps until a new key is saved', async () => {
+  const env = device();
+  env.store[KEY_STORE] = KEY;
+  env.tornError = { code: 2, error: 'Incorrect key' };
+  const w = env.tab().run();
+  await env.advance(3 * MIN);
+  assert.equal(env.torns().length, 1);
+  assert.equal(part(w, 'tao-keyrow').hidden, false, 'the row opens itself');
+  env.tornError = null;
+  saveKey(w, 'NewKey000000abc');
+  await env.advance(0);
+  assert.equal(env.torns().length, 7);
+  assert.ok(env.torns().slice(1).every((r) => r.url.includes('&key=NewKey000000abc&')));
+  assert.equal(footer(w), 'updated 0 s ago');
+  assert.equal(part(w, 'tao-keyrow').hidden, true);
+});
+
+test('saving an empty field removes the saved key, and PDA\'s is used again', async () => {
+  const { env, w } = await started({}, { pda: true });
+  assert.ok(env.torns().every((r) => r.url.includes('&key=' + KEY + '&')));
+  part(w, 'tao-keybtn').click();
+  saveKey(w, '');
+  await env.advance(0);
+  assert.equal(env.store[KEY_STORE], '');
+  assert.equal(env.torns().length, 12);
+  assert.ok(env.torns().slice(6).every((r) => r.url.includes('&key=' + PDA_KEY + '&')));
+  assert.equal(part(w, 'tao-key').getAttribute('placeholder'), '************DA12');
+});
+
+test('a key storage won\'t keep is not used, and the row says so', async () => {
+  const env = device();
+  const w = env.tab({ setValue: (store, k, v) => { if (k === KEY_STORE) throw new Error('full'); store[k] = v; } }).run();
+  await env.advance(0);
+  saveKey(w, KEY);
+  await env.advance(MIN);
+  assert.equal(part(w, 'tao-keymsg').textContent, 'Couldn\'t save the key on this device.');
+  assert.equal(env.torns().length, 0);
+  assert.equal(summary(w), 'Needs an API key.');
+});

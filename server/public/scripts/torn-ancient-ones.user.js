@@ -149,6 +149,18 @@
     return gmSet(name, value) && gmGet(name) === value;
   }
 
+  // A stored object, from a string of JSON (PDA hands back strings) or as it is. null when
+  // nothing is stored or it won't parse.
+  function readJson(name) {
+    let v = gmGet(name);
+    try {
+      if (typeof v === 'string') v = v ? JSON.parse(v) : null;
+    } catch (e) {
+      v = null;
+    }
+    return v && typeof v === 'object' ? v : null;
+  }
+
   // The key for Torn's API: one saved in the box beats the one PDA gives. '' means none.
   function apiKey() {
     const saved = gmGet(KEY_STORE);
@@ -779,6 +791,17 @@
       lines.forEach((l) => holder.appendChild(lineElement(l)));
     }
     box.querySelector('.tao-head').classList.toggle('tao-new', lines.some((l) => l.fresh));
+    // The key row shows with no key, with a key Torn refused, or when the Key button opened it.
+    // With no key, it takes the lines' place.
+    const row = box.querySelector('.tao-keyrow');
+    const showRow = !key || r.stop || keyOpen;
+    if (row.hidden === showRow) row.hidden = !showRow;
+    const holder = box.querySelector('.tao-lines');
+    if (holder.hidden !== !key) holder.hidden = !key;
+    // The field's grey hint: the key in use with all but its last 4 hidden, never more.
+    const hint = key ? '************' + key.slice(-4) : 'Your API key';
+    const input = box.querySelector('.tao-key');
+    if (input.getAttribute('placeholder') !== hint) input.setAttribute('placeholder', hint);
   }
 
   // The ids to draw, in order: M'aol first, then the praetorians nearest country first. One with
@@ -926,11 +949,191 @@
     return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
   }
 
+  // ===== THE BOX'S CONTROLS =====
+
+  // True while the Key button has the key row open.
+  let keyOpen = false;
+  // A drag under way: where the pointer and the box started, and whether the box moved.
+  let drag = null;
+  // Torn's API terms, as the script's header has them, shown in the key row.
+  const TERMS = [
+    ['Data Storage', 'Only on this device: the six NPCs\' last reading, the box\'s place, your key.'],
+    ['Data Sharing', 'None. The script also reads TornStats\' public feed of the six, and sends TornStats nothing of yours.'],
+    ['Purpose of Use', 'Show where the Ancient Ones are and which can be attacked.'],
+    ['Key Storage & Sharing', 'Stored on this device in the script\'s storage; sent only to Torn\'s API.'],
+    ['Key Access Level', 'Public.'],
+  ];
+
+  // The fold and close buttons, the key row, the Key button, the drag, and the box put at its
+  // saved place.
+  function controls() {
+    const head = box.querySelector('.tao-head');
+    head.appendChild(button('-', toggleFold, 'tao-fold'));
+    head.appendChild(button('x', closeBox, 'tao-close'));
+    const foot = box.querySelector('.tao-foot');
+    foot.parentNode.insertBefore(keyRow(), foot);
+    foot.appendChild(button('Key', toggleKey, 'tao-keybtn'));
+    showFold(readPrefs().folded);
+    placeBox();
+    head.addEventListener('pointerdown', startDrag);
+    window.addEventListener('pointermove', moveDrag);
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+    window.addEventListener('blur', endDrag);
+    window.addEventListener('resize', placeBox);
+  }
+
+  // A button of the box's. A click on it goes no further, and a surprise never breaks the page.
+  function button(text, onClick, className) {
+    const b = make('button', text, 'tao-btn ' + className);
+    b.setAttribute('type', 'button');
+    b.addEventListener('click', (e) => {
+      if (e && e.stopPropagation) e.stopPropagation();
+      try {
+        onClick();
+      } catch (err) {
+        // Nothing more to do.
+      }
+    });
+    return b;
+  }
+
+  // The box's place and fold, as stored: left and top (px; null for the default place, bottom
+  // left), and whether it is folded.
+  function readPrefs() {
+    const p = readJson(BOX_STORE) || {};
+    const num = (v) => (typeof v === 'number' || (typeof v === 'string' && v.trim() !== '')) && Number.isFinite(Number(v)) ? Number(v) : null;
+    return { left: num(p.left), top: num(p.top), folded: p.folded === true };
+  }
+
+  function savePrefs(p) {
+    gmSet(BOX_STORE, JSON.stringify(p));
+  }
+
+  // Folds the box to its title bar, or opens it again, and remembers which.
+  function toggleFold() {
+    const p = readPrefs();
+    p.folded = !box.classList.contains('tao-folded');
+    showFold(p.folded);
+    savePrefs(p);
+  }
+
+  function showFold(folded) {
+    box.classList.toggle('tao-folded', folded);
+    const b = box.querySelector('.tao-fold');
+    setText(b, folded ? '+' : '-');
+    b.setAttribute('title', folded ? 'Open the box' : 'Fold the box');
+  }
+
+  // Closes the box until the page reloads. This page makes no more calls.
+  function closeBox() {
+    closed = true;
+    clearInterval(timer);
+    if (box) box.remove();
+    box = null;
+  }
+
+  // Puts the box here, pulled back inside the window so none of it is off screen.
+  function put(left, top) {
+    const rect = box.getBoundingClientRect();
+    const width = window.innerWidth || 0;
+    const height = window.innerHeight || 0;
+    box.style.left = Math.round(Math.max(0, Math.min(left, width - rect.width))) + 'px';
+    box.style.top = Math.round(Math.max(0, Math.min(top, height - rect.height))) + 'px';
+    box.style.right = 'auto';
+    box.style.bottom = 'auto';
+  }
+
+  // Puts the box at its saved place, if it has one; else it stays at the default, bottom left.
+  // Run on load and when the window resizes, so a place saved on a wide screen can't leave the
+  // box off a phone's.
+  function placeBox() {
+    if (!box) return;
+    const p = readPrefs();
+    if (p.left !== null && p.top !== null) put(p.left, p.top);
+  }
+
+  // A drag by the title bar. It never touches the page's own styles, so a drag cut off part
+  // way can't leave the page unable to scroll.
+  function startDrag(e) {
+    if (!box || drag) return;
+    if (e.target && e.target.closest && e.target.closest('button')) return;
+    if (typeof e.button === 'number' && e.button !== 0) return;
+    const rect = box.getBoundingClientRect();
+    drag = { x: e.clientX, y: e.clientY, left: rect.left, top: rect.top, moved: false };
+    if (e.preventDefault) e.preventDefault();
+  }
+
+  function moveDrag(e) {
+    if (!drag || !box) return;
+    drag.moved = true;
+    put(drag.left + e.clientX - drag.x, drag.top + e.clientY - drag.y);
+  }
+
+  // Ends a drag, however it ends: the pointer let go, the browser took the touch over, or the
+  // window lost focus. Only a drag that moved the box saves its place.
+  function endDrag() {
+    if (!drag) return;
+    const moved = drag.moved;
+    drag = null;
+    if (!moved || !box) return;
+    const p = readPrefs();
+    p.left = parseFloat(box.style.left) || 0;
+    p.top = parseFloat(box.style.top) || 0;
+    savePrefs(p);
+  }
+
+  // The key row: what the key is for, Torn's API terms, the field and Save. A plain text field,
+  // not a password field, which sets off password managers.
+  function keyRow() {
+    const row = make('div', '', 'tao-keyrow');
+    row.hidden = true;
+    row.appendChild(make('div', 'With your API key, the script reads these six NPCs\' profiles from Torn\'s API, once a minute at most. A Public key is enough.', 'tao-keyfor'));
+    TERMS.forEach((t) => row.appendChild(make('div', t[0] + ': ' + t[1], 'tao-term')));
+    const input = make('input', '', 'tao-key');
+    input.setAttribute('type', 'text');
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('spellcheck', 'false');
+    input.setAttribute('aria-label', 'API key');
+    row.appendChild(input);
+    row.appendChild(button('Save', saveKey, 'tao-save'));
+    row.appendChild(make('div', '', 'tao-keymsg'));
+    return row;
+  }
+
+  // Opens or closes the key row.
+  function toggleKey() {
+    keyOpen = !keyOpen;
+    drawSafe();
+  }
+
+  // Saves the key in the field. '' removes the saved key, and PDA's is used again, if there is
+  // one. A new key starts afresh: the last error, wait and stop go, and a sweep is due at once.
+  function saveKey() {
+    const input = box.querySelector('.tao-key');
+    const value = String(input.value || '').trim();
+    if (!saveChecked(KEY_STORE, value)) {
+      setText(box.querySelector('.tao-keymsg'), 'Couldn\'t save the key on this device.');
+      return;
+    }
+    input.value = '';
+    setText(box.querySelector('.tao-keymsg'), '');
+    keyOpen = false;
+    const r = readReading();
+    r.at = 0;
+    r.error = '';
+    r.wait = 0;
+    r.stop = false;
+    writeReading(r);
+    tick();
+  }
+
   // ===== START =====
 
   makeBox();
+  controls();
   tick();
-  setInterval(tick, TICK_MS);
+  const timer = setInterval(tick, TICK_MS);
   // A page that comes back into view reads at once if a sweep is due. PDA misreports this.
   document.addEventListener('visibilitychange', () => {
     if (!IS_PDA && document.visibilityState !== 'hidden') tick();
