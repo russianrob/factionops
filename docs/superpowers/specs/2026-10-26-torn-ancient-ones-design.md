@@ -13,7 +13,7 @@
   - 10:03 to 10:28 EDT, testing the box while M'aol could be hit: the owner asked "can it know where it goes next?" and "and when he will go next to mexico". The Cayman Islands' and the UK's praetorians had fallen a second apart, so the box knew no route and named no next stop. The owner approved the design at 10:27 EDT with "do recommended" (his next stop whenever it is certain, and his moves settling falls too close to put in order), then said at 10:28 EDT "it doesnt shown where and when hes moving next", which added naming both of two next stops; the owner kept that at 10:53 EDT. That changed "The box", "M'aol's route" and "Testing" for 1.0.2.
   - 10:53 EDT, using 1.0.0: its Attack link gave Torn's "This endpoint is no longer available. Please use the new endpoints instead (page.php).", and the owner asked "fix the attack link please". Torn's own Attack buttons link to `page.php?sid=attack&user2ID=<id>`, which changed "Links" for 1.0.1.
 
-**Script:** `server/public/scripts/torn-ancient-ones.user.js` and `.meta.js`, version 1.0.1. Tests: `server/torn-ancient-ones.test.mjs`.
+**Script:** `server/public/scripts/torn-ancient-ones.user.js` and `.meta.js`, version 1.0.2. Tests: `server/torn-ancient-ones.test.mjs`.
 
 ## Why
 
@@ -239,7 +239,7 @@ GM storage, as strings of JSON, because PDA hands stored values back as strings:
 
 - `server/public/scripts/torn-ancient-ones.user.js` and `.meta.js`, owned `warboard:warboard`.
 - **Header:**
-  - @name "Torn Ancient Ones", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.1, and a CHANGELOG block. The in-file `VERSION` matches @version, and the console line on start carries it.
+  - @name "Torn Ancient Ones", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.2, and a CHANGELOG block. The in-file `VERSION` matches @version, and the console line on start carries it.
   - @description: where Torn's Halloween Ancient Ones are (M'aol and his five praetorians), in a small box on Torn pages: country, life left, standing or beaten, an attack link, when M'aol can be hit and his route, and where to fly by airstrip or BCT. It needs a Public API key; Torn PDA gives its own. Torn's API terms table follows the description, in the header comment.
   - @downloadURL and @updateURL: `https://tornwar.com/scripts/torn-ancient-ones.user.js` and `.meta.js`.
   - @grant GM_getValue, GM_setValue, GM_xmlhttpRequest; @connect api.torn.com and www.tornstats.com; @run-at document-idle. No menu entry: the Key button is in the box.
