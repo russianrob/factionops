@@ -82,6 +82,8 @@
   const FALL_GAP_MS = 30 * 1000;
   // The most countries M'aol's trail keeps.
   const TRAIL_MAX = 20;
+  // Two readings of M'aol this far apart may hide a whole stop of his (15 minutes).
+  const TRAIL_GAP_MS = 10 * 60 * 1000;
   // TornStats is asked at most this often, across all tabs, while its time for a beaten one is
   // missing.
   const FELL_EVERY_MS = 5 * 60 * 1000;
@@ -346,16 +348,19 @@
     r.npcs[id] = npc;
     // M'aol coming within reach is a change of his own, though his own words may not change.
     if (!wasHittable && hittable(r.npcs) && npc.changedAt === nowMs) r.npcs[MAOL].changedAt = nowMs;
-    noteTrail(r, id, before, npc);
+    noteTrail(r, id, before, npc, nowMs);
   }
 
   // M'aol's trail: a new summoning empties it (and TornStats' defeat times, which were for the
   // summoning before), and while he can be hit, each new country he is seen in is added to it.
-  function noteTrail(r, id, before, npc) {
+  // A gap in his readings that could hide one of his stops (a page out of view, a phone asleep)
+  // starts it again: the order he was seen in across the gap is not his route.
+  function noteTrail(r, id, before, npc, nowMs) {
     if (id === MAOL && down(before) && !down(npc)) {
       r.trail = [];
       r.fell = {};
     }
+    if (id === MAOL && before && !(nowMs >= before.readAt && nowMs - before.readAt < TRAIL_GAP_MS)) r.trail = [];
     if (!hittable(r.npcs)) return;
     const place = r.npcs[MAOL].place;
     if (COUNTRIES.indexOf(place) >= 0 && r.trail[r.trail.length - 1] !== place) {

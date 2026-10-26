@@ -1615,3 +1615,29 @@ test('while Torn says to wait, the footer says when the box tries again; a wait 
   await back.advance(SEC);
   assert.equal(footer(hidden), 'Couldn\'t read Torn: Too many requests (code 5).');
 });
+
+// ---------------------------------------------------------------------------------------------
+// The final review's fixes (Oct 26): a gap in the readings starts M'aol's trail again, and a
+// sweep stored ahead of the clock doesn't beat a tab's own copy when storage won't save.
+
+test('a gap in the readings that could hide one of his stops starts his trail again, so his route comes only from what was seen since', async () => {
+  const { env, w } = await maolInMexico();
+  // Out of view 35 minutes: he goes on to the Cayman Islands, the UK and Canada unseen.
+  w.hide();
+  env.torn[23] = up(23, 'Cayman Islands');
+  await env.advance(15 * MIN);
+  env.torn[23] = up(23, 'United Kingdom');
+  await env.advance(15 * MIN);
+  env.torn[23] = up(23, 'Canada');
+  await env.advance(5 * MIN);
+  w.show();
+  await env.advance(0);
+  for (const place of ['Hawaii', 'Mexico', 'Cayman Islands', 'United Kingdom']) {
+    env.torn[23] = up(23, place);
+    await env.advance(15 * MIN);
+  }
+  // Seen with no gap in Canada, Hawaii, Mexico, the Cayman Islands and the UK: that is his
+  // route, and Canada comes after the UK.
+  assert.ok(maolNotes(w).includes('route Canada > Hawaii > Mexico > Cayman Islands > United Kingdom'), JSON.stringify(maolNotes(w)));
+  assert.match(maolNotes(w).find((n) => n.startsWith('next ')), /^next Canada/);
+});
