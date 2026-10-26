@@ -9,7 +9,7 @@ import { parseHTML } from 'linkedom';
 // TAO_SRC lets a mutant copy be tested in place of the served file.
 const SRC = process.env.TAO_SRC || '/opt/warboard/server/public/scripts/torn-ancient-ones.user.js';
 const META = SRC.replace(/\.user\.js$/, '.meta.js');
-const RUNNING = '[Torn Ancient Ones 1.0.0] running';
+const RUNNING = '[Torn Ancient Ones 1.0.1] running';
 const KEY_STORE = 'torn-ancient-ones-key';
 const READING_STORE = 'torn-ancient-ones-reading';
 const BOX_STORE = 'torn-ancient-ones-box';
@@ -250,7 +250,7 @@ test('the header is the spec\'s, and the meta file is the header and a newline',
   assert.deepEqual(tags, [
     'name Torn Ancient Ones',
     'namespace RussianRob',
-    'version 1.0.0',
+    'version 1.0.1',
     'description Where Torn\'s Halloween Ancient Ones are (M\'aol and his five praetorians), in a small box on Torn pages: country, life left, standing or beaten, an attack link, when M\'aol can be hit and his route, and where to fly by airstrip or BCT. It needs a Public API key; Torn PDA gives its own.',
     'author RussianRob',
     'downloadURL https://tornwar.com/scripts/torn-ancient-ones.user.js',
@@ -267,8 +267,9 @@ test('the header is the spec\'s, and the meta file is the header and a newline',
   assert.match(src, /\n\/\/ TORN'S API TERMS\n/);
   assert.match(src, /\n\/\/ Data Sharing {11}None\. The script also reads TornStats' public feed of the six, and sends\n/);
   assert.match(src, /\n\/\/ Key Access Level {7}Public\.\n/);
-  assert.match(src, /\n  const VERSION = '1\.0\.0';\n/);
+  assert.match(src, /\n  const VERSION = '1\.0\.1';\n/);
   assert.match(src, /\n\/\/ CHANGELOG\n/);
+  assert.match(src, /\n\/\/ v1\.0\.1  - The Attack link opens Torn's attack page again/);
   assert.match(src, /\n\/\/ v1\.0\.0  - First release\./);
 });
 
@@ -291,7 +292,7 @@ test('the source is plain ASCII, guards every GM_* call, holds PDA\'s placeholde
 
 test('it says once in the console that it is running, and a second copy on the same page does nothing', async () => {
   const { env, w } = await started();
-  assert.equal(w.document.documentElement.getAttribute('data-torn-ancient-ones'), '1.0.0');
+  assert.equal(w.document.documentElement.getAttribute('data-torn-ancient-ones'), '1.0.1');
   w.run();
   await env.advance(0);
   assert.deepEqual(w.logs, [RUNNING]);
@@ -817,7 +818,7 @@ test('all asleep, by the window\'s edges: 10:00 TCT on Oct 26 to 23:59:59 TCT on
 test('links: a name goes to the profile, Attack to the fight, both in this tab; Attack only for one that can be hit now', async () => {
   const { w } = await started({ torn: READ_1125 });
   assert.equal(lineEl(w, 100).querySelector('.tao-name').getAttribute('href'), 'https://www.torn.com/profiles.php?XID=100');
-  assert.equal(lineEl(w, 100).querySelector('.tao-attack').getAttribute('href'), 'https://www.torn.com/loader.php?sid=attack&user2ID=100');
+  assert.equal(lineEl(w, 100).querySelector('.tao-attack').getAttribute('href'), 'https://www.torn.com/page.php?sid=attack&user2ID=100');
   assert.equal(lineEl(w, 23).querySelector('.tao-name').getAttribute('href'), 'https://www.torn.com/profiles.php?XID=23');
   assert.equal(lineEl(w, 101).querySelector('.tao-attack'), null);
   assert.equal(lineEl(w, 23).querySelector('.tao-attack'), null);

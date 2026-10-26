@@ -10,8 +10,9 @@
   - 08:48 EDT: a read with four beaten put him in Canada, where the newest had fallen, and agreed with TornStats on all six. TornStats' time for one fall had moved by a second, which changed "Asking TornStats". Tests for a clock set back were added to "Testing".
   - 09:39 to 09:42 EDT, testing a 0.9.0 build: the owner asked "please have it in order they were beaten please", then "the first four are in order except for the last one", and approved the design with "yes go ahead, do recommended", which also said yes to the footer saying when the box tries again after Torn says to wait. That changed "The box" (the order of the lines), "Asking TornStats" (what a defeat time is used for), "Asking Torn" (the footer) and "Testing".
   - 10:10 EDT, the final review: two of its findings changed "M'aol's route" (a gap of 10 minutes or more in his readings starts his trail again) and "Stored" (a sweep stored ahead of the clock doesn't beat a tab's own copy).
+  - 10:53 EDT, using 1.0.0: its Attack link gave Torn's "This endpoint is no longer available. Please use the new endpoints instead (page.php).", and the owner asked "fix the attack link please". Torn's own Attack buttons link to `page.php?sid=attack&user2ID=<id>`, which changed "Links" for 1.0.1.
 
-**Script:** `server/public/scripts/torn-ancient-ones.user.js` and `.meta.js`, version 1.0.0. Tests: `server/torn-ancient-ones.test.mjs`.
+**Script:** `server/public/scripts/torn-ancient-ones.user.js` and `.meta.js`, version 1.0.1. Tests: `server/torn-ancient-ones.test.mjs`.
 
 ## Why
 
@@ -99,7 +100,7 @@ At Halloween, a player who has collected 9,999 treats can summon the Ancient One
   | Torn's words don't fit any of these | the name, then Torn's description as it came, as text |
 - **Links:**
   - A name links to the NPC's profile (`profiles.php?XID=<id>`).
-  - "Attack" links to `loader.php?sid=attack&user2ID=<id>`, shown only for one that can be hit now.
+  - "Attack" links to `page.php?sid=attack&user2ID=<id>`, as Torn's own Attack buttons do, shown only for one that can be hit now. Torn has retired the old `loader.php?sid=attack`, which now answers only with an error.
   - Both are plain links that open in the same tab, never a new one: the warboard app's web view handles new tabs badly.
   - A praetorian can only be attacked in its own country. Its link shows anyway, and Torn says so if you aren't there.
 - **Footer:** how long ago Torn last answered ("updated 40 s ago"), or why the last call failed, and a Key button.
@@ -236,7 +237,7 @@ GM storage, as strings of JSON, because PDA hands stored values back as strings:
 
 - `server/public/scripts/torn-ancient-ones.user.js` and `.meta.js`, owned `warboard:warboard`.
 - **Header:**
-  - @name "Torn Ancient Ones", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.0, and a CHANGELOG block. The in-file `VERSION` matches @version, and the console line on start carries it.
+  - @name "Torn Ancient Ones", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.1, and a CHANGELOG block. The in-file `VERSION` matches @version, and the console line on start carries it.
   - @description: where Torn's Halloween Ancient Ones are (M'aol and his five praetorians), in a small box on Torn pages: country, life left, standing or beaten, an attack link, when M'aol can be hit and his route, and where to fly by airstrip or BCT. It needs a Public API key; Torn PDA gives its own. Torn's API terms table follows the description, in the header comment.
   - @downloadURL and @updateURL: `https://tornwar.com/scripts/torn-ancient-ones.user.js` and `.meta.js`.
   - @grant GM_getValue, GM_setValue, GM_xmlhttpRequest; @connect api.torn.com and www.tornstats.com; @run-at document-idle. No menu entry: the Key button is in the box.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Ancient Ones
 // @namespace    RussianRob
-// @version      1.0.0
+// @version      1.0.1
 // @description  Where Torn's Halloween Ancient Ones are (M'aol and his five praetorians), in a small box on Torn pages: country, life left, standing or beaten, an attack link, when M'aol can be hit and his route, and where to fly by airstrip or BCT. It needs a Public API key; Torn PDA gives its own.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-ancient-ones.user.js
@@ -29,6 +29,8 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.1  - The Attack link opens Torn's attack page again (page.php), now that
+//           Torn has retired its old address (loader.php).
 // v1.0.0  - First release. A small box on Torn pages shows where M'aol and his five
 //           praetorians are, how much life each has left, which can be hit now, when
 //           M'aol can be, and once he can, his route and next stop. For each one
@@ -38,7 +40,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
 
   // Loaded twice on one page (two copies installed, or PDA injecting it again), it runs once.
   // The mark goes on the page itself, which every copy can see; each copy may have its own window.
@@ -59,7 +61,9 @@
     'Switzerland', 'Japan', 'China', 'UAE', 'South Africa'];
   const TORN_CITY = 'Torn City';
   const PROFILE_URL = 'https://www.torn.com/profiles.php?XID=';
-  const ATTACK_URL = 'https://www.torn.com/loader.php?sid=attack&user2ID=';
+  // Torn's attack page, as Torn's own Attack buttons link to it. Torn has retired its old
+  // address (loader.php?sid=attack), which now answers only with an error.
+  const ATTACK_URL = 'https://www.torn.com/page.php?sid=attack&user2ID=';
 
   // ===== TIMES =====
 
