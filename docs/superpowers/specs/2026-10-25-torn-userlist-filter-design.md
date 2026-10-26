@@ -1,6 +1,6 @@
 # Torn User List Filter (design)
 
-**Status:** written for the owner's review. The owner asked on 2026-10-25 at 21:04 EDT, with a link to Torn's Advanced Search (`page.php?sid=UserList`, level 75 and up, active in the last 7 days, not in federal jail): "can we create a filter for that page to filter out people abroad and in hospital?" The decisions below come from two rounds of questions, answered at 21:23, 21:25 and 21:39 EDT.
+**Status:** approved by the owner on 2026-10-25 at 21:47 EDT: "approved, write the plan". The owner asked on 2026-10-25 at 21:04 EDT, with a link to Torn's Advanced Search (`page.php?sid=UserList`, level 75 and up, active in the last 7 days, not in federal jail): "can we create a filter for that page to filter out people abroad and in hospital?" The decisions below come from two rounds of questions, answered at 21:23, 21:25 and 21:39 EDT.
 **Script:** `server/public/scripts/torn-userlist-filter.user.js` and `.meta.js`, version 1.0.0. Tests: `server/torn-userlist-filter.test.mjs`.
 
 ## Why
