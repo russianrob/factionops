@@ -307,3 +307,159 @@ test('TornTools\' lines under a hidden row (its stats estimate and last action) 
   assert.deepEqual(lines, [false, true, true, false]);
   assert.deepEqual(hiddenRows(w), ['hospital']);
 });
+
+// ---------------------------------------------------------------------------------------------
+// The bar
+// ---------------------------------------------------------------------------------------------
+
+test('the bar sits right before the list\'s title bar, with a switch for each kind, all on, and the count', () => {
+  const w = page().run();
+  const title = w.document.querySelector('.users-list-title');
+  assert.equal(barOf(w).nextElementSibling, title);
+  assert.equal(barOf(w).firstElementChild.textContent, 'Hide:');
+  assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: true });
+  assert.deepEqual(Object.keys(switchesOf(w)), ['Hospital', 'Abroad', 'Jail']);
+  assert.equal(count(w), '4 of 7 hidden on this page');
+});
+
+test('with no title bar, the bar sits right before the list; with no wrapper too, before the list in its box', () => {
+  for (const html of [{ title: false }, { title: false, wrapper: false }]) {
+    const w = page(html).run();
+    assert.equal(barOf(w).nextElementSibling, w.list(), JSON.stringify(html));
+    assert.equal(count(w), '4 of 7 hidden on this page');
+  }
+});
+
+test('the bar is put in place once: a box another script puts between it and the title bar stays there', () => {
+  const w = page().run();
+  const other = w.document.createElement('div');
+  other.className = 'tt-container';
+  w.document.querySelector('.users-list-title').before(other);
+  flip(w, 'Hospital', false);
+  assert.equal(barOf(w).nextElementSibling, other);
+  assert.equal(other.nextElementSibling, w.document.querySelector('.users-list-title'));
+});
+
+test('the count leaves out Torn\'s loading placeholder and a no-results line, and says 0 when nothing is hidden', () => {
+  const w = page({ rows: PLACEHOLDER + row('okay', [icon(1)]) + row('jail', [icon(16)]) + '<li class="no-results">No users found</li>' }).run();
+  assert.equal(count(w), '1 of 2 hidden on this page');
+  const none = page({ rows: row('okay', [icon(1)]) + row('idle', [icon(62)]) }).run();
+  assert.equal(count(none), '0 of 2 hidden on this page');
+});
+
+test('when every row on the page is hidden, the bar says so; one row alone gets its own wording', () => {
+  const all = page({ rows: row('hospital', [icon(15)]) + row('jail', [icon(16)]) + row('flying', [icon(71)]) }).run();
+  assert.equal(count(all), 'All 3 on this page are hidden.');
+  const one = page({ rows: row('hospital', [icon(15)]) }).run();
+  assert.equal(count(one), 'The 1 on this page is hidden.');
+});
+
+test('a page with no rows (Torn still loading them, or no results) shows the switches and no count', () => {
+  const w = page({ rows: PLACEHOLDER }).run();
+  assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: true });
+  assert.equal(count(w), '');
+});
+
+test('nothing from the page goes in the bar: a name with HTML in it stays out', () => {
+  const w = page({ rows: row('&lt;b&gt;bold&lt;/b&gt;', [icon(15)]) + row('okay', [icon(1)]) }).run();
+  assert.equal(barOf(w).querySelector('b'), null);
+  assert.equal(barOf(w).textContent.includes('bold'), false);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The switches
+// ---------------------------------------------------------------------------------------------
+
+test('a switch takes effect at once on the rows on the page, and is saved as a string of JSON', () => {
+  const w = page().run();
+  flip(w, 'Hospital', false);
+  assert.deepEqual(hiddenRows(w), ['jail', 'flying']);
+  assert.equal(count(w), '2 of 7 hidden on this page');
+  assert.equal(w.store[STORE], '{"hospital":false,"abroad":true,"jail":true}');
+  flip(w, 'Abroad', false);
+  flip(w, 'Jail', false);
+  assert.deepEqual(hiddenRows(w), []);
+  assert.equal(count(w), '0 of 7 hidden on this page');
+  flip(w, 'Hospital', true);
+  assert.deepEqual(hiddenRows(w), ['hospital', 'radiation']);
+  assert.equal(w.store[STORE], '{"hospital":true,"abroad":false,"jail":false}');
+});
+
+test('the next page load starts from the saved switches', () => {
+  const store = {};
+  const first = page({ store }).run();
+  flip(first, 'Abroad', false);
+  const next = page({ store }).run();
+  assert.deepEqual(switchesOf(next), { Hospital: true, Abroad: false, Jail: true });
+  assert.deepEqual(hiddenRows(next), ['hospital', 'radiation', 'jail']);
+});
+
+test('a row of two kinds at once shows only when both its switches are off', () => {
+  const w = page({ rows: row('hosp-abroad', [icon(15), icon(71)]) + row('okay', [icon(1)]) }).run();
+  flip(w, 'Hospital', false);
+  assert.deepEqual(hiddenRows(w), ['hosp-abroad']);
+  flip(w, 'Abroad', false);
+  assert.deepEqual(hiddenRows(w), []);
+  flip(w, 'Hospital', true);
+  assert.deepEqual(hiddenRows(w), ['hosp-abroad']);
+});
+
+test('TornTools\' lines come back with their row when its switch goes off', () => {
+  const w = page({ rows: row('hospital', [icon(15)]) + '<div class="tt-stats-estimate">Stats Estimate: 2</div>' + row('okay', [icon(1)]) }).run();
+  flip(w, 'Hospital', false);
+  assert.equal(matching(w, 'display: none').has(w.document.querySelector('.tt-stats-estimate')), false);
+});
+
+test('rows another script hides are hidden by this one too when of a kind switched on, but never counted', () => {
+  const w = page({ rows: [
+    row('tt-hospital', [icon(15)], { cls: 'tt-hidden' }),
+    row('tt-okay', [icon(1)], { cls: 'tt-hidden' }),
+    row('attr-jail', [icon(16)], { hidden: true }),
+    row('styled-okay', [icon(1)], { style: 'display: none' }),
+    row('hospital', [icon(15)]),
+    row('okay', [icon(1)]),
+  ].join('') }).run();
+  assert.deepEqual(hiddenRows(w), ['tt-hospital', 'attr-jail', 'hospital']);
+  assert.equal(count(w), '1 of 2 hidden on this page');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Stored
+// ---------------------------------------------------------------------------------------------
+
+test('saved switches read back as a string, as PDA hands them back, or as the object itself', () => {
+  for (const saved of ['{"hospital":true,"abroad":false,"jail":false}', { hospital: true, abroad: false, jail: false }]) {
+    const w = page({ store: { [STORE]: saved } }).run();
+    assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: false, Jail: false });
+    assert.deepEqual(hiddenRows(w), ['hospital', 'radiation']);
+  }
+});
+
+test('nothing saved, a value that won\'t parse, or one that isn\'t an object: all three on; a kind missing from it is on', () => {
+  for (const saved of [undefined, '', 'not json', '42', 'null', '"text"']) {
+    const store = saved === undefined ? {} : { [STORE]: saved };
+    const w = page({ store }).run();
+    assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: true }, String(saved));
+  }
+  const w = page({ store: { [STORE]: '{"jail":false}' } }).run();
+  assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: false });
+});
+
+test('a save that storage refuses still takes effect on this page; the next load starts from what was saved before', () => {
+  const store = { [STORE]: '{"hospital":true,"abroad":true,"jail":false}' };
+  const setValue = () => { throw new Error('QuotaExceededError'); };
+  const w = page({ store, setValue }).run();
+  assert.doesNotThrow(() => flip(w, 'Hospital', false));
+  assert.deepEqual(hiddenRows(w), ['flying']);
+  const next = page({ store }).run();
+  assert.deepEqual(switchesOf(next), { Hospital: true, Abroad: true, Jail: false });
+});
+
+test('storage that throws on reading, or no GM functions at all: all three on, and the switches still work on the page', () => {
+  const broken = page({ getValue: () => { throw new Error('no storage'); } }).run();
+  assert.deepEqual(switchesOf(broken), { Hospital: true, Abroad: true, Jail: true });
+  const bare = page({ gm: false }).run();
+  assert.deepEqual(hiddenRows(bare), ['hospital', 'radiation', 'jail', 'flying']);
+  flip(bare, 'Jail', false);
+  assert.deepEqual(hiddenRows(bare), ['hospital', 'radiation', 'flying']);
+});

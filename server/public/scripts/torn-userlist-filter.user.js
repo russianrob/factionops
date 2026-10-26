@@ -37,12 +37,16 @@
   root.setAttribute('data-tulf', VERSION);
 
   const STYLE_ID = 'tulf-styles';
+  const BAR_ID = 'tulf-bar';
   // A row the script hides gets this class, which its own stylesheet hides.
   const HIDDEN_CLASS = 'tulf-hidden';
   // Torn's list of results. Each row is an li straight under it.
   const LIST = 'ul.user-info-list-wrap';
-  // The three kinds.
+  // The three kinds, in the bar's order, and their names there.
   const KINDS = ['hospital', 'abroad', 'jail'];
+  const NAMES = { hospital: 'Hospital', abroad: 'Abroad', jail: 'Jail' };
+  // GM storage: the three switches, as a string of JSON.
+  const STORE = 'tulf-switches';
   // Torn's status icons by number, as TornTools lists them: 87 kinds, every number from 1 to 91
   // but 14, 69, 77 and 88. A number in the list is decided by the number alone. Four of them
   // tell of a kind: 15 Hospital and 91 Hospital (radiation poisoning), 16 Jail, and 71
@@ -56,6 +60,50 @@
   const BY_LABEL = [[/^hospital/i, 'hospital'], [/^jail/i, 'jail'], [/^(?:traveling|abroad)/i, 'abroad']];
   // TornTools' lines under a row (its stats estimate and last action) go with the row.
   const TT_LINES = ['tt-stats-estimate', 'tt-last-action'];
+
+  // ===== GM STORAGE =====
+
+  // Every GM_* call is guarded, because hosts differ in what they give a script.
+  function gmGet(name) {
+    try {
+      return typeof GM_getValue === 'function' ? GM_getValue(name, '') : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  // A full localStorage, where PDA keeps GM values, throws. The switch still works on this page,
+  // and the next page load starts from what was saved before.
+  function gmSet(name, value) {
+    try {
+      if (typeof GM_setValue === 'function') GM_setValue(name, value);
+    } catch (e) {
+      // Not saved.
+    }
+  }
+
+  // A stored value, read from its JSON. PDA hands values back as strings; a host that hands back
+  // the object itself works too. null when nothing is saved, or the value won't parse.
+  function readJson(name) {
+    const raw = gmGet(name);
+    if (raw && typeof raw === 'object') return raw;
+    try {
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // The three switches: each is on unless it was saved off. With nothing saved, or a value that
+  // won't parse, all three are on.
+  function readSwitches() {
+    const saved = readJson(STORE);
+    const on = {};
+    KINDS.forEach((kind) => {
+      on[kind] = !(saved && typeof saved === 'object' && saved[kind] === false);
+    });
+    return on;
+  }
 
   // ===== WHO IS WHERE =====
 
@@ -104,6 +152,11 @@
     return [...document.querySelectorAll(LIST + ' > li')].filter((li) => li.querySelector('.user.name'));
   }
 
+  // True when another script (TornTools' own filter, say) hides the row. Such rows aren't counted.
+  function hiddenByOthers(row) {
+    return row.hidden || row.style.display === 'none' || row.classList.contains('tt-hidden');
+  }
+
   // ===== HIDING =====
 
   // Hides or shows a row, and TornTools' lines under it with it. classList.toggle with a second
@@ -121,20 +174,101 @@
 
   // ===== THE STYLESHEET =====
 
-  // The class that hides a row.
+  // The class that hides a row, and the bar's look: small, in Torn's own font and colours, so it
+  // fits Torn's light and dark modes.
   const CSS = [
     '.' + HIDDEN_CLASS + ' { display: none !important; }',
+    '#' + BAR_ID + ' { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 10px 0 6px; padding: 6px 10px;'
+      + ' border: 1px solid rgba(128, 128, 128, 0.35); border-radius: 5px; background: rgba(128, 128, 128, 0.08);'
+      + ' font: inherit; font-size: 12px; line-height: 18px; color: inherit; }',
+    '#' + BAR_ID + ' label { display: inline-flex; align-items: center; gap: 4px; margin: 0; cursor: pointer; }',
+    '#' + BAR_ID + ' input { margin: 0; cursor: pointer; }',
+    '#' + BAR_ID + ' .tulf-count { margin-left: auto; opacity: 0.85; }',
   ].join('\n');
+
+  // ===== THE BAR =====
+
+  // The bar above the list: "Hide:", a switch for each kind, then the count. All its text is the
+  // script's own; nothing from the page goes in it.
+  function buildBar() {
+    const el = document.createElement('div');
+    el.id = BAR_ID;
+    const title = document.createElement('span');
+    title.textContent = 'Hide:';
+    el.appendChild(title);
+    KINDS.forEach((kind) => {
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = switches[kind];
+      box.addEventListener('change', safely(() => flip(kind, box.checked)));
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(' ' + NAMES[kind]));
+      el.appendChild(label);
+    });
+    const count = document.createElement('span');
+    count.className = 'tulf-count';
+    el.appendChild(count);
+    return el;
+  }
+
+  // The bar goes right before Torn's title bar over the list, where TornTools puts its own
+  // filter, or right before the list when there is no title bar. It is put there once, and again
+  // only when it is gone from the page, so it never fights another script for the spot.
+  function placeBar() {
+    if (bar.isConnected) return;
+    const anchor = document.querySelector('.users-list-title') || document.querySelector(LIST);
+    if (anchor) anchor.parentNode.insertBefore(bar, anchor);
+  }
+
+  // How many of the rows on this page are hidden, written only when it changes. Blank while the
+  // page has no rows (Torn still loading them, or no results).
+  function showCount(total, hidden) {
+    let text = '';
+    if (total === 1 && hidden === 1) text = 'The 1 on this page is hidden.';
+    else if (total && hidden === total) text = 'All ' + total + ' on this page are hidden.';
+    else if (total) text = hidden + ' of ' + total + ' hidden on this page';
+    const count = bar.querySelector('.tulf-count');
+    if (count.textContent !== text) count.textContent = text;
+  }
+
+  // A switch takes effect at once on the rows on the page, and is saved.
+  function flip(kind, on) {
+    switches[kind] = on;
+    gmSet(STORE, JSON.stringify(switches));
+    check();
+  }
+
+  // Every handler the script gives the page runs inside a try, so an error in one stays there.
+  function safely(handler) {
+    return function (e) {
+      try {
+        handler(e);
+      } catch (err) {
+        // Dropped, as an error in a check is.
+      }
+    };
+  }
 
   // ===== THE CHECK =====
 
-  // Hides the rows of each kind switched on and shows the rest.
+  // Hides the rows of each kind switched on, shows the rest, places the bar and writes the
+  // count. Rows that other scripts hide aren't counted, but this one hides them too when they
+  // are of a kind switched on, so a row either one hides stays hidden.
   function check() {
     try {
+      let total = 0;
+      let hidden = 0;
       rows().forEach((row) => {
         const kinds = kindsOf(row);
-        setHidden(row, KINDS.some((kind) => switches[kind] && kinds.has(kind)));
+        const hide = KINDS.some((kind) => switches[kind] && kinds.has(kind));
+        setHidden(row, hide);
+        if (hiddenByOthers(row)) return;
+        total += 1;
+        if (hide) hidden += 1;
       });
+      placeBar();
+      showCount(total, hidden);
     } catch (e) {
       // A surprise in Torn's page stops this one check. It never breaks the page.
     }
@@ -142,12 +276,12 @@
 
   // ===== START =====
 
-  // For now, every kind is hidden.
-  const switches = { hospital: true, abroad: true, jail: true };
+  const switches = readSwitches();
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = CSS;
   (document.head || root).appendChild(style);
+  const bar = buildBar();
   check();
   console.log('[Torn User List Filter ' + VERSION + '] running');
 })();
