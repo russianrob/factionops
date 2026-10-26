@@ -1,7 +1,8 @@
 # Torn User List Filter (design)
 
 **Status:** approved by the owner on 2026-10-25 at 21:47 EDT: "approved, write the plan". The owner asked on 2026-10-25 at 21:04 EDT, with a link to Torn's Advanced Search (`page.php?sid=UserList`, level 75 and up, active in the last 7 days, not in federal jail): "can we create a filter for that page to filter out people abroad and in hospital?" The decisions below come from two rounds of questions, answered at 21:23, 21:25 and 21:39 EDT.
-**Script:** `server/public/scripts/torn-userlist-filter.user.js` and `.meta.js`, version 1.0.0. Tests: `server/torn-userlist-filter.test.mjs`.
+**Amended for 1.0.1** on 2026-10-26: the owner asked at 18:20 EDT, "for the user filter can you include to hide the fallen", and approved the design at 18:37 EDT: "do recommended". See Q7, and the Fallen row under "Telling who is where".
+**Script:** `server/public/scripts/torn-userlist-filter.user.js` and `.meta.js`, version 1.0.1. Tests: `server/torn-userlist-filter.test.mjs`.
 
 ## Why
 
@@ -20,10 +21,11 @@ TornTools has a user-list filter that can do this. The owner chose a script of t
 | Q4 | A hidden row is gone, not dimmed. A slim bar above the list holds the three switches and the count, such as "12 of 50 hidden on this page". When every row on a page is hidden, the bar says so. You click Next yourself: the script never loads a page, clicks anything or calls the API. The owner: "yes to all, do recommended". |
 | Q5 | All three switches start on, and each device remembers its own. |
 | Q6 | The name is "Torn User List Filter", file `torn-userlist-filter.user.js`, served on tornwar. RussianRob, All Rights Reserved, ready for the owner to upload to Greasy Fork. |
+| Q7 | (1.0.1) Fallen players are hidden too, with a switch of their own after Jail. It starts on, also for anyone whose switches were saved by 1.0.0. Going live needs no warboard restart. The owner: "do recommended". |
 
 ## What it does
 
-On `page.php?sid=UserList`, the script looks at each row of results. A row that shows Torn's hospital, jail or travel icon is hidden while that kind's switch is on. The bar above the list says how many rows on this page are hidden. Whenever Torn puts new rows in the list (the next page, a new search, a new sort order), the script checks them too.
+On `page.php?sid=UserList`, the script looks at each row of results. A row that shows Torn's hospital, jail, travel or fallen icon is hidden while that kind's switch is on. The bar above the list says how many rows on this page are hidden. Whenever Torn puts new rows in the list (the next page, a new search, a new sort order), the script checks them too.
 
 It only reads and hides what Torn has already put on the page. It sends no requests of its own, uses no API key and clicks nothing.
 
@@ -36,13 +38,14 @@ Each row of results is an `li` in Torn's list `ul.user-info-list-wrap`, the same
 | Hospital | 15 (Hospital), 91 (Hospital, radiation poisoning) | 82 (early discharge) does not count on its own; the live check below settles it. |
 | Jail | 16 (Jail) | Federal jail (70) is never hidden: the owner's search already leaves fedded people out, and it was not asked for. |
 | Abroad | 71 (Traveling) | Torn's list of status icons (87 kinds, as TornTools lists them) has no separate abroad icon, so the plane should cover people landed abroad as well as those in flight. The live check confirms it before release. |
+| Fallen | 77 (Fallen) | Added in 1.0.1. 77 is not in TornTools' table of icons, but TornTools' own user-list filter reads it as Fallen on this same page, for its "Fallen" checkbox. We have not seen it on a live page, so the owner's check after release settles it. |
 
-The numbers come from TornTools' table of Torn's icons. A number in that table is decided by its number alone, so 70 and 82 stay as the table above says whatever their labels are. An icon whose number is not in the table (say Torn renumbers one) counts by its label (`aria-label` or `title`): one starting with "Hospital", "Jail", "Traveling" or "Abroad" counts as that kind. The number comes first, the label second, as in our other Torn scripts.
+The numbers come from TornTools' table of Torn's icons, and 77 from TornTools' user-list filter. A number in that table, or 77, is decided by its number alone, so 70 and 82 stay as the table above says whatever their labels are. An icon whose number is not in the table (say Torn renumbers one) counts by its label (`aria-label` or `title`): one starting with "Hospital", "Jail", "Traveling", "Abroad" or "Fallen" counts as that kind. The number comes first, the label second, as in our other Torn scripts.
 
 ## The bar
 
 - **Where:** right before the list's title bar (`.users-list-title`), where TornTools puts its own filter box; with both installed they sit one above the other. With no title bar, it goes right before the list.
-- **What it says:** `Hide: [x] Hospital  [x] Abroad  [x] Jail   12 of 50 hidden on this page`. When nothing on the page is hidden: `0 of 50 hidden on this page`. When every row is hidden: `All 50 on this page are hidden.`
+- **What it says:** `Hide: [x] Hospital  [x] Abroad  [x] Jail  [x] Fallen   12 of 50 hidden on this page`. When nothing on the page is hidden: `0 of 50 hidden on this page`. When every row is hidden: `All 50 on this page are hidden.`
 - **What counts:** a row is an `li` straight under the list with a name link in it (`.user.name`, as TornTools reads it), so Torn's loading placeholder and a "no results" line are not counted. Rows hidden by other scripts are not counted either.
 - **A switch** takes effect at once on the rows already on the page, and is saved.
 - **Look:** small, in Torn's own font and colours, so it fits light and dark mode. All text in the bar is the script's own; nothing from the page is put in as HTML.
@@ -57,8 +60,8 @@ The numbers come from TornTools' table of Torn's icons. A number in that table i
 
 In GM storage, as a string of JSON, because PDA hands stored values back as strings:
 
-- `tulf-switches`: `{"hospital":true,"abroad":true,"jail":true}`.
-- Nothing stored, or a value that won't parse: all three on.
+- `tulf-switches`: `{"hospital":true,"abroad":true,"jail":true,"fallen":true}`.
+- Nothing stored, or a value that won't parse: all four on. A kind missing from what is stored is on, so switches saved by 1.0.0, which had no `fallen`, read Fallen as on.
 - A save that storage refuses (PDA keeps GM values in localStorage, which can be full) still takes effect on this page. The next page load starts from what was stored before.
 
 ## Where it runs
@@ -76,8 +79,8 @@ In GM storage, as a string of JSON, because PDA hands stored values back as stri
 
 - `server/public/scripts/torn-userlist-filter.user.js` and `.meta.js`, owned `warboard:warboard`.
 - **Header:**
-  - @name "Torn User List Filter", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.0, a CHANGELOG block. The in-file `VERSION` matches @version, and the console line on start carries it.
-  - @description: hides people in hospital, in jail or abroad (in flight or landed) from Torn's user list search, with a switch for each above the list.
+  - @name "Torn User List Filter", @namespace and @author RussianRob, @license All Rights Reserved, @version 1.0.1, a CHANGELOG block, newest version first. The in-file `VERSION` matches @version, and the console line on start carries it.
+  - @description: hides people in hospital, in jail, abroad (in flight or landed) or fallen from Torn's user list search, with a switch for each above the list.
   - @downloadURL and @updateURL: `https://tornwar.com/scripts/torn-userlist-filter.user.js` and `.meta.js`.
   - @grant: GM_getValue, GM_setValue. No @connect, and no menu entry: the bar is the settings.
 - The served file and the repo are the same file (`server/public/scripts` is served), committed and pushed together.
@@ -86,7 +89,7 @@ In GM storage, as a string of JSON, because PDA hands stored values back as stri
 
 Tests come first, with node:test and linkedom, in `server/torn-userlist-filter.test.mjs`. `TULF_SRC` points the tests at another copy of the script, for mutants.
 
-- **Telling who is where:** rows with icons 15, 91, 16 and 71 count as their kinds; 70 and 82 alone don't, whatever their labels; `icon1` and `icon150` are not 15; an unknown number counts by its label; a row can be two kinds at once.
+- **Telling who is where:** rows with icons 15, 91, 16, 71 and 77 count as their kinds; 70 and 82 alone don't, whatever their labels; `icon1` and `icon150` are not 15; an unknown number counts by its label; a row can be two kinds at once.
 - **The page:** a fixture of the user list (wrapper, title bar, a list of rows, a loading placeholder):
   - The rows of each switched-on kind are hidden and the others show.
   - The bar sits right before the title bar, or right before the list when there is no title bar.
@@ -115,6 +118,7 @@ Read-only on a live results page; nothing on Torn is clicked or loaded for it. I
 - Next page: the new rows are filtered and the count changes to match.
 - Reload: the switches stay as set.
 - PDA, if handy: the same.
+- 1.0.1: a fallen player in the results is hidden while Fallen is on, and shows again when it is off.
 
 ## Not in this version
 

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn User List Filter
 // @namespace    RussianRob
-// @version      1.0.0
-// @description  Hides people in hospital, in jail or abroad (in flight or landed) from Torn's user list search, with a switch for each above the list.
+// @version      1.0.1
+// @description  Hides people in hospital, in jail, abroad (in flight or landed) or fallen from Torn's user list search, with a switch for each above the list.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-userlist-filter.user.js
 // @updateURL    https://tornwar.com/scripts/torn-userlist-filter.meta.js
@@ -16,6 +16,8 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.1  - Hides fallen players too (Torn's icon 77), with a switch of their own
+//           after Jail, on by default, also for switches saved by 1.0.0.
 // v1.0.0  - First release. Hides people in hospital, in jail or abroad (in flight
 //           or landed) from Torn's user list search, with a switch for each kind
 //           and a count of the rows hidden, in a bar above the list.
@@ -23,7 +25,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
 
   // Torn's user list search only: page.php?sid=UserList, in any letter case. @match takes every
   // page.php, because hosts read a "?" in @match differently. Torn fetches each page of results
@@ -42,22 +44,24 @@
   const HIDDEN_CLASS = 'tulf-hidden';
   // Torn's list of results. Each row is an li straight under it.
   const LIST = 'ul.user-info-list-wrap';
-  // The three kinds, in the bar's order, and their names there.
-  const KINDS = ['hospital', 'abroad', 'jail'];
-  const NAMES = { hospital: 'Hospital', abroad: 'Abroad', jail: 'Jail' };
-  // GM storage: the three switches, as a string of JSON.
+  // The four kinds, in the bar's order, and their names there.
+  const KINDS = ['hospital', 'abroad', 'jail', 'fallen'];
+  const NAMES = { hospital: 'Hospital', abroad: 'Abroad', jail: 'Jail', fallen: 'Fallen' };
+  // GM storage: the four switches, as a string of JSON.
   const STORE = 'tulf-switches';
-  // Torn's status icons by number, as TornTools lists them: 87 kinds, every number from 1 to 91
-  // but 14, 69, 77 and 88. A number in the list is decided by the number alone. Four of them
-  // tell of a kind: 15 Hospital and 91 Hospital (radiation poisoning), 16 Jail, and 71
-  // Traveling. Torn has no icon of its own for abroad, so the plane covers people landed abroad
-  // as well as those in the air. 70 (Federal jail) and 82 (Hospital early discharge) hide
-  // nothing.
-  const KNOWN = [[1, 13], [15, 68], [70, 76], [78, 87], [89, 91]];
-  const BY_NUMBER = { 15: 'hospital', 91: 'hospital', 16: 'jail', 71: 'abroad' };
+  // Torn's status icons by number: the 87 kinds in TornTools' table of icons (every number from
+  // 1 to 91 but 14, 69, 77 and 88), and 77, which that table leaves out but TornTools' own
+  // user-list filter reads as Fallen. A number in the list is decided by the number alone. Five
+  // of them tell of a kind: 15 Hospital and 91 Hospital (radiation poisoning), 16 Jail, 71
+  // Traveling and 77 Fallen. Torn has no icon of its own for abroad, so the plane covers people
+  // landed abroad as well as those in the air. 70 (Federal jail) and 82 (Hospital early
+  // discharge) hide nothing.
+  const KNOWN = [[1, 13], [15, 68], [70, 87], [89, 91]];
+  const BY_NUMBER = { 15: 'hospital', 91: 'hospital', 16: 'jail', 71: 'abroad', 77: 'fallen' };
   // An icon whose number isn't in the list (Torn renumbered one, say) counts by how its label
   // starts, in any letter case.
-  const BY_LABEL = [[/^hospital/i, 'hospital'], [/^jail/i, 'jail'], [/^(?:traveling|abroad)/i, 'abroad']];
+  const BY_LABEL = [[/^hospital/i, 'hospital'], [/^jail/i, 'jail'], [/^(?:traveling|abroad)/i, 'abroad'],
+    [/^fallen/i, 'fallen']];
   // TornTools' lines under a row (its stats estimate and last action) go with the row.
   const TT_LINES = ['tt-stats-estimate', 'tt-last-action'];
   // What the script watches for: rows added and removed, never attribute changes.
@@ -96,8 +100,9 @@
     }
   }
 
-  // The three switches: each is on unless it was saved off. With nothing saved, or a value that
-  // won't parse, all three are on.
+  // The four switches: each is on unless it was saved off, so a kind missing from what was
+  // saved is on (Fallen, in switches saved by 1.0.0). With nothing saved, or a value that won't
+  // parse, all four are on.
   function readSwitches() {
     const saved = readJson(STORE);
     const on = {};
@@ -132,7 +137,7 @@
     return '';
   }
 
-  // The kind an icon tells of: 'hospital', 'abroad' or 'jail', or '' for none.
+  // The kind an icon tells of: 'hospital', 'abroad', 'jail' or 'fallen', or '' for none.
   function kindOf(el) {
     const n = iconNumber(el);
     if (!n) return '';

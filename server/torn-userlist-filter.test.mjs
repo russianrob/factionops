@@ -1,4 +1,4 @@
-// Torn User List Filter: hides people in hospital, in jail or abroad from Torn's user list search.
+// Torn User List Filter: hides people in hospital, in jail, abroad or fallen from Torn's user list search.
 // These tests load the real script into hand-built copies of the search page, with the address,
 // GM storage, the console and the MutationObserver under their control.
 import { test } from 'node:test';
@@ -13,7 +13,7 @@ const META = SRC.replace(/\.user\.js$/, '.meta.js');
 const SEARCH = '?sid=UserList&orderBy=name&orderDirection=asc&levelFrom=75&lastAction=7&searchConditionNot=true&searchConditions=inFederalJail';
 const BAR = 'tulf-bar';
 const STORE = 'tulf-switches';
-const RUNNING = '[Torn User List Filter 1.0.0] running';
+const RUNNING = '[Torn User List Filter 1.0.1] running';
 
 // Text for an HTML attribute.
 function attr(text) {
@@ -30,7 +30,7 @@ function icon(n, { id, title, label, inner } = {}) {
     + (inner ? '<a href="#" aria-label="' + attr(inner) + '"></a>' : '') + '</li>';
 }
 const TITLES = { 1: 'Online', 9: 'Faction member', 15: 'Hospital', 16: 'Jail', 62: 'Idle', 70: 'Federal jail',
-  71: 'Traveling', 82: 'Hospital early discharge', 91: 'Hospital radiation poisoning' };
+  71: 'Traveling', 77: 'Fallen', 82: 'Hospital early discharge', 91: 'Hospital radiation poisoning' };
 
 // A row of results, as Torn draws it: a name link, the level and the row's icons. The ids in
 // the links are made up.
@@ -183,8 +183,8 @@ test('the header is the spec\'s, and the meta file is the header and a newline',
   assert.deepEqual(tags, [
     'name Torn User List Filter',
     'namespace RussianRob',
-    'version 1.0.0',
-    'description Hides people in hospital, in jail or abroad (in flight or landed) from Torn\'s user list search, with a switch for each above the list.',
+    'version 1.0.1',
+    'description Hides people in hospital, in jail, abroad (in flight or landed) or fallen from Torn\'s user list search, with a switch for each above the list.',
     'author RussianRob',
     'downloadURL https://tornwar.com/scripts/torn-userlist-filter.user.js',
     'updateURL https://tornwar.com/scripts/torn-userlist-filter.meta.js',
@@ -194,9 +194,11 @@ test('the header is the spec\'s, and the meta file is the header and a newline',
     'grant GM_getValue',
     'grant GM_setValue',
   ]);
-  assert.match(src, /\n  const VERSION = '1\.0\.0';\n/);
+  assert.match(src, /\n  const VERSION = '1\.0\.1';\n/);
   assert.match(src, /\n\/\/ CHANGELOG\n/);
+  assert.match(src, /\n\/\/ v1\.0\.1  - Hides fallen players too \(Torn's icon 77\)/);
   assert.match(src, /\n\/\/ v1\.0\.0  - First release\./);
+  assert.ok(src.indexOf('// v1.0.1') < src.indexOf('// v1.0.0'), 'the CHANGELOG lists the newest version first');
 });
 
 test('the source is plain ASCII, guards every GM_* call, and has no PDA key placeholder, password field or HTML put in', () => {
@@ -222,7 +224,7 @@ test('the source is plain ASCII, guards every GM_* call, and has no PDA key plac
 test('it runs on page.php?sid=UserList in any letter case, and says so once in the console', () => {
   for (const search of [SEARCH, '?sid=userlist', '?SID=USERLIST&levelFrom=75', '?levelFrom=75&sid=UserList']) {
     const w = page({ search }).run();
-    assert.equal(w.document.documentElement.getAttribute('data-tulf'), '1.0.0', search);
+    assert.equal(w.document.documentElement.getAttribute('data-tulf'), '1.0.1', search);
     assert.deepEqual(hiddenRows(w), ['hospital', 'radiation', 'jail', 'flying'], search);
     assert.deepEqual(w.logs, [RUNNING], search);
   }
@@ -320,6 +322,54 @@ test('TornTools\' lines under a hidden row (its stats estimate and last action) 
 });
 
 // ---------------------------------------------------------------------------------------------
+// The fallen (1.0.1)
+// ---------------------------------------------------------------------------------------------
+
+test('icon 77 counts as fallen by its number alone: with every switch on, fallen rows are hidden whatever their labels say', () => {
+  const w = page({ rows: [
+    row('fallen', [icon(1), icon(77)]),
+    row('fallen-no-label', [icon(77, { title: '' })]),
+    row('fallen-other-label', [icon(77, { title: '<b>Online</b>' })]),
+    row('okay', [icon(1), icon(9)]),
+  ].join('') }).run();
+  assert.deepEqual(hiddenRows(w), ['fallen', 'fallen-no-label', 'fallen-other-label']);
+  assert.deepEqual(showingRows(w), ['okay']);
+  assert.equal(count(w), '3 of 4 hidden on this page');
+});
+
+test('an icon whose number is not known counts as fallen when its label starts with "Fallen"; a known number never does', () => {
+  const w = page({ rows: [
+    row('title', [icon(150, { title: '<b>Fallen</b><br>Rest in peace' })]),
+    row('aria', [icon(151, { title: '', label: 'FALLEN' })]),
+    row('mid-word', [icon(152, { title: 'Not fallen' })]),
+    row('idle', [icon(62, { title: '<b>Fallen</b>' })]),
+  ].join('') }).run();
+  assert.deepEqual(hiddenRows(w), ['title', 'aria']);
+  assert.deepEqual(showingRows(w), ['mid-word', 'idle']);
+});
+
+test('the Fallen switch takes effect at once and is saved; off, the fallen show again, and the next page load keeps it off', () => {
+  const store = {};
+  const w = page({ store, rows: row('fallen', [icon(1), icon(77)]) + row('hospital', [icon(15)]) }).run();
+  assert.deepEqual(hiddenRows(w), ['fallen', 'hospital']);
+  flip(w, 'Fallen', false);
+  assert.deepEqual(hiddenRows(w), ['hospital']);
+  assert.equal(count(w), '1 of 2 hidden on this page');
+  assert.equal(store[STORE], '{"hospital":true,"abroad":true,"jail":true,"fallen":false}');
+  const next = page({ store, rows: row('fallen', [icon(77)]) }).run();
+  assert.deepEqual(switchesOf(next), { Hospital: true, Abroad: true, Jail: true, Fallen: false });
+  assert.deepEqual(hiddenRows(next), []);
+});
+
+test('switches saved by 1.0.0, which had no Fallen switch, read Fallen as on: the fallen are hidden for them too', () => {
+  const store = { [STORE]: '{"hospital":false,"abroad":false,"jail":false}' };
+  const w = page({ store, rows: row('fallen', [icon(77)]) + row('hospital', [icon(15)]) + row('flying', [icon(71)]) }).run();
+  assert.deepEqual(switchesOf(w), { Hospital: false, Abroad: false, Jail: false, Fallen: true });
+  assert.deepEqual(hiddenRows(w), ['fallen']);
+  assert.equal(store[STORE], '{"hospital":false,"abroad":false,"jail":false}', 'nothing is saved until a switch is flipped');
+});
+
+// ---------------------------------------------------------------------------------------------
 // The bar
 // ---------------------------------------------------------------------------------------------
 
@@ -328,8 +378,8 @@ test('the bar sits right before the list\'s title bar, with a switch for each ki
   const title = w.document.querySelector('.users-list-title');
   assert.equal(barOf(w).nextElementSibling, title);
   assert.equal(barOf(w).firstElementChild.textContent, 'Hide:');
-  assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: true });
-  assert.deepEqual(Object.keys(switchesOf(w)), ['Hospital', 'Abroad', 'Jail']);
+  assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: true, Fallen: true });
+  assert.deepEqual(Object.keys(switchesOf(w)), ['Hospital', 'Abroad', 'Jail', 'Fallen']);
   assert.equal(count(w), '4 of 7 hidden on this page');
 });
 
@@ -376,7 +426,7 @@ test('when every row on the page is hidden, the bar says so; one row alone gets 
 
 test('a page with no rows (Torn still loading them, or no results) shows the switches and no count', () => {
   const w = page({ rows: PLACEHOLDER }).run();
-  assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: true });
+  assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: true, Fallen: true });
   assert.equal(count(w), '');
 });
 
@@ -395,14 +445,14 @@ test('a switch takes effect at once on the rows on the page, and is saved as a s
   flip(w, 'Hospital', false);
   assert.deepEqual(hiddenRows(w), ['jail', 'flying']);
   assert.equal(count(w), '2 of 7 hidden on this page');
-  assert.equal(w.store[STORE], '{"hospital":false,"abroad":true,"jail":true}');
+  assert.equal(w.store[STORE], '{"hospital":false,"abroad":true,"jail":true,"fallen":true}');
   flip(w, 'Abroad', false);
   flip(w, 'Jail', false);
   assert.deepEqual(hiddenRows(w), []);
   assert.equal(count(w), '0 of 7 hidden on this page');
   flip(w, 'Hospital', true);
   assert.deepEqual(hiddenRows(w), ['hospital', 'radiation']);
-  assert.equal(w.store[STORE], '{"hospital":true,"abroad":false,"jail":false}');
+  assert.equal(w.store[STORE], '{"hospital":true,"abroad":false,"jail":false,"fallen":true}');
 });
 
 test('the next page load starts from the saved switches', () => {
@@ -410,7 +460,7 @@ test('the next page load starts from the saved switches', () => {
   const first = page({ store }).run();
   flip(first, 'Abroad', false);
   const next = page({ store }).run();
-  assert.deepEqual(switchesOf(next), { Hospital: true, Abroad: false, Jail: true });
+  assert.deepEqual(switchesOf(next), { Hospital: true, Abroad: false, Jail: true, Fallen: true });
   assert.deepEqual(hiddenRows(next), ['hospital', 'radiation', 'jail']);
 });
 
@@ -420,9 +470,9 @@ test('a switch saves only its own kind, so in two tabs one flipped in the other 
   const second = page({ store }).run();
   flip(first, 'Hospital', false);
   flip(second, 'Jail', false);
-  assert.equal(store[STORE], '{"hospital":false,"abroad":true,"jail":false}');
+  assert.equal(store[STORE], '{"hospital":false,"abroad":true,"jail":false,"fallen":true}');
   const next = page({ store }).run();
-  assert.deepEqual(switchesOf(next), { Hospital: false, Abroad: true, Jail: false });
+  assert.deepEqual(switchesOf(next), { Hospital: false, Abroad: true, Jail: false, Fallen: true });
 });
 
 test('a row of two kinds at once shows only when both its switches are off', () => {
@@ -461,19 +511,19 @@ test('rows another script hides are hidden by this one too when of a kind switch
 test('saved switches read back as a string, as PDA hands them back, or as the object itself', () => {
   for (const saved of ['{"hospital":true,"abroad":false,"jail":false}', { hospital: true, abroad: false, jail: false }]) {
     const w = page({ store: { [STORE]: saved } }).run();
-    assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: false, Jail: false });
+    assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: false, Jail: false, Fallen: true });
     assert.deepEqual(hiddenRows(w), ['hospital', 'radiation']);
   }
 });
 
-test('nothing saved, a value that won\'t parse, or one that isn\'t an object: all three on; a kind missing from it is on', () => {
+test('nothing saved, a value that won\'t parse, or one that isn\'t an object: all four on; a kind missing from it is on', () => {
   for (const saved of [undefined, '', 'not json', '42', 'null', '"text"']) {
     const store = saved === undefined ? {} : { [STORE]: saved };
     const w = page({ store }).run();
-    assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: true }, String(saved));
+    assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: true, Fallen: true }, String(saved));
   }
   const w = page({ store: { [STORE]: '{"jail":false}' } }).run();
-  assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: false });
+  assert.deepEqual(switchesOf(w), { Hospital: true, Abroad: true, Jail: false, Fallen: true });
 });
 
 test('a save that storage refuses still takes effect on this page; the next load starts from what was saved before', () => {
@@ -483,12 +533,12 @@ test('a save that storage refuses still takes effect on this page; the next load
   assert.doesNotThrow(() => flip(w, 'Hospital', false));
   assert.deepEqual(hiddenRows(w), ['flying']);
   const next = page({ store }).run();
-  assert.deepEqual(switchesOf(next), { Hospital: true, Abroad: true, Jail: false });
+  assert.deepEqual(switchesOf(next), { Hospital: true, Abroad: true, Jail: false, Fallen: true });
 });
 
-test('storage that throws on reading, or no GM functions at all: all three on, and the switches still work on the page', () => {
+test('storage that throws on reading, or no GM functions at all: all four on, and the switches still work on the page', () => {
   const broken = page({ getValue: () => { throw new Error('no storage'); } }).run();
-  assert.deepEqual(switchesOf(broken), { Hospital: true, Abroad: true, Jail: true });
+  assert.deepEqual(switchesOf(broken), { Hospital: true, Abroad: true, Jail: true, Fallen: true });
   const bare = page({ gm: false }).run();
   assert.deepEqual(hiddenRows(bare), ['hospital', 'radiation', 'jail', 'flying']);
   flip(bare, 'Jail', false);
