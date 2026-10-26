@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.19
+// @version      5.6.20
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -100,7 +100,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.19';
+    const SCRIPT_VERSION = '5.6.20';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -3599,7 +3599,6 @@ body.wb-chain-active {
             if (!existing) {
                 state.statuses[targetId] = newData;
                 rebaseStatusUntil(state.statuses[targetId]);
-                maybeAutoUncallOnHospital(targetId, null, normalizeStatus(newData.status));
                 continue;
             }
             const oldStatus = normalizeStatus(existing.status);
@@ -3638,9 +3637,9 @@ body.wb-chain-active {
                 mergedRec.description = existing.description;
             }
 
-            if (statusChanged) {
-                maybeAutoUncallOnHospital(targetId, oldStatus, newStatus);
-            }
+            // My called target going into hospital: Torn's attack log is
+            // asked whether that was my fight (checkFightOnHospital).
+            if (statusChanged) checkFightOnHospital(targetId, oldStatus, newStatus);
 
             // Monotonic guard on `until` — timer may only count DOWN while
             // the status is unchanged. Previously this only applied when
@@ -3815,48 +3814,33 @@ body.wb-chain-active {
         }
     }
 
-    /**
-     * Auto-uncall hook: when a target that I've called transitions into
-     * hospital (from any detection path — server push, attacks-feed, peer
-     * relay, DOM reader, intercepted attack result), clear my call. Scoped
-     * to my own calls so a teammate's call is never stomped. Runs from
-     * mergeStatusesMonotonic so it sits at the single chokepoint where all
-     * status updates flow through, instead of sprinkled across every
-     * detection path.
-     */
-    function maybeAutoUncallOnHospital(targetId, oldStatus, newStatus) {
-        if (newStatus !== 'hospital') return;
-        if (oldStatus === 'hospital') return; // not a transition
+    // My called target going into hospital may be my fight with them ending,
+    // so that is when Torn's attack log is asked, and the call drops only if
+    // the log shows my own fight with them since calling (fightEndsCall). The
+    // status alone never drops a call: statuses reach this script from several
+    // relays that disagree, so a target lying in hospital can read hospital ->
+    // okay -> hospital, and a drop on each flip back would take calls nobody
+    // fought. The server never drops on a status either (see /api/status).
+    // A first sighting is no change; the report sent on leaving an attack page
+    // covers a page load. One target is asked about at most once in
+    // FIGHT_CHECK_GAP_MS, so a flapping status can't spend the caller's Torn
+    // calls.
+    const FIGHT_CHECK_GAP_MS = 15000;
+    const lastFightCheck = {};
+    function checkFightOnHospital(targetId, oldStatus, newStatus) {
+        if (newStatus !== 'hospital' || !oldStatus || oldStatus === 'hospital') return;
         const call = state.calls && state.calls[targetId];
-        if (!call) {
-            log(`[auto-uncall] #${targetId} → hospital: no call exists`);
-            return;
-        }
-        if (!call.calledBy) {
-            log(`[auto-uncall] #${targetId} → hospital: call has no calledBy`);
-            return;
-        }
-        // v5.0.82: deal calls persist through hospital. They have a
-        // 2-hour DEAL_TIMEOUT (vs 15-min CALL_TIMEOUT) and exist
-        // specifically to claim a target for the next attack window,
-        // which means they need to survive the hospital trip the deal
-        // was likely intending to set up.
-        if (call.isDeal) {
-            log(`[auto-uncall] #${targetId} → hospital: deal call, persisting`);
-            return;
-        }
-        const caller = String(call.calledBy.id);
-        const me = String(state.myPlayerId || '');
-        if (caller !== me) {
-            log(`[auto-uncall] #${targetId} → hospital: call is ${caller}'s (I am ${me}), skipping`);
-            return;
-        }
-        try {
-            emitUncallTarget(targetId);
-            log(`[auto-uncall] #${targetId} hospitalized → cleared my call`);
-        } catch (e) {
-            warn(`[auto-uncall] failed for #${targetId}:`, e);
-        }
+        if (!call || !call.calledBy || call.isDeal) return;
+        if (String(call.calledBy.id) !== String(state.myPlayerId || '')) return;
+        const now = Date.now();
+        if (now - (lastFightCheck[targetId] || 0) < FIGHT_CHECK_GAP_MS) return;
+        lastFightCheck[targetId] = now;
+        // Torn's own attack log trails the fight by a beat, as it does when
+        // leaving an attack page.
+        setTimeout(() => {
+            try { pollAttacks({ fightWith: String(targetId) }); }
+            catch (e) { log('fight check failed: ' + (e && e.message)); }
+        }, 4000);
     }
 
     // v4.9.80: helpers to ground hospital / jail timers on an absolute unix
@@ -9292,6 +9276,13 @@ body.wb-chain-active {
 
     const PENDING_ATTACK_MAX_AGE_MS = 30 * 60 * 1000;
 
+    // A fight has to start after the call was placed to end it. Torn's attack
+    // times are whole seconds and the call's time has milliseconds, so one
+    // second of give keeps a fight started in the same second from missing.
+    // No more: a fight finished a few seconds before the call (hit them, then
+    // claimed them for their release) must keep the new call.
+    const FIGHT_AFTER_CALL_SLACK_SEC = 1;
+
     /**
      * Whether a stored mark still justifies an out-of-band report.
      *
@@ -9333,9 +9324,12 @@ body.wb-chain-active {
      * @param opts.retry  off when called from the attack page: a retry there
      *        would fire after the NEXT fight's mark was written and report a
      *        fight that has not happened yet.
+     * @param opts.current the target whose attack page this is. Opening the
+     *        same target's page again (after a stalemate or an escape) means
+     *        the fight goes on, so the report asks about no fight with them.
      */
     function flushPendingAttack(opts) {
-        const { attempt = 0, retry = true } = opts || {};
+        const { attempt = 0, retry = true, current = '' } = opts || {};
         let raw = null;
         try { raw = GM_getValue(PENDING_ATTACK_KEY, null); } catch (e) { return false; }
 
@@ -9344,39 +9338,11 @@ body.wb-chain-active {
             return false;
         }
 
-        // The fight is over, so the call has done its job — drop it from this
-        // local signal rather than waiting for Torn's attack feed to confirm.
-        //
-        // Neither existing path can be relied on here. The feed path below
-        // needs the member's own API key (pollAttacks returns early without
-        // one), needs the report to actually arrive, and the server only
-        // clears on a result in its success set — so Lost, Stalemate and
-        // Interrupted always left the call standing. maybeAutoUncallOnHospital
-        // does not cover it either: that needs this client to WITNESS the
-        // hospital transition with the page open. Fight-end needs none of
-        // that, only the JWT, so it runs before the API-key gate.
-        //
-        // Deal calls are deliberately left alone. They exist to hold a target
-        // across attack windows and keep their full two hours, which is why
-        // maybeAutoUncallOnHospital skips them too.
-        if (state.jwtToken) {
-            let pendingTarget = '';
-            try { pendingTarget = String((JSON.parse(raw) || {}).t || ''); } catch (e) {}
-            const call = pendingTarget && state.calls && state.calls[pendingTarget];
-            const mine = call && call.calledBy
-                && String(call.calledBy.id) === String(state.myPlayerId || '');
-            if (mine && !call.isDeal) {
-                // emitUncallTarget clears state.calls optimistically, so the
-                // retry below cannot fire a second uncall for the same fight.
-                try {
-                    emitUncallTarget(pendingTarget);
-                    log('[fight-end] #' + pendingTarget + ' fight over → cleared my call');
-                } catch (e) {
-                    warn('[fight-end] uncall failed for #' + pendingTarget + ':', e);
-                }
-            }
-        }
-
+        // Leaving an attack page is not proof of a fight: people open a target's
+        // page to wait out their hospital time and walk away. So nothing drops
+        // here. The report below carries the target, and the call drops only if
+        // Torn's own attack log shows that I fought them after calling
+        // (fightEndsCall).
         if (!CONFIG.API_KEY || !state.jwtToken) {
             if (retry && attempt < 6) {
                 setTimeout(() => flushPendingAttack({ attempt: attempt + 1, retry }), 3000);
@@ -9384,22 +9350,58 @@ body.wb-chain-active {
             return false;
         }
 
+        let pendingTarget = '';
+        try {
+            const mark = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            pendingTarget = String((mark && mark.t) || '');
+        } catch (e) { /* no target: the report still goes to the server */ }
+
         // Clear BEFORE polling: a failed poll must not leave a mark that
         // re-fires a Torn call on every page load for the next half hour.
         try { GM_setValue(PENDING_ATTACK_KEY, ''); } catch (e) {}
 
         // Torn's own attack log trails the fight by a beat; give it one
         // before asking, or the report comes back without the fight in it.
+        const fightWith = pendingTarget === String(current) ? '' : pendingTarget;
         setTimeout(() => {
-            try { pollAttacks(); }
+            try { pollAttacks({ fightWith }); }
             catch (e) { log('early attack report failed: ' + (e && e.message)); }
         }, 4000);
-        log('Fight finished — reporting now so the call drops in seconds, not minutes');
+        log('Left an attack page -- reporting now so a finished fight drops the call in seconds');
         return true;
     }
 
-    function pollAttacks() {
+    /**
+     * Whether Torn's attack log shows that I fought this target after calling
+     * them: the one sign that the call has done its job. Any result counts (a
+     * loss or a stalemate ends that attempt too), but only a fight that started
+     * after the call was placed, so an earlier hit never drops a call made to
+     * claim the target for when they come out. Deal calls hold a target for
+     * two hours and are never dropped here, and a call with no time on it is
+     * kept rather than guessed at.
+     *
+     * `attacks` is Torn's v1 log, a map of records (an array is accepted too).
+     * `call.timestamp` is the server's time; `call.calledAt` is the local one an
+     * optimistic call carries until the server echoes it.
+     */
+    function fightEndsCall(attacks, targetId, call, myId) {
+        if (!attacks || !targetId || !call || !call.calledBy || call.isDeal) return false;
+        if (!myId || String(call.calledBy.id) !== String(myId)) return false;
+        const placedMs = Number(call.timestamp || call.calledAt) || 0;
+        if (!placedMs) return false;
+        const sinceSec = placedMs / 1000 - FIGHT_AFTER_CALL_SLACK_SEC;
+        const list = Array.isArray(attacks) ? attacks : Object.values(attacks);
+        return list.some((a) => a
+            && String(a.attacker_id) === String(myId)
+            && String(a.defender_id) === String(targetId)
+            && Number(a.timestamp_started) >= sinceSec);
+    }
+
+    function pollAttacks(opts) {
         if (!CONFIG.API_KEY || !state.jwtToken) return;
+        // Set only by the report sent on leaving an attack page: the target
+        // whose call ends if the log shows my fight with them.
+        const fightWith = (opts && opts.fightWith) ? String(opts.fightWith) : '';
         const url = `https://api.torn.com/user/?selections=attacks&key=${encodeURIComponent(CONFIG.API_KEY)}&comment=warboard-attacks`;
         httpRequest({
             method: 'GET',
@@ -9408,6 +9410,17 @@ body.wb-chain-active {
                 try {
                     const data = JSON.parse(res.responseText);
                     if (data.error || !data.attacks) return;
+                    if (fightWith) {
+                        try {
+                            const call = state.calls && state.calls[fightWith];
+                            if (fightEndsCall(data.attacks, fightWith, call, state.myPlayerId)) {
+                                emitUncallTarget(fightWith);
+                                log('[fight-end] #' + fightWith + ' fought after calling -> cleared my call');
+                            }
+                        } catch (e) {
+                            warn('[fight-end] uncall failed for #' + fightWith + ':', e);
+                        }
+                    }
                     if (Object.keys(data.attacks).length === 0) return;
                     postAction('/api/me/attacks', { attacks: data.attacks }).catch(() => {});
                 } catch (e) { /* silent */ }
@@ -12850,8 +12863,7 @@ body.wb-chain-active {
         // Two independent flows here:
         //   A. If the target was hospitalized, flip status locally and
         //      peer-relay (fastest possible signal; no Torn API cache in
-        //      the way). Auto-uncall then fires via mergeStatusesMonotonic's
-        //      status-transition hook.
+        //      the way). The status never drops a call; B does.
         //   B. If the target was attacked/mugged (non-hospital successful
         //      hit), the call is still "spent" — your own hit landed, the
         //      target isn't a useful target for you right now. Uncall MY
@@ -12883,8 +12895,8 @@ body.wb-chain-active {
                     mergeStatusesMonotonic(batch);
                     queuePeerRelay(batch);
                     log(`[attack-result] Target ${targetId} marked hospital (${minutesFromResult || '~30'}m)`);
-                    // Auto-uncall on hospital runs via maybeAutoUncallOnHospital
-                    // inside mergeStatusesMonotonic.
+                    // The call is dropped by B below (my own hit landed),
+                    // never by the status itself.
                 }
 
                 // ── B: direct uncall on any successful hit outcome ─────
@@ -13457,7 +13469,7 @@ body.wb-chain-active {
             // Arriving at a NEW attack page also means the previous fight is
             // over, which is the one case that never passes through the war
             // page. Close that one out before marking this one.
-            flushPendingAttack({ retry: false });
+            flushPendingAttack({ retry: false, current: targetId });
             markAttackPending(targetId);
         }
 
@@ -13479,7 +13491,7 @@ body.wb-chain-active {
         // status transition (hospital/mugged/etc.) whenever Torn's sidebar
         // updates. Don't early-exit on first success — the first read just
         // reflects pre-attack state, and we need subsequent reads to catch
-        // the transition that triggers auto-uncall.
+        // the post-attack transition for the rest of the faction.
         const maxAttempts = 60;
         const intervalMs = 1000;
         const timer = setInterval(() => {

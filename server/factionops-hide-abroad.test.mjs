@@ -155,14 +155,16 @@ test('the controls keep an accessible name', () => {
 // client — most of the faction still runs a build that sends description:''
 // for a hospital member.
 
+// The merge's call hooks are stubbed out: this file is about descriptions.
+// Both hook names are given, so it runs whichever one the script has.
 const merge = new Function(
-  'state', 'isOwnFactionMember', 'rebaseStatusUntil', 'maybeAutoUncallOnHospital',
+  'state', 'isOwnFactionMember', 'rebaseStatusUntil', 'maybeAutoUncallOnHospital', 'checkFightOnHospital',
   'normalizeStatus', 'UNTIL_JUMP_SEC', '_nowSec',
   fn('mergeStatusesMonotonic') + '; return mergeStatusesMonotonic;');
 
 function merger(seed = {}) {
   const state = { statuses: JSON.parse(JSON.stringify(seed)) };
-  const fnm = merge(state, () => false, () => {}, () => {},
+  const fnm = merge(state, () => false, () => {}, () => {}, () => {},
     (x) => String(x || '').toLowerCase(), 5, () => Math.floor(Date.now() / 1000));
   return { state, merge: fnm };
 }
