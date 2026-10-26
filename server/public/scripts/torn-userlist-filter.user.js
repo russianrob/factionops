@@ -120,12 +120,16 @@
     return KNOWN.some(([from, to]) => n >= from && n <= to);
   }
 
-  // An icon's label: its aria-label or title, or else those of the first thing inside it that
-  // has one, with any tags taken out (Torn's titles hold HTML, such as <b>Hospital</b><br>...).
+  // An icon's label: the first aria-label or title that isn't empty, the icon's own first, then
+  // those of the things inside it in order, with any tags taken out (Torn's titles hold HTML,
+  // such as <b>Hospital</b><br>...). An empty one is no label, so an icon with title="" and its
+  // label on a link inside it is read by the link's.
   function labelOf(el) {
-    const holder = el.matches('[aria-label], [title]') ? el : el.querySelector('[aria-label], [title]');
-    if (!holder) return '';
-    return (holder.getAttribute('aria-label') || holder.getAttribute('title') || '').replace(/<[^>]*>/g, ' ').trim();
+    for (const holder of [el, ...el.querySelectorAll('[aria-label], [title]')]) {
+      const text = (holder.getAttribute('aria-label') || holder.getAttribute('title') || '').replace(/<[^>]*>/g, ' ').trim();
+      if (text) return text;
+    }
+    return '';
   }
 
   // The kind an icon tells of: 'hospital', 'abroad' or 'jail', or '' for none.
@@ -215,29 +219,41 @@
   }
 
   // The bar goes right before Torn's title bar over the list, where TornTools puts its own
-  // filter, or right before the list when there is no title bar. It is put there once, and again
-  // only when it is gone from the page, so it never fights another script for the spot.
+  // filter, or right before the list when there is no title bar. The title bar is looked for in
+  // the list's wrapper first, so one elsewhere on the page is taken only when the wrapper has
+  // none. The bar is put there once, and again only when it is gone from the page, so it never
+  // fights another script for the spot.
   function placeBar() {
     if (bar.isConnected) return;
-    const anchor = document.querySelector('.users-list-title') || document.querySelector(LIST);
+    const box = wrapper();
+    const anchor = (box && box.querySelector('.users-list-title')) || document.querySelector('.users-list-title') || document.querySelector(LIST);
     if (anchor) anchor.parentNode.insertBefore(bar, anchor);
   }
 
-  // How many of the rows on this page are hidden, written only when it changes. Blank while the
-  // page has no rows (Torn still loading them, or no results).
+  // How many of the rows on this page are hidden. Blank while the page has no rows (Torn still
+  // loading them, or no results). It is written only when the script's own count changes, not
+  // whenever the text on the page differs from it, so a page translator that puts the count in
+  // its own words is let be, not fought.
+  let lastCount = null;
+
   function showCount(total, hidden) {
     let text = '';
     if (total === 1 && hidden === 1) text = 'The 1 on this page is hidden.';
     else if (total && hidden === total) text = 'All ' + total + ' on this page are hidden.';
     else if (total) text = hidden + ' of ' + total + ' hidden on this page';
-    const count = bar.querySelector('.tulf-count');
-    if (count.textContent !== text) count.textContent = text;
+    if (text === lastCount) return;
+    lastCount = text;
+    bar.querySelector('.tulf-count').textContent = text;
   }
 
-  // A switch takes effect at once on the rows on the page, and is saved.
+  // A switch takes effect at once on the rows on the page, and is saved. Only its own kind is
+  // saved: the others are saved again as they are saved now, so a switch flipped in another tab
+  // since this page loaded stays as that tab left it.
   function flip(kind, on) {
     switches[kind] = on;
-    gmSet(STORE, JSON.stringify(switches));
+    const saved = readSwitches();
+    saved[kind] = on;
+    gmSet(STORE, JSON.stringify(saved));
     check();
   }
 
@@ -289,10 +305,12 @@
   // hidden row never shows. Until the list is on the page, it watches the whole page for it.
   let waiting = false;
 
-  // The list's wrapper, or else the list's parent. null while the list isn't on the page.
+  // The list's wrapper: the .userlist-wrapper around the list, or else the list's parent. It is
+  // found from the list, so a .userlist-wrapper elsewhere on the page is never taken for it.
+  // null while the list isn't on the page.
   function wrapper() {
     const list = document.querySelector(LIST);
-    return document.querySelector('.userlist-wrapper') || (list && list.parentElement);
+    return list && (list.closest('.userlist-wrapper') || list.parentElement);
   }
 
   function watch() {

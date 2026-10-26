@@ -290,6 +290,17 @@ test('an icon whose number is not known counts by how its label starts, in any l
   assert.deepEqual(showingRows(w), ['mid-word', 'no-label']);
 });
 
+test('an empty label is no label: an icon with an empty one of its own is read by the first one inside it that isn\'t empty', () => {
+  const w = page({ rows: [
+    // The icon's own title is there but empty, and its label is on a link inside it.
+    row('empty-title', ['<li id="icon200___x7a" title=""><a href="#" aria-label="Hospital: 2 hours"></a></li>']),
+    // The first thing inside the icon has an empty title, and the next one has the label.
+    row('empty-inner', ['<li id="icon201___x7a"><span title=""></span><a href="#" aria-label="Jail: 3 hours"></a></li>']),
+    row('okay', [icon(1)]),
+  ].join('') }).run();
+  assert.deepEqual(hiddenRows(w), ['empty-title', 'empty-inner']);
+});
+
 test('every icon in the row counts, the first or the last, shown or not', () => {
   const w = page({ rows: [
     row('last', [icon(1), icon(9), icon(62), icon(16)]),
@@ -328,6 +339,15 @@ test('with no title bar, the bar sits right before the list; with no wrapper too
     assert.equal(barOf(w).nextElementSibling, w.list(), JSON.stringify(html));
     assert.equal(count(w), '4 of 7 hidden on this page');
   }
+});
+
+test('a title bar elsewhere on the page is not the list\'s: the bar goes right before the list\'s own title bar', () => {
+  const w = page();
+  const side = w.document.createElement('div');
+  side.innerHTML = TITLE;
+  w.document.body.insertBefore(side, w.document.body.firstChild);
+  w.run();
+  assert.ok(barOf(w).nextElementSibling === w.document.querySelector('.userlist-wrapper .users-list-title'), 'the bar is right before the list\'s own title bar');
 });
 
 test('the bar is put in place once: a box another script puts between it and the title bar stays there', () => {
@@ -392,6 +412,17 @@ test('the next page load starts from the saved switches', () => {
   const next = page({ store }).run();
   assert.deepEqual(switchesOf(next), { Hospital: true, Abroad: false, Jail: true });
   assert.deepEqual(hiddenRows(next), ['hospital', 'radiation', 'jail']);
+});
+
+test('a switch saves only its own kind, so in two tabs one flipped in the other tab since this one loaded stays as that tab saved it', () => {
+  const store = {};
+  const first = page({ store }).run();
+  const second = page({ store }).run();
+  flip(first, 'Hospital', false);
+  flip(second, 'Jail', false);
+  assert.equal(store[STORE], '{"hospital":false,"abroad":true,"jail":false}');
+  const next = page({ store }).run();
+  assert.deepEqual(switchesOf(next), { Hospital: false, Abroad: true, Jail: false });
 });
 
 test('a row of two kinds at once shows only when both its switches are off', () => {
@@ -545,6 +576,31 @@ test('when the list is not on the page yet, the script waits for it, then watche
   assert.equal(count(w), 'The 1 on this page is hidden.');
 });
 
+test('a .userlist-wrapper elsewhere on the page, not around the list, is never taken for the list\'s: the next page is still checked', async () => {
+  const w = page({ wrapper: false });
+  const side = w.document.createElement('div');
+  side.innerHTML = '<div class="userlist-wrapper"></div>';
+  w.document.body.insertBefore(side, w.document.body.firstChild);
+  w.run();
+  w.newPage(row('hospital2', [icon(15)]) + row('okay2', [icon(1)]));
+  await settle();
+  assert.deepEqual(hiddenRows(w), ['hospital2']);
+});
+
+test('with a .userlist-wrapper elsewhere on the page before the list comes, the script waits for the list, and checks it when it comes', async () => {
+  const w = page({ list: false });
+  const side = w.document.createElement('div');
+  side.innerHTML = '<div class="userlist-wrapper"></div>';
+  w.document.body.insertBefore(side, w.document.body.firstChild);
+  w.run();
+  const holder = w.document.createElement('div');
+  holder.className = 'results';
+  holder.innerHTML = '<ul class="user-info-list-wrap">' + row('hospital2', [icon(15)]) + row('okay2', [icon(1)]) + '</ul>';
+  w.document.querySelector('.content-wrapper').appendChild(holder);
+  await settle();
+  assert.deepEqual(hiddenRows(w), ['hospital2']);
+});
+
 test('it watches for rows added and removed only, never attribute or text changes', async () => {
   const w = page({ list: false }).run();
   const holder = w.document.createElement('div');
@@ -568,6 +624,29 @@ test('the script\'s own changes (hiding rows, the count, the bar) set off no mor
   await settle();
   assert.equal(count(w), '0 of 2 hidden on this page');
   assert.equal(w.deliveries, 1, 'a switch sets off none');
+});
+
+test('a page translator that rewrites the count is let be: the count is written only when the script\'s own count changes', async () => {
+  const w = page().run();
+  // A page translator: whenever the page changes, it puts the count in its own words.
+  let rewrites = 0;
+  const translator = new w.document.defaultView.MutationObserver(() => {
+    const el = barOf(w).lastElementChild;
+    if (!el.textContent.startsWith('TR:') && rewrites < 25) {
+      rewrites += 1;
+      el.textContent = 'TR:' + el.textContent;
+    }
+  });
+  translator.observe(w.document.body, { childList: true, subtree: true });
+  barOf(w).lastElementChild.textContent = 'TR:' + count(w);
+  for (let i = 0; i < 5; i += 1) await settle();
+  translator.disconnect();
+  assert.equal(rewrites, 0, 'the translator had to put the count in its words again ' + rewrites + ' times');
+  assert.equal(count(w), 'TR:4 of 7 hidden on this page');
+  // A new count of the script's own is still written.
+  w.newPage(row('jail2', [icon(16)]) + row('okay2', [icon(1)]));
+  await settle();
+  assert.equal(count(w), '1 of 2 hidden on this page');
 });
 
 test('a TornTools line Torn or TornTools adds later under a hidden row is hidden too', async () => {
