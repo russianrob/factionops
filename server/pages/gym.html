@@ -66,6 +66,9 @@
   .hof .tt .rk{color:var(--faint);width:26px}
   .hof .tt .e{text-align:right;color:var(--energy);font-variant-numeric:tabular-nums}
   .hof .tt .jt{color:var(--lead);font-weight:800}
+  .mhead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 12px}
+  .mhead .mleft{color:var(--faint);letter-spacing:1.5px}
+  .mhead .mleft b{color:var(--lead);letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums}
   .empty{color:var(--mute);font-size:13px;padding:6px 2px}
   .foot{color:var(--faint);font-size:11.5px;margin-top:14px;line-height:1.6}
   .warn{background:rgba(224,179,87,.12);border:1px solid rgba(224,179,87,.5);
@@ -116,9 +119,19 @@
       <div id="tablebox"></div>
     </div>
 
+    <div class="card hide" id="monthcard">
+      <h2 class="mhead"><span id="mtitle">This month &middot; top 25</span><span class="mleft">Month ends in <b id="mleft">—</b></span></h2>
+      <div id="monthbox"></div>
+    </div>
+
     <div class="card">
       <h2>Previous winners</h2>
       <div class="hof" id="hof"></div>
+    </div>
+
+    <div class="card hide" id="monthscard">
+      <h2>Previous months</h2>
+      <div class="hof" id="months"></div>
     </div>
 
     <p class="foot" id="foot"></p>
@@ -133,6 +146,8 @@
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
     return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
   var fmt = function (n) { return Number(n || 0).toLocaleString(); };
+  // Fixed names, not the browser's locale, so "joined Oct 12" reads the same on every phone.
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
   /**
    * The completed weeks, newest first.
@@ -175,6 +190,61 @@
         '<table class="tt">' + rows + '</table></details>';
     }).join("");
   }
+
+  /** "joined Oct 12" for a member ranked from their first reading of the month, else nothing. */
+  function joinedPill(r) {
+    if (!r.joinedAt) return "";
+    var j = new Date(r.joinedAt);
+    return '<span class="pill">joined ' + MONTHS[j.getUTCMonth()].slice(0, 3) + " " + j.getUTCDate() + '</span>';
+  }
+
+  /**
+   * This month's top 25.
+   *
+   * The weekly standings table, but only the people on the ladder: the server
+   * sends the 25 best who trained at all, so there is no "joined mid-week" row
+   * scored zero. A member who joined after the 1st is ranked from their first
+   * reading this month, and the pill says when that was.
+   */
+  function monthHtml(m) {
+    var top = (m && m.top) || [];
+    if (!top.length) return '<div class="empty">Nobody has trained yet this month.</div>';
+    var max = Math.max(1, top[0].energy);
+    var body = top.map(function (r, i) {
+      return '<tr class="' + (i === 0 ? "top1" : "") + '">' +
+        '<td class="rank">' + (i + 1) + '</td>' +
+        '<td><a class="nm" style="color:#cfe3ff;text-decoration:none" target="_blank" rel="noopener" ' +
+        'href="https://www.torn.com/profiles.php?XID=' + encodeURIComponent(r.id) + '">' + esc(r.name) + '</a>' +
+        joinedPill(r) +
+        (r.split ? '<div class="split">' + esc(r.split) + '</div>' : '') +
+        '<div class="bar" style="width:' + Math.round((r.energy / max) * 100) + '%"></div></td>' +
+        '<td class="r">' + fmt(r.energy) + '</td></tr>';
+    }).join("");
+    return '<table><tr><th class="rank">#</th><th>Member</th><th class="r">Energy</th></tr>' + body + "</table>";
+  }
+
+  /**
+   * The finished months, newest first, laid out like the weeks: last month
+   * open with its whole top 25, older months folded to their leader's line.
+   */
+  function monthsHtml(months) {
+    if (!months.length) return '<div class="empty">No finished months yet — this month\'s top 25 is saved when it ends.</div>';
+    return months.map(function (mo, mi) {
+      var d = new Date(mo.monthStart), top = mo.top || [], lead = top[0] || {};
+      var head = '<div class="w"><div class="wk">' + MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear() + '</div>' +
+        '<div class="nm">' + esc(lead.name) + '</div>' +
+        '<div class="en">' + fmt(lead.energy) + '</div></div>';
+      var rows = top.map(function (r, i) {
+        return '<tr><td class="rk">' + (i + 1) + '</td>' +
+          '<td><a style="color:#cfe3ff;text-decoration:none" target="_blank" rel="noopener" ' +
+          'href="https://www.torn.com/profiles.php?XID=' + encodeURIComponent(r.id) + '">' +
+          esc(r.name) + '</a>' + joinedPill(r) + '</td>' +
+          '<td class="e">' + fmt(r.energy) + '</td></tr>';
+      }).join("");
+      return '<details' + (mi === 0 ? " open" : "") + '><summary>' + head + '</summary>' +
+        '<table class="tt">' + rows + '</table></details>';
+    }).join("");
+  }
   var data = null;
 
   function showSignin(m, bad) {
@@ -185,14 +255,21 @@
   }
   function showBoard() { $("signin").className = "signin"; $("board").className = ""; }
 
-  // TCT is UTC, so the countdown is plain arithmetic — no zone to get wrong.
-  function countdown() {
-    if (!data) return;
-    var left = data.week.end - Date.now();
-    if (left < 0) { $("left").textContent = "scoring…"; return; }
+  // TCT is UTC, so a countdown is plain arithmetic — no zone to get wrong.
+  function leftText(end, now) {
+    var left = end - now;
+    if (left < 0) return "scoring…";
     var d = Math.floor(left / 86400000), h = Math.floor(left / 3600000) % 24,
         m = Math.floor(left / 60000) % 60, s = Math.floor(left / 1000) % 60;
-    $("left").textContent = (d ? d + "d " : "") + h + "h " + m + "m " + (d ? "" : s + "s");
+    return (d ? d + "d " : "") + h + "h " + m + "m " + (d ? "" : s + "s");
+  }
+  // The week and the month count down separately: one ending must not stop
+  // the other.
+  function countdown() {
+    if (!data) return;
+    var now = Date.now();
+    $("left").textContent = leftText(data.week.end, now);
+    if (data.month) $("mleft").textContent = leftText(data.month.end, now);
   }
 
   function render() {
@@ -229,6 +306,17 @@
 
     $("hof").innerHTML = hofHtml(data.history || []);
 
+    // The page goes live the moment its file lands, but the running server
+    // sends no month until it reloads. Until then the month cards stay out of
+    // the way and the weekly board works as before.
+    $("monthcard").className = data.month ? "card" : "card hide";
+    $("monthscard").className = data.months ? "card" : "card hide";
+    if (data.month) {
+      $("mtitle").textContent = MONTHS[new Date(data.month.start).getUTCMonth()] + " \u00b7 top 25";
+      $("monthbox").innerHTML = monthHtml(data.month);
+    }
+    if (data.months) $("months").innerHTML = monthsHtml(data.months);
+
     // A board fed by a dead poller looks exactly like a board where nobody
     // trained. Say which it is.
     var hp = data.health || {};
@@ -246,6 +334,14 @@
         'that is when the first reading was taken. Energy trained before it is invisible to the board, ' +
         'for everyone equally — so a personal tracker that started at midnight will read higher than this page, ' +
         'and both are right. From next Sunday the start line is midnight.</div>';
+    }
+    // The same for the month, which is also not saved when it ends: a month
+    // measured from the 3rd is not a month.
+    if (data.month && data.month.lateStart && data.month.baselineAt) {
+      $("stale").innerHTML += '<div class="warn"><b>This month is measured from ' +
+        new Date(data.month.baselineAt).toUTCString().replace("GMT", "TCT") + '</b>, not the 1st — ' +
+        'that is when the first reading was taken. Energy trained before it is not counted, for anyone, ' +
+        'and this month will not be saved to Previous months.</div>';
     }
 
     $("foot").innerHTML = "Scored on energy spent in the gym, not stat gains — the difference between a reading " +
