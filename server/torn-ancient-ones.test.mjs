@@ -1189,3 +1189,155 @@ test('the next summoning counts from TornStats\' time for M\'aol\'s death', asyn
   assert.equal(lineText(w, 23), 'M\'aol  Mexico  beaten 10:31 TCT');
   assert.equal(summary(w), 'All asleep. Next summoning possible from Oct 28 10:31 TCT (48 h after M\'aol\'s death).');
 });
+
+// ---------------------------------------------------------------------------------------------
+// Where to fly
+// ---------------------------------------------------------------------------------------------
+
+// One praetorian read with each of these lives in turn, one a minute, from the first sweep at
+// 10:40 TCT. The others stand where they awoke, losing nothing; M'aol is shielded.
+async function bleeding(id, lives) {
+  const { env, w } = await started({ torn: { ...allUp(), [id]: up(id, PLACE[id], lives[0]) } });
+  for (const life of lives.slice(1)) {
+    env.torn[id] = up(id, PLACE[id], life);
+    await env.advance(MIN);
+  }
+  return { env, w };
+}
+const M = 1000000;
+
+test('a standing praetorian\'s death estimate: its loss over 2 minutes or more, counted from its newest reading', async () => {
+  const short = await bleeding(102, [100 * M, 99 * M]);
+  assert.deepEqual(notes(short.w, 102), ['airstrip 27 min | BCT 12 min'], 'a minute of history is too little');
+  const { env, w } = await bleeding(102, [100 * M, 99 * M, 98 * M]);
+  assert.deepEqual(notes(w, 102), ['dies about 12:20 TCT | airstrip 27 min: 71 min to spare | BCT 12 min: 86 min to spare']);
+  // No readings for 3 minutes: the estimate stays, and the minutes to spare go down.
+  w.hide();
+  await env.advance(3 * MIN);
+  assert.deepEqual(notes(w, 102), ['dies about 12:20 TCT | airstrip 27 min: 68 min to spare | BCT 12 min: 83 min to spare']);
+});
+
+test('the rate counts only the last 10 minutes of its history', async () => {
+  const lives = [100, 95, 90, 89, 88, 87, 86, 85, 84, 83, 82, 81, 80].map((v) => v * M);
+  const { w } = await bleeding(102, lives);
+  assert.deepEqual(notes(w, 102), ['dies about 12:12 TCT | airstrip 27 min: 53 min to spare | BCT 12 min: 68 min to spare']);
+});
+
+test('no estimate with no loss, or with life going up', async () => {
+  const still = await bleeding(102, [100 * M, 100 * M, 100 * M]);
+  assert.deepEqual(notes(still.w, 102), ['airstrip 27 min | BCT 12 min']);
+  const healing = await bleeding(102, [98 * M, 99 * M, 100 * M]);
+  assert.deepEqual(notes(healing.w, 102), ['airstrip 27 min | BCT 12 min']);
+});
+
+test('the flight minutes to each of the eleven countries: 70% of the standard time by airstrip, 30% by BCT', async () => {
+  const minutes = { 'Mexico': [17, 7], 'Cayman Islands': [23, 10], 'Canada': [27, 12], 'Hawaii': [89, 38], 'United Kingdom': [106, 45], 'Argentina': [111, 47],
+    'Switzerland': [116, 50], 'Japan': [149, 64], 'China': [160, 69], 'UAE': [180, 77], 'South Africa': [197, 85] };
+  for (const [country, [airstrip, bct]] of Object.entries(minutes)) {
+    const { w } = await started({ torn: { ...READ_1125, 100: up(100, country) } });
+    assert.deepEqual(notes(w, 100), ['airstrip ' + airstrip + ' min | BCT ' + bct + ' min'], country);
+  }
+});
+
+test('a flight that lands less than 2 minutes before the estimate is too late', async () => {
+  const soon = await bleeding(101, [12 * M, 11 * M, 10 * M]);
+  assert.deepEqual(notes(soon.w, 101), ['dies about 10:52 TCT | airstrip 17 min: too late | BCT 7 min: 3 min to spare']);
+  const under = await bleeding(101, [2 * M + 8983333, M + 8983333, 8983333]);
+  assert.match(notes(under.w, 101)[0], /\| BCT 7 min: too late$/);
+  const edge = await bleeding(101, [11 * M, 10 * M, 9 * M]);
+  assert.match(notes(edge.w, 101)[0], /\| BCT 7 min: 2 min to spare$/);
+});
+
+test('no note for one beaten, or standing where no flight goes', async () => {
+  const { w } = await started({ torn: { ...READ_1125, 100: profile(100, 'Awoken in Atlantis', 1000) } });
+  assert.deepEqual(notes(w, 100), []);
+  assert.deepEqual(notes(w, 101), []);
+});
+
+// M'aol hittable with his route known from the falls (Mexico, Cayman Islands, United Kingdom,
+// Canada, Hawaii, from 10:41 to 10:45 TCT), seen arriving in Mexico at 10:46 TCT. lives gives
+// his life from 10:40 to 10:45, then at 10:46 and each minute after; he stays in Mexico.
+async function maolInMexico(lives = [151200000, 151200000]) {
+  const { env, w } = await started({ torn: { ...allUp(), 23: up(23, 'Torn City', lives[0]) } });
+  await fall(env, [101, 100, 104, 102]);
+  env.torn[103] = beaten(103, 'Hawaii');
+  await env.advance(MIN);
+  for (const life of lives.slice(1)) {
+    env.torn[23] = up(23, 'Mexico', life);
+    await env.advance(MIN);
+  }
+  return { env, w };
+}
+const flyNotes = (w) => notes(w, 23).filter((n) => /^(airstrip|BCT|dies) /.test(n) || /^(airstrip|BCT):/.test(n));
+
+test('M\'aol: for each flight, the stop on his route where it catches him soonest', async () => {
+  const { env, w } = await maolInMexico();
+  assert.deepEqual(notes(w, 23), [
+    'moves about every 15 min, here since 10:46 TCT',
+    'next Cayman Islands about 11:01 TCT',
+    'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii',
+    'airstrip: fly to Cayman Islands, he\'s there 11:01-11:16 TCT',
+    'BCT: fly to Mexico, he\'s there 10:46-11:01 TCT',
+  ]);
+  await env.advance(6 * MIN);
+  assert.deepEqual(flyNotes(w), ['airstrip: fly to Canada, he\'s there 11:31-11:46 TCT', 'BCT: fly to Mexico, he\'s there 10:46-11:01 TCT']);
+  await env.advance(MIN);
+  assert.deepEqual(flyNotes(w), ['airstrip: fly to Canada, he\'s there 11:31-11:46 TCT', 'BCT: fly to Cayman Islands, he\'s there 11:01-11:16 TCT']);
+});
+
+test('M\'aol: his own death estimate, and too late for a flight that catches him less than 2 minutes before it', async () => {
+  // 15M lost from 10:40 to 10:47, 5M left: dies at 10:49:20.
+  const fast = await maolInMexico([20 * M, 12 * M, 5 * M]);
+  assert.deepEqual(flyNotes(fast.w), ['dies about 10:49 TCT', 'airstrip: too late', 'BCT: too late']);
+  // 7M lost from 10:40 to 10:47, 13M left: dies at 11:00. BCT lands in Mexico at 10:54.
+  const slow = await maolInMexico([20 * M, 16 * M, 13 * M]);
+  assert.deepEqual(flyNotes(slow.w), ['dies about 11:00 TCT', 'airstrip: too late', 'BCT: fly to Mexico, he\'s there 10:46-11:01 TCT']);
+});
+
+test('M\'aol: nothing on where to fly once he has stayed more than 17 minutes in one country', async () => {
+  const { env, w } = await maolInMexico();
+  await env.advance(17 * MIN);
+  assert.equal(flyNotes(w).length, 2, 'seen there 17 minutes after he arrived');
+  await env.advance(MIN);
+  assert.deepEqual(flyNotes(w), []);
+  assert.deepEqual(notes(w, 23).slice(0, 2), ['moves about every 15 min, here since 10:46 TCT', 'next Cayman Islands about 11:01 TCT']);
+});
+
+test('M\'aol: a stop that runs past midnight shows the date on its end', async () => {
+  const env = device({ torn: allUp() });
+  env.now = Date.UTC(2026, 9, 26, 23, 35);
+  env.store[KEY_STORE] = KEY;
+  const w = env.tab().run();
+  await env.advance(0);
+  await fall(env, [101, 100, 104, 102, 103]);
+  await go(env, ['Mexico']);
+  assert.deepEqual(flyNotes(w), ['airstrip: fly to Cayman Islands, he\'s there 23:56-Oct 27 00:11 TCT', 'BCT: fly to Mexico, he\'s there 23:41-23:56 TCT']);
+});
+
+test('M\'aol: nothing on where to fly without his route, or without a time for his arrival', async () => {
+  const noRoute = await started({ torn: allBeaten('Awoken in Mexico') });
+  await go(noRoute.env, ['Cayman Islands']);
+  assert.deepEqual(flyNotes(noRoute.w), []);
+  const { env, w } = await maolInMexico();
+  w.hide();
+  env.torn[23] = up(23, 'Cayman Islands');
+  await env.advance(4 * MIN);
+  w.show();
+  await env.advance(0);
+  assert.deepEqual(flyNotes(w), []);
+});
+
+test('while an estimate shows, the lines are built again only when what they say changes, not every 5 seconds', async () => {
+  const { env, w } = await bleeding(102, [100 * M, 99 * M, 98 * M]);
+  let el = lineEl(w, 102);
+  let rebuilt = 0;
+  for (let i = 1; i <= 120; i++) {
+    if (i % 12 === 0) env.torn[102] = up(102, 'Canada', (98 - i / 12) * M);
+    await env.advance(5 * SEC);
+    if (lineEl(w, 102) !== el) {
+      rebuilt += 1;
+      el = lineEl(w, 102);
+    }
+  }
+  assert.ok(rebuilt >= 10 && rebuilt <= 20, 'built again ' + rebuilt + ' times in 10 minutes');
+});

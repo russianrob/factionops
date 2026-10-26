@@ -87,6 +87,14 @@
   // A defeat time older than this is from an earlier summoning: an Ancient One left standing
   // goes dormant within a week.
   const FELL_MAX_AGE_MS = 8 * 24 * 60 * 60 * 1000;
+  // Each one's life is kept from each reading over this long, for the rate it is losing life.
+  const HIST_MS = 15 * 60 * 1000;
+  const HIST_MAX = 20;
+  // The rate is taken over this long, and needs at least this much of it.
+  const RATE_WINDOW_MS = 10 * 60 * 1000;
+  const RATE_MIN_MS = 2 * 60 * 1000;
+  // A flight that lands less than this before the death estimate is too late.
+  const SPARE_MIN_MS = 2 * 60 * 1000;
 
   // Torn's error codes for a key it won't take: wrong key (2), key owner in federal jail (10),
   // key off for the owner's inactivity (13), key paused (18). Torn blocks an IP that keeps
@@ -209,7 +217,8 @@
   // - since: when its state (or, while it stands, its place) last changed, if the reading
   //   before was close enough to pin that down (ms, 0 for not known);
   // - changedAt: when the script last saw it change (ms, 0 for never), for the highlight;
-  // - upAt: when it was last read standing (ms, 0 for never).
+  // - upAt: when it was last read standing (ms, 0 for never);
+  // - hist: its life at each reading while standing, over the last 15 minutes, as [ms, life].
   function readNpc(n) {
     return {
       name: typeof n.name === 'string' ? n.name : '',
@@ -222,6 +231,9 @@
       since: Number(n.since) || 0,
       changedAt: Number(n.changedAt) || 0,
       upAt: Number(n.upAt) || 0,
+      hist: Array.isArray(n.hist)
+        ? n.hist.filter((h) => Array.isArray(h) && Number(h[0]) > 0 && Number.isFinite(Number(h[1]))).map((h) => [Number(h[0]), Number(h[1])]).slice(-HIST_MAX)
+        : [],
     };
   }
 
@@ -313,6 +325,11 @@
       }
     }
     npc.upAt = npc.state === 'up' ? nowMs : (before ? before.upAt : 0);
+    // Its life over the last 15 minutes, kept only while it stands.
+    const kept = before && before.state === 'up' && npc.state === 'up'
+      ? before.hist.filter((h) => h[0] <= nowMs && nowMs - h[0] <= HIST_MS)
+      : [];
+    npc.hist = npc.state === 'up' ? kept.concat([[nowMs, npc.cur]]).slice(-HIST_MAX) : [];
     r.npcs[id] = npc;
     // M'aol coming within reach is a change of his own, though his own words may not change.
     if (!wasHittable && hittable(r.npcs) && npc.changedAt === nowMs) r.npcs[MAOL].changedAt = nowMs;
@@ -388,6 +405,84 @@
     const i = way && m ? way.indexOf(m.place) : -1;
     if (i < 0) return null;
     return { place: way[(i + 1) % way.length], at: m.since ? m.since + STOP_MS : 0 };
+  }
+
+  // ===== WHERE TO FLY =====
+
+  // Standard flight minutes from Torn City to each of COUNTRIES, in the same order, from
+  // TornTools' travel table (as of 21 Oct 2026).
+  const FLIGHT_MIN = [24, 33, 39, 127, 151, 158, 166, 213, 229, 257, 282];
+  // The two ways of flying the box checks, and the share of the standard time each takes.
+  const FLIGHTS = [['airstrip', 0.7], ['BCT', 0.3]];
+  // M'aol seen in one country longer than this means his 15 minutes don't hold right now, so the
+  // box doesn't say where to fly for him.
+  const OVERSTAY_MS = STOP_MS + 2 * 60 * 1000;
+
+  // A flight's minutes from Torn City: the standard time times its share, rounded to the minute.
+  // 0 for a place with no flight.
+  function flightMin(place, share) {
+    const i = COUNTRIES.indexOf(place);
+    return i < 0 ? 0 : Math.round(FLIGHT_MIN[i] * share);
+  }
+
+  // When this one should die (ms), from how fast its life dropped: the life lost from its oldest
+  // reading in the 10 minutes before its newest, which must be at least 2 minutes back, gives the
+  // rate. The estimate counts from the newest reading. 0 when it isn't losing life, or there is
+  // too little history.
+  function deathAt(n) {
+    const h = n && n.state === 'up' ? n.hist : [];
+    if (h.length < 2) return 0;
+    const last = h[h.length - 1];
+    const first = h.find((x) => last[0] - x[0] <= RATE_WINDOW_MS);
+    if (last[0] - first[0] < RATE_MIN_MS || first[1] <= last[1]) return 0;
+    const rate = (first[1] - last[1]) / (last[0] - first[0]);
+    return last[0] + Math.round(last[1] / rate);
+  }
+
+  // A flight landing at landMs against a death estimate: the whole minutes to spare, or too late
+  // when it lands less than 2 minutes before.
+  function spare(dies, landMs) {
+    const ms = dies - landMs;
+    return ms < SPARE_MIN_MS ? 'too late' : Math.floor(ms / 60000) + ' min to spare';
+  }
+
+  // The note under a standing praetorian: when it should die, then each flight's minutes and
+  // whether it lands in time. With no estimate, only the minutes. '' when its country has no
+  // flight.
+  function flyNote(n, nowMs) {
+    if (!flightMin(n.place, 1)) return '';
+    const dies = deathAt(n);
+    const parts = dies ? ['dies about ' + clock(dies, nowMs)] : [];
+    FLIGHTS.forEach((f) => {
+      const min = flightMin(n.place, f[1]);
+      parts.push(f[0] + ' ' + min + ' min' + (dies ? ': ' + spare(dies, nowMs + min * 60000) : ''));
+    });
+    return parts.join(' | ');
+  }
+
+  // Where each flight catches M'aol soonest, once his route is known and his arrival here had a
+  // time: his stops are 15 minutes each, in route order from his arrival here, round and round.
+  // For each country on the route, a flight catches him on his first stop there that he leaves
+  // at least 2 minutes after it lands. The soonest catch wins, and it is too late when he should
+  // die less than 2 minutes after it. No notes when he has stayed longer than his 15 minutes.
+  function maolFly(r, way, nowMs) {
+    const m = r.npcs[MAOL];
+    const here = way && m ? way.indexOf(m.place) : -1;
+    if (here < 0 || !m.since || m.readAt - m.since > OVERSTAY_MS) return [];
+    const dies = deathAt(m);
+    return FLIGHTS.map((f) => {
+      let best = null;
+      way.forEach((place, i) => {
+        const land = nowMs + flightMin(place, f[1]) * 60000;
+        let k = (i - here + way.length) % way.length;
+        while (m.since + (k + 1) * STOP_MS - SPARE_MIN_MS < land) k += way.length;
+        const from = m.since + k * STOP_MS;
+        const at = Math.max(land, from);
+        if (!best || at < best.at) best = { place: place, at: at, from: from };
+      });
+      if (dies && dies - best.at < SPARE_MIN_MS) return f[0] + ': too late';
+      return f[0] + ': fly to ' + best.place + ', he\'s there ' + hhmm(best.from) + '-' + clock(best.from + STOP_MS, nowMs);
+    });
   }
 
   // ===== ASKING TORN =====
@@ -714,9 +809,15 @@
       const stop = nextStop(r, way);
       if (stop) notes.push('next ' + stop.place + (stop.at ? ' about ' + clock(stop.at, nowMs) : ''));
       if (way) notes.push('route ' + way.join(' > '));
+      const dies = deathAt(n);
+      if (dies) notes.push('dies about ' + clock(dies, nowMs));
+      maolFly(r, way, nowMs).forEach((note) => notes.push(note));
     } else if (id === MAOL) {
       const up = PRAETORIANS.filter((p) => !down(r.npcs[p])).length;
       state = 'shielded, ' + up + ' praetorian' + (up === 1 ? '' : 's') + ' up';
+    } else if (n.state === 'up') {
+      const note = flyNote(n, nowMs);
+      if (note) notes.push(note);
     }
     return {
       id: id,
