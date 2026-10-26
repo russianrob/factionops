@@ -9,7 +9,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as store from "./store.js";
-import { weekWindow, latestUpTo, baselineFor, standings, winnersOf, finaliseWeeks } from "./gym-comp-model.js";
+import { weekWindow, latestUpTo, baselineFor, standings, winnersOf, finaliseWeeks, monthBoard, finaliseMonths }
+  from "./gym-comp-model.js";
 
 // Torn reports gym energy per stat, and the four sum exactly to the total.
 // Reading them separately buys the split — "all dex", "def 75% \u00b7 dex 25%" —
@@ -18,7 +19,10 @@ import { weekWindow, latestUpTo, baselineFor, standings, winnersOf, finaliseWeek
 const STAT_FIELD = { gymstrength: "str", gymdefense: "def", gymspeed: "spe", gymdexterity: "dex" };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DIR = path.join(__dirname, "data", "gym-comp");
+// Worked out at call time, as blood-bags.js does, so a test that sets DATA_DIR
+// first never touches the live files. On the server, DATA_DIR names this same
+// data directory, so nothing moves.
+const dir = () => path.join(process.env.DATA_DIR || path.join(__dirname, "data"), "gym-comp");
 const FACTION = "42055";
 const POLL_MS = 5 * 60 * 1000;
 // Below the poll interval, or the freshness guard would skip every scheduled
@@ -32,8 +36,8 @@ const MIN_GAP_MS = 4 * 60 * 1000;
 const FULL_MS = 2 * 86400000;
 const RETAIN_MS = 45 * 86400000;
 
-const readingsFile = (f) => path.join(DIR, `${f}.json`);
-const resultsFile = (f) => path.join(DIR, `${f}-results.json`);
+const readingsFile = (f) => path.join(dir(), `${f}.json`);
+const resultsFile = (f) => path.join(dir(), `${f}-results.json`);
 
 function readJson(file, fallback) {
   try {
@@ -42,7 +46,7 @@ function readJson(file, fallback) {
   } catch { return fallback; }
 }
 function writeJson(file, data) {
-  fs.mkdirSync(DIR, { recursive: true });
+  fs.mkdirSync(dir(), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data));
 }
 
@@ -61,14 +65,24 @@ export function thin(readings, nowMs = Date.now()) {
     const r = sorted[i];
     const at = Number(r.at);
     if (nowMs - at > RETAIN_MS) continue;
-    // An imported baseline is never thinned away: it cannot be re-fetched.
-    if (nowMs - at <= FULL_MS || r.imported) { keep.push(r); continue; }
+    // An imported baseline is never thinned away: it cannot be re-fetched. Nor
+    // is the reading somebody first appears in: the monthly ladder measures a
+    // mid-month joiner from it, and keeping only the hour's last reading would
+    // drop whatever they trained in their first hour, two days after they joined.
+    if (nowMs - at <= FULL_MS || r.imported || joinedIn(sorted[i - 1], r)) { keep.push(r); continue; }
     const hour = Math.floor(at / 3600000);
     if (seenHour.has(hour)) continue;
     seenHour.add(hour);
     keep.push(r);
   }
   return keep.sort((a, b) => Number(a.at) - Number(b.at));
+}
+
+// Somebody is in this reading who was not in the one before it.
+function joinedIn(prev, r) {
+  if (!prev) return false;
+  const had = prev.members || {};
+  return Object.keys(r.members || {}).some((id) => !had[id]);
 }
 
 // Parsed once per file change. /api/gym is polled by every viewer every minute,
@@ -87,6 +101,11 @@ export function readReadings(factionId = FACTION) {
 }
 export function readResults(factionId = FACTION) {
   return readJson(resultsFile(factionId), { weeks: [] }).weeks || [];
+}
+// The saved months live in the same file as the weeks. A file written before
+// months existed has none, which reads as none.
+export function readMonths(factionId = FACTION) {
+  return readJson(resultsFile(factionId), { months: [] }).months || [];
 }
 
 // Last failure, surfaced on the page. A poller that fails silently for four
@@ -244,16 +263,26 @@ export function importBaseline(board, factionId = FACTION) {
   return { ok: true, at, members: Object.keys(members).length };
 }
 
-/** Record any week that has ended since the last look. */
+/** Record any week, and any month, that has ended since the last look. */
 export function freeze(factionId = FACTION, nowMs = Date.now()) {
+  const readings = readReadings(factionId);
   const done = readResults(factionId);
-  const fresh = finaliseWeeks(readReadings(factionId), done, nowMs);
-  if (!fresh.length) return [];
+  const doneMonths = readMonths(factionId);
+  const fresh = finaliseWeeks(readings, done, nowMs);
+  const freshMonths = finaliseMonths(readings, doneMonths, nowMs);
+  if (!fresh.length && !freshMonths.length) return [];
+  // One file holds both, so every write carries the other forward: freezing a
+  // week must not drop the months, and saving a month must not drop the weeks.
   const weeks = done.concat(fresh).sort((a, b) => b.weekStart - a.weekStart);
-  writeJson(resultsFile(factionId), { factionId, weeks });
+  const months = doneMonths.concat(freshMonths).sort((a, b) => b.monthStart - a.monthStart);
+  writeJson(resultsFile(factionId), { factionId, weeks, months });
   for (const w of fresh) {
     console.log(`[gym-comp] week ${new Date(w.weekStart).toISOString().slice(0, 10)} won by `
       + w.winners.map((x) => `${x.name} (${x.energy})`).join(", "));
+  }
+  for (const m of freshMonths) {
+    console.log(`[gym-comp] month ${new Date(m.monthStart).toISOString().slice(0, 7)} saved: `
+      + `top ${m.top.length}, led by ${m.top[0].name} (${m.top[0].energy})`);
   }
   return fresh;
 }
@@ -275,6 +304,8 @@ export function board(factionId = FACTION, nowMs = Date.now()) {
     lateStart: late,
     currentAt: now ? Number(now.at) : 0,
     history: readResults(factionId),
+    month: monthBoard(readings, nowMs),
+    months: readMonths(factionId),
     health: health(),
   };
 }
