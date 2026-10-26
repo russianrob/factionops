@@ -2,7 +2,7 @@
 // @name         Torn Loot Rangers Floating Panel
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      3.2.1
+// @version      3.2.2
 // @description  Loot Rangers NPC attack info in a compact floating box. Based on the script by IceBlueFire, with the drag handler fixed so an interrupted touch can no longer leave the page unscrollable.
 // @license      All Rights Reserved
 // @match        https://www.torn.com/*
@@ -17,6 +17,10 @@
 
 
 /* CHANGELOG
+ * 3.2.2  The NPC links open Torn's attack page again. Torn has retired the old
+ *        address (loader.php?sid=attack), which now answers only with "This
+ *        endpoint is no longer available", so they go to page.php?sid=attack.
+ *
  * 3.2.1  A drag that is INTERRUPTED rather than finished no longer leaves the
  *        page locked. startDrag sets body{overflow:hidden} and only endDrag
  *        cleared it, and endDrag ran only on touchend — but a touch taken over
@@ -296,7 +300,9 @@ const EXPAND_THRESHOLD_SECONDS = 10 * 60; // 10 minutes
                 const npc = result.npcs[value];
                 if (!npc) return;
 
-                const npcUrl  = 'loader.php?sid=attack&user2ID=' + value;
+                // Torn's attack page. Torn has retired its old address (loader.php?sid=attack),
+                // which now answers only with an error.
+                const npcUrl  = 'page.php?sid=attack&user2ID=' + value;
                 const npcName = '<a href="' + npcUrl + '" ' +
                                 'style="color:' + color + ';text-decoration:underline;" ' +
                                 'target="_blank" title="Attack ' + npc.name + '">' +
@@ -330,7 +336,7 @@ const EXPAND_THRESHOLD_SECONDS = 10 * 60; // 10 minutes
 
             const targetNpc = result.npcs[attackTarget];
             const nextNpcName = targetNpc
-                ? '<a href="loader.php?sid=attack&user2ID=' + attackTarget + '" ' +
+                ? '<a href="page.php?sid=attack&user2ID=' + attackTarget + '" ' +
                   'style="color:' + color + ';text-decoration:underline;" target="_blank" title="Attack ' + targetNpc.name + '">' +
                   targetNpc.name + '</a>'
                 : 'Unknown';

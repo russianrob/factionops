@@ -2,7 +2,7 @@
 // @name         Torn Loot Rangers Floating Panel
 // @namespace    RussianRob
 // @author       RussianRob
-// @version      3.2.1
+// @version      3.2.2
 // @description  Loot Rangers NPC attack info in a compact floating box. Based on the script by IceBlueFire, with the drag handler fixed so an interrupted touch can no longer leave the page unscrollable.
 // @license      All Rights Reserved
 // @match        https://www.torn.com/*
