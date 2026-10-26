@@ -463,3 +463,132 @@ test('storage that throws on reading, or no GM functions at all: all three on, a
   flip(bare, 'Jail', false);
   assert.deepEqual(hiddenRows(bare), ['hospital', 'radiation', 'flying']);
 });
+
+// ---------------------------------------------------------------------------------------------
+// Checking again
+// ---------------------------------------------------------------------------------------------
+
+test('a new page of results is checked as soon as Torn puts it in', async () => {
+  const w = page().run();
+  w.newPage(PLACEHOLDER);
+  await settle();
+  assert.equal(count(w), '');
+  w.newPage(row('jail2', [icon(16)]) + row('okay2', [icon(1)]) + row('flying2', [icon(71)]));
+  await settle();
+  assert.deepEqual(hiddenRows(w), ['jail2', 'flying2']);
+  assert.equal(count(w), '2 of 3 hidden on this page');
+});
+
+test('a list Torn replaces whole is checked the same way, and the bar stays put', async () => {
+  const w = page().run();
+  w.replaceList(row('hospital2', [icon(15)]) + row('okay2', [icon(1)]));
+  await settle();
+  assert.deepEqual(hiddenRows(w), ['hospital2']);
+  assert.equal(count(w), '1 of 2 hidden on this page');
+  assert.equal(barOf(w).nextElementSibling, w.document.querySelector('.users-list-title'));
+});
+
+test('a wrapper Torn replaces whole is checked the same way, and so are the pages after it', async () => {
+  // Watching the wrapper itself would go deaf here: the old wrapper is the one watched, and it
+  // is gone from the page.
+  const w = page().run();
+  const old = w.document.querySelector('.userlist-wrapper');
+  const fresh = w.document.createElement('div');
+  fresh.className = 'userlist-wrapper';
+  fresh.innerHTML = TITLE + '<ul class="user-info-list-wrap">' + row('hospital2', [icon(15)]) + row('okay2', [icon(1)]) + '</ul>';
+  old.parentNode.replaceChild(fresh, old);
+  await settle();
+  assert.deepEqual(hiddenRows(w), ['hospital2']);
+  assert.equal(barOf(w).nextElementSibling, fresh.querySelector('.users-list-title'));
+  w.newPage(row('jail3', [icon(16)]) + row('okay3', [icon(1)]));
+  await settle();
+  assert.deepEqual(hiddenRows(w), ['jail3']);
+  assert.equal(count(w), '1 of 2 hidden on this page');
+});
+
+test('when Torn redraws the title bar and the list, and the bar goes with them, the bar comes back before the new title bar', async () => {
+  const w = page().run();
+  const holder = w.document.querySelector('.userlist-wrapper');
+  holder.innerHTML = TITLE + '<ul class="user-info-list-wrap">' + row('jail2', [icon(16)]) + '</ul>';
+  await settle();
+  assert.equal(barOf(w).nextElementSibling, holder.querySelector('.users-list-title'));
+  assert.equal(count(w), 'The 1 on this page is hidden.');
+});
+
+test('with no wrapper, the script watches from above the list\'s parent: a new page is checked', async () => {
+  const w = page({ wrapper: false }).run();
+  assert.equal(w.observed[0]?.target, w.list().parentNode.parentNode);
+  w.newPage(row('hospital2', [icon(15)]) + row('okay2', [icon(1)]));
+  await settle();
+  assert.deepEqual(hiddenRows(w), ['hospital2']);
+});
+
+test('when the list is not on the page yet, the script waits for it, then watches from above its wrapper', async () => {
+  const w = page({ list: false }).run();
+  assert.equal(w.bar(), null);
+  assert.equal(w.observed[0]?.target, w.document.body);
+  const box = w.document.querySelector('.content-wrapper');
+  const holder = w.document.createElement('div');
+  holder.className = 'userlist-wrapper';
+  box.appendChild(holder);
+  holder.appendChild(w.document.createElement('div')).className = 'users-list-title';
+  const ul = w.document.createElement('ul');
+  ul.className = 'user-info-list-wrap';
+  holder.appendChild(ul);
+  ul.innerHTML = ROWS;
+  await settle();
+  assert.deepEqual(hiddenRows(w), ['hospital', 'radiation', 'jail', 'flying']);
+  assert.equal(barOf(w).nextElementSibling, holder.querySelector('.users-list-title'));
+  assert.equal(w.observed.at(-1)?.target, box);
+  w.newPage(row('jail2', [icon(16)]));
+  await settle();
+  assert.equal(count(w), 'The 1 on this page is hidden.');
+});
+
+test('it watches for rows added and removed only, never attribute or text changes', async () => {
+  const w = page({ list: false }).run();
+  const holder = w.document.createElement('div');
+  holder.className = 'userlist-wrapper';
+  holder.innerHTML = '<ul class="user-info-list-wrap">' + ROWS + '</ul>';
+  w.document.body.appendChild(holder);
+  await settle();
+  assert.ok(w.observed.length >= 2);
+  for (const { options } of w.observed) assert.deepEqual(options, { childList: true, subtree: true });
+});
+
+test('the script\'s own changes (hiding rows, the count, the bar) set off no more checks', async () => {
+  const w = page().run();
+  await settle();
+  assert.equal(w.deliveries, 0, 'starting');
+  w.newPage(row('jail2', [icon(16)]) + row('okay2', [icon(1)]));
+  await settle();
+  await settle();
+  assert.equal(w.deliveries, 1, 'one for Torn\'s new page, none for the check\'s own changes');
+  flip(w, 'Jail', false);
+  await settle();
+  assert.equal(count(w), '0 of 2 hidden on this page');
+  assert.equal(w.deliveries, 1, 'a switch sets off none');
+});
+
+test('a TornTools line Torn or TornTools adds later under a hidden row is hidden too', async () => {
+  const w = page().run();
+  const hospital = [...w.list().children].find((li) => rowName(li) === 'hospital');
+  const line = w.document.createElement('div');
+  line.className = 'tt-stats-estimate';
+  line.textContent = 'Stats Estimate: 9';
+  hospital.after(line);
+  await settle();
+  assert.equal(matching(w, 'display: none').has(line), true);
+});
+
+test('an error in a check stays there: the script starts, and the next check works', async () => {
+  const w = page({ rows: row('hospital', [icon(15)]) });
+  // A row that throws when its classes are touched: a surprise in Torn's page.
+  Object.defineProperty(w.list().firstElementChild, 'classList', { get() { throw new Error('a surprise in Torn\'s page'); } });
+  assert.doesNotThrow(() => w.run());
+  assert.deepEqual(w.logs, [RUNNING]);
+  w.newPage(row('jail2', [icon(16)]) + row('okay2', [icon(1)]));
+  await settle();
+  assert.deepEqual(hiddenRows(w), ['jail2']);
+  assert.equal(count(w), '1 of 2 hidden on this page');
+});

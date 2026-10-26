@@ -60,6 +60,8 @@
   const BY_LABEL = [[/^hospital/i, 'hospital'], [/^jail/i, 'jail'], [/^(?:traveling|abroad)/i, 'abroad']];
   // TornTools' lines under a row (its stats estimate and last action) go with the row.
   const TT_LINES = ['tt-stats-estimate', 'tt-last-action'];
+  // What the script watches for: rows added and removed, never attribute changes.
+  const WATCH = { childList: true, subtree: true };
 
   // ===== GM STORAGE =====
 
@@ -272,6 +274,44 @@
     } catch (e) {
       // A surprise in Torn's page stops this one check. It never breaks the page.
     }
+    // The check's own changes (the count, the bar) are not Torn's. Their records are dropped,
+    // so they never set off another check.
+    observer.takeRecords();
+  }
+
+  // ===== CHECKING AGAIN =====
+
+  // Torn loads each page of results into the list without reloading the page, and a new page or
+  // sort order replaces the rows, the whole list, or the wrapper around it. The script watches
+  // from one level above the list's wrapper (or above the list's parent, when there is no
+  // wrapper), so a wrapper Torn replaces whole is seen too. It watches for rows added and
+  // removed, and checks again as soon as Torn has put them in, before the page is drawn, so a
+  // hidden row never shows. Until the list is on the page, it watches the whole page for it.
+  let waiting = false;
+
+  // The list's wrapper, or else the list's parent. null while the list isn't on the page.
+  function wrapper() {
+    const list = document.querySelector(LIST);
+    return document.querySelector('.userlist-wrapper') || (list && list.parentElement);
+  }
+
+  function watch() {
+    const el = wrapper();
+    waiting = !el;
+    observer.disconnect();
+    observer.observe((el && el.parentElement) || document.body, WATCH);
+  }
+
+  function onChanges() {
+    try {
+      if (waiting) {
+        if (!wrapper()) return;
+        watch();
+      }
+      check();
+    } catch (e) {
+      // Dropped, as an error in a check is.
+    }
   }
 
   // ===== START =====
@@ -282,6 +322,8 @@
   style.textContent = CSS;
   (document.head || root).appendChild(style);
   const bar = buildBar();
+  const observer = new MutationObserver(onChanges);
+  watch();
   check();
   console.log('[Torn User List Filter ' + VERSION + '] running');
 })();
