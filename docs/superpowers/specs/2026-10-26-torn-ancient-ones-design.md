@@ -8,6 +8,7 @@
   - 07:54 EDT: with a screenshot of a chat about where to fly, they asked: "predict where to fly and predict if using bct will get usnthere before its dead", then chose "airstrip and bct" for the flights to check (Q7) and "Yes (Recommended)" for where to fly for M'aol (Q8).
   - 08:15 EDT: a read of Torn's API found M'aol abroad while still shielded, which changed "What Torn does" and M'aol's shielded line.
   - 08:48 EDT: a read with four beaten put him in Canada, where the newest had fallen, and agreed with TornStats on all six. TornStats' time for one fall had moved by a second, which changed "Asking TornStats". Tests for a clock set back were added to "Testing".
+  - 09:39 to 09:42 EDT, testing a 0.9.0 build: the owner asked "please have it in order they were beaten please", then "the first four are in order except for the last one", and approved the design with "yes go ahead, do recommended", which also said yes to the footer saying when the box tries again after Torn says to wait. That changed "The box" (the order of the lines), "Asking TornStats" (what a defeat time is used for), "Asking Torn" (the footer) and "Testing".
 
 **Script:** `server/public/scripts/torn-ancient-ones.user.js` and `.meta.js`, version 1.0.0. Tests: `server/torn-ancient-ones.test.mjs`.
 
@@ -84,7 +85,7 @@ At Halloween, a player who has collected 9,999 treats can summon the Ancient One
     - before the window: "All asleep. Summoning opens Oct 26 10:00 TCT."
     - after it, or when 48 h after the death falls after it: "All asleep. No more summonings this Halloween."
 - **Lines:**
-  - M'aol comes first. The praetorians follow, nearest country first, in Torn's flight order: Mexico, Cayman Islands, Canada, Hawaii, United Kingdom, Argentina, Switzerland, Japan, China, UAE, South Africa. One with no known country goes last. The order stays the same for the whole summoning.
+  - M'aol comes first. The praetorians follow: first those that are down, in the order they fell, then those standing. One down with no defeat time comes before those with one, as most likely it fell before the script was watching. Otherwise, and between falls at the same time, the nearest country comes first, in Torn's flight order: Mexico, Cayman Islands, Canada, Hawaii, United Kingdom, Argentina, Switzerland, Japan, China, UAE, South Africa. One with no known country goes last. A praetorian that falls moves up to join those down.
 
   | Situation | The line |
   |---|---|
@@ -126,7 +127,7 @@ TornStats says M'aol moves about every 15 minutes through his praetorians' count
 - **TornStats' times can tie, or near enough:** on 2026-10-26, Dyno'salam and Ladso'myna fell a second apart, at 11:52:36 and 11:52:37 TCT. An earlier read gave both 11:52:37: TornStats' times can move by a second between reads. Falls under 30 s apart give no route from the falls, whoever timed them. TornStats is asked again only while a fall has no time of its own from it, and each answer's times replace the ones before.
 - **How:** by GM_xmlhttpRequest, with `@connect www.tornstats.com`, sending no cookies. The feed doesn't allow pages on torn.com to read it, so where a host has no GM_xmlhttpRequest the read fails quietly. The route then waits for the script's own readings.
 - **A defeat time counts** when it is no more than 8 days old, isn't in the future (with a minute's slack for clocks), and is no more than a minute before the script last saw that one standing. So an old time from an earlier summoning isn't used.
-- **The defeat time of each one** is TornStats' when it counts, else the script's own (the 3-minute rule). It is used for the beaten line's time, the order of the falls for M'aol's route, and M'aol's death for the next summoning.
+- **The defeat time of each one** is TornStats' when it counts, else the script's own (the 3-minute rule). It is used for the beaten line's time, the order of the lines, the order of the falls for M'aol's route, and M'aol's death for the next summoning.
 - **Answers that can't be read,** or no answer, change nothing. The next try is 5 minutes later.
 
 ## Where to fly
@@ -186,7 +187,7 @@ For each of the six, from its v2 profile:
   | 5 (too many requests), 8 (IP blocked), 9 (API off) | the next sweep waits 5 minutes |
   | anything else, or no answer | try again in a minute |
 
-  The footer shows Torn's message, with the key cut out.
+  The footer shows Torn's message, with the key cut out. While Torn has said to wait, it also says when the next try is ("Trying again at 13:41 TCT."); a wait stored more than 5 minutes ahead is from a clock set back and gets no time.
 
 ## The API key
 
@@ -288,7 +289,7 @@ Tests come first, with node:test and linkedom, in `server/torn-ancient-ones.test
   - a page that becomes visible sweeps once a sweep is due;
   - a closed box stops sweeping, and a folded one doesn't;
   - calls go one after another, and an error stops the rest;
-  - code 2 stops sweeps until a key is saved, code 5 waits 5 minutes, and no answer tries again in a minute;
+  - code 2 stops sweeps until a key is saved, code 5 waits 5 minutes and the footer says when it tries again, and no answer tries again in a minute;
   - a sweep time or a wait stored ahead of the clock (the clock was set back) doesn't stop the sweeps;
   - the URL is right;
   - the key is never in the page, the console or the footer.

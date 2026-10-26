@@ -686,7 +686,7 @@ test('the box: bottom left, titled "Ancient Ones", in its own styles', async () 
   assert.match(css, /\.tao-head\{[^}]*touch-action:none/);
 });
 
-test('the lines at 11:25 TCT: M\'aol first, then the praetorians nearest country first, each in its own words', async () => {
+test('the lines at 11:25 TCT: M\'aol first, then the one beaten, then those standing nearest country first, each in its own words', async () => {
   const { w } = await started({ torn: READ_1125 });
   assert.deepEqual(lineTexts(w), [
     'M\'aol  Torn City  100%  shielded, 4 praetorians up',
@@ -707,9 +707,9 @@ test('the lines at 12:15 TCT: M\'aol shielded in the Cayman Islands, three beate
     'M\'aol  Cayman Islands  100%  shielded, 2 praetorians up',
     'Nol\'dasaym  Mexico  beaten',
     'Dyno\'salam  Cayman Islands  beaten',
+    'Ladso\'myna  United Kingdom  beaten',
     'Asmol\'yand  Canada  55%  Attack',
     'Sylo\'nadam  Hawaii  98%  Attack',
-    'Ladso\'myna  United Kingdom  beaten',
   ]);
   assert.equal(summary(w), '2 of 5 praetorians up. M\'aol shielded.');
 });
@@ -1558,4 +1558,60 @@ test('a key storage won\'t keep is not used, and the row says so', async () => {
   assert.equal(part(w, 'tao-keymsg').textContent, 'Couldn\'t save the key on this device.');
   assert.equal(env.torns().length, 0);
   assert.equal(summary(w), 'Needs an API key.');
+});
+
+// ---------------------------------------------------------------------------------------------
+// The owner's asks while testing a 0.9.0 build (Oct 26): the praetorians in the order they were
+// beaten, and the footer saying when the box tries again after Torn says to wait.
+
+test('the praetorians that are down come in the order they fell, as the box had them at 13:40 TCT on Oct 26', async () => {
+  // TornStats' defeat times from that day; Sylo'nadam's to the minute, as the box showed it.
+  const feed = [fellEntry(101, '2026-10-26T10:24:02Z'), fellEntry(100, '2026-10-26T11:52:36Z'), fellEntry(104, '2026-10-26T11:52:37Z'),
+    fellEntry(102, '2026-10-26T12:39:01Z'), fellEntry(103, '2026-10-26T13:36:00Z')];
+  const env = device({ torn: allBeaten('Awoken in United Kingdom'), tornstats: feed });
+  env.now = Date.UTC(2026, 9, 26, 13, 40);
+  env.store[KEY_STORE] = KEY;
+  const w = env.tab().run();
+  await env.advance(5 * SEC);
+  assert.deepEqual(lineTexts(w), [
+    'M\'aol  United Kingdom  100%  Attack',
+    'Nol\'dasaym  Mexico  beaten 10:24 TCT',
+    'Dyno\'salam  Cayman Islands  beaten 11:52 TCT',
+    'Ladso\'myna  United Kingdom  beaten 11:52 TCT',
+    'Asmol\'yand  Canada  beaten 12:39 TCT',
+    'Sylo\'nadam  Hawaii  beaten 13:36 TCT',
+  ]);
+});
+
+test('falls at the same time go nearest country first, one down with no defeat time comes before those with one, and those standing come last', async () => {
+  // Hawaii's fall has no time: TornStats doesn't list it, and the box first saw it beaten.
+  // Mexico's and the Cayman Islands' came in the same second. Canada and the UK still stand.
+  const torn = { ...allBeaten('Awoken'), 102: up(102, 'Canada'), 104: up(104, 'United Kingdom') };
+  const env = device({ torn, tornstats: [fellEntry(100, '2026-10-26T11:00:00Z'), fellEntry(101, '2026-10-26T11:00:00Z')] });
+  env.now = Date.UTC(2026, 9, 26, 12, 30);
+  env.store[KEY_STORE] = KEY;
+  const w = env.tab().run();
+  await env.advance(5 * SEC);
+  assert.deepEqual([...boxOf(w).querySelectorAll('.tao-line')].map((el) => Number(el.getAttribute('data-id'))), [23, 103, 101, 100, 102, 104]);
+  assert.equal(lineText(w, 103), 'Sylo\'nadam  Hawaii  beaten');
+});
+
+test('while Torn says to wait, the footer says when the box tries again; a wait from a clock set back gets no time', async () => {
+  const env = device();
+  env.store[KEY_STORE] = KEY;
+  env.tornError = { code: 5, error: 'Too many requests' };
+  const w = env.tab().run();
+  await env.advance(SEC);
+  assert.equal(footer(w), 'Couldn\'t read Torn: Too many requests (code 5). Trying again at 10:45 TCT.');
+  env.tornError = null;
+  await env.advance(5 * MIN);
+  assert.ok(footer(w).startsWith('updated '), footer(w));
+  // A wait further off than Torn ever asks for is from a clock set back: the sweeps don't keep
+  // to it, so the footer gives no time for it. The page is out of view, so it only draws.
+  const back = device();
+  back.store[KEY_STORE] = KEY;
+  back.store[READING_STORE] = JSON.stringify({ at: T0 - MIN, wait: T0 + 60 * MIN, error: 'Too many requests (code 5)' });
+  const hidden = back.tab({ visible: false }).run();
+  await back.advance(SEC);
+  assert.equal(footer(hidden), 'Couldn\'t read Torn: Too many requests (code 5).');
 });

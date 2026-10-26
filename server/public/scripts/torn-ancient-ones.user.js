@@ -53,7 +53,8 @@
   const PRAETORIANS = [100, 101, 102, 103, 104];
   const IDS = [MAOL].concat(PRAETORIANS);
   // Torn's countries abroad, nearest first, as Torn's flights go. Only these names count as a
-  // country in Torn's words, and the box lists the praetorians in this order.
+  // country in Torn's words, and the box lists the praetorians standing in this order, and
+  // falls it can't tell apart by time.
   const COUNTRIES = ['Mexico', 'Cayman Islands', 'Canada', 'Hawaii', 'United Kingdom', 'Argentina',
     'Switzerland', 'Japan', 'China', 'UAE', 'South Africa'];
   const TORN_CITY = 'Torn City';
@@ -782,7 +783,7 @@
     const key = apiKey();
     setText(box.querySelector('.tao-summary'), summary(r, key, nowMs));
     setText(box.querySelector('.tao-age'), footer(r, key, nowMs));
-    const lines = order(r.npcs).map((id) => line(id, r, nowMs));
+    const lines = order(r).map((id) => line(id, r, nowMs));
     const plan = JSON.stringify(lines);
     if (plan !== drawn) {
       drawn = plan;
@@ -804,14 +805,22 @@
     if (input.getAttribute('placeholder') !== hint) input.setAttribute('placeholder', hint);
   }
 
-  // The ids to draw, in order: M'aol first, then the praetorians nearest country first. One with
-  // no known country goes last. One not read yet has no line.
-  function order(npcs) {
+  // The ids to draw, in order: M'aol first, then the praetorians that are down in the order they
+  // fell, then those standing. One down with no defeat time comes before those with one: most
+  // likely it fell before the script was watching. Otherwise, and between falls at the same
+  // time, the nearest country comes first, and one with no known country goes last. One not
+  // read yet has no line.
+  function order(r) {
+    const npcs = r.npcs;
     const rank = (id) => {
       const i = COUNTRIES.indexOf(npcs[id].place);
       return i < 0 ? COUNTRIES.length : i;
     };
-    const praetorians = PRAETORIANS.filter((id) => npcs[id]).sort((a, b) => rank(a) - rank(b) || a - b);
+    // 0: down with no defeat time; 1: down with one, earliest first; 2: standing.
+    const group = (id) => (down(npcs[id]) ? (fellAt(r, id) ? 1 : 0) : 2);
+    const byTime = (a, b) => (group(a) === 1 ? fellAt(r, a) - fellAt(r, b) : 0);
+    const praetorians = PRAETORIANS.filter((id) => npcs[id])
+      .sort((a, b) => group(a) - group(b) || byTime(a, b) || rank(a) - rank(b) || a - b);
     return (npcs[MAOL] ? [MAOL] : []).concat(praetorians);
   }
 
@@ -916,11 +925,16 @@
     return 'Next summoning possible 48 h after M\'aol\'s death.';
   }
 
-  // The footer: how long ago Torn last answered, or why the last call failed.
+  // The footer: how long ago Torn last answered, or why the last call failed and, while Torn has
+  // said to wait, when the next try is.
   function footer(r, key, nowMs) {
     if (!key) return '';
     if (r.stop) return 'Torn won\'t take the key: ' + r.error + '. Save a new key.';
-    if (r.error) return 'Couldn\'t read Torn: ' + r.error + '.' + (r.okAt ? ' Last answer ' + ago(nowMs - r.okAt) + ' ago.' : '');
+    // A wait further off than Torn asks for is from a clock set back: the sweeps don't keep to
+    // it (sweepDue), so it gets no time.
+    const waiting = r.wait > nowMs && r.wait - nowMs <= BACK_OFF_MS;
+    const retry = waiting ? ' Trying again at ' + clock(r.wait, nowMs) + '.' : '';
+    if (r.error) return 'Couldn\'t read Torn: ' + r.error + '.' + retry + (r.okAt ? ' Last answer ' + ago(nowMs - r.okAt) + ' ago.' : '');
     if (r.okAt) return 'updated ' + ago(nowMs - r.okAt) + ' ago';
     return 'Reading Torn...';
   }
