@@ -43,7 +43,7 @@
   - In the worktree, only `T` (which sets `TULF_SRC`) runs, never a bare `node --test`: the whole suite there would fail this file for want of the served script.
   - The whole suite runs once, in `/opt/warboard/server`, after the fast-forward.
 - **Commits** name only this plan's paths: `git add -- <new paths>`, then `git commit -- <paths>`. Trailer: `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- **Torn's rules for the live check:** it reads one page that the owner opened, and only if asked, Torn's API: at most 30 calls, 2 s apart, on the owner's key. Nothing on Torn is clicked or loaded for it.
+- **Torn's rules for the live check:** it reads one page that the owner opened (with a watcher that only reads the changes Torn makes to it), and only if asked, Torn's API: at most 30 calls, 3 s apart, on the owner's key, and only while warboard's own use of that key is under 50 a minute. Nothing on Torn is clicked or loaded for it.
 
 ## Review Focus
 
@@ -1475,23 +1475,33 @@ Expected: the commit, then only `?? server/node_modules`.
 
 - [ ] **Step 1: The live check (a gate).** It reads a real results page in the owner's warboard iOS app, through its remote inspect, and changes nothing there. It needs the owner, so STOP here and send them this, then wait:
 
-> The filter is built and reviewed. Before it ships I need one read-only look at a real results page. In the warboard app: Settings, "Remote inspect (owner)", turn on "Allow remote inspect", then open your search: https://www.torn.com/page.php?sid=UserList&orderBy=name&orderDirection=asc&levelFrom=75&lastAction=7&searchConditionNot=true&searchConditions=inFederalJail . Keep the app's AI chat closed for a few minutes (it shares the inspect line). Tell me when the page is open. Later I'll ask you to click Next once.
+> The filter is built and reviewed. Before it ships I need one read-only look at a real results page. In the warboard app: Settings, "Remote inspect (owner)", turn on "Allow remote inspect", then open your search: https://www.torn.com/page.php?sid=UserList&orderBy=name&orderDirection=asc&levelFrom=75&lastAction=7&searchConditionNot=true&searchConditions=inFederalJail . Keep the app's AI chat closed for a few minutes (it shares the inspect line). Tell me when the page is open. Later I'll ask you to click Next once, and, if you don't mind, to change the sort once.
 
-`live/probe.js` and `live/live.mjs` are in the workspace from plan time (Setup checked their hashes). If they must be written again, this is `live/probe.js`:
+`live/probe.js` and `live/live.mjs` were written at plan time, and the final review's fix pass rewrote both (the ledger has their new hashes). If they must be written again, this is `live/probe.js`:
 
 ```js
 // Read-only probe of Torn's user list search, for the Torn User List Filter's live check. It
-// reads the page the owner has open and returns what it found; it changes nothing on the page.
-// The one thing it keeps is a note on window of the list, its wrapper and the box the filter
-// watches (the one above the wrapper), so that a second run, after the owner clicks Next, can say
-// whether Torn kept them or put new ones in.
-const list = document.querySelector('ul.user-info-list-wrap');
+// reads the page the owner has open and returns what it found. It changes nothing on the page
+// and sends nothing.
+// Two things stay on window between runs. One is a weak note of the list, its wrapper, the box
+// the filter watches (the one above the wrapper), the title bar and the first row, so that a run
+// after the owner clicks Next can say whether Torn kept them or put new ones in. The other is a
+// watcher that only reads: it notes in short each change Torn makes to the page (where, and how
+// many things went in and out; no text from the page), so that the next run can say in what
+// order Torn changed things on Next, and how often it changes them when nothing is clicked. It
+// keeps the last 200 notes, and stops itself 30 minutes after the first run.
+const LIST = 'ul.user-info-list-wrap';
+const list = document.querySelector(LIST);
 const wrap = document.querySelector('.userlist-wrapper');
 const title = document.querySelector('.users-list-title');
-const holder = wrap || (list && list.parentElement);
+// The list's wrapper as the filter finds it: the .userlist-wrapper around the list, or else the
+// list's parent. The filter watches the box above it, and looks for the title bar in it first.
+const holder = list && (list.closest('.userlist-wrapper') || list.parentElement);
 const box = holder && holder.parentElement;
-const describe = (n) => n.tagName.toLowerCase() + (n.id ? '#' + n.id : '')
-  + (typeof n.className === 'string' && n.className.trim() ? '.' + n.className.trim().split(/\s+/).join('.') : '');
+const ownTitle = holder && holder.querySelector('.users-list-title');
+const describe = (n) => (n.nodeType !== 1 ? (n.nodeType === 3 ? '#text' : '#node' + n.nodeType)
+  : n.tagName.toLowerCase() + (n.id ? '#' + n.id : '')
+    + (typeof n.className === 'string' && n.className.trim() ? '.' + n.className.trim().split(/\s+/).join('.') : ''));
 const chain = (el) => {
   const out = [];
   for (let n = el; n && n !== document.body && out.length < 8; n = n.parentElement) out.push(describe(n));
@@ -1501,36 +1511,85 @@ const attrs = (el) => ({ title: el.getAttribute('title'), aria: el.getAttribute(
 const shown = (el) => (typeof getComputedStyle === 'function' ? getComputedStyle(el).display : el.style.display) !== 'none';
 const rows = list ? [...list.children].filter((n) => n.tagName === 'LI').map((li) => {
   const link = li.querySelector('.user.name');
-  const icons = [...li.querySelectorAll('li[id^="icon"]')].map((ic) => {
-    const inner = ic.querySelector('[aria-label], [title]');
-    return { id: ic.id, className: String(ic.className), ...attrs(ic), shown: shown(ic),
-      inner: inner ? { tag: inner.tagName.toLowerCase(), className: String(inner.className), ...attrs(inner) } : null };
-  });
+  const icons = [...li.querySelectorAll('li[id^="icon"]')].map((ic) => ({
+    id: ic.id, className: String(ic.className), ...attrs(ic), shown: shown(ic),
+    // The things inside the icon that carry a label, in order: the filter reads them after the
+    // icon's own, and takes the first label that isn't empty.
+    inner: [...ic.querySelectorAll('[aria-label], [title]')].slice(0, 4)
+      .map((n) => ({ tag: n.tagName.toLowerCase(), className: String(n.className), ...attrs(n) })),
+  }));
   const after = [];
   for (let n = li.nextElementSibling; n && n.tagName !== 'LI'; n = n.nextElementSibling) after.push(describe(n));
   return { tag: describe(li), hasName: !!link,
     xid: link ? ((/XID=(\d+)/.exec(link.getAttribute('href') || '') || [])[1] || null) : null,
     hidden: li.hidden, inlineDisplay: li.style.display, shown: shown(li), icons, after };
 }) : [];
+const firstRow = list ? [...list.children].find((n) => n.tagName === 'LI' && n.querySelector('.user.name')) || null : null;
 const prev = window.__tulfProbe;
+const now = () => Math.round(performance.now());
+
+// The watcher, put on the page on the first run.
+let watcher = prev && prev.watcher;
+if (!watcher) {
+  watcher = { started: now(), since: now(), notes: [], seen: 0, inBox: 0, stopped: false, box: box ? new WeakRef(box) : null };
+  const w = watcher;
+  const mo = new MutationObserver((records) => {
+    if (now() - w.started > 30 * 60 * 1000) {
+      mo.disconnect();
+      w.stopped = true;
+      return;
+    }
+    const watched = w.box && w.box.deref();
+    for (const r of records) {
+      const inside = !!(watched && watched.contains(r.target));
+      w.seen += 1;
+      if (inside) w.inBox += 1;
+      w.notes.push({ t: now() - w.since, target: describe(r.target), inBox: inside, added: r.addedNodes.length, removed: r.removedNodes.length,
+        first: r.addedNodes[0] ? '+' + describe(r.addedNodes[0]) : r.removedNodes[0] ? '-' + describe(r.removedNodes[0]) : '' });
+      if (w.notes.length > 200) w.notes.shift();
+    }
+  });
+  mo.observe(document.body, { childList: true, subtree: true });
+}
+// What it saw since the run before, then a fresh start for the next run. The box it counts is
+// the one the filter would watch now.
+const changes = prev ? { seconds: Math.round((now() - watcher.since) / 1000), records: watcher.seen, inBox: watcher.inBox,
+  stopped: watcher.stopped, notes: watcher.notes } : null;
+watcher.since = now();
+watcher.seen = 0;
+watcher.inBox = 0;
+watcher.notes = [];
+watcher.box = box ? new WeakRef(box) : null;
+
 const out = {
   url: location.pathname + location.search,
   at: new Date().toISOString(),
+  lists: document.querySelectorAll(LIST).length,
+  wrappers: document.querySelectorAll('.userlist-wrapper').length,
+  titleBars: document.querySelectorAll('.users-list-title').length,
   wrapper: !!wrap,
   titleBar: !!title,
   titleInWrapper: !!(wrap && title && wrap.contains(title)),
+  listInWrapper: !!(list && list.closest('.userlist-wrapper')),
+  titleInHolder: !!ownTitle,
+  holder: holder ? describe(holder) : null,
+  box: box ? describe(box) : null,
   listChain: list ? chain(list) : null,
   titleChain: title ? chain(title) : null,
   sameListAsBefore: prev ? prev.list.deref() === list : null,
-  sameWrapperAsBefore: prev ? prev.wrap.deref() === wrap : null,
+  sameWrapperAsBefore: prev ? prev.holder.deref() === holder : null,
   sameBoxAsBefore: prev ? prev.box.deref() === box : null,
-  box: box ? describe(box) : null,
+  sameTitleAsBefore: prev ? prev.title.deref() === (ownTitle || title) : null,
+  sameFirstRowAsBefore: prev ? prev.firstRow.deref() === firstRow : null,
   pagination: [...document.querySelectorAll('[class*="pagination"], [class*="pager"], .page-number')].slice(0, 12).map(describe),
   placeholders: list ? list.querySelectorAll('.ajax-placeholder').length : 0,
+  placeholdersOnPage: document.querySelectorAll('.ajax-placeholder').length,
+  preloaders: document.querySelectorAll('.ajax-preloader').length,
+  changes,
   rows,
 };
 const keep = (el) => (el ? new WeakRef(el) : { deref: () => null });
-window.__tulfProbe = { list: keep(list), wrap: keep(wrap), box: keep(box) };
+window.__tulfProbe = { list: keep(list), holder: keep(holder), box: keep(box), title: keep(ownTitle || title), firstRow: keep(firstRow), watcher };
 return out;
 ```
 
@@ -1538,11 +1597,15 @@ and this is `live/live.mjs`:
 
 ```js
 // The Torn User List Filter's live check, outside the repo (Task 4 Step 1). Read-only on Torn.
-//   node live.mjs probe <out.json>           runs probe.js on the page the owner has open in the
-//                                            warboard app (remote inspect), saves what it found
-//                                            and prints a summary with no names or ids in it
-//   node live.mjs abroad <probe.json> [--dry] asks Torn's API where the people in the rows are:
-//                                            the owner's key, at most 30 calls, 2 s apart
+//   node live.mjs probe <out.json>            runs probe.js on the page the owner has open in the
+//                                             warboard app (remote inspect), saves what it found
+//                                             (mode 600) and prints a summary with no names or
+//                                             ids in it
+//   node live.mjs summary <probe.json>        prints that summary again
+//   node live.mjs keyuse                      warboard's own calls on the owner's key, a minute,
+//                                             over the last 5 minutes
+//   node live.mjs abroad <probe.json> [--dry]  asks Torn's API where some of the people in the rows
+//                                             are: the owner's key, at most 30 calls, 3 s apart
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1557,15 +1620,56 @@ const BY_LABEL = [[/^hospital/i, 'hospital'], [/^jail/i, 'jail'], [/^(?:travelin
 const num = (id) => Number((/^icon(\d+)(?:_|$)/.exec(id || '') || [])[1] || 0);
 const known = (n) => KNOWN.some(([from, to]) => n >= from && n <= to);
 const plain = (text) => String(text || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-const labelOf = (ic) => plain(ic.aria || ic.title || (ic.inner && (ic.inner.aria || ic.inner.title)));
+// Text from the page with its digits masked, safe to print: an icon's id keeps only its shape.
+const masked = (text) => String(text || '').replace(/^icon\d+/, 'icon<n>').replace(/\d/g, '#');
+
+// The label the script reads: the first aria-label or title that isn't empty, the icon's own
+// first, then those of the things inside it, in order. With its raw text, and where it was.
+function labelOf(ic) {
+  const holders = [{ ...ic, where: 'on the icon' }, ...(ic.inner || []).map((h) => ({ ...h, where: 'on its ' + h.tag }))];
+  for (const h of holders) {
+    const raw = h.aria || h.title || '';
+    const text = plain(raw);
+    if (text) return { text, raw, where: (h.aria ? 'aria-label ' : 'title ') + h.where };
+  }
+  return { text: '', raw: '', where: 'no label' };
+}
+
+// A label's heading, safe to print: its bold start, or else what comes before its first line
+// break or colon, at most two words and 24 characters. The rest of a label can name people.
+function heading(raw) {
+  const bold = /^\s*<b>(.*?)<\/b>/i.exec(raw);
+  const head = bold ? bold[1] : String(raw).split(/<br\s*\/?>/i)[0].split(':')[0];
+  return plain(head).split(' ').slice(0, 2).join(' ').slice(0, 24);
+}
+
 function kindOf(ic) {
   const n = num(ic.id);
   if (!n) return '';
   if (known(n)) return KINDS[n] || '';
-  const hit = BY_LABEL.find(([re]) => re.test(labelOf(ic)));
+  const hit = BY_LABEL.find(([re]) => re.test(labelOf(ic).text));
   return hit ? hit[1] : '';
 }
 const kindsOf = (row) => new Set(row.icons.map(kindOf).filter(Boolean));
+
+// The owner's key, from the server's .env. It goes only in the Authorization header; its last
+// four characters, never printed, pick it out of the key-usage diagnostic.
+function ownerKey() {
+  const env = readFileSync('/opt/warboard/server/.env', 'utf8');
+  const key = ((/^OWNER_API_KEY=(.*)$/m.exec(env) || [])[1] || '').trim().replace(/^["']|["']$/g, '');
+  if (!key) throw new Error('no OWNER_API_KEY in the .env');
+  return key;
+}
+
+// warboard's own calls on the owner's key, a minute, over the last 5 minutes, from the server's
+// key-usage diagnostic (localhost only). The owner's own scripts on their devices use the same
+// key and are not counted in it.
+async function keyUse() {
+  const end = ownerKey().slice(-4);
+  const res = await fetch('http://127.0.0.1:3000/api/debug/key-usage-local?window=5&keySuffix=' + encodeURIComponent(end));
+  const j = await res.json();
+  return (j.perKey || []).filter((k) => k.suffix === end).reduce((sum, k) => sum + (Number(k.perMin) || 0), 0);
+}
 
 async function probe() {
   // The operator token is read here and sent as a header; it is never printed.
@@ -1593,27 +1697,47 @@ async function probe() {
 function summary(out) {
   const say = (line) => console.log(line);
   say('page: ' + out.url + ' at ' + out.at);
-  say('wrapper .userlist-wrapper: ' + out.wrapper + '; title bar .users-list-title: ' + out.titleBar
-    + '; title bar inside the wrapper: ' + out.titleInWrapper);
-  say('the list, from itself up: ' + (out.listChain || ['no list']).join(' < '));
-  say('the title bar, from itself up: ' + (out.titleChain || ['no title bar']).join(' < '));
-  say('same list as the run before: ' + out.sameListAsBefore + '; same wrapper: ' + out.sameWrapperAsBefore
-    + '; same box above the wrapper (the one the filter watches, ' + out.box + '): ' + out.sameBoxAsBefore);
-  say('pagination: ' + (out.pagination.length ? out.pagination.join(' | ') : 'none found'));
+  say('ul.user-info-list-wrap: ' + out.lists + '; .userlist-wrapper: ' + out.wrappers + '; .users-list-title: ' + out.titleBars);
+  say('the list inside a .userlist-wrapper: ' + out.listInWrapper + '; the filter\'s wrapper: ' + masked(out.holder)
+    + ', with a title bar in it: ' + out.titleInHolder + '; the first title bar inside the first wrapper: ' + out.titleInWrapper);
+  say('the list, from itself up: ' + (out.listChain || ['no list']).map(masked).join(' < '));
+  say('the title bar, from itself up: ' + (out.titleChain || ['no title bar']).map(masked).join(' < '));
+  if (out.sameListAsBefore === null) say('the box the filter would watch: ' + masked(out.box) + ' (first run: nothing to compare)');
+  else say('the same as the run before: list ' + out.sameListAsBefore + ', wrapper ' + out.sameWrapperAsBefore
+    + ', box above the wrapper (the one the filter watches, ' + masked(out.box) + ') ' + out.sameBoxAsBefore
+    + ', title bar ' + out.sameTitleAsBefore + ', first row ' + out.sameFirstRowAsBefore);
+  say('pagination: ' + (out.pagination.length ? out.pagination.map(masked).join(' | ') : 'none found'));
+  say('loading: .ajax-placeholder in the list ' + out.placeholders + ', on the page ' + out.placeholdersOnPage
+    + '; .ajax-preloader on the page ' + out.preloaders);
+  if (out.changes) {
+    const c = out.changes;
+    say('changes since the run before: ' + c.records + ' in ' + c.seconds + ' s, ' + c.inBox + ' of them inside the box the filter watches'
+      + (c.stopped ? ' (the watcher had stopped)' : ''));
+    // The last 200, in order, with runs of the same change folded into one line.
+    const runs = [];
+    for (const n of c.notes) {
+      const what = masked(n.target) + (n.inBox ? ' (in the box)' : '') + ': +' + n.added + ' -' + n.removed + (n.first ? ' ' + masked(n.first) : '');
+      const last = runs[runs.length - 1];
+      if (last && last.what === what) last.times += 1;
+      else runs.push({ what, times: 1, t: n.t });
+    }
+    runs.slice(0, 40).forEach((r) => say('  at ' + (r.t / 1000).toFixed(1) + ' s ' + r.what + (r.times > 1 ? ' x' + r.times : '')));
+    if (runs.length > 40) say('  and ' + (runs.length - 40) + ' more');
+  }
   const named = out.rows.filter((r) => r.hasName);
-  say('rows: ' + out.rows.length + ' li under the list, ' + named.length + ' with a name link; loading placeholders: ' + out.placeholders);
+  say('rows: ' + out.rows.length + ' li under the list, ' + named.length + ' with a name link');
   const numbers = {};
   for (const row of named) {
     for (const ic of row.icons) {
       const n = num(ic.id);
-      const key = n ? String(n) : 'no number (' + ic.id + ')';
-      const e = numbers[key] || (numbers[key] = { n, rows: 0, labels: new Set(), where: new Set(), ids: new Set(), shown: 0 });
+      const key = n ? String(n) : 'no number (' + masked(ic.id) + ')';
+      const e = numbers[key] || (numbers[key] = { n, rows: 0, headings: new Set(), where: new Set(), ids: new Set(), shown: 0 });
+      const label = labelOf(ic);
       e.rows += 1;
       if (ic.shown) e.shown += 1;
-      e.labels.add(labelOf(ic).slice(0, 90));
-      e.where.add(ic.aria ? 'aria-label on the icon' : ic.title ? 'title on the icon'
-        : ic.inner ? (ic.inner.aria ? 'aria-label' : 'title') + ' on its ' + ic.inner.tag : 'no label');
-      e.ids.add(ic.id.replace(/^icon\d+/, 'icon<n>'));
+      e.headings.add(heading(label.raw));
+      e.where.add(label.where);
+      e.ids.add(masked(ic.id));
     }
   }
   const order = Object.keys(numbers).sort((a, b) => (numbers[a].n || 999) - (numbers[b].n || 999));
@@ -1621,7 +1745,7 @@ function summary(out) {
     const e = numbers[key];
     const kind = e.n && known(e.n) ? (KINDS[e.n] || 'none') : 'by label';
     say('icon ' + key + ': ' + e.rows + ' rows (' + e.shown + ' shown), kind ' + kind + ', ' + [...e.where].join(' / ')
-      + ', id like ' + [...e.ids].slice(0, 2).join(' ') + '; labels: ' + [...e.labels].slice(0, 6).map((l) => JSON.stringify(l)).join(', '));
+      + ', id like ' + [...e.ids].slice(0, 2).join(' ') + '; label headings: ' + [...e.headings].slice(0, 6).map((l) => JSON.stringify(l)).join(', '));
   }
   const tally = { hospital: 0, jail: 0, abroad: 0, 'two kinds': 0, none: 0 };
   for (const row of named) {
@@ -1639,41 +1763,79 @@ function summary(out) {
 async function abroad(dry) {
   const out = JSON.parse(readFileSync(file, 'utf8'));
   const named = out.rows.filter((r) => r.hasName && r.xid);
-  const plane = named.filter((r) => kindsOf(r).has('abroad'));
-  const none = named.filter((r) => kindsOf(r).size === 0);
-  const ask = [...plane, ...none].slice(0, 30);
-  const planeAsked = ask.filter((r) => plane.includes(r)).length;
-  console.log('to ask: ' + ask.length + ' (' + planeAsked + ' with an abroad icon, ' + (ask.length - planeAsked) + ' with no kind icon)');
+  const has = (row, kind) => kindsOf(row).has(kind);
+  // Whom to ask about, at most 30 in all: people the script would hide as abroad (up to 10), in
+  // hospital (up to 3) and in jail (up to 3), then people it would leave showing, to make 30.
+  const groups = [
+    ['with an abroad icon', named.filter((r) => has(r, 'abroad')).slice(0, 10)],
+    ['with a hospital icon', named.filter((r) => has(r, 'hospital') && !has(r, 'abroad')).slice(0, 3)],
+    ['with a jail icon', named.filter((r) => has(r, 'jail') && !has(r, 'abroad') && !has(r, 'hospital')).slice(0, 3)],
+  ];
+  const taken = groups.reduce((sum, [, rows]) => sum + rows.length, 0);
+  groups.push(['with no kind icon', named.filter((r) => kindsOf(r).size === 0).slice(0, 30 - taken)]);
+  console.log('to ask: ' + groups.reduce((sum, [, rows]) => sum + rows.length, 0) + ' (' + groups.map(([name, rows]) => rows.length + ' ' + name).join(', ') + ')');
   if (dry) return;
-  // The owner's key, from the server's .env, goes only in the Authorization header.
-  const env = readFileSync('/opt/warboard/server/.env', 'utf8');
-  const key = ((/^OWNER_API_KEY=(.*)$/m.exec(env) || [])[1] || '').trim().replace(/^["']|["']$/g, '');
-  if (!key) throw new Error('no OWNER_API_KEY in the .env');
+  const busy = await keyUse();
+  console.log('warboard\'s own calls on the owner\'s key, over the last 5 minutes: ' + busy.toFixed(1) + ' a minute');
+  if (busy > 50) {
+    console.log('too busy for 20 more a minute: try again later');
+    return;
+  }
+  const key = ownerKey();
+  const total = groups.reduce((sum, [, rows]) => sum + rows.length, 0);
   const seen = [];
-  for (const row of ask) {
-    const res = await fetch('https://api.torn.com/v2/user/' + encodeURIComponent(row.xid) + '/basic?striptags=true',
-      { headers: { Authorization: 'ApiKey ' + key } });
-    const j = await res.json().catch(() => ({}));
-    if (j.error) {
-      console.log('Torn refused a call (code ' + j.error.code + '); stopped after ' + seen.length);
-      break;
+  asking: for (const [group, rows] of groups) {
+    for (const row of rows) {
+      const res = await fetch('https://api.torn.com/v2/user/' + encodeURIComponent(row.xid) + '/basic?striptags=true',
+        { headers: { Authorization: 'ApiKey ' + key } });
+      const j = await res.json().catch(() => ({}));
+      if (j.error) {
+        console.log('Torn refused a call (code ' + j.error.code + '); stopped after ' + seen.length);
+        break asking;
+      }
+      const status = j.profile && j.profile.status;
+      if (!status || typeof status.state !== 'string') {
+        // Not the shape this tool reads: say how it is shaped (its keys, no values), and stop.
+        console.log('an answer of another shape, with keys: ' + Object.keys(j).join(', ')
+          + (j.profile && typeof j.profile === 'object' ? '; and in profile: ' + Object.keys(j.profile).join(', ') : '')
+          + '; stopped after ' + seen.length);
+        break asking;
+      }
+      const kindIcon = row.icons.find((ic) => kindOf(ic));
+      seen.push({ xid: row.xid, group, state: status.state, until: Number(status.until) || 0,
+        numbers: row.icons.map((ic) => num(ic.id)).filter(Boolean),
+        // How long the row's own icon said the stay had left, and how old the probe was then.
+        left: kindIcon ? (labelOf(kindIcon).text.match(/\b\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b/gi) || []).join(' ') : '',
+        probeAge: Math.round((Date.now() - Date.parse(out.at)) / 1000) });
+      await sleep(3000);
     }
-    seen.push({ xid: row.xid, plane: plane.includes(row), state: (j.profile && j.profile.status && j.profile.status.state) || 'unknown' });
-    await sleep(2000);
   }
   writeFileSync(file.replace(/\.json$/, '') + '.abroad.json', JSON.stringify(seen, null, 1), { mode: 0o600 });
+  if (!seen.length) {
+    console.log('no answers to tally');
+    return;
+  }
+  if (seen.length < total) console.log('only ' + seen.length + ' of ' + total + ' were asked: what follows covers only those');
   const tally = (list) => list.reduce((m, s) => ((m[s.state] = (m[s.state] || 0) + 1), m), {});
-  console.log('with an abroad icon: ' + JSON.stringify(tally(seen.filter((s) => s.plane))));
-  console.log('with no kind icon: ' + JSON.stringify(tally(seen.filter((s) => !s.plane))));
+  for (const [group] of groups) console.log(group + ': ' + JSON.stringify(tally(seen.filter((s) => s.group === group))));
+  // The gate's two findings: people the script would leave showing who are away, and people it
+  // would hide who are not.
+  const missed = seen.filter((s) => s.group === 'with no kind icon' && ['Hospital', 'Jail', 'Traveling', 'Abroad'].includes(s.state));
+  console.log('left showing, but Torn says Hospital, Jail, Traveling or Abroad: ' + missed.length
+    + (missed.length ? ' (' + missed.map((s) => s.state + ', icons ' + s.numbers.join(' ')).join('; ') + ')' : ''));
+  const okay = seen.filter((s) => s.group !== 'with no kind icon' && s.state === 'Okay');
+  console.log('hidden, but Torn says Okay: ' + okay.length
+    + (okay.length ? ' (' + okay.map((s) => 'icons ' + s.numbers.join(' ') + ', its label said ' + (s.left || 'no time') + ', the probe ' + s.probeAge + ' s before').join('; ') + ')' : ''));
 }
 
 if (cmd === 'probe') await probe();
-else if (cmd === 'abroad') await abroad(flag === '--dry');
 else if (cmd === 'summary') summary(JSON.parse(readFileSync(file, 'utf8')));
-else console.log('usage: node live.mjs probe <out.json> | abroad <probe.json> [--dry] | summary <probe.json>');
+else if (cmd === 'keyuse') console.log('warboard\'s own calls on the owner\'s key, over the last 5 minutes: ' + (await keyUse()).toFixed(1) + ' a minute');
+else if (cmd === 'abroad') await abroad(flag === '--dry');
+else console.log('usage: node live.mjs probe <out.json> | summary <probe.json> | keyuse | abroad <probe.json> [--dry]');
 ```
 
-When the owner says the page is open, run the probe:
+When the owner says the page is open, run the probe. Its first run also puts a watcher on the page that only reads: it notes in short each change Torn makes there, for the runs after it.
 
 ```bash
 W=/opt/warboard/.superpowers/sdd/2026-10-25-torn-userlist-filter; cd "$W/live" && node live.mjs probe first.json
@@ -1681,29 +1843,42 @@ W=/opt/warboard/.superpowers/sdd/2026-10-25-torn-userlist-filter; cd "$W/live" &
 
 Expected: the summary, starting `page: /page.php?sid=UserList...`, with no names or ids in it. `first.json` (mode 600) keeps the whole answer. If it says no answer in 60 s, ask the owner whether remote inspect is on and the app is open on the page.
 
+About a minute later, with nothing clicked, run it again, for how often Torn changes the page on its own:
+
+```bash
+W=/opt/warboard/.superpowers/sdd/2026-10-25-torn-userlist-filter; cd "$W/live" && node live.mjs probe idle.json
+```
+
+Expected: `changes since the run before: N in S s, M of them inside the box the filter watches`. Each change inside that box sets off one check of the rows on the page.
+
 Then ask the owner to click Next once and say when the new page is there, and run it again:
 
 ```bash
 W=/opt/warboard/.superpowers/sdd/2026-10-25-torn-userlist-filter; cd "$W/live" && node live.mjs probe next.json
 ```
 
-Then, to learn where the people in the rows really are, the abroad check. It asks Torn's API about the rows with an abroad icon, then the rows with no kind icon, at most 30 in all, 2 s apart, on the owner's key in the Authorization header. `--dry` first says how many it would ask:
+If the owner is willing, they then change the sort once (a column heading, say), and it runs again as `node live.mjs probe sort.json`.
+
+Then, to learn where the people in the rows really are, the abroad check. It asks Torn's API about up to 10 rows with an abroad icon, 3 with a hospital icon and 3 with a jail icon, then rows with no kind icon, at most 30 in all, 3 s apart, on the owner's key in the Authorization header. Before it asks, it reads warboard's own use of that key over the last 5 minutes from the server's key-usage diagnostic (localhost only), and stops if that is over 50 a minute. The diagnostic counts only what warboard sends, not the owner's own scripts on their devices, so it is a rough look, not a guard: what keeps the check well under Torn's 100 a minute is its spacing, 3 s apart, 20 a minute. `--dry` first says how many it would ask:
 
 ```bash
 W=/opt/warboard/.superpowers/sdd/2026-10-25-torn-userlist-filter; cd "$W/live" && node live.mjs abroad first.json --dry && node live.mjs abroad first.json
 ```
 
-Expected: `to ask: N (...)`, then two tallies of Torn's states, such as `with an abroad icon: {"Traveling":3,"Abroad":2}` and `with no kind icon: {"Okay":25}`.
+Expected: `to ask: N (...)`, the key's use, then a tally of Torn's states for each group, such as `with an abroad icon: {"Traveling":3,"Abroad":2}` and `with no kind icon: {"Okay":14}`, then the gate's two counts, `left showing, but Torn says Hospital, Jail, Traveling or Abroad: 0` and `hidden, but Torn says Okay: 0`. An answer of another shape prints its keys (no values) and stops the check: make the tool read that shape, and run it again.
 
-The gate, item by item (the spec's five, and what this plan's rulings lean on). Write each answer in the ledger as `Live: <item>: <answer>`, with counts, icon numbers and labels, but no names or ids:
+The gate, item by item (the spec's five, and what this plan's rulings lean on). Write each answer in the ledger as `Live: <item>: <answer>`, with counts, icon numbers and label headings, but no names or ids:
 
-1. **Landed abroad shows the plane.** Pass: the tally with an abroad icon has `"Abroad"` in it, and the tally with no kind icon has none. Fail: any `"Abroad"` among the rows with no kind icon. Then STOP: the design goes back to the owner, because abroad needs another way in. If no one on the page is abroad either way, the owner clicks Next once more and the probe and the abroad check run on that page (`next.json`), up to 3 pages in all. With still no one abroad, ask the owner whether to ship on TornTools' table.
-2. **Hospital shows 15.** The summary's `icon 15` line, with labels that start with "Hospital". Note whether 82 or 91 appear, with what labels.
-3. **Jail shows 16.** The `icon 16` line. If no one on the pages seen is in jail, write "not seen" and carry on: 16 comes from TornTools' table, as all the numbers do.
-4. **The title bar and the wrapper.** `.users-list-title` and `.userlist-wrapper` are there, and the two chains say where. Without them the fallbacks work (before the list; the list's parent). Write which one the page uses.
-5. **The labels.** Where they sit (a title or an aria-label, on the icon or inside it) and what they say. Only a number outside TornTools' table goes by its label; write any such number (`kind by label`).
-6. **Next.** From `next.json`: whether Torn kept the list, the wrapper and the box above the wrapper. The filter watches that box (ruling 3). If Torn replaced the box too, that is a finding: watching it would go deaf after Next.
-7. **Pages by click.** The `pagination` line, and the owner's word that Next loaded a new page in place.
+1. **Landed abroad shows the plane, and no one away is left showing.** Pass: the tally with an abroad icon has `"Abroad"` in it, and `left showing, but Torn says ...` is 0.
+   - Any `"Abroad"` or `"Traveling"` among the rows with no kind icon fails it. Then STOP: the design goes back to the owner, because abroad needs another way in.
+   - A row with no kind icon that Torn says is in `"Hospital"` or `"Jail"` is a finding too. The count prints its icons (a row with only 82, say); the spec leaves 82 to this check.
+   - If no one on the page is abroad either way, the owner clicks Next once more and the probe and the abroad check run on that page (`next.json`), up to 3 pages in all. With still no one abroad, ask the owner whether to ship on TornTools' table.
+2. **Hospital shows 15.** The summary's `icon 15` line, with label headings that start with "Hospital". Note whether 82 or 91 appear, with what headings. The rows with a hospital icon that were asked about should all be `"Hospital"`. One that Torn says is `"Okay"` is a finding, unless the time its label said was left is shorter than the probe's age: a stay can end between the probe and the call.
+3. **Jail shows 16.** The `icon 16` line, and the rows with a jail icon asked about, as in item 2. If no one on the pages seen is in jail, write "not seen" and carry on: 16 comes from TornTools' table, as all the numbers do.
+4. **The title bar and the wrapper.** One of each and one list (`ul.user-info-list-wrap: 1; .userlist-wrapper: 1; .users-list-title: 1`), the list inside the wrapper, and the title bar in the filter's wrapper. Without them the fallbacks work (a title bar elsewhere on the page, else before the list; the list's parent). Write which one the page uses. More than one list is a finding: the filter watches only the first one's box.
+5. **The labels.** Where they sit (a title or an aria-label, on the icon or inside it) and their headings. Only a number outside TornTools' table goes by its label; write any such number (`kind by label`).
+6. **Next.** From `next.json`: whether Torn kept the list, the wrapper, the box above the wrapper, the title bar and the first row, and the order of its changes. The filter watches that box (ruling 3). If Torn replaced the box too, that is a finding: watching it would go deaf after Next. From `idle.json`: how many changes land inside the box with nothing clicked; more than 10 a second is a finding, since each one is a check of the page. From `sort.json`, if run: the same as for Next.
+7. **Pages by click.** The `pagination` line, and the owner's word that Next loaded a new page in place. The loading line says which of `.ajax-placeholder` and `.ajax-preloader` Torn shows while it loads.
 8. **Rows.** The rows with a name link match the people on the page, and the loading placeholder, if any, has none.
 9. **TornTools,** if the owner runs it in the app: its lines after the rows, and its hidden rows.
 
@@ -1735,7 +1910,7 @@ Expected: `Fast-forward`, then both files `-rw-r--r-- warboard warboard`.
 cd /opt/warboard/server && node --test > /opt/warboard/.superpowers/sdd/2026-10-25-torn-userlist-filter/suite.log 2>&1; grep -E "^# (tests|pass|fail|skipped) " /opt/warboard/.superpowers/sdd/2026-10-25-torn-userlist-filter/suite.log | paste -sd" " -
 ```
 
-Expected: `# fail 0`, with 2 skipped. The last run had 2467 tests, so this one should have about 2504 (this plan adds 37), give or take other sessions' work.
+Expected: `# fail 0`, with 2 skipped. The last run had 2467 tests, so this one should have about 2510 (this plan adds 43: 37 in its tasks and 6 from the final review's fix pass), give or take other sessions' work.
 - If a failure is this change's, take the script down at once with `git revert --no-edit <first>^..HEAD` on main (first = the Task 1 commit), and stop.
 - If a failure is another session's, name it in the report and carry on.
 
