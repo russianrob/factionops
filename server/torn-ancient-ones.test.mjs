@@ -896,3 +896,296 @@ test('lines with nothing new in them are left as they are, not built again', asy
   await env.advance(30 * SEC);
   assert.equal(lineEl(w, 102), before);
 });
+
+// ---------------------------------------------------------------------------------------------
+// M'aol's route
+// ---------------------------------------------------------------------------------------------
+
+// Where each praetorian awoke on 2026-10-26.
+const PLACE = { 100: 'Cayman Islands', 101: 'Mexico', 102: 'Canada', 103: 'Hawaii', 104: 'United Kingdom' };
+// All six standing: the praetorians where they awoke, M'aol shielded in Torn City.
+const allUp = () => ({ 23: READ_1125[23], 100: up(100, PLACE[100]), 101: up(101, PLACE[101]), 102: up(102, PLACE[102]), 103: up(103, PLACE[103]), 104: up(104, PLACE[104]) });
+// The praetorians falling in this order, one a minute.
+async function fall(env, ids) {
+  for (const id of ids) {
+    env.torn[id] = beaten(id, PLACE[id]);
+    await env.advance(MIN);
+  }
+}
+// M'aol seen in each of these places in turn, one a minute.
+async function go(env, places) {
+  for (const place of places) {
+    env.torn[23] = up(23, place);
+    await env.advance(MIN);
+  }
+}
+// M'aol's notes on how he moves: where he is since when, his next stop, and his route.
+const maolNotes = (w) => notes(w, 23).filter((n) => /^(moves|next|route) /.test(n));
+
+test('his route from his moves: once he has been seen in all five countries, in the order first seen', async () => {
+  const { env, w } = await started({ torn: allBeaten('Awoken in Mexico') });
+  await go(env, ['Cayman Islands', 'United Kingdom', 'Cayman Islands', 'Canada']);
+  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:44 TCT']);
+  await go(env, ['Hawaii']);
+  assert.deepEqual(maolNotes(w), [
+    'moves about every 15 min, here since 10:45 TCT',
+    'next Mexico about 11:00 TCT',
+    'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii',
+  ]);
+  assert.deepEqual(env.reading().trail, ['Mexico', 'Cayman Islands', 'United Kingdom', 'Cayman Islands', 'Canada', 'Hawaii']);
+});
+
+test('his route from the falls: each timed by the script, at least 30 s apart', async () => {
+  const { env, w } = await started({ torn: allUp() });
+  await fall(env, [102, 100, 104, 101, 103]);
+  assert.deepEqual(maolNotes(w), ['moves about every 15 min', 'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii'], 'no next stop from Torn City');
+  await go(env, ['Canada']);
+  assert.deepEqual(maolNotes(w), [
+    'moves about every 15 min, here since 10:46 TCT',
+    'next Cayman Islands about 11:01 TCT',
+    'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii',
+  ]);
+});
+
+test('no route from the falls when two came in one sweep, a country is missing, or two share one', async () => {
+  const one = await started({ torn: allUp() });
+  one.env.torn[102] = beaten(102, 'Canada');
+  one.env.torn[100] = beaten(100, 'Cayman Islands');
+  await one.env.advance(MIN);
+  await fall(one.env, [104, 101, 103]);
+  assert.deepEqual(maolNotes(one.w), ['moves about every 15 min']);
+
+  const missing = await started({ torn: allUp() });
+  await fall(missing.env, [102, 100, 104, 101]);
+  missing.env.torn[103] = profile(103, 'Dormant', 0, { state: 'Abroad' });
+  await missing.env.advance(MIN);
+  assert.deepEqual(maolNotes(missing.w), ['moves about every 15 min']);
+
+  const shared = await started({ torn: { ...allUp(), 103: up(103, 'Canada') } });
+  await fall(shared.env, [102, 100, 104, 101]);
+  shared.env.torn[103] = beaten(103, 'Canada');
+  await shared.env.advance(MIN);
+  assert.deepEqual(maolNotes(shared.w), ['moves about every 15 min']);
+});
+
+test('his moves beat the falls when they disagree', async () => {
+  const { env, w } = await started({ torn: allUp() });
+  await fall(env, [102, 100, 104, 101, 103]);
+  await go(env, ['Mexico', 'Hawaii', 'Canada', 'Cayman Islands']);
+  assert.deepEqual(maolNotes(w).slice(1), ['next United Kingdom about 11:04 TCT', 'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii']);
+  await go(env, ['United Kingdom']);
+  assert.deepEqual(maolNotes(w).slice(1), ['next Mexico about 11:05 TCT', 'route Mexico > Hawaii > Canada > Cayman Islands > United Kingdom']);
+});
+
+test('the next stop has no time when his arrival wasn\'t seen in time, and there is none from Torn City', async () => {
+  const { env, w } = await started({ torn: allBeaten('Awoken in Mexico') });
+  await go(env, ['Cayman Islands', 'United Kingdom', 'Canada', 'Hawaii']);
+  // Out of view for 4 minutes, while he moves on to Mexico.
+  w.hide();
+  env.torn[23] = up(23, 'Mexico');
+  await env.advance(4 * MIN);
+  w.show();
+  await env.advance(0);
+  assert.deepEqual(maolNotes(w), ['moves about every 15 min', 'next Cayman Islands', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']);
+  env.torn[23] = up(23, 'Torn City');
+  await env.advance(MIN);
+  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:49 TCT', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']);
+});
+
+test('his moves while shielded don\'t count toward his route', async () => {
+  const env = device({ torn: READ_1215 });
+  env.now = Date.UTC(2026, 9, 26, 12, 15, 25);
+  env.store[KEY_STORE] = KEY;
+  const w = env.tab().run();
+  await env.advance(0);
+  await go(env, ['Mexico', 'United Kingdom']);
+  assert.equal(lineText(w, 23), 'M\'aol  United Kingdom  100%  shielded, 2 praetorians up');
+  assert.deepEqual(env.reading().trail, []);
+  env.torn[102] = beaten(102, 'Canada');
+  env.torn[103] = beaten(103, 'Hawaii');
+  await env.advance(MIN);
+  assert.deepEqual(env.reading().trail, ['United Kingdom']);
+});
+
+test('a new summoning empties his trail and TornStats\' times', async () => {
+  const { env, w } = await started({ torn: allBeaten('Awoken in Mexico') });
+  await go(env, ['Cayman Islands', 'United Kingdom', 'Canada', 'Hawaii']);
+  env.tornstats = [{ torn_id: 23, name: 'M\'aol', status: 'Dormant in Hawaii', current_health: 0, max_health: 151200000, hosped_at: '2026-10-26T10:44:30.000000Z' }];
+  env.torn[23] = beaten(23, 'Hawaii');
+  await env.advance(MIN + 5 * SEC);
+  assert.equal(env.reading().trail.length, 5);
+  assert.deepEqual(Object.keys(env.reading().fell), ['23']);
+  env.torn = allUp();
+  await env.advance(MIN);
+  assert.deepEqual(env.reading().trail, []);
+  assert.deepEqual(env.reading().fell, {});
+  assert.equal(lineText(w, 23), 'M\'aol  Torn City  100%  shielded, 5 praetorians up');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Asking TornStats
+// ---------------------------------------------------------------------------------------------
+
+// TornStats' feed of the six at 12:15 TCT on 2026-10-26: the fields the script reads, and a few
+// more, as they came.
+const TS_1215 = [
+  {"torn_id":23,"name":"M'aol","status":"Awoken in Mexico","current_health":151200000,"max_health":151200000,"hosped_at":null,"updated_at":"2026-10-26T12:01:02.000000Z"},
+  {"torn_id":100,"name":"Dyno'salam","status":"Dormant in Cayman Islands","current_health":0,"max_health":172500000,"hosped_at":"2026-10-26T11:52:37.000000Z","updated_at":"2026-10-26T11:53:01.000000Z"},
+  {"torn_id":101,"name":"Nol'dasaym","status":"Dormant in Mexico","current_health":0,"max_health":129600000,"hosped_at":"2026-10-26T10:24:02.000000Z","updated_at":"2026-10-26T10:24:02.000000Z"},
+  {"torn_id":102,"name":"Asmol'yand","status":"Awoken in Canada","current_health":122519445,"max_health":217800000,"hosped_at":null,"updated_at":"2026-10-26T12:15:01.000000Z"},
+  {"torn_id":103,"name":"Sylo'nadam","status":"Awoken in Hawaii","current_health":199933784,"max_health":202950000,"hosped_at":null,"updated_at":"2026-10-26T12:15:01.000000Z"},
+  {"torn_id":104,"name":"Ladso'myna","status":"Dormant in United Kingdom","current_health":0,"max_health":222000000,"hosped_at":"2026-10-26T11:52:37.000000Z","updated_at":"2026-10-26T11:53:02.000000Z"},
+];
+const AT_1215 = Date.UTC(2026, 9, 26, 12, 15, 25);
+// One feed entry: a defeat time for one of the six.
+const fellEntry = (id, iso) => ({ torn_id: id, name: READ_1125[id].name, status: 'Dormant', current_health: 0, max_health: 1, hosped_at: iso });
+
+// A device at 12:15:25 TCT on 2026-10-26, with Torn's and TornStats' answers from then and the
+// key saved, and one tab that has read Torn, and 5 s later TornStats.
+async function at1215(opts = {}, tabOpts = {}) {
+  const env = device({ torn: READ_1215, tornstats: TS_1215, ...opts });
+  env.now = AT_1215;
+  env.store[KEY_STORE] = KEY;
+  const w = env.tab(tabOpts).run();
+  await env.advance(5 * SEC);
+  return { env, w };
+}
+
+test('a beaten one with no time of its own gets TornStats\' time', async () => {
+  const { env, w } = await at1215();
+  assert.equal(lineText(w, 101), 'Nol\'dasaym  Mexico  beaten 10:24 TCT');
+  assert.equal(lineText(w, 100), 'Dyno\'salam  Cayman Islands  beaten 11:52 TCT');
+  assert.equal(lineText(w, 104), 'Ladso\'myna  United Kingdom  beaten 11:52 TCT');
+  assert.deepEqual(env.reading().fell, { 100: Date.parse('2026-10-26T11:52:37Z'), 101: Date.parse('2026-10-26T10:24:02Z'), 104: Date.parse('2026-10-26T11:52:37Z') });
+});
+
+test('TornStats\' times give the route from the falls, but two under 30 s apart give none', async () => {
+  const at = Date.UTC(2026, 9, 26, 12, 30);
+  const feed = (ukAt) => [fellEntry(101, '2026-10-26T10:24:02Z'), fellEntry(100, '2026-10-26T11:52:37Z'), fellEntry(104, ukAt), fellEntry(102, '2026-10-26T12:10:00Z'), fellEntry(103, '2026-10-26T12:20:00Z')];
+  for (const [ukAt, route] of [['2026-10-26T11:52:37Z', null], ['2026-10-26T11:53:30Z', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']]) {
+    const env = device({ torn: allBeaten('Awoken in Mexico'), tornstats: feed(ukAt) });
+    env.now = at;
+    env.store[KEY_STORE] = KEY;
+    const w = env.tab().run();
+    await env.advance(5 * SEC);
+    assert.deepEqual(maolNotes(w).filter((n) => n.startsWith('route ')), route ? [route] : [], ukAt);
+  }
+});
+
+test('TornStats is asked only while its time for a beaten one is missing, even one the script timed, and at most every 5 minutes across tabs', async () => {
+  const standing = await started({ torn: allUp() });
+  await standing.env.advance(10 * MIN);
+  assert.equal(standing.env.stats().length, 0, 'none beaten');
+
+  const { env } = await at1215();
+  assert.equal(env.stats().length, 1);
+  await env.advance(15 * MIN);
+  assert.equal(env.stats().length, 1, 'every time known');
+
+  const two = device({ torn: allUp() });
+  two.store[KEY_STORE] = KEY;
+  two.tab().run();
+  two.tab().run();
+  await two.advance(0);
+  two.torn[100] = beaten(100, 'Cayman Islands');
+  await two.advance(MIN);
+  assert.equal(two.stats().length, 1, 'the script timed the fall at 10:41, and TornStats is asked all the same');
+  await two.advance(5 * MIN - SEC);
+  assert.equal(two.stats().length, 1);
+  await two.advance(SEC);
+  assert.equal(two.stats().length, 2);
+});
+
+test('TornStats is not asked from a page out of view, except in Torn PDA', async () => {
+  const first = await at1215({ tornstats: [] });
+  assert.equal(first.env.stats().length, 1);
+  const hidden = await later(first.env, 10 * MIN, { visible: false });
+  await hidden.env.advance(10 * MIN);
+  assert.equal(hidden.env.stats().length, 0);
+  const pda = await later(first.env, 10 * MIN, { visible: false, pda: true });
+  await pda.env.advance(5 * SEC);
+  assert.equal(pda.env.stats().length, 1);
+});
+
+test('a TornStats ask stored ahead of the clock (the clock was set back) doesn\'t stop the asks', async () => {
+  const env = device({ torn: READ_1215, tornstats: TS_1215 });
+  env.now = AT_1215;
+  env.store[KEY_STORE] = KEY;
+  env.store[READING_STORE] = JSON.stringify({ fellAskedAt: AT_1215 + 3 * 60 * MIN });
+  env.tab().run();
+  await env.advance(5 * SEC);
+  assert.equal(env.stats().length, 1);
+});
+
+test('the request to TornStats is a plain GET of its feed, with no key and no cookies', async () => {
+  const { env } = await at1215();
+  const r = env.stats()[0];
+  assert.equal(r.url, TORNSTATS);
+  assert.equal(r.method, 'GET');
+  assert.equal(r.anonymous, true);
+  assert.equal(r.headers, undefined);
+});
+
+test('a time from TornStats counts only when no more than 8 days old, not in the future, and not from before the script last saw it standing', async () => {
+  const day = 24 * 60 * MIN;
+  for (const [iso, shown] of [
+    [new Date(T0 - 9 * day).toISOString(), 'beaten'],
+    [new Date(T0 - 7 * day).toISOString(), 'beaten Oct 19 10:40 TCT'],
+    [new Date(T0 + 2 * MIN).toISOString(), 'beaten'],
+    [new Date(T0 + 30 * SEC).toISOString(), 'beaten 10:40 TCT'],
+  ]) {
+    const { env, w } = await started({ tornstats: [fellEntry(101, iso)] });
+    await env.advance(5 * SEC);
+    assert.equal(lineText(w, 101), 'Nol\'dasaym  Mexico  ' + shown, iso);
+  }
+  for (const [iso, shown] of [[new Date(T0 - 2 * MIN).toISOString(), 'beaten 10:41 TCT'], [new Date(T0 + 30 * SEC).toISOString(), 'beaten 10:40 TCT']]) {
+    const { env, w } = await started({ tornstats: [fellEntry(100, iso)] });
+    env.torn[100] = beaten(100, 'Cayman Islands');
+    await env.advance(MIN + 5 * SEC);
+    assert.equal(lineText(w, 100), 'Dyno\'salam  Cayman Islands  ' + shown, iso);
+  }
+});
+
+test('an answer from TornStats that can\'t be read, or none, changes nothing, and the next try is 5 minutes later', async () => {
+  for (const feed of ['<html>busy</html>', null, '{"a":1}', JSON.stringify([{ torn_id: 101, hosped_at: 'soon' }, { torn_id: 999, hosped_at: '2026-10-26T10:00:00Z' }])]) {
+    const { env, w } = await started({ tornstats: feed });
+    await env.advance(5 * SEC);
+    assert.equal(env.stats().length, 1, String(feed));
+    assert.equal(lineText(w, 101), 'Nol\'dasaym  Mexico  beaten', String(feed));
+    assert.deepEqual(env.reading().fell, {}, String(feed));
+    await env.advance(5 * MIN);
+    assert.equal(env.stats().length, 2, String(feed));
+  }
+});
+
+test('a TornStats request still out doesn\'t hold up a sweep, and a sweep still out doesn\'t hold up TornStats', async () => {
+  const { env } = await started();
+  env.hold = 'tornstats';
+  await env.advance(3 * MIN);
+  assert.equal(env.stats().length, 1);
+  assert.equal(env.torns().length, 24);
+
+  const other = await started();
+  await other.env.advance(5 * SEC);
+  assert.equal(other.env.stats().length, 1);
+  other.env.hold = 'torn';
+  await other.env.advance(5 * MIN);
+  assert.equal(other.env.torns().length, 7, 'the sweep at 10:41 still waits on M\'aol');
+  assert.equal(other.env.stats().length, 2);
+});
+
+test('with no GM_xmlhttpRequest, TornStats can\'t be read, and nothing else changes', async () => {
+  const { env, w } = await started({ tornstats: [fellEntry(101, '2026-10-26T10:24:02Z')] }, { xhr: false });
+  await env.advance(5 * SEC);
+  assert.equal(env.stats().length, 1);
+  assert.equal(env.stats()[0].via, 'fetch');
+  assert.equal(lineText(w, 101), 'Nol\'dasaym  Mexico  beaten');
+  assert.equal(env.torns().length, 6);
+});
+
+test('the next summoning counts from TornStats\' time for M\'aol\'s death', async () => {
+  const { env, w } = await started({ torn: { ...allBeaten(), 23: beaten(23, 'Mexico') }, tornstats: [fellEntry(23, '2026-10-26T10:31:15.000000Z')] });
+  await env.advance(5 * SEC);
+  assert.equal(lineText(w, 23), 'M\'aol  Mexico  beaten 10:31 TCT');
+  assert.equal(summary(w), 'All asleep. Next summoning possible from Oct 28 10:31 TCT (48 h after M\'aol\'s death).');
+});

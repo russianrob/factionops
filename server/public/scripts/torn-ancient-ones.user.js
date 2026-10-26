@@ -74,6 +74,19 @@
   const HIGHLIGHT_MS = 5 * 60 * 1000;
   // A new summoning is possible this long after M'aol's death, by Torn's patch notes (#408).
   const RESUMMON_MS = 48 * 60 * 60 * 1000;
+  // M'aol stays this long in each country of his route.
+  const STOP_MS = 15 * 60 * 1000;
+  // Two falls this close together can't be put in order: the script saw them in the same sweep,
+  // or TornStats in the same check.
+  const FALL_GAP_MS = 30 * 1000;
+  // The most countries M'aol's trail keeps.
+  const TRAIL_MAX = 20;
+  // TornStats is asked at most this often, across all tabs, while its time for a beaten one is
+  // missing.
+  const FELL_EVERY_MS = 5 * 60 * 1000;
+  // A defeat time older than this is from an earlier summoning: an Ancient One left standing
+  // goes dormant within a week.
+  const FELL_MAX_AGE_MS = 8 * 24 * 60 * 60 * 1000;
 
   // Torn's error codes for a key it won't take: wrong key (2), key owner in federal jail (10),
   // key off for the owner's inactivity (13), key paused (18). Torn blocks an IP that keeps
@@ -143,7 +156,10 @@
   // - error: why the last call failed, in words ('' if it didn't);
   // - wait: no sweep before this time (ms, 0 for none), after Torn said to wait;
   // - stop: Torn won't take the key, so no sweeps until a key is saved;
-  // - npcs: what was read of each Ancient One, by id (see readNpc).
+  // - npcs: what was read of each Ancient One, by id (see readNpc);
+  // - trail: the countries M'aol was seen in while he could be hit, in order;
+  // - fell: TornStats' defeat times (ms), by id;
+  // - fellAskedAt: when TornStats was last asked (ms), in any tab.
   const STATES = ['up', 'beaten', 'dormant', 'unknown'];
 
   function parseReading(v) {
@@ -165,7 +181,21 @@
       wait: Number(v.wait) || 0,
       stop: v.stop === true,
       npcs: npcs,
+      trail: Array.isArray(v.trail) ? v.trail.filter((c) => COUNTRIES.indexOf(c) >= 0).slice(-TRAIL_MAX) : [],
+      fell: readFell(v.fell),
+      fellAskedAt: Number(v.fellAskedAt) || 0,
     };
+  }
+
+  // TornStats' defeat times as stored: a time (ms) by id, for the six only.
+  function readFell(o) {
+    const fell = {};
+    if (o && typeof o === 'object') {
+      IDS.forEach((id) => {
+        if (Number(o[id]) > 0) fell[id] = Number(o[id]);
+      });
+    }
+    return fell;
   }
 
   // One Ancient One as stored:
@@ -178,7 +208,8 @@
   // - readAt: when this was read (ms);
   // - since: when its state (or, while it stands, its place) last changed, if the reading
   //   before was close enough to pin that down (ms, 0 for not known);
-  // - changedAt: when the script last saw it change (ms, 0 for never), for the highlight.
+  // - changedAt: when the script last saw it change (ms, 0 for never), for the highlight;
+  // - upAt: when it was last read standing (ms, 0 for never).
   function readNpc(n) {
     return {
       name: typeof n.name === 'string' ? n.name : '',
@@ -190,6 +221,7 @@
       readAt: Number(n.readAt) || 0,
       since: Number(n.since) || 0,
       changedAt: Number(n.changedAt) || 0,
+      upAt: Number(n.upAt) || 0,
     };
   }
 
@@ -280,9 +312,82 @@
         npc.changedAt = before.changedAt;
       }
     }
+    npc.upAt = npc.state === 'up' ? nowMs : (before ? before.upAt : 0);
     r.npcs[id] = npc;
     // M'aol coming within reach is a change of his own, though his own words may not change.
     if (!wasHittable && hittable(r.npcs) && npc.changedAt === nowMs) r.npcs[MAOL].changedAt = nowMs;
+    noteTrail(r, id, before, npc);
+  }
+
+  // M'aol's trail: a new summoning empties it (and TornStats' defeat times, which were for the
+  // summoning before), and while he can be hit, each new country he is seen in is added to it.
+  function noteTrail(r, id, before, npc) {
+    if (id === MAOL && down(before) && !down(npc)) {
+      r.trail = [];
+      r.fell = {};
+    }
+    if (!hittable(r.npcs)) return;
+    const place = r.npcs[MAOL].place;
+    if (COUNTRIES.indexOf(place) >= 0 && r.trail[r.trail.length - 1] !== place) {
+      r.trail.push(place);
+      r.trail = r.trail.slice(-TRAIL_MAX);
+    }
+  }
+
+  // ===== M'AOL'S ROUTE =====
+
+  // TornStats' time for this one's defeat (ms), or 0: none, it isn't beaten, or the time is from
+  // more than a minute before the script last saw it standing (an earlier summoning).
+  function theirFall(r, id) {
+    const n = r.npcs[id];
+    const at = r.fell[id] || 0;
+    return n && n.state === 'beaten' && at >= n.upAt - 60000 ? at : 0;
+  }
+
+  // When this one was defeated (ms), or 0 when not known: TornStats' time, else the script's own,
+  // when it saw the fall with a time.
+  function fellAt(r, id) {
+    const n = r.npcs[id];
+    if (!n || n.state !== 'beaten') return 0;
+    return theirFall(r, id) || n.since;
+  }
+
+  // The praetorians' countries, one each, or null when one is missing or two share a country.
+  function praetorianCountries(npcs) {
+    const places = PRAETORIANS.map((id) => (npcs[id] ? npcs[id].place : ''));
+    if (places.some((p) => COUNTRIES.indexOf(p) < 0)) return null;
+    return places.filter((p, i) => places.indexOf(p) === i).length === places.length ? places : null;
+  }
+
+  // M'aol's route: his praetorians' countries in the order he visits them, or null when the
+  // script doesn't know it. From his moves once his trail holds all five countries, because
+  // that is what he did; until then, from the order the praetorians fell, when each has a
+  // defeat time and no two came in the same sweep.
+  function route(r) {
+    const countries = praetorianCountries(r.npcs);
+    if (!countries) return null;
+    const moves = [];
+    r.trail.forEach((c) => {
+      if (countries.indexOf(c) >= 0 && moves.indexOf(c) < 0) moves.push(c);
+    });
+    if (moves.length === countries.length) return moves;
+    const falls = PRAETORIANS.map((id) => ({ place: r.npcs[id].place, at: fellAt(r, id) }));
+    if (falls.some((f) => !f.at)) return null;
+    falls.sort((a, b) => a.at - b.at);
+    for (let i = 1; i < falls.length; i++) {
+      if (falls[i].at - falls[i - 1].at < FALL_GAP_MS) return null;
+    }
+    return falls.map((f) => f.place);
+  }
+
+  // Where M'aol goes next: the country after his current one on his route, from the last back
+  // to the first, and when (15 minutes after he was seen arriving; 0 when his arrival had no
+  // time). null with no route, or when he is somewhere not on it.
+  function nextStop(r, way) {
+    const m = r.npcs[MAOL];
+    const i = way && m ? way.indexOf(m.place) : -1;
+    if (i < 0) return null;
+    return { place: way[(i + 1) % way.length], at: m.since ? m.since + STOP_MS : 0 };
   }
 
   // ===== ASKING TORN =====
@@ -419,12 +524,61 @@
     return key ? text.split(key).join('****') : text;
   }
 
+  // ===== ASKING TORNSTATS =====
+
+  // TornStats' public feed of the six, which its own M'aol page reads. Only the time it saw each
+  // one defeated is used; Torn's API stays the source for everything else.
+  const TORNSTATS_URL = 'https://www.tornstats.com/ajax/status/maol';
+  // True while this tab is asking TornStats.
+  let asking = false;
+
+  // True when TornStats should be asked: one of the six is beaten and TornStats' time for it isn't
+  // known yet, the page is visible (PDA can't tell, so there always), and no tab asked in the
+  // last 5 minutes. The script's own times are a sweep apart at best, and Torn's cache can put
+  // two close falls in the wrong order, so TornStats' times are asked for even then.
+  function fallsDue(r, nowMs) {
+    if (closed || asking) return false;
+    if (!IS_PDA && document.visibilityState === 'hidden') return false;
+    if (!IDS.some((id) => r.npcs[id] && r.npcs[id].state === 'beaten' && !theirFall(r, id))) return false;
+    return !(r.fellAskedAt <= nowMs && nowMs - r.fellAskedAt < FELL_EVERY_MS);
+  }
+
+  // Reads TornStats' feed and keeps each defeat time that is no more than 8 days old and not in
+  // the future. The time of the ask is stored first, so another tab sees it and waits. An answer
+  // the script can't read, or none, changes nothing.
+  function askFalls(nowMs) {
+    asking = true;
+    const start = readReading();
+    start.fellAskedAt = nowMs;
+    writeReading(start);
+    get(TORNSTATS_URL).then((text) => {
+      try {
+        const list = JSON.parse(text);
+        const r = readReading();
+        const now = Date.now();
+        (Array.isArray(list) ? list : []).forEach((item) => {
+          const id = Number(item && item.torn_id);
+          const at = Date.parse(item && item.hosped_at);
+          if (IDS.indexOf(id) >= 0 && at > 0 && at <= now + 60000 && now - at <= FELL_MAX_AGE_MS) r.fell[id] = at;
+        });
+        writeReading(r);
+      } catch (e) {
+        // Nothing to keep.
+      }
+      asking = false;
+      drawSafe();
+    }, () => {
+      asking = false;
+    });
+  }
+
   // Each tab's check, every 5 seconds and when the page comes back into view: a sweep if one is
   // due, then the box redrawn from the stored reading, so a sweep by another tab shows too.
   function tick() {
     try {
       const nowMs = Date.now();
       if (sweepDue(nowMs)) sweep(apiKey(), nowMs);
+      if (fallsDue(readReading(), nowMs)) askFalls(nowMs);
       draw();
     } catch (e) {
       // A surprise stops this one check. It never breaks the page.
@@ -552,9 +706,14 @@
     let state = '';
     const notes = [];
     if (asleep) {
-      state = n.state + (n.since ? ' ' + clock(n.since, nowMs) : '');
+      const at = n.state === 'beaten' ? fellAt(r, id) : n.since;
+      state = n.state + (at ? ' ' + clock(at, nowMs) : '');
     } else if (id === MAOL && canHit) {
       notes.push('moves about every 15 min' + (n.since ? ', here since ' + clock(n.since, nowMs) : ''));
+      const way = route(r);
+      const stop = nextStop(r, way);
+      if (stop) notes.push('next ' + stop.place + (stop.at ? ' about ' + clock(stop.at, nowMs) : ''));
+      if (way) notes.push('route ' + way.join(' > '));
     } else if (id === MAOL) {
       const up = PRAETORIANS.filter((p) => !down(r.npcs[p])).length;
       state = 'shielded, ' + up + ' praetorian' + (up === 1 ? '' : 's') + ' up';
@@ -614,16 +773,16 @@
     return 'All asleep. ' + nextSummoning(r, nowMs);
   }
 
-  // When a new summoning is possible: 48 hours after a seen death of M'aol, inside the window
-  // patch #408 gives, from 10:00 TCT on Oct 26 to 23:59:59 TCT on Oct 31 of this year.
+  // When a new summoning is possible: 48 hours after M'aol's death (TornStats' time, or the
+  // script's own), inside the window patch #408 gives, from 10:00 TCT on Oct 26 to 23:59:59 TCT
+  // on Oct 31 of this year.
   function nextSummoning(r, nowMs) {
     const year = new Date(nowMs).getUTCFullYear();
     const opens = Date.UTC(year, 9, 26, 10, 0, 0);
     const ends = Date.UTC(year, 9, 31, 23, 59, 59);
     if (nowMs < opens) return 'Summoning opens ' + clock(opens, nowMs) + '.';
     if (nowMs > ends) return 'No more summonings this Halloween.';
-    const m = r.npcs[MAOL];
-    const died = m.state === 'beaten' ? m.since : 0;
+    const died = fellAt(r, MAOL);
     if (died) {
       const from = died + RESUMMON_MS;
       if (from > ends) return 'No more summonings this Halloween.';
