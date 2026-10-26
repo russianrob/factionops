@@ -1653,3 +1653,25 @@ test('storage that won\'t save the reading, with a sweep stored ahead of the clo
   await env.advance(2 * MIN);
   assert.equal(env.torns().length, 18);
 });
+
+// The six as Torn gave them at 14:20 TCT on Oct 26, in the live check before release, with what each
+// should read as taken from TornStats' words at the same time.
+test('the six as Torn gave them at 14:20 TCT on Oct 26 read as TornStats saw them: M\'aol Awoken in Mexico', async () => {
+  const torn = {
+    23: profile(23, 'Awoken in Mexico', 66279995, { state: 'Abroad', max: 151200000 }),
+    100: profile(100, 'Dormant in Cayman Islands', 0, { state: 'Abroad', max: 172500000 }),
+    101: profile(101, 'Dormant in Mexico', 0, { state: 'Abroad', max: 129600000 }),
+    102: profile(102, 'Dormant in Canada', 0, { state: 'Abroad', max: 217800000 }),
+    103: profile(103, 'Dormant in Hawaii', 0, { state: 'Abroad', max: 202950000 }),
+    104: profile(104, 'Dormant in United Kingdom', 0, { state: 'Abroad', max: 222000000 }),
+  };
+  const { env } = await started({ torn });
+  assert.deepEqual(seen(env), {
+    23: ['up', 'Mexico', 43],
+    100: ['beaten', 'Cayman Islands', 0],
+    101: ['beaten', 'Mexico', 0],
+    102: ['beaten', 'Canada', 0],
+    103: ['beaten', 'Hawaii', 0],
+    104: ['beaten', 'United Kingdom', 0],
+  });
+});
