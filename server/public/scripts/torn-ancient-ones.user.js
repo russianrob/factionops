@@ -400,35 +400,76 @@
     return places.filter((p, i) => places.indexOf(p) === i).length === places.length ? places : null;
   }
 
-  // M'aol's route: his praetorians' countries in the order he visits them, or null when the
-  // script doesn't know it. From his moves once his trail holds all five countries, because
-  // that is what he did; until then, from the order the praetorians fell, when each has a
-  // defeat time and no two came in the same sweep.
-  function route(r) {
+  // M'aol's routes: each order of his praetorians' countries he may be going round in, as far
+  // as the script can tell. From his moves once his trail holds all five countries, because
+  // that is what he did. Until then, each order the praetorians' falls allow that fits every
+  // move he was seen to make. Falls under 30 s apart came too close to put in order (the same
+  // sweep, or TornStats' times a second apart), so they may have come either way. None when a
+  // fall has no time, or when his moves fit no order the falls allow: then the script waits
+  // until it has seen him in all five.
+  function routes(r) {
     const countries = praetorianCountries(r.npcs);
-    if (!countries) return null;
+    if (!countries) return [];
     const moves = [];
     r.trail.forEach((c) => {
       if (countries.indexOf(c) >= 0 && moves.indexOf(c) < 0) moves.push(c);
     });
-    if (moves.length === countries.length) return moves;
+    if (moves.length === countries.length) return [moves];
     const falls = PRAETORIANS.map((id) => ({ place: r.npcs[id].place, at: fellAt(r, id) }));
-    if (falls.some((f) => !f.at)) return null;
+    if (falls.some((f) => !f.at)) return [];
     falls.sort((a, b) => a.at - b.at);
-    for (let i = 1; i < falls.length; i++) {
-      if (falls[i].at - falls[i - 1].at < FALL_GAP_MS) return null;
-    }
-    return falls.map((f) => f.place);
+    // Runs of falls, each under 30 s after the one before: the order inside a run isn't known.
+    const runs = [];
+    falls.forEach((f, i) => {
+      if (i > 0 && f.at - falls[i - 1].at < FALL_GAP_MS) runs[runs.length - 1].push(f.place);
+      else runs.push([f.place]);
+    });
+    let ways = [[]];
+    runs.forEach((run) => {
+      const longer = [];
+      ways.forEach((way) => orders(run).forEach((o) => longer.push(way.concat(o))));
+      ways = longer;
+    });
+    return ways.filter((way) => fitsMoves(way, r.trail));
   }
 
-  // Where M'aol goes next: the country after his current one on his route, from the last back
-  // to the first, and when (15 minutes after he was seen arriving; 0 when his arrival had no
-  // time). null with no route, or when he is somewhere not on it.
-  function nextStop(r, way) {
+  // Every order of these places.
+  function orders(places) {
+    if (places.length < 2) return [places];
+    const all = [];
+    places.forEach((p, i) => {
+      orders(places.filter((q, j) => j !== i)).forEach((rest) => all.push([p].concat(rest)));
+    });
+    return all;
+  }
+
+  // True when each move M'aol was seen to make between two countries of this order, one
+  // straight after the other in his trail, goes on to the next country of it, from the last
+  // back to the first.
+  function fitsMoves(way, trail) {
+    for (let i = 1; i < trail.length; i++) {
+      const from = way.indexOf(trail[i - 1]);
+      if (from >= 0 && way.indexOf(trail[i]) >= 0 && way[(from + 1) % way.length] !== trail[i]) return false;
+    }
+    return true;
+  }
+
+  // Where M'aol goes next: the country after his current one on each of his routes, from the
+  // last back to the first. One country when they all give the same one, two when they give
+  // two (in the order the routes give them), and null when they give more, when there is no
+  // route, or when he is somewhere not on them. When: 15 minutes after he was seen arriving;
+  // 0 when his arrival had no time.
+  function nextStop(r, ways) {
     const m = r.npcs[MAOL];
-    const i = way && m ? way.indexOf(m.place) : -1;
-    if (i < 0) return null;
-    return { place: way[(i + 1) % way.length], at: m.since ? m.since + STOP_MS : 0 };
+    const places = [];
+    for (const way of ways) {
+      const i = m ? way.indexOf(m.place) : -1;
+      if (i < 0) return null;
+      const next = way[(i + 1) % way.length];
+      if (places.indexOf(next) < 0) places.push(next);
+    }
+    if (!places.length || places.length > 2) return null;
+    return { places: places, at: m.since ? m.since + STOP_MS : 0 };
   }
 
   // ===== WHERE TO FLY =====
@@ -848,9 +889,11 @@
       state = n.state + (at ? ' ' + clock(at, nowMs) : '');
     } else if (id === MAOL && canHit) {
       notes.push('moves about every 15 min' + (n.since ? ', here since ' + clock(n.since, nowMs) : ''));
-      const way = route(r);
-      const stop = nextStop(r, way);
-      if (stop) notes.push('next ' + stop.place + (stop.at ? ' about ' + clock(stop.at, nowMs) : ''));
+      const ways = routes(r);
+      // His route, once one order is left of those he may be going round in.
+      const way = ways.length === 1 ? ways[0] : null;
+      const stop = nextStop(r, ways);
+      if (stop) notes.push('next ' + stop.places.join(' or ') + (stop.at ? ' about ' + clock(stop.at, nowMs) : ''));
       if (way) notes.push('route ' + way.join(' > '));
       const dies = deathAt(n);
       if (dies) notes.push('dies about ' + clock(dies, nowMs));

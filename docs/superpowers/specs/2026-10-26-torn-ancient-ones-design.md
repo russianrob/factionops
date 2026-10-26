@@ -10,6 +10,7 @@
   - 08:48 EDT: a read with four beaten put him in Canada, where the newest had fallen, and agreed with TornStats on all six. TornStats' time for one fall had moved by a second, which changed "Asking TornStats". Tests for a clock set back were added to "Testing".
   - 09:39 to 09:42 EDT, testing a 0.9.0 build: the owner asked "please have it in order they were beaten please", then "the first four are in order except for the last one", and approved the design with "yes go ahead, do recommended", which also said yes to the footer saying when the box tries again after Torn says to wait. That changed "The box" (the order of the lines), "Asking TornStats" (what a defeat time is used for), "Asking Torn" (the footer) and "Testing".
   - 10:10 EDT, the final review: two of its findings changed "M'aol's route" (a gap of 10 minutes or more in his readings starts his trail again) and "Stored" (a sweep stored ahead of the clock doesn't beat a tab's own copy).
+  - 10:03 to 10:28 EDT, testing the box while M'aol could be hit: the owner asked "can it know where it goes next?" and "and when he will go next to mexico". The Cayman Islands' and the UK's praetorians had fallen a second apart, so the box knew no route and named no next stop. The owner approved the design at 10:27 EDT with "do recommended" (his next stop whenever it is certain, and his moves settling falls too close to put in order), then said at 10:28 EDT "it doesnt shown where and when hes moving next", which added naming both of two next stops; the owner kept that at 10:53 EDT. That changed "The box", "M'aol's route" and "Testing" for 1.0.2.
   - 10:53 EDT, using 1.0.0: its Attack link gave Torn's "This endpoint is no longer available. Please use the new endpoints instead (page.php).", and the owner asked "fix the attack link please". Torn's own Attack buttons link to `page.php?sid=attack&user2ID=<id>`, which changed "Links" for 1.0.1.
 
 **Script:** `server/public/scripts/torn-ancient-ones.user.js` and `.meta.js`, version 1.0.1. Tests: `server/torn-ancient-ones.test.mjs`.
@@ -95,7 +96,7 @@ At Halloween, a player who has collected 9,999 treats can summon the Ancient One
   | A beaten praetorian (dimmed) | `Nol'dasaym  Mexico  beaten 10:24 TCT` |
   | Dormant with life left (its week ran out) | "dormant" instead of "beaten" |
   | M'aol, shielded (no link) | `M'aol  Torn City  100%  shielded, 3 praetorians up`, or the country he is in once some have fallen: `M'aol  Cayman Islands  100%  shielded, 2 praetorians up` |
-  | M'aol, can be hit | `M'aol  Mexico  92%  Attack`, then `moves about every 15 min, here since 11:02 TCT`, then, when his route is known, `next Canada about 11:17 TCT` and `route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii` |
+  | M'aol, can be hit | `M'aol  Mexico  92%  Attack`, then `moves about every 15 min, here since 11:02 TCT`, then, when his next stop is known, `next Canada about 11:17 TCT` (or `next Cayman Islands or United Kingdom about 11:17 TCT`), and when his route is, `route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii` |
   | M'aol, beaten | `M'aol  Mexico  beaten 12:41 TCT` |
   | Torn's words don't fit any of these | the name, then Torn's description as it came, as text |
 - **Links:**
@@ -112,14 +113,15 @@ At Halloween, a player who has collected 9,999 treats can summon the Ancient One
 
 ## M'aol's route
 
-TornStats says M'aol moves about every 15 minutes through his praetorians' countries, in the order they were defeated, and a player's chat that the owner sent says the same. So once he can be hit, the box says where he goes next, when the script knows his route.
+TornStats says M'aol moves about every 15 minutes through his praetorians' countries, in the order they were defeated, and a player's chat that the owner sent says the same. So once he can be hit, the box says where he goes next and his route, as far as the script knows them.
 
 - **The route from his moves:** while he can be hit, each new country he is seen in is added to his trail. Once the trail holds all five of his praetorians' countries, the route is the order he was first seen in each. His moves while shielded don't count: then he goes round only the beaten ones' countries, and the order he was first seen in across that change wouldn't be his route. Nor does an order seen across a gap: two readings of him 10 minutes or more apart (a page out of view, a phone asleep) could hide one of his stops, so his trail starts again from where he is seen next. That also clears the trail of a summoning the script missed from start to end.
-- **The route from the falls:** when the script saw all five praetorians fall, each with a time (the 3-minute rule) and each at least 30 seconds after the one before, the route is their countries in the order they fell. Falls seen in the same sweep can't be put in order, so then this route isn't known.
-- **Which wins:** the route from his moves, once it is whole, because it is what he did. Until then, the route from the falls.
+- **The route from the falls:** when each praetorian has a defeat time (TornStats', or the script's own by the 3-minute rule), the route is their countries in the order they fell. Falls each under 30 seconds after the one before make a run, however far apart its first and last: they came too close to put in order (falls seen in the same sweep, or TornStats' times a second apart), so each order of a run may be his route.
+- **His moves settle it:** each move the script saw him make, from one of the five countries straight to another in his trail, is a step of his route, and an order the falls allow without that step is dropped. When one order is left, it is his route. On 2026-10-26 the Cayman Islands and the UK fell a second apart, after Mexico and before Canada, and one move among those four, such as the UK to Canada, settles which came first.
+- **Which wins:** the route from his moves, once it is whole, because it is what he did. Until then, the order the falls allow that fits his moves. When his moves fit no order the falls allow, the box names no route and no next stop until his trail is whole: it doesn't name a stop it saw him skip.
 - **Known only when it is whole:** five different countries. Two praetorians in one country, or a country missing, means no route.
-- **Next stop:** the country after his current one on the route, from the last back to the first. The time is 15 minutes after he was seen arriving, shown only when his arrival here had a time. In a country not on the route, such as Torn City, there is no next stop.
-- **Shown:** under M'aol's line, after `moves about every 15 min...`: `next Canada about 11:17 TCT` (or `next Canada` without a time), then `route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii`. With no route known, neither shows.
+- **Next stop:** the country after his current one, from the last back to the first, on each order that may be his route. When they all give the same country, that is his next stop, route known or not: on 2026-10-26, from Hawaii it was Mexico, whichever came first of the Cayman Islands and the UK. When they give two, the box names both; when more, none. The time is 15 minutes after he was seen arriving, shown only when his arrival here had a time. In a country not on the route, such as Torn City, there is no next stop.
+- **Shown:** under M'aol's line, after `moves about every 15 min...`: `next Canada about 11:17 TCT` (or `next Canada` without a time, or `next Cayman Islands or United Kingdom about 11:17 TCT` for one of two), then, once his route is known, `route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii`. Where to fly needs his route.
 - **A new summoning** empties the trail.
 
 ## Asking TornStats
@@ -270,7 +272,11 @@ Tests come first, with node:test and linkedom, in `server/torn-ancient-ones.test
   - the next stop wraps from the last to the first, its time is 15 minutes after a timed arrival, and there is none from Torn City;
   - a new summoning empties the trail;
   - his moves while shielded don't count;
-  - tied times from TornStats give no route from the falls.
+  - tied times from TornStats give no route from the falls;
+  - falls too close to put in order: the next stop when every order gives the same one (from Hawaii, Mexico), both of two (from Mexico, the Cayman Islands or the UK), none of three, and no route or where to fly;
+  - one move among them settles their order, either way round, and his route and where to fly show;
+  - a move that fits no order the falls allow: no next stop and no route until he has been seen in all five countries;
+  - falls each under 30 s after the one before are one run, however far apart its first and last (11:52:00, :20 and :40 are one run of three).
 - **Asking TornStats:**
   - a beaten one with no time of its own gets TornStats' time;
   - TornStats is asked only while its own time for a beaten one is missing, even when the script timed that fall; at most every 5 minutes across tabs; never while hidden;

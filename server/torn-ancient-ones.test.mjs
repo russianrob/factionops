@@ -1676,3 +1676,99 @@ test('the six as Torn gave them at 14:20 TCT on Oct 26 read as TornStats saw the
     104: ['beaten', 'United Kingdom', 0],
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// M'aol's next stop when praetorians fell too close together to put in order
+// ---------------------------------------------------------------------------------------------
+
+// Nol'dasaym (Mexico) falls at 10:41 TCT; Dyno'salam (Cayman Islands) and Ladso'myna (United
+// Kingdom) both in the sweep at 10:42, too close to put in order; then Asmol'yand (Canada) at
+// 10:43 and Sylo'nadam (Hawaii) at 10:44. So his route is Mexico, the Cayman Islands and the UK
+// in an order not known, Canada, Hawaii.
+async function fallWithATie(env) {
+  await fall(env, [101]);
+  env.torn[100] = beaten(100, PLACE[100]);
+  env.torn[104] = beaten(104, PLACE[104]);
+  await env.advance(MIN);
+  await fall(env, [102, 103]);
+}
+// The where-to-fly notes, without his death time.
+const catchNotes = (w) => notes(w, 23).filter((n) => /^(airstrip|BCT):/.test(n));
+
+test('with two falls too close to put in order, the next stop shows when every order gives the same one, or names both, and the route doesn\'t show', async () => {
+  const { env, w } = await started({ torn: allUp() });
+  await fallWithATie(env);
+  await go(env, ['Hawaii']);
+  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:45 TCT', 'next Mexico about 11:00 TCT']);
+  await go(env, ['Mexico']);
+  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:46 TCT', 'next Cayman Islands or United Kingdom about 11:01 TCT']);
+  assert.deepEqual(catchNotes(w), [], 'where to fly needs his route');
+});
+
+test('one move seen among falls too close to put in order settles their order, either way round, and his route and where to fly show', async () => {
+  const caymanFirst = await started({ torn: allUp() });
+  await fallWithATie(caymanFirst.env);
+  await go(caymanFirst.env, ['Mexico', 'Cayman Islands']);
+  assert.deepEqual(maolNotes(caymanFirst.w), [
+    'moves about every 15 min, here since 10:46 TCT',
+    'next United Kingdom about 11:01 TCT',
+    'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii',
+  ]);
+  assert.equal(catchNotes(caymanFirst.w).length, 2);
+
+  const ukFirst = await started({ torn: allUp() });
+  await fallWithATie(ukFirst.env);
+  await go(ukFirst.env, ['United Kingdom', 'Cayman Islands']);
+  assert.deepEqual(maolNotes(ukFirst.w), [
+    'moves about every 15 min, here since 10:46 TCT',
+    'next Canada about 11:01 TCT',
+    'route Mexico > United Kingdom > Cayman Islands > Canada > Hawaii',
+  ]);
+});
+
+test('with three falls too close to put in order, he has no next stop where it could be any of the three', async () => {
+  const { env, w } = await started({ torn: allUp() });
+  await fall(env, [101]);
+  for (const id of [100, 104, 102]) env.torn[id] = beaten(id, PLACE[id]);
+  await env.advance(MIN);
+  await fall(env, [103]);
+  await go(env, ['Hawaii']);
+  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:44 TCT', 'next Mexico about 10:59 TCT']);
+  await go(env, ['Mexico']);
+  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:45 TCT']);
+});
+
+test('a move that fits no order the falls allow: no next stop and no route until he has been seen in all five countries', async () => {
+  const { env, w } = await started({ torn: allUp() });
+  await fall(env, [102, 100, 104, 101, 103]);
+  await go(env, ['Mexico']);
+  assert.deepEqual(maolNotes(w), [
+    'moves about every 15 min, here since 10:46 TCT',
+    'next Hawaii about 11:01 TCT',
+    'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii',
+  ]);
+  // The falls have Hawaii after Mexico, but he goes on to Canada.
+  await go(env, ['Canada']);
+  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:47 TCT']);
+  await go(env, ['Hawaii', 'Cayman Islands', 'United Kingdom']);
+  assert.deepEqual(maolNotes(w), [
+    'moves about every 15 min, here since 10:50 TCT',
+    'next Mexico about 11:05 TCT',
+    'route Mexico > Canada > Hawaii > Cayman Islands > United Kingdom',
+  ]);
+});
+
+test('falls each under 30 s after the one before make one run, however far apart its first and last', async () => {
+  const at = Date.UTC(2026, 9, 26, 12, 30);
+  const feed = (canadaAt) => [fellEntry(101, '2026-10-26T10:24:02Z'), fellEntry(100, '2026-10-26T11:52:00Z'), fellEntry(104, '2026-10-26T11:52:20Z'), fellEntry(102, canadaAt), fellEntry(103, '2026-10-26T12:20:00Z')];
+  // Canada 20 s after the UK: the Cayman Islands, the UK and Canada are one run of three, so
+  // from Mexico his next stop could be any of them. 40 s after: only the first two are a run.
+  for (const [canadaAt, next] of [['2026-10-26T11:52:40Z', []], ['2026-10-26T11:53:00Z', ['next Cayman Islands or United Kingdom']]]) {
+    const env = device({ torn: allBeaten('Awoken in Mexico'), tornstats: feed(canadaAt) });
+    env.now = at;
+    env.store[KEY_STORE] = KEY;
+    const w = env.tab().run();
+    await env.advance(5 * SEC);
+    assert.deepEqual(maolNotes(w).filter((n) => n.startsWith('next ')), next, canadaAt);
+  }
+});
