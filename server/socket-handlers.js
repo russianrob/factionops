@@ -41,7 +41,7 @@ export function registerSocketHandlers(io, socket) {
     });
 
     // Ensure war exists
-    const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null);
+    const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null, { fromClient: true });
 
     console.log(`[ws] ${user.playerName} joined war room ${room}`);
 

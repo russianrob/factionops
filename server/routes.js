@@ -2743,7 +2743,7 @@ router.get("/api/stream", (req, res, next) => {
   }
 
   if (!requireFactionClaim(req, res)) return;
-  const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null);
+  const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null, { fromClient: true });
   if (war.factionId !== factionId) {
     return res.status(403).json({ error: "Not a member of this war's faction" });
   }
@@ -2874,7 +2874,7 @@ router.get("/api/poll", (req, res, next) => {
 
   // Ensure war exists (join_war equivalent)
   if (!requireFactionClaim(req, res)) return;
-  const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null);
+  const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null, { fromClient: true });
 
   // Faction gate — if this war already belongs to another faction, reject
   if (war.factionId !== factionId) {
@@ -2883,31 +2883,8 @@ router.get("/api/poll", (req, res, next) => {
 
   war.lastClientPollAt = Date.now();
 
-  // WIPE STALE WAR DATA if enemy faction ID changed (bug fix)
-  if (enemyFactionId && war.enemyFactionId !== enemyFactionId) {
-    console.log(`[api] War ${warId} enemy changed from ${war.enemyFactionId} to ${enemyFactionId}. Wiping stale state.`);
-    // The NAME is stale state too. This path used to set the id and leave
-    // enemyFactionName untouched, so the record kept the previous faction's
-    // name beside the new id — worse than the blank it also produced, since
-    // every consumer then reports the wrong faction with confidence.
-    const _ident = prewar.reassignEnemy(war, enemyFactionId, warHistory.listWars(factionId) || []);
-    war.enemyFactionId = _ident.enemyFactionId;
-    war.enemyFactionName = _ident.enemyFactionName;
-    war.enemyStatuses = {};
-    war.calls = {};
-    war.priorities = {};
-
-    // Clear call timers for this war
-    for (const [key, timeoutId] of callTimers.entries()) {
-      if (key.startsWith(`${warId}:`)) {
-        clearTimeout(timeoutId);
-        callTimers.delete(key);
-      }
-    }
-
-    store.saveState();
-    broadcastWarUpdate(warId);
-  }
+  // A client's enemy never changes the war's: getOrCreateWar ignores one that
+  // differs (see store.js), and warboard's own checks set a new enemy.
 
   // Auto-detect ranked war enemy if not set
   if (!war.enemyFactionId) {
@@ -3111,7 +3088,7 @@ router.get("/api/poll-long", (req, res, next) => {
   const { warId, enemyFactionId } = req.query;
   if (!warId) return res.status(400).json({ error: "warId query parameter is required" });
   if (!requireFactionClaim(req, res)) return;
-  const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null);
+  const war = store.getOrCreateWar(warId, factionId, enemyFactionId || null, { fromClient: true });
   if (war.factionId !== factionId) return res.status(403).json({ error: "You are not a member of this war's faction" });
   war.lastClientPollAt = Date.now();
 

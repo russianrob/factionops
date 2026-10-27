@@ -165,10 +165,39 @@ export function getWar(warId) {
   return wars.get(warId) ?? null;
 }
 
-export function getOrCreateWar(warId, factionId, enemyFactionId = null) {
+// Who may change a war's enemy. Warboard's own Torn checks may: detectNewWars,
+// the chain monitor's score check and the war-scanner call this without
+// `fromClient`. A FactionOps connect (the stream, the two polls and join_war)
+// passes the enemy that member's script remembers, which after a new matchup
+// is still the last war's. It may create a record, or fill in an enemy the
+// record lacks, but never change one. When it could, every Tuesday from the
+// matchup to kickoff the record flipped between the two enemies about once a
+// minute, and each flip wiped the chain, the calls and the war's start.
+const IGNORED_CLIENT_ENEMY_LOG_MS = 600000;
+// `${warId}:${enemy}` -> when that ignored enemy was last logged.
+const ignoredClientEnemyLoggedAt = new Map();
+
+export function getOrCreateWar(warId, factionId, enemyFactionId = null, { fromClient = false } = {}) {
   if (wars.has(warId)) {
     const war = wars.get(warId);
-    if (enemyFactionId && war.enemyFactionId !== enemyFactionId) {
+    // As strings: some callers pass the id as a number, others as text.
+    const differs = enemyFactionId && String(war.enemyFactionId) !== String(enemyFactionId);
+    if (differs && fromClient) {
+      if (war.enemyFactionId) {
+        const key = `${warId}:${enemyFactionId}`;
+        const now = Date.now();
+        if (now - (ignoredClientEnemyLoggedAt.get(key) || 0) >= IGNORED_CLIENT_ENEMY_LOG_MS) {
+          ignoredClientEnemyLoggedAt.set(key, now);
+          console.log(`[store] ${warId} kept enemy ${war.enemyFactionId}; a FactionOps connect sent ${enemyFactionId}`);
+        }
+        return war;
+      }
+      // No enemy yet: fill it in, and leave the rest of the record alone.
+      war.enemyFactionId = enemyFactionId;
+      saveState();
+      return war;
+    }
+    if (differs) {
       console.log(`[store] New enemy detected (${enemyFactionId}). Resetting stale war data.`);
 
       // ── Archive ended wars before we wipe them ──────────────────────
