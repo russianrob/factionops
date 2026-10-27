@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.20
+// @version      5.6.21
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -16,6 +16,8 @@
 // @match        https://www.torn.com/profiles.php?XID=*
 // @match        https://torn.com/profiles.php?XID=*
 // @match        https://www.torn.com/war.php*
+// @match        https://www.torn.com/*
+// @match        https://torn.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -100,7 +102,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.20';
+    const SCRIPT_VERSION = '5.6.21';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -169,6 +171,235 @@
             GM_setValue(gmKeys[key], value);
         }
     }
+
+    // =========================================================================
+    // SECTION 1A: CHAIN BAR (every Torn page)
+    // =========================================================================
+    // A red and white flashing bar at the top of every Torn page while the
+    // faction's chain has 10 or more hits and the chain-alert threshold (1:00
+    // unless changed in settings) or less left, so whoever is on Torn goes and
+    // hits someone. Asked for 2026-10-27, the day after a chain died with no
+    // one watching it.
+    //
+    // FactionOps loads on every Torn page for this alone. Off its own pages
+    // (isFactionOpsPage: the @match list it had before 5.6.21) the script
+    // stops right after starting the bar: no overlay, no server connection, no
+    // request interception. The private build widened @match the same way in
+    // 5.4.2, for its chat dock.
+    //
+    // Where the war overlay runs, the bar follows the overlay's chain (the
+    // direct poll, with the chain alerts' own freshness and plausibility
+    // checks), so the bar and the alerts come up together. Anywhere else it
+    // reads Torn's own sidebar chain bar, once a second. Torn's rules forbid
+    // drawing attention with anything read off a page you are not looking at, so the bar is only up while the page has
+    // focus; Torn PDA reports no focus while plainly in front of you, so it is
+    // exempt. It follows the chain-alert switch and threshold, and makes no
+    // sound: the alerts in startChainTimer already do, on FactionOps' pages.
+    const CHAIN_BAR_ID = 'fo-chain-bar';
+    // Not "fo-chain...": Gym Coach drops its full-bar banner to 96 px when it
+    // finds an element whose id starts that way, and the style element stays
+    // on the page after the bar comes down.
+    const CHAIN_BAR_STYLE_ID = 'fo-style-chain-bar';
+    // Under 10 hits nothing is at stake yet, and every lone attack starts a
+    // 1-hit chain: the chain alerts' own floor.
+    const CHAIN_BAR_MIN_HITS = 10;
+    // How long the bar waits for its cooldown check before it shows anyway.
+    const CHAIN_BAR_CHECK_WAIT_MS = 5000;
+    // How long one check stands for the same count.
+    const CHAIN_BAR_CHECK_TTL_MS = 60000;
+
+    // The pages in FactionOps' @match list before 5.6.21: the header's first
+    // nine @match lines. Every other page gets the chain bar only.
+    const FO_PAGE_PATTERNS = [
+        /^https:\/\/www\.torn\.com\/factions\.php\?step=(?:your|profile)/,
+        /^https:\/\/(?:www\.)?torn\.com\/(?:loader|page)\.php\?sid=attack/,
+        /^https:\/\/(?:www\.)?torn\.com\/profiles\.php\?XID=/,
+        /^https:\/\/www\.torn\.com\/war\.php/,
+    ];
+
+    function isFactionOpsPage(href) {
+        const s = String(href || '');
+        return FO_PAGE_PATTERNS.some((re) => re.test(s));
+    }
+
+    // Torn's sidebar chain bar: "Chain: 1,234/2,500" beside "00:42", or
+    // "1:02:03" for an hour or more. FactionOps has not read Torn's markup
+    // since 5.1.43, so neither number hangs on one class name. The clock is
+    // the bar's bar-timeleft element, as parseChainFromDOM read it, or else
+    // the first element in the bar that holds nothing but a clock. The count
+    // is the first "n/m" in the rest of the bar's text, the way Gym Coach
+    // reads the energy bar. { count, left } in seconds, or null when the page
+    // has no chain bar or the bar shows no clock.
+    function readChainFromDom(doc) {
+        const bar = doc.getElementById('barChain') || doc.querySelector('[id^="barChain"]');
+        if (!bar) return null;
+        const time = bar.querySelector('[class*="bar-timeleft"]')
+            || Array.from(bar.querySelectorAll('*')).find((e) => !e.children.length
+                && /^\d{1,2}:\d{2}(?::\d{2})?$/.test(String(e.textContent || '').trim()));
+        if (!time) return null;
+        const clock = String(time.textContent || '');
+        const n = String(bar.textContent || '').replace(clock, ' ').match(/(\d[\d,.\s]*)\s*\/\s*\d/);
+        const parts = clock.trim().split(':').map(Number);
+        if (!n || (parts.length !== 2 && parts.length !== 3)) return null;
+        if (!parts.every((p) => Number.isInteger(p) && p >= 0)) return null;
+        const left = parts.length === 3
+            ? parts[0] * 3600 + parts[1] * 60 + parts[2]
+            : parts[0] * 60 + parts[1];
+        return { count: Number(n[1].replace(/[^\d]/g, '')), left };
+    }
+
+    // A chain that has ended keeps its count through its cooldown (about six
+    // seconds a hit), and the sidebar's clock may count that cooldown down.
+    // The API's `cooldown` is the seconds left. Kept with the count it was
+    // read at, because a chain cannot grow in its cooldown: a higher count is
+    // a live chain, whatever the check said.
+    function chainCooldownFrom(chain, now) {
+        const cd = Number(chain && chain.cooldown) || 0;
+        if (!(cd > 0)) return null;
+        return { count: Number(chain.current) || 0, until: now + cd * 1000 };
+    }
+
+    // The chain-alert threshold in seconds: 60 unless changed in settings.
+    function chainBarThreshold() {
+        const t = Number(CONFIG.CHAIN_ALERT_THRESHOLD);
+        return t > 0 ? t : 60;
+    }
+
+    // Should the bar be up for this reading? Pure: { count, left } or null.
+    // `cd` is chainCooldownFrom()'s answer, or null.
+    function chainNag(now, reading, cd, threshold) {
+        if (!reading || !(reading.count >= CHAIN_BAR_MIN_HITS)) return null;
+        if (!(reading.left > 0 && reading.left <= threshold)) return null;
+        if (cd && now < cd.until && reading.count <= cd.count) return null;
+        return { count: reading.count, left: reading.left };
+    }
+
+    // One Torn API check per dying chain, before the bar first comes up,
+    // because the sidebar may be counting a finished chain's cooldown down.
+    // Pure. `check` is { count, left, at, done, cd } or null. Returns
+    // { show, start }: `show` is the bar's reading or null, and `start` asks
+    // for a new check. A check stands while the count is the same, the clock
+    // has only run down since, and it is under a minute old. One that has not
+    // answered in 5 s lets the bar up anyway: missing a dying chain is the
+    // worse mistake. The overlay's own poll knows the cooldown already.
+    function chainBarStep(now, reading, check, threshold) {
+        const live = chainNag(now, reading, check && check.done ? check.cd : null, threshold);
+        if (!live) return { show: null, start: false };
+        if (reading.fromOverlay) return { show: live, start: false };
+        const stands = !!check && check.count === live.count && live.left <= check.left + 1
+            && now - check.at < CHAIN_BAR_CHECK_TTL_MS;
+        if (!stands) return { show: null, start: true };
+        if (check.done || now - check.at >= CHAIN_BAR_CHECK_WAIT_MS) return { show: live, start: false };
+        return { show: null, start: false };
+    }
+
+    function chainBarText(live) {
+        const m = Math.floor(live.left / 60);
+        const s = live.left % 60;
+        return 'CHAIN DYING \u00B7 ' + live.count.toLocaleString('en-US') + ' hits \u00B7 '
+            + m + ':' + String(s).padStart(2, '0') + ' left';
+    }
+
+    // Which chain the bar follows. Where the war overlay's chain tick has run
+    // in the last 2 s, the overlay's: the direct poll the chain alerts use,
+    // null while the alerts' own checks fail, so the bar comes up with them.
+    // Anywhere else, Torn's sidebar. Pure; readSidebar is only called when it
+    // is needed.
+    function chainBarReading(now, overlay, readSidebar) {
+        if (overlay && now - overlay.at < 2000) return overlay.ok ? overlay : null;
+        return readSidebar();
+    }
+
+    // The latest cooldown check (see chainBarStep), and the war overlay's
+    // chain, which startChainTimer's tick keeps fresh where it runs.
+    let chainBarCheck = null;
+    let chainBarFromOverlay = null;
+
+    function renderChainBar(live) {
+        let el = document.getElementById(CHAIN_BAR_ID);
+        if (!live) {
+            if (el && el.parentNode) el.parentNode.removeChild(el);
+            return;
+        }
+        if (!document.body) return;
+        if (!document.getElementById(CHAIN_BAR_STYLE_ID)) {
+            // A hard red/white blink once a second, and steady red for anyone
+            // whose system asks for less motion. An animation outranks the
+            // inline colours.
+            const css = document.createElement('style');
+            css.id = CHAIN_BAR_STYLE_ID;
+            css.textContent =
+                '@keyframes fo-chain-bar-flash{0%,49%{background:#d50000;color:#fff}50%,100%{background:#fff;color:#d50000}}' +
+                '#' + CHAIN_BAR_ID + '{animation:fo-chain-bar-flash 1s infinite}' +
+                '@media (prefers-reduced-motion:reduce){#' + CHAIN_BAR_ID + '{animation:none}}';
+            (document.head || document.documentElement).appendChild(css);
+        }
+        const text = chainBarText(live);
+        if (el && el.textContent === text) return;
+        if (!el) {
+            el = document.createElement('div');
+            el.id = CHAIN_BAR_ID;
+            // Clicks pass through: it is there to be seen, never to sit on a
+            // button you need.
+            el.style.cssText =
+                'position:fixed;top:10px;left:50%;transform:translateX(-50%);' +
+                'z-index:2147483647;pointer-events:none;' +
+                'background:#d50000;color:#fff;font:800 14px/1.2 Arial,sans-serif;' +
+                'padding:9px 16px;border-radius:7px;white-space:nowrap;' +
+                'box-shadow:0 3px 14px rgba(0,0,0,.5);max-width:94vw;';
+            document.body.appendChild(el);
+        }
+        // Below Gym Coach's full-bar banner while that banner holds the top
+        // spot, so the two never sit on each other. (When this bar is up
+        // first, the banner takes 96 px of its own accord.)
+        const gc = document.getElementById('gcb-fullbar-nag');
+        const r = gc ? gc.getBoundingClientRect() : null;
+        el.style.top = (r && r.bottom > 0 && r.top < 50 ? Math.round(r.bottom) + 6 : 10) + 'px';
+        el.textContent = text;
+    }
+
+    function startChainBarCheck(now, reading) {
+        const check = { count: reading.count, left: reading.left, at: now, done: false, cd: null };
+        chainBarCheck = check;
+        const finish = (cd) => { check.cd = cd; check.done = true; };
+        if (!CONFIG.API_KEY) return finish(null);
+        try {
+            httpRequest({
+                method: 'GET',
+                url: 'https://api.torn.com/faction/?selections=chain&key=' + encodeURIComponent(CONFIG.API_KEY),
+                timeout: CHAIN_BAR_CHECK_WAIT_MS,
+                onload(res) {
+                    let data = null;
+                    try { data = JSON.parse(res.responseText); } catch (_) {}
+                    finish(data && !data.error && data.chain ? chainCooldownFrom(data.chain, Date.now()) : null);
+                },
+                onerror() { finish(null); },
+                ontimeout() { finish(null); },
+            });
+        } catch (_) { finish(null); }
+    }
+
+    function chainBarTick() {
+        const now = Date.now();
+        // PDA's GM storage hands values back as strings, and "false" is truthy.
+        const on = !!CONFIG.CHAIN_ALERT && String(CONFIG.CHAIN_ALERT) !== 'false';
+        // The chain alerts' own focus check.
+        const looking = IS_PDA || (typeof document.hasFocus === 'function' ? document.hasFocus() : !document.hidden);
+        const reading = chainBarReading(now, chainBarFromOverlay, () => readChainFromDom(document));
+        const step = on && looking ? chainBarStep(now, reading, chainBarCheck, chainBarThreshold()) : { show: null, start: false };
+        if (step.start) startChainBarCheck(now, reading);
+        renderChainBar(step.show);
+    }
+
+    function startChainBar() {
+        // Not in Torn's frames: one bar, on the page itself.
+        if (window.top !== window.self) return;
+        setInterval(() => { try { chainBarTick(); } catch (_) {} }, 1000);
+    }
+
+    startChainBar();
+    // Off FactionOps' own pages, the chain bar is all this script does.
+    if (!isFactionOpsPage(location.href)) return;
 
     // =========================================================================
     // SECTION 1B: PDA-COMPATIBLE HTTP WRAPPER
@@ -8972,6 +9203,13 @@ body.wb-chain-active {
             const anchorAge = chainTimeoutAnchorAt > 0 ? (Date.now() - chainTimeoutAnchorAt) / 1000 : Infinity;
             const chainDataFresh = anchorAge < 120; // anchor less than 2 min old
             const _chainFocusOK = IS_PDA || (typeof document.hasFocus === 'function' ? document.hasFocus() : !document.hidden);
+            // The chain bar follows this chain while the overlay runs, with the
+            // same freshness and plausibility checks as the alerts below, so
+            // the two come up together. See SECTION 1A.
+            chainBarFromOverlay = {
+                ok: chainDataFresh && chainTimeoutPlausible && state.chain.timeout > 0,
+                count: state.chain.current, left: Math.ceil(state.chain.timeout), at: Date.now(), fromOverlay: true,
+            };
             // Fire on ANY active chain you're watching (not war-only): the focus
             // gate keeps it compliant, current>=10 + freshness keep it relevant.
             if (CONFIG.CHAIN_ALERT && _chainFocusOK && chainDataFresh && chainTimeoutPlausible && state.chain.timeout > 0 && state.chain.current >= 10) {
