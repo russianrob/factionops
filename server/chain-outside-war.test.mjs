@@ -91,7 +91,10 @@ function lastRead(war, current, leftS, agoMs) {
   war.chainDataUpdatedAt = at;
   return war;
 }
-const reading = (current, timeout) => ({ current, timeout, cooldown: 0 });
+// A reading as Torn gives it. A chain that has ended keeps its count, with
+// timeout 0 and a cooldown of about 6 s a hit, and reads 0 only once the
+// cooldown is over.
+const reading = (current, timeout, cooldown = 0) => ({ current, timeout, cooldown });
 
 // ── The rule ────────────────────────────────────────────────────────────
 
@@ -128,16 +131,37 @@ test("before kickoff the next read is never later than kickoff, nor sooner than 
   assert.equal(rule.outsideWarDelay(at(10, { chainData: { current: 1234 } }), T, 15_000, Infinity), 10_000);
 });
 
-test("a 100+ chain has ended when a reading under 100 follows one with 30 s or less left, at most 3 minutes old", () => {
-  const ended = (o) => rule.outsideWarChainEnded({ prevCurrent: 1234, prevTimeoutS: 5, prevAgeMs: 15_000, current: 0, ...o });
+test("a 100+ chain may have ended when its cooldown starts after a reading with 30 s or less left, at most 3 minutes old", () => {
+  const ended = (o) => rule.outsideWarChainEnded({ prevCurrent: 1234, prevTimeoutS: 5, prevCooldown: 0, prevAgeMs: 15_000, current: 1234, cooldown: 7_404, ...o });
   assert.equal(ended({}), true);
-  assert.equal(ended({ current: 3 }), true, "a new chain's first hits");
   assert.equal(ended({ prevTimeoutS: 30, prevAgeMs: 180_000 }), true);
-  assert.equal(ended({ prevTimeoutS: 285 }), false, "a bad reading of 0 with minutes left on the clock");
+  assert.equal(ended({ prevTimeoutS: 0 }), true, "Torn's last reading before the cooldown can show the clock at 0");
+  assert.equal(ended({ cooldown: 0 }), false, "no cooldown: a chain never ends with a reading of 0");
+  assert.equal(ended({ cooldown: 1_793_052_168 }), false, "a cooldown sent as a date, not a duration");
+  assert.equal(ended({ prevTimeoutS: 285 }), false, "minutes left on the clock");
   assert.equal(ended({ prevAgeMs: 180_001 }), false, "a record from before a restart");
   assert.equal(ended({ prevTimeoutS: undefined }), false, "no clock on the reading before");
+  assert.equal(ended({ prevCooldown: 7_394, prevTimeoutS: 0 }), false, "the reading before was in its cooldown already");
   assert.equal(ended({ prevCurrent: 99 }), false);
-  assert.equal(ended({ current: 100 }), false);
+  assert.equal(ended({ current: 99 }), false);
+});
+
+test("outside a war, a chain in its cooldown is read every 2 minutes, though it keeps its count", () => {
+  const cooling = at(-86_400, { warEnded: true, chainData: { current: 1234, cooldown: 7_404 } });
+  assert.equal(rule.outsideWarDelay(cooling, T, 15_000, Infinity), 120_000);
+  assert.equal(rule.outsideWarDelay(cooling, T, 15_000, 60_000), 15_000, "within 5 minutes of the last reading of a running chain of 100+");
+});
+
+test("outside a war, a reading under 100 while a 100+ chain's clock still runs is a bad reading", () => {
+  const bad = (o) => rule.outsideWarBadDrop({ prevCurrent: 1234, prevTimeoutS: 200, current: 0, ...o });
+  assert.equal(bad({}), true);
+  assert.equal(bad({ prevTimeoutS: 5 }), true, "in its last seconds too: a chain ends with its cooldown, never with a 0");
+  assert.equal(bad({ current: 3 }), true);
+  assert.equal(bad({ prevTimeoutS: 0 }), false, "its clock has run out");
+  assert.equal(bad({ prevTimeoutS: undefined }), false, "no clock on the reading before");
+  assert.equal(bad({ prevTimeoutS: 1_793_052_168 }), false, "a clock no chain has: Torn's never reads over 5 minutes");
+  assert.equal(bad({ prevCurrent: 99 }), false);
+  assert.equal(bad({ current: 100 }), false);
 });
 
 // ── The push sender ─────────────────────────────────────────────────────
@@ -271,6 +295,14 @@ function buildMonitor(wars, chainReading = reading(0, 0)) {
   return { api, seen };
 }
 
+// The chain-ended notice waits a minute for the count to hold. This moves
+// the start of that wait back by `ms`, as if that long had gone by; it does
+// nothing when no end is waiting.
+function backdate(api, warId, ms) {
+  const pending = api.maps.pendingChainEnd?.get(warId);
+  if (pending) pending.since -= ms;
+}
+
 test("outside a war, a chain of 100 or more with 25 s left gets CHAIN DYING, and one under 100 gets nothing", async () => {
   const big = lastRead(endedWar(), 1234, 40, 15_000);
   const small = lastRead(endedWar(), 99, 40, 15_000);
@@ -296,32 +328,104 @@ test("outside a war, a bonus warning goes out for a chain of 100 or more and not
   assert.deepEqual(seen.sends.map((s) => s.slice(0, 1).concat(s.slice(2, 5))), [["notifyBonusImminent", "w1", 246, 250]]);
 });
 
-test("outside a war, a 100+ chain's end sends one quiet notice to the chain's audience", async () => {
+test("outside a war, a 100+ chain's end sends one quiet notice once its count has held a minute in its cooldown, naming the final count", async () => {
   const war = lastRead(endedWar(), 1234, 20, 15_000); // 5 s left on its clock now
   const { api, seen } = buildMonitor({ w1: war });
-  await api._processChain("w1", war, reading(0, 0), null, "poll");
-  await api._processChain("w1", war, reading(0, 0), null, "poll");
+  await api._processChain("w1", war, reading(1235, 0, 7_410), null, "poll"); // one more hit, then its clock ran out
+  await api._processChain("w1", war, reading(1235, 0, 7_400), null, "poll");
+  assert.deepEqual(seen.sends, [], "not yet: the count has to hold for a minute");
+  backdate(api, "w1", 61_000);
+  await api._processChain("w1", war, reading(0, 0), null, "client"); // a bad 0 in the cooldown
+  await api._processChain("w1", war, reading(1235, 0, 7_350), null, "poll");
+  await api._processChain("w1", war, reading(1235, 0, 7_340), null, "poll");
+  await api._processChain("w1", war, reading(0, 0), null, "poll"); // the cooldown is over
+  assert.deepEqual(seen.sends, [["notifyChainEnded", AUDIENCE, "w1", 1235]]);
+  assert.ok(seen.logs.includes("[chain] Chain ended outside a war at 1235 (poll)"), seen.logs.join("\n"));
+});
+
+test("outside a war, the end is noticed though Torn's last reading before the cooldown shows the clock at 0", async () => {
+  const war = lastRead(endedWar(), 1234, 0, 10_000); // the count kept, no time left, no cooldown yet
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(1234, 0, 7_404), null, "poll");
+  backdate(api, "w1", 61_000);
+  await api._processChain("w1", war, reading(1234, 0, 7_394), null, "poll");
   assert.deepEqual(seen.sends, [["notifyChainEnded", AUDIENCE, "w1", 1234]]);
-  assert.ok(seen.logs.includes("[chain] Chain ended outside a war at 1234 (poll)"), seen.logs.join("\n"));
+});
+
+test("a chain's end is noticed once, though a stale report of its running clock comes in after the notice", async () => {
+  const war = lastRead(endedWar(), 1234, 20, 15_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(1234, 0, 7_404), null, "poll");
+  backdate(api, "w1", 61_000);
+  await api._processChain("w1", war, reading(1234, 0, 7_394), null, "poll"); // the notice
+  await api._processChain("w1", war, reading(1234, 25), null, "client"); // a report from before the end
+  await api._processChain("w1", war, reading(1234, 0, 7_384), null, "poll");
+  backdate(api, "w1", 61_000);
+  await api._processChain("w1", war, reading(1234, 0, 7_374), null, "poll");
+  assert.equal(seen.sends.filter((s) => s[0] === "notifyChainEnded").length, 1);
+});
+
+test("a reading with time on the chain's clock calls off the notice", async () => {
+  const war = lastRead(endedWar(), 1234, 20, 15_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(1234, 0, 7_404), null, "poll");
+  backdate(api, "w1", 61_000);
+  await api._processChain("w1", war, reading(1234, 25), null, "poll"); // its clock is back
+  await api._processChain("w1", war, reading(1234, 0, 7_394), null, "poll");
+  assert.deepEqual(seen.sends.filter((s) => s[0] === "notifyChainEnded"), []);
+});
+
+test("no notice when Torn reports a cooldown while the hits still count, as it did for five minutes on 2026-10-26", async () => {
+  const war = lastRead(endedWar(), 1234, 20, 15_000); // 5 s left on its clock now
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(1234, 0, 7_404), null, "poll"); // looks like the end
+  await api._processChain("w1", war, reading(1237, 0, 7_422), null, "poll"); // but the hits still count
+  backdate(api, "w1", 61_000);
+  await api._processChain("w1", war, reading(1234, 0, 7_390), null, "client"); // a member's older report
+  await api._processChain("w1", war, reading(1240, 0, 7_428), null, "poll");
+  await api._processChain("w1", war, reading(1242, 5), null, "poll"); // its clock is back
+  assert.deepEqual(seen.sends.filter((s) => s[0] === "notifyChainEnded"), []);
 });
 
 test("before kickoff, a 100+ chain's end sends the notice too", async () => {
   const war = lastRead(comingWar(3_600), 1234, 20, 15_000);
   const { api, seen } = buildMonitor({ w1: war });
-  await api._processChain("w1", war, reading(0, 0), null, "client");
+  await api._processChain("w1", war, reading(1234, 0, 7_404), null, "client");
+  backdate(api, "w1", 61_000);
+  await api._processChain("w1", war, reading(1234, 0, 7_394), null, "client");
   assert.deepEqual(seen.sends.map((s) => s[0]), ["notifyChainEnded"]);
 });
 
-test("no notice for a bad reading of 0, for a record from before a restart, or for a chain in a war", async () => {
-  const blip = lastRead(endedWar(), 1234, 290, 5_000);
+test("no notice for a bad reading of 0, for a record from before a restart, or in a war", async () => {
+  const blip = lastRead(endedWar(), 1234, 20, 5_000); // 15 s left on its clock now
   const stale = lastRead(endedWar(), 1234, 20, 18 * 3_600_000);
   const inWar = lastRead(liveWar(), 1234, 20, 15_000);
   const { api, seen } = buildMonitor({ w1: blip, w2: stale, w3: inWar });
   await api._processChain("w1", blip, reading(0, 0), null, "client");
-  await api._processChain("w1", blip, reading(1234, 280), null, "client");
-  await api._processChain("w2", stale, reading(0, 0), null, "poll");
-  await api._processChain("w3", inWar, reading(0, 0), null, "poll");
+  await api._processChain("w1", blip, reading(1235, 290), null, "client");
+  for (const [id, war] of [["w2", stale], ["w3", inWar]]) {
+    await api._processChain(id, war, reading(1234, 0, 7_404), null, "poll");
+    backdate(api, id, 61_000);
+    await api._processChain(id, war, reading(1234, 0, 7_394), null, "poll");
+  }
   assert.deepEqual(seen.sends, []);
+});
+
+test("outside a war, a bad reading of 0 is turned away, so the chain's CHAIN DYING still goes out", async () => {
+  const war = lastRead(endedWar(), 1234, 100, 75_000); // 25 s left on its clock now
+  const { api, seen } = buildMonitor({ w1: war });
+  assert.equal(await api.recordClientChainData("w1", reading(0, 0)), false);
+  assert.equal(war.chainData.current, 1234);
+  await api._processChain("w1", war, reading(1234, 25), null, "client");
+  assert.deepEqual(seen.sends.map((s) => s[0]), ["notifyChainPanic"]);
+  assert.ok(seen.logs.includes("[chain/client] war=w1 ignored a reading of 0: the chain read 1234 with 25s left"), seen.logs.join("\n"));
+});
+
+test("in a war, a reading of 0 is taken as before", async () => {
+  const war = lastRead(liveWar(), 1234, 100, 75_000);
+  const { api } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(0, 0), null, "client");
+  assert.equal(war.chainData.current, 0);
 });
 
 test("the iOS Live Activity stays with the war: readings after a war update nothing, readings in one do", async () => {
@@ -370,8 +474,14 @@ test("for 5 minutes after a reading of 100 or more, the war's pace holds though 
   const war = endedWar();
   const { api } = buildMonitor({ w1: war }, reading(0, 0));
   await api._processChain("w1", war, reading(1234, 200), null, "client");
+  war.chainData.chainEndsAt = Date.now() - 1_000; // its clock has run out since, so a low reading stands
   war.chainDataUpdatedAt = Date.now() - 60_000; // no fresh client report, so the tick reads the chain itself
   assert.deepEqual(await api.firstTick(), { waitMs: 15_000 });
+});
+
+test("after a war, the monitor reads a chain in its cooldown every 2 minutes", async () => {
+  const { api } = buildMonitor({ w1: endedWar() }, reading(1234, 0, 7_404));
+  assert.deepEqual(await api.firstTick(), { waitMs: 120_000 });
 });
 
 test("before kickoff the chain is read too, and the next tick comes no later than kickoff", async () => {

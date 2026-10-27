@@ -26,20 +26,17 @@ export const OUTSIDE_WAR_MIN_CHAIN = 100;
 export const OUTSIDE_WAR_IDLE_MS = 120_000;
 
 /**
- * How long the war-pace checks hold after the last reading of 100 or more.
- * A chain's clock never runs past 5 minutes, so a chain read at 100+ that
- * recently may still be alive though a later reading says less (see
- * CHAIN_END_MAX_LEFT_S for one that did).
+ * How long the war-pace checks hold after the last reading of a running
+ * chain of 100 or more. A chain's clock never runs past 5 minutes, so a
+ * chain read that recently may still be alive though a later reading says
+ * otherwise.
  */
 export const BIG_CHAIN_HOLD_MS = 300_000;
 
 /**
- * A drop counts as the chain ending only if, by the clock of the reading
- * before it, the chain had this many seconds or fewer left. A chain ends
- * only when its clock runs out, so a drop with more time left is a bad
- * reading: at the end of a war on 2026-10-26 a member's FactionOps
- * reported one 0 with nearly 5 minutes left on the chain's clock, and the
- * next reading had the whole chain again.
+ * A cooldown can be the chain's end only if, by the clock of the reading
+ * before it, the chain had this many seconds or fewer left: a chain ends
+ * only when its clock runs out.
  */
 export const CHAIN_END_MAX_LEFT_S = 30;
 
@@ -49,6 +46,25 @@ export const CHAIN_END_MAX_LEFT_S = 30;
  * just ended.
  */
 export const CHAIN_END_MAX_AGE_MS = 180_000;
+
+/**
+ * ...and the notice waits this long for the count to hold in the cooldown.
+ * On 2026-10-26 Torn reported a cooldown for five minutes while the hits
+ * still counted and the chain ran on. A chain that has ended keeps its count
+ * through the whole cooldown, about 6 s a hit (over 9 minutes for a chain of
+ * 100), so the wait is always over before the cooldown is.
+ */
+export const CHAIN_END_CONFIRM_MS = 60_000;
+
+/**
+ * The longest cooldown taken as one: Torn's runs about 6 s a hit, under 7
+ * days even for a chain of 100,000. A bigger number is a date sent in its
+ * place, as a member's FactionOps did on 2026-10-26.
+ */
+export const MAX_COOLDOWN_S = 864_000;
+
+/** The longest a chain's clock runs: a hit puts it back to 5 minutes. */
+export const CHAIN_CLOCK_MAX_S = 300;
 
 /** The shortest wait before kickoff, as the pre-war cadence had it. */
 const MIN_PRE_WAR_DELAY_MS = 5_000;
@@ -69,16 +85,29 @@ export function chainAlertFloor(war, nowMs) {
   return isWarLive(war, nowMs) ? WAR_MIN_CHAIN : OUTSIDE_WAR_MIN_CHAIN;
 }
 
+/** True for a cooldown Torn could have sent: over 0 and at most MAX_COOLDOWN_S. */
+export function isCooldown(cooldown) {
+  return cooldown > 0 && cooldown <= MAX_COOLDOWN_S;
+}
+
+/**
+ * True for a reading of a running chain of 100 or more. A chain that has
+ * ended keeps its count through its cooldown, for most of a day after a
+ * long chain, and that gets no war-pace reads.
+ */
+export function isBigLiveChain(chain) {
+  return (Number(chain?.current) || 0) >= OUTSIDE_WAR_MIN_CHAIN && !(Number(chain?.cooldown) > 0);
+}
+
 /**
  * Milliseconds until the next chain check outside a live war: `fastMs`, the
- * war's own pace, while the chain reads 100 or more or did within
- * BIG_CHAIN_HOLD_MS (`sinceBigChainMs` ago); otherwise OUTSIDE_WAR_IDLE_MS.
- * Before kickoff the wait never runs past kickoff, so the war's own pace
- * starts on time.
+ * war's own pace, while a running chain reads 100 or more (isBigLiveChain)
+ * or did within BIG_CHAIN_HOLD_MS (`sinceBigChainMs` ago); otherwise
+ * OUTSIDE_WAR_IDLE_MS. Before kickoff the wait never runs past kickoff, so
+ * the war's own pace starts on time.
  */
 export function outsideWarDelay(war, nowMs, fastMs, sinceBigChainMs) {
-  const current = Number(war?.chainData?.current) || 0;
-  const big = current >= OUTSIDE_WAR_MIN_CHAIN || sinceBigChainMs < BIG_CHAIN_HOLD_MS;
+  const big = isBigLiveChain(war?.chainData) || sinceBigChainMs < BIG_CHAIN_HOLD_MS;
   const delay = big ? fastMs : OUTSIDE_WAR_IDLE_MS;
   const startSec = Number(war?.warStart) || 0;
   const msToKickoff = startSec * 1000 - nowMs;
@@ -89,14 +118,36 @@ export function outsideWarDelay(war, nowMs, fastMs, sinceBigChainMs) {
 }
 
 /**
- * True when a reading shows that a chain of 100 or more has just ended: the
- * reading before it was 100+ and recent, and by its clock the chain had 30 s
- * or less left (`prevTimeoutS`, counted to now), and this reading is under
- * 100 (0, or a new chain's first hits).
+ * True when a reading may be the end of a chain of 100 or more. Torn ends a
+ * chain when its clock runs out: the count stays, the timeout reads 0 and a
+ * cooldown starts, and the count reads 0 only once the cooldown is over. So
+ * the end is a reading of 100+ that starts a cooldown (`cooldown`, see
+ * isCooldown), after a recent reading of 100+ with no cooldown and 30 s or
+ * less left on its clock (`prevTimeoutS`, counted to now; Torn's last
+ * reading before the cooldown can show 0). The monitor sends the notice
+ * once the count has held for CHAIN_END_CONFIRM_MS.
  */
-export function outsideWarChainEnded({ prevCurrent, prevTimeoutS, prevAgeMs, current }) {
+export function outsideWarChainEnded({ prevCurrent, prevTimeoutS, prevCooldown, prevAgeMs, current, cooldown }) {
   return prevCurrent >= OUTSIDE_WAR_MIN_CHAIN
-    && current < OUTSIDE_WAR_MIN_CHAIN
+    && current >= OUTSIDE_WAR_MIN_CHAIN
+    && !(prevCooldown > 0)
+    && isCooldown(cooldown)
     && prevTimeoutS <= CHAIN_END_MAX_LEFT_S
     && prevAgeMs <= CHAIN_END_MAX_AGE_MS;
+}
+
+/**
+ * True for a reading under 100 while a chain of 100 or more still has time
+ * on its clock (`prevTimeoutS`, counted to now): a bad reading. A chain's
+ * count never drops while its clock runs, but members' FactionOps send 0s
+ * like that, thousands of them (on 2026-10-26, one with nearly 5 minutes
+ * left on the clock, and the next reading had the whole chain again).
+ * Stored, a 0 makes the next reading look like a fresh chain's first hits,
+ * and that holds back the chain's CHAIN BREAKING and CHAIN DYING for about
+ * 3 minutes. A clock over 5 minutes is no chain's, so it holds nothing back.
+ */
+export function outsideWarBadDrop({ prevCurrent, prevTimeoutS, current }) {
+  return prevCurrent >= OUTSIDE_WAR_MIN_CHAIN
+    && prevTimeoutS > 0 && prevTimeoutS <= CHAIN_CLOCK_MAX_S
+    && current < OUTSIDE_WAR_MIN_CHAIN;
 }

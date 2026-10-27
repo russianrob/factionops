@@ -19,7 +19,10 @@ import * as push from "./push-notifications.js";
 import * as apns from "./apns.js";
 import * as liveActivityTokens from "./live-activity-tokens.js";
 import { normalizeChainData, chainWithLiveTimeout } from "./chain-data.js";
-import { isWarLive, chainAlertFloor, outsideWarDelay, outsideWarChainEnded, OUTSIDE_WAR_MIN_CHAIN } from "./chain-alert-rule.js";
+import {
+  isWarLive, chainAlertFloor, outsideWarDelay, outsideWarChainEnded, outsideWarBadDrop,
+  isBigLiveChain, isCooldown, CHAIN_END_CONFIRM_MS, OUTSIDE_WAR_MIN_CHAIN,
+} from "./chain-alert-rule.js";
 
 // Fallback interval when we can't resolve the dynamic one (e.g. no war
 // context yet). Normal operation uses store.getPollInterval(factionId,
@@ -100,9 +103,16 @@ const lastPanicSent = new Map();
  * hit resets Torn's chain timer to ~5:00, so a recent increase means a low
  * reported timeout is a stale/lagging snapshot, not a real break. */
 const lastChainIncreaseAt = new Map();
-/** Wall-clock (ms) of the last reading of 100 or more per warId. Outside a
- * war it keeps the reads at the war's pace for a while after it. */
+/** Wall-clock (ms) of the last reading of a running chain of 100 or more per
+ * warId. Outside a war it keeps the reads at the war's pace for a while
+ * after it. */
 const lastBigChainAt = new Map();
+/** Outside a war, the end of a 100+ chain waiting for its count to hold,
+ * { count, since } per warId (see CHAIN_END_CONFIRM_MS). */
+const pendingChainEnd = new Map();
+/** The count of the last chain whose end was noticed per warId, so a stale
+ * report from before that end can't bring a second notice. */
+const lastChainEndNoticed = new Map();
 /** Last time we checked war score per warId. */
 const lastScoreCheck = new Map();
 /** Track if we already notified war target reached per warId. */
@@ -138,6 +148,19 @@ async function _processChain(warId, war, chain, io, source) {
   // The age of that reading, taken before it is overwritten below: a record
   // left from before a restart must not pass for a chain that just ended.
   const prevAgeMs = Date.now() - (Number(war.chainDataUpdatedAt) || 0);
+  const warLive = isWarLive(war, Date.now());
+  // Outside a war, a reading under 100 while a chain of 100 or more still has
+  // time on its clock is a bad one (outsideWarBadDrop), and it is not stored.
+  // Nor does it count as a report: chainDataUpdatedAt stays, so the poll
+  // below reads the chain itself.
+  if (!warLive && outsideWarBadDrop({
+    prevCurrent: prevChain.current || 0,
+    prevTimeoutS: prevChain.timeout,
+    current: chain.current || 0,
+  })) {
+    console.log(`[chain/${source}] war=${warId} ignored a reading of ${chain.current || 0}: the chain read ${prevChain.current} with ${Math.round(prevChain.timeout)}s left`);
+    return false;
+  }
   // Store by absolute end instant. `chain` keeps its live `timeout` for the
   // alert thresholds below; only the STORED copy is normalized, so the record
   // stops changing on every poll and the long-poll can stay held. See
@@ -151,9 +174,8 @@ async function _processChain(warId, war, chain, io, source) {
   const broke = (prevChain.current || 0) > 0 && (chain.current || 0) === 0;
   if ((chain.current || 0) > (prevChain.current || 0)) lastChainIncreaseAt.set(warId, Date.now());
   // Chains are alerted from 10 hits in a live war, and from 100 outside one.
-  const warLive = isWarLive(war, Date.now());
   const minChain = chainAlertFloor(war, Date.now());
-  if ((chain.current || 0) >= OUTSIDE_WAR_MIN_CHAIN) lastBigChainAt.set(warId, Date.now());
+  if (isBigLiveChain(chain)) lastBigChainAt.set(warId, Date.now());
   const tokenCount = liveActivityTokens.listForWar(warId).length;
   // The iOS Live Activity belongs to the war: the war's end ends it (in the
   // poll loop below), and a chain after the war does not raise it again.
@@ -209,17 +231,38 @@ async function _processChain(warId, war, chain, io, source) {
   }
   // Outside a war, a chain of 100 or more that ends gets one quiet notice,
   // which also takes down its pinned CHAIN BREAKING / CHAIN DYING alerts, as
-  // the war's end does for a war's. outsideWarChainEnded says which drops
-  // count: not a bad reading of 0, nor a record from before a restart.
-  if (!warLive && outsideWarChainEnded({
-    prevCurrent: prevChain.current || 0,
-    prevTimeoutS: prevChain.timeout,
-    prevAgeMs,
-    current: chain.current || 0,
-  })) {
-    push.notifyChainEnded(pushAudience(war), warId, prevChain.current)
-      .catch((e) => console.warn(`[chain] chain-ended push failed: ${e.message}`));
-    console.log(`[chain] Chain ended outside a war at ${prevChain.current} (${source})`);
+  // the war's end does for a war's. outsideWarChainEnded says which reading
+  // may be the end, and the notice waits for the count to hold a minute in
+  // the cooldown (CHAIN_END_CONFIRM_MS). A reading of 100+ with another
+  // count, or with time on its clock, calls the wait off; one under 100, as
+  // a bad 0 in the cooldown is, leaves it be.
+  if (!warLive && (chain.current || 0) >= OUTSIDE_WAR_MIN_CHAIN) {
+    const count = chain.current;
+    const pending = pendingChainEnd.get(warId);
+    if (pending && (count !== pending.count || (!(chain.cooldown > 0) && chain.timeout > 0))) {
+      pendingChainEnd.delete(warId);
+      console.log(`[chain] Chain end at ${pending.count} called off: read ${count}, timeout=${chain.timeout} cooldown=${chain.cooldown} (${source})`);
+    } else if (pending) {
+      if (isCooldown(chain.cooldown) && Date.now() - pending.since >= CHAIN_END_CONFIRM_MS) {
+        pendingChainEnd.delete(warId);
+        if (lastChainEndNoticed.get(warId) !== count) {
+          lastChainEndNoticed.set(warId, count);
+          push.notifyChainEnded(pushAudience(war), warId, count)
+            .catch((e) => console.warn(`[chain] chain-ended push failed: ${e.message}`));
+          console.log(`[chain] Chain ended outside a war at ${count} (${source})`);
+        }
+      }
+    } else if (outsideWarChainEnded({
+      prevCurrent: prevChain.current || 0,
+      prevTimeoutS: prevChain.timeout,
+      prevCooldown: prevChain.cooldown,
+      prevAgeMs,
+      current: count,
+      cooldown: chain.cooldown,
+    })) {
+      pendingChainEnd.set(warId, { count, since: Date.now() });
+      console.log(`[chain] Chain may have ended outside a war at ${count}: noticed if it holds a minute (${source})`);
+    }
   }
   // A broken or reset chain starts the announcements over: the next chain
   // deserves its own warning at the same milestone.
@@ -232,7 +275,8 @@ async function _processChain(warId, war, chain, io, source) {
  * data and skips its Torn fetch. Rejects snapshots older than what
  * we already have so a slow client can't override fresh data.
  * Taken after a war ends too: the chain is still watched then (from 100
- * hits), and FactionOps keeps sending it.
+ * hits), and FactionOps keeps sending it. Returns false for a snapshot not
+ * taken: a stale one, or a bad reading _processChain turns away.
  */
 export async function recordClientChainData(warId, chain) {
   const war = store.getWar(warId);
@@ -243,8 +287,7 @@ export async function recordClientChainData(warId, chain) {
   const incomingTs  = Number(chain.serverTimestamp) || 0;
   const existingTs  = Number(war.chainData?.serverTimestamp) || 0;
   if (incomingTs && existingTs && incomingTs < existingTs) return false;
-  await _processChain(warId, war, chain, /*io*/ null, "client");
-  return true;
+  return (await _processChain(warId, war, chain, /*io*/ null, "client")) !== false;
 }
 
 /**
@@ -548,6 +591,8 @@ export function stopChainMonitor(warId) {
   lastPanicSent.delete(warId);
   lastChainIncreaseAt.delete(warId);
   lastBigChainAt.delete(warId);
+  pendingChainEnd.delete(warId);
+  lastChainEndNoticed.delete(warId);
   lastBonusAnnounced.delete(warId);
   lastScoreCheck.delete(warId);
   warTargetNotified.delete(warId);
