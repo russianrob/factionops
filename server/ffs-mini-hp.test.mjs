@@ -89,6 +89,7 @@ function torn({ key = 'k+1', answer = () => answerWith(LIFE) } = {}) {
     'let key = keyIn;\nlet _ffsRateLimitedUntil = 0;\n'
     + konst('FFS_RATE_LIMIT_BACKOFF_MS') + konst('FFS_REFUSAL_CODES')
     + konst('FFS_MINI_HP_TTL_MS') + konst('FFS_MINI_HP_TIMEOUT_MS') + konst('_ffsMiniHp')
+    + konst('FFS_MINI_HP_MAX_PER_MIN') + konst('_ffsMiniHpCalls')
     + fn('ffs_isRateLimitError') + fn('ffs_hpLine') + fn('ffs_fetchLife') + fn('ffs_miniHp')
     + 'return { ffs_miniHp, limited: () => _ffsRateLimitedUntil, refuseUntil: (ms) => { _ffsRateLimitedUntil = ms; } };',
   )(fetchStub, { now: () => t.now }, setTimeoutStub, clearStub, key);
@@ -120,6 +121,20 @@ test('two cards for one player while Torn is being asked share the one call', as
   assert.equal(t.calls.length, 1);
   await t.ffs_miniHp(1000002);
   assert.equal(t.calls.length, 2, 'another player has a call of their own');
+});
+
+test('at most 20 calls to Torn in any minute, however many players are opened', async () => {
+  const t = torn();
+  t.now = NOW + 30_000;
+  for (let id = 1000001; id <= 1000025; id++) await t.ffs_miniHp(id);
+  assert.equal(t.calls.length, 20);
+  t.now = NOW + 60_000;
+  assert.equal(await t.ffs_miniHp(1000026), null, 'half a minute on, still over the limit: no line');
+  assert.deepEqual(await t.ffs_miniHp(1000001), LIFE, 'a kept answer is still shown');
+  assert.equal(t.calls.length, 20);
+  t.now = NOW + 90_000;
+  assert.deepEqual(await t.ffs_miniHp(1000026), LIFE);
+  assert.equal(t.calls.length, 21);
 });
 
 test('with no key set, nothing is asked and there is no line', async () => {

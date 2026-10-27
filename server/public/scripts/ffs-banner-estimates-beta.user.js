@@ -27,7 +27,8 @@
 //
 // 2.73.914 — Mini profiles show the player's HP on its own line under the FF
 //              line, as "HP 1,234 / 5,678 (21%)": one Torn call per player a
-//              minute at most, and none while Torn is refusing the key.
+//              minute at most, 20 a minute in all, and none while Torn is
+//              refusing the key.
 // 2.73.913 — Chain button: skip people who can't be attacked (as FFS 2.73.62).
 // 2.73.912 — Menu: the API key entry names the script, "FFS Banner Estimates
 //              Beta: Enter Limited API Key". Some menus list every script's
@@ -2738,7 +2739,8 @@ if (!singleton) {
   // A mini profile shows the player's life on its own line under the FF line,
   // as "HP 1,234 / 5,678 (21%)". Torn's card carries no life, so it costs one
   // API call on the script's key, kept for a minute per player so that opening
-  // the same card again is free. While Torn is refusing the key, nothing is
+  // the same card again is free. While Torn is refusing the key, or once
+  // FFS_MINI_HP_MAX_PER_MIN calls have gone out in the last minute, nothing is
   // asked and the card goes without the line.
   const FFS_MINI_HP_TTL_MS = 60_000;
   // How long a card waits for Torn's answer before going without the line.
@@ -2746,6 +2748,12 @@ if (!singleton) {
   // Player id -> { at, life } once Torn has answered, or { at, pending } while
   // the call is out, so every card that asks meanwhile shares the one call.
   const _ffsMiniHp = new Map();
+  // At most this many HP calls go to Torn in any minute, so that hovering down
+  // a long list cannot spend the account's 100 calls a minute, which every
+  // script on it shares.
+  const FFS_MINI_HP_MAX_PER_MIN = 20;
+  // When each HP call of the last minute went out, oldest first.
+  const _ffsMiniHpCalls = [];
 
   /**
    * The HP line for Torn's life numbers, or null when they are not numbers it
@@ -2796,13 +2804,18 @@ if (!singleton) {
 
   /**
    * One player's life for a mini profile: the answer from the last minute when
-   * there is one, else one call to Torn. Only an answer with life in it is
-   * kept, so the next card after a failure asks again.
+   * there is one, else one call to Torn, unless FFS_MINI_HP_MAX_PER_MIN calls
+   * have gone out in the last minute. Only an answer with life in it is kept,
+   * so the next card after a failure asks again.
    */
   async function ffs_miniHp(playerId) {
     const hit = _ffsMiniHp.get(playerId);
     if (hit && (hit.pending || Date.now() - hit.at < FFS_MINI_HP_TTL_MS)) return hit.pending || hit.life;
     if (!key || Date.now() < _ffsRateLimitedUntil) return null;
+    // Calls older than a minute no longer count against the limit.
+    while (_ffsMiniHpCalls.length && Date.now() - _ffsMiniHpCalls[0] >= 60_000) _ffsMiniHpCalls.shift();
+    if (_ffsMiniHpCalls.length >= FFS_MINI_HP_MAX_PER_MIN) return null;
+    _ffsMiniHpCalls.push(Date.now());
     const pending = ffs_fetchLife(playerId);
     _ffsMiniHp.set(playerId, { at: Date.now(), pending });
     const life = await pending;
