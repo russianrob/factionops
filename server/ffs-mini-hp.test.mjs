@@ -1,9 +1,9 @@
 // FFS Banner Estimates Beta: the HP line in Torn's mini profile. The card shows
 // no life of its own, so FFS asks Torn's API for the player's profile, at most
-// once a minute per player, and writes "HP 1,234 / 5,678 (21%)" under its FF
-// line. Runs the SHIPPED functions of the beta, lifted out by name. The script
-// is read from this checkout's public/scripts, or from FFS_DIR when that names
-// another folder.
+// once a minute per player, and writes "HP 1,234 / 5,678 (21%)" right after the
+// card's icons. Runs the SHIPPED functions of the beta, lifted out by name. The
+// script is read from this checkout's public/scripts, or from FFS_DIR when that
+// names another folder.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -44,7 +44,7 @@ const answerWith = (life) => ({ profile: { id: 1000001, name: 'Target', life } }
 // ── the line ──
 
 // ffs_hpLine as the beta has it, lifted at each call so a missing one fails its own test.
-const hpLine = (life) => new Function(fn('ffs_hpLine') + 'return ffs_hpLine;')()(life);
+const hpLine = (life, short) => new Function(fn('ffs_hpLine') + 'return ffs_hpLine;')()(life, short);
 
 test('the HP line reads as the attack page does, with the percentage after', () => {
   assert.equal(hpLine({ current: 1234, maximum: 5678 }), 'HP 1,234 / 5,678 (21%)');
@@ -64,6 +64,14 @@ test('life that Torn did not give as numbers makes no line', () => {
     { current: NaN, maximum: 5678 }, { current: 1234, maximum: Infinity }]) {
     assert.equal(hpLine(life), null, String(JSON.stringify(life)));
   }
+});
+
+test('the short line is the percentage alone, floored the same way', () => {
+  assert.equal(hpLine({ current: 1234, maximum: 5678 }, true), 'HP 21%');
+  assert.equal(hpLine({ current: 7499, maximum: 7500 }, true), 'HP 99%');
+  assert.equal(hpLine({ current: 1, maximum: 7500 }, true), 'HP 1%');
+  assert.equal(hpLine({ current: 0, maximum: 7500 }, true), 'HP 0%');
+  assert.equal(hpLine({ current: 'x', maximum: 7500 }, true), null);
 });
 
 // ── asking Torn ──
@@ -189,29 +197,50 @@ test('no answer within 4 seconds makes no line, and the next card asks again', a
 // ── the card ──
 
 // A mini profile as Torn draws one, for a made-up player, with FFS's lines (as
-// HTML) in its description after Torn's own status.
-function card(id, lines = '') {
-  const { document } = parseHTML('<!doctype html><html><body>'
-    + '<div class="profile-mini-_userProfileWrapper_abc12"><div class="profile-container">'
+// HTML) in its description after Torn's own status. With `icons`, the card has
+// Torn's icon row above the status box, holding that many icons.
+function card(id, lines = '', icons = null) {
+  const row = icons === null ? '' : '<div class="icons"><ul class="big svg">'
+    + Array.from({ length: icons }, (_, i) => `<li id="icon${i + 1}-mini-profile-${id}" class="left"></li>`).join('')
+    + '</ul></div>';
+  const { window, document } = parseHTML('<!doctype html><html><body>'
+    + '<div class="profile-mini-_userProfileWrapper_abc12">' + row + '<div class="profile-container">'
     + `<a class="user-name" href="https://www.torn.com/profiles.php?XID=${id}">Target</a>`
     + '<div class="description"><div class="desc-wrap"><span class="main-desc">Okay</span></div>'
     + lines + '</div></div></div></body></html>');
   const mini = document.querySelector('[class^="profile-mini-_userProfileWrapper_"]');
-  return { document, mini, description: mini.querySelector('.description') };
+  return { window, document, mini, description: mini.querySelector('.description'), row: mini.querySelector('.icons > ul') };
 }
 const FF = '<span class="ff-scouter-mini-ff">FF 2.50 (Moderate)</span>';
+
+// Lays a card out for the fit check, as a browser would: every icon 17 px tall
+// on the first line, and the HP line beside them while its text is `room`
+// characters long or less, else on the line below, 22 px down (an icon and its
+// margin). With `room` null the card is not laid out yet, and every size reads
+// 0. linkedom has no sizes of its own and one HTMLElement for every document,
+// so the sizes hold for every card until the function this returns is called.
+function layout(c, room) {
+  const proto = c.window.HTMLElement.prototype;
+  Object.defineProperty(proto, 'offsetTop', {
+    configurable: true,
+    get() { return room !== null && this.classList.contains('ffs-mini-hp') && this.textContent.length > room ? 22 : 0; },
+  });
+  Object.defineProperty(proto, 'offsetHeight', { configurable: true, get() { return room === null ? 0 : 17; } });
+  return () => { delete proto.offsetTop; delete proto.offsetHeight; };
+}
 
 // The beta's drawing of the line, with `miniHp` standing in for the call to Torn.
 function painter(document, miniHp = async () => LIFE) {
   return new Function('document', 'ffs_miniHp',
-    fn('ffs_hpLine') + fn('ffs_placeMiniLine') + fn('ffs_paintMiniHp') + fn('get_player_id_in_element')
-    + fn('ffs_showMiniHp') + 'return { ffs_placeMiniLine, ffs_paintMiniHp, ffs_showMiniHp };',
+    fn('ffs_hpLine') + fn('ffs_placeMiniLine') + fn('ffs_miniHpWrapped') + fn('ffs_paintMiniHp')
+    + fn('get_player_id_in_element') + fn('ffs_showMiniHp')
+    + 'return { ffs_placeMiniLine, ffs_paintMiniHp, ffs_showMiniHp };',
   )(document, miniHp);
 }
 // What the description holds, in order: each child's class and text.
 const shown = (description) => [...description.children].map((el) => el.className + ': ' + el.textContent);
 
-test('the HP line sits right under the FF line, above anything after it', () => {
+test('with no icon row, the HP line sits right under the FF line, above anything after it', () => {
   const c = card(1000001, FF + '<div class="other">from another script</div>');
   painter(c.document).ffs_paintMiniHp(c.mini, LIFE);
   assert.deepEqual(shown(c.description), [
@@ -222,7 +251,7 @@ test('the HP line sits right under the FF line, above anything after it', () => 
   ]);
 });
 
-test('an FF line drawn after the HP line still goes above it, each time FFS redraws it', () => {
+test('with no icon row, an FF line drawn after the HP line still goes above it, each time FFS redraws it', () => {
   const c = card(1000001);
   const p = painter(c.document);
   p.ffs_paintMiniHp(c.mini, LIFE);
@@ -239,7 +268,7 @@ test('an FF line drawn after the HP line still goes above it, each time FFS redr
   }
 });
 
-test('with no FF line, the HP line goes at the end of the description', () => {
+test('with no icon row and no FF line, the HP line goes at the end of the description', () => {
   const c = card(1000001);
   painter(c.document).ffs_paintMiniHp(c.mini, LIFE);
   assert.deepEqual(shown(c.description), ['desc-wrap: Okay', 'ffs-mini-hp: HP 1,234 / 5,678 (21%)']);
@@ -283,6 +312,94 @@ test('no description, life with no line, or no player id: nothing is drawn or as
   assert.equal(asked, 0);
 });
 
+// ── the icon row ──
+
+// What the icon row holds, in order: each child's tag and its text.
+const inRow = (c) => [...c.row.children].map((el) => el.tagName + ': ' + el.textContent);
+
+test('the HP line goes right after the last icon, at a size of its own, in the colour of the card', () => {
+  const c = card(1000001, FF, 3);
+  const restore = layout(c, 99);
+  try {
+    painter(c.document).ffs_paintMiniHp(c.mini, LIFE);
+  } finally {
+    restore();
+  }
+  assert.deepEqual(inRow(c), ['LI: ', 'LI: ', 'LI: ', 'DIV: HP 1,234 / 5,678 (21%)']);
+  const line = c.row.lastElementChild;
+  assert.equal(line.className, 'ffs-mini-hp');
+  // Torn's row sets its font size to 0, so the line must set its own or vanish.
+  assert.equal(line.style.fontSize, '10px');
+  assert.equal(line.style.display, 'inline-block');
+  assert.equal(line.style.color, '', 'no colour of its own: the card has a light theme and a dark one');
+  assert.deepEqual(shown(c.description), ['desc-wrap: Okay', 'ff-scouter-mini-ff: FF 2.50 (Moderate)']);
+});
+
+test('when the whole line has no room beside the icons, it says only the percentage', () => {
+  const c = card(1000001, FF, 8);
+  const restore = layout(c, 10);
+  try {
+    painter(c.document).ffs_paintMiniHp(c.mini, LIFE);
+  } finally {
+    restore();
+  }
+  assert.equal(c.row.lastElementChild.textContent, 'HP 21%');
+});
+
+test('when even the percentage has no room, the line is on a line of its own and says it all', () => {
+  const c = card(1000001, FF, 11);
+  const restore = layout(c, 0);
+  try {
+    painter(c.document).ffs_paintMiniHp(c.mini, LIFE);
+  } finally {
+    restore();
+  }
+  assert.equal(c.row.lastElementChild.textContent, 'HP 1,234 / 5,678 (21%)');
+});
+
+test('a card not laid out yet, every size 0, gets the whole line', () => {
+  const c = card(1000001, FF, 3);
+  const restore = layout(c, null);
+  try {
+    painter(c.document).ffs_paintMiniHp(c.mini, LIFE);
+  } finally {
+    restore();
+  }
+  assert.equal(c.row.lastElementChild.textContent, 'HP 1,234 / 5,678 (21%)');
+});
+
+test('an icon row with no icons in it still takes the whole line', () => {
+  const c = card(1000001, FF, 0);
+  const restore = layout(c, 0);
+  try {
+    painter(c.document).ffs_paintMiniHp(c.mini, LIFE);
+  } finally {
+    restore();
+  }
+  assert.deepEqual(inRow(c), ['DIV: HP 1,234 / 5,678 (21%)']);
+});
+
+test('drawing again in the icon row replaces the line instead of adding a second', () => {
+  const c = card(1000001, FF, 3);
+  const p = painter(c.document);
+  const restore = layout(c, 99);
+  try {
+    p.ffs_paintMiniHp(c.mini, LIFE);
+    p.ffs_paintMiniHp(c.mini, { current: 5678, maximum: 5678 });
+  } finally {
+    restore();
+  }
+  assert.deepEqual(inRow(c), ['LI: ', 'LI: ', 'LI: ', 'DIV: HP 5,678 / 5,678 (100%)']);
+  assert.equal(c.mini.querySelectorAll('.ffs-mini-hp').length, 1);
+});
+
+test('a card with an icon row but no status box gets no line', () => {
+  const c = card(1000001, FF, 3);
+  c.description.remove();
+  painter(c.document).ffs_paintMiniHp(c.mini, LIFE);
+  assert.equal(c.mini.querySelectorAll('.ffs-mini-hp').length, 0);
+});
+
 // ── wiring and version ──
 
 test('FFS asks for the HP when it first sees a mini profile, without holding up the FF line', () => {
@@ -297,11 +414,11 @@ test('the FF line is placed with the HP line in mind', () => {
   assert.doesNotMatch(body, /\.append\(desc\)/);
 });
 
-test('the beta is 2.73.914 in its header, its SCRIPT_VERSION and its meta file, and its CHANGELOG starts there', () => {
-  assert.match(SRC, /^\/\/ @version {6}2\.73\.914$/m);
-  assert.match(SRC, /const SCRIPT_VERSION = '2\.73\.914';/);
+test('the beta is 2.73.915 in its header, its SCRIPT_VERSION and its meta file, and its CHANGELOG starts there', () => {
+  assert.match(SRC, /^\/\/ @version {6}2\.73\.915$/m);
+  assert.match(SRC, /const SCRIPT_VERSION = '2\.73\.915';/);
   const end = SRC.indexOf('// ==/UserScript==') + '// ==/UserScript=='.length;
   assert.equal(META, SRC.slice(0, end) + '\n');
   const log = SRC.slice(SRC.indexOf('CHANGELOG'));
-  assert.match(log, /\n\/\/ 2\.73\.914 — [^\n]+\n(\/\/ {14}[^\n]+\n)*\/\/ 2\.73\.913 — /);
+  assert.match(log, /\n\/\/ 2\.73\.915 — [^\n]+\n(\/\/ {14}[^\n]+\n)*\/\/ 2\.73\.914 — /);
 });

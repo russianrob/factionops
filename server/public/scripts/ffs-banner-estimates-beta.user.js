@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates Beta
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.914
+// @version      2.73.915
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -25,6 +25,10 @@
 // Upstream: FF Scouter V2 (GPL-3.0, rDacted/Weav3r/xentac/Glasnost)
 //   https://greasyfork.org/en/scripts/535292
 //
+// 2.73.915 — Mini profiles: the HP sits right after the icons. Under the FF
+//              line it ran out of Torn's status box onto whatever was below
+//              it. When the whole line has no room beside the icons, it says
+//              only the percentage, "HP 21%".
 // 2.73.914 — Mini profiles show the player's HP on its own line under the FF
 //              line, as "HP 1,234 / 5,678 (21%)": one Torn call per player a
 //              minute at most, 20 a minute in all, and none while Torn is
@@ -2736,8 +2740,8 @@ if (!singleton) {
   }
 
   // ── HP in the mini profile ──
-  // A mini profile shows the player's life on its own line under the FF line,
-  // as "HP 1,234 / 5,678 (21%)". Torn's card carries no life, so it costs one
+  // A mini profile shows the player's life right after its icons, as
+  // "HP 1,234 / 5,678 (21%)". Torn's card carries no life, so it costs one
   // API call on the script's key, kept for a minute per player so that opening
   // the same card again is free. While Torn is refusing the key, or once
   // FFS_MINI_HP_MAX_PER_MIN calls have gone out in the last minute, nothing is
@@ -2758,9 +2762,11 @@ if (!singleton) {
   /**
    * The HP line for Torn's life numbers, or null when they are not numbers it
    * can show. The percentage is floored, as FactionOps' is on the attack page,
-   * so it says 100% only when full and 0% only when the player is down.
+   * so it says 100% only when full and 0% only when the player is down. The
+   * short line is the percentage alone, "HP 21%", for where the whole line has
+   * no room.
    */
-  function ffs_hpLine(life) {
+  function ffs_hpLine(life, short = false) {
     if (!life || !Number.isFinite(life.current) || !Number.isFinite(life.maximum)) return null;
     const cur = life.current;
     const max = life.maximum;
@@ -2768,6 +2774,7 @@ if (!singleton) {
     let pct = Math.floor((cur / max) * 100);
     if (pct === 100 && cur < max) pct = 99;
     if (pct === 0 && cur > 0) pct = 1;
+    if (short) return `HP ${pct}%`;
     return `HP ${cur.toLocaleString("en-US")} / ${max.toLocaleString("en-US")} (${pct}%)`;
   }
 
@@ -2846,7 +2853,15 @@ if (!singleton) {
     description.appendChild(el);
   }
 
-  /** Draws the HP line in a mini profile, in place of one already there. */
+  /**
+   * Draws the HP line in a mini profile, in place of one already there. It goes
+   * right after the last icon in Torn's icon row, because the status box below
+   * the icons has a fixed height: a line added inside it runs out of the box
+   * onto whatever is under it. A card with no icon row gets it under the FF
+   * line. The row is narrow, so when the whole line has no room beside the
+   * icons it says only the percentage, and when even that has no room it is on
+   * a line of its own anyway, so it says it all.
+   */
   function ffs_paintMiniHp(mini, life) {
     const text = ffs_hpLine(life);
     const description = mini.querySelector(".description");
@@ -2855,7 +2870,32 @@ if (!singleton) {
     const line = document.createElement("div");
     line.className = "ffs-mini-hp";
     line.textContent = text;
-    ffs_placeMiniLine(description, line);
+    const row = mini.querySelector(".icons > ul");
+    if (!row) {
+      ffs_placeMiniLine(description, line);
+      return;
+    }
+    // Torn's icon row sets its font size to 0 to close the gaps between the
+    // icons, so the line sets its own, and sits on the icons' line like one of
+    // them. It needs no margin: Torn takes the gap after an icon away only from
+    // the row's last child, so the icon before the line keeps its gap. It keeps
+    // the card's text colour, which suits light and dark cards.
+    line.style.cssText = "display:inline-block;font-size:10px;line-height:17px;vertical-align:top;white-space:nowrap";
+    row.appendChild(line);
+    if (ffs_miniHpWrapped(line)) {
+      line.textContent = ffs_hpLine(life, true);
+      if (ffs_miniHpWrapped(line)) line.textContent = text;
+    }
+  }
+
+  /**
+   * Whether the HP line in the icon row went down onto a line of its own, below
+   * the icon before it. On a card that is not laid out yet every size is 0,
+   * which reads as gone down, so such a card ends up with the whole line.
+   */
+  function ffs_miniHpWrapped(line) {
+    const icon = line.previousElementSibling;
+    return !!icon && line.offsetTop >= icon.offsetTop + icon.offsetHeight;
   }
 
   /**
@@ -3448,7 +3488,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.914';
+  const SCRIPT_VERSION = '2.73.915';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
