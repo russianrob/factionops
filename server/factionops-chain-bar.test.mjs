@@ -30,7 +30,7 @@ function L() {
   if (lib) return lib;
   const names = ['isFactionOpsPage', 'readChainFromDom', 'chainCooldownFrom', 'chainNag', 'chainBarStep', 'chainBarText', 'chainBarReading'];
   lib = new Function(
-    ['CHAIN_BAR_MIN_HITS', 'CHAIN_BAR_CHECK_WAIT_MS', 'CHAIN_BAR_CHECK_TTL_MS', 'FO_PAGE_PATTERNS'].map(konst).join('')
+    ['CHAIN_BAR_MIN_HITS', 'CHAIN_BAR_CHECK_WAIT_MS', 'CHAIN_BAR_CHECK_TTL_MS', 'CHAIN_BAR_COOLDOWN_AHEAD_S', 'FO_PAGE_PATTERNS'].map(konst).join('')
     + names.map(fn).join('\n') + '\nreturn { ' + names.join(', ') + ' };')();
   return lib;
 }
@@ -92,14 +92,30 @@ test('up from 10 hits with the threshold or less on the clock, and more than 0',
 });
 
 test('a chain in its cooldown keeps it down until the cooldown ends or the count grows', () => {
-  const cd = L().chainCooldownFrom({ current: 1234, cooldown: 7404 }, 1000);
-  assert.deepEqual(cd, { count: 1234, until: 1000 + 7404 * 1000 });
+  // A sidebar counting a finished chain's cooldown down reads what is left of
+  // it: 0:42 here, with the API's answer up to 30 s behind at 50 s.
+  const cd = L().chainCooldownFrom({ current: 1234, cooldown: 50 }, 1000);
+  assert.deepEqual(cd, { count: 1234, until: 1000 + 50 * 1000 });
   assert.equal(L().chainCooldownFrom({ current: 1234, cooldown: 0 }, 1000), null);
   assert.equal(L().chainCooldownFrom(null, 1000), null);
   const r = { count: 1234, left: 42 };
   assert.equal(L().chainNag(2000, r, cd, 60), null);
   assert.deepEqual(L().chainNag(cd.until, r, cd, 60), r);
   assert.deepEqual(L().chainNag(2000, { count: 1235, left: 42 }, cd, 60), { count: 1235, left: 42 });
+});
+
+test('a cooldown only holds it down while it agrees with the clock: Torn has reported one for a chain that ran on', () => {
+  const r = { count: 1234, left: 42 };
+  // The API's answer is up to about 30 s behind, so a real cooldown reads up
+  // to 45 s ahead of the sidebar clock that counts it down, and never more
+  // than 5 s behind it.
+  const at = (cooldown) => L().chainNag(1000, r, L().chainCooldownFrom({ current: 1234, cooldown }, 1000), 60);
+  assert.equal(at(42), null);
+  assert.equal(at(86), null);
+  assert.equal(at(38), null);
+  assert.deepEqual(at(88), r);
+  assert.deepEqual(at(300), r);
+  assert.deepEqual(at(36), r);
 });
 
 test("one check before it first comes up; the overlay's chain needs none", () => {
@@ -110,7 +126,7 @@ test("one check before it first comes up; the overlay's chain needs none", () =>
   assert.deepEqual(S(5000, { count: 1234, left: 37 }, pending, 60), { show: { count: 1234, left: 37 }, start: false });
   const live = { ...pending, done: true };
   assert.deepEqual(S(1000, { count: 1234, left: 41 }, live, 60), { show: { count: 1234, left: 41 }, start: false });
-  const cooling = { ...pending, done: true, cd: { count: 1234, until: 9e12 } };
+  const cooling = { ...pending, done: true, cd: { count: 1234, until: 1000 + 50 * 1000 } };
   assert.deepEqual(S(1000, { count: 1234, left: 42 }, cooling, 60), { show: null, start: false });
   // A new count, a clock that went back up, or a minute on: check again.
   assert.deepEqual(S(1000, { count: 1240, left: 42 }, live, 60), { show: null, start: true });
@@ -147,14 +163,15 @@ test('the gate: the bar starts, then the script stops off its own pages, above e
   assert.ok(gate < SRC.indexOf('SECTION 1B: PDA-COMPATIBLE HTTP WRAPPER'), 'the gate is below the HTTP wrapper');
 });
 
-test("where the war overlay's chain tick runs, the bar follows it and its checks; elsewhere, the sidebar", () => {
+test("the bar follows Torn's sidebar while it reads, and the war overlay's chain, with the alerts' own checks, only where it does not", () => {
   const side = { count: 1234, left: 42 };
-  const read = () => side;
   const o = (ok, at) => ({ ok, count: 1240, left: 30, at, fromOverlay: true });
-  assert.equal(L().chainBarReading(5000, o(true, 4000), read).count, 1240);
-  assert.equal(L().chainBarReading(5000, o(false, 4000), read), null);
-  assert.deepEqual(L().chainBarReading(5000, o(true, 3000), read), side);
-  assert.deepEqual(L().chainBarReading(5000, null, read), side);
+  assert.deepEqual(L().chainBarReading(5000, o(true, 4000), () => side), side);
+  assert.deepEqual(L().chainBarReading(5000, null, () => side), side);
+  assert.equal(L().chainBarReading(5000, o(true, 4000), () => null).count, 1240);
+  assert.equal(L().chainBarReading(5000, o(false, 4000), () => null), null);
+  assert.equal(L().chainBarReading(5000, o(true, 3000), () => null), null);
+  assert.equal(L().chainBarReading(5000, null, () => null), null);
 });
 
 test("the war overlay's chain tick hands the bar its chain, with the alerts' own checks", () => {

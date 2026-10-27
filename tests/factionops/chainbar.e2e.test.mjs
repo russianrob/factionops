@@ -107,11 +107,21 @@ await t("it follows the sidebar: down at 4:59, up again at 0:30, with no second 
 });
 
 await t("a chain in its cooldown keeps it down, with no more checks", async () => {
-  const { ctx, p } = await open({ cfg: { chain: { current: 1234, max: 2500, timeout: 0, modifier: 1, cooldown: 7404 } } });
+  // The sidebar's 0:42 is the cooldown's own clock; the API, a little behind, says 55 s.
+  const { ctx, p } = await open({ cfg: { chain: { current: 1234, max: 2500, timeout: 0, modifier: 1, cooldown: 55 } } });
   await p.waitForTimeout(2500);
   const got = await bar(p), n = await checks(p);
   await ctx.close();
   assert.strictEqual(got, null);
+  assert.strictEqual(n, 1);
+});
+
+await t("a cooldown that disagrees with the sidebar's clock does not hold it down", async () => {
+  // Torn has reported a cooldown for a chain that ran on: 300 s against 0:42.
+  const { ctx, p } = await open({ cfg: { chain: { current: 1234, max: 2500, timeout: 0, modifier: 1, cooldown: 300 } } });
+  const got = await bar(p), n = await checks(p);
+  await ctx.close();
+  assert.ok(got && got.text.endsWith("0:42 left"), JSON.stringify(got));
   assert.strictEqual(n, 1);
 });
 

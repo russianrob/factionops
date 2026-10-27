@@ -7,7 +7,7 @@
 **Architecture:**
 - `server/public/scripts/factionops.user.js` (the served script is the source) gains SECTION 1A, right after CONFIG and `setConfig`. It holds the pure parts (`isFactionOpsPage`, `readChainFromDom`, `chainCooldownFrom`, `chainNag`, `chainBarStep`, `chainBarText`), the bar (`renderChainBar`), a once-a-second `chainBarTick`, the one Torn API check per dying chain (`startChainBarCheck`), and `startChainBar()`. Then comes the gate: `if (!isFactionOpsPage(location.href)) return;`.
 - The header keeps its nine `@match` lines and adds `https://www.torn.com/*` and `https://torn.com/*`, as the private build did in 5.4.2 for its chat dock. Off the old pages, the script stops at the gate, right after starting the bar.
-- Where the war overlay runs, the bar follows the overlay's chain, which the overlay's chain tick hands over (`chainBarFromOverlay`) with the alerts' own checks. Everywhere else it reads Torn's sidebar chain bar. The existing chain alerts (sound, PDA notification, the overlay's timer) are untouched.
+- The bar reads Torn's sidebar chain bar. Where the sidebar gives no reading, the war overlay's chain stands in, handed over by the overlay's chain tick (`chainBarFromOverlay`) with the alerts' own checks. The existing chain alerts (sound, PDA notification, the overlay's timer) are untouched.
 - Released as 5.6.21 by fast-forwarding main. The script is served from main's checkout, so no restart is needed.
 
 **Tech Stack:**
@@ -38,18 +38,18 @@
   - The chain data on FactionOps' pages comes from the direct poll `api.torn.com/faction/<id>?selections=chain` every 30 s, which also reads `cooldown`. `parseChainFromDOM` reads Torn's `#barChain` as follows:
     - `bar-stats`: "1/10" or "Chain: 1,234/100,000";
     - `bar-timeleft`: "MM:SS", "M:SS" or "HH:MM:SS".
-  - Since 5.1.43 (`CHAIN_POLL_ONLY`) FactionOps neither reads nor moves `#barChain`; the direct poll is its only chain source. Gym Coach reads the live sidebar's `#barEnergy` (or `[id^="barEnergy"]`) by its whole text on every page.
+  - Where the war overlay runs, `moveTornChainBar` moves Torn's `#barChain` into the overlay's header and reads the count from it and the clock from the direct poll ("DOM for count, API poll for timeout"); its comment warns that PDA may lose the bar's id after the move. Gym Coach reads the live sidebar's `#barEnergy` (or `[id^="barEnergy"]`) by its whole text on every page.
   - FactionOps' call toasts sit at the top centre, `top: 10px`, at z-index 1000001.
   - Gym Coach's full-bar banner (`#gcb-fullbar-nag`, released Gym Coach and beta) also sits at the top centre, at z-index 2147483646. It picks its spot once, when it is created: 96 px if `#fo-call-toast-container` or an element whose id starts `fo-chain` is on the page, else 10 px.
   - `factionops.meta.js` is the user.js header, byte for byte. Both files are `warboard:warboard 644`. Express serves them from main's checkout. nginx caches the plain address for 300 s.
   - Most FactionOps server tests read main's copy by its absolute path, so in a worktree they test main, not the branch. `factionops-call-drops.test.mjs` takes `FO_SRC`.
 - **Rulings** (each one is the recommended answer or follows from the approved design):
   1. **FactionOps' own pages** are exactly its old `@match` list (`FO_PAGE_PATTERNS`). The nine lines stay in the header, followed by the two every-page lines.
-  2. **Data:** where the war overlay's chain tick runs, the bar follows the overlay's chain (`chainBarFromOverlay`, under 2 s old) with the alerts' own checks (fresh, plausible, more than 0 left), so the bar and the alerts come up together, as approved. It needs no cooldown check there, because the overlay's poll knows the cooldown. Everywhere else, FactionOps' pages without the overlay included, the bar reads Torn's sidebar. The sidebar's clock is `#barChain`'s `bar-timeleft` element, as `parseChainFromDOM` reads it. Its count is the first `n/m` in the rest of the bar's text, the way Gym Coach reads the energy bar, because nothing here shows which element Torn puts the number in. For the same reason, a bar with no `bar-timeleft` element takes its clock from the first element in it that holds nothing but a clock (Torn's CDP Chrome was not reachable to look, 2026-10-27).
+  2. **Data:** Torn's sidebar first, on every page. The war overlay's chain (`chainBarFromOverlay`, under 2 s old) stands in only where the sidebar gives no reading, and only while the alerts' own checks pass (fresh, plausible, more than 0 left); it needs no cooldown check, because the overlay's poll knows the cooldown. Changed after the final review: an overlay-first draft kept the bar up after a save until the overlay's next poll, and down while the overlay had no chain data though the sidebar showed the chain dying. The switch, threshold and checks stay shared with the alerts. The sidebar's clock is `#barChain`'s `bar-timeleft` element, as `parseChainFromDOM` reads it. Its count is the first `n/m` in the rest of the bar's text, the way Gym Coach reads the energy bar, because nothing here shows which element Torn puts the number in. For the same reason, a bar with no `bar-timeleft` element takes its clock from the first element in it that holds nothing but a clock (Torn's CDP Chrome was not reachable to look, 2026-10-27).
   3. **The check:** `https://api.torn.com/faction/?selections=chain&key=<the FactionOps key>` (v1, the key owner's faction), once per dying chain, before the bar first comes up.
      - The bar is shown anyway after 5 s with no answer, on an error, or when there is no key.
      - A check stands for the same count while the clock only runs down, for up to a minute.
-     - A check that says cooldown keeps the bar down until the cooldown ends or the count grows.
+     - A check that says cooldown keeps the bar down until the cooldown ends or the count grows, and only while that cooldown agrees with the sidebar's clock: at most 45 s ahead of it and 5 s behind. (Added after the final review: Torn reported a cooldown for a chain that ran on, 2026-10-26.)
   4. **When it is up:** 0 < left ≤ the threshold (`Number(CONFIG.CHAIN_ALERT_THRESHOLD)`, 60 if not a positive number), the same `<=` as the alerts. The text says `CHAIN DYING` for the whole window, as approved.
   5. **The on/off switch:** the bar is off when `CONFIG.CHAIN_ALERT` is false or the string `'false'`. PDA's GM storage hands values back as strings, as the CONFIG comment on `CALL_CHAT` says. The alerts' own check is left as it is (a sibling).
   6. **Where it sits:** fixed, top centre, `top: 10px`, z-index 2147483647, `pointer-events: none`. It goes 6 px below Gym Coach's full-bar banner while that banner holds the top spot (its top under 50 px). Its style element's id does not start `fo-chain`, because that element stays on the page and would send Gym Coach's banner to 96 px with no bar up.
@@ -57,7 +57,7 @@
   8. **Version 5.6.21.** FactionOps has no CHANGELOG block.
   9. **Gym Coach:** the unreleased 0.12.19 branch `gym-coach-chain-bar` is deleted and Gym Coach stays at 0.12.18. The stat-book fix offered on 2026-10-22, still waiting for the owner, would be 0.12.19.
 
-**Execution:** Native, with no plan-review stop (the owner: build it without stopping again unless something is off). One fresh Opus reviewer checks the branch between Task 1 and Task 2. The release falls under the standing OK for commit and push at version boundaries after the sweep.
+**Execution:** Native, with no plan-review stop (the owner: build it without stopping again unless something is off). One fresh Opus reviewer checks the branch between Task 1 and Task 2. The release falls under the standing OK for commit and push at version boundaries after the sweep. The final review changed Rulings 2 and 3; Task 1's code blocks are the reviewed draft, and the branch holds the shipped code and tests.
 
 ## Global Constraints
 
@@ -73,7 +73,7 @@
   - the page has focus, or this is Torn PDA;
   - the count is 10 or more;
   - 0 < left ≤ the threshold;
-  - no standing check says the chain is in its cooldown at this count or higher.
+  - no standing check says the chain is in its cooldown at this count or higher, with a cooldown that agrees with the sidebar's clock.
 - **The existing chain alerts do not change:** the sound, the PDA notification, the overlay's timer and their checks.
 - **ASCII only in what is added:** `\u00B7` in strings for the dot. No raw curly quotes in the file (PDA breaks on them).
 - **Tests:** made-up numbers (1,234 / 2,500) and a made-up key. No request to Torn or tornwar.com from any test.
@@ -81,7 +81,7 @@
 
 ## Review Focus
 
-1. **Torn's real sidebar, on desktop and on PDA's mobile layout.** The reader follows `parseChainFromDOM`'s selectors and formats, but nothing here can render Torn's own pages. If a layout has no `#barChain`, the bar is up there only where the war overlay runs. The owner's check during a chain covers it.
+1. **Torn's real sidebar, on desktop and on PDA's mobile layout.** The reader takes the count from `#barChain`'s whole text and the clock from `bar-timeleft`, or else the first element holding only a clock, but nothing here can render Torn's own pages. If a layout has no `#barChain`, the bar is up there only where the war overlay runs. The owner's check during a chain covers it.
 2. **A sidebar clock that counts a cooldown down** (if Torn's does). The check covers it, except when the API's answer is up to about 30 s stale right after a chain breaks: a stale "live" answer then puts the bar up for a chain that just ended. In a cooldown the clock only falls, so only the check's 60 s life brings a new check. A cooldown shorter than about the threshold plus the API's cache (about 90 s: a chain that breaks at about 15 hits or fewer) can show a false CHAIN DYING for the whole of it.
 3. **FactionOps' own pages.** While it is up, the bar sits over the top-centre spot of FactionOps' call toasts. Clicks pass through to them.
 4. **The cost of running on every page.** About 770 KB parses on every Torn page load, phones included. Off FactionOps' pages the script stops after CONFIG and one 1-s interval. PDA and the warboard app pick up the new `@match` when they update the script.

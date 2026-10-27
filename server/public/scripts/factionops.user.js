@@ -187,12 +187,13 @@
     // request interception. The private build widened @match the same way in
     // 5.4.2, for its chat dock.
     //
-    // Where the war overlay runs, the bar follows the overlay's chain (the
-    // direct poll, with the chain alerts' own freshness and plausibility
-    // checks), so the bar and the alerts come up together. Anywhere else it
-    // reads Torn's own sidebar chain bar, once a second. Torn's rules forbid
-    // drawing attention with anything read off a page you are not looking at, so the bar is only up while the page has
-    // focus; Torn PDA reports no focus while plainly in front of you, so it is
+    // It reads Torn's own sidebar chain bar once a second. Where that gives no
+    // reading (the war overlay moves the bar into its header, and PDA may lose
+    // the bar's id in the move), the war overlay's chain stands in: the direct
+    // poll, with the chain alerts' own freshness and plausibility checks.
+    // Torn's rules forbid drawing attention with anything read off a page you
+    // are not looking at, so the bar is only up while the page has focus;
+    // Torn PDA reports no focus while plainly in front of you, so it is
     // exempt. It follows the chain-alert switch and threshold, and makes no
     // sound: the alerts in startChainTimer already do, on FactionOps' pages.
     const CHAIN_BAR_ID = 'fo-chain-bar';
@@ -207,6 +208,10 @@
     const CHAIN_BAR_CHECK_WAIT_MS = 5000;
     // How long one check stands for the same count.
     const CHAIN_BAR_CHECK_TTL_MS = 60000;
+    // How far a cooldown check may read ahead of the sidebar's clock and still
+    // be the cooldown that clock counts down: the API's answer is up to about
+    // 30 s behind, so a real one reads up to that much ahead, never behind.
+    const CHAIN_BAR_COOLDOWN_AHEAD_S = 45;
 
     // The pages in FactionOps' @match list before 5.6.21: the header's first
     // nine @match lines. Every other page gets the chain bar only.
@@ -266,11 +271,18 @@
     }
 
     // Should the bar be up for this reading? Pure: { count, left } or null.
-    // `cd` is chainCooldownFrom()'s answer, or null.
+    // `cd` is chainCooldownFrom()'s answer, or null. A cooldown holds the bar
+    // down only while it agrees with the clock (CHAIN_BAR_COOLDOWN_AHEAD_S, and
+    // 5 s the other way for the two clocks): on 2026-10-26 Torn reported a
+    // cooldown for five minutes while the chain ran on, and missing a dying
+    // chain is the worse mistake.
     function chainNag(now, reading, cd, threshold) {
         if (!reading || !(reading.count >= CHAIN_BAR_MIN_HITS)) return null;
         if (!(reading.left > 0 && reading.left <= threshold)) return null;
-        if (cd && now < cd.until && reading.count <= cd.count) return null;
+        if (cd && now < cd.until && reading.count <= cd.count) {
+            const ahead = (cd.until - now) / 1000 - reading.left;
+            if (ahead > -5 && ahead < CHAIN_BAR_COOLDOWN_AHEAD_S) return null;
+        }
         return { count: reading.count, left: reading.left };
     }
 
@@ -300,14 +312,14 @@
             + m + ':' + String(s).padStart(2, '0') + ' left';
     }
 
-    // Which chain the bar follows. Where the war overlay's chain tick has run
-    // in the last 2 s, the overlay's: the direct poll the chain alerts use,
-    // null while the alerts' own checks fail, so the bar comes up with them.
-    // Anywhere else, Torn's sidebar. Pure; readSidebar is only called when it
-    // is needed.
+    // Which chain the bar follows: Torn's own sidebar, the live clock, while it
+    // gives a reading; where it gives none, the war overlay's chain, if the
+    // overlay's chain tick has run in the last 2 s and the chain alerts' own
+    // checks pass. Pure.
     function chainBarReading(now, overlay, readSidebar) {
-        if (overlay && now - overlay.at < 2000) return overlay.ok ? overlay : null;
-        return readSidebar();
+        const side = readSidebar();
+        if (side) return side;
+        return overlay && overlay.ok && now - overlay.at < 2000 ? overlay : null;
     }
 
     // The latest cooldown check (see chainBarStep), and the war overlay's
@@ -9203,9 +9215,9 @@ body.wb-chain-active {
             const anchorAge = chainTimeoutAnchorAt > 0 ? (Date.now() - chainTimeoutAnchorAt) / 1000 : Infinity;
             const chainDataFresh = anchorAge < 120; // anchor less than 2 min old
             const _chainFocusOK = IS_PDA || (typeof document.hasFocus === 'function' ? document.hasFocus() : !document.hidden);
-            // The chain bar follows this chain while the overlay runs, with the
-            // same freshness and plausibility checks as the alerts below, so
-            // the two come up together. See SECTION 1A.
+            // The chain bar's stand-in where Torn's sidebar gives no reading:
+            // this chain, with the same freshness and plausibility checks as
+            // the alerts below. See SECTION 1A.
             chainBarFromOverlay = {
                 ok: chainDataFresh && chainTimeoutPlausible && state.chain.timeout > 0,
                 count: state.chain.current, left: Math.ceil(state.chain.timeout), at: Date.now(), fromOverlay: true,
