@@ -2,11 +2,13 @@
 // own: one chain check, then up and flashing while the sidebar's chain has
 // the threshold or less left; down for a chain in its cooldown, without focus
 // outside Torn PDA, under 10 hits or with chain alerts off; and nothing else
-// of FactionOps runs there. Numbers and the key are made up.
+// of FactionOps runs there. FactionOps' toasts, on the pages that have them,
+// go under it while it is up. Numbers and the key are made up.
 import fs from "fs";
 import assert from "assert";
 const { chromium } = await import("/root/.hermes/hermes-agent/node_modules/playwright-core/index.mjs");
-const script = fs.readFileSync(new URL("../../server/public/scripts/factionops.user.js", import.meta.url), "utf8");
+// FO_SRC points it at another copy (the mutants use it).
+const script = fs.readFileSync(process.env.FO_SRC || new URL("../../server/public/scripts/factionops.user.js", import.meta.url), "utf8");
 const b = await chromium.launch({ args: ["--no-sandbox"] });
 const CHECK = "https://api.torn.com/faction/?selections=chain&";
 
@@ -41,8 +43,10 @@ const preamble = (cfg) => `(() => {
   }
 })();`;
 
-// Torn's sidebar chain bar, the way the script looks it up.
-const page = ({ time = "00:42", count = "1,234/2,500", gcBanner = 0 }) => `<!doctype html><html><head><meta charset="utf-8"><title>gym</title></head><body>
+// Torn's sidebar chain bar, the way the script looks it up, and with `toasts`
+// FactionOps' two toast stacks where its own pages have them.
+const page = ({ time = "00:42", count = "1,234/2,500", gcBanner = 0, toasts = false }) => `<!doctype html><html><head><meta charset="utf-8"><title>gym</title></head><body>
+${toasts ? '<div id="fo-call-toast-container" style="position:fixed;top:10px">call</div><div id="wb-toast-container" style="position:fixed;top:10px">toast</div>' : ""}
 ${gcBanner ? '<div id="gcb-fullbar-nag" style="position:fixed;top:' + gcBanner + 'px;left:50%;transform:translateX(-50%);height:36px;width:300px">E full</div>' : ""}
 <div id="sidebarroot"><a id="barChain" class="bar___x chain___x"><div class="bar-stats___x"><p class="bar-name___x">Chain:</p><p class="bar-value___x">${count}</p></div><p class="bar-timeleft___x">${time}</p></a></div>
 <script src="/fo-preamble.js"></script><script src="/factionops.user.js"></script></body></html>`;
@@ -69,6 +73,15 @@ const bar = (p) => p.evaluate(() => {
   if (!e) return null;
   const cs = getComputedStyle(e);
   return { text: e.textContent, anim: cs.animationName, pe: cs.pointerEvents, top: parseInt(e.style.top, 10) };
+});
+// The bar's bottom edge (null: no bar) and where the two toast stacks sit.
+const toastTops = (p) => p.evaluate(() => {
+  const e = document.getElementById("fo-chain-bar");
+  return {
+    bar: e ? Math.round(e.getBoundingClientRect().bottom) : null,
+    call: document.getElementById("fo-call-toast-container").style.top,
+    general: document.getElementById("wb-toast-container").style.top,
+  };
 });
 const setClock = (p, s) => p.evaluate((s) => { document.querySelector('[class*="bar-timeleft"]').textContent = s; }, s);
 const noFocus = (p) => p.evaluate(() => { document.hasFocus = () => false; });
@@ -177,6 +190,28 @@ await t("below Gym Coach's full-bar banner while that holds the top spot, and at
   assert.ok(high && low, "no bar");
   assert.strictEqual(high.top, 52);
   assert.strictEqual(low.top, 10);
+});
+
+await t("FactionOps' toasts sit 6 px under the bar while it is up, and back at 10 px once it goes", async () => {
+  const { ctx, p } = await open({ toasts: true });
+  const up = await toastTops(p);
+  await setClock(p, "04:59");
+  await p.waitForTimeout(1500);
+  const down = await toastTops(p);
+  await ctx.close();
+  assert.ok(up.bar > 40, JSON.stringify(up));
+  assert.deepStrictEqual(up, { bar: up.bar, call: up.bar + 6 + "px", general: up.bar + 6 + "px" });
+  assert.deepStrictEqual(down, { bar: null, call: "10px", general: "10px" });
+});
+
+await t("under Gym Coach's banner the bar sits lower, and the toasts go under it there", async () => {
+  const { ctx, p } = await open({ toasts: true, gcBanner: 10 });
+  const got = await toastTops(p), pos = await bar(p);
+  await ctx.close();
+  assert.ok(pos, "no bar");
+  assert.strictEqual(pos.top, 52);
+  assert.ok(got.bar > 80, JSON.stringify(got));
+  assert.deepStrictEqual(got, { bar: got.bar, call: got.bar + 6 + "px", general: got.bar + 6 + "px" });
 });
 
 await b.close();

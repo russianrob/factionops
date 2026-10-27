@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.21
+// @version      5.6.22
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -18,6 +18,7 @@
 // @match        https://www.torn.com/war.php*
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
+// @noframes
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -102,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.21';
+    const SCRIPT_VERSION = '5.6.22';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -212,6 +213,9 @@
     // be the cooldown that clock counts down: the API's answer is up to about
     // 30 s behind, so a real one reads up to that much ahead, never behind.
     const CHAIN_BAR_COOLDOWN_AHEAD_S = 45;
+    // FactionOps' top-centre toast stacks, on its own pages: they go under the
+    // bar while it is up (placeChainBarToasts).
+    const CHAIN_BAR_TOAST_IDS = ['fo-call-toast-container', 'wb-toast-container'];
 
     // The pages in FactionOps' @match list before 5.6.21: the header's first
     // nine @match lines. Every other page gets the chain bar only.
@@ -327,10 +331,29 @@
     let chainBarCheck = null;
     let chainBarFromOverlay = null;
 
+    // Where FactionOps' toasts sit: 6 px under the bar while it is up, so it
+    // never covers them, and at their usual 10 px otherwise. By id alone:
+    // this part runs on every page, before `state` exists.
+    function chainBarToastTop() {
+        const bar = document.getElementById(CHAIN_BAR_ID);
+        return (bar ? Math.round(bar.getBoundingClientRect().bottom) + 6 : 10) + 'px';
+    }
+
+    function placeChainBarToasts() {
+        const top = chainBarToastTop();
+        for (const id of CHAIN_BAR_TOAST_IDS) {
+            const box = document.getElementById(id);
+            if (box) box.style.top = top;
+        }
+    }
+
     function renderChainBar(live) {
         let el = document.getElementById(CHAIN_BAR_ID);
         if (!live) {
-            if (el && el.parentNode) el.parentNode.removeChild(el);
+            if (el && el.parentNode) {
+                el.parentNode.removeChild(el);
+                placeChainBarToasts();
+            }
             return;
         }
         if (!document.body) return;
@@ -368,6 +391,7 @@
         const r = gc ? gc.getBoundingClientRect() : null;
         el.style.top = (r && r.bottom > 0 && r.top < 50 ? Math.round(r.bottom) + 6 : 10) + 'px';
         el.textContent = text;
+        placeChainBarToasts();
     }
 
     function startChainBarCheck(now, reading) {
@@ -13985,7 +14009,7 @@ body.wb-chain-active {
             container.id = 'fo-call-toast-container';
             container.style.cssText = `
                 position: fixed;
-                top: ${state.ui.chainBar ? '52px' : '10px'};
+                top: ${chainBarToastTop()};
                 left: 50%;
                 transform: translateX(-50%);
                 z-index: 1000001;
@@ -15191,7 +15215,7 @@ body.wb-chain-active {
             toastContainer.id = 'wb-toast-container';
             toastContainer.style.cssText = `
                 position: fixed;
-                top: ${state.ui && state.ui.chainBar ? '52px' : '10px'};
+                top: ${chainBarToastTop()};
                 left: 50%;
                 transform: translateX(-50%);
                 z-index: 2147483647;
@@ -15203,8 +15227,8 @@ body.wb-chain-active {
             `;
             document.body.appendChild(toastContainer);
         }
-        // Update position dynamically in case UI shifted
-        toastContainer.style.top = state.ui && state.ui.chainBar ? '52px' : '10px';
+        // Under the chain bar while it is up, at 10 px otherwise.
+        toastContainer.style.top = chainBarToastTop();
         return toastContainer;
     }
 

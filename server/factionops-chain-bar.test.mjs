@@ -1,6 +1,7 @@
 // FactionOps' chain bar (5.6.21): the pure parts lifted out of the script and
 // driven with made-up chains, and the wiring checked in the text -- the
 // header, the version, and the gate that stops the script off its own pages.
+// 5.6.22: no frames, and FactionOps' toasts go under the bar.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -141,15 +142,20 @@ test('the text: the count with commas, the clock as m:ss', () => {
   assert.equal(L().chainBarText({ count: 12, left: 75 }), 'CHAIN DYING \u00B7 12 hits \u00B7 1:15 left');
 });
 
-test('5.6.21 in both places, the meta file is the header, and every page joins the old list', () => {
+test('5.6.22 in both places, the meta file is the header, and every page joins the old list', () => {
   const end = '// ==/UserScript==';
   const head = SRC.slice(0, SRC.indexOf(end) + end.length) + '\n';
   assert.equal(META, head);
-  assert.match(head, /^\/\/ @version\s+5\.6\.21$/m);
-  assert.match(SRC, /const SCRIPT_VERSION = '5\.6\.21';/);
+  assert.match(head, /^\/\/ @version\s+5\.6\.22$/m);
+  assert.match(SRC, /const SCRIPT_VERSION = '5\.6\.22';/);
   const matches = [...head.matchAll(/^\/\/ @match\s+(\S+)$/gm)].map((m) => m[1]);
   assert.equal(matches.length, 11);
   assert.deepEqual(matches.slice(-2), ['https://www.torn.com/*', 'https://torn.com/*']);
+});
+
+test('it stays out of frames: one @noframes in the header', () => {
+  const head = SRC.slice(0, SRC.indexOf('// ==/UserScript=='));
+  assert.equal([...head.matchAll(/^\/\/ @noframes$/gm)].length, 1);
 });
 
 test('the gate: the bar starts, then the script stops off its own pages, above everything else', () => {
@@ -184,4 +190,38 @@ test("the war overlay's chain tick hands the bar its chain, with the alerts' own
 
 test('no raw curly quotes: Torn PDA straightens them and the file stops parsing', () => {
   assert.doesNotMatch(SRC, /[\u2018\u2019\u201C\u201D]/);
+});
+
+// A page for the toasts' spot: the chain bar's bottom edge (null: no bar),
+// and what the script adds to it.
+function toastPage(barBottom) {
+  const added = {};
+  const bar = barBottom == null ? null : { getBoundingClientRect: () => ({ top: 10, bottom: barBottom }) };
+  return {
+    getElementById: (id) => (id === 'fo-chain-bar' ? bar : added[id] || null),
+    createElement: () => ({ style: {} }),
+    body: { appendChild: (e) => { added[e.id] = e; } },
+  };
+}
+// The toasts' spot and both toast stacks, on that page. `state` is as the
+// script has it: nothing sets state.ui.chainBar.
+function toasts(page) {
+  const names = ['chainBarToastTop', 'ensureCallToastContainer', 'getToastContainer'];
+  return new Function('document', 'const state = { ui: {} };\nlet toastContainer = null;\n' + konst('CHAIN_BAR_ID')
+    + names.map(fn).join('\n') + '\nreturn { ' + names.join(', ') + ' };')(page);
+}
+
+test("FactionOps' toasts go 6 px under the chain bar while it is up, and at 10 px without it", () => {
+  assert.equal(toasts(toastPage(45)).chainBarToastTop(), '51px');
+  assert.equal(toasts(toastPage(97.6)).chainBarToastTop(), '104px');
+  assert.equal(toasts(toastPage(null)).chainBarToastTop(), '10px');
+});
+
+test('both toast stacks start under the bar while it is up, and the general one keeps to it', () => {
+  const up = toasts(toastPage(45));
+  assert.match(up.ensureCallToastContainer().style.cssText, /top: 51px;/);
+  assert.equal(up.getToastContainer().style.top, '51px');
+  const none = toasts(toastPage(null));
+  assert.match(none.ensureCallToastContainer().style.cssText, /top: 10px;/);
+  assert.equal(none.getToastContainer().style.top, '10px');
 });
