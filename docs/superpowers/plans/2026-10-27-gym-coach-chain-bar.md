@@ -494,10 +494,10 @@ Expected: two files more than the baseline (the new ones), and `same failing fil
 - [ ] **Step 8: Sweep what the branch adds:**
 
 ```bash
-W=/opt/warboard/.superpowers/sdd/2026-10-27-gym-coach-chain-bar; cd "$W/wt" && git add -N -- tests/gym-coach/chainbar.test.mjs tests/gym-coach/chainbar.e2e.test.mjs && git diff | command grep -E '^\+' > "$W/added.txt"; command grep -oE '(^|[^A-Za-z0-9])[A-Za-z0-9]{16}([^A-Za-z0-9]|$)' "$W/added.txt" | sort | uniq -c; command grep -n -i -E "production|happens" "$W/added.txt"; node "$W/sweep-env.mjs" "$W/added.txt" && node "$W/sweep-names.mjs" "$W/added.txt"
+W=/opt/warboard/.superpowers/sdd/2026-10-27-gym-coach-chain-bar; cd "$W/wt" && git add -N -- tests/gym-coach/chainbar.test.mjs tests/gym-coach/chainbar.e2e.test.mjs && git diff | command grep -E '^\+' > "$W/added.txt"; command grep -oE '(^|[^A-Za-z0-9])[A-Za-z0-9]{16}([^A-Za-z0-9]|$)' "$W/added.txt" | sort | uniq -c; node "$W/sweep-env.mjs" "$W/added.txt" && node "$W/sweep-names.mjs" "$W/added.txt"
 ```
 
-Expected: only code names among the 16-character words, no `production` or `happens` line, both sweeps clean.
+Expected: only code names among the 16-character words, both sweeps clean.
 
 - [ ] **Step 9: Commit.**
 

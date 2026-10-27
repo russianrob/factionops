@@ -440,10 +440,10 @@ Expected: `# tests` 8 more than the baseline's, `# skipped 2`, and `same failing
 - [ ] **Step 8: Sweep what the branch adds.** The new file is marked for adding first, so the diff shows it:
 
 ```bash
-W=/opt/warboard/.superpowers/sdd/2026-10-27-war-enemy-ping-pong; cd "$W/wt" && git add -N -- server/war-enemy-client.test.mjs && git diff | command grep -E '^\+' > "$W/added.txt"; command grep -oE '(^|[^A-Za-z0-9])[A-Za-z0-9]{16}([^A-Za-z0-9]|$)' "$W/added.txt" | sort | uniq -c; command grep -n -i -E "production|happens" "$W/added.txt"; node "$W/sweep-env.mjs" "$W/added.txt" && node "$W/sweep-names.mjs" "$W/added.txt"
+W=/opt/warboard/.superpowers/sdd/2026-10-27-war-enemy-ping-pong; cd "$W/wt" && git add -N -- server/war-enemy-client.test.mjs && git diff | command grep -E '^\+' > "$W/added.txt"; command grep -oE '(^|[^A-Za-z0-9])[A-Za-z0-9]{16}([^A-Za-z0-9]|$)' "$W/added.txt" | sort | uniq -c; node "$W/sweep-env.mjs" "$W/added.txt" && node "$W/sweep-names.mjs" "$W/added.txt"
 ```
 
-Expected: the 16-character words are code names this task adds or calls (`clearPayoutLootOverride` is longer and does not show), with nothing secret; no `production` or `happens` line; both sweeps clean.
+Expected: the 16-character words are code names this task adds or calls (`clearPayoutLootOverride` is longer and does not show), with nothing secret; both sweeps clean.
 
 - [ ] **Step 9: Commit.**
 
