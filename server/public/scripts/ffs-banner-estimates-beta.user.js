@@ -2,7 +2,7 @@
 // @name         FFS Banner Estimates Beta
 // @namespace    tornwar.com
 // @match        https://www.torn.com/*
-// @version      2.73.913
+// @version      2.73.914
 // @author       rDacted, Weav3r, xentac, Glasnost (fork by RussianRob)
 // @description  FFS banner fork — paints estimated stats on the profile name banner using FFScouter data. Based on FF Scouter V2 (2.73, GPL-3.0).
 // @grant        GM_xmlhttpRequest
@@ -25,6 +25,9 @@
 // Upstream: FF Scouter V2 (GPL-3.0, rDacted/Weav3r/xentac/Glasnost)
 //   https://greasyfork.org/en/scripts/535292
 //
+// 2.73.914 — Mini profiles show the player's HP on its own line under the FF
+//              line, as "HP 1,234 / 5,678 (21%)": one Torn call per player a
+//              minute at most, and none while Torn is refusing the key.
 // 2.73.913 — Chain button: skip people who can't be attacked (as FFS 2.73.62).
 // 2.73.912 — Menu: the API key entry names the script, "FFS Banner Estimates
 //              Beta: Enter Limited API Key". Some menus list every script's
@@ -2438,7 +2441,8 @@ if (!singleton) {
         const description = $(mini).find(".description");
         const desc = $("<span></span>", { class: "ff-scouter-mini-ff" });
         desc.text(message);
-        $(description).append(desc);
+        // Above the HP line when that was drawn first, so the order never changes.
+        if (description[0]) ffs_placeMiniLine(description[0], desc[0]);
       }
     }
   }
@@ -2561,6 +2565,8 @@ if (!singleton) {
           mini.classList.add("ff-processed");
 
           const player_id = get_player_id_in_element(mini);
+          // Not awaited: Torn's answer must not hold up the FF line.
+          ffs_showMiniHp(mini, player_id).catch(() => {});
           apply_to_mini_profile(mini);
           await update_ff_cache([player_id], () => {
             apply_to_mini_profile(mini);
@@ -2726,6 +2732,128 @@ if (!singleton) {
     if (!e) return false;
     if (FFS_REFUSAL_CODES.indexOf(e.code) !== -1) return true;
     return /too many requests/i.test(String(e.error || ""));
+  }
+
+  // ── HP in the mini profile ──
+  // A mini profile shows the player's life on its own line under the FF line,
+  // as "HP 1,234 / 5,678 (21%)". Torn's card carries no life, so it costs one
+  // API call on the script's key, kept for a minute per player so that opening
+  // the same card again is free. While Torn is refusing the key, nothing is
+  // asked and the card goes without the line.
+  const FFS_MINI_HP_TTL_MS = 60_000;
+  // How long a card waits for Torn's answer before going without the line.
+  const FFS_MINI_HP_TIMEOUT_MS = 4000;
+  // Player id -> { at, life } once Torn has answered, or { at, pending } while
+  // the call is out, so every card that asks meanwhile shares the one call.
+  const _ffsMiniHp = new Map();
+
+  /**
+   * The HP line for Torn's life numbers, or null when they are not numbers it
+   * can show. The percentage is floored, as FactionOps' is on the attack page,
+   * so it says 100% only when full and 0% only when the player is down.
+   */
+  function ffs_hpLine(life) {
+    if (!life || !Number.isFinite(life.current) || !Number.isFinite(life.maximum)) return null;
+    const cur = life.current;
+    const max = life.maximum;
+    if (max <= 0 || cur < 0) return null;
+    let pct = Math.floor((cur / max) * 100);
+    if (pct === 100 && cur < max) pct = 99;
+    if (pct === 0 && cur > 0) pct = 1;
+    return `HP ${cur.toLocaleString("en-US")} / ${max.toLocaleString("en-US")} (${pct}%)`;
+  }
+
+  /**
+   * One player's life as Torn's v2 profile gives it, { current, maximum }, or
+   * null when Torn gives none: a refusal or another error, a request that
+   * fails, no answer within FFS_MINI_HP_TIMEOUT_MS, or an answer without life
+   * it can show. A refusal stands every Torn call here down for a minute, as
+   * the chain button's does. The cache-buster keeps Torn from answering with a
+   * reading it saved earlier.
+   */
+  async function ffs_fetchLife(playerId) {
+    const url = `https://api.torn.com/v2/user/${playerId}/profile?striptags=true&timestamp=${Date.now()}&key=${encodeURIComponent(key)}`;
+    let timer = null;
+    try {
+      const data = await Promise.race([
+        fetch(url).then((r) => r.json()),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), FFS_MINI_HP_TIMEOUT_MS);
+        }),
+      ]);
+      if (!data || data.error) {
+        if (ffs_isRateLimitError(data)) _ffsRateLimitedUntil = Date.now() + FFS_RATE_LIMIT_BACKOFF_MS;
+        return null;
+      }
+      const life = data.profile && data.profile.life;
+      return ffs_hpLine(life) ? { current: life.current, maximum: life.maximum } : null;
+    } catch (_) {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * One player's life for a mini profile: the answer from the last minute when
+   * there is one, else one call to Torn. Only an answer with life in it is
+   * kept, so the next card after a failure asks again.
+   */
+  async function ffs_miniHp(playerId) {
+    const hit = _ffsMiniHp.get(playerId);
+    if (hit && (hit.pending || Date.now() - hit.at < FFS_MINI_HP_TTL_MS)) return hit.pending || hit.life;
+    if (!key || Date.now() < _ffsRateLimitedUntil) return null;
+    const pending = ffs_fetchLife(playerId);
+    _ffsMiniHp.set(playerId, { at: Date.now(), pending });
+    const life = await pending;
+    if (life) _ffsMiniHp.set(playerId, { at: Date.now(), life });
+    else _ffsMiniHp.delete(playerId);
+    return life;
+  }
+
+  /**
+   * Puts one of FFS's lines into a mini profile's description in a fixed order,
+   * whichever is drawn first: the FF line, then the HP line right under it.
+   * When the other line is not there, it goes at the end.
+   */
+  function ffs_placeMiniLine(description, el) {
+    if (el.classList.contains("ffs-mini-hp")) {
+      const ff = description.querySelector(".ff-scouter-mini-ff");
+      if (ff) {
+        ff.after(el);
+        return;
+      }
+    } else {
+      const hp = description.querySelector(".ffs-mini-hp");
+      if (hp) {
+        hp.before(el);
+        return;
+      }
+    }
+    description.appendChild(el);
+  }
+
+  /** Draws the HP line in a mini profile, in place of one already there. */
+  function ffs_paintMiniHp(mini, life) {
+    const text = ffs_hpLine(life);
+    const description = mini.querySelector(".description");
+    if (!text || !description) return;
+    for (const old of mini.querySelectorAll(".ffs-mini-hp")) old.remove();
+    const line = document.createElement("div");
+    line.className = "ffs-mini-hp";
+    line.textContent = text;
+    ffs_placeMiniLine(description, line);
+  }
+
+  /**
+   * Asks for a player's life when FFS first sees their mini profile, and draws
+   * it if the card is still open on that player when the answer comes.
+   */
+  async function ffs_showMiniHp(mini, playerId) {
+    if (!playerId) return;
+    const life = await ffs_miniHp(playerId);
+    if (!life || !mini.isConnected || get_player_id_in_element(mini) !== playerId) return;
+    ffs_paintMiniHp(mini, life);
   }
 
   // beta: a target whose hospital time just ended is the most time-critical row
@@ -3307,7 +3435,7 @@ if (!singleton) {
   // wb68: stamp the running script version into diags so the server log shows
   // exactly which build a user has installed (PDA/Tampermonkey don't always
   // auto-update). KEEP IN SYNC with the @version header on every bump.
-  const SCRIPT_VERSION = '2.73.913';
+  const SCRIPT_VERSION = '2.73.914';
 
   // wb17: periodic diag post so we can see whether the paint fires and
   // how many rows / travelling members it finds.
