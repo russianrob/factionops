@@ -745,9 +745,12 @@ startMembershipSchedule();
         const rows = JSON.parse(fs.readFileSync(file, "utf-8"));
         for (const row of rows) {
           if (row && row.warId && !seen.has(row.warId)) {
-            seen.add(row.warId);
             const w = store.getWar(row.warId);
             if (w && !w.warEnded) {
+              // Marked only once started. An ENDED war's token used to mark
+              // it too, and the revive below then skipped that war, so a
+              // restart after a war left its chain unwatched (2026-10-26).
+              seen.add(row.warId);
               startChainMonitor(null, row.warId);
               console.log(`[live-activity] resumed chain monitor for ${row.warId}`);
             }
@@ -758,14 +761,13 @@ startMembershipSchedule();
       console.warn(`[live-activity] resume hook failed: ${err.message}`);
     }
 
-    // 2026-05-19: Also resume chain-monitor for every recently-ended
-    // war so the next ranked-war match for that faction gets picked up
-    // automatically without waiting on client traffic. Previously
-    // chain-monitor stopped permanently on warEnded → new-war detection
-    // was blocked until someone loaded the war page (which then ran the
-    // route-level lazy detection). Recency gate: 14 days, well past any
-    // realistic between-war gap so we don't keep polling abandoned wars
-    // forever.
+    // Also resume chain-monitor for every recently-ended war, so its chain
+    // is still watched after the war: chain-monitor alerts on a chain of
+    // 100 or more outside a war (chain-alert-rule.js). Added on 2026-05-19
+    // for new-war detection, which is the war-scanner's now: chain-monitor
+    // makes no score check on an ended war. Recency gate: 14 days, well
+    // past any realistic between-war gap so we don't keep polling
+    // abandoned wars forever.
     try {
       const REVIVE_WINDOW_MS = 14 * 24 * 3600 * 1000;
       const now = Date.now();
@@ -792,7 +794,7 @@ startMembershipSchedule();
         startChainMonitor(null, warId);
         revived++;
       }
-      if (revived > 0) console.log(`[boot-resume] revived chain-monitor for ${revived} recently-ended synthetic war(s) so new-war detection stays live`);
+      if (revived > 0) console.log(`[boot-resume] revived chain-monitor for ${revived} recently-ended synthetic war(s) so their chains stay watched`);
     } catch (err) {
       console.warn(`[boot-resume] revive-recent failed: ${err.message}`);
     }

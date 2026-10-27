@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { warScoreCheckInterval } from "/opt/warboard/server/chain-monitor.js";
+import { isWarLive } from "./chain-alert-rule.js";
 
 // The trap: a ranked war ends exactly when the lead reaches the target, so
 // |my - enemy| >= 0.9 * target is true BY DEFINITION at the final whistle.
@@ -22,7 +23,7 @@ test("THE TRAP: a finished war's scores pin it at 30s", () => {
   // fixture used a 700 lead on a 1000 target, which is not an end state at all.)
   const ended = { warOrigTarget: 1000, warScores: { myScore: 1300, enemyScore: 300 }, warEnded: true };
   assert.equal(warScoreCheckInterval(ended), 30_000,
-    "this is why an ended war polled FASTER — the fix is to stop the monitor and clear warScores");
+    "this is why an ended war polled FASTER — the fix is to clear warScores when the war ends");
 });
 
 test("clearing warScores on war end releases the trap", () => {
@@ -30,14 +31,12 @@ test("clearing warScores on war end releases the trap", () => {
   assert.equal(warScoreCheckInterval(cleared), 300_000);
 });
 
-// The pre-war gate, as the source computes it.
-const preWarAt = (warStart, nowSec) => {
-  const s = Number(warStart) || 0;
-  return s > 0 && nowSec < s;
-};
-test("pre-war gate: suppressed before kickoff, live after", () => {
+// Before kickoff, as chain-alert-rule.js has it: the war is not live yet, so
+// only chains of 100 or more are alerted.
+const preWarAt = (warStart, nowSec) => !isWarLive({ warStart }, nowSec * 1000);
+test("pre-war: not live before kickoff, live from it", () => {
   const start = 2_000_000_000;
-  assert.equal(preWarAt(start, start - 86_400), true,  "a day before kickoff -> no chain fetch");
+  assert.equal(preWarAt(start, start - 86_400), true,  "a day before kickoff -> pre-war");
   assert.equal(preWarAt(start, start - 1), true);
   assert.equal(preWarAt(start, start), false, "at kickoff -> live");
   assert.equal(preWarAt(start, start + 60), false);

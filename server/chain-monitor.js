@@ -5,9 +5,11 @@
  * reporting chain info (i.e. nobody has FactionOps open). Fires push
  * notifications for chain-break alerts and bonus-imminent hits.
  *
- * Only polls when:
- * - A war is active
- * - No client has reported chain data in the last CLIENT_STALE_MS
+ * Polls only when no client has reported chain data in the last
+ * CLIENT_CHAIN_FRESH_MS. In a live war it alerts on chains of 10 or more,
+ * at the faction's chain pace. Outside one (after the war, before kickoff)
+ * it alerts on chains of 100 or more, and reads the chain every 2 minutes
+ * until it reaches 100: see chain-alert-rule.js.
  */
 
 import { bonusToAnnounce } from "./chain-bonus.js";
@@ -17,6 +19,7 @@ import * as push from "./push-notifications.js";
 import * as apns from "./apns.js";
 import * as liveActivityTokens from "./live-activity-tokens.js";
 import { normalizeChainData, chainWithLiveTimeout } from "./chain-data.js";
+import { isWarLive, chainAlertFloor, outsideWarDelay, outsideWarChainEnded, OUTSIDE_WAR_MIN_CHAIN } from "./chain-alert-rule.js";
 
 // Fallback interval when we can't resolve the dynamic one (e.g. no war
 // context yet). Normal operation uses store.getPollInterval(factionId,
@@ -37,7 +40,6 @@ const CHAIN_ALERT_THRESHOLD = 60; // seconds — fire warning when chain timer <
 const CHAIN_PANIC_THRESHOLD = 30; // seconds — fire panic when chain timer <= this
 // Monotonic cursor used to rotate pool keys per chain-poll call.
 let _chainPollCursor = 0;
-const CHAIN_MIN_HITS = 10;        // only alert when chain >= 10 (real chain)
 const CHAIN_ALERT_COOLDOWN_MS = 30_000; // max one alert push per 30s per war
 const CHAIN_PANIC_COOLDOWN_MS = 20_000; // max one panic push per 20s per war
 const WAR_SCORE_CHECK_INTERVAL = 300_000; // normal cadence (score/ETA don't need 30s freshness)
@@ -98,6 +100,9 @@ const lastPanicSent = new Map();
  * hit resets Torn's chain timer to ~5:00, so a recent increase means a low
  * reported timeout is a stale/lagging snapshot, not a real break. */
 const lastChainIncreaseAt = new Map();
+/** Wall-clock (ms) of the last reading of 100 or more per warId. Outside a
+ * war it keeps the reads at the war's pace for a while after it. */
+const lastBigChainAt = new Map();
 /** Last time we checked war score per warId. */
 const lastScoreCheck = new Map();
 /** Track if we already notified war target reached per warId. */
@@ -130,6 +135,9 @@ function pushAudience(war) {
 
 async function _processChain(warId, war, chain, io, source) {
   const prevChain = chainWithLiveTimeout({ ...war.chainData }, Date.now());
+  // The age of that reading, taken before it is overwritten below: a record
+  // left from before a restart must not pass for a chain that just ended.
+  const prevAgeMs = Date.now() - (Number(war.chainDataUpdatedAt) || 0);
   // Store by absolute end instant. `chain` keeps its live `timeout` for the
   // alert thresholds below; only the STORED copy is normalized, so the record
   // stops changing on every poll and the long-poll can stay held. See
@@ -142,9 +150,16 @@ async function _processChain(warId, war, chain, io, source) {
   const cooldownFlipped = ((prevChain.cooldown || 0) > 0) !== ((chain.cooldown || 0) > 0);
   const broke = (prevChain.current || 0) > 0 && (chain.current || 0) === 0;
   if ((chain.current || 0) > (prevChain.current || 0)) lastChainIncreaseAt.set(warId, Date.now());
+  // Chains are alerted from 10 hits in a live war, and from 100 outside one.
+  const warLive = isWarLive(war, Date.now());
+  const minChain = chainAlertFloor(war, Date.now());
+  if ((chain.current || 0) >= OUTSIDE_WAR_MIN_CHAIN) lastBigChainAt.set(warId, Date.now());
   const tokenCount = liveActivityTokens.listForWar(warId).length;
-  console.log(`[chain/${source}] war=${warId} prev=${prevChain.current||0} curr=${chain.current||0} cooldown=${chain.cooldown} timeout=${chain.timeout} tokens=${tokenCount} willPush=${countChanged || cooldownFlipped || broke}`);
-  if (countChanged || cooldownFlipped || broke) {
+  // The iOS Live Activity belongs to the war: the war's end ends it (in the
+  // poll loop below), and a chain after the war does not raise it again.
+  const willPush = !war.warEnded && (countChanged || cooldownFlipped || broke);
+  console.log(`[chain/${source}] war=${warId} prev=${prevChain.current||0} curr=${chain.current||0} cooldown=${chain.cooldown} timeout=${chain.timeout} tokens=${tokenCount} willPush=${willPush}`);
+  if (willPush) {
     broadcastChainLiveActivity(warId, war, chain, broke).catch((e) =>
       console.warn(`[chain] Live Activity broadcast failed: ${e.message}`)
     );
@@ -157,10 +172,10 @@ async function _processChain(warId, war, chain, io, source) {
   // "chain dying" alert to everyone. Real stalls (no hit for minutes) still fire.
   const secsSinceHit = (Date.now() - (lastChainIncreaseAt.get(warId) || 0)) / 1000;
   const timerPlausible = chain.timeout >= (300 - secsSinceHit) - 60;
-  if (!isCoolingDown && !timerPlausible && chain.timeout > 0 && chain.timeout <= CHAIN_ALERT_THRESHOLD && chain.current >= CHAIN_MIN_HITS) {
+  if (!isCoolingDown && !timerPlausible && chain.timeout > 0 && chain.timeout <= CHAIN_ALERT_THRESHOLD && chain.current >= minChain) {
     console.log(`[chain] SUPPRESSED stale alert: chain ${chain.current}, timeout=${Math.round(chain.timeout)}s but only ${Math.round(secsSinceHit)}s since last hit (${source})`);
   }
-  if (!isCoolingDown && timerPlausible && chain.timeout > 0 && chain.current >= CHAIN_MIN_HITS) {
+  if (!isCoolingDown && timerPlausible && chain.timeout > 0 && chain.current >= minChain) {
     if (chain.timeout <= CHAIN_PANIC_THRESHOLD) {
       const lastPanic = lastPanicSent.get(warId) || 0;
       if (Date.now() - lastPanic > CHAIN_PANIC_COOLDOWN_MS) {
@@ -179,7 +194,7 @@ async function _processChain(warId, war, chain, io, source) {
       }
     }
   }
-  if (!isCoolingDown && chain.current >= CHAIN_MIN_HITS) {
+  if (!isCoolingDown && chain.current >= minChain) {
     const already = lastBonusAnnounced.get(warId);
     const bonus = bonusToAnnounce(prevChain.current || 0, chain.current || 0, already);
     if (bonus) {
@@ -192,6 +207,20 @@ async function _processChain(warId, war, chain, io, source) {
       console.log(`[chain] Bonus alert: chain ${chain.current}/${bonus} (${source})`);
     }
   }
+  // Outside a war, a chain of 100 or more that ends gets one quiet notice,
+  // which also takes down its pinned CHAIN BREAKING / CHAIN DYING alerts, as
+  // the war's end does for a war's. outsideWarChainEnded says which drops
+  // count: not a bad reading of 0, nor a record from before a restart.
+  if (!warLive && outsideWarChainEnded({
+    prevCurrent: prevChain.current || 0,
+    prevTimeoutS: prevChain.timeout,
+    prevAgeMs,
+    current: chain.current || 0,
+  })) {
+    push.notifyChainEnded(pushAudience(war), warId, prevChain.current)
+      .catch((e) => console.warn(`[chain] chain-ended push failed: ${e.message}`));
+    console.log(`[chain] Chain ended outside a war at ${prevChain.current} (${source})`);
+  }
   // A broken or reset chain starts the announcements over: the next chain
   // deserves its own warning at the same milestone.
   if ((chain.current || 0) < (prevChain.current || 0)) lastBonusAnnounced.delete(warId);
@@ -202,10 +231,12 @@ async function _processChain(warId, war, chain, io, source) {
  * chainDataUpdatedAt so the server-side poll's gate sees fresh
  * data and skips its Torn fetch. Rejects snapshots older than what
  * we already have so a slow client can't override fresh data.
+ * Taken after a war ends too: the chain is still watched then (from 100
+ * hits), and FactionOps keeps sending it.
  */
 export async function recordClientChainData(warId, chain) {
   const war = store.getWar(warId);
-  if (!war || war.warEnded) return false;
+  if (!war) return false;
   if (!chain || typeof chain !== "object") return false;
   // serverTimestamp on chain (epoch seconds) — if older than what we have,
   // ignore. Avoids a stale-cached client overwriting a fresh server poll.
@@ -232,36 +263,23 @@ export function startChainMonitor(io, warId) {
     const war = store.getWar(warId);
     if (!war || !war.factionId) { scheduleNext(nextChain(war)); return; }
 
-    // STOP once the war is over. This loop had no warEnded gate at all, and
-    // stopChainMonitor was only ever reachable from shutdown — so an ended
-    // war kept a 10-20s chain poll running until the next matchup, days
-    // later. Worse, it SPED UP: warScoreCheckInterval drops to the 30s
-    // endgame cadence once |my - enemy| >= 0.9 * target, and a ranked war
-    // ends precisely when the lead reaches the target, so that condition is
-    // true by definition from the final whistle onward.
+    // A war that has ended keeps its watch. This loop used to stop at the
+    // war's end, and on 2026-10-26 a chain that ran on for seven hours after
+    // its war died with no alert. Outside a live war (after it, and before
+    // kickoff) the chain is read every 2 minutes, and at the war's pace while
+    // it reads 100 or more: see chain-alert-rule.js and the scheduling at the
+    // end of this tick.
     //
-    // Safe to stop here because the war-end branch below has already run on
-    // the tick that detected it, and a NEW war gets a fresh monitor from
-    // war-scanner's crons, server boot, or a client loading the war page.
-    if (war.warEnded) {
-      // Clear the scores that pinned the endgame cadence. Belt and braces:
-      // if a restart ever resurrects this record, the stop above fires
-      // first, but leaving a 30s-forever trap in the data is not worth it.
-      if (war.warScores) { delete war.warScores; store.saveState(); }
-      stopChainMonitor(warId);
-      console.log(`[chain] war ${warId} ended — monitor stopped`);
-      return;
+    // On the first tick after the end, clear the war's scores, as the stop
+    // here used to (they pinned the score check at its 30s endgame cadence:
+    // a ranked war ends exactly when the lead reaches the target), and its
+    // target alert, so the next war on this record gets its own.
+    if (war.warEnded && war.warScores) {
+      delete war.warScores;
+      warTargetNotified.delete(warId);
+      store.saveState();
+      console.log(`[chain] war ${warId} ended — watching the chain outside the war (alerts from ${OUTSIDE_WAR_MIN_CHAIN} hits)`);
     }
-
-    // DON'T POLL BEFORE KICKOFF. war records are created as soon as Torn
-    // lists the matchup, which is days early, and the chain poll ran at full
-    // speed that whole time against a chain nobody is building yet.
-    //
-    // The war-score check still runs at its normal 300s cadence: it is what
-    // keeps warStart fresh and what notices a matchup being cancelled. Only
-    // the 10-20s chain fetch is suppressed.
-    const startSec = Number(war.warStart) || 0;
-    const preWar = startSec > 0 && Date.now() / 1000 < startSec;
 
     // Round-robin across pool keys. Needed up-front for both the
     // chain fetch (when not gated) AND the war-score check.
@@ -276,10 +294,7 @@ export function startChainMonitor(io, warId) {
     // path on this tick. War-score check still runs.
     const updatedAt = Number(war.chainDataUpdatedAt) || 0;
     const ageMs = Date.now() - updatedAt;
-    // `preWar` joins the existing client-freshness gate rather than getting
-    // its own branch, so the war-score check keeps running underneath it
-    // exactly as it does when a client is pushing chain data.
-    const skipChainFetch = preWar || ageMs < CLIENT_CHAIN_FRESH_MS;
+    const skipChainFetch = ageMs < CLIENT_CHAIN_FRESH_MS;
 
     try {
       // Deferred, not handled here: the war-score check below is the only
@@ -290,12 +305,7 @@ export function startChainMonitor(io, warId) {
       let chainErr = null;
       try {
         if (skipChainFetch) {
-          // Say WHICH gate fired. Both suppress the fetch, but "client data
-          // is 13s old" printed 66 hours before kickoff is a lie that would
-          // send the next reader looking for a client that isn't there.
-          console.log(preWar
-            ? `[chain/skip] war=${warId} pre-war, kickoff in ${Math.round((startSec * 1000 - Date.now()) / 3600000)}h`
-            : `[chain/skip] war=${warId} client data is ${Math.round(ageMs / 1000)}s old (gate=${CLIENT_CHAIN_FRESH_MS / 1000}s)`);
+          console.log(`[chain/skip] war=${warId} client data is ${Math.round(ageMs / 1000)}s old (gate=${CLIENT_CHAIN_FRESH_MS / 1000}s)`);
           backoffs.set(warId, POLL_INTERVAL_MS);
         } else {
           const chain = await fetchFactionChain(war.factionId, apiKey);
@@ -310,7 +320,10 @@ export function startChainMonitor(io, warId) {
       // ── War score check (adaptive: 5 min normally, 30s near the finish) ──
       const scoreDueIn = warScoreCheckInterval(war);
       const lastCheck = lastScoreCheck.get(warId) || 0;
-      if (Date.now() - lastCheck > scoreDueIn) {
+      // Not once the war has ended: the war-scanner finds the next war. Here,
+      // the `if (rw)` branch below would clear the ended war's flags before
+      // getOrCreateWar, which archives a war only while it is flagged ended.
+      if (!war.warEnded && Date.now() - lastCheck > scoreDueIn) {
         try {
           const rw = await fetchRankedWar(war.factionId, apiKey);
           if (!rw && war.warScores && !war.warEnded) {
@@ -485,16 +498,13 @@ export function startChainMonitor(io, warId) {
       }
 
       if (chainErr) throw chainErr;
-      // Before kickoff there is no chain to watch, so there is no reason to
-      // wake every 10-20s: the only work left on a pre-war tick is the
-      // 300s war-score check. Wake on that cadence instead, and never
-      // sleep past kickoff itself.
-      if (preWar) {
-        const msToStart = Math.max(0, startSec * 1000 - Date.now());
-        scheduleNext(Math.max(5_000, Math.min(warScoreCheckInterval(war), msToStart)));
-      } else {
-        scheduleNext(nextChain(war));
-      }
+      // In a live war, the war's pace. Outside one, every 2 minutes, or the
+      // war's pace while the chain reads 100 or more (and for a while after),
+      // and before kickoff never later than kickoff.
+      const now = Date.now();
+      scheduleNext(isWarLive(war, now)
+        ? nextChain(war)
+        : outsideWarDelay(war, now, nextChain(war), now - (lastBigChainAt.get(warId) || 0)));
     } catch (err) {
       if (/Incorrect ID-entity relation/i.test(err.message)) {
         store.quarantinePoolKey(apiKey, war.factionId, 'chain code 7');
@@ -537,6 +547,7 @@ export function stopChainMonitor(warId) {
   lastAlertSent.delete(warId);
   lastPanicSent.delete(warId);
   lastChainIncreaseAt.delete(warId);
+  lastBigChainAt.delete(warId);
   lastBonusAnnounced.delete(warId);
   lastScoreCheck.delete(warId);
   warTargetNotified.delete(warId);

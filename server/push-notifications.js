@@ -16,6 +16,9 @@ import { fileURLToPath } from "node:url";
 // store in memory from its own import-time read, so this needs no await —
 // unlike the send path below, which stays lazy.
 import { listForPlayer as fcmListForPlayer } from "./fcm-subscriptions.js";
+// Which chains are worth an alert, in a war and outside one. The module is
+// pure, so this static import adds no cycle.
+import { chainAlertFloor } from "./chain-alert-rule.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -440,15 +443,25 @@ async function hasWarStarted(warId) {
   return nowSec >= war.warStart;
 }
 
-/** Check if the war has ended. Used to gate chain panic / alert
- *  notifications that should stop after the war is over — factions
- *  often keep chaining post-war for the bonus, but the panic urgency
- *  is gone and the push notifications become noise on PDA / FCM. */
+/** Check if the war has ended. Used to gate the enemy-surge notification,
+ *  which stops after the war is over. Chain alerts no longer stop there:
+ *  see chainFloorForWar. */
 async function hasWarEnded(warId) {
   const store = await import('./store.js');
   const war = store.getWar(warId);
   if (!war) return false;
   return war.warEnded === true;
+}
+
+/** The smallest chain worth an alert for this war at this moment: 10 hits
+ *  in a live war, 100 outside one, after it or before kickoff
+ *  (chain-alert-rule.js). Factions keep chaining after a war, and a chain
+ *  that big is worth saving. No war record, no alert, as hasWarStarted
+ *  has it. */
+async function chainFloorForWar(warId) {
+  const store = await import('./store.js');
+  const war = store.getWar(warId);
+  return war ? chainAlertFloor(war, Date.now()) : Infinity;
 }
 
 /**
@@ -477,8 +490,7 @@ export async function notifyTargetCalled(warPlayers, warId, callerName, targetNa
  * Notify war room about chain danger.
  */
 export async function notifyChainAlert(warPlayers, warId, current, timeout, timeLeft) {
-  if (!(await hasWarStarted(warId))) return;
-  if (await hasWarEnded(warId)) return;
+  if ((Number(current) || 0) < (await chainFloorForWar(warId))) return;
   const playerIds = warPlayers.map((p) => p.playerId || p.id);
   await sendToPlayers(
     playerIds.filter((id) => hasAnyPushChannel(id)),
@@ -498,8 +510,7 @@ export async function notifyChainAlert(warPlayers, warId, current, timeout, time
  * PANIC alert — chain is about to die (< 30s).
  */
 export async function notifyChainPanic(warPlayers, warId, current, timeLeft) {
-  if (!(await hasWarStarted(warId))) return;
-  if (await hasWarEnded(warId)) return;
+  if ((Number(current) || 0) < (await chainFloorForWar(warId))) return;
   const playerIds = warPlayers.map((p) => p.playerId || p.id);
   await sendToPlayers(
     playerIds.filter((id) => hasAnyPushChannel(id)),
@@ -533,7 +544,7 @@ export async function notifyHospitalPop(playerId, targetName, targetId) {
  * Notify war room about a bonus hit milestone approaching.
  */
 export async function notifyBonusImminent(warPlayers, warId, current, nextBonus) {
-  if (!(await hasWarStarted(warId))) return;
+  if ((Number(current) || 0) < (await chainFloorForWar(warId))) return;
   const playerIds = warPlayers.map((p) => p.playerId || p.id);
   await sendToPlayers(
     playerIds.filter((id) => hasAnyPushChannel(id)),
@@ -582,10 +593,32 @@ export async function notifyClearChainAlerts(warPlayers, warId, warResult) {
 }
 
 /**
+ * Fired when a chain of 100 or more ends outside a war (chain-monitor.js).
+ * Like the war-end notice above, it takes down the chain-alert /
+ * chain-panic notifications still pinned from that chain, with a quiet
+ * line saying where the chain stopped.
+ */
+export async function notifyChainEnded(warPlayers, warId, finalCount) {
+  const playerIds = warPlayers.map((p) => p.playerId || p.id);
+  await sendToPlayers(
+    playerIds.filter((id) => hasAnyPushChannel(id)),
+    {
+      title: `Chain ended at ${(Number(finalCount) || 0).toLocaleString("en-US")}`,
+      body: "Chain alerts cleared.",
+      tag: "chain-cleared",
+      icon: "/icon-192.png",
+      data: { type: "clear-chain-alerts", warId },
+    },
+    "chain_alert",
+    { urgency: "low", TTL: 60 },
+  );
+}
+
+/**
  * Notify the war room that the count of online enemies just jumped
- * sharply — i.e. the enemy is rallying. Suppressed post-war (matches
- * chain-panic gating) since a surge after the war's over is just
- * noise. Per-faction config (threshold/window/cooldown) is enforced
+ * sharply — i.e. the enemy is rallying. Suppressed post-war since a
+ * surge after the war's over is just noise. Per-faction config
+ * (threshold/window/cooldown) is enforced
  * in enemy-surge-monitor.js, not here.
  */
 export async function notifyEnemySurge(warPlayers, warId, online, delta, windowSec) {
