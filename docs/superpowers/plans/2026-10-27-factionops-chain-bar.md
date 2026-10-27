@@ -75,7 +75,7 @@
   - 0 < left ≤ the threshold;
   - no standing check says the chain is in its cooldown at this count or higher.
 - **The existing chain alerts do not change:** the sound, the PDA notification, the overlay's timer and their checks.
-- **ASCII only in what is added:** `·` in strings for the dot. No raw curly quotes in the file (PDA breaks on them).
+- **ASCII only in what is added:** `\u00B7` in strings for the dot. No raw curly quotes in the file (PDA breaks on them).
 - **Tests:** made-up numbers (1,234 / 2,500) and a made-up key. No request to Torn or tornwar.com from any test.
 - **Commits:** stage only this plan's paths. Every commit ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
@@ -278,8 +278,8 @@ test("one check before it first comes up; the overlay's chain needs none", () =>
 });
 
 test('the text: the count with commas, the clock as m:ss', () => {
-  assert.equal(L().chainBarText({ count: 1234, left: 42 }), 'CHAIN DYING · 1,234 hits · 0:42 left');
-  assert.equal(L().chainBarText({ count: 12, left: 75 }), 'CHAIN DYING · 12 hits · 1:15 left');
+  assert.equal(L().chainBarText({ count: 1234, left: 42 }), 'CHAIN DYING \u00B7 1,234 hits \u00B7 0:42 left');
+  assert.equal(L().chainBarText({ count: 12, left: 75 }), 'CHAIN DYING \u00B7 12 hits \u00B7 1:15 left');
 });
 
 test('5.6.21 in both places, the meta file is the header, and every page joins the old list', () => {
@@ -416,7 +416,7 @@ await t("off FactionOps' pages: one chain check, then the bar is up and flashing
   const got = await bar(p), r = await reqs(p), nodes = await foNodes(p);
   await ctx.close();
   assert.ok(got, "no bar");
-  assert.strictEqual(got.text, "CHAIN DYING · 1,234 hits · 0:42 left");
+  assert.strictEqual(got.text, "CHAIN DYING \u00B7 1,234 hits \u00B7 0:42 left");
   assert.strictEqual(got.anim, "fo-chain-bar-flash");
   assert.strictEqual(got.pe, "none");
   assert.deepStrictEqual(r, [CHECK + "key=K"]);
@@ -690,7 +690,7 @@ With:
     function chainBarText(live) {
         const m = Math.floor(live.left / 60);
         const s = live.left % 60;
-        return 'CHAIN DYING · ' + live.count.toLocaleString('en-US') + ' hits · '
+        return 'CHAIN DYING \u00B7 ' + live.count.toLocaleString('en-US') + ' hits \u00B7 '
             + m + ':' + String(s).padStart(2, '0') + ' left';
     }
 
@@ -851,7 +851,7 @@ const mutants = [
   ['a clock that went back up', ' && live.left <= check.left + 1', ''],
   ['the wait for the check', 'check.done || now - check.at >= CHAIN_BAR_CHECK_WAIT_MS', 'check.done'],
   ["war.php is FactionOps' own", '        /^https:\\/\\/www\\.torn\\.com\\/war\\.php/,\n', ''],
-  ['an hour on the clock', 'parts[0] * 3600 + parts[1] * 60 + parts[2]', 'parts[0] * 60 + parts[1]'],
+  ['an hour on the clock', '? parts[0] * 3600 + parts[1] * 60 + parts[2]', '? parts[0] * 60 + parts[1]'],
   ['the clock out of the count', ".replace(clock, ' ')", ''],
   ['the clock without its class', "/^\\d{1,2}:\\d{2}(?::\\d{2})?$/.test(", "/^$/.test("],
   ['the gate', '    if (!isFactionOpsPage(location.href)) return;\n', ''],
