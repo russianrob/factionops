@@ -54,6 +54,8 @@ async function open(cfg = {}) {
   const p = await ctx.newPage();
   const posts = [];
   const pages = cfg.pages || [WEAPONS];
+  // cfg.rescan, when given, answers every read of the armoury after the first.
+  let reads = 0;
   // Each member-list request gets the next answer in cfg.membersSeq (the last
   // one again after that), and is counted. An answer { httpStatus } is sent as
   // that HTTP status with no body.
@@ -74,7 +76,9 @@ async function open(cfg = {}) {
       posts.push(Object.fromEntries(f));
       if (f.get("step") === "armouryTabContent") {
         if (cfg.noAccess) return r.fulfill({ status: 403, body: "" });
-        const rows = f.get("type") === "weapons" ? (pages[Number(f.get("start")) / 50] || []) : [];
+        if (f.get("type") === "weapons" && f.get("start") === "0") reads++;
+        const src = reads > 1 && cfg.rescan ? cfg.rescan : pages;
+        const rows = f.get("type") === "weapons" ? (src[Number(f.get("start")) / 50] || []) : [];
         return r.fulfill({ contentType: "application/json", body: JSON.stringify({ items: rows, pagination: "" }) });
       }
       if (f.get("step") === "armouryActionItem") {
@@ -271,18 +275,69 @@ await t("a member who already holds a ranked-war copy is not offered in Loan to"
 });
 
 await t("whoever is lent a copy drops out of Loan to, and is offered again once it is taken back", async () => {
-  const { ctx, p } = await open({ accept: ["Primary", "Secondary"] });
+  const { ctx, p } = await open({ accept: ["Primary"] });
   await p.selectOption("#mgr-arm-member", "1000001");
   await p.click('.mgr-arm-loan[data-row="1"]');
   await holderIs(p, 1, "Alpha");
   const lent = await offeredNames(p);
-  const back = '.mgr-arm-back[data-row="0"]';
+  const back = '.mgr-arm-back[data-row="1"]';
   await p.click(back); await p.click(back);
-  await p.waitForFunction(() => document.querySelectorAll("#mgr-arm-list .mgr-arm-row")[0].innerText.includes("Loan"), null, { timeout: 5000 });
+  await p.waitForFunction(() => document.querySelectorAll("#mgr-arm-list .mgr-arm-row")[1].innerText.includes("Loan"), null, { timeout: 5000 });
   const returned = await offeredNames(p);
   await ctx.close();
   assert.deepStrictEqual(lent, ["Loan to…", "Bravo"]);
-  assert.deepStrictEqual(returned, ["Loan to…", "Bravo", "Charlie"]);
+  assert.deepStrictEqual(returned, ["Loan to…", "Alpha", "Bravo"]);
+});
+
+// Waits for the loan on its way to land: the list is up and none of its
+// buttons is held back any more.
+const landed = (p) => p.waitForFunction(() => document.querySelector("#mgr-arm-list .mgr-arm-row") && !document.querySelector("#mgr-arm-list button:disabled"), null, { timeout: 5000 });
+
+await t("a tab read again while a loan is on its way shows the copy lent and leaves that member out of Loan to", async () => {
+  const { ctx, p, posts } = await open({ pages: [TWO_FREE], accept: ["Primary"], slow: 1500 });
+  await p.selectOption("#mgr-arm-member", "1000001");
+  await p.click('.mgr-arm-loan[data-row="0"]');
+  await reopen(p);
+  await landed(p);
+  const got = await rows(p), names = await offeredNames(p), after = await picked(p);
+  await p.click('.mgr-arm-loan[data-row="1"]');
+  const label = await p.textContent('.mgr-arm-loan[data-row="1"]');
+  await ctx.close();
+  assert.ok(got[0].includes("Alpha"), got[0]);
+  assert.deepStrictEqual(names, ["Loan to…", "Bravo", "Charlie"]);
+  assert.strictEqual(after, "Loan to…");
+  assert.strictEqual(label, "Pick a member");
+  assert.deepStrictEqual(actions(posts), ["loan 502 Primary Alpha [1000001]"]);
+});
+
+await t("a read of the tab that comes back without the copy on its way still clears the pick", async () => {
+  const { ctx, p, posts } = await open({ pages: [TWO_FREE], rescan: [[TWO_FREE[1]]], accept: ["Primary"], slow: 1500 });
+  await p.selectOption("#mgr-arm-member", "1000001");
+  await p.click('.mgr-arm-loan[data-row="0"]');
+  await reopen(p);
+  await landed(p);
+  const after = await picked(p);
+  await p.click('.mgr-arm-loan[data-row="0"]');
+  const label = await p.textContent('.mgr-arm-loan[data-row="0"]');
+  await ctx.close();
+  assert.strictEqual(after, "Loan to…");
+  assert.strictEqual(label, "Pick a member");
+  assert.deepStrictEqual(actions(posts), ["loan 502 Primary Alpha [1000001]"]);
+});
+
+await t("a pick whose member holds a copy by the time the tab is read again is dropped, so Loan asks for a new one", async () => {
+  const lentElsewhere = { ...TWO_FREE[0], user: { userID: 1000001, playername: "Alpha" } };
+  const { ctx, p, posts } = await open({ pages: [TWO_FREE], rescan: [[lentElsewhere, TWO_FREE[1]]], accept: ["Primary"] });
+  await p.selectOption("#mgr-arm-member", "1000001");
+  await reopen(p);
+  await holderIs(p, 0, "Alpha");
+  const names = await offeredNames(p);
+  await p.click('.mgr-arm-loan[data-row="1"]');
+  const label = await p.textContent('.mgr-arm-loan[data-row="1"]');
+  await ctx.close();
+  assert.deepStrictEqual(names, ["Loan to…", "Bravo", "Charlie"]);
+  assert.strictEqual(label, "Pick a member");
+  assert.deepStrictEqual(actions(posts), []);
 });
 
 await t("a captcha is shown and not retried with the other type", async () => {

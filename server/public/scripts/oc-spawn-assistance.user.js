@@ -7079,8 +7079,14 @@
             await mgr_armouryAct(loan ? 'loan' : 'retrieve', copy, userID, userName);
             // Show the change at once; the page catches up on the next open.
             copy.holder = loan ? { id: userID, name: userName || `[${userID}]` } : null;
-            // Whoever now holds a copy leaves "Loan to" (and the pick, if it was
-            // them); whoever gave one back is offered again.
+            // A read of the tab made while this was on its way has its own row
+            // for the copy, and that row gets the change too.
+            for (const c of mgr_armouryList) if (c !== copy && c.armoryID === copy.armoryID) c.holder = copy.holder;
+            // The member just lent a copy is never the next pick, even when
+            // that read lacks the copy.
+            if (loan && String(mgr_armouryMember) === userID) mgr_armouryMember = '';
+            // Whoever now holds a copy leaves "Loan to"; whoever gave one back
+            // is offered again.
             mgr_renderArmouryPicker();
         } catch (err) {
             failed = String(err && err.message || err).slice(0, 24);
