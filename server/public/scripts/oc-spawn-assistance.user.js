@@ -6875,7 +6875,7 @@
     // ──────────────────────────────────────────────────────────────────
     // Lists each ranked-war weapon copy in the armoury (rarity, bonuses, who
     // holds it), read from the armoury page once when the tab opens. Pick a
-    // member, then Loan on a free copy (each loan clears the pick); ↩ beside
+    // member, then Loan on a free copy (a loan Torn takes clears it); ↩ beside
     // a holder takes that copy back (second tap). Every request names that
     // exact copy, so a plain copy of the same weapon is never the one lent.
     let mgr_armouryMember = '';   // the member picked in "Loan to"; lending to them clears it

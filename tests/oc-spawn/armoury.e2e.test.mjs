@@ -230,13 +230,17 @@ await t("after a loan the picker is back on Loan to…, so the next copy needs a
 });
 
 await t("a loan Torn refuses keeps the pick, so it can be tried again", async () => {
-  const { ctx, p } = await open({ accept: [] });
+  const { ctx, p, posts } = await open({ pages: [TWO_FREE], accept: [] });
+  const refused = (row) => p.waitForFunction((row) => /refused/i.test(document.querySelector(`.mgr-arm-loan[data-row="${row}"]`).textContent), row, { timeout: 5000 });
   await p.selectOption("#mgr-arm-member", "1000001");
-  await p.click('.mgr-arm-loan[data-row="1"]');
-  await p.waitForFunction(() => /refused/i.test(document.querySelector('.mgr-arm-loan[data-row="1"]').textContent));
+  await p.click('.mgr-arm-loan[data-row="0"]');
+  await refused(0);
   const after = await picked(p);
+  await p.click('.mgr-arm-loan[data-row="1"]');
+  await refused(1).catch(() => {});
   await ctx.close();
   assert.strictEqual(after, "Alpha");
+  assert.deepStrictEqual(actions(posts), ["loan 502 Primary Alpha [1000001]", "loan 505 Primary Alpha [1000001]"]);
 });
 
 await t("a member picked while a loan is on its way stays picked for the next one", async () => {
@@ -244,11 +248,14 @@ await t("a member picked while a loan is on its way stays picked for the next on
   await p.selectOption("#mgr-arm-member", "1000001");
   await p.click('.mgr-arm-loan[data-row="0"]');
   await p.selectOption("#mgr-arm-member", "1000002");
+  // The loan is still on its way when Bravo is picked.
+  const during = await p.evaluate(() => document.querySelector('.mgr-arm-loan[data-row="0"]')?.textContent ?? null);
   await holderIs(p, 0, "Alpha");
   const after = await picked(p);
   await p.click('.mgr-arm-loan[data-row="1"]');
   await holderIs(p, 1, "Bravo").catch(() => {});
   await ctx.close();
+  assert.strictEqual(during, "…");
   assert.strictEqual(after, "Bravo");
   assert.deepStrictEqual(actions(posts), ["loan 502 Primary Alpha [1000001]", "loan 505 Primary Bravo [1000002]"]);
 });
