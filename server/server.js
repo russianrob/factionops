@@ -23,6 +23,7 @@ import routes, { setIO, gateMiddleware, rehydrateCallExpiries } from "./routes.j
 import "./war-scanner.js";
 import { socketAuth } from "./auth.js";
 import { registerSocketHandlers } from "./socket-handlers.js";
+import { guardSocket } from "./socket-guard.js";
 import { startChainMonitor, stopAll as stopAllChainMonitors } from "./chain-monitor.js";
 import { startWarStatusMonitor, stopAll as stopAllWarStatusMonitors } from "./war-status-monitor.js";
 import { verifyPoolKeyAccess } from "./key-verify.js";
@@ -574,6 +575,9 @@ setIO(io);
 io.use(socketAuth);
 
 io.on("connection", (socket) => {
+  // First, so every listener below logs a message that fails instead of
+  // taking the server down with it.
+  guardSocket(socket);
   console.log(`[ws] Socket connected: ${socket.id} (player: ${socket.user.playerName})`);
   
   // Admin/Leader Broadcast Listener
