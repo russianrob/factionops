@@ -104,6 +104,7 @@ import { validateCircularUrl, buildShortcutPlist } from "./circular-pipeline.js"
 import { processPlanner, looksLikePlanner, readLatestPlanner, listPlanners } from "./planner-store.js";
 import { generateTasks, readSchedule as readTaskSchedule, parseSchedule, OUT_LATEST as TASKS_LATEST_FILE } from "./pm-checklist-store.js";
 import * as pendingBroadcasts from "./pending-broadcasts.js";
+import { recordAssist, takeAssistFor, hasAssistFor } from "./assist-relay.js";
 import * as inspectRelay from "./inspect-relay.js";
 import * as missingOverrides from "./missing-overrides.js";
 import * as ocCheckpointHistory from "./oc-checkpoint-history.js";
@@ -3008,6 +3009,9 @@ router.get("/api/poll", (req, res, next) => {
     // see in-app shout toasts within ~1 polling interval. Empty array
     // if nothing's pending — no extra round-trip cost when idle.
     broadcasts: pendingBroadcasts.drainForPlayer(playerId),
+    // The member's next assist request, once (assist-relay.js): FactionOps
+    // toasts it from a poll reply, and only an SSE stream carried it before.
+    lastAssistRequest: assistForPoll(warId, playerId, playerName, "poll"),
   });
 });
 
@@ -3057,9 +3061,17 @@ function _lpRefresh(war, sections) {
   }
   return bumped;
 }
+// The member's next assist request for a poll reply (assist-relay.js), logged
+// so a member's "no toast" can be checked against what the server handed out.
+function assistForPoll(warId, playerId, playerName, via) {
+  const ar = takeAssistFor(warId, playerId);
+  if (ar) console.log(`[assist] ${playerName} (${playerId}) got ${ar.playerName}'s request on ${ar.targetId} by ${via}`);
+  return ar;
+}
 // Build the {v, full, changed} body: only sections whose stamp is newer than
-// the client's `since` (all of them when since===0 or a stale cursor).
-function _lpBuildDelta(war, sections, since, playerId) {
+// the client's `since` (all of them when since===0 or a stale cursor), plus
+// the member's next assist request, or `assist` when one is given.
+function _lpBuildDelta(war, sections, since, playerId, warId, playerName, assist) {
   const full = !(since > 0);
   const changed = {};
   for (const k in sections) {
@@ -3070,6 +3082,8 @@ function _lpBuildDelta(war, sections, since, playerId) {
   if (changed.chainData) changed.chainData = chainWithLiveTimeout(war.chainData, Date.now());
   const bc = pendingBroadcasts.drainForPlayer(playerId);
   if (bc && bc.length) changed.broadcasts = bc;
+  const ar = assist || assistForPoll(warId, playerId, playerName, "poll-long");
+  if (ar) changed.lastAssistRequest = ar;
   return { v: war._lpv, full, changed };
 }
 
@@ -3087,13 +3101,32 @@ function _lpFinish(w, body) {
 function _lpServe(w, war) {
   const sections = _lpWarSections(war, w.warId, w.factionId);
   _lpRefresh(war, sections);
-  if (war._lpv > w.since) { _lpFinish(w, _lpBuildDelta(war, sections, w.since, w.playerId)); return true; }
+  // An assist request waiting for this member ends the hold too, so a copy
+  // that polls shows it within a second instead of at the next change.
+  if (war._lpv > w.since || hasAssistFor(w.warId, w.playerId)) {
+    const body = _lpBuildDelta(war, sections, w.since, w.playerId, w.warId, w.playerName);
+    _lpFinish(w, body);
+    // A request goes to every long-poll the member has held, not just the
+    // oldest: in Torn PDA a page they have left keeps its request open.
+    const ar = body.changed.lastAssistRequest;
+    if (ar) {
+      let more = 0;
+      for (const o of [..._lpWaiters]) {
+        if (o.warId !== w.warId || String(o.playerId) !== String(w.playerId)) continue;
+        _lpFinish(o, _lpBuildDelta(war, sections, o.since, o.playerId, o.warId, o.playerName, ar));
+        more++;
+      }
+      if (more) console.log(`[assist] ${w.playerName} (${w.playerId}) got it on ${more} more held long-poll${more > 1 ? "s" : ""}`);
+    }
+    return true;
+  }
   return false;
 }
 function _lpTick() {
   if (_lpWaiters.size === 0) { clearInterval(_lpTicker); _lpTicker = null; return; }
   const now = Date.now();
   for (const w of [..._lpWaiters]) {
+    if (!_lpWaiters.has(w)) continue; // answered earlier in this pass
     const war = store.getWar(w.warId);
     if (!war) { _lpFinish(w, { v: 0, full: false, changed: {}, gone: true }); continue; }
     if (_lpServe(w, war)) continue;
@@ -3107,7 +3140,7 @@ function wakeLongPoll(warId) {
   if (_lpWaiters.size === 0) return;
   const war = store.getWar(warId);
   for (const w of [..._lpWaiters]) {
-    if (w.warId !== warId) continue;
+    if (w.warId !== warId || !_lpWaiters.has(w)) continue; // or answered earlier in this pass
     if (!war) { _lpFinish(w, { v: 0, full: false, changed: {}, gone: true }); continue; }
     _lpServe(w, war);
   }
@@ -3119,7 +3152,7 @@ router.get("/api/poll-long", (req, res, next) => {
   }
   next();
 }, requireAuth, async (req, res) => {
-  const { playerId, factionId } = req.user;
+  const { playerId, playerName, factionId } = req.user;
   const { warId, enemyFactionId } = req.query;
   if (!warId) return res.status(400).json({ error: "warId query parameter is required" });
   if (!requireFactionClaim(req, res)) return;
@@ -3135,10 +3168,12 @@ router.get("/api/poll-long", (req, res, next) => {
     // since=0 → full; since<_lpv → delta; since>_lpv (stale cursor, e.g. a
     // server restart reset _lpv) → full resync.
     const effSince = (since > 0 && since < war._lpv) ? since : 0;
-    return res.json(_lpBuildDelta(war, sections, effSince, playerId));
+    return res.json(_lpBuildDelta(war, sections, effSince, playerId, warId, playerName));
   }
+  // An assist request this member has not had yet goes out now.
+  if (hasAssistFor(warId, playerId)) return res.json(_lpBuildDelta(war, sections, since, playerId, warId, playerName));
   // Caught up (since === current version) → hold until a change or ~25s.
-  const w = { res, req, warId, factionId, playerId, since, at: Date.now() };
+  const w = { res, req, warId, factionId, playerId, playerName, since, at: Date.now() };
   _lpWaiters.add(w);
   _lpStartTicker();
   req.on("close", () => { _lpWaiters.delete(w); });
@@ -3212,6 +3247,13 @@ router.post("/api/assist-request", requireAuth, (req, res) => {
   const eventName = kind === "retal" ? "retal_request" : "assist_request";
   if (io) io.to(`war_${broadcastWarId}`).emit(eventName, payload);
   broadcastSSE(broadcastWarId, payload);
+  // A copy that polls (every Torn PDA, the app or a desktop without a stream)
+  // gets it in its next poll reply (assist-relay.js); a long-poll on hold
+  // answers now. Retal has no poll reader.
+  if (kind === "assist") {
+    recordAssist(broadcastWarId, payload, playerId);
+    wakeLongPoll(broadcastWarId);
+  }
 
   // Assist targets war-room members only (they're actively fighting);
   // retal targets the whole faction (offline members too) and INCLUDES
