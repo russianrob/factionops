@@ -94,11 +94,24 @@ test("no running clock or no good count is no report, and an end sent stands alo
   bad.forEach((b, i) => assert.equal(rule.parsePageReport(b, T), null, "case " + i));
 });
 
+// ── Who may report ──────────────────────────────────────────────────────
+
+test("only a member on the war's roster reports: a sign-in outlives a member's time in the faction", () => {
+  const war = { ourMemberIds: ["1000001", "1000002"] };
+  assert.equal(rule.onWarRoster(war, "1000001"), true);
+  assert.equal(rule.onWarRoster(war, 1000002), true, "an id as a number");
+  assert.equal(rule.onWarRoster(war, "1000099"), false, "a member who has left, whose page shows another faction's chain");
+  assert.equal(rule.onWarRoster({ ourMemberIds: [] }, "1000001"), false, "no roster, no one on it");
+  assert.equal(rule.onWarRoster({}, "1000001"), false);
+  assert.equal(rule.onWarRoster(null, "1000001"), false);
+  assert.equal(rule.onWarRoster(war, undefined), false);
+});
+
 // ── The route ───────────────────────────────────────────────────────────
 
 const ROUTES = readFileSync(new URL("./routes.js", import.meta.url), "utf8");
 
-test("the route: POST /api/chain-page, signed in, the report checked, for the faction's own war", () => {
+test("the route: POST /api/chain-page, signed in, the report checked, for the faction's own war, from its roster", () => {
   const i = ROUTES.indexOf('router.post("/api/chain-page", requireAuth,');
   assert.ok(i > 0, "no route");
   const body = ROUTES.slice(i, ROUTES.indexOf("\n});", i));
@@ -107,6 +120,10 @@ test("the route: POST /api/chain-page, signed in, the report checked, for the fa
   assert.match(body, /const warId = `war_\$\{factionId\}`;/);
   assert.match(body, /status\(404\)/);
   assert.match(body, /recordPageChain\(warId, report, playerId\)/);
+  const refuse = body.slice(body.indexOf("if (!onWarRoster(war, playerId)) {"), body.indexOf("\n  }\n", body.indexOf("onWarRoster(")));
+  assert.match(refuse, /^if \(!onWarRoster\(war, playerId\)\) \{\n[\s\S]*return res\.status\(403\)/);
+  assert.ok(body.indexOf("onWarRoster(") < body.indexOf("recordPageChain("), "the roster is checked before the report is held");
+  assert.match(ROUTES, /^import \{[^}]*\bonWarRoster\b[^}]*\} from "\.\/chain-alert-rule\.js";$/m);
   assert.match(ROUTES, /^import \{[^}]*\brecordPageChain\b[^}]*\} from "\.\/chain-monitor\.js";$/m);
   assert.match(ROUTES, /^import \{[^}]*\bparsePageReport\b[^}]*\} from "\.\/chain-alert-rule\.js";$/m);
 });

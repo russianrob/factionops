@@ -143,7 +143,7 @@ import * as vaultRequests from "./vault-requests.js";
 import * as keyUsage from "./key-usage-log.js";
 import { hasXanaxSubscription, grantFactionAccess, getXanaxSubscription } from "./xanax-subscriptions.js";
 import { startChainMonitor, recordClientChainData, recordPageChain } from "./chain-monitor.js";
-import { parsePageReport } from "./chain-alert-rule.js";
+import { parsePageReport, onWarRoster } from "./chain-alert-rule.js";
 import { startEnemySurgeMonitor, stopEnemySurgeMonitor } from "./enemy-surge-monitor.js";
 import * as push from "./push-notifications.js";
 import * as restockTracker from "./restock-tracker.js";
@@ -3624,13 +3624,21 @@ router.post("/api/chain-update", requireAuth, async (req, res) => {
 // later): its count, and Torn's end or the seconds on the page's clock. The
 // server still reads Torn's API; a report decides the chain alerts only
 // while it is ahead of the API's reading (chain-monitor.js recordPageChain).
-// The war is the signed-in member's faction's own.
+// The war is the signed-in member's faction's own, and only a member on its
+// roster may report: someone who has left still holds a sign-in for it, and
+// the chain their page shows is their new faction's. A 403 stops FactionOps'
+// reports for 10 minutes.
 router.post("/api/chain-page", requireAuth, (req, res) => {
   const { factionId, playerId } = req.user;
   const report = parsePageReport(req.body || {}, Date.now());
   if (!report) return res.status(400).json({ error: "count, and endsAt or left, required" });
   const warId = `war_${factionId}`;
-  if (!factionId || !store.getWar(warId)) return res.status(404).json({ error: "No war for your faction" });
+  const war = factionId ? store.getWar(warId) : null;
+  if (!war) return res.status(404).json({ error: "No war for your faction" });
+  if (!onWarRoster(war, playerId)) {
+    console.log(`[chain/page] war=${warId} player=${playerId} refused: not on the faction's roster`);
+    return res.status(403).json({ error: "Not on your faction's roster" });
+  }
   return res.json({ ok: true, accepted: recordPageChain(warId, report, playerId) });
 });
 

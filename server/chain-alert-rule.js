@@ -242,3 +242,16 @@ export function parsePageReport(body, nowMs) {
   if (!(endsAtMs > nowMs && endsAtMs <= nowMs + PAGE_REPORT_MAX_LEFT_S * 1000)) return null;
   return { count, endsAtMs };
 }
+
+/**
+ * True when `playerId` is on the war's roster, `war.ourMemberIds`: Torn's
+ * own list of the faction's members, which war-status-monitor.js refreshes
+ * every 10 minutes while a war is set. Only those members' page reports are
+ * taken. A FactionOps sign-in outlives a member's time in the faction, so a
+ * member who has left still holds a token for it, and the chain their page
+ * shows is their new faction's. With no roster, no one is on it.
+ */
+export function onWarRoster(war, playerId) {
+  const roster = Array.isArray(war?.ourMemberIds) ? war.ourMemberIds : [];
+  return playerId != null && roster.includes(String(playerId));
+}
