@@ -40,9 +40,14 @@ const preamble = (cfg) => `(() => {
   };
 })();`;
 
-// The defender's name where the attack page shows it.
+// Both names where Torn's attack page shows them: a header for each player,
+// yours first in Torn's green, the defender's in its rose (TornTools finds
+// the two headers by those colours, on a phone too).
 const page = () => `<!doctype html><html><head><meta charset="utf-8"><title>attack</title></head><body>
-<div id="mainContainer"><div class="defender___x"><span class="userName___x">Enemyname</span></div></div>
+<div id="mainContainer"><div class="playersModelWrap___x">
+<div class="player___x"><div class="headerWrapper___x green___x"><span class="userName___x user-name left" id="playername_Tester">Tester</span></div></div>
+<div class="player___x"><div class="headerWrapper___x rose___x"><span class="userName___x user-name left" id="playername_Enemyname">Enemyname</span></div></div>
+</div></div>
 <script src="/fo-preamble.js"></script><script src="/factionops.user.js"></script></body></html>`;
 
 async function open(url, cfg = {}) {

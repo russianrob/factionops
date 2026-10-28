@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.26
+// @version      5.6.27
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.26';
+    const SCRIPT_VERSION = '5.6.27';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -13066,9 +13066,12 @@ body.wb-chain-active {
             }
 
             // The target's name for the push: the attack page's defender
-            // side, else FactionOps' own lists, else "Player [id]".
+            // side, else FactionOps' own lists, else "Player [id]". Torn
+            // draws the defender's header in its rose colour (TornTools'
+            // attack page title finds the name the same way).
             let targetName = null;
             const nameSelectors = [
+                '[class*="headerWrapper__"][class*="rose__"] .user-name',
                 '.defender .username',
                 '[class*="defender"] [class*="userName"]',
                 '.playersModelWrap .right .username',
