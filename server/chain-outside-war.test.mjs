@@ -549,3 +549,15 @@ test("a restart starts a live war's watch once, from its Live Activity tokens", 
   const wars = { war_1000: liveWar() };
   assert.deepEqual(await bootResume(wars, [{ warId: "war_1000" }, { warId: "war_1000" }]), ["war_1000"]);
 });
+
+// After a restart on 2026-10-28 the boot resume started the watch, and a
+// member's poll started it again while the watch's first read of Torn was
+// still out. Two loops then read the chain on every tick.
+test("a start while the watch's first read is still out runs no second loop", async () => {
+  const war = lastRead(liveWar(), 1240, 120, 15_000);
+  const { api, seen } = buildMonitor({ w1: war }, reading(1241, 127));
+  api.startChainMonitor(null, "w1");
+  api.startChainMonitor(null, "w1");
+  await new Promise((r) => globalThis.setTimeout(r, 50));
+  assert.equal(seen.chainReads, 1);
+});

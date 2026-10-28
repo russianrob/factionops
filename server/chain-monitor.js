@@ -296,6 +296,10 @@ export async function recordClientChainData(warId, chain) {
  */
 export function startChainMonitor(io, warId) {
   if (timeouts.has(warId)) return; // already monitoring
+  // Taken now, not when the first tick sets its timer: that tick reads Torn
+  // first, and a start while the read was out (a member's poll right after a
+  // restart, 2026-10-28) passed the check above and ran a second loop.
+  timeouts.set(warId, null);
 
   const scheduleNext = (delay) => {
     const tid = setTimeout(poll, delay);
