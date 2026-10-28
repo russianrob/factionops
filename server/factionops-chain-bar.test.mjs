@@ -2,7 +2,8 @@
 // driven with made-up chains, and the wiring checked in the text -- the
 // header, the version, and the gate that stops the script off its own pages.
 // 5.6.22: no frames, and FactionOps' toasts go under the bar.
-// 5.6.24: Torn's phone layout, whose chain bar has no clock.
+// 5.6.24: Torn's phone layout, whose chain bar has no clock; 5.6.25: nor, from
+// a max of 1,000, the max.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -77,6 +78,14 @@ test("the phone layout: the bar's count, and the clock from the sidebar's saved 
   const s = saved({ sidebarDataundefined: '{}', sidebarData1000001: chain(1234, 1000042) });
   assert.deepEqual(P()(phoneDoc('Chain:1,234 / 2,500'), s, NOW), { count: 1234, left: 42 });
   assert.deepEqual(P()(phoneDoc('Chain:1,234 / 2,500'), s, NOW + 500), { count: 1234, left: 41 });
+});
+
+test('a bar that shows the count without its max (Torn drops it from a max of 1,000) still reads', () => {
+  for (const text of ['Chain:640', 'Chain:1,234', 'Chain:1234']) {
+    const n = Number(text.replace(/[^\d]/g, ''));
+    const s = saved({ sidebarData1000001: chain(n, 1000042) });
+    assert.deepEqual(P()(phoneDoc(text), s, NOW), { count: n, left: 42 }, text);
+  }
 });
 
 test('saved data with any other count than the bar shows is not used', () => {
@@ -202,12 +211,12 @@ test('the text: the count with commas, the clock as m:ss', () => {
   assert.equal(L().chainBarText({ count: 12, left: 75 }), 'CHAIN DYING \u00B7 12 hits \u00B7 1:15 left');
 });
 
-test('5.6.24 in both places, the meta file is the header, and every page joins the old list', () => {
+test('5.6.25 in both places, the meta file is the header, and every page joins the old list', () => {
   const end = '// ==/UserScript==';
   const head = SRC.slice(0, SRC.indexOf(end) + end.length) + '\n';
   assert.equal(META, head);
-  assert.match(head, /^\/\/ @version\s+5\.6\.24$/m);
-  assert.match(SRC, /const SCRIPT_VERSION = '5\.6\.24';/);
+  assert.match(head, /^\/\/ @version\s+5\.6\.25$/m);
+  assert.match(SRC, /const SCRIPT_VERSION = '5\.6\.25';/);
   const matches = [...head.matchAll(/^\/\/ @match\s+(\S+)$/gm)].map((m) => m[1]);
   assert.equal(matches.length, 11);
   assert.deepEqual(matches.slice(-2), ['https://www.torn.com/*', 'https://torn.com/*']);

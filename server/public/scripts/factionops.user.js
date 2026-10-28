@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.24
+// @version      5.6.25
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.24';
+    const SCRIPT_VERSION = '5.6.25';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -258,17 +258,19 @@
     }
 
     // Torn's phone layout has no #barChain, and its chain bar shows the count
-    // but no clock: the time is only in the bar's tooltip. The sidebar keeps
-    // its data in the tab's sessionStorage as "sidebarData<player id>" and
-    // rewrites it as hits land; the chain's `timestampToUpdate` is when it
-    // runs out, in epoch seconds. That is only taken while its `amount` is the
-    // count the bar shows, so data the page has stopped updating is never
-    // read as a live clock. { count, left } in seconds, or null.
+    // but no clock: the time is only in the bar's tooltip. The count reads
+    // "12 / 25", or from a max of 1,000 just "640", so it is the first number
+    // in the bar. The sidebar keeps its data in the tab's sessionStorage as
+    // "sidebarData<player id>" and rewrites it as hits land; the chain's
+    // `timestampToUpdate` is when it runs out, in epoch seconds. That is only
+    // taken while its `amount` is the count the bar shows, so data the page
+    // has stopped updating is never read as a live clock. { count, left } in
+    // seconds, or null.
     function readChainFromPhoneBar(doc, storage, now) {
         const bar = doc.querySelector('[class*="chainBar"]');
-        const n = bar && String(bar.textContent || '').match(/(\d[\d,.\s]*)\s*\/\s*\d/);
+        const n = bar && String(bar.textContent || '').match(/\d[\d,.]*/);
         if (!n) return null;
-        const count = Number(n[1].replace(/[^\d]/g, ''));
+        const count = Number(n[0].replace(/[^\d]/g, ''));
         let chain = null;
         try {
             for (let i = 0; i < storage.length; i++) {

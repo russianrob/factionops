@@ -55,10 +55,10 @@ const preamble = (cfg) => `(() => {
 // FactionOps' two toast stacks where its own pages have them. With `phone`,
 // Torn's phone layout instead: a chain bar with the count and no clock; with
 // phone "both", the two bars on one page.
-const page = ({ time = "00:42", count = "1,234/2,500", gcBanner = 0, toasts = false, phone = false }) => `<!doctype html><html><head><meta charset="utf-8"><title>gym</title></head><body>
+const page = ({ time = "00:42", count = "1,234/2,500", gcBanner = 0, toasts = false, phone = false, phoneCount = "1,234 / 2,500" }) => `<!doctype html><html><head><meta charset="utf-8"><title>gym</title></head><body>
 ${toasts ? '<div id="fo-call-toast-container" style="position:fixed;top:10px">call</div><div id="wb-toast-container" style="position:fixed;top:10px">toast</div>' : ""}
 ${gcBanner ? '<div id="gcb-fullbar-nag" style="position:fixed;top:' + gcBanner + 'px;left:50%;transform:translateX(-50%);height:36px;width:300px">E full</div>' : ""}
-${phone ? '<div id="sidebar" class="sidebar___x mobile___x"><a href="factions.php?step=your#/war/chain" class="chainBar___x barMobile___x"><div class="barStats___x"><p class="wai">Chain:</p><p class="barValue___x">1,234 / 2,500</p></div></a></div>' : ""}
+${phone ? '<div id="sidebar" class="sidebar___x mobile___x"><a href="factions.php?step=your#/war/chain" class="chainBar___x barMobile___x"><div class="barStats___x"><p class="wai">Chain:</p><p class="barValue___x">' + phoneCount + '</p></div></a></div>' : ""}
 ${phone === true ? "" : '<div id="sidebarroot"><a id="barChain" class="bar___x chain___x"><div class="bar-stats___x"><p class="bar-name___x">Chain:</p><p class="bar-value___x">' + count + '</p></div><p class="bar-timeleft___x">' + time + '</p></a></div>'}
 <script src="/fo-preamble.js"></script><script src="/factionops.user.js"></script></body></html>`;
 
@@ -233,6 +233,13 @@ await t("on Torn's phone layout, with no clock on the page, the sidebar's saved 
   await ctx.close();
   assert.ok(got && /^CHAIN DYING \u00B7 1,234 hits \u00B7 0:4[0-4] left$/.test(got.text), JSON.stringify(got));
   assert.strictEqual(n, 1);
+});
+
+await t("on the phone layout, a bar that shows the count without its max still reads", async () => {
+  const { ctx, p } = await open({ ...PHONE, phoneCount: "1234", cfg: { saved: { amount: 1234, endIn: 45 } } });
+  const got = await bar(p);
+  await ctx.close();
+  assert.ok(got && /^CHAIN DYING \u00B7 1,234 hits \u00B7 0:4[0-4] left$/.test(got.text), JSON.stringify(got));
 });
 
 await t("on the phone layout, saved data behind the bar's count is not used", async () => {
