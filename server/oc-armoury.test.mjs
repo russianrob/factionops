@@ -154,9 +154,9 @@ test('a time a little ahead of this clock reads as now', () => {
   assert.equal(seen()('1000001', new Map([['1000001', la('Online', -30)]]), NOW).text, 'now');
 });
 
-test('3.2.88 in both places, and the meta file is the header', () => {
+test('3.2.89 in both places, and the meta file is the header', () => {
   const end = '// ==/UserScript==';
   assert.equal(META, SRC.slice(0, SRC.indexOf(end) + end.length) + '\n');
-  assert.match(SRC, /^\/\/ @version\s+3\.2\.88$/m);
-  assert.match(SRC, /const SCRIPT_VERSION = '3\.2\.88';/);
+  assert.match(SRC, /^\/\/ @version\s+3\.2\.89$/m);
+  assert.match(SRC, /const SCRIPT_VERSION = '3\.2\.89';/);
 });

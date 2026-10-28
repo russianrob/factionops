@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.88
+// @version      3.2.89
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,9 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.89 — Armoury: "Loan to…" goes back to blank after each loan, so the
+//           next copy needs a fresh pick and can't go to the same member by
+//           a slip. A loan Torn refuses keeps the pick for another try.
 // v3.2.88 — Armoury: each holder's chip says when they were last on
 //           ("· 3h ago"), green online, orange idle, grey offline, from the
 //           member list the tab already reads; a holder no longer in the
@@ -432,7 +435,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.88';
+    const SCRIPT_VERSION = '3.2.89';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -6872,10 +6875,10 @@
     // ──────────────────────────────────────────────────────────────────
     // Lists each ranked-war weapon copy in the armoury (rarity, bonuses, who
     // holds it), read from the armoury page once when the tab opens. Pick a
-    // member once, then Loan on a free copy; ↩ beside a holder takes that
-    // copy back (second tap). Every request names that exact copy, so a
-    // plain copy of the same weapon is never the one lent.
-    let mgr_armouryMember = '';   // the member picked in "Loan to", for this page view
+    // member, then Loan on a free copy (each loan clears the pick); ↩ beside
+    // a holder takes that copy back (second tap). Every request names that
+    // exact copy, so a plain copy of the same weapon is never the one lent.
+    let mgr_armouryMember = '';   // the member picked in "Loan to"; lending to them clears it
     let mgr_armouryQuery = '';
     let mgr_armouryList = [];
     let mgr_armouryBusy = null;   // the one loan/retrieve in flight: { row, loan }
@@ -7051,6 +7054,14 @@
             await mgr_armouryAct(loan ? 'loan' : 'retrieve', copy, userID, userName);
             // Show the change at once; the page catches up on the next open.
             copy.holder = loan ? { id: userID, name: userName || `[${userID}]` } : null;
+            // A loan clears the pick, so the next copy needs a fresh one and
+            // cannot go to the same member by a slip. Someone picked while
+            // this loan was on its way stays picked.
+            if (loan && String(mgr_armouryMember) === userID) {
+                mgr_armouryMember = '';
+                const pick = document.getElementById('mgr-arm-member');
+                if (pick) pick.value = '';
+            }
         } catch (err) {
             failed = String(err && err.message || err).slice(0, 24);
         }

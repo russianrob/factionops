@@ -98,6 +98,10 @@ async function open(cfg = {}) {
   // The Manager tab's admin gate opens only after a full OC analysis; that
   // gate is not what this checks, so the tab is shown directly.
   await p.waitForSelector("#oc-manager-tab", { state: "attached", timeout: 15000 });
+  // The analysis the script starts on load ends by switching to the tab this
+  // viewer may see (Profile here), which would hide the Manager tab under a
+  // test still using it, so the Manager tab is opened once it has finished.
+  await p.waitForFunction(() => /Last updated/.test(document.getElementById("oc-spawn-status")?.textContent || ""), null, { timeout: 15000 });
   await p.evaluate(() => {
     document.getElementById("oc-tab-bar").style.display = "flex";
     document.getElementById("oc-manager-tab").style.display = "";
@@ -203,6 +207,50 @@ await t("a loan Torn refuses on every type shows it and leaves the row alone", a
   await ctx.close();
   assert.deepStrictEqual(actions(posts), ["loan 502 Primary Alpha [1000001]"]);
   assert.ok(got[1].includes("Loan") && !got[1].includes("Alpha"), got[1]);
+});
+
+// Two free ranked-war copies of one weapon: row 0 = 502, row 1 = 505.
+const TWO_FREE = [WEAPONS[1], { ...WEAPONS[1], armoryID: 505 }];
+// The name "Loan to" shows.
+const picked = (p) => p.$eval("#mgr-arm-member", (s) => s.options[s.selectedIndex].text);
+const holderIs = (p, row, name) => p.waitForFunction(([row, name]) => document.querySelectorAll("#mgr-arm-list .mgr-arm-row")[row].innerText.includes(name), [row, name], { timeout: 5000 });
+
+await t("after a loan the picker is back on Loan to…, so the next copy needs a new pick", async () => {
+  const { ctx, p, posts } = await open({ pages: [TWO_FREE], accept: ["Primary"] });
+  await p.selectOption("#mgr-arm-member", "1000001");
+  await p.click('.mgr-arm-loan[data-row="0"]');
+  await holderIs(p, 0, "Alpha");
+  const after = await picked(p);
+  await p.click('.mgr-arm-loan[data-row="1"]');
+  const label = await p.textContent('.mgr-arm-loan[data-row="1"]');
+  await ctx.close();
+  assert.strictEqual(after, "Loan to…");
+  assert.strictEqual(label, "Pick a member");
+  assert.deepStrictEqual(actions(posts), ["loan 502 Primary Alpha [1000001]"]);
+});
+
+await t("a loan Torn refuses keeps the pick, so it can be tried again", async () => {
+  const { ctx, p } = await open({ accept: [] });
+  await p.selectOption("#mgr-arm-member", "1000001");
+  await p.click('.mgr-arm-loan[data-row="1"]');
+  await p.waitForFunction(() => /refused/i.test(document.querySelector('.mgr-arm-loan[data-row="1"]').textContent));
+  const after = await picked(p);
+  await ctx.close();
+  assert.strictEqual(after, "Alpha");
+});
+
+await t("a member picked while a loan is on its way stays picked for the next one", async () => {
+  const { ctx, p, posts } = await open({ pages: [TWO_FREE], accept: ["Primary"], slow: 800 });
+  await p.selectOption("#mgr-arm-member", "1000001");
+  await p.click('.mgr-arm-loan[data-row="0"]');
+  await p.selectOption("#mgr-arm-member", "1000002");
+  await holderIs(p, 0, "Alpha");
+  const after = await picked(p);
+  await p.click('.mgr-arm-loan[data-row="1"]');
+  await holderIs(p, 1, "Bravo").catch(() => {});
+  await ctx.close();
+  assert.strictEqual(after, "Bravo");
+  assert.deepStrictEqual(actions(posts), ["loan 502 Primary Alpha [1000001]", "loan 505 Primary Bravo [1000002]"]);
 });
 
 await t("a captcha is shown and not retried with the other type", async () => {
