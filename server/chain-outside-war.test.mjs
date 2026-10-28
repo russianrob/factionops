@@ -755,3 +755,20 @@ test("a page report over 75 s old no longer leads: the API's reading decides", a
   await api._processChain("w1", war, reading(1240, 25), null, "poll");
   assert.deepEqual(sent(seen), [["notifyChainPanic", "w1", 1240, 25]]);
 });
+
+test("a held page report over 75 s old turns no report away: the next one is held, lower or not", async () => {
+  const war = cooldownRead(liveWar(), 1240, 7_440, 0);
+  const { api, seen } = buildMonitor({ w1: war });
+  api.recordPageChain("w1", pageReport(1250, 200), "1000001");
+  agePage(api, "w1", 76_000);
+  assert.equal(api.recordPageChain("w1", pageReport(1245, 25), "1000002"), true);
+  assert.deepEqual(sent(seen), [["notifyChainPanic", "w1", 1245, 25]]);
+});
+
+test("at the API's count, a page clock that is the cooldown of a reading 50 s old counting down gets no alert", async () => {
+  // The cooldown of 80 s read 50 s ago ends 30 s from now, 10 s after the page's clock.
+  const war = cooldownRead(liveWar(), 1240, 80, 50_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  assert.equal(api.recordPageChain("w1", pageReport(1240, 20), "1000001"), true);
+  assert.deepEqual(seen.sends, []);
+});

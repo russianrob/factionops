@@ -29,6 +29,11 @@ function konst(name) {
   assert.ok(m, name + ' not found');
   return 'const ' + name + ' = ' + m[1] + ';\n';
 }
+function letv(name) {
+  const m = SRC.match(new RegExp('let ' + name + ' = ([^;]+);'));
+  assert.ok(m, name + ' not found');
+  return 'let ' + name + ' = ' + m[1] + ';\n';
+}
 let lib = null;
 function L() {
   if (lib) return lib;
@@ -345,6 +350,10 @@ test('no report in a cooldown, under 10 hits, with over 5 minutes on the clock, 
   cases.forEach(([d, st], i) => assert.equal(R().readChainForReport(d, st, NOW), null, 'case ' + i));
 });
 
+test("a saved sidebar entry that is not JSON leaves the desktop bar's own clock as the report", () => {
+  assert.deepEqual(R().readChainForReport(doc('1,250/2,500', '00:42'), saved({ sidebarData1000001: '{' }), NOW), { count: 1250, left: 42 });
+});
+
 test('a report is due first, then each minute, and each 5 s while the count changes or the clock is under 1:30', () => {
   const D = (at, reading, last) => R().pageReportDue(at, reading, last);
   const last = { at: NOW, count: 1250 };
@@ -375,4 +384,43 @@ test("the page's chain goes to the server from a focused tab only, with the stor
   assert.match(send, /res\.status === 401 \|\| res\.status === 403 \|\| res\.status === 404/);
   assert.match(send, /pageReportPausedUntil = Date\.now\(\) \+ PAGE_REPORT_PAUSE_MS/);
   assert.match(SRC, /\n    const PAGE_REPORT_PAUSE_MS = 600000;\n/);
+});
+
+// reportPageChain with its own state, on a stand-in page and tab storage, the
+// stored token `jwt`, and each request handed to `onSend`, whose number is
+// the answer's status.
+function reporter(page, storage, jwt, onSend) {
+  const consts = ['CHAIN_BAR_MIN_HITS', 'PAGE_REPORT_MAX_LEFT_S', 'PAGE_REPORT_EVERY_MS', 'PAGE_REPORT_MIN_GAP_MS', 'PAGE_REPORT_FAST_UNDER_S', 'PAGE_REPORT_PAUSE_MS'];
+  const names = ['readChainFromDom', 'readChainFromPhoneBar', 'sidebarChain', 'readChainForReport', 'pageReportDue', 'reportPageChain'];
+  return new Function('document', 'window', 'GM_getValue', 'httpRequest', 'CONFIG',
+    consts.map(konst).join('') + ['pageReportLast', 'pageReportPausedUntil'].map(letv).join('')
+    + names.map(fn).join('\n') + '\nreturn reportPageChain;')(
+    page, { sessionStorage: storage }, (k, d) => (k === 'factionops_jwt' ? jwt : d),
+    (o) => o.onload({ status: onSend(o) }), { SERVER_URL: 'https://example.test' });
+}
+
+test('a report goes at once with the token, not again inside 5 s, and none for 10 minutes after a 401', () => {
+  const t = Date.now();
+  const end = Math.floor(t / 1000) + 200;
+  const page = phoneDoc('Chain:1,250 / 2,500');
+  const storage = saved({ sidebarData1000001: chain(1250, end) });
+  const reqs = [];
+  let status = 200;
+  const send = reporter(page, storage, 'tok', (o) => { reqs.push(o); return status; });
+  send(t);
+  assert.equal(reqs.length, 1);
+  assert.equal(reqs[0].method, 'POST');
+  assert.equal(reqs[0].url, 'https://example.test/api/chain-page');
+  assert.equal(reqs[0].headers.Authorization, 'Bearer tok');
+  assert.deepEqual(JSON.parse(reqs[0].data), { count: 1250, endsAt: end });
+  send(t + 1_000);
+  assert.equal(reqs.length, 1, 'not again inside 5 s');
+  status = 401;
+  send(t + 60_000);
+  assert.equal(reqs.length, 2, 'a minute on');
+  send(t + 120_000);
+  assert.equal(reqs.length, 2, 'paused after the 401');
+  const none = [];
+  reporter(page, storage, '', (o) => { none.push(o); return 200; })(t);
+  assert.deepEqual(none, [], 'no token, no report');
 });
