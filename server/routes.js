@@ -153,6 +153,20 @@ import { CALL_EXPIRE_MS, DEAL_EXPIRE_MS, expiryFor, remainingFor } from "./call-
 
 const router = Router();
 
+// An id in the query string is one string. Express also reads
+// warId[toString]=x as an object and warId=a&warId=b as an array. Handed to
+// the war store, either one makes a record store.saveState() then fails on for
+// every war, and String() or a template literal on the object throws, which in
+// an async route takes the whole server down. Turned away before any route.
+function rejectOddIds(req, res, next) {
+  for (const k of ["warId", "enemyFactionId"]) {
+    const v = req.query[k];
+    if (v !== undefined && typeof v !== "string") return res.status(400).json({ error: `${k} must be a single value` });
+  }
+  next();
+}
+router.use(rejectOddIds);
+
 const REFRESH_COOLDOWN_MS = 30_000; // 30 seconds between refreshes per war
 
 /** Socket.IO server instance — set via setIO() from server.js. */
