@@ -518,6 +518,91 @@ test("in a war, the next tick is at the war's pace whatever the chain, as before
   assert.deepEqual(await busy.api.firstTick(), { waitMs: 15_000 });
 });
 
+// ── A low clock just after a hit ────────────────────────────────────────
+
+// A hit puts the chain's clock back to 5 minutes, so a low clock read just
+// after one is a stale reading, and no alert goes out for it. This moves the
+// last hit back by `ms`, as if that long had gone by since it. Only the hit
+// moves: the stored reading keeps its clock, which outside a war decides
+// whether a bad reading is turned away, so these tests are in a war.
+function ageHit(api, warId, ms) {
+  const at = api.maps.lastChainIncreaseAt.get(warId);
+  if (at) api.maps.lastChainIncreaseAt.set(warId, at - ms);
+  const hit = api.maps.lastChainHit?.get(warId);
+  if (hit) hit.atMs -= ms;
+}
+
+// On 2026-09-18 a member's FactionOps sent a 0 and then the real count, the
+// rise from the 0 passed for a hit, and the chain broke with every alert muted.
+test("in a war, a member's bad 0 and the real count after it are no hit, so the chain's real low clock gets CHAIN BREAKING", async () => {
+  const war = lastRead(liveWar(), 1240, 280, 10_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(1241, 299), null, "poll");
+  ageHit(api, "w1", 240_000);
+  await api._processChain("w1", war, reading(0, 0), null, "client");
+  await api._processChain("w1", war, reading(1241, 84), null, "client");
+  await api._processChain("w1", war, reading(1241, 52), null, "poll");
+  assert.deepEqual(seen.sends.map((s) => s.slice(0, 1).concat(s.slice(2, 4))), [["notifyChainAlert", "w1", 1241]]);
+});
+
+test("the 5 minutes run from the latest hit, so in a chain going for longer a bad 0 and the real count are still no hit", async () => {
+  const war = lastRead(liveWar(), 1240, 280, 10_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(1241, 299), null, "poll");
+  ageHit(api, "w1", 200_000);
+  await api._processChain("w1", war, reading(1242, 299), null, "poll");
+  ageHit(api, "w1", 240_000);
+  await api._processChain("w1", war, reading(0, 0), null, "client");
+  await api._processChain("w1", war, reading(1242, 84), null, "client");
+  await api._processChain("w1", war, reading(1242, 52), null, "poll");
+  assert.deepEqual(seen.sends.map((s) => s.slice(0, 1).concat(s.slice(2, 4))), [["notifyChainAlert", "w1", 1242]]);
+});
+
+test("a reading not above the stored one is no hit, even 5 minutes after the last hit", async () => {
+  const war = lastRead(liveWar(), 1240, 280, 10_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(1241, 299), null, "poll");
+  ageHit(api, "w1", 301_000);
+  await api._processChain("w1", war, reading(1241, 25), null, "poll");
+  assert.deepEqual(seen.sends.map((s) => s[0]), ["notifyChainPanic"]);
+});
+
+test("after a restart, the stored count stands for the last hit: a bad 0 and the real count after it are no hit", async () => {
+  const war = lastRead(liveWar(), 1241, 70, 10_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(0, 0), null, "client");
+  await api._processChain("w1", war, reading(1241, 50), null, "poll");
+  assert.deepEqual(seen.sends.map((s) => s.slice(0, 1).concat(s.slice(2, 4))), [["notifyChainAlert", "w1", 1241]]);
+});
+
+// Torn's API ran minutes behind the game on 2026-10-28: a new count came in
+// with its clock already low, and the chain went on.
+test("a count above the stored one is a hit, and a low clock read with it gets no alert", async () => {
+  const war = lastRead(liveWar(), 1240, 120, 10_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(1241, 52), null, "poll");
+  await api._processChain("w1", war, reading(1241, 25), null, "poll");
+  assert.deepEqual(seen.sends, []);
+});
+
+test("a count sent as text is compared as a number: \"1000\" after \"999\" is a hit", async () => {
+  const war = lastRead(liveWar(), 999, 120, 10_000);
+  war.chainData.current = "999";
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, { current: "1000", timeout: 52, cooldown: 0 }, null, "client");
+  assert.deepEqual(seen.sends, []);
+});
+
+test("five minutes after the last hit its count no longer stands, so a new chain's first hit is a hit", async () => {
+  const war = lastRead(liveWar(), 1240, 280, 10_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(1241, 299), null, "poll");
+  ageHit(api, "w1", 301_000);
+  await api._processChain("w1", war, reading(0, 0), null, "poll");
+  await api._processChain("w1", war, reading(12, 30), null, "poll");
+  assert.deepEqual(seen.sends, []);
+});
+
 // ── A restart ───────────────────────────────────────────────────────────
 
 // server.js resumes the chain watches at boot in one anonymous block. This

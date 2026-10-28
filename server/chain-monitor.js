@@ -21,7 +21,7 @@ import * as liveActivityTokens from "./live-activity-tokens.js";
 import { normalizeChainData, chainWithLiveTimeout } from "./chain-data.js";
 import {
   isWarLive, chainAlertFloor, outsideWarDelay, outsideWarChainEnded, outsideWarBadDrop,
-  isBigLiveChain, isCooldown, CHAIN_END_CONFIRM_MS, OUTSIDE_WAR_MIN_CHAIN,
+  isBigLiveChain, isCooldown, CHAIN_END_CONFIRM_MS, OUTSIDE_WAR_MIN_CHAIN, CHAIN_CLOCK_MAX_S,
 } from "./chain-alert-rule.js";
 
 // Fallback interval when we can't resolve the dynamic one (e.g. no war
@@ -99,10 +99,13 @@ const backoffs = new Map();
 const lastAlertSent = new Map();
 /** Last time we sent a chain panic push per warId. */
 const lastPanicSent = new Map();
-/** Wall-clock (ms) of the last chain-count INCREASE per warId. A qualifying
- * hit resets Torn's chain timer to ~5:00, so a recent increase means a low
- * reported timeout is a stale/lagging snapshot, not a real break. */
+/** Wall-clock (ms) of the last hit per warId (see _processChain). A hit
+ * resets Torn's chain timer to ~5:00, so a recent one means a low reported
+ * timeout is a stale/lagging snapshot, not a real break. */
 const lastChainIncreaseAt = new Map();
+/** The count at the last hit and when it was read, { count, atMs } per warId:
+ * while it is at most 5 minutes old, a rise counts as a hit only above it. */
+const lastChainHit = new Map();
 /** Wall-clock (ms) of the last reading of a running chain of 100 or more per
  * warId. Outside a war it keeps the reads at the war's pace for a while
  * after it. */
@@ -172,7 +175,23 @@ async function _processChain(warId, war, chain, io, source) {
   const countChanged = (prevChain.current || 0) !== (chain.current || 0);
   const cooldownFlipped = ((prevChain.cooldown || 0) > 0) !== ((chain.cooldown || 0) > 0);
   const broke = (prevChain.current || 0) > 0 && (chain.current || 0) === 0;
-  if ((chain.current || 0) > (prevChain.current || 0)) lastChainIncreaseAt.set(warId, Date.now());
+  // A hit, for the low-clock check below: a count above the stored record's
+  // and, while the last hit is at most 5 minutes old, above that hit's
+  // count. A member's bad 0 (or a lagging lower count) is stored too, and the
+  // real count's next reading used to pass for a hit: the check then muted
+  // the chain's real low clock until the next hit, and on 2026-09-18 a chain
+  // broke that way with no alert. After a restart the stored count stands in
+  // for the last hit.
+  const current = Number(chain.current) || 0;
+  const prevCurrent = Number(prevChain.current) || 0;
+  const lastHit = lastChainHit.get(warId) || { count: prevCurrent, atMs: Date.now() };
+  const lastHitRecent = Date.now() - lastHit.atMs <= CHAIN_CLOCK_MAX_S * 1000;
+  if (current > prevCurrent && (!lastHitRecent || current > lastHit.count)) {
+    lastChainIncreaseAt.set(warId, Date.now());
+    lastChainHit.set(warId, { count: current, atMs: Date.now() });
+  } else if (!lastChainHit.has(warId)) {
+    lastChainHit.set(warId, lastHit);
+  }
   // Chains are alerted from 10 hits in a live war, and from 100 outside one.
   const minChain = chainAlertFloor(war, Date.now());
   if (isBigLiveChain(chain)) lastBigChainAt.set(warId, Date.now());
@@ -188,8 +207,8 @@ async function _processChain(warId, war, chain, io, source) {
   }
 
   const isCoolingDown = chain.cooldown > 0;
-  // A qualifying hit resets Torn's chain timer to ~5:00, so if the count went
-  // up within the last ~2 min the timer physically can't be near zero — reject
+  // A hit resets Torn's chain timer to ~5:00, so within ~4 min of the last
+  // hit (see above) the timer physically can't be near zero — reject
   // the low reading as a stale/lagging snapshot instead of pushing a false
   // "chain dying" alert to everyone. Real stalls (no hit for minutes) still fire.
   const secsSinceHit = (Date.now() - (lastChainIncreaseAt.get(warId) || 0)) / 1000;
@@ -594,6 +613,7 @@ export function stopChainMonitor(warId) {
   lastAlertSent.delete(warId);
   lastPanicSent.delete(warId);
   lastChainIncreaseAt.delete(warId);
+  lastChainHit.delete(warId);
   lastBigChainAt.delete(warId);
   pendingChainEnd.delete(warId);
   lastChainEndNoticed.delete(warId);
