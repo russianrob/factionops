@@ -324,13 +324,16 @@ test("a report from the phone layout carries Torn's end, whatever the device's c
   }
 });
 
-test("on the desktop sidebar: Torn's end when the saved chain has the bar's count, else the clock's seconds", () => {
+test("on the desktop sidebar: Torn's end when the saved chain has the bar's count, and no report without one", () => {
   const bar = doc('1,250/2,500', '00:42');
   assert.deepEqual(R().readChainForReport(bar, saved({ sidebarData1000001: chain(1250, 1000042) }), NOW), { count: 1250, endsAt: 1000042 });
-  assert.deepEqual(R().readChainForReport(bar, saved({}), NOW), { count: 1250, left: 42 });
-  assert.deepEqual(R().readChainForReport(bar, saved({ sidebarData1000001: chain(1249, 1000100) }), NOW), { count: 1250, left: 42 },
+  // The bar's clock alone may be a finished chain's cooldown counting down.
+  assert.equal(R().readChainForReport(bar, saved({}), NOW), null);
+  assert.equal(R().readChainForReport(doc('12/25', '00:55'), saved({}), NOW), null);
+  assert.equal(R().readChainForReport(bar, saved({ sidebarData1000001: chain(1249, 1000100) }), NOW), null,
     'a saved chain of another count is not this one');
-  assert.deepEqual(R().readChainForReport(doc('1,250/2,500', '5:00'), saved({}), NOW), { count: 1250, left: 300 }, '5:00 is a chain clock');
+  assert.deepEqual(R().readChainForReport(phoneDoc('Chain:1,250 / 2,500'), saved({ sidebarData1000001: chain(1250, 1000300) }), NOW),
+    { count: 1250, endsAt: 1000300 }, '5:00 is a chain clock');
 });
 
 test('no report in a cooldown, under 10 hits, with over 5 minutes on the clock, or with no bar', () => {
@@ -339,19 +342,25 @@ test('no report in a cooldown, under 10 hits, with over 5 minutes on the clock, 
     [phone, saved({ sidebarData1000001: cooling(1250, 1000042, 7440, 0) })],
     [phone, saved({ sidebarData1000001: cooling(1250, 1000042, 0, 1000100) })],
     [doc('1,250/2,500', '00:42'), saved({ sidebarData1000001: cooling(1250, 1000042, 7440, 0) })],
-    [doc('1,250/2,500', '1:02:03'), saved({})],
-    [doc('1,250/2,500', '5:01'), saved({})],
+    [doc('1,250/2,500', '1:02:03'), saved({ sidebarData1000001: chain(1250, 1003723) })],
     [phone, saved({ sidebarData1000001: chain(1250, 1000301) })],
     [phoneDoc('Chain:9 / 10'), saved({ sidebarData1000001: chain(9, 1000042) })],
-    [doc('9/10', '00:42'), saved({})],
+    [doc('9/10', '00:42'), saved({ sidebarData1000001: chain(9, 1000042) })],
     [phoneDoc(null), saved({ sidebarData1000001: chain(1250, 1000042) })],
     [phone, null],
   ];
   cases.forEach(([d, st], i) => assert.equal(R().readChainForReport(d, st, NOW), null, 'case ' + i));
 });
 
-test("a saved sidebar entry that is not JSON leaves the desktop bar's own clock as the report", () => {
-  assert.deepEqual(R().readChainForReport(doc('1,250/2,500', '00:42'), saved({ sidebarData1000001: '{' }), NOW), { count: 1250, left: 42 });
+test('a saved sidebar entry that is not JSON is no report, and no error', () => {
+  assert.equal(R().readChainForReport(doc('1,250/2,500', '00:42'), saved({ sidebarData1000001: '{' }), NOW), null);
+});
+
+test("a sign-in the server refuses (not your faction's) clears the stored token, so no page report goes with it", () => {
+  const auth = fn('authenticate');
+  const refused = auth.slice(auth.indexOf('if (res.status === 403) {'), auth.indexOf('if (res.status === 426) {'));
+  assert.ok(refused.length > 0, 'no 403 branch');
+  assert.match(refused, /\n\s+GM_setValue\('factionops_jwt', ''\);\n/);
 });
 
 test('a report is due first, then each minute, and each 5 s while the count changes or the clock is under 1:30', () => {

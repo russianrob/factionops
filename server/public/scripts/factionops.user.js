@@ -316,25 +316,21 @@
         return null;
     }
 
-    // The chain as the page shows it, for the server: the count, and where
-    // the sidebar's saved chain has that count, Torn's own end, its
-    // `timestampToUpdate` (epoch seconds), so no device clock is in it; else
-    // the seconds on the bar's clock. A saved chain in its cooldown is no
-    // report, since the sidebar may count the cooldown down, and nor is a
-    // chain under 10 hits or a clock over 5 minutes. { count, endsAt } or
-    // { count, left }, or null.
+    // The chain as the page shows it, for the server: the bar's count, and
+    // Torn's own end, the `timestampToUpdate` (epoch seconds) of the chain
+    // the sidebar saved, so no device clock is in it. Only while the saved
+    // chain has the bar's count and no cooldown: the bar's clock alone may be
+    // a finished chain's cooldown counting down. Nor is a chain under 10 hits
+    // a report, or an end over 5 minutes off. { count, endsAt }, or null.
     function readChainForReport(doc, storage, now) {
         const reading = readChainFromDom(doc) || readChainFromPhoneBar(doc, storage, now);
         if (!reading || !(reading.count >= CHAIN_BAR_MIN_HITS)) return null;
         const saved = sidebarChain(storage);
-        if (saved && Number(saved.amount) === reading.count) {
-            if (Number(saved.coolDown) > 0 || Number(saved.endCoolDownTimestamp) > now / 1000) return null;
-            const endsAt = Number(saved.timestampToUpdate);
-            const left = endsAt - now / 1000;
-            return left > 0 && left <= PAGE_REPORT_MAX_LEFT_S ? { count: reading.count, endsAt } : null;
-        }
-        if (!(reading.left > 0 && reading.left <= PAGE_REPORT_MAX_LEFT_S)) return null;
-        return { count: reading.count, left: reading.left };
+        if (!saved || Number(saved.amount) !== reading.count) return null;
+        if (Number(saved.coolDown) > 0 || Number(saved.endCoolDownTimestamp) > now / 1000) return null;
+        const endsAt = Number(saved.timestampToUpdate);
+        const left = endsAt - now / 1000;
+        return left > 0 && left <= PAGE_REPORT_MAX_LEFT_S ? { count: reading.count, endsAt } : null;
     }
 
     // Is a report due? The first at once, then one a minute, and one every
@@ -7091,6 +7087,10 @@ body.wb-chain-active {
                         const msg = (body && body.error) || 'FactionOps is not available for your faction.';
                         warn('Auth refused:', msg);
                         _authRejected = true;
+                        // The stored sign-in is for a faction the server no
+                        // longer takes this player in (they have left it), and
+                        // the chain bar's page reports go with it: drop it.
+                        GM_setValue('factionops_jwt', '');
                         try { teardownWarPageUi(); } catch (_) {}
                         try { showToast(msg, 'error'); } catch (_) {}
                         return reject(new Error(msg));
