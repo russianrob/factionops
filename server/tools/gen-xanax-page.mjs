@@ -7,8 +7,10 @@
  * over; there is no hand-written narrative to go stale.
  *
  * Reads:  ../data/war-history/<faction>.json  (+ ../xanax-model.js)
+ *         Torn's member list (one call per run, OWNER_API_KEY from .env)
  * Writes: ../public/xanax/index.html
  */
+import "dotenv/config";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -123,14 +125,45 @@ for (const p of playerList) {
   }
 }
 
+// ── Who is still in the faction ──
+// A repeat offender who has since left can't be acted on, so that list shows
+// current members only (owner, 2026-10-27). One call per run with the owner's
+// key, sent in a header so it never lands in a logged address. If the call
+// fails, nobody is hidden: the page reads as it did before, and the log says why.
+let rosterNote = "";
+async function currentMembers() {
+  const key = process.env.OWNER_API_KEY;
+  if (!key) { rosterNote = "no OWNER_API_KEY, nobody hidden"; return null; }
+  try {
+    const res = await fetch(`https://api.torn.com/v2/faction/${FACTION}/members?comment=wb-xanax-page`, {
+      headers: { Authorization: `ApiKey ${key}` }, signal: AbortSignal.timeout(15000),
+    });
+    const d = await res.json();
+    if (d && d.error) throw new Error(`${d.error.error} (code ${d.error.code})`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // An empty list would hide every repeat offender; treat it as a failed call.
+    if (!Array.isArray(d.members) || !d.members.length) throw new Error("empty member list");
+    return new Set(d.members.map(m => String(m.id)));
+  } catch (e) {
+    rosterNote = `roster unavailable: ${e.message}, nobody hidden`;
+    return null;
+  }
+}
+const roster = await currentMembers();
+
 // ── Derived (all data-driven) ──
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const sev = (def, took) => !took ? "empty" : def <= 0 ? "none" : def <= 8 ? "low" : def <= 20 ? "mid" : "high";
 const flagged = playerList.filter(p => p.flagged > 0).sort((a, b) => b.flagged - a.flagged || b.deficit - a.deficit || b.xanax - a.xanax);
-const repeat = flagged.filter(p => p.flagged >= 2);
+const repeatAll = flagged.filter(p => p.flagged >= 2);
+// Repeat offenders no longer in the faction; they are left out of the list
+// and of every line that would name them (the biggest-waste bullet).
+const hidden = new Set(roster ? repeatAll.filter(p => !roster.has(p.id)).map(p => p.id) : []);
+const repeat = repeatAll.filter(p => !hidden.has(p.id));
+if (roster) rosterNote = `roster ${roster.size} members, ${hidden.size} repeat offender${hidden.size === 1 ? "" : "s"} hidden`;
 const once = flagged.filter(p => p.flagged === 1);
 const clean = playerList.filter(p => p.flagged === 0 && p.deficit === 0).sort((a, b) => b.xanax - a.xanax).slice(0, 5);
-const bigWaste = [...flagged].sort((a, b) => b.deficit - a.deficit).slice(0, 3);
+const bigWaste = flagged.filter(p => !hidden.has(p.id)).sort((a, b) => b.deficit - a.deficit).slice(0, 3);
 const totalDosed = playerList.length;
 const wins = warMeta.filter(w => w.result === "victory").length;
 const losses = warMeta.filter(w => w.result === "defeat").length;
@@ -223,7 +256,7 @@ const body = `<div class="wrap"><div class="inner">
       <th class="hcol">Flags</th>
     </tr></thead>
     <tbody>
-      ${repeat.length ? band("Repeat offenders", `Flagged in 2 or more of the last ${N} wars`) + repeat.map(row).join("") : ""}
+      ${repeat.length ? band("Repeat offenders", `Flagged in 2 or more of the last ${N} wars${roster ? ` · current members only${hidden.size ? `, ${hidden.size} who left not shown` : ""}` : ""}`) + repeat.map(row).join("") : ""}
       ${once.length ? band("Flagged once", "One bad war — watch, don't convict") + once.map(row).join("") : ""}
       ${flagged.length === 0 ? `<tr><td colspan="${N + 3}" style="padding:20px;text-align:center;color:var(--faint)">No members flagged in the last ${N} wars.</td></tr>` : ""}
     </tbody>
@@ -380,4 +413,4 @@ ${body}
 
 if (!existsSync(OUT_DIR)) mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(OUT, outHtml);
-console.log(`[gen-xanax-page] wrote ${OUT} (${outHtml.length}b) — ${N} wars, ${totalDosed} dosed, ${flagged.length} flagged, ${repeat.length} repeat, updated ${updated}`);
+console.log(`[gen-xanax-page] wrote ${OUT} (${outHtml.length}b) — ${N} wars, ${totalDosed} dosed, ${flagged.length} flagged, ${repeat.length} repeat, ${rosterNote}, updated ${updated}`);
