@@ -154,3 +154,91 @@ export function outsideWarBadDrop({ prevCurrent, prevTimeoutS, current }) {
     && prevTimeoutS > 0 && prevTimeoutS <= CHAIN_CLOCK_MAX_S
     && current < OUTSIDE_WAR_MIN_CHAIN;
 }
+
+// ── Page reports ────────────────────────────────────────────────────────
+//
+// FactionOps (5.6.28 and later) sends the chain as a member's focused Torn
+// page shows it: its count, and when its clock runs out. On 2026-10-28
+// Torn's API ran behind the game for about two hours, showing the chain over
+// while it ran on, and the server sent no chain alert. The server still
+// reads the API as before; a page report decides the low-clock alerts only
+// while it is ahead of the API's reading (pageLeadsApi).
+
+/** How long a page report stands: FactionOps sends one at least every 60 s. */
+export const PAGE_REPORT_FRESH_MS = 75_000;
+
+/**
+ * At the same count, an API cooldown that ends less than this many seconds
+ * after the page's clock, or less than PAGE_COOLDOWN_BEHIND_S before it, is
+ * the cooldown the page counts down, not a chain's clock: a sidebar may count
+ * a finished chain's cooldown down. FactionOps' chain bar takes the same
+ * window (its CHAIN_BAR_COOLDOWN_AHEAD_S): the API's answer is up to about
+ * 30 s behind, so its cooldown ends up to that much later, never earlier.
+ */
+export const PAGE_COOLDOWN_AHEAD_S = 45;
+export const PAGE_COOLDOWN_BEHIND_S = 5;
+
+/** At the same count with no cooldown, how much later the page's clock must end to lead. */
+export const PAGE_LEADS_BY_MS = 15_000;
+
+/** The most time a report's clock may show: a chain's clock, and the trip here. */
+export const PAGE_REPORT_MAX_LEFT_S = CHAIN_CLOCK_MAX_S + 10;
+
+/** The biggest count taken: Torn's top chain bonus is at 100,000. */
+const PAGE_REPORT_MAX_COUNT = 100_000;
+
+/**
+ * A chain reading as instants: { current, endsAtMs, cooldownEndsAtMs }, 0
+ * for none. Takes Torn's reading (`timeout` and `cooldown` in seconds, read
+ * at `readAtMs`) or a stored one (its `chainEndsAt`, see chain-data.js, and
+ * the cooldown it was read with at `readAtMs`).
+ */
+export function apiChainView(chain, readAtMs) {
+  const c = chain || {};
+  const timeout = Number(c.timeout) || 0;
+  const cooldown = Number(c.cooldown) || 0;
+  return {
+    current: Number(c.current) || 0,
+    endsAtMs: Number.isFinite(c.chainEndsAt) ? c.chainEndsAt : (timeout > 0 ? readAtMs + timeout * 1000 : 0),
+    cooldownEndsAtMs: cooldown > 0 ? readAtMs + cooldown * 1000 : 0,
+  };
+}
+
+/**
+ * True while a page report (`page`: { count, endsAtMs, atMs }) is ahead of
+ * the API's reading (`api`, in apiChainView's form), so the chain alerts
+ * follow the page. Only a report at most PAGE_REPORT_FRESH_MS old leads. A
+ * higher count leads (a chain cannot grow in its cooldown, so a higher count
+ * is a running chain whatever the API says), and a lower one never does. At
+ * the same count: while the API shows a cooldown, the page leads unless its
+ * clock is that cooldown counting down (PAGE_COOLDOWN_AHEAD_S); with none,
+ * when its clock ends PAGE_LEADS_BY_MS or more after the API's.
+ */
+export function pageLeadsApi(page, api, nowMs) {
+  if (!page || !(nowMs - page.atMs <= PAGE_REPORT_FRESH_MS)) return false;
+  const apiCount = Number(api?.current) || 0;
+  if (page.count !== apiCount) return page.count > apiCount;
+  const cooldownEndsAtMs = Number(api?.cooldownEndsAtMs) || 0;
+  if (cooldownEndsAtMs > nowMs) {
+    const ahead = (cooldownEndsAtMs - page.endsAtMs) / 1000;
+    return !(ahead > -PAGE_COOLDOWN_BEHIND_S && ahead < PAGE_COOLDOWN_AHEAD_S);
+  }
+  return page.endsAtMs - (Number(api?.endsAtMs) || 0) >= PAGE_LEADS_BY_MS;
+}
+
+/**
+ * A page report as FactionOps sends it, checked: { count, endsAtMs }, or
+ * null. `count` is a whole count from 1 to 100,000. `endsAt` is Torn's own
+ * end, in epoch seconds, with no device clock in it, and when it is sent it
+ * stands alone; else `left` is the seconds the page's clock shows, counted
+ * from `nowMs`. Only a running clock, of at most PAGE_REPORT_MAX_LEFT_S, is
+ * a report.
+ */
+export function parsePageReport(body, nowMs) {
+  if (!body || typeof body !== "object") return null;
+  const count = Number(body.count);
+  if (!Number.isInteger(count) || count < 1 || count > PAGE_REPORT_MAX_COUNT) return null;
+  const endsAtMs = body.endsAt != null ? Number(body.endsAt) * 1000 : nowMs + Number(body.left) * 1000;
+  if (!(endsAtMs > nowMs && endsAtMs <= nowMs + PAGE_REPORT_MAX_LEFT_S * 1000)) return null;
+  return { count, endsAtMs };
+}
