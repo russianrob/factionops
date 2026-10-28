@@ -3,7 +3,8 @@
 // header, the version, and the gate that stops the script off its own pages.
 // 5.6.22: no frames, and FactionOps' toasts go under the bar.
 // 5.6.24: Torn's phone layout, whose chain bar has no clock; 5.6.25: nor, from
-// a max of 1,000, the max.
+// a max of 1,000, the max. 5.6.28: from a focused tab, the page's chain goes
+// to the server, for its chain alerts while Torn's API runs behind.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -211,12 +212,12 @@ test('the text: the count with commas, the clock as m:ss', () => {
   assert.equal(L().chainBarText({ count: 12, left: 75 }), 'CHAIN DYING \u00B7 12 hits \u00B7 1:15 left');
 });
 
-test('5.6.27 in both places, the meta file is the header, and every page joins the old list', () => {
+test('5.6.28 in both places, the meta file is the header, and every page joins the old list', () => {
   const end = '// ==/UserScript==';
   const head = SRC.slice(0, SRC.indexOf(end) + end.length) + '\n';
   assert.equal(META, head);
-  assert.match(head, /^\/\/ @version\s+5\.6\.27$/m);
-  assert.match(SRC, /const SCRIPT_VERSION = '5\.6\.27';/);
+  assert.match(head, /^\/\/ @version\s+5\.6\.28$/m);
+  assert.match(SRC, /const SCRIPT_VERSION = '5\.6\.28';/);
   const matches = [...head.matchAll(/^\/\/ @match\s+(\S+)$/gm)].map((m) => m[1]);
   assert.equal(matches.length, 11);
   assert.deepEqual(matches.slice(-2), ['https://www.torn.com/*', 'https://torn.com/*']);
@@ -293,4 +294,85 @@ test('both toast stacks start under the bar while it is up, and the general one 
   const none = toasts(toastPage(null));
   assert.match(none.ensureCallToastContainer().style.cssText, /top: 10px;/);
   assert.equal(none.getToastContainer().style.top, '10px');
+});
+
+// ── The page's chain for the server (5.6.28) ────────────────────────────
+
+// The report's parts, lifted on their own so the tests above run without them.
+let reportLib = null;
+function R() {
+  if (reportLib) return reportLib;
+  const names = ['readChainFromDom', 'readChainFromPhoneBar', 'sidebarChain', 'readChainForReport', 'pageReportDue'];
+  reportLib = new Function(
+    ['CHAIN_BAR_MIN_HITS', 'PAGE_REPORT_MAX_LEFT_S', 'PAGE_REPORT_EVERY_MS', 'PAGE_REPORT_MIN_GAP_MS', 'PAGE_REPORT_FAST_UNDER_S'].map(konst).join('')
+    + names.map(fn).join('\n') + '\nreturn { ' + names.join(', ') + ' };')();
+  return reportLib;
+}
+// A saved chain with a cooldown: `coolDown` seconds of it, or one ending at `endCd`.
+const cooling = (amount, end, coolDown, endCd) => JSON.stringify({ bars: { chain: { name: 'Chain', amount, max: 2500,
+  timestampToUpdate: end, timeToUpdate: 300, coolDown, endCoolDownTimestamp: endCd } } });
+
+test("a report from the phone layout carries Torn's end, whatever the device's clock says", () => {
+  const s = saved({ sidebarData1000001: chain(1250, 1000042) });
+  for (const late of [0, 500, 20000]) {
+    assert.deepEqual(R().readChainForReport(phoneDoc('Chain:1,250 / 2,500'), s, NOW + late), { count: 1250, endsAt: 1000042 }, String(late));
+  }
+});
+
+test("on the desktop sidebar: Torn's end when the saved chain has the bar's count, else the clock's seconds", () => {
+  const bar = doc('1,250/2,500', '00:42');
+  assert.deepEqual(R().readChainForReport(bar, saved({ sidebarData1000001: chain(1250, 1000042) }), NOW), { count: 1250, endsAt: 1000042 });
+  assert.deepEqual(R().readChainForReport(bar, saved({}), NOW), { count: 1250, left: 42 });
+  assert.deepEqual(R().readChainForReport(bar, saved({ sidebarData1000001: chain(1249, 1000100) }), NOW), { count: 1250, left: 42 },
+    'a saved chain of another count is not this one');
+  assert.deepEqual(R().readChainForReport(doc('1,250/2,500', '5:00'), saved({}), NOW), { count: 1250, left: 300 }, '5:00 is a chain clock');
+});
+
+test('no report in a cooldown, under 10 hits, with over 5 minutes on the clock, or with no bar', () => {
+  const phone = phoneDoc('Chain:1,250 / 2,500');
+  const cases = [
+    [phone, saved({ sidebarData1000001: cooling(1250, 1000042, 7440, 0) })],
+    [phone, saved({ sidebarData1000001: cooling(1250, 1000042, 0, 1000100) })],
+    [doc('1,250/2,500', '00:42'), saved({ sidebarData1000001: cooling(1250, 1000042, 7440, 0) })],
+    [doc('1,250/2,500', '1:02:03'), saved({})],
+    [doc('1,250/2,500', '5:01'), saved({})],
+    [phone, saved({ sidebarData1000001: chain(1250, 1000301) })],
+    [phoneDoc('Chain:9 / 10'), saved({ sidebarData1000001: chain(9, 1000042) })],
+    [doc('9/10', '00:42'), saved({})],
+    [phoneDoc(null), saved({ sidebarData1000001: chain(1250, 1000042) })],
+    [phone, null],
+  ];
+  cases.forEach(([d, st], i) => assert.equal(R().readChainForReport(d, st, NOW), null, 'case ' + i));
+});
+
+test('a report is due first, then each minute, and each 5 s while the count changes or the clock is under 1:30', () => {
+  const D = (at, reading, last) => R().pageReportDue(at, reading, last);
+  const last = { at: NOW, count: 1250 };
+  assert.equal(D(NOW, { count: 1250, left: 120 }, null), true, 'the first');
+  assert.equal(D(NOW + 59_000, { count: 1250, left: 120 }, last), false);
+  assert.equal(D(NOW + 60_000, { count: 1250, left: 120 }, last), true, 'a minute on');
+  assert.equal(D(NOW + 4_900, { count: 1251, left: 299 }, last), false);
+  assert.equal(D(NOW + 5_000, { count: 1251, left: 299 }, last), true, 'a new count, 5 s on');
+  assert.equal(D(NOW + 4_900, { count: 1250, left: 80 }, last), false);
+  assert.equal(D(NOW + 5_000, { count: 1250, left: 80 }, last), true, 'under 1:30, 5 s on');
+  assert.equal(D(NOW + 5_000, { count: 1250, left: 90 }, last), false, '1:30 itself');
+  assert.equal(D(NOW + 5_000, { count: 1250, endsAt: (NOW + 5_000) / 1000 + 80 }, last), true, "from Torn's end");
+  assert.equal(D(NOW + 5_000, { count: 1250, endsAt: (NOW + 5_000) / 1000 + 120 }, last), false);
+});
+
+test("the page's chain goes to the server from a focused tab only, with the stored token, through httpRequest", () => {
+  const tick = fn('chainBarTick');
+  assert.match(tick, /const looking = IS_PDA \|\| \(typeof document\.hasFocus === 'function' \? document\.hasFocus\(\) : !document\.hidden\);/);
+  assert.match(tick, /\n\s+if \(looking\) reportPageChain\(now\);\n/);
+  const send = fn('reportPageChain');
+  assert.match(send, /GM_getValue\('factionops_jwt', ''\)/);
+  assert.doesNotMatch(send, /\bstate\./);
+  assert.match(send, /readChainForReport\(document, window\.sessionStorage, now\)/);
+  assert.match(send, /pageReportDue\(now, reading, pageReportLast\)/);
+  assert.match(send, /httpRequest\(\{/);
+  assert.match(send, /url: CONFIG\.SERVER_URL \+ '\/api\/chain-page'/);
+  assert.match(send, /'Authorization': 'Bearer ' \+ jwt/);
+  assert.match(send, /res\.status === 401 \|\| res\.status === 403 \|\| res\.status === 404/);
+  assert.match(send, /pageReportPausedUntil = Date\.now\(\) \+ PAGE_REPORT_PAUSE_MS/);
+  assert.match(SRC, /\n    const PAGE_REPORT_PAUSE_MS = 600000;\n/);
 });

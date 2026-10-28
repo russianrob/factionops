@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.27
+// @version      5.6.28
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.27';
+    const SCRIPT_VERSION = '5.6.28';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -216,6 +216,18 @@
     // FactionOps' top-centre toast stacks, on its own pages: they go under the
     // bar while it is up (placeChainBarToasts).
     const CHAIN_BAR_TOAST_IDS = ['fo-call-toast-container', 'wb-toast-container'];
+    // The page's chain goes to the server (reportPageChain) for its chain
+    // alerts, which follow it while Torn's API runs behind the game. No
+    // chain's clock shows over 5 minutes.
+    const PAGE_REPORT_MAX_LEFT_S = 300;
+    // A report a minute keeps the server's copy fresh (it holds one 75 s)...
+    const PAGE_REPORT_EVERY_MS = 60000;
+    // ...and one every 5 s while the count moves or the clock is under 1:30.
+    const PAGE_REPORT_MIN_GAP_MS = 5000;
+    const PAGE_REPORT_FAST_UNDER_S = 90;
+    // How long a token the server refuses, or a faction with no war, stops
+    // the reports.
+    const PAGE_REPORT_PAUSE_MS = 600000;
 
     // The pages in FactionOps' @match list before 5.6.21: the header's first
     // nine @match lines. Every other page gets the chain bar only.
@@ -288,6 +300,53 @@
         const left = Math.floor(Number(chain.timestampToUpdate) - now / 1000);
         if (!(left > 0)) return null;
         return { count, left };
+    }
+
+    // The chain the sidebar saved in the tab's sessionStorage, as
+    // readChainFromPhoneBar finds it, or null.
+    function sidebarChain(storage) {
+        try {
+            for (let i = 0; i < storage.length; i++) {
+                const key = storage.key(i);
+                if (!/^sidebarData\d+$/.test(key)) continue;
+                const data = JSON.parse(storage.getItem(key));
+                return (data && data.bars && data.bars.chain) || null;
+            }
+        } catch (_) {}
+        return null;
+    }
+
+    // The chain as the page shows it, for the server: the count, and where
+    // the sidebar's saved chain has that count, Torn's own end, its
+    // `timestampToUpdate` (epoch seconds), so no device clock is in it; else
+    // the seconds on the bar's clock. A saved chain in its cooldown is no
+    // report, since the sidebar may count the cooldown down, and nor is a
+    // chain under 10 hits or a clock over 5 minutes. { count, endsAt } or
+    // { count, left }, or null.
+    function readChainForReport(doc, storage, now) {
+        const reading = readChainFromDom(doc) || readChainFromPhoneBar(doc, storage, now);
+        if (!reading || !(reading.count >= CHAIN_BAR_MIN_HITS)) return null;
+        const saved = sidebarChain(storage);
+        if (saved && Number(saved.amount) === reading.count) {
+            if (Number(saved.coolDown) > 0 || Number(saved.endCoolDownTimestamp) > now / 1000) return null;
+            const endsAt = Number(saved.timestampToUpdate);
+            const left = endsAt - now / 1000;
+            return left > 0 && left <= PAGE_REPORT_MAX_LEFT_S ? { count: reading.count, endsAt } : null;
+        }
+        if (!(reading.left > 0 && reading.left <= PAGE_REPORT_MAX_LEFT_S)) return null;
+        return { count: reading.count, left: reading.left };
+    }
+
+    // Is a report due? The first at once, then one a minute, and one every
+    // 5 s while the count moves or the clock is under 1:30, where the alerts
+    // are. `last` is { at, count } for the last report, or null. Pure.
+    function pageReportDue(now, reading, last) {
+        if (!last) return true;
+        const since = now - last.at;
+        if (since >= PAGE_REPORT_EVERY_MS) return true;
+        if (since < PAGE_REPORT_MIN_GAP_MS) return false;
+        const left = reading.endsAt != null ? reading.endsAt - now / 1000 : reading.left;
+        return reading.count !== last.count || left < PAGE_REPORT_FAST_UNDER_S;
     }
 
     // A chain that has ended keeps its count through its cooldown (about six
@@ -448,6 +507,39 @@
         } catch (_) { finish(null); }
     }
 
+    // The last report sent, and when a refusal's pause runs out.
+    let pageReportLast = null;
+    let pageReportPausedUntil = 0;
+
+    // Sends the chain as this page shows it to the server (POST
+    // /api/chain-page), for its chain alerts while Torn's API runs behind:
+    // on 2026-10-28 it showed the chain over for two hours while it ran on.
+    // chainBarTick calls it only while you are looking at the page. This part
+    // runs on every page, before FactionOps' own state exists, so the token is
+    // the stored one from signing in; with none, nothing is sent.
+    function reportPageChain(now) {
+        if (now < pageReportPausedUntil) return;
+        const reading = readChainForReport(document, window.sessionStorage, now);
+        if (!reading || !pageReportDue(now, reading, pageReportLast)) return;
+        pageReportLast = { at: now, count: reading.count };
+        const jwt = GM_getValue('factionops_jwt', '');
+        if (!jwt) return;
+        try {
+            httpRequest({
+                method: 'POST',
+                url: CONFIG.SERVER_URL + '/api/chain-page',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + jwt },
+                data: JSON.stringify(reading),
+                timeout: 10000,
+                onload(res) {
+                    if (res.status === 401 || res.status === 403 || res.status === 404) {
+                        pageReportPausedUntil = Date.now() + PAGE_REPORT_PAUSE_MS;
+                    }
+                },
+            });
+        } catch (_) {}
+    }
+
     function chainBarTick() {
         const now = Date.now();
         // PDA's GM storage hands values back as strings, and "false" is truthy.
@@ -459,6 +551,7 @@
         const step = on && looking ? chainBarStep(now, reading, chainBarCheck, chainBarThreshold()) : { show: null, start: false };
         if (step.start) startChainBarCheck(now, reading);
         renderChainBar(step.show);
+        if (looking) reportPageChain(now);
     }
 
     function startChainBar() {
