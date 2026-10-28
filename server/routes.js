@@ -2344,6 +2344,11 @@ router.post("/api/admin/xanax/repoll/:warId", requireAuth, async (req, res) => {
 
 const FACTIONOPS_MIN_VERSION = '5.6.26';
 
+// The first FactionOps that takes its buttons off the war page when /api/auth
+// answers 403 (5.5.3, written for factions the server turns away). Older
+// copies read a 403 as an ordinary failure and say nothing about it.
+const FACTIONOPS_WAR_PAGE_OFF_VERSION = '5.5.3';
+
 // Partner builds that version themselves with a NAME rather than a number.
 //
 // The comparison below reads a version as dot-separated integers, and
@@ -2373,16 +2378,48 @@ function factionopsClientName(v) {
   return String(v).trim().toLowerCase().split(/[\s\-_/]|\d/)[0];
 }
 
-function factionopsVersionTooOld(v) {
-  if (!v || typeof v !== 'string') return false; // legacy clients that don't send a version — let them through
-  if (FACTIONOPS_NAMED_VERSIONS.has(factionopsClientName(v))) return false;
-  const a = v.split('.').map(Number), b = FACTIONOPS_MIN_VERSION.split('.').map(Number);
+/** True when version `v` is below `floor`, both read as dot-separated integers. */
+function factionopsVersionBelow(v, floor) {
+  const a = String(v).split('.').map(Number), b = floor.split('.').map(Number);
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
     const ai = a[i] || 0, bi = b[i] || 0;
     if (ai < bi) return true;
     if (ai > bi) return false;
   }
   return false;
+}
+
+function factionopsVersionTooOld(v) {
+  if (!v || typeof v !== 'string') return false; // legacy clients that don't send a version — let them through
+  if (FACTIONOPS_NAMED_VERSIONS.has(factionopsClientName(v))) return false;
+  return factionopsVersionBelow(v, FACTIONOPS_MIN_VERSION);
+}
+
+/**
+ * What /api/auth answers an outdated FactionOps.
+ *
+ * The owner's rule (2026-10-27): an outdated copy stops working on the war
+ * page and nowhere else, so the chain bar and the notifications keep running.
+ * A copy from 5.5.3 on answered 403 removes its CALL buttons, the filter bar
+ * and the called-row tint, keeps them off as Torn repaints the list, and
+ * toasts `error` as it stands. Then it carries on with the sign-in it saved:
+ * it still polls, still raises its alerts and still counts as online for the
+ * pushes. Older copies get the 426, the one refusal they show; it adds the
+ * Tampermonkey hint itself, and their war page keeps working.
+ */
+function factionopsOutdatedAnswer(v) {
+  const updateUrl = 'https://tornwar.com/scripts/factionops.user.js';
+  if (factionopsVersionBelow(v, FACTIONOPS_WAR_PAGE_OFF_VERSION)) {
+    return { status: 426, body: {
+      error: `FactionOps ${v} is outdated — please update to v${FACTIONOPS_MIN_VERSION} or newer.`,
+      outdated: true, updateUrl,
+    } };
+  }
+  return { status: 403, body: {
+    error: `FactionOps ${v} is outdated: update to v${FACTIONOPS_MIN_VERSION} or newer to use it on the war page. `
+      + 'Open Tampermonkey → Check for userscript updates.',
+    outdated: true, updateUrl,
+  } };
 }
 
 router.post("/api/auth", async (req, res) => {
@@ -2411,12 +2448,10 @@ router.post("/api/auth", async (req, res) => {
     // version zero and turned away every time, invisibly — and the absence
     // of any log line then read as evidence the gate was refusing nobody.
     // A gate that can reject a real user must leave a trace when it does.
+    const answer = factionopsOutdatedAnswer(scriptVersion);
     console.warn(`[auth] REFUSED as outdated: version=${JSON.stringify(scriptVersion)} `
-      + `name=${JSON.stringify(scriptName || null)} min=${FACTIONOPS_MIN_VERSION} ip=${req.ip || "?"}`);
-    return res.status(426).json({
-      error: `FactionOps ${scriptVersion} is outdated — please update to v${FACTIONOPS_MIN_VERSION} or newer.`,
-      updateUrl: 'https://tornwar.com/scripts/factionops.user.js',
-    });
+      + `name=${JSON.stringify(scriptName || null)} min=${FACTIONOPS_MIN_VERSION} status=${answer.status} ip=${req.ip || "?"}`);
+    return res.status(answer.status).json(answer.body);
   }
 
   try {
