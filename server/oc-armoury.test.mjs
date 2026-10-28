@@ -1,6 +1,7 @@
-// OC Spawn's Armoury sub-tab (3.2.86): the pure parts lifted out of the script
-// and driven with a made-up armoury -- the rows it lists, the search, which
-// armoury copy a loan or a retrieve acts on, and the request types it tries.
+// OC Spawn's Armoury sub-tab (3.2.87, ranked-war weapons only): the pure parts
+// lifted out of the script and driven with a made-up armoury -- the copies it
+// lists, their bonuses, the search, the request types it tries, and how it
+// reads Torn's answer.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -20,87 +21,68 @@ function fn(name) {
   }
   throw new Error(name + ' never closes');
 }
-const names = ['mgr_armouryRows', 'mgr_armouryMatches', 'mgr_armouryPostTypes', 'mgr_armouryPageTypes', 'mgr_pickArmoryID', 'mgr_actionResult'];
+const names = ['mgr_rwBonusLabel', 'mgr_rwCopies', 'mgr_armouryMatches', 'mgr_armouryPostTypes', 'mgr_actionResult'];
 const L = () => new Function(names.map(fn).join('\n') + '\nreturn { ' + names.join(', ') + ' };')();
 
-// A made-up armoury, in the shape Torn's v1 faction API gives it: loaned_to is
-// a number for one borrower and an "id,id" string for several.
-const API = {
-  weapons: [
-    { ID: 2, name: 'Zebra Knife', type: 'Melee', quantity: 2, available: 2, loaned: 0, loaned_to: null },
-    { ID: 1, name: 'AK-47', type: 'Primary', quantity: 3, available: 1, loaned: 2, loaned_to: '1000001,1000002' },
-    { ID: 3, name: 'Glock 17', type: 'Secondary', quantity: 1, available: 0, loaned: 1, loaned_to: 1000003 },
-  ],
-  armor: [
-    { ID: 9, name: 'Riot Helmet', type: 'Defensive', quantity: 4, available: 3, loaned: 1, loaned_to: 1000001 },
-  ],
-  utilities: [{ ID: 5, name: 'Lockpicks', type: 'Tool', quantity: 9, available: 9, loaned: 0, loaned_to: null }],
-};
-const MEMBERS = new Map([['1000001', 'Alpha'], ['1000002', 'Bravo'], ['1000003', 'Charlie']]);
+// Rows as the armoury page (step=armouryTabContent) gives them: one per copy,
+// glowClass "glow-red|orange|yellow" on a ranked-war copy and "" on a plain
+// one, the bonuses as icons with a title, and the holder as user (false when free).
+const bonus = (name, text) => ({ class: 'bonus-attachment-' + name.toLowerCase(), title: `<b>${name}</b><br/>${text}` });
+const blank = { class: 'bonus-attachment-blank-bonus-25' };
+const PAGE = [
+  { armoryID: 11, itemID: '26', name: 'AK-47', type: 'Primary', glowClass: '', bonuses: [blank, blank], user: false },
+  { armoryID: 12, itemID: '26', name: 'AK-47', type: 'Primary', glowClass: 'glow-orange', bonuses: [bonus('Warlord', '22% increased respect upon final hit'), blank], user: false },
+  { armoryID: 13, itemID: '399', name: 'Zebra Blade', type: 'Melee', glowClass: 'glow-yellow', bonuses: [bonus('Disarm', 'Disarm for 7 turns'), blank], user: { userID: 1000002, playername: 'Bravo' } },
+  { armoryID: 14, itemID: '26', name: 'AK-47', type: 'Primary', glowClass: 'glow-red', bonuses: [bonus('Warlord', '31% increased respect upon final hit'), bonus('Expose', '9% increased critical hit rate')], user: { id: '1000009', playername: 'Gone' } },
+  { armoryID: 15, itemID: '3', name: 'Glock 17', type: 'Secondary', glowClass: 'glow-orange', bonuses: [blank], user: '' },
+];
 
-test('it lists weapons by kind (primary, secondary, melee) and then armour, and nothing else', () => {
-  const rows = L().mgr_armouryRows(API, MEMBERS);
-  assert.deepEqual(rows.map((r) => r.name), ['AK-47', 'Glock 17', 'Zebra Knife', 'Riot Helmet']);
-  assert.deepEqual(rows.map((r) => r.kind), ['weapons', 'weapons', 'weapons', 'armor']);
+test('only ranked-war copies are listed, red then orange then yellow, then by name', () => {
+  const rows = L().mgr_rwCopies(PAGE);
+  assert.deepEqual(rows.map((r) => r.armoryID), [14, 12, 15, 13]);
+  assert.deepEqual(rows.map((r) => r.rarity), ['red', 'orange', 'orange', 'yellow']);
 });
 
-test('each row has its counts and its borrowers by name, whichever shape loaned_to comes in', () => {
-  const rows = L().mgr_armouryRows(API, MEMBERS);
-  assert.deepEqual(rows[0], { itemID: 1, name: 'AK-47', kind: 'weapons', type: 'Primary', quantity: 3, available: 1,
-    loanedTo: [{ id: '1000001', name: 'Alpha' }, { id: '1000002', name: 'Bravo' }] });
-  assert.deepEqual(rows[1].loanedTo, [{ id: '1000003', name: 'Charlie' }]);
-  assert.deepEqual(rows[2].loanedTo, []);
+test('each copy carries its own armoury id, type, bonuses and holder', () => {
+  const rows = L().mgr_rwCopies(PAGE);
+  assert.deepEqual(rows[0], { armoryID: 14, itemID: 26, name: 'AK-47', type: 'Primary', rarity: 'red',
+    bonuses: ['Warlord 31%', 'Expose 9%'], holder: { id: '1000009', name: 'Gone' } });
+  assert.equal(rows[1].holder, null);
+  assert.deepEqual(rows[2].bonuses, []);
+  assert.equal(rows[2].holder, null);
+  assert.deepEqual(rows[3].holder, { id: '1000002', name: 'Bravo' });
 });
 
-test('a borrower who has left the faction still shows, by id', () => {
-  const rows = L().mgr_armouryRows({ weapons: [{ ID: 1, name: 'AK-47', type: 'Primary', quantity: 1, available: 0, loaned: 1, loaned_to: 1000009 }] }, MEMBERS);
-  assert.deepEqual(rows[0].loanedTo, [{ id: '1000009', name: '[1000009]' }]);
+test('a bonus reads as its name and number', () => {
+  const { mgr_rwBonusLabel: b } = L();
+  assert.equal(b('<b>Warlord</b><br/>31% increased respect upon final hit'), 'Warlord 31%');
+  assert.equal(b('<b>Disarm</b><br/>Disarm for 7 turns'), 'Disarm 7');
+  assert.equal(b('<b>Bleed</b>'), 'Bleed');
+  assert.equal(b(undefined), '');
 });
 
-test('an empty or missing armoury lists nothing', () => {
-  assert.deepEqual(L().mgr_armouryRows({}, MEMBERS), []);
-  assert.deepEqual(L().mgr_armouryRows(null, MEMBERS), []);
+test('nothing, or rows with no rarity, list nothing', () => {
+  const { mgr_rwCopies: c } = L();
+  assert.deepEqual(c(null), []);
+  assert.deepEqual(c([{ armoryID: 1, itemID: '1', name: 'X', type: 'Primary', user: false }]), []);
 });
 
-test('the search matches an item, its type, or who has it, in any case', () => {
+test('the search matches an item, its type, rarity, bonus, or who has it, in any case', () => {
   const lib = L();
-  const rows = lib.mgr_armouryRows(API, MEMBERS);
-  const hit = (q) => rows.filter((r) => lib.mgr_armouryMatches(r, q)).map((r) => r.name);
-  assert.deepEqual(hit('ak'), ['AK-47']);
-  assert.deepEqual(hit('melee'), ['Zebra Knife']);
-  assert.deepEqual(hit('ALPHA'), ['AK-47', 'Riot Helmet']);
-  assert.deepEqual(hit(''), ['AK-47', 'Glock 17', 'Zebra Knife', 'Riot Helmet']);
+  const rows = lib.mgr_rwCopies(PAGE);
+  const hit = (q) => rows.filter((r) => lib.mgr_armouryMatches(r, q)).map((r) => r.armoryID);
+  assert.deepEqual(hit('glock'), [15]);
+  assert.deepEqual(hit('MELEE'), [13]);
+  assert.deepEqual(hit('red'), [14]);
+  assert.deepEqual(hit('warlord'), [14, 12]);
+  assert.deepEqual(hit('bravo'), [13]);
+  assert.deepEqual(hit(''), [14, 12, 15, 13]);
 });
 
-test("a loan or retrieve names the item's own type first, then the older guess", () => {
+test("a loan or retrieve names the copy's own type first, then the older guess", () => {
   const { mgr_armouryPostTypes: t } = L();
   assert.deepEqual(t('weapons', 'Secondary'), ['Secondary', 'Primary']);
   assert.deepEqual(t('weapons', 'Primary'), ['Primary']);
-  assert.deepEqual(t('armor', 'Defensive'), ['Defensive', 'Armor']);
-  assert.deepEqual(t('armor', ''), ['Defensive', 'Armor']);
-});
-
-test("the armoury page is read under the weapons tab, and both spellings of armour", () => {
-  const { mgr_armouryPageTypes: t } = L();
-  assert.deepEqual(t('weapons'), ['weapons']);
-  assert.deepEqual(t('armor'), ['armor', 'armour']);
-});
-
-test('a loan takes a free copy, and a retrieve the copy that member holds', () => {
-  const { mgr_pickArmoryID: pick } = L();
-  // The page's rows: borrowers come as user.userID or user.id; free is user false/''/0.
-  const page = [
-    { armoryID: 11, itemID: '1', user: { userID: 1000001 } },
-    { armoryID: 12, itemID: '1', user: { id: '1000002' } },
-    { armoryID: 13, itemID: '1', user: false },
-    { armoryID: 14, itemID: '2', user: '' },
-  ];
-  assert.equal(pick(page, 1, null), 13);
-  assert.equal(pick(page, 1, '1000002'), 12);
-  assert.equal(pick(page, 1, 1000001), 11);
-  assert.equal(pick(page, 2, null), 14);
-  assert.equal(pick(page, 1, '1000003'), null);
-  assert.equal(pick(page, 3, null), null);
 });
 
 test("Torn's answer to a loan or retrieve: success only when it says success is true", () => {
@@ -115,9 +97,9 @@ test("Torn's answer to a loan or retrieve: success only when it says success is 
   assert.equal(r('Something went wrong').ok, false);
 });
 
-test('3.2.86 in both places, and the meta file is the header', () => {
+test('3.2.87 in both places, and the meta file is the header', () => {
   const end = '// ==/UserScript==';
   assert.equal(META, SRC.slice(0, SRC.indexOf(end) + end.length) + '\n');
-  assert.match(SRC, /^\/\/ @version\s+3\.2\.86$/m);
-  assert.match(SRC, /const SCRIPT_VERSION = '3\.2\.86';/);
+  assert.match(SRC, /^\/\/ @version\s+3\.2\.87$/m);
+  assert.match(SRC, /const SCRIPT_VERSION = '3\.2\.87';/);
 });

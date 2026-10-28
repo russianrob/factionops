@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.86
+// @version      3.2.87
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,11 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.87 — Armoury lists only ranked-war weapons: one line per copy with
+//           its rarity, bonuses and holder, read from the armoury page when
+//           the tab opens. Loan and ↩ act on that exact copy, so a plain copy
+//           of the same weapon is never the one lent. Armour is no longer
+//           listed.
 // v3.2.86 — Manager → Armoury: the faction's weapons and armour with how many
 //           are free and who holds the rest. Pick a member in "Loan to",
 //           then Loan on any item; ↩ beside a borrower retrieves it. Search
@@ -422,7 +427,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.86';
+    const SCRIPT_VERSION = '3.2.87';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -2215,67 +2220,56 @@
     const ARMORY_API_SELECTIONS = ['utilities', 'drugs', 'medical', 'boosters', 'temporary', 'armor', 'weapons', 'caches'];
     const ARMORY_CATEGORIES = ['utilities', 'drugs', 'medical', 'boosters', 'temporary', 'clothing', 'armor', 'armour']; // page AJAX categories (loan/retrieve only)
 
-    // --- Armoury sub-tab (3.2.86): weapons and armour to loan out ---
-    // The rows it lists, from the v1 armoury API (weapons + armor): weapons
-    // by kind (primary, secondary, melee), then armour, each by name, with
-    // its borrowers by name. loaned_to is a number for one borrower and an
-    // "id,id" string for several; a borrower no longer in the member list
-    // shows as [id].
-    function mgr_armouryRows(data, names) {
-        const order = { Primary: 0, Secondary: 1, Melee: 2 };
-        const rows = [];
-        for (const kind of ['weapons', 'armor']) {
-            const list = data && Array.isArray(data[kind]) ? data[kind] : [];
-            for (const it of list) {
-                const ids = it.loaned_to == null || it.loaned_to === '' ? [] : String(it.loaned_to).split(',').map(x => x.trim()).filter(Boolean);
-                rows.push({
-                    itemID: Number(it.ID), name: String(it.name || ''), kind, type: String(it.type || ''),
-                    quantity: Number(it.quantity) || 0, available: Number(it.available) || 0,
-                    loanedTo: ids.map(id => ({ id, name: (names && names.get(id)) || `[${id}]` })),
-                });
-            }
-        }
-        const rank = (r) => (r.kind === 'weapons' ? 0 : 10) + (r.kind === 'weapons' ? (order[r.type] ?? 3) : 0);
-        return rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+    // --- Armoury sub-tab (3.2.87): ranked-war weapons to loan out ---
+    // A bonus icon's title is "<b>Warlord</b><br/>31% increased respect…";
+    // it reads as "Warlord 31%" (a number with no % keeps just the number).
+    function mgr_rwBonusLabel(title) {
+        const s = String(title || '');
+        const name = (/<b>([^<]+)<\/b>/.exec(s) || [])[1];
+        if (!name) return '';
+        const n = /(\d+(?:\.\d+)?)(\s*%)?/.exec(s.slice(s.indexOf('</b>') + 4));
+        return n ? `${name.trim()} ${n[1]}${n[2] ? '%' : ''}` : name.trim();
     }
 
-    // The search: an item's name, its type, or a borrower's name, any case.
+    // The copies it lists, from the armoury page's weapon rows (one row per
+    // copy): only ranked-war copies, which Torn marks with glowClass
+    // "glow-red|orange|yellow" (a plain copy has ""). Red first, then orange,
+    // then yellow, each by name. The holder is user.userID or user.id with
+    // user.playername; a free copy has user false or ''.
+    function mgr_rwCopies(rows) {
+        const rank = { red: 0, orange: 1, yellow: 2 };
+        const out = [];
+        for (const e of rows || []) {
+            const m = /glow-(red|orange|yellow)/.exec(String((e && e.glowClass) || ''));
+            if (!m || !e.armoryID) continue;
+            const id = e.user ? (e.user.userID ?? e.user.id) : null;
+            out.push({
+                armoryID: e.armoryID, itemID: Number(e.itemID), name: String(e.name || ''), type: String(e.type || ''),
+                rarity: m[1],
+                bonuses: (Array.isArray(e.bonuses) ? e.bonuses : []).map(b => mgr_rwBonusLabel(b && b.title)).filter(Boolean),
+                holder: id != null && id !== '' ? { id: String(id), name: String(e.user.playername || `[${id}]`) } : null,
+            });
+        }
+        return out.sort((a, b) => rank[a.rarity] - rank[b.rarity] || a.name.localeCompare(b.name) || a.armoryID - b.armoryID);
+    }
+
+    // The search: a copy's name, type, rarity, bonus, or holder, any case.
     function mgr_armouryMatches(row, query) {
         const q = String(query || '').trim().toLowerCase();
         if (!q) return true;
-        return row.name.toLowerCase().includes(q) || row.type.toLowerCase().includes(q)
-            || row.loanedTo.some(b => b.name.toLowerCase().includes(q));
+        return [row.name, row.type, row.rarity, ...row.bonuses, row.holder ? row.holder.name : '']
+            .some(t => String(t).toLowerCase().includes(q));
     }
 
     // The `type` a loan or retrieve request names, in the order to try: the
-    // item's own type from the API first (Primary / Secondary / Melee /
-    // Defensive), then the older guess this script used (Primary for every
+    // copy's own type from the armoury page first (Primary / Secondary /
+    // Melee / Defensive), then the older guess this script used (Primary for every
     // weapon, Armor for armour). Torn's expected value for weapons and armour
     // is not confirmed, so a refused first try gets one more.
     function mgr_armouryPostTypes(kind, type) {
         const first = type || (kind === 'armor' ? 'Defensive' : 'Primary');
         const old = kind === 'armor' ? 'Armor' : 'Primary';
         return first === old ? [first] : [first, old];
-    }
-
-    // The armoury page's own tab names for each kind (armour has two
-    // spellings, as the loan code above already allows for).
-    function mgr_armouryPageTypes(kind) {
-        return kind === 'armor' ? ['armor', 'armour'] : ['weapons'];
-    }
-
-    // Which armoury copy to act on, from the page's rows: a free copy of the
-    // item for a loan (userID null), or the copy that member holds for a
-    // retrieve. Borrowers come as user.userID or user.id; a free copy has
-    // user false, '' or 0.
-    function mgr_pickArmoryID(entries, itemID, userID) {
-        for (const e of entries || []) {
-            if (Number(e.itemID) !== Number(itemID) || !e.armoryID) continue;
-            const holder = e.user && (e.user.userID ?? e.user.id);
-            if (userID == null) { if (!holder) return e.armoryID; }
-            else if (holder != null && holder !== '' && String(holder) === String(userID)) return e.armoryID;
-        }
-        return null;
     }
 
     // What Torn's answer to a loan or retrieve means. Torn refuses with HTTP
@@ -3333,10 +3327,13 @@
         .mgr-arm-row { padding: 6px 0; border-bottom: 1px solid #2d4a3e; }
         .mgr-arm-main { display: flex; align-items: center; gap: 6px; }
         .mgr-arm-name { font-weight: 600; font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .mgr-arm-type, .mgr-arm-count { font-size: 11px; color: #9ca3af; white-space: nowrap; }
-        .mgr-arm-main .mgr-action-btn { width: auto; margin: 0; padding: 3px 10px; }
-        .mgr-arm-borrowers { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-        .mgr-arm-chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 2px 1px 7px; font-size: 11px; border-radius: 14px; background: #0d1b2a; border: 1px solid #2d4a3e; color: #e5e7eb; }
+        .mgr-arm-type { font-size: 11px; color: #9ca3af; white-space: nowrap; }
+        .mgr-arm-sub { display: flex; align-items: center; gap: 6px; margin-top: 3px; min-height: 28px; }
+        .mgr-arm-bonus { flex: 1; min-width: 0; font-size: 11px; color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mgr-arm-sub .mgr-action-btn { width: auto; margin: 0; padding: 3px 10px; }
+        .mgr-arm-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
+        .mgr-arm-red { background: #ef4444; } .mgr-arm-orange { background: #f59e0b; } .mgr-arm-yellow { background: #facc15; }
+        .mgr-arm-chip { display: inline-flex; align-items: center; gap: 3px; max-width: 60%; padding: 1px 2px 1px 8px; font-size: 11px; border-radius: 14px; background: #0d1b2a; border: 1px solid #2d4a3e; color: #e5e7eb; white-space: nowrap; overflow: hidden; }
         .mgr-arm-back { border: 0; background: none; cursor: pointer; font-size: 14px; padding: 0 6px; min-width: 28px; min-height: 28px; color: #f87171; }
         .mgr-arm-back:disabled { opacity: .5; cursor: default; }
         .mgr-btn-success { background: #1b4332 !important; color: #74c69d !important; }
@@ -6850,62 +6847,60 @@
     let mgr_currentSubTab = 'missing';
 
     // ──────────────────────────────────────────────────────────────────
-    //  ARMOURY SUB-TAB — loan out weapons and armour (3.2.86)
+    //  ARMOURY SUB-TAB — loan out ranked-war weapons (3.2.86, RW-only 3.2.87)
     // ──────────────────────────────────────────────────────────────────
-    // Lists the faction's weapons and armour from the API with how many are
-    // free and who holds the rest. Pick a member once, then Loan on any item;
-    // ↩ beside a borrower retrieves their copy. Every request is one tap.
+    // Lists each ranked-war weapon copy in the armoury (rarity, bonuses, who
+    // holds it), read from the armoury page once when the tab opens. Pick a
+    // member once, then Loan on a free copy; ↩ beside a holder takes that
+    // copy back (second tap). Every request names that exact copy, so a
+    // plain copy of the same weapon is never the one lent.
     let mgr_armouryMember = '';   // the member picked in "Loan to", for this page view
     let mgr_armouryQuery = '';
     let mgr_armouryList = [];
-    let mgr_armouryBusy = null;   // the one loan/retrieve in flight: { row, userID }
-    const mgr_armouryLogged = new Set();   // kinds whose working type was already logged
+    let mgr_armouryBusy = null;   // the one loan/retrieve in flight: { row, loan }
+    let mgr_armouryLogged = false;   // the working type was already logged this page view
 
-    // Pages through the armoury tab for a kind until it finds the copy to act
-    // on (see mgr_pickArmoryID).
-    async function mgr_findArmoryID(kind, itemID, userID) {
+    // All weapon rows on the armoury page, 50 per request, up to Torn's
+    // 1000-row cap. Throws when no page answers (no armoury permission).
+    async function mgr_scanArmouryWeapons() {
         const rfcv = mgr_getRfcvToken();
         if (!rfcv) throw new Error('Missing RFCV cookie — refresh the page and try again.');
-        let reached = false;   // did any armoury page answer at all?
-        for (const type of mgr_armouryPageTypes(kind)) {
-            for (let start = 0; start < 1000; start += 50) {
-                const body = new URLSearchParams({ step: 'armouryTabContent', type, start: String(start), ajax: 'true' });
-                const res = await fetch(`https://www.torn.com/factions.php?rfcv=${rfcv}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' }, body, credentials: 'same-origin' });
-                if (!res.ok) break;
-                let data;
-                try { data = await res.json(); } catch (_) { break; }
-                if (data && 'items' in data) reached = true;
-                const rows = data && data.items ? (Array.isArray(data.items) ? data.items : Object.values(data.items)) : [];
-                const found = mgr_pickArmoryID(rows, itemID, userID);
-                if (found) return found;
-                if (rows.length < 50) break;
-            }
+        const all = [];
+        let reached = false;
+        for (let start = 0; start < 1000; start += 50) {
+            const body = new URLSearchParams({ step: 'armouryTabContent', type: 'weapons', start: String(start), ajax: 'true' });
+            const res = await fetch(`https://www.torn.com/factions.php?rfcv=${rfcv}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' }, body, credentials: 'same-origin' });
+            if (!res.ok) break;
+            let data;
+            try { data = await res.json(); } catch (_) { break; }
+            if (!data || !('items' in data)) break;
+            reached = true;
+            const rows = Array.isArray(data.items) ? data.items : Object.values(data.items || {});
+            all.push(...rows);
+            if (rows.length < 50) break;
         }
         if (!reached) throw new Error('No armoury access');
-        return null;
+        return all;
     }
 
-    // One loan or retrieve: finds the copy, then sends the request with each
-    // type in mgr_armouryPostTypes until Torn accepts one. A refusal is
-    // logged (tag oc-armoury, no key) so the right type can be confirmed.
-    async function mgr_armouryAct(role, row, userID, userName) {
-        const armoryID = await mgr_findArmoryID(row.kind, row.itemID, role === 'loan' ? null : userID);
-        if (!armoryID) throw new Error(role === 'loan' ? 'No free copy' : 'Copy not found');
+    // One loan or retrieve of that copy, sending each type in
+    // mgr_armouryPostTypes until Torn accepts one. A refusal, and the first
+    // success, is logged (tag oc-armoury, no key) so the type can be confirmed.
+    async function mgr_armouryAct(role, copy, userID, userName) {
         const tried = [];
-        for (const postType of mgr_armouryPostTypes(row.kind, row.type)) {
+        for (const postType of mgr_armouryPostTypes('weapons', copy.type)) {
             try {
-                if (role === 'loan') await mgr_loanItem({ armoryID, itemID: row.itemID, userID, userName, postType });
-                else await mgr_retrieveItem({ armoryID, itemID: row.itemID, userID, userName, postType });
-                const first = !mgr_armouryLogged.has(row.kind);
-                if (tried.length || first) mgr_reportArmoury({ role, kind: row.kind, ok: postType, refused: tried });
-                mgr_armouryLogged.add(row.kind);
+                const args = { armoryID: copy.armoryID, itemID: copy.itemID, userID, userName, postType };
+                if (role === 'loan') await mgr_loanItem(args); else await mgr_retrieveItem(args);
+                if (tried.length || !mgr_armouryLogged) mgr_reportArmoury({ role, ok: postType, refused: tried });
+                mgr_armouryLogged = true;
                 return;
             } catch (e) {
-                if (e && e.captcha) { mgr_reportArmoury({ role, kind: row.kind, ok: null, captcha: true, refused: tried }); throw e; }
+                if (e && e.captcha) { mgr_reportArmoury({ role, ok: null, captcha: true, refused: tried }); throw e; }
                 tried.push(`${postType}: ${String(e && e.message || e).slice(0, 60)}`);
             }
         }
-        mgr_reportArmoury({ role, kind: row.kind, ok: null, refused: tried });
+        mgr_reportArmoury({ role, ok: null, refused: tried });
         throw new Error(role === 'loan' ? 'Loan refused' : 'Retrieve refused');
     }
 
@@ -6923,21 +6918,21 @@
     async function mgr_loadArmouryTab() {
         const content = document.getElementById('mgr-sub-content');
         content.innerHTML = '<div class="mgr-loading">Reading the armoury…</div>';
+        let rows;
         try {
             await mgr_loadMembers();
-            const key = getApiKey();
-            if (!key || key === 'YOUR_API_KEY_HERE') throw new Error('API key required');
-            // v1: the armoury selections do not exist on v2.
-            const r = await gmRequest(`https://api.torn.com/faction/?selections=weapons,armor&key=${encodeURIComponent(key)}&comment=oc-spawn`);
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            if (r.data && r.data.error) throw new Error(`Torn API: ${r.data.error.error || 'error'} (code ${r.data.error.code})`);
-            mgr_armouryList = mgr_armouryRows(r.data, mgr_memberNameMap);
+            rows = await mgr_scanArmouryWeapons();
         } catch (e) {
             if (mgr_currentSubTab !== 'armoury') return;
             content.innerHTML = `<div class="oc-error">Couldn't read the armoury: ${mgr_esc(e.message || e)}</div>`;
             return;
         }
         if (mgr_currentSubTab !== 'armoury') return;
+        mgr_armouryList = mgr_rwCopies(rows);
+        // Rows with no rarity field at all mean Torn changed the page: say so,
+        // and log the field names (names only) so it can be fixed.
+        const noRarity = rows.length > 0 && !rows.some(r => r && 'glowClass' in r);
+        if (noRarity) mgr_reportArmoury({ noRarity: true, keys: Object.keys(rows[0] || {}) });
         const members = [...mgr_memberNameMap.entries()].sort((a, b) => a[1].localeCompare(b[1]));
         content.innerHTML = `
             <div class="mgr-arm-controls">
@@ -6945,9 +6940,9 @@
                     <option value="">Loan to…</option>
                     ${members.map(([id, name]) => `<option value="${mgr_esc(id)}"${id === mgr_armouryMember ? ' selected' : ''}>${mgr_esc(name)}</option>`).join('')}
                 </select>
-                <input id="mgr-arm-search" class="mgr-arm-input" type="search" placeholder="Search item or member" value="${mgr_esc(mgr_armouryQuery)}">
+                <input id="mgr-arm-search" class="mgr-arm-input" type="search" placeholder="Search weapon, bonus or member" value="${mgr_esc(mgr_armouryQuery)}">
             </div>
-            <div id="mgr-arm-list"></div>`;
+            <div id="mgr-arm-list"${noRarity ? ' data-norarity="1"' : ''}></div>`;
         content.querySelector('#mgr-arm-member').addEventListener('change', (e) => { mgr_armouryMember = e.target.value; });
         content.querySelector('#mgr-arm-search').addEventListener('input', (e) => { mgr_armouryQuery = e.target.value; mgr_renderArmouryList(); });
         content.querySelector('#mgr-arm-list').addEventListener('click', mgr_onArmouryClick);
@@ -6957,24 +6952,29 @@
     function mgr_renderArmouryList() {
         const list = document.getElementById('mgr-arm-list');
         if (!list) return;
+        if (list.dataset.norarity) { list.innerHTML = `<div class="mgr-ok">Couldn't tell ranked-war weapons from plain ones (Torn's rarity field is missing). Logged for a fix.</div>`; return; }
         const rows = mgr_armouryList.filter(r => mgr_armouryMatches(r, mgr_armouryQuery));
-        if (!rows.length) { list.innerHTML = `<div class="mgr-ok">${mgr_armouryList.length ? 'Nothing matches.' : 'No weapons or armour in the armoury.'}</div>`; return; }
-        let html = '', heading = '';
+        if (!rows.length) { list.innerHTML = `<div class="mgr-ok">${mgr_armouryList.length ? 'Nothing matches.' : 'No ranked-war weapons in the armoury.'}</div>`; return; }
+        const free = mgr_armouryList.filter(r => !r.holder).length;
+        const busy = mgr_armouryBusy;
+        let html = `<div class="mgr-arm-heading">Ranked-war weapons · ${mgr_armouryList.length} · ${free} free</div>`;
         for (const r of rows) {
-            const h = r.kind === 'weapons' ? 'Weapons' : 'Armour';
-            if (h !== heading) { heading = h; html += `<div class="mgr-arm-heading">${h}</div>`; }
             const i = mgr_armouryList.indexOf(r);
-            const busy = mgr_armouryBusy;
-            const loanBusy = busy && busy.row === i && busy.loan;
+            const mine = busy && busy.row === i;
+            const action = r.holder
+                ? `<span class="mgr-arm-chip">${mgr_esc(r.holder.name)}<button class="mgr-arm-back" data-row="${i}" title="Take back from ${mgr_esc(r.holder.name)}"${busy ? ' disabled' : ''}>${mine ? '…' : '↩'}</button></span>`
+                : `<button class="mgr-action-btn mgr-btn-loan mgr-arm-loan" data-row="${i}"${busy ? ' disabled' : ''}>${mine ? '…' : 'Loan'}</button>`;
             html += `
                 <div class="mgr-arm-row">
                     <div class="mgr-arm-main">
+                        <span class="mgr-arm-dot mgr-arm-${r.rarity}" title="${r.rarity}"></span>
                         <span class="mgr-arm-name">${mgr_esc(r.name)}</span>
                         <span class="mgr-arm-type">${mgr_esc(r.type)}</span>
-                        <span class="mgr-arm-count">${r.available} free of ${r.quantity}</span>
-                        <button class="mgr-action-btn mgr-btn-loan mgr-arm-loan" data-row="${i}"${r.available > 0 && !busy ? '' : ' disabled'}>${loanBusy ? '…' : 'Loan'}</button>
                     </div>
-                    ${r.loanedTo.length ? `<div class="mgr-arm-borrowers">${r.loanedTo.map(b => `<span class="mgr-arm-chip">${mgr_esc(b.name)}<button class="mgr-arm-back" data-row="${i}" data-userid="${mgr_esc(b.id)}" title="Retrieve from ${mgr_esc(b.name)}"${busy ? ' disabled' : ''}>${busy && busy.row === i && !busy.loan && busy.userID === String(b.id) ? '…' : '↩'}</button></span>`).join('')}</div>` : ''}
+                    <div class="mgr-arm-sub">
+                        <span class="mgr-arm-bonus">${r.bonuses.length ? mgr_esc(r.bonuses.join(' · ')) : 'No bonus'}</span>
+                        ${action}
+                    </div>
                 </div>`;
         }
         list.innerHTML = html;
@@ -6984,30 +6984,29 @@
         const btn = e.target.closest('button');
         if (!btn || btn.disabled || btn.dataset.busy || mgr_armouryBusy) return;
         const i = Number(btn.dataset.row);
-        const row = mgr_armouryList[i];
-        if (!row) return;
+        const copy = mgr_armouryList[i];
+        if (!copy) return;
         const loan = btn.classList.contains('mgr-arm-loan');
-        const userID = String(loan ? mgr_armouryMember : btn.dataset.userid);
+        if (loan ? copy.holder : !copy.holder) return;
         const label = btn.textContent;
-        const flash = (text, ms) => { btn.dataset.busy = '1'; btn.textContent = text; setTimeout(() => { if (btn.isConnected) { btn.textContent = label; delete btn.dataset.busy; delete btn.dataset.confirm; } }, ms); };
+        const flash = (text, ms) => { btn.dataset.busy = '1'; btn.textContent = text; setTimeout(() => { if (btn.isConnected) { btn.textContent = label; delete btn.dataset.busy; } }, ms); };
         if (loan && !mgr_armouryMember) return flash('Pick a member', 1500);
-        const holder = row.loanedTo.find(b => b.id === userID);
-        const userName = mgr_memberNameMap.get(userID) || '';
-        // A retrieve takes a second tap, so a slip cannot take an item back.
+        const userID = loan ? String(mgr_armouryMember) : copy.holder.id;
+        const userName = loan ? (mgr_memberNameMap.get(userID) || '') : copy.holder.name;
+        // Taking a copy back takes a second tap, so a slip cannot do it.
         if (!loan && !btn.dataset.confirm) {
             btn.dataset.confirm = '1';
-            btn.textContent = `Take from ${(holder && holder.name) || userName || userID}?`;
+            btn.textContent = `Take from ${copy.holder.name}?`;
             setTimeout(() => { if (btn.isConnected && btn.dataset.confirm) { btn.textContent = label; delete btn.dataset.confirm; } }, 3000);
             return;
         }
-        mgr_armouryBusy = { row: i, loan, userID };
+        mgr_armouryBusy = { row: i, loan };
         mgr_renderArmouryList();
         let failed = '';
         try {
-            await mgr_armouryAct(loan ? 'loan' : 'retrieve', row, userID, userName);
-            // Show the change at once; the API catches up on the next load.
-            if (loan) { row.available -= 1; row.loanedTo.push({ id: userID, name: userName || `[${userID}]` }); }
-            else { row.available += 1; const k = row.loanedTo.findIndex(b => b.id === userID); if (k >= 0) row.loanedTo.splice(k, 1); }
+            await mgr_armouryAct(loan ? 'loan' : 'retrieve', copy, userID, userName);
+            // Show the change at once; the page catches up on the next open.
+            copy.holder = loan ? { id: userID, name: userName || `[${userID}]` } : null;
         } catch (err) {
             failed = String(err && err.message || err).slice(0, 24);
         }
@@ -7015,8 +7014,7 @@
         mgr_renderArmouryList();
         if (!failed) return;
         // The list was redrawn, so show the reason on the new button.
-        const sel = loan ? `.mgr-arm-loan[data-row="${i}"]` : `.mgr-arm-back[data-row="${i}"][data-userid="${userID}"]`;
-        const again = document.querySelector(`#mgr-arm-list ${sel}`);
+        const again = document.querySelector(`#mgr-arm-list ${loan ? '.mgr-arm-loan' : '.mgr-arm-back'}[data-row="${i}"]`);
         if (!again) return;
         const was = again.textContent;
         again.dataset.busy = '1'; again.textContent = failed;
@@ -7049,6 +7047,11 @@
     }
 
     function loadManagerSubTab(tab) {
+        // A fresh container per switch: each loader holds the one it found
+        // when it started, so a slow load from the tab left behind writes
+        // into the old, detached one instead of over this tab (3.2.87).
+        const old = document.getElementById('mgr-sub-content');
+        if (old) old.replaceWith(Object.assign(document.createElement('div'), { id: 'mgr-sub-content', className: 'mgr-sub-content' }));
         if (tab === 'missing') mgr_loadMissingTab();
         else if (tab === 'unused') mgr_loadUnusedTab();
         else if (tab === 'payouts') mgr_loadPayoutsTab();
