@@ -682,7 +682,7 @@ test("while Torn's API shows the chain over at a lower count, a page report's lo
   const { api, seen } = buildMonitor({ w1: war });
   assert.equal(api.recordPageChain("w1", pageReport(1250, 25), "1000001"), true);
   assert.deepEqual(sent(seen), [["notifyChainPanic", "w1", 1250, 25]]);
-  assert.ok(seen.logs.some((l) => /PANIC alert: chain 1250, 25s remaining \(page\)/.test(l)), seen.logs.join("\n"));
+  assert.ok(seen.logs.some((l) => /PANIC alert: chain 1250, 25s remaining \(page 1000001\)/.test(l)), seen.logs.join("\n"));
 });
 
 test("the API's next readings check the page's clock too, with one CHAIN DYING in 20 s", async () => {

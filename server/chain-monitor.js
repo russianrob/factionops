@@ -193,7 +193,7 @@ function sendLowClockAlert(warId, war, count, timeoutS, source) {
 function checkPageClock(warId, war, page, nowMs) {
   const leftS = Math.round((page.endsAtMs - nowMs) / 1000);
   if (leftS > 0 && page.count >= chainAlertFloor(war, nowMs)) {
-    sendLowClockAlert(warId, war, page.count, leftS, "page");
+    sendLowClockAlert(warId, war, page.count, leftS, `page ${page.playerId}`);
   }
 }
 
