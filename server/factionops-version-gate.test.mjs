@@ -64,9 +64,15 @@ test("a genuinely outdated FactionOps is still refused", () => {
   assert.equal(tooOld("1.0.0"), true);
 });
 
+test("the floor is 5.6.26: everything older is refused, it and newer pass", () => {
+  // Raised at the owner's request (2026-10-27) with the 5.6.26 release.
+  assert.equal(MIN, "5.6.26");
+  for (const v of ["5.6.25", "5.6.19", "5.5.3", "5.4.7"]) assert.equal(tooOld(v), true, v);
+  for (const v of ["5.6.26", "5.6.27", "5.7.0", "6.0.0"]) assert.equal(tooOld(v), false, v);
+});
+
 test("a current version passes", () => {
   assert.equal(tooOld(MIN), false);
-  assert.equal(tooOld("5.4.2"), false);
 });
 
 test("a client that sends no version is still let through", () => {

@@ -2342,7 +2342,7 @@ router.post("/api/admin/xanax/repoll/:warId", requireAuth, async (req, res) => {
 
 // ── POST /api/auth ──────────────────────────────────────────────────────
 
-const FACTIONOPS_MIN_VERSION = '4.9.74';
+const FACTIONOPS_MIN_VERSION = '5.6.26';
 
 // Partner builds that version themselves with a NAME rather than a number.
 //
