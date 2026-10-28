@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.22
+// @version      5.6.23
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.22';
+    const SCRIPT_VERSION = '5.6.23';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -1442,6 +1442,55 @@ html.wb-theme-light {
     align-items: center;
     justify-content: space-between;
     margin-bottom: 6px;
+}
+#wb-assist-btn {
+    position: fixed;
+    bottom: 72px;
+    right: 14px;
+    z-index: 9999999 !important;
+    background: linear-gradient(135deg, #ff6b52, #e03a3a);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Open Sans", Arial, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(214, 48, 49, 0.35), inset 0 1px 0 rgba(255,255,255,0.12);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+#wb-assist-btn .wb-assist-icon {
+    width: 12px;
+    height: 12px;
+    display: inline-block;
+    vertical-align: middle;
+    flex-shrink: 0;
+    filter: drop-shadow(0 1px 0 rgba(0,0,0,0.25));
+}
+#wb-assist-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(214, 48, 49, 0.5), inset 0 1px 0 rgba(255,255,255,0.18);
+}
+#wb-assist-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 4px rgba(214, 48, 49, 0.4), inset 0 1px 0 rgba(0,0,0,0.12);
+}
+#wb-assist-btn:disabled {
+    background: linear-gradient(135deg, #4a5258, #2d3436);
+    color: #b0b8bc;
+    border-color: rgba(255,255,255,0.04);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    cursor: not-allowed;
+    transform: none;
 }
 
 /* ----- Animations ----- */
@@ -12942,6 +12991,107 @@ body.wb-chain-active {
         document.addEventListener('touchcancel', onUp);
     }
 
+    // The floating Assist button: one tap asks the war room for help on this
+    // fight's target (the server pushes it to the members on the war page).
+    // Attack pages only. Profile pages had a Retal button from this same
+    // function, removed at the owner's request; it stays removed.
+    function createAssistButton() {
+        if (!window.location.href.includes('sid=attack')) return;
+        if (document.getElementById('wb-assist-btn')) return;
+
+        const targetId = getAttackTargetId();
+        if (!targetId) {
+            // Torn React takes a moment to render the DOM, retry a few times
+            setTimeout(createAssistButton, 1000);
+            return;
+        }
+
+        const btn = document.createElement('button');
+        btn.id = 'wb-assist-btn';
+        btn.dataset.mode = 'assist';
+        btn.innerHTML = `
+            <svg class="wb-assist-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M6.92 5 5 6.92l6.31 6.31-2.18 2.18a2.4 2.4 0 1 0 1.06 1.06l2.18-2.18 2.17 2.17a2.4 2.4 0 1 0 1.06-1.06L13.43 13.3 19.74 7 17.82 5.08l-5.51 5.51-5.39-5.59Z"/>
+            </svg>
+            <span>Assist</span>
+        `;
+
+        // Dragging moves it and never sends; where it was dropped is kept
+        // under the same key as before the Retal button went.
+        makeAssistBtnDraggable(btn, 'assist');
+
+        btn.addEventListener('click', async () => {
+            if (btn.disabled) return;
+
+            const warId = deriveWarId();
+            if (!warId) {
+                showToast('Not connected to a war', 'warning');
+                return;
+            }
+
+            // The target's name for the push: the attack page's defender
+            // side, else FactionOps' own lists, else "Player [id]".
+            let targetName = null;
+            const nameSelectors = [
+                '.defender .username',
+                '[class*="defender"] [class*="userName"]',
+                '.playersModelWrap .right .username',
+                '[class*="user-information"] [class*="username"]',
+            ];
+            for (const sel of nameSelectors) {
+                try {
+                    const el = document.querySelector(sel);
+                    const txt = el && (el.textContent || '').trim();
+                    if (txt && !/^\s*\[?\d+\]?\s*$/.test(txt) && txt.length < 40) {
+                        targetName = txt;
+                        break;
+                    }
+                } catch (_) { /* invalid selector — keep going */ }
+            }
+            if (!targetName) {
+                const id = String(targetId);
+                if (Array.isArray(state.onlinePlayers)) {
+                    const m = state.onlinePlayers.find(p => String(p.id) === id);
+                    if (m && m.name) targetName = m.name;
+                }
+                if (!targetName && state.memberBars && state.memberBars[id] && state.memberBars[id].name) {
+                    targetName = state.memberBars[id].name;
+                }
+            }
+
+            try {
+                await postAction('/api/assist-request', {
+                    warId,
+                    targetId,
+                    targetName: targetName || `Player [${targetId}]`,
+                    mode: 'assist',
+                });
+                showToast('Assist request sent!', 'success');
+            } catch (err) {
+                showToast('Failed to send assist request', 'error');
+                return;
+            }
+
+            // Disabled for 30 seconds so one fight sends one request.
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            let remaining = 30;
+            btn.innerHTML = `⏳ ${remaining}s`;
+            const cooldownTimer = setInterval(() => {
+                remaining--;
+                if (remaining <= 0) {
+                    clearInterval(cooldownTimer);
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                } else {
+                    btn.innerHTML = `⏳ ${remaining}s`;
+                }
+            }, 1000);
+        });
+
+        document.body.appendChild(btn);
+    }
+
 
     // =========================================================================
     // SECTION 15: FETCH / XHR INTERCEPTION
@@ -13747,6 +13897,8 @@ body.wb-chain-active {
             markAttackPending(targetId);
         }
 
+        // The floating Assist button (attack pages only).
+        createAssistButton();
 
         // Scrape the attack-page DOM for the target's visible status. Torn
         // populates this sidebar text lazily, so retry a handful of times
@@ -16346,6 +16498,11 @@ body.wb-chain-active {
             attackOverlay.remove();
             clearViewing(); // Tell server we left the attack page
         }
+        // The Assist button holds the old fight's target: a new one comes
+        // with the next attack page.
+        const assistBtn = document.getElementById('wb-assist-btn');
+        if (assistBtn) assistBtn.remove();
+
         // Restore Torn's chain bar to its original position before removing overlay
         restoreTornChainBar();
 
