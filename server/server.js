@@ -24,6 +24,7 @@ import "./war-scanner.js";
 import { socketAuth } from "./auth.js";
 import { registerSocketHandlers } from "./socket-handlers.js";
 import { guardSocket } from "./socket-guard.js";
+import { installCrashGuard } from "./crash-guard.js";
 import { startChainMonitor, stopAll as stopAllChainMonitors } from "./chain-monitor.js";
 import { startWarStatusMonitor, stopAll as stopAllWarStatusMonitors } from "./war-status-monitor.js";
 import { verifyPoolKeyAccess } from "./key-verify.js";
@@ -625,6 +626,19 @@ io.on("connection", (socket) => {
 
 // ── Load persisted state & start ────────────────────────────────────────
 
+// Set once the state below has loaded. Saving before then (a crash or a
+// SIGINT during startup) would write an empty state over the real one.
+let stateLoaded = false;
+
+// What a restart must not lose: a normal shutdown and the crash guard both
+// save through here.
+function saveAll() {
+  if (!stateLoaded) return;
+  store.saveState();
+  store.saveMemberBars();
+  try { warHistory.flushAll(); } catch (_) {}
+}
+
 store.loadState();
 store.loadFactionKeys();
 // Which of those keys Torn is currently rejecting. Loaded right after the keys
@@ -659,6 +673,10 @@ try {
   const enriched = warHistory.backfillPayouts();
   if (enriched) console.log(`[war-history] backfilled full payout fields for ${enriched} war(s) from payout cache`);
 } catch (e) { console.warn(`[war-history] payout backfill failed: ${e.message}`); }
+// Everything a restart saves has loaded: from here an error nothing catches
+// is logged and saved before the process exits (crash-guard.js).
+stateLoaded = true;
+installCrashGuard({ save: saveAll });
 // Capture any ended war not yet snapshotted (e.g. nobody opened its payouts).
 // computePayouts ingests via its hook; this just skips wars already in history.
 async function _sweepWarHistory() {
@@ -1020,9 +1038,7 @@ function shutdown(signal) {
   stopMembershipSchedule();
   stopSubscriptionManager();
 
-  store.saveState();
-  store.saveMemberBars();
-  try { warHistory.flushAll(); } catch (_) {}
+  saveAll();
   httpServer.close(() => {
     console.log("[server] Server closed");
     process.exit(0);
