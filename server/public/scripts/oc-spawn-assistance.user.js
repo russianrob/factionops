@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.87
+// @version      3.2.88
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,11 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.88 — Armoury: each holder's chip says when they were last on
+//           ("· 3h ago"), green online, orange idle, grey offline, from the
+//           member list the tab already reads; a holder no longer in the
+//           faction says "left faction" in red. Opening the tab reads the
+//           list again once it is a minute old, so the times stay current.
 // v3.2.87 — Armoury lists only ranked-war weapons: one line per copy with
 //           its rarity, bonuses and holder, read from the armoury page when
 //           the tab opens. Loan and ↩ act on that exact copy, so a plain copy
@@ -427,7 +432,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.87';
+    const SCRIPT_VERSION = '3.2.88';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -1803,7 +1808,11 @@
     // ═══════════════════════════════════════════════════════════════════════
     const BLACKLISTED_ITEM_IDS = new Set([226]);
     const mgr_memberNameMap = new Map();
+    // Each current member's last_action ({ status, timestamp, relative }) from
+    // the same list; refilled whenever the list is read.
+    const mgr_memberLastAction = new Map();
     let   mgr_membersLoaded = false;
+    let   mgr_membersLoadedAt = 0;
     const mgr_armoryCache   = new Map();
     let   mgr_lastRefreshTime = 0;
     const MGR_REFRESH_COOLDOWN_MS = 10000;
@@ -2319,8 +2328,10 @@
     const mgr_getItemName = (itemID) => mgr_getItemNameMap()[itemID] || null;
 
     // --- API helpers (use fetch directly with Torn API key) ---
-    const mgr_loadMembers = async () => {
-        if (mgr_membersLoaded) return;
+    // The member list is read once; with maxAge (ms) it is read again when it
+    // is older than that (the Armoury tab's last-on times go stale).
+    const mgr_loadMembers = async (maxAge) => {
+        if (mgr_membersLoaded && !(maxAge >= 0 && Date.now() - mgr_membersLoadedAt > maxAge)) return;
         const key = getApiKey();
         if (!key || key === 'YOUR_API_KEY_HERE') throw new Error('API key required');
         const res = await fetch(`https://api.torn.com/v2/faction/members?key=${key}&comment=oc-spawn`);
@@ -2329,6 +2340,13 @@
         const members = Array.isArray(data?.members) ? data.members : Object.values(data?.members || {});
         members.forEach(m => mgr_memberNameMap.set(String(m.id), m.name));
         mgr_membersLoaded = true;
+        // A refusal from Torn (too many requests, a key it no longer accepts)
+        // comes back as an error with no members: keep the last-on times read
+        // before, and leave the time unstamped so the next open asks again.
+        if (!members.length) return;
+        mgr_memberLastAction.clear();
+        members.forEach(m => mgr_memberLastAction.set(String(m.id), m.last_action || null));
+        mgr_membersLoadedAt = Date.now();
     };
 
     // Shared cache for the available-crimes endpoint so mgr_getMissingOCItems and
@@ -3334,6 +3352,9 @@
         .mgr-arm-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
         .mgr-arm-red { background: #ef4444; } .mgr-arm-orange { background: #f59e0b; } .mgr-arm-yellow { background: #facc15; }
         .mgr-arm-chip { display: inline-flex; align-items: center; gap: 3px; max-width: 60%; padding: 1px 2px 1px 8px; font-size: 11px; border-radius: 14px; background: #0d1b2a; border: 1px solid #2d4a3e; color: #e5e7eb; white-space: nowrap; overflow: hidden; }
+        .mgr-arm-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+        .mgr-arm-seen { flex: none; }
+        .mgr-seen-on { color: #4ade80; } .mgr-seen-idle { color: #fbbf24; } .mgr-seen-off { color: #9ca3af; } .mgr-seen-left { color: #f87171; }
         .mgr-arm-back { border: 0; background: none; cursor: pointer; font-size: 14px; padding: 0 6px; min-width: 28px; min-height: 28px; color: #f87171; }
         .mgr-arm-back:disabled { opacity: .5; cursor: default; }
         .mgr-btn-success { background: #1b4332 !important; color: #74c69d !important; }
@@ -6920,7 +6941,9 @@
         content.innerHTML = '<div class="mgr-loading">Reading the armoury…</div>';
         let rows;
         try {
-            await mgr_loadMembers();
+            // A re-read that fails keeps the list read before; only a first
+            // read that fails stops the tab.
+            await mgr_loadMembers(60 * 1000).catch(e => { if (!mgr_membersLoaded) throw e; });
             rows = await mgr_scanArmouryWeapons();
         } catch (e) {
             if (mgr_currentSubTab !== 'armoury') return;
@@ -6949,6 +6972,26 @@
         mgr_renderArmouryList();
     }
 
+    // When a holder was last on, for their chip: { text, cls } from the member
+    // list's last_action. "now" under a minute, then whole minutes, hours or
+    // days; the colour is Torn's own Online, Idle or Offline. A holder who is
+    // not in the list has left the faction. Null with no list (an empty one
+    // is none: every faction has at least the one reading it), or no time.
+    function mgr_holderSeen(holderId, membersMap, nowSec) {
+        if (!membersMap || !membersMap.size) return null;
+        const id = String(holderId);
+        if (!membersMap.has(id)) return { text: 'left faction', cls: 'left' };
+        const la = membersMap.get(id);
+        if (!la || typeof la.timestamp !== 'number') return null;
+        const ago = nowSec - la.timestamp; // a time ahead of this clock reads as now
+        const text = ago < 60 ? 'now'
+            : ago < 3600 ? `${Math.floor(ago / 60)}m ago`
+            : ago < 86400 ? `${Math.floor(ago / 3600)}h ago`
+            : `${Math.floor(ago / 86400)}d ago`;
+        const cls = la.status === 'Online' ? 'on' : la.status === 'Idle' ? 'idle' : 'off';
+        return { text, cls };
+    }
+
     function mgr_renderArmouryList() {
         const list = document.getElementById('mgr-arm-list');
         if (!list) return;
@@ -6961,8 +7004,9 @@
         for (const r of rows) {
             const i = mgr_armouryList.indexOf(r);
             const mine = busy && busy.row === i;
+            const seen = r.holder && mgr_holderSeen(r.holder.id, mgr_membersLoaded ? mgr_memberLastAction : null, Date.now() / 1000);
             const action = r.holder
-                ? `<span class="mgr-arm-chip">${mgr_esc(r.holder.name)}<button class="mgr-arm-back" data-row="${i}" title="Take back from ${mgr_esc(r.holder.name)}"${busy ? ' disabled' : ''}>${mine ? '…' : '↩'}</button></span>`
+                ? `<span class="mgr-arm-chip"><span class="mgr-arm-who">${mgr_esc(r.holder.name)}</span>${seen ? `<span class="mgr-arm-seen mgr-seen-${seen.cls}">· ${seen.text}</span>` : ''}<button class="mgr-arm-back" data-row="${i}" title="Take back from ${mgr_esc(r.holder.name)}"${busy ? ' disabled' : ''}>${mine ? '…' : '↩'}</button></span>`
                 : `<button class="mgr-action-btn mgr-btn-loan mgr-arm-loan" data-row="${i}"${busy ? ' disabled' : ''}>${mine ? '…' : 'Loan'}</button>`;
             html += `
                 <div class="mgr-arm-row">

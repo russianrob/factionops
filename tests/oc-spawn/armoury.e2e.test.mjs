@@ -1,7 +1,8 @@
 // OC Spawn's Manager → Armoury in a browser: the whole script on a stand-in
 // faction page, with GM storage, tornwar.com, the Torn API and the armoury
 // page's own requests answered here. Checks that only ranked-war weapon copies
-// are listed and the requests a Loan and a ↩ send. Names and ids are made up.
+// are listed, the requests a Loan and a ↩ send, and when each holder was last
+// on. Names and ids are made up.
 import fs from "fs";
 import assert from "assert";
 const { chromium } = await import("/root/.hermes/hermes-agent/node_modules/playwright-core/index.mjs");
@@ -9,7 +10,14 @@ const { chromium } = await import("/root/.hermes/hermes-agent/node_modules/playw
 const script = fs.readFileSync(process.env.OC_SRC || new URL("../../server/public/scripts/oc-spawn-assistance.user.js", import.meta.url), "utf8");
 const b = await chromium.launch({ args: ["--no-sandbox"] });
 
-const MEMBERS = { members: [{ id: 1000001, name: "Alpha" }, { id: 1000002, name: "Bravo" }, { id: 1000003, name: "Charlie" }] };
+// Members as /v2/faction/members gives them; last_action is ago seconds before
+// the moment Torn answers.
+const member = (id, name, status, ago) => ({
+  id, name, level: 50, position: "Member", days_in_faction: 100,
+  status: { description: "Okay", details: "", state: "Okay", color: "green", until: null },
+  last_action: { status, timestamp: Math.floor(Date.now() / 1000) - ago, relative: "" },
+});
+const MEMBERS = () => ({ members: [member(1000001, "Alpha", "Online", 20), member(1000002, "Bravo", "Idle", 12 * 60), member(1000003, "Charlie", "Offline", 3 * 3600 + 120)] });
 // The armoury page's weapon rows, one per copy, as Torn sends them:
 // glowClass marks a ranked-war copy, "" a plain one.
 const bonus = (name, text) => ({ class: "bonus-attachment-" + name.toLowerCase(), title: `<b>${name}</b><br/>${text}` });
@@ -46,12 +54,21 @@ async function open(cfg = {}) {
   const p = await ctx.newPage();
   const posts = [];
   const pages = cfg.pages || [WEAPONS];
+  // Each member-list request gets the next answer in cfg.membersSeq (the last
+  // one again after that), and is counted. An answer { httpStatus } is sent as
+  // that HTTP status with no body.
+  const membersSeq = cfg.membersSeq || [MEMBERS];
+  const calls = { members: 0 };
   await p.route("**/*", async (r) => {
     const req = r.request(), u = req.url();
     if (u.endsWith("/oc-preamble.js")) return r.fulfill({ contentType: "application/javascript", body: preamble(cfg) });
     if (u.endsWith("/oc.user.js")) return r.fulfill({ contentType: "application/javascript", body: script });
     if (u.startsWith("https://www.torn.com/factions.php?step=your")) return r.fulfill({ contentType: "text/html", body: `<!doctype html><html><head><meta charset="utf-8"></head><body><div class="content-wrapper"><div id="faction-crimes"></div></div><script src="/oc-preamble.js"></script><script src="/oc.user.js"></script></body></html>` });
-    if (u.startsWith("https://api.torn.com/v2/faction/members")) return r.fulfill({ contentType: "application/json", body: JSON.stringify(MEMBERS) });
+    if (u.startsWith("https://api.torn.com/v2/faction/members")) {
+      const answer = membersSeq[Math.min(calls.members++, membersSeq.length - 1)]();
+      if (answer.httpStatus) return r.fulfill({ status: answer.httpStatus, body: "" });
+      return r.fulfill({ contentType: "application/json", body: JSON.stringify(answer) });
+    }
     if (u.startsWith("https://www.torn.com/factions.php?rfcv=") && req.method() === "POST") {
       const f = new URLSearchParams(req.postData() || "");
       posts.push(Object.fromEntries(f));
@@ -88,11 +105,33 @@ async function open(cfg = {}) {
   await p.click("#oc-manager-tab");
   await p.click('.mgr-sub-tab[data-mgr-tab="armoury"]');
   await p.waitForSelector(cfg.wait || "#mgr-arm-list .mgr-arm-row", { timeout: 15000 });
-  return { ctx, p, posts };
+  return { ctx, p, posts, calls };
 }
 const rows = (p) => p.$$eval("#mgr-arm-list .mgr-arm-row", (els) => els.map((e) => e.innerText.replace(/\s+/g, " ").trim()));
 const actions = (posts) => posts.filter((x) => x.step === "armouryActionItem").map((x) => `${x.role} ${x.item} ${x.type} ${x.user}`);
 // Rows are listed red, orange, yellow: 0 = Glock 17 (red, Charlie), 1 = AK-47 (orange, free), 2 = Zebra Blade (yellow, Gone).
+// The colour of each row's last-on time (null on a free copy).
+const seen = (p) => p.$$eval("#mgr-arm-list .mgr-arm-row", (els) => els.map((e) => {
+  const s = e.querySelector(".mgr-arm-seen");
+  return s ? getComputedStyle(s).color : null;
+}));
+// A colour by its look, not its exact value: grey has its channels close
+// together (and is darker than the chip's own near-white text), red and green
+// stand well above the other two, orange is red and green over blue.
+const rgb = (c) => (String(c).match(/\d+/g) || []).map(Number);
+const grey = (c) => { const [r, g, b] = rgb(c); return Math.max(r, g, b) - Math.min(r, g, b) < 40 && r > 100 && r < 200; };
+const orange = (c) => { const [r, g, b] = rgb(c); return r > 200 && g > 120 && g < r && b < 100; };
+// Torn's answer to a request it refuses: HTTP 200, an error and no members.
+const REFUSED = () => ({ error: { code: 5, error: "Too many requests" } });
+// Opens another sub-tab and then the Armoury again, to the list or its error.
+const reopen = async (p) => {
+  await p.click('.mgr-sub-tab[data-mgr-tab="delays"]');
+  await p.click('.mgr-sub-tab[data-mgr-tab="armoury"]');
+  await p.waitForSelector("#mgr-arm-list .mgr-arm-row, .oc-error", { timeout: 15000 });
+};
+const aMinuteOn = (p) => p.evaluate(() => { const real = Date.now; Date.now = () => real() + 61000; });
+const red = (c) => { const [r, g, b] = rgb(c); return r > g + 80 && r > b + 80; };
+const green = (c) => { const [r, g, b] = rgb(c); return g > r + 60 && g > b + 40; };
 
 let pass = 0, fail = 0;
 const t = async (n, f) => { try { await f(); pass++; console.log("ok   " + n); } catch (e) { fail++; console.log("FAIL " + n + " :: " + e.message); } };
@@ -227,6 +266,96 @@ await t("on a phone the sub-tabs fit, the controls are dark like the panel, and 
   assert.ok(got.over <= 0 && got.listOver <= 0, JSON.stringify(got));
   assert.notStrictEqual(got.input, "rgb(255, 255, 255)");
   assert.ok(got.w >= 28 && got.h >= 28, JSON.stringify(got));
+});
+
+await t("each holder shows when they were last on, coloured by Torn's online, idle or offline; one who left says so in red", async () => {
+  const { ctx, p } = await open();
+  const got = await rows(p), col = await seen(p);
+  await ctx.close();
+  assert.ok(got[0].includes("Charlie · 3h ago"), got[0]);
+  assert.ok(got[2].includes("Gone · left faction"), got[2]);
+  assert.ok(grey(col[0]), col[0]);
+  assert.strictEqual(col[1], null);
+  assert.ok(red(col[2]), col[2]);
+});
+
+await t("a copy just lent shows when its new holder was last on", async () => {
+  const { ctx, p } = await open({ accept: ["Primary"] });
+  await p.selectOption("#mgr-arm-member", "1000001");
+  await p.click('.mgr-arm-loan[data-row="1"]');
+  await p.waitForFunction(() => document.querySelectorAll("#mgr-arm-list .mgr-arm-row")[1].innerText.includes("Alpha"));
+  const got = await rows(p), col = await seen(p);
+  await ctx.close();
+  assert.ok(got[1].includes("Alpha · now"), got[1]);
+  assert.ok(green(col[1]), col[1]);
+});
+
+await t("opening the tab again asks Torn for the member list only once it is a minute old", async () => {
+  const later = () => ({ members: [member(1000001, "Alpha", "Online", 20), member(1000002, "Bravo", "Idle", 12 * 60), member(1000003, "Charlie", "Offline", 2 * 86400)] });
+  const { ctx, p, calls } = await open({ membersSeq: [MEMBERS, later] });
+  const reopen = async () => {
+    await p.click('.mgr-sub-tab[data-mgr-tab="delays"]');
+    await p.click('.mgr-sub-tab[data-mgr-tab="armoury"]');
+    await p.waitForSelector("#mgr-arm-list .mgr-arm-row", { timeout: 15000 });
+  };
+  const first = calls.members;
+  await reopen();
+  const soon = calls.members;
+  await p.evaluate(() => { const real = Date.now; Date.now = () => real() + 61000; });
+  await reopen();
+  const got = await rows(p);
+  await ctx.close();
+  assert.strictEqual(first, 1);
+  assert.strictEqual(soon, 1, "asked again within the minute");
+  assert.strictEqual(calls.members, 2);
+  assert.ok(got[0].includes("Charlie · 2d ago"), got[0]);
+});
+
+await t("a holder who has left since the list was last read says so once it is read again", async () => {
+  const later = () => ({ members: [member(1000001, "Alpha", "Online", 20), member(1000002, "Bravo", "Idle", 12 * 60)] });
+  const { ctx, p } = await open({ membersSeq: [MEMBERS, later] });
+  await p.evaluate(() => { const real = Date.now; Date.now = () => real() + 61000; });
+  await p.click('.mgr-sub-tab[data-mgr-tab="delays"]');
+  await p.click('.mgr-sub-tab[data-mgr-tab="armoury"]');
+  await p.waitForSelector("#mgr-arm-list .mgr-arm-row", { timeout: 15000 });
+  const got = await rows(p);
+  await ctx.close();
+  assert.ok(got[0].includes("Charlie · left faction"), got[0]);
+});
+
+await t("a holder Torn has as idle shows the time in orange", async () => {
+  const held = [{ ...WEAPONS[2], user: { userID: 1000002, playername: "Bravo" } }];
+  const { ctx, p } = await open({ pages: [held] });
+  const got = await rows(p), col = await seen(p);
+  await ctx.close();
+  assert.ok(got[0].includes("Bravo · 12m ago"), got[0]);
+  assert.ok(orange(col[0]), col[0]);
+});
+
+await t("when Torn refuses the list a minute on, the times it had stay", async () => {
+  const { ctx, p } = await open({ membersSeq: [MEMBERS, REFUSED] });
+  await aMinuteOn(p);
+  await reopen(p);
+  const got = await rows(p);
+  await ctx.close();
+  assert.ok(got.length && got[0].includes("Charlie · 3h ago"), JSON.stringify(got));
+});
+
+await t("when Torn refuses the first list, no holder is said to have left", async () => {
+  const { ctx, p } = await open({ membersSeq: [REFUSED] });
+  const got = await rows(p);
+  await ctx.close();
+  assert.ok(got[0].includes("Charlie"), got[0]);
+  assert.ok(!got.some((r) => r.includes("left faction")), JSON.stringify(got));
+});
+
+await t("when the list cannot be read a minute on, the tab still opens with the times it had", async () => {
+  const { ctx, p } = await open({ membersSeq: [MEMBERS, () => ({ httpStatus: 500 })] });
+  await aMinuteOn(p);
+  await reopen(p);
+  const got = await rows(p);
+  await ctx.close();
+  assert.ok(got.length && got[0].includes("Charlie · 3h ago"), JSON.stringify(got));
 });
 
 await t("the search narrows the list by item, bonus or holder", async () => {
