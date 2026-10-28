@@ -12996,7 +12996,9 @@ body.wb-chain-active {
     // Attack pages only. Profile pages had a Retal button from this same
     // function, removed at the owner's request; it stays removed.
     function createAssistButton() {
-        if (!window.location.href.includes('sid=attack')) return;
+        // sid=attack exactly: an attack log (sid=attackLog&ID=<hex>) starts
+        // the same, and its hex ID would read as a player id.
+        if (new URLSearchParams(window.location.search).get('sid') !== 'attack') return;
         if (document.getElementById('wb-assist-btn')) return;
 
         const targetId = getAttackTargetId();
@@ -13059,6 +13061,10 @@ body.wb-chain-active {
                 }
             }
 
+            // Disabled from the first tap, so a second tap while the request
+            // is out sends nothing; it comes straight back if the request fails.
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
             try {
                 await postAction('/api/assist-request', {
                     warId,
@@ -13068,13 +13074,12 @@ body.wb-chain-active {
                 });
                 showToast('Assist request sent!', 'success');
             } catch (err) {
+                btn.disabled = false;
                 showToast('Failed to send assist request', 'error');
                 return;
             }
 
-            // Disabled for 30 seconds so one fight sends one request.
-            const originalHtml = btn.innerHTML;
-            btn.disabled = true;
+            // Then 30 seconds of cooldown, so one fight sends one request.
             let remaining = 30;
             btn.innerHTML = `⏳ ${remaining}s`;
             const cooldownTimer = setInterval(() => {
