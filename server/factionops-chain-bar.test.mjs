@@ -79,9 +79,21 @@ test("the phone layout: the bar's count, and the clock from the sidebar's saved 
   assert.deepEqual(P()(phoneDoc('Chain:1,234 / 2,500'), s, NOW + 500), { count: 1234, left: 41 });
 });
 
-test('saved data that has not caught up with the bar is not used', () => {
-  const s = saved({ sidebarData1000001: chain(1233, 1000042) });
-  assert.equal(P()(phoneDoc('Chain:1,234 / 2,500'), s, NOW), null);
+test('saved data with any other count than the bar shows is not used', () => {
+  for (const n of [1233, 1235]) {
+    const s = saved({ sidebarData1000001: chain(n, 1000042) });
+    assert.equal(P()(phoneDoc('Chain:1,234 / 2,500'), s, NOW), null, String(n));
+  }
+});
+
+test("a saved chain whose end has passed gives no reading, so the overlay's chain can stand in", () => {
+  for (const end of [1000000, 999990, 0]) {
+    const s = saved({ sidebarData1000001: chain(1234, end) });
+    const read = () => P()(phoneDoc('Chain:1,234 / 2,500'), s, NOW);
+    assert.equal(read(), null, String(end));
+    const overlay = { count: 1234, left: 30, ok: true, at: NOW - 500 };
+    assert.equal(L().chainBarReading(NOW, overlay, read), overlay, String(end));
+  }
 });
 
 test('no phone bar, no saved chain, or saved data it cannot read: no reading', () => {

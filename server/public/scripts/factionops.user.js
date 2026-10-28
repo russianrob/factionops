@@ -280,9 +280,12 @@
             }
         } catch (_) { return null; }
         if (!chain || Number(chain.amount) !== count) return null;
-        const end = Number(chain.timestampToUpdate);
-        if (!Number.isFinite(end)) return null;
-        return { count, left: Math.floor(end - now / 1000) };
+        // A chain whose end has passed (or has none) is no clock: like a
+        // sidebar showing none, it leaves the reading to the war overlay
+        // where that runs.
+        const left = Math.floor(Number(chain.timestampToUpdate) - now / 1000);
+        if (!(left > 0)) return null;
+        return { count, left };
     }
 
     // A chain that has ended keeps its count through its cooldown (about six
