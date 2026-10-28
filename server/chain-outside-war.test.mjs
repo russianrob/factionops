@@ -530,6 +530,26 @@ test("the server's own read is never stale: its low clock is alerted though a me
   assert.deepEqual(alertsSent(seen), [["notifyChainPanic", 63, 23]]);
 });
 
+test("a member's report of a newer count sets the newest count, so another member's report behind it is stale", async () => {
+  const war = lastRead(liveWar(), 1239, 150, 5_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(1240, 273), null, "poll");
+  await api._processChain("w1", war, reading(1241, 290), null, "client");
+  await api._processChain("w1", war, reading(1240, 40), null, "client");
+  assert.deepEqual(alertsSent(seen), []);
+});
+
+test("a member's report of the newest count keeps it standing, so a report behind it stays stale", async () => {
+  const war = lastRead(liveWar(), 1239, 150, 5_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  await api._processChain("w1", war, reading(1240, 273), null, "poll");
+  ageNewest(api, "w1", 290_000);
+  await api._processChain("w1", war, reading(1240, 270), null, "client");
+  ageNewest(api, "w1", 11_000);
+  await api._processChain("w1", war, reading(1229, 25), null, "client");
+  assert.deepEqual(alertsSent(seen), [], "5 min 1 s after the server's read, but 11 s after a member's of the same count");
+});
+
 test("the server's read sets the newest count, so after it reads the chain at 0 a new chain's low clock is alerted", async () => {
   const war = lastRead(liveWar(), 1234, 5, 10_000);
   const { api, seen } = buildMonitor({ w1: war });
