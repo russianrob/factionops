@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.23
+// @version      5.6.24
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.23';
+    const SCRIPT_VERSION = '5.6.24';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -255,6 +255,34 @@
             ? parts[0] * 3600 + parts[1] * 60 + parts[2]
             : parts[0] * 60 + parts[1];
         return { count: Number(n[1].replace(/[^\d]/g, '')), left };
+    }
+
+    // Torn's phone layout has no #barChain, and its chain bar shows the count
+    // but no clock: the time is only in the bar's tooltip. The sidebar keeps
+    // its data in the tab's sessionStorage as "sidebarData<player id>" and
+    // rewrites it as hits land; the chain's `timestampToUpdate` is when it
+    // runs out, in epoch seconds. That is only taken while its `amount` is the
+    // count the bar shows, so data the page has stopped updating is never
+    // read as a live clock. { count, left } in seconds, or null.
+    function readChainFromPhoneBar(doc, storage, now) {
+        const bar = doc.querySelector('[class*="chainBar"]');
+        const n = bar && String(bar.textContent || '').match(/(\d[\d,.\s]*)\s*\/\s*\d/);
+        if (!n) return null;
+        const count = Number(n[1].replace(/[^\d]/g, ''));
+        let chain = null;
+        try {
+            for (let i = 0; i < storage.length; i++) {
+                const key = storage.key(i);
+                if (!/^sidebarData\d+$/.test(key)) continue;
+                const data = JSON.parse(storage.getItem(key));
+                chain = data && data.bars && data.bars.chain;
+                break;
+            }
+        } catch (_) { return null; }
+        if (!chain || Number(chain.amount) !== count) return null;
+        const end = Number(chain.timestampToUpdate);
+        if (!Number.isFinite(end)) return null;
+        return { count, left: Math.floor(end - now / 1000) };
     }
 
     // A chain that has ended keeps its count through its cooldown (about six
@@ -421,7 +449,8 @@
         const on = !!CONFIG.CHAIN_ALERT && String(CONFIG.CHAIN_ALERT) !== 'false';
         // The chain alerts' own focus check.
         const looking = IS_PDA || (typeof document.hasFocus === 'function' ? document.hasFocus() : !document.hidden);
-        const reading = chainBarReading(now, chainBarFromOverlay, () => readChainFromDom(document));
+        const reading = chainBarReading(now, chainBarFromOverlay,
+            () => readChainFromDom(document) || readChainFromPhoneBar(document, window.sessionStorage, now));
         const step = on && looking ? chainBarStep(now, reading, chainBarCheck, chainBarThreshold()) : { show: null, start: false };
         if (step.start) startChainBarCheck(now, reading);
         renderChainBar(step.show);

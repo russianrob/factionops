@@ -2,6 +2,7 @@
 // driven with made-up chains, and the wiring checked in the text -- the
 // header, the version, and the gate that stops the script off its own pages.
 // 5.6.22: no frames, and FactionOps' toasts go under the bar.
+// 5.6.24: Torn's phone layout, whose chain bar has no clock.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -52,6 +53,53 @@ function doc(count, time, id = 'barChain', cls = 'bar-timeleft___x') {
     querySelector: (s) => (s === '[id^="barChain"]' && id.startsWith('barChain') ? bar : null),
   };
 }
+
+// Torn's phone layout has no #barChain, and its chain bar shows the count but
+// no clock. The clock comes from the chain the sidebar saves in the tab's
+// sessionStorage: `saved` stands in for that storage, `chain` for its entry.
+let phoneLib = null;
+function P() {
+  if (!phoneLib) phoneLib = new Function(fn('readChainFromPhoneBar') + '\nreturn readChainFromPhoneBar;')();
+  return phoneLib;
+}
+function phoneDoc(text) {
+  const bar = text == null ? null : { textContent: text };
+  return { getElementById: () => null, querySelector: (s) => (s.includes('chainBar') ? bar : null) };
+}
+function saved(entries) {
+  const keys = Object.keys(entries);
+  return { get length() { return keys.length; }, key: (i) => keys[i], getItem: (k) => (k in entries ? entries[k] : null) };
+}
+const chain = (amount, end) => JSON.stringify({ bars: { chain: { name: 'Chain', amount, max: 2500, timestampToUpdate: end, timeToUpdate: 300, coolDown: 0, endCoolDownTimestamp: 0 } } });
+const NOW = 1000000 * 1000;
+
+test("the phone layout: the bar's count, and the clock from the sidebar's saved chain", () => {
+  const s = saved({ sidebarDataundefined: '{}', sidebarData1000001: chain(1234, 1000042) });
+  assert.deepEqual(P()(phoneDoc('Chain:1,234 / 2,500'), s, NOW), { count: 1234, left: 42 });
+  assert.deepEqual(P()(phoneDoc('Chain:1,234 / 2,500'), s, NOW + 500), { count: 1234, left: 41 });
+});
+
+test('saved data that has not caught up with the bar is not used', () => {
+  const s = saved({ sidebarData1000001: chain(1233, 1000042) });
+  assert.equal(P()(phoneDoc('Chain:1,234 / 2,500'), s, NOW), null);
+});
+
+test('no phone bar, no saved chain, or saved data it cannot read: no reading', () => {
+  const good = saved({ sidebarData1000001: chain(1234, 1000042) });
+  const bar = phoneDoc('Chain:1,234 / 2,500');
+  const cases = [
+    [phoneDoc(null), good],
+    [phoneDoc('Chain:'), good],
+    [bar, saved({})],
+    [bar, saved({ sidebarDataundefined: chain(1234, 1000042) })],
+    [bar, saved({ sidebarData1000001: 'not json' })],
+    [bar, saved({ sidebarData1000001: JSON.stringify({ bars: {} }) })],
+    [bar, saved({ sidebarData1000001: chain(1234, undefined) })],
+    [bar, { get length() { throw new Error('denied'); } }],
+    [bar, null],
+  ];
+  cases.forEach(([d, s], i) => assert.equal(P()(d, s, NOW), null, 'case ' + i));
+});
 
 test("FactionOps runs whole on its old @match list's pages, and only the bar elsewhere", () => {
   const head = SRC.slice(0, SRC.indexOf('// ==/UserScript=='));
@@ -142,12 +190,12 @@ test('the text: the count with commas, the clock as m:ss', () => {
   assert.equal(L().chainBarText({ count: 12, left: 75 }), 'CHAIN DYING \u00B7 12 hits \u00B7 1:15 left');
 });
 
-test('5.6.23 in both places, the meta file is the header, and every page joins the old list', () => {
+test('5.6.24 in both places, the meta file is the header, and every page joins the old list', () => {
   const end = '// ==/UserScript==';
   const head = SRC.slice(0, SRC.indexOf(end) + end.length) + '\n';
   assert.equal(META, head);
-  assert.match(head, /^\/\/ @version\s+5\.6\.23$/m);
-  assert.match(SRC, /const SCRIPT_VERSION = '5\.6\.23';/);
+  assert.match(head, /^\/\/ @version\s+5\.6\.24$/m);
+  assert.match(SRC, /const SCRIPT_VERSION = '5\.6\.24';/);
   const matches = [...head.matchAll(/^\/\/ @match\s+(\S+)$/gm)].map((m) => m[1]);
   assert.equal(matches.length, 11);
   assert.deepEqual(matches.slice(-2), ['https://www.torn.com/*', 'https://torn.com/*']);

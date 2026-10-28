@@ -3,7 +3,9 @@
 // the threshold or less left; down for a chain in its cooldown, without focus
 // outside Torn PDA, under 10 hits or with chain alerts off; and nothing else
 // of FactionOps runs there. FactionOps' toasts, on the pages that have them,
-// go under it while it is up. Numbers and the key are made up.
+// go under it while it is up. On Torn's phone layout, whose chain bar has no
+// clock, the time comes from the chain the sidebar saves in the tab. Numbers
+// and the key are made up.
 import fs from "fs";
 import assert from "assert";
 const { chromium } = await import("/root/.hermes/hermes-agent/node_modules/playwright-core/index.mjs");
@@ -37,6 +39,12 @@ const preamble = (cfg) => `(() => {
       if (body) o.onload({ status: 200, responseText: body });
     }, 100);
   };
+  // The chain Torn's sidebar saves in the tab, as the phone layout has it.
+  if (cfg.saved) {
+    sessionStorage.setItem("sidebarDataundefined", "{}");
+    sessionStorage.setItem("sidebarData1000001", JSON.stringify({ bars: { chain: { name: "Chain", amount: cfg.saved.amount, max: 2500,
+      timestampToUpdate: Math.floor(Date.now() / 1000) + cfg.saved.endIn, timeToUpdate: 300, coolDown: 0, endCoolDownTimestamp: 0 } } }));
+  }
   if (cfg.pda) {
     window.flutter_inappwebview = { callHandler: () => Promise.resolve() };
     window.PDA_httpGet = (url) => { log(url); return Promise.resolve(answer(url) || "{}"); };
@@ -44,11 +52,14 @@ const preamble = (cfg) => `(() => {
 })();`;
 
 // Torn's sidebar chain bar, the way the script looks it up, and with `toasts`
-// FactionOps' two toast stacks where its own pages have them.
-const page = ({ time = "00:42", count = "1,234/2,500", gcBanner = 0, toasts = false }) => `<!doctype html><html><head><meta charset="utf-8"><title>gym</title></head><body>
+// FactionOps' two toast stacks where its own pages have them. With `phone`,
+// Torn's phone layout instead: a chain bar with the count and no clock; with
+// phone "both", the two bars on one page.
+const page = ({ time = "00:42", count = "1,234/2,500", gcBanner = 0, toasts = false, phone = false }) => `<!doctype html><html><head><meta charset="utf-8"><title>gym</title></head><body>
 ${toasts ? '<div id="fo-call-toast-container" style="position:fixed;top:10px">call</div><div id="wb-toast-container" style="position:fixed;top:10px">toast</div>' : ""}
 ${gcBanner ? '<div id="gcb-fullbar-nag" style="position:fixed;top:' + gcBanner + 'px;left:50%;transform:translateX(-50%);height:36px;width:300px">E full</div>' : ""}
-<div id="sidebarroot"><a id="barChain" class="bar___x chain___x"><div class="bar-stats___x"><p class="bar-name___x">Chain:</p><p class="bar-value___x">${count}</p></div><p class="bar-timeleft___x">${time}</p></a></div>
+${phone ? '<div id="sidebar" class="sidebar___x mobile___x"><a href="factions.php?step=your#/war/chain" class="chainBar___x barMobile___x"><div class="barStats___x"><p class="wai">Chain:</p><p class="barValue___x">1,234 / 2,500</p></div></a></div>' : ""}
+${phone === true ? "" : '<div id="sidebarroot"><a id="barChain" class="bar___x chain___x"><div class="bar-stats___x"><p class="bar-name___x">Chain:</p><p class="bar-value___x">' + count + '</p></div><p class="bar-timeleft___x">' + time + '</p></a></div>'}
 <script src="/fo-preamble.js"></script><script src="/factionops.user.js"></script></body></html>`;
 
 async function open(opts = {}) {
@@ -212,6 +223,41 @@ await t("under Gym Coach's banner the bar sits lower, and the toasts go under it
   assert.strictEqual(pos.top, 52);
   assert.ok(got.bar > 80, JSON.stringify(got));
   assert.deepStrictEqual(got, { bar: got.bar, call: got.bar + 6 + "px", general: got.bar + 6 + "px" });
+});
+
+const PHONE = { phone: true };
+
+await t("on Torn's phone layout, with no clock on the page, the sidebar's saved chain gives the time: one check, then up", async () => {
+  const { ctx, p } = await open({ ...PHONE, cfg: { saved: { amount: 1234, endIn: 45 } } });
+  const got = await bar(p), n = await checks(p);
+  await ctx.close();
+  assert.ok(got && /^CHAIN DYING \u00B7 1,234 hits \u00B7 0:4[0-4] left$/.test(got.text), JSON.stringify(got));
+  assert.strictEqual(n, 1);
+});
+
+await t("on the phone layout, saved data behind the bar's count is not used", async () => {
+  const { ctx, p } = await open({ ...PHONE, cfg: { saved: { amount: 1233, endIn: 45 } } });
+  const got = await bar(p), n = await checks(p);
+  await ctx.close();
+  assert.strictEqual(got, null);
+  assert.strictEqual(n, 0);
+});
+
+await t("on the phone layout, a chain in its cooldown keeps it down after its one check", async () => {
+  const { ctx, p } = await open({ ...PHONE, cfg: { saved: { amount: 1234, endIn: 45 }, chain: { current: 1234, max: 2500, timeout: 0, modifier: 1, cooldown: 55 } } });
+  await p.waitForTimeout(2500);
+  const got = await bar(p), n = await checks(p);
+  await ctx.close();
+  assert.strictEqual(got, null);
+  assert.strictEqual(n, 1);
+});
+
+await t("where the page has the sidebar's clock, that comes before the saved chain", async () => {
+  const { ctx, p } = await open({ phone: "both", time: "04:59", cfg: { saved: { amount: 1234, endIn: 45 } } });
+  const got = await bar(p), n = await checks(p);
+  await ctx.close();
+  assert.strictEqual(got, null);
+  assert.strictEqual(n, 0);
 });
 
 await b.close();
