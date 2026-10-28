@@ -49,12 +49,15 @@ export const CHAIN_END_MAX_AGE_MS = 180_000;
 
 /**
  * ...and the notice waits this long for the count to hold in the cooldown.
- * On 2026-10-26 Torn reported a cooldown for five minutes while the hits
- * still counted and the chain ran on. A chain that has ended keeps its count
- * through the whole cooldown, about 6 s a hit (over 9 minutes for a chain of
- * 100), so the wait is always over before the cooldown is.
+ * Torn has reported a cooldown on chains that then ran on: on 2026-10-26 for
+ * five minutes while the hits still counted, and on 2026-10-28 for 2 min 42 s
+ * with the count held at 3,114 before the next hit came in. So the wait is
+ * longer than five minutes. A chain that has ended keeps its count through
+ * the whole cooldown, about 6 s a hit (over 9 minutes for a chain of 100),
+ * so the wait, and the slow poll that may come after it
+ * (OUTSIDE_WAR_IDLE_MS), are over before the cooldown is.
  */
-export const CHAIN_END_CONFIRM_MS = 60_000;
+export const CHAIN_END_CONFIRM_MS = 360_000;
 
 /**
  * The longest cooldown taken as one: Torn's runs about 6 s a hit, under 7

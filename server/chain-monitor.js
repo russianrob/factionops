@@ -232,8 +232,8 @@ async function _processChain(warId, war, chain, io, source) {
   // Outside a war, a chain of 100 or more that ends gets one quiet notice,
   // which also takes down its pinned CHAIN BREAKING / CHAIN DYING alerts, as
   // the war's end does for a war's. outsideWarChainEnded says which reading
-  // may be the end, and the notice waits for the count to hold a minute in
-  // the cooldown (CHAIN_END_CONFIRM_MS). A reading of 100+ with another
+  // may be the end, and the notice waits for the count to hold in the
+  // cooldown for CHAIN_END_CONFIRM_MS. A reading of 100+ with another
   // count, or with time on its clock, calls the wait off; one under 100, as
   // a bad 0 in the cooldown is, leaves it be.
   if (!warLive && (chain.current || 0) >= OUTSIDE_WAR_MIN_CHAIN) {
@@ -261,7 +261,7 @@ async function _processChain(warId, war, chain, io, source) {
       cooldown: chain.cooldown,
     })) {
       pendingChainEnd.set(warId, { count, since: Date.now() });
-      console.log(`[chain] Chain may have ended outside a war at ${count}: noticed if it holds a minute (${source})`);
+      console.log(`[chain] Chain may have ended outside a war at ${count}: noticed if it holds ${CHAIN_END_CONFIRM_MS / 60_000} minutes (${source})`);
     }
   }
   // A broken or reset chain starts the announcements over: the next chain
