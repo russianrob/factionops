@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.89
+// @version      3.2.90
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,9 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.90 — Armoury: "Loan to…" leaves out anyone who already holds one of
+//           the ranked-war weapons listed, so nobody is lent a second by a
+//           slip; they're offered again once theirs is taken back.
 // v3.2.89 — Armoury: "Loan to…" goes back to blank after each loan, so the
 //           next copy needs a fresh pick and can't go to the same member by
 //           a slip. A loan Torn refuses keeps the pick for another try.
@@ -435,7 +438,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.89';
+    const SCRIPT_VERSION = '3.2.90';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -6875,10 +6878,12 @@
     // ──────────────────────────────────────────────────────────────────
     // Lists each ranked-war weapon copy in the armoury (rarity, bonuses, who
     // holds it), read from the armoury page once when the tab opens. Pick a
-    // member, then Loan on a free copy (a loan Torn takes clears it); ↩ beside
-    // a holder takes that copy back (second tap). Every request names that
-    // exact copy, so a plain copy of the same weapon is never the one lent.
-    let mgr_armouryMember = '';   // the member picked in "Loan to"; lending to them clears it
+    // member, then Loan on a free copy; "Loan to" offers only members who
+    // hold none of these copies, so whoever is lent one drops out (their pick
+    // with them) until it is taken back. ↩ beside a holder takes that copy
+    // back (second tap). Every request names that exact copy, so a plain
+    // copy of the same weapon is never the one lent.
+    let mgr_armouryMember = '';   // the member picked in "Loan to", always one it offers
     let mgr_armouryQuery = '';
     let mgr_armouryList = [];
     let mgr_armouryBusy = null;   // the one loan/retrieve in flight: { row, loan }
@@ -6959,16 +6964,13 @@
         // and log the field names (names only) so it can be fixed.
         const noRarity = rows.length > 0 && !rows.some(r => r && 'glowClass' in r);
         if (noRarity) mgr_reportArmoury({ noRarity: true, keys: Object.keys(rows[0] || {}) });
-        const members = [...mgr_memberNameMap.entries()].sort((a, b) => a[1].localeCompare(b[1]));
         content.innerHTML = `
             <div class="mgr-arm-controls">
-                <select id="mgr-arm-member" class="mgr-arm-input">
-                    <option value="">Loan to…</option>
-                    ${members.map(([id, name]) => `<option value="${mgr_esc(id)}"${id === mgr_armouryMember ? ' selected' : ''}>${mgr_esc(name)}</option>`).join('')}
-                </select>
+                <select id="mgr-arm-member" class="mgr-arm-input"></select>
                 <input id="mgr-arm-search" class="mgr-arm-input" type="search" placeholder="Search weapon, bonus or member" value="${mgr_esc(mgr_armouryQuery)}">
             </div>
             <div id="mgr-arm-list"${noRarity ? ' data-norarity="1"' : ''}></div>`;
+        mgr_renderArmouryPicker();
         content.querySelector('#mgr-arm-member').addEventListener('change', (e) => { mgr_armouryMember = e.target.value; });
         content.querySelector('#mgr-arm-search').addEventListener('input', (e) => { mgr_armouryQuery = e.target.value; mgr_renderArmouryList(); });
         content.querySelector('#mgr-arm-list').addEventListener('click', mgr_onArmouryClick);
@@ -6993,6 +6995,29 @@
             : `${Math.floor(ago / 86400)}d ago`;
         const cls = la.status === 'Online' ? 'on' : la.status === 'Idle' ? 'idle' : 'off';
         return { text, cls };
+    }
+
+    // Who "Loan to" offers: [id, name] for each member holding none of the
+    // listed copies, by name, so nobody is lent a second one by a slip.
+    function mgr_loanCandidates(nameMap, copies) {
+        const holders = new Set((copies || []).filter(c => c && c.holder).map(c => String(c.holder.id)));
+        return [...(nameMap || new Map()).entries()]
+            .filter(([id]) => !holders.has(String(id)))
+            .sort((a, b) => a[1].localeCompare(b[1]));
+    }
+
+    // Fills "Loan to" with the members it offers: when the tab opens and when
+    // a copy changes hands, not on every redraw of the list (replacing an open
+    // picker's options closes it). A pick no longer offered, because its
+    // member was just lent a copy, is dropped from the picker and from what
+    // the next Loan sends.
+    function mgr_renderArmouryPicker() {
+        const offered = mgr_loanCandidates(mgr_memberNameMap, mgr_armouryList);
+        if (!offered.some(([id]) => id === mgr_armouryMember)) mgr_armouryMember = '';
+        const pick = document.getElementById('mgr-arm-member');
+        if (!pick) return;
+        pick.innerHTML = '<option value="">Loan to…</option>'
+            + offered.map(([id, name]) => `<option value="${mgr_esc(id)}"${id === mgr_armouryMember ? ' selected' : ''}>${mgr_esc(name)}</option>`).join('');
     }
 
     function mgr_renderArmouryList() {
@@ -7054,14 +7079,9 @@
             await mgr_armouryAct(loan ? 'loan' : 'retrieve', copy, userID, userName);
             // Show the change at once; the page catches up on the next open.
             copy.holder = loan ? { id: userID, name: userName || `[${userID}]` } : null;
-            // A loan clears the pick, so the next copy needs a fresh one and
-            // cannot go to the same member by a slip. Someone picked while
-            // this loan was on its way stays picked.
-            if (loan && String(mgr_armouryMember) === userID) {
-                mgr_armouryMember = '';
-                const pick = document.getElementById('mgr-arm-member');
-                if (pick) pick.value = '';
-            }
+            // Whoever now holds a copy leaves "Loan to" (and the pick, if it was
+            // them); whoever gave one back is offered again.
+            mgr_renderArmouryPicker();
         } catch (err) {
             failed = String(err && err.message || err).slice(0, 24);
         }

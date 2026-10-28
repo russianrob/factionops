@@ -260,6 +260,31 @@ await t("a member picked while a loan is on its way stays picked for the next on
   assert.deepStrictEqual(actions(posts), ["loan 502 Primary Alpha [1000001]", "loan 505 Primary Bravo [1000002]"]);
 });
 
+// Every line of "Loan to", its "Loan to…" first.
+const offeredNames = (p) => p.$$eval("#mgr-arm-member option", (os) => os.map((o) => o.textContent));
+
+await t("a member who already holds a ranked-war copy is not offered in Loan to", async () => {
+  const { ctx, p } = await open();
+  const names = await offeredNames(p);
+  await ctx.close();
+  assert.deepStrictEqual(names, ["Loan to…", "Alpha", "Bravo"]);
+});
+
+await t("whoever is lent a copy drops out of Loan to, and is offered again once it is taken back", async () => {
+  const { ctx, p } = await open({ accept: ["Primary", "Secondary"] });
+  await p.selectOption("#mgr-arm-member", "1000001");
+  await p.click('.mgr-arm-loan[data-row="1"]');
+  await holderIs(p, 1, "Alpha");
+  const lent = await offeredNames(p);
+  const back = '.mgr-arm-back[data-row="0"]';
+  await p.click(back); await p.click(back);
+  await p.waitForFunction(() => document.querySelectorAll("#mgr-arm-list .mgr-arm-row")[0].innerText.includes("Loan"), null, { timeout: 5000 });
+  const returned = await offeredNames(p);
+  await ctx.close();
+  assert.deepStrictEqual(lent, ["Loan to…", "Bravo"]);
+  assert.deepStrictEqual(returned, ["Loan to…", "Bravo", "Charlie"]);
+});
+
 await t("a captcha is shown and not retried with the other type", async () => {
   const { ctx, p, posts } = await open({ captcha: true });
   const back = '.mgr-arm-back[data-row="2"]';

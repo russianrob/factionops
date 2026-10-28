@@ -154,9 +154,31 @@ test('a time a little ahead of this clock reads as now', () => {
   assert.equal(seen()('1000001', new Map([['1000001', la('Online', -30)]]), NOW).text, 'now');
 });
 
-test('3.2.89 in both places, and the meta file is the header', () => {
+// Who "Loan to" offers: the member names the tab loaded (id -> name) and the
+// ranked-war copies listed, each with its holder or null.
+const offered = () => new Function(fn('mgr_loanCandidates') + '\nreturn mgr_loanCandidates;')();
+const NAMES = new Map([['1000001', 'Alpha'], ['1000003', 'Charlie'], ['1000002', 'Bravo']]);
+
+test('Loan to offers only members holding none of the copies, by name', () => {
+  const copies = [
+    { armoryID: 12, holder: null },
+    { armoryID: 13, holder: { id: '1000002', name: 'Bravo' } },
+    { armoryID: 14, holder: { id: '1000009', name: 'Gone' } },
+  ];
+  assert.deepEqual(offered()(NAMES, copies), [['1000001', 'Alpha'], ['1000003', 'Charlie']]);
+});
+
+test('with every copy free, Loan to offers every member', () => {
+  assert.deepEqual(offered()(NAMES, [{ armoryID: 12, holder: null }]), [['1000001', 'Alpha'], ['1000002', 'Bravo'], ['1000003', 'Charlie']]);
+});
+
+test('a holder id given as a number still leaves that member out', () => {
+  assert.deepEqual(offered()(NAMES, [{ armoryID: 13, holder: { id: 1000002, name: 'Bravo' } }]), [['1000001', 'Alpha'], ['1000003', 'Charlie']]);
+});
+
+test('3.2.90 in both places, and the meta file is the header', () => {
   const end = '// ==/UserScript==';
   assert.equal(META, SRC.slice(0, SRC.indexOf(end) + end.length) + '\n');
-  assert.match(SRC, /^\/\/ @version\s+3\.2\.89$/m);
-  assert.match(SRC, /const SCRIPT_VERSION = '3\.2\.89';/);
+  assert.match(SRC, /^\/\/ @version\s+3\.2\.90$/m);
+  assert.match(SRC, /const SCRIPT_VERSION = '3\.2\.90';/);
 });
