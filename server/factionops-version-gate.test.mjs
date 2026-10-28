@@ -42,6 +42,7 @@ vm.runInContext([
   // fails every test here with "factionopsClientName is not defined",
   // which reads like a broken gate rather than a half-built sandbox.
   fn("factionopsClientName"),
+  fn("factionopsVersionBelow"),
   fn("factionopsVersionTooOld"),
   "globalThis.tooOld = factionopsVersionTooOld;",
 ].join("\n"), box);
@@ -64,9 +65,15 @@ test("a genuinely outdated FactionOps is still refused", () => {
   assert.equal(tooOld("1.0.0"), true);
 });
 
+test("the floor is 5.6.26: everything older is refused, it and newer pass", () => {
+  // Raised at the owner's request (2026-10-27) with the 5.6.26 release.
+  assert.equal(MIN, "5.6.26");
+  for (const v of ["5.6.25", "5.6.19", "5.5.3", "5.4.7"]) assert.equal(tooOld(v), true, v);
+  for (const v of ["5.6.26", "5.6.27", "5.7.0", "6.0.0"]) assert.equal(tooOld(v), false, v);
+});
+
 test("a current version passes", () => {
   assert.equal(tooOld(MIN), false);
-  assert.equal(tooOld("5.4.2"), false);
 });
 
 test("a client that sends no version is still let through", () => {
@@ -86,4 +93,61 @@ test("an unparseable version that is NOT on the list is still refused", () => {
 test("the allowlist cannot be fooled by a version-shaped string", () => {
   assert.equal(tooOld("sidekick.9.9.9"), true);
   assert.equal(tooOld("0.0.1-sidekick"), true);
+});
+
+// What an outdated copy is answered. The owner wants an outdated copy to stop
+// working on the war page and nowhere else: the chain bar and the
+// notifications keep running (2026-10-27). From 5.5.3 a copy answered 403
+// takes its buttons off the war page, says why, and carries on with the
+// sign-in it saved. Older copies read a 403 as a silent failure, so they keep
+// the 426, which they show as "outdated, please update".
+let _answer;
+function answer(v) {
+  if (!_answer) {
+    const b2 = { Number, Math, Set, String };
+    vm.createContext(b2);
+    vm.runInContext([
+      line(/^const FACTIONOPS_MIN_VERSION = .*$/m),
+      line(/^const FACTIONOPS_WAR_PAGE_OFF_VERSION = .*$/m),
+      fn("factionopsVersionBelow"),
+      fn("factionopsOutdatedAnswer"),
+      "globalThis.answer = factionopsOutdatedAnswer;",
+    ].join("\n"), b2);
+    _answer = b2.answer;
+  }
+  return _answer(v);
+}
+
+test("an outdated copy from 5.5.3 on is answered 403, which takes it off the war page", () => {
+  for (const v of ["5.6.25", "5.6.19", "5.5.3"]) {
+    const a = answer(v);
+    assert.equal(a.status, 403, v);
+    assert.equal(a.body.outdated, true, v);
+    assert.equal(a.body.updateUrl, "https://tornwar.com/scripts/factionops.user.js", v);
+  }
+});
+
+test("the 403 names the copy, the version to update to, what stops, and how to update", () => {
+  // The copy toasts this text as it stands; only its 426 branch adds the
+  // Tampermonkey hint itself.
+  assert.equal(answer("5.6.25").body.error,
+    `FactionOps 5.6.25 is outdated: update to v${MIN} or newer to use it on the war page. `
+    + "Open Tampermonkey → Check for userscript updates.");
+});
+
+test("a copy older than 5.5.3 keeps the 426, the refusal it shows", () => {
+  for (const v of ["5.5.2", "5.4.7", "5.1.90", "4.0.0", "banana"]) {
+    const a = answer(v);
+    assert.equal(a.status, 426, v);
+    assert.equal(a.body.error, `FactionOps ${v} is outdated — please update to v${MIN} or newer.`, v);
+    assert.equal(a.body.outdated, true, v);
+    assert.equal(a.body.updateUrl, "https://tornwar.com/scripts/factionops.user.js", v);
+  }
+});
+
+test("/api/auth sends an outdated copy that answer", () => {
+  const route = SRC.slice(SRC.indexOf('router.post("/api/auth"'));
+  const gate = route.slice(0, route.indexOf("factionopsVersionTooOld(scriptVersion)") + 900);
+  assert.match(gate, /const answer = factionopsOutdatedAnswer\(scriptVersion\);/);
+  assert.match(gate, /return res\.status\(answer\.status\)\.json\(answer\.body\);/);
 });
