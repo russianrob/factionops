@@ -609,18 +609,12 @@ io.on("connection", (socket) => {
       }
   });
 
-  registerSocketHandlers(io, socket);
-
-  // When a player joins a war, ensure status monitoring is running
-  // Chain data comes from clients via DOM reading — no server-side chain polling needed
-  socket.on("join_war", ({ warId }) => {
-    // Small delay to let the war get created/loaded first
-    setTimeout(() => {
-      const war = store.getWar(warId);
-      if (war?.enemyFactionId) {
-        startWarStatusMonitor(io, warId);
-      }
-    }, 100);
+  registerSocketHandlers(io, socket, {
+    // A join that is let in starts the war's status monitor once the war has
+    // an enemy. Chain data comes from clients; no server-side chain polling.
+    onJoin: (warId) => {
+      if (store.getWar(warId)?.enemyFactionId) startWarStatusMonitor(io, warId);
+    },
   });
 });
 

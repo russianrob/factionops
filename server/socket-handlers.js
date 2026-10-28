@@ -18,15 +18,29 @@ const refreshCooldowns = new Map(); // warId → timestamp
  * Register all Socket.IO event handlers for a connected socket.
  * @param {import("socket.io").Server} io
  * @param {import("socket.io").Socket} socket
+ * @param {{ onJoin?: (warId: string) => void }} [hooks] onJoin runs once a
+ *   join_war has been let in and its war_state sent.
  */
-export function registerSocketHandlers(io, socket) {
+export function registerSocketHandlers(io, socket, { onJoin } = {}) {
   const user = socket.user; // set by auth middleware: { playerId, playerName, factionId, factionName }
 
   // ── join_war ────────────────────────────────────────────────────────
 
-  socket.on("join_war", ({ warId, factionId, enemyFactionId }) => {
-    if (!warId || !factionId) {
-      return socket.emit("error", { message: "warId and factionId are required" });
+  socket.on("join_war", (payload) => {
+    const { warId, enemyFactionId } = payload && typeof payload === "object" ? payload : {};
+    if (!warId) return socket.emit("error", { message: "warId is required" });
+    if (typeof warId !== "string") return socket.emit("error", { message: "warId must be a single value" });
+    if (enemyFactionId != null && typeof enemyFactionId !== "string" && typeof enemyFactionId !== "number") {
+      return socket.emit("error", { message: "enemyFactionId must be a single value" });
+    }
+    // The faction is the one the sign-in carries, never the one the message
+    // names (as /api/poll does). Another faction's war is turned away before
+    // getOrCreateWar, which would fill in a missing enemy from this message.
+    const factionId = user.factionId;
+    if (!factionId) return socket.emit("error", { message: "This token carries no faction" });
+    const existing = store.getWar(warId);
+    if (existing && String(existing.factionId) !== String(factionId)) {
+      return socket.emit("error", { message: "You are not a member of this war's faction" });
     }
 
     const room = `war_${warId}`;
@@ -66,6 +80,7 @@ export function registerSocketHandlers(io, socket) {
       strategy: war.strategy || null,
       enemyActivityByHour: war.enemyActivityByHour || null,
     });
+    onJoin?.(warId);
   });
 
   // ── call_target ─────────────────────────────────────────────────────
