@@ -142,7 +142,8 @@ import { getLowestListing, trackItem, getListingsById, getListingsByName, fetchN
 import * as vaultRequests from "./vault-requests.js";
 import * as keyUsage from "./key-usage-log.js";
 import { hasXanaxSubscription, grantFactionAccess, getXanaxSubscription } from "./xanax-subscriptions.js";
-import { startChainMonitor, recordClientChainData } from "./chain-monitor.js";
+import { startChainMonitor, recordClientChainData, recordPageChain } from "./chain-monitor.js";
+import { parsePageReport } from "./chain-alert-rule.js";
 import { startEnemySurgeMonitor, stopEnemySurgeMonitor } from "./enemy-surge-monitor.js";
 import * as push from "./push-notifications.js";
 import * as restockTracker from "./restock-tracker.js";
@@ -3616,6 +3617,21 @@ router.post("/api/chain-update", requireAuth, async (req, res) => {
   }
   const accepted = await recordClientChainData(String(warId), chainData);
   return res.json({ ok: true, accepted });
+});
+
+// ── POST /api/chain-page ───────────────────────────────────────────────
+// The chain as a member's focused Torn page shows it (FactionOps 5.6.28 and
+// later): its count, and Torn's end or the seconds on the page's clock. The
+// server still reads Torn's API; a report decides the chain alerts only
+// while it is ahead of the API's reading (chain-monitor.js recordPageChain).
+// The war is the signed-in member's faction's own.
+router.post("/api/chain-page", requireAuth, (req, res) => {
+  const { factionId, playerId } = req.user;
+  const report = parsePageReport(req.body || {}, Date.now());
+  if (!report) return res.status(400).json({ error: "count, and endsAt or left, required" });
+  const warId = `war_${factionId}`;
+  if (!factionId || !store.getWar(warId)) return res.status(404).json({ error: "No war for your faction" });
+  return res.json({ ok: true, accepted: recordPageChain(warId, report, playerId) });
 });
 
 // ── Enemy-online-surge config (per-faction) ─────────────────────────────

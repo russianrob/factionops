@@ -22,6 +22,7 @@ import { normalizeChainData, chainWithLiveTimeout } from "./chain-data.js";
 import {
   isWarLive, chainAlertFloor, outsideWarDelay, outsideWarChainEnded, outsideWarBadDrop,
   isBigLiveChain, isCooldown, CHAIN_END_CONFIRM_MS, OUTSIDE_WAR_MIN_CHAIN, CHAIN_CLOCK_MAX_S,
+  apiChainView, pageLeadsApi, PAGE_REPORT_FRESH_MS,
 } from "./chain-alert-rule.js";
 
 // Fallback interval when we can't resolve the dynamic one (e.g. no war
@@ -120,6 +121,17 @@ const lastChainEndNoticed = new Map();
 const lastScoreCheck = new Map();
 /** Track if we already notified war target reached per warId. */
 const warTargetNotified = new Map();
+/** The page report held per warId, { count, endsAtMs, atMs, playerId }: the
+ * chain as a member's focused Torn page showed it (see recordPageChain). */
+const pageChain = new Map();
+/** Last time a page report, and a reading a page report leads, was logged
+ * per warId. */
+const lastPageReportLog = new Map();
+const lastPageLeadLog = new Map();
+/** Those two lines are logged at most this often per war. */
+const PAGE_LOG_EVERY_MS = 60_000;
+/** Two reports of the same count whose ends are this close are one reading. */
+const PAGE_SAME_END_MS = 2_000;
 
 /**
  * Apply a fresh chain snapshot to a war and run the alert / Live
@@ -144,6 +156,45 @@ function pushAudience(war) {
   return war && war.factionId
     ? store.getPlayerIdsForFaction(war.factionId).map((id) => ({ id }))
     : [];
+}
+
+/**
+ * The low-clock push for a chain of `count` with `timeoutS` left: CHAIN
+ * DYING at CHAIN_PANIC_THRESHOLD or less, else CHAIN BREAKING at
+ * CHAIN_ALERT_THRESHOLD or less, each at most once per its cooldown per war,
+ * whichever reading (`source`, for the log) it comes from.
+ */
+function sendLowClockAlert(warId, war, count, timeoutS, source) {
+  if (timeoutS <= CHAIN_PANIC_THRESHOLD) {
+    const lastPanic = lastPanicSent.get(warId) || 0;
+    if (Date.now() - lastPanic > CHAIN_PANIC_COOLDOWN_MS) {
+      lastPanicSent.set(warId, Date.now());
+      const warPlayers = pushAudience(war);
+      push.notifyChainPanic(warPlayers, warId, count, Math.round(timeoutS));
+      console.log(`[chain] PANIC alert: chain ${count}, ${Math.round(timeoutS)}s remaining (${source})`);
+    }
+  } else if (timeoutS <= CHAIN_ALERT_THRESHOLD) {
+    const lastAlert = lastAlertSent.get(warId) || 0;
+    if (Date.now() - lastAlert > CHAIN_ALERT_COOLDOWN_MS) {
+      lastAlertSent.set(warId, Date.now());
+      const warPlayers = pushAudience(war);
+      push.notifyChainAlert(warPlayers, warId, count, timeoutS, Math.round(timeoutS));
+      console.log(`[chain] Warning alert: chain ${count}, ${Math.round(timeoutS)}s remaining (${source})`);
+    }
+  }
+}
+
+/**
+ * The low-clock alerts on a page report's clock, counted down to `nowMs`,
+ * for a chain at or over the floor (chainAlertFloor). The check of the
+ * API's low clocks against the time since the last hit (timerPlausible in
+ * _processChain) is for the API's lag: a page's clock is the game's own.
+ */
+function checkPageClock(warId, war, page, nowMs) {
+  const leftS = Math.round((page.endsAtMs - nowMs) / 1000);
+  if (leftS > 0 && page.count >= chainAlertFloor(war, nowMs)) {
+    sendLowClockAlert(warId, war, page.count, leftS, "page");
+  }
 }
 
 async function _processChain(warId, war, chain, io, source) {
@@ -207,32 +258,28 @@ async function _processChain(warId, war, chain, io, source) {
   }
 
   const isCoolingDown = chain.cooldown > 0;
-  // A hit resets Torn's chain timer to ~5:00, so within ~4 min of the last
-  // hit (see above) the timer physically can't be near zero — reject
-  // the low reading as a stale/lagging snapshot instead of pushing a false
-  // "chain dying" alert to everyone. Real stalls (no hit for minutes) still fire.
-  const secsSinceHit = (Date.now() - (lastChainIncreaseAt.get(warId) || 0)) / 1000;
-  const timerPlausible = chain.timeout >= (300 - secsSinceHit) - 60;
-  if (!isCoolingDown && !timerPlausible && chain.timeout > 0 && chain.timeout <= CHAIN_ALERT_THRESHOLD && chain.current >= minChain) {
-    console.log(`[chain] SUPPRESSED stale alert: chain ${chain.current}, timeout=${Math.round(chain.timeout)}s but only ${Math.round(secsSinceHit)}s since last hit (${source})`);
-  }
-  if (!isCoolingDown && timerPlausible && chain.timeout > 0 && chain.current >= minChain) {
-    if (chain.timeout <= CHAIN_PANIC_THRESHOLD) {
-      const lastPanic = lastPanicSent.get(warId) || 0;
-      if (Date.now() - lastPanic > CHAIN_PANIC_COOLDOWN_MS) {
-        lastPanicSent.set(warId, Date.now());
-        const warPlayers = pushAudience(war);
-        push.notifyChainPanic(warPlayers, warId, chain.current, Math.round(chain.timeout));
-        console.log(`[chain] PANIC alert: chain ${chain.current}, ${Math.round(chain.timeout)}s remaining (${source})`);
-      }
-    } else if (chain.timeout <= CHAIN_ALERT_THRESHOLD) {
-      const lastAlert = lastAlertSent.get(warId) || 0;
-      if (Date.now() - lastAlert > CHAIN_ALERT_COOLDOWN_MS) {
-        lastAlertSent.set(warId, Date.now());
-        const warPlayers = pushAudience(war);
-        push.notifyChainAlert(warPlayers, warId, chain.current, chain.timeout, Math.round(chain.timeout));
-        console.log(`[chain] Warning alert: chain ${chain.current}, ${Math.round(chain.timeout)}s remaining (${source})`);
-      }
+  // While a member's page report is ahead of this reading (Torn's API runs
+  // behind the game at times), the page's clock decides the low-clock
+  // alerts, and this reading's is not used: see pageLeadsApi.
+  const page = pageChain.get(warId);
+  if (pageLeadsApi(page, apiChainView(chain, Date.now()), Date.now())) {
+    if (Date.now() - (lastPageLeadLog.get(warId) || 0) >= PAGE_LOG_EVERY_MS) {
+      lastPageLeadLog.set(warId, Date.now());
+      console.log(`[chain] page leads: API read ${chain.current || 0} (cooldown=${chain.cooldown} timeout=${chain.timeout}), page ${page.count} with ${Math.round((page.endsAtMs - Date.now()) / 1000)}s left (${source})`);
+    }
+    checkPageClock(warId, war, page, Date.now());
+  } else {
+    // A hit resets Torn's chain timer to ~5:00, so within ~4 min of the last
+    // hit (see above) the timer physically can't be near zero — reject
+    // the low reading as a stale/lagging snapshot instead of pushing a false
+    // "chain dying" alert to everyone. Real stalls (no hit for minutes) still fire.
+    const secsSinceHit = (Date.now() - (lastChainIncreaseAt.get(warId) || 0)) / 1000;
+    const timerPlausible = chain.timeout >= (300 - secsSinceHit) - 60;
+    if (!isCoolingDown && !timerPlausible && chain.timeout > 0 && chain.timeout <= CHAIN_ALERT_THRESHOLD && chain.current >= minChain) {
+      console.log(`[chain] SUPPRESSED stale alert: chain ${chain.current}, timeout=${Math.round(chain.timeout)}s but only ${Math.round(secsSinceHit)}s since last hit (${source})`);
+    }
+    if (!isCoolingDown && timerPlausible && chain.timeout > 0 && chain.current >= minChain) {
+      sendLowClockAlert(warId, war, chain.current, chain.timeout, source);
     }
   }
   if (!isCoolingDown && chain.current >= minChain) {
@@ -307,6 +354,40 @@ export async function recordClientChainData(warId, chain) {
   const existingTs  = Number(war.chainData?.serverTimestamp) || 0;
   if (incomingTs && existingTs && incomingTs < existingTs) return false;
   return (await _processChain(warId, war, chain, /*io*/ null, "client")) !== false;
+}
+
+/**
+ * Public entry: a page report, parsePageReport's { count, endsAtMs }, from a
+ * member's focused Torn page (FactionOps 5.6.28 and later, through POST
+ * /api/chain-page). Of the fresh reports the one held is the furthest
+ * ahead: a lower count, or the same count with an end over PAGE_SAME_END_MS
+ * earlier, is behind it and turned away (false), and the same reading again
+ * refreshes it, keeping the later end. While the held report leads the last
+ * reading (pageLeadsApi), its clock is checked at once. Only the low-clock
+ * alerts read page reports: the stored chain, the Live Activity, the bonus
+ * alerts and the chain-ended notice stay on the API's readings.
+ */
+export function recordPageChain(warId, report, playerId) {
+  const war = store.getWar(warId);
+  if (!war || !report) return false;
+  const now = Date.now();
+  const page = { count: report.count, endsAtMs: report.endsAtMs, atMs: now, playerId };
+  const held = pageChain.get(warId);
+  if (held && now - held.atMs <= PAGE_REPORT_FRESH_MS) {
+    if (page.count < held.count) return false;
+    if (page.count === held.count) {
+      if (page.endsAtMs < held.endsAtMs - PAGE_SAME_END_MS) return false;
+      page.endsAtMs = Math.max(page.endsAtMs, held.endsAtMs);
+    }
+  }
+  pageChain.set(warId, page);
+  const leads = pageLeadsApi(page, apiChainView(war.chainData, Number(war.chainDataUpdatedAt) || now), now);
+  if (now - (lastPageReportLog.get(warId) || 0) >= PAGE_LOG_EVERY_MS) {
+    lastPageReportLog.set(warId, now);
+    console.log(`[chain/page] war=${warId} player=${playerId} count=${page.count} left=${Math.round((page.endsAtMs - now) / 1000)}s leads=${leads ? "yes" : "no"}`);
+  }
+  if (leads) checkPageClock(warId, war, page, now);
+  return true;
 }
 
 /**
@@ -614,6 +695,9 @@ export function stopChainMonitor(warId) {
   lastPanicSent.delete(warId);
   lastChainIncreaseAt.delete(warId);
   lastChainHit.delete(warId);
+  pageChain.delete(warId);
+  lastPageReportLog.delete(warId);
+  lastPageLeadLog.delete(warId);
   lastBigChainAt.delete(warId);
   pendingChainEnd.delete(warId);
   lastChainEndNoticed.delete(warId);

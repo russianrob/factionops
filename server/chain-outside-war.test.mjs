@@ -244,7 +244,8 @@ test("the chain-ended notice is quiet, clears the pinned chain alerts, and says 
 
 // ── The chain monitor ───────────────────────────────────────────────────
 
-const MONITOR_FNS = ["warScoreCheckInterval", "pushAudience", "_processChain", "recordClientChainData", "startChainMonitor"];
+const MONITOR_FNS = ["warScoreCheckInterval", "pushAudience", "sendLowClockAlert", "checkPageClock", "_processChain",
+  "recordClientChainData", "recordPageChain", "startChainMonitor"];
 const AUDIENCE = [{ id: "1000001" }, { id: "1000002" }];
 
 // `chainReading` is what Torn's chain call returns to the loop.
@@ -645,4 +646,112 @@ test("a start while the watch's first read is still out runs no second loop", as
   api.startChainMonitor(null, "w1");
   await new Promise((r) => globalThis.setTimeout(r, 50));
   assert.equal(seen.chainReads, 1);
+});
+
+// ── A page report while the API is behind ───────────────────────────────
+
+// FactionOps (5.6.28 and later) sends the chain as a member's focused Torn
+// page shows it. On 2026-10-28 Torn's API ran behind the game for about two
+// hours, showing the chain over while it ran on, and no chain alert went
+// out. While a page report is ahead of the API's reading, its clock decides
+// the low-clock alerts; the rule is chain-alert-rule.js' pageLeadsApi.
+
+// The reading before the next one, in a cooldown: `current` hits, `agoMs`
+// ago, with `cooldownS` seconds of cooldown then.
+function cooldownRead(war, current, cooldownS, agoMs) {
+  const at = Date.now() - agoMs;
+  war.chainData = normalizeChainData({ current, timeout: 0, cooldown: cooldownS }, at);
+  war.chainDataUpdatedAt = at;
+  return war;
+}
+// A page report as the route passes it on: `count` hits, `leftS` on its clock.
+const pageReport = (count, leftS) => ({ count, endsAtMs: Date.now() + leftS * 1000 });
+// Moves the held page report and the last alerts back by `ms`, as if that
+// long had gone by.
+function agePage(api, warId, ms) {
+  const page = api.maps.pageChain?.get(warId);
+  if (page) { page.atMs -= ms; page.endsAtMs -= ms; }
+  for (const m of [api.maps.lastPanicSent, api.maps.lastAlertSent]) {
+    if (m?.get(warId)) m.set(warId, m.get(warId) - ms);
+  }
+}
+const sent = (seen) => seen.sends.map((s) => [s[0], s[2], s[3], s[4]]);
+
+test("while Torn's API shows the chain over at a lower count, a page report's low clock gets CHAIN DYING, from the page", async () => {
+  const war = cooldownRead(liveWar(), 1240, 7_440, 5_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  assert.equal(api.recordPageChain("w1", pageReport(1250, 25), "1000001"), true);
+  assert.deepEqual(sent(seen), [["notifyChainPanic", "w1", 1250, 25]]);
+  assert.ok(seen.logs.some((l) => /PANIC alert: chain 1250, 25s remaining \(page\)/.test(l)), seen.logs.join("\n"));
+});
+
+test("the API's next readings check the page's clock too, with one CHAIN DYING in 20 s", async () => {
+  const war = cooldownRead(liveWar(), 1240, 7_440, 5_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  api.recordPageChain("w1", pageReport(1250, 25), "1000001");
+  agePage(api, "w1", 10_000);
+  await api._processChain("w1", war, reading(1240, 0, 7_430), null, "poll");
+  assert.equal(seen.sends.length, 1);
+  assert.ok(seen.logs.some((l) => /page leads: API read 1240 \(cooldown=7430 timeout=0\), page 1250 with 15s left \(poll\)/.test(l)), seen.logs.join("\n"));
+  agePage(api, "w1", 11_000);
+  await api._processChain("w1", war, reading(1240, 0, 7_419), null, "poll");
+  assert.deepEqual(sent(seen).slice(1), [["notifyChainPanic", "w1", 1250, 4]]);
+});
+
+test("a page report ahead of the API mutes the API's own low clock", async () => {
+  const war = lastRead(liveWar(), 1240, 30, 10_000);
+  const control = lastRead(liveWar(), 1240, 30, 10_000);
+  const { api, seen } = buildMonitor({ w1: war, w2: control });
+  api.recordPageChain("w1", pageReport(1245, 240), "1000001");
+  await api._processChain("w1", war, reading(1240, 20), null, "poll");
+  await api._processChain("w2", control, reading(1240, 20), null, "poll");
+  assert.deepEqual(sent(seen), [["notifyChainPanic", "w2", 1240, 20]]);
+});
+
+test("a page report behind the API, as from a tab left showing an old count, leaves the API's CHAIN DYING be", async () => {
+  const war = lastRead(liveWar(), 1240, 30, 10_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  assert.equal(api.recordPageChain("w1", pageReport(1235, 240), "1000001"), true);
+  await api._processChain("w1", war, reading(1240, 25), null, "poll");
+  assert.deepEqual(sent(seen), [["notifyChainPanic", "w1", 1240, 25]]);
+});
+
+test("at the API's count in a cooldown, a page clock that is that cooldown counting down gets no alert", async () => {
+  const war = cooldownRead(liveWar(), 1240, 60, 0);
+  const { api, seen } = buildMonitor({ w1: war });
+  api.recordPageChain("w1", pageReport(1240, 50), "1000001");
+  await api._processChain("w1", war, reading(1240, 0, 60), null, "poll");
+  assert.deepEqual(seen.sends, []);
+});
+
+test("one member's reports of the same count, their ends 300 ms apart, keep the report held fresh", async () => {
+  const war = cooldownRead(liveWar(), 1240, 7_440, 0);
+  const { api } = buildMonitor({ w1: war });
+  api.recordPageChain("w1", pageReport(1250, 200), "1000001");
+  agePage(api, "w1", 70_000);
+  const firstEnd = api.maps.pageChain.get("w1").endsAtMs;
+  assert.equal(api.recordPageChain("w1", { count: 1250, endsAtMs: firstEnd - 300 }, "1000001"), true);
+  const held = api.maps.pageChain.get("w1");
+  assert.ok(Date.now() - held.atMs < 1_000, "the second report refreshes the one held");
+  assert.equal(held.endsAtMs, firstEnd, "and keeps the later end");
+  assert.equal(api.recordPageChain("w1", { count: 1250, endsAtMs: firstEnd - 2_001 }, "1000002"), false, "an end 2 s earlier is behind");
+  assert.equal(api.recordPageChain("w1", pageReport(1249, 200), "1000002"), false, "a lower count is behind");
+});
+
+test("outside a war, a page report of a chain under 100 gets no alert, and one of 120 gets CHAIN DYING", async () => {
+  const small = cooldownRead(endedWar(), 90, 7_440, 0);
+  const big = cooldownRead(endedWar(), 110, 7_440, 0);
+  const { api, seen } = buildMonitor({ w1: small, w2: big });
+  api.recordPageChain("w1", pageReport(99, 25), "1000001");
+  api.recordPageChain("w2", pageReport(120, 25), "1000001");
+  assert.deepEqual(sent(seen), [["notifyChainPanic", "w2", 120, 25]]);
+});
+
+test("a page report over 75 s old no longer leads: the API's reading decides", async () => {
+  const war = lastRead(liveWar(), 1240, 30, 10_000);
+  const { api, seen } = buildMonitor({ w1: war });
+  api.recordPageChain("w1", pageReport(1245, 240), "1000001");
+  agePage(api, "w1", 76_000);
+  await api._processChain("w1", war, reading(1240, 25), null, "poll");
+  assert.deepEqual(sent(seen), [["notifyChainPanic", "w1", 1240, 25]]);
 });

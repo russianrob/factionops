@@ -9,6 +9,7 @@
 // routes.js' text. Counts and ids are made up.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import * as rule from "./chain-alert-rule.js";
 
 const T = 2_000_000_000_000; // a fixed moment, in ms
@@ -91,4 +92,21 @@ test("no running clock or no good count is no report, and an end sent stands alo
     { left: 25 }, { count: 1250 }, {}, null, undefined, "1250",
   ];
   bad.forEach((b, i) => assert.equal(rule.parsePageReport(b, T), null, "case " + i));
+});
+
+// ── The route ───────────────────────────────────────────────────────────
+
+const ROUTES = readFileSync(new URL("./routes.js", import.meta.url), "utf8");
+
+test("the route: POST /api/chain-page, signed in, the report checked, for the faction's own war", () => {
+  const i = ROUTES.indexOf('router.post("/api/chain-page", requireAuth,');
+  assert.ok(i > 0, "no route");
+  const body = ROUTES.slice(i, ROUTES.indexOf("\n});", i));
+  assert.match(body, /parsePageReport\(req\.body \|\| \{\}, Date\.now\(\)\)/);
+  assert.match(body, /status\(400\)/);
+  assert.match(body, /const warId = `war_\$\{factionId\}`;/);
+  assert.match(body, /status\(404\)/);
+  assert.match(body, /recordPageChain\(warId, report, playerId\)/);
+  assert.match(ROUTES, /^import \{[^}]*\brecordPageChain\b[^}]*\} from "\.\/chain-monitor\.js";$/m);
+  assert.match(ROUTES, /^import \{[^}]*\bparsePageReport\b[^}]*\} from "\.\/chain-alert-rule\.js";$/m);
 });
