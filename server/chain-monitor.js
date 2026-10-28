@@ -21,7 +21,7 @@ import * as liveActivityTokens from "./live-activity-tokens.js";
 import { normalizeChainData, chainWithLiveTimeout } from "./chain-data.js";
 import {
   isWarLive, chainAlertFloor, outsideWarDelay, outsideWarChainEnded, outsideWarBadDrop,
-  isBigLiveChain, isCooldown, staleMemberReport, CHAIN_END_CONFIRM_MS, OUTSIDE_WAR_MIN_CHAIN,
+  isBigLiveChain, isCooldown, CHAIN_END_CONFIRM_MS, OUTSIDE_WAR_MIN_CHAIN,
 } from "./chain-alert-rule.js";
 
 // Fallback interval when we can't resolve the dynamic one (e.g. no war
@@ -99,10 +99,10 @@ const backoffs = new Map();
 const lastAlertSent = new Map();
 /** Last time we sent a chain panic push per warId. */
 const lastPanicSent = new Map();
-/** The newest chain count read per warId, { count, atMs }, that members'
- * reports are checked against (staleMemberReport). The server's own reads
- * set it, and so do members' reports that are not stale. */
-const newestChainCount = new Map();
+/** Wall-clock (ms) of the last chain-count INCREASE per warId. A qualifying
+ * hit resets Torn's chain timer to ~5:00, so a recent increase means a low
+ * reported timeout is a stale/lagging snapshot, not a real break. */
+const lastChainIncreaseAt = new Map();
 /** Wall-clock (ms) of the last reading of a running chain of 100 or more per
  * warId. Outside a war it keeps the reads at the war's pace for a while
  * after it. */
@@ -172,10 +172,7 @@ async function _processChain(warId, war, chain, io, source) {
   const countChanged = (prevChain.current || 0) !== (chain.current || 0);
   const cooldownFlipped = ((prevChain.cooldown || 0) > 0) !== ((chain.cooldown || 0) > 0);
   const broke = (prevChain.current || 0) > 0 && (chain.current || 0) === 0;
-  // Checked against the newest count before this reading can take its place.
-  const newest = newestChainCount.get(warId);
-  const stale = staleMemberReport({ source, current: chain.current, newest, nowMs: Date.now() });
-  if (!stale) newestChainCount.set(warId, { count: chain.current || 0, atMs: Date.now() });
+  if ((chain.current || 0) > (prevChain.current || 0)) lastChainIncreaseAt.set(warId, Date.now());
   // Chains are alerted from 10 hits in a live war, and from 100 outside one.
   const minChain = chainAlertFloor(war, Date.now());
   if (isBigLiveChain(chain)) lastBigChainAt.set(warId, Date.now());
@@ -191,17 +188,16 @@ async function _processChain(warId, war, chain, io, source) {
   }
 
   const isCoolingDown = chain.cooldown > 0;
-  // A low clock gets CHAIN BREAKING and CHAIN DYING unless the reading is a
-  // stale member's report (staleMemberReport). The check before this one
-  // muted any low clock within about 4 minutes of the count going up, on the
-  // belief that a hit puts 5:00 on the clock. Hits can land with less (on
-  // 2026-10-28 they landed with 17-24 s left), and a bad reading of 0 and then
-  // the count passed for a hit: it muted alerts the server's own read of Torn
-  // confirmed, among them the last ones before chains broke.
-  if (!isCoolingDown && stale && chain.timeout > 0 && chain.timeout <= CHAIN_ALERT_THRESHOLD && chain.current >= minChain) {
-    console.log(`[chain] SUPPRESSED stale alert: chain ${chain.current}, timeout=${Math.round(chain.timeout)}s but chain ${newest.count} was read ${Math.round((Date.now() - newest.atMs) / 1000)}s ago (${source})`);
+  // A qualifying hit resets Torn's chain timer to ~5:00, so if the count went
+  // up within the last ~2 min the timer physically can't be near zero — reject
+  // the low reading as a stale/lagging snapshot instead of pushing a false
+  // "chain dying" alert to everyone. Real stalls (no hit for minutes) still fire.
+  const secsSinceHit = (Date.now() - (lastChainIncreaseAt.get(warId) || 0)) / 1000;
+  const timerPlausible = chain.timeout >= (300 - secsSinceHit) - 60;
+  if (!isCoolingDown && !timerPlausible && chain.timeout > 0 && chain.timeout <= CHAIN_ALERT_THRESHOLD && chain.current >= minChain) {
+    console.log(`[chain] SUPPRESSED stale alert: chain ${chain.current}, timeout=${Math.round(chain.timeout)}s but only ${Math.round(secsSinceHit)}s since last hit (${source})`);
   }
-  if (!isCoolingDown && !stale && chain.timeout > 0 && chain.current >= minChain) {
+  if (!isCoolingDown && timerPlausible && chain.timeout > 0 && chain.current >= minChain) {
     if (chain.timeout <= CHAIN_PANIC_THRESHOLD) {
       const lastPanic = lastPanicSent.get(warId) || 0;
       if (Date.now() - lastPanic > CHAIN_PANIC_COOLDOWN_MS) {
@@ -593,7 +589,7 @@ export function stopChainMonitor(warId) {
   backoffs.delete(warId);
   lastAlertSent.delete(warId);
   lastPanicSent.delete(warId);
-  newestChainCount.delete(warId);
+  lastChainIncreaseAt.delete(warId);
   lastBigChainAt.delete(warId);
   pendingChainEnd.delete(warId);
   lastChainEndNoticed.delete(warId);

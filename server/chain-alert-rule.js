@@ -19,10 +19,9 @@ export const OUTSIDE_WAR_MIN_CHAIN = 100;
 
 /**
  * How often the chain is checked outside a war while it reads under 100.
- * A hit most often puts the chain's clock back to 5 minutes, so a chain that
- * reaches 100 just after a check most often still has 3 minutes or more left
- * at the next one: time for the war-pace checks to catch the 60 s and 30 s
- * marks.
+ * Every hit puts the chain's clock back to 5 minutes, so a chain that
+ * reaches 100 just after a check still has 3 minutes or more left at the
+ * next one: time for the war-pace checks to catch the 60 s and 30 s marks.
  */
 export const OUTSIDE_WAR_IDLE_MS = 120_000;
 
@@ -67,10 +66,7 @@ export const CHAIN_END_CONFIRM_MS = 360_000;
  */
 export const MAX_COOLDOWN_S = 864_000;
 
-/**
- * The longest a chain's clock runs: 5 minutes. A hit most often puts it back
- * there, but not always: on 2026-10-28 hits left it at 17-24 s.
- */
+/** The longest a chain's clock runs: a hit puts it back to 5 minutes. */
 export const CHAIN_CLOCK_MAX_S = 300;
 
 /** The shortest wait before kickoff, as the pre-war cadence had it. */
@@ -149,31 +145,12 @@ export function outsideWarChainEnded({ prevCurrent, prevTimeoutS, prevCooldown, 
  * count never drops while its clock runs, but members' FactionOps send 0s
  * like that, thousands of them (on 2026-10-26, one with nearly 5 minutes
  * left on the clock, and the next reading had the whole chain again).
- * Stored, a 0 makes the next reading look like a fresh chain's first hits:
- * the bonus warnings start over, and an end right after it is never noticed.
- * A clock over 5 minutes is no chain's, so a reading after one is taken.
+ * Stored, a 0 makes the next reading look like a fresh chain's first hits,
+ * and that holds back the chain's CHAIN BREAKING and CHAIN DYING for about
+ * 3 minutes. A clock over 5 minutes is no chain's, so it holds nothing back.
  */
 export function outsideWarBadDrop({ prevCurrent, prevTimeoutS, current }) {
   return prevCurrent >= OUTSIDE_WAR_MIN_CHAIN
     && prevTimeoutS > 0 && prevTimeoutS <= CHAIN_CLOCK_MAX_S
     && current < OUTSIDE_WAR_MIN_CHAIN;
-}
-
-/**
- * True for a member's chain report (`source` "client": FactionOps) with a
- * lower count than the newest one read in the last 5 minutes (`newest`,
- * { count, atMs }): a report from before the latest hits, so its low clock is
- * not the chain's, and it gets no CHAIN BREAKING or CHAIN DYING. On
- * 2026-07-10 a member's FactionOps sent counts up to 40 hits behind for over
- * an hour, with a clock of their own running down, while the chain climbed.
- * A chain's count never drops while it runs, nor through the cooldown after,
- * and its clock never holds more than 5 minutes; a newest count older than
- * that may be of a chain that has ended since, and a lower count may be a new
- * chain's. The server's own read of Torn (`source` "poll") is never stale.
- */
-export function staleMemberReport({ source, current, newest, nowMs }) {
-  return source !== "poll"
-    && !!newest
-    && nowMs - newest.atMs <= CHAIN_CLOCK_MAX_S * 1000
-    && (Number(current) || 0) < newest.count;
 }
