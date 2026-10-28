@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { guardSocket } from "./socket-guard.js";
 import { startHarness, connect } from "./socket-test-harness.mjs";
 
@@ -94,4 +95,17 @@ test("one empty message of each kind leaves the server up and answering", { time
   } finally {
     await h.stop();
   }
+});
+
+// The guard only protects the live server if server.js puts it on each
+// connection before any listener: read from its source, since importing
+// server.js would start the whole server. SERVER_SRC points it at another copy.
+test("server.js guards each socket before adding any listener", () => {
+  const src = readFileSync(new URL(process.env.SERVER_SRC || "./server.js", import.meta.url), "utf8");
+  const start = src.indexOf('io.on("connection", (socket) => {');
+  assert.ok(start > 0, "no connection handler");
+  const guard = src.indexOf("guardSocket(socket);", start);
+  assert.ok(guard > start, "no guardSocket in the connection handler");
+  assert.ok(guard < src.indexOf("socket.on(", start), "a listener is added before guardSocket");
+  assert.ok(guard < src.indexOf("registerSocketHandlers(", start), "the handlers are added before guardSocket");
 });

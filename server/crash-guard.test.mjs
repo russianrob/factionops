@@ -91,7 +91,8 @@ test("a promise nobody handles ends the process with 1, after saving", () => {
 
 // How server.js arms it: read from its source, since importing server.js
 // would start the whole server.
-const SERVER = readFileSync(new URL("./server.js", import.meta.url), "utf8");
+// SERVER_SRC points these at another copy.
+const SERVER = readFileSync(new URL(process.env.SERVER_SRC || "./server.js", import.meta.url), "utf8");
 const body = (name) => {
   const i = SERVER.indexOf(`function ${name}(`);
   assert.ok(i > 0, `${name} not found`);
@@ -119,6 +120,7 @@ test("server.js arms the guard only once the state has loaded", () => {
 
 test("saving waits for the state, and shutdown saves the same way", () => {
   assert.ok(body("saveAll").trim().startsWith("if (!stateLoaded) return;"), body("saveAll"));
+  assert.match(body("saveAll"), /store\.saveState\(\);[\s\S]*store\.saveMemberBars\(\);[\s\S]*warHistory\.flushAll\(\)/);
   assert.match(body("shutdown"), /\bsaveAll\(\);/);
   assert.doesNotMatch(body("shutdown"), /store\.saveState\(\)/);
 });
