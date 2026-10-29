@@ -118,7 +118,9 @@ export async function fetchAllChains(key, onProgress) {
  * (genocide.js reads the running chain's bonus hits this way).
  */
 export async function fetchChainReport(key, chainId) {
-  const path = chainId ? `chainreport?id=${encodeURIComponent(chainId)}` : "chainreport";
+  // The id goes in the path: Torn reads ?id= here as a faction's id and
+  // answers "Incorrect ID" (code 6) for every chain.
+  const path = chainId ? `${encodeURIComponent(chainId)}/chainreport` : "chainreport";
   return (await v2(path, key)).chainreport || null;
 }
 
