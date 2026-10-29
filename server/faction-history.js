@@ -112,6 +112,16 @@ export async function fetchAllChains(key, onProgress) {
   return out;
 }
 
+/**
+ * One chain's report: every attacker's respect, and who made each bonus hit.
+ * With no id, the faction's latest chain, the running one included
+ * (genocide.js reads the running chain's bonus hits this way).
+ */
+export async function fetchChainReport(key, chainId) {
+  const path = chainId ? `chainreport?id=${encodeURIComponent(chainId)}` : "chainreport";
+  return (await v2(path, key)).chainreport || null;
+}
+
 /** Ranked wars, paged by offset. 42055 has 167; offset 200 comes back empty. */
 export async function fetchAllRankedWars(key) {
   const out = [];
