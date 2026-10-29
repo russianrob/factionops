@@ -9,8 +9,9 @@
  *                 worth 1,000+ in the faction's chain reports earned its
  *                 attacker the honor. Finished chains are read once, from
  *                 the chain list the daily faction-history tick fetches; the
- *                 running chain from Torn's id-less chain report, every
- *                 30 minutes.
+ *                 running chain from Torn's id-less chain report, read only
+ *                 when the live chain count passes a bonus mark worth 1,000+
+ *                 (the count is checked every 30 minutes, at no cost).
  *   own answers   Torn shows a player's honors to their own key only, so a
  *                 member who earned it in another faction is known only from
  *                 their FactionOps, which reads its own honors once a day and
@@ -35,7 +36,11 @@ const DATA_DIR = process.env.DATA_DIR || "./data";
 
 export const GENOCIDE_RESPECT = 1000;   // the honor's threshold
 export const GENOCIDE_MIN_CHAIN = 2500; // the first bonus that pays it; the 1,000th pays 640
+// The bonus hits that pay it: the 2,500th pays 1,280, and each later bonus doubles that.
+export const GENOCIDE_MARKS = [GENOCIDE_MIN_CHAIN, 5000, 10000, 25000, 50000, 100000];
 export const FINISHED_GRACE_S = 3600;   // a chain is read as finished an hour after its end
+// How often the live chain count is checked. Checking costs nothing; the
+// running chain's report is read only when the count passes a new mark.
 export const LIVE_SCAN_MS = 30 * 60 * 1000;
 // After faction-history's boot tick (5 min), so a restart does not spend the
 // owner's key before the pollers people are waiting on have settled.
@@ -217,32 +222,82 @@ export async function scanFinishedChains(fetchReport, factionId, chains,
   return { fetched, found };
 }
 
+/** The highest bonus mark worth 1,000+ that a chain count has reached; 0 below the first. */
+export function markReached(count) {
+  let mark = 0;
+  for (const m of GENOCIDE_MARKS) if (count >= m) mark = m;
+  return mark;
+}
+
 /**
- * The latest chain's report, running or just finished: its holders. Never
- * marked read, so the daily tick still reads the chain once it is over and
- * picks up a bonus made after the last live scan.
+ * The latest chain's report, running or just finished: its holders, and the
+ * highest bonus mark it shows. Never marked read, so the daily tick still
+ * reads the chain once it is over and picks up a bonus made after the last
+ * live read.
  */
 export async function scanLiveChain(fetchReport, factionId, { dir = DATA_DIR } = {}) {
   const report = await fetchReport(null);
   const found = foldHits(genocideStore(factionId, dir), bonusHolders(report));
   if (found) saveGenocide(factionId, dir);
-  return found;
+  const hits = report && Array.isArray(report.bonuses)
+    ? report.bonuses.map((b) => Number(b && b.chain) || 0) : [];
+  return { found, mark: markReached(Math.max(0, ...hits)) };
+}
+
+/**
+ * The running chain, read only when its count passes a bonus mark worth
+ * 1,000+ that no report has shown yet: a quiet day costs no call, a big
+ * chain one a mark. The count is the one the chain monitor stores, which
+ * carries no chain id, so a count under the first mark (a new chain, none,
+ * or a member's bad 0) starts the marks afresh, and the real count back
+ * again costs one read. A report that does not show the mark yet (Torn's
+ * report can trail the count) is read again at the next check, and so is
+ * a read that failed.
+ *
+ * Returns check(count), which resolves to the new holders found, 0 when it
+ * did not read.
+ */
+export function liveChainWatch(fetchReport, factionId, { dir = DATA_DIR } = {}) {
+  let shown = 0;   // the highest mark a report has shown for this chain
+  return async function check(count) {
+    const n = Number(count) || 0;
+    if (n < GENOCIDE_MIN_CHAIN) { shown = 0; return 0; }
+    const due = markReached(n);
+    if (due <= shown) return 0;
+    const { found, mark } = await scanLiveChain(fetchReport, factionId, { dir });
+    shown = Math.min(due, mark);
+    if (shown < due) {
+      console.log(`[genocide] live chain at ${n}: the report does not show the ${due}th bonus yet, read again next check`);
+    }
+    return found;
+  };
 }
 
 let _liveTimer = null;
 
-/** The running chain's bonus hits every 30 minutes, on the owner's key. */
-export function startGenocideSchedule() {
+/**
+ * The running chain's bonus hits, on the owner's key: the live chain count
+ * checked every 30 minutes, and the chain's report read only when the count
+ * passes a new bonus mark. chainCount(factionId) is the count the chain
+ * monitor stores; server.js passes it in, so this module never loads the
+ * war store.
+ */
+export function startGenocideSchedule({ chainCount } = {}) {
   const key = process.env.OWNER_API_KEY;
   if (!key) {
     console.log("[genocide] no OWNER_API_KEY — not scanning");
     return;
   }
+  if (typeof chainCount !== "function") {
+    console.log("[genocide] no chain count — not watching the live chain");
+    return;
+  }
   if (_liveTimer) return;
   const factionId = String(process.env.OWNER_FACTION_ID || "42055");
+  const check = liveChainWatch((id) => fetchChainReport(key, id), factionId);
   const run = async () => {
     try {
-      const found = await scanLiveChain((id) => fetchChainReport(key, id), factionId);
+      const found = await check(chainCount(factionId));
       if (found) console.log(`[genocide] live chain: ${found} new holder${found === 1 ? "" : "s"}`);
     } catch (e) {
       console.warn(`[genocide] live chain: ${e.message}`);
@@ -252,5 +307,5 @@ export function startGenocideSchedule() {
     run();
     _liveTimer = setInterval(run, LIVE_SCAN_MS);
   }, LIVE_BOOT_DELAY_MS);
-  console.log("[genocide] live chain scan every 30 min");
+  console.log("[genocide] live chain checked every 30 min, its report read at each bonus mark of 2,500+");
 }

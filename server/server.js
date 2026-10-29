@@ -711,8 +711,9 @@ else console.log("[stakeout-watcher] disabled (set STAKEOUT_WATCHER=1 to enable 
 // auction CSVs so the PDA path (which can't gunzip the CDN) gets fresh prices.
 startRwpRefresh();
 startFactionHistorySchedule();
-// Genocide marks: the running chain's bonus hits every 30 min (genocide.js).
-startGenocideSchedule();
+// Genocide marks: the running chain's bonus hits, read when the chain count
+// the chain monitor stores passes a bonus mark worth 1,000+ (genocide.js).
+startGenocideSchedule({ chainCount: (factionId) => store.getWar(`war_${factionId}`)?.chainData?.current });
 // Hall of Fame climb: saves Torn's daily faction snapshot (00:05 UTC + boot catch-up).
 startHofSnapshots();
 startRestockTracker();

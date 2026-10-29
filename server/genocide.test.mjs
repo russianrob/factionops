@@ -166,16 +166,79 @@ test("a chain of 2,500+ hits whose report shows no 1,000+ bonus stays unread, wi
   }
 });
 
-test("scanLiveChain folds the latest report and never marks it read", async () => {
+test("scanLiveChain folds the latest report, never marks it read, and says which bonus mark it shows", async () => {
   const dir = tmp();
   const asked = [];
-  assert.equal(await g.scanLiveChain(async (id) => { asked.push(id); return REPORT; }, "1001", { dir }), 2);
+  assert.deepEqual(await g.scanLiveChain(async (id) => { asked.push(id); return REPORT; }, "1001", { dir }), { found: 2, mark: 5000 });
   assert.deepEqual(asked, [null]);
   const file = readStore(dir, "1001");
   assert.deepEqual(file.scanned, {});
   assert.deepEqual(Object.keys(file.hits).sort(), ["1000002", "1000003"]);
   // Nothing new the second time.
-  assert.equal(await g.scanLiveChain(async () => REPORT, "1001", { dir }), 0);
+  assert.deepEqual(await g.scanLiveChain(async () => REPORT, "1001", { dir }), { found: 0, mark: 5000 });
+  // No report, no mark.
+  assert.deepEqual(await g.scanLiveChain(async () => null, "1001", { dir }), { found: 0, mark: 0 });
+});
+
+// ── The running chain, read only at a new bonus mark ───────────────────
+
+test("markReached: the highest bonus mark worth 1,000+ that a count has reached", () => {
+  for (const [n, m] of [[0, 0], [2499, 0], [2500, 2500], [4999, 2500], [5000, 5000], [24999, 10000], [100000, 100000]]) {
+    assert.equal(g.markReached(n), m, String(n));
+  }
+});
+
+test("the live watch reads the running chain only when its count passes a new bonus mark", async () => {
+  const dir = tmp();
+  let reads = 0;
+  const check = g.liveChainWatch(async (id) => { reads++; assert.equal(id, null); return REPORT; }, "1004", { dir });
+  const found = [];
+  // [the live count, the reads made so far]
+  const steps = [[1200, 0], [2499, 0], [2500, 1], [2600, 1], [4999, 1], [5000, 2], [6000, 2],
+    // The count drops under 2,500: a new chain, or a member's bad 0. The
+    // real count back again costs one read, which covers both marks.
+    [0, 2], [5100, 3], [5200, 3],
+    [0, 3], [2600, 4]];
+  for (const [count, after] of steps) {
+    found.push(await check(count));
+    assert.equal(reads, after, `after a count of ${count}`);
+  }
+  // The two holders are new once, on the first read.
+  assert.equal(found[2], 2);
+  assert.equal(found.reduce((a, b) => a + b, 0), 2);
+  assert.deepEqual(Object.keys(readStore(dir, "1004").hits).sort(), ["1000002", "1000003"]);
+});
+
+test("a report that does not show the mark yet is read again at the next check, and so is a read that failed", async () => {
+  const dir = tmp();
+  // Torn's report a few hits behind the count: its last bonus is the 1,000th.
+  const BEHIND = { id: 900001, start: 1700000000, bonuses: [
+    { attacker_id: 1000001, defender_id: 2000001, chain: 1000, respect: 640 },
+  ] };
+  let answer = BEHIND, reads = 0;
+  const check = g.liveChainWatch(async () => {
+    reads++;
+    if (answer instanceof Error) throw answer;
+    return answer;
+  }, "1005", { dir });
+  await check(2510);
+  assert.equal(reads, 1);
+  await check(2520);
+  assert.equal(reads, 2);
+  answer = REPORT;
+  assert.equal(await check(2530), 2);
+  assert.equal(reads, 3);
+  await check(2540);
+  assert.equal(reads, 3);
+  // A read that fails reaches the caller, and the next check reads again.
+  answer = new Error("Torn API returned HTTP 502");
+  await assert.rejects(check(5010), /HTTP 502/);
+  assert.equal(reads, 4);
+  answer = REPORT;
+  await check(5020);
+  assert.equal(reads, 5);
+  await check(5030);
+  assert.equal(reads, 5);
 });
 
 test("a member's answer that lands while a scan waits on Torn survives the scan's save", async () => {
@@ -237,8 +300,8 @@ test("the daily faction-history tick reads finished big chains from the chain li
   assert.equal(S.match(/fh\.fetchAllChains\(key\)/g).length, 1);
 });
 
-test("the server starts the live scan", () => {
+test("the server starts the live watch on the chain count it stores", () => {
   const SERVER = readFileSync(new URL("./server.js", import.meta.url), "utf8");
   assert.match(SERVER, /^import \{ startGenocideSchedule \} from "\.\/genocide\.js";$/m);
-  assert.match(SERVER, /^startGenocideSchedule\(\);$/m);
+  assert.match(SERVER, /^startGenocideSchedule\(\{ chainCount: \(factionId\) => store\.getWar\(`war_\$\{factionId\}`\)\?\.chainData\?\.current \}\);$/m);
 });
