@@ -322,6 +322,54 @@
         return null;
     }
 
+    // The energy the sidebar saved in the tab's sessionStorage, from the
+    // same entry sidebarChain reads, as { current, max }, or null when it
+    // has none that reads as a number.
+    function sidebarEnergy(storage) {
+        try {
+            for (let i = 0; i < storage.length; i++) {
+                const key = storage.key(i);
+                if (!/^sidebarData\d+$/.test(key)) continue;
+                const data = JSON.parse(storage.getItem(key));
+                const energy = data && data.bars && data.bars.energy;
+                if (!energy) return null;
+                const current = Number(energy.amount), max = Number(energy.max);
+                return Number.isFinite(current) && current >= 0 && Number.isFinite(max) && max > 0
+                    ? { current, max } : null;
+            }
+        } catch (_) {}
+        return null;
+    }
+
+    // Which energy the attack page's bar shows. `api` is FactionOps' own
+    // reading from when the page opened (energyState); `side` is the
+    // sidebar's saved energy (sidebarEnergy). The saved copy may be an
+    // earlier page's, so it counts only once Torn rewrites it on this page;
+    // from then on it wins whenever there is one. { current, max } or null.
+    function energyFollower() {
+        let first = null, live = false;
+        return {
+            read(api, side) {
+                if (side && !first) first = side;
+                else if (side && (side.current !== first.current || side.max !== first.max)) live = true;
+                if (live && side) return { current: side.current, max: side.max };
+                if (api && api.max > 0) return { current: api.current, max: api.max };
+                return null;
+            },
+        };
+    }
+
+    // The bar's words: "Energy 875/150".
+    function attackEnergyText(r) {
+        return 'Energy ' + Number(r.current).toLocaleString('en-US') + '/' + Number(r.max).toLocaleString('en-US');
+    }
+
+    // How full the bar is, 0 to 100. Full at the max, so energy stacked over
+    // it is a full bar too.
+    function attackEnergyFill(r) {
+        return Math.max(0, Math.min(100, r.current / r.max * 100));
+    }
+
     // The chain as the page shows it, for the server: the bar's count, and
     // Torn's own end, the `timestampToUpdate` (epoch seconds) of the chain
     // the sidebar saved, so no device clock is in it. Only while the saved
