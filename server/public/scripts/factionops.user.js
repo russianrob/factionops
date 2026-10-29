@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.30
+// @version      5.6.31
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.30';
+    const SCRIPT_VERSION = '5.6.31';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -1899,6 +1899,21 @@ body.wb-chain-active {
 .fo-energy-value { color: #74b9ff; font-weight: 700; font-variant-numeric: tabular-nums; }
 .fo-energy-value.full { color: #55efc4; }
 .fo-energy-timer { color: #fdcb6e; font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* The attack page's energy bar, right under your own header */
+#fo-atk-energy {
+    display: block; width: 100%; height: 16px;
+    position: relative; overflow: hidden; box-sizing: border-box;
+    margin: 3px 0; border-radius: 4px;
+    background: rgba(0,0,0,0.55);
+}
+.fo-atk-energy-fill { position: absolute; left: 0; top: 0; bottom: 0; background: #6bd47f; }
+.fo-atk-energy-text {
+    position: relative; text-align: center;
+    font-size: 11px; line-height: 16px; font-weight: 700; color: #fff;
+    white-space: nowrap; font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 2px #000, 0 1px 2px #000;
+}
 
 /* Live chain count + timer display */
 .fo-chain-live {
@@ -9741,6 +9756,8 @@ body.wb-chain-active {
                         energyTickAnchorVal = energyState.ticktime;
                         energyTickAnchorAt = Date.now();
                         updateEnergyDisplay();
+                        // The attack page's energy bar, where it is up.
+                        if (hpObserver) hpQueue();
                     }
                     // Self-report bars only — no cooldowns (v5.0.90).
                     const bars = {
@@ -14246,6 +14263,72 @@ body.wb-chain-active {
         }
     }
 
+    // The energy bar: a slim bar right under your own header (Torn's green
+    // one) reading "Energy 875/150", filled to the max. It shows what
+    // pollEnergy read when the page opened, then the energy Torn's sidebar
+    // saves in sessionStorage once that changes on the page (energyFollower),
+    // so it costs no call of its own. Painted in hpPass with the life
+    // percentages, under the same observer.
+    const ATK_ENERGY_ID = 'fo-atk-energy';
+    const ATK_ENERGY_HEADER = '[class*="headerWrapper__"][class*="green__"]';
+    // sessionStorage is not the page, so the observer never sees the saved
+    // energy change: a look every 2 s does.
+    const ATK_ENERGY_CHECK_MS = 2000;
+    const atkEnergy = energyFollower();
+    let atkEnergyTimer = null;
+
+    // What the bar should be now: your header, the words and the width; or
+    // null for no bar (off the attack page, no header, no reading).
+    function attackEnergyWant() {
+        if (!window.location.href.includes('sid=attack')) return null;
+        const header = document.querySelector(ATK_ENERGY_HEADER);
+        if (!header) return null;
+        const r = atkEnergy.read(energyState, sidebarEnergy(window.sessionStorage));
+        // A whole percent, so style.width reads back just what was written
+        // and the compare below holds on a quiet page.
+        return r ? { header, text: attackEnergyText(r), width: Math.round(attackEnergyFill(r)) + '%' } : null;
+    }
+
+    // Is the page already showing `want` (null: no bar)?
+    function attackEnergyShown(want) {
+        const bar = document.getElementById(ATK_ENERGY_ID);
+        if (!want) return !bar;
+        if (!bar || want.header.nextElementSibling !== bar) return false;
+        const fill = bar.querySelector('.fo-atk-energy-fill');
+        const text = bar.querySelector('.fo-atk-energy-text');
+        return !!fill && !!text && text.textContent === want.text && fill.style.width === want.width;
+    }
+
+    /** Put up, move, update or take down the bar, writing only what differs. */
+    function paintAttackEnergyBar() {
+        const want = attackEnergyWant();
+        let bar = document.getElementById(ATK_ENERGY_ID);
+        if (!want) { if (bar) bar.remove(); return; }
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = ATK_ENERGY_ID;
+        }
+        let fill = bar.querySelector('.fo-atk-energy-fill');
+        let text = bar.querySelector('.fo-atk-energy-text');
+        if (!fill || !text) {
+            bar.innerHTML = '<div class="fo-atk-energy-fill"></div><div class="fo-atk-energy-text"></div>';
+            fill = bar.firstChild;
+            text = bar.lastChild;
+        }
+        // Torn redraws its header now and then; the bar follows it.
+        if (want.header.nextElementSibling !== bar) want.header.after(bar);
+        if (text.textContent !== want.text) text.textContent = want.text;
+        if (fill.style.width !== want.width) fill.style.width = want.width;
+    }
+
+    // The 2 s look: a pass only when the bar would change, appear or go.
+    function startAttackEnergyCheck() {
+        if (atkEnergyTimer) return;
+        atkEnergyTimer = setInterval(() => {
+            try { if (!attackEnergyShown(attackEnergyWant())) hpQueue(); } catch (_) {}
+        }, ATK_ENERGY_CHECK_MS);
+    }
+
     let hpObserver = null;
     let hpQueued = false;
 
@@ -14255,8 +14338,10 @@ body.wb-chain-active {
         // it just wrote is a runaway loop -- that one warmed phones in people's
         // hands on the war page.
         if (hpObserver) hpObserver.disconnect();
-        try { paintLifePercents(); } catch (e) { log('hp paint failed: ' + (e && e.message)); }
-        finally { hpObserve(); }
+        try {
+            try { paintLifePercents(); } catch (e) { log('hp paint failed: ' + (e && e.message)); }
+            try { paintAttackEnergyBar(); } catch (e) { log('energy bar paint failed: ' + (e && e.message)); }
+        } finally { hpObserve(); }
     }
 
     function hpQueue() {
@@ -14283,6 +14368,7 @@ body.wb-chain-active {
         if (!window.location.href.includes('sid=attack')) return;
         hpQueue();
         hpObserve();
+        startAttackEnergyCheck();
     }
 
     function detectPageAndInit() {
