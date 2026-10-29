@@ -90,16 +90,18 @@ test('genocideBadge: who has it and how, who is confirmed not to, nothing for un
   assert.equal(L().genocideBadge(undefined), null);
 });
 
-// A faction info page as linkedom builds it: two member rows (one name inside
-// an honor bar, one with two links to the same profile and Torn's hashed
-// column class), a row with no profile link, a member row with no position
-// cell, and a profile link outside the member list.
+// A faction info page as linkedom builds it, shaped like the real one read on
+// a device (hashes and text made up): the name link inside the honor bar in
+// the member cell, Faction Revive Check's badge already in the position cell,
+// a row with two links to the same profile and only the hashed position
+// class, a row with no profile link, a member row with no position cell, and
+// a profile link outside the member list.
 function page() {
   return parseHTML(`<html><head></head><body>
     <div class="faction-description"><a href="/profiles.php?XID=1000003">Leader</a></div>
-    <div class="members-list"><ul class="table-body">
-      <li class="table-row"><div class="table-cell member"><div class="honor-text-wrap"><a href="/profiles.php?XID=1000001">A</a></div></div><div class="table-cell lvl">50</div><div class="table-cell position">Member</div></li>
-      <li class="table-row"><div class="table-cell member"><a href="/profiles.php?XID=1000002"><img></a><a href="/profiles.php?XID=1000002">B</a></div><div class="table-cell lvl">40</div><div class="positionCol___x1y2z">Recruit</div></li>
+    <div class="f-war-list members-list m-top10"><ul class="table-body">
+      <li class="table-row"><div class="table-cell member icons membersCol___a1b2c"><div class="userInfoBox___d3e4f"><div class="honorWrap___g5h6i"><a class="linkWrap___j7k8l" href="/profiles.php?XID=1000001">A</a></div></div></div><div class="table-cell lvl lvlCol___m9n0p">50</div><div class="table-cell position positionCol___x1y2z"><span class="er-badge er-off">.</span><span class="ellipsis">Member</span></div></li>
+      <li class="table-row"><div class="table-cell member icons membersCol___a1b2c"><a href="/profiles.php?XID=1000002"><img></a><a href="/profiles.php?XID=1000002">B</a></div><div class="table-cell lvl lvlCol___m9n0p">40</div><div class="positionCol___x1y2z"><span class="ellipsis">Recruit</span></div></li>
       <li class="table-row"><div class="table-cell member">nobody</div></li>
       <li class="table-row"><div class="table-cell member"><a href="/profiles.php?XID=1000004">D</a></div><div class="table-cell lvl">30</div></li>
     </ul></div></body></html>`).document;
@@ -118,7 +120,11 @@ test('the mark goes first in the position cell, never in the name cell, and a ro
   const all = { 1000001: { has: true, via: 'self' }, 1000002: { has: false }, 1000004: { has: true, via: 'self' } };
   assert.equal(L().markGenocideRows(d, all), 2);
   const rows = d.querySelectorAll('li.table-row');
-  assert.equal(rows[0].querySelector('.position').firstElementChild.className, 'fo-geno fo-geno-yes');
+  const cell0 = rows[0].querySelector('.position'), kids0 = Array.from(cell0.children);
+  assert.equal(kids0[0].className, 'fo-geno fo-geno-yes');
+  // Ahead of the position text, beside Faction Revive Check's badge.
+  assert.ok(kids0.indexOf(cell0.querySelector('.ellipsis')) > 0);
+  assert.equal(cell0.querySelectorAll('.er-badge').length, 1);
   assert.equal(rows[1].querySelector('.positionCol___x1y2z').firstElementChild.className, 'fo-geno fo-geno-no');
   assert.equal(d.querySelectorAll('.member .fo-geno').length, 0);
   assert.equal(rows[3].querySelector('.fo-geno'), null);
@@ -136,7 +142,7 @@ test('markGenocideRows: one mark per member row, kept in step with the list, nev
   assert.equal(L().markGenocideRows(d, members), 2);
   assert.equal(L().markGenocideRows(d, members), 2);
   assert.equal(d.querySelectorAll('.fo-geno').length, 2);
-  assert.equal(d.querySelectorAll('.honor-text-wrap .fo-geno').length, 0);
+  assert.equal(d.querySelectorAll('[class*="honorWrap"] .fo-geno').length, 0);
   assert.equal(d.querySelectorAll('.faction-description .fo-geno').length, 0);
   const rows = d.querySelectorAll('li.table-row');
   assert.ok(rows[0].querySelector('.position > .fo-geno'));
