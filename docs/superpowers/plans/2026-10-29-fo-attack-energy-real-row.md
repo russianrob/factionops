@@ -27,7 +27,8 @@
   - It cleans itself up: the number out means the name grows again. It also follows a name Torn draws afresh.
 - C2: `attackEnergyRowShape(row, label, name)` changes for the name only. It pushes the name's text rect (a Range over its contents: left, top, width, height) in place of its box, plus `name.scrollWidth - name.clientWidth > 1 ? 1 : 0` (a name made to overflow). Every other child keeps its box; the header's and the row's heights stay.
 - C3: after the number goes in, it counts as cut when `label.scrollWidth > label.clientWidth`. A cut number is handled like a moved row: taken out, `atkEnergyNoRoom = row`, reported.
-  - `reportAttackEnergyNoRoom(row, name, why)` takes `why` as `'moved'` or `'cut'`. It goes in the data as `why` and in the console line: `attack energy: no room in your header (<why>), row <display>`.
+  - From the final review: the cut check also runs once the number is up (in each pass and in the 2 s look), so a row that tightens later takes it down. A name that still grows with the number in (a flex row, computed `flex-grow` above 0: a browser without `:has()`) is handled the same way, with `why: 'grows'`.
+  - `reportAttackEnergyNoRoom(row, name, why)` takes `why` as `'grows'`, `'moved'` or `'cut'`. It goes in the data as `why` and in the console line: `attack energy: no room in your header (<why>), row <display>`.
 - C4: the sent flag is set when `res.status >= 200 && res.status < 300`.
 - C5: `text-overflow: ellipsis` leaves the `#fo-atk-energy` block, since a cut number is never shown. Its comment says so.
 - Kept as they are: the reading, the 2 s check, the pass, the placement rule, the colour and the gap margin.
@@ -62,7 +63,7 @@
 
 **Interfaces:**
 - `attackEnergyRowShape(row, label, name) -> number[]`
-- `reportAttackEnergyNoRoom(row, name, why: 'moved'|'cut') -> void`
+- `reportAttackEnergyNoRoom(row, name, why: 'grows'|'moved'|'cut') -> void`
 - `paintAttackEnergy()` keeps its name and its early returns.
 
 - [ ] **Step 1: tests first.**

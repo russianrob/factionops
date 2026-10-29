@@ -304,6 +304,51 @@ await t("a row with its own gap, short of room, shows no number, and nothing mov
   assert.strictEqual(sentNow[0].why, "cut");
 });
 
+// The room the number needs: its words and the 6 px before them.
+const needs = (p) => p.evaluate(() => {
+  const g = document.createRange();
+  g.selectNodeContents(document.getElementById("fo-atk-energy"));
+  return Math.ceil(g.getBoundingClientRect().width) + 6;
+});
+
+// Your row tightening once the number is up (your hits going from 0 to 100,
+// or another script's tag) would cut it short with no sign of it ("⚡87" for
+// 875): it comes down instead, and the report says it was cut.
+await t("a header that tightens once the number is up takes it down rather than cut it", async () => {
+  const { ctx, p } = await open(ATTACK);
+  const shown = await until(p, BOLT + "875");
+  // 10 px more room than the number needs, then two more digits of hits.
+  await squeeze(p, (await needs(p)) + 10);
+  const fits = await p.evaluate(() => { const e = document.getElementById("fo-atk-energy"); return !!e && e.scrollWidth <= e.clientWidth; });
+  await p.evaluate((sel) => { document.querySelector(sel + ' [class*="entry__"] span').textContent = "100"; }, YOUR_ROW);
+  const tight = await p.evaluate(() => { const e = document.getElementById("fo-atk-energy"); return !e || e.scrollWidth > e.clientWidth; });
+  const down = await p.waitForFunction(() => !document.getElementById("fo-atk-energy"), null, { timeout: 3000 }).then(() => true, () => false);
+  const sentNow = await reports(p);
+  await ctx.close();
+  assert.ok(shown, "no number");
+  assert.ok(fits, "the number did not fit before the row tightened");
+  assert.ok(tight, "the row did not tighten enough to cut the number");
+  assert.ok(down, "a cut number was left up");
+  assert.strictEqual(sentNow.length, 1);
+  assert.strictEqual(sentNow[0].why, "cut");
+});
+
+// The same with no change to the page that the observer sees (the row
+// narrowed in its style, as turning a phone upright narrows it): the 2 s
+// look takes the number down.
+await t("a header that narrows with nothing else changing takes the number down within the 2 s look", async () => {
+  const { ctx, p } = await open(ATTACK);
+  const shown = await until(p, BOLT + "875");
+  await squeeze(p, (await needs(p)) - 10);
+  const down = await p.waitForFunction(() => !document.getElementById("fo-atk-energy"), null, { timeout: 3000 }).then(() => true, () => false);
+  const sentNow = await reports(p);
+  await ctx.close();
+  assert.ok(shown, "no number");
+  assert.ok(down, "a cut number was left up");
+  assert.strictEqual(sentNow.length, 1);
+  assert.strictEqual(sentNow[0].why, "cut");
+});
+
 // A row the number cannot go in without moving something gets none: it is
 // measured before and after the number goes in, before the page is drawn,
 // and taken out again. That row keeps none (no pass tries again), and the
@@ -364,6 +409,35 @@ await t("a name centred in its row gets no number, and nothing moves", async () 
   assert.ok(none, "a number was left up");
   assert.deepStrictEqual(after, before);
   assert.strictEqual(sentNow[0].why, "moved");
+});
+
+await t("on Torn's own row, a name that still grows with the number in gets none, and nothing moves", async () => {
+  // A browser without :has() drops the rule that holds your name to its
+  // words, and the number would get the room left over, mid-header. An
+  // inline !important grow beats the rule here as no :has() would.
+  const { ctx, p } = await open(ATTACK, { barsDelay: 4000, rowCss: REAL_ROW, nameCss: GROWS + ";flex-grow:1 !important" });
+  const before = await layout(p);
+  const sent = await reported(p);
+  const after = await layout(p);
+  const none = await p.evaluate(() => !document.getElementById("fo-atk-energy"));
+  const sentNow = await reports(p);
+  await ctx.close();
+  assert.ok(sent, "no report");
+  assert.ok(none, "a number was left up");
+  assert.deepStrictEqual(after, before);
+  assert.strictEqual(sentNow[0].why, "grows");
+});
+
+await t("a plain block row, where a name's grow does nothing, still gets the number, and nothing moves", async () => {
+  // flex-grow acts only in a flex row: a name that carries one anywhere else
+  // grows nothing, and the number beside it sits where it should.
+  const { ctx, p } = await open(ATTACK, { barsDelay: 4000, rowCss: "display:block", nameCss: ";flex-grow:1 !important" });
+  const before = await layout(p);
+  const shown = await appears(p);
+  const after = await layout(p);
+  await ctx.close();
+  assert.ok(shown, "no number");
+  assert.deepStrictEqual(after, before);
 });
 
 await t("Torn redrawing your header puts the number back after your name", async () => {

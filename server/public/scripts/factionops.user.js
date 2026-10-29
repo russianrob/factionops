@@ -1917,7 +1917,7 @@ body.wb-chain-active {
 /* Torn's own row lets your name grow to fill it, so the number would get half
    the room left over and sit mid-header. While the number follows your name
    (anywhere after it), the name keeps to its words. A rule of its own: a
-   browser without :has() drops just this one. */
+   browser without :has() drops just this one, and then shows no number. */
 [class*="headerWrapper__"][class*="green__"] .user-name:has(~ #fo-atk-energy) {
     flex-grow: 0 !important;
 }
@@ -14334,7 +14334,23 @@ body.wb-chain-active {
         if (want.name.parentElement === atkEnergyNoRoom) return !label;
         return !!label && attackEnergyPlaced(label, want.name)
             && label.textContent === want.text && label.style.color === want.colour
-            && label.style.marginLeft === want.margin;
+            && label.style.marginLeft === want.margin
+            // A row that tightened once the number was up has cut it.
+            && !attackEnergyCut(label);
+    }
+
+    // Is the number cut short for room? "⚡8…", or "⚡87" for 875, could
+    // misread.
+    function attackEnergyCut(label) {
+        return label.scrollWidth > label.clientWidth;
+    }
+
+    // Does your name still grow to fill its row with the number in? On
+    // Torn's own row the :has() rule holds it to its words while the number
+    // follows it; a browser without :has() drops the rule, and the number
+    // would get the room left over, mid-header.
+    function attackEnergyNameGrows(row, name) {
+        return /flex/.test(getComputedStyle(row).display) && parseFloat(getComputedStyle(name).flexGrow) > 0;
     }
 
     // The shape of your header's name row: the header's height, the row's,
@@ -14368,8 +14384,9 @@ body.wb-chain-active {
 
     // A row with no room: in the console every time, and to the client log
     // once per version per install, with the kind of row it was and why (the
-    // number would have moved something, or been cut short), so the owner
-    // learns Torn's real layout from the first member who meets one.
+    // number would have moved something, been cut short, or sat beside a
+    // name that still grows), so the owner learns Torn's real layout from the
+    // first member who meets one.
     function reportAttackEnergyNoRoom(row, name, why) {
         const rcs = getComputedStyle(row), ncs = getComputedStyle(name);
         const data = {
@@ -14406,7 +14423,7 @@ body.wb-chain-active {
         }
         const placed = attackEnergyPlaced(label, want.name);
         if (placed && label.textContent === want.text && label.style.color === want.colour
-            && label.style.marginLeft === want.margin) return;
+            && label.style.marginLeft === want.margin && !attackEnergyCut(label)) return;
         // Where it goes: where it is when that is fine, else right after the
         // name (Torn redraws its header now and then). The row is measured
         // without it first, so what it is held to is the row as Torn drew it.
@@ -14421,12 +14438,15 @@ body.wb-chain-active {
         // sees it: had the number moved or resized anything in the row, or
         // made your header taller (a row laid out as a grid, or around a
         // floated name), it comes out at once and that row keeps none. So
-        // does a number cut short for room: "⚡8…" could be read as 8.
-        const moved = attackEnergyMoved(before, attackEnergyRowShape(row, label, want.name));
-        if (moved || label.scrollWidth > label.clientWidth) {
+        // does a number beside a name that still grows (it would sit
+        // mid-header), and one cut short for room: "⚡8…" could be read as 8.
+        const why = attackEnergyNameGrows(row, want.name) ? 'grows'
+            : attackEnergyMoved(before, attackEnergyRowShape(row, label, want.name)) ? 'moved'
+            : attackEnergyCut(label) ? 'cut' : '';
+        if (why) {
             label.remove();
             atkEnergyNoRoom = row;
-            reportAttackEnergyNoRoom(row, want.name, moved ? 'moved' : 'cut');
+            reportAttackEnergyNoRoom(row, want.name, why);
         }
     }
 
