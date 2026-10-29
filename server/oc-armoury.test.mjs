@@ -215,6 +215,12 @@ test('every armour piece is listed, head to feet, free ones first; a row that is
   assert.deepEqual(A().mgr_armourPieces([piece(40, 'Riot Gloves', false, { type: '' }), { name: 'No id', type: 'Defensive' }]).map((r) => r.armoryID), [40]);
 });
 
+test('a row Torn types as a weapon or clothing is not armour, whatever its name says', () => {
+  // Another tab's rows, as an unknown spelling may answer: gloves and a mask
+  // by name, but typed Melee and Clothing.
+  assert.deepEqual(A().mgr_armourPieces([piece(41, 'Boxing Gloves', false, { type: 'Melee' }), piece(42, 'Ski Mask', false, { type: 'Clothing' })]), []);
+});
+
 test("Armour's Loan to offers everyone short of a full set, by name", () => {
   const offeredA = lift('mgr_armourCandidates');
   const held = (id, ...parts) => parts.map((part) => ({ part, holder: { id, name: '' } }));

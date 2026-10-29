@@ -2288,8 +2288,9 @@
 
     // The pieces the Armour view lists, from the armoury page's armour rows
     // (one row per piece): every piece, ranked-war or not. A row counts as
-    // armour when Torn types it Defensive (or Armor/Armour) or its name says
-    // a body part, so another tab's rows are never shown as armour. Head to
+    // armour when Torn types it Defensive (or Armor/Armour), or has no type
+    // and its name says a body part. Another tab's rows carry their own type
+    // (Boxing Gloves are Melee), so they are never shown as armour. Head to
     // feet, pieces of no known part last; then by name, free pieces before
     // held ones. The holder is read as in mgr_rwCopies.
     function mgr_armourPieces(rows) {
@@ -2298,7 +2299,7 @@
         for (const e of rows || []) {
             if (!e || !e.armoryID) continue;
             const name = String(e.name || ''), type = String(e.type || ''), part = mgr_armourPart(name);
-            if (!part && !/^(defensive|armou?r)$/i.test(type)) continue;
+            if (type ? !/^(defensive|armou?r)$/i.test(type) : !part) continue;
             const m = /glow-(red|orange|yellow)/.exec(String(e.glowClass || ''));
             const id = e.user ? (e.user.userID ?? e.user.id) : null;
             out.push({

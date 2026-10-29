@@ -38,6 +38,9 @@ const BRAVO = { userID: 1000002, playername: "Bravo" };
 const ARMOUR = [piece(601, "Combat Boots", BRAVO), piece(602, "Combat Helmet", BRAVO), piece(603, "Combat Helmet"),
   piece(604, "Combat Vest", BRAVO), piece(605, "Combat Pants", BRAVO), piece(606, "Combat Gloves", BRAVO),
   piece(607, "Combat Gloves"), piece(608, "Combat Boots"), piece(609, "Combat Helmet", { userID: 1000003, playername: "Charlie" })];
+// Another tab's rows, as an unknown armour spelling may answer: the weapons,
+// one of them named for a body part.
+const WRONG_TAB = [...WEAPONS, plain(510, 9510, "Boxing Gloves", "Melee")];
 
 // GM_* as a userscript manager gives them.
 const preamble = (cfg) => `(() => {
@@ -89,11 +92,11 @@ async function open(cfg = {}) {
         const src = reads > 1 && cfg.rescan ? cfg.rescan : pages;
         // Weapons as cfg.pages; armour on the spelling cfg.armourCat names
         // ("armour" unless set) as cfg.armourPages; the other spelling
-        // answers nothing, or the weapons tab's rows with cfg.wrongTab.
+        // answers nothing, or another tab's rows (WRONG_TAB) with cfg.wrongTab.
         const at = Number(f.get("start")) / 50, type = f.get("type");
         const rows = type === "weapons" ? (src[at] || [])
           : type === (cfg.armourCat || "armour") ? ((cfg.armourPages || [ARMOUR])[at] || [])
-          : cfg.wrongTab && (type === "armour" || type === "armor") ? (at === 0 ? WEAPONS : [])
+          : cfg.wrongTab && (type === "armour" || type === "armor") ? (at === 0 ? WRONG_TAB : [])
           : [];
         return r.fulfill({ contentType: "application/json", body: JSON.stringify({ items: rows, pagination: "" }) });
       }
@@ -574,7 +577,7 @@ await t("an answer of another tab's rows is not armour", async () => {
   const got = await rows(p);
   await ctx.close();
   assert.strictEqual(got.length, 9, JSON.stringify(got));
-  assert.ok(!got.some((r) => /AK-47|Glock|Zebra/.test(r)), JSON.stringify(got));
+  assert.ok(!got.some((r) => /AK-47|Glock|Zebra|Boxing/.test(r)), JSON.stringify(got));
 });
 
 await t("Loan in Armour lends that piece as Defensive, and the pick stays for the next piece", async () => {
