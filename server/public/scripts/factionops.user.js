@@ -14275,11 +14275,19 @@ body.wb-chain-active {
     // sessionStorage is not the page, so the observer never sees the saved
     // energy change: a look every 2 s does.
     const ATK_ENERGY_CHECK_MS = 2000;
+    // The version whose "no room" report the client log took: each install
+    // sends it once per version.
+    const ATK_ENERGY_REPORTED_KEY = 'factionops_atk_energy_noroom';
     const atkEnergy = energyFollower();
     let atkEnergyTimer = null;
+    // Your header's name row found to have no room for the number, or null.
+    // It keeps none until Torn draws the row again (a new element), so no
+    // pass or 2 s look tries it over and over.
+    let atkEnergyNoRoom = null;
 
-    // What the number should be now: your name, the words and the name's
-    // colour; or null for none (off the attack page, no name, no reading).
+    // What the number should be now: your name, the words, the name's colour
+    // and the left margin; or null for none (off the attack page, no name, no
+    // reading).
     function attackEnergyWant() {
         // The exact sid: an attack log (sid=attackLog) starts the same way.
         if (new URLSearchParams(window.location.search).get('sid') !== 'attack') return null;
@@ -14290,8 +14298,17 @@ body.wb-chain-active {
         let storage = null;
         try { storage = window.sessionStorage; } catch (_) {}
         const r = atkEnergy.read(energyState, sidebarEnergy(storage));
-        // The name's own colour, not the row's: Torn may colour just the name.
-        return r ? { name, text: attackEnergyText(r), colour: getComputedStyle(name).color } : null;
+        if (!r) return null;
+        // A px gap the row puts between its items would come twice with the
+        // number in; a left margin of minus that takes the second one back.
+        const gap = /^([\d.]+)px$/.exec(getComputedStyle(name.parentElement).columnGap);
+        return {
+            name,
+            text: attackEnergyText(r),
+            // The name's own colour, not the row's: Torn may colour just the name.
+            colour: getComputedStyle(name).color,
+            margin: gap && Number(gap[1]) > 0 ? '-' + gap[1] + 'px' : '',
+        };
     }
 
     // Is the number in place: in your name's row, anywhere after the name?
@@ -14306,8 +14323,57 @@ body.wb-chain-active {
     function attackEnergyShown(want) {
         const label = document.getElementById(ATK_ENERGY_ID);
         if (!want) return !label;
+        // A row with no room shows none.
+        if (want.name.parentElement === atkEnergyNoRoom) return !label;
         return !!label && attackEnergyPlaced(label, want.name)
-            && label.textContent === want.text && label.style.color === want.colour;
+            && label.textContent === want.text && label.style.color === want.colour
+            && label.style.marginLeft === want.margin;
+    }
+
+    // The shape of your header's name row: the header's height, the row's,
+    // and the box of everything in the row but the number. None of it may
+    // change when the number goes in.
+    function attackEnergyRowShape(row, label) {
+        const header = row.closest('[class*="headerWrapper__"]') || row;
+        const shape = [header.getBoundingClientRect().height, row.getBoundingClientRect().height];
+        for (const el of row.children) {
+            if (el === label) continue;
+            const b = el.getBoundingClientRect();
+            shape.push(b.left, b.top, b.width, b.height);
+        }
+        return shape;
+    }
+
+    // Did anything in the shape move or resize by more than half a pixel?
+    function attackEnergyMoved(before, after) {
+        return before.length !== after.length
+            || before.some((v, i) => Math.abs(v - after[i]) > 0.5);
+    }
+
+    // A row with no room: in the console every time, and to the client log
+    // once per version per install, with the kind of row it was, so the owner
+    // learns Torn's real layout from the first member who meets one.
+    function reportAttackEnergyNoRoom(row, name) {
+        const rcs = getComputedStyle(row), ncs = getComputedStyle(name);
+        const data = {
+            v: SCRIPT_VERSION, pda: IS_PDA, display: rcs.display, direction: rcs.flexDirection,
+            gap: rcs.columnGap, columns: rcs.gridTemplateColumns, justify: rcs.justifyContent,
+            // Longhands: WebKit may give a shorthand such as flex as ''.
+            nameFloat: ncs.cssFloat, nameGrow: ncs.flexGrow, nameShrink: ncs.flexShrink, nameBasis: ncs.flexBasis,
+        };
+        log('attack energy: no room in your header, row ' + data.display);
+        try {
+            if (GM_getValue(ATK_ENERGY_REPORTED_KEY, '') === SCRIPT_VERSION) return;
+            httpRequest({
+                method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ tag: 'fo-atk-energy', data }),
+                // Marked sent only once the server has it: a report turned
+                // away goes again from the next page that needs one.
+                onload(res) { if (res && res.status === 200) GM_setValue(ATK_ENERGY_REPORTED_KEY, SCRIPT_VERSION); },
+                onerror() {},
+            });
+        } catch (_) { /* a report must never break the page */ }
     }
 
     /** Put up, move, update or take down the number, writing only what differs. */
@@ -14315,14 +14381,34 @@ body.wb-chain-active {
         const want = attackEnergyWant();
         let label = document.getElementById(ATK_ENERGY_ID);
         if (!want) { if (label) label.remove(); return; }
+        const row = want.name.parentElement;
+        if (row === atkEnergyNoRoom) { if (label) label.remove(); return; }
         if (!label) {
             label = document.createElement('span');
             label.id = ATK_ENERGY_ID;
         }
-        // Torn redraws its header now and then; the number follows your name.
-        if (!attackEnergyPlaced(label, want.name)) want.name.after(label);
+        const placed = attackEnergyPlaced(label, want.name);
+        if (placed && label.textContent === want.text && label.style.color === want.colour
+            && label.style.marginLeft === want.margin) return;
+        // Where it goes: where it is when that is fine, else right after the
+        // name (Torn redraws its header now and then). The row is measured
+        // without it first, so what it is held to is the row as Torn drew it.
+        const next = placed ? label.nextSibling : want.name.nextSibling;
+        label.remove();
+        const before = attackEnergyRowShape(row, label);
         if (label.textContent !== want.text) label.textContent = want.text;
         if (label.style.color !== want.colour) label.style.color = want.colour;
+        if (label.style.marginLeft !== want.margin) label.style.marginLeft = want.margin;
+        row.insertBefore(label, next);
+        // Measured again before the browser draws the page, so a member never
+        // sees it: had the number moved or resized anything in the row, or
+        // made your header taller (a row laid out as a grid, or around a
+        // floated name), it comes out at once and that row keeps none.
+        if (attackEnergyMoved(before, attackEnergyRowShape(row, label))) {
+            label.remove();
+            atkEnergyNoRoom = row;
+            reportAttackEnergyNoRoom(row, want.name);
+        }
     }
 
     // The 2 s look: a pass only when the number would change, appear or go.

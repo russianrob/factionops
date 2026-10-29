@@ -1,7 +1,7 @@
 // FactionOps' energy on the attack page, the small number after your name: the
-// pure parts lifted out of the script and driven with made-up readings. The reading is the bars FactionOps
-// takes from Torn's API when the page opens, or Torn's own saved sidebar data
-// once that changes while the page is open.
+// pure parts lifted out of the script and driven with made-up readings. The
+// reading is the bars FactionOps takes from Torn's API when the page opens, or
+// Torn's own saved sidebar data once that changes while the page is open.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

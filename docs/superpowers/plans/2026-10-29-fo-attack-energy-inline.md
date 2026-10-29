@@ -38,6 +38,7 @@
 ## Review Focus
 
 1. **Torn's real name row.** The stand-in guesses a flex row with the name at one end and the HP entries at the other; the real markup's order is name then `textEntries`, but its CSS is not on hand. In a grid or a column the label could take a line of its own and move the page. Check: the owner's live look, with B as the fallback.
+   - After review: a write-time guard. The row is measured without the number, then with it, before the page is drawn. If anything moved, the number comes out and that row keeps none. The row's CSS goes to the client log once per version (tag `fo-atk-energy`). A px column gap is taken back by the number's left margin. Tests: the grid, floated-name and gapped-row tests.
 2. **A long name or a crowded header.** The label must give way (clipped, with an ellipsis), never wrap and never push the HP. Test: "a crowded header squeezes the number, not your HP".
 3. **Other scripts decorating the name.** TornTools writes into the HP entries, not after the name; other scripts are unknown. There must be no position fight. Test: "another script's tag after your name is left alone".
 4. **The header is Torn's button.** Tapping the label switches the view, as tapping the name does. That is Torn's own behaviour, and nothing changes it.
