@@ -75,7 +75,7 @@ test("parseSelfReport takes true, false or null, and nothing else", () => {
 test("genocideView: a faction hit beats a self 'no', a self 'yes' counts, a 'no' keeps its date, a withdrawal forgets", () => {
   const s = empty();
   g.foldHits(s, g.bonusHolders(REPORT));
-  g.foldSelf(s, "1000002", { has: false, at: null }, 1650000000); // an old "no", from before the hit
+  g.foldSelf(s, "1000002", { has: false, at: null }, 1650000123); // an old "no", from before the hit
   g.foldSelf(s, "1000005", { has: true, at: 1690000000 }, 1700000100);
   g.foldSelf(s, "1000006", { has: false, at: null }, 1700000200);
   g.foldSelf(s, "1000007", { has: true, at: null }, 1700000300);
@@ -113,7 +113,7 @@ test("chainsToScan: 2,500+ hits, finished over an hour ago, not yet read, each i
 test("scanFinishedChains reads the due chains, marks them read, keeps a failed one for next time, and saves", async () => {
   const dir = tmp(), now = 1800000000;
   const reports = {
-    900020: { id: 900020, start: 1750000000, bonuses: [{ attacker_id: 1000011, chain: 2500, respect: 1280 }] },
+    900020: { id: 900020, start: 1750000123, bonuses: [{ attacker_id: 1000011, chain: 2500, respect: 1280 }] },
     900022: { id: 900022, start: 1760000000, bonuses: [
       { attacker_id: 1000012, chain: 2500, respect: 1280 },
       { attacker_id: 1000013, chain: 5000, respect: 2560 },

@@ -27,7 +27,7 @@ FactionOps 5.6.29 fetches the merged list and marks the rows.
 
 **The public repo:**
 - Fixtures use made-up ids (1000001…), made-up chain ids (900001…) and made-up counts.
-- No live values, no key endings, no hosting-provider names, and never the words "production" or "happens".
+- No live values, no key endings, no hosting-provider names, and none of the words the pre-push sweep bans.
 
 **Torn:**
 - At most 100 calls a minute on a shared key. Server calls go through faction-history's paced `tornGet`.
