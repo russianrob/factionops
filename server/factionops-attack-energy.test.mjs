@@ -40,6 +40,7 @@ test("Torn's saved energy is read from the first sidebarData<id> entry", () => {
   assert.equal(L().sidebarEnergy(store({ sidebarData1000002: '{"bars":{"energy":{"amount":"x","max":150}}}' })), null);
   assert.equal(L().sidebarEnergy(store({ sidebarData1000002: '{"bars":{"energy":{"amount":10,"max":0}}}' })), null);
   assert.equal(L().sidebarEnergy({ get length() { throw new Error('blocked'); } }), null);
+  assert.equal(L().sidebarEnergy(null), null);   // the page's storage was blocked
 });
 
 test('the saved energy counts only once it changes on the page; until then the reading from the page opening stands', () => {

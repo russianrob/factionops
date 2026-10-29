@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.31
+// @version      5.6.32
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.31';
+    const SCRIPT_VERSION = '5.6.32';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -326,6 +326,7 @@
     // same entry sidebarChain reads, as { current, max }, or null when it
     // has none that reads as a number.
     function sidebarEnergy(storage) {
+        if (!storage) return null;
         try {
             for (let i = 0; i < storage.length; i++) {
                 const key = storage.key(i);
@@ -1900,9 +1901,10 @@ body.wb-chain-active {
 .fo-energy-value.full { color: #55efc4; }
 .fo-energy-timer { color: #fdcb6e; font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; }
 
-/* The attack page's energy bar, right under your own header */
+/* The attack page's energy bar, right under your own header. flex: none, so a
+   short flex column (the phone's stacked headers) cannot squash it away. */
 #fo-atk-energy {
-    display: block; width: 100%; height: 16px;
+    display: block; width: 100%; height: 16px; flex: none;
     position: relative; overflow: hidden; box-sizing: border-box;
     margin: 3px 0; border-radius: 4px;
     background: rgba(0,0,0,0.55);
@@ -14280,10 +14282,15 @@ body.wb-chain-active {
     // What the bar should be now: your header, the words and the width; or
     // null for no bar (off the attack page, no header, no reading).
     function attackEnergyWant() {
-        if (!window.location.href.includes('sid=attack')) return null;
+        // The exact sid: an attack log (sid=attackLog) starts the same way.
+        if (new URLSearchParams(window.location.search).get('sid') !== 'attack') return null;
         const header = document.querySelector(ATK_ENERGY_HEADER);
         if (!header) return null;
-        const r = atkEnergy.read(energyState, sidebarEnergy(window.sessionStorage));
+        // A browser blocking site data throws from the getter itself; the
+        // reading from the page opening still stands then.
+        let storage = null;
+        try { storage = window.sessionStorage; } catch (_) {}
+        const r = atkEnergy.read(energyState, sidebarEnergy(storage));
         // A whole percent, so style.width reads back just what was written
         // and the compare below holds on a quiet page.
         return r ? { header, text: attackEnergyText(r), width: Math.round(attackEnergyFill(r)) + '%' } : null;
