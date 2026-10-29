@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.32
+// @version      5.6.33
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.32';
+    const SCRIPT_VERSION = '5.6.33';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -342,7 +342,7 @@
         return null;
     }
 
-    // Which energy the attack page's bar shows. `api` is FactionOps' own
+    // Which energy the attack page's number shows. `api` is FactionOps' own
     // reading from when the page opened (energyState); `side` is the
     // sidebar's saved energy (sidebarEnergy). The saved copy may be an
     // earlier page's, so it counts only once Torn rewrites it on this page;
@@ -360,15 +360,11 @@
         };
     }
 
-    // The bar's words: "Energy 875/150".
+    // The number's words: a lightning bolt and the energy with en-US commas,
+    // "⚡875" or "⚡1,050", whatever the device's locale. U+26A1 alone, with no
+    // U+FE0F after it.
     function attackEnergyText(r) {
-        return 'Energy ' + Number(r.current).toLocaleString('en-US') + '/' + Number(r.max).toLocaleString('en-US');
-    }
-
-    // How full the bar is, 0 to 100. Full at the max, so energy stacked over
-    // it is a full bar too.
-    function attackEnergyFill(r) {
-        return Math.max(0, Math.min(100, r.current / r.max * 100));
+        return '\u26A1' + Number(r.current).toLocaleString('en-US');
     }
 
     // The chain as the page shows it, for the server: the bar's count, and
@@ -1901,20 +1897,22 @@ body.wb-chain-active {
 .fo-energy-value.full { color: #55efc4; }
 .fo-energy-timer { color: #fdcb6e; font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; }
 
-/* The attack page's energy bar, right under your own header. flex: none, so a
-   short flex column (the phone's stacked headers) cannot squash it away. */
+/* Your energy on the attack page: a small, plain number right after your name,
+   in your header's name row, so it moves nothing when it appears. In that row
+   it starts from nothing and takes only the room Torn's name and HP leave
+   over (flex 1 1 0px; hidden overflow lets a flex row give it nothing), so
+   they are never squeezed for it: squeezed even a fraction of a pixel, their
+   text wraps onto a second line. When the room is short it is cut off with an
+   ellipsis. The gap after the name is a text indent, not a margin, for the
+   same reason. It never wraps, and line-height 1 keeps the bolt's tall emoji
+   glyph from making the row taller. Its colour is the name's, set when it is
+   painted. */
 #fo-atk-energy {
-    display: block; width: 100%; height: 16px; flex: none;
-    position: relative; overflow: hidden; box-sizing: border-box;
-    margin: 3px 0; border-radius: 4px;
-    background: rgba(0,0,0,0.55);
-}
-.fo-atk-energy-fill { position: absolute; left: 0; top: 0; bottom: 0; background: #6bd47f; }
-.fo-atk-energy-text {
-    position: relative; text-align: center;
-    font-size: 11px; line-height: 16px; font-weight: 700; color: #fff;
-    white-space: nowrap; font-variant-numeric: tabular-nums;
-    text-shadow: 0 0 2px #000, 0 1px 2px #000;
+    display: inline-block; flex: 1 1 0px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    text-indent: 6px;
+    font-size: 0.85em; font-weight: 400; line-height: 1;
+    font-variant-numeric: tabular-nums;
 }
 
 /* Live chain count + timer display */
@@ -9758,7 +9756,7 @@ body.wb-chain-active {
                         energyTickAnchorVal = energyState.ticktime;
                         energyTickAnchorAt = Date.now();
                         updateEnergyDisplay();
-                        // The attack page's energy bar, where it is up.
+                        // The attack page's energy number, where it is up.
                         if (hpObserver) hpQueue();
                     }
                     // Self-report bars only — no cooldowns (v5.0.90).
@@ -14265,70 +14263,69 @@ body.wb-chain-active {
         }
     }
 
-    // The energy bar: a slim bar right under your own header (Torn's green
-    // one) reading "Energy 875/150", filled to the max. It shows what
-    // pollEnergy read when the page opened, then the energy Torn's sidebar
-    // saves in sessionStorage once that changes on the page (energyFollower),
-    // so it costs no call of its own. Painted in hpPass with the life
-    // percentages, under the same observer.
+    // Your energy: a small "⚡875" right after your name in your own header
+    // (Torn's green one), in the name's colour. It shows what pollEnergy read
+    // when the page opened, then the energy Torn's sidebar saves in
+    // sessionStorage once that changes on the page (energyFollower), so it
+    // costs no call of its own. Painted in hpPass with the life percentages,
+    // under the same observer. It sits beside the name, never inside it:
+    // other scripts read the name's text.
     const ATK_ENERGY_ID = 'fo-atk-energy';
-    const ATK_ENERGY_HEADER = '[class*="headerWrapper__"][class*="green__"]';
+    const ATK_ENERGY_NAME = '[class*="headerWrapper__"][class*="green__"] .user-name';
     // sessionStorage is not the page, so the observer never sees the saved
     // energy change: a look every 2 s does.
     const ATK_ENERGY_CHECK_MS = 2000;
     const atkEnergy = energyFollower();
     let atkEnergyTimer = null;
 
-    // What the bar should be now: your header, the words and the width; or
-    // null for no bar (off the attack page, no header, no reading).
+    // What the number should be now: your name, the words and the name's
+    // colour; or null for none (off the attack page, no name, no reading).
     function attackEnergyWant() {
         // The exact sid: an attack log (sid=attackLog) starts the same way.
         if (new URLSearchParams(window.location.search).get('sid') !== 'attack') return null;
-        const header = document.querySelector(ATK_ENERGY_HEADER);
-        if (!header) return null;
+        const name = document.querySelector(ATK_ENERGY_NAME);
+        if (!name) return null;
         // A browser blocking site data throws from the getter itself; the
         // reading from the page opening still stands then.
         let storage = null;
         try { storage = window.sessionStorage; } catch (_) {}
         const r = atkEnergy.read(energyState, sidebarEnergy(storage));
-        // A whole percent, so style.width reads back just what was written
-        // and the compare below holds on a quiet page.
-        return r ? { header, text: attackEnergyText(r), width: Math.round(attackEnergyFill(r)) + '%' } : null;
+        // The name's own colour, not the row's: Torn may colour just the name.
+        return r ? { name, text: attackEnergyText(r), colour: getComputedStyle(name).color } : null;
     }
 
-    // Is the page already showing `want` (null: no bar)?
+    // Is the number in place: in your name's row, anywhere after the name?
+    // Not only right after it: another script may put its own tag there, and
+    // two scripts that each insist on that spot would trade places forever.
+    function attackEnergyPlaced(label, name) {
+        return label.parentElement === name.parentElement
+            && !!(name.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }
+
+    // Is the page already showing `want` (null: no number)?
     function attackEnergyShown(want) {
-        const bar = document.getElementById(ATK_ENERGY_ID);
-        if (!want) return !bar;
-        if (!bar || want.header.nextElementSibling !== bar) return false;
-        const fill = bar.querySelector('.fo-atk-energy-fill');
-        const text = bar.querySelector('.fo-atk-energy-text');
-        return !!fill && !!text && text.textContent === want.text && fill.style.width === want.width;
+        const label = document.getElementById(ATK_ENERGY_ID);
+        if (!want) return !label;
+        return !!label && attackEnergyPlaced(label, want.name)
+            && label.textContent === want.text && label.style.color === want.colour;
     }
 
-    /** Put up, move, update or take down the bar, writing only what differs. */
-    function paintAttackEnergyBar() {
+    /** Put up, move, update or take down the number, writing only what differs. */
+    function paintAttackEnergy() {
         const want = attackEnergyWant();
-        let bar = document.getElementById(ATK_ENERGY_ID);
-        if (!want) { if (bar) bar.remove(); return; }
-        if (!bar) {
-            bar = document.createElement('div');
-            bar.id = ATK_ENERGY_ID;
+        let label = document.getElementById(ATK_ENERGY_ID);
+        if (!want) { if (label) label.remove(); return; }
+        if (!label) {
+            label = document.createElement('span');
+            label.id = ATK_ENERGY_ID;
         }
-        let fill = bar.querySelector('.fo-atk-energy-fill');
-        let text = bar.querySelector('.fo-atk-energy-text');
-        if (!fill || !text) {
-            bar.innerHTML = '<div class="fo-atk-energy-fill"></div><div class="fo-atk-energy-text"></div>';
-            fill = bar.firstChild;
-            text = bar.lastChild;
-        }
-        // Torn redraws its header now and then; the bar follows it.
-        if (want.header.nextElementSibling !== bar) want.header.after(bar);
-        if (text.textContent !== want.text) text.textContent = want.text;
-        if (fill.style.width !== want.width) fill.style.width = want.width;
+        // Torn redraws its header now and then; the number follows your name.
+        if (!attackEnergyPlaced(label, want.name)) want.name.after(label);
+        if (label.textContent !== want.text) label.textContent = want.text;
+        if (label.style.color !== want.colour) label.style.color = want.colour;
     }
 
-    // The 2 s look: a pass only when the bar would change, appear or go.
+    // The 2 s look: a pass only when the number would change, appear or go.
     function startAttackEnergyCheck() {
         if (atkEnergyTimer) return;
         atkEnergyTimer = setInterval(() => {
@@ -14347,7 +14344,7 @@ body.wb-chain-active {
         if (hpObserver) hpObserver.disconnect();
         try {
             try { paintLifePercents(); } catch (e) { log('hp paint failed: ' + (e && e.message)); }
-            try { paintAttackEnergyBar(); } catch (e) { log('energy bar paint failed: ' + (e && e.message)); }
+            try { paintAttackEnergy(); } catch (e) { log('attack energy paint failed: ' + (e && e.message)); }
         } finally { hpObserve(); }
     }
 

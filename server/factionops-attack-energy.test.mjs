@@ -1,5 +1,5 @@
-// FactionOps' energy bar on the attack page: the pure parts lifted out of the
-// script and driven with made-up readings. The reading is the bars FactionOps
+// FactionOps' energy on the attack page, the small number after your name: the
+// pure parts lifted out of the script and driven with made-up readings. The reading is the bars FactionOps
 // takes from Torn's API when the page opens, or Torn's own saved sidebar data
 // once that changes while the page is open.
 import { test } from 'node:test';
@@ -23,7 +23,7 @@ function fn(name) {
 let lib = null;
 function L() {
   if (lib) return lib;
-  const names = ['sidebarEnergy', 'energyFollower', 'attackEnergyText', 'attackEnergyFill'];
+  const names = ['sidebarEnergy', 'energyFollower', 'attackEnergyText'];
   lib = new Function(names.map(fn).join('\n') + '\nreturn { ' + names.join(', ') + ' };')();
   return lib;
 }
@@ -53,17 +53,17 @@ test('the saved energy counts only once it changes on the page; until then the r
   assert.deepEqual(f.read({ current: 800, max: 150 }, null), { current: 800, max: 150 });
 });
 
-test('no reading and no live sidebar is no bar', () => {
+test('no reading and no live sidebar is no number', () => {
   const f = L().energyFollower();
   assert.equal(f.read({ current: 0, max: 0 }, null), null);
   assert.equal(f.read({ current: 0, max: 0 }, { current: 900, max: 150 }), null);
   assert.deepEqual(f.read({ current: 0, max: 0 }, { current: 875, max: 150 }), { current: 875, max: 150 });
 });
 
-test('the bar reads "Energy <current>/<max>" and fills to the max, a stacked bar full', () => {
-  assert.equal(L().attackEnergyText({ current: 75, max: 150 }), 'Energy 75/150');
-  assert.equal(L().attackEnergyText({ current: 1050, max: 150 }), 'Energy 1,050/150');
-  assert.equal(L().attackEnergyFill({ current: 75, max: 150 }), 50);
-  assert.equal(L().attackEnergyFill({ current: 1050, max: 150 }), 100);
-  assert.equal(L().attackEnergyFill({ current: 0, max: 150 }), 0);
+// U+26A1 alone, as the script writes it: with U+FE0F after it the strings
+// differ though they look the same.
+test('the number reads a lightning bolt and the energy with en-US commas, no max', () => {
+  assert.equal(L().attackEnergyText({ current: 75, max: 150 }), '\u26A175');
+  assert.equal(L().attackEnergyText({ current: 1050, max: 150 }), '\u26A11,050');
+  assert.equal(L().attackEnergyText({ current: 0, max: 150 }), '\u26A10');
 });
