@@ -260,9 +260,9 @@ test('an armour loan or retrieve names Defensive first, then the older Armor', (
   assert.deepEqual(t('armor', ''), ['Defensive', 'Armor']);
 });
 
-test('3.2.90 in both places, and the meta file is the header', () => {
+test('3.2.91 in both places, and the meta file is the header', () => {
   const end = '// ==/UserScript==';
   assert.equal(META, SRC.slice(0, SRC.indexOf(end) + end.length) + '\n');
-  assert.match(SRC, /^\/\/ @version\s+3\.2\.90$/m);
-  assert.match(SRC, /const SCRIPT_VERSION = '3\.2\.90';/);
+  assert.match(SRC, /^\/\/ @version\s+3\.2\.91$/m);
+  assert.match(SRC, /const SCRIPT_VERSION = '3\.2\.91';/);
 });

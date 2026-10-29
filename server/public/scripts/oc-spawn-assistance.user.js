@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.90
+// @version      3.2.91
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,12 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.91 — Armoury: a Weapons | Armour switch. Armour lists every piece,
+//           head to feet with free ones first, with its own count line,
+//           search and "Loan to…", which offers everyone short of a full set
+//           and keeps the pick after each loan so a set goes out in a row;
+//           a second piece for the same body part is refused. Weapons are
+//           unchanged.
 // v3.2.90 — Armoury: "Loan to…" leaves out anyone who already holds one of
 //           the ranked-war weapons listed, so nobody is lent a second by a
 //           slip; they're offered again once theirs is taken back.
@@ -438,7 +444,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.90';
+    const SCRIPT_VERSION = '3.2.91';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
@@ -3408,6 +3414,10 @@
         .mgr-btn-loan:hover:not(:disabled) { background: #1b4332; }
         .mgr-btn-retrieve { background: rgba(200,60,60,.1); color: #c33; border: 1px solid rgba(200,60,60,.2); }
         .mgr-btn-retrieve:hover:not(:disabled) { background: rgba(200,60,60,.2); }
+        .mgr-arm-views { display: flex; margin-bottom: 8px; border: 1px solid #2d4a3e; border-radius: 6px; overflow: hidden; }
+        .mgr-arm-view { flex: 1; min-height: 28px; padding: 4px 8px; border: 0; background: #0d1b2a; color: #9ca3af; font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .mgr-arm-view + .mgr-arm-view { border-left: 1px solid #2d4a3e; }
+        .mgr-arm-view-on { background: rgba(116,198,157,.15); color: #74c69d; }
         .mgr-arm-controls { display: flex; gap: 6px; margin-bottom: 8px; }
         .mgr-arm-input { flex: 1; min-width: 0; padding: 5px 6px; font-size: 12px; border: 1px solid #2d4a3e; border-radius: 4px; background: #0d1b2a; color: #e5e7eb; }
         .mgr-arm-heading { margin: 10px 0 4px; font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; }
@@ -6937,30 +6947,44 @@
     let mgr_currentSubTab = 'missing';
 
     // ──────────────────────────────────────────────────────────────────
-    //  ARMOURY SUB-TAB — loan out ranked-war weapons (3.2.86, RW-only 3.2.87)
+    //  ARMOURY SUB-TAB — loan out ranked-war weapons and armour
     // ──────────────────────────────────────────────────────────────────
-    // Lists each ranked-war weapon copy in the armoury (rarity, bonuses, who
-    // holds it), read from the armoury page once when the tab opens. Pick a
-    // member, then Loan on a free copy; "Loan to" offers only members who
-    // hold none of these copies, so whoever is lent one drops out (their pick
-    // with them) until it is taken back. ↩ beside a holder takes that copy
-    // back (second tap). Every request names that exact copy, so a plain
-    // copy of the same weapon is never the one lent.
-    let mgr_armouryMember = '';   // the member picked in "Loan to", always one it offers
-    let mgr_armouryQuery = '';
-    let mgr_armouryList = [];
-    let mgr_armouryBusy = null;   // the one loan/retrieve in flight: { row, loan }
-    let mgr_armouryLogged = false;   // the working type was already logged this page view
+    // Two views behind a Weapons | Armour switch. Each is read from the
+    // armoury page the first time it is shown after the tab opens, and keeps
+    // its own list, "Loan to" pick and search.
+    // Weapons: each ranked-war weapon copy (rarity, bonuses, who holds it).
+    // "Loan to" offers only members who hold none of these copies, so whoever
+    // is lent one drops out (their pick with them) until it is taken back.
+    // Armour: every armour piece, head to feet. "Loan to" offers everyone
+    // short of a full set and keeps the pick after a loan, so a set goes out
+    // in a row; a second piece for a body part the member holds is refused.
+    // In both, ↩ beside a holder takes that copy back (second tap), and every
+    // request names that exact copy, so a plain copy of the same weapon is
+    // never the one lent.
+    // Per view: list, member (the pick, always one "Loan to" offers), query,
+    // logged (its working loan type was logged this page view), readFor (the
+    // tab opening its list was read for), readingFor (the opening a read in
+    // flight is for), error (a failed read this opening).
+    const mgr_armViews = {
+        weapons: { list: [], member: '', query: '', logged: false, readFor: 0, readingFor: 0, error: '', noRarity: false },
+        armour: { list: [], member: '', query: '', logged: false, readFor: 0, readingFor: 0, error: '' },
+    };
+    let mgr_armouryView = 'weapons';   // the view shown
+    let mgr_armouryOpens = 0;          // how many times the tab was opened
+    let mgr_armourCat = '';            // the page category Torn answered armour on
+    let mgr_armourCatLogged = false;   // which one was already logged this page view
+    let mgr_armouryBusy = null;        // the one loan/retrieve in flight: { view, row, loan }
 
-    // All weapon rows on the armoury page, 50 per request, up to Torn's
-    // 1000-row cap. Throws when no page answers (no armoury permission).
-    async function mgr_scanArmouryWeapons() {
+    // All rows of one armoury page category ('weapons', 'armour'…), 50 per
+    // request, up to Torn's 1000-row cap. Throws when no page answers (no
+    // armoury permission).
+    async function mgr_scanArmouryRows(type) {
         const rfcv = mgr_getRfcvToken();
         if (!rfcv) throw new Error('Missing RFCV cookie — refresh the page and try again.');
         const all = [];
         let reached = false;
         for (let start = 0; start < 1000; start += 50) {
-            const body = new URLSearchParams({ step: 'armouryTabContent', type: 'weapons', start: String(start), ajax: 'true' });
+            const body = new URLSearchParams({ step: 'armouryTabContent', type, start: String(start), ajax: 'true' });
             const res = await fetch(`https://www.torn.com/factions.php?rfcv=${rfcv}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' }, body, credentials: 'same-origin' });
             if (!res.ok) break;
             let data;
@@ -6975,24 +6999,61 @@
         return all;
     }
 
-    // One loan or retrieve of that copy, sending each type in
-    // mgr_armouryPostTypes until Torn accepts one. A refusal, and the first
-    // success, is logged (tag oc-armoury, no key) so the type can be confirmed.
-    async function mgr_armouryAct(role, copy, userID, userName) {
+    // The armour pieces (mgr_armourPieces). Torn's page category for armour
+    // is not confirmed, so "armour" is asked first and "armor" when that
+    // gives no armour; the one that answered is asked first from then on and
+    // logged once (tag oc-armoury, with what was tried before it). Rows that
+    // are not armour are noted by their types and field names only. No armour
+    // on either is an empty list; neither answering at all throws.
+    async function mgr_scanArmour() {
+        const cats = mgr_armourCat === 'armor' ? ['armor', 'armour'] : ['armour', 'armor'];
         const tried = [];
-        for (const postType of mgr_armouryPostTypes('weapons', copy.type)) {
+        let answered = false, lastErr = null;
+        for (const cat of cats) {
+            let rows;
+            try { rows = await mgr_scanArmouryRows(cat); } catch (e) {
+                lastErr = e;
+                tried.push(`${cat}: ${String(e && e.message || e).slice(0, 40)}`);
+                continue;
+            }
+            answered = true;
+            const pieces = mgr_armourPieces(rows);
+            if (pieces.length) {
+                mgr_armourCat = cat;
+                if (!mgr_armourCatLogged) mgr_reportArmoury({ kind: 'armour', cat, rows: pieces.length, tried });
+                mgr_armourCatLogged = true;
+                return pieces;
+            }
+            tried.push(!rows.length ? `${cat}: no rows`
+                : `${cat}: ${rows.length} rows, none armour; types ${[...new Set(rows.map(r => String(r && r.type)))].join('/').slice(0, 60)}; keys ${Object.keys(rows[0] || {}).join(',').slice(0, 120)}`);
+        }
+        if (!answered) throw lastErr || new Error('No armoury access');
+        if (!mgr_armourCatLogged) mgr_reportArmoury({ kind: 'armour', cat: null, tried });
+        mgr_armourCatLogged = true;
+        return [];
+    }
+
+    // One loan or retrieve of that copy, sending each type in
+    // mgr_armouryPostTypes until Torn accepts one (Primary/Secondary/Melee
+    // for a weapon, Defensive then Armor for armour). A refusal, and the
+    // first success in each view, is logged (tag oc-armoury, no key) so the
+    // type can be confirmed.
+    async function mgr_armouryAct(view, role, copy, userID, userName) {
+        const v = mgr_armViews[view];
+        const tried = [];
+        for (const postType of mgr_armouryPostTypes(view === 'armour' ? 'armor' : 'weapons', copy.type)) {
             try {
                 const args = { armoryID: copy.armoryID, itemID: copy.itemID, userID, userName, postType };
                 if (role === 'loan') await mgr_loanItem(args); else await mgr_retrieveItem(args);
-                if (tried.length || !mgr_armouryLogged) mgr_reportArmoury({ role, ok: postType, refused: tried });
-                mgr_armouryLogged = true;
+                if (tried.length || !v.logged) mgr_reportArmoury({ kind: view, role, ok: postType, refused: tried });
+                v.logged = true;
                 return;
             } catch (e) {
-                if (e && e.captcha) { mgr_reportArmoury({ role, ok: null, captcha: true, refused: tried }); throw e; }
+                if (e && e.captcha) { mgr_reportArmoury({ kind: view, role, ok: null, captcha: true, refused: tried }); throw e; }
                 tried.push(`${postType}: ${String(e && e.message || e).slice(0, 60)}`);
             }
         }
-        mgr_reportArmoury({ role, ok: null, refused: tried });
+        mgr_reportArmoury({ kind: view, role, ok: null, refused: tried });
         throw new Error(role === 'loan' ? 'Loan refused' : 'Retrieve refused');
     }
 
@@ -7010,33 +7071,86 @@
     async function mgr_loadArmouryTab() {
         const content = document.getElementById('mgr-sub-content');
         content.innerHTML = '<div class="mgr-loading">Reading the armoury…</div>';
-        let rows;
         try {
             // A re-read that fails keeps the list read before; only a first
             // read that fails stops the tab.
             await mgr_loadMembers(60 * 1000).catch(e => { if (!mgr_membersLoaded) throw e; });
-            rows = await mgr_scanArmouryWeapons();
         } catch (e) {
             if (mgr_currentSubTab !== 'armoury') return;
             content.innerHTML = `<div class="oc-error">Couldn't read the armoury: ${mgr_esc(e.message || e)}</div>`;
             return;
         }
         if (mgr_currentSubTab !== 'armoury') return;
-        mgr_armouryList = mgr_rwCopies(rows);
-        // Rows with no rarity field at all mean Torn changed the page: say so,
-        // and log the field names (names only) so it can be fixed.
-        const noRarity = rows.length > 0 && !rows.some(r => r && 'glowClass' in r);
-        if (noRarity) mgr_reportArmoury({ noRarity: true, keys: Object.keys(rows[0] || {}) });
+        // A new opening: each view is read again when shown, and a read
+        // that failed last time is tried again.
+        mgr_armouryOpens++;
+        for (const v of Object.values(mgr_armViews)) v.error = '';
         content.innerHTML = `
+            <div class="mgr-arm-views">
+                <button class="mgr-arm-view" data-view="weapons">Weapons</button>
+                <button class="mgr-arm-view" data-view="armour">Armour</button>
+            </div>
             <div class="mgr-arm-controls">
                 <select id="mgr-arm-member" class="mgr-arm-input"></select>
-                <input id="mgr-arm-search" class="mgr-arm-input" type="search" placeholder="Search weapon, bonus or member" value="${mgr_esc(mgr_armouryQuery)}">
+                <input id="mgr-arm-search" class="mgr-arm-input" type="search">
             </div>
-            <div id="mgr-arm-list"${noRarity ? ' data-norarity="1"' : ''}></div>`;
-        mgr_renderArmouryPicker();
-        content.querySelector('#mgr-arm-member').addEventListener('change', (e) => { mgr_armouryMember = e.target.value; });
-        content.querySelector('#mgr-arm-search').addEventListener('input', (e) => { mgr_armouryQuery = e.target.value; mgr_renderArmouryList(); });
+            <div id="mgr-arm-list"></div>`;
+        content.querySelector('.mgr-arm-views').addEventListener('click', (e) => {
+            const b = e.target.closest('.mgr-arm-view');
+            if (b && b.dataset.view !== mgr_armouryView) mgr_showArmouryView(b.dataset.view);
+        });
+        content.querySelector('#mgr-arm-member').addEventListener('change', (e) => { mgr_armViews[mgr_armouryView].member = e.target.value; });
+        content.querySelector('#mgr-arm-search').addEventListener('input', (e) => { mgr_armViews[mgr_armouryView].query = e.target.value; mgr_renderArmouryList(); });
         content.querySelector('#mgr-arm-list').addEventListener('click', mgr_onArmouryClick);
+        mgr_showArmouryView(mgr_armouryView);
+    }
+
+    // Shows one view: marks the switch, puts that view's search in the box,
+    // draws its "Loan to" and list, and reads its rows if they were not read
+    // since the tab opened.
+    function mgr_showArmouryView(view) {
+        mgr_armouryView = view;
+        const v = mgr_armViews[view];
+        document.querySelectorAll('.mgr-arm-view').forEach(b => b.classList.toggle('mgr-arm-view-on', b.dataset.view === view));
+        const search = document.getElementById('mgr-arm-search');
+        if (search) {
+            search.placeholder = view === 'armour' ? 'Search piece, part or member' : 'Search weapon, bonus or member';
+            search.value = v.query;
+        }
+        mgr_renderArmouryPicker(view);
+        mgr_renderArmouryList();
+        if (v.readFor !== mgr_armouryOpens && v.readingFor !== mgr_armouryOpens && !v.error) mgr_readArmouryView(view);
+    }
+
+    // Reads one view's rows from the armoury page, then draws that view if it
+    // is still the one shown. A read overtaken by a newer opening of the tab
+    // keeps nothing; a failed one shows its error in the list.
+    async function mgr_readArmouryView(view) {
+        const open = mgr_armouryOpens, v = mgr_armViews[view];
+        v.readingFor = open;
+        try {
+            if (view === 'armour') {
+                const pieces = await mgr_scanArmour();
+                if (open !== mgr_armouryOpens) return;
+                v.list = pieces;
+            } else {
+                const rows = await mgr_scanArmouryRows('weapons');
+                if (open !== mgr_armouryOpens) return;
+                v.list = mgr_rwCopies(rows);
+                // Rows with no rarity field at all mean Torn changed the page:
+                // say so, and log the field names (names only) so it can be fixed.
+                v.noRarity = rows.length > 0 && !rows.some(r => r && 'glowClass' in r);
+                if (v.noRarity) mgr_reportArmoury({ noRarity: true, keys: Object.keys(rows[0] || {}) });
+            }
+            v.readFor = open;
+        } catch (e) {
+            if (open !== mgr_armouryOpens) return;
+            v.error = String(e && e.message || e);
+        } finally {
+            if (v.readingFor === open) v.readingFor = 0;
+        }
+        if (mgr_currentSubTab !== 'armoury' || mgr_armouryView !== view) return;
+        mgr_renderArmouryPicker(view);
         mgr_renderArmouryList();
     }
 
@@ -7069,45 +7183,58 @@
             .sort((a, b) => a[1].localeCompare(b[1]));
     }
 
-    // Fills "Loan to" with the members it offers: when the tab opens and when
-    // a copy changes hands, not on every redraw of the list (replacing an open
-    // picker's options closes it). A pick no longer offered, because its
-    // member was just lent a copy, is dropped from the picker and from what
-    // the next Loan sends.
-    function mgr_renderArmouryPicker() {
-        const offered = mgr_loanCandidates(mgr_memberNameMap, mgr_armouryList);
-        if (!offered.some(([id]) => id === mgr_armouryMember)) mgr_armouryMember = '';
+    // Fills a view's "Loan to" with the members it offers: when the view is
+    // shown and when a copy changes hands, not on every redraw of the list
+    // (replacing an open picker's options closes it). A pick no longer
+    // offered (its member was just lent a weapon, or the last piece of a set)
+    // is dropped from the picker and from what the next Loan sends. Drawn
+    // only while that view is the one shown.
+    function mgr_renderArmouryPicker(view = mgr_armouryView) {
+        const v = mgr_armViews[view];
+        const offered = view === 'armour' ? mgr_armourCandidates(mgr_memberNameMap, v.list) : mgr_loanCandidates(mgr_memberNameMap, v.list);
+        if (!offered.some(([id]) => id === v.member)) v.member = '';
         const pick = document.getElementById('mgr-arm-member');
-        if (!pick) return;
+        if (!pick || view !== mgr_armouryView) return;
         pick.innerHTML = '<option value="">Loan to…</option>'
-            + offered.map(([id, name]) => `<option value="${mgr_esc(id)}"${id === mgr_armouryMember ? ' selected' : ''}>${mgr_esc(name)}</option>`).join('');
+            + offered.map(([id, name]) => `<option value="${mgr_esc(id)}"${id === v.member ? ' selected' : ''}>${mgr_esc(name)}</option>`).join('');
     }
 
+    // The shown view's list: its read error, "Reading…" until it is read,
+    // then its count line and one row per copy the search matches.
     function mgr_renderArmouryList() {
         const list = document.getElementById('mgr-arm-list');
         if (!list) return;
-        if (list.dataset.norarity) { list.innerHTML = `<div class="mgr-ok">Couldn't tell ranked-war weapons from plain ones (Torn's rarity field is missing). Logged for a fix.</div>`; return; }
-        const rows = mgr_armouryList.filter(r => mgr_armouryMatches(r, mgr_armouryQuery));
-        if (!rows.length) { list.innerHTML = `<div class="mgr-ok">${mgr_armouryList.length ? 'Nothing matches.' : 'No ranked-war weapons in the armoury.'}</div>`; return; }
-        const free = mgr_armouryList.filter(r => !r.holder).length;
+        const view = mgr_armouryView, v = mgr_armViews[view], armour = view === 'armour';
+        if (v.error) { list.innerHTML = `<div class="oc-error">Couldn't read the armoury: ${mgr_esc(v.error)}</div>`; return; }
+        if (v.readFor !== mgr_armouryOpens) { list.innerHTML = `<div class="mgr-loading">${armour ? 'Reading the armour…' : 'Reading the armoury…'}</div>`; return; }
+        if (!armour && v.noRarity) { list.innerHTML = `<div class="mgr-ok">Couldn't tell ranked-war weapons from plain ones (Torn's rarity field is missing). Logged for a fix.</div>`; return; }
+        const rows = v.list.filter(r => mgr_armouryMatches(r, v.query));
+        if (!rows.length) { list.innerHTML = `<div class="mgr-ok">${v.list.length ? 'Nothing matches.' : armour ? 'No armour in the armoury.' : 'No ranked-war weapons in the armoury.'}</div>`; return; }
+        const free = v.list.filter(r => !r.holder).length;
         const busy = mgr_armouryBusy;
-        let html = `<div class="mgr-arm-heading">Ranked-war weapons · ${mgr_armouryList.length} · ${free} free</div>`;
+        const partLabel = { head: 'Head', body: 'Body', legs: 'Legs', hands: 'Hands', feet: 'Feet' };
+        let html = `<div class="mgr-arm-heading">${armour ? 'Armour' : 'Ranked-war weapons'} · ${v.list.length} · ${free} free</div>`;
         for (const r of rows) {
-            const i = mgr_armouryList.indexOf(r);
-            const mine = busy && busy.row === i;
+            const i = v.list.indexOf(r);
+            const mine = busy && busy.view === view && busy.row === i;
             const seen = r.holder && mgr_holderSeen(r.holder.id, mgr_membersLoaded ? mgr_memberLastAction : null, Date.now() / 1000);
             const action = r.holder
                 ? `<span class="mgr-arm-chip"><span class="mgr-arm-who">${mgr_esc(r.holder.name)}</span>${seen ? `<span class="mgr-arm-seen mgr-seen-${seen.cls}">· ${seen.text}</span>` : ''}<button class="mgr-arm-back" data-row="${i}" title="Take back from ${mgr_esc(r.holder.name)}"${busy ? ' disabled' : ''}>${mine ? '…' : '↩'}</button></span>`
                 : `<button class="mgr-action-btn mgr-btn-loan mgr-arm-loan" data-row="${i}"${busy ? ' disabled' : ''}>${mine ? '…' : 'Loan'}</button>`;
+            // Armour: a dot only on a ranked-war piece, its body part where a
+            // weapon shows its type, and no "No bonus" on every plain piece.
+            const dot = armour && !r.rarity ? '' : `<span class="mgr-arm-dot mgr-arm-${r.rarity}" title="${r.rarity}"></span>`;
+            const kind = armour ? (partLabel[r.part] || '') : r.type;
+            const bonus = r.bonuses.length ? mgr_esc(r.bonuses.join(' · ')) : armour ? '' : 'No bonus';
             html += `
                 <div class="mgr-arm-row">
                     <div class="mgr-arm-main">
-                        <span class="mgr-arm-dot mgr-arm-${r.rarity}" title="${r.rarity}"></span>
+                        ${dot}
                         <span class="mgr-arm-name">${mgr_esc(r.name)}</span>
-                        <span class="mgr-arm-type">${mgr_esc(r.type)}</span>
+                        <span class="mgr-arm-type">${mgr_esc(kind)}</span>
                     </div>
                     <div class="mgr-arm-sub">
-                        <span class="mgr-arm-bonus">${r.bonuses.length ? mgr_esc(r.bonuses.join(' · ')) : 'No bonus'}</span>
+                        <span class="mgr-arm-bonus">${bonus}</span>
                         ${action}
                     </div>
                 </div>`;
@@ -7118,16 +7245,23 @@
     async function mgr_onArmouryClick(e) {
         const btn = e.target.closest('button');
         if (!btn || btn.disabled || btn.dataset.busy || mgr_armouryBusy) return;
+        // The view is fixed at the tap, so a request that lands after a
+        // switch of view changes the view it was made in.
+        const view = mgr_armouryView, v = mgr_armViews[view];
         const i = Number(btn.dataset.row);
-        const copy = mgr_armouryList[i];
+        const copy = v.list[i];
         if (!copy) return;
         const loan = btn.classList.contains('mgr-arm-loan');
         if (loan ? copy.holder : !copy.holder) return;
         const label = btn.textContent;
         const flash = (text, ms) => { btn.dataset.busy = '1'; btn.textContent = text; setTimeout(() => { if (btn.isConnected) { btn.textContent = label; delete btn.dataset.busy; } }, ms); };
-        if (loan && !mgr_armouryMember) return flash('Pick a member', 1500);
-        const userID = loan ? String(mgr_armouryMember) : copy.holder.id;
+        if (loan && !v.member) return flash('Pick a member', 1500);
+        const userID = loan ? String(v.member) : copy.holder.id;
         const userName = loan ? (mgr_memberNameMap.get(userID) || '') : copy.holder.name;
+        // Armour: one piece per body part, so a second helmet (say) for a
+        // member who has one is refused, naming the one they have.
+        const held = loan && view === 'armour' ? mgr_armourPartHeld(v.list, userID, copy.part) : null;
+        if (held) return flash(`Has ${held.name}`, 2000);
         // Taking a copy back takes a second tap, so a slip cannot do it.
         if (!loan && !btn.dataset.confirm) {
             btn.dataset.confirm = '1';
@@ -7135,28 +7269,29 @@
             setTimeout(() => { if (btn.isConnected && btn.dataset.confirm) { btn.textContent = label; delete btn.dataset.confirm; } }, 3000);
             return;
         }
-        mgr_armouryBusy = { row: i, loan };
+        mgr_armouryBusy = { view, row: i, loan };
         mgr_renderArmouryList();
         let failed = '';
         try {
-            await mgr_armouryAct(loan ? 'loan' : 'retrieve', copy, userID, userName);
+            await mgr_armouryAct(view, loan ? 'loan' : 'retrieve', copy, userID, userName);
             // Show the change at once; the page catches up on the next open.
             copy.holder = loan ? { id: userID, name: userName || `[${userID}]` } : null;
             // A read of the tab made while this was on its way has its own row
             // for the copy, and that row gets the change too.
-            for (const c of mgr_armouryList) if (c !== copy && c.armoryID === copy.armoryID) c.holder = copy.holder;
-            // The member just lent a copy is never the next pick, even when
-            // that read lacks the copy.
-            if (loan && String(mgr_armouryMember) === userID) mgr_armouryMember = '';
-            // Whoever now holds a copy leaves "Loan to"; whoever gave one back
-            // is offered again.
-            mgr_renderArmouryPicker();
+            for (const c of v.list) if (c !== copy && c.armoryID === copy.armoryID) c.holder = copy.holder;
+            // A weapon: the member just lent one is never the next pick, even
+            // when that read lacks the copy. Armour keeps the pick for the
+            // rest of the set; it drops once the set is full.
+            if (view === 'weapons' && loan && String(v.member) === userID) v.member = '';
+            // Whoever now holds a weapon (or a full set) leaves "Loan to";
+            // whoever gave one back is offered again.
+            mgr_renderArmouryPicker(view);
         } catch (err) {
             failed = String(err && err.message || err).slice(0, 24);
         }
         mgr_armouryBusy = null;
         mgr_renderArmouryList();
-        if (!failed) return;
+        if (!failed || mgr_armouryView !== view) return;
         // The list was redrawn, so show the reason on the new button.
         const again = document.querySelector(`#mgr-arm-list ${loan ? '.mgr-arm-loan' : '.mgr-arm-back'}[data-row="${i}"]`);
         if (!again) return;
