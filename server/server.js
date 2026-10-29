@@ -43,6 +43,7 @@ import * as stakeoutStore from "./stakeout-store.js";
 import { startWatcher as startStakeoutWatcher, stopWatcher as stopStakeoutWatcher } from "./stakeout-watcher.js";
 import { startRwpRefresh } from "./rwp-refresh.js";
 import { startFactionHistorySchedule } from "./faction-history-schedule.js";
+import { startGenocideSchedule } from "./genocide.js";
 import { startHofSnapshots, stopHofSnapshots } from "./hof-snapshots.js";
 import { startRestockTracker } from "./restock-tracker.js";
 import { startPersonalWatcher } from "./personal-watcher.js";
@@ -710,6 +711,8 @@ else console.log("[stakeout-watcher] disabled (set STAKEOUT_WATCHER=1 to enable 
 // auction CSVs so the PDA path (which can't gunzip the CDN) gets fresh prices.
 startRwpRefresh();
 startFactionHistorySchedule();
+// Genocide marks: the running chain's bonus hits every 30 min (genocide.js).
+startGenocideSchedule();
 // Hall of Fame climb: saves Torn's daily faction snapshot (00:05 UTC + boot catch-up).
 startHofSnapshots();
 startRestockTracker();

@@ -196,3 +196,27 @@ test("fetchChainReport asks for one chain by id, or for the latest chain without
   assert.match(urls[0], /^https:\/\/api\.torn\.com\/v2\/faction\/chainreport\?id=900001&key=TESTKEY&/);
   assert.match(urls[1], /^https:\/\/api\.torn\.com\/v2\/faction\/chainreport\?key=TESTKEY&/);
 });
+
+// ── The wiring (text checks: the tests never import server.js) ─────────
+
+test("the routes: a member posts their own answer, and reads their faction's list", () => {
+  const ROUTES = readFileSync(new URL("./routes.js", import.meta.url), "utf8");
+  assert.match(ROUTES, /router\.post\("\/api\/me\/honors", requireAuth,/);
+  assert.match(ROUTES, /router\.get\("\/api\/genocide", requireAuth,/);
+  assert.match(ROUTES, /parseSelfReport\(req\.body \|\| \{\}\)/);
+  const post = ROUTES.slice(ROUTES.indexOf('router.post("/api/me/honors"'));
+  assert.match(post.slice(0, post.indexOf("\n});\n")), /res\.status\(400\)/);
+});
+
+test("the daily faction-history tick reads finished big chains from the chain list it already fetched", () => {
+  const S = readFileSync(new URL("./faction-history-schedule.js", import.meta.url), "utf8");
+  assert.match(S, /scanFinishedChains\(\(id\) => fh\.fetchChainReport\(key, id\), factionId, chains/);
+  // The list is fetched once, before both steps.
+  assert.equal(S.match(/fh\.fetchAllChains\(key\)/g).length, 1);
+});
+
+test("the server starts the live scan", () => {
+  const SERVER = readFileSync(new URL("./server.js", import.meta.url), "utf8");
+  assert.match(SERVER, /^import \{ startGenocideSchedule \} from "\.\/genocide\.js";$/m);
+  assert.match(SERVER, /^startGenocideSchedule\(\);$/m);
+});

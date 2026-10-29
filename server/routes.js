@@ -144,6 +144,7 @@ import * as keyUsage from "./key-usage-log.js";
 import { hasXanaxSubscription, grantFactionAccess, getXanaxSubscription } from "./xanax-subscriptions.js";
 import { startChainMonitor, recordClientChainData, recordPageChain } from "./chain-monitor.js";
 import { parsePageReport, onWarRoster } from "./chain-alert-rule.js";
+import { parseSelfReport, recordSelfReport, genocideMembers } from "./genocide.js";
 import { startEnemySurgeMonitor, stopEnemySurgeMonitor } from "./enemy-surge-monitor.js";
 import * as push from "./push-notifications.js";
 import * as restockTracker from "./restock-tracker.js";
@@ -3640,6 +3641,30 @@ router.post("/api/chain-page", requireAuth, (req, res) => {
     return res.status(403).json({ error: "Not on your faction's roster" });
   }
   return res.json({ ok: true, accepted: recordPageChain(warId, report, playerId) });
+});
+
+// ── Genocide marks (FactionOps 5.6.29) ─────────────────────────────────
+// A member's FactionOps reads its own honors once a day with that member's
+// own key (Torn shows a player's honors to nobody else) and posts whether
+// Genocide is among them; a null withdraws the answer when they switch
+// sharing off. GET returns the faction's marks, which also hold every bonus
+// hit worth 1,000+ respect from its chain reports (genocide.js), for the
+// marks on the faction info tab. No roster check: an answer is only ever
+// about the member who sends it, the list is what any member can see in the
+// chain reports, and the page marks only the rows it shows.
+router.post("/api/me/honors", requireAuth, (req, res) => {
+  const { factionId, playerId } = req.user;
+  const report = parseSelfReport(req.body || {});
+  if (!report) return res.status(400).json({ error: "genocide must be true, false or null" });
+  if (!factionId) return res.status(404).json({ error: "No faction" });
+  recordSelfReport(String(factionId), String(playerId), report, Math.floor(Date.now() / 1000));
+  console.log(`[genocide] self player=${playerId} has=${report.has}`);
+  return res.json({ ok: true });
+});
+
+router.get("/api/genocide", requireAuth, (req, res) => {
+  const { factionId } = req.user;
+  return res.json({ members: factionId ? genocideMembers(String(factionId)) : {} });
 });
 
 // ── Enemy-online-surge config (per-faction) ─────────────────────────────

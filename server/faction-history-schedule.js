@@ -18,6 +18,7 @@
  * self-only, so the one key it can legitimately use is the owner's.
  */
 import * as fh from "./faction-history.js";
+import { scanFinishedChains } from "./genocide.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Well clear of boot: a restart should not spend API budget before the
@@ -40,11 +41,19 @@ async function tick(reason) {
         + (store.backfillDone ? " (complete)" : ""));
     } catch (e) { summary.push(`attacks failed: ${e.message}`); }
 
+    let chains = [];
     try {
-      const chains = await fh.fetchAllChains(key);
+      chains = await fh.fetchAllChains(key);
       const { fetched, remaining } = await fh.captureChainReports(key, factionId, chains, { budget: 200 });
       summary.push(`chainreports +${fetched}${remaining ? `, ${remaining} left` : ""}`);
     } catch (e) { summary.push(`chainreports failed: ${e.message}`); }
+
+    // Genocide marks: each finished chain of 2,500+ hits is read once for
+    // its bonus hits worth 1,000+ respect, from the list fetched above.
+    try {
+      const { fetched, found } = await scanFinishedChains((id) => fh.fetchChainReport(key, id), factionId, chains);
+      summary.push(`genocide +${fetched} reports, ${found} holders`);
+    } catch (e) { summary.push(`genocide failed: ${e.message}`); }
 
     try {
       const ranked = fh.lifetimeChainRespect(fh.loadChainReports(factionId), fh.loadNames(factionId));
