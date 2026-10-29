@@ -44,8 +44,7 @@ async function tick(reason) {
     let chains = [];
     try {
       chains = await fh.fetchAllChains(key);
-      const { fetched, remaining } = await fh.captureChainReports(key, factionId, chains, { budget: 200 });
-      summary.push(`chainreports +${fetched}${remaining ? `, ${remaining} left` : ""}`);
+      summary.push(fh.chainReportsSummary(await fh.captureChainReports(key, factionId, chains, { budget: 200 })));
     } catch (e) { summary.push(`chainreports failed: ${e.message}`); }
 
     // Genocide marks: each finished chain of 2,500+ hits is read once for

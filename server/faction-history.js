@@ -70,7 +70,11 @@ async function tornGet(url, tries = 4) {
       return data;
     }
     if (data.error.code !== RATE_LIMITED || attempt >= tries) {
-      throw new Error(`Torn API error: ${data.error.error} (code ${data.error.code})`);
+      // The code rides along for a caller that acts on one refusal
+      // (captureChainReports keeps a chain Torn has no report for).
+      const err = new Error(`Torn API error: ${data.error.error} (code ${data.error.code})`);
+      err.code = data.error.code;
+      throw err;
     }
     _spacing = Math.min(SPACING_CEIL_MS, Math.round(_spacing * 1.8));
     console.warn(`[fachist] rate limited, spacing now ${_spacing}ms (attempt ${attempt}/${tries})`);
@@ -931,28 +935,51 @@ export function lifetimeChainRespect(store, names = {}, { period = null } = {}) 
   };
 }
 
+// Torn's answer for a chain older than any report it serves (Feb 2022).
+const INCORRECT_ID = 6;
+
 /**
  * Fetch reports for chains we do not have yet, newest first, on a budget.
  * One call per chain and never repeated, so the cost falls to near zero once
- * the history is in.
+ * the history is in. A chain Torn refuses as "Incorrect ID" (code 6) has no
+ * report to give: it is kept in `unavailable` (never in `chains`, which
+ * lifetime respect counts) and not asked again. Any other failure is asked
+ * again next run.
+ *
+ * `fetched` counts the reports stored this run, `unavailable` the chains
+ * refused this run, and `remaining` the chains still without either.
  */
 export async function captureChainReports(key, factionId, chains, { budget = 300, onProgress } = {}) {
   const store = loadChainReports(factionId);
   store.chains ||= {};
-  const todo = chains.filter((c) => !store.chains[String(c.id)]);
-  let done = 0;
+  store.unavailable ||= {};
+  const todo = chains.filter((c) => !store.chains[String(c.id)] && !store.unavailable[String(c.id)]);
+  let done = 0, fetched = 0, unavailable = 0;
   for (const c of todo.slice(0, budget)) {
     try {
       const r = (await v2(`chainreport?id=${encodeURIComponent(c.id)}`, key)).chainreport;
-      if (r) foldChainReport(store, { id: c.id, attackers: r.attackers }, c.start);
+      if (r) { foldChainReport(store, { id: c.id, attackers: r.attackers }, c.start); fetched++; }
     } catch (e) {
-      console.warn(`[fachist] chainreport ${c.id}: ${e.message}`);
+      if (e.code === INCORRECT_ID) {
+        store.unavailable[String(c.id)] = 1;
+        unavailable++;
+        console.warn(`[fachist] chainreport ${c.id}: ${e.message}, kept as unavailable and not asked again`);
+      } else {
+        console.warn(`[fachist] chainreport ${c.id}: ${e.message}`);
+      }
     }
     done++;
     if (done % 25 === 0) { saveChainReports(factionId, store); if (onProgress) onProgress({ done, todo: todo.length }); }
   }
   saveChainReports(factionId, store);
-  return { store, fetched: done, remaining: Math.max(0, todo.length - done) };
+  return { store, fetched, unavailable, remaining: todo.length - fetched - unavailable };
+}
+
+/** The daily tick's line for it: the reports stored, then the refusals and what is left. */
+export function chainReportsSummary({ fetched, unavailable, remaining }) {
+  return `chainreports +${fetched}`
+    + (unavailable ? `, ${unavailable} unavailable` : "")
+    + (remaining ? `, ${remaining} left` : "");
 }
 
 // ── Captured attacks ───────────────────────────────────────────────────
