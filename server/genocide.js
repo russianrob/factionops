@@ -14,8 +14,9 @@
  *                 (the count is checked every 30 minutes, at no cost).
  *   own answers   Torn shows a player's honors to their own key only, so a
  *                 member who earned it in another faction is known only from
- *                 their FactionOps, which reads its own honors once a day and
- *                 reports yes or no (POST /api/me/honors).
+ *                 their FactionOps, which reads its own honors once, then
+ *                 monthly until it is a yes, and reports yes or no (POST
+ *                 /api/me/honors).
  *
  * FactionOps 5.6.29 marks the faction info tab from GET /api/genocide.
  *

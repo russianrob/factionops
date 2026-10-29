@@ -3,8 +3,9 @@
 // member row gets a mark for holders, another for members confirmed not to
 // hold it, and nothing when nobody knows. The pure parts are lifted out of the
 // script and run with made-up members, the marks are driven on a linkedom
-// page, and the wiring is checked in the text: the setting, the once-a-day
-// check of the member's own honors, and where it all starts.
+// page, and the wiring is checked in the text: the setting, the check of the
+// member's own honors (once, then monthly until it is a yes), and where it
+// all starts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -53,12 +54,17 @@ test('genocideFromHonors reads honor 478, and refuses anything that is not a lis
   }
 });
 
-test('genocideCheckDue: a day after the last answer that got through, and never twice in an hour', () => {
-  const H = 3600000, now = 100 * 24 * H;
-  assert.equal(L().genocideCheckDue(now, 0, 0), true);
-  assert.equal(L().genocideCheckDue(now, now - 23 * H, 0), false);
-  assert.equal(L().genocideCheckDue(now, now - 25 * H, now - 30 * 60000), false);
-  assert.equal(L().genocideCheckDue(now, now - 25 * H, now - 2 * H), true);
+test('genocideCheckDue: a yes taken for this faction is never asked again, a no a month on, anything else now, never twice in an hour', () => {
+  const H = 3600000, D = 24 * H, now = 400 * D;
+  const due = (lastOk, lastTry, saved) => L().genocideCheckDue(now, lastOk, lastTry, saved, '1001');
+  assert.equal(due(0, 0, ''), true);
+  assert.equal(due(now - 2 * D, 0, ''), true);              // updated from 5.6.29: no answer saved
+  assert.equal(due(now - 365 * D, 0, '1:1001'), false);
+  assert.equal(due(now - 29 * D, 0, '0:1001'), false);
+  assert.equal(due(now - 31 * D, 0, '0:1001'), true);
+  assert.equal(due(now - 2 * D, 0, '1:1002'), true);        // taken for another faction
+  assert.equal(due(0, now - 30 * 60000, ''), false);
+  assert.equal(due(now - 31 * D, now - 30 * 60000, '0:1001'), false);
 });
 
 // ── Where the marks go ─────────────────────────────────────────────────
@@ -173,7 +179,8 @@ test('the setting: stored as a string, on unless the member turns it off', () =>
   assert.ok(at > 0, 'the settings row is missing');
   const row = SRC.slice(at - 400, at + 600);
   assert.match(row, /Share whether I have Genocide with my faction/);
-  assert.match(row, /Once a day/);
+  assert.match(row, /once, then monthly until you have it/);
+  assert.doesNotMatch(row, /Once a day/);
   assert.match(row, /your own key/);
   assert.match(row, /only yes or no/);
   // Each device keeps its own switch, so the member is told to use each one.
@@ -206,6 +213,7 @@ test('the switch: off owes a withdrawal and asks for it at once; on clears it an
   assert.equal(gm.get('factionops_genocide_withdraw'), '0');
   assert.equal(gm.get('factionops_genocide_ok'), '0');
   assert.equal(gm.get('factionops_genocide_try'), '0');
+  assert.equal(gm.get('factionops_genocide_has'), '');
   assert.equal(checks.length, 2);
 });
 
@@ -218,7 +226,7 @@ function selfCheck({ share = '1', stored = {}, post = () => Promise.resolve({}) 
   const check = new Function('CONFIG', 'state', 'GM_getValue', 'GM_setValue', 'httpRequest', 'postAction', 'safeParse',
     ['GENOCIDE_HONOR_ID', 'GENOCIDE_CHECK_MS', 'GENOCIDE_RETRY_MS'].map(konst).join('')
     + ['genocideFromHonors', 'genocideCheckDue', 'selfCheckGenocide'].map(fn).join('\n') + '\nreturn selfCheckGenocide;')(
-    CONFIG, { jwtToken: 'jwt' },
+    CONFIG, { jwtToken: 'jwt', myFactionId: '1001' },
     (k, dflt) => (gm.has(k) ? gm.get(k) : dflt), (k, v) => { gm.set(k, v); },
     (o) => { reqs.push(o); },
     (p, b) => { posts.push([p, b]); return post(p, b); },
@@ -227,6 +235,44 @@ function selfCheck({ share = '1', stored = {}, post = () => Promise.resolve({}) 
 }
 const settle = () => new Promise((r) => setImmediate(r));
 const HONORS = JSON.stringify({ honors: [{ id: 478, timestamp: 1690000000 }] });
+
+test('a yes the server took is never asked of Torn again; a no is, a month on; a failed post saves nothing', async () => {
+  // The last answer's time is stamped with the real clock, so these run on it.
+  const H = 3600000, D = 24 * H, T = Date.now();
+  // A yes: saved with the faction it went to, and Torn is never asked again.
+  const yes = selfCheck();
+  yes.check(T);
+  yes.reqs[0].onload({ responseText: HONORS });
+  await settle();
+  assert.equal(yes.gm.get('factionops_genocide_has'), '1:1001');
+  yes.check(T + 2 * H);
+  yes.check(T + 400 * D);
+  assert.equal(yes.reqs.length, 1);
+  // A no: asked again a month on, and not before.
+  const no = selfCheck();
+  no.check(T);
+  no.reqs[0].onload({ responseText: JSON.stringify({ honors: [{ id: 12, timestamp: 1 }] }) });
+  await settle();
+  assert.equal(no.gm.get('factionops_genocide_has'), '0:1001');
+  no.check(T + 2 * D);
+  assert.equal(no.reqs.length, 1);
+  no.check(T + 31 * D);
+  assert.equal(no.reqs.length, 2);
+  // A post the server refused saves nothing, and the hourly retry asks again.
+  const refused = selfCheck({ post: () => Promise.reject(new Error('HTTP 502')) });
+  refused.check(T);
+  refused.reqs[0].onload({ responseText: HONORS });
+  await settle();
+  assert.equal(refused.gm.has('factionops_genocide_has'), false);
+  assert.equal(refused.gm.has('factionops_genocide_ok'), false);
+  refused.check(T + 2 * H);
+  assert.equal(refused.reqs.length, 2);
+  // A device updated from 5.6.29: an answer went through two hours ago, but
+  // none is saved, so it is asked once more and saved this time.
+  const old = selfCheck({ stored: { factionops_genocide_ok: String(T - 2 * H), factionops_genocide_try: String(T - 2 * H) } });
+  old.check(T);
+  assert.equal(old.reqs.length, 1);
+});
 
 test('a check already on its way posts nothing once sharing is switched off', async () => {
   const on = selfCheck();

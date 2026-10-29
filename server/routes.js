@@ -3644,12 +3644,13 @@ router.post("/api/chain-page", requireAuth, (req, res) => {
 });
 
 // ── Genocide marks (FactionOps 5.6.29) ─────────────────────────────────
-// A member's FactionOps reads its own honors once a day with that member's
-// own key (Torn shows a player's honors to nobody else) and posts whether
-// Genocide is among them; a null withdraws the answer when they switch
-// sharing off. GET returns the faction's marks, which also hold every bonus
-// hit worth 1,000+ respect from its chain reports (genocide.js), for the
-// marks on the faction info tab. No roster check: an answer is only ever
+// A member's FactionOps reads its own honors with that member's own key, once
+// and then monthly until it is a yes (Torn shows a player's honors to nobody
+// else), and posts whether Genocide is among them; a null withdraws the
+// answer when they switch sharing off. GET returns the faction's marks,
+// which also hold every bonus hit worth 1,000+ respect from its chain
+// reports (genocide.js), for the marks on the faction info tab. No roster
+// check: an answer is only ever
 // about the member who sends it, the list is what any member can see in the
 // chain reports, and the page marks only the rows it shows.
 router.post("/api/me/honors", requireAuth, (req, res) => {

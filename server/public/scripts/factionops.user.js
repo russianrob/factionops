@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.29
+// @version      5.6.30
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.29';
+    const SCRIPT_VERSION = '5.6.30';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -131,9 +131,9 @@
         // written here round-trips as permanently-ON for every PDA user who
         // never opted in — precisely the accident this default exists to stop.
         CALL_CHAT: (String(GM_getValue('factionops_call_chat', '0')) === '1') ? '1' : '0',
-        // 5.6.29: once a day, read this member's own honors with their own key
-        // and tell the faction whether Genocide is among them (the marks on the
-        // faction info tab). Default ON, the owner's call; the same '1'/'0'
+        // Read this member's own honors with their own key (once, then monthly
+        // until it is a yes) and tell the faction whether Genocide is among them
+        // (the marks on the faction info tab). Default ON, the owner's call; the same '1'/'0'
         // strings as CALL_CHAT, so PDA's string storage reads a '0' as off.
         SHARE_GENOCIDE: (String(GM_getValue('factionops_share_genocide', '1')) === '0') ? '0' : '1',
         // Replace the 1s poll with a hanging GET /api/poll-long (long-poll +
@@ -8410,7 +8410,7 @@ body.wb-chain-active {
                     <span class="wb-toggle-slider"></span>
                 </label>
             </div>
-            <div style="font-size:11px;opacity:0.7;margin:-4px 0 10px;">Once a day FactionOps reads your honors with your own key. Your faction sees only yes or no, on the faction info page. The switch is per device: turn it off on each one you use.</div>
+            <div style="font-size:11px;opacity:0.7;margin:-4px 0 10px;">FactionOps reads your honors with your own key once, then monthly until you have it. Your faction sees only yes or no, on the faction info page. The switch is per device: turn it off on each one you use.</div>
 
             <div class="wb-settings-row">
                 <span>Post my calls to faction chat</span>
@@ -8705,9 +8705,10 @@ body.wb-chain-active {
             });
         }
 
-        // 5.6.29: the Genocide answer. On: a fresh check now. Off: the answer
-        // already on the server is owed a withdrawal, asked for now and at
-        // each sign-in until the server takes it, and the mark goes with it.
+        // The Genocide answer. On: the saved answer is forgotten and a fresh
+        // check runs now. Off: the answer already on the server is owed a
+        // withdrawal, asked for now and at each sign-in until the server takes
+        // it, and the mark goes with it.
         const shareGenoEl = document.getElementById('wb-toggle-share-genocide');
         if (shareGenoEl) {
             shareGenoEl.addEventListener('change', (e) => {
@@ -8716,6 +8717,7 @@ body.wb-chain-active {
                     GM_setValue('factionops_genocide_withdraw', '0');
                     GM_setValue('factionops_genocide_ok', '0');
                     GM_setValue('factionops_genocide_try', '0');
+                    GM_setValue('factionops_genocide_has', '');
                 } else {
                     GM_setValue('factionops_genocide_withdraw', '1');
                 }
@@ -9726,12 +9728,14 @@ body.wb-chain-active {
     // to hold it (so a big bonus hit can go to someone who still can earn it),
     // and nothing when nobody knows. The server builds the list from the
     // faction's chain reports (every bonus hit worth 1,000+) and from members'
-    // own answers: Torn shows a player's honors to their own key only, so once
-    // a day this script reads its member's honors with that key and posts yes
-    // or no. CONFIG.SHARE_GENOCIDE switches that off, and withdraws the answer.
+    // own answers: Torn shows a player's honors to their own key only, so this
+    // script reads its member's honors with that key and posts yes or no: once,
+    // and again a month after a no. Honors never expire, so a yes the server
+    // took is never asked again. CONFIG.SHARE_GENOCIDE switches that off, and
+    // withdraws the answer.
     const GENOCIDE_HONOR_ID = 478;
-    const GENOCIDE_CHECK_MS = 24 * 60 * 60 * 1000;   // one answer a day
-    const GENOCIDE_RETRY_MS = 60 * 60 * 1000;        // one try an hour while it fails
+    const GENOCIDE_CHECK_MS = 30 * 24 * 60 * 60 * 1000;   // a no, asked again a month on
+    const GENOCIDE_RETRY_MS = 60 * 60 * 1000;             // one try an hour while it fails
     const GENOCIDE_LIST_MS = 10 * 60 * 1000;         // the faction's list, fetched again
     // The member rows' profile links on the info tab, by the class names the
     // offline highlighter and FFS read there. A row is the link's li.
@@ -9744,9 +9748,19 @@ body.wb-chain-active {
         return { has: !!h };
     }
 
-    /** Due a day after the last answer that reached the server, and never twice in an hour. */
-    function genocideCheckDue(now, lastOk, lastTry) {
-        return now - lastOk >= GENOCIDE_CHECK_MS && now - lastTry >= GENOCIDE_RETRY_MS;
+    /**
+     * Whether to ask Torn again. `saved` is the answer the server last took
+     * and the faction it went to ('1:<id>' or '0:<id>', '' for none). A yes
+     * taken for this faction is never asked again, and a no a month after it
+     * got through. Anything else (nothing taken yet, an answer taken for
+     * another faction, a device that answered before answers were saved) is
+     * asked now. Never twice in an hour.
+     */
+    function genocideCheckDue(now, lastOk, lastTry, saved, factionId) {
+        if (now - lastTry < GENOCIDE_RETRY_MS) return false;
+        const [has, fid] = String(saved || '').split(':');
+        if (!lastOk || fid !== String(factionId || '')) return true;
+        return has !== '1' && now - lastOk >= GENOCIDE_CHECK_MS;
     }
 
     /** Your own faction's info tab (its member list), and nothing else. */
@@ -9834,11 +9848,12 @@ body.wb-chain-active {
     }
 
     /**
-     * Once a day: this member's own honors, read with their own key, and
-     * whether Genocide is among them posted to the server. Only with sharing
-     * on, a key and a sign-in. A failure posts nothing, and the next try is
-     * an hour later at the soonest. With sharing off, a withdrawal the server
-     * has not taken yet is asked for again instead.
+     * This member's own honors, read with their own key, and whether Genocide
+     * is among them posted to the server: once, then a month after each no,
+     * and never again after a yes the server took (genocideCheckDue). Only
+     * with sharing on, a key and a sign-in. A failure posts and saves nothing,
+     * and the next try is an hour later at the soonest. With sharing off, a
+     * withdrawal the server has not taken yet is asked for again instead.
      */
     function selfCheckGenocide(now) {
         if (!state.jwtToken) return;
@@ -9851,9 +9866,11 @@ body.wb-chain-active {
             return;
         }
         if (!CONFIG.API_KEY) return;
+        const factionId = String(state.myFactionId || '');
         const lastOk = Number(GM_getValue('factionops_genocide_ok', '0')) || 0;
         const lastTry = Number(GM_getValue('factionops_genocide_try', '0')) || 0;
-        if (!genocideCheckDue(now, lastOk, lastTry)) return;
+        const saved = String(GM_getValue('factionops_genocide_has', ''));
+        if (!genocideCheckDue(now, lastOk, lastTry, saved, factionId)) return;
         GM_setValue('factionops_genocide_try', String(now));
         httpRequest({
             method: 'GET',
@@ -9864,7 +9881,11 @@ body.wb-chain-active {
                 const answer = genocideFromHonors(safeParse(res.responseText));
                 if (!answer) return;
                 postAction('/api/me/honors', { genocide: answer.has })
-                    .then(() => GM_setValue('factionops_genocide_ok', String(Date.now())))
+                    .then(() => {
+                        // Kept with the faction it went to: another faction is asked afresh.
+                        GM_setValue('factionops_genocide_has', (answer.has ? '1' : '0') + ':' + factionId);
+                        GM_setValue('factionops_genocide_ok', String(Date.now()));
+                    })
                     .catch(() => {});
             },
             onerror() { /* the hourly retry covers it */ },
